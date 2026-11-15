@@ -217,22 +217,32 @@ disk up if it sleeps, and keeps it in its udev rule
 `/etc/udev/rules.d/90-unos-disk-spindown.rules`, which sets it again at every
 boot and whenever the disk is connected again, under any name: the rule finds
 the disk by its serial number. **Off** stops the timer and removes the disk's
-line; after a power cycle the disk then keeps its own default. A disk that is
-woken often wears faster, so give a disk in daily use a longer timeout.
+line: until its next power cycle the disk then has no standby timer, not even
+one that `/etc/hdparm.conf` or the disk's own default set, and after one it
+keeps those. A disk that is woken often wears faster, so give a disk in daily
+use a longer timeout.
 
 The button is off, with the reason below it, for the system disk, an NVMe
 disk (it manages its own power), a disk that reports no serial number a udev
 rule can match or the serial of another disk, and on a host without `hdparm`:
-install the package `hdparm` on the host (`deploy/install.sh` does).
+install the package `hdparm` on the host (`deploy/install.sh` does). When the
+host cannot read UNOS's udev rule, every disk's button is off with that reason.
 
-Nothing UNOS does on its own wakes a sleeping disk: Disk Health, the SMART
-data and the hourly SMART records leave it asleep, the pool health check
-every 5 minutes reads only what the kernel and udev know, and the trash of a
-pool whose disks sleep is cleared out once they are awake. What an
-administrator starts or schedules wakes the disks it needs: a SMART test, a
-scrub, a snapshot or backup task, a file transfer. Opening the **Storage**
-page can wake a sleeping disk, since its lists of the pools and of the
-filesystems found on the disks read every disk.
+Nothing UNOS does on its own wakes a sleeping disk or keeps an idle one
+awake. Disk Health, the SMART data and the hourly SMART records leave a
+sleeping disk asleep, and the hourly records skip a disk with an idle timeout
+that was not used since its last record: any command sent to an awake disk
+starts its timer again. The pool health check every 5 minutes, and the pool
+counts of `/api/v1/health/prometheus` and `/api/v1/health/full` for
+monitoring, read only what the kernel and udev know. The trash of a pool is
+cleared out once a day, when its disks are awake. What an administrator
+starts or schedules wakes the disks it needs: a SMART test, a scrub, a
+snapshot or backup task, a file transfer. Opening a page that lists the pools
+can wake a sleeping disk, since it reads every disk: the dashboard (the first
+page after signing in), **Storage**, **Shares**, **Snapshots** and
+**System** → **Scheduler**. **Storage** reads whether each disk sleeps
+before it lists the pools, so **Power** shows how each disk was when the page
+opened.
 
 ### Creating a Storage Pool
 

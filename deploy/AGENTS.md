@@ -49,7 +49,8 @@ owner's firmware and is never written, so every write counts (ADR-0214, ADR-0225
   (ADR-0309), the shares check makes entries of other owners and modes on the pool over ssh, signs
   in as its user and turns guest access on for its share (ADR-0340), the scrub check scrubs the pool
   (ADR-0314), the smart check gives the pool's disk its shortest idle timeout, waits for it to sleep
-  and sets the timeout it found again (ADR-0377), the offsite check sets up an off-device copy to a
+  and sets the timeout of UNOS's rule again, or Off, which leaves the disk no standby timer until its
+  next power cycle (it skips that when `/etc/hdparm.conf` sets one, ADR-0377), the offsite check sets up an off-device copy to a
   folder of the pool and forgets it (ADR-0337), and the restore check restores a backup it made
   moments before, twice, which puts the device's database back as it was then (ADR-0341). They
   change the device for their duration, so they run on the owner's request;

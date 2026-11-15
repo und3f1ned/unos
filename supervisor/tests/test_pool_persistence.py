@@ -763,7 +763,10 @@ class FakeHost:
                 # libblkid finds: a disk that sleeps spins up (ADR-0377).
                 for disk in sorted(self.asleep):
                     self._wake(disk, cmd)
-            return self._result(stdout=self._btrfs_show(mounted_only="--mounted" in cmd))
+            shown = self._btrfs_show(mounted_only="--mounted" in cmd)
+            # With --mounted, btrfs-progs exits 1 without a word when no btrfs filesystem is
+            # mounted: cmd_filesystem_show returns btrfs_scan_kernel's "none found".
+            return self._result(1 if "--mounted" in cmd and not shown else 0, stdout=shown)
         if sub == ["device", "scan"]:
             return self._result()
         if sub == ["filesystem", "label"]:

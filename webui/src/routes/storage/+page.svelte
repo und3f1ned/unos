@@ -207,9 +207,10 @@
 		if (devicesHeld !== null) devicesLoaded = devicesHeld;
 		// Each list on its own: one that cannot be loaded says why in its card instead
 		// of looking empty, and the other ones are still shown (ADR-0271). The filesystems
-		// found on the disks have their own error as well (loadImportable).
-		const found = loadImportable(load);
-		const [diskList, poolList] = await Promise.allSettled([getDisks(), getPools()]);
+		// found on the disks have their own error as well (loadImportable). The disks come
+		// first, alone: the pools and the filesystems found are listed with a read of every
+		// disk, which can spin a sleeping one up, so Power is read before (ADR-0377).
+		const [diskList] = await Promise.allSettled([getDisks()]);
 		if (load === disksLoad) {
 			if (diskList.status === 'fulfilled') {
 				disks = diskList.value;
@@ -221,6 +222,10 @@
 			}
 			disksLoading = false;
 		}
+		// A newer load, or a dialog opened meanwhile (dropDeviceReload), lists them instead.
+		if (load !== listsLoad) return;
+		const found = loadImportable(load);
+		const [poolList] = await Promise.allSettled([getPools()]);
 		if (load === listsLoad) {
 			if (poolList.status === 'fulfilled') {
 				pools = poolList.value;

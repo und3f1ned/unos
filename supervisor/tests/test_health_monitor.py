@@ -607,8 +607,8 @@ class TestPoolCount:
     def test_full_health_counts_the_listed_pools(self, admin_api, monkeypatch):
         on_event_loop = []
 
-        def list_pools():
-            on_event_loop.append(_on_event_loop())
+        def list_pools(*, scan=True):
+            on_event_loop.append((_on_event_loop(), scan))
             return [SimpleNamespace(name="data"), SimpleNamespace(name="media")]
 
         monkeypatch.setattr(storage_pools, "list_pools", list_pools)
@@ -616,10 +616,11 @@ class TestPoolCount:
 
         assert response.status_code == 200, response.text
         assert response.json()["components"]["storage"] == {"status": "ok", "pools": 2}
-        assert on_event_loop == [False]  # host commands: listed in a worker thread
+        # Host commands: listed in a worker thread, without a scan of the disks (ADR-0377).
+        assert on_event_loop == [(False, False)]
 
     def test_full_health_reports_a_failed_listing(self, admin_api, monkeypatch):
-        def broken():
+        def broken(*, scan=True):
             raise RuntimeError("btrfs filesystem show failed: nsenter: failed to execute btrfs")
 
         monkeypatch.setattr(storage_pools, "list_pools", broken)
@@ -636,7 +637,7 @@ class TestPoolCount:
         # The RAID monitor keeps {} on a host without pools: Prometheus keeps its gauges at 0, and
         # /health/full counts 0 pools; without a file there are neither (ADR-0324).
         status = tmp_path / "raid_status.json"
-        monkeypatch.setattr(storage_pools, "list_pools", lambda: [])
+        monkeypatch.setattr(storage_pools, "list_pools", lambda *, scan=True: [])
         monkeypatch.setattr(health_router, "RAID_STATUS_FILE", str(status))
         assert "unos_raid_pools_healthy" not in admin_api.get("/api/v1/health/prometheus").text
         assert admin_api.get("/api/v1/health/full").json()["components"]["raid"] == {
@@ -649,14 +650,21 @@ class TestPoolCount:
         assert admin_api.get("/api/v1/health/full").json()["components"]["raid"] == {"status": "ok", "pools_checked": 0}
 
     def test_prometheus_counts_the_listed_pools(self, admin_api, monkeypatch):
-        monkeypatch.setattr(storage_pools, "list_pools", lambda: [SimpleNamespace(name="data")])
+        scans = []
+
+        def list_pools(*, scan=True):
+            scans.append(scan)
+            return [SimpleNamespace(name="data")]
+
+        monkeypatch.setattr(storage_pools, "list_pools", list_pools)
         response = admin_api.get("/api/v1/health/prometheus")
 
         assert response.status_code == 200
         assert "unos_storage_pools 1\n" in response.text
+        assert scans == [False]  # without a scan of the disks (ADR-0377)
 
     def test_prometheus_omits_the_count_when_listing_fails(self, admin_api, monkeypatch):
-        def broken():
+        def broken(*, scan=True):
             raise RuntimeError("no btrfs")
 
         monkeypatch.setattr(storage_pools, "list_pools", broken)

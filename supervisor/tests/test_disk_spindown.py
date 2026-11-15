@@ -9,9 +9,12 @@ an NVMe disk and a disk without a serial that a rule can match are refused with 
 without hdparm says so. GET /storage/disks reports each disk's power state with smartctl -n standby,
 which leaves a sleeping disk alone, and the SMART reads of Storage and Disk Health do the same.
 
-Nothing UNOS does periodically wakes a sleeping disk: the SMART monitor, the RAID monitor, the trash
-expiry and the live statistics are run here with every disk asleep, on the FakeHost of
-test_pool_persistence, which wakes a disk for every command that would read it or spin it up.
+Nothing UNOS does periodically wakes a sleeping disk: the SMART monitor, the RAID monitor, the
+monitoring endpoints, the trash expiry and the live statistics are run here with every disk asleep, on
+the FakeHost of test_pool_persistence, which wakes a disk for every command that would read it or spin
+it up. Nor do they keep an idle disk awake: any command restarts its standby timer, so the SMART monitor
+leaves alone a disk with a timeout that was not used since its last read, and the trash expiry asks a
+pool's disks whether they sleep only when the pool's pass is due.
 """
 from __future__ import annotations
 
@@ -183,6 +186,32 @@ def test_a_line_that_unos_did_not_write_is_not_kept(host):
         assert listed(api)["sdb"]["spindown"] == 10
         assert api.put(f"{DISKS}/sda/spindown", json={"minutes": 30}).status_code == 200
     assert rules(host) == [RULE.format(serial="WD-SPARE", value=120), RULE.format(serial="WD-W3", value=241)]
+
+
+def test_a_line_with_a_timeout_that_is_not_offered_is_not_kept(host):
+    # Edited by hand to -S 180 (15 minutes), or written by a version that offered it: no timeout of
+    # the page, kept no more than a line that UNOS did not write.
+    host.files[spindown.RULES_PATH] = spindown.render({"WD-SPARE": 10}) + RULE.format(serial="WD-W3", value=180) + "\n"
+    with admin_client() as api:
+        assert (listed(api)["sda"]["spindown"], listed(api)["sdb"]["spindown"]) == (0, 10)
+        response = api.put(f"{DISKS}/sdb/spindown", json={"minutes": 20})
+        assert response.status_code == 200, response.text
+    assert rules(host) == [RULE.format(serial="WD-SPARE", value=240)]
+
+
+def test_timeouts_that_cannot_be_read_are_the_reason_why_none_can_be_set(host):
+    # The rule sets sda's 20 minutes at every boot, but cat fails (an I/O error of the SD card):
+    # the page must not show Off for every disk with a button whose change then fails.
+    host.files[spindown.RULES_PATH] = spindown.render({"WD-W3": 20})
+    host.fail[("cat", "--", spindown.RULES_PATH)] = (1, f"cat: {spindown.RULES_PATH}: Input/output error")
+    with admin_client() as api:
+        found = listed(api)
+    reason = (f"The idle timeouts could not be read: Could not read {spindown.RULES_PATH}: "
+              f"cat: {spindown.RULES_PATH}: Input/output error")
+    assert {name: found[name]["spindown_problem"] for name in ("sda", "sdb", "sdc")} == dict.fromkeys(
+        ("sda", "sdb", "sdc"), reason)
+    # A disk's own reason comes first.
+    assert found["nvme0n1"]["spindown_problem"].startswith("/dev/nvme0n1 is an NVMe disk")
 
 
 # --- what gets no timeout ----------------------------------------------------------------------
@@ -367,6 +396,35 @@ def test_the_smart_monitor_leaves_sleeping_disks_asleep(host, monkeypatch, tmp_p
     assert {tuple(c[:-1]) for c in host.container_calls} == {("smartctl", "-n", "standby", "-j", "-a")}
 
 
+def test_the_smart_monitor_reads_a_disk_with_an_idle_timeout_only_after_it_was_used(host, monkeypatch, tmp_path):
+    # Reading SMART data sends an awake disk commands, which restart its standby timer: hourly reads
+    # would keep a disk with a timeout of an hour or more awake for good (ADR-0377).
+    monkeypatch.setattr(health_router, "SMART_HISTORY_FILE", str(tmp_path / "smart_history.json"))
+    io = {"sda": (1000, 500), "sdb": (10, 5), "sdc": (1, 1), "nvme0n1": (7, 7)}
+    monkeypatch.setattr(disks, "io_counts", lambda: dict(io))
+    host.files[spindown.RULES_PATH] = spindown.render({"WD-W3": 120})
+
+    def monitor_pass() -> list[str]:
+        host.container_calls.clear()
+        assert health_router._smart_monitor_pass() == []
+        return sorted(call[-1] for call in host.container_calls)
+
+    every = monitor_pass()
+    assert "/dev/sda" in every and "/dev/sdb" in every
+    others = [path for path in every if path != "/dev/sda"]
+    # sda has had no read or write since: it is left alone and keeps the verdict of its last read.
+    assert monitor_pass() == others
+    assert monitor_pass() == others
+    assert "/dev/sda" in health_router._disk_verdicts
+    # Something read the pool: sda is read at the next pass, and then left alone again.
+    io["sda"] = (1012, 500)
+    assert monitor_pass() == every
+    assert monitor_pass() == others
+    # Without the timeout it is read at every pass, as a disk without one is.
+    host.files.pop(spindown.RULES_PATH)
+    assert monitor_pass() == every
+
+
 async def test_the_raid_monitor_reads_no_disk(host):
     asleep = all_asleep(host)
     health = {info.pool: info for info in await health_router.check_raid_health()}
@@ -388,6 +446,57 @@ async def test_the_raid_monitor_reports_a_managed_pool_that_is_not_mounted_from_
     assert problem.title == "Pool 'spare' is not mounted"
     assert problem.detail.startswith("Nothing is mounted at /mnt/pools/spare")
     assert host.woken == []
+
+
+def unmount_every_pool(fake) -> None:
+    """No btrfs filesystem is mounted: btrfs filesystem show --mounted then exits 1 without a word."""
+    fake.mounts = [mount for mount in fake.mounts if mount["fstype"] != "btrfs"]
+    assert fake.run(["btrfs", "filesystem", "show", "--mounted", "--raw"]).returncode == 1
+
+
+async def test_the_raid_monitor_reports_the_pools_when_none_is_mounted(host):
+    # The owner unmounted data, the only mounted pool, which UNOS mounts at boot.
+    unmount_every_pool(host)
+    asleep = all_asleep(host)
+    health = {info.pool: info.status for info in await health_router.check_raid_health()}
+    assert health == {"data": "unmounted", "spare": "unmounted"}
+    await health_router._update_pool_problems()
+    [problem] = health_router.problems.of_source(health_router.POOL_PROBLEMS).values()
+    assert problem.title == "Pool 'data' is not mounted"
+    assert problem.detail.startswith("Nothing is mounted at /mnt/pools/data")
+    assert host.woken == [] and host.asleep == asleep
+
+
+async def test_the_raid_monitor_reports_a_managed_pool_whose_disk_is_gone_when_none_is_mounted(host):
+    # data did not mount at boot: sda is gone, and no other btrfs filesystem is mounted.
+    unmount_every_pool(host)
+    host.tree = [top for top in host.tree if top["path"] != "/dev/sda"]
+    host.filesystems = [fs for fs in host.filesystems if fs["label"] != "data"]
+    health = {info.pool: info.status for info in await health_router.check_raid_health()}
+    assert health == {"spare": "unmounted"}
+    await health_router._update_pool_problems()
+    [problem] = health_router.problems.of_source(health_router.POOL_PROBLEMS).values()
+    assert problem.title == "Pool 'data' is not mounted"
+    assert problem.detail.startswith("The host finds no disk of pool data")
+
+
+async def test_the_raid_endpoint_answers_when_no_pool_is_mounted(host):
+    unmount_every_pool(host)
+    with admin_client() as api:
+        response = api.get("/api/v1/health/raid")
+    assert response.status_code == 200, response.text
+    assert {pool["pool"]: pool["status"] for pool in response.json()} == {
+        "data": "unmounted", "spare": "unmounted"}
+
+
+def test_the_monitoring_endpoints_count_the_pools_without_reading_a_disk(host, monkeypatch):
+    # Prometheus or an uptime monitor scrapes them every few seconds (README.md).
+    monkeypatch.setattr(importlib.import_module("src.main"), "_running_containers", lambda: 0)
+    asleep = all_asleep(host)
+    with admin_client() as api:
+        assert "unos_storage_pools 2\n" in api.get("/api/v1/health/prometheus").text
+        assert api.get("/api/v1/health/full").json()["components"]["storage"] == {"status": "ok", "pools": 2}
+    assert host.woken == [] and host.asleep == asleep
 
 
 def test_the_live_statistics_run_no_disk_command(monkeypatch):
@@ -417,14 +526,20 @@ def two_pools(tmp_path, monkeypatch):
     monkeypatch.setattr(files_router, "BASE_PATH", str(base))
     monkeypatch.setattr(files_router, "MOUNTINFO", str(mounts.path))
     asleep = {"data"}
-    monkeypatch.setattr(spindown, "sleeping_pools", lambda: set(asleep))
-    yield base, asleep
+    asked = []  # the pools whose disks were asked whether they sleep, in order
+
+    def pool_sleeps(pool):
+        asked.append(pool)
+        return pool in asleep
+
+    monkeypatch.setattr(spindown, "pool_sleeps", pool_sleeps)
+    yield base, asleep, asked
     for name in ("data", "media"):
         os.chmod(base / name, 0o755)
 
 
 def test_the_trash_expiry_passes_over_a_pool_whose_disks_sleep_and_takes_it_when_it_wakes(two_pools):
-    base, asleep = two_pools
+    base, asleep, _ = two_pools
     # A pool that sleeps is not even opened: its folder cannot be read here.
     os.chmod(base / "data", 0)
     now = datetime(2026, 11, 15, tzinfo=timezone.utc)
@@ -448,16 +563,40 @@ def test_the_trash_expiry_passes_over_a_pool_whose_disks_sleep_and_takes_it_when
 
 
 def test_the_trash_expiry_runs_no_pass_when_it_cannot_tell_which_disks_sleep(two_pools, monkeypatch):
-    base, _ = two_pools
+    base, _, _ = two_pools
 
-    def unreadable():
+    def unreadable(pool):
         raise RuntimeError("lsblk failed: no udev")
 
-    monkeypatch.setattr(spindown, "sleeping_pools", unreadable)
+    monkeypatch.setattr(spindown, "pool_sleeps", unreadable)
     now = datetime(2026, 11, 15, tzinfo=timezone.utc)
-    assert files_router._expire_due_trash(now, {}, 0.0) == (
-        0, ["Could not tell which pools' disks sleep, so no trash was cleared out: lsblk failed: no udev"], True)
+    done: dict[str, float] = {}
+    assert files_router._expire_due_trash(now, done, 0.0) == (0, [
+        f"Could not tell whether the disks of pool {pool} sleep, so its trash was not cleared out: lsblk failed: no udev"
+        for pool in ("data", "media")], True)
     assert len(list((base / "media" / files_router.TRASH).iterdir())) == 1
+    assert done == {}  # both passes are still due
+
+
+def test_the_trash_expiry_asks_a_pool_s_disks_whether_they_sleep_only_when_its_pass_is_due(two_pools):
+    # Asking an awake disk is a command, which restarts its standby timer (ADR-0377): the hourly
+    # checks ask nothing while no pass is due, and then only the disks of the pool that is due.
+    base, asleep, asked = two_pools
+    now = datetime(2026, 11, 15, tzinfo=timezone.utc)
+    done: dict[str, float] = {}
+    files_router._expire_due_trash(now, done, 0.0)
+    assert asked == ["data", "media"]
+    asked.clear()
+    files_router._expire_due_trash(now, done, 3600.0)
+    assert asked == ["data"]  # it sleeps, and its pass is due
+    asleep.clear()
+    files_router._expire_due_trash(now, done, 7200.0)
+    asked.clear()
+    for hour in range(3, 24):
+        assert files_router._expire_due_trash(now, done, hour * 3600.0) == (0, [], False)
+    assert asked == []
+    files_router._expire_due_trash(now, done, 86400.0)
+    assert asked == ["media"]
 
 
 def test_the_trash_expiry_checks_every_hour(monkeypatch):
@@ -485,20 +624,31 @@ def test_the_trash_expiry_checks_every_hour(monkeypatch):
 # --- the pools whose disks sleep -------------------------------------------------------------------
 
 
-def test_sleeping_pools_are_found_without_waking_a_disk(host):
+def test_a_pool_whose_disks_sleep_is_found_without_waking_a_disk(host):
     host.add_disk("sdi", model="WDC WD40EFRX", serial="WD-M1")
     host.add_disk("sdj", model="WDC WD40EFRX", serial="WD-M2")
     host.add_btrfs("mirror", "7d4f2c91-4567-4f6e-8e3d-bc6f5d4e7f80", ["/dev/sdi", "/dev/sdj"], profile="raid1")
     host.dirs.add("/mnt/pools/mirror")
     host.mount_pool("mirror")
-    assert spindown.sleeping_pools() == set()
+    assert (spindown.pool_sleeps("mirror"), spindown.pool_sleeps("data")) == (False, False)
     # One disk of the mirror sleeps: a read could go to it.
     host.asleep.update({"/dev/sdj", "/dev/sdb"})
-    assert spindown.sleeping_pools() == {"mirror"}
+    assert (spindown.pool_sleeps("mirror"), spindown.pool_sleeps("data")) == (True, False)
     host.asleep.add("/dev/sda")
-    assert spindown.sleeping_pools() == {"data", "mirror"}
+    assert spindown.pool_sleeps("data")
+    # A pool that is not mounted at the pools' base (spare), or not at all, has nothing to read.
+    assert (spindown.pool_sleeps("spare"), spindown.pool_sleeps("gone")) == (False, False)
     assert host.woken == []
     assert not [c for c in host.calls if c[0] in ("btrfs", "wipefs", "blkid")]
+
+
+def test_only_the_disks_of_the_pool_are_asked_whether_they_sleep(host):
+    host.add_disk("sdi", model="WDC WD40EFRX", serial="WD-M1")
+    host.add_btrfs("media", "7d4f2c91-4567-4f6e-8e3d-bc6f5d4e7f80", ["/dev/sdi"])
+    host.dirs.add("/mnt/pools/media")
+    host.mount_pool("media")
+    assert not spindown.pool_sleeps("data")
+    assert [call[-1] for call in host.container_calls] == ["/dev/sda"]
 
 
 def test_the_power_state_is_read_with_smartctl_n_standby(monkeypatch):

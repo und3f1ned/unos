@@ -96,7 +96,8 @@ def _words(minutes: int) -> str:
 
 def read_timeouts() -> dict[str, int]:
     """The idle timeouts of UNOS's udev rule: serial -> minutes, in the file's order; {} without
-    the file. A line that UNOS did not write is no timeout. RuntimeError when the file cannot be read."""
+    the file. A line that UNOS did not write is no timeout, nor is one whose timeout is not offered
+    (SPINDOWN_MINUTES): one edited by hand. RuntimeError when the file cannot be read."""
     result = host.run_on_host(["cat", "--", RULES_PATH], timeout=UDEV_TIMEOUT, errors="replace")
     if not result.ok:
         if "No such file or directory" in result.stderr:
@@ -107,18 +108,19 @@ def read_timeouts() -> dict[str, int]:
         match = _RULE_LINE.fullmatch(line.strip())
         if match and _RULE_SERIAL.fullmatch(match["serial"]):
             minutes = minutes_of(int(match["value"]))
-            if minutes:
+            if minutes and minutes in SPINDOWN_MINUTES:
                 found[match["serial"]] = minutes
     return found
 
 
-def timeouts_or_none() -> dict[str, int] | None:
-    """read_timeouts() for the disk list: None, with a warning, when the rule cannot be read."""
+def timeouts_or_problem() -> tuple[dict[str, int], str | None]:
+    """read_timeouts(), and None; or, with a warning, {} and why the rule could not be read, which
+    the disk list gives as each disk's spindown_problem."""
     try:
-        return read_timeouts()
+        return read_timeouts(), None
     except Exception as exc:
         logger.warning("Could not read the idle timeouts of the disks: %s", exc)
-        return None
+        return {}, f"The idle timeouts could not be read: {str(exc).strip() or type(exc).__name__}"
 
 
 def render(timeouts: dict[str, int]) -> str:
@@ -278,25 +280,20 @@ def _reload_rules() -> None:
         logger.warning("udevadm control --reload failed: %s", result.stderr.strip() or result.returncode)
 
 
-# --- the pools that sleep ----------------------------------------------------------------------
+# --- a pool that sleeps ------------------------------------------------------------------------
 
 
-def sleeping_pools() -> set[str]:
-    """The names of the pools mounted at the pools' base whose disks sleep: one of the whole disks
-    under the pool is in standby (disks.power_state), so a read of the pool could spin it up.
-    Read without waking a disk: findmnt, lsblk and smartctl -n standby. RuntimeError when the
-    host's mounts or disks cannot be listed. Blocking: call it in a worker thread.
+def pool_sleeps(pool: str) -> bool:
+    """Whether a disk of the pool ``pool``, mounted at the pools' base, is in standby
+    (disks.power_state), so that a read of the pool could spin it up; False for a pool that is not
+    mounted there. Only the pool's own disks are asked: asking an awake disk is a command, which
+    restarts its standby timer. Read without waking a disk: findmnt, lsblk and smartctl -n
+    standby. RuntimeError when the host's mounts or disks cannot be listed. Blocking: call it in
+    a worker thread.
     """
-    base = get_settings().pools_base_path.rstrip("/")
-    asleep: set[str] = set()
-    states: dict[str, str] = {}
+    target = f"{get_settings().pools_base_path.rstrip('/')}/{pool}"
     for mount in disks.host_mounts():
-        parent, _, pool = mount.target.rpartition("/")
-        if mount.fstype != "btrfs" or parent != base or not pool or not mount.uuid:
+        if mount.fstype != "btrfs" or mount.target != target or not mount.uuid:
             continue
-        for disk in disks.disks_of_filesystem(mount.uuid):
-            if disk not in states:
-                states[disk] = disks.power_state(disk)
-            if states[disk] == "standby":
-                asleep.add(pool)
-    return asleep
+        return any(disks.power_state(disk) == "standby" for disk in disks.disks_of_filesystem(mount.uuid))
+    return False

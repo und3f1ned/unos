@@ -17,6 +17,7 @@ from collections.abc import Iterator
 from dataclasses import dataclass, field
 from typing import Any
 
+import psutil
 from fastapi import HTTPException
 
 from .. import host
@@ -534,6 +535,17 @@ def _probe_signatures(path: str) -> str | None:
     return f"{', '.join(types)} signature"
 
 
+def io_counts() -> dict[str, tuple[int, int]]:
+    """The reads and writes that the kernel completed on each block device since boot, by its name
+    ("sda"): /proc/diskstats, which counts a whole disk's partitions in the disk's line and reads no
+    disk. {} when it cannot be read."""
+    try:
+        counters = psutil.disk_io_counters(perdisk=True) or {}
+    except Exception:
+        return {}
+    return {name: (c.read_count, c.write_count) for name, c in counters.items()}
+
+
 def smartctl_found_it_asleep(result: subprocess.CompletedProcess[str]) -> bool:
     """Whether ``smartctl -n standby`` left the disk alone because it sleeps (ADR-0377).
 
@@ -637,12 +649,12 @@ def list_disks() -> list[DiskInfo]:
     ``is_system``/``in_use`` instead of being hidden. Each disk's power state is
     read first, without waking it, and a disk in standby is not probed with
     wipefs; its idle timeout comes from UNOS's udev rule, with the reason when
-    it can have none (ADR-0377).
+    it can have none, a rule that cannot be read included (ADR-0377).
     """
     from . import spindown  # it reads disks' facts itself
 
     state = _collect_host_state()
-    timeouts = spindown.timeouts_or_none()
+    timeouts, unread = spindown.timeouts_or_problem()
     no_hdparm = spindown.hdparm_missing()
     whole = _whole_disks(state.tree)
     listed = [(n.get("path") or f"/dev/{n['name']}", disk_id(n.get("serial"))) for n in whole]
@@ -689,8 +701,10 @@ def list_disks() -> list[DiskInfo]:
                 in_use_reason=facts.in_use_reason,
                 pool=facts.pool,
                 power_state=power,
-                spindown=(timeouts or {}).get(facts.serial or "", 0),
-                spindown_problem=spindown.problem(facts, listed) or (spindown.NO_HDPARM if no_hdparm else None),
+                spindown=timeouts.get(facts.serial or "", 0),
+                spindown_problem=(
+                    spindown.problem(facts, listed) or unread or (spindown.NO_HDPARM if no_hdparm else None)
+                ),
             )
         )
     return result

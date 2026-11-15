@@ -20,6 +20,7 @@ from ..auth.utils import verify_token
 from ..security.validators import validate_pool_name
 from ..storage import disks as storage_disks
 from ..storage import pools as storage_pools
+from ..storage import spindown
 from ..storage.schemas import PoolInfo
 from ..notifications.router import load_configs as load_notification_configs
 from ..notifications.router import history_entry, save_logs, send_email, send_through
@@ -610,6 +611,13 @@ class _DiskVerdict:
 # the problems that come from it; replaced whole by each pass.
 _disk_verdicts: dict[str, _DiskVerdict] = {}
 
+# The reads and writes that the kernel had counted on each whole disk, by its path, when the SMART
+# monitor last read the disk's SMART data (storage.disks.io_counts). A disk given an idle timeout
+# that has had none since is not read again: the read's commands would restart its standby timer,
+# and an hourly read would keep it from ever sleeping with a timeout of an hour or more (ADR-0377).
+# In RAM only; replaced whole by each pass.
+_disk_io_at_read: dict[str, tuple[int, int]] = {}
+
 
 def disk_problems(verdicts: dict[str, _DiskVerdict]) -> dict[str, problems.Problem]:
     """The problems of the disks in the SMART monitor's verdicts, by key (ADR-0332): an error for a
@@ -647,19 +655,41 @@ def _smart_monitor_pass() -> list[SmartTrendAlert]:
     failed (ADR-0269). The first pass reads the file: one that cannot be
     read is logged and replaced by a new history, so that a damaged file
     does not stop the recording (ADR-0235). The verdicts of the disks'
-    health go into _disk_verdicts (ADR-0332).
+    health go into _disk_verdicts (ADR-0332). A disk with an idle timeout
+    (UNOS's udev rule) that the kernel counted no read or write on since this
+    monitor last read it is left alone and keeps that read's verdict
+    (_disk_io_at_read, ADR-0377).
     """
-    global _disk_verdicts
+    global _disk_verdicts, _disk_io_at_read
     try:
         disks = storage_disks.host_disks()
     except Exception as exc:
         logger.warning("SMART monitor: pass skipped, could not list the host's disks: %s", exc)
         return []
+    counts = storage_disks.io_counts()
+    timeouts: dict[str, int] | None = None  # UNOS's udev rule, read once a disk had no I/O since its read
     snapshots = []
     verdicts: dict[str, _DiskVerdict] = {}
+    io_at_read: dict[str, tuple[int, int]] = {}
+    read: list[storage_disks.HostDisk] = []
     for disk in disks:
+        earlier = _disk_verdicts.get(disk.path)
+        io = counts.get(disk.name)
+        if (
+            io is not None
+            and _disk_io_at_read.get(disk.path) == io
+            and earlier is not None
+            and earlier.lsblk_serial == disk.serial
+        ):
+            if timeouts is None:
+                timeouts, _ = spindown.timeouts_or_problem()
+            if timeouts.get(disk.serial or ""):
+                verdicts[disk.path] = earlier
+                io_at_read[disk.path] = io
+                continue
         snapshot = collect_smart_snapshot(disk.path)
         if snapshot:
+            read.append(disk)
             snapshot.lsblk_serial = disk.serial
             # JSON form (str attribute keys), like the entries read from the file.
             snapshots.append(snapshot.model_dump(mode="json"))
@@ -671,6 +701,10 @@ def _smart_monitor_pass() -> list[SmartTrendAlert]:
             # unless another disk is at its path now.
             verdicts[disk.path] = verdict
     _disk_verdicts = verdicts
+    # After the reads, so that their own commands, if the kernel counts them, are not taken for a use.
+    after = storage_disks.io_counts() if read else {}
+    io_at_read.update({disk.path: after[disk.name] for disk in read if disk.name in after})
+    _disk_io_at_read = io_at_read
 
     alerts: list[SmartTrendAlert] = []
     with _smart_history_lock:

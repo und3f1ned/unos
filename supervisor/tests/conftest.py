@@ -46,14 +46,16 @@ def _smart_history_not_read_yet(monkeypatch):
 
 @pytest.fixture(autouse=True)
 def _no_problems_yet(monkeypatch):
-    """The problems of the NAS, the SMART monitor's verdicts of the disks and the pools that the RAID
-    monitor read last are kept in RAM (ADR-0332): every test starts without them, as the supervisor does."""
+    """The problems of the NAS, the SMART monitor's verdicts of the disks (and the disks' I/O counts at
+    its reads, ADR-0377) and the pools that the RAID monitor read last are kept in RAM (ADR-0332): every
+    test starts without them, as the supervisor does."""
     problems = sys.modules.get("src.health.problems")
     if problems is not None:
         monkeypatch.setattr(problems, "_by_source", {})
     health_router = sys.modules.get("src.health.router")
     if health_router is not None:
         monkeypatch.setattr(health_router, "_disk_verdicts", {})
+        monkeypatch.setattr(health_router, "_disk_io_at_read", {})
         monkeypatch.setattr(health_router, "_pools_read", None)
 
 

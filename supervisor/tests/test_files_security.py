@@ -2457,7 +2457,7 @@ def test_the_expiry_runs_at_the_start_and_then_once_a_day(monkeypatch, clock):
         return 0, []
 
     monkeypatch.setattr(files_router, "_expire_trash", expire)
-    monkeypatch.setattr(spindown, "sleeping_pools", set)
+    monkeypatch.setattr(spindown, "pool_sleeps", lambda pool: False)
 
     async def run():
         task = asyncio.create_task(files_router.trash_expiry_loop())
@@ -2487,7 +2487,7 @@ def test_the_expiry_logs_what_it_deleted_and_each_new_problem(monkeypatch, caplo
         return result
 
     monkeypatch.setattr(files_router, "_expire_trash", expire)
-    monkeypatch.setattr(spindown, "sleeping_pools", set)
+    monkeypatch.setattr(spindown, "pool_sleeps", lambda pool: False)
     monkeypatch.setattr(files_router, "TRASH_EXPIRY_INTERVAL", 0)
     monkeypatch.setattr(files_router, "TRASH_EXPIRY_CHECK", 0)
 

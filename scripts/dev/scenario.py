@@ -24,9 +24,11 @@ SD writes of each check (ADR-0214). The areas:
            (the pool's sda on the dev device) given the shortest idle timeout, 5 minutes, with
            its line in UNOS's udev rule, asleep once it ran out (waited for at most three times),
            its SMART data on Storage and Disk Health read while it sleeps, which leaves it asleep
-           with its I/O counters unchanged, and its timeout as found again (ADR-0377; without
-           hdparm on the device these steps are skipped with the reason); and a short self-test
-           of each disk.
+           with its I/O counters unchanged, and the timeout of UNOS's rule set again, or Off: no
+           standby timer until the disk's next power cycle (ADR-0377; these steps are skipped
+           with the reason without hdparm on the device, and when the disk has no timeout of
+           UNOS's and /etc/hdparm.conf sets one, which Off would clear); and a short self-test of
+           each disk.
   backups  A plain and an encrypted backup made and listed, the restores refused for a missing
            backup and for the encrypted one without its passphrase or with a wrong one, and both
            deleted. It never restores a backup.
@@ -280,6 +282,11 @@ SPINDOWN_SHORTEST_VALUE = 60
 NO_HDPARM = "The host has no hdparm: install the package hdparm on the host to set idle timeouts"
 SPINDOWN_SETTLE = 30
 SPINDOWN_ROUNDS = 3
+# Debian's hdparm sets what /etc/hdparm.conf asks whenever udev adds a disk (its rule 85-hdparm.rules,
+# before UNOS's 90-). ATA reads no standby timer back: when UNOS's rule has none for the disk, the
+# check's Off at its end (hdparm -S 0) would clear a timer set there, so it leaves the disk alone.
+HDPARM_CONF = "/etc/hdparm.conf"
+_HDPARM_CONF_TIMER = re.compile(r"spindown_time\s*=|command_line\s*=.*\s-S\s*\d")
 # The token cache in the device's RAM of the shares check's user (api.py's relay, ADR-0222).
 USER_TOKEN = "/dev/shm/unos-scenario-{}.token"
 # What REMOTE_ENTRIES repair makes in the shares check's share folder, and how Repair permissions
@@ -1743,19 +1750,38 @@ def timeout_words(minutes: int) -> str:
     return "off" if not minutes else f"{minutes} minutes"
 
 
-def spindown_steps(c: Check, disk: dict) -> None:
+def hdparm_conf_timer(text: str | None) -> str | None:
+    """The first line of /etc/hdparm.conf (TEXT) that sets a standby timer, for any disk, or None."""
+    for line in (text or "").splitlines():
+        line = line.strip()
+        if not line.startswith("#") and _HDPARM_CONF_TIMER.match(line):
+            return line
+    return None
+
+
+def spindown_steps(c: Check, disk: dict, hdparm_conf: str | None) -> None:
     """storage.disk-spindown (ADR-0377) on the disk DISK of GET /storage/disks: the shortest idle
-    timeout, the disk asleep once it ran out, SMART read while it sleeps, its timeout as found."""
+    timeout, the disk asleep once it ran out, SMART read while it sleeps, and the timeout of UNOS's
+    rule set again; without one, Off: no standby timer (hdparm -S 0) until the disk's next power
+    cycle, which a disk whose timer /etc/hdparm.conf (HDPARM_CONF, its text) sets does not get."""
     name, path, previous = disk["name"], disk["path"], disk.get("spindown", 0)
     texts = (f"{name} gets the shortest idle timeout, {SPINDOWN_SHORTEST} minutes: hdparm -S {SPINDOWN_SHORTEST_VALUE} "
              "in UNOS's udev rule",
              f"{name} sleeps once the timeout ran out",
              f"its SMART data on Storage and on Disk Health leaves {name} asleep",
-             f"{name}'s idle timeout is {timeout_words(previous)} again, as the check found it")
+             f"{name}'s idle timeout is {timeout_words(previous)} again, as the check found it" if previous else
+             f"{name} has no idle timeout again: no line in UNOS's udev rule, and no standby timer (hdparm -S 0) "
+             "until its next power cycle")
     problem = disk.get("spindown_problem")
     if problem == NO_HDPARM:
         for text in texts:
             c.skip(text, f"{problem} (installing a package is an owner action)")
+        return
+    timer = None if previous else hdparm_conf_timer(hdparm_conf)
+    if timer:
+        for text in texts:
+            c.skip(text, f"{HDPARM_CONF} sets a standby timer ({timer!r}), which no command reads back: the check's "
+                         "Off at its end (hdparm -S 0) would clear it until the disk's next power cycle")
         return
 
     def listed() -> dict:
@@ -1818,8 +1844,11 @@ def smart_check(c: Check) -> None:
         return {"the idle timeouts": {d["name"]: d.get("spindown", 0) for d in c.get("/storage/disks")},
                 "UNOS's udev rule": None if rule is None else hashlib.sha256(rule.encode()).hexdigest()}
 
+    conf: dict[str, str | None] = {}
     with c.step("the device holds nothing of an earlier check"):
         c.baseline(state)
+        # The standby timers that Debian's hdparm sets at boot (spindown_steps).
+        conf["hdparm"] = c.device.read(HDPARM_CONF)
 
     with c.step("Storage lists the whole disks, without the system disk") as s:
         disks = c.get("/storage/disks")
@@ -1870,7 +1899,7 @@ def smart_check(c: Check) -> None:
     if data is None:
         c.skip("a data hard disk gets the shortest idle timeout and sleeps", "no data hard disk is listed")
     else:
-        spindown_steps(c, data)
+        spindown_steps(c, data, conf["hdparm"])
 
     for disk in disks:
         with c.step(f"a short self-test starts on {disk['name']}"):

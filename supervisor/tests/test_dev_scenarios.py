@@ -438,6 +438,8 @@ class FakeNas:
         self.idle = 0
         self.disk_reads = 1000
         self.disk_writes = 500
+        # Debian's /etc/hdparm.conf as Debian installs it: every setting commented out.
+        self.hdparm_conf: str | None = "#quiet\n#/dev/sda {\n#\tspindown_time = 24\n#}\n"
 
     # --- what the tests compare
 
@@ -1678,6 +1680,8 @@ class FakeNas:
             return self.installed
         if path == scenario.SPINDOWN_RULES:
             return self.rules
+        if path == scenario.HDPARM_CONF:
+            return self.hdparm_conf
         node = self.fs.get(path)
         return node.content if node is not None and node.kind == "file" else None
 
@@ -2994,13 +2998,39 @@ def test_the_smart_check_gives_the_disk_the_shortest_timeout_and_reads_smart_whi
                   "sda sleeps once the timeout ran out: the Storage page says standby after 330 s",
                   "its SMART data on Storage and on Disk Health leaves sda asleep: STANDBY, and its reads and writes "
                   "stay at (1000, 500)",
-                  "sda's idle timeout is off again, as the check found it"):
+                  # ATA reads no standby timer back: Off is what the check can say it left.
+                  "sda has no idle timeout again: no line in UNOS's udev rule, and no standby timer (hdparm -S 0) "
+                  "until its next power cycle"):
         assert words in text, words
     puts = [(path, body) for method, path, body, _ in nas.calls if method == "PUT" and DISK in path]
     assert puts[:2] == [("/storage/disks/sda/spindown", {"minutes": 5}), ("/storage/disks/sda/spindown", {"minutes": 0})]
     # Before the self-test, which keeps the disk busy.
     assert text.index("sleeps once the timeout ran out") < text.index("a short self-test starts on sda")
     assert (nas.spindown, nas.rules) == (0, None)
+
+
+@pytest.mark.parametrize("line", ["spindown_time = 241", "  spindown_time=24", "command_line = hdparm -S 120 /dev/sda"])
+def test_the_smart_check_leaves_a_standby_timer_of_hdparm_conf_alone(nas, line):
+    # udev's 85-hdparm rule applies it at boot, and no command reads it back: the check's Off
+    # (hdparm -S 0) would clear it until the disk's next power cycle.
+    nas.hdparm_conf = f"#quiet\n/dev/disk/by-id/ata-WDC_W1 {{\n{line}\n}}\n"
+    status, output = run_check("smart", nas)
+    assert status == 0, output
+    skipped = [line for line in step_lines(output) if line.startswith("SKIP")]
+    assert len(skipped) == 4, output
+    why = (f": {scenario.HDPARM_CONF} sets a standby timer ({line.strip()!r}), which no command reads back: the "
+           "check's Off at its end (hdparm -S 0) would clear it until the disk's next power cycle")
+    assert all(why in skipped_line for skipped_line in skipped), skipped
+    assert not [call for call in nas.calls if call[0] == "PUT" and DISK in call[1]]
+
+
+def test_with_a_timeout_of_unos_the_smart_check_takes_hdparm_conf_for_what_udev_overrides(nas):
+    # UNOS's rule (90-) runs after Debian's (85-hdparm) at boot, and the check sets its timeout again.
+    nas.set_spindown(DISK, {"minutes": 20})
+    nas.hdparm_conf = "/dev/sda {\n\tspindown_time = 241\n}\n"
+    status, output = run_check("smart", nas)
+    assert status == 0, output
+    assert "sda's idle timeout is 20 minutes again, as the check found it" in output
 
 
 def test_without_hdparm_the_smart_check_skips_the_idle_timeout_with_the_reason(nas):

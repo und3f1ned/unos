@@ -524,7 +524,10 @@ def btrfs_filesystems(*, scan: bool = True) -> list[BtrfsFilesystem]:
     # not a valid pool name either way.
     cmd = ["btrfs", "filesystem", "show", "--raw"] if scan else ["btrfs", "filesystem", "show", "--mounted", "--raw"]
     result = host.run_on_host(cmd, timeout=60, errors="replace")
-    if not result.ok:
+    # With --mounted, btrfs-progs exits 1 without a word when no btrfs filesystem is mounted (its
+    # cmd_filesystem_show returns btrfs_scan_kernel's "none found"): none is, which is no error.
+    none_mounted = not scan and result.returncode == 1 and not result.stdout.strip() and not result.stderr.strip()
+    if not result.ok and not none_mounted:
         raise RuntimeError(
             f"btrfs filesystem show failed: {result.stderr.strip() or result.returncode}"
         )
@@ -743,15 +746,16 @@ def _pool_info(
     )
 
 
-def list_pools() -> list[PoolInfo]:
+def list_pools(*, scan: bool = True) -> list[PoolInfo]:
     """List the pools: the btrfs filesystems labelled with a valid pool name (_pool_choices).
 
     A pool found on the disks, neither mounted at its mountpoint nor managed
     by UNOS, which Mount would import (ADR-0283), is left out when a member
     is on a boot or virtual device or on the system disk: Mount refuses it.
-    When lsblk cannot tell, it is listed, and Mount checks again.
+    When lsblk cannot tell, it is listed, and Mount checks again. Without
+    ``scan`` no disk is read (pools_and_managed_names, ADR-0377).
     """
-    return pools_and_managed_names()[0]
+    return pools_and_managed_names(scan=scan)[0]
 
 
 def pools_and_managed_names(*, scan: bool = True) -> tuple[list[PoolInfo], set[str] | None]:

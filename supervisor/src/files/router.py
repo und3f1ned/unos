@@ -126,7 +126,8 @@ TRASH_RETENTION_DAYS = 30
 # Seconds between two passes of the expiry over a pool (the first one runs at the start).
 TRASH_EXPIRY_INTERVAL = 24 * 60 * 60
 # Seconds between two checks for the pools whose pass is due: a pool whose disks sleep is passed
-# over, so as not to spin them up, and its pass runs at the first check after they woke (ADR-0377).
+# over, so as not to spin them up, and its pass runs at the first check after they woke; a check
+# with no pass due asks no disk anything (ADR-0377).
 TRASH_EXPIRY_CHECK = 60 * 60
 # In the trash, each deleted item has a folder of its own, named after the
 # time of its deletion in UTC and 16 random hex digits: the item is in it as
@@ -2032,26 +2033,32 @@ def _expire_trash(now: datetime, due: Callable[[str], bool] | None = None) -> tu
 def _expire_due_trash(now: datetime, done: dict[str, float], clock: float) -> tuple[int, list[str], bool]:
     """One check of the expiry (ADR-0377): the pass of each pool that is due, at the start and then
     TRASH_EXPIRY_INTERVAL after its last (``done``: pool -> ``clock`` of its last pass, which this
-    updates), unless the pool's disks sleep (storage.spindown.sleeping_pools): reading its folders
-    could spin them up, so it waits for a check when they are awake. When it cannot tell which
-    disks sleep, it runs no pass. Returns how many entries it deleted, the problems, and whether a
-    pass ran (or the check failed).
+    updates), unless the pool's disks sleep (storage.spindown.pool_sleeps): reading its folders
+    could spin them up, so it waits for a check when they are awake. Only the disks of a pool
+    whose pass is due are asked whether they sleep, since asking an awake disk restarts its
+    standby timer; a pool whose disks cannot be asked gets no pass. Returns how many entries it
+    deleted, the problems, and whether a pass ran (or a pool's disks could not be asked).
     """
-    try:
-        asleep = spindown.sleeping_pools()
-    except Exception as exc:
-        return 0, [f"Could not tell which pools' disks sleep, so no trash was cleared out: {exc}"], True
     passed: list[str] = []
+    unasked: list[str] = []
 
     def due(pool: str) -> bool:
-        if pool in asleep or clock - done.get(pool, clock - TRASH_EXPIRY_INTERVAL) < TRASH_EXPIRY_INTERVAL:
+        if clock - done.get(pool, clock - TRASH_EXPIRY_INTERVAL) < TRASH_EXPIRY_INTERVAL:
+            return False
+        try:
+            if spindown.pool_sleeps(pool):
+                return False
+        except Exception as exc:
+            unasked.append(
+                f"Could not tell whether the disks of pool {pool} sleep, so its trash was not cleared out: {exc}"
+            )
             return False
         done[pool] = clock
         passed.append(pool)
         return True
 
     count, problems = _expire_trash(now, due)
-    return count, problems, bool(passed)
+    return count, unasked + problems, bool(passed or unasked)
 
 
 _trash_expiry_task: asyncio.Task | None = None

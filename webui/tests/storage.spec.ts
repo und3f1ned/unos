@@ -226,6 +226,47 @@ test.describe('Physical disks (fake data)', () => {
     expect(writes).toEqual([{ method: 'PUT', path: '/disks/e2e-hd2/spindown', body: { minutes: 10 } }]);
   });
 
+  // GET /pools and GET /filesystems/importable run btrfs filesystem show, which reads every disk and
+  // can spin a sleeping one up: the page asks for them once Power has been read (ADR-0377).
+  test('reads whether the disks sleep before it lists what the disks hold', async ({ authenticatedPage: page }) => {
+    const events: string[] = [];
+    await fakeStorageApi(page, {
+      holdReads: (path) => {
+        if (!['/disks', '/pools', '/filesystems/importable'].includes(path)) return undefined;
+        events.push(`asked ${path}`);
+        if (path !== '/disks') return undefined;
+        return new Promise<void>((resolve) =>
+          setTimeout(() => {
+            events.push('answered /disks');
+            resolve();
+          }, 500),
+        );
+      },
+    });
+    await page.goto('/storage');
+    await expect(poolCard(page, 'e2e_tank')).toBeVisible();
+    await expect.poll(() => events.length).toBeGreaterThanOrEqual(4);
+    expect(events.slice(0, 2)).toEqual(['asked /disks', 'answered /disks']);
+    expect(events.slice(2, 4).sort()).toEqual(['asked /filesystems/importable', 'asked /pools']);
+  });
+
+  test('a sleeping disk that the host knows nothing of was not read', async ({ authenticatedPage: page }) => {
+    // The server does not probe a sleeping disk for signatures, and counts it as holding data.
+    const asleep = {
+      ...FAKE_DISKS[2], name: 'e2e-hd5', path: '/dev/e2e-hd5', serial: 'E2E5', wwn: '0x5000e2e000000005',
+      has_data: true, power_state: 'standby',
+    };
+    await fakeStorageApi(page, { disks: () => [...FAKE_DISKS, asleep] });
+    await page.goto('/storage');
+    const cells = (path: string) =>
+      disksCard(page).getByRole('row').filter({ has: page.getByRole('cell', { name: path, exact: true }) }).getByRole('cell');
+    await expect(cells('/dev/e2e-hd5')).toHaveText([
+      '/dev/e2e-hd5', 'E2E Disk E2E5', '3.6 TB', 'HDD', 'Not read while the disk sleeps', '-', 'Has data',
+      'Standby Idle timeout of /dev/e2e-hd5: Off',
+    ]);
+    await expect(cells('/dev/e2e-hd2').nth(4)).toHaveText('Empty');
+  });
+
   test('a disk list that cannot be loaded says why, and the pools are still shown', async ({
     authenticatedPage: page,
   }) => {
@@ -357,16 +398,19 @@ test.describe('Physical disks (fake data)', () => {
   type HostDisk = (typeof LISTED_DISKS)[number] | typeof MOUNTED_STICK;
 
   /**
-   * Hold the fake's answers to the reads asked between hold() and stop() until release(), each
-   * with the fake host's state when it was asked: a slow lsblk or btrfs.
+   * Hold the fake's answers to the reads of ``paths`` asked between hold() and stop() until
+   * release(), each with the fake host's state when it was asked: a slow lsblk or btrfs. A load of
+   * the lists asks for the disks first, and for the pools and the filesystems found once the disks
+   * answered (ADR-0377).
    */
-  function heldReads() {
+  function heldReads(paths: string[]) {
     let gate: Promise<void> | undefined;
     let open = () => {};
     const held: string[] = [];
     return {
       holdReads: (path: string) => {
-        if (gate) held.push(path);
+        if (!gate || !paths.includes(path)) return undefined;
+        held.push(path);
         return gate;
       },
       hold: () => {
@@ -375,9 +419,8 @@ test.describe('Physical disks (fake data)', () => {
       stop: () => {
         gate = undefined;
       },
-      /** Wait until the reads of a load of the lists are held. */
-      loadHeld: () =>
-        expect.poll(() => [...held].sort()).toEqual(['/disks', '/filesystems/importable', '/pools']),
+      /** Wait until the reads of ``paths`` of a load of the lists are held. */
+      loadHeld: () => expect.poll(() => [...held].sort()).toEqual([...paths].sort()),
       /** Send the held answers, and give the page the time to show them. */
       release: async (page: Page) => {
         const answered = held.map((path) =>
@@ -394,7 +437,7 @@ test.describe('Physical disks (fake data)', () => {
     authenticatedPage: page,
   }) => {
     let hostDisks: readonly HostDisk[] = FAKE_DISKS;
-    const reads = heldReads();
+    const reads = heldReads(['/disks']);
     await fakeStorageApi(page, { disks: () => hostDisks, holdReads: reads.holdReads });
     const sendDevices = await fakeBlockDevices(page);
     const requests = diskListRequests(page);
@@ -442,7 +485,8 @@ test.describe('Physical disks (fake data)', () => {
     authenticatedPage: page,
   }) => {
     let hostDisks: readonly (typeof LISTED_DISKS)[number][] = FAKE_DISKS;
-    const reads = heldReads();
+    // The disks answer at once, and the pools late: still mounted, as when they were asked.
+    const reads = heldReads(['/filesystems/importable', '/pools']);
     const writes = await fakeStorageApi(page, {
       disks: () => hostDisks,
       pools: [HEALTHY_POOL],

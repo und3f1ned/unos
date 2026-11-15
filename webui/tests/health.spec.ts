@@ -178,7 +178,6 @@ test.describe('Disk Health', () => {
     expect([...requested].sort()).toEqual(['GET /disks', 'GET /smart/predictions']);
   });
 
-  // storage.smart-replace-soon (ADR-0235).
   // storage.disk-spindown: reading SMART data does not wake a sleeping disk (ADR-0377).
   test('a disk that sleeps is listed as asleep, without SMART data', async ({ authenticatedPage: page }) => {
     await fakeHealthApi(page, { disks: () => ({ json: { disks: [...FAKE_SMART_DISKS, SLEEPING_DISK] } }) });
@@ -195,6 +194,7 @@ test.describe('Disk Health', () => {
     await expect(dialog.getByRole('table')).toHaveCount(0);
   });
 
+  // storage.smart-replace-soon (ADR-0235).
   test('marks a disk to replace soon with the reason, until the prediction changes', async ({
     authenticatedPage: page,
   }) => {
