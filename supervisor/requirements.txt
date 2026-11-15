@@ -1,6 +1,6 @@
 # Runtime dependencies of the supervisor (Python 3.11). Test tooling lives in
 # requirements-dev.txt. Pin exact versions; check with pip-audit when bumping.
-fastapi==0.162.0
+fastapi==0.162.2
 starlette==1.10.0
 uvicorn[standard]==0.54.0
 websockets==17.4
