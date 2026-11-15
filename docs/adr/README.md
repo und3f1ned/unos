@@ -295,6 +295,7 @@ and this index, and `make check-fast` runs it.
 | [0318](0318-app-data-lives-only-on-a-mounted-pool-without-handling-for-apps-of-older-versions.md) | App data lives only on a mounted pool, without handling for apps of older versions | accepted | 2026-11-10 |
 | [0323](0323-the-container-and-app-routes-answer-503-with-the-reason-when-docker-does-not-answer.md) | The container and app routes answer 503 with the reason when Docker does not answer | accepted | 2026-11-10 |
 | [0327](0327-the-app-store-lists-its-catalog-when-the-installed-apps-cannot-be-loaded.md) | The App Store lists its catalog when the installed apps cannot be loaded | accepted | 2026-11-10 |
+| [0377](0377-on-an-rk3588-jellyfin-gets-the-video-hardware-without-privileges-through-hardware-profiles.md) | On an RK3588 Jellyfin gets the video hardware without privileges, through the hardware profiles of the catalog | accepted | 2026-11-15 |
 
 ## Backup
 

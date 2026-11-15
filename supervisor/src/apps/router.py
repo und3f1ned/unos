@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 import errno
 import logging
 import os
@@ -30,6 +31,7 @@ from ..shares.constants import SMB_APP_UID, SMB_GROUP_GID, SMB_GROUP_NAME
 from ..shares.models import SmbShare
 from ..snapshots.router import SNAPSHOT_DIR_NAME
 from .catalog import APP_CATALOG, get_app_by_id, get_apps_by_category, search_apps
+from .hardware import container_hardware, for_host, host_socs
 from .schemas import (
     POOL_PLACEHOLDER,
     AppCategory,
@@ -96,21 +98,32 @@ async def list_apps(
     query: str | None = None,
     _: dict = Depends(verify_token)
 ):
-    """List available apps from catalog."""
+    """List available apps from catalog, with the hardware they get on this host (ADR-0377)."""
     if query:
-        return search_apps(query)
-    if category:
-        return get_apps_by_category(category)
-    return APP_CATALOG
+        apps = search_apps(query)
+    elif category:
+        apps = get_apps_by_category(category)
+    else:
+        apps = APP_CATALOG
+    return await _for_this_host(apps)
 
 
 @router.get("/catalog/{app_id}", response_model=AppTemplate)
 async def get_app(app_id: str, _: dict = Depends(verify_token)):
-    """Get app template by ID."""
+    """Get app template by ID, with the hardware it gets on this host (ADR-0377)."""
     app = get_app_by_id(app_id)
     if not app:
         raise HTTPException(404, f"App {app_id} not found")
-    return app
+    return (await _for_this_host([app]))[0]
+
+
+async def _for_this_host(apps: list[AppTemplate]) -> list[AppTemplate]:
+    """The templates with only the hardware profiles of the host's SoC; the device tree is read
+    on the host, in a worker thread, only when one of them has a profile."""
+    if not any(app.hardware for app in apps):
+        return apps
+    socs = await asyncio.to_thread(host_socs)
+    return [for_host(app, socs) for app in apps]
 
 
 @router.get("/installed", response_model=list[InstalledApp])
@@ -867,6 +880,7 @@ def _install_app(req: AppInstallRequest, shares: list[_ShareFolder]) -> AppInsta
     for p in template.ports:
         host_port = req.port_overrides.get(p.container, p.host)
         port_bindings[f"{p.container}/{p.protocol}"] = host_port
+    hardware = container_hardware(template)
 
     try:
         client.images.pull(template.image)
@@ -889,8 +903,10 @@ def _install_app(req: AppInstallRequest, shares: list[_ShareFolder]) -> AppInsta
     ]
 
     try:
-        container = client.containers.create(
+        container = _create_container(
+            client,
             template.image,
+            hardware.masked_paths,
             name=name,
             ports=port_bindings or None,
             mounts=mounts or None,
@@ -901,6 +917,8 @@ def _install_app(req: AppInstallRequest, shares: list[_ShareFolder]) -> AppInsta
             network_mode=template.network_mode,
             labels=labels,
             log_config=CAPPED_LOG,
+            devices=hardware.devices or None,
+            security_opt=hardware.security_opt or None,
         )
     except _DOCKER_ERRORS as e:
         raise HTTPException(500, f"Failed to create container: {e}")
@@ -933,6 +951,28 @@ def _install_app(req: AppInstallRequest, shares: list[_ShareFolder]) -> AppInsta
             for m in planned
         ],
     )
+
+
+def _create_container(client: Any, image: str, masked_paths: list[str] | None, **options: Any) -> Any:
+    """``client.containers.create(image, **options)``; with ``masked_paths``, the same container
+    with Docker's MaskedPaths set to them in place of Docker's defaults (ADR-0377). docker-py's
+    create has no argument for them, so that container is made through its low-level API: the
+    host config that its create would build, with MaskedPaths added."""
+    if masked_paths is None:
+        return client.containers.create(image, **options)
+    created = {key: options.pop(key) for key in ("name", "environment", "labels")}
+    port_bindings = options.pop("ports") or {}
+    host_config = client.api.create_host_config(port_bindings=port_bindings or None, **options)
+    host_config["MaskedPaths"] = list(masked_paths)
+    exposed = [tuple(spec.split("/", 1)) for spec in sorted(port_bindings)]
+    answer = client.api.create_container(image, ports=exposed or None, host_config=host_config, **created)
+    try:
+        return client.containers.get(answer["Id"])
+    except _DOCKER_ERRORS:
+        # Do not leave a container behind that the caller never got: it would block a retry.
+        with contextlib.suppress(*_DOCKER_ERRORS):
+            client.api.remove_container(answer["Id"], force=True)
+        raise
 
 
 @router.post("/install", response_model=AppInstallResponse)

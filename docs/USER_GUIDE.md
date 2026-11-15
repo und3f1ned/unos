@@ -1021,6 +1021,25 @@ name its category the same way. Some of them:
 Starting or restarting an app from UNOS fails while its data folders are not
 on a mounted pool.
 
+### Hardware Acceleration
+
+On a NAS with a Rockchip RK3588 (such as the Banana Pi BPI-W3), Jellyfin's
+card shows **Hardware acceleration**, and its details say what it gets: UNOS
+installs it with the chip's video decoders and encoders (Rockchip MPP), its 2D
+engine (RGA) and its GPU, those of `/dev/dri`, `/dev/dma_heap`,
+`/dev/mpp_service`, `/dev/rga` and `/dev/mali0` that the NAS has, in a
+container without privileged mode. The container can read the NAS's device
+tree, which Rockchip MPP reads to know the chip, and runs without Docker's
+AppArmor profile, which forbids that. Rockchip MPP needs Rockchip's kernel
+(5.10 or 6.1), such as Armbian's `vendor` kernel; under another kernel the app
+gets only the nodes that exist, and transcodes in software.
+
+UNOS does not change Jellyfin's settings: in Jellyfin, choose **Dashboard** >
+**Playback** > **Transcoding** > **Hardware acceleration**: **Rockchip MPP
+(RKMPP)**, and tick the codecs to decode in hardware. On any other NAS the App
+Store says nothing about hardware, and apps are installed as before. Immich
+from the App Store does not use the RK3588's NPU.
+
 ### Share Folders for Apps
 
 An app can use a share's folder only if it runs in the group `unos-smb`. The

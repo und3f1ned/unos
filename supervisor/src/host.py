@@ -48,8 +48,9 @@ logger = logging.getLogger(__name__)
 # request from the host's network when the container connects nowhere, and ends
 # itself at its --max-time: ADR-0336). cat, od (the export files: shares/nfs.py), test,
 # mkdir, rmdir, rm, find, sync, sleep, timeout, hostname, readlink (the time zone:
-# scheduler/router.py, ADR-0266) and sh also run there but come from essential
-# packages. The startup check (main.check_host_tools) warns about the ones the
+# scheduler/router.py, ADR-0266) and sh (also apps/hardware.py, with cat: the device
+# tree and the device nodes of the host's SoC, ADR-0377) also run there but come from
+# essential packages. The startup check (main.check_host_tools) warns about the ones the
 # host lacks.
 HOST_TOOLS: dict[str, str] = {
     "btrfs": "btrfs-progs",

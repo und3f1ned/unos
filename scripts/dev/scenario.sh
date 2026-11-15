@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Scenario checks of the dev device (ADR-0304): scripts/dev/scenario.sh [--pool NAME] AREA...
 #
-#   AREA     files, volumes, smart, backups, smb, smbconf, shares, scrub, offsite or restore; all:
-#            every area, in this order.
+#   AREA     files, volumes, smart, backups, smb, smbconf, shares, scrub, offsite, restore or
+#            hardware; all: every area, in this order.
 #   --pool   the pool of the files, volumes, smb, smbconf, shares, scrub, offsite and restore checks (default:
 #            the one pool that is mounted read-write with UNOS's fstab entry).
 #
@@ -13,7 +13,8 @@
 # makes entries of other owners and modes on the pool over ssh, signs in as its user and turns
 # guest access on for its share, ADR-0340; scrub scrubs the pool, ADR-0314; offsite sets up an off-device
 # copy to a folder of the pool and forgets it again, ADR-0337; restore restores a backup it made
-# moments before, twice, which puts the device's database back as it was then, ADR-0341), prints
+# moments before, twice, which puts the device's database back as it was then, ADR-0341;
+# hardware only reads what the App Store offers of the host's SoC, ADR-0377), prints
 # PASS or FAIL for every step with the MiB written to the SD card meanwhile, removes what it made,
 # also after a FAIL or Ctrl-C, and compares the device with how it found it. The checks change the
 # device: run them when the owner asks for a check of the device (ADR-0016), for example the
@@ -24,7 +25,7 @@
 # Settings: dev.env (see env.sh); UNOS_DEV_PYTHON (python3) runs scenario.py.
 set -euo pipefail
 usage() { awk 'NR > 1 && !/^#/ { exit } NR > 1 { sub(/^# ?/, ""); print }' "$0"; }
-AREAS=(files volumes smart backups smb smbconf shares scrub offsite restore)
+AREAS=(files volumes smart backups smb smbconf shares scrub offsite restore hardware)
 case ${1:-} in
     -h | --help) usage; exit 0 ;;
 esac
@@ -38,7 +39,7 @@ while [ $# -gt 0 ]; do
             shift 2
             ;;
         all) areas+=("${AREAS[@]}"); shift ;;
-        files | volumes | smart | backups | smb | smbconf | shares | scrub | offsite | restore) areas+=("$1"); shift ;;
+        files | volumes | smart | backups | smb | smbconf | shares | scrub | offsite | restore | hardware) areas+=("$1"); shift ;;
         *) usage >&2; exit 2 ;;
     esac
 done

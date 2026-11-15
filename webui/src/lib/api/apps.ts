@@ -46,6 +46,19 @@ export interface EnvVar {
   secret: boolean;
 }
 
+/**
+ * Hardware of a SoC that an app gets when it is installed on a host with that SoC (ADR-0377):
+ * the device nodes the host has of `devices`, Docker's masks without `unmasked_paths`.
+ */
+export interface HardwareProfile {
+  id: string;
+  /** A name of the SoC in the host's device tree. */
+  soc: string;
+  devices: string[];
+  unmasked_paths: string[];
+  apparmor_unconfined: boolean;
+}
+
 export interface AppTemplate {
   id: string;
   name: string;
@@ -69,6 +82,8 @@ export interface AppTemplate {
    * given a share's folder.
    */
   can_run_in_unos_smb: boolean;
+  /** The hardware of this host's SoC that the app gets; empty on any other host. */
+  hardware: HardwareProfile[];
 }
 
 export interface InstalledApp {

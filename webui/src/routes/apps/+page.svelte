@@ -442,9 +442,15 @@
 												></div>
 											{/if}
 										</div>
-										<div class="flex items-center gap-2">
+										<div class="flex flex-wrap items-center gap-2">
 											<Badge variant={source.variant} class="text-xs">{$t(source.key)}</Badge>
 											<span class="text-xs text-muted"><AppCategory category={app.category} /></span>
+											{#if app.hardware.length > 0}
+												<Badge variant="info" class="text-xs">
+													<Cpu class="w-3 h-3 mr-1" />
+													{$t('apps.hardware.badge')}
+												</Badge>
+											{/if}
 										</div>
 									</div>
 								</div>

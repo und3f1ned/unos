@@ -12,6 +12,7 @@ import asyncio
 import fcntl
 import importlib
 import os
+import subprocess
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -23,6 +24,7 @@ import urllib3
 from docker.errors import APIError, NotFound
 from docker.models.containers import Container
 from fastapi import HTTPException
+from docker.types import HostConfig
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
@@ -38,9 +40,11 @@ from src.apps.schemas import (
     AppTemplate,
     VolumeMapping,
 )
+from src import host as host_module
 from src.auth.utils import verify_token
 from src.config import get_settings
 from src.database import Base, get_db
+from src.host import HostResult
 from src.main import app
 from src.shares.models import SmbShare
 
@@ -194,6 +198,33 @@ def docker_client(monkeypatch):
     client.containers.create.return_value = container
     monkeypatch.setattr(apps_router, "get_client", lambda: client)
     return client
+
+
+# What the host of the hardware reads answers (src/apps/hardware.py, ADR-0377).
+DEVICE_TREE = "/proc/device-tree/compatible"
+NO_DEVICE_TREE = HostResult(1, "", f"cat: {DEVICE_TREE}: No such file or directory")
+
+
+@pytest.fixture(autouse=True)
+def soc(monkeypatch):
+    """The host for the reads of its SoC and device nodes: no device tree, as on a PC, until a
+    test gives it a ``compatible`` (the bytes of /proc/device-tree/compatible) and ``devices``
+    (the device nodes it has). ``commands`` records every host command; one that the fake does
+    not know fails the test."""
+    fake = SimpleNamespace(compatible=None, devices=set(), commands=[], fail=None)
+
+    def run(cmd, **kwargs):
+        fake.commands.append(list(cmd))
+        if fake.fail is not None:
+            raise fake.fail
+        if cmd == ["cat", "--", DEVICE_TREE]:
+            return NO_DEVICE_TREE if fake.compatible is None else HostResult(0, fake.compatible, "")
+        if cmd[:2] == ["/bin/sh", "-c"] and cmd[3:4] == ["unos-devices"]:
+            return HostResult(0, "".join(f"{path}\n" for path in cmd[4:] if path in fake.devices), "")
+        raise AssertionError(f"unexpected host command: {cmd}")
+
+    monkeypatch.setattr(host_module, "run_on_host", run)
+    return fake
 
 
 def _mounts(docker_client) -> dict[str, dict]:
@@ -2310,3 +2341,237 @@ class TestStopAndUninstall:
 
         assert response.status_code == 200, response.text
         assert made == [False]
+
+
+# ---------------------------------------------------------------------------
+# The hardware of the host's SoC (apps.rk3588-hardware-acceleration, ADR-0377)
+# ---------------------------------------------------------------------------
+
+# The device tree of the dev device, a Banana Pi BPI-W3 (ADR-0376), and of other boards.
+RK3588 = "rockchip,rk3588-armsom-w3\0rockchip,rk3588\0"
+RK3568 = "rockchip,rk3568-evb1-v10\0rockchip,rk3568\0"
+SPACEMIT_K1 = "spacemit,k1-x\0"
+# What Jellyfin's RKMPP needs of the RK3588 (Jellyfin's Rockchip guide): the DRM nodes, the
+# DMA heaps, the video codecs (MPP), the 2D engine (RGA) and the Mali GPU (OpenCL).
+RK3588_VIDEO = ["/dev/dri", "/dev/dma_heap", "/dev/mpp_service", "/dev/rga", "/dev/mali0"]
+# The paths that Docker 29 masks in every container that is not privileged (moby's
+# defaultLinuxMaskedPaths; the per-CPU thermal_throttle folders exist only on x86).
+DOCKER_MASKED_PATHS = [
+    "/proc/acpi", "/proc/asound", "/proc/interrupts", "/proc/kcore", "/proc/keys", "/proc/latency_stats",
+    "/proc/sched_debug", "/proc/scsi", "/proc/timer_list", "/proc/timer_stats",
+    "/sys/devices/virtual/powercap", "/sys/firmware",
+]
+CREATED_ID = "c0ffee0123456789"
+
+
+@pytest.fixture
+def low_level(docker_client):
+    """docker-py's low-level API, through which a container with MaskedPaths of its own is made:
+    its host config as docker-py builds it, and the new container found by its id."""
+    container = docker_client.containers.create.return_value
+    docker_client.api.create_host_config.side_effect = lambda **kwargs: HostConfig(version="1.47", **kwargs)
+    docker_client.api.create_container.return_value = {"Id": CREATED_ID, "Warnings": []}
+
+    def get(key):
+        if key == CREATED_ID:
+            return container
+        raise NotFound(f"No such container: {key}")
+
+    docker_client.containers.get.side_effect = get
+    return docker_client.api
+
+
+def _host_config(docker_client) -> dict:
+    return docker_client.api.create_container.call_args.kwargs["host_config"]
+
+
+class TestHardwareOfTheSoc:
+    def test_on_an_rk3588_jellyfin_gets_the_video_hardware_without_privileges(
+        self, api, pools, docker_client, low_level, soc
+    ):
+        soc.compatible = RK3588
+        soc.devices = set(RK3588_VIDEO)
+
+        response = api.post(INSTALL, json={"template_id": "jellyfin"})
+
+        assert response.status_code == 200, response.text
+        docker_client.containers.create.assert_not_called()
+        image = docker_client.api.create_container.call_args.args
+        create = docker_client.api.create_container.call_args.kwargs
+        config = _host_config(docker_client)
+        assert image == ("jellyfin/jellyfin:latest",)
+        # Each node, or folder of nodes, as the same path in the container, read and write.
+        assert config["Devices"] == [
+            {"PathOnHost": path, "PathInContainer": path, "CgroupPermissions": "rwm"} for path in RK3588_VIDEO
+        ]
+        # Rockchip's MPP names the SoC from /proc/device-tree/compatible, a link into /sys/firmware:
+        # only that mask of Docker's is lifted, and Docker's AppArmor profile, which denies reading
+        # /sys/firmware, is not applied. The container stays unprivileged, without capabilities
+        # beyond Docker's own.
+        assert config["MaskedPaths"] == [path for path in DOCKER_MASKED_PATHS if path != "/sys/firmware"]
+        assert "ReadonlyPaths" not in config
+        assert config["SecurityOpt"] == ["apparmor=unconfined"]
+        assert "Privileged" not in config  # docker-py sets it only when true
+        assert "CapAdd" not in config
+        # The rest is the container of every host.
+        assert config["PortBindings"] == {"8096/tcp": [{"HostIp": "", "HostPort": "8096"}]}
+        assert {m["Target"]: m["Source"] for m in config["Mounts"]} == {
+            "/config": str(pools.alpha / "apps/jellyfin/config"),
+            "/cache": str(pools.alpha / "apps/jellyfin/cache"),
+            "/media": str(pools.alpha / "media"),
+        }
+        assert config["RestartPolicy"] == {"Name": "unless-stopped"}
+        assert config["LogConfig"] == {"Type": "json-file", "Config": {"max-size": "10m", "max-file": "3"}}
+        assert create["name"] == "jellyfin"
+        assert create["ports"] == [("8096", "tcp")]
+        assert create["environment"] == {"PUID": "1000", "PGID": "1000", "TZ": "UTC"}
+        assert create["labels"]["unos.app"] == "jellyfin"
+        assert create["labels"]["unos.app.pool"] == "alpha"
+        docker_client.containers.create.return_value.start.assert_called_once()
+        assert response.json()["container_id"] == "c0ffee"
+
+    def test_only_the_nodes_that_the_host_has_are_passed_in(self, api, pools, docker_client, low_level, soc):
+        # Under a kernel without Rockchip's Mali driver (panthor) there is no /dev/mali0, and
+        # without its RGA driver no /dev/rga.
+        soc.compatible = RK3588
+        soc.devices = {"/dev/mpp_service", "/dev/dri", "/dev/dma_heap"}
+
+        response = api.post(INSTALL, json={"template_id": "jellyfin"})
+
+        assert response.status_code == 200, response.text
+        assert [d["PathOnHost"] for d in _host_config(docker_client)["Devices"]] == [
+            "/dev/dri", "/dev/dma_heap", "/dev/mpp_service",
+        ]
+        # The host was asked about the profile's nodes, in one command.
+        assert soc.commands[1][3:] == ["unos-devices", *RK3588_VIDEO]
+
+    @pytest.mark.parametrize("compatible", [None, RK3568, SPACEMIT_K1], ids=["pc", "rk3568", "spacemit-k1"])
+    def test_off_an_rk3588_jellyfin_is_installed_as_before(self, api, pools, docker_client, soc, compatible):
+        soc.compatible = compatible
+        soc.devices = set(RK3588_VIDEO)
+
+        response = api.post(INSTALL, json={"template_id": "jellyfin"})
+
+        assert response.status_code == 200, response.text
+        docker_client.api.create_container.assert_not_called()
+        kwargs = docker_client.containers.create.call_args.kwargs
+        assert kwargs.get("devices") is None and kwargs.get("security_opt") is None
+        assert kwargs["privileged"] is False and kwargs["cap_add"] is None
+        # Only the device tree was read; no node was looked for.
+        assert soc.commands == [["cat", "--", DEVICE_TREE]]
+
+    def test_an_rk3588_without_any_of_the_nodes_installs_jellyfin_as_elsewhere(self, api, pools, docker_client, soc):
+        soc.compatible = RK3588
+
+        response = api.post(INSTALL, json={"template_id": "jellyfin"})
+
+        assert response.status_code == 200, response.text
+        docker_client.api.create_container.assert_not_called()
+        assert docker_client.containers.create.call_args.kwargs.get("devices") is None
+
+    @pytest.mark.parametrize(
+        "error", [subprocess.TimeoutExpired(["nsenter"], 15), FileNotFoundError(2, "nsenter")], ids=["timeout", "oserror"]
+    )
+    def test_a_device_tree_that_cannot_be_read_installs_jellyfin_as_elsewhere(
+        self, api, pools, docker_client, soc, error
+    ):
+        soc.fail = error
+
+        response = api.post(INSTALL, json={"template_id": "jellyfin"})
+
+        assert response.status_code == 200, response.text
+        docker_client.api.create_container.assert_not_called()
+        assert docker_client.containers.create.call_args.kwargs.get("devices") is None
+
+    def test_an_app_without_hardware_reads_nothing_of_the_host(self, api, pools, docker_client, soc):
+        soc.compatible = RK3588
+        soc.devices = set(RK3588_VIDEO)
+
+        response = api.post(INSTALL, json={"template_id": "dozzle"})
+
+        assert response.status_code == 200, response.text
+        assert soc.commands == []
+        assert docker_client.containers.create.call_args.kwargs.get("devices") is None
+
+    def test_a_failed_start_on_an_rk3588_removes_the_container(self, api, pools, docker_client, low_level, soc):
+        soc.compatible = RK3588
+        soc.devices = set(RK3588_VIDEO)
+        container = docker_client.containers.create.return_value
+        container.start.side_effect = APIError("error gathering device information while adding custom device")
+
+        response = api.post(INSTALL, json={"template_id": "jellyfin"})
+
+        assert response.status_code == 500
+        assert response.json()["detail"].startswith("Failed to start container: ")
+        container.remove.assert_called_once_with(force=True)
+
+    def test_a_create_that_docker_refuses_on_an_rk3588_answers_500(self, api, pools, docker_client, low_level, soc):
+        soc.compatible = RK3588
+        soc.devices = set(RK3588_VIDEO)
+        low_level.create_container.side_effect = APIError("400 Client Error", explanation="invalid masked path")
+
+        response = api.post(INSTALL, json={"template_id": "jellyfin"})
+
+        assert response.status_code == 500
+        assert response.json()["detail"].startswith("Failed to create container: ")
+
+    def test_a_new_container_that_docker_cannot_find_is_removed(self, api, pools, docker_client, low_level, soc):
+        soc.compatible = RK3588
+        soc.devices = set(RK3588_VIDEO)
+        docker_client.containers.get.side_effect = NotFound("No such container")
+
+        response = api.post(INSTALL, json={"template_id": "jellyfin"})
+
+        assert response.status_code == 500
+        assert response.json()["detail"].startswith("Failed to create container: ")
+        low_level.remove_container.assert_called_once_with(CREATED_ID, force=True)
+
+    def test_the_catalog_names_the_hardware_only_on_its_soc(self, api, soc):
+        soc.compatible = RK3588
+
+        listed = {t["id"]: [p["id"] for p in t["hardware"]] for t in api.get("/api/v1/apps/catalog").json()}
+        one = api.get("/api/v1/apps/catalog/jellyfin").json()["hardware"]
+        found = api.get("/api/v1/apps/catalog", params={"query": "jelly"}).json()
+
+        assert {app_id: ids for app_id, ids in listed.items() if ids} == {"jellyfin": ["rk3588-video"]}
+        assert one == [{
+            "id": "rk3588-video",
+            "soc": "rockchip,rk3588",
+            "devices": RK3588_VIDEO,
+            "unmasked_paths": ["/sys/firmware"],
+            "apparmor_unconfined": True,
+        }]
+        assert [p["id"] for p in found[0]["hardware"]] == ["rk3588-video"]
+
+    @pytest.mark.parametrize("compatible", [None, RK3568, SPACEMIT_K1], ids=["pc", "rk3568", "spacemit-k1"])
+    def test_off_its_soc_the_catalog_names_no_hardware(self, api, soc, compatible):
+        soc.compatible = compatible
+
+        assert not [t["id"] for t in api.get("/api/v1/apps/catalog").json() if t["hardware"]]
+        assert api.get("/api/v1/apps/catalog/jellyfin").json()["hardware"] == []
+        assert api.get("/api/v1/apps/catalog", params={"category": "media"}).json()[0]["hardware"] == []
+
+    def test_the_catalog_reads_the_device_tree_off_the_event_loop(self, api, soc, monkeypatch):
+        seen: list[bool] = []
+        real = host_module.run_on_host
+
+        def run(cmd, **kwargs):
+            seen.append(_on_event_loop())
+            return real(cmd, **kwargs)
+
+        monkeypatch.setattr(host_module, "run_on_host", run)
+
+        assert api.get("/api/v1/apps/catalog").status_code == 200
+        assert api.get("/api/v1/apps/catalog/jellyfin").status_code == 200
+        assert seen == [False, False]
+
+    def test_every_profile_names_device_nodes_and_masks_of_docker(self):
+        profiles = [p for t in APP_CATALOG for p in t.hardware]
+        assert profiles
+        for profile in profiles:
+            assert all(path.startswith("/dev/") for path in profile.devices), profile.id
+            assert set(profile.unmasked_paths) <= set(DOCKER_MASKED_PATHS), profile.id
+        for template in APP_CATALOG:
+            if template.hardware:
+                # The device cgroup and Docker's other limits stay as they are: no privileges.
+                assert not template.privileged and not template.capabilities, template.id
