@@ -64,7 +64,8 @@ significant step. Features and their state live in `feature-list.json`, decision
 - On 2026-11-15 (Log): notes, a ledger entry (`deploy.arm64-bpi-w3`) and guard tests for the dev
   device's board, the Banana Pi BPI-W3 (ArmSoM W3, Rockchip RK3588), which needs no code of its
   own (ADR-0376, proposed); `scenario.sh all` passed on the device before and after a reboot,
-  and the checks by hand of the entry's notes before and after a second one. Open: a fresh
+  and the checks by hand of the entry's notes before and after a second one. Merged as main
+  dfe81f5; the device runs e80e2d5, whose code is the same. Open: a fresh
   `install.sh` on a second microSD card and an NVMe pool (Open owner actions, 6 and 7).
 - On the device the NFS server runs (nfs-server, rpcbind.socket and rpcbind, enabled since
   2026-11-08, ADR-0303) and exports nothing for now; over IPv6 only LAN sources reach it
@@ -390,6 +391,8 @@ Open owner actions:
   hand of the entry's notes before and after a second one (Dev device; the results in the
   entry's notes); all passed. The entry stays open: step 1 needs
   a second microSD card, and a pool made on the board a spare disk.
+- Three reviews in a fresh context; the last found only wording, fixed. `make check` passed on the
+  final commit (7416 tests), which was merged as main dfe81f5.
 
 ### 2026-11-13: The idle load of UNOS within a budget on the BPI-F3 (ADR-0374, ADR-0375)
 
