@@ -73,6 +73,20 @@ def _no_scrubs_seen_yet(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _no_balances_seen_yet(monkeypatch):
+    """The balances that the events socket follows, and when each was first seen running, are kept
+    in RAM (ADR-0379): every test starts without them, as the supervisor does."""
+    balances = sys.modules.get("src.storage.balances")
+    if balances is not None:
+        monkeypatch.setattr(balances, "_balances", {})
+        monkeypatch.setattr(balances, "_version", 0)
+        monkeypatch.setattr(balances, "_noted_at", {})
+        monkeypatch.setattr(balances, "_reading", None)
+        monkeypatch.setattr(balances, "_read_at", float("-inf"))
+        monkeypatch.setattr(balances, "_since", {})
+
+
+@pytest.fixture(autouse=True)
 def _notification_files_in_tmp_path(monkeypatch, tmp_path):
     """The notification channels and their history are files under /data
     (src/notifications/router.py), and every alert that a monitor sends is recorded in the

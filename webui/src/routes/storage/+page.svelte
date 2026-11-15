@@ -10,6 +10,12 @@
 		startScrub,
 		getScrubStatus,
 		cancelScrub,
+		startBalance,
+		getBalanceStatus,
+		pauseBalance,
+		resumeBalance,
+		cancelBalance,
+		BALANCE_DEFAULT_USAGE,
 		deviceIdentity,
 		isChangedDiskError,
 		getVolumes,
@@ -31,6 +37,7 @@
 		type PowerState,
 		type RaidLevel,
 		type ScrubStatus,
+		type BalanceStatus,
 		type Volume
 	} from '$lib/api/storage';
 	import { ApiError } from '$lib/api/client';
@@ -48,7 +55,10 @@
 		Unplug,
 		Layers,
 		HardDriveDownload,
-		Timer
+		Timer,
+		Scale,
+		Pause,
+		Play
 	} from 'lucide-svelte';
 	import {
 		Button,
@@ -63,6 +73,7 @@
 	import { intlLocale, locale, t } from '$lib/i18n';
 	import { stats, wsConnected, type WebSocketStats } from '$lib/stores/stats';
 	import { scrubs, type ScrubUpdate } from '$lib/stores/scrubs';
+	import { balances, type BalanceUpdate } from '$lib/stores/balances';
 
 	type BadgeVariant = 'success' | 'warning' | 'error' | 'info' | 'neutral' | 'orange';
 
@@ -121,6 +132,26 @@
 	let scrubErrors: Record<string, string> = {};
 	let startingScrub: Record<string, boolean> = {};
 
+	// Balance state (ADR-0379): each mounted pool's balance, why it could not be read, and the pools
+	// whose pause, resume or cancel is on its way.
+	let balanceStatuses: Record<string, BalanceStatus> = {};
+	let balanceErrors: Record<string, string> = {};
+	let balanceBusy: Record<string, boolean> = {};
+	// The Balance dialog: its pool, a usage limit or every chunk, and the confirmation of the latter.
+	let balanceTarget: Pool | null = null;
+	let balanceKind = 'usage';
+	let balanceUsage = String(BALANCE_DEFAULT_USAGE);
+	let balanceConfirmed = false;
+	let balanceStarting = false;
+	let balanceError = '';
+	// The statuses of a balance that runs: a pause or a cancel may still wait for its chunk.
+	const BALANCE_RUNS = ['running', 'pausing', 'cancelling'];
+	const balanceRuns = (status: BalanceStatus | undefined): boolean =>
+		status !== undefined && BALANCE_RUNS.includes(status.status);
+	$: balanceFull = balanceKind === 'full';
+	// Every chunk needs its confirmation again after the user chose the usage limit.
+	$: if (!balanceFull) balanceConfirmed = false;
+
 	onMount(async () => {
 		await loadData();
 		reloadForDevices();
@@ -143,7 +174,8 @@
 		importTarget !== null ||
 		showDeleteModal ||
 		volumesPool !== null ||
-		spindownDisk !== null;
+		spindownDisk !== null ||
+		balanceTarget !== null;
 	$: followBlockDevices($stats);
 	$: if (!dialogOpen) reloadForDevices();
 	$: if (dialogOpen) dropDeviceReload();
@@ -235,6 +267,7 @@
 				poolsError = messageOf(poolList.reason);
 			}
 			await loadScrubStatuses(load);
+			await loadBalanceStatuses(load);
 		}
 		await found;
 		if (load === listsLoad) loading = false;
@@ -263,6 +296,43 @@
 			} catch (e) {
 				if (load === listsLoad) showScrubError(pool.name, e);
 			}
+		}
+	}
+
+	async function loadBalanceStatuses(load: number) {
+		for (const pool of pools.filter((p) => p.mounted)) {
+			if (load !== listsLoad) return;
+			try {
+				const status = await getBalanceStatus(pool.name);
+				if (load === listsLoad) showBalanceStatus(pool.name, status);
+			} catch (e) {
+				if (load === listsLoad) showBalanceError(pool.name, e);
+			}
+		}
+	}
+
+	/** Show a pool's balance as btrfs reports it (ADR-0379). */
+	function showBalanceStatus(poolName: string, status: BalanceStatus) {
+		delete balanceErrors[poolName];
+		balanceErrors = balanceErrors;
+		balanceStatuses[poolName] = status;
+		balanceStatuses = balanceStatuses;
+	}
+
+	/** As showScrubError: the last status still decides the buttons. */
+	function showBalanceError(poolName: string, e: unknown) {
+		balanceErrors[poolName] = messageOf(e);
+		balanceErrors = balanceErrors;
+	}
+
+	// A balance that runs is followed over /ws/v1/events as a scrub is (ADR-0379).
+	$: followBalances($balances);
+
+	function followBalances(updates: BalanceUpdate[]) {
+		for (const update of updates) {
+			// A status has an error field of its own (a failed balance's).
+			if ('status' in update) showBalanceStatus(update.pool, update);
+			else showBalanceError(update.pool, update.error);
 		}
 	}
 
@@ -312,6 +382,93 @@
 		if (!socketDropped) return;
 		socketDropped = false;
 		readShownScrubsAgain();
+		readShownBalancesAgain();
+	}
+
+	async function readShownBalancesAgain() {
+		const shown = pools.filter(
+			(pool) =>
+				pool.mounted &&
+				(balanceRuns(balanceStatuses[pool.name]) || pool.name in balanceErrors)
+		);
+		for (const pool of shown) {
+			try {
+				showBalanceStatus(pool.name, await getBalanceStatus(pool.name));
+			} catch (e) {
+				showBalanceError(pool.name, e);
+			}
+		}
+	}
+
+	function openBalance(pool: Pool) {
+		balanceTarget = pool;
+		balanceKind = 'usage';
+		balanceUsage = String(BALANCE_DEFAULT_USAGE);
+		balanceConfirmed = false;
+		balanceError = '';
+	}
+
+	function closeBalance() {
+		if (!balanceStarting) balanceTarget = null;
+	}
+
+	$: balanceLimit = /^\d{1,2}$/.test(balanceUsage.trim()) ? Number(balanceUsage.trim()) : 0;
+	$: canStartBalance = balanceFull ? balanceConfirmed : balanceLimit >= 1 && balanceLimit <= 99;
+
+	async function handleStartBalance() {
+		if (!balanceTarget || !canStartBalance) return;
+		const poolName = balanceTarget.name;
+		balanceStarting = true;
+		balanceError = '';
+		try {
+			showBalanceStatus(
+				poolName,
+				await startBalance(poolName, balanceFull ? { full: true } : { usage: balanceLimit })
+			);
+			balanceStarting = false;
+			closeBalance();
+		} catch (e) {
+			balanceError = messageOf(e);
+		} finally {
+			balanceStarting = false;
+		}
+	}
+
+	const BALANCE_ACTIONS = { pause: pauseBalance, resume: resumeBalance, cancel: cancelBalance };
+
+	async function handleBalanceAction(poolName: string, action: keyof typeof BALANCE_ACTIONS) {
+		balanceBusy[poolName] = true;
+		error = '';
+		try {
+			// A pause or a cancel can still wait for the chunk being moved: then the events socket
+			// sends the balance once it stopped.
+			showBalanceStatus(poolName, await BALANCE_ACTIONS[action](poolName));
+		} catch (e) {
+			error = messageOf(e);
+		} finally {
+			balanceBusy[poolName] = false;
+		}
+	}
+
+	// What a balance that runs or is paused does, by its status.
+	const BALANCE_STATES: Record<string, string> = {
+		running: 'storage.balance.running',
+		pausing: 'storage.balance.pausing',
+		cancelling: 'storage.balance.cancelling',
+		paused: 'storage.balance.paused'
+	};
+
+	/** The estimate of the time a balance needs still, in hours and minutes. */
+	$: timeLeft = (seconds: number): string => {
+		const minutes = Math.ceil(seconds / 60);
+		if (seconds < 60) return $t('storage.balance.leftSeconds');
+		if (minutes < 60) return $t('storage.balance.leftMinutes', { minutes });
+		return $t('storage.balance.leftHours', { hours: Math.floor(minutes / 60), minutes: minutes % 60 });
+	};
+
+	function balanceProgress(status: BalanceStatus): number {
+		if (!status.expected || status.completed === null) return 0;
+		return Math.min(100, (status.completed / status.expected) * 100);
 	}
 
 	async function readShownScrubsAgain() {
@@ -1134,6 +1291,7 @@
 				<div class="space-y-4">
 					{#each pools as pool}
 						{@const scrubStatus = scrubStatuses[pool.name]}
+						{@const balanceStatus = balanceStatuses[pool.name]}
 						{@const health = healthBadge(pool)}
 						<div class="card-nested">
 							<div class="flex flex-wrap items-center justify-between mb-2 gap-2">
@@ -1160,14 +1318,57 @@
 												{$t('storage.pool.cancelScrub')}
 											</Button>
 										{:else}
+											<!-- No scrub beside a balance that runs (ADR-0379). -->
 											<Button
 												variant="secondary"
 												size="sm"
 												icon={startingScrub[pool.name] ? Loader2 : RefreshCw}
-												disabled={startingScrub[pool.name]}
+												disabled={startingScrub[pool.name] || balanceRuns(balanceStatus)}
 												on:click={() => handleStartScrub(pool.name)}
 											>
 												{$t('storage.pool.scrub')}
+											</Button>
+										{/if}
+										{#if balanceStatus?.status === 'running' || balanceStatus?.status === 'paused'}
+											{@const paused = balanceStatus.status === 'paused'}
+											<!-- A resume is refused on a read-only pool and beside a scrub that runs (ADR-0379). -->
+											<Button
+												variant="secondary"
+												size="sm"
+												icon={paused ? Play : Pause}
+												disabled={balanceBusy[pool.name] ||
+													(paused && (pool.read_only || scrubStatus?.status === 'running'))}
+												on:click={() => handleBalanceAction(pool.name, paused ? 'resume' : 'pause')}
+											>
+												{$t(paused ? 'storage.pool.resumeBalance' : 'storage.pool.pauseBalance')}
+											</Button>
+										{/if}
+										{#if balanceStatus && balanceStatus.status !== 'idle'}
+											<!-- A cancel waits for a pause that waits for its chunk, which the kernel would
+											     make all the same, and the kernel keeps a paused balance of a read-only
+											     pool for its next read-write mount (ADR-0379). -->
+											<Button
+												variant="warning"
+												size="sm"
+												icon={XCircle}
+												disabled={balanceBusy[pool.name] ||
+													balanceStatus.status === 'cancelling' ||
+													balanceStatus.status === 'pausing' ||
+													(balanceStatus.status === 'paused' && pool.read_only)}
+												on:click={() => handleBalanceAction(pool.name, 'cancel')}
+											>
+												{$t('storage.pool.cancelBalance')}
+											</Button>
+										{:else}
+											<!-- Not on a read-only pool, nor beside a scrub that runs (ADR-0379). -->
+											<Button
+												variant="secondary"
+												size="sm"
+												icon={Scale}
+												disabled={pool.read_only || scrubStatus?.status === 'running'}
+												on:click={() => openBalance(pool)}
+											>
+												{$t('storage.pool.balance')}
 											</Button>
 										{/if}
 										<Button
@@ -1336,6 +1537,69 @@
 									{/if}
 								</div>
 							{/if}
+
+							<!-- Balance: its progress while it runs or is paused, then how it ended (ADR-0379) -->
+							{#if pool.mounted && balanceErrors[pool.name]}
+								<Alert variant="warning" title={$t('storage.balance.statusError')} class="mt-3">
+									{balanceErrors[pool.name]}
+								</Alert>
+							{:else if pool.mounted && balanceStatus && balanceStatus.status !== 'idle'}
+								<div class="mt-3 pt-3 border-t border-border space-y-2">
+									<div class="flex flex-wrap items-center justify-between gap-2 text-sm">
+										<span
+											class="flex items-center gap-2 {balanceStatus.status === 'paused'
+												? 'text-warning'
+												: 'text-info'}"
+										>
+											{#if balanceStatus.status === 'paused'}
+												<Pause class="w-4 h-4" />
+											{:else}
+												<Loader2 class="w-4 h-4 loading-spinner" />
+											{/if}
+											{$t(BALANCE_STATES[balanceStatus.status] ?? 'storage.balance.running')}
+										</span>
+										{#if balanceStatus.status === 'running' && balanceStatus.seconds_left !== null}
+											<span class="text-secondary">{timeLeft(balanceStatus.seconds_left)}</span>
+										{/if}
+									</div>
+									{#if balanceStatus.expected && balanceStatus.completed !== null}
+										<ProgressBar
+											value={balanceProgress(balanceStatus)}
+											variant="info"
+											label={$t('storage.balance.progress')}
+										/>
+										<div class="flex flex-wrap justify-between gap-x-2 text-xs text-secondary">
+											<span
+												>{$t('storage.balance.chunks', {
+													done: balanceStatus.completed,
+													n: balanceStatus.expected
+												})}</span
+											>
+											<span>{percentFormat.format(balanceProgress(balanceStatus) / 100)}</span>
+										</div>
+									{/if}
+									{#if balanceStatus.status === 'paused'}
+										<p class="text-xs text-secondary">{$t('storage.balance.pausedNote')}</p>
+									{/if}
+								</div>
+							{:else if pool.mounted && balanceStatus?.result === 'finished'}
+								<div class="mt-3 pt-3 border-t border-border flex items-center gap-2 text-sm text-success">
+									<CheckCircle class="w-4 h-4" />
+									{$t('storage.balance.finished', {
+										done: balanceStatus.completed ?? 0,
+										n: balanceStatus.considered ?? 0
+									})}
+								</div>
+							{:else if pool.mounted && balanceStatus?.result === 'cancelled'}
+								<div class="mt-3 pt-3 border-t border-border flex items-center gap-2 text-sm text-warning">
+									<AlertTriangle class="w-4 h-4" />
+									{$t('storage.balance.cancelled')}
+								</div>
+							{:else if pool.mounted && balanceStatus?.result === 'failed'}
+								<Alert variant="error" title={$t('storage.balance.failed')} class="mt-3">
+									<span class="break-words">{balanceStatus.error}</span>
+								</Alert>
+							{/if}
 						</div>
 					{/each}
 				</div>
@@ -1491,6 +1755,62 @@
 			on:click={handleCreatePool}
 		>
 			{$t('storage.create.submit')}
+		</Button>
+	</svelte:fragment>
+</Modal>
+
+<!-- Balance Modal (ADR-0379) -->
+<Modal
+	open={balanceTarget !== null}
+	title={$t('storage.balance.title', { name: balanceTarget?.name ?? '' })}
+	size="md"
+	closable={!balanceStarting}
+	on:close={closeBalance}
+>
+	{#if balanceTarget}
+		<p class="text-sm text-secondary">{$t('storage.balance.intro')}</p>
+		<Select
+			label={$t('storage.balance.what')}
+			bind:value={balanceKind}
+			options={[
+				{ value: 'usage', label: $t('storage.balance.usageOption') },
+				{ value: 'full', label: $t('storage.balance.fullOption') }
+			]}
+		/>
+		{#if balanceFull}
+			<Alert variant="warning" title={$t('storage.balance.fullTitle')}>
+				{$t('storage.balance.fullWarning')}
+				<label class="flex items-center gap-2 mt-3 text-content cursor-pointer">
+					<input type="checkbox" bind:checked={balanceConfirmed} class="form-checkbox" />
+					{$t('storage.balance.fullConfirm', { name: balanceTarget.name })}
+				</label>
+			</Alert>
+		{:else}
+			<Input
+				type="number"
+				label={$t('storage.balance.usage')}
+				bind:value={balanceUsage}
+				hint={$t('storage.balance.usageHint')}
+				error={canStartBalance ? '' : $t('storage.balance.usageInvalid')}
+			/>
+		{/if}
+		{#if balanceError}
+			<Alert variant="error" title={$t('storage.balance.startFailed')}>{balanceError}</Alert>
+		{/if}
+	{/if}
+
+	<svelte:fragment slot="footer">
+		<Button variant="secondary" class="flex-1" disabled={balanceStarting} on:click={closeBalance}>
+			{$t('common.cancel')}
+		</Button>
+		<Button
+			variant={balanceFull ? 'warning' : 'primary'}
+			class="flex-1"
+			loading={balanceStarting}
+			disabled={!canStartBalance}
+			on:click={handleStartBalance}
+		>
+			{$t('storage.balance.start')}
 		</Button>
 	</svelte:fragment>
 </Modal>

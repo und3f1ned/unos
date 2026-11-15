@@ -59,7 +59,7 @@ use the main checkout's. Output shows secrets as `<redacted>`.
    gone: the script prints the owner action that makes it again.
 
 6. **Run a scenario check, when the owner asked for one.** `scripts/dev/scenario.sh <area>`
-   (`files`, `volumes`, `smart`, `backups`, `smb`, `smbconf`, `shares`, `scrub`, `offsite`, `restore`,
+   (`files`, `volumes`, `smart`, `backups`, `smb`, `smbconf`, `shares`, `scrub`, `balance`, `offsite`, `restore`,
    `hardware` or `all`; `--pool <name>` where several pools are mounted), the checks of the host-level entries that the feature-pass
    skill's table names (ADR-0304). They change the device: they make a temporary user, share,
    volume, Scheduler task and folders named `unoscheck<6 hex digits>`, and two backups, through
@@ -68,7 +68,10 @@ use the main checkout's. Output shows secrets as `<redacted>`.
    (ADR-0309), `shares` makes entries of other owners and modes on the pool over ssh, signs in as
    its user and turns guest access on for its share, which lowers signing for the whole server
    while it runs (ADR-0100, ADR-0340), `scrub` scrubs the pool, three times on a small pool, and leaves its last
-   scrub result (ADR-0314), `offsite` sets up an off-device copy to a folder of the pool and
+   scrub result (ADR-0314), `balance` writes 12 GiB of allocated space (fallocate) into a folder of the
+   pool, deletes most of it again and balances, pauses, resumes and cancels the chunks it left about
+   12% full, which moves their 1.5 GiB on the pool's disk, and leaves its last balance result, cancelled, until
+   the host restarts (ADR-0379), `offsite` sets up an off-device copy to a folder of the pool and
    forgets it again (ADR-0337); it refuses to start on a device that has one set up, and
    `restore` restores a backup it made moments before, twice, which puts the device's database
    back as it was then and ends the web sessions but the relay's (ADR-0341); it refuses to start
@@ -127,7 +130,8 @@ use the main checkout's. Output shows secrets as `<redacted>`.
   the trash, `echo '["<path from GET /files/trash>"]' | scripts/dev/api.py DELETE /files/trash -`;
   folders, `echo '["/mnt/pools/<pool>/<folder>"]' | scripts/dev/api.py DELETE /files/delete - --param permanent=true`
   (the `-` before `--param`); a Scheduler task, `scripts/dev/api.py DELETE /scheduler/tasks/<id>`
-  (the id from `GET /scheduler/tasks`); the scrub check's empty folder right below the pools'
+  (the id from `GET /scheduler/tasks`); a balance that the balance check left running or paused,
+  `scripts/dev/api.py DELETE /storage/pools/<pool>/balance`; the scrub and balance checks' empty folder right below the pools'
   base, which the files API does not delete, `scripts/dev/ssh.sh 'rmdir /mnt/pools/<folder>'`. A marked host account or Samba account `unoscheck<6 hex digits>`
   that stayed after its user was deleted (the delete's warning names a failed userdel or pdbedit)
   is the host's: removing it, `scripts/dev/ssh.sh 'pdbedit -x -u <name>; userdel <name>'`, is an

@@ -22,9 +22,11 @@ import {
   fakeScrubEvents,
   fakeStorageApi,
   mountedElsewhere,
+  noBalance,
   noScrub,
   stillInUse,
   usedByContainers,
+  type FakeBalanceStatus,
   type FakeScrubStatus,
   type FakeStorageOptions,
   type RecordedWrite,
@@ -1078,6 +1080,272 @@ test.describe('Scrub (fake data)', () => {
     await expect(poolCard(page, 'e2e_halt').getByText('Last scrub: cancelled before it finished, 2 error(s) found'))
       .toHaveClass(/text-error/);
     await expect(page.getByText(/No errors/)).toHaveCount(0);
+  });
+});
+
+// A pool's balance (storage.pool-balance, ADR-0379), on route fakes and a fake events socket.
+test.describe('Balance (fake data)', () => {
+  const balance = (status: string, fields: Partial<FakeBalanceStatus> = {}): FakeBalanceStatus => ({
+    ...noBalance('e2e_data'), status, ...fields,
+  });
+  const running = (completed: number, secondsLeft: number | null = null) =>
+    balance('running', { completed, expected: 12, considered: completed, seconds_left: secondsLeft });
+  const reads = (page: Page) => {
+    let count = 0;
+    page.on('request', (request) => {
+      if (request.method() === 'GET' && new URL(request.url()).pathname === '/api/v1/storage/pools/e2e_data/balance') {
+        count += 1;
+      }
+    });
+    return () => count;
+  };
+
+  test('a balance of the chunks less than 20% full shows its progress, the time left and how it ended', async ({
+    authenticatedPage: page,
+  }) => {
+    await page.clock.install();
+    let host = noBalance('e2e_data');
+    const writes = await fakeStorageApi(page, {
+      pools: [HEALTHY_POOL],
+      balanceStatus: (_pool, action) => {
+        if (action === 'start') host = running(0); // btrfs runs it, nothing balanced yet
+        return host;
+      },
+    });
+    const events = await fakeScrubEvents(page);
+    const balanceReads = reads(page);
+    await page.goto('/storage');
+
+    const card = poolCard(page, 'e2e_data');
+    await card.getByRole('button', { name: 'Balance', exact: true }).click();
+    const dialog = page.getByRole('dialog', { name: 'Balance e2e_data' });
+    await expect(dialog.getByRole('combobox', { name: 'Chunks to rewrite' })).toContainText(
+      'Only chunks less full than a limit (recommended)'
+    );
+    await expect(dialog.getByLabel('Usage limit (%)')).toHaveValue('20');
+    await dialog.getByRole('button', { name: 'Start Balance' }).click();
+    await expect(dialog).toHaveCount(0);
+    expect(writes).toEqual([{ method: 'POST', path: '/pools/e2e_data/balance', body: { usage: 20 } }]);
+
+    await expect(card.getByText('Balance in progress')).toBeVisible();
+    await expect(card.getByRole('button', { name: 'Pause Balance' })).toBeVisible();
+    await expect(card.getByRole('button', { name: 'Cancel Balance' })).toBeVisible();
+    await expect(card.getByRole('button', { name: 'Balance', exact: true })).toHaveCount(0);
+    // No scrub beside a balance that runs.
+    await expect(card.getByRole('button', { name: 'Scrub', exact: true })).toBeDisabled();
+
+    await events.balances([running(3, 540)]);
+    const progress = card.getByRole('progressbar', { name: 'Balance progress' });
+    await expect(progress).toHaveAttribute('aria-valuenow', '25');
+    await expect(card.getByText('3 of about 12 chunks balanced')).toBeVisible();
+    await expect(card.getByText('25.0%')).toBeVisible();
+    await expect(card.getByText('About 9 min left')).toBeVisible();
+
+    // Time passes: the page does not ask for the status.
+    await page.clock.fastForward('01:00');
+    await page.waitForTimeout(300);
+    expect(balanceReads()).toBe(1);
+
+    await events.balances([running(9, 7300)]);
+    await expect(card.getByText('About 2 h 2 min left')).toBeVisible();
+    await events.balances([running(11, 30)]);
+    await expect(card.getByText('Less than a minute left')).toBeVisible();
+
+    await events.balances([balance('idle', { result: 'finished', completed: 12, considered: 40 })]);
+    await expect(card.getByText('Last balance: finished, 12 of 40 chunks rewritten')).toBeVisible();
+    await expect(card.getByText('Balance in progress')).toHaveCount(0);
+    await expect(progress).toHaveCount(0);
+    await expect(card.getByRole('button', { name: 'Balance', exact: true })).toBeEnabled();
+    await expect(card.getByRole('button', { name: 'Scrub', exact: true })).toBeEnabled();
+    expect(writes).toHaveLength(1);
+    expect(balanceReads()).toBe(1);
+  });
+
+  test('pause, resume and cancel act on the running balance', async ({ authenticatedPage: page }) => {
+    const answers: Record<string, FakeBalanceStatus> = {
+      status: running(4, 300),
+      pause: balance('paused', { completed: 5, expected: 12, considered: 5 }),
+      resume: running(0),
+      cancel: balance('idle', { result: 'cancelled' }),
+    };
+    const writes = await fakeStorageApi(page, {
+      pools: [HEALTHY_POOL],
+      balanceStatus: (_pool, action) => answers[action],
+    });
+    await fakeScrubEvents(page);
+    await page.goto('/storage');
+
+    const card = poolCard(page, 'e2e_data');
+    await expect(card.getByText('Balance in progress')).toBeVisible();
+    await expect(card.getByText('About 5 min left')).toBeVisible();
+
+    await card.getByRole('button', { name: 'Pause Balance' }).click();
+    await expect(card.getByText('Balance paused')).toBeVisible();
+    await expect(card.getByText('5 of about 12 chunks balanced')).toBeVisible();
+    await expect(card.getByText(/goes on when you resume it, and also when the pool is mounted again/)).toBeVisible();
+    await expect(card.getByRole('button', { name: 'Pause Balance' })).toHaveCount(0);
+    // A scrub may run beside a paused balance.
+    await expect(card.getByRole('button', { name: 'Scrub', exact: true })).toBeEnabled();
+
+    await card.getByRole('button', { name: 'Resume Balance' }).click();
+    await expect(card.getByText('Balance in progress')).toBeVisible();
+    await expect(card.getByRole('button', { name: 'Pause Balance' })).toBeVisible();
+
+    await card.getByRole('button', { name: 'Cancel Balance' }).click();
+    await expect(card.getByText('Last balance: cancelled before it finished')).toBeVisible();
+    await expect(card.getByText('Balance in progress')).toHaveCount(0);
+    await expect(card.getByRole('button', { name: 'Balance', exact: true })).toBeVisible();
+    expect(writes).toEqual([
+      { method: 'POST', path: '/pools/e2e_data/balance/pause', body: {} },
+      { method: 'POST', path: '/pools/e2e_data/balance/resume', body: {} },
+      { method: 'DELETE', path: '/pools/e2e_data/balance', body: null },
+    ]);
+  });
+
+  test('a pause that waits for the chunk being moved says so, and the events socket sends the pause', async ({
+    authenticatedPage: page,
+  }) => {
+    await fakeStorageApi(page, {
+      pools: [HEALTHY_POOL],
+      balanceStatus: (_pool, action) =>
+        action === 'pause' ? balance('pausing', { completed: 4, expected: 12, considered: 4 }) : running(4),
+    });
+    const events = await fakeScrubEvents(page);
+    await page.goto('/storage');
+
+    const card = poolCard(page, 'e2e_data');
+    await card.getByRole('button', { name: 'Pause Balance' }).click();
+    await expect(card.getByText('Pausing after the chunk being moved')).toBeVisible();
+    await expect(card.getByRole('button', { name: /^(Pause|Resume) Balance$/ })).toHaveCount(0);
+    // The kernel would pause it all the same: a cancel waits for the pause (ADR-0379).
+    await expect(card.getByRole('button', { name: 'Cancel Balance' })).toBeDisabled();
+    await events.balances([balance('paused', { completed: 5, expected: 12, considered: 5 })]);
+    await expect(card.getByText('Balance paused')).toBeVisible();
+    await expect(card.getByRole('button', { name: 'Resume Balance' })).toBeVisible();
+    await expect(card.getByRole('button', { name: 'Cancel Balance' })).toBeEnabled();
+  });
+
+  test('a paused balance resumes only without a scrub, and is cancelled only on a writable pool', async ({
+    authenticatedPage: page,
+  }) => {
+    const mounted = (name: string, uuid: string, readOnly = false) => ({
+      ...HEALTHY_POOL, name, uuid, mountpoint: `/mnt/pools/${name}`, read_only: readOnly,
+    });
+    const paused = (pool: string) => ({ ...noBalance(pool), status: 'paused', completed: 5, expected: 12, considered: 5 });
+    await fakeStorageApi(page, {
+      pools: [HEALTHY_POOL, mounted('e2e_ro', '00000000-0000-4000-8000-0000000000e8', true)],
+      scrubStatus: (pool) => (pool === 'e2e_data' ? { ...noScrub(pool), status: 'running' } : noScrub(pool)),
+      balanceStatus: (pool) => paused(pool),
+    });
+    await page.goto('/storage');
+
+    const scrubbing = poolCard(page, 'e2e_data');
+    await expect(scrubbing.getByText('Balance paused')).toBeVisible();
+    await expect(scrubbing.getByRole('button', { name: 'Resume Balance' })).toBeDisabled();
+    await expect(scrubbing.getByRole('button', { name: 'Cancel Balance' })).toBeEnabled();
+    const readOnly = poolCard(page, 'e2e_ro');
+    await expect(readOnly.getByText('Balance paused')).toBeVisible();
+    await expect(readOnly.getByRole('button', { name: 'Resume Balance' })).toBeDisabled();
+    await expect(readOnly.getByRole('button', { name: 'Cancel Balance' })).toBeDisabled();
+  });
+
+  test('a full balance starts only once it is confirmed, and a usage limit only from 1 to 99', async ({
+    authenticatedPage: page,
+  }) => {
+    const writes = await fakeStorageApi(page, {
+      pools: [HEALTHY_POOL],
+      balanceStatus: (_pool, action) => (action === 'start' ? running(0) : noBalance('e2e_data')),
+    });
+    await fakeScrubEvents(page);
+    await page.goto('/storage');
+
+    const card = poolCard(page, 'e2e_data');
+    await card.getByRole('button', { name: 'Balance', exact: true }).click();
+    const dialog = page.getByRole('dialog', { name: 'Balance e2e_data' });
+    const start = dialog.getByRole('button', { name: 'Start Balance' });
+    for (const value of ['0', '100', '2.5', '']) {
+      await dialog.getByLabel('Usage limit (%)').fill(value);
+      await expect(start).toBeDisabled();
+      await expect(dialog.getByText('Enter a whole number from 1 to 99')).toBeVisible();
+    }
+
+    await dialog.getByRole('combobox', { name: 'Chunks to rewrite' }).click();
+    await page.getByRole('option', { name: 'Every chunk (full balance)' }).click();
+    await expect(dialog.getByText('A full balance takes long')).toBeVisible();
+    await expect(dialog.getByText(/hours on a hard disk/)).toBeVisible();
+    await expect(start).toBeDisabled();
+    await dialog.getByLabel('Rewrite every chunk of e2e_data').check();
+    await start.click();
+    await expect(dialog).toHaveCount(0);
+    expect(writes).toEqual([{ method: 'POST', path: '/pools/e2e_data/balance', body: { full: true } }]);
+    await expect(card.getByText('Balance in progress')).toBeVisible();
+  });
+
+  test('a start the server refuses keeps the dialog open with the reason', async ({ authenticatedPage: page }) => {
+    // The supervisor's 409 while a scrub of the pool runs (storage/balances.py).
+    const detail = 'A scrub of pool e2e_data runs: wait for its end or cancel it, then start the balance';
+    await fakeStorageApi(page, {
+      pools: [HEALTHY_POOL],
+      balanceStatus: (_pool, action) =>
+        action === 'start' ? { status: 409, json: { detail } } : noBalance('e2e_data'),
+    });
+    await fakeScrubEvents(page);
+    await page.goto('/storage');
+
+    await poolCard(page, 'e2e_data').getByRole('button', { name: 'Balance', exact: true }).click();
+    const dialog = page.getByRole('dialog', { name: 'Balance e2e_data' });
+    await dialog.getByLabel('Usage limit (%)').fill('5');
+    await dialog.getByRole('button', { name: 'Start Balance' }).click();
+    await expect(dialog.getByText('The balance did not start')).toBeVisible();
+    await expect(dialog.getByText(detail)).toBeVisible();
+    await expect(poolCard(page, 'e2e_data').getByText('Balance in progress')).toHaveCount(0);
+  });
+
+  test('a failed balance says why, a scrub or a read-only pool offers no balance', async ({
+    authenticatedPage: page,
+  }) => {
+    const error = "ERROR: error during balancing '/mnt/pools/e2e_data': No space left on device";
+    const mounted = (name: string, uuid: string, readOnly = false) => ({
+      ...HEALTHY_POOL, name, uuid, mountpoint: `/mnt/pools/${name}`, read_only: readOnly,
+    });
+    await fakeStorageApi(page, {
+      pools: [
+        HEALTHY_POOL,
+        mounted('e2e_ro', '00000000-0000-4000-8000-0000000000e8', true),
+        mounted('e2e_busy', '00000000-0000-4000-8000-0000000000e9'),
+      ],
+      scrubStatus: (pool) => (pool === 'e2e_busy' ? { ...noScrub(pool), status: 'running' } : noScrub(pool)),
+      balanceStatus: (pool) => (pool === 'e2e_data' ? balance('idle', { result: 'failed', error }) : noBalance(pool)),
+    });
+    await page.goto('/storage');
+
+    const card = poolCard(page, 'e2e_data');
+    await expect(card.getByText('Last balance failed')).toBeVisible();
+    await expect(card.getByText(error)).toBeVisible();
+    await expect(card.getByRole('button', { name: 'Balance', exact: true })).toBeEnabled();
+    await expect(poolCard(page, 'e2e_ro').getByRole('button', { name: 'Balance', exact: true })).toBeDisabled();
+    await expect(poolCard(page, 'e2e_busy').getByRole('button', { name: 'Balance', exact: true })).toBeDisabled();
+  });
+
+  test('after the events socket connects again, the page reads each balance it shows running', async ({
+    authenticatedPage: page,
+  }) => {
+    let restarted = false;
+    await fakeStorageApi(page, {
+      pools: [HEALTHY_POOL],
+      // It ended while the supervisor restarted.
+      balanceStatus: () => (restarted ? balance('idle', { result: 'finished', completed: 3, considered: 9 }) : running(1)),
+    });
+    const events = await fakeScrubEvents(page);
+    const balanceReads = reads(page);
+    await page.goto('/storage');
+
+    const card = poolCard(page, 'e2e_data');
+    await expect(card.getByText('Balance in progress')).toBeVisible();
+    restarted = true;
+    await events.restart();
+    await expect(card.getByText('Last balance: finished, 3 of 9 chunks rewritten')).toBeVisible();
+    expect(balanceReads()).toBe(2);
   });
 });
 

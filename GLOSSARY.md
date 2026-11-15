@@ -127,6 +127,11 @@ in a folder in the middle of a file manager upload, where the folder's filesyste
 files; the File Browser lists them and removes them for good when an administrator confirms
 (ADR-0354). Avoid: temporary file, partial upload.
 
+**Balance**: Rewriting chunks of a pool, the blocks of space that btrfs gives to data and
+metadata, to free the space of partly empty ones: by default those less than 20% full, or every
+chunk (a full balance). UNOS runs it on the host in the unit `unos-balance-<pool>`, and it can be
+paused, resumed and cancelled (ADR-0379). Avoid: rebalance, defragment (rewrites files, not chunks).
+
 **Recovery runbook**: `docs/RECOVERY.md`: how another Linux machine reads a pool's files without
 writing to its disks, also with a disk missing, and how root runs the emergency reset (ADR-0285).
 Avoid: disaster recovery plan, repair guide.

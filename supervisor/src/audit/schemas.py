@@ -29,6 +29,11 @@ class AuditAction(str, Enum):
     SNAPSHOT_CREATED = "snapshot_created"
     SNAPSHOT_DELETED = "snapshot_deleted"
     SNAPSHOT_RESTORED = "snapshot_restored"
+    # A pool's balance (ADR-0379)
+    BALANCE_STARTED = "balance_started"
+    BALANCE_PAUSED = "balance_paused"
+    BALANCE_RESUMED = "balance_resumed"
+    BALANCE_CANCELLED = "balance_cancelled"
 
     # Shares
     SHARE_CREATED = "share_created"

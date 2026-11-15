@@ -3122,16 +3122,32 @@ def scrub_start(pool: str | os.PathLike, timeout: int) -> subprocess.CompletedPr
     (btrfs-progs cmds/scrub.c). Read through pipes, they would end only then: the error output
     goes to a temporary file (in /tmp, RAM), the output (a line saying that the scrub started)
     nowhere.
+
+    PoolConflictError as well while btrfs reports a balance of the pool running (ADR-0379): both
+    read and write the whole pool. A balance status that cannot be read refuses nothing: btrfs
+    answers the start then; one that does not answer within ``timeout`` ends the start with its
+    subprocess.TimeoutExpired, as a hung filesystem would end the scrub's own command.
     """
     path = os.fspath(pool)
+    name = os.path.basename(path)
     if not _btrfs_mounted_at(path):
-        raise PoolConflictError(f"Pool {os.path.basename(path)} is not mounted at {path}")
-    with tempfile.TemporaryFile() as stderr:
-        result = host.run_in_container(
-            ["btrfs", "scrub", "start", path], stdout=subprocess.DEVNULL, stderr=stderr, timeout=timeout
-        )
-        stderr.seek(0)
-        result.stderr = stderr.read().decode(errors="replace")
+        raise PoolConflictError(f"Pool {name} is not mounted at {path}")
+    with maintenance_lock:
+        try:
+            balance = balance_progress(path, timeout).status
+        except RuntimeError as exc:
+            logger.warning("Could not read the balance of %s before its scrub: %s", path, exc)
+            balance = "unknown"
+        if balance in BALANCE_RUNS:
+            raise PoolConflictError(
+                f"A balance of pool {name} runs: wait for its end, or pause or cancel it, then start the scrub"
+            )
+        with tempfile.TemporaryFile() as stderr:
+            result = host.run_in_container(
+                ["btrfs", "scrub", "start", path], stdout=subprocess.DEVNULL, stderr=stderr, timeout=timeout
+            )
+            stderr.seek(0)
+            result.stderr = stderr.read().decode(errors="replace")
     return result
 
 
@@ -3289,6 +3305,55 @@ def cancel_scrub(pool_name: str) -> ScrubStatus:
         # btrfs cancelled a scrub that it had not recorded yet (ADR-0313).
         return ScrubStatus(pool=pool_name, status="aborted")
     return status
+
+
+# A balance's status, pause and cancel return at once unless the filesystem hangs; a pause or a
+# cancel waits for the chunk being moved, which the balance endpoints wait for only
+# balances.STOP_WAIT seconds of (ADR-0379).
+BALANCE_COMMAND_TIMEOUT = 60
+# The statuses of a balance that runs: a pause or a cancel may still be waiting for its chunk.
+BALANCE_RUNS = ("running", "pausing", "cancelling")
+# Held while a scrub or a balance starts after its checks (scrub_start, storage/balances.py): one
+# does not start between the other's check that it does not run and its own start.
+maintenance_lock = threading.Lock()
+
+
+@dataclass(frozen=True)
+class BalanceProgress:
+    """What ``btrfs balance status`` reports of a filesystem (btrfs-progs cmds/balance.c)."""
+
+    # idle, running, pausing, cancelling or paused
+    status: str
+    completed: int | None = None
+    expected: int | None = None
+    considered: int | None = None
+
+
+def balance_progress(path: str, timeout: float = BALANCE_COMMAND_TIMEOUT) -> BalanceProgress:
+    """The balance of the btrfs filesystem mounted at ``path``, as the container's btrfs reports it
+    (host.run_in_container, ADR-0290). RuntimeError when btrfs cannot report it;
+    subprocess.TimeoutExpired when it does not answer within ``timeout``.
+
+    btrfs exits 0 with "No balance found" when none runs or is paused, and 1 with "Balance on
+    '<path>' is running" (", pause requested" or ", cancel requested" while a pause or a cancel
+    waits for the chunk being moved) or "is paused", then "<n> out of about <m> chunks balanced
+    (<k> considered), <p>% left".
+    """
+    result = host.run_in_container(["btrfs", "balance", "status", path], timeout=timeout)
+    output = result.stdout or ""
+    if result.returncode == 0 and output.startswith("No balance found"):
+        return BalanceProgress("idle")
+    state = re.search(r"^Balance on .* is (running|paused)(, (pause|cancel) requested)?$", output, re.MULTILINE)
+    if state is None:
+        raise RuntimeError(
+            f"Balance status failed: {(result.stderr or '').strip() or f'exit status {result.returncode}'}"
+        )
+    status = {"pause": "pausing", "cancel": "cancelling"}.get(state.group(3) or "", state.group(1))
+    counts = re.search(r"^(\d+) out of about (\d+) chunks balanced \((\d+) considered\)", output, re.MULTILINE)
+    if counts is None:
+        return BalanceProgress(status)
+    completed, expected, considered = map(int, counts.groups())
+    return BalanceProgress(status, completed, expected, considered)
 
 
 def _parse_size_to_bytes(value: float, unit: str) -> int:

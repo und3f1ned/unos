@@ -155,6 +155,8 @@ class FakeProcesses:
     def answer(cmd: list[str]) -> tuple[int, str, str]:
         if cmd[:3] == ["btrfs", "scrub", "status"]:
             return 0, SCRUB_STATUS, ""
+        if cmd[:3] == ["btrfs", "balance", "status"]:
+            return 0, f"No balance found on '{cmd[3]}'\n", ""
         if cmd[:2] == ["smartctl", "-t"]:
             return 0, "Testing has begun.\n", ""
         if cmd[0] == "smartctl":
@@ -464,8 +466,10 @@ def _not_responding(command: str, target: str) -> tuple[int, str]:
 @pytest.mark.parametrize(
     "method, url, stuck, answering, timed_out",
     [
+        # A start asks first whether a balance of the pool runs (ADR-0379): on a hung pool, that
+        # command is the one that does not answer.
         ("POST", "/api/v1/storage/pools/{}/scrub", "data", "media",
-         _not_responding("btrfs scrub start", "pool data")),
+         _not_responding("btrfs balance status", "pool data")),
         ("GET", "/api/v1/storage/pools/{}/scrub", "data", "media",
          _not_responding("btrfs scrub status", "pool data")),
         ("DELETE", "/api/v1/storage/pools/{}/scrub", "data", "media",
