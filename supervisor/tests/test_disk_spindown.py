@@ -658,10 +658,11 @@ def test_the_trash_expiry_asks_an_awake_disk_of_a_pool_put_off_for_a_sleeping_on
 
 def test_the_trash_expiry_checks_every_hour(monkeypatch):
     assert (files_router.TRASH_EXPIRY_CHECK, files_router.TRASH_EXPIRY_INTERVAL) == (3600, 86400)
-    passes = []
+    passes, kept = [], []
 
     def expire(now, done, clock, asleep):
         passes.append(clock)
+        kept.append((done, asleep))
         return 0, [], False
 
     monkeypatch.setattr(files_router, "_expire_due_trash", expire)
@@ -676,6 +677,8 @@ def test_the_trash_expiry_checks_every_hour(monkeypatch):
 
     asyncio.run(run())
     assert passes == sorted(passes)
+    # Each check gets the same memory: the pools' last passes and the disks found asleep.
+    assert all(done is kept[0][0] and asleep is kept[0][1] for done, asleep in kept), kept
 
 
 # --- the pools whose disks sleep -------------------------------------------------------------------

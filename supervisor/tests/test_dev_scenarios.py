@@ -3009,7 +3009,9 @@ def test_the_smart_check_gives_the_disk_the_shortest_timeout_and_reads_smart_whi
     assert (nas.spindown, nas.rules) == (0, None)
 
 
-@pytest.mark.parametrize("line", ["spindown_time = 241", "  spindown_time=24", "command_line = hdparm -S 120 /dev/sda"])
+# force_spindown_time is spindown_time for a disk without APM, which Debian's hdparm applies only with APM.
+@pytest.mark.parametrize("line", ["spindown_time = 241", "  spindown_time=24", "force_spindown_time = 120",
+                                  "command_line = hdparm -S 120 /dev/sda"])
 def test_the_smart_check_leaves_a_standby_timer_of_hdparm_conf_alone(nas, line):
     # udev's 85-hdparm rule applies it at boot, and no command reads it back: the check's Off
     # (hdparm -S 0) would clear it until the disk's next power cycle.
