@@ -121,6 +121,13 @@ SD writes of each check (ADR-0214). The areas:
            when its two restores push out none of the copies that UNOS keeps (the newest 5). Where
            the device has a guest share, Samba takes a user without a Samba account as a guest
            (ADR-0339), so the refused sign-ins of the second user are left out.
+  hardware The hardware of the host's SoC that apps get (ADR-0377): the SoC that the host's device
+           tree names; the App Store's catalog, which offers Jellyfin the RK3588's video hardware on
+           an RK3588 with Rockchip MPP's /dev/mpp_service and nowhere else, and no app the hardware
+           of another SoC; and on an RK3588 the device nodes of its video hardware, with their
+           modes, of which the host has Rockchip MPP's (/dev/mpp_service, /dev/dma_heap,
+           /dev/dri), a SKIP on another host. It only reads: it installs no app, whose image only
+           the owner pulls (ADR-0211).
 
 Each check reads first how the device is (its baseline), and refuses to start beside leftovers
 of an earlier check. It makes what it needs through the API, under names made of "unoscheck"
@@ -184,7 +191,7 @@ import api as relay  # noqa: E402  scripts/dev/api.py
 
 SSH = HERE / "ssh.sh"
 SD = HERE / "sd.sh"
-AREAS = ("files", "volumes", "smart", "backups", "smb", "smbconf", "shares", "scrub", "offsite", "restore")
+AREAS = ("files", "volumes", "smart", "backups", "smb", "smbconf", "shares", "scrub", "offsite", "restore", "hardware")
 MARK = "unoscheck"
 LEFTOVER = re.compile(MARK + r"[0-9a-f]{6}")
 POOL_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}")
@@ -3464,6 +3471,57 @@ def restore_check(c: Check) -> None:
         c.expect(plain not in backups(), f"{plain} is still listed")
 
 
+# --- hardware --------------------------------------------------------------------------------
+
+DEVICE_TREE = "/proc/device-tree/compatible"
+RK3588 = "rockchip,rk3588"
+# Rockchip MPP's node, which only Rockchip's kernel has: the App Store offers the RK3588's video
+# hardware only with it (the profile's requires).
+MPP_SERVICE = "/dev/mpp_service"
+# The nodes without which Rockchip MPP decodes and encodes nothing in Jellyfin's container: the
+# codecs, the DMA heaps and the DRM nodes (Jellyfin's guide to RKMPP); the RGA and the Mali GPU
+# only scale and tone-map.
+RKMPP_NODES = (MPP_SERVICE, "/dev/dma_heap", "/dev/dri")
+
+
+def hardware_check(c: Check) -> None:
+    """ADR-0377: what the App Store offers of the host's SoC, and the nodes the host has for it.
+    It installs nothing: Jellyfin's image is pulled only by the owner (ADR-0211)."""
+    socs: list[str] = []
+
+    with c.step("the host's device tree names its SoC") as s:
+        c.baseline(lambda: {"the installed apps": sorted(a["name"] for a in c.get("/apps/installed"))})
+        socs = [name for name in (c.device.read(DEVICE_TREE) or "").split("\0") if name]
+        s.text += ": " + (", ".join(socs) or "no device tree")
+
+    with c.step("the App Store offers Jellyfin the RK3588's video hardware exactly on an RK3588 with Rockchip MPP") as s:
+        mpp = RK3588 in socs and c.device.stat([MPP_SERVICE]).get(MPP_SERVICE, "missing") != "missing"
+        profiles = c.get("/apps/catalog/jellyfin")["hardware"]
+        ids = [p["id"] for p in profiles]
+        want = ["rk3588-video"] if mpp else []
+        c.expect(ids == want, f"it offers {', '.join(ids) or 'none'}, expected {', '.join(want) or 'none'}")
+        s.text += ": " + (", ".join(ids) or "none")
+
+    with c.step("the App Store offers each app only the hardware of this SoC") as s:
+        offered = {app["id"]: [p["soc"] for p in app["hardware"]] for app in c.get("/apps/catalog") if app["hardware"]}
+        other = {app: names for app, names in offered.items() if not set(names) <= set(socs)}
+        c.expect(not other, "it offers " + "; ".join(f"{app} the hardware of {', '.join(names)}" for app, names in other.items()))
+        s.text += ": " + (", ".join(sorted(offered)) or "none")
+
+    # On an RK3588 the nodes are checked whatever the App Store offers: the dev device is to
+    # transcode in hardware (apps.rk3588-hardware-acceleration).
+    text = "the host has the device nodes of the RK3588's video hardware"
+    if RK3588 not in socs:
+        c.skip(text, "the host is no RK3588")
+        return
+    with c.step(text) as s:
+        devices = [d for p in profiles for d in p["devices"]] or list(RKMPP_NODES)
+        found = c.device.stat(devices)
+        missing = [node for node in RKMPP_NODES if found.get(node, "missing") == "missing"]
+        c.expect(not missing, f"the host lacks {', '.join(missing)}, which Rockchip MPP needs (Rockchip's kernel 5.10 or 6.1)")
+        s.text += ": " + ", ".join(f"{d} {found.get(d, 'missing')}" for d in devices)
+
+
 CHECKS: dict[str, Callable[[Check], None]] = {
     "files": files_check,
     "volumes": volumes_check,
@@ -3475,6 +3533,7 @@ CHECKS: dict[str, Callable[[Check], None]] = {
     "scrub": scrub_check,
     "offsite": offsite_check,
     "restore": restore_check,
+    "hardware": hardware_check,
 }
 
 

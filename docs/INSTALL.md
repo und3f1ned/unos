@@ -196,8 +196,10 @@ board (ADR-0376).
   `soc-thermal` at 75 C on, and with this image it drives no fan: none is among
   its cooling devices. Fit a heatsink, and keep the dashboard's temperature
   below 70 C. The dev device idles at about 42 C.
-- **Apps.** ARM64 images of the App Store run. Apps do not get the RK3588's
-  video decoder or NPU yet.
+- **Apps.** ARM64 images of the App Store run. Jellyfin gets the RK3588's
+  video decoders and encoders, its RGA and its GPU for Rockchip MPP (RKMPP),
+  which needs the `vendor` kernel; choose RKMPP in Jellyfin (ADR-0377, see the
+  User Guide's Hardware Acceleration). No app uses the NPU yet.
 - **Temperature.** The dashboard shows the whole chip's sensor (`soc_thermal`).
 
 ### Network Requirements

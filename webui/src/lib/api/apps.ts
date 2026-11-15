@@ -46,6 +46,22 @@ export interface EnvVar {
   secret: boolean;
 }
 
+/**
+ * Hardware of a SoC that an app gets when it is installed on a host with that SoC and the nodes
+ * of `requires` (ADR-0377): the device nodes the host has of `devices`, Docker's masks without
+ * `unmasked_paths`.
+ */
+export interface HardwareProfile {
+  id: string;
+  /** A name of the SoC in the host's device tree. */
+  soc: string;
+  devices: string[];
+  /** The nodes without which the app cannot use the hardware; a container without them did not get it. */
+  requires: string[];
+  unmasked_paths: string[];
+  apparmor_unconfined: boolean;
+}
+
 export interface AppTemplate {
   id: string;
   name: string;
@@ -69,6 +85,8 @@ export interface AppTemplate {
    * given a share's folder.
    */
   can_run_in_unos_smb: boolean;
+  /** The hardware of this host's SoC that the app gets; empty on any other host. */
+  hardware: HardwareProfile[];
 }
 
 export interface InstalledApp {
@@ -87,6 +105,13 @@ export interface InstalledApp {
   data_outside_pools: string[];
   /** The app runs in the group unos-smb (PUID 80000, PGID 70000): its container says so. */
   runs_in_unos_smb: boolean;
+  /** The host's device nodes passed into the container (ADR-0377), as Docker keeps them. */
+  devices: string[];
+}
+
+/** Whether an installed app's container got the hardware of `profile`: every node it requires. */
+export function hasHardware(app: InstalledApp, profile: HardwareProfile): boolean {
+  return profile.requires.every((node) => app.devices.includes(node));
 }
 
 /** A mounted storage pool that can hold app data. */
@@ -130,6 +155,8 @@ export interface AppInstallResponse {
   /** Pool holding the app's data, or null if it stores nothing on a pool. */
   pool: string | null;
   volumes: AppVolume[];
+  /** The host's device nodes passed into the container (ADR-0377). */
+  devices: string[];
 }
 
 export async function getAppCatalog(category?: string, query?: string): Promise<AppTemplate[]> {

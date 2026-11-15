@@ -60,7 +60,7 @@ use the main checkout's. Output shows secrets as `<redacted>`.
 
 6. **Run a scenario check, when the owner asked for one.** `scripts/dev/scenario.sh <area>`
    (`files`, `volumes`, `smart`, `backups`, `smb`, `smbconf`, `shares`, `scrub`, `offsite`, `restore`,
-   or `all`; `--pool <name>` where several pools are mounted), the checks of the host-level entries that the feature-pass
+   `hardware` or `all`; `--pool <name>` where several pools are mounted), the checks of the host-level entries that the feature-pass
    skill's table names (ADR-0304). They change the device: they make a temporary user, share,
    volume, Scheduler task and folders named `unoscheck<6 hex digits>`, and two backups, through
    the API, and
@@ -77,6 +77,8 @@ use the main checkout's. Output shows secrets as `<redacted>`.
    the owner's decision), and removes the 2 that its restores make, unless a restore changed a
    user, share, API token of the relay's administrator or account that is not the check's: then
    they stay, named by its FAIL, as they hold that data, and removing them is the owner's decision.
+   `hardware` only reads: the SoC, what the App Store offers of it and the nodes the host has
+   (ADR-0377).
    `all` takes several minutes: run it in the background as
    `timeout 3600 scripts/dev/scenario.sh all > <log> 2>&1` (a background command has a deadline,
    ADR-0335), or in the foreground with a tool timeout long enough, since a check that is killed
