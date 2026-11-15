@@ -235,7 +235,13 @@ that was not used since its last record: any command sent to an awake disk
 starts its timer again. The pool health check every 5 minutes, and the pool
 counts of `/api/v1/health/prometheus` and `/api/v1/health/full` for
 monitoring, read only what the kernel and udev know. The trash of a pool is
-cleared out once a day, when its disks are awake. What an administrator
+cleared out once a day, when its disks are awake. `deploy/install.sh` turns
+off smartd, the host's own SMART monitor of the package `smartmontools`: it
+would read every awake disk every 30 minutes, so that a disk with a timeout
+of 30 minutes or more might never spin down. UNOS's hourly SMART records and
+alerts replace it. On a host set up another way, turn it off with
+`sudo systemctl disable --now smartmontools` (`systemctl is-active
+smartmontools` says whether it runs). What an administrator
 starts or schedules wakes the disks it needs: a SMART test, a scrub, a
 snapshot or backup task, a file transfer. Opening a page that lists the pools
 can wake a sleeping disk, since it reads every disk: the dashboard (the first

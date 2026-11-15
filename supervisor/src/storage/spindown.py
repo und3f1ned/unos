@@ -283,17 +283,53 @@ def _reload_rules() -> None:
 # --- a pool that sleeps ------------------------------------------------------------------------
 
 
-def pool_sleeps(pool: str) -> bool:
+@dataclass(frozen=True)
+class Asleep:
+    """A disk of a pool that pool_sleeps found in standby: its path, and the reads and writes the
+    kernel had counted on it then (disks.io_counts), None when they could not be read."""
+
+    disk: str
+    io: tuple[int, int] | None
+
+
+def _io_of(disk: str) -> tuple[int, int] | None:
+    """The reads and writes the kernel counted on the whole disk at the path ``disk``."""
+    return disks.io_counts().get(disk.removeprefix("/dev/"))
+
+
+def pool_sleeps(pool: str, asleep: dict[str, Asleep] | None = None) -> bool:
     """Whether a disk of the pool ``pool``, mounted at the pools' base, is in standby
     (disks.power_state), so that a read of the pool could spin it up; False for a pool that is not
     mounted there. Only the pool's own disks are asked: asking an awake disk is a command, which
     restarts its standby timer. Read without waking a disk: findmnt, lsblk and smartctl -n
     standby. RuntimeError when the host's mounts or disks cannot be listed. Blocking: call it in
     a worker thread.
+
+    ``asleep`` (pool -> Asleep, which this updates) keeps the disk found in standby from one check
+    to the next. While the kernel has counted no read or write on that disk since, it still sleeps
+    and no disk is asked: otherwise the pool's awake disks, asked before it in lsblk's order, would
+    be asked at every check while it sleeps. Once it counted one, that disk is asked first. A disk
+    woken by a command that is no read or write (a SMART test, hdparm -S) counts as asleep until
+    its next read or write.
     """
     target = f"{get_settings().pools_base_path.rstrip('/')}/{pool}"
+    earlier = asleep.get(pool) if asleep is not None else None
+    found: Asleep | None = None
     for mount in disks.host_mounts():
         if mount.fstype != "btrfs" or mount.target != target or not mount.uuid:
             continue
-        return any(disks.power_state(disk) == "standby" for disk in disks.disks_of_filesystem(mount.uuid))
-    return False
+        members = disks.disks_of_filesystem(mount.uuid)
+        if earlier is not None and earlier.disk in members:
+            if earlier.io is not None and _io_of(earlier.disk) == earlier.io:
+                return True
+            members = [earlier.disk, *(disk for disk in members if disk != earlier.disk)]
+        found = next(
+            (Asleep(disk, _io_of(disk)) for disk in members if disks.power_state(disk) == "standby"), None
+        )
+        break
+    if asleep is not None:
+        if found is None:
+            asleep.pop(pool, None)
+        else:
+            asleep[pool] = found
+    return found is not None

@@ -14,7 +14,8 @@ monitoring endpoints, the trash expiry and the live statistics are run here with
 the FakeHost of test_pool_persistence, which wakes a disk for every command that would read it or spin
 it up. Nor do they keep an idle disk awake: any command restarts its standby timer, so the SMART monitor
 leaves alone a disk with a timeout that was not used since its last read, and the trash expiry asks a
-pool's disks whether they sleep only when the pool's pass is due.
+pool's disks whether they sleep only when the pool's pass is due, and none of them again while the disk
+it found asleep had no read or write.
 """
 from __future__ import annotations
 
@@ -528,7 +529,7 @@ def two_pools(tmp_path, monkeypatch):
     asleep = {"data"}
     asked = []  # the pools whose disks were asked whether they sleep, in order
 
-    def pool_sleeps(pool):
+    def pool_sleeps(pool, found=None):
         asked.append(pool)
         return pool in asleep
 
@@ -544,34 +545,36 @@ def test_the_trash_expiry_passes_over_a_pool_whose_disks_sleep_and_takes_it_when
     os.chmod(base / "data", 0)
     now = datetime(2026, 11, 15, tzinfo=timezone.utc)
     done: dict[str, float] = {}
-    assert files_router._expire_due_trash(now, done, 0.0) == (1, [], True)
+    sleeping: dict[str, spindown.Asleep] = {}
+    assert files_router._expire_due_trash(now, done, 0.0, sleeping) == (1, [], True)
     assert sorted(done) == ["media"]
     assert list((base / "media" / files_router.TRASH).iterdir()) == []
 
     # An hour later data still sleeps, and media's pass is not due: nothing is opened.
     os.chmod(base / "media", 0)
-    assert files_router._expire_due_trash(now, done, 3600.0) == (0, [], False)
+    assert files_router._expire_due_trash(now, done, 3600.0, sleeping) == (0, [], False)
 
     # data woke: its pass runs at the next check; media's runs again a day after its last.
     os.chmod(base / "data", 0o755)
     asleep.clear()
-    assert files_router._expire_due_trash(now, done, 7200.0) == (1, [], True)
+    assert files_router._expire_due_trash(now, done, 7200.0, sleeping) == (1, [], True)
     assert list((base / "data" / files_router.TRASH).iterdir()) == []
     os.chmod(base / "media", 0o755)
-    assert files_router._expire_due_trash(now, done, 86400.0) == (0, [], True)
+    assert files_router._expire_due_trash(now, done, 86400.0, sleeping) == (0, [], True)
     assert done == {"data": 7200.0, "media": 86400.0}
 
 
 def test_the_trash_expiry_runs_no_pass_when_it_cannot_tell_which_disks_sleep(two_pools, monkeypatch):
     base, _, _ = two_pools
 
-    def unreadable(pool):
+    def unreadable(pool, found=None):
         raise RuntimeError("lsblk failed: no udev")
 
     monkeypatch.setattr(spindown, "pool_sleeps", unreadable)
     now = datetime(2026, 11, 15, tzinfo=timezone.utc)
     done: dict[str, float] = {}
-    assert files_router._expire_due_trash(now, done, 0.0) == (0, [
+    sleeping: dict[str, spindown.Asleep] = {}
+    assert files_router._expire_due_trash(now, done, 0.0, sleeping) == (0, [
         f"Could not tell whether the disks of pool {pool} sleep, so its trash was not cleared out: lsblk failed: no udev"
         for pool in ("data", "media")], True)
     assert len(list((base / "media" / files_router.TRASH).iterdir())) == 1
@@ -584,26 +587,80 @@ def test_the_trash_expiry_asks_a_pool_s_disks_whether_they_sleep_only_when_its_p
     base, asleep, asked = two_pools
     now = datetime(2026, 11, 15, tzinfo=timezone.utc)
     done: dict[str, float] = {}
-    files_router._expire_due_trash(now, done, 0.0)
+    sleeping: dict[str, spindown.Asleep] = {}
+    files_router._expire_due_trash(now, done, 0.0, sleeping)
     assert asked == ["data", "media"]
     asked.clear()
-    files_router._expire_due_trash(now, done, 3600.0)
+    files_router._expire_due_trash(now, done, 3600.0, sleeping)
     assert asked == ["data"]  # it sleeps, and its pass is due
     asleep.clear()
-    files_router._expire_due_trash(now, done, 7200.0)
+    files_router._expire_due_trash(now, done, 7200.0, sleeping)
     asked.clear()
     for hour in range(3, 24):
-        assert files_router._expire_due_trash(now, done, hour * 3600.0) == (0, [], False)
+        assert files_router._expire_due_trash(now, done, hour * 3600.0, sleeping) == (0, [], False)
     assert asked == []
-    files_router._expire_due_trash(now, done, 86400.0)
+    files_router._expire_due_trash(now, done, 86400.0, sleeping)
     assert asked == ["media"]
+
+
+def test_the_trash_expiry_asks_an_awake_disk_of_a_pool_put_off_for_a_sleeping_one_once(host, tmp_path, monkeypatch):
+    # A raid1 pool whose reads all go to one disk (btrfs picks the mirror by the reader's pid, and
+    # noatime reads write nothing): sdi is awake and sdj sleeps, so the pass is put off. Asking sdi,
+    # which lsblk lists first, at every hourly check would restart its standby timer for good
+    # (ADR-0377): the check remembers sdj and asks nothing until the kernel counted a read or write
+    # on it, and then asks sdj first.
+    host.add_disk("sdi", model="WDC WD40EFRX", serial="WD-M1")
+    host.add_disk("sdj", model="WDC WD40EFRX", serial="WD-M2")
+    host.add_btrfs("mirror", "7d4f2c91-4567-4f6e-8e3d-bc6f5d4e7f80", ["/dev/sdi", "/dev/sdj"], profile="raid1")
+    host.dirs.add("/mnt/pools/mirror")
+    host.mount_pool("mirror")
+    host.asleep.add("/dev/sdj")
+    root = tmp_path.resolve()
+    base = root / "pools"
+    entry = base / "mirror" / files_router.TRASH / "20200101T000000Z-0123456789abcdef"
+    entry.mkdir(parents=True)
+    (entry / "item").write_text("old")
+    (entry / "origin").write_text("old.txt")
+    os.chmod(entry, 0o700)
+    os.chmod(entry.parent, 0o700)
+    mounts = _MountTable(root / "proc" / "mountinfo", base / "mirror")
+    monkeypatch.setattr(files_router, "BASE_PATH", str(base))
+    monkeypatch.setattr(files_router, "MOUNTINFO", str(mounts.path))
+    io = {"sdi": (5000, 0), "sdj": (40, 3)}
+    monkeypatch.setattr(disks, "io_counts", lambda: dict(io))
+    now = datetime(2026, 11, 15, tzinfo=timezone.utc)
+    done: dict[str, float] = {}
+    sleeping: dict[str, spindown.Asleep] = {}
+
+    def asked() -> list[str]:
+        paths = [call[-1] for call in host.container_calls]
+        host.container_calls.clear()
+        return paths
+
+    for hour in range(6):
+        io["sdi"] = (5000 + 100 * hour, 0)  # sdi serves the reads
+        assert files_router._expire_due_trash(now, done, hour * 3600.0, sleeping) == (0, [], False)
+    assert asked() == ["/dev/sdi", "/dev/sdj"]
+    # sdj was written to and is asleep again: it alone is asked.
+    io["sdj"] = (40, 9)
+    assert files_router._expire_due_trash(now, done, 6 * 3600.0, sleeping) == (0, [], False)
+    assert asked() == ["/dev/sdj"]
+    assert files_router._expire_due_trash(now, done, 7 * 3600.0, sleeping) == (0, [], False)
+    assert asked() == []
+    # sdj woke for a write: it is asked first, then sdi, and the pass runs.
+    host.asleep.clear()
+    io["sdj"] = (41, 12)
+    assert files_router._expire_due_trash(now, done, 8 * 3600.0, sleeping) == (1, [], True)
+    assert asked() == ["/dev/sdj", "/dev/sdi"]
+    assert sleeping == {} and done == {"mirror": 8 * 3600.0}
+    assert host.woken == []
 
 
 def test_the_trash_expiry_checks_every_hour(monkeypatch):
     assert (files_router.TRASH_EXPIRY_CHECK, files_router.TRASH_EXPIRY_INTERVAL) == (3600, 86400)
     passes = []
 
-    def expire(now, done, clock):
+    def expire(now, done, clock, asleep):
         passes.append(clock)
         return 0, [], False
 
@@ -671,3 +728,4 @@ def test_the_power_state_is_read_with_smartctl_n_standby(monkeypatch):
 def test_hdparm_is_an_optional_host_tool():
     assert host_module.OPTIONAL_HOST_TOOLS["hdparm"] == "hdparm"
     assert "hdparm" not in host_module.HOST_TOOLS
+

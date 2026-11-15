@@ -434,6 +434,11 @@ print_completion() {
     echo "  apt-get purge docker.io docker-buildx docker-compose"
     echo "(docker-compose-v2 instead of docker-compose on Ubuntu)"
     echo ""
+    # install.sh stopped smartd, since UNOS read SMART itself (ADR-0377).
+    echo "SMART monitoring: install.sh turned off smartd, since UNOS read the disks'"
+    echo "SMART data itself. To have smartd watch the disks again, run:"
+    echo "  systemctl enable --now smartmontools"
+    echo ""
     if [ -f "$K1_NVME_RULE" ]; then
         echo "SpacemiT K1: the udev rule $K1_NVME_RULE keeps turning off the power"
         echo "saving of NVMe drives, because without that an NVMe drive on the K1 can hang"

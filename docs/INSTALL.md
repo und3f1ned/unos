@@ -306,6 +306,16 @@ sudo apt install -y \
     ethtool net-tools iproute2
 ```
 
+UNOS reads the disks' SMART data itself. Turn off smartd, which the package
+smartmontools starts: it would read every awake disk every 30 minutes, and
+each read starts the disk's standby timer again, so a disk given an idle
+timeout of 30 minutes or more on the Storage page might never spin down
+(ADR-0377):
+
+```bash
+sudo systemctl disable --now smartmontools
+```
+
 ### Step 2: Install Docker
 
 ```bash
