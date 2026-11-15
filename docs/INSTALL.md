@@ -193,6 +193,12 @@ board (ADR-0376).
   `soc-thermal` at 75 C on, and with this image it drives no fan: none is among
   its cooling devices. Fit a heatsink, and keep the dashboard's temperature
   below 70 C. The dev device idles at about 42 C.
+- **Samba's vfs modules.** A share's Time Machine and Previous Versions need
+  the package `samba-vfs-modules` (ADR-0377), which `install.sh` installs and
+  Debian's `samba` only recommends. On the dev device, set up by hand, check
+  that `ls /usr/lib/aarch64-linux-gnu/samba/vfs/fruit.so` finds it, else install
+  it with `sudo apt install samba-vfs-modules`; until then the Shares page
+  refuses both options and names the package.
 - **Apps.** ARM64 images of the App Store run. Apps do not get the RK3588's
   video decoder or NPU yet.
 - **Temperature.** The dashboard shows the whole chip's sensor (`soc_thermal`).
@@ -301,7 +307,7 @@ sudo apt update
 sudo apt install -y \
     curl wget git ca-certificates gnupg lsb-release \
     btrfs-progs smartmontools lm-sensors \
-    samba samba-common-bin \
+    samba samba-common-bin samba-vfs-modules \
     hdparm parted mdadm nvme-cli \
     ethtool net-tools iproute2
 ```
@@ -657,7 +663,7 @@ NAS instead:
 | Service | For | What it answers |
 |---------|-----|-----------------|
 | `wsdd2` | Windows | WS-Discovery (UDP 3702 and TCP 3702), and LLMNR for the server's name (UDP and TCP 5355), over IPv4 only |
-| `avahi-daemon` | macOS | Bonjour (mDNS, UDP 5353), over IPv4 only: smbd registers its `_smb._tcp` service with it (`multicast dns register = yes`), and it answers for the server's name (`<name>.local`) with the server's IPv4 addresses |
+| `avahi-daemon` | macOS | Bonjour (mDNS, UDP 5353), over IPv4 only: smbd registers its `_smb._tcp` service with it (`multicast dns register = yes`), and `_adisk._tcp` for the shares that offer Time Machine (ADR-0377), and it answers for the server's name (`<name>.local`) with the server's IPv4 addresses. smbd registers them when it or avahi-daemon starts, so UNOS restarts avahi-daemon after a change of the Time Machine shares |
 
 Both answer over IPv4 only, as `install.sh` sets them up:
 

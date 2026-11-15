@@ -323,6 +323,23 @@ manager, encrypted backup uploads, health checks, CI checks).
   `ups_name`, `host` and `port` are checked before they reach `upsc`.
 
 ### Added
+- An SMB share can require encryption, serve Time Machine backups of Macs and
+  list the snapshots of its pool or volume as Windows' Previous Versions
+  (ADR-0377): three options of the share dialog, off by default, shown on the
+  share's card and stored in the new table `smb_share_options`
+  (`encryption_required`, `time_machine`, `previous_versions` of the share
+  API). Every share section now states `smb encrypt` and `vfs objects`, also
+  with the options off; while a Time Machine share exists every share loads
+  `catia fruit streams_xattr` and `[global]` has `fruit:aapl = yes` and
+  `fruit:nfs_aces = no`, and a change of the Time Machine shares restarts
+  avahi-daemon, so that smbd announces them (`_adisk._tcp`). Previous Versions
+  list the snapshots named `snap_<time>` and `auto_<time>` in UTC. A guest
+  share cannot require encryption; Time Machine and Previous Versions need the
+  package `samba-vfs-modules`, which `install.sh` now installs, and are
+  refused without it; Previous Versions are refused for a folder in a
+  subvolume of its own below a volume. Turning encryption on disconnects the
+  share's open connections. `scripts/dev/scenario.sh smb` shows the three
+  options on a share in a new volume.
 - `scripts/dev/check.sh` shows each container's CPU, the load average and the
   temperatures, and reports a container of UNOS above 15% of a core or a
   thermal zone within 5 C of its throttling point as a problem (ADR-0374).

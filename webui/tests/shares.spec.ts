@@ -7,6 +7,7 @@ import {
   REPAIR_NOT_RUNNING,
   REPAIR_STOPPED,
   SMB_CONF_REPLACED,
+  TIME_MACHINE_MODULES,
   VERSION_CONFLICT,
   accessOf,
   fakeRepairEvents,
@@ -144,7 +145,7 @@ test.describe('SMB shares page (fake data)', () => {
     // Only shrinking access disconnects (smbconf.shrunk_shares).
     await expect(
       dialog.getByText(
-        'Removing or lowering access, or turning guest access off, disconnects open connections to that share (clients reconnect); adding access disconnects nobody.',
+        'Removing or lowering access, turning guest access off, or requiring encryption disconnects open connections to that share (clients reconnect); adding access disconnects nobody.',
       ),
     ).toBeVisible();
     await expect(
@@ -169,6 +170,9 @@ test.describe('SMB shares page (fake data)', () => {
             { user_id: 2, username: 'alice', level: 'write' },
             { user_id: 3, username: 'bob', level: 'read' },
           ],
+          encryption_required: false,
+          time_machine: false,
+          previous_versions: false,
         },
       },
     ]);
@@ -266,6 +270,68 @@ test.describe('SMB shares page (fake data)', () => {
     expect(fake.writes[0].body).toMatchObject({ name: 'e2e_public', guest_ok: true });
     await expect(page.getByText('Share "e2e_public" created')).toBeVisible();
     await expect(page.locator('main .alert-warning')).toHaveText(GUEST_WARNING);
+  });
+
+  test('encryption, Time Machine and Previous Versions are off by default, sent when chosen and shown on the card', async ({
+    authenticatedPage: page,
+  }) => {
+    const users = fakeUsers();
+    const fake = await fakeSmbApi(page, { users });
+    await page.goto('/shares');
+    await page.getByRole('button', { name: 'Add SMB share' }).click();
+    const dialog = page.getByRole('dialog', { name: 'Add SMB share' });
+    const encryption = dialog.getByLabel('Require encryption');
+    const timeMachine = dialog.getByLabel('Time Machine backups of Macs');
+    const versions = dialog.getByLabel('Previous Versions from snapshots');
+    for (const option of [encryption, timeMachine, versions]) await expect(option).not.toBeChecked();
+
+    // Guests' connections are never encrypted: a guest share cannot require encryption, and the
+    // other way round.
+    const guest = dialog.getByLabel('Guests can read this share without a password');
+    await guest.check();
+    await expect(encryption).toBeDisabled();
+    await guest.uncheck();
+    await encryption.check();
+    await expect(guest).toBeDisabled();
+
+    await timeMachine.check();
+    await versions.check();
+    await dialog.getByLabel(/^Name/).fill('backups');
+    await dialog.getByLabel('Folder', { exact: true }).fill('backups');
+    await pick(dialog, 'alice', 'Read & write');
+    await dialog.getByRole('button', { name: 'Create share' }).click();
+    await expect(dialog).toBeHidden();
+    expect(fake.writes[0].body).toMatchObject({
+      name: 'backups',
+      encryption_required: true,
+      time_machine: true,
+      previous_versions: true,
+    });
+    const card = shareCard(page, 'backups');
+    for (const badge of ['Encryption required', 'Time Machine', 'Previous Versions']) {
+      await expect(card.locator('.badge', { hasText: new RegExp(`^${badge}$`) })).toBeVisible();
+    }
+
+    // An edit sends only the option that changed.
+    await card.getByRole('button', { name: 'Edit' }).click();
+    const edit = page.getByRole('dialog', { name: 'Edit share backups' });
+    await expect(edit.getByLabel('Time Machine backups of Macs')).toBeChecked();
+    await edit.getByLabel('Time Machine backups of Macs').uncheck();
+    await edit.getByRole('button', { name: 'Save' }).click();
+    await expect(edit).toBeHidden();
+    expect(fake.writes[1]).toEqual({
+      method: 'PATCH',
+      path: '/shares/smb/backups',
+      body: { expected_version: 1, time_machine: false },
+    });
+    await expect(card.locator('.badge', { hasText: /^Time Machine$/ })).toHaveCount(0);
+
+    // The server's refusal, such as missing vfs modules of Samba, is shown in the dialog.
+    await card.getByRole('button', { name: 'Edit' }).click();
+    await edit.getByLabel('Time Machine backups of Macs').check();
+    fake.intercept = ({ method }) => (method === 'PATCH' ? { status: 400, json: { detail: TIME_MACHINE_MODULES } } : undefined);
+    await edit.getByRole('button', { name: 'Save' }).click();
+    await expect(edit.getByText(TIME_MACHINE_MODULES)).toBeVisible();
   });
 
   test('the edit dialog sends only the changed fields and the expected version', async ({

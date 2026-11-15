@@ -20,9 +20,9 @@ pytestmark = pytest.mark.skipif(shutil.which("testparm") is None, reason="testpa
 FOLDER = "/srv/unos-testparm"
 
 
-def share(name, *, guest_ok=False, readers=(), writers=(), comment="", browseable=True):
+def share(name, *, guest_ok=False, readers=(), writers=(), comment="", browseable=True, **options):
     return ShareRender(name=name, path=f"{FOLDER}/{name}", comment=comment, browseable=browseable,
-                       guest_ok=guest_ok, readers=tuple(readers), writers=tuple(writers))
+                       guest_ok=guest_ok, readers=tuple(readers), writers=tuple(writers), **options)
 
 
 def testparm(tmp_path, text: str) -> str:
@@ -106,3 +106,28 @@ def test_samba_takes_the_logging_lines(tmp_path):
     assert "max log size = 100" in lines
     assert "logging = syslog@2" in lines
     assert "timestamp logs = no" in lines, output
+
+
+# Every combination of the protocol options of a share (ADR-0377): encryption required, Time
+# Machine, and Previous Versions (rendered with the pool or volume whose snapshots it lists).
+OPTION_SETS = [
+    {"encryption_required": encryption, "time_machine": time_machine,
+     "snapshot_root": FOLDER if snapshots else None}
+    for encryption in (False, True) for time_machine in (False, True) for snapshots in (False, True)
+]
+
+
+@pytest.mark.parametrize("options", OPTION_SETS,
+                         ids=lambda o: "-".join(k for k, v in o.items() if v) or "none")
+def test_every_combination_of_the_protocol_options(tmp_path, options):
+    shares = [share("opts", readers=["alice"], writers=["bob"], **options), share("plain", readers=["bob"])]
+    output = testparm(tmp_path, smbconf.render_config(shares))
+    dump = {" ".join(line.split()).lower() for line in output.splitlines()}
+
+    assert sections(output) == ["global", "opts", "plain"]
+    # testparm prints a share's parameters that differ from [global]: encryption under its name of
+    # Samba 4.14 and later, server smb encrypt, of which smb encrypt is a synonym.
+    assert any(line.endswith("smb encrypt = required") for line in dump) == options["encryption_required"]
+    assert ("fruit:time machine = yes" in dump) == options["time_machine"]
+    assert ("shadow:snapdir = .snapshots" in dump) == bool(options["snapshot_root"])
+

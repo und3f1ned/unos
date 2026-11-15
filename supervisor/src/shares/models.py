@@ -52,6 +52,10 @@ class SmbShare(Base):
     access = relationship(
         "SmbShareAccess", back_populates="share", cascade="all, delete-orphan", lazy="selectin"
     )
+    # The share's protocol options (ADR-0377); no row: every option is off.
+    options = relationship(
+        "SmbShareOptions", back_populates="share", cascade="all, delete-orphan", lazy="selectin", uselist=False
+    )
 
 
 class SmbShareAccess(Base):
@@ -73,6 +77,23 @@ class SmbShareAccess(Base):
     created_at = Column(DateTime, nullable=False, server_default=func.now())
 
     share = relationship("SmbShare", back_populates="access")
+
+
+class SmbShareOptions(Base):
+    """The protocol options of one share (ADR-0377), each off by default. No row: every option is
+    off; a row exists only while one is on. Deleted with its share, in the same transaction."""
+
+    __tablename__ = "smb_share_options"
+
+    share_id = Column(Integer, ForeignKey("smb_shares.id", ondelete="CASCADE"), primary_key=True)
+    # The share's section requires SMB3 encryption: a client that cannot encrypt is refused there.
+    encryption_required = Column(Boolean, nullable=False, default=False, server_default="0")
+    # A Mac can use the share as a Time Machine backup disk (vfs_fruit).
+    time_machine = Column(Boolean, nullable=False, default=False, server_default="0")
+    # Windows' Previous Versions list the snapshots of the share's pool or volume (vfs_shadow_copy2).
+    previous_versions = Column(Boolean, nullable=False, default=False, server_default="0")
+
+    share = relationship("SmbShare", back_populates="options")
 
 
 class SmbAccount(Base):

@@ -140,12 +140,23 @@ export const en = {
 	// As the server words its warning about a guest share (ADR-0096).
 	'shares.form.guestWarning':
 		'Anyone on your network can read this share without a password, and its name is visible to anyone on your network. Guests can never write. While a guest share exists, connections to this server are not required to be signed. Windows 11 refuses guest access by default, and guest connections are neither signed nor encrypted.',
+	// The protocol options of a share (ADR-0377).
+	'shares.form.options': 'Protocol options',
+	'shares.form.option.encryption': 'Require encryption',
+	'shares.form.option.encryptionHint':
+		"Only clients that encrypt the connection (SMB 3) can open the share; older ones, such as SMB 2 clients, are refused. Guests' connections are never encrypted, so a guest share cannot require it.",
+	'shares.form.option.timeMachine': 'Time Machine backups of Macs',
+	'shares.form.option.timeMachineHint':
+		"Macs find the share in the Time Machine settings and back up to it; whoever backs up needs read & write access. Time Machine takes the free space of the pool. While a share offers Time Machine, every share loads Apple's SMB extensions.",
+	'shares.form.option.previousVersions': 'Previous Versions from snapshots',
+	'shares.form.option.previousVersionsHint':
+		"Windows lists the snapshots of the share's pool or volume, made on the Snapshots page or by a scheduled task, under Previous Versions of its files and folders.",
 	'shares.form.loadingUsers': 'Loading users...',
 	'shares.form.usersError': 'The users could not be loaded',
 	'shares.form.notServedHint': 'Fix the folder first: a share that is not served cannot be given access',
 	// Only removed or lowered access disconnects (ADR-0103).
 	'shares.form.accessChangeNote':
-		'Removing or lowering access, or turning guest access off, disconnects open connections to that share (clients reconnect); adding access disconnects nobody.',
+		'Removing or lowering access, turning guest access off, or requiring encryption disconnects open connections to that share (clients reconnect); adding access disconnects nobody.',
 	'shares.form.notSaved': 'Share was not saved',
 	'shares.form.notCreated': 'Share was not created',
 	'shares.form.save': 'Save',
@@ -176,6 +187,9 @@ export const en = {
 	'shares.card.notServed': 'Not served',
 	'shares.card.guest': 'Guest: read only',
 	'shares.card.hidden': 'Hidden',
+	'shares.card.encryption': 'Encryption required',
+	'shares.card.timeMachine': 'Time Machine',
+	'shares.card.previousVersions': 'Previous Versions',
 	'shares.card.noAccess': 'No access',
 	'shares.card.poolNotMounted': 'Pool not mounted',
 	'shares.card.permissions': 'Permissions need repair',
@@ -375,11 +389,21 @@ export const ru: Translation<typeof en> = {
 	'shares.form.guest': 'Гости могут читать эту общую папку без пароля',
 	'shares.form.guestWarning':
 		'Любой в вашей сети может читать эту общую папку без пароля, и её имя видно всем в вашей сети. Гости никогда не могут записывать. Пока существует гостевая общая папка, подпись подключений к этому серверу не требуется. Windows 11 по умолчанию отказывает в гостевом доступе, а гостевые подключения не подписываются и не шифруются.',
+	'shares.form.options': 'Параметры протокола',
+	'shares.form.option.encryption': 'Требовать шифрование',
+	'shares.form.option.encryptionHint':
+		'Открыть общую папку могут только клиенты, которые шифруют подключение (SMB 3); более старым, например клиентам SMB 2, отказывается. Гостевые подключения никогда не шифруются, поэтому гостевая общая папка не может требовать шифрования.',
+	'shares.form.option.timeMachine': 'Резервные копии Time Machine с Mac',
+	'shares.form.option.timeMachineHint':
+		'Mac находит общую папку в настройках Time Machine и сохраняет в неё резервные копии; тому, кто их делает, нужен доступ на чтение и запись. Time Machine занимает свободное место пула. Пока хотя бы одна общая папка предлагает Time Machine, все общие папки загружают расширения SMB от Apple.',
+	'shares.form.option.previousVersions': 'Предыдущие версии из снимков',
+	'shares.form.option.previousVersionsHint':
+		'Windows показывает снимки пула или тома общей папки, сделанные на странице «Снимки» или задачей по расписанию, в «Предыдущих версиях» её файлов и папок.',
 	'shares.form.loadingUsers': 'Загрузка пользователей...',
 	'shares.form.usersError': 'Не удалось загрузить пользователей',
 	'shares.form.notServedHint': 'Сначала исправьте папку: общей папке, которая не раздаётся, нельзя выдать доступ',
 	'shares.form.accessChangeNote':
-		'Если убрать или понизить доступ либо выключить гостевой доступ, открытые подключения к этой общей папке разрываются (клиенты подключатся снова); добавление доступа никого не отключает.',
+		'Если убрать или понизить доступ, выключить гостевой доступ или потребовать шифрование, открытые подключения к этой общей папке разрываются (клиенты подключатся снова); добавление доступа никого не отключает.',
 	'shares.form.notSaved': 'Общая папка не сохранена',
 	'shares.form.notCreated': 'Общая папка не создана',
 	'shares.form.save': 'Сохранить',
@@ -406,6 +430,9 @@ export const ru: Translation<typeof en> = {
 	'shares.card.notServed': 'Не раздаётся',
 	'shares.card.guest': 'Гости: только чтение',
 	'shares.card.hidden': 'Скрыта',
+	'shares.card.encryption': 'Шифрование обязательно',
+	'shares.card.timeMachine': 'Time Machine',
+	'shares.card.previousVersions': 'Предыдущие версии',
 	'shares.card.noAccess': 'Нет доступа',
 	'shares.card.poolNotMounted': 'Пул не смонтирован',
 	'shares.card.permissions': 'Нужно исправить права',

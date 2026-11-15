@@ -249,7 +249,7 @@ and this index, and `make check-fast` runs it.
 | [0158](0158-netbios-stays-until-discovery.md) | NetBIOS stays until a discovery slice adds WS-Discovery and Bonjour | superseded by [0275](0275-windows-finds-the-nas-through-wsdd2-macos-through-bonjour-and-netbios-is-off.md) | 2026-11-06 |
 | [0159](0159-passdb-stays-on-the-system-disk.md) | Samba's passdb stays on the system disk until its writes are measured | superseded by [0310](0310-a-failed-smb-sign-in-writes-nothing-to-passdb.md) | 2026-11-06 |
 | [0160](0160-no-file-manager-or-app-group-access-to-shares.md) | The File Manager and apps get no group access to share folders yet | superseded by [0273](0273-file-manager-entries-in-share-folders-get-2770-and-0660.md) | 2026-11-06 |
-| [0161](0161-no-per-share-protocol-options-yet.md) | Per-share protocol options wait for a later slice | accepted | 2026-11-06 |
+| [0161](0161-no-per-share-protocol-options-yet.md) | Per-share protocol options wait for a later slice | superseded by [0377](0377-a-share-can-require-encryption-serve-time-machine-and-list-snapshots-as-previous-versions.md) | 2026-11-06 |
 | [0162](0162-apparmor-profile-for-new-share-paths.md) | UNOS does not manage smbd's AppArmor profile while smbd runs unconfined | accepted | 2026-11-07 |
 | [0163](0163-nfs-unchanged-in-slice-2.md) | NFS exports stay unchanged in slice 2 | superseded by [0292](0292-nfs-exports-in-their-own-file-read-as-exportfs-reads-them.md) | 2026-11-06 |
 | [0164](0164-smb-and-audit-follow-ups-left-for-later.md) | Six SMB and audit follow-ups wait for later slices | accepted | 2026-11-06 |
@@ -281,6 +281,7 @@ and this index, and `make check-fast` runs it.
 | [0353](0353-smb-uids-handed-out-are-recorded-and-a-restored-account-keeps-one-only-under-its-name.md) | SMB uids handed out are recorded for good, and a restored account keeps a recorded uid only under the name it went to | accepted | 2026-11-12 |
 | [0362](0362-every-replaced-smb-conf-is-kept-in-a-dated-copy-and-the-newest-10-stay.md) | Every replaced smb.conf is kept in a copy named with its UTC time, and the newest 10 of each kind stay | accepted | 2026-11-12 |
 | [0368](0368-a-rename-moves-the-users-smb-account-to-the-new-name-keeping-its-uid.md) | An administrator renames a user, and the user's SMB account moves to the new name with its uid | accepted | 2026-11-12 |
+| [0377](0377-a-share-can-require-encryption-serve-time-machine-and-list-snapshots-as-previous-versions.md) | A share can require encryption, serve Time Machine and list snapshots as Previous Versions | accepted | 2026-11-15 |
 
 ## Apps
 

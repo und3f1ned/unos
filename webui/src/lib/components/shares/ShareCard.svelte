@@ -60,6 +60,15 @@
 				{#if !share.browseable}
 					<Badge variant="neutral">{$t('shares.card.hidden')}</Badge>
 				{/if}
+				{#if share.encryption_required}
+					<Badge variant="info">{$t('shares.card.encryption')}</Badge>
+				{/if}
+				{#if share.time_machine}
+					<Badge variant="info">{$t('shares.card.timeMachine')}</Badge>
+				{/if}
+				{#if share.previous_versions}
+					<Badge variant="info">{$t('shares.card.previousVersions')}</Badge>
+				{/if}
 				{#if share.served && !share.available}
 					<Badge variant="error">{$t('shares.card.noAccess')}</Badge>
 				{/if}

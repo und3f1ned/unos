@@ -80,6 +80,20 @@ _TOLERATED_UNKNOWN_LINE = re.compile(
     + r')"\Z'
 )
 
+# The check of the vfs modules of the share options (ADR-0377): the arguments are module names,
+# and it prints those that smbd's modules folder (MODULESDIR of smbd -b) lacks; it exits 3 when
+# smbd names no such folder. Debian's samba-vfs-modules has them, which samba only recommends.
+VFS_CHECK = (
+    'dir=$(smbd -b 2> /dev/null | sed -n "s/^[[:space:]]*MODULESDIR:[[:space:]]*//p" | head -n 1)\n'
+    '[ -n "$dir" ] || { echo "smbd -b names no modules folder" >&2; exit 3; }\n'
+    'for m do [ -f "$dir/vfs/$m.so" ] || printf "%s\\n" "$m"; done'
+)
+VFS_PACKAGE = "samba-vfs-modules"
+# smbd registers the _adisk._tcp service of its Time Machine shares with avahi-daemon when it
+# starts and when avahi-daemon restarts, never at a reload (ADR-0377). --no-block: systemd
+# restarts it after the answer, so no stop that hangs holds the apply.
+AVAHI_RESTART = ["systemctl", "--no-block", "restart", "avahi-daemon"]
+
 # Serializes the renames of smb.conf.
 _lock = threading.Lock()
 
@@ -436,6 +450,37 @@ def _reload_samba() -> tuple[bool, str | None]:
         errors.append(f"{cmd[0]}: {detail}")
     logger.error("Samba did not reload smb.conf; the changes apply when smbd next reloads or restarts")
     return False, "; ".join(errors)
+
+
+def missing_vfs_modules(names: list[str] | tuple[str, ...]) -> list[str]:
+    """The vfs modules of ``names`` that Samba on the host lacks (VFS_CHECK), in their order.
+
+    Raises SambaConfigError when the check cannot run or answer.
+    """
+    try:
+        result = host.run_on_host(["sh", "-c", VFS_CHECK, "sh", *names], timeout=30)
+    except Exception as exc:
+        raise SambaConfigError(f"Samba's vfs modules could not be checked: {exc}") from exc
+    if not result.ok:
+        detail = (result.stderr or result.stdout).strip() or f"exit status {result.returncode}"
+        raise SambaConfigError(f"Samba's vfs modules could not be checked: {detail}")
+    missing = set(result.stdout.split())
+    return [name for name in names if name in missing]
+
+
+def _restart_avahi() -> str | None:
+    """Restart avahi-daemon, so that smbd registers its Time Machine shares again (ADR-0377).
+    None, or why it failed. Never raises."""
+    try:
+        result = host.run_on_host(AVAHI_RESTART, timeout=30)
+    except Exception as exc:
+        logger.warning("Restarting avahi-daemon failed: %s", exc)
+        return str(exc)
+    if not result.ok:
+        detail = (result.stderr or result.stdout).strip() or f"exit status {result.returncode}"
+        logger.warning("Restarting avahi-daemon failed: %s", detail)
+        return detail
+    return None
 
 
 def _close_share(name: object) -> str | None:

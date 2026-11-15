@@ -66,6 +66,11 @@ FIXED = """   veto files = /.snapshots/.unos-trash/
    force directory mode = 2770
 """
 
+# The lines of a share's protocol options with every option off (ADR-0377), before the fixed lines.
+OPTIONS_OFF = """   smb encrypt = default
+   vfs objects =
+"""
+
 PATH = "/mnt/pools/data/shared"
 
 
@@ -75,7 +80,7 @@ def share(name="shared", path=PATH, comment="", browseable=True, guest_ok=False,
 
 
 def section(name, body):
-    return f"[{name}]\n{body}{FIXED}"
+    return f"[{name}]\n{body}{OPTIONS_OFF}{FIXED}"
 
 
 # --- [global] (ADR-0281) -------------------------------------------------------------------
@@ -241,6 +246,8 @@ class TestShareSections:
    valid users = root
    write list =
    available = no
+   smb encrypt = default
+   vfs objects =
    veto files = /.snapshots/.unos-trash/
    force group = unos-smb
    create mask = 0660
@@ -256,6 +263,8 @@ class TestShareSections:
    valid users = alice, bob
    write list = alice
    available = yes
+   smb encrypt = default
+   vfs objects =
    veto files = /.snapshots/.unos-trash/
    force group = unos-smb
    create mask = 0660

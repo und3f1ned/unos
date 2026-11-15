@@ -615,6 +615,10 @@ const USERS = [
 const SHARES = [
   fakeShare('family_photos_and_videos', {
     comment: 'Every photo and video of the family since 2019, sorted by year',
+    // The badges of every protocol option (ADR-0377) wrap on a phone.
+    encryption_required: true,
+    time_machine: true,
+    previous_versions: true,
     access: accessOf(USERS, [
       { user_id: 2, username: 'alice', level: 'write' },
       { user_id: 3, username: 'bob_the_family_photographer', level: 'read' },
