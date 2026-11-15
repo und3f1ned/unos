@@ -31,9 +31,16 @@ from .test_storage import SCRUB_OUTPUT
 MOUNTPOINT = "/mnt/pools/data"
 LOG = "/run/unos-balance-data.log"
 URL = "/api/v1/storage/pools/data/balance"
+# The unit outlives the supervisor's container. systemd stops it at a shutdown of the host, before it
+# unmounts the pool (RequiresMountsFor): its SIGTERM would cancel the balance and delete it from the
+# disk, so ExecStop pauses it first, and the kernel resumes it at the next mount, as after a power
+# cut. Every command of the unit opens its output file, ExecStop too: btrfs appends to it, emptied
+# before it starts (ExecStartPre).
 UNIT = [
     "systemd-run", "--unit=unos-balance-data", "--description=UNOS: balance the pool data", "--collect", "--quiet",
-    "--service-type=exec", f"--property=StandardOutput=truncate:{LOG}", "--property=StandardError=inherit", "--",
+    "--service-type=exec", f"--property=RequiresMountsFor={MOUNTPOINT}", f"--property=ExecStartPre=truncate --size=0 {LOG}",
+    f"--property=StandardOutput=append:{LOG}", "--property=StandardError=inherit",
+    f"--property=ExecStop=-btrfs balance pause {MOUNTPOINT}", "--property=TimeoutStopSec=10min", "--",
 ]
 # What btrfs-progs prints, with exit status 2, for a pause or a cancel when the kernel has no
 # balance to stop (ENOTCONN, cmds/balance.c): its words differ between the two.
@@ -60,7 +67,7 @@ class FakeKernel:
     def __init__(self, fake_host) -> None:
         self.host = fake_host
         self.state: str | None = None  # None, "running" or "paused"
-        self.request: str | None = None  # "pause" or "cancel": waiting for the chunk being moved
+        self.requests: set[str] = set()  # "pause", "cancel": waiting for the chunk being moved
         self.completed = 0
         self.expected = 12
         self.considered = 0
@@ -95,27 +102,35 @@ class FakeKernel:
                 return result(2, err=self.status_fails)
             if self.state is None or self.unseen:
                 return result(out=f"No balance found on '{MOUNTPOINT}'\n")
-            how = f"is {self.state}" + (f", {self.request} requested" if self.request else "")
+            # btrfs-progs names a cancel requested before a pause (cmds/balance.c).
+            request = next((r for r in ("cancel", "pause") if r in self.requests), None)
+            how = f"is {self.state}" + (f", {request} requested" if request else "")
             left = 100 * (1 - self.completed / self.expected) if self.expected else float("nan")
             return result(1, out=f"Balance on '{MOUNTPOINT}' {how}\n{self.completed} out of about {self.expected} "
                                  f"chunks balanced ({self.considered} considered), {left:3.0f}% left\n")
         if cmd[2] in ("pause", "cancel"):
             if self.state is None or (cmd[2] == "pause" and self.state == "paused"):
                 return result(2, err=NOT_RUNNING[cmd[2]].format(MOUNTPOINT))
+            self.requests.add(cmd[2])
             if self.stops_wait and self.state == "running":
-                self.request = cmd[2]
                 raise subprocess.TimeoutExpired(cmd, kwargs["timeout"])
-            self.stop(cmd[2])
+            self.chunk_moved()
             return result()
         raise AssertionError(f"unexpected container command: {cmd}")
 
-    def stop(self, how: str) -> None:
-        """The kernel pauses or cancels the balance; the unit's btrfs ends with what it prints."""
-        if self.state == "running":
-            self.host.files[LOG] = f"balance {'paused' if how == 'pause' else 'canceled'} by user\n"
+    def chunk_moved(self) -> None:
+        """The kernel has moved the chunk and acts on the requests. A pause wins over a cancel
+        requested meanwhile (btrfs_balance(), Linux 6.1.150 and later), and the cancel still
+        returns 0; the unit's btrfs ends with a line for each request. A paused balance is
+        cancelled at once."""
+        if self.state == "running" and self.requests:
+            self.host.files[LOG] = "".join(f"balance {done} by user\n" for request, done in
+                                           (("pause", "paused"), ("cancel", "canceled")) if request in self.requests)
             self.unit = None
-        self.request = None
-        self.state = "paused" if how == "pause" else None
+            self.state = "paused" if "pause" in self.requests else None
+        elif self.state == "paused" and "cancel" in self.requests:
+            self.state = None
+        self.requests = set()
 
     def finish(self, relocated: int = 3, considered: int = 12) -> None:
         self.state, self.unit = None, None
@@ -133,7 +148,7 @@ class FakeKernel:
         if self.unit is not None:
             return host.HostResult(1, "", "Failed to start transient service unit: Unit unos-balance-data.service "
                                           "was already loaded or has a fragment file.\n")
-        self.host.files[LOG] = ""  # StandardOutput=truncate:
+        self.host.files[LOG] = ""  # ExecStartPre=truncate
         if self.refuse_start:
             self.host.files[LOG] = self.refuse_start
         elif self.ends_at_once:
@@ -313,7 +328,7 @@ class TestStatus:
         ("paused", None, answer(status="paused", completed=2, expected=12, considered=5)),
     ])
     def test_the_status_is_what_btrfs_reports(self, kernel, state, request_, expected):
-        kernel.state, kernel.request = state, request_
+        kernel.state, kernel.requests = state, {request_} - {None}
         kernel.completed, kernel.considered = 2, 5
         with admin_client() as client:
             r = client.get(URL)
@@ -330,6 +345,19 @@ class TestStatus:
          answer(result="failed", error="ERROR: error during balancing '/mnt/pools/data': No space left on device")),
         # Paused, and no longer: cancelled, or resumed by the kernel when the pool was mounted again.
         ("balance paused by user\n", answer()),
+        # A pause wins over a cancel requested meanwhile: the balance was paused.
+        ("balance paused by user\nbalance canceled by user\n", answer()),
+        # When btrfs ended by itself, systemd still runs the unit's ExecStop, whose pause finds nothing
+        # to pause.
+        ("Done, had to relocate 3 out of 12 chunks\nERROR: balance pause on '/mnt/pools/data' failed: Not running\n",
+         answer(result="finished", completed=3, considered=12)),
+        ("balance canceled by user\nERROR: balance pause on '/mnt/pools/data' failed: Not running\n",
+         answer(result="cancelled")),
+        ("ERROR: error during balancing '/mnt/pools/data': No space left on device\n"
+         "There may be more info in syslog - try dmesg | tail\n"
+         "ERROR: balance pause on '/mnt/pools/data' failed: Not running\n",
+         answer(result="failed", error="ERROR: error during balancing '/mnt/pools/data': No space left on device")),
+        ("ERROR: balance pause on '/mnt/pools/data' failed: Not running\n", answer()),
         # The unit's btrfs was killed: it printed nothing.
         ("", answer()),
         # No balance since the host started (/run is a tmpfs).
@@ -411,7 +439,7 @@ class TestPauseResumeCancel:
             r = getattr(client, method)(url)
 
         assert (r.status_code, r.json()["status"]) == (200, status)
-        assert [cmd[2] for cmd in kernel.container] == [action, "status"]
+        assert [cmd[2] for cmd in kernel.container] == ["status", action, "status"]
         assert [c for c in kernel.container if c[2] == action][0] == ["btrfs", "balance", action, MOUNTPOINT]
         assert [a for a, *_ in audited()] == [f"balance_{'paused' if action == 'pause' else 'cancelled'}"]
         assert balances.current() == [answer(status=status, completed=0, expected=12, considered=0)]
@@ -432,8 +460,90 @@ class TestPauseResumeCancel:
             r = client.post(f"{URL}/pause")
 
         assert (r.status_code, r.json()) == (200, answer(status="paused", completed=2, expected=12, considered=4))
-        assert [cmd[2] for cmd in kernel.container] == ["pause", "status"]
+        assert [cmd[2] for cmd in kernel.container] == ["status", "pause", "status"]
         assert audited() == []
+
+    def test_a_cancel_while_a_pause_waits_for_the_chunk_being_moved_is_refused(self, kernel):
+        """The kernel pauses a balance with a pause and a cancel requested, and the cancel returns
+        0 all the same: it would be audited as cancelled while the balance stays on the disk."""
+        kernel.state, kernel.stops_wait, kernel.completed = "running", True, 4
+        with admin_client() as client:
+            pausing = client.post(f"{URL}/pause")
+            refused = client.delete(URL)
+            kernel.chunk_moved()
+            paused = client.get(URL)
+            cancelled = client.delete(URL)
+
+        assert (pausing.status_code, pausing.json()["status"]) == (200, "pausing")
+        assert (refused.status_code, refused.json()) == (409, {
+            "detail": "A pause of the balance of pool data waits for the chunk being moved: cancel the balance once "
+                      "it is paused"})
+        assert paused.json()["status"] == "paused"
+        assert (cancelled.status_code, cancelled.json()) == (200, answer(result="cancelled"))
+        assert [cmd[2] for cmd in kernel.container if cmd[2] != "status"] == ["pause", "cancel"]
+        assert [a for a, *_ in audited()] == ["balance_paused", "balance_cancelled"]
+
+    def test_a_pause_while_a_cancel_waits_for_the_chunk_being_moved_is_refused(self, kernel):
+        """The pause would win, and the balance cancelled in the audit log would stay on the disk."""
+        kernel.state, kernel.stops_wait = "running", True
+        with admin_client() as client:
+            cancelling = client.delete(URL)
+            refused = client.post(f"{URL}/pause")
+            kernel.chunk_moved()
+            ended = client.get(URL)
+
+        assert (cancelling.status_code, cancelling.json()["status"]) == (200, "cancelling")
+        assert (refused.status_code, refused.json()) == (409, {
+            "detail": "A cancel of the balance of pool data waits for the chunk being moved"})
+        assert ended.json() == answer(result="cancelled")
+        assert [cmd[2] for cmd in kernel.container if cmd[2] != "status"] == ["cancel"]
+        assert [a for a, *_ in audited()] == ["balance_cancelled"]
+
+    @pytest.mark.parametrize("action, method, status", [
+        ("pause", "post", "pausing"), ("cancel", "delete", "cancelling"),
+    ])
+    def test_a_second_pause_or_cancel_while_the_first_waits_answers_the_status_and_writes_nothing(
+            self, kernel, action, method, status):
+        kernel.state, kernel.requests = "running", {action}
+        url = f"{URL}/pause" if action == "pause" else URL
+        with admin_client() as client:
+            r = getattr(client, method)(url)
+
+        assert (r.status_code, r.json()["status"]) == (200, status)
+        assert [cmd[2] for cmd in kernel.container] == ["status"]
+        assert audited() == []
+
+    def test_a_cancel_that_a_pause_from_elsewhere_beats_answers_paused_and_writes_nothing(self, kernel, monkeypatch):
+        """A pause by hand on the host between the status UNOS read and its cancel wins."""
+        kernel.state = "running"
+        real = kernel.run_in_container
+
+        def paused_by_hand_meanwhile(cmd, **kwargs):
+            if cmd[2] == "cancel":
+                kernel.requests.add("pause")
+            return real(cmd, **kwargs)
+
+        monkeypatch.setattr(host, "run_in_container", paused_by_hand_meanwhile)
+        with admin_client() as client:
+            r = client.delete(URL)
+
+        assert (r.status_code, r.json()["status"]) == (200, "paused")
+        assert audited() == []
+
+    def test_a_cancel_of_a_paused_balance_on_a_read_only_pool_is_refused(self, kernel):
+        """The kernel keeps a paused balance of a read-only filesystem for its next read-write
+        mount: it refuses the cancel (EROFS)."""
+        kernel.state = "paused"
+        kernel.host.mounts.clear()
+        kernel.host.mount_pool("data", vfs_options="ro,noatime", fs_options="ro")
+        with admin_client() as client:
+            r = client.delete(URL)
+
+        assert (r.status_code, r.json()) == (409, {
+            "detail": "Pool data is mounted read-only: its paused balance can be cancelled once it is mounted "
+                      "read-write"})
+        assert [cmd[2] for cmd in kernel.container] == ["status"]
+        assert kernel.state == "paused" and audited() == []
 
     def test_a_resume_needs_a_paused_balance(self, kernel):
         with admin_client() as client:
@@ -518,7 +628,7 @@ class TestScrubAndBalance:
     @pytest.mark.parametrize("state", ["running", "pausing", "cancelling"])
     def test_a_scrub_is_refused_while_a_balance_runs(self, kernel, state):
         kernel.state = "running"
-        kernel.request = {"running": None, "pausing": "pause", "cancelling": "cancel"}[state]
+        kernel.requests = {"running": set(), "pausing": {"pause"}, "cancelling": {"cancel"}}[state]
         with admin_client() as client:
             r = client.post("/api/v1/storage/pools/data/scrub")
 

@@ -84,6 +84,7 @@ import stat
 import subprocess
 import sys
 import textwrap
+import time
 import types
 from collections.abc import Callable
 from datetime import datetime, timezone
@@ -401,12 +402,14 @@ class FakeNas:
         self.scrubs = 0
         self.pool_used = 1  # bytes of data in the pool data
         self.pool_free = 600 * scenario.GIB  # and of free space, as on the dev device's disk
-        # The pool's balance (ADR-0377): None, or {"status": "running" or "paused", "completed": n} of
-        # about BALANCE_EXPECTED chunks, one more balanced at each request while it runs; how the
-        # last one ended; the balances started.
+        # The pool's balance (ADR-0377): None, or {"status": "running", "pausing" or "paused",
+        # "completed": n} of about BALANCE_EXPECTED chunks, one more balanced at each request while
+        # it runs; how the last one ended; the balances started; the seconds a pause waits for the
+        # chunk being moved.
         self.balance: dict | None = None
         self.balance_result: str | None = None
         self.balances = 0
+        self.pause_takes = 0.0
         self.tasks: dict[str, dict] = {}
         self.runs: list[dict] = []
         self.task_keys: dict[str, str] = {}  # the backup tasks' passphrases (scheduled_backup_keys.json)
@@ -903,6 +906,8 @@ class FakeNas:
                 raise Refused(409, f"Pool {name} is not mounted at {folder}")
             raise Refused(404, f"Pool {name} not found")
         b = self.balance
+        if b is not None and b["status"] == "pausing" and time.monotonic() >= b["paused_at"]:
+            b["status"] = "paused"  # the chunk was moved
         if method == "GET":
             answer = self.balance_answer()
             if b is not None and b["status"] == "running":  # each request is a moment later
@@ -927,7 +932,9 @@ class FakeNas:
             return {**answer, "status": "idle"} if "balance-start-answers-idle" in self.bugs else answer
         if method == "POST" and rest == ["pause"]:
             if b is not None and b["status"] == "running" and "pause-keeps-running" not in self.bugs:
-                b["status"] = "paused"
+                b["status"], b["paused_at"] = "pausing", time.monotonic() + self.pause_takes
+                if not self.pause_takes:
+                    b["status"] = "paused"
             return self.balance_answer()
         if method == "POST" and rest == ["resume"]:
             if b is None or b["status"] != "paused":
@@ -936,6 +943,9 @@ class FakeNas:
             self.balance = {"status": "running", "completed": 0, "unit": "resume-outside-unit" not in self.bugs}
             return self.balance_answer()
         if method == "DELETE" and rest == []:
+            if b is not None and b["status"] == "pausing":
+                raise Refused(409, "A pause of the balance of pool data waits for the chunk being moved: cancel the "
+                                   "balance once it is paused")
             if b is not None and not (b["status"] == "running" and "cancel-keeps-balancing" in self.bugs):
                 self.balance, self.balance_result = None, "cancelled"
             return self.balance_answer()
@@ -2540,6 +2550,21 @@ def test_the_balance_check_starts_pauses_resumes_and_cancels_a_balance_with_a_lo
         assert words in output, (words, output)
     assert nas.balances == 1 and nas.balance is None and nas.balance_result == "cancelled"
     assert not nas.ballast_kept()
+
+
+def test_the_balance_check_s_clean_up_cancels_a_balance_whose_pause_outlasts_its_step(nas, monkeypatch):
+    """A pause waits for the chunk being moved, and the supervisor refuses a cancel meanwhile (409),
+    since the kernel would pause the balance all the same: the clean-up waits for the pause, then
+    cancels the paused balance, and the device is as it was."""
+    monkeypatch.setattr(scenario, "BALANCE_WAIT", 0.5)
+    nas.pause_takes = 0.75
+    before = nas.snapshot()
+    status, output = run_check("balance", nas)
+    assert status == 1, output
+    failed = [line for line in step_lines(output) if line.startswith("FAIL  ")]
+    assert len(failed) == 1 and "Pause Balance pauses it" in failed[0] and "the balance is pausing" in failed[0], output
+    assert nas.balance is None and nas.balance_result == "cancelled", output
+    assert nas.snapshot() == before, output
 
 
 @pytest.mark.parametrize("found, why", [

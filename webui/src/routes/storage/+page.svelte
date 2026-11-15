@@ -1248,22 +1248,30 @@
 										{/if}
 										{#if balanceStatus?.status === 'running' || balanceStatus?.status === 'paused'}
 											{@const paused = balanceStatus.status === 'paused'}
+											<!-- A resume is refused on a read-only pool and beside a scrub that runs (ADR-0377). -->
 											<Button
 												variant="secondary"
 												size="sm"
 												icon={paused ? Play : Pause}
-												disabled={balanceBusy[pool.name] || (paused && pool.read_only)}
+												disabled={balanceBusy[pool.name] ||
+													(paused && (pool.read_only || scrubStatus?.status === 'running'))}
 												on:click={() => handleBalanceAction(pool.name, paused ? 'resume' : 'pause')}
 											>
 												{$t(paused ? 'storage.pool.resumeBalance' : 'storage.pool.pauseBalance')}
 											</Button>
 										{/if}
 										{#if balanceStatus && balanceStatus.status !== 'idle'}
+											<!-- A cancel waits for a pause that waits for its chunk, which the kernel would
+											     make all the same, and the kernel keeps a paused balance of a read-only
+											     pool for its next read-write mount (ADR-0377). -->
 											<Button
 												variant="warning"
 												size="sm"
 												icon={XCircle}
-												disabled={balanceBusy[pool.name] || balanceStatus.status === 'cancelling'}
+												disabled={balanceBusy[pool.name] ||
+													balanceStatus.status === 'cancelling' ||
+													balanceStatus.status === 'pausing' ||
+													(balanceStatus.status === 'paused' && pool.read_only)}
 												on:click={() => handleBalanceAction(pool.name, 'cancel')}
 											>
 												{$t('storage.pool.cancelBalance')}

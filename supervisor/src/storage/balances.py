@@ -3,18 +3,22 @@
 A balance rewrites a pool's chunks: by default the data and metadata chunks less than 20% full
 (``btrfs balance start -dusage=20 -musage=20``), which frees the space of partly empty chunks for
 new ones, or every chunk (``--full-balance``), hours on a hard disk. The kernel runs it in the
-process that asked for it, and cancels it when that process gets a fatal signal; a restart of the
-supervisor's container kills every process in it. So ``btrfs balance start`` and ``resume`` run on
-the host, in a transient systemd unit of their own, unos-balance-<pool> (``systemd-run``, which
-returns once btrfs runs), with their output in /run/unos-balance-<pool>.log (RAM): what btrfs
-printed at the end tells how the balance ended, also after a restart of the supervisor. Its status,
-its pause and its cancel are btrfs commands in the container (host.run_in_container, ADR-0290): a
-pause or a cancel waits for the chunk being moved, which the request waits STOP_WAIT seconds for;
-the status then says pausing or cancelling.
+process that asked for it, and cancels it, deleting it from the disk, when that process gets a
+fatal signal; a restart of the supervisor's container kills every process in it. So ``btrfs balance
+start`` and ``resume`` run on the host, in a transient systemd unit of their own,
+unos-balance-<pool> (``systemd-run``, which returns once btrfs runs), with their output in
+/run/unos-balance-<pool>.log (RAM): what btrfs printed at the end tells how the balance ended, also
+after a restart of the supervisor. A shutdown of the host stops the unit, whose ExecStop pauses the
+balance before systemd's SIGTERM could cancel it: the kernel resumes it at the next mount. Its
+status, its pause and its cancel are btrfs commands in the container (host.run_in_container,
+ADR-0290): a pause or a cancel waits for the chunk being moved, which the request waits STOP_WAIT
+seconds for; the status then says pausing or cancelling.
 
 One balance per pool, and none beside a scrub of it: a start or a resume is refused while the pool
 is not mounted or is read-only, while a scrub of it runs, and while a balance of it runs or (for a
-start) is paused; pools.scrub_start refuses a scrub while a balance runs.
+start) is paused; pools.scrub_start refuses a scrub while a balance runs. One pause or cancel at a
+time: the kernel pauses a balance with both requested (Linux 6.1.150 and later), so a cancel is
+refused while a pause waits, and a pause while a cancel waits.
 
 The page follows a balance that runs over the events socket, as it follows a scrub (ADR-0367):
 each request of the balance API notes what it found (``note``), and while an administrator's events
@@ -46,6 +50,13 @@ LOG = "/run/unos-balance-{}.log"
 STOP_WAIT = 10
 # systemd-run returns once btrfs runs in its unit.
 SYSTEMD_RUN_TIMEOUT = 60
+# How long a stop of the unit, at a shutdown of the host, waits for its pause of the balance: the
+# chunk being moved, which can take minutes on a hard disk.
+UNIT_STOP_TIMEOUT = "10min"
+# What the unit's ExecStop prints when btrfs ended by itself: there is nothing to pause.
+NOTHING_TO_PAUSE = "ERROR: balance pause on '{}' failed: Not running"
+# The status while a pause or a cancel waits for the chunk being moved, by the request.
+WAITING = {"pause": "pausing", "cancel": "cancelling"}
 READ_INTERVAL_SECONDS = 2.0
 # The longest error of btrfs that a status keeps.
 ERROR_LENGTH = 500
@@ -65,14 +76,20 @@ def failure(exc: Exception, pool: str) -> str:
     return sanitize_error_message(exc)
 
 
-def _mounted(pool: str, *, write: bool) -> str:
-    """The mountpoint of ``pool``, where the host's mount table has its btrfs filesystem; no btrfs
-    command runs otherwise (as pools.scrub_start, ADR-0311). With ``write``, also refused while it
-    is mounted read-only, on purpose or by btrfs after an error."""
+def _mounts(pool: str) -> tuple[str, list]:
+    """The mountpoint of ``pool`` and its mounts in the host's mount table, which has its btrfs
+    filesystem there; no btrfs command runs otherwise (as pools.scrub_start, ADR-0311)."""
     path = pools.pool_mountpoint(pool)
     here = [m for m in disks.host_mounts() if m.target == path and m.fstype == "btrfs"]
     if not here:
         raise pools.PoolConflictError(f"Pool {pool} is not mounted at {path}")
+    return path, here
+
+
+def _mounted(pool: str, *, write: bool) -> str:
+    """The mountpoint of ``pool`` (``_mounts``). With ``write``, also refused while it is mounted
+    read-only, on purpose or by btrfs after an error."""
+    path, here = _mounts(pool)
     if write and any(m.read_only for m in here):
         message = f"Pool {pool} is mounted read-only: a balance cannot rewrite its chunks"
         if any(m.forced_read_only for m in here):
@@ -84,7 +101,9 @@ def _mounted(pool: str, *, write: bool) -> str:
 def _ended(pool: str) -> dict[str, Any]:
     """How the last balance that UNOS ran in the pool's unit ended, from its output: {} when the
     output is gone (a reboot), empty (btrfs was killed) or says it was paused (since then cancelled,
-    or resumed by the kernel when the pool was mounted again)."""
+    or resumed by the kernel when the pool was mounted again). btrfs prints a line for each request
+    that stopped it, and a pause wins over a cancel requested meanwhile; the unit's ExecStop, which
+    systemd runs also after btrfs ended by itself, adds that it found nothing to pause."""
     try:
         text = host.read_host_file(LOG.format(pool))
     except host.HostCommandError:
@@ -95,9 +114,12 @@ def _ended(pool: str) -> dict[str, Any]:
     done = re.search(r"Done, had to relocate (\d+) out of (\d+) chunks", text)
     if done:
         return {"result": "finished", "completed": int(done.group(1)), "considered": int(done.group(2))}
+    if "balance paused by user" in text:
+        return {}
     if "balance canceled by user" in text:
         return {"result": "cancelled"}
-    errors = [line.strip() for line in text.splitlines() if line.startswith("ERROR:")]
+    stop = NOTHING_TO_PAUSE.format(pools.pool_mountpoint(pool))
+    errors = [line.strip() for line in text.splitlines() if line.startswith("ERROR:") and line.strip() != stop]
     if errors:
         return {"result": "failed", "error": "; ".join(errors)[:ERROR_LENGTH]}
     return {}
@@ -127,14 +149,17 @@ def _estimate(found: BalanceStatus) -> BalanceStatus:
         return found.model_copy(update={"seconds_left": math.ceil(left * (now - since[0]) / balanced)})
 
 
-def _status(pool: str, path: str) -> BalanceStatus:
-    progress = pools.balance_progress(path)
+def _found(pool: str, progress: pools.BalanceProgress) -> BalanceStatus:
     if progress.status == "idle":
         return _estimate(BalanceStatus(pool=pool, status="idle", **_ended(pool)))
     return _estimate(BalanceStatus(
         pool=pool, status=progress.status, completed=progress.completed, expected=progress.expected,
         considered=progress.considered,
     ))
+
+
+def _status(pool: str, path: str) -> BalanceStatus:
+    return _found(pool, pools.balance_progress(path))
 
 
 def status(pool: str) -> BalanceStatus:
@@ -158,6 +183,7 @@ def _run_in_unit(pool: str, path: str, btrfs: list[str], action: str) -> Balance
             raise pools.PoolConflictError(f"A balance of pool {pool} is paused: resume or cancel it")
         if action == "resume" and progress != "paused":
             raise pools.PoolConflictError(f"No balance of pool {pool} is paused")
+        log = LOG.format(pool)
         cmd = [
             "systemd-run",
             f"--unit={UNIT.format(pool)}",
@@ -165,10 +191,23 @@ def _run_in_unit(pool: str, path: str, btrfs: list[str], action: str) -> Balance
             # Unloaded once btrfs ended, also after a failure: the next balance takes the name.
             "--collect",
             "--quiet",
-            # systemd-run returns once btrfs runs, after systemd truncated the output file.
+            # systemd-run returns once btrfs runs, after ExecStartPre emptied the output file.
             "--service-type=exec",
-            f"--property=StandardOutput=truncate:{LOG.format(pool)}",
+            # A shutdown of the host stops the unit before it unmounts the pool. Its SIGTERM would
+            # be fatal to btrfs, and the kernel cancels the balance of a process that gets a fatal
+            # signal and deletes it from the disk: ExecStop pauses it first, and the kernel resumes
+            # it when the pool is mounted again, as after a power cut. systemd runs ExecStop also
+            # after btrfs ended by itself, when it finds nothing to pause ("-": not a failure).
+            f"--property=RequiresMountsFor={path}",
+            # Every command of the unit opens the output file, ExecStop too: btrfs appends to it,
+            # emptied before it starts.
+            f"--property=ExecStartPre=truncate --size=0 {log}",
+            f"--property=StandardOutput=append:{log}",
             "--property=StandardError=inherit",
+            # The mountpoint is the pools' base and a pool name (letters, digits, - and _): systemd
+            # splits the line at its spaces.
+            f"--property=ExecStop=-btrfs balance pause {path}",
+            f"--property=TimeoutStopSec={UNIT_STOP_TIMEOUT}",
             "--",
             *btrfs,
         ]
@@ -210,24 +249,49 @@ def resume(pool: str) -> BalanceStatus:
     return _run_in_unit(pool, path, ["btrfs", "balance", "resume", path], "resume")
 
 
+# Held while a pause or a cancel reads the status and asks btrfs: the one does not start between the
+# other's read and its request.
+_stop_lock = threading.Lock()
+
+
 def _stop(pool: str, action: str) -> tuple[BalanceStatus, bool]:
-    path = _mounted(pool, write=False)
-    try:
-        result = host.run_in_container(["btrfs", "balance", action, path], timeout=STOP_WAIT)
-    except subprocess.TimeoutExpired:
-        acted = True  # the kernel has the request and stops after the chunk being moved
-    else:
-        if result.returncode == 0:
-            acted = True
-        elif result.returncode == 2 and re.search(r"failed: Not (running|in progress)$", result.stderr or "", re.M):
-            # No balance to stop (ENOTCONN, btrfs-progs cmds/balance.c): a pause says "Not running",
-            # also of a paused one, a cancel "Not in progress". The answer is the status.
-            acted = False
-        else:
-            raise RuntimeError(
-                f"Balance {action} failed: {(result.stderr or '').strip() or f'exit status {result.returncode}'}"
+    path, here = _mounts(pool)
+    with _stop_lock:
+        progress = pools.balance_progress(path)
+        if progress.status == WAITING[action]:
+            # Asked already: the kernel acts after the chunk being moved.
+            return _found(pool, progress), False
+        if action == "cancel" and progress.status == "pausing":
+            raise pools.PoolConflictError(
+                f"A pause of the balance of pool {pool} waits for the chunk being moved: cancel the balance once "
+                "it is paused"
             )
-    found = _status(pool, path)
+        if action == "pause" and progress.status == "cancelling":
+            raise pools.PoolConflictError(f"A cancel of the balance of pool {pool} waits for the chunk being moved")
+        if action == "cancel" and progress.status == "paused" and any(m.read_only for m in here):
+            # The kernel keeps it for the next read-write mount, which resumes it (EROFS).
+            raise pools.PoolConflictError(
+                f"Pool {pool} is mounted read-only: its paused balance can be cancelled once it is mounted read-write"
+            )
+        try:
+            result = host.run_in_container(["btrfs", "balance", action, path], timeout=STOP_WAIT)
+        except subprocess.TimeoutExpired:
+            acted = True  # the kernel has the request and stops after the chunk being moved
+        else:
+            if result.returncode == 0:
+                acted = True
+            elif result.returncode == 2 and re.search(r"failed: Not (running|in progress)$", result.stderr or "", re.M):
+                # No balance to stop (ENOTCONN, btrfs-progs cmds/balance.c): a pause says "Not running",
+                # also of a paused one, a cancel "Not in progress". The answer is the status.
+                acted = False
+            else:
+                raise RuntimeError(
+                    f"Balance {action} failed: {(result.stderr or '').strip() or f'exit status {result.returncode}'}"
+                )
+        found = _status(pool, path)
+    if action == "cancel" and acted and found.status == "paused":
+        # A pause from elsewhere (by hand on the host) won, and the cancel returned 0 all the same.
+        acted = False
     if action == "cancel" and acted and found.status == "idle":
         # A paused balance has no unit whose output could say so.
         found = BalanceStatus(pool=pool, status="idle", result="cancelled")
@@ -235,12 +299,15 @@ def _stop(pool: str, action: str) -> tuple[BalanceStatus, bool]:
 
 
 def pause(pool: str) -> tuple[BalanceStatus, bool]:
-    """Pause the pool's running balance: its status then, and whether btrfs paused one."""
+    """Pause the pool's running balance: its status then, and whether btrfs paused one.
+    PoolConflictError while a cancel waits for the chunk being moved: the pause would win."""
     return _stop(pool, "pause")
 
 
 def cancel(pool: str) -> tuple[BalanceStatus, bool]:
-    """Cancel the pool's running or paused balance: its status then, and whether btrfs cancelled one."""
+    """Cancel the pool's running or paused balance: its status then, and whether btrfs cancelled one.
+    PoolConflictError while a pause waits for the chunk being moved, which the kernel would make all
+    the same, and for a paused balance of a read-only pool."""
     return _stop(pool, "cancel")
 
 

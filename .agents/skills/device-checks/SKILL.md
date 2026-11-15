@@ -70,7 +70,8 @@ use the main checkout's. Output shows secrets as `<redacted>`.
    while it runs (ADR-0100, ADR-0340), `scrub` scrubs the pool, three times on a small pool, and leaves its last
    scrub result (ADR-0314), `balance` writes 12 GiB of allocated space (fallocate) into a folder of the
    pool, deletes most of it again and balances, pauses, resumes and cancels the chunks it left about
-   12% full, which moves their 1.5 GiB on the pool's disk (ADR-0377), `offsite` sets up an off-device copy to a folder of the pool and
+   12% full, which moves their 1.5 GiB on the pool's disk, and leaves its last balance result, cancelled, until
+   the host restarts (ADR-0377), `offsite` sets up an off-device copy to a folder of the pool and
    forgets it again (ADR-0337); it refuses to start on a device that has one set up, and
    `restore` restores a backup it made moments before, twice, which puts the device's database
    back as it was then and ends the web sessions but the relay's (ADR-0341); it refuses to start

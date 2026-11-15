@@ -330,9 +330,15 @@ For each pool, you can:
   how many chunks it balanced of about how many, and the time left that UNOS
   estimates from the chunks balanced so far, sent to the open page as it
   changes; **Pause Balance** pauses it after the chunk it moves, **Resume
-  Balance** goes on, and **Cancel Balance** stops it. A paused balance also
+  Balance** goes on, and **Cancel Balance** stops it. While a pause still
+  waits for its chunk, **Cancel Balance** waits too (btrfs would pause the
+  balance all the same): cancel it once it is paused. A paused balance also
   goes on by itself when the pool is mounted again, for example at the next
-  start of the NAS: cancel it to stop it for good. Afterwards the pool says
+  start of the NAS: cancel it to stop it for good. A restart or shutdown of
+  the host pauses a balance that runs, which then goes on after the start in
+  the same way. **Resume Balance** waits for a scrub of the pool to end, and
+  the paused balance of a read-only pool can be resumed or cancelled only once
+  the pool is mounted read-write again. Afterwards the pool says
   whether the last balance finished (with the chunks it rewrote), was
   cancelled or failed (with btrfs's error, such as no space left); after a
   restart of the host it shows none. The balance runs on the host, so a

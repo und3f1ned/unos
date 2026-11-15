@@ -95,7 +95,9 @@ SD writes of each check (ADR-0214). The areas:
            409 while it runs; its chunks balanced growing, with the time left; Pause Balance, after
            which the status says paused and the unit has ended; Resume Balance, which runs it in
            the unit again; Cancel Balance, after which the status says that it was cancelled. The
-           clean-up cancels a balance that still runs or is paused and removes the folder.
+           clean-up cancels a balance that still runs or is paused, once a pause that waits for
+           the chunk being moved has paused it, and removes the folder. The pool's last balance
+           result is the check's, cancelled, until the host restarts.
   offsite  The off-device copy (ADR-0337), on a device where none is set up: a folder of the
            pool with two files as the source and another as the disk target; Save and test, which
            makes the copy repository there (700 root:root) and says that it lies on the disk it
@@ -3035,7 +3037,9 @@ def balance_check(c: Check) -> None:
 
     def cancel() -> None:
         """Cancel a balance of the pool that still runs or is paused: DELETE answers the status also
-        when none does."""
+        when none does. A pause that waits for the chunk being moved refuses a cancel (409): the
+        kernel would pause the balance all the same, so the clean-up waits for it first."""
+        balance_until(c, name, lambda b: b.get("status") != "pausing", "the pause before the clean-up's cancel")
         c.call("DELETE", f"/storage/pools/{name}/balance")
         balance_until(c, name, lambda b: b.get("status") == "idle", "the cancel of the clean-up")
 

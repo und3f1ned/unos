@@ -451,7 +451,9 @@ async def start_balance_endpoint(request: Request, name: str, body: BalanceStart
 async def pause_balance_endpoint(request: Request, name: str, user: User = Depends(verify_token)):
     """Pause the pool's running balance after the chunk it moves (ADR-0377): paused, or pausing
     while btrfs still waits for that chunk after balances.STOP_WAIT seconds. A pool without a
-    running balance answers its status, and the audit log gets balance_paused only for a pause."""
+    running balance, or whose pause waits already, answers its status, and the audit log gets
+    balance_paused only for a pause. 409 while a cancel waits for the chunk: the kernel would
+    pause the balance instead."""
     status, paused = await _balance(balances.pause, name)
     if paused:
         await _audit_balance(AuditAction.BALANCE_PAUSED, request, user, status.pool,
@@ -474,8 +476,11 @@ async def resume_balance_endpoint(request: Request, name: str, user: User = Depe
 async def cancel_balance_endpoint(request: Request, name: str, user: User = Depends(verify_token)):
     """Cancel the pool's running or paused balance (ADR-0377): idle with the result cancelled, or
     cancelling while btrfs still waits for the chunk being moved after balances.STOP_WAIT seconds.
-    A pool without a balance answers its status, and the audit log gets balance_cancelled only for
-    a cancel."""
+    A pool without a balance, or whose cancel waits already, answers its status, and so does one
+    whose balance a pause from elsewhere kept; the audit log gets balance_cancelled only for a
+    cancel. 409 while a pause waits for the chunk (the kernel would pause the balance all the
+    same: cancel it once it is paused) and for a paused balance of a read-only pool, which the
+    kernel keeps for its next read-write mount."""
     status, cancelled = await _balance(balances.cancel, name)
     if cancelled:
         await _audit_balance(AuditAction.BALANCE_CANCELLED, request, user, status.pool,

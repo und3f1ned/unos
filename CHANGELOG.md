@@ -332,10 +332,14 @@ manager, encrypted backup uploads, health checks, CI checks).
   act on it; afterwards it says whether the last balance finished, was
   cancelled or failed, with btrfs's error. The balance runs on the host in the
   systemd unit `unos-balance-<pool>`, so a restart of UNOS neither stops nor
-  hides it. A balance is refused while the pool is not mounted or is
-  read-only, while a scrub of it runs and while another balance of it runs or
-  is paused, and a scrub (also a scheduled one) while a balance of the pool
-  runs. The audit log records each start, pause, resume and cancel
+  hides it, and a restart or shutdown of the host pauses it: it goes on when
+  the pool is mounted again. A balance is refused while the pool is not
+  mounted or is read-only, while a scrub of it runs and while another balance
+  of it runs or is paused, and a scrub (also a scheduled one) while a balance
+  of the pool runs. A cancel waits while a pause waits for the chunk being
+  moved, since btrfs would pause the balance all the same, and the paused
+  balance of a read-only pool is kept until it is mounted read-write. The
+  audit log records each start, pause, resume and cancel
   (`GET`/`POST`/`DELETE /api/v1/storage/pools/{name}/balance`,
   `POST .../balance/pause` and `.../balance/resume`). `scripts/dev/scenario.sh
   balance` checks it on the dev device.

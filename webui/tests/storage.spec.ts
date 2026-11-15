@@ -1088,9 +1088,36 @@ test.describe('Balance (fake data)', () => {
     await card.getByRole('button', { name: 'Pause Balance' }).click();
     await expect(card.getByText('Pausing after the chunk being moved')).toBeVisible();
     await expect(card.getByRole('button', { name: /^(Pause|Resume) Balance$/ })).toHaveCount(0);
+    // The kernel would pause it all the same: a cancel waits for the pause (ADR-0377).
+    await expect(card.getByRole('button', { name: 'Cancel Balance' })).toBeDisabled();
     await events.balances([balance('paused', { completed: 5, expected: 12, considered: 5 })]);
     await expect(card.getByText('Balance paused')).toBeVisible();
     await expect(card.getByRole('button', { name: 'Resume Balance' })).toBeVisible();
+    await expect(card.getByRole('button', { name: 'Cancel Balance' })).toBeEnabled();
+  });
+
+  test('a paused balance resumes only without a scrub, and is cancelled only on a writable pool', async ({
+    authenticatedPage: page,
+  }) => {
+    const mounted = (name: string, uuid: string, readOnly = false) => ({
+      ...HEALTHY_POOL, name, uuid, mountpoint: `/mnt/pools/${name}`, read_only: readOnly,
+    });
+    const paused = (pool: string) => ({ ...noBalance(pool), status: 'paused', completed: 5, expected: 12, considered: 5 });
+    await fakeStorageApi(page, {
+      pools: [HEALTHY_POOL, mounted('e2e_ro', '00000000-0000-4000-8000-0000000000e8', true)],
+      scrubStatus: (pool) => (pool === 'e2e_data' ? { ...noScrub(pool), status: 'running' } : noScrub(pool)),
+      balanceStatus: (pool) => paused(pool),
+    });
+    await page.goto('/storage');
+
+    const scrubbing = poolCard(page, 'e2e_data');
+    await expect(scrubbing.getByText('Balance paused')).toBeVisible();
+    await expect(scrubbing.getByRole('button', { name: 'Resume Balance' })).toBeDisabled();
+    await expect(scrubbing.getByRole('button', { name: 'Cancel Balance' })).toBeEnabled();
+    const readOnly = poolCard(page, 'e2e_ro');
+    await expect(readOnly.getByText('Balance paused')).toBeVisible();
+    await expect(readOnly.getByRole('button', { name: 'Resume Balance' })).toBeDisabled();
+    await expect(readOnly.getByRole('button', { name: 'Cancel Balance' })).toBeDisabled();
   });
 
   test('a full balance starts only once it is confirmed, and a usage limit only from 1 to 99', async ({
