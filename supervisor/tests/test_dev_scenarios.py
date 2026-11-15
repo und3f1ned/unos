@@ -197,6 +197,13 @@ class Node:
         return ([f"user::{bits(mode >> 6)}"] + self.acl + ["group::r--", f"mask::{bits(mode >> 3)}", f"other::{bits(mode)}"])
 
 
+# The protocol options of a share (ADR-0380), as the share API names them, and the warning of a
+# change of the Time Machine shares after which avahi-daemon could not be restarted.
+SHARE_OPTIONS = ("encryption_required", "time_machine", "previous_versions")
+ADVERTISE_WARNING = ("avahi-daemon could not be restarted (Unit avahi-daemon.service not found.), so Macs do not "
+                     "see the new Time Machine shares yet; it is tried again at the next change, and a restart of "
+                     "Samba or of the NAS applies it too")
+
 # The accounts of the fake host: name -> uid.
 UIDS = {"root": 0, "nobody": 65534}
 
@@ -215,7 +222,8 @@ class Interrupt(BaseException):
 class FakeSmbSession:
     """One smbclient session to a share, as REMOTE_SMB's session mode gives it to scenario.py."""
 
-    def __init__(self, nas: FakeNas, user: str, password: str, share: str, guest: bool = False) -> None:
+    def __init__(self, nas: FakeNas, user: str, password: str, share: str, guest: bool = False,
+                 protection: str = "") -> None:
         self.nas = nas
         self.user = user or "nobody"  # a guest works as the guest account
         self.share = share
@@ -232,6 +240,14 @@ class FakeSmbSession:
                 self.problem = f"session setup failed: {status}"
             self.level = nas.level(share, user)  # what the tree connect was granted
         if self.problem is None and self.level is None:
+            self.problem = "tree connect failed: NT_STATUS_ACCESS_DENIED"
+        # A share that requires encryption refuses a client that cannot encrypt (ADR-0380). The defect
+        # encryption-everywhere refuses it on every share while one requires encryption, as a
+        # requirement in [global] would.
+        section = scenario.smb_section(nas.installed, share) or {}
+        required = (section.get("smb encrypt") == "required"
+                    or ("encryption-everywhere" in nas.bugs and "smb encrypt = required" in nas.installed))
+        if self.problem is None and protection == "smb2" and required:
             self.problem = "tree connect failed: NT_STATUS_ACCESS_DENIED"
         self.tree_closed = False
         self.killed = False
@@ -271,6 +287,21 @@ class FakeSmbSession:
         words = line.split()
         if words[0] == "ls":
             return "\n".join(sorted(p.rsplit("/", 1)[1] for p in nas.children(folder)))
+        if words[0] == "allinfo":
+            # The file's times, then those of each snapshot that shadow_copy2 lists (ADR-0380).
+            if f"{folder}/{words[1]}" not in nas.fs:
+                return "NT_STATUS_OBJECT_NAME_NOT_FOUND getting alt name for \\" + words[1]
+            lines = [f"altname: {words[1].upper()}", "create_time:    Thu Nov 12 10:00:00 2026 UTC"]
+            section = scenario.smb_section(nas.installed, self.share) or {}
+            if "shadow_copy2" in section.get("vfs objects", "").split() and "snapshots-unlisted" not in nas.bugs:
+                snapdir = f"{section['shadow:mountpoint']}/.snapshots"
+                for path in sorted(nas.fs):
+                    found = re.fullmatch(r"(?:snap|auto)_(\d{4})(\d\d)(\d\d)_(\d\d)(\d\d)(\d\d)",
+                                         path.rsplit("/", 1)[1]) if os.path.dirname(path) == snapdir else None
+                    if found:
+                        lines += ["@GMT-{}.{}.{}-{}.{}.{}".format(*found.groups()),
+                                  "create_time:    Thu Nov 12 10:00:00 2026 UTC"]
+            return "\n".join(lines)
         if words[0] == "get":
             node = nas.fs.get(f"{folder}/{words[1]}")
             if node is None:
@@ -330,6 +361,10 @@ class FakeUserApi:
     def forget_token(self) -> None:
         self.nas.tokens.discard(self.cache)
         self.nas.forgotten.append(self.cache)
+
+
+# busctl's text when avahi-daemon is not on the system bus.
+AVAHI_NOT_ON_THE_BUS = "The name org.freedesktop.Avahi was not provided by any .service files"
 
 
 class FakeNas:
@@ -602,7 +637,8 @@ class FakeNas:
         return {"name": name, "path": info["path"], "comment": info["comment"], "browseable": True, "guest_ok": guest,
                 "access": access, "version": info["version"], "served": problem is None, "path_problem": problem,
                 "available": problem is None and (guest or any(a["effective"] for a in access)), "pool": "data",
-                "pool_mounted": True, "permissions_ok": True, "import_notes": [], "warnings": []}
+                "pool_mounted": True, "permissions_ok": True, "import_notes": [], "warnings": [],
+                **{option: bool(info.get(option)) for option in SHARE_OPTIONS}}
 
     def guests_rendered(self) -> list[str]:
         """The served shares with guest access, which give [global] its guest lines (ADR-0339)."""
@@ -620,14 +656,36 @@ class FakeNas:
             return (f"   valid users = {', '.join(sorted(a['username'] for a in active)) or 'root'}\n"
                     + (f"   write list = {writers}\n" if writers else "   write list =\n"))
 
-        sections = "".join(f"\n[{name}]\n   path = {info['path']}\n" + principals(info) + fixed
-                           for name, info in sorted(self.shares.items()) if self.path_problem(info["path"]) is None)
+        served = {name: info for name, info in sorted(self.shares.items()) if self.path_problem(info["path"]) is None}
+        # The protocol options (ADR-0380): fruit in every section while a Time Machine share exists.
+        # Defects: encryption-not-required never writes required, encryption-stays keeps it once
+        # written, snapshots-unlisted lists no snapshot (allinfo), fruit-without-global leaves
+        # [global] without Apple's lines.
+        time_machine = any(info.get("time_machine") for info in served.values())
+
+        def options(info: dict) -> str:
+            encrypt = ((info.get("encryption_required") or ("encryption-stays" in self.bugs and info.get("encrypted_once")))
+                       and "encryption-not-required" not in self.bugs)
+            modules = (["catia", "fruit", "streams_xattr"] if time_machine else []) + (
+                ["shadow_copy2", "btrfs"] if info.get("previous_versions") else [])
+            lines = [f"   smb encrypt = {'required' if encrypt else 'default'}\n",
+                     f"   vfs objects = {' '.join(modules)}\n" if modules else "   vfs objects =\n"]
+            if info.get("time_machine"):
+                lines.append("   fruit:time machine = yes\n")
+            if info.get("previous_versions"):
+                lines.append(f"   shadow:mountpoint = {self.volume_of(info['path']) or ROOT}\n   shadow:snapdir = .snapshots\n")
+            return "".join(lines)
+
+        sections = "".join(f"\n[{name}]\n   path = {info['path']}\n" + principals(info) + options(info) + fixed
+                           for name, info in served.items())
+        fruit = ("   fruit:aapl = yes\n   fruit:nfs_aces = no\n"
+                 if time_machine and "fruit-without-global" not in self.bugs else "")
         # The defect guest-globals-stay keeps the guest lines once a guest share was rendered, and
         # no-guest-globals never writes them.
         guest = ((bool(self.guests_rendered()) and "no-guest-globals" not in self.bugs)
                  or ("guest-globals-stay" in self.bugs and getattr(self, "guest_once", False)))
         return (HEADER + "\n[global]\n" + "".join(f"   {key} = {values[guest]}\n" for key, values in scenario.GUEST_GLOBALS.items())
-                + "   log file = /run/samba/log.samba\n   max log size = 100\n" + sections)
+                + "   log file = /run/samba/log.samba\n   max log size = 100\n" + fruit + sections)
 
     def replaced_copies(self) -> list[str]:
         """The names of the copies smb.conf.unos-replaced-<time> in /etc/samba, oldest first."""
@@ -818,10 +876,14 @@ class FakeNas:
         """The Snapshots page's API on the pool's volumes: read-only snapshots in <volume>/.snapshots,
         restores into writable copies restore_<time> right in the volume (ADR-0358)."""
         folder = body["subvolume"] if method == "POST" and parts == [] else params.get("subvolume")
-        if folder is not None and (folder not in self.fs or self.fs[folder].kind != "subvolume"):
+        if folder is not None and folder != ROOT and (folder not in self.fs or self.fs[folder].kind != "subvolume"):
             raise Refused(404, f"Subvolume not found: {folder}")
         if parts == [] and method == "POST":
-            name = body.get("name") or "snap_20261112_100000"
+            # As src/snapshots/router.py names one without a name: snap_<UTC time> of the device's
+            # clock. The defect snapshot-other-names names it in another form.
+            stamp = time.strftime("%Y%m%dT%H%M%S" if "snapshot-other-names" in self.bugs else "%Y%m%d_%H%M%S",
+                                  time.gmtime(1_800_000_000))
+            name = body.get("name") or f"snap_{stamp}"
             path = f"{folder}/.snapshots/{name}"
             if path in self.fs:
                 raise Refused(400, f"Snapshot already exists: {name}")
@@ -1342,7 +1404,8 @@ class FakeNas:
                 if (warning := self.unsafe_text(path, "warning")):
                     warnings.append(warning)
             self.shares[name] = {"path": path, "comment": body.get("comment", ""), "access": body.get("access", []),
-                                 "version": 1, "guest_ok": bool(body.get("guest_ok"))}
+                                 "version": 1, "guest_ok": bool(body.get("guest_ok")),
+                                 **{option: bool(body.get(option)) for option in SHARE_OPTIONS if body.get(option)}}
             self.apply()
             return {**self.share_info(name), "warnings": warnings}
         name = parts[1]
@@ -1379,6 +1442,20 @@ class FakeNas:
                 if body["guest_ok"] and not info.get("guest_ok") and "no-guest-warning" not in self.bugs:
                     warnings.append(GUEST_WARNING)
                 info["guest_ok"] = body["guest_ok"]
+            for option in SHARE_OPTIONS:
+                if option in body:
+                    if option == "encryption_required" and body[option] and not info.get(option):
+                        info["encrypted_once"] = True
+                        # A tree connect keeps what it was granted (ADR-0380); the defect
+                        # encryption-keeps-sessions leaves the share's open sessions.
+                        if "encryption-keeps-sessions" not in self.bugs:
+                            self.close_share(name)
+                    # The defect advertise-fails: avahi-daemon cannot be restarted after a change of the
+                    # Time Machine shares, which the answer warns about (service.advertise_warning).
+                    if (option == "time_machine" and bool(body[option]) != bool(info.get(option))
+                            and "advertise-fails" in self.bugs):
+                        warnings.append(ADVERTISE_WARNING)
+                    info[option] = body[option]
             info["version"] += 1
             self.apply()
             return {**self.share_info(name), "warnings": warnings}
@@ -1861,6 +1938,29 @@ class FakeNas:
         self.device_call("now")
         return 1_800_000_000
 
+    def adisk_shares(self):
+        """Avahi's resolve of smbd's _adisk._tcp service (ADR-0380): the Time Machine shares of the
+        installed smb.conf, printed as REMOTE_ADISK prints them and read by scenario.adisk_names.
+        Defects: adisk-unannounced (smbd never registers the service), adisk-stays (a share stays
+        in it once it was), avahi-unreachable (once no share offers Time Machine, Avahi cannot be
+        asked: busctl fails with another error than Avahi's answer for no such service)."""
+        self.device_call("adisk_shares")
+        names = [name for name in re.findall(r"^\[([^\]]+)\]$", self.installed, re.M)
+                 if (scenario.smb_section(self.installed, name) or {}).get("fruit:time machine") == "yes"]
+        if "adisk-unannounced" in self.bugs:
+            names = []
+        if "adisk-stays" in self.bugs:
+            self.adisk_once = sorted(set(getattr(self, "adisk_once", [])) | set(names))
+            names = self.adisk_once
+        if names:
+            out = "found " + busctl_json("sys=adVF=0x100", *(f"dk{n}=adVN={name},adVF=0x82"
+                                                             for n, name in enumerate(names)))
+        elif "avahi-unreachable" in self.bugs:
+            out = f"none Call failed: {AVAHI_NOT_ON_THE_BUS}"
+        else:
+            out = "none Call failed: Timeout reached"  # Avahi's answer for no such service
+        return scenario.adisk_names(out + "\n")
+
     def quota_limit(self, path):
         self.device_call("quota_limit")
         return str(self.quota_of[path]) if path in self.quota_of else "none"
@@ -1912,9 +2012,9 @@ class FakeNas:
             account["password"] = new
         return scenario.SmbPasswordChange(1, SAMR_REFUSAL)
 
-    def smb_session(self, user, password, share):
+    def smb_session(self, user, password, share, protection=""):
         self.device_call("smb_session")
-        return FakeSmbSession(self, user, password, share)
+        return FakeSmbSession(self, user, password, share, protection=protection)
 
     def smb_guest_session(self, share):
         self.device_call("smb_guest_session")
@@ -2088,15 +2188,19 @@ def nas():
 
 @pytest.fixture(autouse=True)
 def _checks_without_pauses(monkeypatch):
-    """The scrub check asks btrfs every SCRUB_POLL seconds, for up to SCRUB_WAIT seconds, and the
+    """The scrub check asks btrfs every SCRUB_POLL seconds, for up to SCRUB_WAIT seconds, the
     shares check asks for the end of a repair every REPAIR_POLL seconds, for up to REPAIR_WAIT
-    seconds: the fake's scrubs are recorded and end after a few requests, its repairs after one."""
+    seconds, and the smb check resolves the _adisk._tcp service every ADISK_POLL seconds, for up to
+    ADISK_WAIT seconds: the fake's scrubs are recorded and end after a few requests, its repairs
+    after one, and its service follows smb.conf at once."""
     monkeypatch.setattr(scenario, "SCRUB_POLL", 0)
     monkeypatch.setattr(scenario, "SCRUB_WAIT", 2)
     monkeypatch.setattr(scenario, "REPAIR_POLL", 0)
     monkeypatch.setattr(scenario, "REPAIR_WAIT", 2)
     monkeypatch.setattr(scenario, "BALANCE_POLL", 0)
     monkeypatch.setattr(scenario, "BALANCE_WAIT", 2)
+    monkeypatch.setattr(scenario, "ADISK_POLL", 0)
+    monkeypatch.setattr(scenario, "ADISK_WAIT", 0.2)
 
 
 def run_check(area: str, nas: FakeNas, **kw) -> tuple[int, str]:
@@ -2156,6 +2260,37 @@ def test_the_smb_check_covers_the_flows_of_slice_2(nas):
     levels = [tuple(a["level"] for a in body["access"]) for method, path, body, _ in nas.calls
               if method == "PATCH" and body and "access" in body]
     assert levels == [("read",), (), ("write",)]
+
+
+def test_the_smb_check_shows_the_protocol_options_of_its_share(nas):
+    """shares.per-share-protocol-options (ADR-0380), on a share of a folder in a new volume:
+    Previous Versions list the snapshot that the check makes of the volume, and no longer once it
+    is deleted; encryption required refuses an SMB 2.1 client and serves one that encrypts; Time
+    Machine's lines; each option off again, then the share and the volume deleted."""
+    status, output = run_check("smb", nas)
+    assert status == 0, output
+    text = "\n".join(step_lines(output))
+    for words in ("shadow:mountpoint = /mnt/pools/data/unoscheck1a2b3cv)", ": @GMT-2027.01.15-08.00.00",
+                  "with encryption required the share's section says so and testparm takes smb.conf",
+                  "the SMB 2.1 client still opens unoscheck1a2b3c,", ": NT_STATUS_ACCESS_DENIED",
+                  "with Time Machine too", ": _adisk._tcp named unoscheck1a2b3cv",
+                  "Delete of the share unoscheck1a2b3cv"):
+        assert words in text, words
+    # The snapshot is made with the name the Snapshots page gives (no name of the check's own).
+    made = [body for method, path, body, _ in nas.calls if method == "POST" and path == "/snapshots/"]
+    assert made == [{"subvolume": "/mnt/pools/data/unoscheck1a2b3cv"}]
+    created = [body for method, path, body, _ in nas.calls if method == "POST" and path == "/shares/smb"]
+    assert [(b["name"], b["path"], b.get("previous_versions")) for b in created][-1] == (
+        "unoscheck1a2b3cv", "/mnt/pools/data/unoscheck1a2b3cv/files", True)
+    patched = [{k: v for k, v in body.items() if k in SHARE_OPTIONS} for method, path, body, _ in nas.calls
+               if method == "PATCH" and body and set(body) & set(SHARE_OPTIONS)]
+    assert patched == [{"encryption_required": True}, {"encryption_required": False},
+                       {"time_machine": True}, {"time_machine": False, "previous_versions": False}]
+    snapshots = [(method, path, params) for method, path, _, params in nas.calls if path.startswith("/snapshots")]
+    volume = {"subvolume": "/mnt/pools/data/unoscheck1a2b3cv"}
+    # The step's Delete, then the clean-up's list of the volume's snapshots, which finds none.
+    assert snapshots == [("POST", "/snapshots/", {}), ("DELETE", "/snapshots/snap_20270115_080000", volume),
+                         ("GET", "/snapshots/", volume)]
 
 
 def test_the_smb_check_renames_its_user_and_goes_on_under_the_new_name(nas):
@@ -2367,6 +2502,7 @@ def test_the_shares_check_expects_unos_s_texts():
 
     assert service.GUEST_WARNING == GUEST_WARNING and GUEST_WARNING.startswith(scenario.GUEST_WARNS)
     assert service.PERMISSIONS_WARNING == PERMISSIONS_WARNING
+    assert service.advertise_warning("Unit avahi-daemon.service not found.") == ADVERTISE_WARNING
     assert constants.smb_password_problem("a" * 7) == scenario.SMB_TOO_SHORT
     assert constants.smb_password_problem("unos\tscenario\tcheck") == scenario.SMB_CONTROL
     assert schemas.MAX_PASSWORD_BYTES == scenario.UNOS_PASSWORD_BYTES
@@ -2906,6 +3042,18 @@ def test_the_pool_folder_helper_removes_only_an_empty_folder_that_is_no_mount_po
     ("smb", "rename-drops-access", "the share's access follows the new name"),
     ("hardware", "hardware-not-offered", "the App Store offers Jellyfin the RK3588's video hardware"),
     ("hardware", "hardware-of-another-soc", "the App Store offers each app only the hardware of this SoC"),
+    ("smb", "encryption-not-required", "with encryption required the share's section says so"),
+    ("smb", "encryption-stays", "with the option off the section has smb encrypt = required"),
+    ("smb", "snapshots-unlisted", "allinfo v.txt answered no error without @GMT-2027.01.15-08.00.00"),
+    ("smb", "fruit-without-global", "[global] has fruit:aapl = None, fruit:nfs_aces = None"),
+    ("smb", "advertise-fails", "turning Time Machine on warns: avahi-daemon could not be restarted"),
+    ("smb", "adisk-unannounced", "Avahi does not resolve unoscheck1a2b3cv in the device's _adisk._tcp service"),
+    ("smb", "adisk-stays", "Avahi still resolves unoscheck1a2b3cv in the device's _adisk._tcp service"),
+    ("smb", "avahi-unreachable", f"Avahi could not be asked for the device's _adisk._tcp service: Call failed: "
+                                 f"{AVAHI_NOT_ON_THE_BUS}"),
+    ("smb", "encryption-keeps-sessions", "the open session of the SMB 2.1 client still lists the share"),
+    ("smb", "encryption-everywhere", "the SMB 2.1 client answered NT_STATUS_ACCESS_DENIED on unoscheck1a2b3c,"),
+    ("smb", "snapshot-other-names", "the Snapshots page named the snapshot 'snap_20270115T080000'"),
     ("files", "volume-deletable", "refused with 409"),
     ("files", "upload-mode", "644 root:root"),
     ("volumes", "volume-delete-ignores-shares", "names the share"),
@@ -3987,6 +4135,71 @@ def test_the_device_reads_pdbedit_without_the_read_only_namespace(stub):
     assert scenario.RO_ROOT not in (stub.log / "stdin").read_text()
 
 
+def busctl_json(*records: str) -> str:
+    """busctl --json=short's answer to Avahi's ResolveService (iissssisqaayu) with these TXT records."""
+    return json.dumps({"type": "iissssisqaayu", "data": [
+        2, 0, "BPI-W3", "_adisk._tcp", "local", "bpi-w3.local", 0, "192.168.1.20", 9,
+        [list(record.encode()) for record in records], 4]}, separators=(",", ":"))
+
+
+def test_the_device_reads_the_shares_of_its_adisk_service(stub):
+    """smbd's Time Machine announcement (ADR-0380): the adVN of each dk<n> TXT record, in the
+    read-only namespace; none only when Avahi answers that it resolves no such service (its
+    TimeoutError, "Timeout reached"). Any other failure of the call, as REMOTE_ADISK prints it
+    (avahi-daemon not on the bus, a D-Bus denial, no busctl), fails with busctl's text: otherwise
+    the check of Time Machine turned off would pass without asking Avahi."""
+    device = device_with_stub(stub)
+    (stub.log / "reply").write_text("found " + busctl_json("sys=adVF=0x100", "dk0=adVN=unoscheck1a2b3cv,adVF=0x82",
+                                                           "dk1=adVN=Backups,adVF=0x82") + "\n")
+    assert device.adisk_shares() == ["unoscheck1a2b3cv", "Backups"]
+    assert "unshare --mount --propagation private" in (stub.log / "argv").read_text()
+    for reply in ("none Call failed: Timeout reached\n", "none Call failed: org.freedesktop.Avahi.TimeoutError\n"):
+        (stub.log / "reply").write_text(reply)
+        assert device.adisk_shares() is None
+    for failure in (f"Call failed: {AVAHI_NOT_ON_THE_BUS}", "Call failed: Access denied",
+                    "bash: line 7: busctl: command not found"):
+        (stub.log / "reply").write_text(f"none {failure}\n")
+        with pytest.raises(scenario.Failed) as failed:
+            device.adisk_shares()
+        assert str(failed.value) == f"Avahi could not be asked for the device's _adisk._tcp service: {failure}"
+    for reply in ("found {}\n", "found not json\n"):
+        (stub.log / "reply").write_text(reply)
+        with pytest.raises(scenario.Failed, match="_adisk._tcp service could not be read"):
+            device.adisk_shares()
+
+
+@pytest.mark.parametrize("answers, printed", [
+    ("0", "found {busctl}"),
+    ("1", "none Call failed: Timeout reached"),
+    ("2", "none Call failed: Access denied"),
+])
+def test_the_adisk_helper_resolves_smbd_s_service_under_its_netbios_name(tmp_path, answers, printed):
+    """REMOTE_ADISK, run here with a testparm and a busctl that log their arguments: the service of
+    type _adisk._tcp named as smbd names its services (the netbios name), any interface and protocol,
+    with -- before the arguments, whose -1 busctl would read as an option."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    log = tmp_path / "busctl.log"
+    answer = busctl_json("dk0=adVN=docs,adVF=0x82")
+    stubs = {
+        "testparm": '[ "$*" = "-s --parameter-name netbios name" ] || exit 9\necho BPI-W3\n',
+        "busctl": (f'printf "%s\\n" "$@" > {str(log)!r}\n'
+                   f'case {answers} in 0) printf "%s\\n" {answer!r} ;; 1) echo "Call failed: Timeout reached" >&2; exit 1 ;; '
+                   '*) echo "Call failed: Access denied" >&2; exit 1 ;; esac\n'),
+        "mkdir": "exit 0\n",
+    }
+    for name, body in stubs.items():
+        (bin_dir / name).write_text("#!/usr/bin/env bash\n" + body)
+        (bin_dir / name).chmod(0o755)
+    result = subprocess.run(["bash", "-s"], input=scenario.REMOTE_ADISK, capture_output=True, text=True,
+                            env={"PATH": f"{bin_dir}:{os.environ['PATH']}"})
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == printed.format(busctl=answer) + "\n"
+    assert log.read_text().splitlines() == [
+        "--json=short", "--", "call", "org.freedesktop.Avahi", "/", "org.freedesktop.Avahi.Server", "ResolveService",
+        "iisssiu", "-1", "-1", "BPI-W3", "_adisk._tcp", "local", "-1", "0"]
+
+
 def test_the_device_s_facts_are_parsed(stub):
     device = device_with_stub(stub)
     (stub.log / "reply").write_text(textwrap.dedent("""\
@@ -4329,6 +4542,8 @@ STUB_SMBCLIENT = textwrap.dedent(
         log.write("argv " + " ".join(args) + "\\n")
         log.write("signing " + ("required" if "client signing = required" in text else "not required") + "\\n")
         log.write("ipc signing " + ("required" if "client ipc signing = required" in text else "not required") + "\\n")
+        log.write("protection " + ("smb2" if "client max protocol = SMB2_10" in text else
+                                   "encrypt" if "client smb encrypt = required" in text else "none") + "\\n")
         if "-A" in args:
             auth = args[args.index("-A") + 1]
             log.write("auth %o %s\\n" % (stat.S_IMODE(os.stat(auth).st_mode), open(auth).read().replace("\\n", "|")))
@@ -4416,6 +4631,26 @@ def test_the_smb_helper_runs_a_session_step_by_step_and_removes_its_files(local_
     assert "\nsigning not required" in lists[1] and "ipc signing not required" in lists[1]
     for folder in re.findall(r"^dir (\S+)$", log, re.M):
         assert folder.startswith(str(stub.tmp / "shm") + "/") and not os.path.exists(folder)
+    assert list((stub.tmp / "shm").iterdir()) == []
+
+
+def test_the_smb_helper_s_session_can_be_one_of_smb_2_1_or_one_that_encrypts(local_stub):
+    """The encryption step of the smb check (ADR-0380): a session of a client of SMB 2.1 at most,
+    which cannot encrypt, and one of a client that requires SMB3 encryption, both signed; a session
+    without either sets neither."""
+    stub = local_stub
+    extra = {"FAKE_SSH_MODE": "local", "UNOS_DEV_SHM": str(stub.tmp / "shm"), "FAKE_SMB_LOG": str(stub.tmp / "smb.log")}
+    runner = stub.bin / "ssh-here"
+    runner.write_text(f"#!/usr/bin/env bash\nexport {' '.join(f'{k}={v!r}' for k, v in stub.env(**extra).items())}\n"
+                      f'exec "{DEV}/ssh.sh" "$@"\n')
+    runner.chmod(0o755)
+    device = scenario.Device(ssh=runner, sd=runner)
+    for protection in ("smb2", "encrypt", ""):
+        with device.smb_session("unoscheck1a2b3c", "pw-x", "unoscheck1a2b3c", protection=protection) as session:
+            assert session.run("ls").ok
+    runs = (stub.tmp / "smb.log").read_text().split("argv ")[1:]
+    assert [re.search(r"^protection (\S+)$", run, re.M).group(1) for run in runs] == ["smb2", "encrypt", "none"]
+    assert all("\nsigning required" in run for run in runs)
     assert list((stub.tmp / "shm").iterdir()) == []
 
 

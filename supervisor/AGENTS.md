@@ -72,6 +72,8 @@ The SMB flows of users (allow, turn on, password changes) are in `src/auth/route
   after taking it (ADR-0080, ADR-0081).
 - A share section states each restriction in a line of its own (ADR-0088). Values are checked when
   stored, when rendered (restored databases are untrusted, ADR-0144) and by `smbconf.py`'s guards.
+  A share's protocol options (`smb_share_options`, ADR-0380) are checked the same way: their vfs
+  modules on the host and the snapshots of the share's folder, when turned on and at every render.
 - `share_path_problem` alone judges share paths (ADR-0145, ADR-0146).
 - Only marked host accounts and their passdb entries are touched (ADR-0108), each after a fresh
   read right before a destructive command (ADR-0192).

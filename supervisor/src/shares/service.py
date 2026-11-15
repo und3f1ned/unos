@@ -49,7 +49,7 @@ from pathlib import Path, PurePosixPath
 from types import SimpleNamespace
 
 from fastapi import HTTPException
-from sqlalchemy import DateTime, select
+from sqlalchemy import DateTime, delete, select
 from sqlalchemy.dialects import sqlite as sqlite_dialect
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -236,6 +236,187 @@ def _check_paths(entries: Sequence[tuple[int, str, object]], pool_names: Collect
     return problems
 
 
+# --- the protocol options of a share (ADR-0380) ------------------------------------------------
+
+GUEST_ENCRYPTION = (
+    "A guest share cannot require encryption: guests' connections are never encrypted, so no guest could open it"
+)
+# The options in the order of the answers and the audit entries, with their names in texts.
+OPTION_LABELS = {
+    "encryption_required": "encryption required",
+    "time_machine": "Time Machine",
+    "previous_versions": "Previous Versions",
+}
+_OPTION_MODULES = {"time_machine": smbconf.FRUIT_MODULES, "previous_versions": smbconf.SNAPSHOT_MODULES}
+_NEEDS = {"time_machine": "Time Machine needs", "previous_versions": "Previous Versions need"}
+# The inode of the root of every btrfs subvolume (BTRFS_FIRST_FREE_OBJECTID).
+BTRFS_SUBVOLUME_INODE = 256
+
+
+def modules_problem(option: str, missing: Sequence[str]) -> str:
+    """Why ``option`` cannot be on: the vfs modules ``missing`` that it needs."""
+    modules = f"module {missing[0]}" if len(missing) == 1 else f"modules {', '.join(missing)}"
+    return (
+        f"Samba on this NAS lacks the vfs {modules} that {_NEEDS[option]}: install the package "
+        f"{smb.VFS_PACKAGE} on the host"
+    )
+
+
+def no_snapshots_problem(folder: str) -> str:
+    """Why Previous Versions cannot be on for a share inside ``folder``."""
+    return (
+        f"{folder} is a subvolume or a file system of its own: UNOS makes snapshots of pools and volumes only, "
+        "and none of them holds this share's files, so Previous Versions would list nothing"
+    )
+
+
+def advertise_warning(detail: str) -> str:
+    return (
+        f"avahi-daemon could not be restarted ({detail}), so Macs do not see the new Time Machine shares yet; "
+        "it is tried again at the next change, and a restart of Samba or of the NAS applies it too"
+    )
+
+
+def _crosses(parent: os.stat_result, child: os.stat_result) -> str | None:
+    """Whether the folder ``child`` starts another file tree than its parent: None, "subvolume" (a
+    btrfs subvolume, which has a device of its own) or "mount" (another file system)."""
+    if child.st_dev == parent.st_dev:
+        return None
+    return "subvolume" if child.st_ino == BTRFS_SUBVOLUME_INODE else "mount"
+
+
+def snapshot_root(path: object) -> tuple[str | None, str | None]:
+    """Previous Versions (ADR-0380): the pool or volume whose snapshots (``<it>/.snapshots``) hold
+    the folder ``path``, or (None, why none does). Never raises.
+
+    The parts of the folder below its pool are opened one at a time without following links. A
+    btrfs subvolume right below the pool is a volume (or a restored copy of a pool's snapshot),
+    which the Snapshots page snapshots; the Scheduler snapshots pools only, and a pool's snapshot
+    holds no file of its volumes. Any other part that starts another file tree (_crosses: a
+    deeper subvolume such as a restored copy in a volume or one made by hand, a mount point) is
+    in no snapshot of UNOS. A part that does not exist yet is a folder still to be made, in its
+    parent's tree. Sync: reads the filesystem.
+    """
+    try:
+        normalized = validate_share_path(path)  # type: ignore[arg-type]
+        parts = PurePosixPath(normalized).relative_to(pools_base()).parts
+    except HTTPException as exc:
+        return None, str(exc.detail)
+    except Exception as exc:
+        return None, f"The folder could not be checked: {_reason(exc)}"
+    if len(parts) < 2:
+        return None, POOL_ROOT_PROBLEM
+    base = pools_base()
+    root = 1
+    try:
+        fd = open_dir_nofollow(base, parts[:1])
+    except (OSError, ValueError) as exc:
+        return None, f"The folder could not be checked: {_reason(exc)}"
+    try:
+        parent = os.fstat(fd)
+        for depth in range(1, len(parts)):
+            try:
+                child_fd = open_subdirs_nofollow(fd, parts[depth:depth + 1])
+            except FileNotFoundError:
+                break
+            except (OSError, ValueError) as exc:
+                return None, f"The folder could not be checked: {_reason(exc)}"
+            os.close(fd)
+            fd = child_fd
+            child = os.fstat(fd)
+            crossing = _crosses(parent, child)
+            if crossing is not None:
+                if depth == 1 and crossing == "subvolume":
+                    root = 2
+                else:
+                    return None, no_snapshots_problem(str(base.joinpath(*parts[:depth + 1])))
+            parent = child
+    finally:
+        os.close(fd)
+    return str(base.joinpath(*parts[:root])), None
+
+
+def _missing_modules(options: Collection[str]) -> dict[str, list[str]]:
+    """The vfs modules that each of ``options`` (time_machine, previous_versions) needs and the host
+    lacks; one host command. Raises SambaConfigError when the check cannot run (sync)."""
+    needed = [module for option in _OPTION_MODULES if option in options for module in _OPTION_MODULES[option]]
+    if not needed:
+        return {}
+    missing = set(smb.missing_vfs_modules(needed))
+    return {
+        option: [module for module in _OPTION_MODULES[option] if module in missing]
+        for option in _OPTION_MODULES
+        if option in options and missing & set(_OPTION_MODULES[option])
+    }
+
+
+async def _check_new_options(
+    *, guest_ok: bool, encryption_required: bool, turned_on: Collection[str], snapshots_of: str | None
+) -> None:
+    """The checks of options a create or PATCH turns on (ADR-0380): 400 for a guest share that
+    would require encryption, for Time Machine or Previous Versions without their vfs modules,
+    and for Previous Versions where no snapshot of UNOS holds the folder ``snapshots_of`` (None:
+    not checked). SambaConfigError when the modules cannot be checked."""
+    if guest_ok and encryption_required:
+        raise HTTPException(status_code=400, detail=GUEST_ENCRYPTION)
+    missing = await asyncio.to_thread(_missing_modules, turned_on)
+    for option in _OPTION_MODULES:
+        if missing.get(option):
+            raise HTTPException(status_code=400, detail=modules_problem(option, missing[option]))
+    if snapshots_of is not None:
+        _, problem = await asyncio.to_thread(snapshot_root, snapshots_of)
+        if problem is not None:
+            raise HTTPException(status_code=400, detail=problem)
+
+
+def _options_text(values: Mapping[str, bool]) -> str:
+    return ", ".join(OPTION_LABELS[name] for name in OPTION_LABELS if values.get(name))
+
+
+# What a stored setting that is not rendered is called in the status's problem (ADR-0380).
+_OFF_TEXTS = {
+    "guest_ok": "guest access is off",
+    "time_machine": "Time Machine is off",
+    "previous_versions": "Previous Versions are off",
+}
+
+
+def _rendered_options(
+    wanted: Mapping[int, tuple[str, bool, bool, bool]]
+) -> tuple[dict[int, tuple[bool, bool, str | None]], dict[int, dict[str, str]]]:
+    """The options of the served shares as they are rendered (sync; one host command and reads of
+    the filesystem): share id -> (encryption required, Time Machine, snapshot root), and the
+    options that are on and not rendered, with the reason (share id -> option -> why).
+    ``wanted``: share id -> (path, and the three stored options). Time Machine and Previous
+    Versions are rendered only with their vfs modules on the host, and Previous Versions only
+    where a snapshot of UNOS holds the folder; a check of the modules that cannot run renders
+    them as stored, with a log line."""
+    on = {name for _, _, tm, pv in wanted.values() for name, value in
+          (("time_machine", tm), ("previous_versions", pv)) if value}
+    try:
+        missing = _missing_modules(on)
+    except smb.SambaConfigError as exc:
+        logger.warning("%s; the options are rendered as stored", exc)
+        missing = {}
+    rendered: dict[int, tuple[bool, bool, str | None]] = {}
+    off: dict[int, dict[str, str]] = {}
+    for share_id, (path, encryption, time_machine, previous_versions) in wanted.items():
+        if time_machine and missing.get("time_machine"):
+            time_machine = False
+            off.setdefault(share_id, {})["time_machine"] = modules_problem("time_machine", missing["time_machine"])
+        root = None
+        if previous_versions:
+            problem = None
+            if missing.get("previous_versions"):
+                problem = modules_problem("previous_versions", missing["previous_versions"])
+            else:
+                root, problem = snapshot_root(path)
+            if problem is not None:
+                off.setdefault(share_id, {})["previous_versions"] = problem
+        rendered[share_id] = (encryption, time_machine, root)
+    return rendered, off
+
+
 # --- the render input ----------------------------------------------------------
 
 
@@ -248,6 +429,11 @@ class ShareRender:
     guest_ok: bool
     readers: tuple[str, ...]   # sorted active linux names with level "read"
     writers: tuple[str, ...]   # sorted active linux names with level "write"
+    # The protocol options as rendered (ADR-0380): Time Machine only when the host has its vfs
+    # modules; Previous Versions as the pool or volume whose snapshots they list (None: off).
+    encryption_required: bool = False
+    time_machine: bool = False
+    snapshot_root: str | None = None
 
     @property
     def available(self) -> bool:
@@ -259,6 +445,9 @@ class RenderInput:
     shares: list[ShareRender]      # the served shares
     problems: list[str]            # for GET /shares/smb-status
     unserved: dict[int, str]       # share id -> why it is not served (SmbShareInfo.path_problem)
+    # Served share id -> its stored settings that are not rendered (guest_ok, time_machine,
+    # previous_versions) -> why (SmbShareInfo.not_rendered, ADR-0380).
+    not_rendered: dict[int, dict[str, str]] = field(default_factory=dict)
 
 
 def _name_problem(name: object) -> str | None:
@@ -317,6 +506,19 @@ async def _read_render_input(db: AsyncSession, pool_names: Collection[str]) -> t
             ).execution_options(**_FRESH)
         )
     ).all()
+    option_rows = {
+        row.share_id: row
+        for row in (
+            await db.execute(
+                select(
+                    models.SmbShareOptions.share_id,
+                    models.SmbShareOptions.encryption_required,
+                    models.SmbShareOptions.time_machine,
+                    models.SmbShareOptions.previous_versions,
+                ).execution_options(**_FRESH)
+            )
+        ).all()
+    }
 
     all_names = {row.name.lower() for row in share_rows if isinstance(row.name, str)}
     problems: dict[int, list[str]] = {}
@@ -373,6 +575,17 @@ async def _read_render_input(db: AsyncSession, pool_names: Collection[str]) -> t
         # Two rows for one user (no constraint in a restored database): the lower level.
         levels[row.share_id][name] = "read" if "read" in (current, row.level) else "write"
 
+    # The options of the served shares (ADR-0380), checked as they are rendered.
+    wanted = {
+        row_id: (path, bool(opts.encryption_required), bool(opts.time_machine), bool(opts.previous_versions))
+        for row_id, _, path in candidates
+        if row_id not in path_problems and (opts := option_rows.get(row_id)) is not None
+    }
+    options: dict[int, tuple[bool, bool, str | None]] = {}
+    not_rendered: dict[int, dict[str, str]] = {}
+    if wanted:
+        options, not_rendered = await asyncio.to_thread(_rendered_options, wanted)
+
     shares = []
     for row_id, name, path in candidates:
         if row_id in path_problems:
@@ -393,20 +606,32 @@ async def _read_render_input(db: AsyncSession, pool_names: Collection[str]) -> t
                 )
                 comment = ""
         granted = levels.get(row_id, {})
+        encryption_required, time_machine, root = options.get(row_id, (False, False, None))
+        guest_ok = bool(row.guest_ok)
+        if guest_ok and encryption_required:
+            # smbd refuses guests where encryption is required: such a share (a restored row, the API
+            # refuses the pair) must not give [global] its guest lines (ADR-0339).
+            guest_ok = False
+            not_rendered.setdefault(row_id, {})["guest_ok"] = GUEST_ENCRYPTION
+        for setting, reason in not_rendered.get(row_id, {}).items():
+            problems.setdefault(row_id, []).append(f"Share {name}: {_OFF_TEXTS[setting]}: {reason}")
         shares.append(
             ShareRender(
                 name=name,
                 path=path,
                 comment=comment,
                 browseable=bool(row.browseable),
-                guest_ok=bool(row.guest_ok),
+                guest_ok=guest_ok,
                 readers=tuple(sorted(n for n, level in granted.items() if level == "read")),
                 writers=tuple(sorted(n for n, level in granted.items() if level == "write")),
+                encryption_required=encryption_required,
+                time_machine=time_machine,
+                snapshot_root=root,
             )
         )
 
     ordered = [problem for row_id in sorted(problems, key=_sort_key) for problem in problems[row_id]]
-    return RenderInput(shares=shares, problems=ordered, unserved=unserved), all_names
+    return RenderInput(shares=shares, problems=ordered, unserved=unserved, not_rendered=not_rendered), all_names
 
 
 def _sort_key(value: object) -> tuple[int, int, str]:
@@ -417,11 +642,14 @@ def _sort_key(value: object) -> tuple[int, int, str]:
 async def build_render_input(db: AsyncSession, pool_names: Collection[str]) -> RenderInput:
     """The served shares and their active principals, from rows read now (ADR-0081).
 
-    Shares, access rows, users and SMB accounts are read with one query each.
-    Every value is validated again (ADR-0144): a share with an invalid or duplicate
-    name or a path that breaks ADR-0145 is not served, a comment that fails
-    validation is left out, and a principal is rendered only for an access row
-    of an existing user with that user's current name and an active account.
+    Shares, access rows, users, SMB accounts and the shares' options are read with
+    one query each. Every value is validated again (ADR-0144): a share with an
+    invalid or duplicate name or a path that breaks ADR-0145 is not served, a
+    comment that fails validation is left out, a principal is rendered only for
+    an access row of an existing user with that user's current name and an active
+    account, Time Machine and Previous Versions only as _rendered_options
+    allows (ADR-0380), and guest access not where encryption is required, each
+    with a problem for the status when it does not.
     """
     render, _ = await _read_render_input(db, pool_names)
     return render
@@ -468,6 +696,14 @@ class _ImportedShare:
     guest_ok: bool = False
     access: dict[int, tuple[str, str]] = field(default_factory=dict)  # user id -> (username, level)
     notes: list[str] = field(default_factory=list)
+    # The protocol options (ADR-0380): encryption and Time Machine from any file, Previous Versions
+    # only from UNOS's own (_import_options).
+    encryption_required: bool = False
+    time_machine: bool = False
+    previous_versions: bool = False
+
+    def options(self) -> dict[str, bool]:
+        return {name: getattr(self, name) for name in OPTION_LABELS}
 
 
 @dataclass
@@ -571,6 +807,7 @@ class _ImportContext:
     unos: bool                      # the source starts with HEADER (UNOS rendered it)
     global_restrictions: list[str]  # "<key> = <value>" of the [global] restrictions
     includes: list[str]             # values of include and config file lines
+    global_encryption: bool = False  # a [global] block requires encryption: every share does (ADR-0380)
 
 
 def _groups_note(list_name: str, groups: Sequence[str]) -> str:
@@ -581,7 +818,7 @@ def _groups_note(list_name: str, groups: Sequence[str]) -> str:
 def _import_section(
     section: smbconf.ParsedSection, ctx: _ImportContext, taken: set[str], report: list[str]
 ) -> _ImportedShare | None:
-    """Map one section to a share (ADR-0086), fail-safe; None when it is skipped (with a report line).
+    """Map one section to a share (ADR-0380), fail-safe; None when it is skipped (with a report line).
     A share that had a script refusing connections gets a report line too.
 
     Runs in a worker thread: the folder is normalized with validate_share_path,
@@ -660,8 +897,7 @@ def _import_section(
         if not ctx.unos:
             _add(notes, "It was switched off (available = no) and stays without access")
     restricting = [a for a in ("hosts_allow", "hosts_deny") if getattr(values, a) and a in values.from_section]
-    if values.encryption_required and "smb_encrypt" in values.from_section:
-        restricting.append("smb_encrypt")
+    _import_options(share, section, values, ctx)
     for attribute in restricting:
         removed = True
         _add(
@@ -755,6 +991,10 @@ def _import_section(
                         "read only = no can only read now",
                     )
 
+    if share.guest_ok and share.encryption_required:
+        share.guest_ok = False
+        _add(notes, f"Guest access was removed: {GUEST_ENCRYPTION}")
+
     # Options that are not kept.
     if values.admin_users:
         _add(notes, "admin users removed (they act as root)")
@@ -770,12 +1010,16 @@ def _import_section(
             f"Ownership settings ({listed}) were replaced by the UNOS model: group {constants.SMB_GROUP_NAME}, "
             "folders 2770; run Repair permissions",
         )
-    if "smb_encrypt" in values.from_section and not values.encryption_required:
+    if "smb_encrypt" in values.from_section and not values.encryption_required and not (
+        ctx.unos and smbconf.normalize_key(values.smb_encrypt) == "default"  # UNOS renders it with the option off
+    ):
         _add(notes, f"Option '{_option_text(values.source['smb_encrypt'])}' was not kept")
     for option in section.options:
         if option.key in smbconf.KNOWN_SHARE_KEYS or option.key in smbconf.INCLUDE_KEYS:
             continue
         if ctx.unos and smbconf.is_unos_share_line(option):
+            continue
+        if _kept_as_option(option, share, ctx.unos):
             continue
         if any(option is used for used in script_options):
             continue  # named by the restriction's note
@@ -785,6 +1029,39 @@ def _import_section(
 
     taken.add(name.lower())
     return share
+
+
+def _import_options(
+    share: _ImportedShare, section: smbconf.ParsedSection, values: smbconf.SectionValues, ctx: _ImportContext
+) -> None:
+    """The protocol options of an imported share (ADR-0380), from the lines that apply to its section.
+
+    Required encryption, in the section or in any [global] block, becomes the option, which keeps
+    that restriction (ADR-0086 removed the access instead). Time Machine where
+    ``fruit:time machine`` is true and fruit is loaded. Previous Versions only in a file that UNOS
+    rendered: another file's snapshots have another layout. In UNOS's own file only the ``vfs
+    objects`` line that UNOS composes (smbconf.is_unos_option_line) loads a module.
+    """
+    share.encryption_required = values.encryption_required or ctx.global_encryption
+    vfs = smbconf.vfs_objects(ctx.parsed, section)
+    loaded = smbconf.split_list(vfs.value) if vfs is not None and (
+        not ctx.unos or smbconf.is_unos_option_line(vfs)) else []
+    offered = smbconf.last_option(ctx.parsed, section, smbconf.TIME_MACHINE_KEY)
+    share.time_machine = "fruit" in loaded and offered is not None and smbconf.parse_bool(offered.value) is True
+    share.previous_versions = ctx.unos and "shadow_copy2" in loaded
+
+
+def _kept_as_option(option: smbconf.ParsedOption, share: _ImportedShare, unos: bool) -> bool:
+    """Whether a line of the section came back as a protocol option of the share (no note, ADR-0380):
+    in UNOS's own file the vfs objects line that UNOS composes and the snapshots' lines of Previous
+    Versions, and in any file a true ``fruit:time machine`` of Time Machine."""
+    if option.key in smbconf.VFS_OBJECTS_KEYS:
+        return unos and smbconf.is_unos_option_line(option)
+    if option.key == smbconf.TIME_MACHINE_KEY:
+        return share.time_machine and smbconf.parse_bool(option.value) is True
+    if option.key.startswith("shadow:"):
+        return unos and share.previous_versions and smbconf.is_unos_option_line(option)
+    return False
 
 
 def _same_value(a: str, b: str) -> bool:
@@ -813,6 +1090,9 @@ def _plan_import(
     global_restrictions: list[str] = []
     for _, restriction in sorted(found, key=lambda item: item[0]):  # file order
         _add(global_restrictions, restriction)
+    global_encryption: list[str] = []
+    for option in smbconf.global_encryption(parsed):
+        _add(global_encryption, _option_text(option))
     includes = [
         option.value
         for option in (*parsed.global_options, *(o for s in parsed.sections for o in s.options))
@@ -825,6 +1105,7 @@ def _plan_import(
         unos=parsed.unos_header,
         global_restrictions=global_restrictions,
         includes=includes,
+        global_encryption=bool(global_encryption),
     )
 
     skipped: list[str] = []
@@ -859,7 +1140,12 @@ def _plan_import(
             f"The old [global] had {option}, which UNOS does not keep per share: access to every imported "
             "share was removed; review the shares and grant access"
         )
-    new_globals = {smbconf.normalize_key(k): v for k, v in smbconf.global_settings(any(s.guest_ok for s in shares))}
+    for option in global_encryption:
+        report.append(f"The old [global] had {option}: every imported share requires encryption")
+    new_globals = {
+        smbconf.normalize_key(k): v
+        for k, v in smbconf.global_settings(any(s.guest_ok for s in shares), any(s.time_machine for s in shares))
+    }
     latest: dict[str, smbconf.ParsedOption] = {}
     for option in smbconf.global_options_considered(parsed):
         latest[option.key] = option
@@ -945,6 +1231,8 @@ async def _run_import(db: AsyncSession) -> _ImportPlan | None:
             models.SmbShareAccess(user_id=user_id, username=username, level=level)
             for user_id, (username, level) in sorted(imported.access.items())
         ]
+        if any(imported.options().values()):
+            share.options = models.SmbShareOptions(**imported.options())
         db.add(share)
     state.shares_imported_at = _utcnow()
     state.import_report = json.dumps(plan.report) if plan.report else None
@@ -1042,6 +1330,9 @@ class LastApply:
     # next full reload makes them pending closes again.
     close_after_full_reload: set[str] = field(default_factory=set)
     replaced_problem: str | None = None    # the status problem of a copy of foreign sections, until restart
+    # The Time Machine shares changed and avahi-daemon was not restarted after a reload (ADR-0380).
+    advertise_pending: bool = False
+    advertise_failed: str | None = None    # why the last restart of avahi-daemon failed, until one works
 
 
 _last_apply = LastApply()
@@ -1223,8 +1514,9 @@ async def install_smb_config(staged: StagedConfig) -> interfaces.ApplyResult:
     Also retries a pending reload and pending closes of earlier applies, even
     when the text is unchanged. The shares closed while the full reload was
     pending (after a reload with systemctl only) are closed again after it.
-    Problems become warnings of the result and stay pending in last_apply();
-    this never raises for them.
+    After a reload, a change of the Time Machine shares restarts avahi-daemon,
+    so that smbd announces them (ADR-0380). Problems become warnings of the
+    result and stay pending in last_apply(); this never raises for them.
     """
     result = interfaces.ApplyResult()
     message = staged.install_error
@@ -1278,6 +1570,17 @@ async def install_smb_config(staged: StagedConfig) -> interfaces.ApplyResult:
             f"{partial_note}; the full reload is tried again at the next change{_then_closed_again()}"
         )
     result.warnings.extend(close_warnings)
+    # smbd registers the _adisk._tcp service of its Time Machine shares with avahi-daemon when it
+    # starts and when avahi-daemon restarts, never at a reload (ADR-0380): after a reload that
+    # reached the main smbd, a restart of avahi-daemon makes it register the new shares.
+    if result.changed and smbconf.time_machine_shares(staged.old_text) != smbconf.time_machine_shares(staged.new_text):
+        _last_apply.advertise_pending = True
+    if _last_apply.advertise_pending and reloaded:
+        failed = await asyncio.to_thread(smb._restart_avahi)
+        _last_apply.advertise_pending = failed is not None
+        _last_apply.advertise_failed = failed
+        if failed is not None:
+            result.warnings.append(advertise_warning(failed))
     _last_apply.pending_close = pending
     _last_apply.time = _utcnow()
     _last_apply.ok = message is None
@@ -1457,6 +1760,25 @@ async def purge_orphans(db: AsyncSession) -> int:
         )
     await _delete_access_rows(db, [row.id for row in stale], {row.share_id for row in stale} & share_ids)
     return len(stale)
+
+
+async def purge_orphan_options(db: AsyncSession) -> int:
+    """Delete the options of shares that do not exist (ADR-0380), flushed in the caller's transaction:
+    SQLite reuses the highest rowid, so they would attach to the next share. Only a SELECT runs when
+    there is none. The caller holds smb_lock() and commits; returns the number of rows deleted."""
+    orphans = (
+        await db.execute(
+            select(models.SmbShareOptions.share_id)
+            .where(models.SmbShareOptions.share_id.not_in(select(models.SmbShare.id)))
+            .execution_options(**_FRESH)
+        )
+    ).scalars().all()
+    if not orphans:
+        return 0
+    logger.info("Removing the options of deleted shares (ids %s)", ", ".join(map(_label, orphans)))
+    await db.execute(delete(models.SmbShareOptions).where(models.SmbShareOptions.share_id.in_(list(orphans))))
+    await db.flush()
+    return len(orphans)
 
 
 # --- the share API -------------------------------------------------------------
@@ -2093,6 +2415,13 @@ async def _create_share_locked(db: AsyncSession, data: schemas.SmbShareCreate) -
     pool_names = await _pool_names()
     path, parts = await asyncio.to_thread(_new_path, data.path, None, rows, pool_names)
     access = await _check_access(db, data.access)
+    options = {name: bool(getattr(data, name)) for name in OPTION_LABELS}
+    await _check_new_options(
+        guest_ok=data.guest_ok,
+        encryption_required=options["encryption_required"],
+        turned_on=[name for name, value in options.items() if value],
+        snapshots_of=path if options["previous_versions"] else None,
+    )
     folder = await asyncio.to_thread(_prepare_folder, parts)
 
     share = models.SmbShare(
@@ -2110,6 +2439,12 @@ async def _create_share_locked(db: AsyncSession, data: schemas.SmbShareCreate) -
     db.add(share)
     await db.flush()
     share_id = share.id
+    # SQLite reuses the highest rowid: a row of options left by a share deleted outside UNOS (a
+    # restored database) would attach to this one.
+    await db.execute(delete(models.SmbShareOptions).where(models.SmbShareOptions.share_id == share_id))
+    if any(options.values()):
+        share.options = models.SmbShareOptions(**options)
+        await db.flush()
     result, render = await _stage_commit_install(db)
 
     warnings = list(result.warnings)
@@ -2126,6 +2461,8 @@ async def _create_share_locked(db: AsyncSession, data: schemas.SmbShareCreate) -
         details += ", guests can read it"
     if access:
         details += f"; access: {_access_text(access)}"
+    if any(options.values()):
+        details += f"; {_options_text(options)}"
     severity = AuditSeverity.WARNING if data.guest_ok else AuditSeverity.INFO
     return ShareChange(name=name, details=details, severity=severity, info=info, warnings=warnings)
 
@@ -2165,6 +2502,20 @@ async def _update_share_locked(db: AsyncSession, name: str, data: schemas.SmbSha
         new_path, parts = await asyncio.to_thread(_new_path, data.path, share_id, rows, pool_names)
     access = await _check_access(db, data.access) if "access" in sent else None
     guest_ok = data.guest_ok if "guest_ok" in sent else bool(share.guest_ok)
+
+    # The protocol options (ADR-0380): what is on now, and what this PATCH turns on.
+    stored = share.options
+    before = {option: bool(getattr(stored, option, False)) for option in OPTION_LABELS}
+    after = {option: getattr(data, option) if option in sent else value for option, value in before.items()}
+    turned_on = [option for option in OPTION_LABELS if after[option] and not before[option]]
+    if turned_on or (guest_ok and not share.guest_ok) or (after["previous_versions"] and new_path != share.path):
+        await _check_new_options(
+            guest_ok=guest_ok,
+            encryption_required=after["encryption_required"],
+            turned_on=turned_on,
+            snapshots_of=new_path if after["previous_versions"] and (
+                "previous_versions" in turned_on or new_path != share.path) else None,
+        )
 
     # 4. A share that is not served must not grant anything (ADR-0136). A PATCH that only
     # dismisses the import notes grants nothing new and needs no valid folder.
@@ -2214,6 +2565,17 @@ async def _update_share_locked(db: AsyncSession, name: str, data: schemas.SmbSha
     if "import_notes" in sent and share.import_notes is not None:
         changes.append("import notes dismissed")
         share.import_notes = None
+    for option, label in OPTION_LABELS.items():
+        if after[option] != before[option]:
+            changes.append(f"{label} {'on' if after[option] else 'off'}")
+    if after != before:
+        if not any(after.values()):
+            share.options = None  # the row goes: no row, every option off
+        elif stored is None:
+            share.options = models.SmbShareOptions(**after)
+        else:
+            for option, value in after.items():
+                setattr(stored, option, value)
 
     if not changes:
         # 5. Nothing changed: no write (nothing was flushed either).
@@ -2253,7 +2615,7 @@ def _stop_repair(share_id: object, stopped_by: str, *, deleted: bool = False) ->
 
 
 async def delete_share(db: AsyncSession, name: str) -> ShareChange:
-    """DELETE /shares/smb/{name}: the row and its access rows; the folder is kept.
+    """DELETE /shares/smb/{name}: the row, its access rows and its options; the folder is kept.
 
     The shrink rule (ADR-0103) closes the share's open tree connects, and a
     running repair of the share stops (ADR-0363). Takes smb_lock().
@@ -2263,7 +2625,7 @@ async def delete_share(db: AsyncSession, name: str) -> ShareChange:
             await _import_if_needed_locked(db)
             share = await _load_share(db, name)
             share_id, share_name, share_path = share.id, _text(share.name), _text(share.path)
-            await db.delete(share)  # the ORM cascade deletes its access rows
+            await db.delete(share)  # the ORM cascade deletes its access rows and its options
             await db.flush()
             result, _ = await _stage_commit_install(db)
             _stop_repair(share_id, "the deletion of the share", deleted=True)
@@ -2403,11 +2765,19 @@ async def _infos(
         models.SmbShareAccess.username,
         models.SmbShareAccess.level,
     ).order_by(models.SmbShareAccess.id)
+    options_query = select(
+        models.SmbShareOptions.share_id,
+        models.SmbShareOptions.encryption_required,
+        models.SmbShareOptions.time_machine,
+        models.SmbShareOptions.previous_versions,
+    )
     if only is not None:
         query = query.where(models.SmbShare.id == only)
         access_query = access_query.where(models.SmbShareAccess.share_id == only)
+        options_query = options_query.where(models.SmbShareOptions.share_id == only)
     share_rows = (await db.execute(query.execution_options(**_FRESH))).all()
     access_rows = (await db.execute(access_query.execution_options(**_FRESH))).all()
+    option_rows = {row.share_id: row for row in (await db.execute(options_query.execution_options(**_FRESH))).all()}
     states = await _account_states(db)
 
     rendered = {share.name.lower(): share for share in render.shares}
@@ -2476,6 +2846,8 @@ async def _infos(
                 pool_mounted=_pool_mounted(pools_of[row.id], mounts),
                 permissions_ok=permissions.get(row.id),
                 import_notes=json_lines(row.import_notes),
+                **{name: bool(getattr(option_rows.get(row.id), name, False)) for name in OPTION_LABELS},
+                not_rendered=render.not_rendered.get(row.id, {}) if share is not None else {},
             )
         )
     infos.sort(key=lambda info: info.name.lower())
@@ -2641,6 +3013,8 @@ async def service_status(db: AsyncSession) -> schemas.SmbServiceStatus:
         problems.append(f"Open connections to {names} were not closed yet; this is tried again at the next change")
     if _last_apply.replaced_problem:
         problems.append(_last_apply.replaced_problem)
+    if _last_apply.advertise_pending and _last_apply.advertise_failed:
+        problems.append(advertise_warning(_last_apply.advertise_failed))
     problems.extend(_last_reconcile.problems)
 
     state = (
@@ -2875,6 +3249,7 @@ async def _reconcile(db: AsyncSession, run: _Run, *, after_restore: bool) -> Non
     # 2. Stale access rows (and, after a restore, the access of shares that are not served).
     try:
         purged = await purge_orphans(db)
+        orphan_options = await purge_orphan_options(db)
         cleaned: list[str] = []
         if after_restore:
             try:
@@ -2883,10 +3258,12 @@ async def _reconcile(db: AsyncSession, run: _Run, *, after_restore: bool) -> Non
                 run.problems.append(
                     f"The access of shares that are not served could not be checked: {_reason(exc)}"
                 )
-        if purged or cleaned:
+        if purged or orphan_options or cleaned:
             await db.commit()
         if purged:
             run.changes.append(f"Removed {purged} stale share access row(s)")
+        if orphan_options:
+            run.changes.append(f"Removed the options of {orphan_options} deleted share(s)")
         if cleaned:
             run.changes.append(f"Removed the access of shares that are not served: {', '.join(cleaned)}")
     except Exception as exc:
@@ -3032,10 +3409,14 @@ _SMB_TABLES = (
     models.SmbAccount.__table__,
     models.SmbState.__table__,
 )
+# Checked like them when the backup has it: one made before the shares had options (ADR-0380)
+# lacks it, and init_db makes it empty after the restore (every option off).
+_OPTIONAL_SMB_TABLES = (models.SmbShareOptions.__table__,)
 
 
 def check_smb_tables(db_file: os.PathLike | str) -> None:
-    """Check the four SMB tables of an extracted backup database (sync).
+    """Check the four SMB tables of an extracted backup database, and the shares' options when it
+    has them (sync).
 
     A database without one of them comes from a UNOS before shares were stored
     in the database, whose backups are not restored (ADR-0319). A table that
@@ -3056,10 +3437,11 @@ def check_smb_tables(db_file: os.PathLike | str) -> None:
     extra: list[str] = []
     shared_uid = None
     try:
-        for table in _SMB_TABLES:
+        for table in (*_SMB_TABLES, *_OPTIONAL_SMB_TABLES):
             info = conn.execute(f'PRAGMA table_info("{table.name}")').fetchall()
             if not info:
-                absent.append(table.name)
+                if table not in _OPTIONAL_SMB_TABLES:
+                    absent.append(table.name)
                 continue
             columns = {str(row[1]).lower(): row for row in info}
             model_columns = {column.name.lower() for column in table.columns}
@@ -3147,17 +3529,23 @@ def restored_smb_authoritative(conn: sqlite3.Connection) -> bool:
 def prepare_restored_shares(conn: sqlite3.Connection, authoritative: bool) -> list[str]:
     """The share rules of a restore (ADR-0319) on an extracted database, in the caller's transaction (sync).
 
-    Not authoritative: every share and access row is deleted, and the next
-    import reads the live file; such an import never turns guest access on.
-    Authoritative: the rows are
-    kept, DateTime values that SQLAlchemy cannot read are replaced, and every
+    Not authoritative: every share, access and options row is deleted, and the
+    next import reads the live file; such an import never turns guest access on.
+    Authoritative: the rows are kept but the options of shares that do not exist
+    (ADR-0380), DateTime values that SQLAlchemy cannot read are replaced, every
     share whose stored path breaks a rule of ADR-0145 loses its access rows
-    and guest access, with a note. Returns the names of the shares with guest
+    and guest access, with a note, and a share that requires encryption loses
+    guest access, with a note. Returns the names of the shares with guest
     access afterwards. Raises PoolListUnavailable when the pool list cannot be
     read.
     """
+    has_options = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'smb_share_options'"
+    ).fetchone() is not None
     if not authoritative:
         conn.execute("DELETE FROM smb_share_access")
+        if has_options:
+            conn.execute("DELETE FROM smb_share_options")
         conn.execute("DELETE FROM smb_shares")
         if conn.execute("SELECT 1 FROM smb_state WHERE id = 1").fetchone() is None:
             conn.execute(
@@ -3179,6 +3567,9 @@ def prepare_restored_shares(conn: sqlite3.Connection, authoritative: bool) -> li
     except Exception as exc:
         raise PoolListUnavailable(f"The pool list could not be read: {_reason(exc)}") from exc
     _make_datetimes_readable(conn)
+    if has_options:
+        # The options of a share that the backup does not have would attach to the next share (ADR-0380).
+        conn.execute("DELETE FROM smb_share_options WHERE share_id NOT IN (SELECT id FROM smb_shares)")
     rows = conn.execute("SELECT id, name, path, guest_ok, import_notes, version FROM smb_shares").fetchall()
     problems = _check_paths([(row[0], row[1], row[2]) for row in rows], pool_names)
     granted = {row[0] for row in conn.execute("SELECT DISTINCT share_id FROM smb_share_access")}
@@ -3194,6 +3585,19 @@ def prepare_restored_shares(conn: sqlite3.Connection, authoritative: bool) -> li
             (json.dumps(notes), _next_version(version), share_id),
         )
         logger.info("Restore: share %s is not served (%s); its access was removed", _label(name), problem)
+    if has_options:
+        # smbd refuses guests where encryption is required (ADR-0380), as create and PATCH do.
+        for share_id, name, import_notes, version in conn.execute(
+            "SELECT id, name, import_notes, version FROM smb_shares WHERE guest_ok AND id IN "
+            "(SELECT share_id FROM smb_share_options WHERE encryption_required)"
+        ).fetchall():
+            notes = json_lines(import_notes)
+            _add(notes, f"Guest access was removed at the restore: {GUEST_ENCRYPTION}")
+            conn.execute(
+                "UPDATE smb_shares SET guest_ok = 0, import_notes = ?, version = ? WHERE id = ?",
+                (json.dumps(notes), _next_version(version), share_id),
+            )
+            logger.info("Restore: share %s requires encryption; its guest access was removed", _label(name))
     return sorted(
         (_text(name) for name, guest_ok in conn.execute("SELECT name, guest_ok FROM smb_shares") if guest_ok),
         key=str.lower,

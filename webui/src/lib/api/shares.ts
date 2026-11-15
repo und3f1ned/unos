@@ -54,9 +54,27 @@ export interface SmbShare {
   permissions_ok: boolean | null;
   /** Messages of the one-time import of the old smb.conf, until dismissed. */
   import_notes: string[];
+  /**
+   * The protocol options as stored (ADR-0380): clients that cannot encrypt are refused; Macs can
+   * back up with Time Machine; Windows lists the snapshots of the share's pool or volume. The SMB
+   * status names one that is on and not in smb.conf.
+   */
+  encryption_required: boolean;
+  time_machine: boolean;
+  previous_versions: boolean;
+  /**
+   * The stored settings that smb.conf leaves out, with the server's reason (ADR-0380): Time
+   * Machine or Previous Versions that the host or the folder cannot serve, and guest access of a
+   * share that requires encryption.
+   */
+  not_rendered: Partial<Record<'guest_ok' | 'time_machine' | 'previous_versions', string>>;
   /** Only in answers to changes. */
   warnings?: string[];
 }
+
+/** The protocol options of a share, each off by default (ADR-0380). */
+export type ShareOption = 'encryption_required' | 'time_machine' | 'previous_versions';
+export const SHARE_OPTIONS: ShareOption[] = ['encryption_required', 'time_machine', 'previous_versions'];
 
 export interface SmbShareCreate {
   name: string;
@@ -65,6 +83,9 @@ export interface SmbShareCreate {
   browseable?: boolean;
   guest_ok?: boolean;
   access?: ShareAccessEntry[];
+  encryption_required?: boolean;
+  time_machine?: boolean;
+  previous_versions?: boolean;
 }
 
 /** PATCH body: only the fields that are sent change. */
@@ -80,6 +101,9 @@ export interface SmbShareUpdate {
   access?: ShareAccessEntry[];
   /** Only [] is accepted: it dismisses the import notes. */
   import_notes?: [];
+  encryption_required?: boolean;
+  time_machine?: boolean;
+  previous_versions?: boolean;
 }
 
 export interface SmbShareDeleted {

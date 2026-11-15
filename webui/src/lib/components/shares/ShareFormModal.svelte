@@ -5,7 +5,9 @@
 	import {
 		createSmbShare,
 		getSmbShare,
+		SHARE_OPTIONS,
 		updateSmbShare,
+		type ShareOption,
 		type SharePath,
 		type SmbShare,
 		type SmbShareUpdate
@@ -49,6 +51,12 @@
 	let browseable = true;
 	let guestOk = false;
 	let levels: Record<string, AccessChoice> = {};
+	// The protocol options (ADR-0380), each off by default.
+	let options: Record<ShareOption, boolean> = noOptions();
+
+	function noOptions(): Record<ShareOption, boolean> {
+		return { encryption_required: false, time_machine: false, previous_versions: false };
+	}
 
 	let users: User[] = [];
 	let usersLoading = true;
@@ -71,6 +79,11 @@
 			browseable = from.browseable;
 			guestOk = from.guest_ok;
 			levels = levelsFromAccess(from.access);
+			options = {
+				encryption_required: from.encryption_required,
+				time_machine: from.time_machine,
+				previous_versions: from.previous_versions
+			};
 		} else {
 			name = '';
 			base = offered[0]?.path ?? '';
@@ -79,6 +92,7 @@
 			browseable = true;
 			guestOk = false;
 			levels = {};
+			options = noOptions();
 		}
 		attempted = false;
 	}
@@ -139,8 +153,28 @@
 	$: accessLocked = editing && loaded?.served === false && (!pathChanged || problem !== '');
 	$: loadedGrants = (loaded?.access.length ?? 0) > 0 || loaded?.guest_ok === true;
 	// While access is locked, guest access can be turned off, and on again
-	// only when the loaded share has it.
-	$: guestLocked = accessLocked && !guestOk && loaded?.guest_ok !== true;
+	// only when the loaded share has it. Guests' connections are never encrypted:
+	// a share that requires encryption has no guests (the server refuses both).
+	$: guestLocked =
+		(accessLocked && !guestOk && loaded?.guest_ok !== true) || (options.encryption_required && !guestOk);
+	$: encryptionLocked = guestOk && !options.encryption_required;
+	// The options in the form's order, with the catalog keys of their names and of their hints.
+	const OPTION_KEYS: Record<ShareOption, string> = {
+		encryption_required: 'shares.form.option.encryption',
+		time_machine: 'shares.form.option.timeMachine',
+		previous_versions: 'shares.form.option.previousVersions'
+	};
+	const OPTION_HINT_KEYS: Record<ShareOption, string> = {
+		encryption_required: 'shares.form.option.encryptionHint',
+		time_machine: 'shares.form.option.timeMachineHint',
+		previous_versions: 'shares.form.option.previousVersionsHint'
+	};
+	$: optionChoices = SHARE_OPTIONS.map((name) => ({
+		name,
+		label: $t(OPTION_KEYS[name]),
+		hint: $t(OPTION_HINT_KEYS[name]),
+		locked: name === 'encryption_required' && encryptionLocked
+	}));
 
 	$: listedUsers = pickableUsers(users);
 	$: loadedLevels = levelsFromAccess(loaded?.access ?? []);
@@ -157,6 +191,9 @@
 		if (browseable !== from.browseable) patch.browseable = browseable;
 		if (guestOk !== from.guest_ok) patch.guest_ok = guestOk;
 		if (!sameAccess(currentAccess, loadedAccess)) patch.access = currentAccess;
+		for (const name of SHARE_OPTIONS) {
+			if (options[name] !== from[name]) patch[name] = options[name];
+		}
 		return patch;
 	}
 
@@ -177,7 +214,8 @@
 					comment,
 					browseable,
 					guest_ok: guestOk,
-					access: currentAccess
+					access: currentAccess,
+					...options
 				});
 				dispatch('saved', { share: created, created: true });
 				return;
@@ -336,6 +374,25 @@
 				<Alert variant="warning">{$t('shares.form.guestWarning')}</Alert>
 			{/if}
 		</div>
+
+		<fieldset class="space-y-2">
+			<legend class="form-label">{$t('shares.form.options')}</legend>
+			{#each optionChoices as choice (choice.name)}
+				<div>
+					<label class="flex items-center gap-2 {choice.locked ? 'opacity-60' : 'cursor-pointer'}">
+						<input
+							type="checkbox"
+							class="form-checkbox"
+							bind:checked={options[choice.name]}
+							disabled={choice.locked}
+							aria-describedby="share-option-{choice.name}"
+						/>
+						{choice.label}
+					</label>
+					<p id="share-option-{choice.name}" class="form-hint ml-6">{choice.hint}</p>
+				</div>
+			{/each}
+		</fieldset>
 
 		{#if usersLoading}
 			<p class="text-sm text-muted">{$t('shares.form.loadingUsers')}</p>

@@ -71,7 +71,7 @@ REPLACED = (
 
 
 class FakeSmbHost:
-    """mkdir, testparm, smbcontrol and systemctl; ``fail`` maps an argv prefix to a HostResult or exception."""
+    """mkdir, testparm, smbcontrol, systemctl and timeout; ``fail`` maps an argv prefix to a HostResult or exception."""
 
     def __init__(self) -> None:
         self.calls: list[list[str]] = []
@@ -86,7 +86,7 @@ class FakeSmbHost:
                 if isinstance(outcome, BaseException):
                     raise outcome
                 return outcome
-        if cmd[0] in ("mkdir", "testparm", "smbcontrol", "systemctl"):
+        if cmd[0] in ("mkdir", "testparm", "smbcontrol", "systemctl", "timeout"):
             return HostResult(0, "", "")
         raise AssertionError(f"unexpected host command: {cmd}")
 

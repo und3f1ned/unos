@@ -618,6 +618,9 @@ every served share below such a folder until the command has run.
      shares (a hidden share can still be opened by its name)
    - **Guests can read this share without a password** - See
      [Guest Shares](#guest-shares)
+   - **Protocol options** - **Require encryption**, **Time Machine backups of
+     Macs** and **Previous Versions from snapshots**, each off by default:
+     see [Protocol Options](#protocol-options)
    - **Access** - For each user: No access, Read only or Read & write
 3. Click **Create**
 
@@ -637,11 +640,61 @@ requires signing. Windows 11 refuses guest access by default, and guest
 connections are neither signed nor encrypted. Use guest shares only for
 files everyone on your network may read, and keep them few.
 
+#### Protocol Options
+
+Each share can turn on three options; its card shows those that are on, and
+marks one that the NAS cannot serve now with the reason (see below).
+
+- **Require encryption** - Only clients that encrypt the connection (SMB 3:
+  Windows 8 and later, macOS, Linux) can open the share; older ones, such as
+  SMB 2 clients, are refused. Turning it on disconnects the share's open
+  connections, which reconnect encrypted. A guest share cannot require
+  encryption: guest connections are never encrypted.
+- **Time Machine backups of Macs** - A Mac backs up to the share: in **System
+  Settings** → **General** → **Time Machine**, **Add Backup Disk** lists it
+  (or connect to it in the Finder first). Give whoever backs up **Read &
+  write**, ideally a share of its own; Time Machine takes the free space of
+  the pool. While any share offers Time Machine, every share loads Apple's
+  SMB extensions (Windows' extra file streams are then kept as well), and
+  macOS cannot change the permissions of the files. The NAS announces the
+  Time Machine shares over Bonjour, those that someone has access to; a
+  change of them restarts avahi-daemon for that, so the NAS disappears from
+  the Finder sidebar for a moment. If avahi-daemon does not start again, the
+  answer and the status panel of the **Shares** page say so, and the next
+  change tries again.
+- **Previous Versions from snapshots** - Windows lists the snapshots of the
+  share's pool, or of its volume when the share is in one, under
+  **Properties** → **Previous Versions** of its files and folders, and can
+  open, copy or restore them; `smbclient` reaches them as `@GMT-` paths.
+  Only the snapshots that UNOS names are listed: those made on the
+  [Snapshots](#snapshots) page with the default name (`snap_<time>`) and
+  those of scheduled snapshot tasks (`auto_<time>`). Scheduled tasks
+  snapshot pools only, and a pool's snapshot does not hold the files of its
+  volumes: a share in a volume lists only the volume's snapshots made on the
+  **Snapshots** page. A folder in a subvolume or file system of its own
+  further below the pool's top level than a volume (such as a restored copy
+  inside a volume, a subvolume made by hand or another file system mounted
+  there) is in no snapshot of UNOS, and the option is refused there with the
+  reason; a subvolume right below the pool, such as a restored copy of a
+  pool's snapshot, counts as a volume. Turning the option on applies to the
+  next connections (open ones get it when they reconnect); turning it off
+  disconnects the share's open connections, so that none keeps showing the
+  snapshots.
+
+Time Machine and Previous Versions need Samba's vfs modules, the package
+`samba-vfs-modules` on the NAS; without it both are refused, with the
+package named. If the modules or the snapshots of an option that is on go
+away later, the share is served without that option: its card shows the
+option as a warning with the reason, and so does the status panel of the
+**Shares** page. A share restored from a backup with guest access and
+encryption required loses guest access at the restore, with a note.
+
 #### Editing a Share
 
-- **Edit** changes the comment, network browsing, guest access and the
-  access list (and the folder of a share marked **Not served**). Removing or
-  lowering someone's access, and turning guest access off, disconnect every
+- **Edit** changes the comment, network browsing, guest access, the protocol
+  options and the access list (and the folder of a share marked **Not
+  served**). Removing or lowering someone's access, turning guest access off,
+  requiring encryption and turning Previous Versions off disconnect every
   open connection to that share; the computers reconnect by themselves.
   Adding access disconnects nobody.
 - **Repair permissions** fixes the permissions of the files that are already

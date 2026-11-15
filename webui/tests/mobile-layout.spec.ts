@@ -2,7 +2,7 @@ import type { Locator, Page, WebSocketRoute } from '@playwright/test';
 import { test, expect } from './fixtures';
 import { createAccount, deleteAccount, type Account } from './accounts';
 import { FAKE_IMPORTABLE, fakeStorageApi, noBalance } from './storage-fakes';
-import { POOLS, accessOf, fakeNfsExport, fakeShare, fakeSmbApi, fakeUser } from './shares-fakes';
+import { NO_SNAPSHOTS, POOLS, accessOf, fakeNfsExport, fakeShare, fakeSmbApi, fakeUser } from './shares-fakes';
 import { HEALTHY_HDD_2, REPLACE_SOON, fakeHealthApi, predictionsAnswer } from './health-fakes';
 import { fakeNetworkApi } from './network-fakes';
 import { fakeNotificationsApi, type Channel } from './notifications-fakes';
@@ -615,6 +615,12 @@ const USERS = [
 const SHARES = [
   fakeShare('family_photos_and_videos', {
     comment: 'Every photo and video of the family since 2019, sorted by year',
+    // The badges of every protocol option (ADR-0380) wrap on a phone, and so does the reason of
+    // one that smb.conf leaves out, with its long path.
+    encryption_required: true,
+    time_machine: true,
+    previous_versions: true,
+    not_rendered: { previous_versions: NO_SNAPSHOTS },
     access: accessOf(USERS, [
       { user_id: 2, username: 'alice', level: 'write' },
       { user_id: 3, username: 'bob_the_family_photographer', level: 'read' },

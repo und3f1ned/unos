@@ -36,7 +36,7 @@ DEFAULT_FSTAB = (
 )
 
 # The parameters that UNOS renders, in [global] and in share sections (the testparm
-# allowlist; ADR-0281, ADR-0088, ADR-0275, ADR-0342).
+# allowlist; ADR-0281, ADR-0088, ADR-0275, ADR-0342, ADR-0380).
 SMB_CONF_KEYS = frozenset({
     "workgroup", "server string", "server role", "security", "passdb backend", "map to guest",
     "restrict anonymous", "guest account", "invalid users", "hosts allow", "server min protocol",
@@ -49,6 +49,8 @@ SMB_CONF_KEYS = frozenset({
     "path", "comment", "browseable", "read only", "guest ok", "valid users", "write list",
     "available", "veto files", "force group", "create mask", "force create mode",
     "directory mask", "force directory mode",
+    "smb encrypt", "vfs objects", "fruit:time machine", "fruit:aapl", "fruit:nfs_aces",
+    "shadow:mountpoint", "shadow:snapdir", "shadow:snapprefix", "shadow:delimiter", "shadow:format",
 })
 
 # The script of host.missing_host_binaries (the tool check).

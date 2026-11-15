@@ -66,6 +66,11 @@ FIXED = """   veto files = /.snapshots/.unos-trash/
    force directory mode = 2770
 """
 
+# The lines of a share's protocol options with every option off (ADR-0380), before the fixed lines.
+OPTIONS_OFF = """   smb encrypt = default
+   vfs objects =
+"""
+
 PATH = "/mnt/pools/data/shared"
 
 
@@ -75,7 +80,7 @@ def share(name="shared", path=PATH, comment="", browseable=True, guest_ok=False,
 
 
 def section(name, body):
-    return f"[{name}]\n{body}{FIXED}"
+    return f"[{name}]\n{body}{OPTIONS_OFF}{FIXED}"
 
 
 # --- [global] (ADR-0281) -------------------------------------------------------------------
@@ -241,6 +246,8 @@ class TestShareSections:
    valid users = root
    write list =
    available = no
+   smb encrypt = default
+   vfs objects =
    veto files = /.snapshots/.unos-trash/
    force group = unos-smb
    create mask = 0660
@@ -256,6 +263,8 @@ class TestShareSections:
    valid users = alice, bob
    write list = alice
    available = yes
+   smb encrypt = default
+   vfs objects =
    veto files = /.snapshots/.unos-trash/
    force group = unos-smb
    create mask = 0660
@@ -353,7 +362,7 @@ class TestSerializerGuards:
             smbconf._safe_path("/x/%S")
 
 
-# --- the parser (ADR-0086) ----------------------------------------------------------------------------
+# --- the parser (ADR-0380) ----------------------------------------------------------------------------
 
 
 def values(text, name="x"):
@@ -534,17 +543,18 @@ class TestParser:
 
     def test_global_restrictions_of_every_block_in_file_order(self):
         """A restriction that a later [global] block lifts still applies to the shares between
-        the blocks in Samba, so every block counts (ADR-0086)."""
+        the blocks in Samba, so every block counts (ADR-0380)."""
         parsed = smbconf.parse_smb_conf(
             "[global]\n Invalid Users = alice\n smb encrypt = desired\n hosts allow =\n"
             "[x]\n path = /x\n hosts deny = 10.0.0.5\n"
             "[global]\n invalid users =\n allow hosts = 192.168.1.5\n server smb encrypt = Mandatory\n"
             " deny hosts = 10.0.0.9\n")
         assert [(o.raw_key, o.value) for o in smbconf.global_restrictions(parsed)] == [
-            ("Invalid Users", "alice"), ("allow hosts", "192.168.1.5"), ("server smb encrypt", "Mandatory"),
-            ("deny hosts", "10.0.0.9"),
+            ("Invalid Users", "alice"), ("allow hosts", "192.168.1.5"), ("deny hosts", "10.0.0.9"),
         ]
         assert smbconf.global_restrictions(smbconf.parse_smb_conf("[x]\n hosts allow = 10.0.0.1\n")) == []
+        # Required encryption is a share's option (ADR-0380), not a restriction that removes access.
+        assert [(o.raw_key, o.value) for o in smbconf.global_encryption(parsed)] == [("server smb encrypt", "Mandatory")]
 
     @pytest.mark.parametrize("value", ["required", "mandatory", "force", "forced", "enforced", "Forced", "ENFORCED",
                                        " En forced "])
@@ -553,13 +563,14 @@ class TestParser:
         assert values(f"[x]\n path = /x\n smb encrypt = {value}\n").encryption_required
         assert values(f"[x]\n path = /x\n server smb encrypt = {value}\n").encryption_required
         parsed = smbconf.parse_smb_conf(f"[global]\n server smb encrypt = {value}\n[x]\n path = /x\n")
-        assert [o.value for o in smbconf.global_restrictions(parsed)] == [value.strip()]
+        assert [o.value for o in smbconf.global_encryption(parsed)] == [value.strip()]
+        assert smbconf.global_restrictions(parsed) == []
 
     @pytest.mark.parametrize("value", ["default", "desired", "if_required", "off", "auto", "yes", ""])
     def test_encryption_that_refuses_no_client(self, value):
         assert not values(f"[x]\n path = /x\n smb encrypt = {value}\n").encryption_required
         parsed = smbconf.parse_smb_conf(f"[global]\n server smb encrypt = {value}\n[x]\n path = /x\n")
-        assert smbconf.global_restrictions(parsed) == []
+        assert smbconf.global_restrictions(parsed) == [] and smbconf.global_encryption(parsed) == []
 
     @pytest.mark.parametrize("command, close", [
         ("root preexec = /usr/local/bin/check %U", "root preexec close = yes"),

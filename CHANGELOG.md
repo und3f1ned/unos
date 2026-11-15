@@ -383,6 +383,34 @@ manager, encrypted backup uploads, health checks, CI checks).
   (`GET`/`POST`/`DELETE /api/v1/storage/pools/{name}/balance`,
   `POST .../balance/pause` and `.../balance/resume`). `scripts/dev/scenario.sh
   balance` checks it on the dev device.
+- An SMB share can require encryption, serve Time Machine backups of Macs and
+  list the snapshots of its pool or volume as Windows' Previous Versions
+  (ADR-0380): three options of the share dialog, off by default, shown on the
+  share's card and stored in the new table `smb_share_options`
+  (`encryption_required`, `time_machine`, `previous_versions` of the share
+  API). Every share section now states `smb encrypt` and `vfs objects`, also
+  with the options off; while a Time Machine share exists every share loads
+  `catia fruit streams_xattr` and `[global]` has `fruit:aapl = yes` and
+  `fruit:nfs_aces = no`, and a change of the Time Machine shares restarts
+  avahi-daemon and waits for it, so that smbd announces them (`_adisk._tcp`);
+  a restart that fails is a warning and a problem of the SMB status until one
+  works. Previous Versions list the snapshots named `snap_<time>` and
+  `auto_<time>` in UTC; scheduled tasks snapshot pools only, so a share in a
+  volume lists the volume's snapshots of the Snapshots page. A guest share
+  cannot require encryption, and a restored one with both loses guest access;
+  Time Machine and Previous Versions need the package `samba-vfs-modules`,
+  which `install.sh` now installs, and are refused without it; Previous
+  Versions are refused for a folder in a subvolume or file system of its own
+  below the pool's top level other than a volume. An option that the NAS
+  cannot serve is left out of smb.conf and shown on the card as a warning
+  with the reason (`not_rendered` of the share API). Turning encryption on
+  and Previous Versions off disconnect the share's open connections. The
+  import of an smb.conf that UNOS did not write keeps required encryption
+  (of a section, or of `[global]` for every share) as the option with the
+  access, where it removed the access before, and Time Machine where fruit is
+  loaded. `scripts/dev/scenario.sh smb` shows the three options on a share in
+  a new volume, with open sessions across the encryption switch and the
+  `_adisk._tcp` service that Avahi resolves.
 - `scripts/dev/check.sh` shows each container's CPU, the load average and the
   temperatures, and reports a container of UNOS above 15% of a core or a
   thermal zone within 5 C of its throttling point as a problem (ADR-0374).
@@ -764,14 +792,15 @@ manager, encrypted backup uploads, health checks, CI checks).
   `smb.conf.unos-import-backup-<UTC time>`. Share options that UNOS does not know are not
   kept; they are listed on the Shares page. Hand-made global settings are
   replaced by the hardened defaults. Restrictions in the imported `[global]`
-  (`hosts allow`, `hosts deny`, `invalid users`, required encryption, a
-  script that refuses connections) or an `include` remove the access of the
-  imported shares, so that nothing becomes more open; `hosts allow`,
-  `hosts deny`, required encryption or such a script in a share's own section
-  remove that share's access. Required encryption is `required`, `mandatory`,
-  `force`, `forced` or `enforced`; a script that refuses connections is a
-  `preexec` (or `exec`) command with `preexec close = yes`, or a
-  `root preexec` command with `root preexec close = yes`.
+  (`hosts allow`, `hosts deny`, `invalid users`, a script that refuses
+  connections) or an `include` remove the access of the imported shares, so
+  that nothing becomes more open; `hosts allow`, `hosts deny` or such a
+  script in a share's own section remove that share's access. A script that
+  refuses connections is a `preexec` (or `exec`) command with
+  `preexec close = yes`, or a `root preexec` command with
+  `root preexec close = yes`. Required encryption (`required`, `mandatory`,
+  `force`, `forced` or `enforced`), in `[global]` or in a share's section,
+  keeps the access and becomes the share's option (see Added).
 - Share and user API: `PUT /api/v1/shares/smb/{name}` is replaced by `PATCH`,
   which changes only the fields it receives; an unknown share answers 404, and
   `expected_version` (from `version`) makes a PATCH fail with 409 when the

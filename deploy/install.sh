@@ -133,6 +133,7 @@ install_dependencies() {
         lm-sensors \
         samba \
         samba-common-bin \
+        samba-vfs-modules \
         hdparm \
         parted \
         mdadm \
