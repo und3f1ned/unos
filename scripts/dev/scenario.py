@@ -365,8 +365,8 @@ lsblk -no PKNAME "$(findmnt -no SOURCE /)"'''
 
 # smbd's Time Machine announcement (ADR-0377): Avahi resolves the device's _adisk._tcp service over
 # D-Bus (busctl ships with systemd) under the name smbd gives its services, the netbios name (mdns
-# name = netbios, Samba's default). Prints "found <busctl's JSON>", or "none <why>" when Avahi
-# resolves no such service.
+# name = netbios, Samba's default). Prints "found <busctl's JSON>", or "none <busctl's error>" when the
+# call fails; adisk_names tells Avahi's answer for no such service from a call that could not ask it.
 REMOTE_ADISK = r'''
 set -uo pipefail
 mkdir -p -m 0755 /run/samba
@@ -862,6 +862,37 @@ def adisk_until(c: Check, share: str, *, listed: bool) -> list[str]:
         time.sleep(ADISK_POLL)
 
 
+# Avahi's answer when it resolves no such service: its error org.freedesktop.Avahi.TimeoutError,
+# whose message busctl prints.
+AVAHI_NOT_FOUND = ("Timeout reached", "org.freedesktop.Avahi.TimeoutError")
+
+
+def adisk_names(out: str) -> list[str] | None:
+    """The shares that the device's _adisk._tcp service names (TXT records dk<n>=adVN=<share>,...),
+    from REMOTE_ADISK's output; None when Avahi answers that it resolves no such service. Any other
+    failure of the call (avahi-daemon not on the bus, a D-Bus denial, no busctl) fails with its text,
+    so that a check of Time Machine turned off does not pass without asking Avahi."""
+    kind, _, rest = out.strip().partition(" ")
+    if kind == "none":
+        if any(answer in rest for answer in AVAHI_NOT_FOUND):
+            return None
+        raise Failed(f"Avahi could not be asked for the device's _adisk._tcp service: {tail(rest, 200)}")
+    try:
+        if kind != "found":
+            raise ValueError("no answer")
+        records = [bytes(entry).decode("utf-8", "replace") for entry in json.loads(rest)["data"][9]]
+    except (ValueError, KeyError, IndexError, TypeError) as exc:
+        raise Failed(f"the device's _adisk._tcp service could not be read ({exc}): {tail(out, 200)}") from exc
+    names = []
+    for record in records:
+        key, _, value = record.partition("=")
+        if re.fullmatch(r"dk\d+", key):
+            fields = dict(part.partition("=")[::2] for part in value.split(","))
+            if fields.get("adVN"):
+                names.append(fields["adVN"])
+    return names
+
+
 def tail(data: bytes | str, size: int = 400) -> str:
     text = data.decode("utf-8", "replace") if isinstance(data, bytes) else data
     return " ".join(text.split())[-size:]
@@ -1028,26 +1059,9 @@ class Device:
         return self.run(REMOTE_QUOTA, path).strip()
 
     def adisk_shares(self) -> list[str] | None:
-        """The shares that the device's _adisk._tcp service names (TXT records dk<n>=adVN=<share>,...),
-        as Avahi resolves it (REMOTE_ADISK); None when Avahi resolves no such service."""
-        out = self.run(REMOTE_ADISK).strip()
-        kind, _, rest = out.partition(" ")
-        if kind == "none":
-            return None
-        try:
-            if kind != "found":
-                raise ValueError("no answer")
-            records = [bytes(entry).decode("utf-8", "replace") for entry in json.loads(rest)["data"][9]]
-        except (ValueError, KeyError, IndexError, TypeError) as exc:
-            raise Failed(f"the device's _adisk._tcp service could not be read ({exc}): {tail(out, 200)}") from exc
-        names = []
-        for record in records:
-            key, _, value = record.partition("=")
-            if re.fullmatch(r"dk\d+", key):
-                fields = dict(part.partition("=")[::2] for part in value.split(","))
-                if fields.get("adVN"):
-                    names.append(fields["adVN"])
-        return names
+        """The shares that the device's _adisk._tcp service names, as Avahi resolves it (REMOTE_ADISK,
+        adisk_names); None when Avahi resolves no such service."""
+        return adisk_names(self.run(REMOTE_ADISK))
 
     def system_disk(self) -> str:
         return self.settings.get("UNOS_DEV_SYSTEM_DISK") or self.run(REMOTE_SYSTEM_DISK).strip()

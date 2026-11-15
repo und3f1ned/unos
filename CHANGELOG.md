@@ -732,14 +732,15 @@ manager, encrypted backup uploads, health checks, CI checks).
   `smb.conf.unos-import-backup-<UTC time>`. Share options that UNOS does not know are not
   kept; they are listed on the Shares page. Hand-made global settings are
   replaced by the hardened defaults. Restrictions in the imported `[global]`
-  (`hosts allow`, `hosts deny`, `invalid users`, required encryption, a
-  script that refuses connections) or an `include` remove the access of the
-  imported shares, so that nothing becomes more open; `hosts allow`,
-  `hosts deny`, required encryption or such a script in a share's own section
-  remove that share's access. Required encryption is `required`, `mandatory`,
-  `force`, `forced` or `enforced`; a script that refuses connections is a
-  `preexec` (or `exec`) command with `preexec close = yes`, or a
-  `root preexec` command with `root preexec close = yes`.
+  (`hosts allow`, `hosts deny`, `invalid users`, a script that refuses
+  connections) or an `include` remove the access of the imported shares, so
+  that nothing becomes more open; `hosts allow`, `hosts deny` or such a
+  script in a share's own section remove that share's access. A script that
+  refuses connections is a `preexec` (or `exec`) command with
+  `preexec close = yes`, or a `root preexec` command with
+  `root preexec close = yes`. Required encryption (`required`, `mandatory`,
+  `force`, `forced` or `enforced`), in `[global]` or in a share's section,
+  keeps the access and becomes the share's option (see Added).
 - Share and user API: `PUT /api/v1/shares/smb/{name}` is replaced by `PATCH`,
   which changes only the fields it receives; an unknown share answers 404, and
   `expected_version` (from `version`) makes a PATCH fail with 409 when the

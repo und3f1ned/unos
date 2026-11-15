@@ -175,7 +175,7 @@ and a restore (ADR-0080). Avoid: share lock.
 the old file (ADR-0089). Avoid: sync, reload (one step of it).
 
 **Import**: The one-time turning of the host's existing smb.conf into shares, which only ever
-narrows access (ADR-0084, ADR-0086). Avoid: migration.
+narrows access (ADR-0084, ADR-0377). Avoid: migration.
 
 **Startup reconcile**: The task at the supervisor's start that brings the host accounts, Samba's
 passwords and smb.conf in line with the database (ADR-0138). Avoid: sync, repair.

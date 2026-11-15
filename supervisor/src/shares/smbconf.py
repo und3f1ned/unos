@@ -247,7 +247,7 @@ def render_config(shares: Sequence[service.ShareRender]) -> str:
     return "".join(parts)
 
 
-# --- parser (ADR-0086) ---------------------------------------------------------------
+# --- parser (ADR-0377) ---------------------------------------------------------------
 
 
 @dataclass
@@ -278,7 +278,7 @@ class ParsedSmbConf:
 
 
 def note_value(value: object) -> str:
-    """A value quoted in a note or report line (ADR-0086): bytes that were not UTF-8
+    """A value quoted in a note or report line (ADR-0377): bytes that were not UTF-8
     become U+FFFD, control characters '?', and at most 200 characters are kept."""
     text = value if isinstance(value, str) else str(value)
     try:
@@ -426,7 +426,7 @@ def parse_bool(value: str) -> bool | None:
     return None
 
 
-# --- effective values (ADR-0086) -------------------------------------------------------
+# --- effective values (ADR-0377) -------------------------------------------------------
 
 # Normalized key -> (canonical boolean, inverted).
 _BOOLEAN_KEYS: dict[str, tuple[str, bool]] = {
@@ -622,7 +622,7 @@ def _restricts(option: ParsedOption) -> bool:
 
 
 def global_restrictions(parsed: ParsedSmbConf) -> list[ParsedOption]:
-    """The [global] options that remove all access at the import (ADR-0086), in file order:
+    """The [global] options that remove all access at the import (ADR-0377), in file order:
     ``hosts allow``, ``hosts deny`` or an ``invalid users`` entry. Scripts that refuse
     connections are pairs of options: global_script_restrictions. Required encryption is
     the shares' option instead (global_encryption, ADR-0377).
@@ -673,7 +673,7 @@ def _restricting(scripts: Mapping[str, Mapping[str, ParsedOption]]) -> list[Scri
 
 
 def section_script_restrictions(parsed: ParsedSmbConf, section: ParsedSection) -> list[ScriptRestriction]:
-    """The scripts that can refuse connections to ``section`` (ADR-0086): with its effective
+    """The scripts that can refuse connections to ``section`` (ADR-0377): with its effective
     values (the [global] options before its first header, then its own options, the last
     value of each), a command is set and its close option is true. The caller tells apart
     the restrictions that the section sets itself."""

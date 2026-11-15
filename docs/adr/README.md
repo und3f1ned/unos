@@ -174,7 +174,7 @@ and this index, and `make check-fast` runs it.
 | [0083](0083-import-smb-conf-when-the-shares-table-is-empty.md) | Shares are imported from smb.conf whenever the shares table is empty | superseded by [0084](0084-import-the-existing-smb-conf-once.md) | 2026-11-06 |
 | [0084](0084-import-the-existing-smb-conf-once.md) | The existing smb.conf is imported once per database, controlled by a marker | accepted | 2026-11-06 |
 | [0085](0085-keep-the-original-smb-conf-as-import-backup.md) | The original smb.conf is kept once as smb.conf.unos-import-backup | superseded by [0362](0362-every-replaced-smb-conf-is-kept-in-a-dated-copy-and-the-newest-10-stay.md) | 2026-11-06 |
-| [0086](0086-the-import-only-narrows-access.md) | The smb.conf import only narrows access and reports every option it drops | accepted | 2026-11-06 |
+| [0086](0086-the-import-only-narrows-access.md) | The smb.conf import only narrows access and reports every option it drops | superseded by [0377](0377-a-share-can-require-encryption-serve-time-machine-and-list-snapshots-as-previous-versions.md) | 2026-11-06 |
 | [0087](0087-hardened-pinned-global-section.md) | UNOS renders a hardened [global] section with pinned values | superseded by [0281](0281-hardened-pinned-global-section-with-auth-audit-logging.md) | 2026-11-06 |
 | [0088](0088-fail-safe-share-sections.md) | Share sections never express a restriction by leaving a line out | accepted | 2026-11-06 |
 | [0089](0089-apply-is-checked-by-testparm-and-atomic.md) | Every apply is checked by testparm and installed atomically | accepted | 2026-11-06 |

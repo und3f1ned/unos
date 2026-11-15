@@ -150,7 +150,7 @@ export const en = {
 		"Macs find the share in the Time Machine settings and back up to it; whoever backs up needs read & write access. Time Machine takes the free space of the pool. While a share offers Time Machine, every share loads Apple's SMB extensions.",
 	'shares.form.option.previousVersions': 'Previous Versions from snapshots',
 	'shares.form.option.previousVersionsHint':
-		"Windows lists the snapshots of the share's pool, or of its volume when the share is in one, under Previous Versions of its files and folders: those made on the Snapshots page, and for a pool those of scheduled tasks too, which snapshot pools only. Open connections get it when they reconnect; turning it off disconnects them.",
+		"Windows lists the snapshots of the share's pool, or of its volume when the share is in one, under Previous Versions of its files and folders: those made on the Snapshots page without a name of your own, and for a pool those of scheduled tasks too, which snapshot pools only. Open connections get it when they reconnect; turning it off disconnects them.",
 	'shares.form.loadingUsers': 'Loading users...',
 	'shares.form.usersError': 'The users could not be loaded',
 	'shares.form.notServedHint': 'Fix the folder first: a share that is not served cannot be given access',
@@ -402,7 +402,7 @@ export const ru: Translation<typeof en> = {
 		'Mac находит общую папку в настройках Time Machine и сохраняет в неё резервные копии; тому, кто их делает, нужен доступ на чтение и запись. Time Machine занимает свободное место пула. Пока хотя бы одна общая папка предлагает Time Machine, все общие папки загружают расширения SMB от Apple.',
 	'shares.form.option.previousVersions': 'Предыдущие версии из снимков',
 	'shares.form.option.previousVersionsHint':
-		'Windows показывает в «Предыдущих версиях» файлов и папок общей папки снимки её пула, а если она в томе, то снимки тома: сделанные на странице «Снимки», а для пула ещё и задачами по расписанию, которые снимают только пулы. Открытые подключения получат их после переподключения; выключение разрывает их.',
+		'Windows показывает в «Предыдущих версиях» файлов и папок общей папки снимки её пула, а если она в томе, то снимки тома: сделанные на странице «Снимки» без заданного вами имени, а для пула ещё и задачами по расписанию, которые снимают только пулы. Открытые подключения получат их после переподключения; выключение разрывает их.',
 	'shares.form.loadingUsers': 'Загрузка пользователей...',
 	'shares.form.usersError': 'Не удалось загрузить пользователей',
 	'shares.form.notServedHint': 'Сначала исправьте папку: общей папке, которая не раздаётся, нельзя выдать доступ',

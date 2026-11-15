@@ -1,13 +1,16 @@
 ---
-status: accepted
+status: superseded
 date: 2026-11-06
 area: shares
 decided-by: agent
+superseded-by: ADR-0377
 ---
 
 # ADR-0086: The smb.conf import only narrows access and reports every option it drops
 
 ## Context
+
+Superseded by ADR-0377: required encryption, of a section or of `[global]`, is imported as the share's option with its access kept, and `fruit:time machine` as Time Machine where fruit is loaded; ADR-0377 restates the other rules.
 
 The import (ADR-0084) maps sections of a file that UNOS did not write onto UNOS's simpler model. Samba has many ways to restrict access (host lists, invalid users, required encryption, include files, scripts that refuse connections), and options in `[global]` are the defaults of every share. Dropping an option that restricts access would widen access silently.
 

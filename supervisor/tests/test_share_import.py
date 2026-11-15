@@ -1,4 +1,4 @@
-"""The one-time import of the existing smb.conf (ADR-0084, ADR-0086).
+"""The one-time import of the existing smb.conf (ADR-0084, ADR-0377).
 
 Each test has its own database file, pools base, smb.conf and audit log; host
 commands go to a fake behind ``src.host.run_on_host`` and the pool list is
@@ -196,7 +196,7 @@ def served_folder(env, name="x"):
     return f"{env.pool}/{name}"
 
 
-# --- mapping a section to a share (ADR-0086) ---------------------------------------------------------------------
+# --- mapping a section to a share (ADR-0377) ---------------------------------------------------------------------
 
 
 class TestMapping:
@@ -315,7 +315,7 @@ class TestMapping:
         assert share.notes == [f"It had {command} with {close}, which UNOS does not support; access was removed: "
                                "review it and grant access"]
         assert (one(env, "y").access, one(env, "y").notes) == ({"bob": "read"}, None)
-        # A restriction gets a report line too, in a section as in [global] (ADR-0086).
+        # A restriction gets a report line too, in a section as in [global] (ADR-0377).
         assert [line for line in state(env).report if line.startswith("Share ")] == [
             f"Share x had {command} with {close}, which UNOS does not support: its access was removed; "
             "review it and grant access"]

@@ -696,7 +696,8 @@ class _ImportedShare:
     guest_ok: bool = False
     access: dict[int, tuple[str, str]] = field(default_factory=dict)  # user id -> (username, level)
     notes: list[str] = field(default_factory=list)
-    # The protocol options (ADR-0377), from a file that UNOS rendered.
+    # The protocol options (ADR-0377): encryption and Time Machine from any file, Previous Versions
+    # only from UNOS's own (_import_options).
     encryption_required: bool = False
     time_machine: bool = False
     previous_versions: bool = False
@@ -817,7 +818,7 @@ def _groups_note(list_name: str, groups: Sequence[str]) -> str:
 def _import_section(
     section: smbconf.ParsedSection, ctx: _ImportContext, taken: set[str], report: list[str]
 ) -> _ImportedShare | None:
-    """Map one section to a share (ADR-0086), fail-safe; None when it is skipped (with a report line).
+    """Map one section to a share (ADR-0377), fail-safe; None when it is skipped (with a report line).
     A share that had a script refusing connections gets a report line too.
 
     Runs in a worker thread: the folder is normalized with validate_share_path,
@@ -1036,7 +1037,7 @@ def _import_options(
     """The protocol options of an imported share (ADR-0377), from the lines that apply to its section.
 
     Required encryption, in the section or in any [global] block, becomes the option, which keeps
-    that restriction (this changes ADR-0086, where it removed the access). Time Machine where
+    that restriction (ADR-0086 removed the access instead). Time Machine where
     ``fruit:time machine`` is true and fruit is loaded. Previous Versions only in a file that UNOS
     rendered: another file's snapshots have another layout. In UNOS's own file only the ``vfs
     objects`` line that UNOS composes (smbconf.is_unos_option_line) loads a module.

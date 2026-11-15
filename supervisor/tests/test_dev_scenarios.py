@@ -350,6 +350,10 @@ class FakeUserApi:
         self.nas.forgotten.append(self.cache)
 
 
+# busctl's text when avahi-daemon is not on the system bus.
+AVAHI_NOT_ON_THE_BUS = "The name org.freedesktop.Avahi was not provided by any .service files"
+
+
 class FakeNas:
     """The dev device for scenario.py: request() and upload() as api.DeviceApi has them, and the
     methods of scenario.Device. fail_at and interrupt_at name an API call (0-based) that answers
@@ -1721,17 +1725,26 @@ class FakeNas:
 
     def adisk_shares(self):
         """Avahi's resolve of smbd's _adisk._tcp service (ADR-0377): the Time Machine shares of the
-        installed smb.conf. Defects: adisk-unannounced (smbd never registers the service),
-        adisk-stays (a share stays in it once it was)."""
+        installed smb.conf, printed as REMOTE_ADISK prints them and read by scenario.adisk_names.
+        Defects: adisk-unannounced (smbd never registers the service), adisk-stays (a share stays
+        in it once it was), avahi-unreachable (once no share offers Time Machine, Avahi cannot be
+        asked: busctl fails with another error than Avahi's answer for no such service)."""
         self.device_call("adisk_shares")
-        if "adisk-unannounced" in self.bugs:
-            return None
         names = [name for name in re.findall(r"^\[([^\]]+)\]$", self.installed, re.M)
                  if (scenario.smb_section(self.installed, name) or {}).get("fruit:time machine") == "yes"]
+        if "adisk-unannounced" in self.bugs:
+            names = []
         if "adisk-stays" in self.bugs:
             self.adisk_once = sorted(set(getattr(self, "adisk_once", [])) | set(names))
             names = self.adisk_once
-        return names or None
+        if names:
+            out = "found " + busctl_json("sys=adVF=0x100", *(f"dk{n}=adVN={name},adVF=0x82"
+                                                             for n, name in enumerate(names)))
+        elif "avahi-unreachable" in self.bugs:
+            out = f"none Call failed: {AVAHI_NOT_ON_THE_BUS}"
+        else:
+            out = "none Call failed: Timeout reached"  # Avahi's answer for no such service
+        return scenario.adisk_names(out + "\n")
 
     def quota_limit(self, path):
         self.device_call("quota_limit")
@@ -2652,6 +2665,8 @@ def test_the_pool_folder_helper_removes_only_an_empty_folder_that_is_no_mount_po
     ("smb", "advertise-fails", "turning Time Machine on warns: avahi-daemon could not be restarted"),
     ("smb", "adisk-unannounced", "Avahi does not resolve unoscheck1a2b3cv in the device's _adisk._tcp service"),
     ("smb", "adisk-stays", "Avahi still resolves unoscheck1a2b3cv in the device's _adisk._tcp service"),
+    ("smb", "avahi-unreachable", f"Avahi could not be asked for the device's _adisk._tcp service: Call failed: "
+                                 f"{AVAHI_NOT_ON_THE_BUS}"),
     ("smb", "encryption-keeps-sessions", "the open session of the SMB 2.1 client still lists the share"),
     ("smb", "encryption-everywhere", "the SMB 2.1 client answered NT_STATUS_ACCESS_DENIED on unoscheck1a2b3c,"),
     ("smb", "snapshot-other-names", "the Snapshots page named the snapshot 'snap_20270115T080000'"),
@@ -3606,15 +3621,25 @@ def busctl_json(*records: str) -> str:
 
 def test_the_device_reads_the_shares_of_its_adisk_service(stub):
     """smbd's Time Machine announcement (ADR-0377): the adVN of each dk<n> TXT record, in the
-    read-only namespace; none when Avahi resolves no such service."""
+    read-only namespace; none only when Avahi answers that it resolves no such service (its
+    TimeoutError, "Timeout reached"). Any other failure of the call, as REMOTE_ADISK prints it
+    (avahi-daemon not on the bus, a D-Bus denial, no busctl), fails with busctl's text: otherwise
+    the check of Time Machine turned off would pass without asking Avahi."""
     device = device_with_stub(stub)
     (stub.log / "reply").write_text("found " + busctl_json("sys=adVF=0x100", "dk0=adVN=unoscheck1a2b3cv,adVF=0x82",
                                                            "dk1=adVN=Backups,adVF=0x82") + "\n")
     assert device.adisk_shares() == ["unoscheck1a2b3cv", "Backups"]
     assert "unshare --mount --propagation private" in (stub.log / "argv").read_text()
-    (stub.log / "reply").write_text("none Call failed: Timeout reached\n")
-    assert device.adisk_shares() is None
-    for reply in ("found {}\n", "found not json\n", "busctl: command not found\n"):
+    for reply in ("none Call failed: Timeout reached\n", "none Call failed: org.freedesktop.Avahi.TimeoutError\n"):
+        (stub.log / "reply").write_text(reply)
+        assert device.adisk_shares() is None
+    for failure in (f"Call failed: {AVAHI_NOT_ON_THE_BUS}", "Call failed: Access denied",
+                    "bash: line 7: busctl: command not found"):
+        (stub.log / "reply").write_text(f"none {failure}\n")
+        with pytest.raises(scenario.Failed) as failed:
+            device.adisk_shares()
+        assert str(failed.value) == f"Avahi could not be asked for the device's _adisk._tcp service: {failure}"
+    for reply in ("found {}\n", "found not json\n"):
         (stub.log / "reply").write_text(reply)
         with pytest.raises(scenario.Failed, match="_adisk._tcp service could not be read"):
             device.adisk_shares()
@@ -3623,6 +3648,7 @@ def test_the_device_reads_the_shares_of_its_adisk_service(stub):
 @pytest.mark.parametrize("answers, printed", [
     ("0", "found {busctl}"),
     ("1", "none Call failed: Timeout reached"),
+    ("2", "none Call failed: Access denied"),
 ])
 def test_the_adisk_helper_resolves_smbd_s_service_under_its_netbios_name(tmp_path, answers, printed):
     """REMOTE_ADISK, run here with a testparm and a busctl that log their arguments: the service of
@@ -3635,7 +3661,8 @@ def test_the_adisk_helper_resolves_smbd_s_service_under_its_netbios_name(tmp_pat
     stubs = {
         "testparm": '[ "$*" = "-s --parameter-name netbios name" ] || exit 9\necho BPI-W3\n',
         "busctl": (f'printf "%s\\n" "$@" > {str(log)!r}\n'
-                   f'if [ {answers} = 0 ]; then printf "%s\\n" {answer!r}; else echo "Call failed: Timeout reached" >&2; exit 1; fi\n'),
+                   f'case {answers} in 0) printf "%s\\n" {answer!r} ;; 1) echo "Call failed: Timeout reached" >&2; exit 1 ;; '
+                   '*) echo "Call failed: Access denied" >&2; exit 1 ;; esac\n'),
         "mkdir": "exit 0\n",
     }
     for name, body in stubs.items():

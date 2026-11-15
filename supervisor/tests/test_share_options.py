@@ -585,7 +585,7 @@ class TestRestoreAndImport:
 
     def test_the_import_of_a_file_written_by_hand_keeps_required_encryption_and_time_machine(self, api):
         """A file that UNOS did not render: required encryption comes back as the option, which keeps
-        that restriction, so the access stays (this changes ADR-0086); Time Machine where fruit is
+        that restriction, so the access stays (ADR-0086 removed it); Time Machine where fruit is
         loaded; snapshots of another layout are not kept, and the vfs objects line is noted."""
         text = (
             f"[docs]\n   path = {api.pool}/docs\n   valid users = alice\n"
