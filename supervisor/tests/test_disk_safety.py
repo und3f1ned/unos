@@ -7,6 +7,7 @@ every refusal is checked to happen before mkfs.btrfs is ever run.
 from __future__ import annotations
 
 import pytest
+from fastapi import HTTPException
 
 from src import host as host_module
 from src.host import HostResult
@@ -76,6 +77,24 @@ def nvme_root(fake_host):
     fake_host.add_mount("/", "/dev/nvme0n1p2", "ext4", NVME_ROOT_UUID)
     fake_host.files["/proc/cmdline"] = f"root=UUID={NVME_ROOT_UUID} ro quiet"
     fake_host.add_disk("sdb")
+    return fake_host
+
+
+def bpi_w3(fake_host):
+    """The flash of a Banana Pi BPI-W3 (ArmSoM W3, Rockchip RK3588) as the dev device has it, on
+    top of the fake host's microSD card mmcblk1 with the system and zram0 for swap: the eMMC
+    mmcblk0 keeps a firmware in nine partitions, one of them a swap partition that is not in use,
+    beside its boot partitions mmcblk0boot0 and mmcblk0boot1, and Armbian keeps /var/log on zram1
+    (ADR-0225, ADR-0376). The SATA disk sda sits behind an AHCI controller, blank here."""
+    fake_host.files["/proc/device-tree/compatible"] = "rockchip,rk3588-armsom-w3\0rockchip,rk3588\0"
+    fake_host.add_disk("mmcblk0", size=31_268_536_320, rota=False, pttype="gpt")
+    for n, fstype in enumerate(("vfat", "squashfs", "ext4", "ext4", "swap", "ext4", None, None, "ext4"), 1):
+        fake_host.add_partition("mmcblk0", f"mmcblk0p{n}", fstype=fstype)
+    fake_host.add_disk("mmcblk0boot0", size=4_194_304, rota=False)
+    fake_host.add_disk("mmcblk0boot1", size=4_194_304, rota=False)
+    fake_host.add_disk("zram1", size=52_428_800, rota=False, fstype="ext4")
+    fake_host.add_mount("/var/log", "/dev/zram1", "ext4")
+    fake_host.add_disk("sda", size=640_135_028_736, model="WDC WD6400AACS-00G8B0", serial="WD-W3")
     return fake_host
 
 
@@ -172,6 +191,14 @@ class TestListDisks:
         fake_host.add_disk("loop0", size=1_000_000)
         fake_host.add_disk("sdb")
         assert [d.name for d in disks.list_disks()] == ["sdb"]
+
+    def test_on_a_bpi_w3_only_the_sata_disk_is_listed(self, fake_host):
+        # The eMMC, its boot partitions, the microSD card and both zram devices are no disks of
+        # the Storage page (ADR-0225, ADR-0376).
+        bpi_w3(fake_host)
+        sda = by_name(disks.list_disks())["sda"]
+        assert [d.name for d in disks.list_disks()] == ["sda"]
+        assert (sda.is_system, sda.in_use, sda.model) == (False, False, "WDC WD6400AACS-00G8B0")
 
     def test_root_shown_as_dev_root_is_matched_by_device_number(self, fake_host):
         fake_host.mounts = [m for m in fake_host.mounts if m["target"] != "/"]
@@ -327,6 +354,42 @@ class TestCreatePoolGuards:
 
         assert nas.changes[0] == ["mkfs.btrfs", "-L", "tank", "-d", "single", "-m", "single", "/dev/sdb"]
         assert ["mount", "-t", "btrfs", "-o", "noatime", f"UUID={NEW_UUID}", "/mnt/pools/tank"] in nas.changes
+
+    @pytest.mark.parametrize(
+        ("device", "refusal", "message"),
+        [("/dev/mmcblk0", HTTPException, "Invalid device name format"),
+         ("/dev/mmcblk0p9", HTTPException, "Invalid device name format"),
+         ("/dev/mmcblk0boot0", HTTPException, "Invalid device name format"),
+         ("/dev/mmcblk1", HTTPException, "Invalid device name format"),
+         ("/dev/mmcblk1p1", HTTPException, "Invalid device name format"),
+         ("/dev/zram1", ValueError, "boot or virtual device")],
+        ids=["emmc", "emmc-partition", "emmc-boot-partition", "sd-card", "sd-card-root", "zram-var-log"],
+    )
+    def test_on_a_bpi_w3_the_flash_is_never_formatted(self, fake_host, device, refusal, message):
+        # A name of the eMMC or the microSD card is refused by its format before any host command;
+        # zram's name is a disk name, so lsblk runs and it is refused as a virtual device
+        # (ADR-0225, ADR-0376).
+        bpi_w3(fake_host)
+        with pytest.raises(refusal) as raised:
+            create_forced(fake_host, [device])
+        assert message in str(getattr(raised.value, "detail", raised.value))
+        assert not ran_mkfs(fake_host)
+        if refusal is HTTPException:
+            assert fake_host.calls == []
+
+    @pytest.mark.parametrize("disk", ["sda", "nvme0n1"], ids=["sata", "nvme"])
+    def test_on_a_bpi_w3_a_pool_gets_none_of_the_k1s_workarounds(self, fake_host, disk):
+        # Nothing of the K1's workarounds on the RK3588: a SATA disk behind an AHCI controller and
+        # an NVMe drive in the M.2 Key M slot are formatted and mounted as on every host, without
+        # --nodiscard, nodiscard or X-fstrim.notrim (ADR-0370, ADR-0376).
+        bpi_w3(fake_host)
+        fake_host.add_disk("nvme0n1", size=512_110_190_592, rota=False, model="Samsung SSD 980")
+
+        create([f"/dev/{disk}"])
+
+        assert fake_host.changes[0] == ["mkfs.btrfs", "-L", "tank", "-d", "single", "-m", "single", f"/dev/{disk}"]
+        assert ["mount", "-t", "btrfs", "-o", "noatime", f"UUID={NEW_UUID}", "/mnt/pools/tank"] in fake_host.changes
+        assert fake_host.fstab == BASE_FSTAB + marker("tank") + entry("tank", NEW_UUID)
 
     def test_raid1_on_two_blank_disks(self, nas):
         nas.add_disk("sdd")

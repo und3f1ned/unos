@@ -349,6 +349,12 @@ manager, encrypted backup uploads, health checks, CI checks).
   (`cluster0_thermal`) instead of the first sensor psutil lists. `uninstall.sh`
   names the distribution's Docker packages and keeps the K1's rule (ADR-0370,
   ADR-0373).
+- Notes for the Banana Pi BPI-W3 (ArmSoM W3, Rockchip RK3588), the dev device,
+  in `docs/INSTALL.md`: Armbian's `armsom-w3` image on a microSD card, the eMMC
+  left alone, Docker's data off the card where possible, SATA disks behind an
+  AHCI controller, NVMe drives and USB 3 disks made and mounted into pools as on
+  every host, and cooling, since the kernel slows the CPU from 75 C and drives
+  no fan. The board needs no code of its own (ADR-0376).
 - Administrators rename users in the **Users** page's edit dialog
   (`PUT /api/v1/auth/users/{id}` with `new_username` and the current
   `username`): the user signs in with the new name, the old one is refused,

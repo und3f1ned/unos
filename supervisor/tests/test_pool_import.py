@@ -105,7 +105,7 @@ def numbered_uuid(index: int) -> str:
 def boot_virtual_and_system_devices(host) -> dict[str, str]:
     """Devices that no pool is made of, empty: what each is -> its path.
 
-    The eMMC, which keeps the vendor's firmware (ADR-0225); a second
+    The eMMC, which keeps the owner's firmware (ADR-0225); a second
     partition of the SD card that the host boots from (FakeHost's system
     disk, mmcblk1); a loop device; and a partition of an NVMe disk whose EFI
     partition the host mounts at /boot/efi.

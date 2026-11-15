@@ -407,6 +407,7 @@ and this index, and `make check-fast` runs it.
 | [0370](0370-on-the-spacemit-k1-only-nvme-drives-go-without-power-saving-and-trim-and-sata-is-the-recommended-storage.md) | UNOS runs on the Banana Pi BPI-F3 with both images built on the host, and on its SpacemiT K1 only NVMe drives go without power saving and TRIM | proposed | 2026-11-13 |
 | [0371](0371-on-riscv64-the-web-ui-builder-runs-vite-without-the-maglev-compiler.md) | On riscv64 the web UI's builder runs vite without Node.js's Maglev compiler | superseded by [0373](0373-the-web-ui-image-of-a-spacemit-k1-is-built-on-another-machine.md) | 2026-11-13 |
 | [0373](0373-the-web-ui-image-of-a-spacemit-k1-is-built-on-another-machine.md) | The web UI's image of a SpacemiT K1 is built on another machine, and install.sh and update.sh build only the supervisor there | proposed | 2026-11-13 |
+| [0376](0376-the-banana-pi-bpi-w3-gets-no-code-of-its-own-for-the-rk3588.md) | The Banana Pi BPI-W3 gets no code of its own for the RK3588 | proposed | 2026-11-15 |
 
 ## Device
 

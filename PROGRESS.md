@@ -53,15 +53,19 @@ significant step. Features and their state live in `feature-list.json`, decision
 - That evening (Log): a fifth batch, ADR-0363 to ADR-0368: Repair permissions as a background
   job, a restore in one streaming pass, no page polling the API, and renaming a user with its SMB
   account. `main` is 7827340 and its tree runs on the dev device.
-- On 2026-11-13 (Log), in the branch `deploy.riscv64-bpi-f3`, not merged: UNOS for the Banana Pi
-  BPI-F3 (SpacemiT K1, riscv64), ADR-0370, ADR-0372 and ADR-0373. It runs on the owner's BPI-F3
-  (10.1.1.56) from this branch, with the pool `data` (btrfs RAID1 on two SATA SSDs), Docker's data
-  root on the pool, and Home Assistant and Frigate beside UNOS, their data in `apps/` of the pool.
-  The board has no administrator account of UNOS yet, so its first-run setup is open to the LAN:
-  the owner makes the account, then a dev.env for the board, and the scenario checks run before
-  and after a reboot. UNOS's idle load stays within the budget of ADR-0374 there: the supervisor
-  3.5% of a core with no dashboard open (ADR-0375). Once the branch is merged, the dev device's
-  next supervisor build runs its pip layer again: tell the owner first (`deploy/AGENTS.md`).
+- On 2026-11-13 (Log), merged by the owner on 2026-11-15 as #81 (e80e2d5): UNOS for the Banana Pi
+  BPI-F3 (SpacemiT K1, riscv64), ADR-0370, ADR-0372 and ADR-0373. The owner's BPI-F3 (10.1.1.56)
+  is switched off since 2026-11-15 (the owner), and nothing was deployed to it after the merge.
+  Before that it ran UNOS from the branch, with the pool `data` (btrfs RAID1 on two SATA SSDs),
+  Docker's data root on the pool, and Home Assistant and Frigate beside UNOS, their data in
+  `apps/` of the pool, and the supervisor at 3.5% of a core with no dashboard open (ADR-0374,
+  ADR-0375). Its administrator account of UNOS, a dev.env for it and the scenario checks before
+  and after a reboot wait until it is on again.
+- On 2026-11-15 (Log): notes, a ledger entry (`deploy.arm64-bpi-w3`) and guard tests for the dev
+  device's board, the Banana Pi BPI-W3 (ArmSoM W3, Rockchip RK3588), which needs no code of its
+  own (ADR-0376, proposed); `scenario.sh all` passed on the device before and after a reboot,
+  and the checks by hand of the entry's notes before and after a second one. Open: a fresh
+  `install.sh` on a second microSD card and an NVMe pool (Open owner actions, 6 and 7).
 - On the device the NFS server runs (nfs-server, rpcbind.socket and rpcbind, enabled since
   2026-11-08, ADR-0303) and exports nothing for now; over IPv6 only LAN sources reach it
   (ADR-0301). avahi-daemon and wsdd2 run (network discovery), and nmbd is disabled since
@@ -111,15 +115,27 @@ significant step. Features and their state live in `feature-list.json`, decision
 
 ## Dev device
 
-State on 2026-11-12, 20:40 UTC. A UGREEN NAS board with an RK3588,
-running Armbian; its address and logins are in `dev.env` (ADR-0212).
+State on 2026-11-15, 14:25 UTC. A Banana Pi BPI-W3 (ArmSoM W3, Rockchip RK3588, 8 GB), running
+Armbian's community image for `armsom-w3` (26.2.0-trunk, Debian 13, kernel 6.1.115-vendor-rk35xx);
+its address and logins are in `dev.env` (ADR-0212). This journal called it a UGREEN board, after
+the UGREEN firmware on its eMMC, until the owner set that right on 2026-11-15 (ADR-0376).
 
 - Flash (ADR-0225): the system runs from the SD card `mmcblk1` (SanDisk, 32 GB). The soldered
-  eMMC `mmcblk0` (Samsung, 32 GB) keeps the vendor's firmware: 0 MiB written since boot, its own
-  wear estimate 0 to 10%. Nothing writes to it.
+  eMMC `mmcblk0` (Samsung, 32 GB) keeps the UGREEN firmware the owner put there: 0 MiB written
+  since boot, its own wear estimate 0 to 10%. Nothing writes to it.
 - SSH by key only, root by the workstation's key `~/.ssh/unos_dev_ed25519`; root's and the UNOS
   administrator's passwords were rotated and live only in `dev.env` (ADR-0226).
-- Runs the tree of main 7827340 (the fifth batch, ADR-0363 to ADR-0368), deployed as 5deee90 at
+- Runs main e80e2d5 (the merge of #81, the BPI-F3's change, ADR-0369 to ADR-0375), deployed to
+  this device at 12:52 to 12:55 UTC on 2026-11-15 (SD MiB sync 2.520, build-supervisor 440.910:
+  the pip layer built again for #81's pip 26.3, build-webui 18.504, up 6.473, check.sh 0.453);
+  both containers healthy after 7 s, check.sh OK: unos-supervisor 0.6% of a core, unos-webui 0.0%,
+  soc-thermal 42 C, first passive trip 75 C. Then `scenario.sh all` OK (10 areas, 156 steps, one
+  skipped for want of setfacl; 20.109 MiB), a reboot from the API at 13:39:55 UTC (the boot of
+  13:40:11; both containers healthy by 13:40:40; check.sh OK), and `scenario.sh all` OK again
+  (20.125 MiB). Then the checks by hand of `deploy.arm64-bpi-w3` (its notes) before and after a
+  second reboot from the API at about 14:21 UTC (the boot of 14:21:23; both containers healthy by
+  14:21:51; check.sh OK): all passed.
+- Before it, the tree of main 7827340 (the fifth batch, ADR-0363 to ADR-0368), deployed as 5deee90 at
   20:14 UTC (SD MiB sync 2.941, build-supervisor 13.473, build-webui 19.176, up 6.012, check.sh
   0.016), then `scenario.sh shares`, `restore` and `smb` OK. Before it, the integration tree
   b9aaea5, deployed at 19:33 UTC and rebooted from the API at 19:37:03 UTC (the boot of 19:37:58;
@@ -339,8 +355,41 @@ Open owner actions:
    the reboot (the command that `scripts/dev/linux-tests.sh` prints; it runs a container and
    writes about 2 MB to the SD card): the Linux-only tests wait for it, `test_share_repair.py` of
    `shares.rollback-era-safeguards` among them.
+6. A second microSD card for the dev device, for a fresh `deploy/install.sh` on the BPI-W3 with
+   Armbian's `armsom-w3` image (`deploy.arm64-bpi-w3`, step 1).
+7. An NVMe drive for the BPI-W3's M.2 Key M slot, for an NVMe pool before and after a reboot
+   (`deploy.arm64-bpi-w3`).
 
 ## Log
+
+### 2026-11-15: Notes, a ledger entry and guard tests for the BPI-W3 (ADR-0376)
+
+- The owner asked to describe support for the BPI-W3, the dev device, by analogy with the BPI-F3's
+  #81, then to do it, after merging #81 and asking for the dev device to be brought up to `main`.
+  `main` e80e2d5 was deployed to the device first (Dev device): its supervisor's pip layer built
+  again (440.9 MiB on the SD card), and check.sh passed. Nothing went to the BPI-F3, which is
+  switched off.
+- Read on the board, without changing it: the device tree of Armbian's `armsom-w3` image; the
+  eMMC with nine partitions beside two boot partitions; the pool's hard disk behind a JMicron
+  JMB58x AHCI controller on a PCIe 2.0 x1 link, the M.2 Key M slot empty; only soc-thermal with
+  passive trips (75 and 85 C), the six other zones with a critical trip alone; no fan among the
+  cooling devices; an extra device tree overlay that turns on two PCIe controllers with nothing
+  on them. The review in a fresh context took the UGREEN firmware on the eMMC (ADR-0225) for the
+  board's own; the owner set that right: the device is a BPI-W3, and the firmware is the owner's.
+- ADR-0376 (proposed): no code of its own for the RK3588; a section of `docs/INSTALL.md`, a line
+  of `README.md`, the ledger entry `deploy.arm64-bpi-w3` and guard tests on the board's facts:
+  the flash never listed or formatted, SATA and NVMe pools made without the K1's workarounds, the
+  board's compatible among the RK3588 cases of the K1's NVMe rules, and check.sh against
+  soc-thermal's 75 C. `GLOSSARY.md` named the dev device an ArmSoM Sige7; it names the BPI-W3 now.
+- The review's other findings, fixed: btrfs turns on discard=async by default only from kernel
+  6.2 and UNOS mounts pools with noatime alone, so the texts say what UNOS does under the vendor
+  kernel 6.1 (no K1 workaround, fstrim.timer) instead of "with TRIM"; `install.sh`
+  and the web UI's builder stage have not run on the board; `update.sh` builds both images
+  without a cache; the entry's notes say what `scenario.sh all` covers and give the checks by hand.
+- The device check: `scenario.sh all` before and after a reboot from the API, then the checks by
+  hand of the entry's notes before and after a second one (Dev device; the results in the
+  entry's notes); all passed. The entry stays open: step 1 needs
+  a second microSD card, and a pool made on the board a spare disk.
 
 ### 2026-11-13: The idle load of UNOS within a budget on the BPI-F3 (ADR-0374, ADR-0375)
 

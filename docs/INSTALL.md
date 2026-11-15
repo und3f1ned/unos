@@ -43,7 +43,8 @@ is not enough; the script then stops before it changes anything.
 ### Supported Architectures
 
 - **AMD64** (x86_64) - Intel/AMD processors
-- **ARM64** (AArch64) - Raspberry Pi 4/5, ARM SBCs
+- **ARM64** (AArch64) - Raspberry Pi 4/5, ARM SBCs; see
+  [Banana Pi BPI-W3](#banana-pi-bpi-w3-rockchip-rk3588-arm64)
 - **RISCV64** - Debian 13 or Ubuntu 24.04 only; see
   [Banana Pi BPI-F3](#banana-pi-bpi-f3-spacemit-k1-riscv64)
 - **ARMv7** - Limited support, may have performance issues
@@ -155,6 +156,46 @@ for apps (ADR-0372):
 
   UNOS lists these containers on its Containers page and keeps the pool
   mounted while they use it.
+
+### Banana Pi BPI-W3 (Rockchip RK3588, ARM64)
+
+UNOS runs on a BPI-W3 with 8 GB of RAM, its dev device, from a microSD card
+with Armbian's community image for the board (26.2.0-trunk, Debian 13, the
+`vendor-rk35xx` kernel 6.1.115). The BPI-W3 and the ArmSoM W3 are one board,
+and Armbian names its images `armsom-w3`. UNOS has no code of its own for the
+board (ADR-0376).
+
+- **Installation.** `install.sh` installs Docker from Docker's repository, as
+  on every ARM64 host, and builds both images on the board. Neither
+  `install.sh` nor the web UI's build has run on the board yet: the dev device
+  was set up by hand, and its web UI is built on another machine.
+- **The eMMC stays as it is.** Write the image to a microSD card and boot from
+  it. UNOS neither lists nor formats the eMMC (`mmcblk0`), its boot partitions,
+  the microSD card or zram, so whatever is on the eMMC stays there.
+- **Docker's data and the card.** `update.sh` builds both images again, without
+  a cache, for each update. Installing the supervisor's Python packages alone
+  wrote about 440 MiB to the dev device's card, and the web UI's build adds its
+  own. Keep Docker's data root on another disk where you can, and make Docker
+  wait for that disk with a drop-in
+  `/etc/systemd/system/docker.service.d/data-root.conf` that says `[Unit]` and
+  `RequiresMountsFor=<the data root>`, as on the BPI-F3. Docker, and with it
+  UNOS, then does not start while that disk is missing; the dev device keeps
+  its data root on the card for that reason (ADR-0228).
+- **Disks for pools.** SATA disks behind an AHCI controller (the dev device has
+  a JMicron JMB58x on a PCIe 2.0 x1 link), NVMe drives in the M.2 Key M slot
+  (PCIe 3.0 x4) and USB 3 disks need nothing special: UNOS makes and mounts
+  their pools as on every host. Btrfs turns on `discard=async` by default only
+  from kernel 6.2, and UNOS mounts pools with `noatime` alone, so under the
+  vendor kernel an SSD's pool is trimmed when it is made and then by the weekly
+  `fstrim.timer` (`systemctl is-enabled fstrim.timer`). A SATA disk needs its own power supply. Only a hard disk has
+  held a pool on the board so far; an NVMe pool is not checked.
+- **Cooling.** The kernel slows the CPU down from the passive trip of
+  `soc-thermal` at 75 C on, and with this image it drives no fan: none is among
+  its cooling devices. Fit a heatsink, and keep the dashboard's temperature
+  below 70 C. The dev device idles at about 42 C.
+- **Apps.** ARM64 images of the App Store run. Apps do not get the RK3588's
+  video decoder or NPU yet.
+- **Temperature.** The dashboard shows the whole chip's sensor (`soc_thermal`).
 
 ### Network Requirements
 

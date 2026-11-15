@@ -34,7 +34,7 @@
 ## The dev device
 
 One shared board. It runs from an SD card that wears with every write, and its eMMC keeps the
-vendor's firmware and is never written, so every write counts (ADR-0214, ADR-0225).
+owner's firmware and is never written, so every write counts (ADR-0214, ADR-0225).
 
 - Every action goes through `scripts/dev/`, with the settings of `dev.env`: the deploy-device
   skill for deploys, the device-checks skill for checks. `deploy.sh`, `linux-tests.sh`,

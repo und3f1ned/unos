@@ -5,7 +5,7 @@ description: Check the UNOS dev device (health, API answers, Samba's real testpa
 
 # Checks on the dev device
 
-The device runs from an SD card that wears with every write, and its eMMC keeps the vendor's
+The device runs from an SD card that wears with every write, and its eMMC keeps the owner's
 firmware and is never written (ADR-0214, ADR-0225). Run every check from
 the repository root, through `scripts/dev`:
 

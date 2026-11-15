@@ -20,6 +20,7 @@
   <img src="https://img.shields.io/badge/Docker-2496ED?style=flat-square&logo=docker&logoColor=white" alt="Docker">
   <img src="https://img.shields.io/badge/BTRFS-FF6600?style=flat-square&logo=linux&logoColor=white" alt="BTRFS">
   <img src="https://img.shields.io/badge/ARM64-supported-green?style=flat-square" alt="ARM64">
+  <img src="https://img.shields.io/badge/ARM64-BPI--W3-green?style=flat-square" alt="BPI-W3">
   <img src="https://img.shields.io/badge/AMD64-supported-green?style=flat-square" alt="AMD64">
   <img src="https://img.shields.io/badge/RISCV64-BPI--F3-yellow?style=flat-square" alt="RISCV64">
 </p>
@@ -160,7 +161,8 @@ anyone who can reach the page can create it.
 
 ### Supported Platforms
 - x86_64 (AMD64)
-- ARM64 (AArch64)
+- ARM64 (AArch64); the dev device is a Banana Pi BPI-W3 (Rockchip RK3588): see
+  [its notes](docs/INSTALL.md#banana-pi-bpi-w3-rockchip-rk3588-arm64)
 - RISCV64 on Debian 13 or Ubuntu 24.04, made for the Banana Pi BPI-F3
   (SpacemiT K1): see [its notes](docs/INSTALL.md#banana-pi-bpi-f3-spacemit-k1-riscv64)
 
