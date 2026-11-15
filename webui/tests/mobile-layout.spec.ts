@@ -930,6 +930,16 @@ const VIEWS: View[] = [
     end: dialogEnd,
   },
   {
+    name: "Dialog: a disk's idle timeout",
+    path: '/storage',
+    fake: (page) => fakeStorageApi(page),
+    open: (page) =>
+      page.getByRole('button', { name: /^(Idle timeout of|Тайм-аут простоя) \/dev\/e2e-hd1: / }).click(),
+    shows: (page) => page.getByRole('dialog'),
+    start: dialogTitle,
+    end: dialogEnd,
+  },
+  {
     name: 'Dialog: remove leftovers of uploads',
     path: '/files',
     fake: fakeFilesWithLeftovers,

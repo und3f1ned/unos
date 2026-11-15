@@ -18,8 +18,16 @@ SD writes of each check (ADR-0214). The areas:
            in it, a subvolume on the host listed with the volume's restored copies (ADR-0358), the
            copy's Delete refused while the share uses the copy and done once the share is gone,
            and, with the snapshot deleted, the volume's Delete.
-  smart    The whole disks on the Storage page and on Disk Health, each disk's SMART data on both,
-           the refusal of the system disk and of what is not a disk, and a short self-test of
+  smart    The whole disks on the Storage page and on Disk Health, each disk's SMART data on both
+           (STANDBY for a disk that sleeps), the refusal of the system disk and of what is not a
+           disk, and of an idle timeout for the system disk, with the reason; the first data hard disk
+           (the pool's sda on the dev device) given the shortest idle timeout, 5 minutes, with
+           its line in UNOS's udev rule, asleep once it ran out (waited for at most three times),
+           its SMART data on Storage and Disk Health read while it sleeps, which leaves it asleep
+           with its I/O counters unchanged, and the timeout of UNOS's rule set again, or Off: no
+           standby timer until the disk's next power cycle (ADR-0378; these steps are skipped
+           with the reason without hdparm on the device, and when the disk has no timeout of
+           UNOS's and /etc/hdparm.conf sets one, which Off would clear); and a short self-test of
            each disk.
   backups  A plain and an encrypted backup made and listed, the restores refused for a missing
            backup and for the encrypted one without its passphrase or with a wrong one, and both
@@ -169,6 +177,7 @@ from __future__ import annotations
 import argparse
 import base64
 import contextlib
+import hashlib
 import json
 import os
 import re
@@ -269,6 +278,22 @@ FRIENDLY_NT_STATUS = (
     ("Error was : Logon failure.", "NT_STATUS_LOGON_FAILURE"),
     ("Error was : Access denied.", "NT_STATUS_ACCESS_DENIED"),
 )
+# The idle timeouts of the disks (storage.disk-spindown, ADR-0378), as src/storage/spindown.py has them
+# (test_dev_scenarios.py compares): UNOS's udev rule, the shortest timeout in minutes and its value of
+# hdparm -S, and what the Storage page says of a host without hdparm. The check waits the timeout and
+# SPINDOWN_SETTLE seconds before it asks whether the disk sleeps, at most SPINDOWN_ROUNDS times: each
+# question reads the disk's power mode, which some disks count as an access.
+SPINDOWN_RULES = "/etc/udev/rules.d/90-unos-disk-spindown.rules"
+SPINDOWN_SHORTEST = 5
+SPINDOWN_SHORTEST_VALUE = 60
+NO_HDPARM = "The host has no hdparm: install the package hdparm on the host to set idle timeouts"
+SPINDOWN_SETTLE = 30
+SPINDOWN_ROUNDS = 3
+# Debian's hdparm sets what /etc/hdparm.conf asks whenever udev adds a disk (its rule 85-hdparm.rules,
+# before UNOS's 90-). ATA reads no standby timer back: when UNOS's rule has none for the disk, the
+# check's Off at its end (hdparm -S 0) would clear a timer set there, so it leaves the disk alone.
+HDPARM_CONF = "/etc/hdparm.conf"
+_HDPARM_CONF_TIMER = re.compile(r"spindown_time\s*=|command_line\s*=.*\s-S\s*\d")
 # The token cache in the device's RAM of the shares check's user (api.py's relay, ADR-0222).
 USER_TOKEN = "/dev/shm/unos-scenario-{}.token"
 # What REMOTE_ENTRIES repair makes in the shares check's share folder, and how Repair permissions
@@ -975,6 +1000,17 @@ class Device:
 
     def system_disk(self) -> str:
         return self.settings.get("UNOS_DEV_SYSTEM_DISK") or self.run(REMOTE_SYSTEM_DISK).strip()
+
+    def disk_io(self, name: str) -> tuple[int, int] | None:
+        """The reads and writes that the kernel completed on the disk NAME since boot
+        (/sys/block/NAME/stat, which reads no disk), or None."""
+        fields = (self.read(f"/sys/block/{name}/stat") or "").split()
+        return (int(fields[0]), int(fields[4])) if len(fields) > 4 and fields[0].isdigit() and fields[4].isdigit() else None
+
+    @staticmethod
+    def wait(seconds: float) -> None:
+        """Let SECONDS pass on the device (the smart check's wait for a disk to sleep)."""
+        time.sleep(seconds)
 
     def scan(self, needles: list[str], since: int) -> dict[str, int]:
         names = {"supervisor": "the supervisor's log", "journal": "the journal", "samba": "Samba's log",
@@ -1717,7 +1753,110 @@ def volumes_check(c: Check) -> None:
 # --- SMART -----------------------------------------------------------------------------------
 
 
+def timeout_words(minutes: int) -> str:
+    return "off" if not minutes else f"{minutes} minutes"
+
+
+def hdparm_conf_timer(text: str | None) -> str | None:
+    """The first line of /etc/hdparm.conf (TEXT) that sets a standby timer, for any disk, or None."""
+    for line in (text or "").splitlines():
+        line = line.strip()
+        if not line.startswith("#") and _HDPARM_CONF_TIMER.match(line):
+            return line
+    return None
+
+
+def spindown_steps(c: Check, disk: dict, hdparm_conf: str | None) -> None:
+    """storage.disk-spindown (ADR-0378) on the disk DISK of GET /storage/disks: the shortest idle
+    timeout, the disk asleep once it ran out, SMART read while it sleeps, and the timeout of UNOS's
+    rule set again; without one, Off: no standby timer (hdparm -S 0) until the disk's next power
+    cycle, which a disk whose timer /etc/hdparm.conf (HDPARM_CONF, its text) sets does not get."""
+    name, path, previous = disk["name"], disk["path"], disk.get("spindown", 0)
+    texts = (f"{name} gets the shortest idle timeout, {SPINDOWN_SHORTEST} minutes: hdparm -S {SPINDOWN_SHORTEST_VALUE} "
+             "in UNOS's udev rule",
+             f"{name} sleeps once the timeout ran out",
+             f"its SMART data on Storage and on Disk Health leaves {name} asleep",
+             f"{name}'s idle timeout is {timeout_words(previous)} again, as the check found it" if previous else
+             f"{name} has no idle timeout again: no line in UNOS's udev rule, and no standby timer (hdparm -S 0) "
+             "until its next power cycle")
+    problem = disk.get("spindown_problem")
+    if problem == NO_HDPARM:
+        for text in texts:
+            c.skip(text, f"{problem} (installing a package is an owner action)")
+        return
+    timer = None if previous else hdparm_conf_timer(hdparm_conf)
+    if timer:
+        for text in texts:
+            c.skip(text, f"{HDPARM_CONF} sets a standby timer ({timer!r}), which no command reads back: the check's "
+                         "Off at its end (hdparm -S 0) would clear it until the disk's next power cycle")
+        return
+
+    def listed() -> dict:
+        return next((d for d in c.get("/storage/disks") if d.get("name") == name), {})
+
+    def restore() -> None:
+        c.call("PUT", f"/storage/disks/{name}/spindown", {"minutes": previous})
+
+    with c.step(texts[0]) as s:
+        c.expect(problem is None, f"the Storage page says: {problem}")
+        c.on_cleanup(f"the idle timeout of {name} {timeout_words(previous)} again", restore)
+        answer = c.call("PUT", f"/storage/disks/{name}/spindown", {"minutes": SPINDOWN_SHORTEST})
+        c.expect(answer == {"name": name, "minutes": SPINDOWN_SHORTEST}, f"it answered {answer}")
+        c.expect(listed().get("spindown") == SPINDOWN_SHORTEST, "the Storage page does not show it")
+        line = (f'ENV{{ID_SERIAL_SHORT}}=="{disk.get("serial")}", '
+                f'RUN+="/sbin/hdparm -S {SPINDOWN_SHORTEST_VALUE} $devnode"')
+        rule = c.device.read(SPINDOWN_RULES) or ""
+        c.expect(line in rule, f"{SPINDOWN_RULES} has no line for it: {tail(rule)!r}")
+        s.text += f" (serial {disk.get('serial')})"
+
+    with c.step(texts[1]) as s:
+        start, waited, state = c.device.disk_io(name), 0, None
+        for _ in range(SPINDOWN_ROUNDS):
+            c.device.wait(SPINDOWN_SHORTEST * 60 + SPINDOWN_SETTLE)
+            waited += SPINDOWN_SHORTEST * 60 + SPINDOWN_SETTLE
+            state = listed().get("power_state")
+            if state == "standby":
+                break
+        end = c.device.disk_io(name)
+        moved = (f"{end[0] - start[0]} reads and {end[1] - start[1]} writes" if start and end
+                 else "its I/O counters could not be read")
+        c.expect(state == "standby", f"it is {state} after {waited} s; meanwhile the kernel counted {moved} on it: "
+                                     "something keeps it awake (an app or a share on the pool?)")
+        s.text += f": the Storage page says standby after {waited} s"
+
+    with c.step(texts[2]) as s:
+        before = c.device.disk_io(name)
+        storage = c.get(f"/storage/disks/{name}/smart")
+        c.expect(storage.get("power_state") == "standby" and storage.get("healthy") is None,
+                 f"Storage's SMART data: power {storage.get('power_state')}, healthy {storage.get('healthy')}")
+        one = c.get(f"/health/disk/{name}")
+        c.expect(one.get("health_status") == "STANDBY", f"Disk Health's dialog says {one.get('health_status')}")
+        health = [d for d in c.get("/health/disks")["disks"] if d.get("device") == path]
+        c.expect(health and health[0].get("health_status") == "STANDBY",
+                 f"Disk Health lists it as {[d.get('health_status') for d in health]}")
+        state = listed().get("power_state")
+        c.expect(state == "standby", f"it is {state} after the reads")
+        after = c.device.disk_io(name)
+        c.expect(before == after, f"the kernel counted reads or writes on it: {before} before, {after} after")
+        s.text += f": STANDBY, and its reads and writes stay at {after}"
+
+    with c.step(texts[3]):
+        restore()
+        c.expect(listed().get("spindown") == previous, "the Storage page does not show it")
+
+
 def smart_check(c: Check) -> None:
+    def state() -> dict:
+        rule = c.device.read(SPINDOWN_RULES)
+        return {"the idle timeouts": {d["name"]: d.get("spindown", 0) for d in c.get("/storage/disks")},
+                "UNOS's udev rule": None if rule is None else hashlib.sha256(rule.encode()).hexdigest()}
+
+    conf: dict[str, str | None] = {}
+    with c.step("the device holds nothing of an earlier check"):
+        c.baseline(state)
+        # The standby timers that Debian's hdparm sets at boot (spindown_steps).
+        conf["hdparm"] = c.device.read(HDPARM_CONF)
+
     with c.step("Storage lists the whole disks, without the system disk") as s:
         disks = c.get("/storage/disks")
         system = c.device.system_disk()
@@ -1737,7 +1876,9 @@ def smart_check(c: Check) -> None:
             data = c.get(f"/storage/disks/{disk['name']}/smart")
             c.expect(info.get("device") == disk["path"] and data.get("device") == disk["path"],
                      f"they are of {info.get('device')} and {data.get('device')}")
-            c.expect(info.get("health_status") in ("PASSED", "FAILED", "UNKNOWN"), f"health {info.get('health_status')}")
+            # STANDBY: the disk sleeps, and the reads left it asleep (ADR-0378).
+            c.expect(info.get("health_status") in ("PASSED", "FAILED", "UNKNOWN", "STANDBY"),
+                     f"health {info.get('health_status')}")
             s.text += f": {disk['name']}: {info.get('health_status')}, {info.get('temperature')} C, " \
                       f"{len(info.get('attributes') or [])} attributes"
 
@@ -1749,6 +1890,23 @@ def smart_check(c: Check) -> None:
             c.get(f"/health/disk/{name}", expect=400)
             c.get(f"/storage/disks/{name}/smart", expect=400)
         s.text += ": " + ", ".join(refused) + ("" if partitions else " (no listed disk has a partition)")
+
+    with c.step("the system disk gets no idle timeout") as s:
+        answer = c.call("PUT", f"/storage/disks/{system}/spindown", {"minutes": SPINDOWN_SHORTEST}, expect=(200, 400, 409))
+        if not isinstance(answer, dict) or "detail" not in answer:
+            c.on_cleanup(f"no idle timeout for {system}",
+                         lambda: c.call("PUT", f"/storage/disks/{system}/spindown", {"minutes": 0}, expect=(200, 400, 409)))
+            c.expect(False, f"{system} took the idle timeout of {SPINDOWN_SHORTEST} minutes: {answer}")
+        reason = str(answer["detail"])
+        c.expect(reason.endswith("it gets no idle timeout"), f"the reason is {reason!r}")
+        s.text += f": {reason}"
+
+    # Before the self-tests, which keep a disk busy for minutes.
+    data = next((d for d in disks if not d.get("is_system") and d.get("rotational")), None)
+    if data is None:
+        c.skip("a data hard disk gets the shortest idle timeout and sleeps", "no data hard disk is listed")
+    else:
+        spindown_steps(c, data, conf["hdparm"])
 
     for disk in disks:
         with c.step(f"a short self-test starts on {disk['name']}"):

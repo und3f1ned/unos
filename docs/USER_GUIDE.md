@@ -200,6 +200,50 @@ page stays through such a reload. The SMART data of a disk attached
 after the supervisor started (**System** → **Disk Health**) can be read
 only once the supervisor has restarted.
 
+### Idle Timeouts (Spin-Down)
+
+The **Power** column shows whether each disk is **Active** (spinning, or
+idle) or in **Standby** (spun down), or **Unknown** when the disk cannot say,
+as behind some USB bridges. UNOS asks the disk for its power mode in a way
+that does not wake it, and a disk in standby is not read for what it holds:
+the **Contents** column then says "Not read while the disk sleeps" unless the
+host already knows its filesystem or partitions.
+
+Below the state, the button with the disk's idle timeout (**Off** by
+default) opens **Idle Timeout**: choose **Off**, 5, 10, 20 or 30 minutes, or
+1 to 5 hours, and **Save**. The disk spins down after that time without
+access. UNOS sets it at once with `hdparm -S` on the host, which spins the
+disk up if it sleeps, and keeps it in its udev rule
+`/etc/udev/rules.d/90-unos-disk-spindown.rules`, which sets it again at every
+boot and whenever the disk is connected again, under any name: the rule finds
+the disk by its serial number. **Off** stops the timer and removes the disk's
+line: until its next power cycle the disk then has no standby timer, not even
+one that `/etc/hdparm.conf` or the disk's own default set, and after one it
+keeps those. A disk that is woken often wears faster, so give a disk in daily
+use a longer timeout.
+
+The button is off, with the reason below it, for the system disk, an NVMe
+disk (it manages its own power), a disk that reports no serial number a udev
+rule can match or the serial of another disk, and on a host without `hdparm`:
+install the package `hdparm` on the host (`deploy/install.sh` does). When the
+host cannot read UNOS's udev rule, every disk's button is off with that reason.
+
+Nothing UNOS does on its own wakes a sleeping disk or keeps an idle one
+awake. Disk Health, the SMART data and the hourly SMART records leave a
+sleeping disk asleep, and the hourly records skip a disk with an idle timeout
+that was not used since its last record: any command sent to an awake disk
+starts its timer again. The pool health check every 5 minutes, and the pool
+counts of `/api/v1/health/prometheus` and `/api/v1/health/full` for
+monitoring, read only what the kernel and udev know. The trash of a pool is
+cleared out once a day, when its disks are awake. What an administrator
+starts or schedules wakes the disks it needs: a SMART test, a scrub, a
+snapshot or backup task, a file transfer. Opening a page that lists the pools
+can wake a sleeping disk, since it reads every disk: the dashboard (the first
+page after signing in), **Storage**, **Shares**, **Snapshots** and
+**System** → **Scheduler**. **Storage** reads whether each disk sleeps
+before it lists the pools, so **Power** shows how each disk was when the page
+opened.
+
 ### Creating a Storage Pool
 
 1. Go to **Storage**
@@ -382,7 +426,10 @@ history shows why.
 **System** → **Disk Health** shows the model, size, temperature and SMART
 health status of each disk that the **Storage** page lists, the system disk
 included unless it is an SD card or eMMC. Opening the tab, or its refresh
-button, reads the SMART data of every disk, which wakes disks that sleep.
+button, reads the SMART data of every disk that is awake: a disk that sleeps
+stays asleep and is listed as **STANDBY**, with the model, serial number and
+size that the host knows, and its dialog says that its SMART data is read
+once it is awake.
 
 **SMART data** opens a disk: its overall health, temperature, power-on hours
 and power cycles, serial number, firmware, capacity, the last self-test and
@@ -915,6 +962,8 @@ and the size of files.
   **New Folder**, then restore the item.
 - Deleted items stay in the trash for 30 days. When UNOS starts, and then once
   a day, it deletes for good the items that were deleted 30 or more days ago.
+  It passes over a pool whose disks sleep, so as not to wake them, and clears
+  out its trash at the first hourly check after they woke.
 - Until then they still take up space in their pool. **Delete for good**
   deletes the selected items at once, and **Empty trash** everything in the
   trash of every pool and volume. Both ask first, and neither can be undone.

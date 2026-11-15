@@ -33,6 +33,7 @@ export const en = {
 	'storage.disks.column.contents': 'Contents',
 	'storage.disks.column.mountedAt': 'Mounted at',
 	'storage.disks.column.status': 'Status',
+	'storage.disks.column.power': 'Power',
 	'storage.disks.hdd': 'HDD',
 	'storage.disks.ssd': 'SSD',
 	// What a disk holds, as lsblk reports it: {type} is the partition table's, such as GPT or DOS.
@@ -42,12 +43,33 @@ export const en = {
 	'storage.disks.partitions': { one: '{n} partition', other: '{n} partitions' },
 	'storage.disks.unrecognized': 'Unrecognized data',
 	'storage.disks.empty': 'Empty',
+	// A sleeping disk is not read for what it holds, so as not to wake it (ADR-0378).
+	'storage.disks.notReadAsleep': 'Not read while the disk sleeps',
 	// A disk's status; the reason below it is the server's (in_use_reason).
 	'storage.disks.status.system': 'System',
 	'storage.disks.status.inUse': 'In use',
 	'storage.disks.status.pool': 'Pool "{pool}"',
 	'storage.disks.status.hasData': 'Has data',
 	'storage.disks.status.free': 'Free',
+	// A disk's power, read without waking it (ADR-0378).
+	'storage.disks.power.active': 'Active',
+	'storage.disks.power.standby': 'Standby',
+	'storage.disks.power.unknown': 'Unknown',
+
+	// A disk's idle timeout (ADR-0378): the button shows it, and opens the dialog that sets it.
+	'storage.spindown.off': 'Off',
+	'storage.spindown.minutes': { one: '{n} minute', other: '{n} minutes' },
+	'storage.spindown.hours': { one: '{n} hour', other: '{n} hours' },
+	// Before the timeout in the button, for screen readers: {disk} is its path.
+	'storage.spindown.of': 'Idle timeout of {disk}:',
+	'storage.spindown.title': 'Idle Timeout',
+	// Before the disk's path and model.
+	'storage.spindown.disk': 'The disk spins down after this long without access:',
+	'storage.spindown.label': 'Spin down after',
+	'storage.spindown.hint':
+		'Saving spins the disk up now. A disk that is woken often wears faster: choose a longer timeout for a disk in daily use.',
+	'storage.spindown.failed': 'The idle timeout was not set',
+	'storage.spindown.save': 'Save',
 
 	// btrfs filesystems on the host's disks that are not pools yet (ADR-0283).
 	'storage.found.title': 'Found on the disks',
@@ -318,6 +340,7 @@ export const ru: Translation<typeof en> = {
 	'storage.disks.column.contents': 'Содержимое',
 	'storage.disks.column.mountedAt': 'Точка монтирования',
 	'storage.disks.column.status': 'Статус',
+	'storage.disks.column.power': 'Питание',
 	'storage.disks.hdd': 'HDD',
 	'storage.disks.ssd': 'SSD',
 	'storage.disks.partitionTable': 'Таблица разделов {type}',
@@ -325,11 +348,27 @@ export const ru: Translation<typeof en> = {
 	'storage.disks.partitions': { one: '{n} раздел', few: '{n} раздела', many: '{n} разделов' },
 	'storage.disks.unrecognized': 'Нераспознанные данные',
 	'storage.disks.empty': 'Пустой',
+	'storage.disks.notReadAsleep': 'Не прочитано, пока диск спит',
 	'storage.disks.status.system': 'Системный',
 	'storage.disks.status.inUse': 'Используется',
 	'storage.disks.status.pool': 'Пул «{pool}»',
 	'storage.disks.status.hasData': 'Есть данные',
 	'storage.disks.status.free': 'Свободен',
+	'storage.disks.power.active': 'Работает',
+	'storage.disks.power.standby': 'Спит',
+	'storage.disks.power.unknown': 'Неизвестно',
+
+	'storage.spindown.off': 'Выкл.',
+	'storage.spindown.minutes': { one: '{n} минута', few: '{n} минуты', many: '{n} минут' },
+	'storage.spindown.hours': { one: '{n} час', few: '{n} часа', many: '{n} часов' },
+	'storage.spindown.of': 'Тайм-аут простоя {disk}:',
+	'storage.spindown.title': 'Тайм-аут простоя',
+	'storage.spindown.disk': 'Диск останавливается после такого времени без обращений:',
+	'storage.spindown.label': 'Остановить через',
+	'storage.spindown.hint':
+		'Сохранение сейчас раскрутит диск. Диск, который часто будят, изнашивается быстрее: для диска, которым пользуются каждый день, выберите время подольше.',
+	'storage.spindown.failed': 'Тайм-аут простоя не установлен',
+	'storage.spindown.save': 'Сохранить',
 
 	'storage.found.title': 'Найдено на дисках',
 	'storage.found.searchError': 'Не удалось выполнить поиск пулов для импорта',

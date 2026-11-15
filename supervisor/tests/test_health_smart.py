@@ -98,7 +98,8 @@ def start_test(api, device):
     return api.post(f"/api/v1/health/disk/{device}/test?test_type=short")
 
 
-SMARTCTL = {read_smart: ["smartctl", "-j", "-a"], start_test: ["smartctl", "-t", "short"]}
+# A read leaves a sleeping disk asleep (-n standby, ADR-0378); a self-test is asked for.
+SMARTCTL = {read_smart: ["smartctl", "-n", "standby", "-j", "-a"], start_test: ["smartctl", "-t", "short"]}
 ENDPOINTS = pytest.mark.parametrize("call", [read_smart, start_test], ids=["data", "test"])
 
 
@@ -189,6 +190,9 @@ def test_storage_smart_for_every_disk_the_storage_page_lists(api, host):
     # webui/src/lib/api/storage.ts getDiskSmart() sends the names of GET /storage/disks.
     names = [disk["name"] for disk in api.get("/api/v1/storage/disks").json()]
     assert names == ["sda", "sdc", "nvme0n1"]
+    # The list reads each disk's power state, which leaves a sleeping disk asleep (ADR-0378).
+    assert host.smartctl == [["smartctl", "-n", "standby", "-i", "-j", f"/dev/{name}"] for name in names]
+    host.smartctl.clear()
     host.lsblk_on_loop.clear()
 
     for name in names:
@@ -197,7 +201,7 @@ def test_storage_smart_for_every_disk_the_storage_page_lists(api, host):
         assert response.json()["device"] == f"/dev/{name}"
         assert response.json()["healthy"] is True
 
-    assert host.smartctl == [["smartctl", "-j", "-a", f"/dev/{name}"] for name in names]
+    assert host.smartctl == [["smartctl", "-n", "standby", "-j", "-a", f"/dev/{name}"] for name in names]
     # The check runs on the host, in a worker thread.
     assert host.lsblk_on_loop == [False] * len(names)
 
@@ -246,9 +250,9 @@ def test_whole_disks_with_longer_names_answer_wherever_they_are_listed(api, host
                      start_test(api, name)):
         assert response.status_code == 200, response.text
     assert host.smartctl == [
-        ["smartctl", "-j", "-a", f"/dev/{name}"],
-        ["smartctl", "-j", "-a", f"/dev/{name}"],
-        ["smartctl", "-j", "-a", f"/dev/{name}"],
+        ["smartctl", "-n", "standby", "-j", "-a", f"/dev/{name}"],
+        ["smartctl", "-n", "standby", "-j", "-a", f"/dev/{name}"],
+        ["smartctl", "-n", "standby", "-j", "-a", f"/dev/{name}"],
         ["smartctl", "-t", "short", f"/dev/{name}"],
     ]
 
@@ -376,7 +380,7 @@ def disk_health(api) -> list[dict]:
 
 
 def smartctl_reads(*paths: str) -> list[list[str]]:
-    return [["smartctl", "-j", "-a", path] for path in paths]
+    return [["smartctl", "-n", "standby", "-j", "-a", path] for path in paths]
 
 
 def test_disk_health_lists_the_whole_disks_of_the_host(board_api, board):
@@ -577,7 +581,7 @@ def test_overview_counts_the_same_disks(board_api, board):
 
     assert response.status_code == 200, response.text
     assert response.json() == {
-        "total_disks": 2, "healthy": 1, "warning": 0, "failed": 1, "unknown": 0,
+        "total_disks": 2, "healthy": 1, "warning": 0, "failed": 1, "unknown": 0, "standby": 0,
         "average_temperature": 37,
     }
     assert board.smartctl == smartctl_reads("/dev/sda", "/dev/nvme0n1")
@@ -592,7 +596,7 @@ def test_overview_counts_a_disk_without_smart_data_as_unknown(board_api, board):
 
     assert response.status_code == 200, response.text
     assert response.json() == {
-        "total_disks": 2, "healthy": 1, "warning": 0, "failed": 0, "unknown": 1,
+        "total_disks": 2, "healthy": 1, "warning": 0, "failed": 0, "unknown": 1, "standby": 0,
         "average_temperature": 34,
     }
     assert board.smartctl == smartctl_reads("/dev/sda", "/dev/nvme0n1")

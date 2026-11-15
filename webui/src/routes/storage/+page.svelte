@@ -22,10 +22,13 @@
 		importFilesystem,
 		suggestedPoolName,
 		POOL_NAME_PATTERN,
+		setDiskSpindown,
+		SPINDOWN_MINUTES,
 		type DeviceIdentity,
 		type Disk,
 		type ImportableFilesystem,
 		type Pool,
+		type PowerState,
 		type RaidLevel,
 		type ScrubStatus,
 		type Volume
@@ -44,7 +47,8 @@
 		Plug,
 		Unplug,
 		Layers,
-		HardDriveDownload
+		HardDriveDownload,
+		Timer
 	} from 'lucide-svelte';
 	import {
 		Button,
@@ -92,6 +96,12 @@
 	// Set after a 409 because a selected path now holds another disk.
 	let selectionCleared = false;
 
+	// The idle timeout of a disk (ADR-0378): the disk whose dialog is open, the choice as text.
+	let spindownDisk: Disk | null = null;
+	let spindownChoice = '0';
+	let spindownBusy = false;
+	let spindownError = '';
+
 	// Mount / unmount confirmation
 	let poolAction: { kind: 'mount' | 'unmount'; pool: Pool } | null = null;
 	let poolActionBusy = false;
@@ -128,7 +138,12 @@
 	// The reload for the devices in flight: the number of its load, and devicesLoaded before it.
 	let deviceReload: { load: number; devices: string | null } | null = null;
 	$: dialogOpen =
-		showCreateModal || poolAction !== null || importTarget !== null || showDeleteModal || volumesPool !== null;
+		showCreateModal ||
+		poolAction !== null ||
+		importTarget !== null ||
+		showDeleteModal ||
+		volumesPool !== null ||
+		spindownDisk !== null;
 	$: followBlockDevices($stats);
 	$: if (!dialogOpen) reloadForDevices();
 	$: if (dialogOpen) dropDeviceReload();
@@ -192,9 +207,10 @@
 		if (devicesHeld !== null) devicesLoaded = devicesHeld;
 		// Each list on its own: one that cannot be loaded says why in its card instead
 		// of looking empty, and the other ones are still shown (ADR-0271). The filesystems
-		// found on the disks have their own error as well (loadImportable).
-		const found = loadImportable(load);
-		const [diskList, poolList] = await Promise.allSettled([getDisks(), getPools()]);
+		// found on the disks have their own error as well (loadImportable). The disks come
+		// first, alone: the pools and the filesystems found are listed with a read of every
+		// disk, which can spin a sleeping one up, so Power is read before (ADR-0378).
+		const [diskList] = await Promise.allSettled([getDisks()]);
 		if (load === disksLoad) {
 			if (diskList.status === 'fulfilled') {
 				disks = diskList.value;
@@ -206,6 +222,10 @@
 			}
 			disksLoading = false;
 		}
+		// A newer load, or a dialog opened meanwhile (dropDeviceReload), lists them instead.
+		if (load !== listsLoad) return;
+		const found = loadImportable(load);
+		const [poolList] = await Promise.allSettled([getPools()]);
 		if (load === listsLoad) {
 			if (poolList.status === 'fulfilled') {
 				pools = poolList.value;
@@ -468,6 +488,8 @@
 		}
 		const partitionCount = disk.partitions?.length ?? 0;
 		if (partitionCount > 0) parts.push($t('storage.disks.partitions', { n: partitionCount }));
+		// A sleeping disk is not probed for signatures (ADR-0378): what lsblk does not know is unknown.
+		if (parts.length === 0 && disk.power_state === 'standby') return $t('storage.disks.notReadAsleep');
 		if (parts.length > 0) return parts.join(', ');
 		return $t(disk.has_data ? 'storage.disks.unrecognized' : 'storage.disks.empty');
 	};
@@ -479,6 +501,50 @@
 		if (disk.has_data) return { variant: 'orange', label: $t('storage.disks.status.hasData') };
 		return { variant: 'success', label: $t('storage.disks.status.free') };
 	};
+
+	const POWER_STATES: Record<PowerState, { variant: BadgeVariant; key: string }> = {
+		active: { variant: 'success', key: 'storage.disks.power.active' },
+		standby: { variant: 'info', key: 'storage.disks.power.standby' },
+		unknown: { variant: 'neutral', key: 'storage.disks.power.unknown' }
+	};
+
+	/** An idle timeout in minutes in words: Off, "20 minutes", "2 hours". */
+	$: timeoutLabel = (minutes: number): string => {
+		if (minutes === 0) return $t('storage.spindown.off');
+		if (minutes % 60 === 0) return $t('storage.spindown.hours', { n: minutes / 60 });
+		return $t('storage.spindown.minutes', { n: minutes });
+	};
+
+	$: spindownOptions = SPINDOWN_MINUTES.map((minutes) => ({ value: String(minutes), label: timeoutLabel(minutes) }));
+
+	function openSpindown(disk: Disk) {
+		spindownDisk = disk;
+		spindownChoice = String(disk.spindown);
+		spindownError = '';
+	}
+
+	function closeSpindown() {
+		if (spindownBusy) return;
+		spindownDisk = null;
+		spindownError = '';
+	}
+
+	async function saveSpindown() {
+		if (!spindownDisk) return;
+		spindownBusy = true;
+		spindownError = '';
+		try {
+			await setDiskSpindown(spindownDisk.name, Number(spindownChoice));
+			spindownBusy = false;
+			closeSpindown();
+			await loadData(false);
+		} catch (e) {
+			// e.g. 409 "The host has no hdparm: ..." or 500 when hdparm fails
+			spindownError = messageOf(e);
+		} finally {
+			spindownBusy = false;
+		}
+	}
 
 	function diskMountpoints(disk: Disk): string {
 		if (disk.mountpoints?.length) return disk.mountpoints.join(', ');
@@ -934,6 +1000,7 @@
 								<th>{$t('storage.disks.column.contents')}</th>
 								<th>{$t('storage.disks.column.mountedAt')}</th>
 								<th>{$t('storage.disks.column.status')}</th>
+								<th>{$t('storage.disks.column.power')}</th>
 							</tr>
 						</thead>
 						<tbody>
@@ -968,6 +1035,26 @@
 										<Badge variant={status.variant}>{status.label}</Badge>
 										{#if disk.in_use_reason}
 											<p class="text-xs text-muted mt-1">{disk.in_use_reason}</p>
+										{/if}
+									</td>
+									<td>
+										<Badge variant={POWER_STATES[disk.power_state].variant}>
+											{$t(POWER_STATES[disk.power_state].key)}
+										</Badge>
+										<div class="relative mt-2">
+											<Button
+												variant="secondary"
+												size="sm"
+												icon={Timer}
+												disabled={disk.spindown_problem !== null}
+												on:click={() => openSpindown(disk)}
+											>
+												<span class="sr-only">{$t('storage.spindown.of', { disk: disk.path })}</span>
+												{timeoutLabel(disk.spindown)}
+											</Button>
+										</div>
+										{#if disk.spindown_problem}
+											<p class="text-xs text-muted mt-1">{disk.spindown_problem}</p>
 										{/if}
 									</td>
 								</tr>
@@ -1459,6 +1546,36 @@
 		>
 			{$t(poolAction?.kind === 'mount' ? 'storage.pool.mount' : 'storage.pool.unmount')}
 		</Button>
+	</svelte:fragment>
+</Modal>
+
+<!-- The idle timeout of a disk (ADR-0378) -->
+<Modal open={spindownDisk !== null} title={$t('storage.spindown.title')} size="md" closable={!spindownBusy} on:close={closeSpindown}>
+	{#if spindownDisk}
+		<form on:submit|preventDefault={saveSpindown} class="space-y-4">
+			<p>
+				{$t('storage.spindown.disk')}
+				<span class="mono break-all">{spindownDisk.path}</span>{spindownDisk.model ? ` (${spindownDisk.model})` : ''}
+			</p>
+			<Select
+				id="spindown-timeout"
+				label={$t('storage.spindown.label')}
+				options={spindownOptions}
+				bind:value={spindownChoice}
+				hint={$t('storage.spindown.hint')}
+				disabled={spindownBusy}
+			/>
+			{#if spindownError}
+				<Alert variant="error" title={$t('storage.spindown.failed')}>{spindownError}</Alert>
+			{/if}
+		</form>
+	{/if}
+
+	<svelte:fragment slot="footer">
+		<Button variant="secondary" class="flex-1" disabled={spindownBusy} on:click={closeSpindown}>
+			{$t('common.cancel')}
+		</Button>
+		<Button class="flex-1" loading={spindownBusy} on:click={saveSpindown}>{$t('storage.spindown.save')}</Button>
 	</svelte:fragment>
 </Modal>
 

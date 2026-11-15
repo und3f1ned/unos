@@ -17,11 +17,12 @@ from collections.abc import Iterator
 from dataclasses import dataclass, field
 from typing import Any
 
+import psutil
 from fastapi import HTTPException
 
 from .. import host
 from ..security.validators import sanitize_error_message, validate_disk_target
-from .schemas import DiskInfo, PartitionInfo, SmartData
+from .schemas import DiskInfo, PartitionInfo, PowerState, SmartData
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +49,14 @@ LSBLK_COLUMNS = (
 FINDMNT_COLUMNS = "TARGET,SOURCE,FSTYPE,UUID,MAJ:MIN,FSROOT,VFS-OPTIONS,FS-OPTIONS"
 
 SMARTCTL_TIMEOUT = 60
+# Seconds the read of a disk's power state may take (power_state): smartctl -n standby answers
+# at once, unless the disk or its USB bridge hangs.
+POWER_CHECK_TIMEOUT = 15
+
+# What smartctl -n standby prints, as its message and in the JSON's, when it leaves a disk alone
+# because the disk sleeps: "Device is in STANDBY mode, exit(2)" (or SLEEP; SCSI disks add their
+# variant, "STANDBY_Y").
+_ASLEEP = re.compile(r"Device is in (?:STANDBY|SLEEP)\b")
 
 _SUBVOLUME_SUFFIX = re.compile(r"\[[^\]]*\]$")
 
@@ -290,6 +299,31 @@ def labelled_devices(label: str) -> list[str]:
     })
 
 
+def udev_btrfs_devices() -> list[tuple[str, str | None, str, int]]:
+    """The host's block devices with a btrfs filesystem as udev recorded them when they appeared:
+    (UUID in lower case, label, path, size in bytes), read from lsblk without reading a disk
+    (ADR-0378). RuntimeError when lsblk fails.
+    """
+    return [
+        ((node.get("uuid") or "").lower(), node.get("label"), node.get("path") or f"/dev/{node.get('name')}",
+         _to_int(node.get("size")))
+        for top in _lsblk_tree()
+        for node in _walk(top)
+        if node.get("fstype") == "btrfs" and node.get("uuid")
+    ]
+
+
+def disks_of_filesystem(uuid: str) -> list[str]:
+    """The paths of the whole disks that hold a member of the filesystem ``uuid`` (lsblk, which reads
+    no disk). RuntimeError when lsblk fails."""
+    wanted = uuid.lower()
+    return [
+        top.get("path") or f"/dev/{top.get('name')}"
+        for top in _lsblk_tree()
+        if any((node.get("uuid") or "").lower() == wanted for node in _walk(top))
+    ]
+
+
 def _whole_disks(tree: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """The whole disks among the top-level devices of an lsblk tree.
 
@@ -501,7 +535,51 @@ def _probe_signatures(path: str) -> str | None:
     return f"{', '.join(types)} signature"
 
 
-def _node_facts(node: dict[str, Any], disk: dict[str, Any], state: _HostState) -> DeviceFacts:
+def io_counts() -> dict[str, tuple[int, int]]:
+    """The reads and writes that the kernel completed on each block device since boot, by its name
+    ("sda"): /proc/diskstats, which counts a whole disk's partitions in the disk's line and reads no
+    disk. {} when it cannot be read."""
+    try:
+        counters = psutil.disk_io_counters(perdisk=True) or {}
+    except Exception:
+        return {}
+    return {name: (c.read_count, c.write_count) for name, c in counters.items()}
+
+
+def smartctl_found_it_asleep(result: subprocess.CompletedProcess[str]) -> bool:
+    """Whether ``smartctl -n standby`` left the disk alone because it sleeps (ADR-0378).
+
+    smartctl first asks the disk for its power mode, which does not spin it up, and stops for a
+    disk in standby or sleep: exit status bit 1, which also means that the device could not be
+    opened, and its message "Device is in STANDBY mode".
+    """
+    return bool(result.returncode & 0b10) and _ASLEEP.search(result.stdout or "") is not None
+
+
+def power_state(device: str) -> PowerState:
+    """Whether the whole disk ``device`` is active (spinning, or idle) or in standby, read without
+    waking it (ADR-0378): ``smartctl -n standby -i`` in the container asks the disk for its power
+    mode and stops for a sleeping one; an awake one answers its identity. "unknown" when smartctl
+    cannot open the disk (behind some USB bridges) or does not answer within
+    POWER_CHECK_TIMEOUT. Blocking: call it in a worker thread.
+    """
+    try:
+        # Killed at its timeout and not waited for (ADR-0290).
+        result = host.run_in_container(
+            ["smartctl", "-n", "standby", "-i", "-j", device], timeout=POWER_CHECK_TIMEOUT
+        )
+    except (OSError, subprocess.SubprocessError):
+        return "unknown"
+    if smartctl_found_it_asleep(result):
+        return "standby"
+    if result.returncode & 0b11:  # a bad command line, or the device could not be opened
+        return "unknown"
+    return "active"
+
+
+def _node_facts(
+    node: dict[str, Any], disk: dict[str, Any], state: _HostState, *, probe: bool = True
+) -> DeviceFacts:
     subtree = list(_walk(node))
     path = node.get("path") or f"/dev/{node.get('name')}"
     mountpoints = tuple(
@@ -540,7 +618,9 @@ def _node_facts(node: dict[str, Any], disk: dict[str, Any], state: _HostState) -
 
     data = _data_description(node)
     if data is None:
-        data = _probe_signatures(path)
+        # wipefs reads the disk: one that sleeps (probe=False) would spin up, so what it holds is
+        # unknown, and it counts as holding data (ADR-0378).
+        data = _probe_signatures(path) if probe else "unknown contents (the disk sleeps)"
 
     return DeviceFacts(
         path=path,
@@ -566,13 +646,25 @@ def list_disks() -> list[DiskInfo]:
 
     Boot and virtual devices (see HIDDEN_DISK_PREFIXES) are left out. Every
     other disk is listed, including system disks, which are flagged with
-    ``is_system``/``in_use`` instead of being hidden.
+    ``is_system``/``in_use`` instead of being hidden. Each disk's power state is
+    read first, without waking it, and a disk in standby is not probed with
+    wipefs; its idle timeout comes from UNOS's udev rule, with the reason when
+    it can have none, a rule that cannot be read included (ADR-0378).
     """
+    from . import spindown  # it reads disks' facts itself
+
     state = _collect_host_state()
+    timeouts, unread = spindown.timeouts_or_problem()
+    no_hdparm = spindown.hdparm_missing()
+    whole = _whole_disks(state.tree)
+    listed = [(n.get("path") or f"/dev/{n['name']}", disk_id(n.get("serial"))) for n in whole]
     result: list[DiskInfo] = []
-    for node in _whole_disks(state.tree):
+    for node in whole:
         name = node["name"]
-        facts = _node_facts(node, node, state)
+        path = node.get("path") or f"/dev/{name}"
+        # Before anything that could read the disk: smartctl -n standby leaves a sleeping disk alone.
+        power = power_state(path)
+        facts = _node_facts(node, node, state, probe=power != "standby")
         partitions = [
             PartitionInfo(
                 name=child.get("name") or "",
@@ -608,6 +700,11 @@ def list_disks() -> list[DiskInfo]:
                 in_use=facts.in_use,
                 in_use_reason=facts.in_use_reason,
                 pool=facts.pool,
+                power_state=power,
+                spindown=timeouts.get(facts.serial or "", 0),
+                spindown_problem=(
+                    spindown.problem(facts, listed) or unread or (spindown.NO_HDPARM if no_hdparm else None)
+                ),
             )
         )
     return result
@@ -733,22 +830,31 @@ def get_device_facts(paths: list[str]) -> dict[str, DeviceFacts]:
 
 
 def get_smart_data(device_path: str) -> SmartData:
-    """Get SMART data for a device using smartctl (blocking: run it in a worker thread)."""
+    """SMART data of a whole disk with smartctl (blocking: run it in a worker thread).
+
+    ``-n standby`` leaves a sleeping disk asleep (ADR-0378): its answer has the power state
+    "standby", ``healthy`` None and no data.
+    """
     try:
         # Killed at the timeout and not waited for (ADR-0290).
-        result = host.run_in_container(["smartctl", "-j", "-a", device_path], timeout=SMARTCTL_TIMEOUT)
+        result = host.run_in_container(
+            ["smartctl", "-n", "standby", "-j", "-a", device_path], timeout=SMARTCTL_TIMEOUT
+        )
     except subprocess.TimeoutExpired:
         return SmartData(
             device=device_path,
             healthy=False,
+            power_state="unknown",
             raw_data={"error": f"smartctl did not answer within {SMARTCTL_TIMEOUT} seconds"},
         )
+    if smartctl_found_it_asleep(result):
+        return SmartData(device=device_path, healthy=None, power_state="standby")
 
     # smartctl returns non-zero for various reasons, try to parse anyway
     try:
         data = json.loads(result.stdout)
     except json.JSONDecodeError:
-        return SmartData(device=device_path, healthy=False, raw_data={"error": result.stderr})
+        return SmartData(device=device_path, healthy=False, power_state="unknown", raw_data={"error": result.stderr})
 
     smart_status = data.get("smart_status", {})
     healthy = smart_status.get("passed", False)
@@ -769,6 +875,7 @@ def get_smart_data(device_path: str) -> SmartData:
     return SmartData(
         device=device_path,
         healthy=healthy,
+        power_state="unknown" if result.returncode & 0b11 else "active",
         temperature=temperature,
         power_on_hours=power_on_hours,
         reallocated_sectors=reallocated_sectors,

@@ -369,9 +369,10 @@ async def full_health_check():
 
     # Storage pools: btrfs filesystems labelled with a pool name, as on the
     # Storage page (other directories under /mnt/pools are not pools). Listing
-    # them runs host commands, so not on the event loop.
+    # them runs host commands, so not on the event loop; without a scan of the
+    # disks, which would spin up a sleeping one at every scrape (ADR-0378).
     try:
-        pools = await asyncio.to_thread(storage_pools.list_pools)
+        pools = await asyncio.to_thread(storage_pools.list_pools, scan=False)
         health["components"]["storage"] = {"status": "ok", "pools": len(pools)}
     except Exception as e:
         health["components"]["storage"] = {"status": "error", "message": str(e)}
@@ -477,9 +478,10 @@ async def prometheus_metrics():
     lines.append(f'unos_load_average{{period="5m"}} {load[1]}')
     lines.append(f'unos_load_average{{period="15m"}} {load[2]}')
 
-    # Storage pools (btrfs filesystems labelled with a pool name)
+    # Storage pools (btrfs filesystems labelled with a pool name), without a scan of the disks,
+    # which would spin up a sleeping one at every scrape (ADR-0378)
     try:
-        pool_count = len(await asyncio.to_thread(storage_pools.list_pools))
+        pool_count = len(await asyncio.to_thread(storage_pools.list_pools, scan=False))
         lines.append("# HELP unos_storage_pools Number of storage pools")
         lines.append("# TYPE unos_storage_pools gauge")
         lines.append(f"unos_storage_pools {pool_count}")

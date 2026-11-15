@@ -49,6 +49,7 @@ import shutil
 import stat
 import sys
 import threading
+import time
 from collections.abc import Callable, Iterator
 from contextlib import closing, contextmanager
 from datetime import datetime, timedelta, timezone
@@ -63,6 +64,7 @@ from ..config import get_settings
 from ..request_limits import UPLOAD_OPENAPI, UploadSink, receive_upload
 from ..security.validators import open_dir_nofollow, open_subdirs_nofollow
 from ..shares import constants as smb_constants
+from ..storage import spindown
 from .schemas import (
     CreateDirectoryRequest,
     DirectoryListing,
@@ -121,8 +123,12 @@ _MOVED_ELSEWHERE = "moved to another pool or volume"
 TRASH = ".unos-trash"
 # Days that a deleted item stays in the trash before the expiry deletes it for good.
 TRASH_RETENTION_DAYS = 30
-# Seconds between two passes of the expiry (the first one runs at the start).
+# Seconds between two passes of the expiry over a pool (the first one runs at the start).
 TRASH_EXPIRY_INTERVAL = 24 * 60 * 60
+# Seconds between two checks for the pools whose pass is due: a pool whose disks sleep is passed
+# over, so as not to spin them up, and its pass runs at the first check after they woke; a check
+# with no pass due asks no disk anything (ADR-0378).
+TRASH_EXPIRY_CHECK = 60 * 60
 # In the trash, each deleted item has a folder of its own, named after the
 # time of its deletion in UTC and 16 random hex digits: the item is in it as
 # _TRASH_ITEM, and its path below the pool or volume, as bytes, in _TRASH_ORIGIN.
@@ -1649,10 +1655,11 @@ def _check_trash_of(parts: list[str], mount_points: list[bytes] | None) -> None:
         os.close(scope_fd)
 
 
-def _trash_scopes(problems: list[str]) -> list[list[str]]:
+def _trash_scopes(problems: list[str], due: Callable[[str], bool] | None = None) -> list[list[str]]:
     """Every pool, each followed by its volumes: the places that can have a trash, by name.
 
-    A pool whose top folder cannot be read is left out, with the reason in ``problems``.
+    A pool whose top folder cannot be read is left out, with the reason in ``problems``. With
+    ``due``, only the pools for which it answers True, asked before a pool is opened.
     """
     base_fd = _open_dir([])
     try:
@@ -1661,7 +1668,7 @@ def _trash_scopes(problems: list[str]) -> list[list[str]]:
         os.close(base_fd)
     scopes = []
     for pool in pools:
-        if pool == TRASH:
+        if pool == TRASH or (due is not None and not due(pool)):
             continue
         try:
             pool_fd = _open_dir([pool])
@@ -1704,12 +1711,13 @@ def _open_scope(scope: list[str]) -> int | None:
         os.close(pool_fd)
 
 
-def _each_trash(problems: list[str]) -> Iterator[tuple[list[str], int]]:
+def _each_trash(problems: list[str], due: Callable[[str], bool] | None = None) -> Iterator[tuple[list[str], int]]:
     """(the pool or volume, its open trash folder) for each trash; what cannot be read goes to ``problems``.
 
-    Close the iterator when done with it (contextlib.closing): it holds descriptors.
+    With ``due``, of the pools for which it answers True (_trash_scopes). Close the iterator when
+    done with it (contextlib.closing): it holds descriptors.
     """
-    for scope in _trash_scopes(problems):
+    for scope in _trash_scopes(problems, due):
         try:
             scope_fd = _open_scope(scope)
         except FileNotFoundError:
@@ -1991,16 +1999,17 @@ def _empty_trash() -> int:
     return count
 
 
-def _expire_trash(now: datetime) -> tuple[int, list[str]]:
+def _expire_trash(now: datetime, due: Callable[[str], bool] | None = None) -> tuple[int, list[str]]:
     """Delete for good what was deleted TRASH_RETENTION_DAYS or more before ``now``.
 
-    Returns how many entries it deleted and the problems: the trashes it
-    could not read and the entries it could not delete, which stay.
+    With ``due``, in the pools for which it answers True. Returns how many
+    entries it deleted and the problems: the trashes it could not read and the
+    entries it could not delete, which stay.
     """
     cutoff = now - timedelta(days=TRASH_RETENTION_DAYS)
     problems: list[str] = []
     count = 0
-    with closing(_each_trash(problems)) as trashes:
+    with closing(_each_trash(problems, due)) as trashes:
         for scope, trash_fd in trashes:
             try:
                 names = _trash_entries(trash_fd)
@@ -2021,31 +2030,66 @@ def _expire_trash(now: datetime) -> tuple[int, list[str]]:
     return count, problems
 
 
+def _expire_due_trash(now: datetime, done: dict[str, float], clock: float) -> tuple[int, list[str], bool]:
+    """One check of the expiry (ADR-0378): the pass of each pool that is due, at the start and then
+    TRASH_EXPIRY_INTERVAL after its last (``done``: pool -> ``clock`` of its last pass, which this
+    updates), unless the pool's disks sleep (storage.spindown.pool_sleeps): reading its folders
+    could spin them up, so it waits for a check when they are awake. Only the disks of a pool
+    whose pass is due are asked whether they sleep, since asking an awake disk restarts its
+    standby timer; a pool whose disks cannot be asked gets no pass. Returns how many entries it
+    deleted, the problems, and whether a pass ran (or a pool's disks could not be asked).
+    """
+    passed: list[str] = []
+    unasked: list[str] = []
+
+    def due(pool: str) -> bool:
+        if clock - done.get(pool, clock - TRASH_EXPIRY_INTERVAL) < TRASH_EXPIRY_INTERVAL:
+            return False
+        try:
+            if spindown.pool_sleeps(pool):
+                return False
+        except Exception as exc:
+            unasked.append(
+                f"Could not tell whether the disks of pool {pool} sleep, so its trash was not cleared out: {exc}"
+            )
+            return False
+        done[pool] = clock
+        passed.append(pool)
+        return True
+
+    count, problems = _expire_trash(now, due)
+    return count, unasked + problems, bool(passed or unasked)
+
+
 _trash_expiry_task: asyncio.Task | None = None
 
 
 async def trash_expiry_loop() -> None:
-    """Delete for good what has been in the trash for TRASH_RETENTION_DAYS: at the start, then once a day.
+    """Delete for good what has been in the trash for TRASH_RETENTION_DAYS: each pool's at the start,
+    then once a day, every TRASH_EXPIRY_CHECK seconds looking for the pools that are due and whose
+    disks are awake (_expire_due_trash, ADR-0378).
 
-    Each pass reads the pools in a worker thread, without a timeout: a pool
-    that hangs holds that one thread, and the next pass waits for it. A pass
+    Each check reads the pools in a worker thread, without a timeout: a pool
+    that hangs holds that one thread, and the next check waits for it. A pass
     logs what it deleted, and its problems when they differ from the last
     pass's; one that finds nothing to do writes nothing (ADR-0214).
     """
     reported: list[str] = []
+    done: dict[str, float] = {}
     while True:
         try:
-            count, problems = await asyncio.to_thread(_expire_trash, _now())
+            count, problems, ran = await asyncio.to_thread(_expire_due_trash, _now(), done, time.monotonic())
         except Exception as exc:  # e.g. the pools directory cannot be read
-            count, problems = 0, [str(exc) or type(exc).__name__]
+            count, problems, ran = 0, [str(exc) or type(exc).__name__], True
         if count:
             logger.info(
                 "Deleted %d item(s) for good that had been in the trash for %d days", count, TRASH_RETENTION_DAYS
             )
-        if problems and problems != reported:
-            logger.warning("The trash could not be cleared out completely: %s", "; ".join(problems))
-        reported = problems
-        await asyncio.sleep(TRASH_EXPIRY_INTERVAL)
+        if ran:
+            if problems and problems != reported:
+                logger.warning("The trash could not be cleared out completely: %s", "; ".join(problems))
+            reported = problems
+        await asyncio.sleep(TRASH_EXPIRY_CHECK)
 
 
 async def start_trash_expiry() -> None:

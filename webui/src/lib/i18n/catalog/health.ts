@@ -24,6 +24,7 @@ export const en = {
 	'health.status.passed': 'PASSED',
 	'health.status.failed': 'FAILED',
 	'health.status.unknown': 'UNKNOWN',
+	'health.status.standby': 'STANDBY',
 
 	'health.overall': 'Overall health',
 	'health.temperature': 'Temperature',
@@ -57,6 +58,8 @@ export const en = {
 	'health.attribute.warning': 'Warning',
 	'health.attribute.critical': 'Failing',
 	'health.noAttributes': 'smartctl reported no SMART attributes for this disk.',
+	// A disk in standby, whose SMART data is not read so as not to spin it up (ADR-0378).
+	'health.asleep': 'The disk sleeps: its SMART data is read once it is awake, so as not to spin it up.',
 
 	'health.nvmeLog': 'NVMe SMART/Health Information log',
 	'health.nvmeField': 'Health information',
@@ -99,6 +102,7 @@ export const ru: Translation<typeof en> = {
 	'health.status.passed': 'ИСПРАВЕН',
 	'health.status.failed': 'НЕИСПРАВЕН',
 	'health.status.unknown': 'НЕИЗВЕСТНО',
+	'health.status.standby': 'СПИТ',
 
 	'health.overall': 'Общее состояние',
 	'health.temperature': 'Температура',
@@ -128,6 +132,7 @@ export const ru: Translation<typeof en> = {
 	'health.attribute.warning': 'Внимание',
 	'health.attribute.critical': 'Сбой',
 	'health.noAttributes': 'smartctl не сообщил атрибутов SMART для этого диска.',
+	'health.asleep': 'Диск спит: данные SMART читаются, когда он работает, чтобы не раскручивать его.',
 
 	'health.nvmeLog': 'Журнал NVMe SMART/Health Information',
 	'health.nvmeField': 'Сведения о состоянии',
