@@ -92,10 +92,13 @@ HOST_TOOLS: dict[str, str] = {
 # leaves them out, and the feature that runs one says when the host lacks it.
 # shares/nfs.py runs exportfs (under timeout), and the NFS tab names a missing
 # NFS server (ADR-0292). power/router.py runs NUT's upsc (under timeout), and the
-# UPS status names a missing NUT client (ADR-0356).
+# UPS status names a missing NUT client (ADR-0356). storage/spindown.py runs hdparm
+# -S (under timeout) for a disk's idle timeout, and the Storage page names a missing
+# hdparm (ADR-0377): install.sh installs it, but a host set up by hand may lack it.
 OPTIONAL_HOST_TOOLS: dict[str, str] = {
     "exportfs": "nfs-kernel-server",
     "upsc": "nut-client",
+    "hdparm": "hdparm",
 }
 
 # Enter all of PID 1's namespaces except the user and cgroup namespaces.

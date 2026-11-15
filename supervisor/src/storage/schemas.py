@@ -1,6 +1,17 @@
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+# A whole disk's power as smartctl -n standby reads it without waking the disk (ADR-0377): active
+# (spinning, or idle), standby (spun down, or asleep), or unknown (smartctl cannot open the disk,
+# as behind some USB bridges, or did not answer).
+PowerState = Literal["active", "standby", "unknown"]
+
+# The idle timeouts that the Storage page offers, in minutes, 0 for off (ADR-0377): values that
+# hdparm -S expresses (5-second steps up to 20 minutes, 30-minute steps from 30 minutes to 5.5
+# hours), from the shortest that does not spin a disk down between the bursts of a quiet NAS to the
+# longest whole hour.
+SPINDOWN_MINUTES = (0, 5, 10, 20, 30, 60, 120, 180, 240, 300)
 
 
 class PartitionInfo(BaseModel):
@@ -35,11 +46,39 @@ class DiskInfo(BaseModel):
     in_use: bool = False  # is_system, mounted, member of a mounted btrfs pool, or held by md/LVM/LUKS
     in_use_reason: str | None = None
     pool: str | None = None  # btrfs label when the disk (or a partition) belongs to a btrfs filesystem
+    # Read before anything else, with smartctl -n standby, which leaves a sleeping disk alone; a
+    # disk in standby is not probed with wipefs, so has_data is true for it unless lsblk knows more.
+    power_state: PowerState = "unknown"
+    # The idle timeout in minutes that UNOS's udev rule sets for the disk (by its serial), 0 for none.
+    spindown: int = 0
+    # Why the disk gets no idle timeout (the system disk, an NVMe disk, no serial a udev rule can
+    # match, no hdparm on the host); None when it can have one.
+    spindown_problem: str | None = None
+
+
+class SpindownSet(BaseModel):
+    """Body of PUT /storage/disks/{name}/spindown: the idle timeout in minutes, 0 for off."""
+
+    minutes: int
+
+    @field_validator("minutes", mode="before")
+    @classmethod
+    def _offered(cls, value: object) -> object:
+        if type(value) is not int or value not in SPINDOWN_MINUTES:
+            raise ValueError(f"minutes must be one of {', '.join(map(str, SPINDOWN_MINUTES))}")
+        return value
+
+
+class DiskSpindown(BaseModel):
+    name: str
+    minutes: int
 
 
 class SmartData(BaseModel):
     device: str
-    healthy: bool
+    # None when smartctl left the disk alone because it sleeps (power_state "standby", ADR-0377).
+    healthy: bool | None
+    power_state: PowerState = "unknown"
     temperature: int | None = None
     power_on_hours: int | None = None
     reallocated_sectors: int | None = None

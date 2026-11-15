@@ -9,6 +9,18 @@ export interface PartitionInfo {
   mountpoints: string[];
 }
 
+/**
+ * A whole disk's power, read without waking it (smartctl -n standby, ADR-0377): active (spinning,
+ * or idle), standby (spun down), or unknown (smartctl could not open it or did not answer).
+ */
+export type PowerState = 'active' | 'standby' | 'unknown';
+
+/**
+ * The idle timeouts the Storage page offers, in minutes, 0 for off (SPINDOWN_MINUTES of
+ * supervisor/src/storage/schemas.py): values that hdparm -S expresses (ADR-0377).
+ */
+export const SPINDOWN_MINUTES = [0, 5, 10, 20, 30, 60, 120, 180, 240, 300] as const;
+
 export interface Disk {
   name: string;
   path: string;
@@ -37,11 +49,19 @@ export interface Disk {
   in_use_reason: string | null;
   /** Label of the btrfs filesystem the disk (or a partition) belongs to. */
   pool: string | null;
+  /** Read first; a disk in standby is not probed for signatures, so has_data is true for it. */
+  power_state: PowerState;
+  /** The idle timeout in minutes that UNOS's udev rule sets for the disk, 0 for none. */
+  spindown: number;
+  /** Why the disk gets no idle timeout (the server's message), or null when it can have one. */
+  spindown_problem: string | null;
 }
 
 export interface SmartData {
   device: string;
-  healthy: boolean;
+  /** null when the disk sleeps: smartctl left it alone (power_state standby). */
+  healthy: boolean | null;
+  power_state: PowerState;
   temperature: number | null;
   power_on_hours: number | null;
   reallocated_sectors: number | null;
@@ -216,6 +236,18 @@ export async function getDisks(): Promise<Disk[]> {
 /** SMART data of a disk as getDisks() lists it, by name (HTTP 400 for any other device). */
 export async function getDiskSmart(name: string): Promise<SmartData> {
   return api.get<SmartData>(`/storage/disks/${name}/smart`);
+}
+
+/**
+ * Give a whole data disk the idle timeout `minutes` of SPINDOWN_MINUTES, 0 for off: hdparm -S on
+ * the host now, which spins a sleeping disk up, and UNOS's udev rule, which sets it again whenever
+ * the disk appears. HTTP 400 for a boot or virtual device or a partition, 409 for the system disk
+ * and the other disks that spindown_problem names, 500 when hdparm fails.
+ */
+export async function setDiskSpindown(name: string, minutes: number): Promise<{ name: string; minutes: number }> {
+  return api.put<{ name: string; minutes: number }>(`/storage/disks/${encodeURIComponent(name)}/spindown`, {
+    minutes
+  });
 }
 
 export async function getPools(): Promise<Pool[]> {

@@ -98,6 +98,7 @@ export const en = {
 	// The types of resource that the server records: in English as it records them.
 	'audit.resource.user': 'user',
 	'audit.resource.pool': 'pool',
+	'audit.resource.disk': 'disk',
 	'audit.resource.volume': 'volume',
 	'audit.resource.snapshot': 'snapshot',
 	'audit.resource.share': 'share',
@@ -204,6 +205,7 @@ export const ru: Translation<typeof en> = {
 
 	'audit.resource.user': 'пользователь',
 	'audit.resource.pool': 'пул',
+	'audit.resource.disk': 'диск',
 	'audit.resource.volume': 'том',
 	'audit.resource.snapshot': 'снимок',
 	'audit.resource.share': 'общая папка',

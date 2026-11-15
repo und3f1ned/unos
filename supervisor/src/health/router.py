@@ -48,7 +48,9 @@ class SmartInfo(BaseModel):
     temperature: Optional[int]
     power_on_hours: Optional[int]
     power_cycle_count: Optional[int]
-    health_status: str  # PASSED, FAILED, UNKNOWN
+    # PASSED, FAILED, UNKNOWN; STANDBY: the disk sleeps, and smartctl -n standby left it alone, so
+    # no SMART data was read (ADR-0377).
+    health_status: str
     attributes: list[SmartAttribute]  # ATA attributes; NVMe disks have none
     # The numbers of an NVMe disk's SMART/Health Information log, by smartctl's
     # names and in its order (critical_warning, available_spare, media_errors,
@@ -821,8 +823,11 @@ _pools_read: Optional[_PoolsRead] = None
 
 def _raid_health_and_pools() -> tuple[list[RaidHealthInfo], _PoolsRead]:
     # Pools are btrfs filesystems labelled with a pool name, mounted or not;
-    # other directories under the pools base are not pools.
-    pools, managed = storage_pools.pools_and_managed_names()
+    # other directories under the pools base are not pools. Read without a scan
+    # of the disks, which would spin up a sleeping one every RAID_CHECK_INTERVAL
+    # (ADR-0377): the mounted pools as the kernel knows them, the others as udev
+    # recorded them.
+    pools, managed = storage_pools.pools_and_managed_names(scan=False)
     return [_raid_health_of_pool(info) for info in pools], _PoolsRead(pools, managed)
 
 
@@ -1112,9 +1117,18 @@ def _format_capacity(size: int) -> str:
 
 
 def parse_smart_data(device: str) -> SmartInfo:
-    """Parse SMART data from smartctl."""
+    """The SMART data of a whole disk, from ``smartctl -n standby -j -a``.
+
+    A disk that sleeps is left asleep (ADR-0377): its health status is STANDBY, without data.
+    """
     try:
-        result = host.run_in_container(["smartctl", "-j", "-a", device], timeout=SMARTCTL_TIMEOUT)
+        result = host.run_in_container(["smartctl", "-n", "standby", "-j", "-a", device], timeout=SMARTCTL_TIMEOUT)
+        if storage_disks.smartctl_found_it_asleep(result):
+            return SmartInfo(
+                device=device, model="Unknown", serial="Unknown", firmware="Unknown", capacity="Unknown",
+                temperature=None, power_on_hours=None, power_cycle_count=None, health_status="STANDBY",
+                attributes=[], self_test_status=None, last_test_result=None,
+            )
         data = json.loads(result.stdout)
     except (subprocess.TimeoutExpired, json.JSONDecodeError) as e:
         raise HTTPException(500, f"Failed to get SMART data: {e}")
@@ -1246,7 +1260,7 @@ def _disk_health(disk: storage_disks.HostDisk) -> SmartInfo:
     The model and the capacity that lsblk reports stand in for those that
     smartctl does not report: with -j it prints JSON without them when it
     cannot open or identify the disk, such as one behind a USB bridge it
-    does not know.
+    does not know. A disk that sleeps (STANDBY) gets lsblk's serial too.
     """
     try:
         info = parse_smart_data(disk.path)
@@ -1270,6 +1284,8 @@ def _disk_health(disk: storage_disks.HostDisk) -> SmartInfo:
         from_lsblk["model"] = disk.model
     if info.capacity == "Unknown":
         from_lsblk["capacity"] = _format_capacity(disk.size)
+    if info.health_status == "STANDBY" and disk.serial:
+        from_lsblk["serial"] = disk.serial
     return info.model_copy(update=from_lsblk)
 
 
@@ -1334,7 +1350,8 @@ def start_smart_test(
 
 @router.get("/overview")
 def get_health_overview(_: dict = Depends(verify_token)):
-    """Health counts of the disks of GET /health/disks (500 when they cannot be listed)."""
+    """Health counts of the disks of GET /health/disks (500 when they cannot be listed); a disk that
+    sleeps counts as standby (ADR-0377)."""
     disks = storage_disks.host_disks_or_500()
 
     total_disks = len(disks)
@@ -1342,6 +1359,7 @@ def get_health_overview(_: dict = Depends(verify_token)):
     warning_disks = 0
     failed_disks = 0
     unknown_disks = 0
+    standby_disks = 0
     total_temp = 0
     temp_count = 0
 
@@ -1355,6 +1373,8 @@ def get_health_overview(_: dict = Depends(verify_token)):
                 healthy_disks += 1
         elif smart_info.health_status == "FAILED":
             failed_disks += 1
+        elif smart_info.health_status == "STANDBY":
+            standby_disks += 1
         else:  # also when smartctl failed
             unknown_disks += 1
 
@@ -1370,6 +1390,7 @@ def get_health_overview(_: dict = Depends(verify_token)):
         "warning": warning_disks,
         "failed": failed_disks,
         "unknown": unknown_disks,
+        "standby": standby_disks,
         "average_temperature": avg_temp
     }
 

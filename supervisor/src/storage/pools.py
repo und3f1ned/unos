@@ -510,19 +510,38 @@ def parse_btrfs_show(output: str) -> list[BtrfsFilesystem]:
     return result
 
 
-def btrfs_filesystems() -> list[BtrfsFilesystem]:
-    """All btrfs filesystems the host knows about, mounted or not."""
+def btrfs_filesystems(*, scan: bool = True) -> list[BtrfsFilesystem]:
+    """All btrfs filesystems the host knows about, mounted or not.
+
+    With ``scan`` btrfs reads the superblock of every block device that libblkid finds, which
+    spins up a sleeping disk that no mounted filesystem holds open (ADR-0377). Without it no disk
+    is read: the mounted filesystems as the kernel reports them (``--mounted``), and the others as
+    udev recorded them when their devices appeared (lsblk), with the devices that are present,
+    without a count of missing ones or of the bytes used.
+    """
     # The labels are printed as they are: one that is not UTF-8 (a filesystem
     # formatted elsewhere) must not keep the pools from being listed. It is
     # not a valid pool name either way.
-    result = host.run_on_host(
-        ["btrfs", "filesystem", "show", "--raw"], timeout=60, errors="replace"
-    )
+    cmd = ["btrfs", "filesystem", "show", "--raw"] if scan else ["btrfs", "filesystem", "show", "--mounted", "--raw"]
+    result = host.run_on_host(cmd, timeout=60, errors="replace")
     if not result.ok:
         raise RuntimeError(
             f"btrfs filesystem show failed: {result.stderr.strip() or result.returncode}"
         )
-    return parse_btrfs_show(result.stdout)
+    found = parse_btrfs_show(result.stdout)
+    if not scan:
+        mounted = {fs.uuid for fs in found}
+        recorded: dict[str, BtrfsFilesystem] = {}
+        for uuid, label, path, size in disks.udev_btrfs_devices():
+            if uuid in mounted:
+                continue
+            fs = recorded.setdefault(uuid, BtrfsFilesystem(label=label, uuid=uuid))
+            if path not in fs.devices:
+                fs.devices.append(path)
+                fs.devices_size += size
+                fs.total_devices = len(fs.devices)
+        found.extend(recorded.values())
+    return found
 
 
 def _btrfs_usage(target: str) -> tuple[int, int, str | None] | None:
@@ -735,14 +754,16 @@ def list_pools() -> list[PoolInfo]:
     return pools_and_managed_names()[0]
 
 
-def pools_and_managed_names() -> tuple[list[PoolInfo], set[str] | None]:
+def pools_and_managed_names(*, scan: bool = True) -> tuple[list[PoolInfo], set[str] | None]:
     """list_pools(), and the names of the pools that UNOS mounts at boot (their entries in the host's
     fstab), from the same reads of the host; None for the names when the fstab could not be read.
 
     A managed pool none of whose disks is connected has a name here and no PoolInfo: btrfs finds
-    no filesystem of it (the RAID monitor reports it, ADR-0332).
+    no filesystem of it (the RAID monitor reports it, ADR-0332). Without ``scan`` no disk is read
+    (btrfs_filesystems): a pool that is not mounted has its devices that are present, and no
+    missing ones or bytes used (the RAID monitor, ADR-0377).
     """
-    filesystems = btrfs_filesystems()
+    filesystems = btrfs_filesystems(scan=scan)
     mounts = _mounts_or_none()
     managed = _managed_entries_or_none()
     chosen = _pool_choices(filesystems, mounts, managed)

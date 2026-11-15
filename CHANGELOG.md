@@ -323,6 +323,24 @@ manager, encrypted backup uploads, health checks, CI checks).
   `ups_name`, `host` and `port` are checked before they reach `upsc`.
 
 ### Added
+- Idle timeouts of the data disks (`storage.disk-spindown`, ADR-0377):
+  **Storage** → **Physical Disks** has a **Power** column with each disk's
+  power state (Active, Standby, Unknown), read with `smartctl -n standby`
+  without waking it, and a button that sets the disk's idle timeout (Off, 5,
+  10, 20 or 30 minutes, 1 to 5 hours) through
+  `PUT /api/v1/storage/disks/{name}/spindown`: `hdparm -S` on the host at once,
+  and a line in UNOS's udev rule `/etc/udev/rules.d/90-unos-disk-spindown.rules`,
+  matched by the disk's serial, at every boot and reconnection. The system
+  disk, boot and virtual devices, partitions, NVMe disks, disks without a
+  usable serial and a host without `hdparm` (now an optional host tool) are
+  refused with the reason. The SMART reads of Storage and Disk Health leave a
+  sleeping disk asleep (health status `STANDBY`, `power_state` standby, and
+  `standby` in `GET /api/v1/health/overview`); the RAID monitor reads the
+  pools without a scan of the disks (`btrfs filesystem show --mounted` and
+  udev's records); the trash expiry passes over a pool whose disks sleep and
+  checks again every hour. `scripts/dev/scenario.sh smart` shows the system
+  disk refused a timeout, gives the pool's disk the shortest timeout, waits
+  for it to sleep and reads SMART while it sleeps.
 - `scripts/dev/check.sh` shows each container's CPU, the load average and the
   temperatures, and reports a container of UNOS above 15% of a core or a
   thermal zone within 5 C of its throttling point as a problem (ADR-0374).

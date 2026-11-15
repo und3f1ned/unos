@@ -15,6 +15,7 @@ import {
   FAKE_IMPORTABLE,
   FAKE_POOLS,
   HEALTHY_POOL,
+  NO_HDPARM,
   SWAPPED_DISKS,
   dockerUnavailable,
   fakeBlockDevices,
@@ -90,13 +91,15 @@ test.describe('Physical disks (fake data)', () => {
         { name: 'e2e-hd3p1', path: '/dev/e2e-hd3p1', size: 2e12, fstype: 'ext4', label: 'backup', mountpoints: ['/srv/backup'] },
       ],
       mountpoints: ['/srv/backup'], has_data: true, is_system: false, in_use: true,
-      in_use_reason: 'Mounted at /srv/backup', pool: null,
+      in_use_reason: 'Mounted at /srv/backup', pool: null, power_state: 'active', spindown: 0, spindown_problem: null,
     },
     {
       name: 'e2e-sd4', path: '/dev/e2e-sd4', model: 'E2E Stick', serial: null, wwn: null, size: 32e9,
       rotational: false, mountpoint: null, type: 'disk', fstype: 'exfat', label: 'CAMERA', pttype: null,
       partitions: [], mountpoints: [], has_data: true, is_system: false, in_use: false, in_use_reason: null,
-      pool: null,
+      pool: null, power_state: 'unknown', spindown: 0,
+      spindown_problem: '/dev/e2e-sd4 reports no serial number that a udev rule can match: UNOS could not set its ' +
+        'idle timeout again when it is connected',
     },
   ];
   // What GET /storage/disks answers when lsblk fails on the host (storage/disks.py).
@@ -117,32 +120,110 @@ test.describe('Physical disks (fake data)', () => {
     const cells = (path: string) =>
       rows.filter({ has: page.getByRole('cell', { name: path, exact: true }) }).getByRole('cell');
     await expect(rows).toHaveCount(1 + LISTED_DISKS.length);
-    // Device, Model (and serial), Size, Type, Contents, Mounted at, Status.
+    // Device, Model (and serial), Size, Type, Contents, Mounted at, Status, and Power: the power
+    // state, the idle timeout's button (with its text for screen readers) and why there is none.
     await expect(cells('/dev/e2e-sd0')).toHaveText([
       '/dev/e2e-sd0', 'Boot card E2E0', '59.6 GB', 'SSD',
       'DOS partition table, 1 partition e2e-sd0p1 · 58.7 GB · ext4', '/', 'System Mounted at /',
+      'Active Idle timeout of /dev/e2e-sd0: Off /dev/e2e-sd0 is the system disk (Mounted at /): it gets no idle timeout',
     ]);
     await expect(cells('/dev/e2e-hd1')).toHaveText([
       '/dev/e2e-hd1', 'E2E Disk E2E1', '3.6 TB', 'HDD', 'btrfs "e2e_tank"', '-', 'Pool "e2e_tank"',
+      'Standby Idle timeout of /dev/e2e-hd1: 20 minutes',
     ]);
     await expect(cells('/dev/e2e-hd2')).toHaveText([
-      '/dev/e2e-hd2', 'E2E Disk E2E2', '3.6 TB', 'HDD', 'Empty', '-', 'Free',
+      '/dev/e2e-hd2', 'E2E Disk E2E2', '3.6 TB', 'HDD', 'Empty', '-', 'Free', 'Active Idle timeout of /dev/e2e-hd2: Off',
     ]);
     await expect(cells('/dev/e2e-hd3')).toHaveText([
       '/dev/e2e-hd3', 'E2E Backup E2E3', '1.8 TB', 'HDD',
       'GPT partition table, 1 partition e2e-hd3p1 · 1.8 TB · ext4 "backup"', '/srv/backup',
-      'In use Mounted at /srv/backup',
+      'In use Mounted at /srv/backup', 'Active Idle timeout of /dev/e2e-hd3: Off',
     ]);
-    // No serial: none is shown.
+    // No serial: none is shown, and the disk gets no idle timeout.
     await expect(cells('/dev/e2e-sd4')).toHaveText([
       '/dev/e2e-sd4', 'E2E Stick', '29.8 GB', 'SSD', 'exfat "CAMERA"', '-', 'Has data',
+      'Unknown Idle timeout of /dev/e2e-sd4: Off /dev/e2e-sd4 reports no serial number that a udev rule can match: ' +
+        'UNOS could not set its idle timeout again when it is connected',
     ]);
-    const status = (path: string) => cells(path).last().locator('.badge');
+    const status = (path: string) => cells(path).nth(6).locator('.badge');
     await expect(status('/dev/e2e-sd0')).toHaveClass(/badge-error/);
     await expect(status('/dev/e2e-hd3')).toHaveClass(/badge-warning/);
     await expect(status('/dev/e2e-hd1')).toHaveClass(/badge-info/);
     await expect(status('/dev/e2e-sd4')).toHaveClass(/badge-orange/);
     await expect(status('/dev/e2e-hd2')).toHaveClass(/badge-success/);
+  });
+
+  // storage.disk-spindown (ADR-0377): each disk's power, read without waking it, and its idle timeout.
+  test('each disk shows whether it sleeps, and its idle timeout is set in a dialog', async ({
+    authenticatedPage: page,
+  }) => {
+    const writes = await fakeStorageApi(page);
+    await page.goto('/storage');
+    const cells = (path: string) =>
+      disksCard(page).getByRole('row').filter({ has: page.getByRole('cell', { name: path, exact: true }) }).getByRole('cell');
+    await expect(disksCard(page).locator('thead th').last()).toHaveText('Power');
+    const power = (path: string) => cells(path).last().locator('.badge');
+    await expect(power('/dev/e2e-hd1')).toHaveText('Standby');
+    await expect(power('/dev/e2e-hd1')).toHaveClass(/badge-info/);
+    await expect(power('/dev/e2e-hd2')).toHaveText('Active');
+    await expect(power('/dev/e2e-hd2')).toHaveClass(/badge-success/);
+
+    // The system disk gets none: its button is off, with the server's reason below it.
+    const system = page.getByRole('button', { name: 'Idle timeout of /dev/e2e-sd0: Off' });
+    await expect(system).toBeDisabled();
+    await expect(cells('/dev/e2e-sd0').last()).toContainText(
+      '/dev/e2e-sd0 is the system disk (Mounted at /): it gets no idle timeout',
+    );
+
+    // The sleeping disk has 20 minutes; it gets the shortest.
+    await page.getByRole('button', { name: 'Idle timeout of /dev/e2e-hd1: 20 minutes' }).click();
+    const dialog = page.getByRole('dialog', { name: 'Idle Timeout' });
+    await expect(dialog).toContainText('/dev/e2e-hd1 (E2E Disk)');
+    await expect(dialog).toContainText('Saving spins the disk up now.');
+    const choice = dialog.getByRole('combobox', { name: 'Spin down after' });
+    await expect(choice).toHaveText('20 minutes');
+    await choice.click();
+    await expect(dialog.getByRole('option')).toHaveText([
+      'Off', '5 minutes', '10 minutes', '20 minutes', '30 minutes', '1 hour', '2 hours', '3 hours', '4 hours', '5 hours',
+    ]);
+    await dialog.getByRole('option', { name: '5 minutes' }).click();
+    await dialog.getByRole('button', { name: 'Save' }).click();
+    await expect(dialog).toBeHidden();
+    await expect(page.getByRole('button', { name: 'Idle timeout of /dev/e2e-hd1: 5 minutes' })).toBeVisible();
+
+    // And off again, for the other disk too a timeout of hours.
+    await page.getByRole('button', { name: 'Idle timeout of /dev/e2e-hd2: Off' }).click();
+    await dialog.getByRole('combobox', { name: 'Spin down after' }).click();
+    await dialog.getByRole('option', { name: '2 hours' }).click();
+    await dialog.getByRole('button', { name: 'Save' }).click();
+    await expect(page.getByRole('button', { name: 'Idle timeout of /dev/e2e-hd2: 2 hours' })).toBeVisible();
+    await page.getByRole('button', { name: 'Idle timeout of /dev/e2e-hd1: 5 minutes' }).click();
+    await dialog.getByRole('combobox', { name: 'Spin down after' }).click();
+    await dialog.getByRole('option', { name: 'Off' }).click();
+    await dialog.getByRole('button', { name: 'Save' }).click();
+    await expect(page.getByRole('button', { name: 'Idle timeout of /dev/e2e-hd1: Off' })).toBeVisible();
+
+    expect(writes).toEqual([
+      { method: 'PUT', path: '/disks/e2e-hd1/spindown', body: { minutes: 5 } },
+      { method: 'PUT', path: '/disks/e2e-hd2/spindown', body: { minutes: 120 } },
+      { method: 'PUT', path: '/disks/e2e-hd1/spindown', body: { minutes: 0 } },
+    ]);
+  });
+
+  test('a timeout that the host refuses says why, and the dialog stays open', async ({ authenticatedPage: page }) => {
+    const writes = await fakeStorageApi(page, { spindownResponse: { status: 409, json: { detail: NO_HDPARM } } });
+    await page.goto('/storage');
+    await page.getByRole('button', { name: 'Idle timeout of /dev/e2e-hd2: Off' }).click();
+    const dialog = page.getByRole('dialog', { name: 'Idle Timeout' });
+    await dialog.getByRole('combobox', { name: 'Spin down after' }).click();
+    await dialog.getByRole('option', { name: '10 minutes' }).click();
+    await dialog.getByRole('button', { name: 'Save' }).click();
+    await expect(dialog).toContainText('The idle timeout was not set');
+    await expect(dialog).toContainText(NO_HDPARM);
+    await dialog.getByRole('button', { name: 'Cancel' }).click();
+    await expect(dialog).toBeHidden();
+    await expect(page.getByRole('button', { name: 'Idle timeout of /dev/e2e-hd2: Off' })).toBeVisible();
+    expect(writes).toEqual([{ method: 'PUT', path: '/disks/e2e-hd2/spindown', body: { minutes: 10 } }]);
   });
 
   test('a disk list that cannot be loaded says why, and the pools are still shown', async ({
@@ -178,7 +259,11 @@ test.describe('Physical disks (fake data)', () => {
   // request, and the page asks again when the block devices of the stats stream change.
   const BOOT = ['e2e-sd0', 'e2e-sd0p1'];
   const STICK = LISTED_DISKS[4];
-  const STICK_CELLS = ['/dev/e2e-sd4', 'E2E Stick', '29.8 GB', 'SSD', 'exfat "CAMERA"', '-', 'Has data'];
+  // Its power cell: no serial, so no idle timeout (ADR-0377).
+  const STICK_POWER =
+    'Unknown Idle timeout of /dev/e2e-sd4: Off /dev/e2e-sd4 reports no serial number that a udev rule can match: ' +
+    'UNOS could not set its idle timeout again when it is connected';
+  const STICK_CELLS = ['/dev/e2e-sd4', 'E2E Stick', '29.8 GB', 'SSD', 'exfat "CAMERA"', '-', 'Has data', STICK_POWER];
 
   /** Count the page's requests for the disk list. */
   function diskListRequests(page: Page): () => number {
@@ -349,7 +434,7 @@ test.describe('Physical disks (fake data)', () => {
       .filter({ has: page.getByRole('cell', { name: '/dev/e2e-sd4', exact: true }) });
     await expect(row.getByRole('cell')).toHaveText([
       '/dev/e2e-sd4', 'E2E Stick', '29.8 GB', 'SSD', 'exfat "CAMERA"', '/media/camera',
-      'In use Mounted at /media/camera',
+      'In use Mounted at /media/camera', STICK_POWER,
     ]);
   });
 
@@ -1817,6 +1902,9 @@ test.describe('The Storage page in Russian', () => {
       { name: 'e2e-sd5p2', path: '/dev/e2e-sd5p2', size: 5e6, fstype: 'vfat', label: null, mountpoints: [] },
     ],
     mountpoints: [], has_data: true, is_system: false, in_use: false, in_use_reason: null, pool: null,
+    power_state: 'active', spindown: 0,
+    spindown_problem: '/dev/e2e-sd5 reports no serial number that a udev rule can match: UNOS could not set its ' +
+      'idle timeout again when it is connected',
   };
   const scrubs: Record<string, FakeScrubStatus> = {
     e2e_data: {
@@ -1857,19 +1945,23 @@ test.describe('The Storage page in Russian', () => {
     // server's (in_use_reason) and stays in English.
     const disks = main.locator('.card').filter({ has: page.getByRole('heading', { name: 'Физические диски' }) });
     await expect(disks.locator('thead th')).toHaveText([
-      'Устройство', 'Модель', 'Размер', 'Тип', 'Содержимое', 'Точка монтирования', 'Статус',
+      'Устройство', 'Модель', 'Размер', 'Тип', 'Содержимое', 'Точка монтирования', 'Статус', 'Питание',
     ]);
     const cells = (path: string) =>
       disks.getByRole('row').filter({ has: page.getByRole('cell', { name: path, exact: true }) }).getByRole('cell');
     await expect(cells('/dev/e2e-sd0')).toHaveText([
       '/dev/e2e-sd0', 'Boot card E2E0', '59,6 ГБ', 'SSD',
       'Таблица разделов DOS, 1 раздел e2e-sd0p1 · 58,7 ГБ · ext4', '/', 'Системный Mounted at /',
+      'Работает Тайм-аут простоя /dev/e2e-sd0: Выкл. /dev/e2e-sd0 is the system disk (Mounted at /): it gets no idle ' +
+        'timeout',
     ]);
     await expect(cells('/dev/e2e-hd1')).toHaveText([
       '/dev/e2e-hd1', 'E2E Disk E2E1', '3,6 ТБ', 'HDD', 'btrfs «e2e_tank»', '-', 'Пул «e2e_tank»',
+      'Спит Тайм-аут простоя /dev/e2e-hd1: 20 минут',
     ]);
     await expect(cells('/dev/e2e-hd2')).toHaveText([
       '/dev/e2e-hd2', 'E2E Disk E2E2', '3,6 ТБ', 'HDD', 'Пустой', '-', 'Свободен',
+      'Работает Тайм-аут простоя /dev/e2e-hd2: Выкл.',
     ]);
     // In the middle of the list, the partition table goes on with a lower-case letter.
     await expect(cells('/dev/e2e-sd5')).toHaveText([
@@ -1877,6 +1969,8 @@ test.describe('The Storage page in Russian', () => {
       'iso9660 «Ubuntu», таблица разделов DOS, 2 раздела e2e-sd5p1 · 4,7 ГБ · iso9660 «Ubuntu» ' +
         'e2e-sd5p2 · 4,8 МБ · vfat',
       '-', 'Есть данные',
+      'Работает Тайм-аут простоя /dev/e2e-sd5: Выкл. /dev/e2e-sd5 reports no serial number that a udev rule can ' +
+        'match: UNOS could not set its idle timeout again when it is connected',
     ]);
 
     const found = main.getByRole('region', { name: 'Найдено на дисках' });

@@ -427,6 +427,17 @@ class FakeNas:
         self.invalid: set[int] = set()
         self.callers: list[str | None] = []  # whose token each call of calls carried; None: the administrator's
         self.no_acl = False
+        # The disk's power (ADR-0377): whether the host has hdparm, the idle timeout of UNOS's udev
+        # rule (its text, None without the file), whether the disk sleeps, the seconds it has been
+        # idle, and the reads and writes that the kernel counted on it.
+        self.hdparm = True
+        self.spindown = 0
+        self.system_spindown = 0  # what the system disk took, with the defect system-disk-timeout
+        self.rules: str | None = None
+        self.asleep = False
+        self.idle = 0
+        self.disk_reads = 1000
+        self.disk_writes = 500
 
     # --- what the tests compare
 
@@ -452,6 +463,7 @@ class FakeNas:
             "the off-device copy": (copy.deepcopy(self.offsite), self.offsite_password,
                                     copy.deepcopy(self.offsite_status), self.offsite_running),
             "the users' tokens in RAM": sorted(self.tokens),
+            "the disk's idle timeout": (self.spindown, self.rules, self.system_spindown),
         }
 
     # --- the model
@@ -717,18 +729,24 @@ class FakeNas:
         if parts[:1] == ["pools"] and parts[2:] == ["scrub"]:
             return self.api_scrub(method, parts[1])
         if parts == ["disks"] and self.partitions:
-            return [{"name": DISK, "path": f"/dev/{DISK}", "size": 640, "rotational": True, "type": "disk",
-                     "partitions": [{"name": p, "path": f"/dev/{p}", "size": 1} for p in self.partitions]}]
+            return [{"name": DISK, "path": f"/dev/{DISK}", "serial": "W1", "size": 640, "rotational": True, "type": "disk",
+                     "partitions": [{"name": p, "path": f"/dev/{p}", "size": 1} for p in self.partitions],
+                     **self.power()}]
         if parts == ["pools"]:
             return [{"name": "data", "mountpoint": ROOT, "mounted": True, "persistent": True, "read_only": False,
                      "devices": ["/dev/sda"], "total_size": max(1, self.pool_used), "used_size": self.pool_used}]
         if parts == ["disks"]:
             return [{"name": DISK, "path": f"/dev/{DISK}", "model": "WDC", "serial": "W1", "size": 640, "rotational": True,
-                     "type": "disk", "partitions": [], "is_system": False}]
+                     "type": "disk", "partitions": [], "is_system": False, **self.power()}]
+        if parts[0] == "disks" and parts[2:] == ["spindown"] and method == "PUT":
+            return self.set_spindown(parts[1], body)
         if parts[0] == "disks" and parts[2:] == ["smart"]:
             if parts[1] != DISK:
                 raise Refused(400, f"Not a disk of this system: {parts[1]}")
-            return {"device": f"/dev/{DISK}", "healthy": True, "temperature": 33}
+            self.read_smart()
+            if self.asleep:
+                return {"device": f"/dev/{DISK}", "healthy": None, "power_state": "standby"}
+            return {"device": f"/dev/{DISK}", "healthy": True, "power_state": "active", "temperature": 33}
         if parts[:2] == ["pools", "data"] and parts[2] == "volumes":
             if method == "GET":
                 return [{"name": p.rsplit("/", 1)[1], "pool": "data", "path": p, "quota": None}
@@ -917,14 +935,74 @@ class FakeNas:
             if parts[1] != DISK:
                 raise Refused(400, f"Not a disk of this system: {parts[1]}")
             if parts[2:] == ["test"]:
+                self.wake()  # smartctl -t: the disk runs the test
                 return {"status": "started", "message": f"Short test started on /dev/{DISK}"}
             return self.smart_info()
         raise AssertionError(f"the fake does not know {method} /health/{'/'.join(parts)}")
 
     def smart_info(self) -> dict:
+        self.read_smart()
+        if self.asleep:  # smartctl -n standby left it alone: lsblk's model, serial and size
+            return {"device": f"/dev/{DISK}", "model": "WDC", "serial": "W1", "firmware": "Unknown",
+                    "capacity": "596.17 GB", "temperature": None, "power_on_hours": None, "power_cycle_count": None,
+                    "health_status": "STANDBY", "attributes": [], "self_test_status": None, "last_test_result": None}
         return {"device": f"/dev/{DISK}", "model": "WDC", "serial": "W1", "firmware": "1", "capacity": "640 GB",
                 "temperature": 33, "power_on_hours": 51832, "power_cycle_count": 9, "health_status": "PASSED",
                 "attributes": [{"id": 5}, {"id": 9}], "self_test_status": None, "last_test_result": None}
+
+    # --- the disk's power (ADR-0377)
+
+    def power(self) -> dict:
+        """What GET /storage/disks says of the disk's power: smartctl -n standby, which leaves it asleep."""
+        return {"power_state": "standby" if self.asleep else "active", "spindown": self.spindown,
+                "spindown_problem": None if self.hdparm else scenario.NO_HDPARM}
+
+    def wake(self) -> None:
+        if self.asleep:
+            self.disk_reads += 1
+        self.asleep, self.idle = False, 0
+
+    def read_smart(self) -> None:
+        """A SMART read: smartctl -n standby leaves a sleeping disk alone; with the defect
+        smart-wakes-disk, it reads the disk as smartctl without -n standby does."""
+        if "smart-wakes-disk" in self.bugs:
+            self.wake()
+
+    def set_spindown(self, name, body):
+        if name == self.system_disk():
+            # The boot SD card, as on the dev device; with the defect system-disk-timeout it takes one.
+            if "system-disk-timeout" not in self.bugs:
+                raise Refused(400, f"{name} is a boot or virtual device: it gets no idle timeout")
+            self.system_spindown = body["minutes"]
+            return {"name": name, "minutes": body["minutes"]}
+        if name != DISK:
+            raise Refused(400, f"{name} is not a disk of this system")
+        if not self.hdparm:
+            raise Refused(409, scenario.NO_HDPARM)
+        minutes = body["minutes"]
+        values = {0: 0, 5: 60, 10: 120, 20: 240, 30: 241, 60: 242, 120: 244, 180: 246, 240: 248, 300: 250}
+        if minutes not in values:
+            raise Refused(422, "minutes must be one of 0, 5, 10, 20, 30, 60, 120, 180, 240, 300")
+        self.wake()  # hdparm -S: the IDLE command spins the disk up
+        self.spindown = minutes
+        if minutes:
+            self.rules = ("# Written by UNOS\n" 'ACTION=="add", SUBSYSTEM=="block", ENV{DEVTYPE}=="disk", '
+                          f'ENV{{ID_SERIAL_SHORT}}=="W1", RUN+="/sbin/hdparm -S {values[minutes]} $devnode"\n')
+        elif "off-keeps-the-rule" not in self.bugs:
+            self.rules = None
+        return {"name": name, "minutes": minutes}
+
+    def wait(self, seconds):
+        """Time passes on the device: the disk sleeps once it was idle for its timeout."""
+        self.idle += seconds
+        if self.spindown and self.idle >= self.spindown * 60 and "never-sleeps" not in self.bugs:
+            self.asleep = True
+        elif "never-sleeps" in self.bugs:
+            self.disk_writes += 3
+
+    def disk_io(self, name):
+        self.device_call("disk_io")
+        return (self.disk_reads, self.disk_writes) if name == DISK else None
 
     def api_files(self, method, parts, body, params, upload):
         what = parts[0] if parts else ""
@@ -1598,6 +1676,8 @@ class FakeNas:
         self.device_call("read")
         if path == "/etc/samba/smb.conf":
             return self.installed
+        if path == scenario.SPINDOWN_RULES:
+            return self.rules
         node = self.fs.get(path)
         return node.content if node is not None and node.kind == "file" else None
 
@@ -2901,6 +2981,111 @@ def test_the_smart_check_refuses_what_is_not_a_disk_and_starts_a_short_test(nas)
     assert f"/health/disk/{DISK}1" not in paths and "(no listed disk has a partition)" in output
     assert ("POST", f"/health/disk/{DISK}/test", None, {"test_type": "short"}) in nas.calls
     assert "sda: PASSED, 33 C, 2 attributes" in output
+
+
+# --- the smart check's idle timeout (storage.disk-spindown, ADR-0377) ----------------------------
+
+
+def test_the_smart_check_gives_the_disk_the_shortest_timeout_and_reads_smart_while_it_sleeps(nas):
+    status, output = run_check("smart", nas)
+    assert status == 0, output
+    text = "\n".join(step_lines(output))
+    for words in ("sda gets the shortest idle timeout, 5 minutes: hdparm -S 60 in UNOS's udev rule (serial W1)",
+                  "sda sleeps once the timeout ran out: the Storage page says standby after 330 s",
+                  "its SMART data on Storage and on Disk Health leaves sda asleep: STANDBY, and its reads and writes "
+                  "stay at (1000, 500)",
+                  "sda's idle timeout is off again, as the check found it"):
+        assert words in text, words
+    puts = [(path, body) for method, path, body, _ in nas.calls if method == "PUT" and DISK in path]
+    assert puts[:2] == [("/storage/disks/sda/spindown", {"minutes": 5}), ("/storage/disks/sda/spindown", {"minutes": 0})]
+    # Before the self-test, which keeps the disk busy.
+    assert text.index("sleeps once the timeout ran out") < text.index("a short self-test starts on sda")
+    assert (nas.spindown, nas.rules) == (0, None)
+
+
+def test_without_hdparm_the_smart_check_skips_the_idle_timeout_with_the_reason(nas):
+    nas.hdparm = False
+    status, output = run_check("smart", nas)
+    assert status == 0, output
+    skipped = [line for line in step_lines(output) if line.startswith("SKIP")]
+    assert len(skipped) == 4, output
+    assert all(f": {scenario.NO_HDPARM} (installing a package is an owner action)" in line for line in skipped)
+    assert not [call for call in nas.calls if call[0] == "PUT" and DISK in call[1]]
+
+
+def test_the_smart_check_fails_a_smart_read_that_wakes_the_disk_and_restores_the_timeout(nas):
+    nas.bugs.add("smart-wakes-disk")
+    status, output = run_check("smart", nas)
+    assert status == 1, output
+    assert re.search(r"^FAIL  \d+\. its SMART data on Storage and on Disk Health leaves sda asleep: Storage's SMART "
+                     r"data: power active, healthy True", output, re.M), output
+    assert "done  clean up: the idle timeout of sda off again" in output
+    assert (nas.spindown, nas.rules) == (0, None)
+
+
+def test_the_smart_check_fails_an_off_that_keeps_the_udev_rule(nas):
+    nas.bugs.add("off-keeps-the-rule")
+    status, output = run_check("smart", nas)
+    assert status == 1, output
+    assert re.search(r"^FAIL  \d+\. the device is as the check found it: UNOS's udev rule: None before", output,
+                     re.M), output
+
+
+def test_a_disk_that_something_keeps_awake_fails_after_a_bounded_wait(nas):
+    nas.bugs.add("never-sleeps")
+    status, output = run_check("smart", nas)
+    assert status == 1, output
+    assert re.search(r"^FAIL  \d+\. sda sleeps once the timeout ran out: it is active after 990 s; meanwhile the kernel "
+                     r"counted 0 reads and 9 writes on it", output, re.M), output
+    assert (nas.spindown, nas.rules) == (0, None)
+
+
+def test_the_smart_check_shows_that_the_system_disk_gets_no_idle_timeout(nas):
+    # Whether or not the host has hdparm: the refusal comes first.
+    nas.hdparm = False
+    status, output = run_check("smart", nas)
+    assert status == 0, output
+    assert re.search(r"^PASS  \d+\. the system disk gets no idle timeout: mmcblk1 is a boot or virtual device: it "
+                     r"gets no idle timeout", output, re.M), output
+    assert [call[:3] for call in nas.calls if call[0] == "PUT"] == [("PUT", "/storage/disks/mmcblk1/spindown", {"minutes": 5})]
+
+
+def test_the_smart_check_fails_a_system_disk_that_takes_a_timeout_and_takes_it_back(nas):
+    before = nas.snapshot()
+    nas.bugs.add("system-disk-timeout")
+    status, output = run_check("smart", nas)
+    assert status == 1, output
+    assert re.search(r"^FAIL  \d+\. the system disk gets no idle timeout: mmcblk1 took the idle timeout of 5 minutes",
+                     output, re.M), output
+    assert "done  clean up: no idle timeout for mmcblk1" in output
+    assert nas.snapshot() == before
+
+
+def test_the_smart_check_takes_a_disk_that_sleeps_when_it_starts(nas):
+    """The owner gave sda a timeout of 20 minutes, which ran out: Disk Health and Storage answer
+    STANDBY, and the check sets 20 minutes again at its end."""
+    nas.set_spindown(DISK, {"minutes": 20})
+    nas.asleep = True
+    before = nas.snapshot()
+    status, output = run_check("smart", nas)
+    assert status == 0, output
+    text = "\n".join(step_lines(output))
+    assert "the SMART data of sda open on Disk Health and on Storage: sda: STANDBY" in text, text
+    assert "sda's idle timeout is 20 minutes again, as the check found it" in text, text
+    puts = [(path, body) for method, path, body, _ in nas.calls if method == "PUT" and DISK in path]
+    assert puts[:2] == [(f"/storage/disks/{DISK}/spindown", {"minutes": 5}), (f"/storage/disks/{DISK}/spindown", {"minutes": 20})]
+    assert nas.snapshot() == before
+
+
+def test_the_smart_check_expects_unos_s_idle_timeouts():
+    from src.storage import spindown
+
+    assert scenario.SPINDOWN_RULES == spindown.RULES_PATH
+    assert scenario.NO_HDPARM == spindown.NO_HDPARM
+    assert scenario.SPINDOWN_SHORTEST == min(m for m in spindown.SPINDOWN_MINUTES if m)
+    assert scenario.SPINDOWN_SHORTEST_VALUE == spindown.hdparm_value(scenario.SPINDOWN_SHORTEST)
+    rule = spindown.render({"W1": scenario.SPINDOWN_SHORTEST})
+    assert f'ENV{{ID_SERIAL_SHORT}}=="W1", RUN+="/sbin/hdparm -S {scenario.SPINDOWN_SHORTEST_VALUE} $devnode"' in rule
 
 
 def test_the_offsite_check_covers_the_copy_its_snapshots_and_both_restores(nas):

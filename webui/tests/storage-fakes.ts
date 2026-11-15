@@ -12,17 +12,21 @@ export const FAKE_DISKS = [
     rotational: false, mountpoint: '/', type: 'disk', fstype: null, label: null, pttype: 'dos',
     partitions: [{ name: 'e2e-sd0p1', path: '/dev/e2e-sd0p1', size: 63e9, fstype: 'ext4', label: null, mountpoints: ['/'] }],
     mountpoints: ['/'], has_data: true, is_system: true, in_use: true,
-    in_use_reason: 'Mounted at /', pool: null,
+    in_use_reason: 'Mounted at /', pool: null, power_state: 'active', spindown: 0,
+    spindown_problem: '/dev/e2e-sd0 is the system disk (Mounted at /): it gets no idle timeout',
   },
   {
     name: 'e2e-hd1', path: '/dev/e2e-hd1', model: 'E2E Disk', serial: 'E2E1', wwn: '0x5000e2e000000001', size: 4e12,
     rotational: true, mountpoint: null, type: 'disk', fstype: 'btrfs', label: 'e2e_tank', pttype: null, partitions: [],
     mountpoints: [], has_data: true, is_system: false, in_use: false, in_use_reason: null, pool: 'e2e_tank',
+    // Asleep: its idle timeout of 20 minutes ran out (ADR-0377).
+    power_state: 'standby', spindown: 20, spindown_problem: null,
   },
   {
     name: 'e2e-hd2', path: '/dev/e2e-hd2', model: 'E2E Disk', serial: 'E2E2', wwn: '0x5000e2e000000002', size: 4e12,
     rotational: true, mountpoint: null, type: 'disk', fstype: null, label: null, pttype: null, partitions: [],
     mountpoints: [], has_data: false, is_system: false, in_use: false, in_use_reason: null, pool: null,
+    power_state: 'active', spindown: 0, spindown_problem: null,
   },
 ];
 
@@ -213,11 +217,18 @@ export interface RecordedWrite {
 }
 
 interface DiskIdentity {
+  name?: string;
   path: string;
   serial: string | null;
   wwn: string | null;
   size: number;
+  /** The idle timeout in minutes before the first PUT of the disk's (ADR-0377), and why none. */
+  spindown?: number;
+  spindown_problem?: string | null;
 }
+
+/** What PUT /storage/disks/{name}/spindown answers for a host without hdparm (spindown.NO_HDPARM). */
+export const NO_HDPARM = 'The host has no hdparm: install the package hdparm on the host to set idle timeouts';
 
 export interface FakeResponse {
   status: number;
@@ -261,6 +272,8 @@ export interface FakeStorageOptions {
   importableResponse?: { status: number; json: unknown };
   /** Answer POST /filesystems/<uuid>/import with this instead of importing. */
   importResponse?: { status: number; json: unknown };
+  /** Answer PUT /disks/<name>/spindown with this instead of setting the idle timeout. */
+  spindownResponse?: FakeResponse;
   /**
    * Called with the path of each GET (such as '/disks') when it is asked: its answer, made of the
    * fake host's state at that moment, is sent once the promise returned resolves, as the answer
@@ -390,6 +403,16 @@ export async function fakeStorageApi(page: Page, options: FakeStorageOptions = {
   const sharesItsLabel = (pool: FakePool) =>
     !pool.mounted && !pool.persistent && importable.some((fs) => fs.label === pool.name);
   const writes: RecordedWrite[] = [];
+  // The idle timeouts set through the fake, by the disk's serial, as UNOS's udev rule keeps them.
+  const timeouts = new Map<string | null, number>();
+  // A disk without the fields of the power is an awake disk that can have a timeout.
+  const listed = () =>
+    disks().map((disk) => ({
+      power_state: 'active',
+      spindown_problem: null,
+      ...disk,
+      spindown: timeouts.get(disk.serial) ?? disk.spindown ?? 0,
+    }));
   await page.route(
     (url) => url.pathname.startsWith('/api/v1/storage/'),
     async (route) => {
@@ -403,7 +426,19 @@ export async function fakeStorageApi(page: Page, options: FakeStorageOptions = {
         return route.fulfill(response);
       };
 
-      if (method === 'GET' && path === '/disks') return answer({ json: disks() });
+      if (method === 'GET' && path === '/disks') return answer({ json: listed() });
+      const spindown = /^\/disks\/([^/]+)\/spindown$/.exec(path);
+      if (method === 'PUT' && spindown) {
+        const body = request.postDataJSON();
+        writes.push({ method, path, body });
+        if (options.spindownResponse) return route.fulfill(options.spindownResponse);
+        const name = decodeURIComponent(spindown[1]);
+        const disk = disks().find((d) => d.name === name);
+        if (!disk) return route.fulfill({ status: 400, json: { detail: `${name} is not a disk of this system` } });
+        if (disk.spindown_problem) return route.fulfill({ status: 409, json: { detail: disk.spindown_problem } });
+        timeouts.set(disk.serial, body.minutes);
+        return route.fulfill({ json: { name, minutes: body.minutes } });
+      }
       if (method === 'GET' && path === '/pools') {
         return answer({ json: pools.filter((pool) => !sharesItsLabel(pool)) });
       }

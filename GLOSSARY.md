@@ -140,6 +140,15 @@ logs).
 its SMART history, reaches 50; Disk Health and the dashboard show it with its reasons (ADR-0235).
 Avoid: failing (the disk's own SMART health check), degraded (a pool's health).
 
+**Idle timeout**: The time without access after which a data disk spins down into standby, set on
+the Storage page with `hdparm -S` and kept in UNOS's udev rule by the disk's serial (ADR-0377).
+Avoid: sleep timer, APM (the disk's own power management).
+
+**Standby**: The power state of a disk that has spun down: a read spins it up, and reading its
+power state with `smartctl -n standby` does not. "Standby-safe" is a command that sends a sleeping
+disk nothing that wakes it (ADR-0377). The user texts say a disk in standby "sleeps". Avoid: SLEEP
+mode (the deeper ATA state that needs a reset).
+
 ## Shares and SMB
 
 **Share**: An SMB share: a folder inside a managed pool, or a volume, that Samba serves with

@@ -6,6 +6,7 @@ import {
   MONITOR_CLOSELY,
   REPLACE_SOON,
   REPLACE_SOON_HDD_2,
+  SLEEPING_DISK,
   fakeHealthApi,
   predictionsAnswer,
   type FakeAnswer,
@@ -178,6 +179,22 @@ test.describe('Disk Health', () => {
   });
 
   // storage.smart-replace-soon (ADR-0235).
+  // storage.disk-spindown: reading SMART data does not wake a sleeping disk (ADR-0377).
+  test('a disk that sleeps is listed as asleep, without SMART data', async ({ authenticatedPage: page }) => {
+    await fakeHealthApi(page, { disks: () => ({ json: { disks: [...FAKE_SMART_DISKS, SLEEPING_DISK] } }) });
+    await page.goto('/system#health');
+    await expect(disk(page, '/dev/e2e-sdd')).toContainText('STANDBY');
+    await expect(disk(page, '/dev/e2e-sdd').locator('.text-info')).toHaveText('STANDBY');
+    await disk(page, '/dev/e2e-sdd').getByRole('button', { name: 'SMART data of /dev/e2e-sdd' }).click();
+    const dialog = page.getByRole('dialog', { name: 'E2E HDD 640GB (/dev/e2e-sdd)' });
+    await expect(field(dialog, 'Overall health')).toHaveText('STANDBY');
+    await expect(field(dialog, 'Serial')).toHaveText('E2E-HDD-3');
+    await expect(dialog).toContainText(
+      'The disk sleeps: its SMART data is read once it is awake, so as not to spin it up.',
+    );
+    await expect(dialog.getByRole('table')).toHaveCount(0);
+  });
+
   test('marks a disk to replace soon with the reason, until the prediction changes', async ({
     authenticatedPage: page,
   }) => {

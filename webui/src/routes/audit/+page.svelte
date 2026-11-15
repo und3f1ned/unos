@@ -119,6 +119,7 @@
 	const RESOURCE_TYPES: Record<string, string> = {
 		user: 'audit.resource.user',
 		pool: 'audit.resource.pool',
+		disk: 'audit.resource.disk',
 		volume: 'audit.resource.volume',
 		snapshot: 'audit.resource.snapshot',
 		share: 'audit.resource.share',

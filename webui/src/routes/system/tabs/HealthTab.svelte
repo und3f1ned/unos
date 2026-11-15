@@ -10,7 +10,7 @@
   } from "$lib/api/health";
   import { Alert, Badge, Button, Modal } from "$lib/components/ui";
   import { intlLocale, t } from "$lib/i18n";
-  import { HardDrive, Thermometer, Check, X, AlertTriangle, RefreshCw } from "lucide-svelte";
+  import { HardDrive, Thermometer, Check, X, AlertTriangle, RefreshCw, Moon } from "lucide-svelte";
 
   let disks: SmartInfo[] = [];
   // The predictions that say replace soon (ADR-0235).
@@ -66,12 +66,14 @@
   function healthIcon(status: string) {
     if (status === "PASSED") return Check;
     if (status === "FAILED") return X;
+    if (status === "STANDBY") return Moon;
     return AlertTriangle;
   }
 
   function healthClass(status: string): string {
     if (status === "PASSED") return "text-success";
     if (status === "FAILED") return "text-error";
+    if (status === "STANDBY") return "text-info";
     return "text-warning";
   }
 
@@ -88,7 +90,9 @@
   const HEALTH_STATUS: Record<string, string> = {
     PASSED: "health.status.passed",
     FAILED: "health.status.failed",
-    UNKNOWN: "health.status.unknown"
+    UNKNOWN: "health.status.unknown",
+    // The disk sleeps: smartctl left it alone, so no SMART data was read (ADR-0377).
+    STANDBY: "health.status.standby"
   };
   // The numbers of an NVMe disk's SMART/Health Information log, by smartctl's names.
   const NVME_FIELDS: Record<string, string> = {
@@ -347,6 +351,8 @@
           </tbody>
         </table>
       </div>
+    {:else if openDisk.health_status === "STANDBY"}
+      <p class="text-secondary text-sm mt-6">{$t("health.asleep")}</p>
     {:else}
       <p class="text-secondary text-sm mt-6">{$t("health.noAttributes")}</p>
     {/if}

@@ -17,15 +17,17 @@ from ..security.validators import (
     validate_volume_name,
 )
 from ..shares import service as shares_service
-from . import disks, pools, scrubs
+from . import disks, pools, scrubs, spindown
 from .schemas import (
     DiskInfo,
+    DiskSpindown,
     ImportableFilesystem,
     PoolCreate,
     PoolImport,
     PoolInfo,
     ScrubStatus,
     SmartData,
+    SpindownSet,
     VolumeCreate,
     VolumeInfo,
 )
@@ -79,21 +81,56 @@ async def _change_pools(func: Callable[..., T], *args: Any) -> T:
 
 @router.get("/disks", response_model=list[DiskInfo])
 async def list_disks_endpoint(_=Depends(verify_token)):
-    """List physical disks with their host state (system, in use, data)."""
+    """List physical disks with their host state (system, in use, data), their power state, read
+    without waking them, and their idle timeout (ADR-0377)."""
     return await _call(disks.list_disks)
+
+
+@router.put("/disks/{name}/spindown", response_model=DiskSpindown)
+async def set_disk_spindown(request: Request, name: str, body: SpindownSet, user: User = Depends(verify_token)):
+    """Give a whole data disk of GET /disks an idle timeout, ``minutes`` of SPINDOWN_MINUTES, 0 for
+    off (ADR-0377): hdparm -S on the host now, which spins a sleeping disk up, and UNOS's udev
+    rule, which sets it again whenever the disk appears.
+
+    400 for a name that is no disk of this system, a boot or virtual device or a partition; 409 for
+    the system disk, an NVMe disk, a disk without a serial that a udev rule can match or one that
+    another disk reports too, a disk that udev knows by another serial, and a host without hdparm;
+    422 for minutes that are not offered; 500 when hdparm fails or the rule cannot be read (nothing
+    changed then), and when the rule cannot be written after hdparm set the timeout, which the
+    audit log records as failed. A change of the rule is audited as settings_changed.
+    """
+    try:
+        change = await asyncio.to_thread(spindown.set_timeout, name, body.minutes)
+    except HTTPException:
+        raise
+    except spindown.RuleNotWritten as exc:
+        await audit_change(
+            AuditAction.SETTINGS_CHANGED, request, user.username, resource_type="disk",
+            resource_id=exc.change.name, details=f"{exc.change.what} until it restarts; then: {exc.reason}",
+            success=False,
+        )
+        raise HTTPException(status_code=500, detail=sanitize_error_message(RuntimeError(exc.detail))) from exc
+    except Exception as exc:
+        raise _http_error(exc) from exc
+    if change.changed:
+        await audit_change(
+            AuditAction.SETTINGS_CHANGED, request, user.username, resource_type="disk",
+            resource_id=change.name, details=change.what,
+        )
+    return DiskSpindown(name=change.name, minutes=change.minutes)
 
 
 @router.get("/disks/{name}/smart", response_model=SmartData)
 async def get_disk_smart(name: str, _=Depends(verify_token)):
     """SMART data of a whole disk of the host, by its name in GET /storage/disks.
 
-    400 for anything else (a partition, a RAID array, the boot SD card or
-    eMMC, a virtual device, a name such as null or st0); 500 when the host's
-    disks cannot be listed. smartctl is not run then.
+    A disk that sleeps stays asleep: its answer has the power state standby
+    and no data (ADR-0377). 400 for anything else (a partition, a RAID array,
+    the boot SD card or eMMC, a virtual device, a name such as null or st0);
+    500 when the host's disks cannot be listed. smartctl is not run then.
     """
     # Both block, off the event loop: lsblk on the host, and smartctl, which
-    # can take many seconds (or spin up a sleeping disk); get_smart_data
-    # bounds it with a timeout.
+    # can take many seconds; get_smart_data bounds it with a timeout.
     device = await _call(disks.whole_disk_device, name)
     return await _call(disks.get_smart_data, device)
 

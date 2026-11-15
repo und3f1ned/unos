@@ -48,10 +48,11 @@ owner's firmware and is never written, so every write counts (ADR-0214, ADR-0225
   how they found it; the smbconf check also edits smb.conf by hand and restarts the supervisor
   (ADR-0309), the shares check makes entries of other owners and modes on the pool over ssh, signs
   in as its user and turns guest access on for its share (ADR-0340), the scrub check scrubs the pool
-  (ADR-0314), the offsite check sets up an off-device copy to a folder of the pool and forgets it
-  (ADR-0337), and the restore check restores a backup it made moments before, twice, which puts the
-  device's database back as it was then (ADR-0341). They change the device for their duration, so
-  they run on the owner's request;
+  (ADR-0314), the smart check gives the pool's disk its shortest idle timeout, waits for it to sleep
+  and sets the timeout it found again (ADR-0377), the offsite check sets up an off-device copy to a
+  folder of the pool and forgets it (ADR-0337), and the restore check restores a backup it made
+  moments before, twice, which puts the device's database back as it was then (ADR-0341). They
+  change the device for their duration, so they run on the owner's request;
   the feature-pass skill names the check of each host-level entry, and after a reboot
   (ADR-0018) `scenario.sh all` runs again, with the checks by hand that its table lists.
 - A linked worktree without a `dev.env` of its own uses the main checkout's (`scripts/dev/env.sh`),

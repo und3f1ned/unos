@@ -290,6 +290,19 @@ class FakeHost:
         self.subvolume_root = lambda path: False
         # How often the storage endpoints applied smb.conf after a pool change (install_fake_host).
         self.smb_applies = 0
+        # The power of the whole disks (ADR-0377): the paths of those in standby. A command that
+        # reads a sleeping disk, or sends it a command that spins it up, wakes it and is recorded
+        # in woken as (disk, command): btrfs filesystem show without --mounted (libblkid reads
+        # every block device), wipefs, blkid -p, mount, mkfs.btrfs and hdparm -S. smartctl runs
+        # in the container (run_in_container), and only with -n standby, which leaves them asleep.
+        self.asleep: set[str] = set()
+        self.woken: list[tuple[str, list[str]]] = []
+        # The standby timer that hdparm -S gave each disk, by its path: the -S value.
+        self.standby_timers: dict[str, int] = {}
+        # udev's ID_SERIAL_SHORT of a disk, by its path, where it is not lsblk's serial (None: none).
+        self.udev_serials: dict[str, str | None] = {}
+        # The commands run in the container (smartctl), in order.
+        self.container_calls: list[list[str]] = []
         self._minor = 0
         # The host boots from the SD card (ext4 root on mmcblk1p1), like the
         # ArmSoM board, and swaps to zram.
@@ -459,6 +472,53 @@ class FakeHost:
     def _fs_of(self, path):
         return next((fs for fs in self.filesystems if path in fs["devices"]), None)
 
+    def _disk_of(self, path):
+        """The path of the whole disk that ``path`` (a disk or a partition) is on, or None."""
+        for top in self.tree:
+            if any(node["path"] == path for node in self._walk(top)):
+                return top["path"]
+        return None
+
+    def _wake(self, path, cmd):
+        """A command that reads ``path`` or spins up its disk: a sleeping disk wakes (asleep)."""
+        disk = self._disk_of(path)
+        if disk in self.asleep:
+            self.asleep.discard(disk)
+            self.woken.append((disk, list(cmd)))
+
+    def run_in_container(self, cmd, *, timeout, **kwargs):
+        """host.run_in_container: smartctl -n standby, which reads a disk's power mode first and
+        leaves a sleeping one alone (exit status 2, "Device is in STANDBY mode"), as its -i (the
+        identity) and -a (the SMART data) of an awake one. Any other command fails the test, as
+        smartctl without -n standby, which would wake a sleeping disk."""
+        cmd = list(cmd)
+        assert timeout, cmd
+        self.container_calls.append(cmd)
+        if cmd[:3] != ["smartctl", "-n", "standby"] or cmd[3:-1] not in (["-i", "-j"], ["-j", "-a"]):
+            raise AssertionError(f"test tried to run a real command: {cmd!r}")
+        device = cmd[-1]
+        node = self._node_by_path(device)
+        if node is None or node["type"] != "disk":
+            message = f"Smartctl open device: {device} failed: No such device"
+            return subprocess.CompletedProcess(cmd, 2, json.dumps(
+                {"smartctl": {"messages": [{"string": message, "severity": "error"}], "exit_status": 2}}), "")
+        if device in self.asleep:
+            return subprocess.CompletedProcess(cmd, 2, json.dumps({
+                "smartctl": {"messages": [{"string": "Device is in STANDBY mode, exit(2)", "severity": "information"}],
+                             "exit_status": 2},
+                "device": {"name": device, "type": "sat"},
+            }), "")
+        data = {"device": {"name": device, "type": "sat"}, "model_name": node.get("model") or "Fake Disk",
+                "serial_number": node.get("serial") or "", "firmware_version": "1.0",
+                "user_capacity": {"bytes": node["size"]}, "smart_status": {"passed": True},
+                "temperature": {"current": 31}}
+        if "-a" in cmd:
+            data["ata_smart_attributes"] = {"table": [
+                {"id": 9, "name": "Power_On_Hours", "value": 99, "worst": 99, "thresh": 0, "raw": {"value": 51832}},
+                {"id": 12, "name": "Power_Cycle_Count", "value": 99, "worst": 99, "thresh": 0, "raw": {"value": 9}},
+            ]}
+        return subprocess.CompletedProcess(cmd, 0, json.dumps(data), "")
+
     @staticmethod
     def _result(returncode=0, stdout="", stderr=""):
         return HostResult(returncode, stdout, stderr)
@@ -592,12 +652,35 @@ class FakeHost:
             return self._result(stdout="".join(f"{s}\n" for s in self.swaps))
         if prog == "wipefs":
             assert "--no-act" in cmd and not {"-a", "--all"} & set(cmd), cmd
+            self._wake(cmd[-1], cmd)
             sigs = self.signatures.get(cmd[-1])
             return self._result(stdout=json.dumps({"signatures": sigs}) if sigs else "")
         if prog == "blkid":
+            if "-p" in cmd:  # probes the device itself, not the cache
+                self._wake(cmd[-1], cmd)
             fs = self._fs_of(cmd[-1])
             return self._result(0 if fs else 2, stdout=f"{fs['uuid']}\n" if fs else "")
+        if prog == "udevadm" and cmd[1:2] == ["info"]:
+            # The properties of the udev database (no disk is read): ID_SERIAL_SHORT, the serial
+            # that lsblk reports for a SATA disk, unless udev_serials says otherwise.
+            assert cmd[2:4] == ["--query=property", "--name"] and len(cmd) == 5, cmd
+            node = self._node_by_path(cmd[4])
+            if node is None:
+                return self._result(1, stderr=f"Unknown device \"{cmd[4]}\": No such device")
+            serial = self.udev_serials.get(cmd[4], node.get("serial"))
+            lines = [f"DEVNAME={cmd[4]}", f"DEVTYPE={node['type']}"]
+            if serial:
+                lines.append(f"ID_SERIAL_SHORT={serial}")
+            return self._result(stdout="".join(f"{line}\n" for line in lines))
         if prog in ("udevadm",):
+            return self._result()
+        if prog == "hdparm":
+            return self._hdparm(cmd)
+        if prog == "rm":
+            assert cmd[1:3] == ["-f", "--"], cmd
+            for path in cmd[3:]:
+                if self.files.pop(path, None) is not None:
+                    self.changes.append(["rm", path])
             return self._result()
         if prog == "btrfs":
             return self._btrfs(cmd)
@@ -675,7 +758,12 @@ class FakeHost:
     def _btrfs(self, cmd):
         sub = cmd[1:3]
         if sub == ["filesystem", "show"]:
-            return self._result(stdout=self._btrfs_show())
+            if "--mounted" not in cmd:
+                # Without --mounted, btrfs reads the superblock of every block device that
+                # libblkid finds: a disk that sleeps spins up (ADR-0377).
+                for disk in sorted(self.asleep):
+                    self._wake(disk, cmd)
+            return self._result(stdout=self._btrfs_show(mounted_only="--mounted" in cmd))
         if sub == ["device", "scan"]:
             return self._result()
         if sub == ["filesystem", "label"]:
@@ -727,9 +815,11 @@ class FakeHost:
         next(f for f in self.filesystems if f["uuid"] == mount["uuid"])["label"] = label
         return self._result()
 
-    def _btrfs_show(self):
+    def _btrfs_show(self, mounted_only=False):
         chunks = []
         for fs in self.filesystems:
+            if mounted_only and not any(m["fstype"] == "btrfs" and m["uuid"] == fs["uuid"] for m in self.mounts):
+                continue
             label = f"'{fs['label']}'" if fs["label"] else "none"
             total = len(fs["devices"]) + fs["missing"]
             lines = [f"Label: {label}  uuid: {fs['uuid']}",
@@ -742,9 +832,25 @@ class FakeHost:
             chunks.append("\n".join(lines) + "\n")
         return "\n".join(chunks)
 
+    def _hdparm(self, cmd):
+        """hdparm -S <value> <disk>: the IDLE command with a standby timer, which spins up a
+        sleeping disk. -C would only read the power mode; UNOS runs no other option."""
+        if "hdparm" in self.missing_programs:
+            return self._result(127, stderr="nsenter: failed to execute hdparm: No such file or directory")
+        assert len(cmd) == 4 and cmd[1] == "-S" and cmd[2].isdigit(), cmd
+        device = cmd[3]
+        if self._node_by_path(device) is None:
+            return self._result(2, stderr=f"{device}: No such file or directory")
+        self._wake(device, cmd)
+        self.standby_timers[device] = int(cmd[2])
+        self.changes.append(cmd)
+        return self._result(stdout=f"\n{device}:\n setting standby to {cmd[2]}\n")
+
     def _mkfs_btrfs(self, cmd):
         args = cmd[1:]
         devices = [a for a in args if a.startswith("/dev/")]
+        for device in devices:
+            self._wake(device, cmd)
         label = args[args.index("-L") + 1]
         profile = args[args.index("-d") + 1]
         for device in devices:
@@ -793,6 +899,8 @@ class FakeHost:
         fs = next((f for f in self.filesystems if f["uuid"] == uuid), None)
         if fs is None:
             return self._result(32, stderr=f"mount: {target}: can't find UUID={uuid}.")
+        for device in fs["devices"]:
+            self._wake(device, cmd)
         if fs["missing"]:
             return self._result(32, stderr=f"mount: {target}: wrong fs type, bad option, bad superblock")
         if target not in self.dirs:
@@ -874,8 +982,9 @@ def install_fake_host(monkeypatch) -> FakeHost:
     fake = FakeHost()
     monkeypatch.setattr(host_module, "run_on_host", fake.run)
     monkeypatch.setattr(subprocess, "run", _forbidden_subprocess)
-    # btrfs scrubs and smartctl, which run in the container (ADR-0290).
-    monkeypatch.setattr(host_module, "run_in_container", _forbidden_subprocess)
+    # btrfs scrubs and smartctl, which run in the container (ADR-0290): only smartctl -n standby,
+    # which leaves a sleeping disk asleep, is answered (FakeHost.run_in_container).
+    monkeypatch.setattr(host_module, "run_in_container", fake.run_in_container)
     monkeypatch.setattr(pools, "_docker_api", fake.docker.api)
     monkeypatch.setattr(pools.settings, "pools_base_path", "/mnt/pools")
     # The checks before an app starts (apps.router.prepare_app_start) would look
