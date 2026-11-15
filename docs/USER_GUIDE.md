@@ -1041,10 +1041,11 @@ UNOS does not change Jellyfin's settings: in Jellyfin, choose **Dashboard** >
 (RKMPP)**, and tick the codecs to decode in hardware. The details of an
 installed Jellyfin say this only when its container has the hardware. One
 installed without it, as when UNOS could not look for the device nodes during
-the install, gets a warning there instead: uninstall it (its data folders are
-kept) and install it again on the same pool to give it the hardware. On any
-other NAS the App Store says nothing about hardware, and apps are installed as
-before. Immich from the App Store does not use the RK3588's NPU.
+the install, shows **No hardware acceleration** on its card, and the notice
+of its install and its details warn instead: uninstall it (its data folders
+are kept) and install it again on the same pool to give it the hardware. On
+any other NAS the App Store says nothing about hardware, and apps are
+installed as before. Immich from the App Store does not use the RK3588's NPU.
 
 ### Share Folders for Apps
 

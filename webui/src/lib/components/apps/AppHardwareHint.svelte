@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { Alert } from '$lib/components/ui';
 	import { t } from '$lib/i18n';
-	import { hasHardware, type AppTemplate, type InstalledApp } from '$lib/api/apps';
+	import { missingHardware, type AppTemplate, type InstalledApp } from '$lib/api/apps';
 
 	/** The app whose hardware of this host's SoC is named (ADR-0377); nothing is shown without any. */
 	export let app: AppTemplate;
@@ -15,8 +15,8 @@
 	const PROFILE_TEXTS: Record<string, string> = { 'rk3588-video': 'apps.hardware.profile.rk3588Video' };
 	const SETTING_TEXTS: Record<string, string> = { jellyfin: 'apps.hardware.setting.jellyfin' };
 
-	$: got = app.hardware.filter((profile) => !installed || hasHardware(installed, profile));
-	$: missing = app.hardware.filter((profile) => !!installed && !hasHardware(installed, profile));
+	$: missing = installed ? missingHardware(app, installed) : [];
+	$: got = app.hardware.filter((profile) => !missing.includes(profile));
 </script>
 
 {#if got.length > 0}

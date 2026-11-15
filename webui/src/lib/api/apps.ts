@@ -109,9 +109,17 @@ export interface InstalledApp {
   devices: string[];
 }
 
-/** Whether an installed app's container got the hardware of `profile`: every node it requires. */
-export function hasHardware(app: InstalledApp, profile: HardwareProfile): boolean {
-  return profile.requires.every((node) => app.devices.includes(node));
+/**
+ * Whether an app's container got the hardware of `profile`: every node it requires. The container
+ * is an installed app, or the answer of its install.
+ */
+export function hasHardware(container: Pick<InstalledApp, "devices">, profile: HardwareProfile): boolean {
+  return profile.requires.every((node) => container.devices.includes(node));
+}
+
+/** The hardware profiles of `app` that its container did not get (ADR-0377). */
+export function missingHardware(app: AppTemplate, container: Pick<InstalledApp, "devices">): HardwareProfile[] {
+  return app.hardware.filter((profile) => !hasHardware(container, profile));
 }
 
 /** A mounted storage pool that can hold app data. */

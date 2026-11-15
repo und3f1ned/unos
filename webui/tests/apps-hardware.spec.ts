@@ -24,14 +24,14 @@ const INSTALLED_WITHOUT =
   'Jellyfin was installed without the hardware of this NAS that it can use, so hardware acceleration does not ' +
   'work in it. To give it the hardware, uninstall Jellyfin (its data folders are kept) and install it again on ' +
   'the same pool.';
+// The badge of the card of an installed app whose container did not get the hardware.
+const NO_HARDWARE = 'No hardware acceleration';
 
-/**
- * An installed Jellyfin whose container got ``devices``, as GET /api/v1/apps/installed lists it: the
- * stand-in has no Docker, so the answer is faked.
- */
-async function installedJellyfin(page: Page, devices: string[]) {
-  const config = '/mnt/pools/data/apps/jellyfin/config';
-  const jellyfin = {
+const POOL = { name: 'data', path: '/mnt/pools/data', free_bytes: 2 ** 34, total_bytes: 2 ** 35 };
+
+/** Jellyfin installed on the pool data, its container with ``devices``, as the installed list names it. */
+function jellyfinApp(devices: string[]) {
+  return {
     id: 'e2e-jellyfin-id',
     template_id: 'jellyfin',
     name: 'jellyfin',
@@ -39,15 +39,52 @@ async function installedJellyfin(page: Page, devices: string[]) {
     status: 'running',
     web_port: 8096,
     created_at: '2026-11-15T10:00:00Z',
-    pool: 'data',
-    volumes: [{ host: config, container: '/config', readonly: false }],
+    pool: POOL.name,
+    volumes: [{ host: `${POOL.path}/apps/jellyfin/config`, container: '/config', readonly: false }],
     data_outside_pools: [],
     runs_in_unos_smb: false,
     devices,
   };
+}
+
+/**
+ * An installed Jellyfin whose container got ``devices``, as GET /api/v1/apps/installed lists it: the
+ * stand-in has no Docker, so the answer is faked. The list answers once ``answered`` resolves.
+ */
+async function installedJellyfin(page: Page, devices: string[], answered: Promise<unknown> = Promise.resolve()) {
   await page.route(
     (url: URL) => url.pathname === '/api/v1/apps/installed',
-    (route: Route) => route.fulfill({ json: [jellyfin] }),
+    async (route: Route) => {
+      await answered;
+      await route.fulfill({ json: [jellyfinApp(devices)] });
+    },
+  );
+}
+
+/**
+ * An install of Jellyfin on the pool data whose container gets ``devices``, as POST
+ * /api/v1/apps/install answers it, with the installed list before and after it.
+ */
+async function installsJellyfin(page: Page, devices: string[]) {
+  const installed: ReturnType<typeof jellyfinApp>[] = [];
+  await page.route(
+    (url: URL) => url.pathname === '/api/v1/apps/pools',
+    (route: Route) => route.fulfill({ json: [POOL] }),
+  );
+  await page.route(
+    (url: URL) => url.pathname === '/api/v1/apps/installed',
+    (route: Route) => route.fulfill({ json: installed }),
+  );
+  await page.route(
+    (url: URL) => url.pathname === '/api/v1/apps/install',
+    (route: Route) => {
+      const app = jellyfinApp(devices);
+      installed.push(app);
+      const { id, name, container_id, status, pool, volumes } = app;
+      return route.fulfill({
+        json: { id, name, container_id, status, web_url: 'http://localhost:8096', pool, volumes, devices },
+      });
+    },
   );
 }
 
@@ -101,6 +138,8 @@ test.describe('Hardware acceleration of the host SoC', () => {
     await installedJellyfin(page, RK3588_VIDEO.devices);
     await page.goto('/apps');
 
+    await expect(card(page, 'Jellyfin').getByText('Hardware acceleration', { exact: true })).toBeVisible();
+    await expect(card(page, 'Jellyfin').getByText(NO_HARDWARE)).toHaveCount(0);
     const dialog = await details(page, 'Jellyfin');
     const hint = dialog.locator('.alert', { hasText: 'Hardware acceleration' });
     await expect(hint).toHaveCount(1);
@@ -124,6 +163,58 @@ test.describe('Hardware acceleration of the host SoC', () => {
     await expect(hint).toContainText(INSTALLED_WITHOUT);
     await expect(dialog.getByText(WHAT_IT_GETS)).toHaveCount(0);
     await expect(dialog.getByText('Rockchip MPP (RKMPP)')).toHaveCount(0);
+  });
+
+  test('on an RK3588 the card of an installed Jellyfin without the video hardware warns, not offers it', async ({
+    authenticatedPage: page,
+  }) => {
+    // A Jellyfin installed before UNOS gave it the hardware, or when the node lookup failed. The
+    // installed list answers after the catalog, as when Docker answers after the host's device tree.
+    let answer = () => {};
+    await onAnRk3588(page);
+    await installedJellyfin(page, [], new Promise<void>((resolve) => (answer = resolve)));
+    await page.goto('/apps');
+    const jellyfin = card(page, 'Jellyfin');
+    await expect(jellyfin.getByText('Hardware acceleration', { exact: true })).toBeVisible();
+
+    answer();
+    await expect(jellyfin.locator('.badge-warning', { hasText: NO_HARDWARE })).toBeVisible();
+    await expect(jellyfin.getByText('Hardware acceleration', { exact: true })).toHaveCount(0);
+  });
+
+  test('on an RK3588 an install whose container got no video hardware says so in its notice', async ({
+    authenticatedPage: page,
+  }) => {
+    // As when the node lookup failed during the install: the answer names no device.
+    await onAnRk3588(page);
+    await installsJellyfin(page, []);
+    await page.goto('/apps');
+
+    const dialog = await details(page, 'Jellyfin');
+    await expect(dialog.getByText(WHAT_TO_CHOOSE)).toBeVisible();
+    await dialog.getByRole('button', { name: 'Install Jellyfin' }).click();
+
+    const notice = page.locator('.alert', { hasText: 'Jellyfin was installed.' });
+    await expect(notice).toContainText('Jellyfin was installed. Its data is stored on the "data" pool.');
+    await expect(notice).toContainText(INSTALLED_WITHOUT);
+    await expect(notice).toHaveClass(/alert-warning/);
+    await expect(card(page, 'Jellyfin').locator('.badge-warning', { hasText: NO_HARDWARE })).toBeVisible();
+  });
+
+  test('on an RK3588 an install whose container got the video hardware only says that it was installed', async ({
+    authenticatedPage: page,
+  }) => {
+    await onAnRk3588(page);
+    await installsJellyfin(page, RK3588_VIDEO.devices);
+    await page.goto('/apps');
+
+    const dialog = await details(page, 'Jellyfin');
+    await dialog.getByRole('button', { name: 'Install Jellyfin' }).click();
+
+    const notice = page.locator('.alert', { hasText: 'Jellyfin was installed.' });
+    await expect(notice).toHaveText('Jellyfin was installed. Its data is stored on the "data" pool.');
+    await expect(notice).toHaveClass(/alert-success/);
+    await expect(card(page, 'Jellyfin').getByText('Hardware acceleration', { exact: true })).toBeVisible();
   });
 
   test('off an RK3588 the App Store says nothing about hardware', async ({ authenticatedPage: page }) => {

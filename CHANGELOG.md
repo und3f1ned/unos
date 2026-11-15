@@ -330,13 +330,15 @@ manager, encrypted backup uploads, health checks, CI checks).
   host has, Docker's masks without `/sys/firmware` (MPP reads the SoC from the
   device tree) and no AppArmor profile, without privileged mode. The App Store
   shows **Hardware acceleration** on its card and says in its details to
-  choose **Rockchip MPP (RKMPP)** in Jellyfin, or, for an installed Jellyfin
-  whose container lacks the hardware, that reinstalling it gives it; the
-  catalog API answers an app's `hardware` profiles that apply on the host
-  only, and the install's answer and the installed apps list the `devices`
-  their containers got. On other hosts, an RK3588 under the mainline kernel
-  included, nothing changes. `scripts/dev/scenario.sh hardware` checks what
-  the App Store offers on the dev device and the nodes the host has (ADR-0377).
+  choose **Rockchip MPP (RKMPP)** in Jellyfin; an installed Jellyfin whose
+  container lacks the hardware shows **No hardware acceleration** on its card,
+  and the notice of its install and its details say that reinstalling it gives
+  it the hardware; the catalog API answers an app's `hardware` profiles that
+  apply on the host only, and the install's answer and the installed apps list
+  the `devices` their containers got. On other hosts, an RK3588 under the
+  mainline kernel included, nothing changes. `scripts/dev/scenario.sh hardware`
+  checks what the App Store offers on the dev device and the nodes the host
+  has (ADR-0377).
 - `scripts/dev/check.sh` shows each container's CPU, the load average and the
   temperatures, and reports a container of UNOS above 15% of a core or a
   thermal zone within 5 C of its throttling point as a problem (ADR-0374).
