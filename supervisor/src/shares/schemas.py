@@ -103,11 +103,14 @@ class SmbShareInfo(BaseModel):
     pool_mounted: bool | None                       # None: the host mount table could not be read
     permissions_ok: bool | None                     # constants.share_root_mode_ok of the folder; None: not mounted / missing
     import_notes: list[str]
-    # The protocol options as stored (ADR-0377); GET /shares/smb-status names one that is on and
-    # not rendered (vfs modules missing on the host, a folder in no snapshot of UNOS).
+    # The protocol options as stored (ADR-0377).
     encryption_required: bool
     time_machine: bool
     previous_versions: bool
+    # The stored settings that smb.conf leaves out, with the reason (ADR-0377): time_machine or
+    # previous_versions (vfs modules missing on the host, a folder in no snapshot of UNOS) and
+    # guest_ok (a share that requires encryption admits no guest). GET /shares/smb-status names them too.
+    not_rendered: dict[str, str] = {}
     warnings: list[str] = []                        # only in answers to changes
 
 

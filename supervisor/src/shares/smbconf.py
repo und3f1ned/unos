@@ -60,8 +60,9 @@ _FIXED_SHARE_LINES: tuple[tuple[str, str], ...] = (
 # the file system's own module).
 FRUIT_MODULES = ("catia", "fruit", "streams_xattr")
 SNAPSHOT_MODULES = ("shadow_copy2", "btrfs")
-# Previous Versions list the snapshots that UNOS makes of the share's pool or volume:
-# <root>/.snapshots/snap_<UTC time> (the Snapshots page) and auto_<UTC time> (the Scheduler).
+# Previous Versions list the snapshots that UNOS names in <root>/.snapshots of the share's pool or
+# volume: snap_<UTC time> (the Snapshots page) and auto_<UTC time> (the Scheduler, which snapshots
+# pools only, so a share in a volume lists only the volume's snapshots of the Snapshots page).
 SNAPSHOT_DIR = ".snapshots"
 _SNAPSHOT_LINES: tuple[tuple[str, str], ...] = (
     ("shadow:snapdir", SNAPSHOT_DIR),
@@ -609,17 +610,22 @@ def global_options_considered(parsed: ParsedSmbConf) -> list[ParsedOption]:
     return _considered_globals(parsed, True)
 
 
-def _restricts(option: ParsedOption) -> bool:
+def _values_of(option: ParsedOption) -> SectionValues:
     values = SectionValues()
     _apply(values, option, False)
-    return bool(values.hosts_allow or values.hosts_deny or values.invalid_users or values.encryption_required)
+    return values
+
+
+def _restricts(option: ParsedOption) -> bool:
+    values = _values_of(option)
+    return bool(values.hosts_allow or values.hosts_deny or values.invalid_users)
 
 
 def global_restrictions(parsed: ParsedSmbConf) -> list[ParsedOption]:
     """The [global] options that remove all access at the import (ADR-0086), in file order:
-    ``hosts allow``, ``hosts deny``, an ``invalid users`` entry, or ``smb encrypt`` set to
-    required, mandatory, force, forced or enforced. Scripts that refuse connections are
-    pairs of options: global_script_restrictions.
+    ``hosts allow``, ``hosts deny`` or an ``invalid users`` entry. Scripts that refuse
+    connections are pairs of options: global_script_restrictions. Required encryption is
+    the shares' option instead (global_encryption, ADR-0377).
 
     Every [global] block counts, not only the last value of an option: Samba
     copies the share defaults when a section starts (loadparm.c lp_do_section),
@@ -628,6 +634,14 @@ def global_restrictions(parsed: ParsedSmbConf) -> list[ParsedOption]:
     are not restrictions.
     """
     return [option for option in global_options_considered(parsed) if _restricts(option)]
+
+
+def global_encryption(parsed: ParsedSmbConf) -> list[ParsedOption]:
+    """The [global] options that require encryption, in file order: ``smb encrypt`` or ``server
+    smb encrypt`` set to required, mandatory, force, forced or enforced. At the import every
+    share then requires encryption (ADR-0377); every [global] block counts, as in
+    global_restrictions."""
+    return [option for option in global_options_considered(parsed) if _values_of(option).encryption_required]
 
 
 @dataclass(frozen=True)
@@ -729,6 +743,47 @@ def is_unos_option_line(option: ParsedOption) -> bool:
     return option.key == _SNAPSHOT_MOUNTPOINT_KEY or (option.key, option.value) in _UNOS_OPTION_LINES
 
 
+VFS_OBJECTS_KEYS = frozenset({normalize_key("vfs objects"), normalize_key("vfs object")})
+TIME_MACHINE_KEY = normalize_key("fruit:time machine")
+_SNAPSHOT_KEY_PREFIX = "shadow:"
+
+
+def _options_of(parsed: ParsedSmbConf, section: ParsedSection) -> tuple[ParsedOption, ...]:
+    """The options that apply to ``section`` in file order: the [global] options before its first
+    header (without UNOS's own lines in a file that starts with HEADER), then its own."""
+    return (*_considered_globals(parsed, True, section.global_count), *section.options)
+
+
+def vfs_objects(parsed: ParsedSmbConf, section: ParsedSection) -> ParsedOption | None:
+    """The ``vfs objects`` line that applies to ``section``: its own last one, else the last one of
+    [global] before it; None without one."""
+    found = None
+    for option in _options_of(parsed, section):
+        if option.key in VFS_OBJECTS_KEYS:
+            found = option
+    return found
+
+
+def last_option(parsed: ParsedSmbConf, section: ParsedSection, key: str) -> ParsedOption | None:
+    """The last option of ``key`` (normalized) that applies to ``section``, or None."""
+    found = None
+    for option in _options_of(parsed, section):
+        if option.key == key:
+            found = option
+    return found
+
+
+def _snapshot_settings(parsed: ParsedSmbConf, section: ParsedSection) -> tuple[tuple[str, str], ...] | None:
+    """What a tree connect of ``section`` lists as snapshots: the ``shadow:`` settings when its vfs
+    modules include shadow_copy2, which reads them at the tree connect; None without it."""
+    vfs = vfs_objects(parsed, section)
+    if vfs is None or "shadow_copy2" not in split_list(vfs.value):
+        return None
+    settings = {option.key: option.value for option in _options_of(parsed, section)
+                if option.key.startswith(_SNAPSHOT_KEY_PREFIX)}
+    return tuple(sorted(settings.items()))
+
+
 def is_unos_section(section: ParsedSection) -> bool:
     """Whether a section has the six fixed lines of _FIXED_SHARE_LINES (UNOS rendered it)."""
     present = {(option.key, option.value) for option in section.options}
@@ -746,6 +801,8 @@ class ShareGrants:
     unknown: bool                           # UNOS cannot evaluate the access exactly
     text: tuple[tuple[str, str], ...]       # the section's own options (key, value)
     encryption_required: bool = False       # a client that cannot encrypt is refused (ADR-0377)
+    # The shadow: settings of a section that loads shadow_copy2 (Previous Versions, ADR-0377); None: none.
+    snapshots: tuple[tuple[str, str], ...] | None = None
 
 
 def _not_exact(values: SectionValues) -> bool:
@@ -802,6 +859,7 @@ def config_grants(parsed: ParsedSmbConf) -> dict[str, ShareGrants]:
             unknown=unknown,
             text=tuple((option.key, option.value) for option in section.options),
             encryption_required=values.encryption_required,
+            snapshots=_snapshot_settings(parsed, section),
         )
     return result
 
@@ -817,9 +875,10 @@ def _level(grants: Mapping[str, int], principal: str) -> int:
 def shrunk_shares(old_text: str, new_text: str) -> list[str]:
     """Names (as in the old file) of the sections whose access shrank from ``old_text``
     to ``new_text`` (ADR-0103): removed, renamed or no longer served, path changed,
-    an unknown section whose text changed, a principal that lost read or write, or
-    encryption required now (ADR-0377): a tree connect keeps what it was granted, also
-    a session without encryption."""
+    an unknown section whose text changed, a principal that lost read or write,
+    encryption required now, or snapshots listed before (shadow_copy2) and no longer
+    or others (ADR-0377): a tree connect keeps what it was granted, also a session
+    without encryption, and its vfs modules with their settings."""
     old = config_grants(parse_smb_conf(old_text))
     new = config_grants(parse_smb_conf(new_text))
     shrunk: list[str] = []
@@ -831,12 +890,12 @@ def shrunk_shares(old_text: str, new_text: str) -> list[str]:
             or (before.unknown and after.text != before.text)
             or any(_level(after.grants, p) < level for p, level in before.grants.items())
             or (after.encryption_required and not before.encryption_required)
+            or (before.snapshots is not None and after.snapshots != before.snapshots)
         ):
             shrunk.append(before.name)
     return shrunk
 
 
-_TIME_MACHINE_KEY = normalize_key("fruit:time machine")
 _AVAILABLE_KEY = normalize_key("available")
 
 
@@ -847,8 +906,8 @@ def time_machine_shares(text: str) -> set[str]:
     found = set()
     for section in parse_smb_conf(text).sections:
         values = {key: [option.value for option in section.options if option.key == key]
-                  for key in (_TIME_MACHINE_KEY, _AVAILABLE_KEY)}
-        offered = values[_TIME_MACHINE_KEY] and parse_bool(values[_TIME_MACHINE_KEY][-1])
+                  for key in (TIME_MACHINE_KEY, _AVAILABLE_KEY)}
+        offered = values[TIME_MACHINE_KEY] and parse_bool(values[TIME_MACHINE_KEY][-1])
         if offered and (not values[_AVAILABLE_KEY] or parse_bool(values[_AVAILABLE_KEY][-1]) is not False):
             found.add(section.name.lower())
     return found

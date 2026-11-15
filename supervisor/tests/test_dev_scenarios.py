@@ -84,6 +84,7 @@ import stat
 import subprocess
 import sys
 import textwrap
+import time
 import types
 from collections.abc import Callable
 from datetime import datetime, timezone
@@ -227,9 +228,13 @@ class FakeSmbSession:
             self.level = nas.level(share, user)  # what the tree connect was granted
         if self.problem is None and self.level is None:
             self.problem = "tree connect failed: NT_STATUS_ACCESS_DENIED"
-        # A share that requires encryption refuses a client that cannot encrypt (ADR-0377).
+        # A share that requires encryption refuses a client that cannot encrypt (ADR-0377). The defect
+        # encryption-everywhere refuses it on every share while one requires encryption, as a
+        # requirement in [global] would.
         section = scenario.smb_section(nas.installed, share) or {}
-        if self.problem is None and protection == "smb2" and section.get("smb encrypt") == "required":
+        required = (section.get("smb encrypt") == "required"
+                    or ("encryption-everywhere" in nas.bugs and "smb encrypt = required" in nas.installed))
+        if self.problem is None and protection == "smb2" and required:
             self.problem = "tree connect failed: NT_STATUS_ACCESS_DENIED"
         self.tree_closed = False
         self.killed = False
@@ -817,7 +822,11 @@ class FakeNas:
         if folder is not None and folder != ROOT and (folder not in self.fs or self.fs[folder].kind != "subvolume"):
             raise Refused(404, f"Subvolume not found: {folder}")
         if parts == [] and method == "POST":
-            name = body.get("name") or "snap_20261112_100000"
+            # As src/snapshots/router.py names one without a name: snap_<UTC time> of the device's
+            # clock. The defect snapshot-other-names names it in another form.
+            stamp = time.strftime("%Y%m%dT%H%M%S" if "snapshot-other-names" in self.bugs else "%Y%m%d_%H%M%S",
+                                  time.gmtime(1_800_000_000))
+            name = body.get("name") or f"snap_{stamp}"
             path = f"{folder}/.snapshots/{name}"
             if path in self.fs:
                 raise Refused(400, f"Snapshot already exists: {name}")
@@ -1222,7 +1231,10 @@ class FakeNas:
                 if option in body:
                     if option == "encryption_required" and body[option] and not info.get(option):
                         info["encrypted_once"] = True
-                        self.close_share(name)  # a tree connect keeps what it was granted (ADR-0377)
+                        # A tree connect keeps what it was granted (ADR-0377); the defect
+                        # encryption-keeps-sessions leaves the share's open sessions.
+                        if "encryption-keeps-sessions" not in self.bugs:
+                            self.close_share(name)
                     # The defect advertise-fails: avahi-daemon cannot be restarted after a change of the
                     # Time Machine shares, which the answer warns about (service.advertise_warning).
                     if (option == "time_machine" and bool(body[option]) != bool(info.get(option))
@@ -1707,6 +1719,20 @@ class FakeNas:
         self.device_call("now")
         return 1_800_000_000
 
+    def adisk_shares(self):
+        """Avahi's resolve of smbd's _adisk._tcp service (ADR-0377): the Time Machine shares of the
+        installed smb.conf. Defects: adisk-unannounced (smbd never registers the service),
+        adisk-stays (a share stays in it once it was)."""
+        self.device_call("adisk_shares")
+        if "adisk-unannounced" in self.bugs:
+            return None
+        names = [name for name in re.findall(r"^\[([^\]]+)\]$", self.installed, re.M)
+                 if (scenario.smb_section(self.installed, name) or {}).get("fruit:time machine") == "yes"]
+        if "adisk-stays" in self.bugs:
+            self.adisk_once = sorted(set(getattr(self, "adisk_once", [])) | set(names))
+            names = self.adisk_once
+        return names or None
+
     def quota_limit(self, path):
         self.device_call("quota_limit")
         return str(self.quota_of[path]) if path in self.quota_of else "none"
@@ -1911,13 +1937,17 @@ def nas():
 
 @pytest.fixture(autouse=True)
 def _checks_without_pauses(monkeypatch):
-    """The scrub check asks btrfs every SCRUB_POLL seconds, for up to SCRUB_WAIT seconds, and the
+    """The scrub check asks btrfs every SCRUB_POLL seconds, for up to SCRUB_WAIT seconds, the
     shares check asks for the end of a repair every REPAIR_POLL seconds, for up to REPAIR_WAIT
-    seconds: the fake's scrubs are recorded and end after a few requests, its repairs after one."""
+    seconds, and the smb check resolves the _adisk._tcp service every ADISK_POLL seconds, for up to
+    ADISK_WAIT seconds: the fake's scrubs are recorded and end after a few requests, its repairs
+    after one, and its service follows smb.conf at once."""
     monkeypatch.setattr(scenario, "SCRUB_POLL", 0)
     monkeypatch.setattr(scenario, "SCRUB_WAIT", 2)
     monkeypatch.setattr(scenario, "REPAIR_POLL", 0)
     monkeypatch.setattr(scenario, "REPAIR_WAIT", 2)
+    monkeypatch.setattr(scenario, "ADISK_POLL", 0)
+    monkeypatch.setattr(scenario, "ADISK_WAIT", 0.2)
 
 
 def run_check(area: str, nas: FakeNas, **kw) -> tuple[int, str]:
@@ -1989,8 +2019,13 @@ def test_the_smb_check_shows_the_protocol_options_of_its_share(nas):
     text = "\n".join(step_lines(output))
     for words in ("shadow:mountpoint = /mnt/pools/data/unoscheck1a2b3cv)", ": @GMT-2027.01.15-08.00.00",
                   "with encryption required the share's section says so and testparm takes smb.conf",
-                  ": NT_STATUS_ACCESS_DENIED", "with Time Machine too", "Delete of the share unoscheck1a2b3cv"):
+                  "the SMB 2.1 client still opens unoscheck1a2b3c,", ": NT_STATUS_ACCESS_DENIED",
+                  "with Time Machine too", ": _adisk._tcp named unoscheck1a2b3cv",
+                  "Delete of the share unoscheck1a2b3cv"):
         assert words in text, words
+    # The snapshot is made with the name the Snapshots page gives (no name of the check's own).
+    made = [body for method, path, body, _ in nas.calls if method == "POST" and path == "/snapshots/"]
+    assert made == [{"subvolume": "/mnt/pools/data/unoscheck1a2b3cv"}]
     created = [body for method, path, body, _ in nas.calls if method == "POST" and path == "/shares/smb"]
     assert [(b["name"], b["path"], b.get("previous_versions")) for b in created][-1] == (
         "unoscheck1a2b3cv", "/mnt/pools/data/unoscheck1a2b3cv/files", True)
@@ -2000,9 +2035,9 @@ def test_the_smb_check_shows_the_protocol_options_of_its_share(nas):
                        {"time_machine": True}, {"time_machine": False, "previous_versions": False}]
     snapshots = [(method, path, params) for method, path, _, params in nas.calls if path.startswith("/snapshots")]
     volume = {"subvolume": "/mnt/pools/data/unoscheck1a2b3cv"}
-    # The step's Delete, then the clean-up's, which finds none (404).
+    # The step's Delete, then the clean-up's list of the volume's snapshots, which finds none.
     assert snapshots == [("POST", "/snapshots/", {}), ("DELETE", "/snapshots/snap_20270115_080000", volume),
-                         ("DELETE", "/snapshots/snap_20270115_080000", volume)]
+                         ("GET", "/snapshots/", volume)]
 
 
 def test_the_smb_check_renames_its_user_and_goes_on_under_the_new_name(nas):
@@ -2615,6 +2650,11 @@ def test_the_pool_folder_helper_removes_only_an_empty_folder_that_is_no_mount_po
     ("smb", "snapshots-unlisted", "allinfo v.txt answered no error without @GMT-2027.01.15-08.00.00"),
     ("smb", "fruit-without-global", "[global] has fruit:aapl = None, fruit:nfs_aces = None"),
     ("smb", "advertise-fails", "turning Time Machine on warns: avahi-daemon could not be restarted"),
+    ("smb", "adisk-unannounced", "Avahi does not resolve unoscheck1a2b3cv in the device's _adisk._tcp service"),
+    ("smb", "adisk-stays", "Avahi still resolves unoscheck1a2b3cv in the device's _adisk._tcp service"),
+    ("smb", "encryption-keeps-sessions", "the open session of the SMB 2.1 client still lists the share"),
+    ("smb", "encryption-everywhere", "the SMB 2.1 client answered NT_STATUS_ACCESS_DENIED on unoscheck1a2b3c,"),
+    ("smb", "snapshot-other-names", "the Snapshots page named the snapshot 'snap_20270115T080000'"),
     ("files", "volume-deletable", "refused with 409"),
     ("files", "upload-mode", "644 root:root"),
     ("volumes", "volume-delete-ignores-shares", "names the share"),
@@ -3555,6 +3595,59 @@ def test_the_device_reads_pdbedit_without_the_read_only_namespace(stub):
     argv = (stub.log / "argv").read_text()
     assert "unshare" not in argv and argv.rstrip("\n").endswith("\0bash -s --")
     assert scenario.RO_ROOT not in (stub.log / "stdin").read_text()
+
+
+def busctl_json(*records: str) -> str:
+    """busctl --json=short's answer to Avahi's ResolveService (iissssisqaayu) with these TXT records."""
+    return json.dumps({"type": "iissssisqaayu", "data": [
+        2, 0, "BPI-W3", "_adisk._tcp", "local", "bpi-w3.local", 0, "192.168.1.20", 9,
+        [list(record.encode()) for record in records], 4]}, separators=(",", ":"))
+
+
+def test_the_device_reads_the_shares_of_its_adisk_service(stub):
+    """smbd's Time Machine announcement (ADR-0377): the adVN of each dk<n> TXT record, in the
+    read-only namespace; none when Avahi resolves no such service."""
+    device = device_with_stub(stub)
+    (stub.log / "reply").write_text("found " + busctl_json("sys=adVF=0x100", "dk0=adVN=unoscheck1a2b3cv,adVF=0x82",
+                                                           "dk1=adVN=Backups,adVF=0x82") + "\n")
+    assert device.adisk_shares() == ["unoscheck1a2b3cv", "Backups"]
+    assert "unshare --mount --propagation private" in (stub.log / "argv").read_text()
+    (stub.log / "reply").write_text("none Call failed: Timeout reached\n")
+    assert device.adisk_shares() is None
+    for reply in ("found {}\n", "found not json\n", "busctl: command not found\n"):
+        (stub.log / "reply").write_text(reply)
+        with pytest.raises(scenario.Failed, match="_adisk._tcp service could not be read"):
+            device.adisk_shares()
+
+
+@pytest.mark.parametrize("answers, printed", [
+    ("0", "found {busctl}"),
+    ("1", "none Call failed: Timeout reached"),
+])
+def test_the_adisk_helper_resolves_smbd_s_service_under_its_netbios_name(tmp_path, answers, printed):
+    """REMOTE_ADISK, run here with a testparm and a busctl that log their arguments: the service of
+    type _adisk._tcp named as smbd names its services (the netbios name), any interface and protocol,
+    with -- before the arguments, whose -1 busctl would read as an option."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    log = tmp_path / "busctl.log"
+    answer = busctl_json("dk0=adVN=docs,adVF=0x82")
+    stubs = {
+        "testparm": '[ "$*" = "-s --parameter-name netbios name" ] || exit 9\necho BPI-W3\n',
+        "busctl": (f'printf "%s\\n" "$@" > {str(log)!r}\n'
+                   f'if [ {answers} = 0 ]; then printf "%s\\n" {answer!r}; else echo "Call failed: Timeout reached" >&2; exit 1; fi\n'),
+        "mkdir": "exit 0\n",
+    }
+    for name, body in stubs.items():
+        (bin_dir / name).write_text("#!/usr/bin/env bash\n" + body)
+        (bin_dir / name).chmod(0o755)
+    result = subprocess.run(["bash", "-s"], input=scenario.REMOTE_ADISK, capture_output=True, text=True,
+                            env={"PATH": f"{bin_dir}:{os.environ['PATH']}"})
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == printed.format(busctl=answer) + "\n"
+    assert log.read_text().splitlines() == [
+        "--json=short", "--", "call", "org.freedesktop.Avahi", "/", "org.freedesktop.Avahi.Server", "ResolveService",
+        "iisssiu", "-1", "-1", "BPI-W3", "_adisk._tcp", "local", "-1", "0"]
 
 
 def test_the_device_s_facts_are_parsed(stub):

@@ -332,14 +332,25 @@ manager, encrypted backup uploads, health checks, CI checks).
   with the options off; while a Time Machine share exists every share loads
   `catia fruit streams_xattr` and `[global]` has `fruit:aapl = yes` and
   `fruit:nfs_aces = no`, and a change of the Time Machine shares restarts
-  avahi-daemon, so that smbd announces them (`_adisk._tcp`). Previous Versions
-  list the snapshots named `snap_<time>` and `auto_<time>` in UTC. A guest
-  share cannot require encryption; Time Machine and Previous Versions need the
-  package `samba-vfs-modules`, which `install.sh` now installs, and are
-  refused without it; Previous Versions are refused for a folder in a
-  subvolume of its own below a volume. Turning encryption on disconnects the
-  share's open connections. `scripts/dev/scenario.sh smb` shows the three
-  options on a share in a new volume.
+  avahi-daemon and waits for it, so that smbd announces them (`_adisk._tcp`);
+  a restart that fails is a warning and a problem of the SMB status until one
+  works. Previous Versions list the snapshots named `snap_<time>` and
+  `auto_<time>` in UTC; scheduled tasks snapshot pools only, so a share in a
+  volume lists the volume's snapshots of the Snapshots page. A guest share
+  cannot require encryption, and a restored one with both loses guest access;
+  Time Machine and Previous Versions need the package `samba-vfs-modules`,
+  which `install.sh` now installs, and are refused without it; Previous
+  Versions are refused for a folder in a subvolume or file system of its own
+  below the pool's top level other than a volume. An option that the NAS
+  cannot serve is left out of smb.conf and shown on the card as a warning
+  with the reason (`not_rendered` of the share API). Turning encryption on
+  and Previous Versions off disconnect the share's open connections. The
+  import of an smb.conf that UNOS did not write keeps required encryption
+  (of a section, or of `[global]` for every share) as the option with the
+  access, where it removed the access before, and Time Machine where fruit is
+  loaded. `scripts/dev/scenario.sh smb` shows the three options on a share in
+  a new volume, with open sessions across the encryption switch and the
+  `_adisk._tcp` service that Avahi resolves.
 - `scripts/dev/check.sh` shows each container's CPU, the load average and the
   temperatures, and reports a container of UNOS above 15% of a core or a
   thermal zone within 5 C of its throttling point as a problem (ADR-0374).

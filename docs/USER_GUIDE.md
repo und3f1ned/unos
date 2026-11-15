@@ -569,7 +569,8 @@ files everyone on your network may read, and keep them few.
 
 #### Protocol Options
 
-Each share can turn on three options; its card shows those that are on.
+Each share can turn on three options; its card shows those that are on, and
+marks one that the NAS cannot serve now with the reason (see below).
 
 - **Require encryption** - Only clients that encrypt the connection (SMB 3:
   Windows 8 and later, macOS, Linux) can open the share; older ones, such as
@@ -585,30 +586,44 @@ Each share can turn on three options; its card shows those that are on.
   macOS cannot change the permissions of the files. The NAS announces the
   Time Machine shares over Bonjour, those that someone has access to; a
   change of them restarts avahi-daemon for that, so the NAS disappears from
-  the Finder sidebar for a moment.
+  the Finder sidebar for a moment. If avahi-daemon does not start again, the
+  answer and the status panel of the **Shares** page say so, and the next
+  change tries again.
 - **Previous Versions from snapshots** - Windows lists the snapshots of the
   share's pool, or of its volume when the share is in one, under
   **Properties** → **Previous Versions** of its files and folders, and can
   open, copy or restore them; `smbclient` reaches them as `@GMT-` paths.
   Only the snapshots that UNOS names are listed: those made on the
-  [Snapshots](#snapshots) page with the default name (`snap_<time>`) and by
-  scheduled snapshot tasks (`auto_<time>`). A share whose folder is in a
-  subvolume of its own below a volume, such as a restored copy, has no
-  snapshots of UNOS, and the option is refused there with the reason.
+  [Snapshots](#snapshots) page with the default name (`snap_<time>`) and
+  those of scheduled snapshot tasks (`auto_<time>`). Scheduled tasks
+  snapshot pools only, and a pool's snapshot does not hold the files of its
+  volumes: a share in a volume lists only the volume's snapshots made on the
+  **Snapshots** page. A folder in a subvolume or file system of its own
+  further below the pool's top level than a volume (such as a restored copy
+  inside a volume, a subvolume made by hand or another file system mounted
+  there) is in no snapshot of UNOS, and the option is refused there with the
+  reason; a subvolume right below the pool, such as a restored copy of a
+  pool's snapshot, counts as a volume. Turning the option on applies to the
+  next connections (open ones get it when they reconnect); turning it off
+  disconnects the share's open connections, so that none keeps showing the
+  snapshots.
 
 Time Machine and Previous Versions need Samba's vfs modules, the package
 `samba-vfs-modules` on the NAS; without it both are refused, with the
 package named. If the modules or the snapshots of an option that is on go
-away later, the share is served without that option and the status panel of
-the **Shares** page says why.
+away later, the share is served without that option: its card shows the
+option as a warning with the reason, and so does the status panel of the
+**Shares** page. A share restored from a backup with guest access and
+encryption required loses guest access at the restore, with a note.
 
 #### Editing a Share
 
 - **Edit** changes the comment, network browsing, guest access, the protocol
   options and the access list (and the folder of a share marked **Not
   served**). Removing or lowering someone's access, turning guest access off,
-  and requiring encryption disconnect every open connection to that share;
-  the computers reconnect by themselves. Adding access disconnects nobody.
+  requiring encryption and turning Previous Versions off disconnect every
+  open connection to that share; the computers reconnect by themselves.
+  Adding access disconnects nobody.
 - **Repair permissions** fixes the permissions of the files that are already
   in the share (see below).
 - **Delete** removes the share; the folder and its files are kept. Open

@@ -21,7 +21,10 @@ from .test_share_api import api as share_api  # noqa: F401  (a fixture: the shar
 PATH = "/mnt/pools/data/shared"
 FRUIT = ("catia", "fruit", "streams_xattr")
 SNAPSHOTS = ("shadow_copy2", "btrfs")
-AVAHI = ["systemctl", "--no-block", "restart", "avahi-daemon"]
+# The restart of avahi-daemon waits for its job, under the host's timeout (ADR-0258), after a reset
+# of the unit's failed state and start limit.
+AVAHI_RESET = ["systemctl", "reset-failed", "avahi-daemon"]
+AVAHI = ["timeout", "60", "systemctl", "restart", "avahi-daemon"]
 
 
 def share(name="shared", path=PATH, *, readers=("alice",), writers=(), guest_ok=False, **options):
@@ -113,6 +116,24 @@ class TestRendering:
         assert smbconf.shrunk_shares(plain, required) == ["shared"]
         assert smbconf.shrunk_shares(required, plain) == []
 
+    def test_turning_previous_versions_off_closes_the_open_connections_and_on_does_not(self):
+        """smbd loads a tree connect's vfs modules, and shadow_copy2 reads its settings, at the tree
+        connect: after a reload without them an open connection still lists and opens the snapshots."""
+        listed = smbconf.render_config([share(snapshot_root="/mnt/pools/data")])
+        plain = smbconf.render_config([share()])
+        assert smbconf.shrunk_shares(listed, plain) == ["shared"]
+        assert smbconf.shrunk_shares(plain, listed) == []
+        assert smbconf.shrunk_shares(listed, listed) == []
+        # Other snapshots (another pool or volume) are a shrink too.
+        other = smbconf.render_config([share(snapshot_root="/mnt/pools/data/media")])
+        assert smbconf.shrunk_shares(listed, other) == ["shared"]
+        # Time Machine on or off keeps the snapshots' modules and lines.
+        both = smbconf.render_config([share(time_machine=True, snapshot_root="/mnt/pools/data")])
+        assert smbconf.shrunk_shares(listed, both) == [] and smbconf.shrunk_shares(both, listed) == []
+        # A file written by hand: shadow_copy2 loaded from [global] counts as well.
+        by_hand = "[global]\n vfs objects = shadow_copy2\n[x]\n path = /x\n valid users = alice\n"
+        assert smbconf.shrunk_shares(by_hand, by_hand.replace("shadow_copy2", "recycle")) == ["x"]
+
     def test_time_machine_shares_of_a_file(self):
         text = smbconf.render_config([share("a", "/mnt/pools/data/a", time_machine=True),
                                       share("b", "/mnt/pools/data/b")])
@@ -170,6 +191,7 @@ class TestStored:
         assert "smb encrypt = required" in found and "fruit:time machine = yes" in found
         assert "vfs objects = catia fruit streams_xattr shadow_copy2 btrfs" in found
         assert f"shadow:mountpoint = {api.pool}" in found
+        assert response.json()["not_rendered"] == {}
         check = [cmd for cmd in api.host.calls if cmd[:2] == ["sh", "-c"]]
         assert check and check[0][2] == smb.VFS_CHECK and check[0][3] == "sh"
         assert set(check[0][4:]) == set(FRUIT + SNAPSHOTS)
@@ -253,6 +275,17 @@ class TestRefused:
         assert response.status_code == 400
         assert response.json()["detail"] == service.no_snapshots_problem(f"{api.pool}/media/restore_20261112_100000")
 
+    def test_moving_a_share_with_previous_versions_into_a_nested_subvolume_is_refused(self, api, monkeypatch):
+        modules(api)
+        assert api.create(access=access((ALICE, "write")), previous_versions=True).status_code == 200
+        nested = api.pool / "media" / "restore_20261112_100000"
+        nested.mkdir(parents=True)
+        inode = os.stat(nested).st_ino
+        monkeypatch.setattr(service, "_crosses", lambda parent, child: "subvolume" if child.st_ino == inode else None)
+        response = api.patch("docs", path=f"{nested}/photos")
+        assert (response.status_code, response.json()["detail"]) == (400, service.no_snapshots_problem(str(nested)))
+        assert api.rows("SELECT path, version FROM smb_shares") == [(f"{api.pool}/docs", 1)]
+
     def test_a_share_in_a_volume_lists_the_volume_s_snapshots(self, api, monkeypatch):
         modules(api)
         volumes = [api.pool / "media", api.pool / "music"]
@@ -274,8 +307,8 @@ class TestApplied:
         assert api.create(access=access((ALICE, "write"))).status_code == 200
         api.host.calls.clear()
         assert api.patch("docs", time_machine=True).status_code == 200
-        calls = [cmd for cmd in api.host.calls if cmd[0] in ("smbcontrol", "systemctl")]
-        assert calls == [["smbcontrol", "all", "reload-config"], AVAHI]
+        calls = [cmd for cmd in api.host.calls if cmd[0] in ("smbcontrol", "systemctl", "timeout")]
+        assert calls == [["smbcontrol", "all", "reload-config"], AVAHI_RESET, AVAHI]
         api.host.calls.clear()
         assert api.patch("docs", comment="Backups").status_code == 200
         assert AVAHI not in api.host.calls
@@ -294,16 +327,55 @@ class TestApplied:
         assert api.patch("docs", access=[]).status_code == 200
         assert AVAHI in api.host.calls
 
-    def test_a_failed_restart_of_avahi_daemon_is_a_warning_and_is_tried_again(self, api):
+    def test_a_failed_restart_of_avahi_daemon_is_a_warning_and_a_problem_until_it_works(self, api):
         modules(api)
         assert api.create(access=access((ALICE, "write"))).status_code == 200
         api.host.fail[tuple(AVAHI)] = HostResult(5, "", "Unit avahi-daemon.service not found.")
         response = api.patch("docs", time_machine=True)
         assert response.status_code == 200
-        assert response.json()["warnings"] == [service.advertise_warning("Unit avahi-daemon.service not found.")]
+        warning = service.advertise_warning("Unit avahi-daemon.service not found.")
+        assert response.json()["warnings"] == [warning]
+        assert api.client.get(f"{API}/smb-status").json()["problems"] == [warning]
         del api.host.fail[tuple(AVAHI)]
         api.host.calls.clear()
-        assert api.patch("docs", comment="again").status_code == 200
+        response = api.patch("docs", comment="again")
+        assert (response.status_code, response.json()["warnings"]) == (200, [])
+        assert [cmd for cmd in api.host.calls if cmd in (AVAHI_RESET, AVAHI)] == [AVAHI_RESET, AVAHI]
+        assert api.client.get(f"{API}/smb-status").json()["problems"] == []
+
+    def test_a_start_that_fails_after_the_restart_was_queued_is_a_warning(self, api):
+        """systemctl waits for the restart's job (no --no-block): a start that fails, as one that
+        systemd's start limit refuses after a few quick changes, is reported, not taken as done.
+        The next apply resets the unit's failed state and start limit first (AVAHI_RESET)."""
+        modules(api)
+        assert api.create(access=access((ALICE, "write"))).status_code == 200
+        refused = ("Job for avahi-daemon.service failed because start of the service was attempted too often.")
+        api.host.fail[tuple(AVAHI)] = HostResult(1, "", refused)
+        response = api.patch("docs", time_machine=True)
+        assert response.json()["warnings"] == [service.advertise_warning(refused)]
+        assert service.last_apply().advertise_pending
+
+    def test_a_restart_of_avahi_daemon_that_does_not_end_is_a_warning(self, api):
+        modules(api)
+        assert api.create(access=access((ALICE, "write"))).status_code == 200
+        api.host.fail[tuple(AVAHI)] = HostResult(124, "", "")
+        response = api.patch("docs", time_machine=True)
+        assert response.json()["warnings"] == [service.advertise_warning("systemctl did not end within 60 s")]
+
+    def test_avahi_daemon_is_restarted_only_after_a_reload_that_reached_smbd(self, api):
+        """smbd registers the Time Machine shares of the configuration it has loaded."""
+        modules(api)
+        assert api.create(access=access((ALICE, "write"))).status_code == 200
+        api.host.fail[("smbcontrol",)] = HostResult(1, "", "no smbd")
+        api.host.fail[("systemctl", "reload")] = HostResult(1, "", "not active")
+        api.host.calls.clear()
+        response = api.patch("docs", time_machine=True)
+        assert response.json()["warnings"][0].startswith("Samba did not reload smb.conf")
+        assert AVAHI not in api.host.calls and AVAHI_RESET not in api.host.calls
+        del api.host.fail[("smbcontrol",)], api.host.fail[("systemctl", "reload")]
+        api.host.calls.clear()
+        response = api.patch("docs", comment="again")
+        assert (response.status_code, response.json()["warnings"]) == (200, [])
         assert AVAHI in api.host.calls
 
     def test_turning_encryption_on_closes_the_share_s_open_connections(self, api):
@@ -315,6 +387,16 @@ class TestApplied:
         assert api.patch("docs", encryption_required=False).status_code == 200
         assert api.host.closed() == []
 
+    def test_turning_previous_versions_off_closes_the_share_s_open_connections(self, api):
+        modules(api)
+        assert api.create(access=access((ALICE, "write")), previous_versions=True).status_code == 200
+        api.host.calls.clear()
+        assert api.patch("docs", previous_versions=False).status_code == 200
+        assert api.host.closed() == ["docs"]
+        api.host.calls.clear()
+        assert api.patch("docs", previous_versions=True).status_code == 200
+        assert api.host.closed() == []
+
     def test_a_stored_option_whose_modules_are_gone_is_not_rendered_and_the_status_says_why(self, api):
         modules(api)
         assert api.create(access=access((ALICE, "write")), time_machine=True).status_code == 200
@@ -323,6 +405,37 @@ class TestApplied:
         assert "fruit" not in api.conf.read_text()
         problems = api.client.get(f"{API}/smb-status").json()["problems"]
         assert f"Share docs: Time Machine is off: {service.modules_problem('time_machine', ['fruit'])}" in problems
+        body = api.get("docs").json()
+        assert flags(body) == (False, True, False)  # as stored
+        assert body["not_rendered"] == {"time_machine": service.modules_problem("time_machine", ["fruit"])}
+
+    def test_previous_versions_whose_modules_are_gone_are_not_rendered_and_the_status_says_why(self, api):
+        modules(api)
+        assert api.create(access=access((ALICE, "write")), previous_versions=True).status_code == 200
+        modules(api, missing=["shadow_copy2"])
+        assert api.patch("docs", comment="x").status_code == 200
+        assert "shadow" not in api.conf.read_text()
+        assert option_lines(section(api, "docs")) == ["smb encrypt = default", "vfs objects ="]
+        reason = service.modules_problem("previous_versions", ["shadow_copy2"])
+        problems = api.client.get(f"{API}/smb-status").json()["problems"]
+        assert f"Share docs: Previous Versions are off: {reason}" in problems
+        assert api.get("docs").json()["not_rendered"] == {"previous_versions": reason}
+
+    def test_a_restored_guest_share_that_requires_encryption_admits_no_guest(self, api):
+        """smbd refuses guests where encryption is required: a row with both (a restored database,
+        ADR-0144) is rendered without guests, so that [global] keeps mandatory signing (ADR-0339)."""
+        assert api.create(access=access((ALICE, "write")), guest_ok=True).status_code == 200
+        api.sql("INSERT INTO smb_share_options (share_id, encryption_required, time_machine, previous_versions) "
+                "VALUES (1, 1, 0, 0)")
+        assert api.patch("docs", comment="x").status_code == 200
+        assert smbconf.render_global(False) in api.conf.read_text()
+        assert "guest ok = no" in lines(section(api, "docs"))
+        status = api.client.get(f"{API}/smb-status").json()
+        assert f"Share docs: guest access is off: {service.GUEST_ENCRYPTION}" in status["problems"]
+        assert status["guest_shares"] == []
+        body = api.get("docs").json()
+        assert (body["guest_ok"], body["encryption_required"]) == (True, True)  # as stored
+        assert body["not_rendered"] == {"guest_ok": service.GUEST_ENCRYPTION}
 
     def test_a_restored_folder_without_snapshots_is_rendered_without_previous_versions(self, api, monkeypatch):
         modules(api)
@@ -334,6 +447,8 @@ class TestApplied:
         problems = api.client.get(f"{API}/smb-status").json()["problems"]
         assert (f"Share docs: Previous Versions are off: {service.no_snapshots_problem(str(api.pool / 'docs'))}"
                 in problems)
+        assert api.get("docs").json()["not_rendered"] == {
+            "previous_versions": service.no_snapshots_problem(str(api.pool / "docs"))}
 
 
 class TestRestoreAndImport:
@@ -358,6 +473,40 @@ class TestRestoreAndImport:
         assert conn.execute("SELECT share_id FROM smb_share_options").fetchall() == [(1,)]
         service.prepare_restored_shares(conn, authoritative=False)
         assert conn.execute("SELECT * FROM smb_share_options").fetchall() == []
+        conn.close()
+
+    def test_the_restore_turns_guest_access_off_where_encryption_is_required(self, tmp_path, monkeypatch):
+        """smbd refuses guests where encryption is required: the restore drops guest access with a note,
+        as the import does."""
+        import json
+        import sqlite3
+
+        from sqlalchemy import create_engine
+
+        from src.database import Base
+        from src.storage import pools
+
+        from src.security import validators
+
+        base = tmp_path / "pools"
+        (base / "data").mkdir(parents=True)
+        for settings in {id(smb.settings): smb.settings, id(validators.settings): validators.settings}.values():
+            monkeypatch.setattr(settings, "pools_base_path", str(base))
+        db = tmp_path / "restored.db"
+        engine = create_engine(f"sqlite:///{db}")
+        Base.metadata.create_all(engine)
+        engine.dispose()
+        conn = sqlite3.connect(db)
+        conn.executemany("INSERT INTO smb_shares (id, name, path, guest_ok, version) VALUES (?, ?, ?, 1, ?)",
+                         [(1, "a", f"{base}/data/a", 4), (2, "b", f"{base}/data/b", 1)])
+        conn.executemany("INSERT INTO smb_share_options (share_id, encryption_required, time_machine, "
+                         "previous_versions) VALUES (?, ?, ?, 0)", [(1, 1, 0), (2, 0, 1)])
+        monkeypatch.setattr(pools, "managed_pool_names", lambda: {"data"})
+        assert service.prepare_restored_shares(conn, authoritative=True) == ["b"]
+        assert conn.execute("SELECT name, guest_ok, import_notes, version FROM smb_shares ORDER BY id").fetchall() == [
+            ("a", 0, json.dumps([f"Guest access was removed at the restore: {service.GUEST_ENCRYPTION}"]), 5),
+            ("b", 1, None, 1),
+        ]
         conn.close()
 
     def test_a_backup_without_the_options_table_is_restored_and_one_of_another_layout_is_refused(self, tmp_path):
@@ -394,11 +543,12 @@ class TestRestoreAndImport:
 
     def test_an_option_line_that_unos_does_not_render_is_noted_also_in_unos_s_own_file(self, api):
         """Only the option lines that UNOS renders are its own (smbconf.is_unos_option_line): another
-        vfs module, fruit or shadow setting written by hand into its file is not kept, with a note."""
+        encryption, vfs module, fruit or shadow setting written by hand into its file is not kept,
+        with a note."""
         text = smbconf.render_config([share("docs", f"{api.pool}/docs")]).replace(
-            "   vfs objects =\n",
-            "   vfs objects = recycle\n   fruit:locking = netatalk\n   fruit:time machine = no\n"
-            "   shadow:snapdir = /elsewhere\n",
+            "   smb encrypt = default\n   vfs objects =\n",
+            "   smb encrypt = desired\n   vfs objects = recycle\n   fruit:locking = netatalk\n"
+            "   fruit:time machine = no\n   shadow:snapdir = /elsewhere\n",
         )
         users = [service._ImportUser(id=ALICE, username="alice", is_admin=False)]
         plan = service._plan_import(text, users, {"data"}, restored=True, source_label="smb.conf", kept=None,
@@ -406,8 +556,25 @@ class TestRestoreAndImport:
         (docs,) = plan.shares
         assert (docs.encryption_required, docs.time_machine, docs.previous_versions) == (False, False, False)
         assert docs.notes == [f"Option '{line}' was not kept" for line in (
-            "vfs objects = recycle", "fruit:locking = netatalk", "fruit:time machine = no",
-            "shadow:snapdir = /elsewhere")]
+            "smb encrypt = desired", "vfs objects = recycle", "fruit:locking = netatalk",
+            "fruit:time machine = no", "shadow:snapdir = /elsewhere")]
+
+    def test_unos_s_own_file_takes_the_options_only_from_the_vfs_objects_line_that_unos_renders(self, api):
+        """A vfs objects line edited by hand is not kept: neither are the options whose modules it
+        names, and their lines are noted as not kept too."""
+        rendered = smbconf.render_config([share("docs", f"{api.pool}/docs", time_machine=True,
+                                                snapshot_root=str(api.pool))])
+        text = rendered.replace("vfs objects = catia fruit streams_xattr shadow_copy2 btrfs",
+                                "vfs objects = recycle fruit shadow_copy2")
+        users = [service._ImportUser(id=ALICE, username="alice", is_admin=False)]
+        plan = service._plan_import(text, users, {"data"}, restored=True, source_label="smb.conf", kept=None,
+                                    taken=[])
+        (docs,) = plan.shares
+        assert (docs.encryption_required, docs.time_machine, docs.previous_versions) == (False, False, False)
+        dropped = [line.strip() for line in text.split("\n\n")[2].splitlines()
+                   if line.strip().startswith(("vfs objects", "fruit:", "shadow:"))]
+        assert len(dropped) == 7
+        assert docs.notes == [f"Option '{line}' was not kept" for line in dropped]
 
     def test_a_guest_share_of_unos_s_own_file_that_requires_encryption_keeps_no_guests(self, api):
         text = smbconf.render_config([share("docs", f"{api.pool}/docs", guest_ok=True, encryption_required=True)])
@@ -416,9 +583,10 @@ class TestRestoreAndImport:
         assert (docs.guest_ok, docs.encryption_required) == (False, True)
         assert docs.notes == [f"Guest access was removed: {service.GUEST_ENCRYPTION}"]
 
-    def test_the_import_of_a_file_written_by_hand_keeps_no_option(self, api):
-        """ADR-0086 stays for a file that UNOS did not render: required encryption removes the
-        access, and the other lines are noted as not kept."""
+    def test_the_import_of_a_file_written_by_hand_keeps_required_encryption_and_time_machine(self, api):
+        """A file that UNOS did not render: required encryption comes back as the option, which keeps
+        that restriction, so the access stays (this changes ADR-0086); Time Machine where fruit is
+        loaded; snapshots of another layout are not kept, and the vfs objects line is noted."""
         text = (
             f"[docs]\n   path = {api.pool}/docs\n   valid users = alice\n"
             "   vfs objects = fruit streams_xattr shadow_copy2\n   fruit:time machine = yes\n"
@@ -428,10 +596,63 @@ class TestRestoreAndImport:
         plan = service._plan_import(text, users, {"data"}, restored=False, source_label="smb.conf", kept=None,
                                     taken=[])
         (docs,) = plan.shares
-        assert (docs.encryption_required, docs.time_machine, docs.previous_versions) == (False, False, False)
-        assert docs.access == {}
-        assert "Option 'vfs objects = fruit streams_xattr shadow_copy2' was not kept" in docs.notes
-        assert "Option 'fruit:time machine = yes' was not kept" in docs.notes
+        assert (docs.encryption_required, docs.time_machine, docs.previous_versions) == (True, True, False)
+        assert docs.access == {ALICE: ("alice", "read")}
+        assert docs.notes == ["Option 'vfs objects = fruit streams_xattr shadow_copy2' was not kept"]
+
+    def test_time_machine_of_a_file_written_by_hand_needs_fruit_loaded(self, api):
+        """vfs objects of [global] before the section count; fruit:time machine without fruit served nothing."""
+        text = (
+            "[global]\n   vfs objects = catia fruit streams_xattr\n"
+            f"[a]\n   path = {api.pool}/a\n   valid users = alice\n   fruit:time machine = yes\n"
+            f"[b]\n   path = {api.pool}/b\n   valid users = alice\n   vfs objects = recycle\n"
+            "   fruit:time machine = yes\n"
+        )
+        users = [service._ImportUser(id=ALICE, username="alice", is_admin=False)]
+        plan = service._plan_import(text, users, {"data"}, restored=False, source_label="smb.conf", kept=None,
+                                    taken=[])
+        a, b = plan.shares
+        assert (a.time_machine, a.notes) == (True, [])
+        assert (b.time_machine, b.notes) == (False, ["Option 'vfs objects = recycle' was not kept",
+                                                     "Option 'fruit:time machine = yes' was not kept"])
+
+
+def stat_of(device: int, inode: int) -> os.stat_result:
+    return os.stat_result((0o40755, inode, device, 2, 0, 0, 4096, 0, 0, 0))
+
+
+class TestCrosses:
+    """service._crosses, which the tests of snapshot_root through the share API replace: a folder
+    on another device starts a file tree of its own, a btrfs subvolume when its inode is 256."""
+
+    def test_a_folder_on_its_parent_s_device_starts_no_tree(self):
+        assert service._crosses(stat_of(40, 300), stat_of(40, 256)) is None
+
+    def test_a_btrfs_subvolume(self):
+        assert service._crosses(stat_of(40, 300), stat_of(41, service.BTRFS_SUBVOLUME_INODE)) == "subvolume"
+
+    def test_another_file_system(self):
+        assert service._crosses(stat_of(40, 300), stat_of(41, 2)) == "mount"
+
+
+def test_unos_s_snapshot_names_are_the_ones_previous_versions_list():
+    """shadow_copy2 splits a snapshot's name at the first shadow:delimiter, matches the part before it
+    with shadow:snapprefix (a POSIX basic regular expression) and reads the rest, delimiter included,
+    with shadow:format: the names of the Snapshots page (snap_) and of the Scheduler (auto_)."""
+    import re
+    from datetime import datetime, timezone
+
+    from src.snapshots.router import AUTO_SNAPSHOT_PREFIX, RESTORE_PREFIX, SNAPSHOT_PREFIX, utc_stamp
+
+    settings = dict(smbconf._SNAPSHOT_LINES)
+    prefix = re.compile(settings["shadow:snapprefix"].replace("\\(", "(").replace("\\)", ")").replace("\\|", "|"))
+    before = datetime.now(timezone.utc).replace(microsecond=0, tzinfo=None)
+    for name in (SNAPSHOT_PREFIX + utc_stamp(), AUTO_SNAPSHOT_PREFIX + utc_stamp()):
+        head, delimiter, rest = name.partition(settings["shadow:delimiter"])
+        assert prefix.search(head), name
+        taken = datetime.strptime(delimiter + rest, settings["shadow:format"])
+        assert 0 <= (taken - before).total_seconds() < 5, name
+    assert not prefix.search(RESTORE_PREFIX.rstrip("_"))  # writable copies are no snapshots
 
 
 def test_the_status_problem_text_of_missing_modules_names_the_package():
@@ -461,8 +682,13 @@ def test_the_check_of_the_vfs_modules_reads_smbd_s_modules_folder(monkeypatch):
 
 def test_the_e2e_fakes_answer_with_the_servers_texts():
     """webui/tests/shares-fakes.ts answers with these texts word for word (ADR-0189)."""
+    import re
     from pathlib import Path
 
     fakes = (Path(__file__).resolve().parents[2] / "webui" / "tests" / "shares-fakes.ts").read_text(encoding="utf-8")
     assert f'"{service.GUEST_ENCRYPTION}"' in fakes
     assert f"'{service.modules_problem('time_machine', ['fruit'])}'" in fakes
+    start = fakes.index("export const NO_SNAPSHOTS =")
+    pieces = re.findall(r"'([^']*)'|\"([^\"]*)\"", fakes[start:fakes.index(";", start)])
+    assert "".join(a or b for a, b in pieces) == service.no_snapshots_problem(
+        "/mnt/pools/data/media/restore_20261112_100000")

@@ -31,12 +31,15 @@ SD writes of each check (ADR-0214). The areas:
            the access lowered to read and then removed during open sessions, a comment saved with
            the expected version and a stale one refused; the protocol options (ADR-0377) of a
            second share, of a folder in a new volume: Previous Versions, which list a snapshot of
-           the volume that the check makes as @GMT-<its time> for a file the user wrote and no
-           longer once it is deleted, encryption required, which refuses an SMB 2.1 client and
-           serves one that encrypts, and with the option off the SMB 2.1 client again, and Time
-           Machine with Previous Versions, whose lines and those of [global] testparm takes and
-           whose change restarts avahi-daemon without a warning, each with the section's lines,
-           then that share's and that volume's Delete; a rename of the
+           the volume that the check makes on the Snapshots page with the name it gives as
+           @GMT-<its time> for a file the user wrote and no longer once it is deleted, encryption
+           required, which ends the share's open SMB 2.1 and unencrypted SMB3 sessions, refuses a
+           new SMB 2.1 client and serves one that encrypts while the SMB 2.1 client still opens
+           the first share, and with the option off the SMB 2.1 client again, and Time Machine
+           with Previous Versions, whose lines and those of [global] testparm takes and whose
+           change restarts avahi-daemon without a warning, after which Avahi resolves the share
+           in the device's _adisk._tcp service, and no longer with the option off, each with the
+           section's lines, then that share's and that volume's Delete; a rename of the
            user with a new password
            (ADR-0368) that ends the open session and keeps the marked host account's uid, and so
            the user's files, under the new name, with a Samba account of the new name and none of
@@ -359,6 +362,22 @@ if btrfs subvolume show "$2" > /dev/null 2>&1; then echo subvolume; else echo no
 # The disk that holds the root filesystem.
 REMOTE_SYSTEM_DISK = r'''
 lsblk -no PKNAME "$(findmnt -no SOURCE /)"'''
+
+# smbd's Time Machine announcement (ADR-0377): Avahi resolves the device's _adisk._tcp service over
+# D-Bus (busctl ships with systemd) under the name smbd gives its services, the netbios name (mdns
+# name = netbios, Samba's default). Prints "found <busctl's JSON>", or "none <why>" when Avahi
+# resolves no such service.
+REMOTE_ADISK = r'''
+set -uo pipefail
+mkdir -p -m 0755 /run/samba
+name=$(testparm -s --parameter-name "netbios name" 2> /dev/null) || name=
+if [ -z "$name" ]; then echo "testparm names no netbios name" >&2; exit 1; fi
+if out=$(busctl --json=short -- call org.freedesktop.Avahi / org.freedesktop.Avahi.Server ResolveService \
+        iisssiu -1 -1 "$name" _adisk._tcp local -1 0 2>&1); then
+    printf "found %s\n" "$out"
+else
+    printf "none %s\n" "$(printf "%s" "$out" | tr "\n" " ")"
+fi'''
 
 # The device's time in seconds, since which the scan reads the logs.
 REMOTE_NOW = r'''
@@ -814,6 +833,35 @@ def secret_forms(secret: str) -> set[str]:
     return {form for form in (secret, json.dumps(secret)[1:-1], " ".join(secret.split())) if form}
 
 
+def gmt_token(snapshot: str) -> str | None:
+    """The @GMT token under which Previous Versions list a snapshot that UNOS named (snap_ or
+    auto_<UTC time>, ADR-0243), as shadow_copy2 reads it with UNOS's shadow:format (ADR-0377);
+    None for another name."""
+    found = re.fullmatch(r"(?:snap|auto)_(\d{4})(\d\d)(\d\d)_(\d\d)(\d\d)(\d\d)", snapshot)
+    return "@GMT-{}.{}.{}-{}.{}.{}".format(*found.groups()) if found else None
+
+
+# smbd registers its _adisk._tcp service a moment after avahi-daemon runs again.
+ADISK_WAIT = 30
+ADISK_POLL = 2
+
+
+def adisk_until(c: Check, share: str, *, listed: bool) -> list[str]:
+    """The shares of the device's _adisk._tcp service (smbd's Time Machine announcement, ADR-0377) once
+    SHARE is among them (LISTED) or not, within ADISK_WAIT seconds."""
+    deadline = time.monotonic() + ADISK_WAIT
+    while True:
+        names = c.device.adisk_shares()
+        if (share.lower() in [name.lower() for name in names or []]) == listed:
+            return names or []
+        found = f"it names {', '.join(names)}" if names else "Avahi resolves no such service"
+        c.expect(time.monotonic() < deadline,
+                 f"Avahi does not resolve {share} in the device's _adisk._tcp service within {ADISK_WAIT} s ({found})"
+                 if listed else f"Avahi still resolves {share} in the device's _adisk._tcp service after "
+                                f"{ADISK_WAIT} s ({found})")
+        time.sleep(ADISK_POLL)
+
+
 def tail(data: bytes | str, size: int = 400) -> str:
     text = data.decode("utf-8", "replace") if isinstance(data, bytes) else data
     return " ".join(text.split())[-size:]
@@ -978,6 +1026,28 @@ class Device:
     def quota_limit(self, path: str) -> str:
         """The limit of the volume's quota group in bytes, or "none"."""
         return self.run(REMOTE_QUOTA, path).strip()
+
+    def adisk_shares(self) -> list[str] | None:
+        """The shares that the device's _adisk._tcp service names (TXT records dk<n>=adVN=<share>,...),
+        as Avahi resolves it (REMOTE_ADISK); None when Avahi resolves no such service."""
+        out = self.run(REMOTE_ADISK).strip()
+        kind, _, rest = out.partition(" ")
+        if kind == "none":
+            return None
+        try:
+            if kind != "found":
+                raise ValueError("no answer")
+            records = [bytes(entry).decode("utf-8", "replace") for entry in json.loads(rest)["data"][9]]
+        except (ValueError, KeyError, IndexError, TypeError) as exc:
+            raise Failed(f"the device's _adisk._tcp service could not be read ({exc}): {tail(out, 200)}") from exc
+        names = []
+        for record in records:
+            key, _, value = record.partition("=")
+            if re.fullmatch(r"dk\d+", key):
+                fields = dict(part.partition("=")[::2] for part in value.split(","))
+                if fields.get("adVN"):
+                    names.append(fields["adVN"])
+        return names
 
     def system_disk(self) -> str:
         return self.settings.get("UNOS_DEV_SYSTEM_DISK") or self.run(REMOTE_SYSTEM_DISK).strip()
@@ -2045,14 +2115,19 @@ def smb_check(c: Check) -> None:
             done = smb.run("put data.txt v.txt")
         c.expect(done.ok, f"smbclient: {done.status} {tail(done.output, 200)}")
 
-    with c.step("a snapshot of the volume that the check makes is listed for that file as @GMT-<its time>, and once "
-                "deleted no longer") as s:
-        stamp = time.gmtime(c.device.now())
-        snap = time.strftime("snap_%Y%m%d_%H%M%S", stamp)  # as UNOS names its snapshots (ADR-0243)
-        token = time.strftime("@GMT-%Y.%m.%d-%H.%M.%S", stamp)
-        c.on_cleanup(f"delete the snapshot {snap} of {vpath}",
-                     lambda: c.call("DELETE", f"/snapshots/{snap}", params={"subvolume": vpath}, expect=(200, 404)))
-        c.post("/snapshots/", {"subvolume": vpath, "name": snap})
+    with c.step("a snapshot of the volume that the check makes on the Snapshots page, with the name it gives, is "
+                "listed for that file as @GMT-<its time>, and once deleted no longer") as s:
+        def delete_snapshots() -> None:
+            """Every snapshot of the check's new volume is the check's, also one whose answer was lost."""
+            found = c.get("/snapshots/", {"subvolume": vpath}, expect=(200, 404))
+            for snapshot in found if isinstance(found, list) else []:
+                c.call("DELETE", f"/snapshots/{snapshot['name']}", params={"subvolume": vpath}, expect=(200, 404))
+
+        c.on_cleanup(f"delete the snapshots of {vpath}", delete_snapshots)
+        snap = str(c.post("/snapshots/", {"subvolume": vpath}).get("name") or "")
+        token = gmt_token(snap)
+        c.expect(token is not None, f"the Snapshots page named the snapshot {snap!r}, which Previous Versions "
+                                    "do not list (shadow:snapprefix, shadow:format)")
         with c.device.smb_session(user, password, vshare) as smb:
             listed = smb.run("allinfo v.txt")
         c.expect(listed.ok and token in listed.output.split(),
@@ -2064,13 +2139,28 @@ def smb_check(c: Check) -> None:
                  f"after the snapshot's Delete allinfo v.txt answered {done.status}: {tail(done.output, 300)}")
         s.text += f": {token}"
 
-    with c.step("with encryption required the share's section says so and testparm takes smb.conf; an SMB 2.1 "
-                "client, which cannot encrypt, is refused, a client that encrypts (SMB3) lists the share, and with "
-                "the option off the section asks for Samba's default again and the SMB 2.1 client gets in") as s:
-        options(encryption_required=True)
-        line = section_now().get("smb encrypt")
-        c.expect(line == "required", f"the section has smb encrypt = {line}")
-        c.expect(c.device.facts()["testparm"], "testparm refuses smb.conf")
+    with c.step("with encryption required the share's section says so and testparm takes smb.conf; the open "
+                "sessions of an SMB 2.1 client and of an SMB3 client that does not encrypt end, a new SMB 2.1 client, "
+                "which cannot encrypt, is refused, a client that encrypts (SMB3) lists the share, the SMB 2.1 client "
+                f"still opens {share}, and with the option off the section asks for Samba's default again and the "
+                "SMB 2.1 client gets in") as s:
+        # A tree connect keeps the encryption it was granted: only closing it (ADR-0103) ends the
+        # unencrypted sessions that were open before.
+        with c.device.smb_session(user, password, vshare, protection="smb2") as older, \
+                c.device.smb_session(user, password, vshare) as plain:
+            clients = ((older, "SMB 2.1"), (plain, "SMB3 without encryption"))
+            for session, client in clients:
+                done = session.run("ls")
+                c.expect(done.ok, f"before the change the {client} client answered {done.status}: "
+                                  f"{tail(done.output, 200)}")
+            options(encryption_required=True)
+            line = section_now().get("smb encrypt")
+            c.expect(line == "required", f"the section has smb encrypt = {line}")
+            c.expect(c.device.facts()["testparm"], "testparm refuses smb.conf")
+            for session, client in clients:
+                done = session.run("ls")
+                c.expect(done.ended or done.status.startswith("NT_STATUS_"),
+                         f"the open session of the {client} client still lists the share: {tail(done.output, 200)}")
         with c.device.smb_session(user, password, vshare, protection="smb2") as smb:
             refused = smb.run("ls")
         c.expect(not refused.ok and refused.status == "NT_STATUS_ACCESS_DENIED",
@@ -2079,6 +2169,11 @@ def smb_check(c: Check) -> None:
             done = smb.run("ls")
         c.expect(done.ok and "v.txt" in done.output, f"the encrypting client answered {done.status}: "
                                                      f"{tail(done.output, 200)}")
+        # The requirement is the share's own: [global] keeps Samba's default for every other share.
+        with c.device.smb_session(user, password, share, protection="smb2") as smb:
+            done = smb.run("ls")
+        c.expect(done.ok, f"the SMB 2.1 client answered {done.status} on {share}, which does not require encryption: "
+                          f"{tail(done.output, 200)}")
         options(encryption_required=False)
         line = section_now().get("smb encrypt")
         c.expect(line == "default", f"with the option off the section has smb encrypt = {line}")
@@ -2094,9 +2189,11 @@ def smb_check(c: Check) -> None:
 
     with c.step("with Time Machine too, the section's one vfs objects line loads catia, fruit and streams_xattr "
                 "before the snapshots' modules, the section offers itself to Time Machine, [global] turns Apple's "
-                "extensions on without NFS ACEs, testparm takes smb.conf and the answers warn of no failed restart "
-                "of avahi-daemon; with both off the line is empty (a Mac's backup is a step by hand)") as s:
+                "extensions on without NFS ACEs, testparm takes smb.conf, the answers warn of no failed restart "
+                "of avahi-daemon and Avahi resolves the share in the device's _adisk._tcp service; with both off "
+                "the line is empty and the service no longer names the share (a Mac's backup is a step by hand)") as s:
         advertised(options(time_machine=True), "turning Time Machine on")
+        announced = adisk_until(c, vshare, listed=True)
         conf = c.device.read(SMB_CONF) or ""
         section, glob = smb_section(conf, vshare) or {}, smb_global(conf)
         c.expect(section.get("vfs objects") == "catia fruit streams_xattr shadow_copy2 btrfs"
@@ -2107,6 +2204,8 @@ def smb_check(c: Check) -> None:
                  f"[global] has fruit:aapl = {glob.get('fruit:aapl')}, fruit:nfs_aces = {glob.get('fruit:nfs_aces')}")
         c.expect(c.device.facts()["testparm"], "testparm refuses smb.conf")
         advertised(options(time_machine=False, previous_versions=False), "turning Time Machine off")
+        adisk_until(c, vshare, listed=False)
+        s.text += f": _adisk._tcp named {', '.join(announced)}"
         conf = c.device.read(SMB_CONF) or ""
         section = smb_section(conf, vshare) or {}
         others = [x["name"] for x in c.get("/shares/smb") if x.get("time_machine")]

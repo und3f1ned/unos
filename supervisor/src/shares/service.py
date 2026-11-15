@@ -290,10 +290,12 @@ def snapshot_root(path: object) -> tuple[str | None, str | None]:
     the folder ``path``, or (None, why none does). Never raises.
 
     The parts of the folder below its pool are opened one at a time without following links. A
-    part that starts another file tree (_crosses) right below the pool is a volume, which the
-    Snapshots page and the Scheduler snapshot; one deeper (a restored copy, a subvolume made by
-    hand, a mount point) is in no snapshot of UNOS. A part that does not exist yet is a folder
-    still to be made, in its parent's tree. Sync: reads the filesystem.
+    btrfs subvolume right below the pool is a volume (or a restored copy of a pool's snapshot),
+    which the Snapshots page snapshots; the Scheduler snapshots pools only, and a pool's snapshot
+    holds no file of its volumes. Any other part that starts another file tree (_crosses: a
+    deeper subvolume such as a restored copy in a volume or one made by hand, a mount point) is
+    in no snapshot of UNOS. A part that does not exist yet is a folder still to be made, in its
+    parent's tree. Sync: reads the filesystem.
     """
     try:
         normalized = validate_share_path(path)  # type: ignore[arg-type]
@@ -371,16 +373,25 @@ def _options_text(values: Mapping[str, bool]) -> str:
     return ", ".join(OPTION_LABELS[name] for name in OPTION_LABELS if values.get(name))
 
 
+# What a stored setting that is not rendered is called in the status's problem (ADR-0377).
+_OFF_TEXTS = {
+    "guest_ok": "guest access is off",
+    "time_machine": "Time Machine is off",
+    "previous_versions": "Previous Versions are off",
+}
+
+
 def _rendered_options(
-    wanted: Mapping[int, tuple[str, str, bool, bool, bool]]
-) -> tuple[dict[int, tuple[bool, bool, str | None]], dict[int, list[str]]]:
+    wanted: Mapping[int, tuple[str, bool, bool, bool]]
+) -> tuple[dict[int, tuple[bool, bool, str | None]], dict[int, dict[str, str]]]:
     """The options of the served shares as they are rendered (sync; one host command and reads of
     the filesystem): share id -> (encryption required, Time Machine, snapshot root), and the
-    status problems of options that are on and not rendered. ``wanted``: share id -> (name, path,
-    and the three stored options). Time Machine and Previous Versions are rendered only with
-    their vfs modules on the host, and Previous Versions only where a snapshot of UNOS holds the
-    folder; a check of the modules that cannot run renders them as stored, with a log line."""
-    on = {name for _, _, _, tm, pv in wanted.values() for name, value in
+    options that are on and not rendered, with the reason (share id -> option -> why).
+    ``wanted``: share id -> (path, and the three stored options). Time Machine and Previous
+    Versions are rendered only with their vfs modules on the host, and Previous Versions only
+    where a snapshot of UNOS holds the folder; a check of the modules that cannot run renders
+    them as stored, with a log line."""
+    on = {name for _, _, tm, pv in wanted.values() for name, value in
           (("time_machine", tm), ("previous_versions", pv)) if value}
     try:
         missing = _missing_modules(on)
@@ -388,13 +399,11 @@ def _rendered_options(
         logger.warning("%s; the options are rendered as stored", exc)
         missing = {}
     rendered: dict[int, tuple[bool, bool, str | None]] = {}
-    problems: dict[int, list[str]] = {}
-    for share_id, (name, path, encryption, time_machine, previous_versions) in wanted.items():
+    off: dict[int, dict[str, str]] = {}
+    for share_id, (path, encryption, time_machine, previous_versions) in wanted.items():
         if time_machine and missing.get("time_machine"):
             time_machine = False
-            problems.setdefault(share_id, []).append(
-                f"Share {name}: Time Machine is off: {modules_problem('time_machine', missing['time_machine'])}"
-            )
+            off.setdefault(share_id, {})["time_machine"] = modules_problem("time_machine", missing["time_machine"])
         root = None
         if previous_versions:
             problem = None
@@ -403,9 +412,9 @@ def _rendered_options(
             else:
                 root, problem = snapshot_root(path)
             if problem is not None:
-                problems.setdefault(share_id, []).append(f"Share {name}: Previous Versions are off: {problem}")
+                off.setdefault(share_id, {})["previous_versions"] = problem
         rendered[share_id] = (encryption, time_machine, root)
-    return rendered, problems
+    return rendered, off
 
 
 # --- the render input ----------------------------------------------------------
@@ -436,6 +445,9 @@ class RenderInput:
     shares: list[ShareRender]      # the served shares
     problems: list[str]            # for GET /shares/smb-status
     unserved: dict[int, str]       # share id -> why it is not served (SmbShareInfo.path_problem)
+    # Served share id -> its stored settings that are not rendered (guest_ok, time_machine,
+    # previous_versions) -> why (SmbShareInfo.not_rendered, ADR-0377).
+    not_rendered: dict[int, dict[str, str]] = field(default_factory=dict)
 
 
 def _name_problem(name: object) -> str | None:
@@ -565,15 +577,14 @@ async def _read_render_input(db: AsyncSession, pool_names: Collection[str]) -> t
 
     # The options of the served shares (ADR-0377), checked as they are rendered.
     wanted = {
-        row_id: (name, path, bool(opts.encryption_required), bool(opts.time_machine), bool(opts.previous_versions))
-        for row_id, name, path in candidates
+        row_id: (path, bool(opts.encryption_required), bool(opts.time_machine), bool(opts.previous_versions))
+        for row_id, _, path in candidates
         if row_id not in path_problems and (opts := option_rows.get(row_id)) is not None
     }
     options: dict[int, tuple[bool, bool, str | None]] = {}
+    not_rendered: dict[int, dict[str, str]] = {}
     if wanted:
-        options, option_problems = await asyncio.to_thread(_rendered_options, wanted)
-        for row_id, found in option_problems.items():
-            problems.setdefault(row_id, []).extend(found)
+        options, not_rendered = await asyncio.to_thread(_rendered_options, wanted)
 
     shares = []
     for row_id, name, path in candidates:
@@ -596,13 +607,21 @@ async def _read_render_input(db: AsyncSession, pool_names: Collection[str]) -> t
                 comment = ""
         granted = levels.get(row_id, {})
         encryption_required, time_machine, root = options.get(row_id, (False, False, None))
+        guest_ok = bool(row.guest_ok)
+        if guest_ok and encryption_required:
+            # smbd refuses guests where encryption is required: such a share (a restored row, the API
+            # refuses the pair) must not give [global] its guest lines (ADR-0339).
+            guest_ok = False
+            not_rendered.setdefault(row_id, {})["guest_ok"] = GUEST_ENCRYPTION
+        for setting, reason in not_rendered.get(row_id, {}).items():
+            problems.setdefault(row_id, []).append(f"Share {name}: {_OFF_TEXTS[setting]}: {reason}")
         shares.append(
             ShareRender(
                 name=name,
                 path=path,
                 comment=comment,
                 browseable=bool(row.browseable),
-                guest_ok=bool(row.guest_ok),
+                guest_ok=guest_ok,
                 readers=tuple(sorted(n for n, level in granted.items() if level == "read")),
                 writers=tuple(sorted(n for n, level in granted.items() if level == "write")),
                 encryption_required=encryption_required,
@@ -612,7 +631,7 @@ async def _read_render_input(db: AsyncSession, pool_names: Collection[str]) -> t
         )
 
     ordered = [problem for row_id in sorted(problems, key=_sort_key) for problem in problems[row_id]]
-    return RenderInput(shares=shares, problems=ordered, unserved=unserved), all_names
+    return RenderInput(shares=shares, problems=ordered, unserved=unserved, not_rendered=not_rendered), all_names
 
 
 def _sort_key(value: object) -> tuple[int, int, str]:
@@ -628,8 +647,9 @@ async def build_render_input(db: AsyncSession, pool_names: Collection[str]) -> R
     invalid or duplicate name or a path that breaks ADR-0145 is not served, a
     comment that fails validation is left out, a principal is rendered only for
     an access row of an existing user with that user's current name and an active
-    account, and Time Machine and Previous Versions only as _rendered_options
-    allows (ADR-0377), with a problem for the status when it does not.
+    account, Time Machine and Previous Versions only as _rendered_options
+    allows (ADR-0377), and guest access not where encryption is required, each
+    with a problem for the status when it does not.
     """
     render, _ = await _read_render_input(db, pool_names)
     return render
@@ -786,6 +806,7 @@ class _ImportContext:
     unos: bool                      # the source starts with HEADER (UNOS rendered it)
     global_restrictions: list[str]  # "<key> = <value>" of the [global] restrictions
     includes: list[str]             # values of include and config file lines
+    global_encryption: bool = False  # a [global] block requires encryption: every share does (ADR-0377)
 
 
 def _groups_note(list_name: str, groups: Sequence[str]) -> str:
@@ -875,14 +896,7 @@ def _import_section(
         if not ctx.unos:
             _add(notes, "It was switched off (available = no) and stays without access")
     restricting = [a for a in ("hosts_allow", "hosts_deny") if getattr(values, a) and a in values.from_section]
-    if ctx.unos:
-        # The lines that UNOS renders for a share's options (smbconf.is_unos_option_line) are its own,
-        # and come back as the options (ADR-0377): required encryption keeps its restriction that way.
-        share.encryption_required = values.encryption_required and "smb_encrypt" in values.from_section
-        share.time_machine = smbconf.parse_bool(_last_value(section, "fruit:timemachine") or "") is True
-        share.previous_versions = "shadow_copy2" in smbconf.split_list(_last_value(section, "vfsobjects") or "")
-    elif values.encryption_required and "smb_encrypt" in values.from_section:
-        restricting.append("smb_encrypt")
+    _import_options(share, section, values, ctx)
     for attribute in restricting:
         removed = True
         _add(
@@ -995,12 +1009,16 @@ def _import_section(
             f"Ownership settings ({listed}) were replaced by the UNOS model: group {constants.SMB_GROUP_NAME}, "
             "folders 2770; run Repair permissions",
         )
-    if "smb_encrypt" in values.from_section and not values.encryption_required and not ctx.unos:
+    if "smb_encrypt" in values.from_section and not values.encryption_required and not (
+        ctx.unos and smbconf.normalize_key(values.smb_encrypt) == "default"  # UNOS renders it with the option off
+    ):
         _add(notes, f"Option '{_option_text(values.source['smb_encrypt'])}' was not kept")
     for option in section.options:
         if option.key in smbconf.KNOWN_SHARE_KEYS or option.key in smbconf.INCLUDE_KEYS:
             continue
-        if ctx.unos and (smbconf.is_unos_share_line(option) or smbconf.is_unos_option_line(option)):
+        if ctx.unos and smbconf.is_unos_share_line(option):
+            continue
+        if _kept_as_option(option, share, ctx.unos):
             continue
         if any(option is used for used in script_options):
             continue  # named by the restriction's note
@@ -1012,10 +1030,37 @@ def _import_section(
     return share
 
 
-def _last_value(section: smbconf.ParsedSection, key: str) -> str | None:
-    """The value of the section's last ``key`` option (normalized key), or None."""
-    values = [option.value for option in section.options if option.key == key]
-    return values[-1] if values else None
+def _import_options(
+    share: _ImportedShare, section: smbconf.ParsedSection, values: smbconf.SectionValues, ctx: _ImportContext
+) -> None:
+    """The protocol options of an imported share (ADR-0377), from the lines that apply to its section.
+
+    Required encryption, in the section or in any [global] block, becomes the option, which keeps
+    that restriction (this changes ADR-0086, where it removed the access). Time Machine where
+    ``fruit:time machine`` is true and fruit is loaded. Previous Versions only in a file that UNOS
+    rendered: another file's snapshots have another layout. In UNOS's own file only the ``vfs
+    objects`` line that UNOS composes (smbconf.is_unos_option_line) loads a module.
+    """
+    share.encryption_required = values.encryption_required or ctx.global_encryption
+    vfs = smbconf.vfs_objects(ctx.parsed, section)
+    loaded = smbconf.split_list(vfs.value) if vfs is not None and (
+        not ctx.unos or smbconf.is_unos_option_line(vfs)) else []
+    offered = smbconf.last_option(ctx.parsed, section, smbconf.TIME_MACHINE_KEY)
+    share.time_machine = "fruit" in loaded and offered is not None and smbconf.parse_bool(offered.value) is True
+    share.previous_versions = ctx.unos and "shadow_copy2" in loaded
+
+
+def _kept_as_option(option: smbconf.ParsedOption, share: _ImportedShare, unos: bool) -> bool:
+    """Whether a line of the section came back as a protocol option of the share (no note, ADR-0377):
+    in UNOS's own file the vfs objects line that UNOS composes and the snapshots' lines of Previous
+    Versions, and in any file a true ``fruit:time machine`` of Time Machine."""
+    if option.key in smbconf.VFS_OBJECTS_KEYS:
+        return unos and smbconf.is_unos_option_line(option)
+    if option.key == smbconf.TIME_MACHINE_KEY:
+        return share.time_machine and smbconf.parse_bool(option.value) is True
+    if option.key.startswith("shadow:"):
+        return unos and share.previous_versions and smbconf.is_unos_option_line(option)
+    return False
 
 
 def _same_value(a: str, b: str) -> bool:
@@ -1044,6 +1089,9 @@ def _plan_import(
     global_restrictions: list[str] = []
     for _, restriction in sorted(found, key=lambda item: item[0]):  # file order
         _add(global_restrictions, restriction)
+    global_encryption: list[str] = []
+    for option in smbconf.global_encryption(parsed):
+        _add(global_encryption, _option_text(option))
     includes = [
         option.value
         for option in (*parsed.global_options, *(o for s in parsed.sections for o in s.options))
@@ -1056,6 +1104,7 @@ def _plan_import(
         unos=parsed.unos_header,
         global_restrictions=global_restrictions,
         includes=includes,
+        global_encryption=bool(global_encryption),
     )
 
     skipped: list[str] = []
@@ -1090,6 +1139,8 @@ def _plan_import(
             f"The old [global] had {option}, which UNOS does not keep per share: access to every imported "
             "share was removed; review the shares and grant access"
         )
+    for option in global_encryption:
+        report.append(f"The old [global] had {option}: every imported share requires encryption")
     new_globals = {
         smbconf.normalize_key(k): v
         for k, v in smbconf.global_settings(any(s.guest_ok for s in shares), any(s.time_machine for s in shares))
@@ -1280,6 +1331,7 @@ class LastApply:
     replaced_problem: str | None = None    # the status problem of a copy of foreign sections, until restart
     # The Time Machine shares changed and avahi-daemon was not restarted after a reload (ADR-0377).
     advertise_pending: bool = False
+    advertise_failed: str | None = None    # why the last restart of avahi-daemon failed, until one works
 
 
 _last_apply = LastApply()
@@ -1525,6 +1577,7 @@ async def install_smb_config(staged: StagedConfig) -> interfaces.ApplyResult:
     if _last_apply.advertise_pending and reloaded:
         failed = await asyncio.to_thread(smb._restart_avahi)
         _last_apply.advertise_pending = failed is not None
+        _last_apply.advertise_failed = failed
         if failed is not None:
             result.warnings.append(advertise_warning(failed))
     _last_apply.pending_close = pending
@@ -2793,6 +2846,7 @@ async def _infos(
                 permissions_ok=permissions.get(row.id),
                 import_notes=json_lines(row.import_notes),
                 **{name: bool(getattr(option_rows.get(row.id), name, False)) for name in OPTION_LABELS},
+                not_rendered=render.not_rendered.get(row.id, {}) if share is not None else {},
             )
         )
     infos.sort(key=lambda info: info.name.lower())
@@ -2958,6 +3012,8 @@ async def service_status(db: AsyncSession) -> schemas.SmbServiceStatus:
         problems.append(f"Open connections to {names} were not closed yet; this is tried again at the next change")
     if _last_apply.replaced_problem:
         problems.append(_last_apply.replaced_problem)
+    if _last_apply.advertise_pending and _last_apply.advertise_failed:
+        problems.append(advertise_warning(_last_apply.advertise_failed))
     problems.extend(_last_reconcile.problems)
 
     state = (
@@ -3475,9 +3531,10 @@ def prepare_restored_shares(conn: sqlite3.Connection, authoritative: bool) -> li
     Not authoritative: every share, access and options row is deleted, and the
     next import reads the live file; such an import never turns guest access on.
     Authoritative: the rows are kept but the options of shares that do not exist
-    (ADR-0377), DateTime values that SQLAlchemy cannot read are replaced, and every
+    (ADR-0377), DateTime values that SQLAlchemy cannot read are replaced, every
     share whose stored path breaks a rule of ADR-0145 loses its access rows
-    and guest access, with a note. Returns the names of the shares with guest
+    and guest access, with a note, and a share that requires encryption loses
+    guest access, with a note. Returns the names of the shares with guest
     access afterwards. Raises PoolListUnavailable when the pool list cannot be
     read.
     """
@@ -3527,6 +3584,19 @@ def prepare_restored_shares(conn: sqlite3.Connection, authoritative: bool) -> li
             (json.dumps(notes), _next_version(version), share_id),
         )
         logger.info("Restore: share %s is not served (%s); its access was removed", _label(name), problem)
+    if has_options:
+        # smbd refuses guests where encryption is required (ADR-0377), as create and PATCH do.
+        for share_id, name, import_notes, version in conn.execute(
+            "SELECT id, name, import_notes, version FROM smb_shares WHERE guest_ok AND id IN "
+            "(SELECT share_id FROM smb_share_options WHERE encryption_required)"
+        ).fetchall():
+            notes = json_lines(import_notes)
+            _add(notes, f"Guest access was removed at the restore: {GUEST_ENCRYPTION}")
+            conn.execute(
+                "UPDATE smb_shares SET guest_ok = 0, import_notes = ?, version = ? WHERE id = ?",
+                (json.dumps(notes), _next_version(version), share_id),
+            )
+            logger.info("Restore: share %s requires encryption; its guest access was removed", _label(name))
     return sorted(
         (_text(name) for name, guest_ok in conn.execute("SELECT name, guest_ok FROM smb_shares") if guest_ok),
         key=str.lower,

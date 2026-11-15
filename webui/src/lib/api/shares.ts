@@ -62,6 +62,12 @@ export interface SmbShare {
   encryption_required: boolean;
   time_machine: boolean;
   previous_versions: boolean;
+  /**
+   * The stored settings that smb.conf leaves out, with the server's reason (ADR-0377): Time
+   * Machine or Previous Versions that the host or the folder cannot serve, and guest access of a
+   * share that requires encryption.
+   */
+  not_rendered: Partial<Record<'guest_ok' | 'time_machine' | 'previous_versions', string>>;
   /** Only in answers to changes. */
   warnings?: string[];
 }

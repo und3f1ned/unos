@@ -30,6 +30,13 @@ export const GUEST_ENCRYPTION =
   "A guest share cannot require encryption: guests' connections are never encrypted, so no guest could open it";
 export const TIME_MACHINE_MODULES =
   'Samba on this NAS lacks the vfs module fruit that Time Machine needs: install the package samba-vfs-modules on the host';
+// Why Previous Versions of a folder in no snapshot of UNOS are left out of smb.conf:
+// service.no_snapshots_problem('/mnt/pools/data/media/restore_20261112_100000'), checked by
+// supervisor/tests/test_share_options.py.
+export const NO_SNAPSHOTS =
+  '/mnt/pools/data/media/restore_20261112_100000 is a subvolume or a file system of its own: UNOS makes ' +
+  "snapshots of pools and volumes only, and none of them holds this share's files, so Previous Versions " +
+  'would list nothing';
 // A change sent with an outdated expected_version (ADR-0135).
 export const VERSION_CONFLICT = 'The share was changed meanwhile; reload';
 // Why a share of a pool that UNOS does not manage, or no longer manages after an unmount, is not
@@ -126,6 +133,7 @@ export interface FakeShare {
   encryption_required: boolean;
   time_machine: boolean;
   previous_versions: boolean;
+  not_rendered: Partial<Record<'guest_ok' | 'time_machine' | 'previous_versions', string>>;
 }
 
 export interface FakeServiceStatus {
@@ -306,6 +314,7 @@ export function fakeShare(name: string, extra: Partial<FakeShare> = {}): FakeSha
     encryption_required: false,
     time_machine: false,
     previous_versions: false,
+    not_rendered: {},
     ...extra,
   };
 }

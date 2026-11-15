@@ -550,10 +550,11 @@ class TestParser:
             "[global]\n invalid users =\n allow hosts = 192.168.1.5\n server smb encrypt = Mandatory\n"
             " deny hosts = 10.0.0.9\n")
         assert [(o.raw_key, o.value) for o in smbconf.global_restrictions(parsed)] == [
-            ("Invalid Users", "alice"), ("allow hosts", "192.168.1.5"), ("server smb encrypt", "Mandatory"),
-            ("deny hosts", "10.0.0.9"),
+            ("Invalid Users", "alice"), ("allow hosts", "192.168.1.5"), ("deny hosts", "10.0.0.9"),
         ]
         assert smbconf.global_restrictions(smbconf.parse_smb_conf("[x]\n hosts allow = 10.0.0.1\n")) == []
+        # Required encryption is a share's option (ADR-0377), not a restriction that removes access.
+        assert [(o.raw_key, o.value) for o in smbconf.global_encryption(parsed)] == [("server smb encrypt", "Mandatory")]
 
     @pytest.mark.parametrize("value", ["required", "mandatory", "force", "forced", "enforced", "Forced", "ENFORCED",
                                        " En forced "])
@@ -562,13 +563,14 @@ class TestParser:
         assert values(f"[x]\n path = /x\n smb encrypt = {value}\n").encryption_required
         assert values(f"[x]\n path = /x\n server smb encrypt = {value}\n").encryption_required
         parsed = smbconf.parse_smb_conf(f"[global]\n server smb encrypt = {value}\n[x]\n path = /x\n")
-        assert [o.value for o in smbconf.global_restrictions(parsed)] == [value.strip()]
+        assert [o.value for o in smbconf.global_encryption(parsed)] == [value.strip()]
+        assert smbconf.global_restrictions(parsed) == []
 
     @pytest.mark.parametrize("value", ["default", "desired", "if_required", "off", "auto", "yes", ""])
     def test_encryption_that_refuses_no_client(self, value):
         assert not values(f"[x]\n path = /x\n smb encrypt = {value}\n").encryption_required
         parsed = smbconf.parse_smb_conf(f"[global]\n server smb encrypt = {value}\n[x]\n path = /x\n")
-        assert smbconf.global_restrictions(parsed) == []
+        assert smbconf.global_restrictions(parsed) == [] and smbconf.global_encryption(parsed) == []
 
     @pytest.mark.parametrize("command, close", [
         ("root preexec = /usr/local/bin/check %U", "root preexec close = yes"),

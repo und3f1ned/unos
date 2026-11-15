@@ -6,6 +6,14 @@
 	import { t } from '$lib/i18n';
 	import { smbUrl, windowsAddress } from './texts';
 
+	type Setting = keyof SmbShare['not_rendered'];
+	const OFF_SETTINGS: Setting[] = ['guest_ok', 'time_machine', 'previous_versions'];
+	const OFF_KEYS: Record<Setting, string> = {
+		guest_ok: 'shares.card.off.guest',
+		time_machine: 'shares.card.off.timeMachine',
+		previous_versions: 'shares.card.off.previousVersions'
+	};
+
 	export let share: SmbShare;
 	/** The NAS's address as the browser reached it. */
 	export let host = '';
@@ -28,6 +36,12 @@
 		{ label: $t('shares.card.read'), entries: readers }
 	].filter((group) => group.entries.length > 0);
 	$: someNotEffective = share.access.some((entry) => !entry.effective);
+	// The stored settings that smb.conf leaves out, with the server's reason (ADR-0377).
+	let off: SmbShare['not_rendered'] = {};
+	$: off = share.not_rendered ?? {};
+	$: offReasons = OFF_SETTINGS.filter((setting) => off[setting]).map((setting) =>
+		$t(OFF_KEYS[setting], { reason: off[setting] ?? '' })
+	);
 
 	/** Why an access entry does not count yet (it is not in smb.conf). */
 	function reason(entry: ShareAccess): string {
@@ -64,10 +78,12 @@
 					<Badge variant="info">{$t('shares.card.encryption')}</Badge>
 				{/if}
 				{#if share.time_machine}
-					<Badge variant="info">{$t('shares.card.timeMachine')}</Badge>
+					<Badge variant={off.time_machine ? 'warning' : 'info'}>{$t('shares.card.timeMachine')}</Badge>
 				{/if}
 				{#if share.previous_versions}
-					<Badge variant="info">{$t('shares.card.previousVersions')}</Badge>
+					<Badge variant={off.previous_versions ? 'warning' : 'info'}
+						>{$t('shares.card.previousVersions')}</Badge
+					>
 				{/if}
 				{#if share.served && !share.available}
 					<Badge variant="error">{$t('shares.card.noAccess')}</Badge>
@@ -86,6 +102,9 @@
 			{#if !share.served && share.path_problem}
 				<p class="text-sm text-error">{share.path_problem}</p>
 			{/if}
+			{#each offReasons as reason}
+				<p class="text-sm text-warning break-words">{reason}</p>
+			{/each}
 			{#if share.comment}
 				<p class="text-sm text-secondary">{share.comment}</p>
 			{/if}

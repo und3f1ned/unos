@@ -3,6 +3,7 @@ import { E2E_ADMIN, test, expect } from './fixtures';
 import {
   FAKE_PATHS,
   GUEST_WARNING,
+  NO_SNAPSHOTS,
   POOLS,
   REPAIR_NOT_RUNNING,
   REPAIR_STOPPED,
@@ -145,7 +146,7 @@ test.describe('SMB shares page (fake data)', () => {
     // Only shrinking access disconnects (smbconf.shrunk_shares).
     await expect(
       dialog.getByText(
-        'Removing or lowering access, turning guest access off, or requiring encryption disconnects open connections to that share (clients reconnect); adding access disconnects nobody.',
+        'Removing or lowering access, turning guest access off, requiring encryption or turning Previous Versions off disconnects open connections to that share (clients reconnect); adding access disconnects nobody.',
       ),
     ).toBeVisible();
     await expect(
@@ -332,6 +333,33 @@ test.describe('SMB shares page (fake data)', () => {
     fake.intercept = ({ method }) => (method === 'PATCH' ? { status: 400, json: { detail: TIME_MACHINE_MODULES } } : undefined);
     await edit.getByRole('button', { name: 'Save' }).click();
     await expect(edit.getByText(TIME_MACHINE_MODULES)).toBeVisible();
+  });
+
+  test('an option that smb.conf leaves out is a warning on the card, with the reason', async ({
+    authenticatedPage: page,
+  }) => {
+    const users = fakeUsers();
+    await fakeSmbApi(page, {
+      users,
+      shares: [
+        fakeShare('old_photos', {
+          path: '/mnt/pools/data/media/restore_20261112_100000/photos',
+          access: accessOf(users, [{ user_id: 2, username: 'alice', level: 'write' }]),
+          encryption_required: true,
+          time_machine: true,
+          previous_versions: true,
+          not_rendered: { time_machine: TIME_MACHINE_MODULES, previous_versions: NO_SNAPSHOTS },
+        }),
+      ],
+    });
+    await page.goto('/shares');
+    const card = shareCard(page, 'old_photos');
+    await expect(card.locator('.badge', { hasText: /^Encryption required$/ })).toHaveClass(/badge-info/);
+    for (const badge of [/^Time Machine$/, /^Previous Versions$/]) {
+      await expect(card.locator('.badge', { hasText: badge })).toHaveClass(/badge-warning/);
+    }
+    await expect(card.getByText(`Time Machine is off: ${TIME_MACHINE_MODULES}`)).toBeVisible();
+    await expect(card.getByText(`Previous Versions are off: ${NO_SNAPSHOTS}`)).toBeVisible();
   });
 
   test('the edit dialog sends only the changed fields and the expected version', async ({

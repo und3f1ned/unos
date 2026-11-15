@@ -177,6 +177,15 @@ def state(env) -> SimpleNamespace | None:
                            source=row[2])
 
 
+def options(env) -> dict[str, tuple[int, int, int]]:
+    """The protocol options of the shares that have a row (ADR-0377): name -> (encryption required,
+    Time Machine, Previous Versions)."""
+    with closing(sqlite3.connect(env.db_path)) as conn:
+        return {name: (encryption, time_machine, previous) for name, encryption, time_machine, previous in conn.execute(
+            "SELECT s.name, o.encryption_required, o.time_machine, o.previous_versions "
+            "FROM smb_share_options o JOIN smb_shares s ON s.id = o.share_id")}
+
+
 def one(env, name="x") -> SimpleNamespace:
     found = shares(env)
     assert name in found, found
@@ -261,10 +270,7 @@ class TestMapping:
         assert one(env).notes == ["It was switched off (available = no) and stays without access"]
 
     @pytest.mark.parametrize("line", ["hosts allow = 192.168.1.0/24", "allow hosts = 10.0.0.1",
-                                      "hosts deny = 10.0.0.5", "smb encrypt = required",
-                                      "server smb encrypt = mandatory", "smb encrypt = Force",
-                                      "smb encrypt = forced", "server smb encrypt = enforced",
-                                      "smb encrypt = Forced", "server smb encrypt = ENFORCED"])
+                                      "hosts deny = 10.0.0.5"])
     async def test_section_restrictions_remove_access(self, env, line):
         write_conf(env, f"[x]\n path = {{pool}}/x\n guest ok = yes\n write list = alice\n {line}\n")
         await run_import(env)
@@ -272,6 +278,19 @@ class TestMapping:
         assert (share.access, share.guest_ok) == ({}, False)
         assert share.notes == [
             f"It had {line}, which UNOS does not support; access was removed: review it and grant access"]
+
+    @pytest.mark.parametrize("line", ["smb encrypt = required", "server smb encrypt = mandatory", "smb encrypt = Force",
+                                      "smb encrypt = forced", "server smb encrypt = enforced",
+                                      "smb encrypt = Forced", "server smb encrypt = ENFORCED"])
+    async def test_required_encryption_in_a_section_is_kept_as_the_share_s_option(self, env, line):
+        """The share requires encryption (ADR-0377), which keeps the restriction: the access stays,
+        and guest access, which smbd refuses there, goes."""
+        write_conf(env, f"[x]\n path = {{pool}}/x\n guest ok = yes\n write list = alice\n {line}\n")
+        await run_import(env)
+        share = one(env)
+        assert (share.access, share.guest_ok) == ({"alice": "write"}, False)
+        assert share.notes == [f"Guest access was removed: {service.GUEST_ENCRYPTION}"]
+        assert options(env) == {"x": (1, 0, 0)}
 
     @pytest.mark.parametrize("value", ["desired", "if_required", "off", "default"])
     async def test_encryption_that_does_not_require_is_dropped(self, env, value):
@@ -519,8 +538,7 @@ class TestEffectiveValues:
 
 class TestRestrictions:
     @pytest.mark.parametrize("line", ["hosts allow = 192.168.1.0/24", "hosts deny = 10.0.0.5",
-                                      "invalid users = bob", "server smb encrypt = required",
-                                      "server smb encrypt = forced", "smb encrypt = enforced",
+                                      "invalid users = bob",
                                       "root preexec = /usr/local/bin/check %U with root preexec close = yes",
                                       "exec = /bin/check with preexec close = on"])
     async def test_global_restrictions_remove_all_access(self, env, line):
@@ -553,7 +571,6 @@ class TestRestrictions:
         ("invalid users = alice", "invalid users ="),
         ("hosts allow = 192.168.1.5", "hosts allow ="),
         ("hosts deny = 10.0.0.5", "deny hosts ="),
-        ("server smb encrypt = required", "smb encrypt = default"),
     ])
     async def test_a_global_restriction_that_a_later_block_lifts_still_removes_all_access(self, env, line, lifted):
         """Samba copies the share defaults when a section starts (loadparm.c lp_do_section), so
@@ -574,6 +591,33 @@ class TestRestrictions:
             f"The old [global] had {line}, which UNOS does not keep per share: access to every imported share was "
             "removed; review the shares and grant access"
         ]
+
+    @pytest.mark.parametrize("line", ["server smb encrypt = required", "server smb encrypt = forced",
+                                      "smb encrypt = enforced"])
+    async def test_required_encryption_in_global_is_kept_by_every_share(self, env, line):
+        """Every imported share requires encryption (ADR-0377): the shares keep their access, and a
+        guest share, whose guests smbd would refuse, loses guest access."""
+        write_conf(env, f"[global]\n {line}\n[x]\n path = {{pool}}/x\n valid users = alice, bob\n"
+                        "[g]\n path = {pool}/g\n guest ok = yes\n write list = carol\n")
+        await run_import(env)
+        x, g = one(env, "x"), one(env, "g")
+        assert (x.access, x.guest_ok, x.notes) == ({"alice": "read", "bob": "read"}, False, None)
+        assert (g.access, g.guest_ok, g.notes) == (
+            {"carol": "write"}, False, [f"Guest access was removed: {service.GUEST_ENCRYPTION}"])
+        assert options(env) == {"x": (1, 0, 0), "g": (1, 0, 0)}
+        report = state(env).report
+        assert f"The old [global] had {line}: every imported share requires encryption" in report
+        assert [r for r in report if "access to every imported share was removed" in r] == []
+
+    async def test_required_encryption_that_a_later_block_lifts_is_still_kept_by_every_share(self, env):
+        """As with the restrictions above, every [global] block counts, and the rule covers every share."""
+        write_conf(env, "[global]\n server smb encrypt = required\n"
+                        "[media]\n path = {pool}/media\n valid users = alice, bob\n"
+                        "[global]\n smb encrypt = default\n"
+                        "[late]\n path = {pool}/late\n valid users = alice\n")
+        await run_import(env)
+        assert options(env) == {"media": (1, 0, 0), "late": (1, 0, 0)}
+        assert (one(env, "late").access, one(env, "late").notes) == ({"alice": "read"}, None)
 
     async def test_every_global_restriction_is_named_once_in_file_order(self, env):
         write_conf(env, "[global]\n hosts deny = 10.0.0.5\n invalid users = bob\n"
@@ -1110,6 +1154,24 @@ class TestStartupTrigger:
         details = [entry["details"] for entry in audit_entries(env.audit)]
         assert details[0] == "Imported 1 shares from smb.conf"
         assert details[1].startswith("SMB startup reconcile: Imported 1 share(s) from smb.conf; smb.conf was rewritten")
+
+    async def test_the_startup_removes_the_options_of_deleted_shares(self, startup):
+        """SQLite reuses the highest rowid: options left by a share deleted outside UNOS would attach
+        to the next share (ADR-0377)."""
+        env = startup
+        write_conf(env, DEVICE_CONF)
+        await service.reconcile_smb_on_startup()
+        with closing(sqlite3.connect(env.db_path)) as conn:
+            conn.execute("INSERT INTO smb_share_options (share_id, encryption_required, time_machine, "
+                         "previous_versions) VALUES (99, 1, 0, 0)")
+            conn.commit()
+
+        await service.reconcile_smb_on_startup()
+
+        with closing(sqlite3.connect(env.db_path)) as conn:
+            assert conn.execute("SELECT * FROM smb_share_options").fetchall() == []
+        details = [entry["details"] for entry in audit_entries(env.audit)]
+        assert details[-1] == "SMB startup reconcile: Removed the options of 1 deleted share(s)"
 
     async def test_a_second_startup_imports_nothing(self, startup):
         env = startup
