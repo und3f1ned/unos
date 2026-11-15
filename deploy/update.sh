@@ -409,16 +409,38 @@ restore_previous() {
         docker image tag "$(previous_tag "$ref")" "$ref" ||
             log_error "Could not tag $(previous_tag "$ref") as $ref"
     done
+    # On a SpacemiT K1 that takes the tag from the web UI's image of the new
+    # version, which came from another machine (ADR-0373).
+    if is_spacemit_k1; then
+        log_warn "SpacemiT K1: deploy-webui:latest is the previous web UI again; load the web UI image of the new version again before the next update.sh."
+    fi
     git -C "$UNOS_INSTALL_DIR" reset --hard --quiet "$PREVIOUS_REV" ||
         log_error "Could not reset $UNOS_INSTALL_DIR to $PREVIOUS_REV"
+}
+
+# The SpacemiT K1 (Banana Pi BPI-F3), as its device tree names it: under the
+# vendor's kernel "spacemit,k1-x", under the mainline one "spacemit,k1".
+# install.sh has the same test.
+is_spacemit_k1() {
+    [ -r /proc/device-tree/compatible ] &&
+        tr '\0' '\n' < /proc/device-tree/compatible | grep -qxE 'spacemit,k1(-x)?'
 }
 
 build_images() {
     log_info "Building the new images (UNOS keeps running meanwhile)..."
 
+    # On a SpacemiT K1 Node.js crashes while it builds the web UI, so its image
+    # deploy-webui:latest comes from another machine (ADR-0373, docs/INSTALL.md)
+    # and only the supervisor is built here.
+    local services=()
+    if is_spacemit_k1; then
+        log_warn "SpacemiT K1: only the supervisor is built. The web UI starts from the image deploy-webui:latest, which comes from another machine: load that of the new version before the update (docs/INSTALL.md)."
+        services=(supervisor)
+    fi
+
     # Build with no cache to ensure fresh build. The supervisor image carries
     # the version of the new checkout, which the web interface shows (ADR-0234).
-    if ! UNOS_VERSION=$NEW_VERSION compose build --no-cache; then
+    if ! UNOS_VERSION=$NEW_VERSION compose build --no-cache "${services[@]}"; then
         log_error "Building the new images failed. UNOS keeps running $CURRENT_VERSION; nothing was changed."
         restore_previous
         exit 1

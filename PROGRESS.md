@@ -53,6 +53,15 @@ significant step. Features and their state live in `feature-list.json`, decision
 - That evening (Log): a fifth batch, ADR-0363 to ADR-0368: Repair permissions as a background
   job, a restore in one streaming pass, no page polling the API, and renaming a user with its SMB
   account. `main` is 7827340 and its tree runs on the dev device.
+- On 2026-11-13 (Log), in the branch `deploy.riscv64-bpi-f3`, not merged: UNOS for the Banana Pi
+  BPI-F3 (SpacemiT K1, riscv64), ADR-0370, ADR-0372 and ADR-0373. It runs on the owner's BPI-F3
+  (10.1.1.56) from this branch, with the pool `data` (btrfs RAID1 on two SATA SSDs), Docker's data
+  root on the pool, and Home Assistant and Frigate beside UNOS, their data in `apps/` of the pool.
+  The board has no administrator account of UNOS yet, so its first-run setup is open to the LAN:
+  the owner makes the account, then a dev.env for the board, and the scenario checks run before
+  and after a reboot. UNOS's idle load stays within the budget of ADR-0374 there: the supervisor
+  3.5% of a core with no dashboard open (ADR-0375). Once the branch is merged, the dev device's
+  next supervisor build runs its pip layer again: tell the owner first (`deploy/AGENTS.md`).
 - On the device the NFS server runs (nfs-server, rpcbind.socket and rpcbind, enabled since
   2026-11-08, ADR-0303) and exports nothing for now; over IPv6 only LAN sources reach it
   (ADR-0301). avahi-daemon and wsdd2 run (network discovery), and nmbd is disabled since
@@ -332,6 +341,116 @@ Open owner actions:
    `shares.rollback-era-safeguards` among them.
 
 ## Log
+
+### 2026-11-13: The idle load of UNOS within a budget on the BPI-F3 (ADR-0374, ADR-0375)
+
+- The owner found the board at about half its CPU and memory and 71 C without a fan, and asked
+  that such load never happen again. Most of it was a test video that Frigate decoded and searched
+  in a loop (its camera `test` is now off in the stack's config, on the pool), the rest UNOS's:
+  each open dashboard tab took a stats sample every two seconds in the event loop, 0.4 s of the
+  K1's CPU each (the list of 311 host processes), the walk for upload leftovers went through
+  Docker's data root on the pool, and the healthcheck started a Python every 10 seconds, 0.5 s of
+  CPU each. ADR-0374 (d76096a) shares one sample between the tabs, in a worker thread, with the
+  process list at most every 10 s, leaves Docker's data root out of the walk, and gives
+  `scripts/dev/check.sh` a section that fails for a container of UNOS above 15% of a core or a
+  thermal zone within 5 C of its first passive trip. ADR-0375 (07f9c47): the healthcheck asks
+  with bash over `/dev/tcp` (0.01 s) and the process list reads the ten it shows in full only
+  (0.41 s to 0.13 s).
+- Measured on the board with the cgroup's CPU counter, `install.sh` of 07f9c47: unos-supervisor
+  3.5% of a core with no dashboard open (its process 2.9%, spread over the event loop and four
+  worker threads; before, peaks of 40 to 46% every ten seconds), 5.6% with two simulated tabs
+  (two threads that call `shared_system_stats` every two seconds in the container; before, with
+  one real tab, 15.5% on average and peaks of 58.8%); unos-webui 0.3%; load average 0.2; the
+  thermal zones 45 to 47 C.
+- Review in a fresh context: no finding. Not done: the same measurement with two real tabs,
+  which needs the owner's sign-in, so `system.idle-load-budget` does not pass yet.
+
+### 2026-11-13: UNOS deployed on the BPI-F3, with Home Assistant and Frigate on its pool
+
+- At the owner's request ("deploy UNOS on the board, then the custom Home Assistant and Frigate
+  containers by the rules of UNOS; do everything yourself"), on the board that ran the stack of
+  github.com/und3f1ned/bpi-f3-frigate-ha. `install.sh` from a bundle of this branch set up the
+  host and built the supervisor on the board (about 35 minutes); the web UI's build crashed in
+  Node.js 22 twice, also with `--no-maglev` (nodejs/node#66845), so ADR-0373 superseded ADR-0371:
+  on a K1 the web UI's image comes from another machine, and `install.sh` and `update.sh` build
+  only the supervisor there. Its image was made from static files built on the workstation, and
+  `install.sh`'s own functions started UNOS and its unit.
+- Storage (ADR-0372, the owner's decisions): the stack's data (15 GB with Docker's) was copied to
+  a USB disk and checked with checksums, the md RAID1 of the two SATA SSDs was taken apart (fstab,
+  mdadm.conf and the initramfs follow; the old files are kept as `*.k1-before-unos`), UNOS's
+  `create_pool` made the pool `data` (btrfs RAID1, with TRIM), and Docker's data root (the
+  subvolume `.docker`) and the apps' data moved to it. The stack runs with a `compose.override.yaml` (data in `apps/<app>`, log
+  rotation). Downtime of the cameras: 15:44 to 16:04 and 16:26 to 16:40 MSK.
+- Checked on the board: Frigate's detector on the NPU about 24 ms, its camera at 5 fps; Home
+  Assistant answers; UNOS's health 200; the pool healthy; `fstrim` trimmed the pool;
+  `cpu_temperature` is cluster0's. After the reboot of 16:43 MSK everything came back by itself
+  (the pool 203 s into the boot, Docker at 220 s) with 3.2 MiB written to the microSD card.
+- Review in a fresh context: no blocker. Fixed: a rollback of `update.sh` on a K1 gives
+  `deploy-webui:latest` back to the previous image, so it now says to load the new one again; the
+  subvolume of Docker's data root is `.docker`, which the Storage page neither lists nor deletes
+  as a volume (it was `docker`); the steps of `docs/INSTALL.md` for a fresh K1 (a first run of
+  `install.sh` before the image, `scp` and `docker load -i` instead of a pipe into sudo, QEMU's
+  binfmt, the manual build and upgrade).
+- `install.sh` of 6007166, run again on the board at 17:37 MSK, went to its end on the K1 path: the
+  supervisor from the build cache, no web UI build beside the loaded image, UNOS and its unit up.
+- Not done: the administrator account of UNOS and the board's dev.env (passwords, the owner's),
+  so `scripts/dev/scenario.sh` did not run and `deploy.riscv64-bpi-f3` does not pass yet. The USB
+  disk keeps the checked copy of the old data. The board's sshd allows root to sign in with a
+  password (Armbian's setting); root's key login of `scripts/dev/` was added.
+
+### 2026-11-13: On the K1 only NVMe drives go without power saving and TRIM (ADR-0370)
+
+- The owner's BPI-F3 showed that NVMe, not TRIM, is the K1's problem: its NVMe drive hung under
+  load and, after a warm reboot, never became ready again, and the slot's power is not switched by
+  the K1's PCIe driver. The board now runs two SATA SSDs in an md RAID1 behind a JMB582
+  M.2-to-SATA adapter, with TRIM and `fstrim.timer`. At the owner's request ADR-0370 supersedes
+  ADR-0369: `install.sh` no longer turns `fstrim.timer` off on a K1 (its udev rule touches NVMe
+  drives only), a pool is made with `--nodiscard` and mounted with `nodiscard` only when an NVMe
+  drive is among its devices, and its fstab entry then keeps fstrim off it with
+  `X-fstrim.notrim` (util-linux 2.41 on the board knows it); `docs/INSTALL.md` advises SATA
+  behind an M.2-to-SATA adapter or USB SSDs and advises against NVMe.
+- Checked as well: a pool's disk missing at boot leaves nothing on the system disk, since the
+  mountpoint of a pool that is not mounted is immutable and the supervisor mounts the pool at its
+  next start (ADR-0034); UNOS does not move Docker's data root, and `docs/INSTALL.md` now tells a
+  K1 host that moves it to make Docker require that mount, as the stack does with
+  `RequiresMountsFor=`. `install.sh` installs mdadm, which UNOS does not run, and Debian's mdadm
+  writes the arrays of old NAS disks into mdadm.conf: the new entry `deploy.no-unused-mdadm`.
+- Review in a fresh context: no blocker. Fixed: the ledger's steps, which wanted an NVMe pool to
+  survive a reboot on a board without one (the NVMe behaviour stays with the backend tests), the
+  mount again after a busy unmount, which now cannot fail on reading the pool's devices and keeps
+  TRIM off on a K1 whose devices it cannot read, the claim that the supervisor mounts a late disk
+  by itself, the advice to move Docker's data off the card without a guard, NVMe filesystems that
+  UNOS does not manage, and the tests of the import and of that mount again on a K1. Recorded in
+  ADR-0370: an NVMe drive below device mapper, or missing from a degraded pool, is not seen.
+- The board was only read over ssh. Open as before: every step on the board (ADR-0018).
+
+### 2026-11-13: UNOS for the Banana Pi BPI-F3 (SpacemiT K1, riscv64), built but not yet on the board
+
+- At the owner's request, `deploy.riscv64-bpi-f3` (ADR-0369, proposed): `install.sh` accepts
+  riscv64 and takes Docker from the distribution there; the supervisor's pip layer installs pip
+  26.3 and on riscv64 compiles five packages with a Rust toolchain it removes again; the web UI's
+  builder runs Alpine 3.22's Node.js 22 everywhere, since the `node` image has no riscv64 build;
+  on a SpacemiT K1 a udev rule turns off the NVMe drives' APST and ASPM L1, `fstrim.timer` goes
+  off, and pools are made and mounted without TRIM; the dashboard shows the K1's
+  `cluster0_thermal`. The K1's VPU and NPU serve apps, not UNOS: they went into the new entry
+  `apps.spacemit-k1-hardware-acceleration`, and the App Store's platforms into
+  `apps.catalog-platforms`.
+- Checked on the workstation: both images built for linux/riscv64 under QEMU from the pinned
+  bases (whose indexes list riscv64), the supervisor's pip layer in about 25 minutes; the riscv64
+  supervisor answered `/api/v1/health` with 200, and the arm64 images built as well. The udev rule
+  passed `udevadm verify` (systemd 257). The board was only read over ssh. `make check` passed.
+- Review in a fresh context: the first version turned NVMe power saving off in a unit before
+  `local-fs-pre.target`, as the stack on the board does; the board's journal showed the drive
+  appearing 63 ms before that target, so it became a udev rule, and the reviewer then found that
+  the controller's APST setting appears only after identify, so the rule runs the script when the
+  drive's disk appears. Fixed as well: the docs, the ADR and the changelog that still named the
+  unit, a `udevadm settle` that could stop the installation, the trim decision read twice in one
+  Create, the ledger's notes, "tested" where nothing ran on the board, a wrong Dockerfile comment
+  and the Docker packages `uninstall.sh` names. Recorded in ADR-0369: a pool mounted before UNOS
+  took it over keeps its options until it is mounted again, and `nodejs~22` and `pip==26.3` are
+  not fixed by a digest.
+- Open: every step on the board (it runs another stack; making it a device for UNOS is the
+  owner's call), then the device and reboot checks (ADR-0018).
 
 ### 2026-11-12: A fifth batch: a repair job, a streaming restore, no polling, renamed users
 

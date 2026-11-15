@@ -46,7 +46,7 @@ The one exception is the web UI's Russian texts and the tests that check them (A
 | `make smoke` | In a few seconds, through existing backend tests: the app starts and serves health, first-run setup and login. The baseline of a session. |
 | `make e2e-local` | The Playwright specs pass against the local stand-in: the real supervisor and the built web UI on this machine. `scripts/standin/e2e.sh <spec> [args]` runs a part. |
 | `scripts/dev/linux-tests.sh [pytest args]` | The backend tests pass on Linux, in the dev device's RAM: the ones that skip on macOS. |
-| `scripts/dev/check.sh` | The dev device is healthy: containers, Samba and network discovery (smbd, wsdd2, avahi-daemon; nmbd off), the API, the inbound IPv6 filter, SD writes since boot. Read-only. |
+| `scripts/dev/check.sh` | The dev device is healthy: containers, Samba and network discovery (smbd, wsdd2, avahi-daemon; nmbd off), the API, the inbound IPv6 filter, SD writes since boot, UNOS within its CPU budget and no thermal zone near its throttling point (ADR-0374). Read-only. |
 | `scripts/dev/api.py METHOD PATH` | What the API on the dev device answers. Methods other than GET change the device. |
 | `scripts/dev/deploy.sh status` | Which runtime files differ between this tree and the device. `status`, `sync --dry-run` and `backup` only read the device (ADR-0223); `backup` copies its secrets into the git-ignored `tmp/dev/backup` and keeps the newest 3 copies. |
 | `scripts/dev/sd.sh measure <label> -- <command>` | How many MiB a command wrote to the device's SD card. |

@@ -7,9 +7,13 @@
 # creates set, ADR-0330), the images, errors in the supervisor's log of the last 24
 # hours, smbd, network discovery (wsdd2 and avahi-daemon; nmbd off, as NetBIOS is: ADR-0275),
 # the API's health answer, the inbound IPv6 filter (ADR-0301), the system disk's writes since
-# boot (and its wear data where the card reports it), free RAM and the mounted pools. Exits 0 when unos-supervisor and unos-webui run and are
-# healthy, smbd, wsdd2 and avahi-daemon are active, nmbd neither runs nor is enabled, the API
-# answers and the filter's unit is active with its table loaded; 1 otherwise ("check: problems").
+# boot (and its wear data where the card reports it), free RAM, the mounted pools, each running
+# container's CPU averaged over five readings of docker stats, the load average and each thermal
+# zone with its first passive trip point (ADR-0374). Exits 0 when unos-supervisor and unos-webui
+# run and are healthy and stay within 15% of a core, smbd, wsdd2 and avahi-daemon are active,
+# nmbd neither runs nor is enabled, the API answers, the filter's unit is active with its table
+# loaded and no thermal zone is within 5 C of its first passive trip; 1 otherwise ("check:
+# problems").
 #
 # It runs one script on the device, with the root filesystem read-only (dev_remote_ro of
 # env.sh, ADR-0221), starts no container (ADR-0183), takes no lock (it waits for nobody) and
@@ -129,6 +133,52 @@ if [ -n "$pools" ]; then
 else
     echo "no pool mounted under /mnt/pools"
 fi
+
+# Load and temperature (ADR-0374): a board that runs hot or a UNOS that keeps a core busy went
+# unnoticed. Each reading of docker stats compares two samples; five readings take about ten
+# seconds. A thermal zone within 5 C of its first passive trip point is about to be slowed down by
+# the kernel.
+echo "== load and temperature"
+budget=15
+readings=
+for i in 1 2 3 4 5; do
+    readings="$readings
+$(docker stats --no-stream --format "{{.Name}} {{.CPUPerc}}" 2> /dev/null)"
+    [ "$i" = 5 ] || sleep 1
+done
+averages=$(printf "%s\n" "$readings" | awk "NF == 2 { sub(/%\$/, \"\", \$2); s[\$1] += \$2; n[\$1]++ } END { for (c in s) printf \"%s %.1f\\n\", c, s[c] / n[c] }" | sort)
+printf "%s\n" "$averages" | awk "NF == 2 { printf \"%s: %s%% of a core\\n\", \$1, \$2 }"
+for c in unos-supervisor unos-webui; do
+    avg=$(printf "%s\n" "$averages" | awk -v c="$c" "\$1 == c { print \$2 }")
+    [ -n "$avg" ] || continue
+    if awk -v a="$avg" -v b="$budget" "BEGIN { exit !(a > b) }"; then
+        problem "$c used $avg% of a core on average, more than its budget of $budget% (ADR-0374)"
+    fi
+done
+[ -r /proc/loadavg ] && echo "load average: $(cut -d " " -f 1-3 /proc/loadavg)"
+thermal=${UNOS_CHECK_THERMAL_DIR:-/sys/class/thermal}
+zones=0
+for z in "$thermal"/thermal_zone*; do
+    [ -r "$z/temp" ] || continue
+    zones=$((zones + 1))
+    name=$(cat "$z/type" 2> /dev/null) || name=${z##*/}
+    t=$(( $(cat "$z/temp") / 1000 ))
+    trip=
+    for tt in "$z"/trip_point_*_type; do
+        [ -r "$tt" ] && [ "$(cat "$tt")" = passive ] || continue
+        v=$(( $(cat "${tt%_type}_temp") / 1000 ))
+        if [ -z "$trip" ] || [ "$v" -lt "$trip" ]; then trip=$v; fi
+    done
+    if [ -z "$trip" ]; then
+        echo "$name: $t C"
+        continue
+    fi
+    echo "$name: $t C, first passive trip $trip C"
+    if [ "$t" -ge $((trip - 5)) ]; then
+        problem "$name is at $t C, within 5 C of its first passive trip ($trip C), where the kernel slows the CPU down: the board needs cooling or less load"
+    fi
+done
+[ "$zones" -gt 0 ] || echo "no thermal zones"
 
 echo "== result"
 if [ -z "$problems" ]; then

@@ -28,6 +28,7 @@ from .test_pool_persistence import (
     MEDIA_UUID,
     NEW_UUID,
     OLD_UUID,
+    OPTIONS,
     admin_client,
     apps_router,
     entry,
@@ -249,6 +250,22 @@ class TestImportableFilesystems:
 
 
 class TestImport:
+    def test_on_a_spacemit_k1_an_nvme_filesystem_is_imported_without_discard_or_fstrim(self, api, host):
+        # The import mounts and keeps in fstab a filesystem on an NVMe drive of a K1 as Create does
+        # (ADR-0370).
+        host.files["/proc/device-tree/compatible"] = "spacemit,k1-x\0"
+        host.add_disk("nvme0n1", rota=False, serial="P300-1", model="Patriot M.2 P300 256GB")
+        host.add_btrfs(None, SECOND_UUID, ["/dev/nvme0n1"], used=USED)
+
+        response = import_as(api, SECOND_UUID, "fast")
+
+        assert response.status_code == 200, response.text
+        assert ["mount", "-t", "btrfs", "-o", "noatime,nodiscard", f"UUID={SECOND_UUID}",
+                "/mnt/pools/fast"] in host.changes
+        assert host.fstab == MANAGED_DATA + marker("fast") + (
+            f"UUID={SECOND_UUID} /mnt/pools/fast btrfs {OPTIONS},nodiscard,X-fstrim.notrim 0 0\n"
+        )
+
     def test_mounts_by_uuid_without_formatting_and_keeps_the_pool_in_fstab(self, api, host):
         response = import_as(api, FOREIGN_UUID, "backup")
 

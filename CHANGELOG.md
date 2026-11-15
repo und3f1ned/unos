@@ -323,6 +323,32 @@ manager, encrypted backup uploads, health checks, CI checks).
   `ups_name`, `host` and `port` are checked before they reach `upsc`.
 
 ### Added
+- `scripts/dev/check.sh` shows each container's CPU, the load average and the
+  temperatures, and reports a container of UNOS above 15% of a core or a
+  thermal zone within 5 C of its throttling point as a problem (ADR-0374).
+- RISCV64 hosts on Debian 13 and Ubuntu 24.04, made for the Banana Pi BPI-F3
+  (SpacemiT K1): `install.sh` accepts `riscv64` and installs the
+  distribution's `docker.io`, `docker-buildx` and `docker-compose` (Debian) or
+  `docker-compose-v2` (Ubuntu), since Docker's repository has no RISCV64
+  packages. The supervisor's pip layer installs pip 26.3 (the base's 24.0
+  ignores RISCV64 wheels) and, on RISCV64 only, compiles cryptography, bcrypt,
+  cffi, psutil and uvloop with a Rust toolchain that it removes again; the web
+  UI's builder runs Alpine 3.22's Node.js 22 on every platform, since the `node`
+  image has no RISCV64 build. Node.js crashes on the K1 while it builds the web
+  UI, so there `install.sh` and `update.sh` build only the supervisor and start
+  the web UI from an image `deploy-webui:latest` made on another machine
+  (`docker buildx build --platform linux/riscv64`); `install.sh` stops with
+  those commands without one, and `update.sh` reminds to load the new one. On
+  a K1, SATA disks behind an M.2-to-SATA adapter or USB SSDs are the recommended
+  storage and need nothing special; NVMe is not recommended. For an NVMe drive
+  used anyway, `install.sh` adds the udev rule `60-unos-k1-nvme.rules`, which
+  turns off the drive's APST and its PCIe link's ASPM L1 whenever it appears,
+  and a pool with an NVMe drive is made with `mkfs.btrfs --nodiscard`, mounted
+  with `nodiscard` and kept out of the weekly fstrim (`X-fstrim.notrim`): the
+  K1's NVMe drives hang otherwise. The dashboard shows the K1's CPU temperature
+  (`cluster0_thermal`) instead of the first sensor psutil lists. `uninstall.sh`
+  names the distribution's Docker packages and keeps the K1's rule (ADR-0370,
+  ADR-0373).
 - Administrators rename users in the **Users** page's edit dialog
   (`PUT /api/v1/auth/users/{id}` with `new_username` and the current
   `username`): the user signs in with the new name, the old one is refused,
@@ -852,6 +878,18 @@ manager, encrypted backup uploads, health checks, CI checks).
   smb.conf as UNOS wrote it.
 
 ### Fixed
+- The dashboard's live stats cost a slow board a large share of a core: every
+  open tab took its own sample every two seconds, in the supervisor's event loop,
+  and listed every process of the host each time (0.4 s of CPU on a SpacemiT
+  K1). One sample now serves every tab, taken in a worker thread, and the
+  process list is taken at most every 10 seconds (ADR-0374).
+- The supervisor's healthcheck started a Python every 10 seconds, 0.5 s of CPU
+  each on a SpacemiT K1; it now asks with bash, 0.01 s. The dashboard's process
+  list reads name, memory, status and user of the ten processes it shows only
+  (ADR-0375).
+- The check for leftovers of uploads after a start no longer walks Docker's
+  data root when a host keeps it on a pool, with its image layers and the root
+  filesystems of the running containers (ADR-0374).
 - Escape closes only the dialog on top when one dialog opens over another:
   turning **Allow SMB access** off in a user's edit dialog now asks over that
   dialog, which stays open, and Escape closes the question first, then the

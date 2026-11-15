@@ -49,7 +49,7 @@ def env(tmp_path, monkeypatch):
     """A pools directory with the pool data, a folder outside it, and an administrator's client.
 
     The mount table (a stand-in for /proc/self/mountinfo) has the pool's mount.
-    The check starts with nothing found, and the clock stands at NOW.
+    The check starts with nothing found, the clock stands at NOW, and Docker does not answer.
     """
     root = tmp_path.resolve()
     base = root / "pools"
@@ -62,6 +62,9 @@ def env(tmp_path, monkeypatch):
     monkeypatch.setattr(files_router, "MOUNTINFO", str(mounts.path))
     monkeypatch.setattr(files_router, "_now", lambda: NOW)
     monkeypatch.setattr(files_router, "_leftovers", files_router._LeftoverCheck())
+    # No Docker of the machine that runs the tests: a test that keeps Docker's data root on a pool
+    # sets its own.
+    monkeypatch.setattr(files_router, "_docker_data_root", lambda: None)
     app.dependency_overrides[verify_token] = lambda: ADMIN
     try:
         yield SimpleNamespace(
@@ -208,6 +211,60 @@ def test_a_folder_that_a_bind_mount_shows_again_is_walked_once(env, monkeypatch)
 
     # backup comes before photos: the walk meets the folder first through the bind mount.
     assert _paths(_check(env)) == [str(again / ".unos-upload-0123456789abcdef")]
+
+
+def test_the_check_leaves_out_dockers_data_root_on_a_pool(env, monkeypatch):
+    """A host may keep Docker's data root on a pool, as the BPI-F3 does (ADR-0372): its image
+    layers and the mounted root filesystems of the running containers were walked after every
+    start, minutes of CPU on a slow board, and the walk went on into those containers' /sys. Docker's
+    files hold no upload, so the walk leaves the data root out (ADR-0374)."""
+    docker_root = env.pool / ".docker"
+    layer = docker_root / "overlay2" / "0123abcd" / "diff" / "tmp"
+    layer.mkdir(parents=True)
+    _hidden(layer, "aaaaaaaaaaaaaaaa")
+    photos = env.pool / "photos"
+    photos.mkdir()
+    kept = _hidden(photos)
+    asked = []
+    monkeypatch.setattr(files_router, "_docker_data_root", lambda: asked.append(1) or str(docker_root))
+    entered = []
+    real_open = os.open
+
+    def recording_open(path, flags, *args, dir_fd=None, **kwargs):
+        if dir_fd is not None:
+            entered.append(path)
+        return real_open(path, flags, *args, dir_fd=dir_fd, **kwargs)
+
+    monkeypatch.setattr(files_router.os, "open", recording_open)
+
+    answer = _check(env)
+
+    assert asked == [1]
+    assert _paths(answer) == [str(kept)]
+    assert answer["problems"] == []
+    assert ".docker" not in entered and "overlay2" not in entered
+
+
+def test_without_docker_the_check_walks_every_folder(env, monkeypatch):
+    other = env.pool / ".docker" / "x"
+    other.mkdir(parents=True)
+    found = _hidden(other)
+    monkeypatch.setattr(files_router, "_docker_data_root", lambda: None)
+
+    assert _paths(_check(env)) == [str(found)]
+
+
+def test_dockers_data_root_comes_from_docker_and_none_without_it(monkeypatch):
+    from src.containers import docker as docker_ops
+
+    monkeypatch.setattr(docker_ops, "get_client", lambda: SimpleNamespace(info=lambda: {"DockerRootDir": "/mnt/pools/data/.docker"}))
+    assert files_router._docker_data_root() == "/mnt/pools/data/.docker"
+
+    def unavailable():
+        raise docker_ops.DockerUnavailable("no socket")
+
+    monkeypatch.setattr(docker_ops, "get_client", unavailable)
+    assert files_router._docker_data_root() is None
 
 
 def _folders(top: Path, width: int, levels: int) -> None:

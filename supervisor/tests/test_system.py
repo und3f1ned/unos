@@ -314,6 +314,14 @@ class TestDashboardTemperature:
                 {"cpu-thermal": [_reading("", 51.1)], "gpu-thermal": [_reading("", 49.0)]},
                 51.1, id="cpu-thermal-zone",
             ),
+            # The SpacemiT K1 of a Banana Pi BPI-F3 under Armbian's current-spacemit kernel, in the
+            # order psutil lists them there: the NVMe drive's hwmon comes first, then the zones of
+            # the top of the chip, the GPU and the CPU's two clusters (ADR-0370).
+            pytest.param(
+                {"nvme": _NVME, "top_thermal": [_reading("", 65.0)], "gpu_thermal": [_reading("", 61.0)],
+                 "cluster0_thermal": [_reading("", 71.0)], "cluster1_thermal": [_reading("", 70.0)]},
+                71.0, id="spacemit-k1-cluster0",
+            ),
             # No sensor known as the CPU's: the first reading of the first group, as before.
             pytest.param(
                 {"acpitz": [_reading("", 27.8), _reading("", 29.8)], "nvme": _NVME},

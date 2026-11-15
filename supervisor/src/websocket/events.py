@@ -58,6 +58,7 @@ import asyncio
 import functools
 import json
 import logging
+import threading
 import time
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
@@ -111,6 +112,67 @@ _prev_disk_io = None
 _prev_time = None
 _prev_net_per_iface = {}
 
+# The list of the host's processes is most of a sample's cost: on a SpacemiT K1 one listing of
+# 315 processes took 0.4 s of CPU. A sample reuses the last list until it is this old (ADR-0374).
+PROCESS_LIST_INTERVAL_SECONDS = 10.0
+_processes: list[dict] = []
+_processes_at: float | None = None
+
+# One sample serves every socket of /ws/v1/events until it is STATS_INTERVAL_SECONDS old, taken in
+# a worker thread (shared_system_stats, ADR-0374).
+_sample: dict | None = None
+_sample_at: float | None = None
+_sample_lock = threading.Lock()
+_clock = time.monotonic
+
+
+def shared_system_stats() -> dict:
+    """The stats message for every open socket: the last sample while it is younger than
+    STATS_INTERVAL_SECONDS, else a new one. Each socket used to take its own every interval, in the
+    event loop, which on a slow board cost a share of a core per open tab and held the API while it
+    ran (ADR-0374). Callers run it in a worker thread; the lock makes concurrent callers wait for
+    one sample instead of taking one each."""
+    global _sample, _sample_at
+    with _sample_lock:
+        now = _clock()
+        if _sample is None or _sample_at is None or now - _sample_at >= STATS_INTERVAL_SECONDS:
+            _sample = get_system_stats()
+            _sample_at = now
+        return _sample
+
+
+def _top_processes() -> list[dict]:
+    """The ten processes of the host that use the most CPU, listed again only when the last list is
+    PROCESS_LIST_INTERVAL_SECONDS old; psutil gives each process's CPU share since the listing
+    before. Only the CPU share is read for every process, the rest for the ten: on a K1, name,
+    memory, status and user of 311 processes took 0.41 s of CPU, their CPU shares 0.13 s
+    (ADR-0375)."""
+    global _processes, _processes_at
+    now = _clock()
+    if _processes_at is not None and now - _processes_at < PROCESS_LIST_INTERVAL_SECONDS:
+        return _processes
+    listed = sorted(
+        psutil.process_iter(["cpu_percent"]), key=lambda proc: proc.info["cpu_percent"] or 0, reverse=True
+    )
+    processes = []
+    for proc in listed:
+        if len(processes) == 10:
+            break
+        try:
+            info = proc.as_dict(["name", "memory_percent", "memory_info", "status", "username"], ad_value=None)
+        except psutil.NoSuchProcess:
+            continue
+        processes.append({
+            "pid": proc.pid,
+            "name": info["name"] or "Unknown",
+            "cpu_percent": proc.info["cpu_percent"] or 0,
+            "memory_percent": info["memory_percent"] or 0,
+            "memory_mb": (info["memory_info"].rss / 1024 / 1024) if info["memory_info"] else 0,
+            "status": info["status"] or "unknown",
+            "username": info["username"] or "unknown"
+        })
+    _processes, _processes_at = processes, now
+    return _processes
 
 
 def get_system_stats() -> dict:
@@ -202,24 +264,8 @@ def get_system_stats() -> dict:
             "write_count": counters.write_count
         })
 
-    # Top processes
-    processes = []
-    for proc in psutil.process_iter(["pid", "name", "cpu_percent", "memory_percent", "memory_info", "status", "username"]):
-        try:
-            info = proc.info
-            processes.append({
-                "pid": info["pid"],
-                "name": info["name"] or "Unknown",
-                "cpu_percent": info["cpu_percent"] or 0,
-                "memory_percent": info["memory_percent"] or 0,
-                "memory_mb": (info["memory_info"].rss / 1024 / 1024) if info["memory_info"] else 0,
-                "status": info["status"] or "unknown",
-                "username": info["username"] or "unknown"
-            })
-        except (psutil.NoSuchProcess, psutil.AccessDenied):
-            pass
-    processes.sort(key=lambda x: x["cpu_percent"], reverse=True)
-    top_processes = processes[:10]
+    # Top processes, listed at most every PROCESS_LIST_INTERVAL_SECONDS
+    top_processes = _top_processes()
 
     timestamp = datetime.now().isoformat()
 
@@ -490,7 +536,7 @@ async def websocket_endpoint(websocket: WebSocket):
             sent_problems = await _send_problems(websocket, role["admin"], sent_problems)
             sent_scrubs = await _send_scrubs(websocket, role["admin"], sent_scrubs)
             sent_repair = await _send_repair(websocket, role["admin"], sent_repair)
-            stats = get_system_stats()
+            stats = await asyncio.to_thread(shared_system_stats)
             await websocket.send_json(stats)
             await asyncio.wait(
                 {disconnected, revoked},

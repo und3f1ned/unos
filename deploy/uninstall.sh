@@ -32,6 +32,10 @@ SMBD_RESTART_PENDING=""
 # The export file of UNOS (Shares > NFS); /etc/exports and the other files of
 # /etc/exports.d are not UNOS's and stay.
 NFS_EXPORTS_FILE="/etc/exports.d/unos.exports"
+# The udev rule that install.sh writes on a SpacemiT K1, with the script it
+# runs (configure_spacemit_k1, ADR-0370). They stay, as the pools on NVMe do:
+# print_completion names them.
+K1_NVME_RULE="/etc/udev/rules.d/60-unos-k1-nvme.rules"
 
 log_info() { echo -e "${BLUE}[INFO]${NC} $1"; }
 log_success() { echo -e "${GREEN}[OK]${NC} $1"; }
@@ -426,7 +430,18 @@ print_completion() {
     echo ""
     echo "To completely remove Docker, run:"
     echo "  apt-get purge docker-ce docker-ce-cli containerd.io"
+    echo "or, where install.sh took Docker from the distribution (riscv64):"
+    echo "  apt-get purge docker.io docker-buildx docker-compose"
+    echo "(docker-compose-v2 instead of docker-compose on Ubuntu)"
     echo ""
+    if [ -f "$K1_NVME_RULE" ]; then
+        echo "SpacemiT K1: the udev rule $K1_NVME_RULE keeps turning off the power"
+        echo "saving of NVMe drives, because without that an NVMe drive on the K1 can hang"
+        echo "under load. To remove it, run:"
+        echo "  rm $K1_NVME_RULE /usr/local/sbin/unos-k1-nvme"
+        echo "and reboot."
+        echo ""
+    fi
     print_smb_leftovers
 }
 

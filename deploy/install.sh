@@ -4,7 +4,8 @@
 # https://github.com/und3f1ned/unos
 #
 # This script installs UNOS on a fresh Debian/Ubuntu system
-# Supports: Debian 11+, Ubuntu 22.04+, ARM64 and AMD64
+# Supports: Debian 11+, Ubuntu 22.04+, ARM64 and AMD64; on RISCV64 Debian 13+
+# and Ubuntu 24.04+
 #
 
 set -e
@@ -87,6 +88,9 @@ detect_system() {
         armv7l)
             ARCH="armv7"
             ;;
+        riscv64)
+            ARCH="riscv64"
+            ;;
         *)
             log_error "Unsupported architecture: $ARCH"
             exit 1
@@ -149,7 +153,21 @@ install_docker() {
     fi
     
     log_info "Installing Docker..."
-    
+
+    # Docker's repository has no packages for riscv64: Debian 13 and Ubuntu
+    # 24.04 build Docker Engine, Compose v2 (the compose plugin; Debian's
+    # package is docker-compose, Ubuntu's docker-compose-v2) and buildx for it
+    # (ADR-0370).
+    if [ "$ARCH" = riscv64 ]; then
+        local compose=docker-compose
+        [ "$OS" = ubuntu ] && compose=docker-compose-v2
+        apt-get install -y -qq docker.io "$compose" docker-buildx >/dev/null 2>&1
+        systemctl enable docker
+        systemctl start docker
+        log_success "Docker installed from the distribution and started"
+        return
+    fi
+
     # Add Docker's official GPG key
     install -m 0755 -d /etc/apt/keyrings
     curl -fsSL https://download.docker.com/linux/$OS/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
@@ -215,6 +233,80 @@ check_compose_wait() {
             log_warn "Docker Compose ${version:-(version unknown)} has no \`up --wait-timeout\`: \`docker compose up\`, here and in the unos service, runs without it and waits until Docker reports the supervisor healthy or unhealthy. Compose 2.30 or later limits that wait; run install.sh again after updating Docker Compose."
             ;;
     esac
+}
+
+# The SpacemiT K1 (Banana Pi BPI-F3), as its device tree names it: under the
+# vendor's kernel "spacemit,k1-x", under the mainline one "spacemit,k1".
+is_spacemit_k1() {
+    [ -r /proc/device-tree/compatible ] &&
+        tr '\0' '\n' < /proc/device-tree/compatible | grep -qxE 'spacemit,k1(-x)?'
+}
+
+# The web UI's image on a SpacemiT K1, which Node.js cannot build there: it
+# crashes now and then in the middle of the build (nodejs/node#66845). The
+# image is built on another machine and loaded here (ADR-0373).
+K1_WEBUI_IMAGE=deploy-webui:latest
+require_k1_webui_image() {
+    docker image inspect "$K1_WEBUI_IMAGE" >/dev/null 2>&1 && return 0
+    log_error "Node.js crashes on the SpacemiT K1 while it builds the web UI, so the image $K1_WEBUI_IMAGE comes from another machine. On a machine with Docker that runs linux/riscv64 images (QEMU's binfmt) and the same checkout of UNOS, run in its root:"
+    echo "  docker buildx build --platform linux/riscv64 -t $K1_WEBUI_IMAGE --load webui"
+    echo "  docker save -o deploy-webui.tar $K1_WEBUI_IMAGE"
+    echo "  scp deploy-webui.tar <this host>:"
+    echo "and here:"
+    echo "  sudo docker load -i deploy-webui.tar"
+    echo "Everything before this step is done; run install.sh again (docs/INSTALL.md, Banana Pi BPI-F3)."
+    exit 1
+}
+
+# NVMe drives are not recommended on the SpacemiT K1 (docs/INSTALL.md): one hung
+# under load ("QID 0 timeout, disable controller") unless its power saving
+# (APST) and the ASPM L1 of its PCIe link were off, and the kernel parameters
+# that would turn them off (pcie_aspm=off, nvme_core.default_ps_max_latency_us=0)
+# keep the BPI-F3 from booting. For an NVMe drive that is used anyway, udev turns
+# them off as each drive appears, also when the K1 enumerates PCIe late in the
+# boot: ASPM L1 when its PCIe function appears, and APST once its disk appears,
+# since the driver adds the controller's APST setting only after it has
+# identified the drive. udev applies the rule to the drives there are now. It
+# touches NVMe drives only: SATA and USB disks keep their power management and
+# TRIM, and fstrim.timer stays as it is; the supervisor keeps TRIM off the pools
+# with an NVMe drive (ADR-0370). Elsewhere this does nothing. uninstall.sh keeps
+# the rule: the pools stay.
+configure_spacemit_k1() {
+    is_spacemit_k1 || return 0
+    log_info "Configuring NVMe for the SpacemiT K1..."
+
+    mkdir -p /usr/local/sbin /etc/udev/rules.d
+    cat > /usr/local/sbin/unos-k1-nvme << 'EOF'
+#!/bin/sh
+# UNOS (install.sh): turns off the power saving of each NVMe drive of this
+# SpacemiT K1 and of its PCIe link (ADR-0370); 60-unos-k1-nvme.rules runs it.
+# 0 in pm_qos_latency_tolerance_us makes the driver turn APST off; 0 in
+# l1_aspm turns ASPM L1 off.
+for controller in /sys/class/nvme/nvme*; do
+    [ -e "$controller" ] || continue
+    if [ -w "$controller/power/pm_qos_latency_tolerance_us" ]; then
+        echo 0 > "$controller/power/pm_qos_latency_tolerance_us"
+    fi
+    link=$(readlink -f "$controller/device")/link
+    if [ -w "$link/l1_aspm" ]; then
+        echo 0 > "$link/l1_aspm"
+    fi
+done
+exit 0
+EOF
+    chmod 755 /usr/local/sbin/unos-k1-nvme
+    cat > /etc/udev/rules.d/60-unos-k1-nvme.rules << 'EOF'
+# UNOS (install.sh): NVMe power saving off on the SpacemiT K1 (ADR-0370).
+# ASPM L1 of an NVMe drive's PCIe link goes off when the function appears;
+# APST once the drive's disk appears, after the driver has identified it.
+ACTION=="add|change", SUBSYSTEM=="pci", ATTR{class}=="0x010802", ATTR{link/l1_aspm}="0"
+ACTION=="add|change", SUBSYSTEM=="block", KERNEL=="nvme*", ENV{DEVTYPE}=="disk", RUN+="/usr/local/sbin/unos-k1-nvme"
+EOF
+    udevadm control --reload
+    udevadm trigger --action=change --subsystem-match=pci --attr-match=class=0x010802
+    udevadm trigger --action=change --subsystem-match=block --sysname-match='nvme*'
+
+    log_success "SpacemiT K1: NVMe power saving off whenever an NVMe drive appears"
 }
 
 # Create UNOS user and directories
@@ -448,9 +540,16 @@ start_unos() {
     fi
     
     # Build containers. The supervisor image carries the version of the
-    # checkout, which the web interface shows (ADR-0234).
+    # checkout, which the web interface shows (ADR-0234). On a SpacemiT K1
+    # only the supervisor: the web UI's image comes from another machine
+    # (require_k1_webui_image, ADR-0373).
+    local services=()
+    if is_spacemit_k1; then
+        require_k1_webui_image
+        services=(supervisor)
+    fi
     UNOS_VERSION=$(git -C "$UNOS_INSTALL_DIR" describe --tags --always 2>/dev/null || echo unknown) \
-        docker compose build
+        docker compose build "${services[@]}"
 
     # Start containers: webui once the supervisor is healthy.
     # --remove-orphans: a re-run removes the containers of services that a
@@ -570,6 +669,7 @@ main() {
     require_compose "The system packages are installed; UNOS is not."
     # Sets the `docker compose up` arguments of start_unos and the unit.
     check_compose_wait
+    configure_spacemit_k1
     setup_directories
     download_unos
     generate_secrets

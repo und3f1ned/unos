@@ -16,7 +16,9 @@ line of the host fstab is preserved as is. The original file is copied once to
 ``/etc/fstab.unos-backup`` before the first modification. ``nofail`` keeps a
 missing disk from blocking the boot; it also drops the ordering before
 local-fs.target, so ``x-systemd.before=docker.service`` makes Docker (and the
-apps it restarts) wait for the mount, for at most the 15 s device timeout.
+apps it restarts) wait for the mount, for at most the 15 s device timeout. On
+the SoCs of :data:`NVME_NO_TRIM_SOCS` a pool with an NVMe drive is made without
+TRIM, and mounted with ``nodiscard`` and ``X-fstrim.notrim`` as well (ADR-0370).
 :func:`reconcile_pools` mounts managed entries the host did not mount (e.g. a
 slow disk) when the supervisor starts, starts the apps that Docker could not
 start without them, and write-protects the mountpoints of pools that are not
@@ -56,7 +58,7 @@ import signal
 import subprocess
 import tempfile
 import threading
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -99,6 +101,17 @@ FSTAB_MOUNT_OPTIONS = (
     "defaults,noatime,nofail,x-systemd.device-timeout=15s,x-systemd.before=docker.service"
 )
 MOUNT_OPTIONS = "noatime"
+# The SoCs on which an NVMe drive hangs on a TRIM of the whole drive ("QID 0 timeout, disable
+# controller"), as their device tree's compatible names them: the SpacemiT K1 of the Banana Pi
+# BPI-F3, "spacemit,k1-x" under its vendor's kernel and "spacemit,k1" under the mainline one. There
+# a pool with an NVMe drive among its devices is made without the TRIM that mkfs.btrfs runs first
+# on an SSD, is mounted with nodiscard, where kernels from 6.2 discard the freed space of an SSD as
+# they go, and its fstab entry keeps the weekly fstrim of fstrim.timer off it (X-fstrim.notrim).
+# SATA and USB disks there keep TRIM (ADR-0370).
+NVME_NO_TRIM_SOCS = frozenset({"spacemit,k1-x", "spacemit,k1"})
+DEVICE_TREE_COMPATIBLE = "/proc/device-tree/compatible"
+NO_TRIM_MOUNT_OPTIONS = "nodiscard"
+NO_TRIM_FSTAB_OPTIONS = "nodiscard,X-fstrim.notrim"
 
 MKFS_TIMEOUT = 900  # mkfs.btrfs discards (TRIMs) SSDs first, which can take minutes
 MOUNT_TIMEOUT = 120
@@ -216,8 +229,51 @@ def fstab_marker(name: str) -> str:
     return f"# unos-pool:{name} (managed by UNOS)"
 
 
-def fstab_entry(name: str, uuid: str) -> str:
-    return f"UUID={uuid} {pool_mountpoint(name)} btrfs {FSTAB_MOUNT_OPTIONS} 0 0"
+def _soc_hangs_on_nvme_trim() -> bool:
+    """Whether the host's device tree names one of NVME_NO_TRIM_SOCS; False on a host without a
+    device tree (a PC) or whose device tree cannot be read."""
+    result = host.run_on_host(["cat", "--", DEVICE_TREE_COMPATIBLE], timeout=15)
+    return result.ok and bool(NVME_NO_TRIM_SOCS & set(result.stdout.split("\0")))
+
+
+def _has_nvme_drive(devices: Iterable[str]) -> bool:
+    return any(os.path.basename(device).startswith("nvme") for device in devices)
+
+
+def pool_is_trimmed(devices: Iterable[str]) -> bool:
+    """Whether a pool on ``devices`` gets TRIM: not when one of them is an NVMe drive and the
+    host's SoC is one of NVME_NO_TRIM_SOCS (ADR-0370). The device tree is read only for a pool
+    with an NVMe drive."""
+    return not (_has_nvme_drive(devices) and _soc_hangs_on_nvme_trim())
+
+
+def _remount_is_trimmed(uuid: str) -> bool:
+    """pool_is_trimmed for mounting the filesystem ``uuid`` again after an unmount that left it in
+    use, which must not fail on it: the devices are read only on a SoC of NVME_NO_TRIM_SOCS, and
+    there a filesystem whose devices cannot be read or are not found is taken as one with an NVMe
+    drive."""
+    try:
+        if not _soc_hangs_on_nvme_trim():
+            return True
+        devices = _filesystem_devices(uuid)
+    except Exception as exc:
+        logger.warning("Could not read the devices of %s: %s", uuid, exc)
+        return False
+    return bool(devices) and not _has_nvme_drive(devices)
+
+
+def _filesystem_devices(uuid: str) -> list[str]:
+    """The present devices of the btrfs filesystem ``uuid``, none when it is not found."""
+    return next((fs.devices for fs in btrfs_filesystems() if fs.uuid == uuid), [])
+
+
+def _mount_options(trimmed: bool) -> str:
+    return MOUNT_OPTIONS if trimmed else f"{MOUNT_OPTIONS},{NO_TRIM_MOUNT_OPTIONS}"
+
+
+def fstab_entry(name: str, uuid: str, *, trimmed: bool = True) -> str:
+    options = FSTAB_MOUNT_OPTIONS if trimmed else f"{FSTAB_MOUNT_OPTIONS},{NO_TRIM_FSTAB_OPTIONS}"
+    return f"UUID={uuid} {pool_mountpoint(name)} btrfs {options} 0 0"
 
 
 def _fstab_fields(line: str) -> list[str] | None:
@@ -261,13 +317,14 @@ def parse_managed_fstab(text: str) -> dict[str, ManagedFstabEntry]:
     return entries
 
 
-def set_managed_fstab_entry(text: str, name: str, uuid: str) -> str:
+def set_managed_fstab_entry(text: str, name: str, uuid: str, *, trimmed: bool = True) -> str:
     """Return ``text`` with exactly one managed entry for ``name`` mounting ``uuid``.
 
     An existing managed entry is rewritten in place; otherwise the entry is
-    appended. Lines that are not ours are never changed.
+    appended. Lines that are not ours are never changed. Without ``trimmed``
+    the entry mounts with nodiscard and fstrim skips it (pool_is_trimmed).
     """
-    marker, entry = fstab_marker(name), fstab_entry(name, uuid)
+    marker, entry = fstab_marker(name), fstab_entry(name, uuid, trimmed=trimmed)
     lines = text.splitlines(keepends=True)
     out: list[str] = []
     placed = False
@@ -861,9 +918,9 @@ def _prepare_btrfs_devices() -> None:
     _run_best_effort(["udevadm", "settle", "--timeout=10"], ["btrfs", "device", "scan"])
 
 
-def _mount_by_uuid(uuid: str, target: str) -> None:
+def _mount_by_uuid(uuid: str, target: str, *, trimmed: bool) -> None:
     result = host.run_on_host(
-        ["mount", "-t", "btrfs", "-o", MOUNT_OPTIONS, f"UUID={uuid}", target],
+        ["mount", "-t", "btrfs", "-o", _mount_options(trimmed), f"UUID={uuid}", target],
         timeout=MOUNT_TIMEOUT,
     )
     if not result.ok:
@@ -1299,8 +1356,9 @@ def _unmount_pool_target(name: str, target: str, mounts: list[disks.HostMount]) 
         if not _filesystem_active(uuid):
             return
     reason = reason or "for example by a container's bind mount"
+    trimmed = _remount_is_trimmed(uuid)
     try:
-        _mount_by_uuid(uuid, target)
+        _mount_by_uuid(uuid, target, trimmed=trimmed)
     except Exception as exc:
         raise PoolLeftUnmountedError(
             f"{target} was unmounted on the host, but the filesystem is still in use "
@@ -1356,7 +1414,9 @@ def _remove_made_mountpoint(target: str) -> None:
         logger.warning("Could not remove %s again: %s", target, exc)
 
 
-def _mount_and_persist(name: str, uuid: str, *, already_mounted: bool, relabel: bool = False) -> None:
+def _mount_and_persist(
+    name: str, uuid: str, *, already_mounted: bool, devices: list[str], relabel: bool = False
+) -> None:
     """Mount ``uuid`` at the pool's mountpoint on the host and keep it in fstab.
 
     A filesystem that this call mounts must show its top level there
@@ -1367,6 +1427,7 @@ def _mount_and_persist(name: str, uuid: str, *, already_mounted: bool, relabel: 
     removed again (ADR-0283); only after a failed mount of a pool that
     exists (Create, Mount) does it stay, write-protected like that of every
     pool that is not mounted. An import that fails leaves nothing behind.
+    ``devices`` are the filesystem's, which decide its TRIM (pool_is_trimmed).
     """
     target = pool_mountpoint(name)
     original = text = _read_fstab()
@@ -1377,7 +1438,8 @@ def _mount_and_persist(name: str, uuid: str, *, already_mounted: bool, relabel: 
             f"manage ({conflicts[0]}). Remove or comment out that line first."
         )
     made = not already_mounted and not host.run_on_host(["test", "-d", target], timeout=15).ok
-    desired = set_managed_fstab_entry(text, name, uuid)
+    trimmed = pool_is_trimmed(devices)
+    desired = set_managed_fstab_entry(text, name, uuid, trimmed=trimmed)
     if desired != text and name in parse_managed_fstab(text):
         # Replace an outdated entry (e.g. of an older pool with the same name)
         # before mounting, so systemd's unit no longer points at the old device.
@@ -1387,7 +1449,7 @@ def _mount_and_persist(name: str, uuid: str, *, already_mounted: bool, relabel: 
         try:
             _ensure_mountpoint_dir(target)
             _prepare_btrfs_devices()
-            _mount_by_uuid(uuid, target)
+            _mount_by_uuid(uuid, target, trimmed=trimmed)
         except Exception:
             _write_fstab(original, text)  # an outdated entry replaced above comes back
             if made and relabel:
@@ -1451,7 +1513,9 @@ def mount_pool(name: str) -> PoolInfo:
             if problem:
                 raise PoolConflictError(f"Pool '{name}' cannot be mounted: {problem}.")
             _refuse_hidden_files(target)
-        _mount_and_persist(name, _check_uuid(fs.uuid), already_mounted=bool(mounted_here))
+        _mount_and_persist(
+            name, _check_uuid(fs.uuid), already_mounted=bool(mounted_here), devices=fs.devices
+        )
     if not mounted_here:
         _start_pool_apps_later(name)  # after releasing the lock; never raises
     return get_pool(name)
@@ -1650,6 +1714,8 @@ def create_pool(pool: PoolCreate) -> PoolInfo:
             # Without -f mkfs.btrfs refuses devices with existing signatures,
             # which is a last line of defence for disks that looked blank.
             cmd.append("-f")
+        if not pool_is_trimmed(validated_devices):
+            cmd.append("--nodiscard")
         cmd += validated_devices
         result = host.run_on_host(cmd, timeout=MKFS_TIMEOUT)
         if not result.ok:
@@ -1658,7 +1724,7 @@ def create_pool(pool: PoolCreate) -> PoolInfo:
 
         try:
             uuid = _new_filesystem_uuid(result.stdout, validated_devices[0])
-            _mount_and_persist(name, uuid, already_mounted=False)
+            _mount_and_persist(name, uuid, already_mounted=False, devices=validated_devices)
             return get_pool(name)
         except Exception as exc:
             # The devices are formatted: the audit log records that (ADR-0350).
@@ -1896,7 +1962,7 @@ def import_pool(uuid: str, name: str) -> PoolInfo:
     name = validate_pool_name(name)
     with _lock:
         fs = _check_import(uuid, name)
-        _mount_and_persist(name, uuid, already_mounted=False, relabel=True)
+        _mount_and_persist(name, uuid, already_mounted=False, devices=fs.devices, relabel=True)
         # The kernel wrote the label: udev reads a device again on its own only
         # after a program that opened it for writing closes it.
         devices = [device for device in fs.devices if device.startswith("/dev/")]

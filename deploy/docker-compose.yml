@@ -95,12 +95,14 @@ services:
     # wait, so that Compose does not give up on the supervisor first. Change
     # SUPERVISOR_START_TIMEOUT in both scripts, and UNOS_DEV_UP_TIMEOUT of
     # scripts/dev/deploy.sh, with these values.
+    # bash asks for the health without a proxy: a Python that did only that cost a SpacemiT K1
+    # 0.5 s of CPU every interval, bash 0.01 s (ADR-0375). Compose reads $$ as $.
     healthcheck:
       test:
         - CMD
-        - python
+        - bash
         - -c
-        - "import urllib.request as u; u.build_opener(u.ProxyHandler({})).open('http://127.0.0.1:8080/api/v1/health', timeout=5)"
+        - 'u=http://127.0.0.1:8080/api/v1/health && a=$${u#*//} && p=/$${a#*/} && a=$${a%%/*} && exec 3<>"/dev/tcp/$${a%:*}/$${a##*:}" && printf "GET %s HTTP/1.0\r\nHost: %s\r\n\r\n" "$$p" "$$a" >&3 && read -r -t 5 _ code _ <&3 && [ "$$code" = 200 ] || exit 1'
       interval: 10s
       timeout: 10s
       retries: 3

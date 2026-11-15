@@ -76,6 +76,8 @@ DOCKER_STUB = textwrap.dedent(
       done
     }
     case "$1" in
+      # no-webui-image: no image deploy-webui:latest has been loaded.
+      image) if [ "$2" = inspect ] && has no-webui-image; then exit 1; fi ;;
       # stopped: the supervisor's container exists but does not run; its /data is $STUB_DIR/data.
       cp)
         if [ "$3" = - ]; then tar -C "$STUB_DIR" -cf - data; else cp "$STUB_DIR/${2#unos-supervisor:/}" "$3"; fi ;;
@@ -461,6 +463,26 @@ class TestUpdateScript:
         assert "UNOS is already up to date!" in result.stdout
         assert (sandbox / "stub" / "build-env").read_text().splitlines() == ["UNOS_VERSION=v1.0.0"]
 
+    def test_on_a_spacemit_k1_only_the_supervisor_is_built(self, sandbox):
+        # The web UI's image of a K1 comes from another machine (ADR-0373): update.sh builds the
+        # supervisor alone, starts the web UI image that is there, and says so.
+        result, calls = _run_update(sandbox, overrides="is_spacemit_k1() { true; }")
+
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert [call for call in calls if call.startswith("docker compose build")] == [
+            "docker compose build --no-cache supervisor"
+        ]
+        assert "deploy-webui:latest" in result.stdout and "another machine" in result.stdout
+
+    def test_on_a_spacemit_k1_a_rollback_asks_to_load_the_web_ui_image_again(self, sandbox):
+        # The rollback tags deploy-webui:latest as the previous image again, so the image of the
+        # new version that was loaded for the update loses its tag (ADR-0373).
+        result, calls = _run_update(sandbox, "build-fails", overrides="is_spacemit_k1() { true; }")
+
+        assert result.returncode == 1
+        assert "docker image tag deploy-webui:previous deploy-webui" in calls
+        assert "load the web UI image of the new version again" in " ".join(result.stdout.split())
+
     def test_failed_build_leaves_the_running_version_alone(self, sandbox):
         before = _head(sandbox)
 
@@ -802,10 +824,11 @@ def _install_lib(tmp_path, paths):
     return lib
 
 
-def _start_install(tmp_path, *scenario):
+def _start_install(tmp_path, *scenario, prelude=""):
     """check_compose_wait, start_unos and create_systemd_service of install.sh
-    with the docker stub of the update sandbox. Returns the result, the docker
-    calls and the ExecStart lines of the unit (None without a unit)."""
+    with the docker stub of the update sandbox, after the shell code `prelude`.
+    Returns the result, the docker calls and the ExecStart lines of the unit
+    (None without a unit)."""
     (tmp_path / "install" / "deploy").mkdir(parents=True)
     (tmp_path / "etc-systemd-system").mkdir()
     bin_dir = tmp_path / "bin"
@@ -821,13 +844,14 @@ def _start_install(tmp_path, *scenario):
     lib = _install_lib(tmp_path, ["/etc/systemd/system", "/etc/unos"])
 
     result = subprocess.run(
-        ["bash", "-c", '. "$LIB"; check_compose_wait; start_unos; create_systemd_service'],
+        ["bash", "-c", '. "$LIB"; eval "$PRELUDE"; check_compose_wait; start_unos; create_systemd_service'],
         env={
             **os.environ,
             "PATH": f"{bin_dir}:{os.environ['PATH']}",
             "LIB": str(lib),
             "STUB_DIR": str(stub_dir),
             "UNOS_INSTALL_DIR": str(tmp_path / "install"),
+            "PRELUDE": prelude,
         },
         stdin=subprocess.DEVNULL,
         capture_output=True,
@@ -849,12 +873,22 @@ _INSTALL_TARGETS = {"install", "data", "mnt-pools", "etc-unos", "etc-samba", "et
 _LOGGER = '#!/bin/bash\necho "${0##*/} $*" >> "$STUB_DIR/calls"\n'
 
 
-def _run_install_main(tmp_path, *scenario, docker_installed=True):
-    """main() of install.sh as root on Debian 12 (aarch64), with stub
+# The hosts of _run_install_main: what uname -m and dpkg --print-architecture print, and
+# /etc/os-release.
+DEBIAN_12_ARM64 = ("aarch64", "arm64", 'ID=debian\nVERSION_ID="12"\nVERSION_CODENAME=bookworm\n')
+DEBIAN_13_RISCV64 = ("riscv64", "riscv64", 'ID=debian\nVERSION_ID="13"\nVERSION_CODENAME=trixie\n')
+UBUNTU_2404_RISCV64 = ("riscv64", "riscv64", 'ID=ubuntu\nVERSION_ID="24.04"\nVERSION_CODENAME=noble\n')
+# The compatible of the device tree of a Banana Pi BPI-F3 under the vendor's kernel (ADR-0370).
+SPACEMIT_K1 = "spacemit,k1-x\0"
+
+
+def _run_install_main(tmp_path, *scenario, docker_installed=True, system=DEBIAN_12_ARM64, compatible=None):
+    """main() of install.sh as root on `system` (Debian 12 on aarch64 by default), with stub
     commands that log their calls (docker as in the update sandbox) and the
-    system paths moved into tmp_path. Without docker_installed, `apt-get
-    install ... docker-ce ...` installs the docker stub. Returns the result
-    and the calls."""
+    system paths moved into tmp_path; `compatible` is the host's device tree's, none by
+    default (a PC). Without docker_installed, `apt-get install` of docker-ce or docker.io
+    installs the docker stub. Returns the result and the calls."""
+    machine, dpkg_arch, os_release = system
     bin_dir = tmp_path / "bin"
     docker_dir = tmp_path / "docker-bin"
     stub_dir = tmp_path / "stub"
@@ -866,23 +900,29 @@ def _run_install_main(tmp_path, *scenario, docker_installed=True):
     (stub_dir / "docker").chmod(0o755)
     if docker_installed:
         shutil.copy(stub_dir / "docker", docker_dir / "docker")
-    (tmp_path / "etc-os-release").write_text('ID=debian\nVERSION_ID="12"\n')
+    (tmp_path / "etc-os-release").write_text(os_release)
+    if compatible is not None:
+        (tmp_path / "proc-device-tree-compatible").write_text(compatible)
+    codename = re.search(r"^VERSION_CODENAME=(\w+)$", os_release, re.M).group(1)
     stubs = {
-        "uname": "#!/bin/bash\necho aarch64\n",
+        "uname": f"#!/bin/bash\necho {machine}\n",
         "apt-get": _LOGGER
-        + 'if [ "$1" = install ] && [[ " $* " == *" docker-ce "* ]]; then cp "$STUB_DIR/docker" "$DOCKER_DIR/"; fi\n',
+        + 'if [ "$1" = install ] && [[ " $* " == *" docker-ce "* || " $* " == *" docker.io "* ]]; then\n'
+        + '  cp "$STUB_DIR/docker" "$DOCKER_DIR/"\nfi\n',
         # Writes the file after -o.
         "gpg": _LOGGER + 'while [ $# -gt 0 ]; do [ "$1" = -o ] && : > "$2"; shift; done\n',
-        "dpkg": _LOGGER + "echo arm64\n",
-        "lsb_release": _LOGGER + "echo bookworm\n",
+        "dpkg": _LOGGER + f"echo {dpkg_arch}\n",
+        "lsb_release": _LOGGER + f"echo {codename}\n",
         "curl": _LOGGER,
         "systemctl": _LOGGER,
+        "udevadm": _LOGGER,
         "git": _LOGGER + "exit 1\n",
     }
     for name, body in stubs.items():
         (bin_dir / name).write_text(body)
         (bin_dir / name).chmod(0o755)
-    paths = ["/etc/os-release", "/etc/apt", "/mnt/pools", "/etc/unos", "/etc/samba", "/etc/systemd/system"]
+    paths = ["/etc/os-release", "/etc/apt", "/mnt/pools", "/etc/unos", "/etc/samba", "/etc/systemd/system",
+             "/proc/device-tree/compatible", "/etc/udev/rules.d", "/usr/local/sbin"]
     lib = _install_lib(tmp_path, paths)
 
     result = subprocess.run(
@@ -1424,6 +1464,137 @@ class TestInstallScript:
         assert calls[docker_ce + 1 :] == ["systemctl enable docker", "systemctl start docker", "docker compose version"]
         assert [path.name for path in tmp_path.iterdir() if path.name in _INSTALL_TARGETS] == []
 
+    def test_arm64_takes_docker_from_dockers_repository(self, tmp_path):
+        result, calls = _run_install_main(tmp_path, docker_installed=False)
+
+        assert "Detected: debian 12 (arm64)" in self._text(result)
+        assert "dpkg --print-architecture" in calls
+        assert [call for call in calls if call.startswith("apt-get install") and "docker" in call] == [
+            "apt-get install -y -qq docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin"
+        ]
+        assert (tmp_path / "etc-apt" / "sources.list.d" / "docker.list").exists()
+
+    @pytest.mark.parametrize(
+        ("system", "compose"),
+        [(DEBIAN_13_RISCV64, "docker-compose"), (UBUNTU_2404_RISCV64, "docker-compose-v2")],
+        ids=["debian-13", "ubuntu-24.04"],
+    )
+    def test_riscv64_takes_docker_from_the_distribution(self, tmp_path, system, compose):
+        # Docker's repository has no packages for linux/riscv64. Debian 13 and Ubuntu 24.04
+        # build Docker Engine, Compose v2 (the docker compose plugin) and buildx for it: Debian
+        # as docker-compose, Ubuntu as docker-compose-v2 (ADR-0370).
+        result, calls = _run_install_main(tmp_path, docker_installed=False, system=system)
+
+        assert "(riscv64)" in self._text(result)
+        installs = [call for call in calls if call.startswith("apt-get install") and "docker" in call]
+        assert installs == [f"apt-get install -y -qq docker.io {compose} docker-buildx"]
+        assert not [call for call in calls if call.startswith(("curl", "gpg", "lsb_release", "dpkg"))]
+        assert list((tmp_path / "etc-apt" / "sources.list.d").iterdir()) == []
+        after = calls[calls.index(installs[0]) + 1:]
+        assert after[:3] == ["systemctl enable docker", "systemctl start docker", "docker compose version"]
+
+    def test_an_installed_docker_stays_on_riscv64(self, tmp_path):
+        result, calls = _run_install_main(tmp_path, system=DEBIAN_13_RISCV64)
+
+        assert not [call for call in calls if call.startswith("apt-get install") and "docker" in call]
+        assert "Docker is already installed" in result.stdout
+
+    def test_on_a_spacemit_k1_nvme_power_saving_goes_off_whenever_a_drive_appears(self, tmp_path):
+        # The NVMe controller of the SpacemiT K1 hangs under load ("QID 0 timeout, disable
+        # controller") unless the drive's APST and the PCIe link's ASPM L1 are off, and the kernel
+        # parameters that would turn them off keep the BPI-F3 from booting. The K1 may enumerate
+        # PCIe late in the boot, so udev turns them off as each drive appears: ASPM L1 with the
+        # PCIe function, APST with the drive's disk, since the driver adds the controller's APST
+        # setting only after it has identified the drive. udev applies the rule to the drives
+        # there are now. The rule touches NVMe drives only, and fstrim.timer stays as it is:
+        # SATA and USB disks keep TRIM, and the fstab entries of the pools with an NVMe drive keep
+        # fstrim off those (ADR-0370).
+        result, calls = _run_install_main(tmp_path, system=DEBIAN_13_RISCV64, compatible=SPACEMIT_K1)
+
+        script = tmp_path / "usr-local-sbin" / "unos-k1-nvme"
+        rules = _settings(tmp_path / "etc-udev-rules.d" / "60-unos-k1-nvme.rules")
+        assert rules == [
+            'ACTION=="add|change", SUBSYSTEM=="pci", ATTR{class}=="0x010802", ATTR{link/l1_aspm}="0"',
+            'ACTION=="add|change", SUBSYSTEM=="block", KERNEL=="nvme*", ENV{DEVTYPE}=="disk", '
+            f'RUN+="{script}"',
+        ]
+        assert os.access(script, os.X_OK)
+        k1 = [call for call in calls if call.startswith("udevadm") or "fstrim" in call]
+        assert k1 == [
+            "udevadm control --reload",
+            "udevadm trigger --action=change --subsystem-match=pci --attr-match=class=0x010802",
+            "udevadm trigger --action=change --subsystem-match=block --sysname-match=nvme*",
+        ]
+        assert "SpacemiT K1" in self._text(result)
+
+    def test_the_k1_nvme_script_turns_off_apst_and_aspm_l1_of_each_drive(self, tmp_path):
+        """The script the rule runs, against a sysfs of two NVMe drives in tmp_path: 0 in a
+        controller's pm_qos_latency_tolerance_us makes the driver turn APST off, and 0 in its PCIe
+        function's l1_aspm turns ASPM L1 off (ADR-0370)."""
+        _run_install_main(tmp_path / "install", system=DEBIAN_13_RISCV64, compatible=SPACEMIT_K1)
+        sys = tmp_path / "sys"
+        for n, pci in enumerate(["0001:01:00.0", "0002:01:00.0"]):
+            function = sys / "devices" / pci
+            (function / "link").mkdir(parents=True)
+            (function / "link" / "l1_aspm").write_text("1\n")
+            controller = sys / "class" / "nvme" / f"nvme{n}"
+            (controller / "power").mkdir(parents=True)
+            (controller / "power" / "pm_qos_latency_tolerance_us").write_text("100000\n")
+            (controller / "device").symlink_to(function)
+        script = (tmp_path / "install" / "usr-local-sbin" / "unos-k1-nvme").read_text()
+        assert script.count("/sys/") == 1
+        (tmp_path / "k1-nvme").write_text(script.replace("/sys/", f"{sys}/"))
+
+        result = subprocess.run(["sh", str(tmp_path / "k1-nvme")], capture_output=True, text=True, timeout=30)
+
+        assert result.returncode == 0, result.stderr
+        for n, pci in enumerate(["0001:01:00.0", "0002:01:00.0"]):
+            assert (sys / "class" / "nvme" / f"nvme{n}" / "power" / "pm_qos_latency_tolerance_us").read_text() == "0\n"
+            assert (sys / "devices" / pci / "link" / "l1_aspm").read_text() == "0\n"
+
+    # On a SpacemiT K1 (is_spacemit_k1 replaced, as the device tree would answer).
+    K1 = "is_spacemit_k1() { true; }"
+
+    def test_on_a_spacemit_k1_only_the_supervisor_is_built_beside_a_loaded_web_ui_image(self, tmp_path):
+        # Node.js crashes on the K1 while it builds the web UI (nodejs/node#66845): its image comes
+        # from another machine, and install.sh builds the supervisor alone (ADR-0373).
+        result, calls, exec_start = _start_install(tmp_path, prelude=self.K1)
+
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert "docker image inspect deploy-webui:latest" in calls
+        assert [call for call in calls if call.startswith("docker compose build")] == ["docker compose build supervisor"]
+        assert any(call.startswith("docker compose up") for call in calls)
+        assert exec_start
+
+    def test_on_a_spacemit_k1_without_a_web_ui_image_it_stops_and_says_how_to_load_one(self, tmp_path):
+        result, calls, exec_start = _start_install(tmp_path, "no-webui-image", prelude=self.K1)
+        text = self._text(result)
+
+        assert result.returncode == 1
+        assert not [call for call in calls
+                    if call.startswith(("docker compose build", "docker compose up")) and "--help" not in call]
+        assert exec_start is None
+        assert "docker buildx build --platform linux/riscv64 -t deploy-webui:latest --load webui" in text
+        assert "docker save -o deploy-webui.tar deploy-webui:latest" in text
+        assert "sudo docker load -i deploy-webui.tar" in text
+
+    def test_elsewhere_both_images_are_built(self, tmp_path):
+        result, calls, _ = _start_install(tmp_path, "no-webui-image")
+
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert [call for call in calls if call.startswith("docker compose build")] == ["docker compose build"]
+        assert "docker image inspect deploy-webui:latest" not in calls
+
+    @pytest.mark.parametrize(
+        "compatible", [None, "rockchip,rk3588-evb1-v10\0rockchip,rk3588\0"], ids=["pc", "rk3588"],
+    )
+    def test_other_hosts_keep_nvme_power_saving_and_trim(self, tmp_path, compatible):
+        result, calls = _run_install_main(tmp_path, compatible=compatible)
+
+        assert not [call for call in calls if call.startswith("udevadm") or "fstrim" in call]
+        assert not (tmp_path / "etc-udev-rules.d").exists()
+        assert not (tmp_path / "usr-local-sbin").exists()
+
 
 def _uninstall_lib(tmp_path):
     """uninstall.sh without its last line (`main "$@"`). Returns the path of the copy."""
@@ -1856,6 +2027,29 @@ class TestUninstallScript:
         assert "Uninstallation cancelled" in result.stdout
         assert "  - The Samba passwords of the SMB accounts created by UNOS\n" in result.stdout
         assert "The SMB accounts themselves and the group unos-smb are kept" in self._text(result)
+
+    def test_the_completion_names_the_docker_packages_of_both_sources(self, tmp_path):
+        # install.sh takes Docker from Docker's repository, and on riscv64 from the
+        # distribution (ADR-0370).
+        result, _, _ = self._run(tmp_path, "print_completion")
+
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert "  apt-get purge docker-ce docker-ce-cli containerd.io\n" in result.stdout
+        assert "  apt-get purge docker.io docker-buildx docker-compose\n" in result.stdout
+        assert "SpacemiT K1" not in result.stdout
+
+    def test_the_completion_names_the_kept_nvme_rule_of_a_spacemit_k1(self, tmp_path):
+        # The pools stay, so the udev rule that keeps the K1's NVMe drives from hanging stays
+        # (ADR-0370).
+        rule = tmp_path / "60-unos-k1-nvme.rules"
+        rule.write_text("# UNOS\n")
+
+        result, calls, _ = self._run(tmp_path, f'K1_NVME_RULE="{rule}"; print_completion')
+
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert rule.exists() and calls == []
+        assert f"SpacemiT K1: the udev rule {rule} keeps turning off the power saving" in self._text(result)
+        assert "fstrim" not in result.stdout
 
     def test_the_completion_names_the_kept_accounts_and_how_to_remove_them(self, tmp_path):
         result, _, _ = self._run(tmp_path, "remove_samba_passwords; print_completion")
@@ -2440,6 +2634,24 @@ def _dockerignore(context):
     return {line.strip() for line in lines if line.strip() and not line.lstrip().startswith("#")}
 
 
+def _pip_layer(lines):
+    """The index of the RUN that installs requirements.txt in the stripped lines of
+    supervisor/Dockerfile: the only one that starts with `RUN pip install`."""
+    starts = [i for i, line in enumerate(lines) if line.startswith("RUN pip install")]
+    assert len(starts) == 1, starts
+    return starts[0]
+
+
+def _instruction(lines, start):
+    """The instruction that starts at the stripped line `start`, its continuation lines joined."""
+    parts = []
+    for line in lines[start:]:
+        parts.append(line.removesuffix("\\").strip())
+        if not line.endswith("\\"):
+            break
+    return " ".join(parts)
+
+
 class TestBuildContexts:
     def test_dockerignore_keeps_what_the_test_images_copy(self):
         for context in ("webui", "supervisor"):
@@ -2500,7 +2712,7 @@ class TestBuildContexts:
         lines = [line.strip() for line in (REPO_ROOT / "supervisor" / "Dockerfile").read_text().splitlines()]
         arg = lines.index("ARG UNOS_VERSION=unknown")
         assert lines[arg + 1] == "ENV UNOS_VERSION=${UNOS_VERSION}"
-        assert arg > lines.index("COPY src/ ./src/") > lines.index("RUN pip install --no-cache-dir -r requirements.txt")
+        assert arg > lines.index("COPY src/ ./src/") > _pip_layer(lines)
         build = _compose_file("docker-compose.yml")["services"]["supervisor"]["build"]
         assert build == {"context": "../supervisor", "args": {"UNOS_VERSION": "${UNOS_VERSION:-unknown}"}}
 
@@ -2514,7 +2726,7 @@ class TestBuildContexts:
                   "&& rm -rf /var/lib/apt/lists/*")
         assert lines.count(restic) == 1
         at = lines.index(restic)
-        assert lines.index("RUN pip install --no-cache-dir -r requirements.txt") < at < lines.index("COPY src/ ./src/")
+        assert _pip_layer(lines) < at < lines.index("COPY src/ ./src/")
         comment = []
         for line in reversed(lines[:at]):
             if not line.startswith("#"):
@@ -2522,6 +2734,30 @@ class TestBuildContexts:
             comment.insert(0, line)
         assert "ADR-0337" in " ".join(comment) and "cached" in " ".join(comment), comment
         assert "restic" not in text.split("COPY requirements.txt")[0]
+
+    def test_the_pip_layer_builds_on_riscv64_and_keeps_no_toolchain_there(self):
+        """The base's pip 24.0 takes no linux/riscv64 wheel, and five packages publish none for it:
+        the pip layer first installs a pip of 24.1 or later, and on riscv64 installs what compiles
+        them, builds them and removes it again in the same RUN, so that no layer of the image keeps
+        the Rust toolchain. Elsewhere it installs the requirements as before (ADR-0370)."""
+        lines = [line.strip() for line in (REPO_ROOT / "supervisor" / "Dockerfile").read_text().splitlines()]
+        layer = _instruction(lines, _pip_layer(lines))
+        toolchain = "cargo rustc pkg-config libssl-dev libffi-dev make"
+
+        pip = re.match(r"RUN pip install --no-cache-dir pip==(\d+)\.(\d+)(?:\.\d+)? && ", layer)
+        assert pip and (int(pip[1]), int(pip[2])) >= (24, 1), layer
+        other, riscv64 = re.fullmatch(
+            r'.*? && if \[ "\$\(dpkg --print-architecture\)" != riscv64 \]; then (.*?); else (.*?); fi', layer
+        ).groups()
+        assert other == "pip install --no-cache-dir -r requirements.txt"
+        steps = riscv64.split(" && ")
+        assert steps == [
+            "apt-get update",
+            f"apt-get install -y --no-install-recommends {toolchain}",
+            "pip install --no-cache-dir -r requirements.txt",
+            f"apt-get purge -y --auto-remove {toolchain}",
+            "rm -rf /var/lib/apt/lists/* /root/.cargo",
+        ]
 
 
 # A FROM line that names its image by tag and digest, `name:tag@sha256:<64 hex>`, with an
@@ -2753,12 +2989,14 @@ class TestHealthchecks:
     @pytest.mark.parametrize("status, exit_code", [(200, 0), (503, 1), (None, 1)])
     def test_supervisor_is_healthy_only_while_the_api_answers(self, status, exit_code):
         check = _compose_file("docker-compose.yml")["services"]["supervisor"]["healthcheck"]
-        # The image (python:3.11-slim) has neither curl nor wget.
-        assert check["test"][:3] == ["CMD", "python", "-c"]
-        code = check["test"][3]
+        # The image (python:3.11-slim) has neither curl nor wget, and a Python that only asked for
+        # the health cost a K1 0.5 s of CPU every interval; bash costs it 0.01 s (ADR-0375).
+        assert check["test"][:3] == ["CMD", "bash", "-c"]
+        # Compose reads $$ as $.
+        code = check["test"][3].replace("$$", "$")
         assert code.count(SUPERVISOR_HEALTH_URL) == 1
-        # The request gives up before Docker kills the check.
-        request_timeout = re.search(r"timeout=(\d+)", code)
+        # The check waits for the answer less long than Docker gives it.
+        request_timeout = re.search(r"read -r -t (\d+) ", code)
         assert request_timeout, code
         assert int(request_timeout.group(1)) < _seconds(check["timeout"])
 
@@ -2767,7 +3005,7 @@ class TestHealthchecks:
             # A proxy in the container's environment must not get the request.
             env["http_proxy"] = env["HTTP_PROXY"] = f"http://127.0.0.1:{proxy_port}"
             result = subprocess.run(
-                [sys.executable, "-c", code.replace(SUPERVISOR_HEALTH_URL, f"http://127.0.0.1:{port}/api/v1/health")],
+                ["bash", "-c", code.replace(SUPERVISOR_HEALTH_URL, f"http://127.0.0.1:{port}/api/v1/health")],
                 env=env,
                 capture_output=True,
                 text=True,
@@ -3130,12 +3368,18 @@ class TestContainerLogs:
 class TestContinuousIntegration:
     """.github/workflows/test.yml. docs/TESTING.md lists the same commands."""
 
+    # The major version of Node.js in the nodejs package of an Alpine release (pkgs.alpinelinux.org;
+    # 3.22 has 22.23.5 on linux/riscv64 among the others, read on 2026-11-13). A newer Alpine is
+    # checked and added here before the builder moves to it.
+    ALPINE_NODE = {"3.22": "22"}
+
     def test_node_is_supported_and_the_same_for_the_image_ci_and_npm(self):
-        builder = re.findall(
-            r"^FROM node:(\d+)-alpine@sha256:[0-9a-f]{64} AS builder$",
-            (REPO_ROOT / "webui" / "Dockerfile").read_text(),
-            re.M,
-        )
+        # The builder runs Alpine's Node.js, whose major version the Alpine release fixes; the
+        # constraint nodejs~<major> makes apk fail the build on a release with another one
+        # (ADR-0370).
+        dockerfile = (REPO_ROOT / "webui" / "Dockerfile").read_text()
+        alpine = re.findall(r"^FROM alpine:(\d+\.\d+)@sha256:[0-9a-f]{64} AS builder$", dockerfile, re.M)
+        builder = re.findall(r"^RUN apk add --no-cache nodejs~(\d+) npm$", dockerfile, re.M)
         setup_node = [
             str(step["with"]["node-version"])
             for step in _workflow_jobs()["frontend"]["steps"]
@@ -3143,11 +3387,22 @@ class TestContinuousIntegration:
         ]
         engines = json.loads((REPO_ROOT / "webui" / "package.json").read_text())["engines"]
 
-        assert len(builder) == 1
+        assert len(alpine) == 1 and len(builder) == 1
+        assert self.ALPINE_NODE.get(alpine[0]) == builder[0], alpine
         # Node.js 20 reached its end of life in April 2026.
         assert int(builder[0]) >= 22
         assert setup_node == builder
         assert engines == {"node": f">={builder[0]}"}
+
+    def test_dependabot_keeps_the_alpine_release_of_the_builder(self):
+        # A new Alpine release can bring another major version of Node.js: Dependabot proposes
+        # new digests of alpine:3.22 only (ADR-0370).
+        config = yaml.safe_load((REPO_ROOT / ".github" / "dependabot.yml").read_text())
+        docker = next(update for update in config["updates"] if update["package-ecosystem"] == "docker")
+        ignored = {rule["dependency-name"]: rule.get("update-types") for rule in docker["ignore"]}
+
+        assert ignored["alpine"] == ["version-update:semver-major", "version-update:semver-minor"]
+        assert "node" not in ignored
 
     def test_python_checks_install_hashed_tools(self):
         # `pip install ruff==... pip-audit==...` resolved the packages they

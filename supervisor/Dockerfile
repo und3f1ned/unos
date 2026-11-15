@@ -18,7 +18,21 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# pip 26.3 first: the base's pip 24.0 takes no wheel built for linux/riscv64 (pip 24.1 added the
+# platform's manylinux tags). On riscv64, cryptography, bcrypt, cffi, psutil and uvloop publish no
+# wheel, so this layer also installs what compiles them (Rust, the headers of OpenSSL and libffi,
+# make), builds them and removes it again: the image keeps no Rust toolchain. Elsewhere nothing
+# is compiled (ADR-0370).
+RUN pip install --no-cache-dir pip==26.3 \
+    && if [ "$(dpkg --print-architecture)" != riscv64 ]; then \
+        pip install --no-cache-dir -r requirements.txt; \
+    else \
+        apt-get update \
+        && apt-get install -y --no-install-recommends cargo rustc pkg-config libssl-dev libffi-dev make \
+        && pip install --no-cache-dir -r requirements.txt \
+        && apt-get purge -y --auto-remove cargo rustc pkg-config libssl-dev libffi-dev make \
+        && rm -rf /var/lib/apt/lists/* /root/.cargo; \
+    fi
 
 # restic for the off-device copy (ADR-0337), Debian's package, in a layer of its own after pip's:
 # the apt-get and pip layers above stay cached, so a device that builds this image downloads and
