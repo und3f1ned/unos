@@ -66,7 +66,9 @@ significant step. Features and their state live in `feature-list.json`, decision
   own (ADR-0376, proposed); `scenario.sh all` passed on the device before and after a reboot,
   and the checks by hand of the entry's notes before and after a second one. Merged as main
   dfe81f5; the device runs e80e2d5, whose code is the same. Open: a fresh
-  `install.sh` on a second microSD card and an NVMe pool (Open owner actions, 6 and 7).
+  `install.sh` on a second microSD card and an NVMe pool (Open owner actions, 6 and 7). That
+  afternoon the device's Armbian was upgraded to 26.11.0-trunk (kernel 6.1.172), and hdparm,
+  nvme-cli and acl installed (Log).
 - On the device the NFS server runs (nfs-server, rpcbind.socket and rpcbind, enabled since
   2026-11-08, ADR-0303) and exports nothing for now; over IPv6 only LAN sources reach it
   (ADR-0301). avahi-daemon and wsdd2 run (network discovery), and nmbd is disabled since
@@ -109,15 +111,16 @@ significant step. Features and their state live in `feature-list.json`, decision
      around the reboot of 13:11 UTC, `shares.keep-every-replaced-copy` on those around the
      reboot of 14:45 UTC, and `shares.repair-in-background`, `backup.streaming-restore`,
      `webui.no-http-polling` and `auth.user-rename` on those around the reboot of 19:37 UTC
-     (Log); `shares.repair-permissions` waits for setfacl on the device
-     (the package acl, an owner action) and `shares.acl-aware-parent-check` for the owner's word
+     (Log); `shares.repair-permissions` waits for its ACL step before and after a reboot
+     (setfacl is on the device since 2026-11-15, and the step passed once after a reboot) and `shares.acl-aware-parent-check` for the owner's word
      on ADR-0193; the others need a device check first or, as `storage.pool-health`, a step the
      re-check could not show.
 
 ## Dev device
 
-State on 2026-11-15, 14:25 UTC. A Banana Pi BPI-W3 (ArmSoM W3, Rockchip RK3588, 8 GB), running
-Armbian's community image for `armsom-w3` (26.2.0-trunk, Debian 13, kernel 6.1.115-vendor-rk35xx);
+State on 2026-11-15, 16:17 UTC. A Banana Pi BPI-W3 (ArmSoM W3, Rockchip RK3588, 8 GB), running
+Armbian's community image for `armsom-w3`, upgraded on 2026-11-15 from 26.2.0-trunk.151 to
+26.11.0-trunk.133 (Debian 13, kernel 6.1.172-vendor-rk35xx);
 its address and logins are in `dev.env` (ADR-0212). This journal called it a UGREEN board, after
 the UGREEN firmware on its eMMC, until the owner set that right on 2026-11-15 (ADR-0376).
 
@@ -126,6 +129,19 @@ the UGREEN firmware on its eMMC, until the owner set that right on 2026-11-15 (A
   since boot, its own wear estimate 0 to 10%. Nothing writes to it.
 - SSH by key only, root by the workstation's key `~/.ssh/unos_dev_ed25519`; root's and the UNOS
   administrator's passwords were rotated and live only in `dev.env` (ADR-0226).
+- The owner had Armbian upgraded on 2026-11-15 ("update Armbian on the W3 to the current one"):
+  a copy of `/boot`, `/etc/fstab`, `/etc/apt` and the package list on the workstation (the
+  worktree's `tmp/`), `apt-get update` (166.512 MiB on the card), then `apt-get full-upgrade` in a
+  systemd unit of its own, keeping changed configuration files: 136 packages upgraded and 9 new,
+  none removed, among them Armbian 26.11.0-trunk.133 with kernel 6.1.172-vendor-rk35xx, Docker
+  29.9.3, containerd 2.4.2, Samba 4.22.11, systemd 257.13 and OpenSSH 10.0p1-7+deb13u4 (3155.180
+  MiB on the card, downloads and the restart of Docker included). `armbianEnv.txt` and
+  `boot.scr` stayed as they were; the owner's device tree overlay, which no package owns, was
+  copied into the new kernel's dtb directory. A reboot from the API at 16:02 UTC (the boot of
+  16:03:11; both containers healthy by 16:03:33; check.sh OK). Then hdparm, nvme-cli and acl
+  installed (63.137 MiB): the first two are in `deploy/install.sh`'s list and were missing, acl
+  gives the scenario checks setfacl. `scenario.sh all` OK at 16:17 UTC, 157 steps without a skip
+  (20.047 MiB).
 - Runs main e80e2d5 (the merge of #81, the BPI-F3's change, ADR-0369 to ADR-0375), deployed to
   this device at 12:52 to 12:55 UTC on 2026-11-15 (SD MiB sync 2.520, build-supervisor 440.910:
   the pip layer built again for #81's pip 26.3, build-webui 18.504, up 6.473, check.sh 0.453);
@@ -362,6 +378,19 @@ Open owner actions:
    (`deploy.arm64-bpi-w3`).
 
 ## Log
+
+### 2026-11-15: Armbian on the dev device upgraded to 26.11.0-trunk (kernel 6.1.172)
+
+- The owner asked to "update Armbian on the W3 to the current one". The board tracks Armbian's
+  nightly repository for `armsom-w3` (beta.armbian.com); its package lists dated from January.
+  The upgrade stayed on that repository and on the vendor kernel branch (the kernel choice is the
+  owner's, ADR-0376): 26.2.0-trunk.151 to 26.11.0-trunk.133, kernel 6.1.115 to 6.1.172 (Dev
+  device has the steps, versions and SD writes). The owner's overlay lived in the old kernel's dtb
+  directory, which `/boot/dtb` no longer points to after the upgrade: it was copied over, and
+  `docs/INSTALL.md` now says so for any overlay of one's own.
+- After the reboot: the RK3588's video, GPU and NPU nodes, the JMB58x and the RTL8125 are there,
+  the pool mounted with UNOS's options, check.sh OK, and `scenario.sh all` passed with its ACL
+  step, which had been skipped for want of setfacl.
 
 ### 2026-11-15: Notes, a ledger entry and guard tests for the BPI-W3 (ADR-0376)
 

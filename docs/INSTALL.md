@@ -160,8 +160,8 @@ for apps (ADR-0372):
 ### Banana Pi BPI-W3 (Rockchip RK3588, ARM64)
 
 UNOS runs on a BPI-W3 with 8 GB of RAM, its dev device, from a microSD card
-with Armbian's community image for the board (26.2.0-trunk, Debian 13, the
-`vendor-rk35xx` kernel 6.1.115). The BPI-W3 and the ArmSoM W3 are one board,
+with Armbian's community image for the board (26.11.0-trunk, Debian 13, the
+`vendor-rk35xx` kernel 6.1.172). The BPI-W3 and the ArmSoM W3 are one board,
 and Armbian names its images `armsom-w3`. UNOS has no code of its own for the
 board (ADR-0376).
 
@@ -169,6 +169,9 @@ board (ADR-0376).
   on every ARM64 host, and builds both images on the board. Neither
   `install.sh` nor the web UI's build has run on the board yet: the dev device
   was set up by hand, and its web UI is built on another machine.
+- **Upgrades.** `apt full-upgrade` also replaces the kernel and its device
+  trees: `/boot/dtb` then points to the new kernel's directory, so copy a device
+  tree overlay of your own into its `rockchip/overlay/` before the reboot.
 - **The eMMC stays as it is.** Write the image to a microSD card and boot from
   it. UNOS neither lists nor formats the eMMC (`mmcblk0`), its boot partitions,
   the microSD card or zram, so whatever is on the eMMC stays there.
