@@ -25,7 +25,8 @@ Account page; the server's messages stay English (ADR-0287). Avoid: dictionary, 
 phone's screen: the table scrolls sideways inside it, while the page never does (ADR-0302).
 Avoid: scroll wrapper, responsive table.
 
-**Dev device**: The ArmSoM Sige7 board that UNOS is developed and checked on. It holds no data to
+**Dev device**: The Banana Pi BPI-W3 (ArmSoM W3, Rockchip RK3588) that UNOS is developed and checked
+on; PROGRESS.md (Dev device) has its state. It holds no data to
 preserve (ADR-0220). Avoid: production NAS, the server.
 
 **Workstation**: The owner's computer, where the repository is edited and tested, the local

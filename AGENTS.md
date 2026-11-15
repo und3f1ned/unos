@@ -107,7 +107,7 @@ Each rule names its decision and what enforces it. The guard checks the commands
 the desktop app's terminal tool, and this project denies the Desktop Commander tools (ADR-0211).
 A denial by the guard or the permission system is an answer: ask the owner how to go on.
 
-- The dev device runs from an SD card that wears with every write; its eMMC keeps the vendor's
+- The dev device runs from an SD card that wears with every write; its eMMC keeps the owner's
   firmware and is never written (ADR-0214, ADR-0225). Reach the device only through `scripts/dev/`
   (ADR-0016), scratch files in its `/dev/shm`. `deploy.sh`, `linux-tests.sh`, `ipv6-filter.sh`
   (install, remove) and `scenario.sh` hold the device lock (ADR-0210) and print `SD writes`;

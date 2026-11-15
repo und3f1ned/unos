@@ -1586,7 +1586,9 @@ class TestInstallScript:
         assert "docker image inspect deploy-webui:latest" not in calls
 
     @pytest.mark.parametrize(
-        "compatible", [None, "rockchip,rk3588-evb1-v10\0rockchip,rk3588\0"], ids=["pc", "rk3588"],
+        "compatible",
+        [None, "rockchip,rk3588-evb1-v10\0rockchip,rk3588\0", "rockchip,rk3588-armsom-w3\0rockchip,rk3588\0"],
+        ids=["pc", "rk3588", "bpi-w3"],
     )
     def test_other_hosts_keep_nvme_power_saving_and_trim(self, tmp_path, compatible):
         result, calls = _run_install_main(tmp_path, compatible=compatible)

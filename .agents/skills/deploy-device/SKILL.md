@@ -7,7 +7,7 @@ disable-model-invocation: true
 # Deploy to the dev device
 
 The dev device is one shared board. It runs from an SD card, which wears with every write, and
-its eMMC keeps the vendor's firmware and is never written: every write counts (ADR-0214,
+its eMMC keeps the owner's firmware and is never written: every write counts (ADR-0214,
 ADR-0225). `scripts/dev/deploy.sh` does the deploy in scripted, measured,
 reversible steps, and keeps the backups and rollback copies on this workstation (ADR-0223).
 Each step holds the device lock (`/run/unos-dev.lock` on the device, ADR-0210) and ends with a

@@ -1093,8 +1093,9 @@ class TestMountPool:
 
     @pytest.mark.parametrize(
         ("compatible", "pool"),
-        [("spacemit,k1-x\0", "data"), ("rockchip,rk3588-evb1-v10\0rockchip,rk3588\0", "fast")],
-        ids=["k1-sata-pool", "rk3588-nvme-pool"],
+        [("spacemit,k1-x\0", "data"), ("rockchip,rk3588-evb1-v10\0rockchip,rk3588\0", "fast"),
+         ("rockchip,rk3588-armsom-w3\0rockchip,rk3588\0", "fast")],
+        ids=["k1-sata-pool", "rk3588-nvme-pool", "bpi-w3-nvme-pool"],
     )
     def test_other_pools_keep_the_default_discard(self, data_pool, compatible, pool):
         # Only NVMe drives hang on the K1: a SATA or USB disk there, and an NVMe drive on another

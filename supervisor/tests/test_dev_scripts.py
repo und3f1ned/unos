@@ -933,6 +933,38 @@ def test_check_sh_reports_a_board_near_its_throttling_point(local_device, tmp_pa
     assert result.returncode == 1
 
 
+# The thermal zones of a Rockchip RK3588 (BPI-W3, ArmSoM W3) under Armbian's vendor kernel 6.1,
+# as the dev device has them: only soc-thermal has passive trips; the zones of the CPU's clusters,
+# the GPU and the NPU have a critical trip alone (ADR-0376).
+RK3588_ZONES = [
+    ("soc-thermal", 42, [("passive", 75), ("passive", 85), ("critical", 115)]),
+    *[(zone, 42, [("critical", 115)]) for zone in
+      ("bigcore0-thermal", "bigcore1-thermal", "littlecore-thermal", "center-thermal", "gpu-thermal", "npu-thermal")],
+]
+
+
+def test_check_sh_reads_the_zones_of_an_rk3588(local_device, tmp_path):
+    """On the BPI-W3 soc-thermal carries the passive trip at 75 C that the check measures against;
+    a zone with a critical trip alone is shown without one and is never a problem."""
+    result = _run_check(local_device, tmp_path, RK3588_ZONES)
+    out = result.stdout
+    section = out.split("== load and temperature", 1)[1].split("\n== ", 1)[0]
+    assert "soc-thermal: 42 C, first passive trip 75 C" in section, out + result.stderr
+    lines = section.splitlines()
+    assert "bigcore0-thermal: 42 C" in lines and "npu-thermal: 42 C" in lines
+    assert "check: OK" in out and result.returncode == 0, out + result.stderr
+
+
+def test_check_sh_reports_an_rk3588_near_its_throttling_point(local_device, tmp_path):
+    zones = [("soc-thermal", 70, RK3588_ZONES[0][2]), ("bigcore0-thermal", 72, [("critical", 115)])]
+    result = _run_check(local_device, tmp_path, zones)
+    out = result.stdout
+    assert ("- soc-thermal is at 70 C, within 5 C of its first passive trip (75 C), where the "
+            "kernel slows the CPU down: the board needs cooling or less load") in out, out + result.stderr
+    assert "bigcore0-thermal is at" not in out
+    assert result.returncode == 1
+
+
 @pytest.mark.parametrize("enabled", ["none", "masked", "static"])
 def test_check_sh_takes_an_nmbd_that_cannot_start(local_device, enabled):
     """An nmbd that is not installed, masked or static (never started by itself) is no problem."""
