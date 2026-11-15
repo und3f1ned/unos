@@ -209,6 +209,36 @@ export interface ScrubStatus {
   last_run: string | null;
 }
 
+/** The usage limit of a balance that the dialog offers first (BALANCE_DEFAULT_USAGE, ADR-0377). */
+export const BALANCE_DEFAULT_USAGE = 20;
+
+/**
+ * What a balance rewrites (ADR-0377): the data and metadata chunks less than `usage` percent full
+ * (1 to 99), or every chunk with `full`, which takes no usage.
+ */
+export type BalanceStart = { usage: number } | { full: true };
+
+/** A pool's balance as `btrfs balance status` reports it, and how the last one ended (ADR-0377). */
+export interface BalanceStatus {
+  pool: string;
+  /**
+   * pausing and cancelling: a pause or a cancel waits for the chunk being moved; idle: none runs
+   * and none is paused.
+   */
+  status: 'running' | 'pausing' | 'cancelling' | 'paused' | 'idle';
+  /** Chunks balanced since the start or resume, of about `expected`; of a finished one, relocated. */
+  completed: number | null;
+  expected: number | null;
+  /** Of a finished balance: the chunks it considered. */
+  considered: number | null;
+  /** The estimate of a balance that runs; null until it has balanced a chunk. */
+  seconds_left: number | null;
+  /** Of an idle pool: how its last balance ended, when known. */
+  result: 'finished' | 'cancelled' | 'failed' | null;
+  /** btrfs's error of a failed one, in English. */
+  error: string | null;
+}
+
 export async function getDisks(): Promise<Disk[]> {
   return api.get<Disk[]>('/storage/disks');
 }
@@ -300,4 +330,32 @@ export async function getScrubStatus(poolName: string): Promise<ScrubStatus> {
 
 export async function cancelScrub(poolName: string): Promise<ScrubStatus> {
   return api.delete<ScrubStatus>(`/storage/pools/${poolName}/scrub`);
+}
+
+function balancePath(poolName: string): string {
+  return `/storage/pools/${encodeURIComponent(poolName)}/balance`;
+}
+
+/**
+ * Start a balance; HTTP 409 when the pool is not mounted or read-only, while a scrub of it runs or
+ * a balance of it runs or is paused.
+ */
+export async function startBalance(poolName: string, what: BalanceStart): Promise<BalanceStatus> {
+  return api.post<BalanceStatus>(balancePath(poolName), what);
+}
+
+export async function getBalanceStatus(poolName: string): Promise<BalanceStatus> {
+  return api.get<BalanceStatus>(balancePath(poolName));
+}
+
+export async function pauseBalance(poolName: string): Promise<BalanceStatus> {
+  return api.post<BalanceStatus>(`${balancePath(poolName)}/pause`, {});
+}
+
+export async function resumeBalance(poolName: string): Promise<BalanceStatus> {
+  return api.post<BalanceStatus>(`${balancePath(poolName)}/resume`, {});
+}
+
+export async function cancelBalance(poolName: string): Promise<BalanceStatus> {
+  return api.delete<BalanceStatus>(balancePath(poolName));
 }

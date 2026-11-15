@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Scenario checks of the dev device (ADR-0304): scripts/dev/scenario.sh [--pool NAME] AREA...
 #
-#   AREA     files, volumes, smart, backups, smb, smbconf, shares, scrub, offsite or restore; all:
+#   AREA     files, volumes, smart, backups, smb, smbconf, shares, scrub, balance, offsite or restore; all:
 #            every area, in this order.
-#   --pool   the pool of the files, volumes, smb, smbconf, shares, scrub, offsite and restore checks (default:
+#   --pool   the pool of the files, volumes, smb, smbconf, shares, scrub, balance, offsite and restore checks (default:
 #            the one pool that is mounted read-write with UNOS's fstab entry).
 #
 # Each check runs the user scenario of its area on the device through the API and on the host
@@ -11,7 +11,8 @@
 # share, a volume, a Scheduler task and folders whose names start with "unoscheck", and two
 # backups; smbconf also edits smb.conf by hand and restarts the supervisor, ADR-0309; shares
 # makes entries of other owners and modes on the pool over ssh, signs in as its user and turns
-# guest access on for its share, ADR-0340; scrub scrubs the pool, ADR-0314; offsite sets up an off-device
+# guest access on for its share, ADR-0340; scrub scrubs the pool, ADR-0314; balance balances it with a
+# usage limit, pauses, resumes and cancels the balance, ADR-0377; offsite sets up an off-device
 # copy to a folder of the pool and forgets it again, ADR-0337; restore restores a backup it made
 # moments before, twice, which puts the device's database back as it was then, ADR-0341), prints
 # PASS or FAIL for every step with the MiB written to the SD card meanwhile, removes what it made,
@@ -24,7 +25,7 @@
 # Settings: dev.env (see env.sh); UNOS_DEV_PYTHON (python3) runs scenario.py.
 set -euo pipefail
 usage() { awk 'NR > 1 && !/^#/ { exit } NR > 1 { sub(/^# ?/, ""); print }' "$0"; }
-AREAS=(files volumes smart backups smb smbconf shares scrub offsite restore)
+AREAS=(files volumes smart backups smb smbconf shares scrub balance offsite restore)
 case ${1:-} in
     -h | --help) usage; exit 0 ;;
 esac
@@ -38,7 +39,7 @@ while [ $# -gt 0 ]; do
             shift 2
             ;;
         all) areas+=("${AREAS[@]}"); shift ;;
-        files | volumes | smart | backups | smb | smbconf | shares | scrub | offsite | restore) areas+=("$1"); shift ;;
+        files | volumes | smart | backups | smb | smbconf | shares | scrub | balance | offsite | restore) areas+=("$1"); shift ;;
         *) usage >&2; exit 2 ;;
     esac
 done

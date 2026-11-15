@@ -2,6 +2,7 @@ import { writable } from 'svelte/store';
 import { getToken, handleUnauthorized } from '$lib/api/client';
 import { problems, type Problem } from '$lib/stores/problems';
 import { scrubs, type ScrubUpdate } from '$lib/stores/scrubs';
+import { balances, type BalanceUpdate } from '$lib/stores/balances';
 import { repairJob } from '$lib/stores/repair';
 import type { RepairResult } from '$lib/api/shares';
 
@@ -188,8 +189,10 @@ export function connectWebSocket() {
       authenticatedAt = Date.now();
       wsConnected.set(true);
       // A new socket, maybe to a supervisor that restarted: the scrubs the last one sent need not
-      // run any more, and this one sends those that its supervisor saw running (ADR-0367).
+      // run any more, and this one sends those that its supervisor saw running (ADR-0367); the
+      // balances likewise (ADR-0377).
       scrubs.set([]);
+      balances.set([]);
     } else if (message.type === 'stats' && message.data) {
       if (!authenticatedAt) authenticatedAt = Date.now();
       wsConnected.set(true);
@@ -200,6 +203,9 @@ export function connectWebSocket() {
     } else if (message.type === 'scrubs' && Array.isArray(message.data)) {
       // Administrators only: the scrubs that run, until they end (ADR-0367).
       scrubs.set(message.data as ScrubUpdate[]);
+    } else if (message.type === 'balances' && Array.isArray(message.data)) {
+      // Administrators only: the balances that run, until they end (ADR-0377).
+      balances.set(message.data as BalanceUpdate[]);
     } else if (message.type === 'repair') {
       // Administrators only, right after auth_ok and on each change: the running or last repair of
       // a share's permissions, null when none has run since the supervisor started (ADR-0363).
@@ -239,6 +245,7 @@ export function disconnectWebSocket() {
   stats.set(null);
   problems.set([]);
   scrubs.set([]);
+  balances.set([]);
   repairJob.set(null);
 }
 

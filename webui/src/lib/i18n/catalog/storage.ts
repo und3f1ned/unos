@@ -103,6 +103,10 @@ export const en = {
 	'storage.pool.inFstab': 'In fstab, but not mounted',
 	'storage.pool.scrub': 'Scrub',
 	'storage.pool.cancelScrub': 'Cancel Scrub',
+	'storage.pool.balance': 'Balance',
+	'storage.pool.pauseBalance': 'Pause Balance',
+	'storage.pool.resumeBalance': 'Resume Balance',
+	'storage.pool.cancelBalance': 'Cancel Balance',
 	'storage.pool.volumes': 'Volumes',
 	'storage.pool.mount': 'Mount',
 	'storage.pool.unmount': 'Unmount',
@@ -153,6 +157,44 @@ export const en = {
 	},
 	'storage.scrub.aborted': 'cancelled before it finished',
 	'storage.scrub.interrupted': 'interrupted before it finished',
+	// A pool's balance, as btrfs reports it, and its dialog (ADR-0377).
+	'storage.balance.statusError': 'Could not read the balance status',
+	'storage.balance.running': 'Balance in progress',
+	'storage.balance.pausing': 'Pausing after the chunk being moved',
+	'storage.balance.cancelling': 'Cancelling the balance',
+	'storage.balance.paused': 'Balance paused',
+	'storage.balance.pausedNote':
+		'A paused balance goes on when you resume it, and also when the pool is mounted again, as at the next start of the NAS. Cancel it to stop it for good.',
+	'storage.balance.progress': 'Balance progress',
+	'storage.balance.chunks': {
+		one: '{done} of about {n} chunk balanced',
+		other: '{done} of about {n} chunks balanced'
+	},
+	'storage.balance.leftSeconds': 'Less than a minute left',
+	'storage.balance.leftMinutes': 'About {minutes} min left',
+	'storage.balance.leftHours': 'About {hours} h {minutes} min left',
+	'storage.balance.finished': {
+		one: 'Last balance: finished, {done} of {n} chunk rewritten',
+		other: 'Last balance: finished, {done} of {n} chunks rewritten'
+	},
+	'storage.balance.cancelled': 'Last balance: cancelled before it finished',
+	'storage.balance.failed': 'Last balance failed',
+	'storage.balance.title': 'Balance {name}',
+	'storage.balance.intro':
+		'A balance rewrites chunks of the pool, the blocks of space that btrfs gives to data and metadata, and frees the space of partly empty ones for new chunks. The pool stays usable, but slower, while it runs.',
+	'storage.balance.what': 'Chunks to rewrite',
+	'storage.balance.usageOption': 'Only chunks less full than a limit (recommended)',
+	'storage.balance.fullOption': 'Every chunk (full balance)',
+	'storage.balance.usage': 'Usage limit (%)',
+	'storage.balance.usageHint':
+		'The data and metadata chunks less full than this are rewritten. A low limit frees the most space for the least work: minutes, not hours.',
+	'storage.balance.usageInvalid': 'Enter a whole number from 1 to 99',
+	'storage.balance.fullTitle': 'A full balance takes long',
+	'storage.balance.fullWarning':
+		'It rewrites every chunk, all the data of the pool: hours on a hard disk, with the pool slower meanwhile. It is rarely needed, such as after a disk was added to the pool.',
+	'storage.balance.fullConfirm': 'Rewrite every chunk of {name}',
+	'storage.balance.start': 'Start Balance',
+	'storage.balance.startFailed': 'The balance did not start',
 
 	'storage.create.title': 'Create Storage Pool',
 	'storage.create.eraseTitle': 'This erases the selected disks',
@@ -379,6 +421,10 @@ export const ru: Translation<typeof en> = {
 	'storage.pool.inFstab': 'Есть в fstab, но не смонтирован',
 	'storage.pool.scrub': 'Проверить целостность',
 	'storage.pool.cancelScrub': 'Отменить проверку',
+	'storage.pool.balance': 'Балансировка',
+	'storage.pool.pauseBalance': 'Приостановить балансировку',
+	'storage.pool.resumeBalance': 'Продолжить балансировку',
+	'storage.pool.cancelBalance': 'Отменить балансировку',
 	'storage.pool.volumes': 'Тома',
 	'storage.pool.mount': 'Смонтировать',
 	'storage.pool.unmount': 'Отмонтировать',
@@ -431,6 +477,45 @@ export const ru: Translation<typeof en> = {
 	},
 	'storage.scrub.aborted': 'отменена до завершения',
 	'storage.scrub.interrupted': 'прервана до завершения',
+	'storage.balance.statusError': 'Не удалось прочитать состояние балансировки',
+	'storage.balance.running': 'Идёт балансировка',
+	'storage.balance.pausing': 'Приостанавливается после перемещаемого блока',
+	'storage.balance.cancelling': 'Балансировка отменяется',
+	'storage.balance.paused': 'Балансировка приостановлена',
+	'storage.balance.pausedNote':
+		'Приостановленная балансировка продолжится, когда вы её возобновите, а также при следующем монтировании пула, например при следующем запуске NAS. Чтобы остановить её совсем, отмените её.',
+	'storage.balance.progress': 'Ход балансировки',
+	'storage.balance.chunks': {
+		one: 'Сбалансировано {done} из примерно {n} блока',
+		few: 'Сбалансировано {done} из примерно {n} блоков',
+		many: 'Сбалансировано {done} из примерно {n} блоков'
+	},
+	'storage.balance.leftSeconds': 'Осталось меньше минуты',
+	'storage.balance.leftMinutes': 'Осталось около {minutes} мин',
+	'storage.balance.leftHours': 'Осталось около {hours} ч {minutes} мин',
+	'storage.balance.finished': {
+		one: 'Последняя балансировка: завершена, перезаписано {done} из {n} блока',
+		few: 'Последняя балансировка: завершена, перезаписано {done} из {n} блоков',
+		many: 'Последняя балансировка: завершена, перезаписано {done} из {n} блоков'
+	},
+	'storage.balance.cancelled': 'Последняя балансировка: отменена до завершения',
+	'storage.balance.failed': 'Последняя балансировка не удалась',
+	'storage.balance.title': 'Балансировка {name}',
+	'storage.balance.intro':
+		'Балансировка перезаписывает блоки пула — участки места, которые btrfs выделяет под данные и метаданные, — и освобождает место частично пустых блоков под новые. Пока она идёт, пул работает, но медленнее.',
+	'storage.balance.what': 'Какие блоки перезаписать',
+	'storage.balance.usageOption': 'Только заполненные меньше порога (рекомендуется)',
+	'storage.balance.fullOption': 'Все блоки (полная балансировка)',
+	'storage.balance.usage': 'Порог заполнения (%)',
+	'storage.balance.usageHint':
+		'Перезаписываются блоки данных и метаданных, заполненные меньше порога. Низкий порог освобождает больше всего места за меньшую работу: минуты, а не часы.',
+	'storage.balance.usageInvalid': 'Введите целое число от 1 до 99',
+	'storage.balance.fullTitle': 'Полная балансировка идёт долго',
+	'storage.balance.fullWarning':
+		'Она перезаписывает все блоки, все данные пула: на жёстком диске это часы, и всё это время пул работает медленнее. Она нужна редко, например после добавления диска в пул.',
+	'storage.balance.fullConfirm': 'Перезаписать все блоки {name}',
+	'storage.balance.start': 'Начать балансировку',
+	'storage.balance.startFailed': 'Балансировка не началась',
 
 	'storage.create.title': 'Новый пул хранения',
 	'storage.create.eraseTitle': 'Выбранные диски будут стёрты',

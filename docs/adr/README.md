@@ -155,6 +155,7 @@ and this index, and `make check-fast` runs it.
 | [0358](0358-restored-copies-are-listed-and-deleted-on-the-snapshots-page-by-subvolume-id.md) | Restored copies are listed and deleted on the Snapshots page, by subvolume id after the checks of a volume's Delete | accepted | 2026-11-12 |
 | [0360](0360-the-storage-page-loads-its-lists-again-when-the-block-devices-change.md) | The Storage page loads its lists again when the block devices of the stats stream change | accepted | 2026-11-12 |
 | [0367](0367-the-storage-page-follows-a-running-scrub-over-the-events-socket.md) | A scrub runs from its start, its result names how it ended, and the Storage page follows it over the events socket | accepted | 2026-11-12 |
+| [0377](0377-a-balance-runs-in-a-host-unit-with-a-usage-limit-of-20-percent-and-a-full-balance-behind-a-confirmation.md) | A balance runs in a unit of the host, rewrites the chunks less than 20% full by default, and a full one needs a confirmation | accepted | 2026-11-15 |
 
 ## Shares
 

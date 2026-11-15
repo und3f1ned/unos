@@ -1,7 +1,7 @@
 import type { Locator, Page, WebSocketRoute } from '@playwright/test';
 import { test, expect } from './fixtures';
 import { createAccount, deleteAccount, type Account } from './accounts';
-import { FAKE_IMPORTABLE, fakeStorageApi } from './storage-fakes';
+import { FAKE_IMPORTABLE, fakeStorageApi, noBalance } from './storage-fakes';
 import { POOLS, accessOf, fakeNfsExport, fakeShare, fakeSmbApi, fakeUser } from './shares-fakes';
 import { HEALTHY_HDD_2, REPLACE_SOON, fakeHealthApi, predictionsAnswer } from './health-fakes';
 import { fakeNetworkApi } from './network-fakes';
@@ -701,6 +701,21 @@ const VIEWS: View[] = [
     shows: (page) => page.getByText('e2e_frozen').first(),
   },
   {
+    // A pool card with a balance in progress: its buttons wrap, its progress and time left (ADR-0377).
+    name: 'Storage: a balance in progress',
+    path: '/storage',
+    fake: (page) =>
+      fakeStorageApi(page, {
+        balanceStatus: (pool) => ({
+          ...noBalance(pool),
+          ...(pool === 'e2e_media'
+            ? { status: 'running', completed: 123, expected: 4567, considered: 130, seconds_left: 98765 }
+            : {}),
+        }),
+      }),
+    shows: (page) => page.getByText(/^(About 27 h 27 min left|Осталось около 27 ч 27 мин)$/),
+  },
+  {
     name: 'Snapshots',
     path: '/snapshots',
     fake: (page) => serve(page, SNAPSHOTS_API),
@@ -926,6 +941,20 @@ const VIEWS: View[] = [
     fake: (page) => fakeStorageApi(page),
     open: (page) => page.getByRole('button', { name: /^(Create Pool|Создать пул)$/ }).click(),
     shows: (page) => page.getByRole('dialog'),
+    start: dialogTitle,
+    end: dialogEnd,
+  },
+  {
+    // A full balance: its warning and its confirmation make the dialog tallest (ADR-0377).
+    name: 'Dialog: balance a pool',
+    path: '/storage',
+    fake: (page) => fakeStorageApi(page),
+    open: async (page) => {
+      await page.getByRole('button', { name: /^(Balance|Балансировка)$/ }).first().click();
+      await page.getByRole('dialog').getByRole('combobox').click();
+      await page.getByRole('option', { name: /^(Every chunk \(full balance\)|Все блоки \(полная балансировка\))$/ }).click();
+    },
+    shows: (page) => page.getByRole('dialog').getByRole('checkbox'),
     start: dialogTitle,
     end: dialogEnd,
   },

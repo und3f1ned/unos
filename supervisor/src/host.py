@@ -14,7 +14,8 @@ they cannot inject extra shell syntax.
 Set ``UNOS_HOST_EXEC=local`` to run commands directly (no nsenter), e.g. when
 the supervisor runs natively on the host during development.
 
-btrfs scrubs, error stats resets and smartctl run in the container itself,
+btrfs scrubs, error stats resets, a balance's status, pause and cancel, and
+smartctl run in the container itself,
 on the pools and disks that the privileged container sees:
 :func:`run_in_container` runs them, and at their timeout it kills them
 without waiting for them (ADR-0290).
@@ -37,6 +38,8 @@ logger = logging.getLogger(__name__)
 
 # Programs the supervisor runs on the host through this module, with the
 # Debian/Ubuntu package that installs them. Callers: storage/pools.py,
+# storage/balances.py (systemd-run, which runs a pool's balance in a unit of
+# its own that outlives the supervisor's container: ADR-0377),
 # storage/disks.py (lsns and findmnt --task: the mount namespaces of other
 # processes, ADR-0288), shares/smb.py, shares/accounts.py (SMB accounts: getent
 # and the shadow tools, smbpasswd, pdbedit, smbstatus), health/router.py and

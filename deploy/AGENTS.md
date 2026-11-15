@@ -48,7 +48,8 @@ owner's firmware and is never written, so every write counts (ADR-0214, ADR-0225
   how they found it; the smbconf check also edits smb.conf by hand and restarts the supervisor
   (ADR-0309), the shares check makes entries of other owners and modes on the pool over ssh, signs
   in as its user and turns guest access on for its share (ADR-0340), the scrub check scrubs the pool
-  (ADR-0314), the offsite check sets up an off-device copy to a folder of the pool and forgets it
+  (ADR-0314), the balance check balances, pauses, resumes and cancels chunks of the pool that it
+  leaves about 12% full (ADR-0377), the offsite check sets up an off-device copy to a folder of the pool and forgets it
   (ADR-0337), and the restore check restores a backup it made moments before, twice, which puts the
   device's database back as it was then (ADR-0341). They change the device for their duration, so
   they run on the owner's request;

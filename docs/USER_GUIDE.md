@@ -318,7 +318,27 @@ For each pool, you can:
   the ones that still run. When btrfs cannot report the status, the pool
   says so with the reason. Scheduled scrubs are set up in **System** → **Scheduler**; a
   scheduled scrub of a pool that is not mounted fails without scrubbing
-  anything. For a pool that does not answer, see below
+  anything. No scrub starts, scheduled or not, while a balance of the pool
+  runs. For a pool that does not answer, see below
+- **Balance** - (mounted pools that are not read-only) Rewrite the pool's
+  chunks, the blocks of space btrfs gives to data and metadata, to free the
+  space of partly empty ones. By default only the chunks less full than the
+  **Usage limit (%)**, 20, are rewritten, which takes minutes; enter another
+  whole number from 1 to 99. **Every chunk (full balance)** rewrites all the
+  data of the pool, hours on a hard disk, and starts only after you tick
+  **Rewrite every chunk of <pool>**. While the balance runs, the pool shows
+  how many chunks it balanced of about how many, and the time left that UNOS
+  estimates from the chunks balanced so far, sent to the open page as it
+  changes; **Pause Balance** pauses it after the chunk it moves, **Resume
+  Balance** goes on, and **Cancel Balance** stops it. A paused balance also
+  goes on by itself when the pool is mounted again, for example at the next
+  start of the NAS: cancel it to stop it for good. Afterwards the pool says
+  whether the last balance finished (with the chunks it rewrote), was
+  cancelled or failed (with btrfs's error, such as no space left); after a
+  restart of the host it shows none. The balance runs on the host, so a
+  restart of UNOS does not stop it, and the pool shows it again once the page
+  is loaded. A balance does not start while a scrub of the pool runs, nor
+  while another balance of it runs or is paused
 - **Volumes** - (mounted pools) List, create and delete volumes: btrfs
   subvolumes in the pool's top folder (`/mnt/pools/<pool>/<name>`) that can be
   shared on their own. **Quota in GiB** is optional: leave it empty for no

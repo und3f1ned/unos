@@ -323,6 +323,22 @@ manager, encrypted backup uploads, health checks, CI checks).
   `ups_name`, `host` and `port` are checked before they reach `upsc`.
 
 ### Added
+- **Balance** on the Storage page (ADR-0377): a mounted, writable pool's
+  balance rewrites the data and metadata chunks less full than a usage limit
+  (20% by default, 1 to 99) or, after a confirmation, every chunk (a full
+  balance). The pool card shows its progress (chunks balanced of about how
+  many) and an estimate of the time left, which UNOS sends the open page as
+  they change, and **Pause Balance**, **Resume Balance** and **Cancel Balance**
+  act on it; afterwards it says whether the last balance finished, was
+  cancelled or failed, with btrfs's error. The balance runs on the host in the
+  systemd unit `unos-balance-<pool>`, so a restart of UNOS neither stops nor
+  hides it. A balance is refused while the pool is not mounted or is
+  read-only, while a scrub of it runs and while another balance of it runs or
+  is paused, and a scrub (also a scheduled one) while a balance of the pool
+  runs. The audit log records each start, pause, resume and cancel
+  (`GET`/`POST`/`DELETE /api/v1/storage/pools/{name}/balance`,
+  `POST .../balance/pause` and `.../balance/resume`). `scripts/dev/scenario.sh
+  balance` checks it on the dev device.
 - `scripts/dev/check.sh` shows each container's CPU, the load average and the
   temperatures, and reports a container of UNOS above 15% of a core or a
   thermal zone within 5 C of its throttling point as a problem (ADR-0374).

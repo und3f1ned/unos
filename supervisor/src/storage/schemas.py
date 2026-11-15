@@ -1,6 +1,6 @@
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class PartitionInfo(BaseModel):
@@ -170,3 +170,52 @@ class ScrubStatus(BaseModel):
     rate: int | None = None  # bytes per second
     errors: int = 0  # the sum of the error summary: read, super, verify and csum errors (ADR-0313)
     last_run: str | None = None  # when the scrub started, as btrfs prints it
+
+
+# The usage limit of a balance when the request names none (ADR-0377): the data and metadata
+# chunks less than this many percent full are rewritten, which frees the space of partly empty
+# chunks in minutes instead of rewriting the whole pool.
+BALANCE_DEFAULT_USAGE = 20
+
+
+class BalanceStart(BaseModel):
+    """What POST /storage/pools/{name}/balance balances (ADR-0377)."""
+
+    # Rewrite only the data and metadata chunks less than this many percent full
+    # (btrfs balance start -dusage=N -musage=N). 100 would rewrite every chunk: that is ``full``.
+    usage: int | None = Field(default=None, ge=1, le=99)
+    # Rewrite every chunk (--full-balance): hours on a hard disk; the page asks first.
+    full: bool = False
+
+    @model_validator(mode="after")
+    def _one_kind(self) -> "BalanceStart":
+        if self.full and self.usage is not None:
+            raise ValueError("A full balance rewrites every chunk: it takes no usage limit")
+        return self
+
+    @property
+    def limit(self) -> int:
+        return BALANCE_DEFAULT_USAGE if self.usage is None else self.usage
+
+
+class BalanceStatus(BaseModel):
+    """A pool's balance as btrfs balance status reports it, and how the last one ended (ADR-0377)."""
+
+    pool: str
+    # "running"; "pausing" and "cancelling" while a pause or a cancel waits for the chunk that is
+    # being moved; "paused"; "idle": none runs and none is paused.
+    status: str
+    # Of a balance that runs or is paused: the chunks balanced since its start or resume, of about
+    # ``expected``, and those it considered. Of a finished one: the chunks it relocated, of
+    # ``considered``.
+    completed: int | None = None
+    expected: int | None = None
+    considered: int | None = None
+    # Of a balance that runs: the seconds it needs still, at the rate of the chunks it balanced
+    # since UNOS first saw it run; None until it balanced one.
+    seconds_left: int | None = None
+    # Of an idle pool: how the last balance that UNOS started or resumed since the host started
+    # ended, from its output: "finished", "cancelled" or "failed" (``error``: btrfs's error);
+    # None when that is not known.
+    result: str | None = None
+    error: str | None = None

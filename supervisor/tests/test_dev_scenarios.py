@@ -13,7 +13,7 @@ refuses the right password as well and writes nothing (ADR-0334), and a password
 which Samba refuses without a write (ADR-0342).
 
 Covered (the steps of the ledger entry device.scenario-checks-in-repo):
-* every area (files, volumes, smart, backups, smb, smbconf, shares, scrub, offsite, restore) passes against
+* every area (files, volumes, smart, backups, smb, smbconf, shares, scrub, balance, offsite, restore) passes against
   the fake, prints a PASS line with its SD MiB for each step and a summary, and leaves the device as it
   found it;
 * the volumes check makes a snapshot of its volume and restores it: the copy restore_<time> is
@@ -400,6 +400,13 @@ class FakeNas:
         self.scrub_left = 0
         self.scrubs = 0
         self.pool_used = 1  # bytes of data in the pool data
+        self.pool_free = 600 * scenario.GIB  # and of free space, as on the dev device's disk
+        # The pool's balance (ADR-0377): None, or {"status": "running" or "paused", "completed": n} of
+        # about BALANCE_EXPECTED chunks, one more balanced at each request while it runs; how the
+        # last one ended; the balances started.
+        self.balance: dict | None = None
+        self.balance_result: str | None = None
+        self.balances = 0
         self.tasks: dict[str, dict] = {}
         self.runs: list[dict] = []
         self.task_keys: dict[str, str] = {}  # the backup tasks' passphrases (scheduled_backup_keys.json)
@@ -447,6 +454,7 @@ class FakeNas:
             "the hand edit's copies": dict(self.saved),
             "the copy's problem": self.replaced_problem,
             "a scrub runs": self.scrub["status"] == "running",
+            "a balance runs or is paused": copy.deepcopy(self.balance),
             "the Scheduler's tasks": copy.deepcopy(self.tasks),
             "the backup tasks' keys": dict(self.task_keys),
             "the off-device copy": (copy.deepcopy(self.offsite), self.offsite_password,
@@ -716,12 +724,15 @@ class FakeNas:
     def api_storage(self, method, parts, body, params, upload):
         if parts[:1] == ["pools"] and parts[2:] == ["scrub"]:
             return self.api_scrub(method, parts[1])
+        if parts[:1] == ["pools"] and parts[2:3] == ["balance"]:
+            return self.api_balance(method, parts[1], parts[3:], body)
         if parts == ["disks"] and self.partitions:
             return [{"name": DISK, "path": f"/dev/{DISK}", "size": 640, "rotational": True, "type": "disk",
                      "partitions": [{"name": p, "path": f"/dev/{p}", "size": 1} for p in self.partitions]}]
         if parts == ["pools"]:
             return [{"name": "data", "mountpoint": ROOT, "mounted": True, "persistent": True, "read_only": False,
-                     "devices": ["/dev/sda"], "total_size": max(1, self.pool_used), "used_size": self.pool_used}]
+                     "devices": ["/dev/sda"], "total_size": self.pool_used + self.pool_free,
+                     "used_size": self.pool_used}]
         if parts == ["disks"]:
             return [{"name": DISK, "path": f"/dev/{DISK}", "model": "WDC", "serial": "W1", "size": 640, "rotational": True,
                      "type": "disk", "partitions": [], "is_system": False}]
@@ -826,6 +837,8 @@ class FakeNas:
     def start_scrub(self) -> None:
         if self.scrub["status"] == "running":
             raise Refused(500, "Scrub start failed: ERROR: Scrub is already running.")
+        if (self.balance or {}).get("status") == "running" and "scrub-beside-balance" not in self.bugs:
+            raise Refused(409, "A balance of pool data runs: wait for its end, or pause or cancel it, then start the scrub")
         self.scrubs += 1
         self.scrub = {"status": "running", "last_run": f"Mon Nov  9 10:{self.scrubs:02d}:00 2026", "errors": 0}
         self.scrub_unrecorded, self.scrub_left = 2, 3
@@ -862,6 +875,71 @@ class FakeNas:
                     self.scrub = {**self.scrub, "status": "finished", "duration": 19,
                                   "errors": 2 if "scrub-errors" in self.bugs else 0}
         return answer
+
+    BALANCE_EXPECTED = 12
+
+    def balance_answer(self) -> dict:
+        b = self.balance
+        answer = {"pool": "data", "status": "idle", "completed": None, "expected": None, "considered": None,
+                  "seconds_left": None, "result": None, "error": None}
+        if b is None:
+            return {**answer, "result": self.balance_result,
+                    **({"completed": 0, "considered": 4} if self.balance_result == "finished" else {})}
+        left = None
+        if b["status"] == "running" and b["completed"] and "no-time-left" not in self.bugs:
+            left = 2 * (self.BALANCE_EXPECTED - b["completed"])
+        return {**answer, "status": b["status"], "completed": b["completed"], "expected": self.BALANCE_EXPECTED,
+                "considered": b["completed"], "seconds_left": left}
+
+    def ballast_kept(self) -> int:
+        """The check's files on the pool, in the chunks that a balance with a low usage limit moves."""
+        return sum(1 for p, node in self.fs.items()
+                   if node.kind == "file" and LEFTOVER.fullmatch(os.path.basename(os.path.dirname(p)) or ""))
+
+    def api_balance(self, method, name, rest, body):
+        if name != "data":
+            folder = f"/mnt/pools/{name}"
+            if folder in self.fs and "balance-no-mount-check" not in self.bugs:
+                raise Refused(409, f"Pool {name} is not mounted at {folder}")
+            raise Refused(404, f"Pool {name} not found")
+        b = self.balance
+        if method == "GET":
+            answer = self.balance_answer()
+            if b is not None and b["status"] == "running":  # each request is a moment later
+                b["completed"] += 1
+                if b["completed"] >= self.BALANCE_EXPECTED:
+                    self.balance, self.balance_result = None, "finished"
+            return answer
+        if method == "POST" and rest == []:
+            assert body == {"usage": scenario.BALANCE_USAGE}, body
+            if self.scrub["status"] == "running":
+                raise Refused(409, "A scrub of pool data runs: wait for its end or cancel it, then start the balance")
+            if b is not None and b["status"] == "running":
+                raise Refused(409, "A balance of pool data runs already")
+            if b is not None:
+                raise Refused(409, "A balance of pool data is paused: resume or cancel it")
+            self.balances += 1
+            if not self.ballast_kept():  # no chunk below the limit: it ends at once
+                self.balance_result = "finished"
+                return self.balance_answer()
+            self.balance, self.balance_result = {"status": "running", "completed": 0}, None
+            answer = self.balance_answer()
+            return {**answer, "status": "idle"} if "balance-start-answers-idle" in self.bugs else answer
+        if method == "POST" and rest == ["pause"]:
+            if b is not None and b["status"] == "running" and "pause-keeps-running" not in self.bugs:
+                b["status"] = "paused"
+            return self.balance_answer()
+        if method == "POST" and rest == ["resume"]:
+            if b is None or b["status"] != "paused":
+                raise Refused(409, "No balance of pool data is paused")
+            # btrfs balance resume runs in the unit again, unless resumed some other way.
+            self.balance = {"status": "running", "completed": 0, "unit": "resume-outside-unit" not in self.bugs}
+            return self.balance_answer()
+        if method == "DELETE" and rest == []:
+            if b is not None and not (b["status"] == "running" and "cancel-keeps-balancing" in self.bugs):
+                self.balance, self.balance_result = None, "cancelled"
+            return self.balance_answer()
+        raise AssertionError(f"the fake does not know {method} /storage/pools/{name}/balance/{'/'.join(rest)}")
 
     def api_scheduler(self, method, parts, body, params, upload):
         if parts == ["tasks"] and method == "GET":
@@ -1831,6 +1909,29 @@ class FakeNas:
             self.copies = [n for n in self.copies if n not in names]
         return sorted(self.copies)
 
+    def ballast(self, action, path, files=0, mib=0, keep=1):
+        """REMOTE_BALLAST: the check's folder on the pool, with every KEEP-th of FILES files."""
+        self.device_call("ballast")
+        assert re.fullmatch(rf"{ROOT}/unoscheck[0-9a-f]{{6}}", path), path
+        if action == "make":
+            if path in self.fs:
+                raise scenario.Failed(f"the device answered status 1: mkdir: {path}: File exists")
+            self.fs[path] = Node("dir", 0o700)
+            for i in range(keep, files + 1, keep):
+                self.fs[f"{path}/{i}"] = Node("file", 0o644, content=f"{mib} MiB")
+            return f"kept {self.ballast_kept()}"
+        assert action == "remove", action
+        self.remove(path)
+        return "removed"
+
+    def balance_unit(self, pool):
+        """systemctl is-active unos-balance-<pool>: active while the balance's btrfs runs in it."""
+        self.device_call("balance_unit")
+        assert pool == "data", pool
+        b = self.balance or {}
+        runs = b.get("status") == "running" and b.get("unit", True)
+        return "active" if runs and "balance-in-container" not in self.bugs else "inactive"
+
     def restart_supervisor(self):
         """docker restart unos-supervisor: the copy's problem goes with the process, and the API
         answers before the startup reconcile has applied (reconcile)."""
@@ -1856,6 +1957,8 @@ def _checks_without_pauses(monkeypatch):
     monkeypatch.setattr(scenario, "SCRUB_WAIT", 2)
     monkeypatch.setattr(scenario, "REPAIR_POLL", 0)
     monkeypatch.setattr(scenario, "REPAIR_WAIT", 2)
+    monkeypatch.setattr(scenario, "BALANCE_POLL", 0)
+    monkeypatch.setattr(scenario, "BALANCE_WAIT", 2)
 
 
 def run_check(area: str, nas: FakeNas, **kw) -> tuple[int, str]:
@@ -2424,6 +2527,76 @@ def test_the_scrub_check_covers_storage_scrub_and_the_start_through_one_helper(n
         "Pool unoscheck1a2b3c is not mounted at /mnt/pools/unoscheck1a2b3c", "Scrub started"]
 
 
+def test_the_balance_check_starts_pauses_resumes_and_cancels_a_balance_with_a_low_usage_limit(nas):
+    """ADR-0377: the steps of storage.pool-balance on the fake NAS, whose balance moves the check's
+    chunks one at each request."""
+    status, output = run_check("balance", nas)
+    assert status == 0, output
+    for words in ("'Pool unoscheck1a2b3c is not mounted at /mnt/pools/unoscheck1a2b3c'", "kept 12 files",
+                  "with the usage limit of 20% answers running", "running, then running, the unit active",
+                  "'A balance of pool data runs: wait for its end, or pause or cancel it, then start the scrub'; "
+                  "'A balance of pool data runs already'", "s left", "paused, then paused", "the unit inactive",
+                  "running, the unit active", "idle, then idle, cancelled"):
+        assert words in output, (words, output)
+    assert nas.balances == 1 and nas.balance is None and nas.balance_result == "cancelled"
+    assert not nas.ballast_kept()
+
+
+@pytest.mark.parametrize("found, why", [
+    ("paused", "a balance of data is paused: wait for its end, or cancel it"),
+    ("scrub", "a scrub of data runs: wait for its end, or cancel it"),
+    ("full", "20.0 GiB free, and the check needs 24 GiB"),
+])
+def test_the_balance_check_does_not_start_beside_a_balance_or_a_scrub_or_without_room(nas, found, why):
+    if found == "paused":
+        nas.balance = {"status": "paused", "completed": 3}
+    elif found == "scrub":
+        nas.start_scrub()
+    else:
+        nas.pool_free = 20 * scenario.GIB
+    before = nas.snapshot()
+    status, output = run_check("balance", nas)
+    assert status == 1
+    assert re.search(rf"^FAIL  1\. .*: {re.escape(why)}", output, re.M), output
+    assert nas.snapshot() == before and not [c for c in nas.calls if c[0] != "GET"]
+
+
+@pytest.mark.parametrize("args, code", [
+    (["make", "/elsewhere/unoscheck1a2b3c", "16", "1", "8"], 2),
+    (["make", "{base}/data", "16", "1", "8"], 2),
+    (["make", "{base}/data/unoscheckxyz123", "16", "1", "8"], 2),
+    (["make", "{base}/data/unoscheck1a2b3c/x", "16", "1", "8"], 2),
+    (["make", "{base}/data/../unoscheck1a2b3c", "16", "1", "8"], 2),
+    (["remove", "{base}/data", "0", "0", "1"], 2),
+    (["make", "{base}/data/unoscheck1a2b3c", "16", "1", "8"], 0),
+])
+def test_the_ballast_helper_makes_only_a_check_s_folder_of_the_pool_and_removes_it(tmp_path, args, code):
+    """REMOTE_BALLAST (ADR-0377) with a stand-in fallocate and sync: every 8th of 16 files stays."""
+    base = tmp_path / "pools"
+    (base / "data" / "kept").mkdir(parents=True)
+    stubs = tmp_path / "bin"
+    stubs.mkdir()
+    (stubs / "fallocate").write_text('#!/usr/bin/env bash\n[ "$1 $3" = "-l --" ] && : > "$4"\n')
+    (stubs / "sync").write_text('#!/usr/bin/env bash\n[ "$1 $2" = "-f --" ]\n')
+    for stub in ("fallocate", "sync"):
+        (stubs / stub).chmod(0o755)
+    env = {"PATH": f"{stubs}:/usr/bin:/bin", "UNOS_DEV_POOLS": str(base)}
+    argv = [a.format(base=base) for a in args]
+    made = subprocess.run(["bash", "-s", "--", *argv], input=scenario.REMOTE_BALLAST, env=env,
+                          capture_output=True, text=True)
+    assert made.returncode == code, made.stderr
+    folder = base / "data" / "unoscheck1a2b3c"
+    if code:
+        assert sorted(p.name for p in (base / "data").iterdir()) == ["kept"] and not (tmp_path / "unoscheck1a2b3c").exists()
+        return
+    assert made.stdout == "kept 2\n"
+    assert sorted(p.name for p in folder.iterdir()) == ["16", "8"]
+    removed = subprocess.run(["bash", "-s", "--", "remove", str(folder)], input=scenario.REMOTE_BALLAST, env=env,
+                             capture_output=True, text=True)
+    assert (removed.returncode, removed.stdout) == (0, "removed\n"), removed.stderr
+    assert sorted(p.name for p in (base / "data").iterdir()) == ["kept"]
+
+
 def test_on_a_pool_with_much_data_the_scrub_check_cancels_its_scrubs(nas):
     nas.pool_used = 100 * scenario.GIB
     status, output = run_check("scrub", nas)
@@ -2537,6 +2710,14 @@ def test_the_pool_folder_helper_removes_only_an_empty_folder_that_is_no_mount_po
     ("scrub", "scrub-errors", "it found 2 errors"),
     ("scrub", "cancel-keeps-running", "the scrub ended finished"),
     ("scrub", "runs-go-with-the-task", "its run is gone"),
+    ("balance", "balance-no-mount-check", "is refused with 409"),
+    ("balance", "balance-in-container", "btrfs runs it in the host's unit unos-balance-data"),
+    ("balance", "scrub-beside-balance", "a scrub of data and a second balance are refused with 409"),
+    ("balance", "no-time-left", "shows the chunks balanced growing, and the time left"),
+    ("balance", "pause-keeps-running", "Pause Balance pauses it"),
+    ("balance", "balance-start-answers-idle", "with the usage limit of 20% answers running"),
+    ("balance", "resume-outside-unit", "Resume Balance runs it again in the unit unos-balance-data"),
+    ("balance", "cancel-keeps-balancing", "Cancel Balance ends it"),
     ("offsite", "offsite-check-fails", "the copy failed at check"),
     ("offsite", "offsite-restore-differs", "the restored files hold other bytes"),
     ("offsite", "log-offsite-password", "no password of the check"),
