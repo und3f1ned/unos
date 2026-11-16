@@ -233,6 +233,11 @@ SS = ["ss", "-H", "-l", "-n", "-t", "-u", "-p"]
 DOCKER_ROOT = "/var/lib/docker"
 CONTAINERD_ROOT = "/var/lib/containerd"
 GIB = 1024**3
+# The read of the free space exits with this status where the host has none of the folders.
+NO_FREE_SPACE_FOLDER = 3
+# src/host.py's own run_on_host, which the fixture ``soc`` replaces: tests of the scripts that
+# the host runs put it back and run them on this machine (UNOS_HOST_EXEC=local).
+REAL_RUN_ON_HOST = host_module.run_on_host
 
 
 def _reads_free_space(cmd: list[str]) -> bool:
@@ -273,8 +278,9 @@ def soc(monkeypatch):
     read. ``sockets`` are the lines that ``ss`` prints for the host's listening sockets (none by
     default), and ``ss`` (a HostResult, or an exception to raise) answers only that read.
     ``free`` gives the free bytes of the file systems of the folders that exist (Docker's root
-    folder and the containerd image store, 64 GiB each by default), and ``df`` (a HostResult, or
-    an exception to raise) answers only the read of the free space."""
+    folder and the containerd image store, 64 GiB each by default); where none of them exists the
+    read exits NO_FREE_SPACE_FOLDER, as its script does. ``df`` (a HostResult, or an exception to
+    raise) answers only the read of the free space."""
     fake = SimpleNamespace(
         compatible=None, devices=set(), commands=[], tree=None, lookup=None, sockets=[], ss=None,
         free={DOCKER_ROOT: 64 * GIB, CONTAINERD_ROOT: 64 * GIB}, df=None,
@@ -287,6 +293,8 @@ def soc(monkeypatch):
                 raise fake.df
             if fake.df is not None:
                 return fake.df
+            if not any(path in fake.free for path in cmd[4:]):
+                return HostResult(NO_FREE_SPACE_FOLDER, "", "")
             return HostResult(0, _df(fake.free, cmd[4:]), "")
         if cmd == SS:
             if isinstance(fake.ss, BaseException):
@@ -3421,8 +3429,8 @@ UNPINNED_AT_MOST = frozenset({
     "tautulli", "traefik", "transmission", "trilium", "uptime-kuma", "vaultwarden", "vikunja", "wikijs",
     "wireguard", "zigbee2mqtt",
 })
-# Templates that named a database or a broker no container gave them: apps.catalog-companions
-# brings them back with companions (ADR-0381).
+# Templates of apps that need a database or a broker that a one-container template never gave
+# them: apps.catalog-companions brings them back with companions (ADR-0381).
 REMOVED_TEMPLATES = ("bookstack", "paperless-ngx", "linkwarden")
 # The variables of Immich's server that UNOS sets to reach its companions and its password.
 IMMICH_WIRING = {
@@ -3667,6 +3675,27 @@ class TestSystemDiskSpace:
 
         assert response.status_code == 200, response.text
 
+    def test_a_host_without_either_folder_is_logged_and_the_install_goes_on(
+        self, api, pools, docker_client, soc, caplog
+    ):
+        # A supervisor that does not run on Docker's host, as in the compose test stack
+        # (UNOS_HOST_EXEC=local in a container that has Docker's socket but not its folders):
+        # there is no file system to read, and Docker's own pull is the last check.
+        pools.mounted.clear()
+        soc.free = {}
+
+        with caplog.at_level("WARNING", logger="src.apps.preflight"):
+            response = api.post(INSTALL, json={"template_id": "dozzle"})
+
+        assert response.status_code == 200, response.text
+        assert [cmd for cmd in soc.commands if _reads_free_space(cmd)] == [_free_space_read()]
+        assert [r.getMessage() for r in caplog.records if r.name == "src.apps.preflight"] == [
+            f"Could not read the free space of the system disk: the host has none of {DOCKER_ROOT}, "
+            f"{CONTAINERD_ROOT}; the install goes on"
+        ]
+        docker_client.images.pull.assert_called_once()
+        docker_client.containers.create.return_value.start.assert_called_once()
+
     @pytest.mark.parametrize(("df", "reason"), [
         (HostResult(1, "", "df: /var/lib/docker: Input/output error\n"), "df: /var/lib/docker: Input/output error"),
         (HostResult(0, "", ""), "df printed no free space"),
@@ -3724,6 +3753,40 @@ class TestSystemDiskSpace:
         assert (result.returncode, result.stderr) == (0, "")
         [free] = preflight_module._available(result.stdout)
         assert abs(free - shutil.disk_usage(tmp_path).free) < GIB // 4
+
+    def test_the_script_reads_nothing_where_the_host_has_neither_folder(self, monkeypatch, tmp_path):
+        # The script as the host runs it, through src/host.py on this machine's sh.
+        monkeypatch.setattr(host_module, "run_on_host", REAL_RUN_ON_HOST)
+        monkeypatch.setenv("UNOS_HOST_EXEC", "local")
+
+        assert preflight_module._free_bytes([str(tmp_path / "docker"), str(tmp_path / "containerd")]) is None
+
+    def test_a_df_that_fails_for_one_folder_answers_500_though_another_is_read(self, monkeypatch, tmp_path):
+        # df fails for Docker's root folder (an I/O error on the system disk) and reads the
+        # containerd image store: the lower free space is not known, so none is used.
+        monkeypatch.setattr(host_module, "run_on_host", REAL_RUN_ON_HOST)
+        monkeypatch.setenv("UNOS_HOST_EXEC", "local")
+        bin_dir = tmp_path / "bin"
+        bin_dir.mkdir()
+        (bin_dir / "df").write_text(
+            "#!/bin/sh\n"
+            'case "$*" in */docker) echo "df: $4: Input/output error" >&2; exit 1;; esac\n'
+            "printf 'Filesystem 1024-blocks Used Available Capacity Mounted on\\n'\n"
+            "printf '/dev/sda1 67110912 2048 67108864 1%% /\\n'\n"
+        )
+        (bin_dir / "df").chmod(0o755)
+        monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
+        (tmp_path / "docker").mkdir()
+        (tmp_path / "containerd").mkdir()
+        # The stub reads the containerd store when it is the only folder.
+        assert preflight_module._free_bytes([str(tmp_path / "containerd")]) == 64 * GIB
+
+        with pytest.raises(HTTPException) as raised:
+            preflight_module._free_bytes([str(tmp_path / "docker"), str(tmp_path / "containerd")])
+
+        assert (raised.value.status_code, raised.value.detail) == (
+            500, _unread_free_space(f"df: {tmp_path / 'docker'}: Input/output error")["detail"]
+        )
 
     def test_a_file_system_whose_name_or_folder_holds_spaces_is_read(self):
         listing = (

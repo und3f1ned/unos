@@ -163,8 +163,10 @@ IMMICH_SERVER = PinnedImage(
     "ghcr.io/immich-app/immich-server", IMMICH_VERSION,
     "sha256:7c489add298fc2f92cda4c777de6462aa206877e04087b815f62c7664af0b53b", 1_482_000_000,
 )
-# The machine learning for the CPU (amd64 and arm64); the size is the -rknn image's, whose layers it
-# shares but for librknnrt.
+# The machine learning for the CPU (amd64 and arm64). Its size is an estimate, about the -rknn
+# image's: their compressed arm64 layers are 238 MB and 242 MB, and its unpacked size was not
+# measured. The two images are built apart and share only 2 of their 11 and 12 arm64 layers, so
+# both on one disk take about twice the size of one.
 IMMICH_ML = PinnedImage(
     "ghcr.io/immich-app/immich-machine-learning", IMMICH_VERSION,
     "sha256:8adebf414256f6e4f837bfbb66fa94f14f4da7260e3a1d65cbba49e4e35d8764", 950_000_000,

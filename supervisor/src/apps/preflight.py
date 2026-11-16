@@ -18,7 +18,10 @@ install's images are there. A pinned image (PinnedImage of the catalog) counts i
 size unless Docker has it already; an image of a floating tag counts nothing, its size is not
 known before its pull. The free space is the lower of those of the file systems of Docker's root
 folder (Docker's info) and of the containerd image store, read on the host with df through
-src/host.py; when it cannot be read, the install answers 500 and pulls nothing.
+src/host.py; when it cannot be read, the install answers 500 and pulls nothing. A host that has
+neither folder, as when the supervisor does not run on Docker's host (the compose test stack), has
+no file system to read: that is logged, the install goes on, and Docker's own pull is then the
+last check.
 """
 
 from __future__ import annotations
@@ -168,9 +171,14 @@ FREE_SPACE_FLOOR = 2 * 1024**3
 # Docker's root folder.
 CONTAINERD_ROOT = "/var/lib/containerd"
 # For each of its arguments that exists on the host, df's POSIX listing of its file system: a
-# header, then one line with its free 1024-byte blocks. One that does not exist is skipped. The
-# paths reach the shell as positional arguments, never as script text.
-FREE_SPACE_SCRIPT = 'for p do if [ -e "$p" ]; then df -P -k -- "$p" || exit; fi; done'
+# header, then one line with its free 1024-byte blocks. One that does not exist is skipped; a df
+# that fails ends the script with its status. Where none exists, the script exits 3, a status
+# that neither nsenter nor df uses. The paths reach the shell as positional arguments, never as
+# script text.
+FREE_SPACE_SCRIPT = (
+    'seen=; for p do if [ -e "$p" ]; then df -P -k -- "$p" || exit; seen=1; fi; done; [ -n "$seen" ] || exit 3'
+)
+_NO_FOLDER = 3
 # A line of df -P: the file system (whose name may hold spaces), its 1024-byte blocks, the used
 # and the free ones, the capacity in percent, then the mount point.
 _DF_LINE = re.compile(r"\s(\d+)\s+(\d+)\s+(\d+)\s+\d+%\s")
@@ -182,7 +190,8 @@ def check_space(client: Any, template: AppTemplate, images: Iterable[str]) -> No
     pulled, each counted with its PinnedImage.disk_bytes; an image of a floating tag counts
     nothing, since its size is not known before its pull. The free space is the lower of those of
     the file systems of Docker's root folder and of the containerd image store, read on the host
-    with df; 500 when it cannot be read. Blocks: call it in a worker thread, before any pull."""
+    with df; 500 when it cannot be read. A host that has neither folder is logged and not checked.
+    Blocks: call it in a worker thread, before any pull."""
     try:
         need = sum(pin.disk_bytes for pin in _missing_pins(client, images))
         root = client.info().get("DockerRootDir")
@@ -190,7 +199,14 @@ def check_space(client: Any, template: AppTemplate, images: Iterable[str]) -> No
         raise _unread(str(exc)) from exc
     if not isinstance(root, str) or not root.startswith("/"):
         raise _unread("Docker names no root folder")
-    free = _free_bytes([root, CONTAINERD_ROOT])
+    folders = [root, CONTAINERD_ROOT]
+    free = _free_bytes(folders)
+    if free is None:
+        logger.warning(
+            "Could not read the free space of the system disk: the host has none of %s; the install goes on",
+            ", ".join(folders),
+        )
+        return
     if free - need >= FREE_SPACE_FLOOR:
         return
     remedy = "Remove unused images on Containers > Images first."
@@ -221,15 +237,17 @@ def _missing_pins(client: Any, images: Iterable[str]) -> list[PinnedImage]:
     return missing
 
 
-def _free_bytes(paths: list[str]) -> int:
-    """The lowest free space of the file systems of those of ``paths`` that exist on the host:
-    500 when it cannot be read."""
+def _free_bytes(paths: list[str]) -> int | None:
+    """The lowest free space of the file systems of those of ``paths`` that exist on the host;
+    None when none of them exists; 500 when it cannot be read."""
     try:
         result = host.run_on_host(
             ["/bin/sh", "-c", FREE_SPACE_SCRIPT, "unos-free-space", *paths], timeout=HOST_TIMEOUT, errors="replace"
         )
     except (OSError, subprocess.SubprocessError) as exc:
         raise _unread(str(exc)) from exc
+    if result.returncode == _NO_FOLDER:
+        return None
     if not result.ok:
         raise _unread(result.stderr.strip() or f"df exited with status {result.returncode}")
     free = _available(result.stdout)
