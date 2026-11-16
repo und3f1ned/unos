@@ -99,7 +99,12 @@ PHOTOS = AppTemplate(
                 VolumeMapping(host=f"{APPS_DATA_PATH}/photos/database/data", container="/var/lib/postgresql/data"),
                 PASSWORD,
             ],
-            environment=[EnvVar(name="POSTGRES_PASSWORD_FILE", value="/run/secrets/db-password")],
+            # A variable that the main container has too: an override of the main container's
+            # leaves it as it is.
+            environment=[
+                EnvVar(name="POSTGRES_PASSWORD_FILE", value="/run/secrets/db-password"),
+                EnvVar(name="LOG_LEVEL", value="warning"),
+            ],
             tmpfs={"/var/run/postgresql": "size=1m"},
             shm_size="128m",
             stop_timeout=60,
@@ -221,7 +226,9 @@ class TestInstall:
         database = _created(docker, "photos-database")
         assert database.args == (f"example/photos-db@{_digest(2)}",)
         assert database.kwargs["labels"] == {"unos.app": "photos", "unos.app.companion": "database", "unos.app.pool": "alpha"}
-        assert database.kwargs["environment"] == {"POSTGRES_PASSWORD_FILE": "/run/secrets/db-password"}
+        assert database.kwargs["environment"] == {
+            "POSTGRES_PASSWORD_FILE": "/run/secrets/db-password", "LOG_LEVEL": "warning",
+        }
         assert database.kwargs["stop_timeout"] == 60
         assert database.kwargs["ports"] is None
         assert database.kwargs["networking_config"] == {"EndpointsConfig": {NETWORK: {"Aliases": ["database"]}}}
@@ -869,6 +876,15 @@ class TestChecksBeforeThePull:
         assert docker.called("networks.create", "api.create_container") == []
         assert not (pools.alpha / "apps").exists()
 
+    def test_an_image_volume_at_or_under_a_folder_kept_in_ram_is_accepted(self, api, pools, docker):
+        # The machine learning keeps /tmp in RAM (a tmpfs) and binds only /cache.
+        docker.publish(LEARNING, volumes=("/tmp", "/tmp/models"))
+
+        response = api.post(INSTALL, json=PHOTOS_INSTALL)
+
+        assert response.status_code == 200, response.text
+        assert _created(docker, "photos-machine-learning").kwargs["host_config"]["Tmpfs"] == {"/tmp": "size=64m"}
+
     def test_a_name_in_the_request_is_refused(self, api, pools, docker):
         response = api.post(INSTALL, json={**PHOTOS_INSTALL, "name": "photos2"})
 
@@ -891,9 +907,9 @@ class TestChecksBeforeThePull:
 
         assert response.status_code == 200, response.text
         assert _created(docker, "photos").kwargs["environment"]["LOG_LEVEL"] == "debug"
-        # Companions take no override.
+        # Companions take no override, not even of a variable that the main container has too.
         assert _created(docker, "photos-database").kwargs["environment"] == {
-            "POSTGRES_PASSWORD_FILE": "/run/secrets/db-password"
+            "POSTGRES_PASSWORD_FILE": "/run/secrets/db-password", "LOG_LEVEL": "warning",
         }
 
     def test_an_app_with_companions_does_not_run_in_the_group(self, api, pools, docker):
@@ -1044,6 +1060,26 @@ class TestActions:
         assert response.status_code == 409
         assert "Mount the pool ('alpha' holds the app's data)" in response.json()["detail"]
         assert docker.called("container.start") == []
+
+    @pytest.mark.parametrize("path", [START, RESTART])
+    def test_a_folder_of_the_main_container_alone_that_is_unusable_starts_no_companion(
+        self, api, pools, docker, path
+    ):
+        # The companions start first and their folders are fine: only checks of every container
+        # made before any start keep them from running beside a main container that cannot start.
+        _installed(api, docker)
+        if path == START:
+            assert api.post(STOP.format("photos")).status_code == 200
+        library = pools.alpha / "apps/photos/library"
+        library.rename(library.with_name("library-real"))
+        library.symlink_to(library.with_name("library-real"))
+        docker.calls.clear()
+
+        response = api.post(path.format("photos"))
+
+        assert response.status_code == 409
+        assert str(library) in response.json()["detail"] and "symbolic link" in response.json()["detail"]
+        assert docker.called("container.stop", "container.start") == []
 
     def test_a_restart_stops_every_container_then_starts_them_all(self, api, pools, docker):
         _installed(api, docker)
