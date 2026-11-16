@@ -62,11 +62,16 @@ Covered (the steps of the ledger entry device.scenario-checks-in-repo):
   SAMR that Samba takes, or refuses while it writes passdb.tdb or stores the new password, a
   catalog that does not offer Jellyfin the RK3588's video hardware on an RK3588 with Rockchip MPP
   or offers an app the hardware of another SoC, Previous Versions that list no snapshot, still
-  list or open a deleted one, or fail for a .snapshots deleted with its last snapshot;
+  list or open a deleted one, open the file as it is now in place of the snapshot's copy, drop the
+  session at the open of a file in a deleted one, or fail for a .snapshots deleted with its last
+  snapshot;
 * the smb check reads Previous Versions as Samba 4.22 shows them (ADR-0380): smbclient's allinfo
   lists the share's shadow copies with the file's times in each, and an empty list, which smbd
   answers in 14 bytes, as NT_STATUS_INVALID_NETWORK_RESPONSE, since smbclient takes no answer
-  shorter than 16 bytes; get @GMT-<time>/<name> opens the file in a shadow copy; the Snapshots
+  shorter than 16 bytes; get @GMT-<time>/<name> opens the file in a shadow copy, the snapshot's
+  copy and not the file as it is now; an open of a file in a shadow copy that is gone counts as
+  refused only with a status of smbd's, not one that says the connection, the session or the tree
+  connect broke, and only while the same session lists the file afterwards; the Snapshots
   page names a snapshot to the second of the device's clock and refuses a second one of that name;
 * no temporary password reaches the output, a command line or the environment: scenario.Device
   sends them on standard input, and the SMB helper keeps them in a file of mode 600 in RAM that
@@ -257,6 +262,9 @@ class FakeSmbSession:
             self.problem = "tree connect failed: NT_STATUS_ACCESS_DENIED"
         self.tree_closed = False
         self.killed = False
+        # smbd dropped the connection while smbclient runs on, as it does then: every later command
+        # answers NT_STATUS_CONNECTION_DISCONNECTED (the defect missing-version-drops-session).
+        self.dropped = False
         self.ended = self.problem is not None
         nas.sessions.append(self)
 
@@ -285,7 +293,7 @@ class FakeSmbSession:
         nas.smb_lines.append((self.share, line))
         if line.startswith("!cat "):
             return self.local.get(line[5:], "cat: no such file")
-        if self.killed:
+        if self.killed or self.dropped:
             return "NT_STATUS_CONNECTION_DISCONNECTED"
         if self.tree_closed:
             return "NT_STATUS_NETWORK_NAME_DELETED"
@@ -321,11 +329,22 @@ class FakeSmbSession:
             return "\n".join(lines)
         if words[0] == "get":
             # A name that starts with an @GMT token is the file in that shadow copy (smbclient sends
-            # the token as the create's timewarp context).
+            # the token as the create's timewarp context). Defects: version-opens-live-file serves the
+            # share's file as it is now (the token ignored), and missing-version-drops-session drops
+            # the connection at the open of a file in a shadow copy that is gone.
             found = re.fullmatch(r"(@GMT-\d{4}\.\d\d\.\d\d-\d\d\.\d\d\.\d\d)[/\\](.+)", words[1])
-            node = self.version(found[1], found[2]) if found else nas.fs.get(f"{folder}/{words[1]}")
+            shown = "\\" + words[1].replace("/", "\\")
+            if found and "version-opens-live-file" in nas.bugs:
+                node = nas.fs.get(f"{folder}/{found[2]}")
+            elif found:
+                if "missing-version-drops-session" in nas.bugs and found[1] not in self.versions(listed=False):
+                    self.dropped = True
+                    return f"NT_STATUS_CONNECTION_DISCONNECTED opening remote file {shown}"
+                node = self.version(found[1], found[2])
+            else:
+                node = nas.fs.get(f"{folder}/{words[1]}")
             if node is None or node.kind != "file":
-                return "NT_STATUS_OBJECT_NAME_NOT_FOUND opening remote file \\" + words[1].replace("/", "\\")
+                return f"NT_STATUS_OBJECT_NAME_NOT_FOUND opening remote file {shown}"
             self.local[words[2]] = node.content
             return f"getting file \\{words[1]}"
         if level != "write":
@@ -2347,8 +2366,9 @@ def test_the_smb_check_covers_the_flows_of_slice_2(nas):
 def test_the_smb_check_shows_the_protocol_options_of_its_share(nas):
     """shares.per-share-protocol-options (ADR-0380), on a share of a folder in a new volume:
     Previous Versions list the two snapshots that the check makes of the volume a second apart,
-    only the second once the first is deleted, whose version of the file opens, and once both are
-    deleted neither opens and the list is empty, which Samba 4.22's smbclient reports as
+    after which it overwrites the file, only the second once the first is deleted, whose version of
+    the file opens with the bytes from before the overwrite, and once both are deleted neither opens
+    while the session goes on, and the list is empty, which Samba 4.22's smbclient reports as
     NT_STATUS_INVALID_NETWORK_RESPONSE; encryption required refuses an SMB 2.1 client and serves
     one that encrypts; Time Machine's lines; each option off again, then the share and the volume
     deleted."""
@@ -2368,11 +2388,13 @@ def test_the_smb_check_shows_the_protocol_options_of_its_share(nas):
     # the second a second after the first, as the page names them to the second.
     made = [body for method, path, body, _ in nas.calls if method == "POST" and path == "/snapshots/"]
     assert made == [{"subvolume": "/mnt/pools/data/unoscheck1a2b3cv"}] * 2
-    # The listings and the opens of the file in the snapshots, over SMB.
+    # Over SMB: the file written, overwritten after the snapshots (the fake's snapshots hold the
+    # first bytes), the listings, the opens of the file in the snapshots, and after the opens of the
+    # deleted ones a plain ls in the same session; then the encryption step's sessions.
     first, second = "@GMT-2027.01.15-08.00.00", "@GMT-2027.01.15-08.00.01"
-    assert [line for share, line in nas.smb_lines if share == "unoscheck1a2b3cv" and ("allinfo" in line or "@GMT" in line)] == [
-        "allinfo v.txt", "allinfo v.txt", f"get {second}/v.txt kept.txt", "allinfo v.txt", f"get {first}/v.txt gone.txt",
-        f"get {second}/v.txt gone.txt"]
+    assert [line for share, line in nas.smb_lines if share == "unoscheck1a2b3cv"][:10] == [
+        "put data.txt v.txt", "put data2.txt v.txt", "allinfo v.txt", "allinfo v.txt", f"get {second}/v.txt kept.txt",
+        "!cat kept.txt", "allinfo v.txt", f"get {first}/v.txt gone.txt", f"get {second}/v.txt gone.txt", "ls"]
     created = [body for method, path, body, _ in nas.calls if method == "POST" and path == "/shares/smb"]
     assert [(b["name"], b["path"], b.get("previous_versions")) for b in created][-1] == (
         "unoscheck1a2b3cv", "/mnt/pools/data/unoscheck1a2b3cv/files", True)
@@ -2395,6 +2417,41 @@ def test_the_smb_check_takes_an_empty_list_of_previous_versions_without_an_error
     status, output = run_check("smb", nas)
     assert status == 0, output
     assert "and allinfo's empty list no error" in "\n".join(step_lines(output))
+
+
+@pytest.mark.parametrize("output, ended, refused", [
+    ("NT_STATUS_OBJECT_NAME_NOT_FOUND opening remote file \\@GMT-2027.01.15-08.00.00\\v.txt", False, True),
+    ("NT_STATUS_OBJECT_PATH_NOT_FOUND opening remote file \\@GMT-2027.01.15-08.00.00\\v.txt", False, True),
+    # The connection, the session or the tree connect broke: no answer of smbd to the open.
+    ("NT_STATUS_CONNECTION_DISCONNECTED opening remote file \\@GMT-2027.01.15-08.00.00\\v.txt", False, False),
+    ("NT_STATUS_CONNECTION_RESET opening remote file \\v.txt", False, False),
+    ("NT_STATUS_IO_TIMEOUT opening remote file \\v.txt", False, False),
+    ("NT_STATUS_NETWORK_NAME_DELETED opening remote file \\v.txt", False, False),
+    ("NT_STATUS_USER_SESSION_DELETED opening remote file \\v.txt", False, False),
+    ("NT_STATUS_PIPE_BROKEN opening remote file \\v.txt", False, False),
+    ("NT_STATUS_OBJECT_NAME_NOT_FOUND opening remote file \\v.txt\nNT_STATUS_CONNECTION_DISCONNECTED", False, False),
+    # smbclient ended, or opened the file.
+    ("NT_STATUS_OBJECT_NAME_NOT_FOUND opening remote file \\v.txt", True, False),
+    ("getting file \\@GMT-2027.01.15-08.00.00\\v.txt of size 20 as gone.txt", False, False),
+])
+def test_an_open_counts_as_refused_only_for_an_answer_of_smbd(output, ended, refused):
+    """The opens of a file in deleted snapshots must be refused by smbd: a status that says the
+    connection, the session or the tree connect broke is no refusal, nor is smbclient's end."""
+    assert scenario.refused_open(scenario.SmbResult(False, output, ended)) is refused
+
+
+def test_the_smb_check_needs_its_session_after_the_opens_in_deleted_snapshots(nas, monkeypatch):
+    """A broken session whose status TRANSPORT_STATUSES does not name still fails the step: after the
+    opens in the deleted snapshots, a plain ls in the same session must list the file."""
+    monkeypatch.setattr(scenario, "TRANSPORT_STATUSES", frozenset())
+    nas.bugs.add("missing-version-drops-session")
+    before = nas.snapshot()
+    status, output = run_check("smb", nas)
+    assert status == 1, output
+    failed = [line for line in step_lines(output) if line.startswith("FAIL  ")]
+    assert len(failed) == 1 and ("after the opens in the deleted snapshots ls in the same session answered "
+                                 "NT_STATUS_CONNECTION_DISCONNECTED") in failed[0], output
+    assert nas.snapshot() == before, output
 
 
 def test_the_smb_check_lets_a_second_pass_between_its_two_snapshots(nas, monkeypatch):
@@ -3166,6 +3223,10 @@ def test_the_pool_folder_helper_removes_only_an_empty_folder_that_is_no_mount_po
     ("smb", "deleted-version-listed", "after the Delete of snap_20270115_080000 allinfo v.txt answered no error"),
     ("smb", "deleted-version-opens", "afterwards v.txt in @GMT-2027.01.15-08.00.00 answered no error"),
     ("smb", "snapdir-removed", "afterwards allinfo v.txt answered NT_STATUS_INVALID_DEVICE_REQUEST"),
+    ("smb", "version-opens-live-file", "v.txt in @GMT-2027.01.15-08.00.01 answered no error, with the bytes put "
+                                       "after the snapshots"),
+    ("smb", "missing-version-drops-session", "afterwards v.txt in @GMT-2027.01.15-08.00.00 answered "
+                                             "NT_STATUS_CONNECTION_DISCONNECTED, which says the session broke"),
     ("smb", "fruit-without-global", "[global] has fruit:aapl = None, fruit:nfs_aces = None"),
     ("smb", "advertise-fails", "turning Time Machine on warns: avahi-daemon could not be restarted"),
     ("smb", "adisk-unannounced", "Avahi does not resolve unoscheck1a2b3cv in the device's _adisk._tcp service"),
