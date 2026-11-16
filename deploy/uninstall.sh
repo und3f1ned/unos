@@ -65,9 +65,10 @@ DISK_IDLE_SCANS_OFF=()
 # The rule's lines other than comments that are not as UNOS writes them
 # (edited by hand): nothing was run for them, and print_completion shows them.
 DISK_IDLE_FOREIGN=()
-# The exit status of a Ctrl-C (130), a TERM (143) or a HUP (129, a dropped SSH
-# session) that came while the step undid the disks: it stops once the command
-# then running has ended.
+# The exit status of a Ctrl-C (130), a TERM (143) or a HUP (129) that came while
+# the step undid the disks: it stops once the command then running has ended.
+# After a dropped SSH session the next write to the closed terminal fails
+# first, so set -e ends the script there with status 1; the rule is whole too.
 DISK_IDLE_STOP=""
 
 log_info() { echo -e "${BLUE}[INFO]${NC} $1"; }
