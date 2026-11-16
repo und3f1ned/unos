@@ -307,8 +307,10 @@ FRIENDLY_NT_STATUS = (
 # The idle timeouts of the disks (storage.disk-spindown, ADR-0378), as src/storage/spindown.py has them
 # (test_dev_scenarios.py compares): UNOS's udev rule, the shortest timeout in minutes and its value of
 # hdparm -S, and what the Storage page says of a host without hdparm. The check waits the timeout and
-# SPINDOWN_SETTLE seconds before it asks whether the disk sleeps, at most SPINDOWN_ROUNDS times: each
-# question reads the disk's power mode, which some disks count as an access.
+# SPINDOWN_SETTLE seconds before it asks whether the disk sleeps, at most SPINDOWN_ROUNDS times, 990 s
+# in all: each question is GET /storage/disks, whose power read (hdparm -C on the host) does not
+# restart the disk's standby timer, so a disk with a minimum of its own that sleeps later than the
+# timeout is found asleep too (the dev device's WD6400AACS: after about 10 minutes for 5).
 SPINDOWN_RULES = "/etc/udev/rules.d/90-unos-disk-spindown.rules"
 SPINDOWN_SHORTEST = 5
 SPINDOWN_SHORTEST_VALUE = 60
@@ -2006,9 +2008,12 @@ def spindown_steps(c: Check, disk: dict, hdparm_conf: str | None) -> None:
         end = c.device.disk_io(name)
         moved = (f"{end[0] - start[0]} reads and {end[1] - start[1]} writes" if start and end
                  else "its I/O counters could not be read")
-        c.expect(state == "standby", f"it is {state} after {waited} s; meanwhile the kernel counted {moved} on it: "
-                                     "something keeps it awake (an app or a share on the pool?)")
-        s.text += f": the Storage page says standby after {waited} s"
+        # The kernel counts reads and writes, not the commands that are none (SMART, IDENTIFY).
+        why = ("no read or write kept it awake, so a command did that restarts its standby timer (smartd, a SMART "
+               f"read or a power read that sends IDENTIFY), or it has a minimum timeout of its own above {waited} s"
+               if start and end and start == end else "something reads or writes it (an app or a share on the pool?)")
+        c.expect(state == "standby", f"it is {state} after {waited} s; meanwhile the kernel counted {moved} on it: {why}")
+        s.text += f": the Storage page says standby after {waited} s (the timeout: {SPINDOWN_SHORTEST * 60} s)"
 
     with c.step(texts[2]) as s:
         before = c.device.disk_io(name)

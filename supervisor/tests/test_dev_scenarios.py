@@ -554,13 +554,16 @@ class FakeNas:
         self.no_acl = False
         # The disk's power (ADR-0378): whether the host has hdparm, the idle timeout of UNOS's udev
         # rule (its text, None without the file), whether the disk sleeps, the seconds it has been
-        # idle, and the reads and writes that the kernel counted on it.
+        # idle, and the reads and writes that the kernel counted on it. The dev device's
+        # WD6400AACS has a minimum of its own: given 5 minutes, it sleeps after about 10
+        # (minimum, in seconds; 0 for a disk that takes any timeout).
         self.hdparm = True
         self.spindown = 0
         self.system_spindown = 0  # what the system disk took, with the defect system-disk-timeout
         self.rules: str | None = None
         self.asleep = False
         self.idle = 0
+        self.minimum = 600
         self.disk_reads = 1000
         self.disk_writes = 500
         # Debian's /etc/hdparm.conf as Debian installs it: every setting commented out.
@@ -1221,7 +1224,11 @@ class FakeNas:
     # --- the disk's power (ADR-0378)
 
     def power(self) -> dict:
-        """What GET /storage/disks says of the disk's power: smartctl -n standby, which leaves it asleep."""
+        """What GET /storage/disks says of the disk's power: hdparm -C, which leaves it asleep and does
+        not restart its standby timer; with the defect power-read-restarts-timer, a read that does, as
+        smartctl -n standby -i's IDENTIFY did on the dev device's disk."""
+        if "power-read-restarts-timer" in self.bugs and not self.asleep:
+            self.idle = 0
         return {"power_state": "standby" if self.asleep else "active", "spindown": self.spindown,
                 "spindown_problem": None if self.hdparm else scenario.NO_HDPARM}
 
@@ -1261,10 +1268,12 @@ class FakeNas:
         return {"name": name, "minutes": minutes}
 
     def wait(self, seconds):
-        """Time passes on the device: the disk sleeps once it was idle for its timeout."""
+        """Time passes on the device: the disk sleeps once it was idle for its timeout, or for its own
+        minimum when that is longer."""
         self.seconds += seconds
         self.idle += seconds
-        if self.spindown and self.idle >= self.spindown * 60 and "never-sleeps" not in self.bugs:
+        if (self.spindown and self.idle >= max(self.spindown * 60, self.minimum)
+                and "never-sleeps" not in self.bugs):
             self.asleep = True
         elif "never-sleeps" in self.bugs:
             self.disk_writes += 3
@@ -3559,12 +3568,17 @@ def test_the_smart_check_refuses_what_is_not_a_disk_and_starts_a_short_test(nas)
 # --- the smart check's idle timeout (storage.disk-spindown, ADR-0378) ----------------------------
 
 
-def test_the_smart_check_gives_the_disk_the_shortest_timeout_and_reads_smart_while_it_sleeps(nas):
+# The dev device's WD6400AACS sleeps after about 10 minutes when given 5 (a minimum of its own,
+# ADR-0378); a disk without one sleeps at the first read after the timeout.
+@pytest.mark.parametrize("minimum, after", [(600, 660), (0, 330)])
+def test_the_smart_check_gives_the_disk_the_shortest_timeout_and_reads_smart_while_it_sleeps(nas, minimum, after):
+    nas.minimum = minimum
     status, output = run_check("smart", nas)
     assert status == 0, output
     text = "\n".join(step_lines(output))
     for words in ("sda gets the shortest idle timeout, 5 minutes: hdparm -S 60 in UNOS's udev rule (serial W1)",
-                  "sda sleeps once the timeout ran out: the Storage page says standby after 330 s",
+                  f"sda sleeps once the timeout ran out: the Storage page says standby after {after} s (the "
+                  "timeout: 300 s)",
                   "its SMART data on Storage and on Disk Health leaves sda asleep: STANDBY, and its reads and writes "
                   "stay at (1000, 500)",
                   # ATA reads no standby timer back: Off is what the check can say it left.
@@ -3637,8 +3651,31 @@ def test_a_disk_that_something_keeps_awake_fails_after_a_bounded_wait(nas):
     status, output = run_check("smart", nas)
     assert status == 1, output
     assert re.search(r"^FAIL  \d+\. sda sleeps once the timeout ran out: it is active after 990 s; meanwhile the kernel "
-                     r"counted 0 reads and 9 writes on it", output, re.M), output
+                     r"counted 0 reads and 9 writes on it: something reads or writes it \(an app or a share on the "
+                     r"pool\?\)  \[SD ", output, re.M), output
     assert (nas.spindown, nas.rules) == (0, None)
+
+
+def test_the_smart_check_fails_a_power_read_that_restarts_the_disk_s_timer(nas):
+    # On the dev device: GET /storage/disks read sda's power with smartctl -n standby -i every 330 s, whose
+    # IDENTIFY restarted the timer that sda raises to about 10 minutes: no read or write, and no sleep.
+    nas.bugs.add("power-read-restarts-timer")
+    status, output = run_check("smart", nas)
+    assert status == 1, output
+    assert re.search(r"^FAIL  \d+\. sda sleeps once the timeout ran out: it is active after 990 s; meanwhile the kernel "
+                     r"counted 0 reads and 0 writes on it: no read or write kept it awake, so a command did that "
+                     r"restarts its standby timer \(smartd, a SMART read or a power read that sends IDENTIFY\), or "
+                     r"it has a minimum timeout of its own above 990 s  \[SD ", output, re.M), output
+    assert (nas.spindown, nas.rules) == (0, None)
+
+
+def test_the_smart_check_waits_a_bounded_time_for_a_disk_whose_minimum_is_longer(nas):
+    nas.minimum = 1200
+    status, output = run_check("smart", nas)
+    assert status == 1, output
+    assert re.search(r"^FAIL  \d+\. sda sleeps once the timeout ran out: it is active after 990 s; meanwhile the kernel "
+                     r"counted 0 reads and 0 writes on it: no read or write kept it awake", output, re.M), output
+    assert nas.seconds < 1200
 
 
 def test_the_smart_check_shows_that_the_system_disk_gets_no_idle_timeout(nas):

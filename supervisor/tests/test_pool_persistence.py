@@ -293,8 +293,9 @@ class FakeHost:
         # The power of the whole disks (ADR-0378): the paths of those in standby. A command that
         # reads a sleeping disk, or sends it a command that spins it up, wakes it and is recorded
         # in woken as (disk, command): btrfs filesystem show without --mounted (libblkid reads
-        # every block device), wipefs, blkid -p, mount, mkfs.btrfs and hdparm -S. smartctl runs
-        # in the container (run_in_container), and only with -n standby, which leaves them asleep.
+        # every block device), wipefs, blkid -p, mount, mkfs.btrfs and hdparm -S. hdparm -C reads
+        # a disk's power mode on the host and leaves it asleep; smartctl runs in the container
+        # (run_in_container), and only with -n standby, which leaves them asleep too.
         self.asleep: set[str] = set()
         self.woken: list[tuple[str, list[str]]] = []
         # The standby timer that hdparm -S gave each disk, by its path: the -S value.
@@ -488,9 +489,10 @@ class FakeHost:
 
     def run_in_container(self, cmd, *, timeout, **kwargs):
         """host.run_in_container: smartctl -n standby, which reads a disk's power mode first and
-        leaves a sleeping one alone (exit status 2, "Device is in STANDBY mode"), as its -i (the
-        identity) and -a (the SMART data) of an awake one. Any other command fails the test, as
-        smartctl without -n standby, which would wake a sleeping disk."""
+        leaves a sleeping one alone (exit status 2, "Device is in STANDBY mode"), and answers -i
+        (the identity: the power read of an NVMe disk, and of a host without hdparm) and -a (the
+        SMART data) of an awake one. Any other command fails the test, as smartctl without -n
+        standby, which would wake a sleeping disk."""
         cmd = list(cmd)
         assert timeout, cmd
         self.container_calls.append(cmd)
@@ -837,9 +839,22 @@ class FakeHost:
 
     def _hdparm(self, cmd):
         """hdparm -S <value> <disk>: the IDLE command with a standby timer, which spins up a
-        sleeping disk. -C would only read the power mode; UNOS runs no other option."""
+        sleeping disk. hdparm -C <disk>: CHECK POWER MODE, which reads the disk's power mode and
+        leaves it asleep (" drive state is:  standby", or "active/idle"); an NVMe disk takes no ATA
+        command, so hdparm fails for it with "unknown". UNOS runs no other option."""
         if "hdparm" in self.missing_programs:
             return self._result(127, stderr="nsenter: failed to execute hdparm: No such file or directory")
+        if cmd[1:2] == ["-C"]:
+            assert len(cmd) == 3, cmd
+            device = cmd[2]
+            node = self._node_by_path(device)
+            if node is None:
+                return self._result(2, stderr=f"{device}: No such file or directory\n")
+            if node["name"].startswith("nvme"):
+                return self._result(25, stdout=f"\n{device}:\n drive state is:  unknown\n",
+                                    stderr=" HDIO_DRIVE_CMD(checkpowermode) failed: Inappropriate ioctl for device\n")
+            state = "standby" if self._disk_of(device) in self.asleep else "active/idle"
+            return self._result(stdout=f"\n{device}:\n drive state is:  {state}\n")
         assert len(cmd) == 4 and cmd[1] == "-S" and cmd[2].isdigit(), cmd
         device = cmd[3]
         if self._node_by_path(device) is None:

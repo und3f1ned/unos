@@ -300,10 +300,11 @@ def _io_of(disk: str) -> tuple[int, int] | None:
 def pool_sleeps(pool: str, asleep: dict[str, Asleep] | None = None) -> bool:
     """Whether a disk of the pool ``pool``, mounted at the pools' base, is in standby
     (disks.power_state), so that a read of the pool could spin it up; False for a pool that is not
-    mounted there. Only the pool's own disks are asked: asking an awake disk is a command, which
-    restarts its standby timer. Read without waking a disk: findmnt, lsblk and smartctl -n
-    standby. RuntimeError when the host's mounts or disks cannot be listed. Blocking: call it in
-    a worker thread.
+    mounted there. Read without waking a disk: findmnt, lsblk and the power read, hdparm -C, which
+    does not restart an awake disk's standby timer either. Only the pool's own disks are asked: on
+    a host without hdparm the power read is smartctl -n standby -i, whose IDENTIFY restarts it.
+    RuntimeError when the host's mounts or disks cannot be listed. Blocking: call it in a worker
+    thread.
 
     ``asleep`` (pool -> Asleep, which this updates) keeps the disk found in standby from one check
     to the next. While the kernel has counted no read or write on that disk since, it still sleeps

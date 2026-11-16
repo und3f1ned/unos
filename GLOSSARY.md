@@ -150,8 +150,8 @@ the Storage page with `hdparm -S` and kept in UNOS's udev rule by the disk's ser
 Avoid: sleep timer, APM (the disk's own power management).
 
 **Standby**: The power state of a disk that has spun down: a read spins it up, and reading its
-power state with `smartctl -n standby` does not. "Standby-safe" is a command that sends a sleeping
-disk nothing that wakes it (ADR-0378). The user texts say a disk in standby "sleeps". Avoid: SLEEP
+power state with `hdparm -C` (or `smartctl -n standby`) does not. "Standby-safe" is a command that
+sends a sleeping disk nothing that wakes it (ADR-0378). The user texts say a disk in standby "sleeps". Avoid: SLEEP
 mode (the deeper ATA state that needs a reset).
 
 ## Shares and SMB

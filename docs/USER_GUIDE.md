@@ -204,16 +204,20 @@ only once the supervisor has restarted.
 
 The **Power** column shows whether each disk is **Active** (spinning, or
 idle) or in **Standby** (spun down), or **Unknown** when the disk cannot say,
-as behind some USB bridges. UNOS asks the disk for its power mode in a way
-that does not wake it, and a disk in standby is not read for what it holds:
-the **Contents** column then says "Not read while the disk sleeps" unless the
-host already knows its filesystem or partitions.
+as behind some USB bridges. UNOS asks the disk for its power mode with
+`hdparm -C` on the host, which neither wakes a sleeping disk nor starts an
+awake one's idle timeout again, and a disk in standby is not read for what it
+holds: the **Contents** column then says "Not read while the disk sleeps"
+unless the host already knows its filesystem or partitions. On a host without
+`hdparm`, and for an NVMe disk, UNOS asks with `smartctl` instead, which also
+leaves a sleeping disk asleep but starts an awake one's timer again.
 
 Below the state, the button with the disk's idle timeout (**Off** by
 default) opens **Idle Timeout**: choose **Off**, 5, 10, 20 or 30 minutes, or
 1 to 5 hours, and **Save**. The disk spins down after that time without
-access. UNOS sets it at once with `hdparm -S` on the host, which spins the
-disk up if it sleeps, and keeps it in its udev rule
+access, or later when it has a minimum of its own: a WD6400AACS given 5
+minutes spins down after about 10. UNOS sets it at once with `hdparm -S` on
+the host, which spins the disk up if it sleeps, and keeps it in its udev rule
 `/etc/udev/rules.d/90-unos-disk-spindown.rules`, which sets it again at every
 boot and whenever the disk is connected again, under any name: the rule finds
 the disk by its serial number. **Off** stops the timer and removes the disk's
@@ -231,7 +235,7 @@ host cannot read UNOS's udev rule, every disk's button is off with that reason.
 Nothing UNOS does on its own wakes a sleeping disk or keeps an idle one
 awake. Disk Health, the SMART data and the hourly SMART records leave a
 sleeping disk asleep, and the hourly records skip a disk with an idle timeout
-that was not used since its last record: any command sent to an awake disk
+that was not used since its last record: a SMART read of an awake disk
 starts its timer again. The pool health check every 5 minutes, and the pool
 counts of `/api/v1/health/prometheus` and `/api/v1/health/full` for
 monitoring, read only what the kernel and udev know. The trash of a pool is

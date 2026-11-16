@@ -2,9 +2,10 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-# A whole disk's power as smartctl -n standby reads it without waking the disk (ADR-0378): active
-# (spinning, or idle), standby (spun down, or asleep), or unknown (smartctl cannot open the disk,
-# as behind some USB bridges, or did not answer).
+# A whole disk's power as disks.power_state reads it without waking the disk (ADR-0378): hdparm -C
+# on the host, or smartctl -n standby without hdparm and for an NVMe disk. Active (spinning, or
+# idle), standby (spun down, or asleep), or unknown (the disk cannot be asked, as behind some USB
+# bridges, names no power mode, or did not answer).
 PowerState = Literal["active", "standby", "unknown"]
 
 # The idle timeouts that the Storage page offers, in minutes, 0 for off (ADR-0378): values that
@@ -46,8 +47,8 @@ class DiskInfo(BaseModel):
     in_use: bool = False  # is_system, mounted, member of a mounted btrfs pool, or held by md/LVM/LUKS
     in_use_reason: str | None = None
     pool: str | None = None  # btrfs label when the disk (or a partition) belongs to a btrfs filesystem
-    # Read before anything else, with smartctl -n standby, which leaves a sleeping disk alone; a
-    # disk in standby is not probed with wipefs, so has_data is true for it unless lsblk knows more.
+    # Read before anything else (disks.power_state), which leaves a sleeping disk alone; a disk in
+    # standby is not probed with wipefs, so has_data is true for it unless lsblk knows more.
     power_state: PowerState = "unknown"
     # The idle timeout in minutes that UNOS's udev rule sets for the disk (by its serial), 0 for none.
     spindown: int = 0

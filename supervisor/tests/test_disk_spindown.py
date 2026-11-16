@@ -6,8 +6,11 @@ Off or one of SPINDOWN_MINUTES, which hdparm -S expresses. UNOS applies it at on
 the host and keeps it in its udev rule, which runs hdparm -S again whenever the disk appears (at boot
 and when it is plugged in again), matched by its serial. The system disk, a boot or virtual device,
 an NVMe disk and a disk without a serial that a rule can match are refused with the reason; a host
-without hdparm says so. GET /storage/disks reports each disk's power state with smartctl -n standby,
-which leaves a sleeping disk alone, and the SMART reads of Storage and Disk Health do the same.
+without hdparm says so. GET /storage/disks reports each disk's power state with hdparm -C on the host,
+which asks the disk CHECK POWER MODE alone: a sleeping disk stays asleep, and an awake one's standby
+timer goes on (smartctl -n standby -i, the read of a host without hdparm and of an NVMe disk, asks an
+awake disk IDENTIFY, which restarts it). The SMART reads of Storage and Disk Health run smartctl -n
+standby, which leaves a sleeping disk alone.
 
 Nothing UNOS does periodically wakes a sleeping disk: the SMART monitor, the RAID monitor, the
 monitoring endpoints, the trash expiry and the live statistics are run here with every disk asleep, on
@@ -75,6 +78,19 @@ def host(monkeypatch, tmp_path):
     fake.add_disk("nvme0n1", rota=False, size=512_110_190_592, model="Samsung SSD 980", serial="S64ANS0T")
     yield fake
     wait_for_app_starts()
+
+
+def power_read(device: str) -> list[str]:
+    """The power read of a SATA disk (disks.power_state): hdparm -C on the host, under its timeout."""
+    return ["timeout", "--kill-after=5", "15", "hdparm", "-C", device]
+
+
+def power_reads(fake) -> list[str]:
+    """The disks whose power hdparm -C read on the fake host, in order."""
+    return [call[-1] for call in fake.calls if call[:1] == ["timeout"] and call[3:5] == ["hdparm", "-C"]]
+
+
+IDENTIFY = ["smartctl", "-n", "standby", "-i", "-j"]  # and the disk: smartctl's power read
 
 
 def rules(fake) -> list[str]:
@@ -229,7 +245,8 @@ def test_the_system_disk_is_refused_with_the_reason(host):
         response = api.put(f"{DISKS}/sde/spindown", json={"minutes": 5})
         assert (response.status_code, response.json()["detail"]) == (409, reason)
         assert listed(api)["sda"]["spindown_problem"] is None
-    assert [c for c in host.calls if c[:1] in (["hdparm"], ["timeout"])] == []
+    # No timer was set: hdparm ran only to read the disks' power (hdparm -C).
+    assert [c for c in host.calls if c[:1] in (["hdparm"], ["timeout"]) and "-C" not in c] == []
     assert spindown.RULES_PATH not in host.files
 
 
@@ -285,9 +302,13 @@ def test_an_nvme_disk_and_a_disk_without_a_usable_serial_are_refused(host):
 def test_a_host_without_hdparm_says_so_and_changes_nothing(host):
     host.missing_programs.add("hdparm")
     with admin_client() as api:
+        host.asleep.add("/dev/sdc")
         found = listed(api)
         assert found["sda"]["spindown_problem"] == spindown.NO_HDPARM
-        assert found["sda"]["power_state"] == "active"  # read with smartctl, in the container
+        # Read with smartctl -n standby -i in the container, which leaves a sleeping disk alone.
+        assert (found["sda"]["power_state"], found["sdc"]["power_state"]) == ("active", "standby")
+        assert [IDENTIFY + [f"/dev/{name}"] for name in ("sda", "sdb", "sdc", "nvme0n1")] == host.container_calls
+        assert host.woken == []
         response = api.put(f"{DISKS}/sda/spindown", json={"minutes": 5})
         assert (response.status_code, response.json()["detail"]) == (409, spindown.NO_HDPARM)
     assert spindown.NO_HDPARM == "The host has no hdparm: install the package hdparm on the host to set idle timeouts"
@@ -331,21 +352,33 @@ def test_storage_shows_each_disk_s_power_state_without_waking_it(host):
     # The blank sdc is not probed for signatures while it sleeps: it may hold data.
     assert not [c for c in host.calls if c[0] == "wipefs" and c[-1] == "/dev/sdc"]
     assert found["sdc"]["has_data"] is True
-    assert {tuple(c[:-1]) for c in host.container_calls} == {("smartctl", "-n", "standby", "-i", "-j")}
+    # hdparm -C on the host asks each SATA disk CHECK POWER MODE alone, which does not restart an awake
+    # disk's standby timer: never smartctl -i, whose IDENTIFY does. The NVMe disk, which hdparm cannot
+    # ask and which gets no idle timeout, is read with smartctl.
+    assert power_reads(host) == ["/dev/sda", "/dev/sdb", "/dev/sdc"]
+    assert [power_read(f"/dev/{name}") for name in ("sda", "sdb", "sdc")] == [
+        call for call in host.calls if "-C" in call]
+    assert host.container_calls == [IDENTIFY + ["/dev/nvme0n1"]]
 
 
 def test_a_disk_whose_power_state_cannot_be_read_is_unknown(host, monkeypatch):
-    answer = host.run_in_container
+    # sdb's hdparm was ended by the host's timeout (exit status 124), sdc's could not ask the disk; sda's
+    # host command did not answer in time. None of them is asked again with smartctl -i.
+    host.fail[tuple(power_read("/dev/sdb"))] = (124, "")
+    host.fail[tuple(power_read("/dev/sdc"))] = (5, " HDIO_DRIVE_CMD(checkpowermode) failed: Input/output error")
+    answer = host.run
 
-    def failing(cmd, **kwargs):
-        if cmd[-1] == "/dev/sdb":
+    def slow(cmd, **kwargs):
+        if cmd == power_read("/dev/sda"):
             raise subprocess.TimeoutExpired(cmd, kwargs["timeout"])
         return answer(cmd, **kwargs)
 
-    monkeypatch.setattr(host_module, "run_in_container", failing)
+    monkeypatch.setattr(host_module, "run_on_host", slow)
     with admin_client() as api:
         found = listed(api)
-    assert (found["sdb"]["power_state"], found["sda"]["power_state"]) == ("unknown", "active")
+    assert {name: d["power_state"] for name, d in found.items()} == {
+        "sda": "unknown", "sdb": "unknown", "sdc": "unknown", "nvme0n1": "active"}
+    assert host.container_calls == [IDENTIFY + ["/dev/nvme0n1"]]
 
 
 def test_reading_smart_data_leaves_a_sleeping_disk_asleep(host):
@@ -633,8 +666,8 @@ def test_the_trash_expiry_asks_an_awake_disk_of_a_pool_put_off_for_a_sleeping_on
     sleeping: dict[str, spindown.Asleep] = {}
 
     def asked() -> list[str]:
-        paths = [call[-1] for call in host.container_calls]
-        host.container_calls.clear()
+        paths = power_reads(host)
+        host.calls.clear()
         return paths
 
     for hour in range(6):
@@ -653,7 +686,7 @@ def test_the_trash_expiry_asks_an_awake_disk_of_a_pool_put_off_for_a_sleeping_on
     assert files_router._expire_due_trash(now, done, 8 * 3600.0, sleeping) == (1, [], True)
     assert asked() == ["/dev/sdj", "/dev/sdi"]
     assert sleeping == {} and done == {"mirror": 8 * 3600.0}
-    assert host.woken == []
+    assert host.woken == [] and host.container_calls == []
 
 
 def test_the_trash_expiry_checks_every_hour(monkeypatch):
@@ -708,14 +741,68 @@ def test_only_the_disks_of_the_pool_are_asked_whether_they_sleep(host):
     host.dirs.add("/mnt/pools/media")
     host.mount_pool("media")
     assert not spindown.pool_sleeps("data")
-    assert [call[-1] for call in host.container_calls] == ["/dev/sda"]
+    assert power_reads(host) == ["/dev/sda"] and host.container_calls == []
 
 
-def test_the_power_state_is_read_with_smartctl_n_standby(monkeypatch):
+def test_the_power_state_is_read_with_hdparm_c_on_the_host(monkeypatch):
+    # hdparm -C sends the disk CHECK POWER MODE alone and prints its answer as " drive state is:  <state>":
+    # it neither wakes a sleeping disk nor restarts an awake one's standby timer (ADR-0378).
+    answers = {
+        "/dev/sda": (0, "\n/dev/sda:\n drive state is:  active/idle\n", ""),
+        "/dev/sdb": (0, "\n/dev/sdb:\n drive state is:  idle\n", ""),
+        "/dev/sdc": (0, "\n/dev/sdc:\n drive state is:  standby\n", ""),
+        "/dev/sdd": (0, "\n/dev/sdd:\n drive state is:  sleeping\n", ""),
+        "/dev/sde": (0, "\n/dev/sde:\n drive state is:  NVcache_spindown\n", ""),
+        "/dev/sdf": (0, "\n/dev/sdf:\n drive state is:  NVcache_spinup\n", ""),
+        # The disk gives no answer that hdparm knows.
+        "/dev/sdg": (0, "\n/dev/sdg:\n drive state is:  unknown\n", ""),
+        "/dev/sdh": (0, "\n/dev/sdh:\n", ""),
+        # hdparm could not ask the disk (a USB bridge without ATA pass-through, an I/O error), the disk is
+        # gone, or the host's timeout ended hdparm (124) or killed it (137).
+        "/dev/sdi": (5, "\n/dev/sdi:\n drive state is:  unknown\n",
+                     " HDIO_DRIVE_CMD(checkpowermode) failed: Input/output error\n"),
+        "/dev/sdj": (2, "", "/dev/sdj: No such file or directory\n"),
+        "/dev/sdk": (124, "", ""),
+        "/dev/sdl": (137, "", ""),
+    }
+    seen = []
+
+    def run_on_host(cmd, **kwargs):
+        seen.append((cmd, kwargs["timeout"]))
+        if cmd[-1] == "/dev/sdm":  # nsenter did not answer in time
+            raise subprocess.TimeoutExpired(cmd, kwargs["timeout"])
+        if cmd[-1] == "/dev/sdn":
+            raise OSError("nsenter: cannot open /proc/1/ns/mnt: Permission denied")
+        return host_module.HostResult(*answers[cmd[-1]])
+
+    def smartctl(cmd, **kwargs):
+        raise AssertionError(f"smartctl read the power of a disk that hdparm asked: {cmd}")
+
+    monkeypatch.setattr(host_module, "run_on_host", run_on_host)
+    monkeypatch.setattr(host_module, "run_in_container", smartctl)
+    assert {c: disks.power_state(f"/dev/sd{c}") for c in "abcdefghijklmn"} == {
+        "a": "active", "b": "active", "c": "standby", "d": "standby", "e": "standby", "f": "active",
+        "g": "unknown", "h": "unknown", "i": "unknown", "j": "unknown", "k": "unknown", "l": "unknown",
+        "m": "unknown", "n": "unknown"}
+    # Bounded: the host's timeout sends TERM after 15 seconds and KILL 5 later (ADR-0258); nsenter's own
+    # timeout comes after both.
+    assert seen[0] == (["timeout", "--kill-after=5", "15", "hdparm", "-C", "/dev/sda"], 25)
+    assert (disks.POWER_CHECK_TIMEOUT, disks.POWER_CHECK_KILL_AFTER) == (15, 5)
+
+
+def test_without_hdparm_the_power_state_is_read_with_smartctl_n_standby(monkeypatch):
+    # The host's timeout finds no hdparm (exit status 127): smartctl -n standby -i in the container,
+    # which leaves a sleeping disk alone but asks an awake one IDENTIFY, which restarts its timer.
+    def run_on_host(cmd, **kwargs):
+        assert cmd[3:5] == ["hdparm", "-C"], cmd
+        return host_module.HostResult(127, "", "timeout: failed to run command 'hdparm': No such file or directory\n")
+
     seen = []
 
     def smartctl(cmd, **kwargs):
         seen.append((cmd, kwargs["timeout"]))
+        if cmd[-1] == "/dev/sdf":
+            raise subprocess.TimeoutExpired(cmd, kwargs["timeout"])
         out = {"/dev/sda": (2, '{"smartctl": {"messages": [{"string": "Device is in STANDBY mode, exit(2)"}]}}'),
                "/dev/sdb": (2, '{"smartctl": {"messages": [{"string": "Device is in SLEEP mode, exit(2)"}]}}'),
                "/dev/sdc": (0, '{"model_name": "X"}'),
@@ -723,9 +810,21 @@ def test_the_power_state_is_read_with_smartctl_n_standby(monkeypatch):
                "/dev/sde": (4, '{"model_name": "X"}')}[cmd[-1]]
         return subprocess.CompletedProcess(cmd, *out, "")
 
+    monkeypatch.setattr(host_module, "run_on_host", run_on_host)
     monkeypatch.setattr(host_module, "run_in_container", smartctl)
-    assert [disks.power_state(f"/dev/sd{c}") for c in "abcde"] == ["standby", "standby", "active", "unknown", "active"]
-    assert seen[0] == (["smartctl", "-n", "standby", "-i", "-j", "/dev/sda"], disks.POWER_CHECK_TIMEOUT)
+    assert [disks.power_state(f"/dev/sd{c}") for c in "abcdef"] == [
+        "standby", "standby", "active", "unknown", "active", "unknown"]
+    assert seen[0] == (IDENTIFY + ["/dev/sda"], disks.POWER_CHECK_TIMEOUT)
+
+
+def test_an_nvme_disk_s_power_state_is_read_with_smartctl(host):
+    # hdparm sends ATA commands, which an NVMe disk does not take: it would always be unknown. An NVMe
+    # disk has no standby of ATA's and gets no idle timeout, so smartctl's IDENTIFY keeps nothing awake.
+    assert disks.power_state("/dev/nvme0n1") == "active"
+    assert power_reads(host) == [] and host.container_calls == [IDENTIFY + ["/dev/nvme0n1"]]
+    # What hdparm -C answers for it on the fake host, as on a real one.
+    result = host.run(power_read("/dev/nvme0n1"))
+    assert (result.returncode, result.stdout.splitlines()[-1]) == (25, " drive state is:  unknown")
 
 
 def test_hdparm_is_an_optional_host_tool():

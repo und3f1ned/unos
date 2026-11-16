@@ -99,6 +99,8 @@ HOST_TOOLS: dict[str, str] = {
 # UPS status names a missing NUT client (ADR-0356). storage/spindown.py runs hdparm
 # -S (under timeout) for a disk's idle timeout, and the Storage page names a missing
 # hdparm (ADR-0378): install.sh installs it, but a host set up by hand may lack it.
+# storage/disks.py runs hdparm -C (under timeout) for a disk's power state, and
+# smartctl -n standby -i in the container without it.
 OPTIONAL_HOST_TOOLS: dict[str, str] = {
     "exportfs": "nfs-kernel-server",
     "upsc": "nut-client",

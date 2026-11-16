@@ -49,14 +49,32 @@ LSBLK_COLUMNS = (
 FINDMNT_COLUMNS = "TARGET,SOURCE,FSTYPE,UUID,MAJ:MIN,FSROOT,VFS-OPTIONS,FS-OPTIONS"
 
 SMARTCTL_TIMEOUT = 60
-# Seconds the read of a disk's power state may take (power_state): smartctl -n standby answers
-# at once, unless the disk or its USB bridge hangs.
+# Seconds the read of a disk's power state may take (power_state): hdparm -C and smartctl -n standby
+# answer at once, unless the disk or its USB bridge hangs. hdparm runs on the host under its timeout
+# (ADR-0258), which kills it POWER_CHECK_KILL_AFTER seconds after its TERM.
 POWER_CHECK_TIMEOUT = 15
+POWER_CHECK_KILL_AFTER = 5
 
 # What smartctl -n standby prints, as its message and in the JSON's, when it leaves a disk alone
 # because the disk sleeps: "Device is in STANDBY mode, exit(2)" (or SLEEP; SCSI disks add their
 # variant, "STANDBY_Y").
 _ASLEEP = re.compile(r"Device is in (?:STANDBY|SLEEP)\b")
+
+# How hdparm -C prints the disk's answer to CHECK POWER MODE: " drive state is:  standby".
+_DRIVE_STATE = re.compile(r"^\s*drive state is:\s*(\S+)\s*$", re.MULTILINE)
+# hdparm's names of the power modes: active/idle (FFh), idle (80h), standby (00h), sleeping (older
+# versions, for a disk in SLEEP) and those of a disk with an NV cache (41h spinning, 40h spun down).
+# "unknown", and any other, is no power mode that hdparm knows.
+_HDPARM_STATES: dict[str, PowerState] = {
+    "active/idle": "active",
+    "idle": "active",
+    "NVcache_spinup": "active",
+    "standby": "standby",
+    "sleeping": "standby",
+    "NVcache_spindown": "standby",
+}
+# The exit status of the host's timeout(1) when it cannot find the program: the host has no hdparm.
+_NOT_FOUND = 127
 
 _SUBVOLUME_SUFFIX = re.compile(r"\[[^\]]*\]$")
 
@@ -558,11 +576,35 @@ def smartctl_found_it_asleep(result: subprocess.CompletedProcess[str]) -> bool:
 
 def power_state(device: str) -> PowerState:
     """Whether the whole disk ``device`` is active (spinning, or idle) or in standby, read without
-    waking it (ADR-0378): ``smartctl -n standby -i`` in the container asks the disk for its power
-    mode and stops for a sleeping one; an awake one answers its identity. "unknown" when smartctl
-    cannot open the disk (behind some USB bridges) or does not answer within
-    POWER_CHECK_TIMEOUT. Blocking: call it in a worker thread.
+    waking it and without restarting its standby timer (ADR-0378): ``hdparm -C`` on the host sends
+    the disk CHECK POWER MODE alone. "unknown" when hdparm fails (a disk it cannot ask, as behind
+    some USB bridges), names no power mode, or does not answer within POWER_CHECK_TIMEOUT.
+
+    On a host without hdparm (an optional host tool), and for an NVMe disk, which hdparm cannot ask
+    and which gets no idle timeout, ``smartctl -n standby -i`` in the container reads it
+    (_smartctl_power_state): it leaves a sleeping disk alone, but asks an awake one IDENTIFY DEVICE,
+    which restarts the disk's standby timer. Blocking: call it in a worker thread.
     """
+    if device.removeprefix("/dev/").startswith("nvme"):
+        return _smartctl_power_state(device)
+    cmd = ["timeout", f"--kill-after={POWER_CHECK_KILL_AFTER}", str(POWER_CHECK_TIMEOUT), "hdparm", "-C", device]
+    try:
+        result = host.run_on_host(cmd, timeout=POWER_CHECK_TIMEOUT + POWER_CHECK_KILL_AFTER + 5, errors="replace")
+    except (OSError, subprocess.SubprocessError):
+        return "unknown"
+    if result.returncode == _NOT_FOUND:
+        return _smartctl_power_state(device)
+    found = _DRIVE_STATE.search(result.stdout)
+    if not result.ok or found is None:  # also when the host's timeout ended it (124, or 137 killed)
+        return "unknown"
+    return _HDPARM_STATES.get(found[1], "unknown")
+
+
+def _smartctl_power_state(device: str) -> PowerState:
+    """power_state with ``smartctl -n standby -i`` in the container, which asks the disk for its
+    power mode and stops for a sleeping one; an awake one answers its identity. "unknown" when
+    smartctl cannot open the disk (behind some USB bridges) or does not answer within
+    POWER_CHECK_TIMEOUT."""
     try:
         # Killed at its timeout and not waited for (ADR-0290).
         result = host.run_in_container(
@@ -662,7 +704,7 @@ def list_disks() -> list[DiskInfo]:
     for node in whole:
         name = node["name"]
         path = node.get("path") or f"/dev/{name}"
-        # Before anything that could read the disk: smartctl -n standby leaves a sleeping disk alone.
+        # Before anything that could read the disk: the power read leaves a sleeping disk alone.
         power = power_state(path)
         facts = _node_facts(node, node, state, probe=power != "standby")
         partitions = [

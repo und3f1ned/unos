@@ -190,8 +190,10 @@ def test_storage_smart_for_every_disk_the_storage_page_lists(api, host):
     # webui/src/lib/api/storage.ts getDiskSmart() sends the names of GET /storage/disks.
     names = [disk["name"] for disk in api.get("/api/v1/storage/disks").json()]
     assert names == ["sda", "sdc", "nvme0n1"]
-    # The list reads each disk's power state, which leaves a sleeping disk asleep (ADR-0378).
-    assert host.smartctl == [["smartctl", "-n", "standby", "-i", "-j", f"/dev/{name}"] for name in names]
+    # The list reads each disk's power state without waking it (ADR-0378): hdparm -C on the host for
+    # a SATA disk, smartctl -n standby -i for the NVMe disk, which hdparm cannot ask.
+    assert [call[-1] for call in host.calls if call[3:5] == ["hdparm", "-C"]] == ["/dev/sda", "/dev/sdc"]
+    assert host.smartctl == [["smartctl", "-n", "standby", "-i", "-j", "/dev/nvme0n1"]]
     host.smartctl.clear()
     host.lsblk_on_loop.clear()
 
