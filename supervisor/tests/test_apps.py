@@ -198,9 +198,12 @@ def pools(tmp_path, monkeypatch):
 
 @pytest.fixture
 def docker_client(monkeypatch):
+    """Docker without containers; ``containers.create`` makes a running container "c0ffee"."""
     client = MagicMock(name="docker")
     client.containers.get.side_effect = NotFound("No such container")
+    client.containers.list.return_value = []
     container = MagicMock(name="container", short_id="c0ffee", status="running")
+    container.attrs = {"State": {"Status": "running", "Running": True}}
     client.containers.create.return_value = container
     monkeypatch.setattr(apps_router, "get_client", lambda: client)
     return client
@@ -332,10 +335,13 @@ class TestPoolSelection:
         assert response.status_code == 200, response.text
         body = response.json()
         assert body["pool"] == "alpha"
+        # All of the main container's (ADR-0381).
         assert body["volumes"] == [
-            {"host": str(pools.alpha / "apps/jellyfin/config"), "container": "/config", "readonly": False},
-            {"host": str(pools.alpha / "apps/jellyfin/cache"), "container": "/cache", "readonly": False},
-            {"host": str(pools.alpha / "media"), "container": "/media", "readonly": True},
+            {"host": str(pools.alpha / "apps/jellyfin/config"), "container": "/config", "readonly": False,
+             "companion": None},
+            {"host": str(pools.alpha / "apps/jellyfin/cache"), "container": "/cache", "readonly": False,
+             "companion": None},
+            {"host": str(pools.alpha / "media"), "container": "/media", "readonly": True, "companion": None},
         ]
         assert _mounts(docker_client) == {
             "/config": {"Target": "/config", "Source": str(pools.alpha / "apps/jellyfin/config"), "Type": "bind", "ReadOnly": False},
@@ -532,9 +538,11 @@ class TestCatalogPaths:
         assert response.status_code == 200
         assert response.json()["volumes"] == [
             {"host": f"{POOL_PLACEHOLDER}/apps/portainer/data", "container": "/data",
-             "readonly": False, "is_file": False, "uid": None, "gid": None, "on_pool": True},
+             "readonly": False, "is_file": False, "uid": None, "gid": None, "generated_secret": False,
+             "secret_for": None, "on_pool": True},
             {"host": "/var/run/docker.sock", "container": "/var/run/docker.sock",
-             "readonly": False, "is_file": False, "uid": None, "gid": None, "on_pool": False},
+             "readonly": False, "is_file": False, "uid": None, "gid": None, "generated_secret": False,
+             "secret_for": None, "on_pool": False},
         ]
 
 
@@ -962,16 +970,29 @@ class TestFileVolumes:
 
 
 class TestDockerFlow:
-    def test_existing_container_is_a_conflict(self, api, pools, docker_client):
-        docker_client.containers.get.side_effect = None
-        docker_client.containers.get.return_value = MagicMock(name="existing")
+    def test_existing_container_is_a_conflict(self, api, pools, docker_client, installed):
+        installed(_container("jellyfin"))
 
         response = api.post(INSTALL, json={"template_id": "jellyfin"})
 
-        assert response.status_code == 409
-        assert "already exists" in response.json()["detail"]
+        assert (response.status_code, response.json()) == (
+            409, {"detail": "A container named 'jellyfin' already exists"}
+        )
+        # One listing of Docker's containers names them all (ADR-0381).
+        docker_client.containers.list.assert_called_once_with(all=True, ignore_removed=True)
+        docker_client.containers.get.assert_not_called()
         docker_client.images.pull.assert_not_called()
         assert not (pools.alpha / "apps").exists()
+
+    @pytest.mark.parametrize("name", ["jellyfin", "media"], ids=["its-name", "another-name"])
+    def test_an_installed_app_is_not_installed_again(self, api, pools, docker_client, installed, name):
+        # One instance per template: its data folders are named after the template (ADR-0381).
+        installed(_jellyfin(pools, name=name))
+
+        response = api.post(INSTALL, json={"template_id": "jellyfin"})
+
+        assert (response.status_code, response.json()) == (409, {"detail": "Jellyfin is already installed"})
+        docker_client.images.pull.assert_not_called()
 
     def test_failed_start_removes_the_container(self, api, pools, docker_client):
         container = docker_client.containers.create.return_value
@@ -983,12 +1004,14 @@ class TestDockerFlow:
         assert "port is already allocated" in response.json()["detail"]
         container.remove.assert_called_once_with(force=True)
 
-    @pytest.mark.parametrize("name", ["../etc", "a b", "-x", "x"])
-    def test_invalid_container_name_is_rejected(self, api, pools, docker_client, name):
+    @pytest.mark.parametrize("name", ["jellyfin2", "../etc"])
+    def test_a_name_in_the_request_is_refused(self, api, pools, docker_client, name):
+        # The containers of an app are named after its template (ADR-0381).
         response = api.post(INSTALL, json={"template_id": "jellyfin", "name": name})
 
-        assert response.status_code == 400
-        docker_client.containers.get.assert_not_called()
+        assert response.status_code == 422
+        docker_client.containers.list.assert_not_called()
+        docker_client.images.pull.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -1948,7 +1971,9 @@ class TestShareFolders:
             "Target": "/downloads", "Source": str(family), "Type": "bind", "ReadOnly": False,
         }
         assert _environment(docker_client)["PGID"] == "70000"
-        assert {"host": str(family), "container": "/downloads", "readonly": False} in response.json()["volumes"]
+        assert {"host": str(family), "container": "/downloads", "readonly": False, "companion": None} in (
+            response.json()["volumes"]
+        )
 
     def test_a_shared_default_folder_needs_the_option(self, api, pools, docker_client, shares):
         # Folders that apps use can be shared; an app installed on one afterwards needs the group.
@@ -2181,7 +2206,12 @@ class TestStartChecks:
         response = api.post(RESTART.format("jellyfin"))
 
         assert response.status_code == 200, response.text
-        container.restart.assert_called_once_with()
+        # A restart is a stop, then a start, as for an app of several containers (ADR-0381).
+        assert [call[0] for call in container.method_calls if call[0] in ("stop", "start", "restart")] == [
+            "stop", "start",
+        ]
+        container.stop.assert_called_once_with(timeout=10)
+        container.start.assert_called_once_with()
 
     def test_missing_folders_on_the_apps_pool_are_created_again(self, api, pools, installed):
         # Docker's old -v binds recreated a deleted folder; Mount binds do not.
@@ -2263,7 +2293,9 @@ class TestStartChecks:
 
         assert response.status_code == 409
         assert "Mount the pool ('alpha' holds the app's data)" in response.json()["detail"]
-        container.restart.assert_not_called()
+        # Refused before the stop: the app keeps running.
+        container.stop.assert_not_called()
+        container.start.assert_not_called()
 
     def test_the_answer_names_the_pool_that_holds_the_folder(self, api, pools, installed):
         """A folder on another pool than the one the app was installed on, such as a share's folder
@@ -2452,10 +2484,14 @@ class TestInstalledApps:
         [app_info] = response.json()
         assert app_info["pool"] == "alpha"
         assert app_info["volumes"] == [
-            {"host": str(pools.alpha / "apps/portainer/data"), "container": "/data", "readonly": False},
-            {"host": "/var/run/docker.sock", "container": "/var/run/docker.sock", "readonly": False},
+            {"host": str(pools.alpha / "apps/portainer/data"), "container": "/data", "readonly": False,
+             "companion": None},
+            {"host": "/var/run/docker.sock", "container": "/var/run/docker.sock", "readonly": False,
+             "companion": None},
         ]
         assert app_info["data_outside_pools"] == []
+        # An app of one container (ADR-0381).
+        assert (app_info["companions"], app_info["missing"], app_info["health"]) == ([], [], None)
 
     def test_app_on_an_unmounted_pool_is_flagged(self, api, pools, installed):
         installed(_jellyfin(pools))
@@ -2606,7 +2642,8 @@ class TestStopAndUninstall:
         response = api.post(STOP.format("jellyfin"))
 
         assert (response.status_code, response.json()) == (200, {"status": "exited", "id": "jellyfin"})
-        container.stop.assert_called_once_with()
+        # The stop's timeout is given, so that docker-py waits for it (ADR-0381).
+        container.stop.assert_called_once_with(timeout=10)
         container.remove.assert_not_called()
 
     def test_uninstall_removes_the_container_and_keeps_the_apps_data(self, api, pools, installed):
@@ -2618,7 +2655,7 @@ class TestStopAndUninstall:
         response = api.delete(UNINSTALL.format("jellyfin"))
 
         assert (response.status_code, response.json()) == (200, {"status": "removed", "id": "jellyfin"})
-        container.stop.assert_called_once_with()
+        container.stop.assert_called_once_with(timeout=10)
         # Without v=True: Docker keeps the container's volumes too.
         container.remove.assert_called_once_with()
         assert _tree(pools.root) == before
