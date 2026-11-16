@@ -15,12 +15,19 @@ balance in the process that asked for it and cancels it, deleting it from the di
 process gets a fatal signal; a restart of the supervisor's container (`pid: host`) kills every
 process in it, and a shutdown of the host sends SIGTERM to the processes of every unit it stops.
 The kernel pauses a balance whose pause and cancel are both requested, and both requests return 0
-(`btrfs_balance()`, Linux 6.1.150 and later, the dev device's 6.1.172 too). A full balance
-rewrites every chunk: hours on the dev device's hard disk (`deploy.arm64-bpi-w3`). Working on
-through the features under the owner's delegation ("work on through the features, ask no
-questions; I allow everything", in translation, as ADR-0340), with "then we continue developing
-UNOS's features with our test hardware in mind" for this batch (2026-11-15), the agent decided the
-following.
+(`btrfs_balance()`, Linux 6.1.150 and later, the dev device's 6.1.172 too). A full balance rewrites
+every chunk: hours on the dev device's hard disk (`deploy.arm64-bpi-w3`). Every resume, the
+kernel's at a mount and `btrfs balance resume`'s, gives each chunk type without a usage or
+usage-range filter that is not being converted the filter usage=90 (`update_balance_args()` of
+Linux 6.1's `fs/btrfs/volumes.c`, called by `btrfs_balance()` for `BTRFS_BALANCE_RESUME`: "chunks
+that we have already balanced should be reasonably full"), so a resumed full balance skips the
+chunks at least 90% full; a balance with a usage limit keeps its own. On the dev device
+(2026-11-16, 6.1.172) a full balance of the pool data paused by the unit's `ExecStop` at a reboot
+was resumed at the next mount as "balance: resume -dusage=90 -musage=90 -susage=90" and ended a
+minute later after 4 block groups. Working on through the features under the owner's delegation
+("work on through the features, ask no questions; I allow everything", in translation, as
+ADR-0340), with "then we continue developing UNOS's features with our test hardware in mind" for
+this batch (2026-11-15), the agent decided the following.
 
 ## Decision
 
@@ -45,7 +52,8 @@ following.
   "ERROR: ..." (failed, with that line). An empty log and none give no result. A shutdown of the
   host stops the unit before it unmounts the pool (`RequiresMountsFor`): `ExecStop` pauses the
   balance, within `TimeoutStopSec` for the chunk being moved, before systemd's SIGTERM could
-  cancel it, and the kernel resumes it when the pool is mounted again, as after a power cut.
+  cancel it, and the kernel resumes it when the pool is mounted again, as after a power cut (a full
+  balance with usage=90, above).
   systemd runs `ExecStop` also after btrfs ended by itself; its pause then finds nothing ("-"
   ignores its failure), and the line it appends, "ERROR: balance pause on '<mountpoint>' failed:
   Not running", is not an error of the balance. Every command of the unit opens the output file,
@@ -92,6 +100,11 @@ following.
   again (also at the next boot): the card says so, and Cancel Balance ends it for good. A restart
   or shutdown of the host pauses a running balance in the same way; it waits up to 10 minutes for
   the chunk being moved, and should systemd end the pause then, its request stays with the kernel.
+- A full balance that is paused (Pause Balance, a restart or shutdown of the host) or cut by a
+  power loss, and then goes on (Resume Balance, the next mount), rewrites only the chunks less
+  than 90% full, the kernel's rule (Context): UNOS keeps it and says so, in the card's note of a
+  paused balance, in the full balance's warning and in `docs/USER_GUIDE.md`, with the way to
+  rewrite every chunk: cancel it and start a new full balance.
 - The card disables Cancel Balance while a pause waits for its chunk and for a paused balance of
   a read-only pool, and Resume Balance beside a scrub, as the server refuses them.
 - A balance started by hand on the host shows on the card as running or paused and can be paused

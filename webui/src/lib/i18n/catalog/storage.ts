@@ -191,7 +191,7 @@ export const en = {
 	'storage.balance.cancelling': 'Cancelling the balance',
 	'storage.balance.paused': 'Balance paused',
 	'storage.balance.pausedNote':
-		'A paused balance goes on when you resume it, and also when the pool is mounted again, as at the next start of the NAS. Cancel it to stop it for good.',
+		"A paused balance goes on when you resume it, and also when the pool is mounted again, as at the next start of the NAS; cancel it to stop it for good. A full balance then rewrites only the chunks less than 90% full (the Linux kernel's rule): to rewrite every chunk, cancel it and start a new full balance.",
 	'storage.balance.progress': 'Balance progress',
 	'storage.balance.chunks': {
 		one: '{done} of about {n} chunk balanced',
@@ -218,7 +218,7 @@ export const en = {
 	'storage.balance.usageInvalid': 'Enter a whole number from 1 to 99',
 	'storage.balance.fullTitle': 'A full balance takes long',
 	'storage.balance.fullWarning':
-		'It rewrites every chunk, all the data of the pool: hours on a hard disk, with the pool slower meanwhile. It is rarely needed, such as after a disk was added to the pool.',
+		'It rewrites every chunk, all the data of the pool: hours on a hard disk, with the pool slower meanwhile. It is rarely needed, such as after a disk was added to the pool. If it is paused, or the NAS stops before it ends, it then rewrites only the chunks less than 90% full.',
 	'storage.balance.fullConfirm': 'Rewrite every chunk of {name}',
 	'storage.balance.start': 'Start Balance',
 	'storage.balance.startFailed': 'The balance did not start',
@@ -530,7 +530,7 @@ export const ru: Translation<typeof en> = {
 	'storage.balance.cancelling': 'Балансировка отменяется',
 	'storage.balance.paused': 'Балансировка приостановлена',
 	'storage.balance.pausedNote':
-		'Приостановленная балансировка продолжится, когда вы её возобновите, а также при следующем монтировании пула, например при следующем запуске NAS. Чтобы остановить её совсем, отмените её.',
+		'Приостановленная балансировка продолжится, когда вы её возобновите, а также при следующем монтировании пула, например при следующем запуске NAS; чтобы остановить её совсем, отмените её. Полная балансировка после этого перезапишет только блоки, заполненные меньше чем на 90% (правило ядра Linux): чтобы перезаписать все блоки, отмените её и начните новую полную балансировку.',
 	'storage.balance.progress': 'Ход балансировки',
 	'storage.balance.chunks': {
 		one: 'Сбалансировано {done} из примерно {n} блока',
@@ -559,7 +559,7 @@ export const ru: Translation<typeof en> = {
 	'storage.balance.usageInvalid': 'Введите целое число от 1 до 99',
 	'storage.balance.fullTitle': 'Полная балансировка идёт долго',
 	'storage.balance.fullWarning':
-		'Она перезаписывает все блоки, все данные пула: на жёстком диске это часы, и всё это время пул работает медленнее. Она нужна редко, например после добавления диска в пул.',
+		'Она перезаписывает все блоки, все данные пула: на жёстком диске это часы, и всё это время пул работает медленнее. Она нужна редко, например после добавления диска в пул. Если она будет приостановлена или работа NAS прервётся до её завершения, дальше она перезапишет только блоки, заполненные меньше чем на 90%.',
 	'storage.balance.fullConfirm': 'Перезаписать все блоки {name}',
 	'storage.balance.start': 'Начать балансировку',
 	'storage.balance.startFailed': 'Балансировка не началась',

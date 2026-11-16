@@ -1222,6 +1222,12 @@ test.describe('Balance (fake data)', () => {
     await expect(card.getByText('Balance paused')).toBeVisible();
     await expect(card.getByText('5 of about 12 chunks balanced')).toBeVisible();
     await expect(card.getByText(/goes on when you resume it, and also when the pool is mounted again/)).toBeVisible();
+    // The kernel resumes a balance without a usage filter with usage=90 (ADR-0379).
+    await expect(
+      card.getByText(
+        /A full balance then rewrites only the chunks less than 90% full \(the Linux kernel's rule\): to rewrite every chunk, cancel it and start a new full balance\./
+      )
+    ).toBeVisible();
     await expect(card.getByRole('button', { name: 'Pause Balance' })).toHaveCount(0);
     // A scrub may run beside a paused balance.
     await expect(card.getByRole('button', { name: 'Scrub', exact: true })).toBeEnabled();
@@ -1312,6 +1318,9 @@ test.describe('Balance (fake data)', () => {
     await page.getByRole('option', { name: 'Every chunk (full balance)' }).click();
     await expect(dialog.getByText('A full balance takes long')).toBeVisible();
     await expect(dialog.getByText(/hours on a hard disk/)).toBeVisible();
+    await expect(
+      dialog.getByText(/If it is paused, or the NAS stops before it ends, it then rewrites only the chunks less than 90% full\./)
+    ).toBeVisible();
     await expect(start).toBeDisabled();
     await dialog.getByLabel('Rewrite every chunk of e2e_data').check();
     await start.click();

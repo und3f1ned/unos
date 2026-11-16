@@ -417,8 +417,14 @@ For each pool, you can:
   goes on by itself when the pool is mounted again, for example at the next
   start of the NAS: cancel it to stop it for good. A restart or shutdown of
   the host pauses a balance that runs, which then goes on after the start in
-  the same way. **Resume Balance** waits for a scrub of the pool to end, and
-  the paused balance of a read-only pool can be resumed or cancelled only once
+  the same way. A full balance that goes on after a pause, by
+  **Resume Balance** or at a mount, rewrites only the chunks less than 90%
+  full, a rule of the Linux kernel for a resumed balance without a usage
+  limit: the chunks at least 90% full that it had not reached stay as they
+  are. To rewrite every chunk, cancel it and start a new full balance; a
+  balance with a usage limit keeps its limit when it goes on.
+  **Resume Balance** waits for a scrub of the pool to end, and the paused
+  balance of a read-only pool can be resumed or cancelled only once
   the pool is mounted read-write again. Afterwards the pool says
   whether the last balance finished (with the chunks it rewrote), was
   cancelled or failed (with btrfs's error, such as no space left); after a
