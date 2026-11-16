@@ -253,10 +253,12 @@ test.describe('API Tests', () => {
   });
 
   test('POST /api/v1/apps/install refuses a name: there is one instance of each app', async ({ request }) => {
-    // Refused as the request is read, before anything is checked or pulled (ADR-0381).
+    // Refused as the request is read, before anything is checked or pulled (ADR-0381). The template
+    // does not exist: should the name ever be accepted, the answer is a 404 and nothing is installed,
+    // also on the compose test stack, whose supervisor reaches the host's Docker.
     const response = await request.post(`${BASE_URL}/api/v1/apps/install`, {
       headers: { Authorization: `Bearer ${token}` },
-      data: { template_id: 'dozzle', name: 'e2e-second-dozzle' },
+      data: { template_id: 'e2e-no-such-app', name: 'e2e-second' },
     });
     expect(response.status(), await response.text()).toBe(422);
   });

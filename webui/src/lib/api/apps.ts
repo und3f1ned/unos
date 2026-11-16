@@ -123,6 +123,12 @@ export interface AppTemplate extends ContainerSpec {
   /** The main container's ports; companions publish none. */
   ports: PortMapping[];
   /**
+   * "host" for an app in the host's network: Docker discards its port bindings, so the app binds
+   * its container ports on the host itself, and the server refuses an override that moves one
+   * (ADR-0381). Null: a network of Docker's.
+   */
+  network_mode: string | null;
+  /**
    * The app can be installed to run in the group unos-smb: its image takes PUID, PGID and
    * UMASK (linuxserver.io), and it has a folder besides its own data. Only such an app is
    * given a share's folder.

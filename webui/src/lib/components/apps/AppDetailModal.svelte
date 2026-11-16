@@ -27,6 +27,7 @@
 		type AppInstallResponse,
 		type AppVolume,
 		type InstalledApp,
+		type PortMapping,
 		type VolumeMapping,
 		type EnvVar,
 		appContainers,
@@ -75,6 +76,9 @@
 	$: handleOpenChange(open);
 	// Whether the app runs (installed) or is to run (the form) in the group unos-smb.
 	$: inUnosSmb = isInstalled ? (installedApp?.runs_in_unos_smb ?? false) : runInUnosSmb;
+
+	// An app in the host's network binds its container ports on the host: they cannot be moved (ADR-0381).
+	$: inHostNetwork = app ? isInHostNetwork(app) : false;
 
 	// The app's containers, its main container first (ADR-0381): an app of several lists each.
 	$: containers = app ? appContainers(app) : [];
@@ -149,9 +153,19 @@
 		return $t(SIZE_UNITS[power], { size });
 	};
 
+	/** Whether `template` runs in the host's network, where Docker discards its port bindings. */
+	function isInHostNetwork(template: AppTemplate): boolean {
+		return template.network_mode === 'host';
+	}
+
+	/** The host port of `port`: the container port itself for an app in the host's network. */
+	function hostPortOf(template: AppTemplate, port: PortMapping): number {
+		return isInHostNetwork(template) ? port.container : port.host;
+	}
+
 	function resetForm(template: AppTemplate) {
 		portValues = Object.fromEntries(
-			template.ports.map((port) => [port.container, String(port.host)])
+			template.ports.map((port) => [port.container, String(hostPortOf(template, port))])
 		);
 		volumeOverrides = {};
 		envValues = Object.fromEntries(template.environment.map((env) => [env.name, env.value]));
@@ -288,6 +302,8 @@
 
 	function changedPorts(template: AppTemplate): Record<number, number> {
 		const result: Record<number, number> = {};
+		// The server refuses to move a port of an app in the host's network: none is sent.
+		if (isInHostNetwork(template)) return result;
 		for (const port of template.ports) {
 			const value = Number(portValues[port.container]);
 			if (value !== port.host) result[port.container] = value;
@@ -683,7 +699,11 @@
 				</div>
 			{:else if activeTab === 'ports'}
 				<div class="space-y-3">
-					<p class="text-sm text-secondary mb-4">{$t('apps.detail.portsHint')}</p>
+					<p class="text-sm text-secondary mb-4">
+						{inHostNetwork
+							? $t('apps.detail.portsHostNetwork', { name: app.name })
+							: $t('apps.detail.portsHint')}
+					</p>
 					{#each app.ports as port}
 						<div class="card-nested">
 							<div class="flex items-start gap-4">
@@ -692,7 +712,7 @@
 									type="number"
 									label={$t('apps.detail.hostPort')}
 									bind:value={portValues[port.container]}
-									disabled={isInstalled}
+									disabled={isInstalled || inHostNetwork}
 									error={invalidPorts.includes(port.container) ? $t('apps.detail.portRange') : ''}
 								/>
 								<span class="text-secondary pt-8">→</span>

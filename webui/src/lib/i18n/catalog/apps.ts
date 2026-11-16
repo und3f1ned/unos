@@ -164,6 +164,8 @@ export const en = {
 	'apps.detail.volumes': 'Volumes',
 	'apps.detail.variables': 'Variables',
 	'apps.detail.portsHint': 'Configure port mappings. Modify host ports if they conflict with existing services.',
+	'apps.detail.portsHostNetwork':
+		"{name} runs in the host's network: it listens on these ports of the host itself, so they cannot be changed.",
 	'apps.detail.hostPort': 'Host Port',
 	'apps.detail.containerPort': 'Container Port',
 	'apps.detail.portRange': 'Use a port from 1 to 65535',
@@ -349,6 +351,8 @@ export const ru: Translation<typeof en> = {
 	'apps.detail.variables': 'Переменные',
 	'apps.detail.portsHint':
 		'Настройте сопоставление портов. Измените порты хоста, если они заняты другими службами.',
+	'apps.detail.portsHostNetwork':
+		'Приложение {name} работает в сети хоста и слушает эти порты на самом хосте, поэтому их нельзя изменить.',
 	'apps.detail.hostPort': 'Порт хоста',
 	'apps.detail.containerPort': 'Порт контейнера',
 	'apps.detail.portRange': 'Укажите порт от 1 до 65535',

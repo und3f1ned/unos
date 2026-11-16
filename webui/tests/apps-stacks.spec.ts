@@ -359,6 +359,8 @@ test.describe('An installed app of several containers', () => {
 
     await immich.getByRole('button', { name: 'Stop', exact: true }).click();
     await expect(immich.getByText('Stopped', { exact: true })).toBeVisible();
+    // A stopped app runs no container: none of its companions is named as not running.
+    await expect(immich.locator('.alert')).toHaveCount(0);
     await immich.getByRole('button', { name: 'Start', exact: true }).click();
     await expect(immich.getByText('Running', { exact: true })).toBeVisible();
 

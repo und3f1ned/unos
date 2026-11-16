@@ -1,5 +1,6 @@
 import type { Page, Request, Route } from '@playwright/test';
 import { test, expect } from './fixtures';
+import { catalogCard, installAnswer, oneContainerApp } from './apps-fakes';
 
 test.describe('App Store', () => {
   test('should display App Store page', async ({ authenticatedPage: page }) => {
@@ -389,6 +390,86 @@ test.describe('Install in the group unos-smb', () => {
 
     await expect(dialog.getByRole('button', { name: 'Install Prowlarr' })).toBeEnabled();
     await expect(dialog.getByRole('checkbox', { name: 'Run in the group unos-smb' })).toHaveCount(0);
+  });
+});
+
+// Install > Ports (ADR-0381). An app in the host's network (Home Assistant, Scrypted) binds its
+// container ports on the host itself, since Docker discards the port bindings of such a container,
+// and the server refuses an override that moves one with 400: its details show the port it binds
+// as fixed, and its install moves none. The pools and the install are answered here (the stand-in
+// has no Docker and no mounted pool); the catalog is the stand-in's own.
+test.describe('Ports of an app', () => {
+  const POOL = { name: 'e2e_data', path: '/mnt/pools/e2e_data', free_bytes: 2 ** 34, total_bytes: 2 ** 35 };
+  const PORTS_HINT = 'Configure port mappings. Modify host ports if they conflict with existing services.';
+  const hostNetwork = (name: string) =>
+    `${name} runs in the host's network: it listens on these ports of the host itself, so they cannot be changed.`;
+
+  /** Answers the pools and the install of `app`; returns the bodies of the installs. */
+  async function fakeInstall(page: Page, app: ReturnType<typeof oneContainerApp>): Promise<unknown[]> {
+    const installs: unknown[] = [];
+    await page.route(
+      (url: URL) => url.pathname === '/api/v1/apps/installed',
+      (route: Route) => route.fulfill({ json: [] }),
+    );
+    await page.route(
+      (url: URL) => url.pathname === '/api/v1/apps/pools',
+      (route: Route) => route.fulfill({ json: [POOL] }),
+    );
+    await page.route(
+      (url: URL) => url.pathname === '/api/v1/apps/install',
+      (route: Route) => {
+        installs.push(route.request().postDataJSON());
+        return route.fulfill({ json: installAnswer(app) });
+      },
+    );
+    return installs;
+  }
+
+  /** The Ports tab of the details of the catalog app `name`. */
+  async function portsOf(page: Page, name: string) {
+    await page.goto('/apps');
+    await catalogCard(page, name).click();
+    const dialog = page.getByRole('dialog');
+    await expect(dialog.getByRole('heading', { name, exact: true })).toBeVisible();
+    await dialog.getByRole('button', { name: 'Ports (1)', exact: true }).click();
+    return dialog;
+  }
+
+  for (const [name, id, port] of [
+    ['Home Assistant', 'homeassistant', 8123],
+    ['Scrypted', 'scrypted', 10443],
+  ] as const) {
+    test(`${name} runs in the host's network: its port cannot be moved, and the install moves none`, async ({
+      authenticatedPage: page,
+    }) => {
+      const installs = await fakeInstall(page, oneContainerApp(id, POOL.path, { port }));
+      const dialog = await portsOf(page, name);
+
+      const host = dialog.getByLabel('Host Port');
+      await expect(host).toHaveValue(String(port));
+      await expect(host).toBeDisabled();
+      await expect(dialog.getByText(hostNetwork(name))).toBeVisible();
+      await expect(dialog.getByText(PORTS_HINT)).toHaveCount(0);
+
+      await dialog.getByRole('button', { name: `Install ${name}` }).click();
+      await expect(page.getByText(`${name} was installed. Its data is stored on the "e2e_data" pool.`)).toBeVisible();
+      expect(installs).toEqual([{ template_id: id, pool: POOL.name }]);
+    });
+  }
+
+  test('an app in a network of its own may move its host port', async ({ authenticatedPage: page }) => {
+    const installs = await fakeInstall(page, oneContainerApp('jellyfin', POOL.path, { port: 8097 }));
+    const dialog = await portsOf(page, 'Jellyfin');
+
+    const host = dialog.getByLabel('Host Port');
+    await expect(host).toHaveValue('8096');
+    await expect(host).toBeEnabled();
+    await expect(dialog.getByText(PORTS_HINT)).toBeVisible();
+    await host.fill('8097');
+
+    await dialog.getByRole('button', { name: 'Install Jellyfin' }).click();
+    await expect(page.getByText('Jellyfin was installed. Its data is stored on the "e2e_data" pool.')).toBeVisible();
+    expect(installs).toEqual([{ template_id: 'jellyfin', pool: POOL.name, port_overrides: { '8096': 8097 } }]);
   });
 });
 
