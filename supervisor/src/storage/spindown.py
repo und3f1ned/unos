@@ -91,7 +91,9 @@ _RULE_LINE = re.compile(
     r'RUN\+="' + re.escape(HDPARM_PATH) + r' -S (?P<value>[0-9]+) \$devnode"'
 )
 # The blanks that udev skips around a line of a rules file; a line ends at "\n" or "\r" (udev's
-# read_line). read_rule reads the file the same way, and so does deploy/uninstall.sh.
+# read_line), and also at a NUL byte, which UNOS never writes. read_rule reads the file so too,
+# but ends no line at a NUL byte; deploy/uninstall.sh reads it as read_rule does, and does not read
+# a rule with a NUL byte at all.
 _BLANKS = " \t"
 # A serial that a udev rule matches as it is: udev's ID_SERIAL_SHORT keeps letters, digits and
 # "#+-.:=@_" (it replaces the rest), and none of them is a pattern character of a rule's match.
@@ -146,8 +148,9 @@ class Rule:
 def read_rule() -> Rule:
     """UNOS's udev rule; empty without the file. A line that UNOS did not write is no timeout, nor
     is one whose timeout is not offered (SPINDOWN_MINUTES): one edited by hand; nor is a record
-    edited by hand one. Lines are read as udev reads them: one ends at "\n" or "\r", and only
-    spaces and tabs around it are blanks. RuntimeError when the file cannot be read."""
+    edited by hand one. Lines are read as udev reads a file without NUL bytes, as UNOS writes it:
+    one ends at "\n" or "\r" (udev also ends one at a NUL byte), and only spaces and tabs around
+    it are blanks. RuntimeError when the file cannot be read."""
     result = host.run_on_host(["cat", "--", RULES_PATH], timeout=UDEV_TIMEOUT, errors="replace")
     if not result.ok:
         if "No such file or directory" in result.stderr:

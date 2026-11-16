@@ -22,9 +22,10 @@
   (ADR-0049); `uninstall.sh` keeps the SMB host accounts and removes only their exact passdb
   entries, with one restart of smbd (ADR-0322), and undoes on the disks of UNOS's udev rule of
   the idle timeouts what UNOS set, with the host's hdparm and smartctl, then removes the rule (only
-  the records of disks whose scans stay off remain); its tests run stubs of them, never the host's
-  own (ADR-0378). There are no upgrade paths from older UNOS
-  versions (ADR-0207).
+  the records of disks whose scans stay off remain), before it removes `/opt/unos`, so that a run
+  stopped in that step can run again; its tests run stubs of them, never the host's own, and put a
+  folder of their own in place of the system folders that the script adds to PATH (ADR-0378).
+  There are no upgrade paths from older UNOS versions (ADR-0207).
 - `reset-admin.sh` also runs as root on a user's host: it runs the emergency command line,
   `python -m src.emergency reset-admin`, in the supervisor container, with the new password on
   standard input (ADR-0284, `docs/RECOVERY.md`); `supervisor/tests/test_emergency.py` runs it

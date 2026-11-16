@@ -1636,9 +1636,21 @@ class TestInstallScript:
         assert not (tmp_path / "usr-local-sbin").exists()
 
 
-def _uninstall_lib(tmp_path):
-    """uninstall.sh without its last line (`main "$@"`). Returns the path of the copy."""
+# The line of uninstall.sh that adds the system's folders of programs to PATH, after those it was
+# given: root's PATH may lack them (su without "-" keeps the user's).
+_SYSTEM_PATH_LINE = 'export PATH="${PATH:+$PATH:}/usr/sbin:/usr/bin:/sbin:/bin"'
+
+
+def _uninstall_lib(tmp_path, system_path=None):
+    """uninstall.sh without its last line (`main "$@"`). Returns the path of the copy. Its PATH line
+    adds the folder `system_path` instead of the system's folders (an empty folder by default), so
+    that no test runs the host's hdparm or smartctl, which act on real disks."""
     script = (REPO_ROOT / "deploy" / "uninstall.sh").read_text().rstrip("\n").rsplit("\n", 1)[0]
+    assert len(re.findall(r"^\s*(?:export\s+)?PATH\+?=", script, re.M)) == script.count(_SYSTEM_PATH_LINE) <= 1
+    if system_path is None:
+        system_path = tmp_path / "no-system-programs"
+        system_path.mkdir(exist_ok=True)
+    script = script.replace(_SYSTEM_PATH_LINE, f'export PATH="${{PATH:+$PATH:}}{system_path}"')
     lib = tmp_path / "uninstall-lib.sh"
     lib.write_text(script + "\n")
     return lib
@@ -1732,9 +1744,38 @@ _DISKS = "mmcblk1 disk 0x8f3a\nsda disk WD-1\nsdb disk WD-2\nsr0 rom WD-1\nloop0
 def _timeout_stub(status=124):
     """timeout(1) of the host: runs the command after its two options; a call listed in
     $STUB_DIR/fail ends with `status`, as when it ran out of time: 124 when its TERM ended the
-    command, 137 when its KILL did, which ends timeout too."""
-    return (_LOGGER + f'if grep -qxF -- "${{0##*/}} $*" "$STUB_DIR/fail"; then exit {status}; fi\n'
+    command, 137 when its KILL did, which timeout sends to its own process group and so dies of
+    too (as here)."""
+    ends = "kill -KILL $$" if status == 137 else f"exit {status}"
+    return (_LOGGER + f'if grep -qxF -- "${{0##*/}} $*" "$STUB_DIR/fail"; then {ends}; fi\n'
             + 'shift 2\nexec "$@"\n')
+
+
+# timeout(1) of the host whose KILL did not end smartctl: the kernel holds it (uninterruptible
+# sleep), and it keeps its standard output open, as the process `holder` does here (its pid in
+# $STUB_DIR/holder) until $STUB_DIR/release appears, 30 seconds at most. timeout ends all the same,
+# by its own KILL (137). It notes in $STUB_DIR/tmp-during what $TMPDIR holds meanwhile. The
+# holder keeps no other file open: its standard error and fd 3 are the script's standard error,
+# a terminal on a host, which nobody waits to close, but here the test's pipe, which would hold
+# the test until the holder ends.
+_STUCK_SMARTCTL_TIMEOUT = (
+    _LOGGER
+    + textwrap.dedent(
+        """\
+        case "$*" in
+          *smartctl*)
+            ls -A "$TMPDIR" > "$STUB_DIR/tmp-during"
+            sh -c 'echo $$ > "$STUB_DIR/holder"; i=0
+              while [ ! -e "$STUB_DIR/release" ] && [ $i -lt 300 ]; do sleep 0.1; i=$((i + 1)); done' \\
+              </dev/null 2>/dev/null 3>&- &
+            while [ ! -s "$STUB_DIR/holder" ]; do sleep 0.05; done
+            kill -KILL $$ ;;
+        esac
+        shift 2
+        exec "$@"
+        """
+    )
+)
 
 
 def _smartctl_stub(*lines, status=0):
@@ -1784,7 +1825,7 @@ def _records(path):
 class TestUninstallScript:
     def _run(
         self, tmp_path, commands="remove_samba_passwords", *, passwd=_PASSWD, passdb=_PASSDB, fail=(), samba=(),
-        stubs=None, without=(),
+        stubs=None, without=(), system_path=None,
     ):
         """Functions of uninstall.sh (`commands`), under its `set -e`, with stub
         getent, pdbedit and systemctl that log their calls, and with SAMBA_DIR
@@ -1792,7 +1833,8 @@ class TestUninstallScript:
         `fail` fail. Returns the result, the calls and passdb afterwards. Stubs
         of the commands that change accounts log their calls too, so a call
         would show. `stubs` adds stubs (name: script body); the host's own
-        programs named in `without` are not on PATH."""
+        programs named in `without` are not on PATH. The script's PATH line
+        adds the folder `system_path` (_uninstall_lib)."""
         bin_dir = tmp_path / "bin"
         stub_dir = tmp_path / "stub"
         samba_dir = tmp_path / "samba"
@@ -1821,7 +1863,7 @@ class TestUninstallScript:
             env={
                 **os.environ,
                 "PATH": f"{bin_dir}:{_path_without(without, tmp_path) if without else os.environ['PATH']}",
-                "LIB": str(_uninstall_lib(tmp_path)),
+                "LIB": str(_uninstall_lib(tmp_path, system_path)),
                 "STUB_DIR": str(stub_dir),
                 "SAMBA": str(samba_dir),
             },
@@ -2447,12 +2489,13 @@ class TestUninstallScript:
     # --- the disks' idle timeouts (storage.disk-spindown, ADR-0378) ---
 
     def _run_idle(self, tmp_path, rule, *, listing=_DISKS, missing=(), fail=(), stubs=None,
-                  commands="remove_disk_idle_timeouts; print_completion"):
+                  commands="remove_disk_idle_timeouts; print_completion", system_path=None):
         """`commands` with UNOS's udev rule of the idle timeouts in tmp_path holding `rule` (no file
         for None), and stubs of _IDLE_TOOLS that log their calls: lsblk lists `listing`, smartctl
         prints that the scans are on, timeout runs the command after its options, and those in
-        `missing` are not there. The host's own are never on PATH. The command lines in `fail`
-        fail. Returns the result, the calls and the rule's path."""
+        `missing` are not there. The host's own are never on PATH (nor in `system_path`, the
+        folder that the script adds to PATH). The command lines in `fail` fail. Returns the
+        result, the calls and the rule's path."""
         path = tmp_path / "90-unos-disk-spindown.rules"
         if rule is not None:
             path.write_text(rule)
@@ -2469,6 +2512,7 @@ class TestUninstallScript:
             fail=fail,
             stubs={**{name: body for name, body in tools.items() if name not in missing}, **(stubs or {})},
             without=_IDLE_TOOLS,
+            system_path=system_path,
         )
         return result, calls, path
 
@@ -2549,16 +2593,26 @@ class TestUninstallScript:
         ]
         assert self._left(result) == []
 
-    def test_an_uninstallation_stopped_on_the_way_keeps_the_rule_for_the_next_run(self, tmp_path):
-        """The rule goes only once its disks are done: a run that stops on the way (an SSH session
-        that drops) leaves it whole, and the next run undoes it all."""
+    @pytest.mark.parametrize("signal_name, status", [("INT", 130), ("TERM", 143)])
+    def test_an_uninstallation_stopped_on_the_way_keeps_the_rule_for_the_next_run(
+        self, tmp_path, signal_name, status
+    ):
+        """The rule goes only once its disks are done: a run that stops on the way leaves it whole,
+        and the next run undoes it all. Ctrl-C reaches only the script, not timeout and the tool,
+        which run in a process group of their own, and bash does not stop for a SIGINT that its
+        command survived: the step stops once that command has ended (its signal comes from the
+        command here, as the terminal's comes while it runs), keeps the rule whole and ends the
+        uninstallation with what to do."""
         rule = self._two_disks()
-        stopped = _LOGGER + 'kill -TERM "$PPID"\n'
+        stopped = _LOGGER + f'kill -{signal_name} "$PPID"\n'
         result, calls, path = self._run_idle(tmp_path, rule, stubs={"hdparm": stopped})
 
-        assert result.returncode != 0
+        assert result.returncode == status, result.stdout + result.stderr
         assert calls == [_LSBLK, *_timer_off("/dev/sda")]
         assert path.read_text() == rule
+        assert (f"Stopped: UNOS's udev rule {path} stays as it was, and the disks it names may keep what "
+                "UNOS set. Run the uninstallation again to finish." in self._text(result))
+        assert "UNOS Uninstallation Complete!" not in result.stdout
 
         again = tmp_path / "again"
         again.mkdir()
@@ -2618,11 +2672,13 @@ class TestUninstallScript:
         """smartctl fails on WD-1 and WD-7 is not attached: the rule then holds only their records
         and comments, which udev runs nothing of and which read_rule takes as records without a
         timeout: a new installation's Off turns their scans on, and so does another run of the
-        uninstallation, which then removes the rule."""
+        uninstallation, which then removes the rule. The rule is 0644 as udev's other rules, also
+        under root's umask 077, with which the new file would be 0600."""
         from src.storage import spindown
 
         rule = spindown.render({"WD-1": 20, "WD-2": 60, "WD-7": 30}, frozenset({"WD-1", "WD-7"}))
-        result, calls, path = self._run_idle(tmp_path, rule, fail=("smartctl -o on -c /dev/sda",))
+        result, calls, path = self._run_idle(tmp_path, rule, fail=("smartctl -o on -c /dev/sda",),
+                                             commands="umask 077; remove_disk_idle_timeouts; print_completion")
 
         assert result.returncode == 0, result.stdout + result.stderr
         assert calls == [_LSBLK, *_timer_off("/dev/sda"), *_scans_on("/dev/sda"), *_timer_off("/dev/sdb"), _RELOAD]
@@ -2688,6 +2744,37 @@ class TestUninstallScript:
             assert not path.exists()
             assert calls[-1] == _RELOAD
             assert f"Removed UNOS's udev rule {path}" in text
+
+    @pytest.mark.parametrize("case", ["rule", "no-rule", "rm-fails"])
+    def test_temporary_files_of_a_killed_run_go(self, tmp_path, case):
+        """A run killed between the write of the records and their rename (write_disk_idle_records)
+        leaves <rule>.unos-tmp.<pid> next to the rule, which udev does not read: the next run removes
+        it, also when the rule is gone, and only the files of that exact name. One that cannot be
+        removed is named, and the uninstallation goes on."""
+        name = "90-unos-disk-spindown.rules"
+        left = [f"{name}.unos-tmp.4242", f"{name}.unos-tmp.1"]
+        others = [f"{name}.unos-tmp.", f"{name}.unos-tmp.12a", f"{name}.unos-tmp.1.bak", f"{name}.unos-tmp.-1",
+                  f"x{name}.unos-tmp.12", "60-other.rules.unos-tmp.12", f"{name}.unos-tmp"]
+        for entry in left + others:
+            (tmp_path / entry).write_text("# UNOS turned off\n")
+        rm = (_LOGGER + 'case "$*" in *.unos-tmp.*) echo "rm: cannot remove: Read-only file system" >&2; exit 1 ;; '
+              + f'esac\nexec {shutil.which("rm")} "$@"\n')
+        result, calls, path = self._run_idle(
+            tmp_path, None if case == "no-rule" else self._two_disks(),
+            stubs={"rm": rm} if case == "rm-fails" else None)
+
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert not path.exists()
+        assert [entry for entry in left if (tmp_path / entry).exists()] == (left if case == "rm-fails" else [])
+        assert all((tmp_path / entry).exists() for entry in others)
+        if case == "rm-fails":
+            text = self._text(result)
+            for entry in sorted(left):
+                assert (f"Could not remove {tmp_path / entry}, a temporary file of an earlier uninstallation, which "
+                        f"udev does not read: remove it with rm {tmp_path / entry}") in text
+        else:
+            assert "WARN" not in result.stdout
+        assert "UNOS Uninstallation Complete!" in result.stdout
 
     @pytest.mark.parametrize(
         "missing, expected_calls, left, records",
@@ -2844,18 +2931,91 @@ class TestUninstallScript:
             "hdparm -S 0 did not answer within 30 seconds.",
             "    hdparm -S 0 /dev/sdb",
         ]
+        # Not bash's line on a command that a signal ended ("Killed"): the end says what happened.
+        assert "Killed" not in result.stderr
+
+    def test_a_smartctl_that_outlives_its_kill_does_not_hold_the_uninstallation(self, tmp_path):
+        """A command that the kernel holds in uninterruptible sleep outlives the KILL of the host's
+        timeout, which ends all the same: the script goes on after at most 35 seconds. smartctl's
+        answer goes to a temporary file, read once timeout has returned, and not through a pipe,
+        whose end the stuck smartctl would keep open, so that bash would wait for it as long as
+        the kernel holds it. The file is in $TMPDIR, not next to the rule, and goes. (mktemp makes
+        it there, as Debian's does without a template; macOS's would not.)"""
+        from src.storage import spindown
+
+        tmp = tmp_path / "tmp"
+        tmp.mkdir()
+        stub_dir = tmp_path / "stub"
+        mktemp = f'#!/bin/bash\nexec {shutil.which("mktemp")} "$TMPDIR/tmp.XXXXXXXXXX"\n'
+        try:
+            result, calls, path = self._run_idle(
+                tmp_path, self._two_disks(), stubs={"timeout": _STUCK_SMARTCTL_TIMEOUT, "mktemp": mktemp},
+                commands=f'export TMPDIR="{tmp}"; remove_disk_idle_timeouts; print_completion',
+            )
+            holder = int((stub_dir / "holder").read_text())
+            try:
+                os.kill(holder, 0)
+                stuck = True
+            except ProcessLookupError:
+                stuck = False
+        finally:
+            (stub_dir / "release").touch()
+
+        # The uninstallation has ended while the stuck smartctl still holds its output.
+        assert stuck
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert calls == [_LSBLK, *_timer_off("/dev/sda"), _scans_on("/dev/sda")[0], *_timer_off("/dev/sdb"), _RELOAD]
+        assert self._left(result) == [
+            "  The disk with the serial WD-1 (/dev/sda) has its automatic offline scans off: smartctl -o on "
+            "did not answer within 30 seconds.",
+            "    smartctl -o on /dev/sda",
+        ]
+        assert _records(path) == [spindown.RECORD.format(serial="WD-1")]
+        assert "Killed" not in result.stderr
+        # One temporary file in $TMPDIR while smartctl ran, none after it, and none next to the rule.
+        assert len((stub_dir / "tmp-during").read_text().split()) == 1
+        assert list(tmp.iterdir()) == []
+        assert sorted(entry.name for entry in tmp_path.iterdir() if entry.name.startswith(path.name)) == [path.name]
+
+    def test_without_a_temporary_file_for_its_answer_smartctl_does_not_run(self, tmp_path):
+        """mktemp fails (a full or read-only /tmp): the scans stay off, with the reason, and the
+        uninstallation goes on."""
+        from src.storage import spindown
+
+        result, calls, path = self._run_idle(
+            tmp_path, self._two_disks(), stubs={"mktemp": _LOGGER + 'echo "mktemp: failed" >&2\nexit 1\n'})
+
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert calls == [_LSBLK, *_timer_off("/dev/sda"), "mktemp ", *_timer_off("/dev/sdb"), _RELOAD]
+        assert self._left(result) == [
+            "  The disk with the serial WD-1 (/dev/sda) has its automatic offline scans off: no temporary file "
+            "for smartctl's answer could be made (mktemp failed).",
+            "    smartctl -o on /dev/sda",
+        ]
+        assert _records(path) == [spindown.RECORD.format(serial="WD-1")]
+        assert "UNOS Uninstallation Complete!" in result.stdout
 
     @pytest.mark.parametrize(
-        "printed, why",
+        "printed, why, command",
         [
-            # SMART is off on the disk: smartctl says so and exits 0 without sending -o (ataprint.cpp).
-            (("SMART Disabled. Use option -s with argument 'on' to enable it.",), "smartctl -o on read no state"),
+            # SMART is off on the disk: smartctl says so and exits 0 without sending -o (ataprint.cpp),
+            # so the command to run turns SMART on too, which the uninstallation does not do itself.
+            (
+                ("SMART Disabled. Use option -s with argument 'on' to enable it.",
+                 "(override with '-T permissive' option)"),
+                "SMART is off on the disk, and smartctl sends -o on only to a disk with SMART on; smartctl -s on "
+                "-o on turns SMART on too",
+                "smartctl -s on -o on /dev/sda",
+            ),
             ((_SCANS_TURNED_ON[1], "\t\t\t\t\twas aborted by an interrupting command from host.",
-              "\t\t\t\t\tAuto Offline Data Collection: Disabled."), "smartctl -o on left them off (exit status 0)"),
+              "\t\t\t\t\tAuto Offline Data Collection: Disabled."), "smartctl -o on left them off (exit status 0)",
+             "smartctl -o on /dev/sda"),
+            (("smartctl 7.3 2022-02-28 r5338 [aarch64-linux-6.1.0] (local build)",), "smartctl -o on read no state",
+             "smartctl -o on /dev/sda"),
         ],
-        ids=["smart-off", "still-off"],
+        ids=["smart-off", "still-off", "no-state"],
     )
-    def test_scans_that_smartctl_does_not_show_on_are_named(self, tmp_path, printed, why):
+    def test_scans_that_smartctl_does_not_show_on_are_named(self, tmp_path, printed, why, command):
         """smartctl -o on exits 0 without proving the scans on: -c reads them back, as the
         supervisor does, and only "Auto Offline Data Collection: Enabled." counts."""
         from src.storage import spindown
@@ -2868,9 +3028,12 @@ class TestUninstallScript:
         assert "Turned on again" not in result.stdout
         assert self._left(result) == [
             f"  The disk with the serial WD-1 (/dev/sda) has its automatic offline scans off: {why}.",
-            "    smartctl -o on /dev/sda",
+            f"    {command}",
         ]
         assert _records(path) == [spindown.RECORD.format(serial="WD-1")]
+        # The kept rule's header says how to turn the scans on, also where SMART is off.
+        assert "smartctl -s on -o on DISK where SMART is off on the disk" in " ".join(
+            line.removeprefix("# ") for line in path.read_text().splitlines())
 
     def test_a_rule_that_cannot_be_removed_is_named_and_its_disks_are_still_undone(self, tmp_path):
         """It sets UNOS's timeouts again at every boot, which the end says, also of the disks whose
@@ -2883,6 +3046,10 @@ class TestUninstallScript:
 
         assert result.returncode == 0, result.stdout + result.stderr
         assert path.read_text() == rule
+        # The rm stub logs the removal of smartctl's answer too, a file of mktemp outside the rules folder.
+        answer = [call for call in calls if call.startswith("rm -f -- ") and not call.endswith(path.name)]
+        assert len(answer) == 1 and str(tmp_path) not in answer[0]
+        calls = [call for call in calls if call not in answer]
         # Nothing for udev to read again.
         assert calls == [
             _LSBLK, *_timer_off("/dev/sda"), *_scans_on("/dev/sda"), *_timer_off("/dev/sdb"), f"rm -f -- {path}"]
@@ -3000,7 +3167,8 @@ class TestUninstallScript:
     def test_the_lines_that_count_are_those_the_supervisor_reads(self, tmp_path, monkeypatch, locale):
         """spindown.read_rule decides which lines are UNOS's: the exact form that render writes,
         with a serial that _RULE_SERIAL accepts and the hdparm -S value of an offered timeout, in
-        lines read as udev reads them (ended by \\n or \\r, with spaces and tabs around them). The
+        lines read as udev reads a file without NUL bytes (ended by \\n or \\r, with spaces and tabs
+        around them; udev also ends a line at a NUL byte, which UNOS never writes). The
         uninstallation takes the same lines, and no other, in any locale. A rule with a NUL byte it
         does not read at all (test_a_rule_with_a_nul_byte_stays_and_nothing_runs)."""
         from src.storage import spindown
@@ -3059,8 +3227,12 @@ class TestUninstallScript:
         assert spindown.HDPARM_PATH == "/sbin/hdparm" and "/sbin/hdparm -S" in script
         assert f"DISK_IDLE_RECORD='{spindown.RECORD.format(serial='')}'" in script
 
-    def test_main_undoes_the_idle_timeouts_once_unos_has_stopped(self):
-        # The supervisor writes the rule: it must not write it again meanwhile.
+    def test_main_undoes_the_idle_timeouts_once_unos_has_stopped_and_before_its_files_go(self):
+        """The supervisor writes the rule: it must not write it again meanwhile, so its container
+        is gone (stop_and_remove_containers removes every container named unos*, unos-supervisor
+        too) and the unos service has stopped. The step comes before remove_files, which removes
+        /opt/unos and the script with it (install.sh puts it nowhere else): a run stopped in the
+        step leaves the rule whole, and the script there to run again."""
         script = (REPO_ROOT / "deploy" / "uninstall.sh").read_text()
         body = re.search(r"^main\(\) \{\n(.*?)^\}", script, re.M | re.S).group(1)
         steps = [line.strip() for line in body.splitlines() if line.strip() and not line.strip().startswith("#")]
@@ -3070,8 +3242,45 @@ class TestUninstallScript:
             < steps.index("stop_and_remove_containers")
             < steps.index("remove_systemd_service")
             < steps.index("remove_disk_idle_timeouts")
+            < steps.index("remove_files")
             < steps.index("print_completion")
         )
+        assert steps.index("remove_disk_idle_timeouts") == steps.index("remove_systemd_service") + 1
+        stop = re.search(r"^stop_and_remove_containers\(\) \{\n(.*?)^\}", script, re.M | re.S).group(1)
+        assert 'docker ps -a --filter "name=unos" -q | xargs -r docker rm -f' in stop
+        compose = yaml.safe_load((REPO_ROOT / "deploy" / "docker-compose.yml").read_text())
+        assert compose["services"]["supervisor"]["container_name"] == "unos-supervisor"
+        remove_files = re.search(r"^remove_files\(\) \{\n(.*?)^\}", script, re.M | re.S).group(1)
+        assert 'rm -rf "$UNOS_INSTALL_DIR"' in remove_files
+        assert "sudo /opt/unos/deploy/uninstall.sh" in (REPO_ROOT / "README.md").read_text()
+
+    def test_the_script_adds_the_system_folders_of_programs_to_path(self):
+        """Root's PATH may lack /usr/sbin and /sbin (su without "-" keeps the user's PATH, without
+        them on Debian), where hdparm, smartctl, udevadm and exportfs are: the script adds them at
+        its top, after the folders it was given, which keep their order."""
+        script = (REPO_ROOT / "deploy" / "uninstall.sh").read_text()
+        top = script[: script.index("\nlog_info() {")]
+
+        assert script.count(_SYSTEM_PATH_LINE) == 1
+        assert f"\n{_SYSTEM_PATH_LINE}\n" in top and top.index("\nset -e\n") < top.index(_SYSTEM_PATH_LINE)
+
+    def test_the_tools_outside_the_path_given_are_found(self, tmp_path):
+        """hdparm, smartctl and udevadm only in a folder that stands for /usr/sbin, which the PATH
+        given has not: the script finds them there (the folders it adds, _uninstall_lib), and
+        does not say that the host has no hdparm or smartctl."""
+        sbin = tmp_path / "sbin"
+        sbin.mkdir()
+        tools = {"hdparm": _LOGGER + _FAILS, "smartctl": _smartctl_stub(*_SCANS_TURNED_ON), "udevadm": _LOGGER + _FAILS}
+        for name, body in tools.items():
+            (sbin / name).write_text(body)
+            (sbin / name).chmod(0o755)
+
+        result, calls, path = self._run_idle(tmp_path, self._two_disks(), missing=tuple(tools), system_path=sbin)
+
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert calls == [_LSBLK, *_timer_off("/dev/sda"), *_scans_on("/dev/sda"), *_timer_off("/dev/sdb"), _RELOAD]
+        assert not path.exists() and self._left(result) == []
+        assert "the host has no" not in result.stdout
 
     def test_the_confirmation_names_the_idle_timeouts(self, tmp_path):
         result = subprocess.run(

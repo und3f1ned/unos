@@ -261,11 +261,14 @@ It undoes what UNOS's udev rule of the disks' idle timeouts
 Each disk it names gets no standby timer until it restarts (`hdparm -S 0`),
 and a disk whose own automatic offline scans UNOS turned off gets them on
 again (`smartctl -o on`, where the host has smartctl). What it could not undo
-(a missing tool, a disk not attached, a command that failed) is named at the
-end, with the command to run. A disk whose scans stay off keeps its record:
-the rule then holds only such records, which do nothing at boot, until they
-are on. The rule's lines other than comments that UNOS did not write go with
-it, and the end shows them.
+(a missing tool, a disk not attached, SMART off on a disk, a command that
+failed) is named at the end, with the command to run. A disk whose scans stay
+off keeps its record: the rule then holds only such records, which do nothing
+at boot, until they are on. The rule's lines other than comments that UNOS did
+not write go with it, and the end shows them. This happens before the script
+removes `/opt/unos`: if the uninstallation stops while it undoes the disks
+(Ctrl-C, a dropped SSH session), the rule is still whole, and running the
+script again finishes it.
 
 ## Contributing
 
