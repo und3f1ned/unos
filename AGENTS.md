@@ -50,7 +50,7 @@ The one exception is the web UI's Russian texts and the tests that check them (A
 | `scripts/dev/api.py METHOD PATH` | What the API on the dev device answers. Methods other than GET change the device. |
 | `scripts/dev/deploy.sh status` | Which runtime files differ between this tree and the device. `status`, `sync --dry-run` and `backup` only read the device (ADR-0223); `backup` copies its secrets into the git-ignored `tmp/dev/backup` and keeps the newest 3 copies. |
 | `scripts/dev/sd.sh measure <label> -- <command>` | How many MiB a command wrote to the device's SD card. |
-| `scripts/dev/scenario.sh AREA` | The user scenario of an area (`files`, `volumes`, `smart`, `backups`, `smb`, `smbconf`, `shares`, `scrub`, `offsite`, `restore`, `all`) works on the dev device, step by step with each step's SD MiB, and the check left the device as it found it (ADR-0304). It changes the device for its duration: on the owner's request. |
+| `scripts/dev/scenario.sh AREA` | The user scenario of an area (`files`, `volumes`, `smart`, `backups`, `smb`, `smbconf`, `shares`, `scrub`, `balance`, `offsite`, `restore`, `hardware`, `all`) works on the dev device, step by step with each step's SD MiB, and the check left the device as it found it (ADR-0304). It changes the device for its duration: on the owner's request. |
 | `make setup`, `make audit` | Bootstrap and dependency audit. Both need the network: the owner runs them. |
 
 The backend tests use fixed paths under `/tmp`: run them through make, whose test targets wait for

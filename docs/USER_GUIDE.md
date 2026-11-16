@@ -200,6 +200,101 @@ page stays through such a reload. The SMART data of a disk attached
 after the supervisor started (**System** → **Disk Health**) can be read
 only once the supervisor has restarted.
 
+### Idle Timeouts (Spin-Down)
+
+The **Power** column shows whether each disk is **Active** (spinning, or
+idle) or in **Standby** (spun down), or **Unknown** when the disk cannot say,
+as behind some USB bridges, or does not answer: after a power read of a disk
+that did not answer, UNOS shows it Unknown without asking again until that
+read has ended on the host. UNOS asks the disk for its power mode with
+`hdparm -C` on the host, which sends it only the CHECK POWER MODE command:
+that does not wake a sleeping disk, and it did not start the idle timeout
+again on the disk UNOS was measured with (a WD6400AACS). A disk in standby is
+not read for what it holds: the **Contents** column then says "Not read while
+the disk sleeps" unless the host already knows its filesystem or partitions.
+Disks with the Extended Power Conditions (EPC) of many NAS drives answer with
+power conditions that `hdparm` does not name; UNOS then asks with
+`smartctl -n idle`, which also sends only CHECK POWER MODE and shows them
+Active (idle_a, idle_b, idle_c) or Standby (standby_y). On a host without
+`hdparm`, and for an NVMe disk, UNOS asks with `smartctl` instead, which also
+leaves a sleeping disk asleep but starts an awake one's timer again.
+
+Below the state, the button with the disk's idle timeout (**Off** by
+default) opens **Idle Timeout**: choose **Off**, 5, 10, 20 or 30 minutes, or
+1 to 5 hours, and **Save**. The disk spins down after that time without
+access, or later when it has a minimum of its own: a WD6400AACS given 5
+minutes spins down after about 10. UNOS sets it at once with `hdparm -S` on
+the host, which spins the disk up if it sleeps, and keeps it in its udev rule
+`/etc/udev/rules.d/90-unos-disk-spindown.rules`, which sets it again at every
+boot and whenever the disk is connected again, under any name: the rule finds
+the disk by its serial number. **Off** stops the timer and removes the disk's
+line: until its next power cycle the disk then has no standby timer, not even
+one that `/etc/hdparm.conf` or the disk's own default set, and after one it
+keeps those. A disk that is woken often wears faster, so give a disk in daily
+use a longer timeout.
+
+Many hard disks run automatic offline scans of their own: every few hours the
+disk reads its surface, for hours, and it does not sleep meanwhile, whatever
+its timeout (a WD6400AACS stayed awake for hours that way). While a disk has a
+timeout, UNOS turns its automatic offline scans off (`smartctl -o off`), notes
+that in its udev rule, and turns them on again when you set **Off**; a disk
+whose scans were off already, or that has none (also one whose SMART is
+turned off), is left as it is. The disk is expected to keep the setting when
+it restarts, but that is not confirmed for every disk: if a disk no longer
+sleeps after a restart, save its timeout again, which turns its scans off
+again. When they cannot be turned off, or UNOS cannot tell whether they were,
+the timeout is saved all the same, and **Storage** says that the scans may
+keep the disk awake. Without them the disk no longer reads its surface by itself: schedule
+a scrub of its pool (**System** → **Scheduler**), which reads every used
+block of the pool. A long SMART test reads the whole surface, but the
+Scheduler's SMART tests are short ones and no page starts a long one yet: run
+`sudo smartctl -t long /dev/sdX` on the host.
+
+The button is off, with the reason below it, for the system disk, an NVMe
+disk (it manages its own power), a disk that reports no serial number a udev
+rule can match or the serial of another disk, and on a host without `hdparm`:
+install the package `hdparm` on the host (`deploy/install.sh` does). When the
+host cannot read UNOS's udev rule, every disk's button is off with that reason.
+
+Uninstalling UNOS (`deploy/uninstall.sh`) does what **Off** does for each
+disk the udev rule names, then removes the rule: the disk has no standby timer
+until it restarts, and its automatic offline scans are on again (with the
+host's `smartctl`). At its end it names what it could not undo, such as a disk
+that is not attached or has SMART off, with the command to run. Until such a
+disk's scans are on again, the rule stays with only their records, which do
+nothing at boot; a new installation of UNOS reads them, and saving **Off** for
+the disk turns its scans on, unless SMART is off on the disk: then only the
+command named at the end does. If the uninstallation stops while it undoes the
+disks (Ctrl-C or a dropped connection, which take effect once the disk command
+then running has ended), the rule is still whole: run the uninstallation again
+to finish. That run makes no backup: the first one offered it, then removed
+UNOS's data volume.
+
+Nothing UNOS does on its own wakes a sleeping disk or keeps an idle one
+awake. Disk Health, the SMART data and the hourly SMART records leave a
+sleeping disk asleep, and the hourly records skip a disk with an idle timeout
+that was not used since its last record: a SMART read of an awake disk
+starts its timer again. The first records after UNOS starts read every awake
+disk, and a disk that was asleep at its last record is read once it is awake
+again, also when only saving its idle timeout woke it. The pool health check
+every 5 minutes, and the pool
+counts of `/api/v1/health/prometheus` and `/api/v1/health/full` for
+monitoring, read only what the kernel and udev know. The trash of a pool is
+cleared out once a day, when its disks are awake. `deploy/install.sh` turns
+off smartd, the host's own SMART monitor of the package `smartmontools`: it
+would read every awake disk every 30 minutes, so that a disk with a timeout
+of 30 minutes or more might never spin down. UNOS's hourly SMART records and
+alerts replace it. On a host set up another way, turn it off with
+`sudo systemctl disable --now smartmontools` (`systemctl is-active
+smartmontools` says whether it runs). What an administrator
+starts or schedules wakes the disks it needs: a SMART test, a scrub, a
+snapshot or backup task, a file transfer. Opening a page that lists the pools
+can wake a sleeping disk, since it reads every disk: the dashboard (the first
+page after signing in), **Storage**, **Shares**, **Snapshots** and
+**System** → **Scheduler**. **Storage** reads whether each disk sleeps
+before it lists the pools, so **Power** shows how each disk was when the page
+opened.
+
 ### Creating a Storage Pool
 
 1. Go to **Storage**
@@ -318,7 +413,39 @@ For each pool, you can:
   the ones that still run. When btrfs cannot report the status, the pool
   says so with the reason. Scheduled scrubs are set up in **System** → **Scheduler**; a
   scheduled scrub of a pool that is not mounted fails without scrubbing
-  anything. For a pool that does not answer, see below
+  anything. No scrub starts, scheduled or not, while a balance of the pool
+  runs. For a pool that does not answer, see below
+- **Balance** - (mounted pools that are not read-only) Rewrite the pool's
+  chunks, the blocks of space btrfs gives to data and metadata, to free the
+  space of partly empty ones. By default only the chunks less full than the
+  **Usage limit (%)**, 20, are rewritten, which takes minutes; enter another
+  whole number from 1 to 99. **Every chunk (full balance)** rewrites all the
+  data of the pool, hours on a hard disk, and starts only after you tick
+  **Rewrite every chunk of <pool>**. While the balance runs, the pool shows
+  how many chunks it balanced of about how many, and the time left that UNOS
+  estimates from the chunks balanced so far, sent to the open page as it
+  changes; **Pause Balance** pauses it after the chunk it moves, **Resume
+  Balance** goes on, and **Cancel Balance** stops it. While a pause still
+  waits for its chunk, **Cancel Balance** waits too (btrfs would pause the
+  balance all the same): cancel it once it is paused. A paused balance also
+  goes on by itself when the pool is mounted again, for example at the next
+  start of the NAS: cancel it to stop it for good. A restart or shutdown of
+  the host pauses a balance that runs, which then goes on after the start in
+  the same way. A full balance that goes on after a pause, by
+  **Resume Balance** or at a mount, rewrites only the chunks less than 90%
+  full, a rule of the Linux kernel for a resumed balance without a usage
+  limit: the chunks at least 90% full that it had not reached stay as they
+  are. To rewrite every chunk, cancel it and start a new full balance; a
+  balance with a usage limit keeps its limit when it goes on.
+  **Resume Balance** waits for a scrub of the pool to end, and the paused
+  balance of a read-only pool can be resumed or cancelled only once
+  the pool is mounted read-write again. Afterwards the pool says
+  whether the last balance finished (with the chunks it rewrote), was
+  cancelled or failed (with btrfs's error, such as no space left); after a
+  restart of the host it shows none. The balance runs on the host, so a
+  restart of UNOS does not stop it, and the pool shows it again once the page
+  is loaded. A balance does not start while a scrub of the pool runs, nor
+  while another balance of it runs or is paused
 - **Volumes** - (mounted pools) List, create and delete volumes: btrfs
   subvolumes in the pool's top folder (`/mnt/pools/<pool>/<name>`) that can be
   shared on their own. **Quota in GiB** is optional: leave it empty for no
@@ -382,7 +509,10 @@ history shows why.
 **System** → **Disk Health** shows the model, size, temperature and SMART
 health status of each disk that the **Storage** page lists, the system disk
 included unless it is an SD card or eMMC. Opening the tab, or its refresh
-button, reads the SMART data of every disk, which wakes disks that sleep.
+button, reads the SMART data of every disk that is awake: a disk that sleeps
+stays asleep and is listed as **STANDBY**, with the model, serial number and
+size that the host knows, and its dialog says that its SMART data is read
+once it is awake.
 
 **SMART data** opens a disk: its overall health, temperature, power-on hours
 and power cycles, serial number, firmware, capacity, the last self-test and
@@ -545,6 +675,9 @@ every served share below such a folder until the command has run.
      shares (a hidden share can still be opened by its name)
    - **Guests can read this share without a password** - See
      [Guest Shares](#guest-shares)
+   - **Protocol options** - **Require encryption**, **Time Machine backups of
+     Macs** and **Previous Versions from snapshots**, each off by default:
+     see [Protocol Options](#protocol-options)
    - **Access** - For each user: No access, Read only or Read & write
 3. Click **Create**
 
@@ -564,11 +697,72 @@ requires signing. Windows 11 refuses guest access by default, and guest
 connections are neither signed nor encrypted. Use guest shares only for
 files everyone on your network may read, and keep them few.
 
+#### Protocol Options
+
+Each share can turn on three options; its card shows those that are on, and
+marks one that the NAS cannot serve now with the reason (see below).
+
+- **Require encryption** - Only clients that encrypt the connection (SMB 3:
+  Windows 8 and later, macOS, Linux) can open the share; older ones, such as
+  SMB 2 clients, are refused. Turning it on disconnects the share's open
+  connections, which reconnect encrypted. A guest share cannot require
+  encryption: guest connections are never encrypted.
+- **Time Machine backups of Macs** - A Mac backs up to the share: in **System
+  Settings** → **General** → **Time Machine**, **Add Backup Disk** lists it
+  (or connect to it in the Finder first). Give whoever backs up **Read &
+  write**, ideally a share of its own; Time Machine takes the free space of
+  the pool. While any share offers Time Machine, every share loads Apple's
+  SMB extensions (Windows' extra file streams are then kept as well), and
+  macOS cannot change the permissions of the files. The NAS announces the
+  Time Machine shares over Bonjour, those that someone has access to; a
+  change of them restarts avahi-daemon for that, so the NAS disappears from
+  the Finder sidebar for a moment. If avahi-daemon does not start again, the
+  answer and the status panel of the **Shares** page say so, and the next
+  change tries again.
+- **Previous Versions from snapshots** - Windows lists the snapshots of the
+  share's pool, or of its volume when the share is in one, under
+  **Properties** → **Previous Versions** of its files and folders, and can
+  open, copy or restore them; `smbclient` reaches them as `@GMT-` paths.
+  Only the snapshots that UNOS names are listed: those made on the
+  [Snapshots](#snapshots) page with the default name (`snap_<time>`) and
+  those of scheduled snapshot tasks (`auto_<time>`). Scheduled tasks
+  snapshot pools only, and a pool's snapshot does not hold the files of its
+  volumes: a share in a volume lists only the volume's snapshots made on the
+  **Snapshots** page. When a pool or volume that has a `.snapshots` folder
+  lists none (all its snapshots were deleted, or it holds only snapshots
+  of other names), `smbclient` of Samba 4.22 prints
+  `NT_STATUS_INVALID_NETWORK_RESPONSE getting shadow copy data` (smbd
+  answers the empty list in 14 bytes, and that `smbclient` wants at least
+  16): it means the list is empty. A pool or volume without a `.snapshots`
+  folder, such as a new one before its first snapshot (the first snapshot
+  makes the folder, and deleting snapshots keeps it), has no list: there
+  `smbclient` prints `NT_STATUS_INVALID_DEVICE_REQUEST getting shadow copy
+  data`, as the dev device showed. In each case Windows shows no previous
+  versions. A folder
+  in a subvolume or file system of its own
+  further below the pool's top level than a volume (such as a restored copy
+  inside a volume, a subvolume made by hand or another file system mounted
+  there) is in no snapshot of UNOS, and the option is refused there with the
+  reason; a subvolume right below the pool, such as a restored copy of a
+  pool's snapshot, counts as a volume. Turning the option on applies to the
+  next connections (open ones get it when they reconnect); turning it off
+  disconnects the share's open connections, so that none keeps showing the
+  snapshots.
+
+Time Machine and Previous Versions need Samba's vfs modules, the package
+`samba-vfs-modules` on the NAS; without it both are refused, with the
+package named. If the modules or the snapshots of an option that is on go
+away later, the share is served without that option: its card shows the
+option as a warning with the reason, and so does the status panel of the
+**Shares** page. A share restored from a backup with guest access and
+encryption required loses guest access at the restore, with a note.
+
 #### Editing a Share
 
-- **Edit** changes the comment, network browsing, guest access and the
-  access list (and the folder of a share marked **Not served**). Removing or
-  lowering someone's access, and turning guest access off, disconnect every
+- **Edit** changes the comment, network browsing, guest access, the protocol
+  options and the access list (and the folder of a share marked **Not
+  served**). Removing or lowering someone's access, turning guest access off,
+  requiring encryption and turning Previous Versions off disconnect every
   open connection to that share; the computers reconnect by themselves.
   Adding access disconnects nobody.
 - **Repair permissions** fixes the permissions of the files that are already
@@ -915,6 +1109,8 @@ and the size of files.
   **New Folder**, then restore the item.
 - Deleted items stay in the trash for 30 days. When UNOS starts, and then once
   a day, it deletes for good the items that were deleted 30 or more days ago.
+  It passes over a pool whose disks sleep, so as not to wake them, and clears
+  out its trash at the first hourly check after they woke.
 - Until then they still take up space in their pool. **Delete for good**
   deletes the selected items at once, and **Empty trash** everything in the
   trash of every pool and volume. Both ask first, and neither can be undone.
@@ -1020,6 +1216,32 @@ name its category the same way. Some of them:
 
 Starting or restarting an app from UNOS fails while its data folders are not
 on a mounted pool.
+
+### Hardware Acceleration
+
+On a NAS with a Rockchip RK3588 (such as the Banana Pi BPI-W3) under
+Rockchip's kernel (5.10 or 6.1, such as Armbian's `vendor` kernel), Jellyfin's
+card shows **Hardware acceleration**, and its details say what it gets: UNOS
+installs it with the chip's video decoders and encoders (Rockchip MPP), its 2D
+engine (RGA) and its GPU, those of `/dev/dri`, `/dev/dma_heap`,
+`/dev/mpp_service`, `/dev/rga` and `/dev/mali0` that the NAS has, in a
+container without privileged mode. The container can read the NAS's device
+tree, which Rockchip MPP reads to know the chip, and runs without Docker's
+AppArmor profile, which forbids that. Only Rockchip's kernel has Rockchip
+MPP's `/dev/mpp_service`: under another kernel, such as the mainline kernel,
+the App Store says nothing about hardware and Jellyfin is installed as on any
+other NAS, and transcodes in software.
+
+UNOS does not change Jellyfin's settings: in Jellyfin, choose **Dashboard** >
+**Playback** > **Transcoding** > **Hardware acceleration**: **Rockchip MPP
+(RKMPP)**, and tick the codecs to decode in hardware. The details of an
+installed Jellyfin say this only when its container has the hardware. One
+installed without it, as when UNOS could not look for the device nodes during
+the install, shows **No hardware acceleration** on its card, and the notice
+of its install and its details warn instead: uninstall it (its data folders
+are kept) and install it again on the same pool to give it the hardware. On
+any other NAS the App Store says nothing about hardware, and apps are
+installed as before. Immich from the App Store does not use the RK3588's NPU.
 
 ### Share Folders for Apps
 

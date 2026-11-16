@@ -32,6 +32,7 @@ from src.storage.schemas import ScrubStatus
 
 from .test_pool_persistence import install_fake_host
 from .test_snapshots import FakeBtrfs, local_time_9_hours_ahead_of_utc
+from .test_storage import NO_BALANCE
 
 scheduler = importlib.import_module("src.scheduler.router")
 backup_router = importlib.import_module("src.backup.router")
@@ -1016,10 +1017,27 @@ def test_a_scheduled_snapshot_of_an_unmounted_pool_is_recorded_as_failed(env, mo
 async def test_scrub_task(env):
     ok, _ = await scheduler.execute_task(ScheduledTask(**_task(task_type="scrub")))
     assert ok
-    assert _commands(env) == [["btrfs", "scrub", "start", str(env.pool)]]
+    # Not while a balance of the pool runs (ADR-0379).
+    assert _commands(env) == [["btrfs", "balance", "status", str(env.pool)], ["btrfs", "scrub", "start", str(env.pool)]]
     assert env.run.call_args.kwargs["timeout"] == scheduler.SCRUB_START_TIMEOUT == 60
     # The Storage page follows it over the events socket (ADR-0367).
     assert scrubs.current() == [ScrubStatus(pool="data", status="running").model_dump()]
+
+
+async def test_a_scheduled_scrub_fails_while_a_balance_of_its_pool_runs(env):
+    """Both read and write the whole pool: the run fails with the reason, and no scrub starts (ADR-0379)."""
+    def btrfs(cmd, **kwargs):
+        if cmd[:3] == ["btrfs", "balance", "status"]:
+            return MagicMock(returncode=1, stderr="", stdout=f"Balance on '{cmd[3]}' is running\n"
+                                                              "2 out of about 12 chunks balanced (3 considered),  83% left\n")
+        raise AssertionError(f"no scrub starts beside a balance: {cmd}")
+
+    env.run.side_effect = btrfs
+
+    ok, message = await scheduler.execute_task(ScheduledTask(**_task(task_type="scrub")))
+
+    assert (ok, message) == (False, "A balance of pool data runs: wait for its end, or pause or cancel it, then start "
+                                    "the scrub")
 
 
 async def test_scrub_of_an_unmounted_pool_fails_without_btrfs(env, monkeypatch):
@@ -1094,7 +1112,8 @@ def test_a_scheduled_scrub_is_recorded_when_btrfs_returns(env, monkeypatch, btrf
     monkeypatch.setattr(scheduler, "SCRUB_START_TIMEOUT", 5)
     bin_dir = env.tmp / "bin"
     bin_dir.mkdir()
-    (bin_dir / "btrfs").write_text("#!/bin/sh\n" + FAKE_SCRUB_START[btrfs])
+    # btrfs balance status, which the start asks first (ADR-0379), finds none.
+    (bin_dir / "btrfs").write_text("#!/bin/sh\n" + NO_BALANCE + FAKE_SCRUB_START[btrfs])
     (bin_dir / "btrfs").chmod(0o755)
     monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
     env.run.side_effect = _REAL_RUN_IN_CONTAINER
@@ -1103,7 +1122,8 @@ def test_a_scheduled_scrub_is_recorded_when_btrfs_returns(env, monkeypatch, btrf
     try:
         env.client.post(f"/api/v1/scheduler/tasks/{task['id']}/run")
 
-        assert _commands(env) == [["btrfs", "scrub", "start", str(env.pool)]]
+        assert _commands(env) == [["btrfs", "balance", "status", str(env.pool)],
+                                  ["btrfs", "scrub", "start", str(env.pool)]]
         (run,) = env.client.get(f"/api/v1/scheduler/runs/{task['id']}").json()
         (stored,) = env.client.get("/api/v1/scheduler/tasks").json()
         assert run["finished_at"]

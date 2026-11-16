@@ -12,17 +12,21 @@ export const FAKE_DISKS = [
     rotational: false, mountpoint: '/', type: 'disk', fstype: null, label: null, pttype: 'dos',
     partitions: [{ name: 'e2e-sd0p1', path: '/dev/e2e-sd0p1', size: 63e9, fstype: 'ext4', label: null, mountpoints: ['/'] }],
     mountpoints: ['/'], has_data: true, is_system: true, in_use: true,
-    in_use_reason: 'Mounted at /', pool: null,
+    in_use_reason: 'Mounted at /', pool: null, power_state: 'active', spindown: 0,
+    spindown_problem: '/dev/e2e-sd0 is the system disk (Mounted at /): it gets no idle timeout',
   },
   {
     name: 'e2e-hd1', path: '/dev/e2e-hd1', model: 'E2E Disk', serial: 'E2E1', wwn: '0x5000e2e000000001', size: 4e12,
     rotational: true, mountpoint: null, type: 'disk', fstype: 'btrfs', label: 'e2e_tank', pttype: null, partitions: [],
     mountpoints: [], has_data: true, is_system: false, in_use: false, in_use_reason: null, pool: 'e2e_tank',
+    // Asleep: its idle timeout of 20 minutes ran out (ADR-0378).
+    power_state: 'standby', spindown: 20, spindown_problem: null,
   },
   {
     name: 'e2e-hd2', path: '/dev/e2e-hd2', model: 'E2E Disk', serial: 'E2E2', wwn: '0x5000e2e000000002', size: 4e12,
     rotational: true, mountpoint: null, type: 'disk', fstype: null, label: null, pttype: null, partitions: [],
     mountpoints: [], has_data: false, is_system: false, in_use: false, in_use_reason: null, pool: null,
+    power_state: 'active', spindown: 0, spindown_problem: null,
   },
 ];
 
@@ -181,6 +185,26 @@ export function noScrub(pool: string): FakeScrubStatus {
   };
 }
 
+/** A balance as GET /storage/pools/{name}/balance reports it (storage/balances.py, ADR-0379). */
+export interface FakeBalanceStatus {
+  pool: string;
+  status: string;
+  completed: number | null;
+  expected: number | null;
+  considered: number | null;
+  seconds_left: number | null;
+  result: string | null;
+  error: string | null;
+}
+
+/** No balance runs or is paused, and none is known to have ended since the host started. */
+export function noBalance(pool: string): FakeBalanceStatus {
+  return {
+    pool, status: 'idle', completed: null, expected: null, considered: null, seconds_left: null, result: null,
+    error: null,
+  };
+}
+
 // The 409s of an unmount or a removal of a pool in use, word for word as the server sends them
 // (_unmount_pool_target in supervisor/src/storage/pools.py; test_pool_persistence.py checks them).
 
@@ -213,10 +237,26 @@ export interface RecordedWrite {
 }
 
 interface DiskIdentity {
+  name?: string;
   path: string;
   serial: string | null;
   wwn: string | null;
   size: number;
+  /** The idle timeout in minutes before the first PUT of the disk's (ADR-0378), and why none. */
+  spindown?: number;
+  spindown_problem?: string | null;
+}
+
+/** What PUT /storage/disks/{name}/spindown answers for a host without hdparm (spindown.NO_HDPARM). */
+export const NO_HDPARM = 'The host has no hdparm: install the package hdparm on the host to set idle timeouts';
+
+/**
+ * The warning of PUT /storage/disks/{name}/spindown when the disk's own automatic offline scans
+ * could not be turned off for its timeout (spindown.SCANS_LEFT_ON, ADR-0378): `path` is the disk's,
+ * `reason` why. The timeout is set all the same.
+ */
+export function scansLeftOn(path: string, reason: string): string {
+  return `${path} has the idle timeout, but the disk's own automatic offline scans could not be turned off (${reason}): they may keep it awake`;
 }
 
 export interface FakeResponse {
@@ -251,6 +291,12 @@ export interface FakeStorageOptions {
    */
   scrubStatus?: (pool: string, method: string) => FakeScrubStatus;
   /**
+   * The server's answer to a request of a pool's balance (default: none runs, none known): the
+   * status, or another response such as a 409. ``action`` is status (GET), start (POST), pause,
+   * resume (POST .../pause, .../resume) or cancel (DELETE).
+   */
+  balanceStatus?: (pool: string, action: string) => FakeBalanceStatus | FakeResponse;
+  /**
    * The filesystems GET /filesystems/importable answers (default none), besides the pools that
    * share a label with one of them and are neither mounted nor managed: those are no pools, as
    * GET /pools answers (ADR-0283). An import takes its filesystem off this list (a copy) or off
@@ -261,6 +307,13 @@ export interface FakeStorageOptions {
   importableResponse?: { status: number; json: unknown };
   /** Answer POST /filesystems/<uuid>/import with this instead of importing. */
   importResponse?: { status: number; json: unknown };
+  /** Answer PUT /disks/<name>/spindown with this instead of setting the idle timeout. */
+  spindownResponse?: FakeResponse;
+  /**
+   * The warning of a PUT /disks/<name>/spindown that sets the timeout (default none): the server's
+   * text, as scansLeftOn makes it, for the disk's path and the minutes.
+   */
+  spindownWarning?: (path: string, minutes: number) => string | null;
   /**
    * Called with the path of each GET (such as '/disks') when it is asked: its answer, made of the
    * fake host's state at that moment, is sent once the promise returned resolves, as the answer
@@ -330,6 +383,9 @@ export async function fakeBlockDevices(page: Page): Promise<(devices: string[]) 
 /** A pool's scrub as /ws/v1/events sends administrators: its status, or why it could not be read. */
 export type FakeScrubUpdate = FakeScrubStatus | { pool: string; error: string };
 
+/** A pool's balance as /ws/v1/events sends administrators: its status, or why it could not be read. */
+export type FakeBalanceUpdate = FakeBalanceStatus | { pool: string; error: string };
+
 /** The fake /ws/v1/events of fakeScrubEvents. */
 export interface FakeScrubEvents {
   /** Send one scrubs message, as the server does whenever the status of a scrub that runs changed. */
@@ -339,6 +395,8 @@ export interface FakeScrubEvents {
    * in again: the new socket follows no scrub until one is seen running.
    */
   restart(): Promise<void>;
+  /** Send one balances message, as the server does whenever a balance that runs changed (ADR-0379). */
+  balances(balances: FakeBalanceUpdate[]): Promise<void>;
 }
 
 /**
@@ -372,7 +430,11 @@ export async function fakeScrubEvents(page: Page): Promise<FakeScrubEvents> {
     await closing.close({ code: 1012, reason: 'Service Restart' });
     await expect.poll(() => signIns, { message: 'the page signed in to the events socket again' }).toBe(before + 1);
   };
-  return Object.assign(send, { restart });
+  const balances = async (updates: FakeBalanceUpdate[]) => {
+    await signedIn();
+    socket!.send(JSON.stringify({ type: 'balances', data: updates }));
+  };
+  return Object.assign(send, { restart, balances });
 }
 
 /** Serve the disks and pools; returns the list of write requests made. */
@@ -390,6 +452,16 @@ export async function fakeStorageApi(page: Page, options: FakeStorageOptions = {
   const sharesItsLabel = (pool: FakePool) =>
     !pool.mounted && !pool.persistent && importable.some((fs) => fs.label === pool.name);
   const writes: RecordedWrite[] = [];
+  // The idle timeouts set through the fake, by the disk's serial, as UNOS's udev rule keeps them.
+  const timeouts = new Map<string | null, number>();
+  // A disk without the fields of the power is an awake disk that can have a timeout.
+  const listed = () =>
+    disks().map((disk) => ({
+      power_state: 'active',
+      spindown_problem: null,
+      ...disk,
+      spindown: timeouts.get(disk.serial) ?? disk.spindown ?? 0,
+    }));
   await page.route(
     (url) => url.pathname.startsWith('/api/v1/storage/'),
     async (route) => {
@@ -403,7 +475,20 @@ export async function fakeStorageApi(page: Page, options: FakeStorageOptions = {
         return route.fulfill(response);
       };
 
-      if (method === 'GET' && path === '/disks') return answer({ json: disks() });
+      if (method === 'GET' && path === '/disks') return answer({ json: listed() });
+      const spindown = /^\/disks\/([^/]+)\/spindown$/.exec(path);
+      if (method === 'PUT' && spindown) {
+        const body = request.postDataJSON();
+        writes.push({ method, path, body });
+        if (options.spindownResponse) return route.fulfill(options.spindownResponse);
+        const name = decodeURIComponent(spindown[1]);
+        const disk = disks().find((d) => d.name === name);
+        if (!disk) return route.fulfill({ status: 400, json: { detail: `${name} is not a disk of this system` } });
+        if (disk.spindown_problem) return route.fulfill({ status: 409, json: { detail: disk.spindown_problem } });
+        timeouts.set(disk.serial, body.minutes);
+        const warning = options.spindownWarning?.(disk.path, body.minutes) ?? null;
+        return route.fulfill({ json: { name, minutes: body.minutes, warning } });
+      }
       if (method === 'GET' && path === '/pools') {
         return answer({ json: pools.filter((pool) => !sharesItsLabel(pool)) });
       }
@@ -414,6 +499,17 @@ export async function fakeStorageApi(page: Page, options: FakeStorageOptions = {
         if (!pools.some((p) => p.name === name && p.mounted)) return route.abort();
         if (method !== 'GET') writes.push({ method, path, body: method === 'POST' ? request.postDataJSON() : null });
         return answer({ json: scrubStatus(name, method) });
+      }
+      const balance = path.match(/^\/pools\/([^/]+)\/balance(?:\/(pause|resume))?$/);
+      if (balance && (balance[2] ? method === 'POST' : ['GET', 'POST', 'DELETE'].includes(method))) {
+        const name = decodeURIComponent(balance[1]);
+        // The server refuses a pool that is not mounted with 409; the fake does not invent it.
+        if (!pools.some((p) => p.name === name && p.mounted)) return route.abort();
+        const action =
+          balance[2] ?? ({ GET: 'status', POST: 'start', DELETE: 'cancel' } as Record<string, string>)[method];
+        if (method !== 'GET') writes.push({ method, path, body: method === 'POST' ? request.postDataJSON() : null });
+        const found = options.balanceStatus?.(name, action) ?? noBalance(name);
+        return answer('status' in found && typeof found.status === 'number' ? (found as FakeResponse) : { json: found });
       }
       if (method === 'GET' && path === '/filesystems/importable') {
         const found = [...pools.filter(sharesItsLabel).map(foundDuplicate), ...importable];

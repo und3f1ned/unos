@@ -18,9 +18,20 @@ SD writes of each check (ADR-0214). The areas:
            in it, a subvolume on the host listed with the volume's restored copies (ADR-0358), the
            copy's Delete refused while the share uses the copy and done once the share is gone,
            and, with the snapshot deleted, the volume's Delete.
-  smart    The whole disks on the Storage page and on Disk Health, each disk's SMART data on both,
-           the refusal of the system disk and of what is not a disk, and a short self-test of
-           each disk.
+  smart    The whole disks on the Storage page and on Disk Health, each disk's SMART data on both
+           (STANDBY for a disk that sleeps), the refusal of the system disk and of what is not a
+           disk, and of an idle timeout for the system disk, with the reason; the first data hard disk
+           (the pool's sda on the dev device) given the shortest idle timeout, 5 minutes, with
+           its line in UNOS's udev rule, its own automatic offline data collection (smartctl -c)
+           off while it has the timeout, asleep once it ran out (waited for at most six times),
+           its SMART data on Storage and Disk Health read while it sleeps, which leaves it asleep
+           with its I/O counters unchanged, and the timeout of UNOS's rule set again, or Off: no
+           standby timer until the disk's next power cycle, with its offline data collection as
+           the check found it (ADR-0378; these steps are skipped with the reason without hdparm
+           on the device, when the disk has no timeout of UNOS's and /etc/hdparm.conf sets one,
+           which Off would clear, and when it has a timeout of UNOS's with its offline data
+           collection on, which the check's Save would turn off for good); and a short self-test
+           of each disk.
   backups  A plain and an encrypted backup made and listed, the restores refused for a missing
            backup and for the encrypted one without its passphrase or with a wrong one, and both
            deleted. It never restores a backup.
@@ -29,7 +40,26 @@ SD writes of each check (ADR-0214). The areas:
            without shares, the folder's 2770 root:unos-smb, a signed session that writes, New
            Folder and Upload in the share's folder (2770 and 660 root:unos-smb) changed over SMB,
            the access lowered to read and then removed during open sessions, a comment saved with
-           the expected version and a stale one refused, a rename of the user with a new password
+           the expected version and a stale one refused; the protocol options (ADR-0380) of a
+           second share, of a folder in a new volume: Previous Versions, with smbd's answer for
+           the shadow copies of the volume before its first snapshot, without .snapshots,
+           recorded (any answer passes), which list two snapshots of the volume that the check
+           makes on the Snapshots page a second apart with the names it gives as @GMT-<their
+           times> for a file the user wrote and then overwrote, only the second once the first
+           is deleted, whose version of the file opens with exactly the bytes from before the
+           overwrite (the SHA-256 of the copy smbclient gets, which sha256sum reads where
+           smbclient runs), and once both are deleted none (an empty list, which smbclient
+           reports as NT_STATUS_INVALID_NETWORK_RESPONSE), while smbd refuses to open the file in
+           either, the session goes on and the volume keeps its .snapshots, encryption required,
+           which ends the share's open SMB 2.1 and unencrypted SMB3 sessions, refuses a new
+           SMB 2.1 client and serves one
+           that encrypts while the SMB 2.1 client still opens the first share, and with the
+           option off the SMB 2.1 client again, and Time Machine with Previous Versions, whose
+           lines and those of [global] testparm takes and whose change restarts avahi-daemon
+           without a warning, after which Avahi resolves the share
+           in the device's _adisk._tcp service, and no longer with the option off, each with the
+           section's lines, then that share's and that volume's Delete; a rename of the
+           user with a new password
            (ADR-0368) that ends the open session and keeps the marked host account's uid, and so
            the user's files, under the new name, with a Samba account of the new name and none of
            the old, the share's access and smb.conf's section following the new name, which signs
@@ -87,6 +117,17 @@ SD writes of each check (ADR-0214). The areas:
            end; and the task deleted, its run left in the Scheduler's history. On a pool with more
            than 32 GiB of data the scrubs are cancelled instead of waited for. The pool's last
            scrub result is the check's afterwards.
+  balance  A balance of the pool (ADR-0379): one of a folder below the pools' base with nothing
+           mounted on it refused with 409; a folder of the pool with chunks about 12% full, made
+           of files that fallocate allocates and of which most are deleted again; Start Balance
+           with the usage limit of 20% answered running, and so the status right after it, its
+           btrfs in the host's unit unos-balance-<pool>; a scrub and a second balance refused with
+           409 while it runs; its chunks balanced growing, with the time left; Pause Balance, after
+           which the status says paused and the unit has ended; Resume Balance, which runs it in
+           the unit again; Cancel Balance, after which the status says that it was cancelled. The
+           clean-up cancels a balance that still runs or is paused, once a pause that waits for
+           the chunk being moved has paused it, and removes the folder. The pool's last balance
+           result is the check's, cancelled, until the host restarts.
   offsite  The off-device copy (ADR-0337), on a device where none is set up: a folder of the
            pool with two files as the source and another as the disk target; Save and test, which
            makes the copy repository there (700 root:root) and says that it lies on the disk it
@@ -121,6 +162,13 @@ SD writes of each check (ADR-0214). The areas:
            when its two restores push out none of the copies that UNOS keeps (the newest 5). Where
            the device has a guest share, Samba takes a user without a Samba account as a guest
            (ADR-0339), so the refused sign-ins of the second user are left out.
+  hardware The hardware of the host's SoC that apps get (ADR-0377): the SoC that the host's device
+           tree names; the App Store's catalog, which offers Jellyfin the RK3588's video hardware on
+           an RK3588 with Rockchip MPP's /dev/mpp_service and nowhere else, and no app the hardware
+           of another SoC; and on an RK3588 the device nodes of its video hardware, with their
+           modes, of which the host has Rockchip MPP's (/dev/mpp_service, /dev/dma_heap,
+           /dev/dri), a SKIP on another host. It only reads: it installs no app, whose image only
+           the owner pulls (ADR-0211).
 
 Each check reads first how the device is (its baseline), and refuses to start beside leftovers
 of an earlier check. It makes what it needs through the API, under names made of "unoscheck"
@@ -138,9 +186,10 @@ The API is called through api.py's relay (ADR-0222). The commands on the device 
 in a private mount namespace with the root filesystem read-only (ADR-0221), with scratch files in
 /dev/shm: stat, the account files' digests, testparm, Samba's log sizes, smbclient and the smb
 check's smbpasswd -r with a client configuration of their own in RAM, the scan for passwords, the
-shares check's entries on the pool (which the namespace leaves writable) and getfacl; only pdbedit
+shares check's entries on the pool (which the namespace leaves writable), the balance check's files on
+the pool and its look at its unit's state (systemctl is-active), and getfacl; only pdbedit
 runs without that namespace, since tdbsam opens passdb.tdb read-write, and the smbconf check's edit
-of smb.conf by hand, which writes /etc/samba (ADR-0309), the scrub check's folder below the pools'
+of smb.conf by hand, which writes /etc/samba (ADR-0309), the scrub and balance checks' folder below the pools'
 base, on the root filesystem (ADR-0314), and the restore check's removal of the copies of the
 database that its restores keep in the supervisor's data volume (ADR-0341). The restore check lists
 a backup's members with python in the supervisor's running container (docker exec, as deploy.sh's
@@ -162,6 +211,7 @@ from __future__ import annotations
 import argparse
 import base64
 import contextlib
+import hashlib
 import json
 import os
 import re
@@ -184,7 +234,7 @@ import api as relay  # noqa: E402  scripts/dev/api.py
 
 SSH = HERE / "ssh.sh"
 SD = HERE / "sd.sh"
-AREAS = ("files", "volumes", "smart", "backups", "smb", "smbconf", "shares", "scrub", "offsite", "restore")
+AREAS = ("files", "volumes", "smart", "backups", "smb", "smbconf", "shares", "scrub", "balance", "offsite", "restore", "hardware")
 MARK = "unoscheck"
 LEFTOVER = re.compile(MARK + r"[0-9a-f]{6}")
 POOL_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}")
@@ -262,6 +312,36 @@ FRIENDLY_NT_STATUS = (
     ("Error was : Logon failure.", "NT_STATUS_LOGON_FAILURE"),
     ("Error was : Access denied.", "NT_STATUS_ACCESS_DENIED"),
 )
+# The idle timeouts of the disks (storage.disk-spindown, ADR-0378), as src/storage/spindown.py has them
+# (test_dev_scenarios.py compares): UNOS's udev rule, the shortest timeout in minutes and its value of
+# hdparm -S, and what the Storage page says of a host without hdparm. The check waits the timeout and
+# SPINDOWN_SETTLE seconds before it asks whether the disk sleeps, at most SPINDOWN_ROUNDS times, 1980 s
+# in all, and stops at the first standby: each question is GET /storage/disks, whose power read
+# (hdparm -C on the host, CHECK POWER MODE alone) did not restart the dev device's disk's standby
+# timer, so a disk with a minimum of its own that sleeps later than the timeout is found asleep too
+# (the dev device's WD6400AACS: after about 10 minutes for 5, 660 s). The hourly SMART monitor may read
+# the awake disk meanwhile, since the files and volumes checks used the pool just before smart in
+# scenario.sh all, and its IDENTIFY and SMART commands restart the timer: the wait allows one more
+# full minimum after such a read.
+SPINDOWN_RULES = "/etc/udev/rules.d/90-unos-disk-spindown.rules"
+SPINDOWN_SHORTEST = 5
+SPINDOWN_SHORTEST_VALUE = 60
+NO_HDPARM = "The host has no hdparm: install the package hdparm on the host to set idle timeouts"
+SPINDOWN_SETTLE = 30
+SPINDOWN_ROUNDS = 6
+# The line of UNOS's udev rule that records that UNOS turned off a disk's own automatic offline data
+# collection for its timeout (src/storage/spindown.py's RECORD), and the bits of smartctl -c's JSON
+# that show it (ataprint.cpp): ata_smart_data.offline_data_collection.status.value has bit 7 while
+# it is on, and the first of ata_smart_data.capabilities.values bit 1 when the disk can switch it.
+SPINDOWN_SCANS_RECORD = "# UNOS turned off the automatic offline data collection of the disk with the serial {serial}"
+AUTO_OFFLINE_ON = 0x80
+AUTO_OFFLINE_SWITCH = 0x02
+# Debian's hdparm sets what /etc/hdparm.conf asks whenever udev adds a disk (its rule 85-hdparm.rules,
+# before UNOS's 90-). ATA reads no standby timer back: when UNOS's rule has none for the disk, the
+# check's Off at its end (hdparm -S 0) would clear a timer set there, so it leaves the disk alone.
+# force_spindown_time is spindown_time also for a disk without APM, which spindown_time skips.
+HDPARM_CONF = "/etc/hdparm.conf"
+_HDPARM_CONF_TIMER = re.compile(r"(?:force_)?spindown_time\s*=|command_line\s*=.*\s-S\s*\d")
 # The token cache in the device's RAM of the shares check's user (api.py's relay, ADR-0222).
 USER_TOKEN = "/dev/shm/unos-scenario-{}.token"
 # What REMOTE_ENTRIES repair makes in the shares check's share folder, and how Repair permissions
@@ -348,9 +428,39 @@ case $1 in
 esac
 if btrfs subvolume show "$2" > /dev/null 2>&1; then echo subvolume; else echo none; fi'''
 
+# $1: a whole disk's path; $2: never or standby, smartctl's -n (never reads a sleeping disk too, which
+# wakes it). smartctl -i -c -j of the disk in the supervisor's running container, which has smartctl
+# (docker exec, no new container, ADR-0183): it reads the disk's SMART capabilities, its automatic
+# offline data collection among them, and whether it has SMART and SMART is on (-i: smart_support), as
+# src/storage/spindown.py does, and changes nothing. Prints "status <smartctl's exit status>", then its
+# JSON.
+REMOTE_OFFLINE = r'''
+set -uo pipefail
+if ! [[ $1 =~ ^/dev/[a-z][a-z0-9]*$ ]]; then echo "not a whole disk: $1" >&2; exit 2; fi
+case $2 in never | standby) ;; *) echo "not a power mode of smartctl -n: $2" >&2; exit 2 ;; esac
+out=$(docker exec unos-supervisor smartctl -n "$2" -i -c -j "$1")
+echo "status $?"
+printf "%s\n" "$out"'''
+
 # The disk that holds the root filesystem.
 REMOTE_SYSTEM_DISK = r'''
 lsblk -no PKNAME "$(findmnt -no SOURCE /)"'''
+
+# smbd's Time Machine announcement (ADR-0380): Avahi resolves the device's _adisk._tcp service over
+# D-Bus (busctl ships with systemd) under the name smbd gives its services, the netbios name (mdns
+# name = netbios, Samba's default). Prints "found <busctl's JSON>", or "none <busctl's error>" when the
+# call fails; adisk_names tells Avahi's answer for no such service from a call that could not ask it.
+REMOTE_ADISK = r'''
+set -uo pipefail
+mkdir -p -m 0755 /run/samba
+name=$(testparm -s --parameter-name "netbios name" 2> /dev/null) || name=
+if [ -z "$name" ]; then echo "testparm names no netbios name" >&2; exit 1; fi
+if out=$(busctl --json=short -- call org.freedesktop.Avahi / org.freedesktop.Avahi.Server ResolveService \
+        iisssiu -1 -1 "$name" _adisk._tcp local -1 0 2>&1); then
+    printf "found %s\n" "$out"
+else
+    printf "none %s\n" "$(printf "%s" "$out" | tr "\n" " ")"
+fi'''
 
 # The device's time in seconds, since which the scan reads the logs.
 REMOTE_NOW = r'''
@@ -389,10 +499,11 @@ fi'''
 # (a share list, -L), anonymous (the same as a null session: no user, no password, and no
 # signing required by the client, so that a refusal can only come from the server), session, or
 # guest (a session to a share as a null session, as anonymous signs in); $2: the user; $3: the
-# share. The first line of standard input is the password: it goes into an auth file of mode 600
-# in a private folder in RAM, deleted at the end, with a client configuration that requires
-# signing (client signing for a share, client ipc signing for the IPC$ of a share list) and
-# keeps smbclient's own files there. list and anonymous print "end <status> <output in
+# share; $4 (session): smb2, a client of SMB 2.1 at most, which cannot encrypt, or encrypt, a
+# client that requires SMB3 encryption (ADR-0380). The first line of standard input is the
+# password: it goes into an auth file of mode 600 in a private folder in RAM, deleted at the end,
+# with a client configuration that requires signing (client signing for a share, client ipc
+# signing for the IPC$ of a share list) and keeps smbclient's own files there. list and anonymous print "end <status> <output in
 # base64>". session and guest read commands from standard input and pass them to one smbclient
 # session; "pause N" waits until smbclient has run what came before and prints "at N <its
 # output>", or "ended N <output>" when smbclient has ended; after the last line, "end <status>
@@ -400,7 +511,7 @@ fi'''
 REMOTE_SMB = r'''
 set -uo pipefail
 trap "" PIPE
-mode=$1 user=$2 share=$3
+mode=$1 user=$2 share=$3 protection=${4:-}
 umask 077
 dir=$(mktemp -d "${UNOS_DEV_SHM:-/dev/shm}/unos-scenario-smb.XXXXXX") || exit 1
 pid=
@@ -414,6 +525,10 @@ case $mode in anonymous | guest) signing=default ;; esac
     echo "   client min protocol = SMB2_02"
     echo "   client signing = $signing"
     echo "   client ipc signing = $signing"
+    case $protection in
+        smb2) echo "   client max protocol = SMB2_10" ;;
+        encrypt) echo "   client smb encrypt = required" ;;
+    esac
     for d in "cache directory" "lock directory" "state directory" "private dir" "pid directory" "ncalrpc dir"; do
         echo "   $d = $dir"
     done
@@ -696,6 +811,50 @@ case $action in
 esac
 ls -1A -- "$base"'''
 
+# The balance check's chunks with little in them (ADR-0379): $1 make or remove, $2 a folder
+# <base>/<pool>/unoscheck<6 hex digits>; for make, $3 files of $4 MiB, of which every $5-th stays.
+# fallocate allocates the files' space at once, without writing it; the deletes leave the chunks
+# that held them about 1/$5 full, once a sync committed them. Prints "kept <n>", or "removed".
+REMOTE_BALLAST = r'''
+set -uo pipefail
+action=$1 path=$2 files=${3:-0} mib=${4:-0} keep=${5:-1}
+base=${UNOS_DEV_POOLS:-/mnt/pools}
+rest=${path#"$base"/}
+if [ "$rest" = "$path" ] || ! [[ $rest =~ ^[A-Za-z0-9][A-Za-z0-9_-]{0,63}/unoscheck[0-9a-f]{6}$ ]]; then
+    echo "not a folder of a scenario check: $path" >&2
+    exit 2
+fi
+pool=$base/${rest%%/*}
+case $action in
+    make)
+        mkdir -m 0700 -- "$path" || exit 1
+        for i in $(seq 1 "$files"); do
+            fallocate -l "${mib}MiB" -- "$path/$i" || exit 1
+        done
+        sync -f -- "$pool" || exit 1
+        for i in $(seq 1 "$files"); do
+            if [ $((i % keep)) -ne 0 ]; then rm -f -- "${path:?}/${i:?}" || exit 1; fi
+        done
+        sync -f -- "$pool" || exit 1
+        kept=$(find "$path" -mindepth 1 -maxdepth 1 -type f | wc -l)
+        echo "kept $((kept))"
+        ;;
+    remove)
+        if [ -d "$path" ] && [ ! -L "$path" ]; then
+            rm -rf -- "${path:?}" || exit 1
+            sync -f -- "$pool" || exit 1
+        fi
+        echo removed
+        ;;
+    *) echo "not an action: $action" >&2; exit 2 ;;
+esac'''
+
+# The state of a pool's balance unit on the host (ADR-0379): active while its btrfs runs.
+REMOTE_BALANCE_UNIT = r'''
+set -uo pipefail
+if ! [[ ${1:-} =~ ^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$ ]]; then echo "not a pool name: ${1:-}" >&2; exit 2; fi
+systemctl is-active "unos-balance-$1.service" || true'''
+
 # The supervisor's restart (ADR-0309): Docker restarts the container that runs (no new one,
 # ADR-0183); prints "healthy <seconds>" once its health check passes again.
 REMOTE_RESTART = r'''
@@ -799,6 +958,128 @@ def secret_forms(secret: str) -> set[str]:
     """SECRET as it may be printed: as is, as JSON writes it (a tab as \\t) and as tail() joins
     its whitespace (a tab as a space)."""
     return {form for form in (secret, json.dumps(secret)[1:-1], " ".join(secret.split())) if form}
+
+
+def gmt_token(snapshot: str) -> str | None:
+    """The @GMT token under which Previous Versions list a snapshot that UNOS named (snap_ or
+    auto_<UTC time>, ADR-0243), as shadow_copy2 reads it with UNOS's shadow:format (ADR-0380);
+    None for another name."""
+    found = re.fullmatch(r"(?:snap|auto)_(\d{4})(\d\d)(\d\d)_(\d\d)(\d\d)(\d\d)", snapshot)
+    return "@GMT-{}.{}.{}-{}.{}.{}".format(*found.groups()) if found else None
+
+
+def gmt_tokens(output: str) -> list[str]:
+    """The @GMT tokens in smbclient's OUTPUT, in order: allinfo prints one line for each shadow copy."""
+    return re.findall(r"@GMT-\d{4}\.\d\d\.\d\d-\d\d\.\d\d\.\d\d", output)
+
+
+def shadow_copy_answer(result: SmbResult) -> str:
+    """What smbclient's allinfo of a file printed for its shadow copies (FSCTL_GET_SHADOW_COPY_DATA):
+    its line "<status> getting shadow copy data for <name>" (do_allinfo of Samba 4.22's
+    source3/client/client.c), else no error with the @GMT tokens it listed, or the error or end of
+    smbclient that came before any such line."""
+    found = re.search(r"NT_STATUS_[A-Z_]+ getting shadow copy data for \S+", result.output)
+    if found:
+        return found[0]
+    if result.ended or not result.ok:
+        return f"{result.status} before any line for the shadow copies"
+    tokens = gmt_tokens(result.output)
+    return f"no error and the shadow copies {', '.join(tokens)}" if tokens else "no error and no shadow copy"
+
+
+def sha256_digests(output: str, name: str) -> list[str]:
+    """The digests that coreutils' sha256sum printed for the file NAME ("<64 hex digits>  NAME", or
+    " *NAME" in binary mode) in smbclient's OUTPUT, run there with smbclient's !: found wherever
+    smbclient's prompts or the line of a get, which may end without a line break, put them."""
+    return re.findall(r"(?<![0-9a-f])([0-9a-f]{64}) [ *]" + re.escape(name) + r"(?!\S)", output)
+
+
+def no_shadow_copies(result: SmbResult, name: str) -> bool:
+    """Whether smbclient's allinfo of NAME, a file in the share's top folder, answered as Samba 4.22's
+    smbclient answers smbd's list of shadow copies when it holds none. smbd answers
+    FSCTL_GET_SHADOW_COPY_DATA with the labels in 12 + num_volumes * 2 * sizeof(SHADOW_COPY_LABEL) + 2
+    bytes, 14 for none (source3/modules/vfs_default.c, vfswrap_fsctl, case FSCTL_GET_SHADOW_COPY_DATA);
+    smbclient refuses an answer shorter than 16 bytes with NT_STATUS_INVALID_NETWORK_RESPONSE
+    (source3/libsmb/cli_smb2_fnum.c, cli_smb2_shadow_copy_data_fnum_recv), and allinfo prints that
+    status in this line on its standard error and lists no shadow copy (source3/client/client.c,
+    do_allinfo). Any other error is not that answer."""
+    line = f"NT_STATUS_INVALID_NETWORK_RESPONSE getting shadow copy data for \\{name}"
+    return (not result.ended and re.findall(r"NT_STATUS_[A-Z_]+", result.output) == ["NT_STATUS_INVALID_NETWORK_RESPONSE"]
+            and line in [text.strip() for text in result.output.splitlines()])
+
+
+# The statuses with which smbclient reports a broken connection, session or tree connect rather than
+# smbd's answer to a request: a lost or reset connection, no answer in time, an answer it cannot
+# read, a session or tree connect that smbd ended.
+TRANSPORT_STATUSES = frozenset({
+    "NT_STATUS_CONNECTION_DISCONNECTED", "NT_STATUS_CONNECTION_RESET", "NT_STATUS_CONNECTION_ABORTED",
+    "NT_STATUS_CONNECTION_REFUSED", "NT_STATUS_LOCAL_DISCONNECT", "NT_STATUS_REMOTE_DISCONNECT",
+    "NT_STATUS_PIPE_BROKEN", "NT_STATUS_PIPE_DISCONNECTED", "NT_STATUS_IO_TIMEOUT",
+    "NT_STATUS_INVALID_NETWORK_RESPONSE", "NT_STATUS_UNEXPECTED_NETWORK_ERROR", "NT_STATUS_NETWORK_UNREACHABLE",
+    "NT_STATUS_HOST_UNREACHABLE", "NT_STATUS_NETWORK_NAME_DELETED", "NT_STATUS_USER_SESSION_DELETED",
+    "NT_STATUS_NETWORK_SESSION_EXPIRED",
+})
+
+
+def refused_open(result: SmbResult) -> bool:
+    """Whether smbd refused smbclient's open of a file: smbclient runs on and printed an NT_STATUS
+    error, none of them one of TRANSPORT_STATUSES, which say that the connection, the session or the
+    tree connect broke and not that smbd answered the open. A break with a status that the set does
+    not name shows at the session's next command, which a check runs after the opens."""
+    found = set(re.findall(r"NT_STATUS_[A-Z_]+", result.output))
+    return not result.ended and bool(found) and not found & TRANSPORT_STATUSES
+
+
+# smbd registers its _adisk._tcp service a moment after avahi-daemon runs again.
+ADISK_WAIT = 30
+ADISK_POLL = 2
+
+
+def adisk_until(c: Check, share: str, *, listed: bool) -> list[str]:
+    """The shares of the device's _adisk._tcp service (smbd's Time Machine announcement, ADR-0380) once
+    SHARE is among them (LISTED) or not, within ADISK_WAIT seconds."""
+    deadline = time.monotonic() + ADISK_WAIT
+    while True:
+        names = c.device.adisk_shares()
+        if (share.lower() in [name.lower() for name in names or []]) == listed:
+            return names or []
+        found = f"it names {', '.join(names)}" if names else "Avahi resolves no such service"
+        c.expect(time.monotonic() < deadline,
+                 f"Avahi does not resolve {share} in the device's _adisk._tcp service within {ADISK_WAIT} s ({found})"
+                 if listed else f"Avahi still resolves {share} in the device's _adisk._tcp service after "
+                                f"{ADISK_WAIT} s ({found})")
+        time.sleep(ADISK_POLL)
+
+
+# Avahi's answer when it resolves no such service: its error org.freedesktop.Avahi.TimeoutError,
+# whose message busctl prints.
+AVAHI_NOT_FOUND = ("Timeout reached", "org.freedesktop.Avahi.TimeoutError")
+
+
+def adisk_names(out: str) -> list[str] | None:
+    """The shares that the device's _adisk._tcp service names (TXT records dk<n>=adVN=<share>,...),
+    from REMOTE_ADISK's output; None when Avahi answers that it resolves no such service. Any other
+    failure of the call (avahi-daemon not on the bus, a D-Bus denial, no busctl) fails with its text,
+    so that a check of Time Machine turned off does not pass without asking Avahi."""
+    kind, _, rest = out.strip().partition(" ")
+    if kind == "none":
+        if any(answer in rest for answer in AVAHI_NOT_FOUND):
+            return None
+        raise Failed(f"Avahi could not be asked for the device's _adisk._tcp service: {tail(rest, 200)}")
+    try:
+        if kind != "found":
+            raise ValueError("no answer")
+        records = [bytes(entry).decode("utf-8", "replace") for entry in json.loads(rest)["data"][9]]
+    except (ValueError, KeyError, IndexError, TypeError) as exc:
+        raise Failed(f"the device's _adisk._tcp service could not be read ({exc}): {tail(out, 200)}") from exc
+    names = []
+    for record in records:
+        key, _, value = record.partition("=")
+        if re.fullmatch(r"dk\d+", key):
+            fields = dict(part.partition("=")[::2] for part in value.split(","))
+            if fields.get("adVN"):
+                names.append(fields["adVN"])
+    return names
 
 
 def tail(data: bytes | str, size: int = 400) -> str:
@@ -966,8 +1247,30 @@ class Device:
         """The limit of the volume's quota group in bytes, or "none"."""
         return self.run(REMOTE_QUOTA, path).strip()
 
+    def adisk_shares(self) -> list[str] | None:
+        """The shares that the device's _adisk._tcp service names, as Avahi resolves it (REMOTE_ADISK,
+        adisk_names); None when Avahi resolves no such service."""
+        return adisk_names(self.run(REMOTE_ADISK))
+
     def system_disk(self) -> str:
         return self.settings.get("UNOS_DEV_SYSTEM_DISK") or self.run(REMOTE_SYSTEM_DISK).strip()
+
+    def disk_io(self, name: str) -> tuple[int, int] | None:
+        """The reads and writes that the kernel completed on the disk NAME since boot
+        (/sys/block/NAME/stat, which reads no disk), or None."""
+        fields = (self.read(f"/sys/block/{name}/stat") or "").split()
+        return (int(fields[0]), int(fields[4])) if len(fields) > 4 and fields[0].isdigit() and fields[4].isdigit() else None
+
+    def offline_collection(self, path: str, wake: bool = False) -> str:
+        """The automatic offline data collection of the whole disk PATH (REMOTE_OFFLINE,
+        offline_collection_state): "on", "off", "none", or "standby" for a sleeping disk, which
+        smartctl -n standby leaves alone; WAKE reads a sleeping disk too, which wakes it."""
+        return offline_collection_state(self.run(REMOTE_OFFLINE, path, "never" if wake else "standby"))
+
+    @staticmethod
+    def wait(seconds: float) -> None:
+        """Let SECONDS pass on the device (the smart check's wait for a disk to sleep)."""
+        time.sleep(seconds)
 
     def scan(self, needles: list[str], since: int) -> dict[str, int]:
         names = {"supervisor": "the supervisor's log", "journal": "the journal", "samba": "Samba's log",
@@ -998,8 +1301,10 @@ class Device:
         Windows' Change a password asks for one (ADR-0342)."""
         return SmbPasswordChange(*self._smb_helper("change", user, old, new))
 
-    def smb_session(self, user: str, password: str, share: str) -> SmbSession:
-        return SmbSession(self, user, password, share)
+    def smb_session(self, user: str, password: str, share: str, protection: str = "") -> SmbSession:
+        """PROTECTION: "" (signing required), smb2 (SMB 2.1 at most: no encryption) or encrypt
+        (SMB3 encryption required)."""
+        return SmbSession(self, user, password, share, protection=protection)
 
     def smb_guest_session(self, share: str) -> SmbSession:
         """A session to SHARE without a user and a password, as a null session signs in."""
@@ -1049,6 +1354,14 @@ class Device:
         base is a folder of the root filesystem. The folders of the base afterwards."""
         return sorted(self.run(REMOTE_POOL_FOLDER, action, name, read_only=action == "list").split())
 
+    def ballast(self, action: str, path: str, files: int = 0, mib: int = 0, keep: int = 1) -> str:
+        """REMOTE_BALLAST: the files kept in PATH ("kept <n>"), or "removed"."""
+        return self.run(REMOTE_BALLAST, action, path, str(files), str(mib), str(keep)).strip()
+
+    def balance_unit(self, pool: str) -> str:
+        """The state of the unit unos-balance-<pool> on the host: active, inactive, failed."""
+        return self.run(REMOTE_BALANCE_UNIT, pool).strip()
+
     def restart_supervisor(self) -> int:
         """Restart the supervisor's container; the seconds until it was healthy again."""
         out = self.run(REMOTE_RESTART).split()
@@ -1074,14 +1387,14 @@ class SmbSession:
     check calls the API: run() sends commands and waits for their output."""
 
     def __init__(self, device: Device, user: str, password: str, share: str, timeout: int = 90,
-                 mode: str = "session") -> None:
+                 mode: str = "session", protection: str = "") -> None:
         self.timeout = timeout
         self.n = 0
         self.ended = False
         self.buffer = b""
         self.errors = tempfile.TemporaryFile()  # the helper's standard error, for a failure's message
         self.proc = subprocess.Popen(
-            [str(device.ssh), device.command((mode, user, share))],
+            [str(device.ssh), device.command((mode, user, share, protection))],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=self.errors,
         )
         self._send(device.payload(REMOTE_SMB) + password + "\n")
@@ -1710,7 +2023,247 @@ def volumes_check(c: Check) -> None:
 # --- SMART -----------------------------------------------------------------------------------
 
 
+def timeout_words(minutes: int) -> str:
+    return "off" if not minutes else f"{minutes} minutes"
+
+
+def offline_collection_state(out: str) -> str:
+    """A disk's automatic offline data collection from REMOTE_OFFLINE's output OUT: "on" while it is
+    on, "off" while a disk that can switch it has it off, "none" for a disk without it (no switch
+    for it; no ATA SMART data: an NVMe or SCSI disk; an ATA disk without SMART or with SMART off,
+    which smart_support says), "standby" when smartctl -n standby left the disk alone. Failed when
+    smartctl read no state."""
+    first, _, text = out.partition("\n")
+    status = first.removeprefix("status ").strip()
+    try:
+        data = json.loads(text)
+    except ValueError:
+        data = None
+    if not isinstance(data, dict):
+        raise Failed(f"smartctl -c answered no JSON (exit status {status}): {tail(text)!r}")
+    said = [m.get("string") or "" for m in (data.get("smartctl") or {}).get("messages") or [] if isinstance(m, dict)]
+    if status.isdigit() and int(status) & 0b10 and any(re.search(r"Device is in (SLEEP|STANDBY\w*) mode", m)
+                                                       for m in said):
+        return "standby"
+    smart = data.get("ata_smart_data") if isinstance(data.get("ata_smart_data"), dict) else {}
+    value = ((smart.get("offline_data_collection") or {}).get("status") or {}).get("value")
+    capabilities = (smart.get("capabilities") or {}).get("values") or [None]
+    if isinstance(value, int) and isinstance(capabilities[0], int):
+        if value & AUTO_OFFLINE_ON:
+            return "on"
+        return "off" if capabilities[0] & AUTO_OFFLINE_SWITCH else "none"
+    if (data.get("device") or {}).get("protocol") in ("NVMe", "SCSI"):
+        return "none"
+    support = data.get("smart_support") if isinstance(data.get("smart_support"), dict) else {}
+    if support.get("available") is False or support.get("enabled") is False:
+        return "none"
+    raise Failed(f"smartctl -c read no offline data collection (exit status {status}): {'; '.join(said) or '-'}")
+
+
+def hdparm_conf_timer(text: str | None) -> str | None:
+    """The first line of /etc/hdparm.conf (TEXT) that sets a standby timer, for any disk, or None."""
+    for line in (text or "").splitlines():
+        line = line.strip()
+        if not line.startswith("#") and _HDPARM_CONF_TIMER.match(line):
+            return line
+    return None
+
+
+def spindown_steps(c: Check, disk: dict, hdparm_conf: str | None) -> None:
+    """storage.disk-spindown (ADR-0378) on the disk DISK of GET /storage/disks: its own automatic
+    offline data collection as found, the shortest idle timeout, that collection off while the disk
+    has it, the disk asleep once it ran out, SMART read while it sleeps, and the timeout of UNOS's
+    rule set again with the collection as found; without one, Off: no standby timer (hdparm -S 0)
+    until the disk's next power cycle, which a disk whose timer /etc/hdparm.conf (HDPARM_CONF, its
+    text) sets does not get."""
+    name, path, previous = disk["name"], disk["path"], disk.get("spindown", 0)
+    record = SPINDOWN_SCANS_RECORD.format(serial=disk.get("serial"))
+    texts = (f"the check reads {name}'s own automatic offline data collection, a surface scan every few hours "
+             "during which the disk does not sleep",
+             f"{name} gets the shortest idle timeout, {SPINDOWN_SHORTEST} minutes: hdparm -S {SPINDOWN_SHORTEST_VALUE} "
+             "in UNOS's udev rule",
+             f"{name}'s automatic offline data collection is off while it has the timeout",
+             f"{name} sleeps once the timeout ran out",
+             f"its SMART data on Storage and on Disk Health leaves {name} asleep",
+             (f"{name}'s idle timeout is {timeout_words(previous)} again, as the check found it" if previous else
+              f"{name} has no idle timeout again: no line in UNOS's udev rule, and no standby timer (hdparm -S 0) "
+              "until its next power cycle") + ", and its automatic offline data collection is as the check found it")
+    problem = disk.get("spindown_problem")
+    if problem == NO_HDPARM:
+        for text in texts:
+            c.skip(text, f"{problem} (installing a package is an owner action)")
+        return
+    timer = None if previous else hdparm_conf_timer(hdparm_conf)
+    if timer:
+        for text in texts:
+            c.skip(text, f"{HDPARM_CONF} sets a standby timer ({timer!r}), which no command reads back: the check's "
+                         "Off at its end (hdparm -S 0) would clear it until the disk's next power cycle")
+        return
+
+    def listed() -> dict:
+        return next((d for d in c.get("/storage/disks") if d.get("name") == name), {})
+
+    def restore() -> None:
+        answer = c.call("PUT", f"/storage/disks/{name}/spindown", {"minutes": previous})
+        warning = answer.get("warning") if isinstance(answer, dict) else None
+        c.expect(not warning, f"UNOS answered: {warning}")
+
+    def recorded() -> bool:
+        return record in (c.device.read(SPINDOWN_RULES) or "").splitlines()
+
+    def scans_words(state: str, rec: bool) -> str:
+        return state + (", recorded in UNOS's udev rule" if rec else "")
+
+    def scans_as_found() -> None:
+        """After the restore (cleanups run last first): the disk's automatic offline data collection
+        and UNOS's record of it as found, which the final comparison does not read (its first read
+        would wake a sleeping disk); otherwise what is left, and the way back."""
+        now, now_recorded = c.device.offline_collection(path, wake=True), recorded()
+        if (now, now_recorded) == (found, found_recorded):
+            return
+        if found_recorded and now == "on":
+            fix = f"save {name}'s idle timeout of {timeout_words(previous)} on the Storage page again"
+        elif found == "on" and now_recorded and not previous:
+            fix = f"save Off for {name} on the Storage page again"
+        elif found in ("on", "off") and now_recorded == found_recorded:
+            fix = f"turn it {found} again with smartctl -o {found} {path} in the supervisor's container"
+        elif found_recorded:
+            fix = (f"turn it on with smartctl -o on {path} in the supervisor's container, then save {name}'s idle "
+                   f"timeout of {timeout_words(previous)} on the Storage page again")
+        else:
+            fix = f"put it back by hand: smartctl -o in the supervisor's container, and UNOS's record in {SPINDOWN_RULES}"
+        unrecorded = ", with no record in UNOS's udev rule" if found_recorded and not now_recorded else ""
+        raise Failed(f"it is {scans_words(now, now_recorded)}{unrecorded}: {fix}")
+
+    with c.step(texts[0]) as s:
+        # It wakes a disk that sleeps, as the Save of the next step does.
+        found = c.device.offline_collection(path, wake=True)
+        found_recorded = recorded()
+        c.expect(not (found_recorded and found == "on"),
+                 "UNOS's udev rule records that UNOS turned it off for the disk's timeout, but it is on: the drive did "
+                 "not keep it off (after a power cycle?), or something turned it on (smartctl -o on, smartd with -o on), "
+                 "and its scans keep the disk awake")
+        s.text += f": {found}" + (", turned off by UNOS, which its udev rule records" if found_recorded else "")
+    # States that the check's Save and restore cannot leave as found, through UNOS's API alone.
+    why = None
+    if previous and found == "on":
+        why = (f"{name} has UNOS's idle timeout of {timeout_words(previous)} with its automatic offline data collection "
+               "on, which UNOS's rule does not record (set before UNOS turned it off, or UNOS could not): the check's "
+               f"Save would turn it off for good; save {name}'s timeout on the Storage page, then run the check again")
+    elif not previous and found_recorded:
+        why = (f"UNOS's udev rule records that UNOS turned off {name}'s automatic offline data collection, but {name} "
+               "has no timeout of UNOS's (an Off that could not turn it on again): the check's Off would turn it on; "
+               f"save Off for {name} on the Storage page again, then run the check again")
+    if why:
+        for text in texts[1:]:
+            c.skip(text, why)
+        return
+
+    warning = None
+    with c.step(texts[1]) as s:
+        c.expect(problem is None, f"the Storage page says: {problem}")
+        c.on_cleanup(f"{name}'s automatic offline data collection {scans_words(found, found_recorded)}, as the check "
+                     "found it", scans_as_found)
+        c.on_cleanup(f"the idle timeout of {name} {timeout_words(previous)} again", restore)
+        answer = c.call("PUT", f"/storage/disks/{name}/spindown", {"minutes": SPINDOWN_SHORTEST})
+        c.expect(isinstance(answer, dict) and answer.get("name") == name and answer.get("minutes") == SPINDOWN_SHORTEST,
+                 f"it answered {answer}")
+        warning = answer.get("warning")
+        c.expect(listed().get("spindown") == SPINDOWN_SHORTEST, "the Storage page does not show it")
+        line = (f'ENV{{ID_SERIAL_SHORT}}=="{disk.get("serial")}", '
+                f'RUN+="/sbin/hdparm -S {SPINDOWN_SHORTEST_VALUE} $devnode"')
+        rule = c.device.read(SPINDOWN_RULES) or ""
+        c.expect(line in rule, f"{SPINDOWN_RULES} has no line for it: {tail(rule)!r}")
+        s.text += f" (serial {disk.get('serial')})"
+
+    with c.step(texts[2]) as s:
+        # Read right after the Save, whose hdparm -S woke the disk.
+        state = c.device.offline_collection(path)
+        if found == "none":
+            c.expect(state == "none", f"it has none as found, but smartctl -c now says {state}")
+            s.text += ": the disk has none"
+        else:
+            said = f"UNOS answered: {warning}" if warning else "UNOS answered no warning: it left it on"
+            c.expect(state == "off", f"it is {state} after the Save ({said}), and the drive's own surface scans keep the "
+                                     "disk awake")
+            turned = found == "on" or found_recorded
+            c.expect(recorded() == turned,
+                     f"UNOS's udev rule {'does not record' if turned else 'records'} that UNOS turned it off "
+                     f"(found {found})")
+            s.text += (": UNOS turned it off, and its udev rule records that" if found == "on" else
+                       ": as found, turned off by UNOS, which its udev rule records" if found_recorded else
+                       ": it was off already, and UNOS's udev rule records nothing")
+
+    with c.step(texts[3]) as s:
+        start, waited, state = c.device.disk_io(name), 0, None
+        for _ in range(SPINDOWN_ROUNDS):
+            c.device.wait(SPINDOWN_SHORTEST * 60 + SPINDOWN_SETTLE)
+            waited += SPINDOWN_SHORTEST * 60 + SPINDOWN_SETTLE
+            state = listed().get("power_state")
+            if state == "standby":
+                break
+        end = c.device.disk_io(name)
+        moved = (f"{end[0] - start[0]} reads and {end[1] - start[1]} writes" if start and end
+                 else "its I/O counters could not be read")
+        # The kernel counts reads and writes, not the commands that are none (SMART, IDENTIFY), nor the
+        # drive's own automatic offline data collection, which it reads awake (smartctl -n standby).
+        scans = None
+        if state != "standby" and start and end and start == end:
+            try:
+                scans = c.device.offline_collection(path)
+            except Failed:
+                scans = None
+        if scans == "on":
+            why = ("its own automatic offline data collection is on: the drive's surface scan, suspended for each "
+                   "command and resumed, keeps it awake (UNOS left it on, or smartctl -o on or smartd with -o on turned "
+                   "it on again)")
+        elif start and end and start == end:
+            why = ("no read or write kept it awake, so a command did that restarts its standby timer (smartd, a SMART "
+                   f"read or a power read that sends IDENTIFY), or it has a minimum timeout of its own above {waited} s")
+        else:
+            why = "something reads or writes it (an app or a share on the pool?)"
+        c.expect(state == "standby", f"it is {state} after {waited} s; meanwhile the kernel counted {moved} on it: {why}")
+        s.text += f": the Storage page says standby after {waited} s (the timeout: {SPINDOWN_SHORTEST * 60} s)"
+
+    with c.step(texts[4]) as s:
+        before = c.device.disk_io(name)
+        storage = c.get(f"/storage/disks/{name}/smart")
+        c.expect(storage.get("power_state") == "standby" and storage.get("healthy") is None,
+                 f"Storage's SMART data: power {storage.get('power_state')}, healthy {storage.get('healthy')}")
+        one = c.get(f"/health/disk/{name}")
+        c.expect(one.get("health_status") == "STANDBY", f"Disk Health's dialog says {one.get('health_status')}")
+        health = [d for d in c.get("/health/disks")["disks"] if d.get("device") == path]
+        c.expect(health and health[0].get("health_status") == "STANDBY",
+                 f"Disk Health lists it as {[d.get('health_status') for d in health]}")
+        state = listed().get("power_state")
+        c.expect(state == "standby", f"it is {state} after the reads")
+        after = c.device.disk_io(name)
+        c.expect(before == after, f"the kernel counted reads or writes on it: {before} before, {after} after")
+        s.text += f": STANDBY, and its reads and writes stay at {after}"
+
+    with c.step(texts[5]) as s:
+        restore()
+        c.expect(listed().get("spindown") == previous, "the Storage page does not show it")
+        # The Save woke the disk: smartctl -n standby reads it.
+        state = c.device.offline_collection(path)
+        c.expect(state == found, f"its automatic offline data collection is {state}, not {found} as the check found it")
+        c.expect(recorded() == found_recorded,
+                 f"UNOS's udev rule {'no longer records' if found_recorded else 'still records'} that UNOS turned it off")
+        s.text += f" ({found})"
+
+
 def smart_check(c: Check) -> None:
+    def state() -> dict:
+        rule = c.device.read(SPINDOWN_RULES)
+        return {"the idle timeouts": {d["name"]: d.get("spindown", 0) for d in c.get("/storage/disks")},
+                "UNOS's udev rule": None if rule is None else hashlib.sha256(rule.encode()).hexdigest()}
+
+    conf: dict[str, str | None] = {}
+    with c.step("the device holds nothing of an earlier check"):
+        c.baseline(state)
+        # The standby timers that Debian's hdparm sets at boot (spindown_steps).
+        conf["hdparm"] = c.device.read(HDPARM_CONF)
+
     with c.step("Storage lists the whole disks, without the system disk") as s:
         disks = c.get("/storage/disks")
         system = c.device.system_disk()
@@ -1730,7 +2283,9 @@ def smart_check(c: Check) -> None:
             data = c.get(f"/storage/disks/{disk['name']}/smart")
             c.expect(info.get("device") == disk["path"] and data.get("device") == disk["path"],
                      f"they are of {info.get('device')} and {data.get('device')}")
-            c.expect(info.get("health_status") in ("PASSED", "FAILED", "UNKNOWN"), f"health {info.get('health_status')}")
+            # STANDBY: the disk sleeps, and the reads left it asleep (ADR-0378).
+            c.expect(info.get("health_status") in ("PASSED", "FAILED", "UNKNOWN", "STANDBY"),
+                     f"health {info.get('health_status')}")
             s.text += f": {disk['name']}: {info.get('health_status')}, {info.get('temperature')} C, " \
                       f"{len(info.get('attributes') or [])} attributes"
 
@@ -1742,6 +2297,23 @@ def smart_check(c: Check) -> None:
             c.get(f"/health/disk/{name}", expect=400)
             c.get(f"/storage/disks/{name}/smart", expect=400)
         s.text += ": " + ", ".join(refused) + ("" if partitions else " (no listed disk has a partition)")
+
+    with c.step("the system disk gets no idle timeout") as s:
+        answer = c.call("PUT", f"/storage/disks/{system}/spindown", {"minutes": SPINDOWN_SHORTEST}, expect=(200, 400, 409))
+        if not isinstance(answer, dict) or "detail" not in answer:
+            c.on_cleanup(f"no idle timeout for {system}",
+                         lambda: c.call("PUT", f"/storage/disks/{system}/spindown", {"minutes": 0}, expect=(200, 400, 409)))
+            c.expect(False, f"{system} took the idle timeout of {SPINDOWN_SHORTEST} minutes: {answer}")
+        reason = str(answer["detail"])
+        c.expect(reason.endswith("it gets no idle timeout"), f"the reason is {reason!r}")
+        s.text += f": {reason}"
+
+    # Before the self-tests, which keep a disk busy for minutes.
+    data = next((d for d in disks if not d.get("is_system") and d.get("rotational")), None)
+    if data is None:
+        c.skip("a data hard disk gets the shortest idle timeout and sleeps", "no data hard disk is listed")
+    else:
+        spindown_steps(c, data, conf["hdparm"])
 
     for disk in disks:
         with c.step(f"a short self-test starts on {disk['name']}"):
@@ -1997,6 +2569,200 @@ def smb_check(c: Check) -> None:
 
     with c.step("the user gets read-write access again"):
         grant("write")
+
+    # shares.per-share-protocol-options (ADR-0380): a second share, of a folder in a new volume, whose
+    # options are turned on and off in turn, each shown with sessions. Its snapshot goes into the
+    # volume's .snapshots, which goes with the volume.
+    volume, vshare = f"{c.run}v", f"{c.run}v"
+    vpath = f"{root}/{volume}"
+    vfolder = f"{vpath}/files"
+
+    def options(**changes: bool) -> dict:
+        version = c.get(f"/shares/smb/{vshare}")["version"]
+        return c.call("PATCH", f"/shares/smb/{vshare}", {"expected_version": version, **changes})
+
+    def section_now() -> dict[str, str]:
+        return smb_section(c.device.read(SMB_CONF) or "", vshare) or {}
+
+    with c.step(f"a share {vshare} of a new folder in a new volume {volume}, with Previous Versions on, lists the "
+                f"volume's snapshots (shadow_copy2 with shadow:mountpoint = {vpath}), testparm takes smb.conf, and "
+                "in a session the user writes a file there, whose allinfo before the volume's first snapshot shows "
+                "what smbd answers for the shadow copies of a volume without .snapshots (any answer passes)") as s:
+        c.on_cleanup(f"delete the volume {volume}", lambda: c.delete_volume(pool["name"], volume))
+        c.post(f"/storage/pools/{pool['name']}/volumes", {"name": volume})
+        c.on_cleanup(f"delete the share {vshare}", lambda: c.delete_share(vshare))
+        made = c.post("/shares/smb", {"name": vshare, "path": vfolder, "previous_versions": True,
+                                      "access": [{"user_id": uid, "username": user, "level": "write"}]})
+        c.expect(made.get("previous_versions") is True and made.get("served"), f"the share is {made}")
+        section = section_now()
+        c.expect("shadow_copy2" in section.get("vfs objects", "").split() and section.get("shadow:mountpoint") == vpath,
+                 f"the section has vfs objects = {section.get('vfs objects')}, shadow:mountpoint = "
+                 f"{section.get('shadow:mountpoint')}")
+        c.expect(c.device.facts()["testparm"], "testparm refuses smb.conf")
+        with c.device.smb_session(user, password, vshare) as smb:
+            done = smb.run("put data.txt v.txt")
+            # Recorded, not judged: what smbd answers here has not been seen on the device yet. The
+            # first snapshot makes .snapshots (make_snapshot of src/snapshots/router.py).
+            info = smb.run("allinfo v.txt")
+        c.expect(done.ok, f"smbclient: {done.status} {tail(done.output, 200)}")
+        snapdir = c.device.stat([f"{vpath}/.snapshots"])[f"{vpath}/.snapshots"]
+        s.text += (": the volume has " + ("no .snapshots" if snapdir == "missing" else f".snapshots ({snapdir})")
+                   + f", and allinfo v.txt answered {shadow_copy_answer(info)}")
+
+    with c.step("two snapshots of the volume that the check makes on the Snapshots page a second apart, with the "
+                "names it gives, are listed for that file as @GMT-<their times> once the user has overwritten it; "
+                "after the first one's Delete only the second is listed and the file opens in it with exactly the "
+                "bytes it held before the overwrite (the SHA-256 of the copy smbclient gets), and after the second "
+                "one's Delete smbd refuses to open the file in either while the session goes on, and none is listed "
+                "(Samba 4.22's smbclient reports that empty list as NT_STATUS_INVALID_NETWORK_RESPONSE), while the "
+                "volume keeps its .snapshots") as s:
+        def delete_snapshots() -> None:
+            """Every snapshot of the check's new volume is the check's, also one whose answer was lost."""
+            found = c.get("/snapshots/", {"subvolume": vpath}, expect=(200, 404))
+            for snapshot in found if isinstance(found, list) else []:
+                c.call("DELETE", f"/snapshots/{snapshot['name']}", params={"subvolume": vpath}, expect=(200, 404))
+
+        c.on_cleanup(f"delete the snapshots of {vpath}", delete_snapshots)
+        made: list[str] = []
+        for _ in range(2):
+            if made:
+                # The Snapshots page names a snapshot to the second of the device's clock
+                # (snap_<UTC time>) and refuses a second one of the same name.
+                c.device.wait(1)
+            name = str(c.post("/snapshots/", {"subvolume": vpath}).get("name") or "")
+            c.expect(gmt_token(name) is not None, f"the Snapshots page named the snapshot {name!r}, which Previous "
+                                                  "Versions do not list (shadow:snapprefix, shadow:format)")
+            made.append(name)
+        first, second = (str(gmt_token(name)) for name in made)
+        # The live file gets other bytes (DATA2, whose line starts with DATA's text), so that only an
+        # open of the snapshot's own copy gives the bytes from before.
+        with c.device.smb_session(user, password, vshare) as smb:
+            changed = smb.run("put data2.txt v.txt")
+            listed = smb.run("allinfo v.txt")
+        c.expect(changed.ok, f"overwriting v.txt answered {changed.status}: {tail(changed.output, 200)}")
+        c.expect(c.device.read(f"{vfolder}/v.txt") == DATA2, "after the overwrite v.txt holds other bytes")
+        c.expect(listed.ok and {first, second} <= set(gmt_tokens(listed.output)),
+                 f"allinfo v.txt answered {listed.status} without {first} and {second}: {tail(listed.output, 300)}")
+        c.call("DELETE", f"/snapshots/{made[0]}", params={"subvolume": vpath})
+        with c.device.smb_session(user, password, vshare) as smb:
+            listed = smb.run("allinfo v.txt")
+            # get writes the version into the helper's folder in RAM, where smbclient's ! runs
+            # coreutils' sha256sum: its digest proves the exact bytes, which neither smbclient's
+            # prompts nor its line of the get can blur (the text of DATA is a part of DATA2's line).
+            kept = smb.run(f"get {second}/v.txt kept.txt", "!sha256sum kept.txt")
+        c.expect(listed.ok and gmt_tokens(listed.output) == [second],
+                 f"after the Delete of {made[0]} allinfo v.txt answered {listed.status}: {tail(listed.output, 300)}")
+        digests = sha256_digests(kept.output, "kept.txt")
+        earlier, later = (hashlib.sha256(text.encode()).hexdigest() for text in (DATA, DATA2))
+        c.expect(kept.ok and digests == [earlier],
+                 f"v.txt in {second} answered {kept.status}"
+                 + (", with the bytes put after the snapshots" if digests == [later]
+                    else ", with other bytes than before the overwrite" if digests else "")
+                 + f": {tail(kept.output, 200)}")
+        c.call("DELETE", f"/snapshots/{made[1]}", params={"subvolume": vpath})
+        with c.device.smb_session(user, password, vshare) as smb:
+            listed = smb.run("allinfo v.txt")
+            gone = [smb.run(f"get {when}/v.txt gone.txt") for when in (first, second)]
+            after = smb.run("ls")
+        for when, done in zip((first, second), gone):
+            c.expect(refused_open(done),
+                     f"afterwards v.txt in {when} answered {done.status}"
+                     + (", which says the session broke" if done.ended or done.status in TRANSPORT_STATUSES else "")
+                     + f": {tail(done.output, 200)}")
+        c.expect(after.ok and "v.txt" in after.output.split(),
+                 f"after the opens in the deleted snapshots ls in the same session answered {after.status}: "
+                 f"{tail(after.output, 200)}")
+        c.expect(not gmt_tokens(listed.output) and (listed.ok or no_shadow_copies(listed, "v.txt")),
+                 f"afterwards allinfo v.txt answered {listed.status}: {tail(listed.output, 300)}")
+        # Seen directly: smbd's answer for a volume without .snapshots may look like an empty list.
+        c.expect(c.device.stat([f"{vpath}/.snapshots"])[f"{vpath}/.snapshots"] != "missing",
+                 "after both Deletes the volume has no .snapshots, which the first snapshot made and a Delete keeps")
+        s.text += (f": {first} and {second}; afterwards v.txt in them answered {gone[0].status} and {gone[1].status}, "
+                   f"and allinfo's empty list {listed.status}")
+
+    with c.step("with encryption required the share's section says so and testparm takes smb.conf; the open "
+                "sessions of an SMB 2.1 client and of an SMB3 client that does not encrypt end, a new SMB 2.1 client, "
+                "which cannot encrypt, is refused, a client that encrypts (SMB3) lists the share, the SMB 2.1 client "
+                f"still opens {share}, and with the option off the section asks for Samba's default again and the "
+                "SMB 2.1 client gets in") as s:
+        # A tree connect keeps the encryption it was granted: only closing it (ADR-0103) ends the
+        # unencrypted sessions that were open before.
+        with c.device.smb_session(user, password, vshare, protection="smb2") as older, \
+                c.device.smb_session(user, password, vshare) as plain:
+            clients = ((older, "SMB 2.1"), (plain, "SMB3 without encryption"))
+            for session, client in clients:
+                done = session.run("ls")
+                c.expect(done.ok, f"before the change the {client} client answered {done.status}: "
+                                  f"{tail(done.output, 200)}")
+            options(encryption_required=True)
+            line = section_now().get("smb encrypt")
+            c.expect(line == "required", f"the section has smb encrypt = {line}")
+            c.expect(c.device.facts()["testparm"], "testparm refuses smb.conf")
+            for session, client in clients:
+                done = session.run("ls")
+                c.expect(done.ended or done.status.startswith("NT_STATUS_"),
+                         f"the open session of the {client} client still lists the share: {tail(done.output, 200)}")
+        with c.device.smb_session(user, password, vshare, protection="smb2") as smb:
+            refused = smb.run("ls")
+        c.expect(not refused.ok and refused.status == "NT_STATUS_ACCESS_DENIED",
+                 f"the SMB 2.1 client answered {refused.status}: {tail(refused.output, 200)}")
+        with c.device.smb_session(user, password, vshare, protection="encrypt") as smb:
+            done = smb.run("ls")
+        c.expect(done.ok and "v.txt" in done.output, f"the encrypting client answered {done.status}: "
+                                                     f"{tail(done.output, 200)}")
+        # The requirement is the share's own: [global] keeps Samba's default for every other share.
+        with c.device.smb_session(user, password, share, protection="smb2") as smb:
+            done = smb.run("ls")
+        c.expect(done.ok, f"the SMB 2.1 client answered {done.status} on {share}, which does not require encryption: "
+                          f"{tail(done.output, 200)}")
+        options(encryption_required=False)
+        line = section_now().get("smb encrypt")
+        c.expect(line == "default", f"with the option off the section has smb encrypt = {line}")
+        with c.device.smb_session(user, password, vshare, protection="smb2") as smb:
+            done = smb.run("ls")
+        c.expect(done.ok, f"with the option off the SMB 2.1 client answered {done.status}: {tail(done.output, 200)}")
+        s.text += f": {refused.status}"
+
+    def advertised(answer: dict, change: str) -> None:
+        """After a change of the Time Machine shares UNOS restarts avahi-daemon, so that smbd announces
+        them (ADR-0380); a restart that failed is a warning of the answer."""
+        c.expect(not answer.get("warnings"), f"{change} warns: " + "; ".join(answer.get("warnings") or []))
+
+    with c.step("with Time Machine too, the section's one vfs objects line loads catia, fruit and streams_xattr "
+                "before the snapshots' modules, the section offers itself to Time Machine, [global] turns Apple's "
+                "extensions on without NFS ACEs, testparm takes smb.conf, the answers warn of no failed restart "
+                "of avahi-daemon and Avahi resolves the share in the device's _adisk._tcp service; with both off "
+                "the line is empty and the service no longer names the share (a Mac's backup is a step by hand)") as s:
+        advertised(options(time_machine=True), "turning Time Machine on")
+        announced = adisk_until(c, vshare, listed=True)
+        conf = c.device.read(SMB_CONF) or ""
+        section, glob = smb_section(conf, vshare) or {}, smb_global(conf)
+        c.expect(section.get("vfs objects") == "catia fruit streams_xattr shadow_copy2 btrfs"
+                 and section.get("fruit:time machine") == "yes",
+                 f"the section has vfs objects = {section.get('vfs objects')}, fruit:time machine = "
+                 f"{section.get('fruit:time machine')}")
+        c.expect(glob.get("fruit:aapl") == "yes" and glob.get("fruit:nfs_aces") == "no",
+                 f"[global] has fruit:aapl = {glob.get('fruit:aapl')}, fruit:nfs_aces = {glob.get('fruit:nfs_aces')}")
+        c.expect(c.device.facts()["testparm"], "testparm refuses smb.conf")
+        advertised(options(time_machine=False, previous_versions=False), "turning Time Machine off")
+        adisk_until(c, vshare, listed=False)
+        s.text += f": _adisk._tcp named {', '.join(announced)}"
+        conf = c.device.read(SMB_CONF) or ""
+        section = smb_section(conf, vshare) or {}
+        others = [x["name"] for x in c.get("/shares/smb") if x.get("time_machine")]
+        c.expect(section.get("vfs objects") == ("catia fruit streams_xattr" if others else "")
+                 and "fruit:time machine" not in section,
+                 f"with both off the section has vfs objects = {section.get('vfs objects')}, fruit:time machine = "
+                 f"{section.get('fruit:time machine')}")
+        if others:
+            s.text += f"; the device's own Time Machine shares ({', '.join(others)}) keep fruit in every section"
+        else:
+            c.expect(not [key for key in smb_global(conf) if key.startswith("fruit:")],
+                     "[global] keeps fruit lines without a Time Machine share")
+
+    with c.step(f"Delete of the share {vshare} and of the volume {volume}"):
+        c.call("DELETE", f"/shares/smb/{vshare}")
+        c.call("DELETE", f"/storage/pools/{pool['name']}/volumes/{volume}")
 
     # auth.user-rename (ADR-0368): the user and its SMB account take a new name; the steps after these use it.
     renamed, renamed_password = f"{user}r", c.secret()
@@ -2917,6 +3683,141 @@ def scrub_check(c: Check) -> None:
         c.expect([r["id"] for r in c.get(f"/scheduler/runs/{made['id']}")] == [run["id"]], "its run is gone")
 
 
+# --- balance ---------------------------------------------------------------------------------
+
+# How long the balance steps wait for btrfs, and how often they ask (the tests make both short).
+BALANCE_WAIT = 300
+BALANCE_POLL = 1
+# The usage limit of the check's balance: the dialog's default (BALANCE_DEFAULT_USAGE, ADR-0379).
+BALANCE_USAGE = 20
+# The check's chunks with little in them: BALLAST_FILES files of BALLAST_MIB MiB, of which every
+# BALLAST_KEEP-th stays, leave the data chunks (1 GiB on a pool of more than 50 GiB) that held them
+# about 12% full: 12 of them, 1.5 GiB to move, some seconds each on a hard disk. The pool needs
+# twice the space of the files free.
+BALLAST_FILES = 96
+BALLAST_MIB = 128
+BALLAST_KEEP = 8
+
+
+def balance_of(c: Check, pool: str) -> dict:
+    return c.get(f"/storage/pools/{pool}/balance")
+
+
+def balance_until(c: Check, pool: str, done: Callable[[dict], bool], what: str) -> dict:
+    """The pool's balance once DONE takes its status, asked every BALANCE_POLL seconds for up to
+    BALANCE_WAIT seconds."""
+    deadline = time.monotonic() + BALANCE_WAIT
+    while True:
+        status = balance_of(c, pool)
+        if done(status):
+            return status
+        c.expect(time.monotonic() < deadline,
+                 f"{what} within {BALANCE_WAIT} s: the balance is {status.get('status')} ({status.get('result')})")
+        time.sleep(BALANCE_POLL)
+
+
+def balance_check(c: Check) -> None:
+    with c.step("a pool is mounted read-write and managed by UNOS, no balance or scrub of it runs, and it has room "
+                "for the check's chunks") as s:
+        pool = c.pick_pool()
+        name, root = pool["name"], pool["mountpoint"]
+        base = os.path.dirname(root)
+        found = balance_of(c, name)
+        c.expect(found.get("status") == "idle", f"a balance of {name} is {found.get('status')}: wait for its end, "
+                                                "or cancel it")
+        c.expect(scrub_of(c, name).get("status") != "running", f"a scrub of {name} runs: wait for its end, or cancel it")
+        free = (pool.get("total_size") or 0) - (pool.get("used_size") or 0)
+        need = 2 * BALLAST_FILES * BALLAST_MIB << 20
+        c.expect(free >= need, f"{free / GIB:.1f} GiB free, and the check needs {need / GIB:.0f} GiB")
+        s.text += f": {name} at {root}, {free / GIB:.0f} GiB free, its last balance {found.get('result') or 'not known'}"
+    folder = f"{root}/{c.run}"
+    outside = f"{base}/{c.run}"
+
+    def state() -> dict:
+        return {"the pool's top folder": sorted(i["name"] for i in c.get("/files/list", params={"path": root})["items"]),
+                f"the folders of {base}": c.device.pool_folders()}
+
+    def cancel() -> None:
+        """Cancel a balance of the pool that still runs or is paused: DELETE answers the status also
+        when none does. A pause that waits for the chunk being moved refuses a cancel (409): the
+        kernel would pause the balance all the same, so the clean-up waits for it first."""
+        balance_until(c, name, lambda b: b.get("status") != "pausing", "the pause before the clean-up's cancel")
+        c.call("DELETE", f"/storage/pools/{name}/balance")
+        balance_until(c, name, lambda b: b.get("status") == "idle", "the cancel of the clean-up")
+
+    with c.step("the device holds nothing of an earlier check"):
+        c.baseline(state)
+
+    with c.step(f"a balance of {outside}, a folder with nothing mounted on it, is refused with 409") as s:
+        c.on_cleanup(f"remove {outside}", lambda: c.device.pool_folders("remove", c.run))
+        c.expect(c.run in c.device.pool_folders("make", c.run), f"{outside} was not made")
+        refused = c.call("POST", f"/storage/pools/{c.run}/balance", {"usage": BALANCE_USAGE}, expect=409)
+        want = f"Pool {c.run} is not mounted at {outside}"
+        c.expect(refused.get("detail") == want, f"the answer is {refused.get('detail')!r}, not {want!r}")
+        c.expect(c.run not in c.device.pool_folders("remove", c.run), f"{outside} is still there")
+        s.text += f": {want!r}"
+
+    with c.step(f"{folder} gets {BALLAST_FILES} files of {BALLAST_MIB} MiB, of which every {BALLAST_KEEP}th stays: "
+                f"chunks about {100 // BALLAST_KEEP}% full") as s:
+        c.on_cleanup(f"remove {folder}", lambda: c.expect(c.device.ballast("remove", folder) == "removed",
+                                                          f"{folder} was not removed"))
+        kept = c.device.ballast("make", folder, BALLAST_FILES, BALLAST_MIB, BALLAST_KEEP)
+        c.expect(kept == f"kept {BALLAST_FILES // BALLAST_KEEP}", f"the device answered {kept!r}")
+        s.text += f": {kept} files"
+
+    with c.step(f"Start Balance of {name} with the usage limit of {BALANCE_USAGE}% answers running, and so does the "
+                f"status right after it; btrfs runs it in the host's unit unos-balance-{name}") as s:
+        c.on_cleanup(f"cancel a balance of {name} that still runs or is paused", cancel)
+        started = c.post(f"/storage/pools/{name}/balance", {"usage": BALANCE_USAGE})
+        right_after = balance_of(c, name)
+        unit = c.device.balance_unit(name)
+        c.expect(started.get("status") == "running", f"Start Balance answered {started.get('status')} "
+                                                     f"({started.get('result')})")
+        c.expect(right_after.get("status") == "running", f"the status right after the start is "
+                                                         f"{right_after.get('status')} ({right_after.get('result')})")
+        c.expect(unit == "active", f"the unit unos-balance-{name} is {unit or 'unknown'}")
+        s.text += f": {started.get('status')}, then {right_after.get('status')}, the unit {unit}"
+
+    with c.step(f"while it runs, a scrub of {name} and a second balance are refused with 409") as s:
+        c.on_cleanup(f"cancel a scrub of {name} that the balance did not refuse", lambda: (
+            c.call("DELETE", f"/storage/pools/{name}/scrub"), scrub_until_it_ends(c, name)))
+        scrub = c.call("POST", f"/storage/pools/{name}/scrub", expect=409)
+        second = c.call("POST", f"/storage/pools/{name}/balance", {"usage": BALANCE_USAGE}, expect=409)
+        s.text += f": {scrub.get('detail')!r}; {second.get('detail')!r}"
+
+    with c.step(f"the status of {name}'s balance shows the chunks balanced growing, and the time left") as s:
+        moving = balance_until(c, name, lambda b: b.get("status") != "running" or (b.get("completed") or 0) >= 1
+                               and b.get("seconds_left") is not None, "the time left")
+        c.expect(moving.get("status") == "running", f"it ended {moving.get('status')} ({moving.get('result')}) first")
+        s.text += (f": {moving.get('completed')} of about {moving.get('expected')} chunks, "
+                   f"{moving.get('seconds_left')} s left")
+
+    with c.step(f"Pause Balance pauses it: the status says paused, and the unit unos-balance-{name} has ended") as s:
+        answer = c.post(f"/storage/pools/{name}/balance/pause")
+        paused = balance_until(c, name, lambda b: b.get("status") not in ("running", "pausing"), "the pause")
+        unit = c.device.balance_unit(name)
+        c.expect(paused.get("status") == "paused", f"the pause answered {answer.get('status')}, and the balance is "
+                                                   f"{paused.get('status')} ({paused.get('result')})")
+        c.expect(unit != "active", f"the unit unos-balance-{name} is still {unit}")
+        s.text += (f": {answer.get('status')}, then {paused.get('status')} at {paused.get('completed')} of about "
+                   f"{paused.get('expected')} chunks, the unit {unit}")
+
+    with c.step(f"Resume Balance runs it again in the unit unos-balance-{name}") as s:
+        resumed = c.post(f"/storage/pools/{name}/balance/resume")
+        unit = c.device.balance_unit(name)
+        c.expect(resumed.get("status") == "running", f"Resume Balance answered {resumed.get('status')} "
+                                                     f"({resumed.get('result')})")
+        c.expect(unit == "active", f"the unit unos-balance-{name} is {unit or 'unknown'}")
+        s.text += f": {resumed.get('status')}, the unit {unit}"
+
+    with c.step("Cancel Balance ends it, and the status says that it was cancelled") as s:
+        answer = c.call("DELETE", f"/storage/pools/{name}/balance")
+        ended = balance_until(c, name, lambda b: b.get("status") == "idle", "the cancel")
+        c.expect(ended.get("result") == "cancelled", f"the cancel answered {answer.get('status')}, and the balance "
+                                                      f"ended {ended.get('result')}")
+        s.text += f": {answer.get('status')}, then {ended.get('status')}, {ended.get('result')}"
+
+
 # --- the off-device copy ------------------------------------------------------------------------
 
 # Seconds a copy or a restore of the check's small folder may take (the repository on the pool's
@@ -3464,6 +4365,57 @@ def restore_check(c: Check) -> None:
         c.expect(plain not in backups(), f"{plain} is still listed")
 
 
+# --- hardware --------------------------------------------------------------------------------
+
+DEVICE_TREE = "/proc/device-tree/compatible"
+RK3588 = "rockchip,rk3588"
+# Rockchip MPP's node, which only Rockchip's kernel has: the App Store offers the RK3588's video
+# hardware only with it (the profile's requires).
+MPP_SERVICE = "/dev/mpp_service"
+# The nodes without which Rockchip MPP decodes and encodes nothing in Jellyfin's container: the
+# codecs, the DMA heaps and the DRM nodes (Jellyfin's guide to RKMPP); the RGA and the Mali GPU
+# only scale and tone-map.
+RKMPP_NODES = (MPP_SERVICE, "/dev/dma_heap", "/dev/dri")
+
+
+def hardware_check(c: Check) -> None:
+    """ADR-0377: what the App Store offers of the host's SoC, and the nodes the host has for it.
+    It installs nothing: Jellyfin's image is pulled only by the owner (ADR-0211)."""
+    socs: list[str] = []
+
+    with c.step("the host's device tree names its SoC") as s:
+        c.baseline(lambda: {"the installed apps": sorted(a["name"] for a in c.get("/apps/installed"))})
+        socs = [name for name in (c.device.read(DEVICE_TREE) or "").split("\0") if name]
+        s.text += ": " + (", ".join(socs) or "no device tree")
+
+    with c.step("the App Store offers Jellyfin the RK3588's video hardware exactly on an RK3588 with Rockchip MPP") as s:
+        mpp = RK3588 in socs and c.device.stat([MPP_SERVICE]).get(MPP_SERVICE, "missing") != "missing"
+        profiles = c.get("/apps/catalog/jellyfin")["hardware"]
+        ids = [p["id"] for p in profiles]
+        want = ["rk3588-video"] if mpp else []
+        c.expect(ids == want, f"it offers {', '.join(ids) or 'none'}, expected {', '.join(want) or 'none'}")
+        s.text += ": " + (", ".join(ids) or "none")
+
+    with c.step("the App Store offers each app only the hardware of this SoC") as s:
+        offered = {app["id"]: [p["soc"] for p in app["hardware"]] for app in c.get("/apps/catalog") if app["hardware"]}
+        other = {app: names for app, names in offered.items() if not set(names) <= set(socs)}
+        c.expect(not other, "it offers " + "; ".join(f"{app} the hardware of {', '.join(names)}" for app, names in other.items()))
+        s.text += ": " + (", ".join(sorted(offered)) or "none")
+
+    # On an RK3588 the nodes are checked whatever the App Store offers: the dev device is to
+    # transcode in hardware (apps.rk3588-hardware-acceleration).
+    text = "the host has the device nodes of the RK3588's video hardware"
+    if RK3588 not in socs:
+        c.skip(text, "the host is no RK3588")
+        return
+    with c.step(text) as s:
+        devices = [d for p in profiles for d in p["devices"]] or list(RKMPP_NODES)
+        found = c.device.stat(devices)
+        missing = [node for node in RKMPP_NODES if found.get(node, "missing") == "missing"]
+        c.expect(not missing, f"the host lacks {', '.join(missing)}, which Rockchip MPP needs (Rockchip's kernel 5.10 or 6.1)")
+        s.text += ": " + ", ".join(f"{d} {found.get(d, 'missing')}" for d in devices)
+
+
 CHECKS: dict[str, Callable[[Check], None]] = {
     "files": files_check,
     "volumes": volumes_check,
@@ -3473,8 +4425,10 @@ CHECKS: dict[str, Callable[[Check], None]] = {
     "smbconf": smbconf_check,
     "shares": shares_check,
     "scrub": scrub_check,
+    "balance": balance_check,
     "offsite": offsite_check,
     "restore": restore_check,
+    "hardware": hardware_check,
 }
 
 
@@ -3509,7 +4463,8 @@ def main(argv: list[str] | None = None) -> int:
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("area", choices=AREAS)
     parser.add_argument("--pool", type=pool_name,
-                        help="the pool of the files, volumes, smb, smbconf, shares, scrub, offsite and restore checks")
+                        help="the pool of the files, volumes, smb, smbconf, shares, scrub, balance, offsite and restore "
+                             "checks")
     args = parser.parse_args(argv)
     if not lock_holder_alive(os.environ.get("UNOS_DEV_LOCK_HELD", "")):
         print("scenario.py: run it through scripts/dev/scenario.sh, which holds the device lock (ADR-0210)", file=sys.stderr)

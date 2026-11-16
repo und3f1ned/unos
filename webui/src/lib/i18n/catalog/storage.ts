@@ -33,6 +33,7 @@ export const en = {
 	'storage.disks.column.contents': 'Contents',
 	'storage.disks.column.mountedAt': 'Mounted at',
 	'storage.disks.column.status': 'Status',
+	'storage.disks.column.power': 'Power',
 	'storage.disks.hdd': 'HDD',
 	'storage.disks.ssd': 'SSD',
 	// What a disk holds, as lsblk reports it: {type} is the partition table's, such as GPT or DOS.
@@ -42,12 +43,38 @@ export const en = {
 	'storage.disks.partitions': { one: '{n} partition', other: '{n} partitions' },
 	'storage.disks.unrecognized': 'Unrecognized data',
 	'storage.disks.empty': 'Empty',
+	// A sleeping disk is not read for what it holds, so as not to wake it (ADR-0378).
+	'storage.disks.notReadAsleep': 'Not read while the disk sleeps',
 	// A disk's status; the reason below it is the server's (in_use_reason).
 	'storage.disks.status.system': 'System',
 	'storage.disks.status.inUse': 'In use',
 	'storage.disks.status.pool': 'Pool "{pool}"',
 	'storage.disks.status.hasData': 'Has data',
 	'storage.disks.status.free': 'Free',
+	// A disk's power, read without waking it (ADR-0378).
+	'storage.disks.power.active': 'Active',
+	'storage.disks.power.standby': 'Standby',
+	'storage.disks.power.unknown': 'Unknown',
+
+	// A disk's idle timeout (ADR-0378): the button shows it, and opens the dialog that sets it.
+	'storage.spindown.off': 'Off',
+	'storage.spindown.minutes': { one: '{n} minute', other: '{n} minutes' },
+	'storage.spindown.hours': { one: '{n} hour', other: '{n} hours' },
+	// Before the timeout in the button, for screen readers: {disk} is its path.
+	'storage.spindown.of': 'Idle timeout of {disk}:',
+	'storage.spindown.title': 'Idle Timeout',
+	// Before the disk's path and model.
+	'storage.spindown.disk': 'The disk spins down after this long without access:',
+	'storage.spindown.label': 'Spin down after',
+	'storage.spindown.hint':
+		'Saving spins the disk up now. A disk that is woken often wears faster: choose a longer timeout for a disk in daily use.',
+	// The disk's own automatic offline scans, which UNOS turns off while it has a timeout (ADR-0378).
+	'storage.spindown.scans':
+		'While the disk has a timeout, UNOS turns off its own automatic offline scans (a surface scan that the disk runs every few hours, during which it does not sleep) and turns them on again when the timeout is removed. Schedule a scrub of its pool (System, Scheduler) to read its data instead; a long SMART test reads the whole surface, but the SMART tests of the Scheduler are short ones.',
+	'storage.spindown.failed': 'The idle timeout was not set',
+	// Above the list of disks, before the server's warning: the timeout was set all the same.
+	'storage.spindown.saved': 'The idle timeout was saved',
+	'storage.spindown.save': 'Save',
 
 	// btrfs filesystems on the host's disks that are not pools yet (ADR-0283).
 	'storage.found.title': 'Found on the disks',
@@ -103,6 +130,10 @@ export const en = {
 	'storage.pool.inFstab': 'In fstab, but not mounted',
 	'storage.pool.scrub': 'Scrub',
 	'storage.pool.cancelScrub': 'Cancel Scrub',
+	'storage.pool.balance': 'Balance',
+	'storage.pool.pauseBalance': 'Pause Balance',
+	'storage.pool.resumeBalance': 'Resume Balance',
+	'storage.pool.cancelBalance': 'Cancel Balance',
 	'storage.pool.volumes': 'Volumes',
 	'storage.pool.mount': 'Mount',
 	'storage.pool.unmount': 'Unmount',
@@ -153,6 +184,44 @@ export const en = {
 	},
 	'storage.scrub.aborted': 'cancelled before it finished',
 	'storage.scrub.interrupted': 'interrupted before it finished',
+	// A pool's balance, as btrfs reports it, and its dialog (ADR-0379).
+	'storage.balance.statusError': 'Could not read the balance status',
+	'storage.balance.running': 'Balance in progress',
+	'storage.balance.pausing': 'Pausing after the chunk being moved',
+	'storage.balance.cancelling': 'Cancelling the balance',
+	'storage.balance.paused': 'Balance paused',
+	'storage.balance.pausedNote':
+		"A paused balance goes on when you resume it, and also when the pool is mounted again, as at the next start of the NAS; cancel it to stop it for good. When a paused full balance goes on, it rewrites only the chunks less than 90% full (the Linux kernel's rule): to rewrite every chunk, cancel it and start a new full balance.",
+	'storage.balance.progress': 'Balance progress',
+	'storage.balance.chunks': {
+		one: '{done} of about {n} chunk balanced',
+		other: '{done} of about {n} chunks balanced'
+	},
+	'storage.balance.leftSeconds': 'Less than a minute left',
+	'storage.balance.leftMinutes': 'About {minutes} min left',
+	'storage.balance.leftHours': 'About {hours} h {minutes} min left',
+	'storage.balance.finished': {
+		one: 'Last balance: finished, {done} of {n} chunk rewritten',
+		other: 'Last balance: finished, {done} of {n} chunks rewritten'
+	},
+	'storage.balance.cancelled': 'Last balance: cancelled before it finished',
+	'storage.balance.failed': 'Last balance failed',
+	'storage.balance.title': 'Balance {name}',
+	'storage.balance.intro':
+		'A balance rewrites chunks of the pool, the blocks of space that btrfs gives to data and metadata, and frees the space of partly empty ones for new chunks. The pool stays usable, but slower, while it runs.',
+	'storage.balance.what': 'Chunks to rewrite',
+	'storage.balance.usageOption': 'Only chunks less full than a limit (recommended)',
+	'storage.balance.fullOption': 'Every chunk (full balance)',
+	'storage.balance.usage': 'Usage limit (%)',
+	'storage.balance.usageHint':
+		'The data and metadata chunks less full than this are rewritten. A low limit frees the most space for the least work: minutes, not hours.',
+	'storage.balance.usageInvalid': 'Enter a whole number from 1 to 99',
+	'storage.balance.fullTitle': 'A full balance takes long',
+	'storage.balance.fullWarning':
+		'It rewrites every chunk, all the data of the pool: hours on a hard disk, with the pool slower meanwhile. It is rarely needed, such as after a disk was added to the pool. If it is paused, or the NAS stops before it ends, it then rewrites only the chunks less than 90% full: to rewrite every chunk, cancel it and start a new one.',
+	'storage.balance.fullConfirm': 'Rewrite every chunk of {name}',
+	'storage.balance.start': 'Start Balance',
+	'storage.balance.startFailed': 'The balance did not start',
 
 	'storage.create.title': 'Create Storage Pool',
 	'storage.create.eraseTitle': 'This erases the selected disks',
@@ -318,6 +387,7 @@ export const ru: Translation<typeof en> = {
 	'storage.disks.column.contents': 'Содержимое',
 	'storage.disks.column.mountedAt': 'Точка монтирования',
 	'storage.disks.column.status': 'Статус',
+	'storage.disks.column.power': 'Питание',
 	'storage.disks.hdd': 'HDD',
 	'storage.disks.ssd': 'SSD',
 	'storage.disks.partitionTable': 'Таблица разделов {type}',
@@ -325,11 +395,30 @@ export const ru: Translation<typeof en> = {
 	'storage.disks.partitions': { one: '{n} раздел', few: '{n} раздела', many: '{n} разделов' },
 	'storage.disks.unrecognized': 'Нераспознанные данные',
 	'storage.disks.empty': 'Пустой',
+	'storage.disks.notReadAsleep': 'Не прочитано, пока диск спит',
 	'storage.disks.status.system': 'Системный',
 	'storage.disks.status.inUse': 'Используется',
 	'storage.disks.status.pool': 'Пул «{pool}»',
 	'storage.disks.status.hasData': 'Есть данные',
 	'storage.disks.status.free': 'Свободен',
+	'storage.disks.power.active': 'Работает',
+	'storage.disks.power.standby': 'Спит',
+	'storage.disks.power.unknown': 'Неизвестно',
+
+	'storage.spindown.off': 'Выкл.',
+	'storage.spindown.minutes': { one: '{n} минута', few: '{n} минуты', many: '{n} минут' },
+	'storage.spindown.hours': { one: '{n} час', few: '{n} часа', many: '{n} часов' },
+	'storage.spindown.of': 'Тайм-аут простоя {disk}:',
+	'storage.spindown.title': 'Тайм-аут простоя',
+	'storage.spindown.disk': 'Диск останавливается после такого времени без обращений:',
+	'storage.spindown.label': 'Остановить через',
+	'storage.spindown.hint':
+		'Сохранение сейчас раскрутит диск. Диск, который часто будят, изнашивается быстрее: для диска, которым пользуются каждый день, выберите время подольше.',
+	'storage.spindown.scans':
+		'Пока у диска есть тайм-аут, UNOS выключает его собственное автоматическое офлайн-сканирование (проверку поверхности, которую диск сам запускает каждые несколько часов и во время которой не засыпает) и включает его снова, когда тайм-аут убирают. Чтобы вместо этого читать его данные, запланируйте проверку целостности его пула (Система, Планировщик); всю поверхность читает длинный тест SMART, но тесты SMART Планировщика короткие.',
+	'storage.spindown.failed': 'Тайм-аут простоя не установлен',
+	'storage.spindown.saved': 'Тайм-аут простоя сохранён',
+	'storage.spindown.save': 'Сохранить',
 
 	'storage.found.title': 'Найдено на дисках',
 	'storage.found.searchError': 'Не удалось выполнить поиск пулов для импорта',
@@ -379,6 +468,10 @@ export const ru: Translation<typeof en> = {
 	'storage.pool.inFstab': 'Есть в fstab, но не смонтирован',
 	'storage.pool.scrub': 'Проверить целостность',
 	'storage.pool.cancelScrub': 'Отменить проверку',
+	'storage.pool.balance': 'Балансировка',
+	'storage.pool.pauseBalance': 'Приостановить балансировку',
+	'storage.pool.resumeBalance': 'Продолжить балансировку',
+	'storage.pool.cancelBalance': 'Отменить балансировку',
 	'storage.pool.volumes': 'Тома',
 	'storage.pool.mount': 'Смонтировать',
 	'storage.pool.unmount': 'Отмонтировать',
@@ -431,6 +524,45 @@ export const ru: Translation<typeof en> = {
 	},
 	'storage.scrub.aborted': 'отменена до завершения',
 	'storage.scrub.interrupted': 'прервана до завершения',
+	'storage.balance.statusError': 'Не удалось прочитать состояние балансировки',
+	'storage.balance.running': 'Идёт балансировка',
+	'storage.balance.pausing': 'Приостанавливается после перемещаемого блока',
+	'storage.balance.cancelling': 'Балансировка отменяется',
+	'storage.balance.paused': 'Балансировка приостановлена',
+	'storage.balance.pausedNote':
+		'Приостановленная балансировка продолжится, когда вы её возобновите, а также при следующем монтировании пула, например при следующем запуске NAS; чтобы остановить её совсем, отмените её. Когда приостановленная полная балансировка продолжится, она перезапишет только блоки, заполненные меньше чем на 90% (правило ядра Linux): чтобы перезаписать все блоки, отмените её и начните новую полную балансировку.',
+	'storage.balance.progress': 'Ход балансировки',
+	'storage.balance.chunks': {
+		one: 'Сбалансировано {done} из примерно {n} блока',
+		few: 'Сбалансировано {done} из примерно {n} блоков',
+		many: 'Сбалансировано {done} из примерно {n} блоков'
+	},
+	'storage.balance.leftSeconds': 'Осталось меньше минуты',
+	'storage.balance.leftMinutes': 'Осталось около {minutes} мин',
+	'storage.balance.leftHours': 'Осталось около {hours} ч {minutes} мин',
+	'storage.balance.finished': {
+		one: 'Последняя балансировка: завершена, перезаписано {done} из {n} блока',
+		few: 'Последняя балансировка: завершена, перезаписано {done} из {n} блоков',
+		many: 'Последняя балансировка: завершена, перезаписано {done} из {n} блоков'
+	},
+	'storage.balance.cancelled': 'Последняя балансировка: отменена до завершения',
+	'storage.balance.failed': 'Последняя балансировка не удалась',
+	'storage.balance.title': 'Балансировка {name}',
+	'storage.balance.intro':
+		'Балансировка перезаписывает блоки пула — участки места, которые btrfs выделяет под данные и метаданные, — и освобождает место частично пустых блоков под новые. Пока она идёт, пул работает, но медленнее.',
+	'storage.balance.what': 'Какие блоки перезаписать',
+	'storage.balance.usageOption': 'Только заполненные меньше порога (рекомендуется)',
+	'storage.balance.fullOption': 'Все блоки (полная балансировка)',
+	'storage.balance.usage': 'Порог заполнения (%)',
+	'storage.balance.usageHint':
+		'Перезаписываются блоки данных и метаданных, заполненные меньше порога. Низкий порог освобождает больше всего места за меньшую работу: минуты, а не часы.',
+	'storage.balance.usageInvalid': 'Введите целое число от 1 до 99',
+	'storage.balance.fullTitle': 'Полная балансировка идёт долго',
+	'storage.balance.fullWarning':
+		'Она перезаписывает все блоки, все данные пула: на жёстком диске это часы, и всё это время пул работает медленнее. Она нужна редко, например после добавления диска в пул. Если она будет приостановлена или работа NAS прервётся до её завершения, дальше она перезапишет только блоки, заполненные меньше чем на 90%: чтобы перезаписать все блоки, отмените её и начните новую.',
+	'storage.balance.fullConfirm': 'Перезаписать все блоки {name}',
+	'storage.balance.start': 'Начать балансировку',
+	'storage.balance.startFailed': 'Балансировка не началась',
 
 	'storage.create.title': 'Новый пул хранения',
 	'storage.create.eraseTitle': 'Выбранные диски будут стёрты',

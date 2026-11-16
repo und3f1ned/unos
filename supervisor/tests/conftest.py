@@ -46,15 +46,27 @@ def _smart_history_not_read_yet(monkeypatch):
 
 @pytest.fixture(autouse=True)
 def _no_problems_yet(monkeypatch):
-    """The problems of the NAS, the SMART monitor's verdicts of the disks and the pools that the RAID
-    monitor read last are kept in RAM (ADR-0332): every test starts without them, as the supervisor does."""
+    """The problems of the NAS, the SMART monitor's verdicts of the disks (and the disks' I/O counts at
+    its reads, ADR-0378) and the pools that the RAID monitor read last are kept in RAM (ADR-0332): every
+    test starts without them, as the supervisor does."""
     problems = sys.modules.get("src.health.problems")
     if problems is not None:
         monkeypatch.setattr(problems, "_by_source", {})
     health_router = sys.modules.get("src.health.router")
     if health_router is not None:
         monkeypatch.setattr(health_router, "_disk_verdicts", {})
+        monkeypatch.setattr(health_router, "_disk_io_at_read", {})
         monkeypatch.setattr(health_router, "_pools_read", None)
+
+
+@pytest.fixture(autouse=True)
+def _no_power_reads_yet(monkeypatch):
+    """The hdparm -C reads of the disks' power that run, and those that timed out, are kept in RAM
+    (storage.disks.power_state, ADR-0378): every test starts without them, as the supervisor does."""
+    disks = sys.modules.get("src.storage.disks")
+    if disks is not None:
+        monkeypatch.setattr(disks, "_power_reading", set())
+        monkeypatch.setattr(disks, "_power_stuck", {})
 
 
 @pytest.fixture(autouse=True)
@@ -68,6 +80,20 @@ def _no_scrubs_seen_yet(monkeypatch):
         monkeypatch.setattr(scrubs, "_noted_at", {})
         monkeypatch.setattr(scrubs, "_reading", None)
         monkeypatch.setattr(scrubs, "_read_at", float("-inf"))
+
+
+@pytest.fixture(autouse=True)
+def _no_balances_seen_yet(monkeypatch):
+    """The balances that the events socket follows, and when each was first seen running, are kept
+    in RAM (ADR-0379): every test starts without them, as the supervisor does."""
+    balances = sys.modules.get("src.storage.balances")
+    if balances is not None:
+        monkeypatch.setattr(balances, "_balances", {})
+        monkeypatch.setattr(balances, "_version", 0)
+        monkeypatch.setattr(balances, "_noted_at", {})
+        monkeypatch.setattr(balances, "_reading", None)
+        monkeypatch.setattr(balances, "_read_at", float("-inf"))
+        monkeypatch.setattr(balances, "_since", {})
 
 
 @pytest.fixture(autouse=True)

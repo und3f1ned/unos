@@ -17,15 +17,19 @@ from ..security.validators import (
     validate_volume_name,
 )
 from ..shares import service as shares_service
-from . import disks, pools, scrubs
+from . import balances, disks, pools, scrubs, spindown
 from .schemas import (
+    BalanceStart,
+    BalanceStatus,
     DiskInfo,
+    DiskSpindown,
     ImportableFilesystem,
     PoolCreate,
     PoolImport,
     PoolInfo,
     ScrubStatus,
     SmartData,
+    SpindownSet,
     VolumeCreate,
     VolumeInfo,
 )
@@ -79,21 +83,60 @@ async def _change_pools(func: Callable[..., T], *args: Any) -> T:
 
 @router.get("/disks", response_model=list[DiskInfo])
 async def list_disks_endpoint(_=Depends(verify_token)):
-    """List physical disks with their host state (system, in use, data)."""
+    """List physical disks with their host state (system, in use, data), their power state, read
+    without waking them, and their idle timeout (ADR-0378)."""
     return await _call(disks.list_disks)
+
+
+@router.put("/disks/{name}/spindown", response_model=DiskSpindown)
+async def set_disk_spindown(request: Request, name: str, body: SpindownSet, user: User = Depends(verify_token)):
+    """Give a whole data disk of GET /disks an idle timeout, ``minutes`` of SPINDOWN_MINUTES, 0 for
+    off (ADR-0378): hdparm -S on the host now, which spins a sleeping disk up, the disk's own
+    automatic offline data collection turned off for a timeout and on again when UNOS turned it off,
+    and UNOS's udev rule, which sets the timeout again whenever the disk appears and records the
+    collection UNOS turned off. When that collection cannot be switched, the timeout is set all the
+    same and ``warning`` says so.
+
+    400 for a name that is no disk of this system, a boot or virtual device or a partition; 409 for
+    the system disk, an NVMe disk, a disk without a serial that a udev rule can match or one that
+    another disk reports too, a disk that udev knows by another serial, and a host without hdparm;
+    422 for minutes that are not offered; 500 when hdparm fails or the rule cannot be read (nothing
+    changed then), and when the rule cannot be written after hdparm set the timeout, which the
+    audit log records as failed. A change of the rule or of the disk's automatic offline data
+    collection is audited as settings_changed.
+    """
+    try:
+        change = await asyncio.to_thread(spindown.set_timeout, name, body.minutes)
+    except HTTPException:
+        raise
+    except spindown.RuleNotWritten as exc:
+        await audit_change(
+            AuditAction.SETTINGS_CHANGED, request, user.username, resource_type="disk",
+            resource_id=exc.change.name, details=f"{exc.change.what} until it restarts; then: {exc.reason}",
+            success=False,
+        )
+        raise HTTPException(status_code=500, detail=sanitize_error_message(RuntimeError(exc.detail))) from exc
+    except Exception as exc:
+        raise _http_error(exc) from exc
+    if change.changed or change.scans:  # the rule, or the disk's own offline data collection
+        await audit_change(
+            AuditAction.SETTINGS_CHANGED, request, user.username, resource_type="disk",
+            resource_id=change.name, details=change.what,
+        )
+    return DiskSpindown(name=change.name, minutes=change.minutes, warning=change.warning)
 
 
 @router.get("/disks/{name}/smart", response_model=SmartData)
 async def get_disk_smart(name: str, _=Depends(verify_token)):
     """SMART data of a whole disk of the host, by its name in GET /storage/disks.
 
-    400 for anything else (a partition, a RAID array, the boot SD card or
-    eMMC, a virtual device, a name such as null or st0); 500 when the host's
-    disks cannot be listed. smartctl is not run then.
+    A disk that sleeps stays asleep: its answer has the power state standby
+    and no data (ADR-0378). 400 for anything else (a partition, a RAID array,
+    the boot SD card or eMMC, a virtual device, a name such as null or st0);
+    500 when the host's disks cannot be listed. smartctl is not run then.
     """
     # Both block, off the event loop: lsblk on the host, and smartctl, which
-    # can take many seconds (or spin up a sleeping disk); get_smart_data
-    # bounds it with a timeout.
+    # can take many seconds; get_smart_data bounds it with a timeout.
     device = await _call(disks.whole_disk_device, name)
     return await _call(disks.get_smart_data, device)
 
@@ -396,3 +439,91 @@ async def cancel_scrub_endpoint(name: str, _=Depends(verify_token)):
     aborted (ADR-0313).
     """
     return await _scrub(pools.cancel_scrub, name)
+
+
+async def _balance(func: Callable[..., T], name: str, *args: Any, reads: bool = False) -> T:
+    """Run a balance command for a pool in a worker thread and note its status for the events
+    socket (storage/balances.py, ADR-0379); for a read of the status (``reads``), also why it
+    failed. 409 for a refusal, 500 with the reason when btrfs or systemd fails."""
+    validated_name = validate_pool_name(name)
+    try:
+        answer = await asyncio.to_thread(func, validated_name, *args)
+    except pools.PoolConflictError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    except Exception as e:
+        detail = balances.failure(e, validated_name)
+        if reads:
+            balances.note(validated_name, detail)
+        raise HTTPException(status_code=500, detail=detail)
+    balances.note(validated_name, answer[0] if isinstance(answer, tuple) else answer)
+    return answer
+
+
+async def _audit_balance(action: AuditAction, request: Request, user: User, name: str, details: str) -> None:
+    await audit_change(action, request, user.username, resource_type="pool", resource_id=name, details=details)
+
+
+@router.get("/pools/{name}/balance", response_model=BalanceStatus)
+async def get_balance_status_endpoint(name: str, _=Depends(verify_token)):
+    """The pool's balance as btrfs reports it, with the seconds left while it runs, and how the
+    last one ended when none runs or is paused (ADR-0379). 409 when the pool is not mounted; 500
+    when btrfs cannot report it or does not answer within pools.BALANCE_COMMAND_TIMEOUT."""
+    return await _balance(balances.status, name, reads=True)
+
+
+@router.post("/pools/{name}/balance", response_model=BalanceStatus)
+@limiter.limit("10/minute")
+async def start_balance_endpoint(request: Request, name: str, body: BalanceStart,
+                                 user: User = Depends(verify_token)):
+    """Start a balance of a pool: of the data and metadata chunks less than ``usage`` percent full
+    (20 by default), or of every chunk with ``full`` (ADR-0379). It runs on the host in the unit
+    unos-balance-<pool>; the answer is its status once btrfs runs (running also before the kernel
+    reports it), or how it ended when it ended at once. 409, and nothing run, when the pool is not
+    mounted or is read-only, while a scrub of it runs and while a balance of it runs or is paused;
+    500 with the reason when systemd or btrfs refuses it. The audit log gets balance_started."""
+    status = await _balance(balances.start, name, body)
+    what = "a full balance of the pool {}: every chunk" if body.full else (
+        "a balance of the pool {}: the data and metadata chunks less than " + f"{body.limit}% full")
+    await _audit_balance(AuditAction.BALANCE_STARTED, request, user, status.pool, "Started " + what.format(status.pool))
+    return status
+
+
+@router.post("/pools/{name}/balance/pause", response_model=BalanceStatus)
+async def pause_balance_endpoint(request: Request, name: str, user: User = Depends(verify_token)):
+    """Pause the pool's running balance after the chunk it moves (ADR-0379): paused, or pausing
+    while btrfs still waits for that chunk after balances.STOP_WAIT seconds. A pool without a
+    running balance, or whose pause waits already, answers its status, and the audit log gets
+    balance_paused only for a pause. 409 while a cancel waits for the chunk: the kernel would
+    pause the balance instead."""
+    status, paused = await _balance(balances.pause, name)
+    if paused:
+        await _audit_balance(AuditAction.BALANCE_PAUSED, request, user, status.pool,
+                             f"Paused the balance of the pool {status.pool}")
+    return status
+
+
+@router.post("/pools/{name}/balance/resume", response_model=BalanceStatus)
+async def resume_balance_endpoint(request: Request, name: str, user: User = Depends(verify_token)):
+    """Resume the pool's paused balance in its unit on the host (ADR-0379). 409 when none is
+    paused, when the pool is not mounted or is read-only and while a scrub of it runs. The audit
+    log gets balance_resumed."""
+    status = await _balance(balances.resume, name)
+    await _audit_balance(AuditAction.BALANCE_RESUMED, request, user, status.pool,
+                         f"Resumed the balance of the pool {status.pool}")
+    return status
+
+
+@router.delete("/pools/{name}/balance", response_model=BalanceStatus)
+async def cancel_balance_endpoint(request: Request, name: str, user: User = Depends(verify_token)):
+    """Cancel the pool's running or paused balance (ADR-0379): idle with the result cancelled, or
+    cancelling while btrfs still waits for the chunk being moved after balances.STOP_WAIT seconds.
+    A pool without a balance, or whose cancel waits already, answers its status, and so does one
+    whose balance a pause from elsewhere kept; the audit log gets balance_cancelled only for a
+    cancel. 409 while a pause waits for the chunk (the kernel would pause the balance all the
+    same: cancel it once it is paused) and for a paused balance of a read-only pool, which the
+    kernel keeps for its next read-write mount."""
+    status, cancelled = await _balance(balances.cancel, name)
+    if cancelled:
+        await _audit_balance(AuditAction.BALANCE_CANCELLED, request, user, status.pool,
+                             f"Cancelled the balance of the pool {status.pool}")
+    return status

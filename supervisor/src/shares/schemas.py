@@ -47,6 +47,10 @@ class SmbShareCreate(BaseModel):
     browseable: bool = True
     guest_ok: bool = False                          # guests can only ever read
     access: AccessList = []
+    # The protocol options (ADR-0380), each off by default.
+    encryption_required: bool = False               # clients that cannot encrypt (SMB3) are refused
+    time_machine: bool = False                      # a Mac can back up to the share with Time Machine
+    previous_versions: bool = False                 # Windows lists the snapshots of the share's pool or volume
 
 
 class SmbShareUpdate(BaseModel):
@@ -62,6 +66,9 @@ class SmbShareUpdate(BaseModel):
     guest_ok: bool | None = None
     access: AccessList | None = None                # when sent: the complete list (replaces it)
     import_notes: list[str] | None = None           # only [] is accepted: dismisses the notes
+    encryption_required: bool | None = None
+    time_machine: bool | None = None
+    previous_versions: bool | None = None
 
     @model_validator(mode="after")
     def _sent_fields_have_values(self) -> SmbShareUpdate:
@@ -96,6 +103,14 @@ class SmbShareInfo(BaseModel):
     pool_mounted: bool | None                       # None: the host mount table could not be read
     permissions_ok: bool | None                     # constants.share_root_mode_ok of the folder; None: not mounted / missing
     import_notes: list[str]
+    # The protocol options as stored (ADR-0380).
+    encryption_required: bool
+    time_machine: bool
+    previous_versions: bool
+    # The stored settings that smb.conf leaves out, with the reason (ADR-0380): time_machine or
+    # previous_versions (vfs modules missing on the host, a folder in no snapshot of UNOS) and
+    # guest_ok (a share that requires encryption admits no guest). GET /shares/smb-status names them too.
+    not_rendered: dict[str, str] = {}
     warnings: list[str] = []                        # only in answers to changes
 
 

@@ -127,6 +127,11 @@ in a folder in the middle of a file manager upload, where the folder's filesyste
 files; the File Browser lists them and removes them for good when an administrator confirms
 (ADR-0354). Avoid: temporary file, partial upload.
 
+**Balance**: Rewriting chunks of a pool, the blocks of space that btrfs gives to data and
+metadata, to free the space of partly empty ones: by default those less than 20% full, or every
+chunk (a full balance). UNOS runs it on the host in the unit `unos-balance-<pool>`, and it can be
+paused, resumed and cancelled (ADR-0379). Avoid: rebalance, defragment (rewrites files, not chunks).
+
 **Recovery runbook**: `docs/RECOVERY.md`: how another Linux machine reads a pool's files without
 writing to its disks, also with a disk missing, and how root runs the emergency reset (ADR-0285).
 Avoid: disaster recovery plan, repair guide.
@@ -139,6 +144,22 @@ logs).
 **Replace soon**: The mark of a connected disk whose failure prediction, a score of the rises in
 its SMART history, reaches 50; Disk Health and the dashboard show it with its reasons (ADR-0235).
 Avoid: failing (the disk's own SMART health check), degraded (a pool's health).
+
+**Idle timeout**: The time without access after which a data disk spins down into standby, set on
+the Storage page with `hdparm -S` and kept in UNOS's udev rule by the disk's serial (ADR-0378).
+Avoid: sleep timer, APM (the disk's own power management).
+
+**Standby**: The power state of a disk that has spun down: a read spins it up, and reading its
+power state with `hdparm -C` or `smartctl -n standby` (CHECK POWER MODE first) does not. Whether
+CHECK POWER MODE restarts an awake disk's standby timer is the disk's: it did not on the dev
+device's disk (ADR-0378). "Standby-safe" is a command that
+sends a sleeping disk nothing that wakes it (ADR-0378). The user texts say a disk in standby "sleeps". Avoid: SLEEP
+mode (the deeper ATA state that needs a reset).
+
+**Automatic offline scan**: A hard disk's own surface scan every few hours (smartctl's automatic
+offline data collection, `smartctl -o on`), which keeps the disk awake while it runs; UNOS turns it
+off while the disk has an idle timeout and records that in its udev rule (ADR-0378). Avoid: offline
+test, self-test (a SMART test that UNOS starts).
 
 ## Shares and SMB
 
@@ -155,6 +176,11 @@ Avoid: permission, ACL.
 
 **Guest share**: A share that guests may read without a password; guests never write (ADR-0096,
 ADR-0100). Avoid: public share, anonymous share.
+
+**Protocol options**: A share's three SMB settings beside its access, each off by default: Require
+encryption (only clients that encrypt with SMB 3 open it), Time Machine backups of Macs, and
+Previous Versions from the snapshots of its pool or volume. Each is checked when stored and when
+smb.conf is rendered (ADR-0380).
 
 **SMB account**: A UNOS user's allowance to use SMB and, while it is active, the marked host account
 and the Samba password behind it (ADR-0105, ADR-0118). Avoid: Samba user, SMB user.
@@ -175,7 +201,7 @@ and a restore (ADR-0080). Avoid: share lock.
 the old file (ADR-0089). Avoid: sync, reload (one step of it).
 
 **Import**: The one-time turning of the host's existing smb.conf into shares, which only ever
-narrows access (ADR-0084, ADR-0086). Avoid: migration.
+narrows access (ADR-0084, ADR-0380). Avoid: migration.
 
 **Startup reconcile**: The task at the supervisor's start that brings the host accounts, Samba's
 passwords and smb.conf in line with the database (ADR-0138). Avoid: sync, repair.
@@ -239,6 +265,13 @@ in the SMB group.
 
 **Container**: Any Docker container on the host, as the Containers page lists it; an app runs as
 one or more containers. Avoid: app.
+
+**Hardware profile**: The hardware of a SoC that an app gets when it is installed on a host whose
+device tree names that SoC and that has the nodes the profile requires: the device nodes that the
+host has of the profile's list, and the Docker masks and AppArmor profile the app cannot work
+under, as Jellyfin's `rk3588-video` on an RK3588 with Rockchip MPP's `/dev/mpp_service`; on any
+other host the app is installed as elsewhere, and the App Store says nothing of it (ADR-0377).
+Avoid: hardware acceleration (what the App Store calls it for the user), passthrough.
 
 **Backup**: An archive of the UNOS database, encrypted if wanted, without the pools' files
 (ADR-0040). Avoid: snapshot.

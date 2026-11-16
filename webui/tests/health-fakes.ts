@@ -53,6 +53,17 @@ export const FAKE_SMART_DISKS = [
   },
 ];
 
+/**
+ * A disk that sleeps, as GET /health/disks answers it (ADR-0378): smartctl -n standby left it
+ * alone, so no SMART data; lsblk's model, serial and size.
+ */
+export const SLEEPING_DISK = {
+  device: '/dev/e2e-sdd', model: 'E2E HDD 640GB', serial: 'E2E-HDD-3', firmware: 'Unknown',
+  capacity: '596.17 GB', temperature: null, power_on_hours: null, power_cycle_count: null,
+  health_status: 'STANDBY', attributes: [], nvme_health: null,
+  self_test_status: null, last_test_result: null,
+};
+
 // Predictions as GET /health/smart/predictions reports them. NVMe disks get
 // none: the SMART monitor records ATA attributes only.
 

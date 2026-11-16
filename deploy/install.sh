@@ -133,6 +133,7 @@ install_dependencies() {
         lm-sensors \
         samba \
         samba-common-bin \
+        samba-vfs-modules \
         hdparm \
         parted \
         mdadm \
@@ -363,6 +364,18 @@ EOF
     else
         log_info "Secrets file already exists, keeping it"
     fi
+}
+
+# UNOS reads the disks' SMART data itself (Disk Health, and the hourly SMART
+# monitor with its alerts: ADR-0235, ADR-0332). smartd, which the package
+# smartmontools starts, asks every awake disk its power mode and reads its
+# SMART data every 30 minutes with Debian's /etc/smartd.conf: each command
+# restarts the disk's standby timer, so a disk with an idle timeout of 30
+# minutes or more might never spin down. Once UNOS runs, smartd is stopped and
+# does not start at boot (ADR-0378).
+stop_smartd() {
+    systemctl disable --now smartmontools
+    log_success "smartd is off: UNOS reads the disks' SMART data itself"
 }
 
 # smbd serves SMB. NetBIOS is off (disable netbios in smb.conf), so nmbd, the
@@ -677,6 +690,7 @@ main() {
     configure_discovery
     start_unos
     create_systemd_service
+    stop_smartd
     wait_for_services
     print_completion
 }

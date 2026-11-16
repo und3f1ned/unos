@@ -18,6 +18,7 @@
 	import { intlLocale, t } from '$lib/i18n';
 	import AppCategory from './AppCategory.svelte';
 	import AppStorageWarning from './AppStorageWarning.svelte';
+	import AppHardwareHint from './AppHardwareHint.svelte';
 	import {
 		type AppTemplate,
 		type AppPool,
@@ -443,6 +444,7 @@
 		{#if isInstalled && installedApp}
 			<AppStorageWarning app={installedApp} class="mb-4" />
 		{/if}
+		<AppHardwareHint {app} installed={isInstalled ? installedApp : null} class="mb-4" />
 
 		<!-- Tabs: they wrap on a narrow screen (ADR-0302) -->
 		<div class="flex flex-wrap border-b border-border -mx-6 px-6 mb-4">

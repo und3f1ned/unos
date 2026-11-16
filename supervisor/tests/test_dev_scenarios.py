@@ -13,7 +13,7 @@ refuses the right password as well and writes nothing (ADR-0334), and a password
 which Samba refuses without a write (ADR-0342).
 
 Covered (the steps of the ledger entry device.scenario-checks-in-repo):
-* every area (files, volumes, smart, backups, smb, smbconf, shares, scrub, offsite, restore) passes against
+* every area (files, volumes, smart, backups, smb, smbconf, shares, scrub, balance, offsite, restore, hardware) passes against
   the fake, prints a PASS line with its SD MiB for each step and a summary, and leaves the device as it
   found it;
 * the volumes check makes a snapshot of its volume and restores it: the copy restore_<time> is
@@ -37,6 +37,10 @@ Covered (the steps of the ledger entry device.scenario-checks-in-repo):
   mandatory signing where the device has other guest shares and in place of the ACL step without
   setfacl; its entries helper makes the check's entries with their owners and modes and touches
   only a check's own folders;
+* the hardware check (ADR-0377) reads the host's device tree and the device nodes of the RK3588's
+  video hardware, says so in place of the nodes' step on a host that is no RK3588, takes a
+  catalog without the hardware as right on an RK3588 without /dev/mpp_service, and fails for an
+  RK3588 without a node that Rockchip MPP needs;
 * a failure at any API call of a step, before or after the call changed something (a lost
   answer), an interruption, an output that can no longer be written or a refusal of the device
   still removes what the check made, and the check fails; only a backup whose answer was lost is
@@ -55,14 +59,33 @@ Covered (the steps of the ledger entry device.scenario-checks-in-repo):
   entry, drops an ACL entry or repairs a share that is not served, SMB that takes a password of
   7 characters or keeps the account the user turned off, a guest share without the warning,
   an anonymous write, guest lines that stay after the last guest share, a password change over
-  SAMR that Samba takes, or refuses while it writes passdb.tdb or stores the new password;
+  SAMR that Samba takes, or refuses while it writes passdb.tdb or stores the new password, a
+  catalog that does not offer Jellyfin the RK3588's video hardware on an RK3588 with Rockchip MPP
+  or offers an app the hardware of another SoC, Previous Versions that list no snapshot, still
+  list or open a deleted one, open the file as it is now in place of the snapshot's copy, serve a
+  copy with other bytes than the file held (its bytes and more, or a line that only contains their
+  text), drop the session at the open of a file in a deleted one, or delete .snapshots with its
+  last snapshot (seen with stat, whatever smbd answers then);
+* the smb check reads Previous Versions as Samba 4.22 shows them (ADR-0380): smbclient's allinfo
+  lists the share's shadow copies with the file's times in each, and an empty list, which smbd
+  answers in 14 bytes, as NT_STATUS_INVALID_NETWORK_RESPONSE, since smbclient takes no answer
+  shorter than 16 bytes; get @GMT-<time>/<name> opens the file in a shadow copy, the snapshot's
+  copy and not the file as it is now, and the check proves its bytes with the SHA-256 of the copy
+  that smbclient wrote (coreutils' sha256sum, which smbclient's ! runs in the helper's folder);
+  allinfo before the volume's first snapshot, while the volume has no .snapshots, passes with any
+  answer, which the step records (what smbd answers then has not been seen on the device: the
+  fake's status for it is an assumption); an open of a file in a shadow copy that is gone counts as
+  refused only with a status of smbd's, not one that says the connection, the session or the tree
+  connect broke, and only while the same session lists the file afterwards; the Snapshots
+  page names a snapshot to the second of the device's clock and refuses a second one of that name;
 * no temporary password reaches the output, a command line or the environment: scenario.Device
   sends them on standard input, and the SMB helper keeps them in a file of mode 600 in RAM that
   it deletes, or gives them to smbpasswd -r on its standard input;
 * every call the checks make is a route of the supervisor in this tree, with a body its model
   accepts (the contract with the API);
 * the scripts that run on the device parse; the SMB helper's session and share-list protocol
-  works against a stand-in smbclient, with signing required except for the null session, and its
+  works against a stand-in smbclient, with signing required except for the null session and with
+  a get whose copy sha256sum reads past smbclient's prompts, and its
   password change against a stand-in smbpasswd; the
   subvolume helper touches only a check's own folder;
 * scenario.sh holds the device lock and reports the SD writes of each check, also of one that a
@@ -84,6 +107,7 @@ import stat
 import subprocess
 import sys
 import textwrap
+import time
 import types
 from collections.abc import Callable
 from datetime import datetime, timezone
@@ -114,6 +138,13 @@ Answer = scenario.relay.Answer
 ROOT = "/mnt/pools/data"
 SMB_GROUP = "unos-smb"
 DISK = "sda"
+# The SoC of the dev device, a BPI-W3 (ADR-0376), and the hardware profile that the catalog API
+# answers for Jellyfin on it (src/apps/catalog.py, ADR-0377).
+DEVICE_TREE = "/proc/device-tree/compatible"
+RK3588 = "rockchip,rk3588-armsom-w3\0rockchip,rk3588\0"
+RK3588_VIDEO = {"id": "rk3588-video", "soc": "rockchip,rk3588",
+                "devices": ["/dev/dri", "/dev/dma_heap", "/dev/mpp_service", "/dev/rga", "/dev/mali0"],
+                "requires": ["/dev/mpp_service"], "unmasked_paths": ["/sys/firmware"], "apparmor_unconfined": True}
 LEFTOVER = re.compile(r"unoscheck[0-9a-f]{6}")
 HEADER = "# Generated by UNOS from its database.\n"
 # The texts of GET /shares/smb-status that the smbconf check reads, as UNOS words them
@@ -163,7 +194,7 @@ def conf_sections(text: str) -> list[tuple[str, str]]:
 class Node:
     def __init__(self, kind: str, mode: int, owner: str = "root", group: str = "root", content: str = "",
                  acl: list[str] | None = None) -> None:
-        self.kind = kind  # dir, file, subvolume (a volume, or one made by the files check) or link
+        self.kind = kind  # dir, file, subvolume (a volume, or one made by the files check), link or char
         self.mode = mode
         self.owner = owner
         self.group = group
@@ -183,6 +214,13 @@ class Node:
         return ([f"user::{bits(mode >> 6)}"] + self.acl + ["group::r--", f"mask::{bits(mode >> 3)}", f"other::{bits(mode)}"])
 
 
+# The protocol options of a share (ADR-0380), as the share API names them, and the warning of a
+# change of the Time Machine shares after which avahi-daemon could not be restarted.
+SHARE_OPTIONS = ("encryption_required", "time_machine", "previous_versions")
+ADVERTISE_WARNING = ("avahi-daemon could not be restarted (Unit avahi-daemon.service not found.), so Macs do not "
+                     "see the new Time Machine shares yet; it is tried again at the next change, and a restart of "
+                     "Samba or of the NAS applies it too")
+
 # The accounts of the fake host: name -> uid.
 UIDS = {"root": 0, "nobody": 65534}
 
@@ -201,7 +239,8 @@ class Interrupt(BaseException):
 class FakeSmbSession:
     """One smbclient session to a share, as REMOTE_SMB's session mode gives it to scenario.py."""
 
-    def __init__(self, nas: FakeNas, user: str, password: str, share: str, guest: bool = False) -> None:
+    def __init__(self, nas: FakeNas, user: str, password: str, share: str, guest: bool = False,
+                 protection: str = "") -> None:
         self.nas = nas
         self.user = user or "nobody"  # a guest works as the guest account
         self.share = share
@@ -219,8 +258,19 @@ class FakeSmbSession:
             self.level = nas.level(share, user)  # what the tree connect was granted
         if self.problem is None and self.level is None:
             self.problem = "tree connect failed: NT_STATUS_ACCESS_DENIED"
+        # A share that requires encryption refuses a client that cannot encrypt (ADR-0380). The defect
+        # encryption-everywhere refuses it on every share while one requires encryption, as a
+        # requirement in [global] would.
+        section = scenario.smb_section(nas.installed, share) or {}
+        required = (section.get("smb encrypt") == "required"
+                    or ("encryption-everywhere" in nas.bugs and "smb encrypt = required" in nas.installed))
+        if self.problem is None and protection == "smb2" and required:
+            self.problem = "tree connect failed: NT_STATUS_ACCESS_DENIED"
         self.tree_closed = False
         self.killed = False
+        # smbd dropped the connection while smbclient runs on, as it does then: every later command
+        # answers NT_STATUS_CONNECTION_DISCONNECTED (the defect missing-version-drops-session).
+        self.dropped = False
         self.ended = self.problem is not None
         nas.sessions.append(self)
 
@@ -246,9 +296,17 @@ class FakeSmbSession:
 
     def command(self, line: str) -> str:
         nas = self.nas
+        nas.smb_lines.append((self.share, line))
         if line.startswith("!cat "):
             return self.local.get(line[5:], "cat: no such file")
-        if self.killed:
+        if line.startswith("!sha256sum "):
+            # smbclient's ! runs a command where smbclient runs, in the helper's folder in RAM that
+            # get writes to: coreutils' sha256sum prints "<digest>  <name>", or its error on stderr.
+            name = line[len("!sha256sum "):]
+            if name not in self.local:
+                return f"sha256sum: {name}: No such file or directory"
+            return f"{digest(self.local[name])}  {name}"
+        if self.killed or self.dropped:
             return "NT_STATUS_CONNECTION_DISCONNECTED"
         if self.tree_closed:
             return "NT_STATUS_NETWORK_NAME_DELETED"
@@ -257,12 +315,55 @@ class FakeSmbSession:
         words = line.split()
         if words[0] == "ls":
             return "\n".join(sorted(p.rsplit("/", 1)[1] for p in nas.children(folder)))
-        if words[0] == "get":
+        if words[0] == "allinfo":
+            # The file's times and streams, then the shadow copies (FSCTL_GET_SHADOW_COPY_DATA) that
+            # shadow_copy2 lists for the share (ADR-0380), each with the file's times in it.
             node = nas.fs.get(f"{folder}/{words[1]}")
+            shown = "\\" + words[1].replace("/", "\\")
             if node is None:
-                return "NT_STATUS_OBJECT_NAME_NOT_FOUND opening remote file"
+                return f"NT_STATUS_OBJECT_NAME_NOT_FOUND getting alt name for {shown}"
+            lines = [f"altname: {words[1].upper()}", "create_time:    Thu Nov 12 10:00:00 AM 2026 UTC",
+                     f"stream: [::$DATA], {len(node.content)} bytes"]
+            section = scenario.smb_section(nas.installed, self.share) or {}
+            if "shadow_copy2" in section.get("vfs objects", "").split():
+                versions = self.versions(listed=True)
+                if f"{section['shadow:mountpoint']}/.snapshots" not in nas.fs:
+                    # shadow_copy2 cannot open its folder. What smbd answers then has not been seen on
+                    # the device yet (the smb check records it before the volume's first snapshot, and
+                    # sees a .snapshots gone after its Deletes with stat): no_snapdir_status, an assumption.
+                    if nas.no_snapdir_status is not None:
+                        lines.append(f"{nas.no_snapdir_status} getting shadow copy data for {shown}")
+                elif not versions and not nas.smbclient_takes_an_empty_list:
+                    # Samba 4.22's smbd answers an empty list in 14 bytes, which its smbclient refuses
+                    # (cli_smb2_shadow_copy_data_fnum_recv): allinfo prints this line on its standard error.
+                    lines.append(f"NT_STATUS_INVALID_NETWORK_RESPONSE getting shadow copy data for {shown}")
+                for token in versions:
+                    held = self.version(token, words[1])
+                    lines += ([token, "create_time:    Thu Nov 12 10:00:00 AM 2026 UTC", f"size: {len(held.content)}"]
+                              if held is not None else
+                              [token, f"pathinfo({token}{shown}) failed: NT_STATUS_OBJECT_NAME_NOT_FOUND"])
+            return "\n".join(lines)
+        if words[0] == "get":
+            # A name that starts with an @GMT token is the file in that shadow copy (smbclient sends
+            # the token as the create's timewarp context). Defects: version-opens-live-file serves the
+            # share's file as it is now (the token ignored), and missing-version-drops-session drops
+            # the connection at the open of a file in a shadow copy that is gone.
+            found = re.fullmatch(r"(@GMT-\d{4}\.\d\d\.\d\d-\d\d\.\d\d\.\d\d)[/\\](.+)", words[1])
+            shown = "\\" + words[1].replace("/", "\\")
+            if found and "version-opens-live-file" in nas.bugs:
+                node = nas.fs.get(f"{folder}/{found[2]}")
+            elif found:
+                if "missing-version-drops-session" in nas.bugs and found[1] not in self.versions(listed=False):
+                    self.dropped = True
+                    return f"NT_STATUS_CONNECTION_DISCONNECTED opening remote file {shown}"
+                node = self.version(found[1], found[2])
+            else:
+                node = nas.fs.get(f"{folder}/{words[1]}")
+            if node is None or node.kind != "file":
+                return f"NT_STATUS_OBJECT_NAME_NOT_FOUND opening remote file {shown}"
             self.local[words[2]] = node.content
-            return f"getting file \\{words[1]}"
+            # do_get of Samba 4.22's source3/client/client.c, without the rate it may add.
+            return f"getting file {shown} of size {len(node.content.encode())} as {words[2]}"
         if level != "write":
             return f"NT_STATUS_ACCESS_DENIED opening remote file \\{words[-1]}"
         if words[0] == "put":
@@ -276,6 +377,37 @@ class FakeSmbSession:
             nas.fs[f"{folder}/{words[1]}"] = Node("dir", 0o2770, self.user, SMB_GROUP)
             return ""
         raise AssertionError(f"the fake smbclient does not know {line!r}")
+
+    def versions(self, listed: bool) -> dict[str, str]:
+        """The snapshots that shadow_copy2 finds for the share (ADR-0380): @GMT token -> the
+        snapshot's path, for the names snap_ and auto_<UTC time> in .snapshots of
+        shadow:mountpoint. LISTED: for the list of shadow copies, else for an open of a file in one.
+        Defects: snapshots-unlisted finds none, deleted-version-listed still finds a deleted
+        snapshot, and deleted-version-opens finds one that is no longer listed for an open."""
+        nas = self.nas
+        section = scenario.smb_section(nas.installed, self.share) or {}
+        if "shadow_copy2" not in section.get("vfs objects", "").split() or "snapshots-unlisted" in nas.bugs:
+            return {}
+        snapdir = f"{section['shadow:mountpoint']}/.snapshots"
+        paths = [p for p in nas.fs if os.path.dirname(p) == snapdir]
+        if "deleted-version-listed" in nas.bugs or ("deleted-version-opens" in nas.bugs and not listed):
+            paths += [p for p in nas.left_to_samba if os.path.dirname(p) == snapdir]
+        found = {}
+        for path in sorted(paths):
+            name = re.fullmatch(r"(?:snap|auto)_(\d{4})(\d\d)(\d\d)_(\d\d)(\d\d)(\d\d)", path.rsplit("/", 1)[1])
+            if name:
+                found["@GMT-{}.{}.{}-{}.{}.{}".format(*name.groups())] = path
+        return found
+
+    def version(self, token: str, name: str) -> Node | None:
+        """NAME of the share's folder in the shadow copy TOKEN, None where Samba opens none."""
+        snapshot = self.versions(listed=False).get(token)
+        if snapshot is None:
+            return None
+        section = scenario.smb_section(self.nas.installed, self.share) or {}
+        inner = self.nas.shares[self.share]["path"][len(section["shadow:mountpoint"]):]
+        held = self.nas.left_to_samba.get(snapshot) or self.nas.fs
+        return held.get(f"{snapshot}{inner}/{name}")
 
 
 def smb_password_problem(password: str) -> str | None:
@@ -318,6 +450,10 @@ class FakeUserApi:
         self.nas.forgotten.append(self.cache)
 
 
+# busctl's text when avahi-daemon is not on the system bus.
+AVAHI_NOT_ON_THE_BUS = "The name org.freedesktop.Avahi was not provided by any .service files"
+
+
 class FakeNas:
     """The dev device for scenario.py: request() and upload() as api.DeviceApi has them, and the
     methods of scenario.Device. fail_at and interrupt_at name an API call (0-based) that answers
@@ -333,6 +469,13 @@ class FakeNas:
             f"{ROOT}/shared/old.txt": Node("file", 0o660, "root", SMB_GROUP, "old"),
             f"{ROOT}/media": Node("subvolume", 0o755),
             f"{ROOT}/.unos-trash": Node("dir", 0o700),
+            # The RK3588's device tree and its video hardware under the vendor kernel 6.1.
+            DEVICE_TREE: Node("file", 0o444, content=RK3588),
+            "/dev/dri": Node("dir", 0o755),
+            "/dev/dma_heap": Node("dir", 0o755),
+            "/dev/mpp_service": Node("char", 0o600),
+            "/dev/rga": Node("char", 0o600),
+            "/dev/mali0": Node("char", 0o600),
         }
         self.trash: dict[str, str] = {}  # the item's folder in a trash -> the path it was deleted from
         self.trash_entries = 100
@@ -354,6 +497,18 @@ class FakeNas:
         self.databases: dict[str, dict] = {}
         self.restored: list[str] = []
         self.restores = 0  # the restores of snapshots, which name their copies (restore_<time>)
+        # The seconds that passed on the device (wait), whose clock names snapshots (snap_<UTC time>),
+        # and the snapshots whose Delete left them to Samba (the defects deleted-version-listed and
+        # deleted-version-opens): path -> the snapshot's files and folders.
+        self.seconds = 0
+        self.left_to_samba: dict[str, dict[str, Node]] = {}
+        # The commands of the smbclient sessions: (share, line); and whether smbclient takes smbd's
+        # answer for no snapshot, which Samba 4.22's refuses (FakeSmbSession.command, allinfo).
+        self.smb_lines: list[tuple[str, str]] = []
+        self.smbclient_takes_an_empty_list = False
+        # The status of allinfo's line for the shadow copies of a share whose shadow:mountpoint has no
+        # .snapshots, None for no such line; the smb check records it, whatever it is.
+        self.no_snapdir_status: str | None = "NT_STATUS_INVALID_DEVICE_REQUEST"
         # The copies of the database that the restores keep (the newest 5), and an API token.
         self.copies: list[str] = []
         self.api_tokens = [{"id": 1, "user_id": 1, "name": "home assistant", "token_prefix": "unos_ab12", "is_active": True,
@@ -400,6 +555,15 @@ class FakeNas:
         self.scrub_left = 0
         self.scrubs = 0
         self.pool_used = 1  # bytes of data in the pool data
+        self.pool_free = 600 * scenario.GIB  # and of free space, as on the dev device's disk
+        # The pool's balance (ADR-0379): None, or {"status": "running", "pausing" or "paused",
+        # "completed": n} of about BALANCE_EXPECTED chunks, one more balanced at each request while
+        # it runs; how the last one ended; the balances started; the seconds a pause waits for the
+        # chunk being moved.
+        self.balance: dict | None = None
+        self.balance_result: str | None = None
+        self.balances = 0
+        self.pause_takes = 0.0
         self.tasks: dict[str, dict] = {}
         self.runs: list[dict] = []
         self.task_keys: dict[str, str] = {}  # the backup tasks' passphrases (scheduled_backup_keys.json)
@@ -427,6 +591,35 @@ class FakeNas:
         self.invalid: set[int] = set()
         self.callers: list[str | None] = []  # whose token each call of calls carried; None: the administrator's
         self.no_acl = False
+        # The disk's power (ADR-0378): whether the host has hdparm, the idle timeout of UNOS's udev
+        # rule (its text, None without the file), whether the disk sleeps, the seconds it has been
+        # idle, and the reads and writes that the kernel counted on it. The dev device's
+        # WD6400AACS has a minimum of its own: given 5 minutes, it sleeps after about 10
+        # (minimum, in seconds; 0 for a disk that takes any timeout).
+        self.hdparm = True
+        self.spindown = 0
+        self.system_spindown = 0  # what the system disk took, with the defect system-disk-timeout
+        self.rules: str | None = None
+        self.asleep = False
+        self.idle = 0
+        self.minimum = 600
+        # The hourly SMART monitor's read of the awake disk, once, when the disk with a timeout has been
+        # idle for that many seconds (None: no read): its IDENTIFY and SMART commands restart the disk's
+        # standby timer, and the kernel counts no read or write for them.
+        self.smart_monitor_read: int | None = None
+        self.disk_reads = 1000
+        self.disk_writes = 500
+        # Debian's /etc/hdparm.conf as Debian installs it: every setting commented out.
+        self.hdparm_conf: str | None = "#quiet\n#/dev/sda {\n#\tspindown_time = 24\n#}\n"
+        # The disk's own automatic offline data collection (ADR-0378): "on", "off", or "none" for a disk
+        # without it, and whether UNOS's udev rule records that UNOS turned it off. While it is on, the
+        # drive's surface scan, suspended for each command and resumed, keeps it awake, as it kept the dev
+        # device's sda (the defect unos-leaves-scans-on: UNOS's Save leaves it on; scans-off-unrecorded: the
+        # Save turns it off but its rule does not record that; scans-stay-off: Off cannot turn it on again,
+        # keeps the record and answers SCANS_LEFT_OFF's warning; scans-on-again: something turns it on
+        # again once the wait for standby begins, as smartd with -o on would).
+        self.offline = "on"
+        self.scans_recorded = False
 
     # --- what the tests compare
 
@@ -447,11 +640,14 @@ class FakeNas:
             "the hand edit's copies": dict(self.saved),
             "the copy's problem": self.replaced_problem,
             "a scrub runs": self.scrub["status"] == "running",
+            "a balance runs or is paused": copy.deepcopy(self.balance),
             "the Scheduler's tasks": copy.deepcopy(self.tasks),
             "the backup tasks' keys": dict(self.task_keys),
             "the off-device copy": (copy.deepcopy(self.offsite), self.offsite_password,
                                     copy.deepcopy(self.offsite_status), self.offsite_running),
             "the users' tokens in RAM": sorted(self.tokens),
+            "the disk's idle timeout": (self.spindown, self.rules, self.system_spindown),
+            "the disk's automatic offline data collection": (self.offline, self.scans_recorded),
         }
 
     # --- the model
@@ -557,7 +753,8 @@ class FakeNas:
         return {"name": name, "path": info["path"], "comment": info["comment"], "browseable": True, "guest_ok": guest,
                 "access": access, "version": info["version"], "served": problem is None, "path_problem": problem,
                 "available": problem is None and (guest or any(a["effective"] for a in access)), "pool": "data",
-                "pool_mounted": True, "permissions_ok": True, "import_notes": [], "warnings": []}
+                "pool_mounted": True, "permissions_ok": True, "import_notes": [], "warnings": [],
+                **{option: bool(info.get(option)) for option in SHARE_OPTIONS}}
 
     def guests_rendered(self) -> list[str]:
         """The served shares with guest access, which give [global] its guest lines (ADR-0339)."""
@@ -575,14 +772,36 @@ class FakeNas:
             return (f"   valid users = {', '.join(sorted(a['username'] for a in active)) or 'root'}\n"
                     + (f"   write list = {writers}\n" if writers else "   write list =\n"))
 
-        sections = "".join(f"\n[{name}]\n   path = {info['path']}\n" + principals(info) + fixed
-                           for name, info in sorted(self.shares.items()) if self.path_problem(info["path"]) is None)
+        served = {name: info for name, info in sorted(self.shares.items()) if self.path_problem(info["path"]) is None}
+        # The protocol options (ADR-0380): fruit in every section while a Time Machine share exists.
+        # Defects: encryption-not-required never writes required, encryption-stays keeps it once
+        # written, fruit-without-global leaves [global] without Apple's lines (the defects of
+        # shadow_copy2's snapshots are FakeSmbSession.versions').
+        time_machine = any(info.get("time_machine") for info in served.values())
+
+        def options(info: dict) -> str:
+            encrypt = ((info.get("encryption_required") or ("encryption-stays" in self.bugs and info.get("encrypted_once")))
+                       and "encryption-not-required" not in self.bugs)
+            modules = (["catia", "fruit", "streams_xattr"] if time_machine else []) + (
+                ["shadow_copy2", "btrfs"] if info.get("previous_versions") else [])
+            lines = [f"   smb encrypt = {'required' if encrypt else 'default'}\n",
+                     f"   vfs objects = {' '.join(modules)}\n" if modules else "   vfs objects =\n"]
+            if info.get("time_machine"):
+                lines.append("   fruit:time machine = yes\n")
+            if info.get("previous_versions"):
+                lines.append(f"   shadow:mountpoint = {self.volume_of(info['path']) or ROOT}\n   shadow:snapdir = .snapshots\n")
+            return "".join(lines)
+
+        sections = "".join(f"\n[{name}]\n   path = {info['path']}\n" + principals(info) + options(info) + fixed
+                           for name, info in served.items())
+        fruit = ("   fruit:aapl = yes\n   fruit:nfs_aces = no\n"
+                 if time_machine and "fruit-without-global" not in self.bugs else "")
         # The defect guest-globals-stay keeps the guest lines once a guest share was rendered, and
         # no-guest-globals never writes them.
         guest = ((bool(self.guests_rendered()) and "no-guest-globals" not in self.bugs)
                  or ("guest-globals-stay" in self.bugs and getattr(self, "guest_once", False)))
         return (HEADER + "\n[global]\n" + "".join(f"   {key} = {values[guest]}\n" for key, values in scenario.GUEST_GLOBALS.items())
-                + "   log file = /run/samba/log.samba\n   max log size = 100\n" + sections)
+                + "   log file = /run/samba/log.samba\n   max log size = 100\n" + fruit + sections)
 
     def replaced_copies(self) -> list[str]:
         """The names of the copies smb.conf.unos-replaced-<time> in /etc/samba, oldest first."""
@@ -716,19 +935,28 @@ class FakeNas:
     def api_storage(self, method, parts, body, params, upload):
         if parts[:1] == ["pools"] and parts[2:] == ["scrub"]:
             return self.api_scrub(method, parts[1])
+        if parts[:1] == ["pools"] and parts[2:3] == ["balance"]:
+            return self.api_balance(method, parts[1], parts[3:], body)
         if parts == ["disks"] and self.partitions:
-            return [{"name": DISK, "path": f"/dev/{DISK}", "size": 640, "rotational": True, "type": "disk",
-                     "partitions": [{"name": p, "path": f"/dev/{p}", "size": 1} for p in self.partitions]}]
+            return [{"name": DISK, "path": f"/dev/{DISK}", "serial": "W1", "size": 640, "rotational": True, "type": "disk",
+                     "partitions": [{"name": p, "path": f"/dev/{p}", "size": 1} for p in self.partitions],
+                     **self.power()}]
         if parts == ["pools"]:
             return [{"name": "data", "mountpoint": ROOT, "mounted": True, "persistent": True, "read_only": False,
-                     "devices": ["/dev/sda"], "total_size": max(1, self.pool_used), "used_size": self.pool_used}]
+                     "devices": ["/dev/sda"], "total_size": self.pool_used + self.pool_free,
+                     "used_size": self.pool_used}]
         if parts == ["disks"]:
             return [{"name": DISK, "path": f"/dev/{DISK}", "model": "WDC", "serial": "W1", "size": 640, "rotational": True,
-                     "type": "disk", "partitions": [], "is_system": False}]
+                     "type": "disk", "partitions": [], "is_system": False, **self.power()}]
+        if parts[0] == "disks" and parts[2:] == ["spindown"] and method == "PUT":
+            return self.set_spindown(parts[1], body)
         if parts[0] == "disks" and parts[2:] == ["smart"]:
             if parts[1] != DISK:
                 raise Refused(400, f"Not a disk of this system: {parts[1]}")
-            return {"device": f"/dev/{DISK}", "healthy": True, "temperature": 33}
+            self.read_smart()
+            if self.asleep:
+                return {"device": f"/dev/{DISK}", "healthy": None, "power_state": "standby"}
+            return {"device": f"/dev/{DISK}", "healthy": True, "power_state": "active", "temperature": 33}
         if parts[:2] == ["pools", "data"] and parts[2] == "volumes":
             if method == "GET":
                 return [{"name": p.rsplit("/", 1)[1], "pool": "data", "path": p, "quota": None}
@@ -764,15 +992,33 @@ class FakeNas:
         """The Snapshots page's API on the pool's volumes: read-only snapshots in <volume>/.snapshots,
         restores into writable copies restore_<time> right in the volume (ADR-0358)."""
         folder = body["subvolume"] if method == "POST" and parts == [] else params.get("subvolume")
-        if folder is not None and (folder not in self.fs or self.fs[folder].kind != "subvolume"):
+        if folder is not None and folder != ROOT and (folder not in self.fs or self.fs[folder].kind != "subvolume"):
             raise Refused(404, f"Subvolume not found: {folder}")
         if parts == [] and method == "POST":
-            name = body.get("name") or "snap_20261112_100000"
+            # As src/snapshots/router.py names one without a name: snap_<UTC time> of the device's
+            # clock, to the second, so a second one in the same second is refused. The defect
+            # snapshot-other-names names it in another form.
+            stamp = time.strftime("%Y%m%dT%H%M%S" if "snapshot-other-names" in self.bugs else "%Y%m%d_%H%M%S",
+                                  time.gmtime(1_800_000_000 + int(self.seconds)))
+            name = body.get("name") or f"snap_{stamp}"
             path = f"{folder}/.snapshots/{name}"
             if path in self.fs:
                 raise Refused(400, f"Snapshot already exists: {name}")
             self.fs.setdefault(f"{folder}/.snapshots", Node("dir", 0o755))
+            # It holds the subvolume's files and folders as they were, without the subvolumes inside
+            # it (its snapshots and restored copies), as btrfs makes it.
+            inner = [p for p in self.subtree(folder) if p != folder and self.fs[p].kind == "subvolume"]
+            held = {path + p[len(folder):]: copy.copy(self.fs[p]) for p in sorted(self.subtree(folder))
+                    if p != folder and not any(p == q or p.startswith(q + "/") for q in inner)}
+            # The defects version-extra-bytes and version-line-contains-data give the snapshot's copy of
+            # a file other bytes: the file's bytes and more, or a line that only contains its text.
+            for node in held.values():
+                if node.kind == "file" and "version-extra-bytes" in self.bugs:
+                    node.content += "trailing bytes not in the original\n"
+                if node.kind == "file" and "version-line-contains-data" in self.bugs:
+                    node.content = "a copy of " + node.content
             self.fs[path] = Node("subvolume", 0o755)
+            self.fs.update(held)
             return {"id": name, "name": name, "subvolume": folder, "path": path, "created": "2026-11-12T10:00:00+00:00"}
         if parts == [] and method == "GET":
             return [{"id": p.rsplit("/", 1)[1], "name": p.rsplit("/", 1)[1], "subvolume": folder, "path": p,
@@ -809,7 +1055,12 @@ class FakeNas:
             path = f"{folder}/.snapshots/{parts[0]}"
             if path not in self.fs:
                 raise Refused(404, f"Snapshot not found: {parts[0]}")
+            if {"deleted-version-listed", "deleted-version-opens"} & self.bugs:
+                # Gone from the Snapshots page, still where Samba finds it.
+                self.left_to_samba[path] = {p: self.fs[p] for p in self.subtree(path)}
             self.remove(path)
+            if "snapdir-removed" in self.bugs and not [p for p in self.fs if os.path.dirname(p) == f"{folder}/.snapshots"]:
+                del self.fs[f"{folder}/.snapshots"]  # the defect: the last snapshot's Delete takes .snapshots too
             return {"status": "deleted", "id": parts[0]}
         raise AssertionError(f"the fake does not know {method} /snapshots/{'/'.join(parts)}")
 
@@ -826,6 +1077,8 @@ class FakeNas:
     def start_scrub(self) -> None:
         if self.scrub["status"] == "running":
             raise Refused(500, "Scrub start failed: ERROR: Scrub is already running.")
+        if (self.balance or {}).get("status") == "running" and "scrub-beside-balance" not in self.bugs:
+            raise Refused(409, "A balance of pool data runs: wait for its end, or pause or cancel it, then start the scrub")
         self.scrubs += 1
         self.scrub = {"status": "running", "last_run": f"Mon Nov  9 10:{self.scrubs:02d}:00 2026", "errors": 0}
         self.scrub_unrecorded, self.scrub_left = 2, 3
@@ -862,6 +1115,78 @@ class FakeNas:
                     self.scrub = {**self.scrub, "status": "finished", "duration": 19,
                                   "errors": 2 if "scrub-errors" in self.bugs else 0}
         return answer
+
+    BALANCE_EXPECTED = 12
+
+    def balance_answer(self) -> dict:
+        b = self.balance
+        answer = {"pool": "data", "status": "idle", "completed": None, "expected": None, "considered": None,
+                  "seconds_left": None, "result": None, "error": None}
+        if b is None:
+            return {**answer, "result": self.balance_result,
+                    **({"completed": 0, "considered": 4} if self.balance_result == "finished" else {})}
+        left = None
+        if b["status"] == "running" and b["completed"] and "no-time-left" not in self.bugs:
+            left = 2 * (self.BALANCE_EXPECTED - b["completed"])
+        return {**answer, "status": b["status"], "completed": b["completed"], "expected": self.BALANCE_EXPECTED,
+                "considered": b["completed"], "seconds_left": left}
+
+    def ballast_kept(self) -> int:
+        """The check's files on the pool, in the chunks that a balance with a low usage limit moves."""
+        return sum(1 for p, node in self.fs.items()
+                   if node.kind == "file" and LEFTOVER.fullmatch(os.path.basename(os.path.dirname(p)) or ""))
+
+    def api_balance(self, method, name, rest, body):
+        if name != "data":
+            folder = f"/mnt/pools/{name}"
+            if folder in self.fs and "balance-no-mount-check" not in self.bugs:
+                raise Refused(409, f"Pool {name} is not mounted at {folder}")
+            raise Refused(404, f"Pool {name} not found")
+        b = self.balance
+        if b is not None and b["status"] == "pausing" and time.monotonic() >= b["paused_at"]:
+            b["status"] = "paused"  # the chunk was moved
+        if method == "GET":
+            answer = self.balance_answer()
+            if b is not None and b["status"] == "running":  # each request is a moment later
+                b["completed"] += 1
+                if b["completed"] >= self.BALANCE_EXPECTED:
+                    self.balance, self.balance_result = None, "finished"
+            return answer
+        if method == "POST" and rest == []:
+            assert body == {"usage": scenario.BALANCE_USAGE}, body
+            if self.scrub["status"] == "running":
+                raise Refused(409, "A scrub of pool data runs: wait for its end or cancel it, then start the balance")
+            if b is not None and b["status"] == "running":
+                raise Refused(409, "A balance of pool data runs already")
+            if b is not None:
+                raise Refused(409, "A balance of pool data is paused: resume or cancel it")
+            self.balances += 1
+            if not self.ballast_kept():  # no chunk below the limit: it ends at once
+                self.balance_result = "finished"
+                return self.balance_answer()
+            self.balance, self.balance_result = {"status": "running", "completed": 0}, None
+            answer = self.balance_answer()
+            return {**answer, "status": "idle"} if "balance-start-answers-idle" in self.bugs else answer
+        if method == "POST" and rest == ["pause"]:
+            if b is not None and b["status"] == "running" and "pause-keeps-running" not in self.bugs:
+                b["status"], b["paused_at"] = "pausing", time.monotonic() + self.pause_takes
+                if not self.pause_takes:
+                    b["status"] = "paused"
+            return self.balance_answer()
+        if method == "POST" and rest == ["resume"]:
+            if b is None or b["status"] != "paused":
+                raise Refused(409, "No balance of pool data is paused")
+            # btrfs balance resume runs in the unit again, unless resumed some other way.
+            self.balance = {"status": "running", "completed": 0, "unit": "resume-outside-unit" not in self.bugs}
+            return self.balance_answer()
+        if method == "DELETE" and rest == []:
+            if b is not None and b["status"] == "pausing":
+                raise Refused(409, "A pause of the balance of pool data waits for the chunk being moved: cancel the "
+                                   "balance once it is paused")
+            if b is not None and not (b["status"] == "running" and "cancel-keeps-balancing" in self.bugs):
+                self.balance, self.balance_result = None, "cancelled"
+            return self.balance_answer()
+        raise AssertionError(f"the fake does not know {method} /storage/pools/{name}/balance/{'/'.join(rest)}")
 
     def api_scheduler(self, method, parts, body, params, upload):
         if parts == ["tasks"] and method == "GET":
@@ -910,6 +1235,30 @@ class FakeNas:
             return {"status": "deleted"}
         raise Refused(404, "Not Found")
 
+    def api_apps(self, method, parts, body, params, upload):
+        """The App Store's catalog with the hardware profiles that apply on the host (its SoC, with
+        the nodes the profile requires: ADR-0377), and no app installed."""
+        node = self.fs.get(DEVICE_TREE)
+        socs = set(node.content.split("\0")) - {""} if node is not None else set()
+        applies = RK3588_VIDEO["soc"] in socs and all(path in self.fs for path in RK3588_VIDEO["requires"])
+        offered = applies != ("hardware-not-offered" in self.bugs)
+        other = {**RK3588_VIDEO, "id": "rk3568-video", "soc": "rockchip,rk3568"}
+        catalog = [
+            {"id": "plex", "name": "Plex Media Server", "hardware": [other] if "hardware-of-another-soc" in self.bugs else []},
+            {"id": "jellyfin", "name": "Jellyfin", "hardware": [RK3588_VIDEO] if offered else []},
+            {"id": "dozzle", "name": "Dozzle", "hardware": []},
+        ]
+        if method == "GET" and parts == ["catalog"]:
+            return catalog
+        if method == "GET" and parts[:1] == ["catalog"] and len(parts) == 2:
+            found = [app for app in catalog if app["id"] == parts[1]]
+            if not found:
+                raise Refused(404, f"App {parts[1]} not found")
+            return found[0]
+        if method == "GET" and parts == ["installed"]:
+            return []
+        raise Refused(404, "Not Found")
+
     def api_health(self, method, parts, body, params, upload):
         if parts == ["disks"]:
             return {"disks": [self.smart_info()]}
@@ -917,14 +1266,118 @@ class FakeNas:
             if parts[1] != DISK:
                 raise Refused(400, f"Not a disk of this system: {parts[1]}")
             if parts[2:] == ["test"]:
+                self.wake()  # smartctl -t: the disk runs the test
                 return {"status": "started", "message": f"Short test started on /dev/{DISK}"}
             return self.smart_info()
         raise AssertionError(f"the fake does not know {method} /health/{'/'.join(parts)}")
 
     def smart_info(self) -> dict:
+        self.read_smart()
+        if self.asleep:  # smartctl -n standby left it alone: lsblk's model, serial and size
+            return {"device": f"/dev/{DISK}", "model": "WDC", "serial": "W1", "firmware": "Unknown",
+                    "capacity": "596.17 GB", "temperature": None, "power_on_hours": None, "power_cycle_count": None,
+                    "health_status": "STANDBY", "attributes": [], "self_test_status": None, "last_test_result": None}
         return {"device": f"/dev/{DISK}", "model": "WDC", "serial": "W1", "firmware": "1", "capacity": "640 GB",
                 "temperature": 33, "power_on_hours": 51832, "power_cycle_count": 9, "health_status": "PASSED",
                 "attributes": [{"id": 5}, {"id": 9}], "self_test_status": None, "last_test_result": None}
+
+    # --- the disk's power (ADR-0378)
+
+    def power(self) -> dict:
+        """What GET /storage/disks says of the disk's power: hdparm -C, which leaves it asleep and did
+        not restart the dev device's disk's standby timer; with the defect power-read-restarts-timer, a
+        read that does, as smartctl -n standby -i's IDENTIFY did on the dev device's disk."""
+        if "power-read-restarts-timer" in self.bugs and not self.asleep:
+            self.idle = 0
+        return {"power_state": "standby" if self.asleep else "active", "spindown": self.spindown,
+                "spindown_problem": None if self.hdparm else scenario.NO_HDPARM}
+
+    def wake(self) -> None:
+        if self.asleep:
+            self.disk_reads += 1
+        self.asleep, self.idle = False, 0
+
+    def read_smart(self) -> None:
+        """A SMART read: smartctl -n standby leaves a sleeping disk alone; with the defect
+        smart-wakes-disk, it reads the disk as smartctl without -n standby does."""
+        if "smart-wakes-disk" in self.bugs:
+            self.wake()
+
+    def set_spindown(self, name, body):
+        if name == self.system_disk():
+            # The boot SD card, as on the dev device; with the defect system-disk-timeout it takes one.
+            if "system-disk-timeout" not in self.bugs:
+                raise Refused(400, f"{name} is a boot or virtual device: it gets no idle timeout")
+            self.system_spindown = body["minutes"]
+            return {"name": name, "minutes": body["minutes"]}
+        if name != DISK:
+            raise Refused(400, f"{name} is not a disk of this system")
+        if not self.hdparm:
+            raise Refused(409, scenario.NO_HDPARM)
+        minutes = body["minutes"]
+        values = {0: 0, 5: 60, 10: 120, 20: 240, 30: 241, 60: 242, 120: 244, 180: 246, 240: 248, 300: 250}
+        if minutes not in values:
+            raise Refused(422, "minutes must be one of 0, 5, 10, 20, 30, 60, 120, 180, 240, 300")
+        self.wake()  # hdparm -S: the IDLE command spins the disk up
+        self.spindown = minutes
+        # Then smartctl -o off for a timeout when the collection is on, and -o on without one when UNOS
+        # turned it off.
+        warning = None
+        if minutes and self.offline == "on" and "unos-leaves-scans-on" not in self.bugs:
+            self.offline, self.scans_recorded = "off", "scans-off-unrecorded" not in self.bugs
+        elif not minutes and self.scans_recorded:
+            if "scans-stay-off" in self.bugs:
+                warning = (f"/dev/{DISK} has no idle timeout now, but the disk's own automatic offline scans, which "
+                           "UNOS turned off for its timeout, could not be turned on again (smartctl did not answer "
+                           "within 30 seconds): save Off again to try once more")
+            else:
+                self.offline, self.scans_recorded = "on", False
+        record = scenario.SPINDOWN_SCANS_RECORD.format(serial="W1") + "\n" if self.scans_recorded else ""
+        if minutes:
+            self.rules = ("# Written by UNOS\n" 'ACTION=="add", SUBSYSTEM=="block", ENV{DEVTYPE}=="disk", '
+                          f'ENV{{ID_SERIAL_SHORT}}=="W1", RUN+="/sbin/hdparm -S {values[minutes]} $devnode"\n'
+                          + record)
+        elif record:
+            self.rules = "# Written by UNOS\n" + record
+        elif "off-keeps-the-rule" not in self.bugs:
+            self.rules = None
+        return {"name": name, "minutes": minutes, "warning": warning}
+
+    def offline_collection(self, path, wake=False):
+        """REMOTE_OFFLINE: smartctl -c of the disk in the container; -n standby leaves a sleeping disk
+        alone, and -n never (WAKE) wakes it to read it."""
+        self.device_call("offline_collection")
+        assert path == f"/dev/{DISK}", path
+        if self.asleep:
+            if not wake:
+                return "standby"
+            self.wake()
+        return self.offline
+
+    def wait(self, seconds):
+        """Time passes on the device: the disk sleeps once it was idle for its timeout, or for its own
+        minimum when that is longer; a SMART monitor read (smart_monitor_read) of the disk while it is
+        still awake restarts that time."""
+        self.seconds += seconds
+        if "scans-on-again" in self.bugs:
+            self.offline = "on"
+        sleeps_after = max(self.spindown * 60, self.minimum)
+        read = self.smart_monitor_read
+        if read is not None and self.spindown and not self.asleep and self.idle + seconds >= read:
+            self.smart_monitor_read = None
+            if read < sleeps_after:  # still awake then; asleep, smartctl -n standby leaves it alone
+                seconds -= read - self.idle
+                self.idle = 0
+        self.idle += seconds
+        if (self.spindown and self.idle >= sleeps_after
+                and "never-sleeps" not in self.bugs and self.offline != "on"):
+            self.asleep = True
+        elif "never-sleeps" in self.bugs:
+            self.disk_writes += 3
+
+    def disk_io(self, name):
+        self.device_call("disk_io")
+        return (self.disk_reads, self.disk_writes) if name == DISK else None
 
     def api_files(self, method, parts, body, params, upload):
         what = parts[0] if parts else ""
@@ -1130,7 +1583,8 @@ class FakeNas:
                 if (warning := self.unsafe_text(path, "warning")):
                     warnings.append(warning)
             self.shares[name] = {"path": path, "comment": body.get("comment", ""), "access": body.get("access", []),
-                                 "version": 1, "guest_ok": bool(body.get("guest_ok"))}
+                                 "version": 1, "guest_ok": bool(body.get("guest_ok")),
+                                 **{option: bool(body.get(option)) for option in SHARE_OPTIONS if body.get(option)}}
             self.apply()
             return {**self.share_info(name), "warnings": warnings}
         name = parts[1]
@@ -1167,6 +1621,20 @@ class FakeNas:
                 if body["guest_ok"] and not info.get("guest_ok") and "no-guest-warning" not in self.bugs:
                     warnings.append(GUEST_WARNING)
                 info["guest_ok"] = body["guest_ok"]
+            for option in SHARE_OPTIONS:
+                if option in body:
+                    if option == "encryption_required" and body[option] and not info.get(option):
+                        info["encrypted_once"] = True
+                        # A tree connect keeps what it was granted (ADR-0380); the defect
+                        # encryption-keeps-sessions leaves the share's open sessions.
+                        if "encryption-keeps-sessions" not in self.bugs:
+                            self.close_share(name)
+                    # The defect advertise-fails: avahi-daemon cannot be restarted after a change of the
+                    # Time Machine shares, which the answer warns about (service.advertise_warning).
+                    if (option == "time_machine" and bool(body[option]) != bool(info.get(option))
+                            and "advertise-fails" in self.bugs):
+                        warnings.append(ADVERTISE_WARNING)
+                    info[option] = body[option]
             info["version"] += 1
             self.apply()
             return {**self.share_info(name), "warnings": warnings}
@@ -1598,6 +2066,10 @@ class FakeNas:
         self.device_call("read")
         if path == "/etc/samba/smb.conf":
             return self.installed
+        if path == scenario.SPINDOWN_RULES:
+            return self.rules
+        if path == scenario.HDPARM_CONF:
+            return self.hdparm_conf
         node = self.fs.get(path)
         return node.content if node is not None and node.kind == "file" else None
 
@@ -1644,6 +2116,29 @@ class FakeNas:
     def now(self):
         self.device_call("now")
         return 1_800_000_000
+
+    def adisk_shares(self):
+        """Avahi's resolve of smbd's _adisk._tcp service (ADR-0380): the Time Machine shares of the
+        installed smb.conf, printed as REMOTE_ADISK prints them and read by scenario.adisk_names.
+        Defects: adisk-unannounced (smbd never registers the service), adisk-stays (a share stays
+        in it once it was), avahi-unreachable (once no share offers Time Machine, Avahi cannot be
+        asked: busctl fails with another error than Avahi's answer for no such service)."""
+        self.device_call("adisk_shares")
+        names = [name for name in re.findall(r"^\[([^\]]+)\]$", self.installed, re.M)
+                 if (scenario.smb_section(self.installed, name) or {}).get("fruit:time machine") == "yes"]
+        if "adisk-unannounced" in self.bugs:
+            names = []
+        if "adisk-stays" in self.bugs:
+            self.adisk_once = sorted(set(getattr(self, "adisk_once", [])) | set(names))
+            names = self.adisk_once
+        if names:
+            out = "found " + busctl_json("sys=adVF=0x100", *(f"dk{n}=adVN={name},adVF=0x82"
+                                                             for n, name in enumerate(names)))
+        elif "avahi-unreachable" in self.bugs:
+            out = f"none Call failed: {AVAHI_NOT_ON_THE_BUS}"
+        else:
+            out = "none Call failed: Timeout reached"  # Avahi's answer for no such service
+        return scenario.adisk_names(out + "\n")
 
     def quota_limit(self, path):
         self.device_call("quota_limit")
@@ -1696,9 +2191,9 @@ class FakeNas:
             account["password"] = new
         return scenario.SmbPasswordChange(1, SAMR_REFUSAL)
 
-    def smb_session(self, user, password, share):
+    def smb_session(self, user, password, share, protection=""):
         self.device_call("smb_session")
-        return FakeSmbSession(self, user, password, share)
+        return FakeSmbSession(self, user, password, share, protection=protection)
 
     def smb_guest_session(self, share):
         self.device_call("smb_guest_session")
@@ -1831,6 +2326,29 @@ class FakeNas:
             self.copies = [n for n in self.copies if n not in names]
         return sorted(self.copies)
 
+    def ballast(self, action, path, files=0, mib=0, keep=1):
+        """REMOTE_BALLAST: the check's folder on the pool, with every KEEP-th of FILES files."""
+        self.device_call("ballast")
+        assert re.fullmatch(rf"{ROOT}/unoscheck[0-9a-f]{{6}}", path), path
+        if action == "make":
+            if path in self.fs:
+                raise scenario.Failed(f"the device answered status 1: mkdir: {path}: File exists")
+            self.fs[path] = Node("dir", 0o700)
+            for i in range(keep, files + 1, keep):
+                self.fs[f"{path}/{i}"] = Node("file", 0o644, content=f"{mib} MiB")
+            return f"kept {self.ballast_kept()}"
+        assert action == "remove", action
+        self.remove(path)
+        return "removed"
+
+    def balance_unit(self, pool):
+        """systemctl is-active unos-balance-<pool>: active while the balance's btrfs runs in it."""
+        self.device_call("balance_unit")
+        assert pool == "data", pool
+        b = self.balance or {}
+        runs = b.get("status") == "running" and b.get("unit", True)
+        return "active" if runs and "balance-in-container" not in self.bugs else "inactive"
+
     def restart_supervisor(self):
         """docker restart unos-supervisor: the copy's problem goes with the process, and the API
         answers before the startup reconcile has applied (reconcile)."""
@@ -1849,13 +2367,19 @@ def nas():
 
 @pytest.fixture(autouse=True)
 def _checks_without_pauses(monkeypatch):
-    """The scrub check asks btrfs every SCRUB_POLL seconds, for up to SCRUB_WAIT seconds, and the
+    """The scrub check asks btrfs every SCRUB_POLL seconds, for up to SCRUB_WAIT seconds, the
     shares check asks for the end of a repair every REPAIR_POLL seconds, for up to REPAIR_WAIT
-    seconds: the fake's scrubs are recorded and end after a few requests, its repairs after one."""
+    seconds, and the smb check resolves the _adisk._tcp service every ADISK_POLL seconds, for up to
+    ADISK_WAIT seconds: the fake's scrubs are recorded and end after a few requests, its repairs
+    after one, and its service follows smb.conf at once."""
     monkeypatch.setattr(scenario, "SCRUB_POLL", 0)
     monkeypatch.setattr(scenario, "SCRUB_WAIT", 2)
     monkeypatch.setattr(scenario, "REPAIR_POLL", 0)
     monkeypatch.setattr(scenario, "REPAIR_WAIT", 2)
+    monkeypatch.setattr(scenario, "BALANCE_POLL", 0)
+    monkeypatch.setattr(scenario, "BALANCE_WAIT", 2)
+    monkeypatch.setattr(scenario, "ADISK_POLL", 0)
+    monkeypatch.setattr(scenario, "ADISK_WAIT", 0.2)
 
 
 def run_check(area: str, nas: FakeNas, **kw) -> tuple[int, str]:
@@ -1915,6 +2439,167 @@ def test_the_smb_check_covers_the_flows_of_slice_2(nas):
     levels = [tuple(a["level"] for a in body["access"]) for method, path, body, _ in nas.calls
               if method == "PATCH" and body and "access" in body]
     assert levels == [("read",), (), ("write",)]
+
+
+def test_the_smb_check_shows_the_protocol_options_of_its_share(nas):
+    """shares.per-share-protocol-options (ADR-0380), on a share of a folder in a new volume:
+    before the volume's first snapshot allinfo shows what smbd answers for a volume without
+    .snapshots, which the step records; Previous Versions list the two snapshots that the check
+    makes of the volume a second apart, after which it overwrites the file, only the second once the
+    first is deleted, whose version of the file opens with exactly the bytes from before the
+    overwrite (sha256sum of the copy that smbclient wrote), and once both are deleted neither opens
+    while the session goes on, and the list is empty, which Samba 4.22's smbclient reports as
+    NT_STATUS_INVALID_NETWORK_RESPONSE; encryption required refuses an SMB 2.1 client and serves
+    one that encrypts; Time Machine's lines; each option off again, then the share and the volume
+    deleted."""
+    status, output = run_check("smb", nas)
+    assert status == 0, output
+    text = "\n".join(step_lines(output))
+    for words in ("shadow:mountpoint = /mnt/pools/data/unoscheck1a2b3cv)",
+                  "(any answer passes): the volume has no .snapshots, and allinfo v.txt answered "
+                  "NT_STATUS_INVALID_DEVICE_REQUEST getting shadow copy data for \\v.txt",
+                  ": @GMT-2027.01.15-08.00.00 and @GMT-2027.01.15-08.00.01; afterwards v.txt in them answered "
+                  "NT_STATUS_OBJECT_NAME_NOT_FOUND and NT_STATUS_OBJECT_NAME_NOT_FOUND, and allinfo's empty list "
+                  "NT_STATUS_INVALID_NETWORK_RESPONSE",
+                  "with encryption required the share's section says so and testparm takes smb.conf",
+                  "the SMB 2.1 client still opens unoscheck1a2b3c,", ": NT_STATUS_ACCESS_DENIED",
+                  "with Time Machine too", ": _adisk._tcp named unoscheck1a2b3cv",
+                  "Delete of the share unoscheck1a2b3cv"):
+        assert words in text, words
+    # Both snapshots are made with the names the Snapshots page gives (no name of the check's own),
+    # the second a second after the first, as the page names them to the second.
+    made = [body for method, path, body, _ in nas.calls if method == "POST" and path == "/snapshots/"]
+    assert made == [{"subvolume": "/mnt/pools/data/unoscheck1a2b3cv"}] * 2
+    # Over SMB: the file written and its list of shadow copies before the first snapshot, the file
+    # overwritten after the snapshots (the fake's snapshots hold the first bytes), the listings, the
+    # open of the file in the snapshot left and the digest of the copy that smbclient wrote, the
+    # opens in the deleted ones and after them a plain ls in the same session; then the encryption
+    # step's sessions.
+    first, second = "@GMT-2027.01.15-08.00.00", "@GMT-2027.01.15-08.00.01"
+    assert [line for share, line in nas.smb_lines if share == "unoscheck1a2b3cv"][:11] == [
+        "put data.txt v.txt", "allinfo v.txt", "put data2.txt v.txt", "allinfo v.txt", "allinfo v.txt",
+        f"get {second}/v.txt kept.txt", "!sha256sum kept.txt", "allinfo v.txt", f"get {first}/v.txt gone.txt",
+        f"get {second}/v.txt gone.txt", "ls"]
+    created = [body for method, path, body, _ in nas.calls if method == "POST" and path == "/shares/smb"]
+    assert [(b["name"], b["path"], b.get("previous_versions")) for b in created][-1] == (
+        "unoscheck1a2b3cv", "/mnt/pools/data/unoscheck1a2b3cv/files", True)
+    patched = [{k: v for k, v in body.items() if k in SHARE_OPTIONS} for method, path, body, _ in nas.calls
+               if method == "PATCH" and body and set(body) & set(SHARE_OPTIONS)]
+    assert patched == [{"encryption_required": True}, {"encryption_required": False},
+                       {"time_machine": True}, {"time_machine": False, "previous_versions": False}]
+    snapshots = [(method, path, params) for method, path, _, params in nas.calls if path.startswith("/snapshots")]
+    volume = {"subvolume": "/mnt/pools/data/unoscheck1a2b3cv"}
+    # The step's Deletes, then the clean-up's list of the volume's snapshots, which finds none.
+    assert snapshots == [("POST", "/snapshots/", {}), ("POST", "/snapshots/", {}),
+                         ("DELETE", "/snapshots/snap_20270115_080000", volume),
+                         ("DELETE", "/snapshots/snap_20270115_080001", volume), ("GET", "/snapshots/", volume)]
+
+
+def test_the_smb_check_takes_an_empty_list_of_previous_versions_without_an_error(nas):
+    """An smbclient that takes smbd's 14-byte answer for no snapshot prints no error for the empty
+    list: the check takes that too."""
+    nas.smbclient_takes_an_empty_list = True
+    status, output = run_check("smb", nas)
+    assert status == 0, output
+    assert "and allinfo's empty list no error" in "\n".join(step_lines(output))
+
+
+@pytest.mark.parametrize("answer, recorded", [
+    ("NT_STATUS_INVALID_DEVICE_REQUEST", "NT_STATUS_INVALID_DEVICE_REQUEST getting shadow copy data for \\v.txt"),
+    ("NT_STATUS_INVALID_NETWORK_RESPONSE", "NT_STATUS_INVALID_NETWORK_RESPONSE getting shadow copy data for \\v.txt"),
+    ("NT_STATUS_UNSUCCESSFUL", "NT_STATUS_UNSUCCESSFUL getting shadow copy data for \\v.txt"),
+    (None, "no error and no shadow copy"),
+])
+def test_the_smb_check_records_what_smbd_answers_for_a_volume_without_snapshots(nas, answer, recorded):
+    """What smbd answers for the shadow copies of a volume without .snapshots (a new one before its
+    first snapshot) has not been seen on the device: the step that makes the share records
+    allinfo's line for them, and passes with any answer or none."""
+    nas.no_snapdir_status = answer
+    status, output = run_check("smb", nas)
+    assert status == 0, output
+    found = [line for line in step_lines(output) if "(any answer passes)" in line]
+    assert len(found) == 1 and found[0].startswith("PASS"), output
+    assert f"(any answer passes): the volume has no .snapshots, and allinfo v.txt answered {recorded}  [" in found[0]
+
+
+@pytest.mark.parametrize("answer", ["NT_STATUS_INVALID_NETWORK_RESPONSE", None])
+def test_the_smb_check_sees_snapshots_deleted_with_the_last_snapshot_whatever_smbd_answers(nas, answer):
+    """A .snapshots deleted with the volume's last snapshot fails the step also where smbd's answer for a
+    volume without .snapshots (not seen on the device yet) looks like an empty list: the step sees the
+    folder itself."""
+    nas.no_snapdir_status = answer
+    nas.bugs.add("snapdir-removed")
+    before = nas.snapshot()
+    status, output = run_check("smb", nas)
+    assert status == 1, output
+    failed = [line for line in step_lines(output) if line.startswith("FAIL  ")]
+    assert len(failed) == 1 and "after both Deletes the volume has no .snapshots" in failed[0], output
+    assert nas.snapshot() == before, output
+
+
+@pytest.mark.parametrize("output, digests", [
+    (f"{digest(scenario.DATA)}  kept.txt", [digest(scenario.DATA)]),
+    # The line of the get, which ends without a line break when smbclient prints no rate, and its
+    # prompt (removed by SmbSession.run) put the digest in the middle of a line.
+    (f"getting file \\@GMT-2027.01.15-08.00.01\\v.txt of size 20 as kept.txt {digest(scenario.DATA)}  kept.txt",
+     [digest(scenario.DATA)]),
+    (f"{digest(scenario.DATA)} *kept.txt", [digest(scenario.DATA)]),
+    ("sha256sum: kept.txt: No such file or directory", []),
+    (f"{digest(scenario.DATA)}  other.txt", []),
+    (f"{digest(scenario.DATA)}  kept.txt.old", []),
+    (f"0{digest(scenario.DATA)}  kept.txt", []),
+    (f"{digest(scenario.DATA)}  kept.txt\n{digest(scenario.DATA2)}  kept.txt", [digest(scenario.DATA), digest(scenario.DATA2)]),
+])
+def test_the_digest_of_a_version_is_read_wherever_smbclient_puts_it(output, digests):
+    assert scenario.sha256_digests(output, "kept.txt") == digests
+
+
+@pytest.mark.parametrize("output, ended, refused", [
+    ("NT_STATUS_OBJECT_NAME_NOT_FOUND opening remote file \\@GMT-2027.01.15-08.00.00\\v.txt", False, True),
+    ("NT_STATUS_OBJECT_PATH_NOT_FOUND opening remote file \\@GMT-2027.01.15-08.00.00\\v.txt", False, True),
+    # The connection, the session or the tree connect broke: no answer of smbd to the open.
+    ("NT_STATUS_CONNECTION_DISCONNECTED opening remote file \\@GMT-2027.01.15-08.00.00\\v.txt", False, False),
+    ("NT_STATUS_CONNECTION_RESET opening remote file \\v.txt", False, False),
+    ("NT_STATUS_IO_TIMEOUT opening remote file \\v.txt", False, False),
+    ("NT_STATUS_NETWORK_NAME_DELETED opening remote file \\v.txt", False, False),
+    ("NT_STATUS_USER_SESSION_DELETED opening remote file \\v.txt", False, False),
+    ("NT_STATUS_PIPE_BROKEN opening remote file \\v.txt", False, False),
+    ("NT_STATUS_OBJECT_NAME_NOT_FOUND opening remote file \\v.txt\nNT_STATUS_CONNECTION_DISCONNECTED", False, False),
+    # smbclient ended, or opened the file.
+    ("NT_STATUS_OBJECT_NAME_NOT_FOUND opening remote file \\v.txt", True, False),
+    ("getting file \\@GMT-2027.01.15-08.00.00\\v.txt of size 20 as gone.txt", False, False),
+])
+def test_an_open_counts_as_refused_only_for_an_answer_of_smbd(output, ended, refused):
+    """The opens of a file in deleted snapshots must be refused by smbd: a status that says the
+    connection, the session or the tree connect broke is no refusal, nor is smbclient's end."""
+    assert scenario.refused_open(scenario.SmbResult(False, output, ended)) is refused
+
+
+def test_the_smb_check_needs_its_session_after_the_opens_in_deleted_snapshots(nas, monkeypatch):
+    """A broken session whose status TRANSPORT_STATUSES does not name still fails the step: after the
+    opens in the deleted snapshots, a plain ls in the same session must list the file."""
+    monkeypatch.setattr(scenario, "TRANSPORT_STATUSES", frozenset())
+    nas.bugs.add("missing-version-drops-session")
+    before = nas.snapshot()
+    status, output = run_check("smb", nas)
+    assert status == 1, output
+    failed = [line for line in step_lines(output) if line.startswith("FAIL  ")]
+    assert len(failed) == 1 and ("after the opens in the deleted snapshots ls in the same session answered "
+                                 "NT_STATUS_CONNECTION_DISCONNECTED") in failed[0], output
+    assert nas.snapshot() == before, output
+
+
+def test_the_smb_check_lets_a_second_pass_between_its_two_snapshots(nas, monkeypatch):
+    """The Snapshots page names a snapshot to the second (snap_<UTC time>) and refuses a second one of
+    the same name: the check lets a second pass on the device between its two snapshots, and without
+    that wait the second is refused, which fails the step and leaves no snapshot."""
+    monkeypatch.setattr(FakeNas, "wait", lambda self, seconds: None)
+    before = nas.snapshot()
+    status, output = run_check("smb", nas)
+    assert status == 1, output
+    failed = [line for line in step_lines(output) if line.startswith("FAIL  ")]
+    assert len(failed) == 1 and "Snapshot already exists: snap_20270115_080000" in failed[0], output
+    assert nas.snapshot() == before, output
 
 
 def test_the_smb_check_renames_its_user_and_goes_on_under_the_new_name(nas):
@@ -2126,6 +2811,7 @@ def test_the_shares_check_expects_unos_s_texts():
 
     assert service.GUEST_WARNING == GUEST_WARNING and GUEST_WARNING.startswith(scenario.GUEST_WARNS)
     assert service.PERMISSIONS_WARNING == PERMISSIONS_WARNING
+    assert service.advertise_warning("Unit avahi-daemon.service not found.") == ADVERTISE_WARNING
     assert constants.smb_password_problem("a" * 7) == scenario.SMB_TOO_SHORT
     assert constants.smb_password_problem("unos\tscenario\tcheck") == scenario.SMB_CONTROL
     assert schemas.MAX_PASSWORD_BYTES == scenario.UNOS_PASSWORD_BYTES
@@ -2406,6 +3092,63 @@ def test_a_check_refuses_to_start_beside_leftovers_of_an_earlier_one(nas, area):
     assert not [c for c in nas.calls if c[0] != "GET"]
 
 
+def test_the_hardware_check_reads_the_soc_the_catalog_and_the_nodes_jellyfin_gets(nas):
+    """ADR-0377: on the BPI-W3 the App Store offers Jellyfin the RK3588's video hardware, and the
+    host has the nodes that its container gets; the check installs nothing (no image pull,
+    ADR-0211)."""
+    status, output = run_check("hardware", nas)
+    assert status == 0, output
+    text = "\n".join(step_lines(output))
+    assert "the host's device tree names its SoC: rockchip,rk3588-armsom-w3, rockchip,rk3588" in text
+    assert ("the App Store offers Jellyfin the RK3588's video hardware exactly on an RK3588 with Rockchip MPP: "
+            "rk3588-video") in text
+    assert "the App Store offers each app only the hardware of this SoC: jellyfin" in text
+    assert ("the host has the device nodes of the RK3588's video hardware: /dev/dri 755 root:root, /dev/dma_heap "
+            "755 root:root, /dev/mpp_service 600 root:root, /dev/rga 600 root:root, /dev/mali0 600 root:root") in text
+    assert {method for method, *_ in nas.calls} == {"GET"}
+    assert {path for _, path, *_ in nas.calls} == {"/apps/installed", "/apps/catalog/jellyfin", "/apps/catalog"}
+
+
+def test_off_an_rk3588_the_hardware_check_finds_no_hardware_offered(nas):
+    del nas.fs[DEVICE_TREE]
+
+    status, output = run_check("hardware", nas)
+
+    assert status == 0, output
+    text = "\n".join(step_lines(output))
+    assert "the host's device tree names its SoC: no device tree" in text
+    assert "the App Store offers Jellyfin the RK3588's video hardware exactly on an RK3588 with Rockchip MPP: none" in text
+    assert re.search(r"^SKIP  \d+\. the host has the device nodes of the RK3588's video hardware: the host is no "
+                     r"RK3588", output, re.M), output
+
+
+@pytest.mark.parametrize("node", ["/dev/mpp_service", "/dev/dma_heap", "/dev/dri"])
+def test_an_rk3588_without_a_node_that_rkmpp_needs_fails_the_hardware_check(nas, node):
+    # As under the mainline kernel, which has no Rockchip MPP: the install would pass no codecs.
+    del nas.fs[node]
+
+    status, output = run_check("hardware", nas)
+
+    assert status == 1, output
+    failed = [line for line in step_lines(output) if line.startswith("FAIL  ")]
+    assert len(failed) == 1 and f"the host lacks {node}, which Rockchip MPP needs" in failed[0], output
+
+
+def test_on_an_rk3588_without_rockchip_mpp_the_app_store_offers_no_hardware(nas):
+    # The mainline kernel has no /dev/mpp_service: the App Store offers nothing, which the check
+    # takes as right, and fails only for the node the device lacks.
+    del nas.fs["/dev/mpp_service"]
+
+    status, output = run_check("hardware", nas)
+
+    assert status == 1, output
+    text = "\n".join(step_lines(output))
+    assert ("PASS  2. the App Store offers Jellyfin the RK3588's video hardware exactly on an RK3588 with Rockchip "
+            "MPP: none") in text
+    assert ("FAIL  4. the host has the device nodes of the RK3588's video hardware: the host lacks /dev/mpp_service"
+            in text), output
+
+
 def test_the_scrub_check_covers_storage_scrub_and_the_start_through_one_helper(nas):
     """ADR-0314: the steps of storage.scrub and storage.scrub-needs-mounted-pool that were checked by
     hand on 2026-11-09, with Start Scrub's answer of ADR-0313."""
@@ -2422,6 +3165,91 @@ def test_the_scrub_check_covers_storage_scrub_and_the_start_through_one_helper(n
         assert words in text, words
     assert nas.scrubs == 3 and [r["output"] or r["error"] for r in nas.runs] == [
         "Pool unoscheck1a2b3c is not mounted at /mnt/pools/unoscheck1a2b3c", "Scrub started"]
+
+
+def test_the_balance_check_starts_pauses_resumes_and_cancels_a_balance_with_a_low_usage_limit(nas):
+    """ADR-0379: the steps of storage.pool-balance on the fake NAS, whose balance moves the check's
+    chunks one at each request."""
+    status, output = run_check("balance", nas)
+    assert status == 0, output
+    for words in ("'Pool unoscheck1a2b3c is not mounted at /mnt/pools/unoscheck1a2b3c'", "kept 12 files",
+                  "with the usage limit of 20% answers running", "running, then running, the unit active",
+                  "'A balance of pool data runs: wait for its end, or pause or cancel it, then start the scrub'; "
+                  "'A balance of pool data runs already'", "s left", "paused, then paused", "the unit inactive",
+                  "running, the unit active", "idle, then idle, cancelled"):
+        assert words in output, (words, output)
+    assert nas.balances == 1 and nas.balance is None and nas.balance_result == "cancelled"
+    assert not nas.ballast_kept()
+
+
+def test_the_balance_check_s_clean_up_cancels_a_balance_whose_pause_outlasts_its_step(nas, monkeypatch):
+    """A pause waits for the chunk being moved, and the supervisor refuses a cancel meanwhile (409),
+    since the kernel would pause the balance all the same: the clean-up waits for the pause, then
+    cancels the paused balance, and the device is as it was."""
+    monkeypatch.setattr(scenario, "BALANCE_WAIT", 0.5)
+    nas.pause_takes = 0.75
+    before = nas.snapshot()
+    status, output = run_check("balance", nas)
+    assert status == 1, output
+    failed = [line for line in step_lines(output) if line.startswith("FAIL  ")]
+    assert len(failed) == 1 and "Pause Balance pauses it" in failed[0] and "the balance is pausing" in failed[0], output
+    assert nas.balance is None and nas.balance_result == "cancelled", output
+    assert nas.snapshot() == before, output
+
+
+@pytest.mark.parametrize("found, why", [
+    ("paused", "a balance of data is paused: wait for its end, or cancel it"),
+    ("scrub", "a scrub of data runs: wait for its end, or cancel it"),
+    ("full", "20.0 GiB free, and the check needs 24 GiB"),
+])
+def test_the_balance_check_does_not_start_beside_a_balance_or_a_scrub_or_without_room(nas, found, why):
+    if found == "paused":
+        nas.balance = {"status": "paused", "completed": 3}
+    elif found == "scrub":
+        nas.start_scrub()
+    else:
+        nas.pool_free = 20 * scenario.GIB
+    before = nas.snapshot()
+    status, output = run_check("balance", nas)
+    assert status == 1
+    assert re.search(rf"^FAIL  1\. .*: {re.escape(why)}", output, re.M), output
+    assert nas.snapshot() == before and not [c for c in nas.calls if c[0] != "GET"]
+
+
+@pytest.mark.parametrize("args, code", [
+    (["make", "/elsewhere/unoscheck1a2b3c", "16", "1", "8"], 2),
+    (["make", "{base}/data", "16", "1", "8"], 2),
+    (["make", "{base}/data/unoscheckxyz123", "16", "1", "8"], 2),
+    (["make", "{base}/data/unoscheck1a2b3c/x", "16", "1", "8"], 2),
+    (["make", "{base}/data/../unoscheck1a2b3c", "16", "1", "8"], 2),
+    (["remove", "{base}/data", "0", "0", "1"], 2),
+    (["make", "{base}/data/unoscheck1a2b3c", "16", "1", "8"], 0),
+])
+def test_the_ballast_helper_makes_only_a_check_s_folder_of_the_pool_and_removes_it(tmp_path, args, code):
+    """REMOTE_BALLAST (ADR-0379) with a stand-in fallocate and sync: every 8th of 16 files stays."""
+    base = tmp_path / "pools"
+    (base / "data" / "kept").mkdir(parents=True)
+    stubs = tmp_path / "bin"
+    stubs.mkdir()
+    (stubs / "fallocate").write_text('#!/usr/bin/env bash\n[ "$1 $3" = "-l --" ] && : > "$4"\n')
+    (stubs / "sync").write_text('#!/usr/bin/env bash\n[ "$1 $2" = "-f --" ]\n')
+    for stub in ("fallocate", "sync"):
+        (stubs / stub).chmod(0o755)
+    env = {"PATH": f"{stubs}:/usr/bin:/bin", "UNOS_DEV_POOLS": str(base)}
+    argv = [a.format(base=base) for a in args]
+    made = subprocess.run(["bash", "-s", "--", *argv], input=scenario.REMOTE_BALLAST, env=env,
+                          capture_output=True, text=True)
+    assert made.returncode == code, made.stderr
+    folder = base / "data" / "unoscheck1a2b3c"
+    if code:
+        assert sorted(p.name for p in (base / "data").iterdir()) == ["kept"] and not (tmp_path / "unoscheck1a2b3c").exists()
+        return
+    assert made.stdout == "kept 2\n"
+    assert sorted(p.name for p in folder.iterdir()) == ["16", "8"]
+    removed = subprocess.run(["bash", "-s", "--", "remove", str(folder)], input=scenario.REMOTE_BALLAST, env=env,
+                             capture_output=True, text=True)
+    assert (removed.returncode, removed.stdout) == (0, "removed\n"), removed.stderr
+    assert sorted(p.name for p in (base / "data").iterdir()) == ["kept"]
 
 
 def test_on_a_pool_with_much_data_the_scrub_check_cancels_its_scrubs(nas):
@@ -2521,6 +3349,32 @@ def test_the_pool_folder_helper_removes_only_an_empty_folder_that_is_no_mount_po
     ("smb", "rename-keeps-session", "renaming the user to unoscheck1a2b3cr with a new password ends its open session"),
     ("smb", "rename-new-uid", "keeps its uid under the new name"),
     ("smb", "rename-drops-access", "the share's access follows the new name"),
+    ("hardware", "hardware-not-offered", "the App Store offers Jellyfin the RK3588's video hardware"),
+    ("hardware", "hardware-of-another-soc", "the App Store offers each app only the hardware of this SoC"),
+    ("smb", "encryption-not-required", "with encryption required the share's section says so"),
+    ("smb", "encryption-stays", "with the option off the section has smb encrypt = required"),
+    ("smb", "snapshots-unlisted", "allinfo v.txt answered NT_STATUS_INVALID_NETWORK_RESPONSE without "
+                                  "@GMT-2027.01.15-08.00.00 and @GMT-2027.01.15-08.00.01"),
+    ("smb", "deleted-version-listed", "after the Delete of snap_20270115_080000 allinfo v.txt answered no error"),
+    ("smb", "deleted-version-opens", "afterwards v.txt in @GMT-2027.01.15-08.00.00 answered no error"),
+    ("smb", "snapdir-removed", "afterwards allinfo v.txt answered NT_STATUS_INVALID_DEVICE_REQUEST"),
+    ("smb", "version-opens-live-file", "v.txt in @GMT-2027.01.15-08.00.01 answered no error, with the bytes put "
+                                       "after the snapshots"),
+    ("smb", "version-extra-bytes", "v.txt in @GMT-2027.01.15-08.00.01 answered no error, with other bytes than "
+                                   "before the overwrite"),
+    ("smb", "version-line-contains-data", "v.txt in @GMT-2027.01.15-08.00.01 answered no error, with other bytes "
+                                          "than before the overwrite"),
+    ("smb", "missing-version-drops-session", "afterwards v.txt in @GMT-2027.01.15-08.00.00 answered "
+                                             "NT_STATUS_CONNECTION_DISCONNECTED, which says the session broke"),
+    ("smb", "fruit-without-global", "[global] has fruit:aapl = None, fruit:nfs_aces = None"),
+    ("smb", "advertise-fails", "turning Time Machine on warns: avahi-daemon could not be restarted"),
+    ("smb", "adisk-unannounced", "Avahi does not resolve unoscheck1a2b3cv in the device's _adisk._tcp service"),
+    ("smb", "adisk-stays", "Avahi still resolves unoscheck1a2b3cv in the device's _adisk._tcp service"),
+    ("smb", "avahi-unreachable", f"Avahi could not be asked for the device's _adisk._tcp service: Call failed: "
+                                 f"{AVAHI_NOT_ON_THE_BUS}"),
+    ("smb", "encryption-keeps-sessions", "the open session of the SMB 2.1 client still lists the share"),
+    ("smb", "encryption-everywhere", "the SMB 2.1 client answered NT_STATUS_ACCESS_DENIED on unoscheck1a2b3c,"),
+    ("smb", "snapshot-other-names", "the Snapshots page named the snapshot 'snap_20270115T080000'"),
     ("files", "volume-deletable", "refused with 409"),
     ("files", "upload-mode", "644 root:root"),
     ("volumes", "volume-delete-ignores-shares", "names the share"),
@@ -2537,6 +3391,14 @@ def test_the_pool_folder_helper_removes_only_an_empty_folder_that_is_no_mount_po
     ("scrub", "scrub-errors", "it found 2 errors"),
     ("scrub", "cancel-keeps-running", "the scrub ended finished"),
     ("scrub", "runs-go-with-the-task", "its run is gone"),
+    ("balance", "balance-no-mount-check", "is refused with 409"),
+    ("balance", "balance-in-container", "btrfs runs it in the host's unit unos-balance-data"),
+    ("balance", "scrub-beside-balance", "a scrub of data and a second balance are refused with 409"),
+    ("balance", "no-time-left", "shows the chunks balanced growing, and the time left"),
+    ("balance", "pause-keeps-running", "Pause Balance pauses it"),
+    ("balance", "balance-start-answers-idle", "with the usage limit of 20% answers running"),
+    ("balance", "resume-outside-unit", "Resume Balance runs it again in the unit unos-balance-data"),
+    ("balance", "cancel-keeps-balancing", "Cancel Balance ends it"),
     ("offsite", "offsite-check-fails", "the copy failed at check"),
     ("offsite", "offsite-restore-differs", "the restored files hold other bytes"),
     ("offsite", "log-offsite-password", "no password of the check"),
@@ -2901,6 +3763,395 @@ def test_the_smart_check_refuses_what_is_not_a_disk_and_starts_a_short_test(nas)
     assert f"/health/disk/{DISK}1" not in paths and "(no listed disk has a partition)" in output
     assert ("POST", f"/health/disk/{DISK}/test", None, {"test_type": "short"}) in nas.calls
     assert "sda: PASSED, 33 C, 2 attributes" in output
+
+
+# --- the smart check's idle timeout (storage.disk-spindown, ADR-0378) ----------------------------
+
+
+# The dev device's WD6400AACS sleeps after about 10 minutes when given 5 (a minimum of its own,
+# ADR-0378); a disk without one sleeps at the first read after the timeout.
+@pytest.mark.parametrize("minimum, after", [(600, 660), (0, 330)])
+def test_the_smart_check_gives_the_disk_the_shortest_timeout_and_reads_smart_while_it_sleeps(nas, minimum, after):
+    nas.minimum = minimum
+    status, output = run_check("smart", nas)
+    assert status == 0, output
+    text = "\n".join(step_lines(output))
+    for words in ("the check reads sda's own automatic offline data collection, a surface scan every few hours "
+                  "during which the disk does not sleep: on",
+                  "sda gets the shortest idle timeout, 5 minutes: hdparm -S 60 in UNOS's udev rule (serial W1)",
+                  "sda's automatic offline data collection is off while it has the timeout: UNOS turned it off, and "
+                  "its udev rule records that",
+                  f"sda sleeps once the timeout ran out: the Storage page says standby after {after} s (the "
+                  "timeout: 300 s)",
+                  "its SMART data on Storage and on Disk Health leaves sda asleep: STANDBY, and its reads and writes "
+                  "stay at (1000, 500)",
+                  # ATA reads no standby timer back: Off is what the check can say it left.
+                  "sda has no idle timeout again: no line in UNOS's udev rule, and no standby timer (hdparm -S 0) "
+                  "until its next power cycle, and its automatic offline data collection is as the check found it "
+                  "(on)"):
+        assert words in text, words
+    puts = [(path, body) for method, path, body, _ in nas.calls if method == "PUT" and DISK in path]
+    assert puts[:2] == [("/storage/disks/sda/spindown", {"minutes": 5}), ("/storage/disks/sda/spindown", {"minutes": 0})]
+    # Before the self-test, which keeps the disk busy.
+    assert text.index("sleeps once the timeout ran out") < text.index("a short self-test starts on sda")
+    assert (nas.spindown, nas.rules, nas.offline, nas.scans_recorded) == (0, None, "on", False)
+    # The clean-up sets the timeout as found once more, then reads the offline data collection it left.
+    assert re.search(r"^done  clean up: the idle timeout of sda off again  \[SD .*\n"
+                     r"done  clean up: sda's automatic offline data collection on, as the check found it  \[SD ",
+                     output, re.M), output
+
+
+# force_spindown_time is spindown_time for a disk without APM, which Debian's hdparm applies only with APM.
+@pytest.mark.parametrize("line", ["spindown_time = 241", "  spindown_time=24", "force_spindown_time = 120",
+                                  "command_line = hdparm -S 120 /dev/sda"])
+def test_the_smart_check_leaves_a_standby_timer_of_hdparm_conf_alone(nas, line):
+    # udev's 85-hdparm rule applies it at boot, and no command reads it back: the check's Off
+    # (hdparm -S 0) would clear it until the disk's next power cycle.
+    nas.hdparm_conf = f"#quiet\n/dev/disk/by-id/ata-WDC_W1 {{\n{line}\n}}\n"
+    status, output = run_check("smart", nas)
+    assert status == 0, output
+    skipped = [line for line in step_lines(output) if line.startswith("SKIP")]
+    assert len(skipped) == 6, output
+    why = (f": {scenario.HDPARM_CONF} sets a standby timer ({line.strip()!r}), which no command reads back: the "
+           "check's Off at its end (hdparm -S 0) would clear it until the disk's next power cycle")
+    assert all(why in skipped_line for skipped_line in skipped), skipped
+    assert not [call for call in nas.calls if call[0] == "PUT" and DISK in call[1]]
+
+
+def test_with_a_timeout_of_unos_the_smart_check_takes_hdparm_conf_for_what_udev_overrides(nas):
+    # UNOS's rule (90-) runs after Debian's (85-hdparm) at boot, and the check sets its timeout again.
+    nas.set_spindown(DISK, {"minutes": 20})
+    nas.hdparm_conf = "/dev/sda {\n\tspindown_time = 241\n}\n"
+    status, output = run_check("smart", nas)
+    assert status == 0, output
+    assert "sda's idle timeout is 20 minutes again, as the check found it" in output
+
+
+def test_without_hdparm_the_smart_check_skips_the_idle_timeout_with_the_reason(nas):
+    nas.hdparm = False
+    status, output = run_check("smart", nas)
+    assert status == 0, output
+    skipped = [line for line in step_lines(output) if line.startswith("SKIP")]
+    assert len(skipped) == 6, output
+    assert all(f": {scenario.NO_HDPARM} (installing a package is an owner action)" in line for line in skipped)
+    assert not [call for call in nas.calls if call[0] == "PUT" and DISK in call[1]]
+
+
+def test_the_smart_check_fails_a_smart_read_that_wakes_the_disk_and_restores_the_timeout(nas):
+    nas.bugs.add("smart-wakes-disk")
+    status, output = run_check("smart", nas)
+    assert status == 1, output
+    assert re.search(r"^FAIL  \d+\. its SMART data on Storage and on Disk Health leaves sda asleep: Storage's SMART "
+                     r"data: power active, healthy True", output, re.M), output
+    assert "done  clean up: the idle timeout of sda off again" in output
+    assert (nas.spindown, nas.rules) == (0, None)
+
+
+def test_the_smart_check_fails_an_off_that_keeps_the_udev_rule(nas):
+    nas.bugs.add("off-keeps-the-rule")
+    status, output = run_check("smart", nas)
+    assert status == 1, output
+    assert re.search(r"^FAIL  \d+\. the device is as the check found it: UNOS's udev rule: None before", output,
+                     re.M), output
+
+
+def test_a_disk_that_something_keeps_awake_fails_after_a_bounded_wait(nas):
+    nas.bugs.add("never-sleeps")
+    status, output = run_check("smart", nas)
+    assert status == 1, output
+    assert re.search(r"^FAIL  \d+\. sda sleeps once the timeout ran out: it is active after 1980 s; meanwhile the kernel "
+                     r"counted 0 reads and 18 writes on it: something reads or writes it \(an app or a share on the "
+                     r"pool\?\)  \[SD ", output, re.M), output
+    assert (nas.spindown, nas.rules) == (0, None)
+
+
+def test_the_smart_check_fails_a_power_read_that_restarts_the_disk_s_timer(nas):
+    # On the dev device: GET /storage/disks read sda's power with smartctl -n standby -i every 330 s, whose
+    # IDENTIFY restarted the timer that sda raises to about 10 minutes: no read or write, and no sleep.
+    nas.bugs.add("power-read-restarts-timer")
+    status, output = run_check("smart", nas)
+    assert status == 1, output
+    assert re.search(r"^FAIL  \d+\. sda sleeps once the timeout ran out: it is active after 1980 s; meanwhile the kernel "
+                     r"counted 0 reads and 0 writes on it: no read or write kept it awake, so a command did that "
+                     r"restarts its standby timer \(smartd, a SMART read or a power read that sends IDENTIFY\), or "
+                     r"it has a minimum timeout of its own above 1980 s  \[SD ", output, re.M), output
+    assert (nas.spindown, nas.rules) == (0, None)
+
+
+def test_the_smart_check_waits_a_bounded_time_for_a_disk_whose_minimum_is_longer(nas):
+    nas.minimum = 2400
+    status, output = run_check("smart", nas)
+    assert status == 1, output
+    assert re.search(r"^FAIL  \d+\. sda sleeps once the timeout ran out: it is active after 1980 s; meanwhile the kernel "
+                     r"counted 0 reads and 0 writes on it: no read or write kept it awake", output, re.M), output
+    assert nas.seconds < 2400
+
+
+# The hourly SMART monitor reads an awake disk that was used since its last read (in scenario.sh all, the
+# files and volumes checks write to the pool just before), and its IDENTIFY and SMART commands restart the
+# disk's standby timer. The wait allows one more full minimum after such a read: at the latest it comes
+# just before the disk would sleep (590 s idle, 10 s before its minimum of 600), and the disk then sleeps
+# 600 s later, at 1190 s, found at the read after 1320 s.
+@pytest.mark.parametrize("idle, after", [(10, 660), (360, 990), (590, 1320)])
+def test_the_smart_check_waits_for_a_disk_whose_timer_a_smart_monitor_read_restarted(nas, idle, after):
+    nas.smart_monitor_read = idle
+    status, output = run_check("smart", nas)
+    assert status == 0, output
+    assert (f"sda sleeps once the timeout ran out: the Storage page says standby after {after} s (the timeout: 300 s)"
+            in output), output
+    assert nas.smart_monitor_read is None  # it did read the disk
+
+
+def test_the_smart_check_shows_that_the_system_disk_gets_no_idle_timeout(nas):
+    # Whether or not the host has hdparm: the refusal comes first.
+    nas.hdparm = False
+    status, output = run_check("smart", nas)
+    assert status == 0, output
+    assert re.search(r"^PASS  \d+\. the system disk gets no idle timeout: mmcblk1 is a boot or virtual device: it "
+                     r"gets no idle timeout", output, re.M), output
+    assert [call[:3] for call in nas.calls if call[0] == "PUT"] == [("PUT", "/storage/disks/mmcblk1/spindown", {"minutes": 5})]
+
+
+def test_the_smart_check_fails_a_system_disk_that_takes_a_timeout_and_takes_it_back(nas):
+    before = nas.snapshot()
+    nas.bugs.add("system-disk-timeout")
+    status, output = run_check("smart", nas)
+    assert status == 1, output
+    assert re.search(r"^FAIL  \d+\. the system disk gets no idle timeout: mmcblk1 took the idle timeout of 5 minutes",
+                     output, re.M), output
+    assert "done  clean up: no idle timeout for mmcblk1" in output
+    assert nas.snapshot() == before
+
+
+def test_the_smart_check_takes_a_disk_that_sleeps_when_it_starts(nas):
+    """The owner gave sda a timeout of 20 minutes, which ran out: Disk Health and Storage answer
+    STANDBY, and the check sets 20 minutes again at its end."""
+    nas.set_spindown(DISK, {"minutes": 20})
+    nas.asleep = True
+    before = nas.snapshot()
+    status, output = run_check("smart", nas)
+    assert status == 0, output
+    text = "\n".join(step_lines(output))
+    assert "the SMART data of sda open on Disk Health and on Storage: sda: STANDBY" in text, text
+    assert "sda's idle timeout is 20 minutes again, as the check found it" in text, text
+    puts = [(path, body) for method, path, body, _ in nas.calls if method == "PUT" and DISK in path]
+    assert puts[:2] == [(f"/storage/disks/{DISK}/spindown", {"minutes": 5}), (f"/storage/disks/{DISK}/spindown", {"minutes": 20})]
+    assert nas.snapshot() == before
+
+
+# --- the disk's own automatic offline data collection (ADR-0378) ----------------------------------
+# On, it kept the dev device's sda awake after a reboot, for hours with its timeout of 20 minutes: the drive
+# scans its surface every 4 hours, suspends the scan for each command and resumes it. UNOS turns it off while
+# the disk has a timeout.
+
+
+def test_the_smart_check_fails_a_save_that_leaves_the_disk_s_own_scans_on(nas):
+    before = nas.snapshot()
+    nas.bugs.add("unos-leaves-scans-on")
+    status, output = run_check("smart", nas)
+    assert status == 1, output
+    assert re.search(r"^FAIL  \d+\. sda's automatic offline data collection is off while it has the timeout: it is on "
+                     r"after the Save \(UNOS answered no warning: it left it on\), and the drive's own surface scans keep "
+                     r"the disk awake  \[SD ", output, re.M), output
+    assert "done  clean up: the idle timeout of sda off again" in output
+    assert nas.snapshot() == before
+
+
+def test_the_smart_check_names_the_disk_s_own_scans_that_keep_it_awake(nas):
+    # Turned off by UNOS's Save, and on again during the wait (smartd with -o on, say): the disk stays awake
+    # with no read or write counted, and the step says why.
+    before = nas.snapshot()
+    nas.bugs.add("scans-on-again")
+    status, output = run_check("smart", nas)
+    assert status == 1, output
+    assert re.search(r"^FAIL  \d+\. sda sleeps once the timeout ran out: it is active after 1980 s; meanwhile the kernel "
+                     r"counted 0 reads and 0 writes on it: its own automatic offline data collection is on: the "
+                     r"drive's surface scan, suspended for each command and resumed, keeps it awake \(UNOS left it on, "
+                     r"or smartctl -o on or smartd with -o on turned it on again\)  \[SD ", output, re.M), output
+    assert nas.snapshot() == before
+
+
+@pytest.mark.parametrize("offline, says", [
+    ("off", "it was off already, and UNOS's udev rule records nothing"),
+    ("none", "the disk has none"),
+])
+def test_the_smart_check_leaves_a_disk_without_scans_on_as_it_found_it(nas, offline, says):
+    nas.offline = offline
+    before = nas.snapshot()
+    status, output = run_check("smart", nas)
+    assert status == 0, output
+    assert f"sda's automatic offline data collection is off while it has the timeout: {says}" in output, output
+    assert f"and its automatic offline data collection is as the check found it ({offline})" in output, output
+    assert nas.snapshot() == before
+
+
+def test_the_smart_check_keeps_the_record_of_a_disk_with_a_timeout_of_unos(nas):
+    # The owner's 20 minutes, saved with this version: the scans are off and recorded, and stay so.
+    nas.set_spindown(DISK, {"minutes": 20})
+    assert (nas.offline, nas.scans_recorded) == ("off", True)
+    before = nas.snapshot()
+    status, output = run_check("smart", nas)
+    assert status == 0, output
+    assert ("the check reads sda's own automatic offline data collection, a surface scan every few hours during which "
+            "the disk does not sleep: off, turned off by UNOS, which its udev rule records") in output, output
+    assert ("sda's automatic offline data collection is off while it has the timeout: as found, turned off by UNOS, "
+            "which its udev rule records") in output, output
+    assert nas.snapshot() == before
+
+
+def test_the_smart_check_fails_scans_on_that_the_rule_records_as_turned_off(nas):
+    # The drive did not keep the setting across a power cycle, or something turned it on again.
+    nas.set_spindown(DISK, {"minutes": 20})
+    nas.offline = "on"
+    status, output = run_check("smart", nas)
+    assert status == 1, output
+    assert re.search(r"^FAIL  \d+\. the check reads sda's own automatic offline data collection, a surface scan every "
+                     r"few hours during which the disk does not sleep: UNOS's udev rule records that UNOS turned it off "
+                     r"for the disk's timeout, but it is on: the drive did not keep it off \(after a power cycle\?\)",
+                     output, re.M), output
+    assert not [call for call in nas.calls if call[0] == "PUT" and DISK in call[1]]
+
+
+def test_the_smart_check_s_clean_up_names_scans_that_it_left_unlike_it_found_them(nas):
+    # The Save turns them off but records nothing: the restore's Off leaves them off. The final comparison
+    # reads no offline data collection (it would wake a sleeping disk at the start), so the clean-up says
+    # what is left and the way back.
+    nas.bugs.add("scans-off-unrecorded")
+    status, output = run_check("smart", nas)
+    assert status == 1, output
+    assert re.search(r"^FAIL  \d+\. sda's automatic offline data collection is off while it has the timeout: UNOS's "
+                     r"udev rule does not record that UNOS turned it off \(found on\)  \[SD ", output, re.M), output
+    assert "done  clean up: the idle timeout of sda off again" in output
+    assert re.search(r"^FAIL  clean up: sda's automatic offline data collection on, as the check found it: it is "
+                     r"off: turn it on again with smartctl -o on /dev/sda in the supervisor's container  \[SD ",
+                     output, re.M), output
+    # The restore runs first, then the read of what it left.
+    assert output.index("clean up: the idle timeout of sda off again") < output.index(
+        "clean up: sda's automatic offline data collection")
+
+
+@pytest.mark.parametrize("bugs, failed", [
+    # The wait fails, and the clean-up's Off cannot turn them on again.
+    ({"never-sleeps", "scans-stay-off"}, "sda sleeps once the timeout ran out: it is active after 1980 s"),
+    # The last step's Off cannot turn them on again: its warning fails the step.
+    ({"scans-stay-off"}, "sda has no idle timeout again: no line in UNOS's udev rule, and no standby timer (hdparm -S "
+                         "0) until its next power cycle, and its automatic offline data collection is as the check "
+                         "found it: UNOS answered: /dev/sda has no idle timeout now, but the disk's own automatic "
+                         "offline scans, which UNOS turned off for its timeout, could not be turned on again"),
+])
+def test_the_smart_check_fails_an_off_that_answers_a_warning_and_names_the_scans_left_off(nas, bugs, failed):
+    nas.bugs.update(bugs)
+    status, output = run_check("smart", nas)
+    assert status == 1, output
+    assert failed in [line for line in step_lines(output) if line.startswith("FAIL  ")][0], output
+    assert re.search(r"^FAIL  clean up: the idle timeout of sda off again: UNOS answered: /dev/sda has no idle timeout "
+                     r"now, but .*: save Off again to try once more  \[SD ", output, re.M), output
+    assert re.search(r"^FAIL  clean up: sda's automatic offline data collection on, as the check found it: it is off, "
+                     r"recorded in UNOS's udev rule: save Off for sda on the Storage page again  \[SD ",
+                     output, re.M), output
+    assert (nas.offline, nas.scans_recorded) == ("off", True)
+
+
+@pytest.mark.parametrize("spindown, offline, recorded, why", [
+    # A timeout saved before UNOS turned the scans off, as the dev device's sda has it: the Save would turn
+    # them off for good.
+    (20, "on", False, "sda has UNOS's idle timeout of 20 minutes with its automatic offline data collection on, which "
+                      "UNOS's rule does not record (set before UNOS turned it off, or UNOS could not): the check's Save "
+                      "would turn it off for good; save sda's timeout on the Storage page, then run the check again"),
+    # An Off that could not turn them on again: the check's Off would.
+    (0, "off", True, "UNOS's udev rule records that UNOS turned off sda's automatic offline data collection, but sda "
+                     "has no timeout of UNOS's (an Off that could not turn it on again): the check's Off would turn it "
+                     "on; save Off for sda on the Storage page again, then run the check again"),
+])
+def test_the_smart_check_skips_scans_that_it_could_not_leave_as_found(nas, spindown, offline, recorded, why):
+    values = {0: 0, 20: 240}
+    nas.spindown, nas.offline, nas.scans_recorded = spindown, offline, recorded
+    nas.rules = ("# Written by UNOS\n" + (f'ACTION=="add", SUBSYSTEM=="block", ENV{{DEVTYPE}}=="disk", '
+                                          f'ENV{{ID_SERIAL_SHORT}}=="W1", RUN+="/sbin/hdparm -S {values[spindown]} '
+                                          '$devnode"\n' if spindown else "")
+                 + (scenario.SPINDOWN_SCANS_RECORD.format(serial="W1") + "\n" if recorded else ""))
+    before = nas.snapshot()
+    status, output = run_check("smart", nas)
+    assert status == 0, output
+    skipped = [line for line in step_lines(output) if line.startswith("SKIP")]
+    assert len(skipped) == 5 and all(f": {why}  [SD " in line for line in skipped), skipped
+    assert not [call for call in nas.calls if call[0] == "PUT" and DISK in call[1]]
+    assert nas.snapshot() == before
+
+
+@pytest.mark.parametrize("out, state", [
+    # The dev device's sda: 0x84, suspended by a command of the host, automatic collection enabled; 0x7b.
+    ('status 0\n{"device": {"protocol": "ATA"}, "ata_smart_data": {"offline_data_collection": {"status": '
+     '{"value": 132}}, "capabilities": {"values": [123, 3]}}}', "on"),
+    ('status 0\n{"ata_smart_data": {"offline_data_collection": {"status": {"value": 5}}, "capabilities": '
+     '{"values": [123, 3]}}}', "off"),
+    # No "Auto Offline data collection on/off support", and not on: none.
+    ('status 0\n{"ata_smart_data": {"offline_data_collection": {"status": {"value": 0}}, "capabilities": '
+     '{"values": [89, 3]}}}', "none"),
+    ('status 0\n{"device": {"protocol": "NVMe"}, "nvme_smart_health_information_log": {}}', "none"),
+    ('status 4\n{"device": {"protocol": "SCSI"}}', "none"),
+    # An ATA disk whose SMART is off (smartctl -s off), or that has none: no automatic offline data
+    # collection runs (ataprint.cpp; -i writes smart_support).
+    ('status 0\n{"device": {"protocol": "ATA"}, "smart_support": {"available": true, "enabled": false}}', "none"),
+    ('status 4\n{"device": {"protocol": "ATA"}, "smart_support": {"available": false}}', "none"),
+    ('status 2\n{"smartctl": {"messages": [{"string": "Device is in STANDBY mode, exit(2)"}]}}', "standby"),
+])
+def test_the_smart_check_reads_a_disk_s_offline_data_collection_from_smartctl_c(out, state):
+    assert scenario.offline_collection_state(out) == state
+
+
+@pytest.mark.parametrize("out", [
+    "status 2\n",
+    'status 2\n{"smartctl": {"messages": [{"string": "Smartctl open device: /dev/sda failed: No such device"}]}}',
+])
+def test_the_smart_check_fails_a_smartctl_c_that_reads_no_state(out):
+    with pytest.raises(scenario.Failed):
+        scenario.offline_collection_state(out)
+
+
+def test_the_offline_helper_runs_smartctl_c_in_the_supervisor_s_container(tmp_path):
+    """REMOTE_OFFLINE runs smartctl -i -c -j through docker exec (no new container), with -n standby or
+    never, for a whole disk's path alone, and prints smartctl's exit status before its JSON."""
+    stubs = tmp_path / "bin"
+    stubs.mkdir()
+    (stubs / "docker").write_text(
+        "#!/usr/bin/env bash\n"
+        f'echo "$*" >> "{tmp_path}/docker.log"\n'
+        'echo \'{"ata_smart_data": {"offline_data_collection": {"status": {"value": 132}}, '
+        '"capabilities": {"values": [123, 3]}}}\'\n'
+        "exit 64\n")
+    (stubs / "docker").chmod(0o755)
+    env = {"PATH": f"{stubs}:/usr/bin:/bin"}
+
+    def run(*args: str) -> subprocess.CompletedProcess:
+        payload = scenario.Device.payload(scenario.REMOTE_OFFLINE, read_only=False)
+        return subprocess.run(["bash", "-s", "--", *args], input=payload, env=env, capture_output=True, text=True)
+
+    found = run("/dev/sda", "standby")
+    assert found.returncode == 0, found.stderr
+    assert found.stdout.startswith("status 64\n")
+    assert scenario.offline_collection_state(found.stdout) == "on"
+    assert run("/dev/sda", "never").returncode == 0
+    for args in (("/dev/sda; true", "standby"), ("/dev/../etc/passwd", "standby"), ("/dev/sda", "idle")):
+        assert run(*args).returncode == 2, args
+    assert (tmp_path / "docker.log").read_text().splitlines() == [
+        "exec unos-supervisor smartctl -n standby -i -c -j /dev/sda",
+        "exec unos-supervisor smartctl -n never -i -c -j /dev/sda"]
+
+
+def test_the_smart_check_expects_unos_s_idle_timeouts():
+    from src.storage import spindown
+
+    assert scenario.SPINDOWN_SCANS_RECORD == spindown.RECORD
+    assert (scenario.AUTO_OFFLINE_ON, scenario.AUTO_OFFLINE_SWITCH) == (
+        spindown._AUTO_OFFLINE_ON, spindown._AUTO_OFFLINE_SWITCH)
+    assert scenario.SPINDOWN_SCANS_RECORD.format(serial="W1") in spindown.render({"W1": 5}, frozenset({"W1"}))
+    assert scenario.SPINDOWN_RULES == spindown.RULES_PATH
+    assert scenario.NO_HDPARM == spindown.NO_HDPARM
+    assert scenario.SPINDOWN_SHORTEST == min(m for m in spindown.SPINDOWN_MINUTES if m)
+    assert scenario.SPINDOWN_SHORTEST_VALUE == spindown.hdparm_value(scenario.SPINDOWN_SHORTEST)
+    rule = spindown.render({"W1": scenario.SPINDOWN_SHORTEST})
+    assert f'ENV{{ID_SERIAL_SHORT}}=="W1", RUN+="/sbin/hdparm -S {scenario.SPINDOWN_SHORTEST_VALUE} $devnode"' in rule
 
 
 def test_the_offsite_check_covers_the_copy_its_snapshots_and_both_restores(nas):
@@ -3463,6 +4714,71 @@ def test_the_device_reads_pdbedit_without_the_read_only_namespace(stub):
     assert scenario.RO_ROOT not in (stub.log / "stdin").read_text()
 
 
+def busctl_json(*records: str) -> str:
+    """busctl --json=short's answer to Avahi's ResolveService (iissssisqaayu) with these TXT records."""
+    return json.dumps({"type": "iissssisqaayu", "data": [
+        2, 0, "BPI-W3", "_adisk._tcp", "local", "bpi-w3.local", 0, "192.168.1.20", 9,
+        [list(record.encode()) for record in records], 4]}, separators=(",", ":"))
+
+
+def test_the_device_reads_the_shares_of_its_adisk_service(stub):
+    """smbd's Time Machine announcement (ADR-0380): the adVN of each dk<n> TXT record, in the
+    read-only namespace; none only when Avahi answers that it resolves no such service (its
+    TimeoutError, "Timeout reached"). Any other failure of the call, as REMOTE_ADISK prints it
+    (avahi-daemon not on the bus, a D-Bus denial, no busctl), fails with busctl's text: otherwise
+    the check of Time Machine turned off would pass without asking Avahi."""
+    device = device_with_stub(stub)
+    (stub.log / "reply").write_text("found " + busctl_json("sys=adVF=0x100", "dk0=adVN=unoscheck1a2b3cv,adVF=0x82",
+                                                           "dk1=adVN=Backups,adVF=0x82") + "\n")
+    assert device.adisk_shares() == ["unoscheck1a2b3cv", "Backups"]
+    assert "unshare --mount --propagation private" in (stub.log / "argv").read_text()
+    for reply in ("none Call failed: Timeout reached\n", "none Call failed: org.freedesktop.Avahi.TimeoutError\n"):
+        (stub.log / "reply").write_text(reply)
+        assert device.adisk_shares() is None
+    for failure in (f"Call failed: {AVAHI_NOT_ON_THE_BUS}", "Call failed: Access denied",
+                    "bash: line 7: busctl: command not found"):
+        (stub.log / "reply").write_text(f"none {failure}\n")
+        with pytest.raises(scenario.Failed) as failed:
+            device.adisk_shares()
+        assert str(failed.value) == f"Avahi could not be asked for the device's _adisk._tcp service: {failure}"
+    for reply in ("found {}\n", "found not json\n"):
+        (stub.log / "reply").write_text(reply)
+        with pytest.raises(scenario.Failed, match="_adisk._tcp service could not be read"):
+            device.adisk_shares()
+
+
+@pytest.mark.parametrize("answers, printed", [
+    ("0", "found {busctl}"),
+    ("1", "none Call failed: Timeout reached"),
+    ("2", "none Call failed: Access denied"),
+])
+def test_the_adisk_helper_resolves_smbd_s_service_under_its_netbios_name(tmp_path, answers, printed):
+    """REMOTE_ADISK, run here with a testparm and a busctl that log their arguments: the service of
+    type _adisk._tcp named as smbd names its services (the netbios name), any interface and protocol,
+    with -- before the arguments, whose -1 busctl would read as an option."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    log = tmp_path / "busctl.log"
+    answer = busctl_json("dk0=adVN=docs,adVF=0x82")
+    stubs = {
+        "testparm": '[ "$*" = "-s --parameter-name netbios name" ] || exit 9\necho BPI-W3\n',
+        "busctl": (f'printf "%s\\n" "$@" > {str(log)!r}\n'
+                   f'case {answers} in 0) printf "%s\\n" {answer!r} ;; 1) echo "Call failed: Timeout reached" >&2; exit 1 ;; '
+                   '*) echo "Call failed: Access denied" >&2; exit 1 ;; esac\n'),
+        "mkdir": "exit 0\n",
+    }
+    for name, body in stubs.items():
+        (bin_dir / name).write_text("#!/usr/bin/env bash\n" + body)
+        (bin_dir / name).chmod(0o755)
+    result = subprocess.run(["bash", "-s"], input=scenario.REMOTE_ADISK, capture_output=True, text=True,
+                            env={"PATH": f"{bin_dir}:{os.environ['PATH']}"})
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == printed.format(busctl=answer) + "\n"
+    assert log.read_text().splitlines() == [
+        "--json=short", "--", "call", "org.freedesktop.Avahi", "/", "org.freedesktop.Avahi.Server", "ResolveService",
+        "iisssiu", "-1", "-1", "BPI-W3", "_adisk._tcp", "local", "-1", "0"]
+
+
 def test_the_device_s_facts_are_parsed(stub):
     device = device_with_stub(stub)
     (stub.log / "reply").write_text(textwrap.dedent("""\
@@ -3790,8 +5106,10 @@ def test_the_smb_helper_makes_the_files_the_checks_compare():
 
 # The smbclient of the SMB helper's session test: it checks its arguments (the auth file, the
 # client configuration in RAM, signing), keeps the auth file's mode and content where the test
-# finds them, and answers ls, put and the ! commands, line by line on standard input, as smbclient
-# does without a terminal; "put" of the name "denied" fails, "quit-now" ends it.
+# finds them, and answers ls, put, get and the ! commands, line by line on standard input, as
+# smbclient does without a terminal; "put" of the name "denied" fails, "get" writes the bytes of
+# data.txt to its local name and prints smbclient's line without its rate, which leaves the line
+# open, and "quit-now" ends it.
 STUB_SMBCLIENT = textwrap.dedent(
     """\
     #!@PYTHON@
@@ -3805,6 +5123,8 @@ STUB_SMBCLIENT = textwrap.dedent(
         log.write("argv " + " ".join(args) + "\\n")
         log.write("signing " + ("required" if "client signing = required" in text else "not required") + "\\n")
         log.write("ipc signing " + ("required" if "client ipc signing = required" in text else "not required") + "\\n")
+        log.write("protection " + ("smb2" if "client max protocol = SMB2_10" in text else
+                                   "encrypt" if "client smb encrypt = required" in text else "none") + "\\n")
         if "-A" in args:
             auth = args[args.index("-A") + 1]
             log.write("auth %o %s\\n" % (stat.S_IMODE(os.stat(auth).st_mode), open(auth).read().replace("\\n", "|")))
@@ -3827,6 +5147,11 @@ STUB_SMBCLIENT = textwrap.dedent(
         elif line.startswith("put "):
             name = line.split()[2]
             print("NT_STATUS_ACCESS_DENIED opening remote file \\\\" + name if name == "denied" else "putting file " + name)
+        elif line.startswith("get "):
+            remote, local = line.split()[1:3]
+            data = open("data.txt", "rb").read()
+            open(local, "wb").write(data)
+            sys.stdout.write("getting file \\\\%s of size %d as %s " % (remote.replace("/", "\\\\"), len(data), local))
         elif line == "quit-now":
             sys.exit(0)
         sys.stdout.flush()
@@ -3842,6 +5167,9 @@ def local_stub(stub):
         stub.stub("flock", STUB_FLOCK)
     stub.stub("smbclient", STUB_SMBCLIENT)
     stub.stub("stdbuf", '#!/usr/bin/env bash\nwhile [ "${1#-}" != "$1" ]; do shift; done\nexec "$@"\n')
+    if shutil.which("sha256sum") is None:  # coreutils' format, where this host has no sha256sum
+        stub.stub("sha256sum", '#!@PYTHON@\nimport hashlib, sys\nfor name in sys.argv[1:]:\n'
+                               '    print(hashlib.sha256(open(name, "rb").read()).hexdigest() + "  " + name)\n')
     (stub.tmp / "shm").mkdir()
     return stub
 
@@ -3863,6 +5191,7 @@ def test_the_smb_helper_runs_a_session_step_by_step_and_removes_its_files(local_
         first = session.run("ls", "put data.txt a.txt")
         second = session.run("put data.txt denied")
         third = session.run("!cat data.txt")
+        version = session.run("get @GMT-2027.01.15-08.00.01/v.txt kept.txt", "!sha256sum kept.txt")
         session.run("quit-now")
         fourth = session.run("ls")
     with device.smb_guest_session("unoscheck1a2b3c") as session:
@@ -3874,6 +5203,10 @@ def test_the_smb_helper_runs_a_session_step_by_step_and_removes_its_files(local_
     assert first.ok and "putting file a.txt" in first.output and not first.ended, first.output
     assert not second.ok and second.status == "NT_STATUS_ACCESS_DENIED"
     assert third.ok and scenario.DATA.strip() in third.output
+    # sha256sum runs in the helper's folder, where get wrote the copy, and its digest is read past
+    # the get's open line and smbclient's prompts.
+    assert version.ok and "getting file \\@GMT-2027.01.15-08.00.01\\v.txt of size 20 as kept.txt" in version.output
+    assert scenario.sha256_digests(version.output, "kept.txt") == [digest(scenario.DATA)], version.output
     assert not fourth.ok and fourth.ended
     assert guest.ok and ".  D  0" in guest.output, guest.output
     log = (stub.tmp / "smb.log").read_text()
@@ -3892,6 +5225,26 @@ def test_the_smb_helper_runs_a_session_step_by_step_and_removes_its_files(local_
     assert "\nsigning not required" in lists[1] and "ipc signing not required" in lists[1]
     for folder in re.findall(r"^dir (\S+)$", log, re.M):
         assert folder.startswith(str(stub.tmp / "shm") + "/") and not os.path.exists(folder)
+    assert list((stub.tmp / "shm").iterdir()) == []
+
+
+def test_the_smb_helper_s_session_can_be_one_of_smb_2_1_or_one_that_encrypts(local_stub):
+    """The encryption step of the smb check (ADR-0380): a session of a client of SMB 2.1 at most,
+    which cannot encrypt, and one of a client that requires SMB3 encryption, both signed; a session
+    without either sets neither."""
+    stub = local_stub
+    extra = {"FAKE_SSH_MODE": "local", "UNOS_DEV_SHM": str(stub.tmp / "shm"), "FAKE_SMB_LOG": str(stub.tmp / "smb.log")}
+    runner = stub.bin / "ssh-here"
+    runner.write_text(f"#!/usr/bin/env bash\nexport {' '.join(f'{k}={v!r}' for k, v in stub.env(**extra).items())}\n"
+                      f'exec "{DEV}/ssh.sh" "$@"\n')
+    runner.chmod(0o755)
+    device = scenario.Device(ssh=runner, sd=runner)
+    for protection in ("smb2", "encrypt", ""):
+        with device.smb_session("unoscheck1a2b3c", "pw-x", "unoscheck1a2b3c", protection=protection) as session:
+            assert session.run("ls").ok
+    runs = (stub.tmp / "smb.log").read_text().split("argv ")[1:]
+    assert [re.search(r"^protection (\S+)$", run, re.M).group(1) for run in runs] == ["smb2", "encrypt", "none"]
+    assert all("\nsigning required" in run for run in runs)
     assert list((stub.tmp / "shm").iterdir()) == []
 
 

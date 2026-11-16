@@ -1,6 +1,19 @@
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator, model_validator
+
+# A whole disk's power as disks.power_state reads it without waking the disk (ADR-0378): hdparm -C
+# on the host (smartctl -n idle for a power condition it does not name, as an EPC disk's), or
+# smartctl -n standby without hdparm and for an NVMe disk. Active (spinning, or idle), standby (spun
+# down, or asleep), or unknown (the disk cannot be asked, as behind some USB bridges, names no power
+# mode, did not answer, or its earlier read is still stuck).
+PowerState = Literal["active", "standby", "unknown"]
+
+# The idle timeouts that the Storage page offers, in minutes, 0 for off (ADR-0378): values that
+# hdparm -S expresses (5-second steps up to 20 minutes, 30-minute steps from 30 minutes to 5.5
+# hours), from the shortest that does not spin a disk down between the bursts of a quiet NAS to the
+# longest whole hour.
+SPINDOWN_MINUTES = (0, 5, 10, 20, 30, 60, 120, 180, 240, 300)
 
 
 class PartitionInfo(BaseModel):
@@ -35,11 +48,42 @@ class DiskInfo(BaseModel):
     in_use: bool = False  # is_system, mounted, member of a mounted btrfs pool, or held by md/LVM/LUKS
     in_use_reason: str | None = None
     pool: str | None = None  # btrfs label when the disk (or a partition) belongs to a btrfs filesystem
+    # Read before anything else (disks.power_state), which leaves a sleeping disk alone; a disk in
+    # standby is not probed with wipefs, so has_data is true for it unless lsblk knows more.
+    power_state: PowerState = "unknown"
+    # The idle timeout in minutes that UNOS's udev rule sets for the disk (by its serial), 0 for none.
+    spindown: int = 0
+    # Why the disk gets no idle timeout (the system disk, an NVMe disk, no serial a udev rule can
+    # match, no hdparm on the host); None when it can have one.
+    spindown_problem: str | None = None
+
+
+class SpindownSet(BaseModel):
+    """Body of PUT /storage/disks/{name}/spindown: the idle timeout in minutes, 0 for off."""
+
+    minutes: int
+
+    @field_validator("minutes", mode="before")
+    @classmethod
+    def _offered(cls, value: object) -> object:
+        if type(value) is not int or value not in SPINDOWN_MINUTES:
+            raise ValueError(f"minutes must be one of {', '.join(map(str, SPINDOWN_MINUTES))}")
+        return value
+
+
+class DiskSpindown(BaseModel):
+    name: str
+    minutes: int
+    # Set when the disk's own automatic offline scans could not be turned off for the timeout, or on
+    # again once it was removed (ADR-0378): the timeout is set all the same.
+    warning: str | None = None
 
 
 class SmartData(BaseModel):
     device: str
-    healthy: bool
+    # None when smartctl left the disk alone because it sleeps (power_state "standby", ADR-0378).
+    healthy: bool | None
+    power_state: PowerState = "unknown"
     temperature: int | None = None
     power_on_hours: int | None = None
     reallocated_sectors: int | None = None
@@ -170,3 +214,52 @@ class ScrubStatus(BaseModel):
     rate: int | None = None  # bytes per second
     errors: int = 0  # the sum of the error summary: read, super, verify and csum errors (ADR-0313)
     last_run: str | None = None  # when the scrub started, as btrfs prints it
+
+
+# The usage limit of a balance when the request names none (ADR-0379): the data and metadata
+# chunks less than this many percent full are rewritten, which frees the space of partly empty
+# chunks in minutes instead of rewriting the whole pool.
+BALANCE_DEFAULT_USAGE = 20
+
+
+class BalanceStart(BaseModel):
+    """What POST /storage/pools/{name}/balance balances (ADR-0379)."""
+
+    # Rewrite only the data and metadata chunks less than this many percent full
+    # (btrfs balance start -dusage=N -musage=N). 100 would rewrite every chunk: that is ``full``.
+    usage: int | None = Field(default=None, ge=1, le=99)
+    # Rewrite every chunk (--full-balance): hours on a hard disk; the page asks first.
+    full: bool = False
+
+    @model_validator(mode="after")
+    def _one_kind(self) -> "BalanceStart":
+        if self.full and self.usage is not None:
+            raise ValueError("A full balance rewrites every chunk: it takes no usage limit")
+        return self
+
+    @property
+    def limit(self) -> int:
+        return BALANCE_DEFAULT_USAGE if self.usage is None else self.usage
+
+
+class BalanceStatus(BaseModel):
+    """A pool's balance as btrfs balance status reports it, and how the last one ended (ADR-0379)."""
+
+    pool: str
+    # "running"; "pausing" and "cancelling" while a pause or a cancel waits for the chunk that is
+    # being moved; "paused"; "idle": none runs and none is paused.
+    status: str
+    # Of a balance that runs or is paused: the chunks balanced since its start or resume, of about
+    # ``expected``, and those it considered. Of a finished one: the chunks it relocated, of
+    # ``considered``.
+    completed: int | None = None
+    expected: int | None = None
+    considered: int | None = None
+    # Of a balance that runs: the seconds it needs still, at the rate of the chunks it balanced
+    # since UNOS first saw it run; None until it balanced one.
+    seconds_left: int | None = None
+    # Of an idle pool: how the last balance that UNOS started or resumed since the host started
+    # ended, from its output: "finished", "cancelled" or "failed" (``error``: btrfs's error);
+    # None when that is not known.
+    result: str | None = None
+    error: str | None = None

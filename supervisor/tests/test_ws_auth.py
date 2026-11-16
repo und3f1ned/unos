@@ -38,8 +38,8 @@ from src.host import HostResult
 from src.main import app
 from src.shares import repair, repair_router
 from src.storage import pools as storage_pools
-from src.storage import scrubs
-from src.storage.schemas import ScrubStatus
+from src.storage import balances, scrubs
+from src.storage.schemas import BalanceStatus, ScrubStatus
 from src.websocket import events
 
 from .test_alert_events import _found, _problem
@@ -1011,6 +1011,53 @@ class TestTheScrubsOnTheEventsSocket:
         asyncio.run(cancel_during_a_read())
         assert scrubs.current() == [_scrub("aborted").model_dump()]
 
+
+
+
+class TestTheBalancesOnTheEventsSocket:
+    """The balances that run, as the scrubs (ADR-0379): sent to administrators only, read again
+    while they run."""
+
+    @pytest.fixture
+    def kernel(self, monkeypatch):
+        kernel = SimpleNamespace(answer=BalanceStatus(pool="data", status="running", completed=1, expected=4), reads=0)
+
+        def status(pool):
+            assert pool == "data"
+            kernel.reads += 1
+            return kernel.answer
+
+        monkeypatch.setattr(balances, "status", status)
+        monkeypatch.setattr(balances, "READ_INTERVAL_SECONDS", 0.05)
+        return kernel
+
+    def test_an_administrator_follows_a_running_balance_until_it_ends(self, client, admin_token, fast_recheck, kernel):
+        balances.note("data", BalanceStatus(pool="data", status="running"))  # the start answered running
+        with client.websocket_connect("/ws/v1/events") as ws:
+            _auth(ws, admin_token)
+            assert [ws.receive_json()["type"] for _ in range(2)] == ["auth_ok", "problems"]
+            assert ws.receive_json() == {"type": "balances", "data": [
+                BalanceStatus(pool="data", status="running").model_dump()]}
+            deadline = time.monotonic() + 5
+            while (message := ws.receive_json())["type"] != "balances":
+                assert time.monotonic() < deadline
+            assert message["data"] == [kernel.answer.model_dump()]
+
+            kernel.answer = BalanceStatus(pool="data", status="idle", result="finished", completed=4, considered=9)
+            while (message := ws.receive_json())["type"] != "balances":
+                assert time.monotonic() < deadline
+            assert message["data"] == [kernel.answer.model_dump()]
+            reads = kernel.reads
+            assert [ws.receive_json()["type"] for _ in range(10)] == ["stats"] * 10
+            assert kernel.reads == reads  # it no longer runs: nothing is read
+
+    def test_a_regular_user_gets_none_and_nothing_is_read_for_them(self, client, user_token, fast_recheck, kernel):
+        balances.note("data", BalanceStatus(pool="data", status="running"))
+        with client.websocket_connect("/ws/v1/events") as ws:
+            _auth(ws, user_token)
+            assert ws.receive_json() == {"type": "auth_ok"}
+            assert [ws.receive_json()["type"] for _ in range(10)] == ["stats"] * 10
+        assert kernel.reads == 0
 
 
 

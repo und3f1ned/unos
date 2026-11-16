@@ -83,6 +83,10 @@
 		snapshot_created: 'audit.action.snapshotCreated',
 		snapshot_deleted: 'audit.action.snapshotDeleted',
 		snapshot_restored: 'audit.action.snapshotRestored',
+		balance_started: 'audit.action.balanceStarted',
+		balance_paused: 'audit.action.balancePaused',
+		balance_resumed: 'audit.action.balanceResumed',
+		balance_cancelled: 'audit.action.balanceCancelled',
 		share_created: 'audit.action.shareCreated',
 		share_updated: 'audit.action.shareUpdated',
 		share_deleted: 'audit.action.shareDeleted',
@@ -119,6 +123,7 @@
 	const RESOURCE_TYPES: Record<string, string> = {
 		user: 'audit.resource.user',
 		pool: 'audit.resource.pool',
+		disk: 'audit.resource.disk',
 		volume: 'audit.resource.volume',
 		snapshot: 'audit.resource.snapshot',
 		share: 'audit.resource.share',

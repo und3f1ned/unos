@@ -15,15 +15,19 @@ import {
   FAKE_IMPORTABLE,
   FAKE_POOLS,
   HEALTHY_POOL,
+  NO_HDPARM,
   SWAPPED_DISKS,
   dockerUnavailable,
   fakeBlockDevices,
   fakeScrubEvents,
   fakeStorageApi,
   mountedElsewhere,
+  noBalance,
   noScrub,
+  scansLeftOn,
   stillInUse,
   usedByContainers,
+  type FakeBalanceStatus,
   type FakeScrubStatus,
   type FakeStorageOptions,
   type RecordedWrite,
@@ -90,13 +94,15 @@ test.describe('Physical disks (fake data)', () => {
         { name: 'e2e-hd3p1', path: '/dev/e2e-hd3p1', size: 2e12, fstype: 'ext4', label: 'backup', mountpoints: ['/srv/backup'] },
       ],
       mountpoints: ['/srv/backup'], has_data: true, is_system: false, in_use: true,
-      in_use_reason: 'Mounted at /srv/backup', pool: null,
+      in_use_reason: 'Mounted at /srv/backup', pool: null, power_state: 'active', spindown: 0, spindown_problem: null,
     },
     {
       name: 'e2e-sd4', path: '/dev/e2e-sd4', model: 'E2E Stick', serial: null, wwn: null, size: 32e9,
       rotational: false, mountpoint: null, type: 'disk', fstype: 'exfat', label: 'CAMERA', pttype: null,
       partitions: [], mountpoints: [], has_data: true, is_system: false, in_use: false, in_use_reason: null,
-      pool: null,
+      pool: null, power_state: 'unknown', spindown: 0,
+      spindown_problem: '/dev/e2e-sd4 reports no serial number that a udev rule can match: UNOS could not set its ' +
+        'idle timeout again when it is connected',
     },
   ];
   // What GET /storage/disks answers when lsblk fails on the host (storage/disks.py).
@@ -117,32 +123,189 @@ test.describe('Physical disks (fake data)', () => {
     const cells = (path: string) =>
       rows.filter({ has: page.getByRole('cell', { name: path, exact: true }) }).getByRole('cell');
     await expect(rows).toHaveCount(1 + LISTED_DISKS.length);
-    // Device, Model (and serial), Size, Type, Contents, Mounted at, Status.
+    // Device, Model (and serial), Size, Type, Contents, Mounted at, Status, and Power: the power
+    // state, the idle timeout's button (with its text for screen readers) and why there is none.
     await expect(cells('/dev/e2e-sd0')).toHaveText([
       '/dev/e2e-sd0', 'Boot card E2E0', '59.6 GB', 'SSD',
       'DOS partition table, 1 partition e2e-sd0p1 · 58.7 GB · ext4', '/', 'System Mounted at /',
+      'Active Idle timeout of /dev/e2e-sd0: Off /dev/e2e-sd0 is the system disk (Mounted at /): it gets no idle timeout',
     ]);
     await expect(cells('/dev/e2e-hd1')).toHaveText([
       '/dev/e2e-hd1', 'E2E Disk E2E1', '3.6 TB', 'HDD', 'btrfs "e2e_tank"', '-', 'Pool "e2e_tank"',
+      'Standby Idle timeout of /dev/e2e-hd1: 20 minutes',
     ]);
     await expect(cells('/dev/e2e-hd2')).toHaveText([
-      '/dev/e2e-hd2', 'E2E Disk E2E2', '3.6 TB', 'HDD', 'Empty', '-', 'Free',
+      '/dev/e2e-hd2', 'E2E Disk E2E2', '3.6 TB', 'HDD', 'Empty', '-', 'Free', 'Active Idle timeout of /dev/e2e-hd2: Off',
     ]);
     await expect(cells('/dev/e2e-hd3')).toHaveText([
       '/dev/e2e-hd3', 'E2E Backup E2E3', '1.8 TB', 'HDD',
       'GPT partition table, 1 partition e2e-hd3p1 · 1.8 TB · ext4 "backup"', '/srv/backup',
-      'In use Mounted at /srv/backup',
+      'In use Mounted at /srv/backup', 'Active Idle timeout of /dev/e2e-hd3: Off',
     ]);
-    // No serial: none is shown.
+    // No serial: none is shown, and the disk gets no idle timeout.
     await expect(cells('/dev/e2e-sd4')).toHaveText([
       '/dev/e2e-sd4', 'E2E Stick', '29.8 GB', 'SSD', 'exfat "CAMERA"', '-', 'Has data',
+      'Unknown Idle timeout of /dev/e2e-sd4: Off /dev/e2e-sd4 reports no serial number that a udev rule can match: ' +
+        'UNOS could not set its idle timeout again when it is connected',
     ]);
-    const status = (path: string) => cells(path).last().locator('.badge');
+    const status = (path: string) => cells(path).nth(6).locator('.badge');
     await expect(status('/dev/e2e-sd0')).toHaveClass(/badge-error/);
     await expect(status('/dev/e2e-hd3')).toHaveClass(/badge-warning/);
     await expect(status('/dev/e2e-hd1')).toHaveClass(/badge-info/);
     await expect(status('/dev/e2e-sd4')).toHaveClass(/badge-orange/);
     await expect(status('/dev/e2e-hd2')).toHaveClass(/badge-success/);
+  });
+
+  // storage.disk-spindown (ADR-0378): each disk's power, read without waking it, and its idle timeout.
+  test('each disk shows whether it sleeps, and its idle timeout is set in a dialog', async ({
+    authenticatedPage: page,
+  }) => {
+    const writes = await fakeStorageApi(page);
+    await page.goto('/storage');
+    const cells = (path: string) =>
+      disksCard(page).getByRole('row').filter({ has: page.getByRole('cell', { name: path, exact: true }) }).getByRole('cell');
+    await expect(disksCard(page).locator('thead th').last()).toHaveText('Power');
+    const power = (path: string) => cells(path).last().locator('.badge');
+    await expect(power('/dev/e2e-hd1')).toHaveText('Standby');
+    await expect(power('/dev/e2e-hd1')).toHaveClass(/badge-info/);
+    await expect(power('/dev/e2e-hd2')).toHaveText('Active');
+    await expect(power('/dev/e2e-hd2')).toHaveClass(/badge-success/);
+
+    // The system disk gets none: its button is off, with the server's reason below it.
+    const system = page.getByRole('button', { name: 'Idle timeout of /dev/e2e-sd0: Off' });
+    await expect(system).toBeDisabled();
+    await expect(cells('/dev/e2e-sd0').last()).toContainText(
+      '/dev/e2e-sd0 is the system disk (Mounted at /): it gets no idle timeout',
+    );
+
+    // The sleeping disk has 20 minutes; it gets the shortest.
+    await page.getByRole('button', { name: 'Idle timeout of /dev/e2e-hd1: 20 minutes' }).click();
+    const dialog = page.getByRole('dialog', { name: 'Idle Timeout' });
+    await expect(dialog).toContainText('/dev/e2e-hd1 (E2E Disk)');
+    await expect(dialog).toContainText('Saving spins the disk up now.');
+    // Its own automatic offline scans, which keep it awake, are off while it has a timeout (ADR-0378).
+    await expect(dialog).toContainText(
+      'While the disk has a timeout, UNOS turns off its own automatic offline scans (a surface scan that the disk ' +
+        'runs every few hours, during which it does not sleep) and turns them on again when the timeout is removed.',
+    );
+    const choice = dialog.getByRole('combobox', { name: 'Spin down after' });
+    await expect(choice).toHaveText('20 minutes');
+    await choice.click();
+    await expect(dialog.getByRole('option')).toHaveText([
+      'Off', '5 minutes', '10 minutes', '20 minutes', '30 minutes', '1 hour', '2 hours', '3 hours', '4 hours', '5 hours',
+    ]);
+    await dialog.getByRole('option', { name: '5 minutes' }).click();
+    await dialog.getByRole('button', { name: 'Save' }).click();
+    await expect(dialog).toBeHidden();
+    await expect(page.getByRole('button', { name: 'Idle timeout of /dev/e2e-hd1: 5 minutes' })).toBeVisible();
+
+    // And off again, for the other disk too a timeout of hours.
+    await page.getByRole('button', { name: 'Idle timeout of /dev/e2e-hd2: Off' }).click();
+    await dialog.getByRole('combobox', { name: 'Spin down after' }).click();
+    await dialog.getByRole('option', { name: '2 hours' }).click();
+    await dialog.getByRole('button', { name: 'Save' }).click();
+    await expect(page.getByRole('button', { name: 'Idle timeout of /dev/e2e-hd2: 2 hours' })).toBeVisible();
+    await page.getByRole('button', { name: 'Idle timeout of /dev/e2e-hd1: 5 minutes' }).click();
+    await dialog.getByRole('combobox', { name: 'Spin down after' }).click();
+    await dialog.getByRole('option', { name: 'Off' }).click();
+    await dialog.getByRole('button', { name: 'Save' }).click();
+    await expect(page.getByRole('button', { name: 'Idle timeout of /dev/e2e-hd1: Off' })).toBeVisible();
+
+    expect(writes).toEqual([
+      { method: 'PUT', path: '/disks/e2e-hd1/spindown', body: { minutes: 5 } },
+      { method: 'PUT', path: '/disks/e2e-hd2/spindown', body: { minutes: 120 } },
+      { method: 'PUT', path: '/disks/e2e-hd1/spindown', body: { minutes: 0 } },
+    ]);
+  });
+
+  test("a timeout whose disk's own scans stay on is set, and the page says they may keep it awake", async ({
+    authenticatedPage: page,
+  }) => {
+    const reason = 'smartctl did not answer within 30 seconds';
+    const writes = await fakeStorageApi(page, {
+      spindownWarning: (path, minutes) => (minutes ? scansLeftOn(path, reason) : null),
+    });
+    await page.goto('/storage');
+    await page.getByRole('button', { name: 'Idle timeout of /dev/e2e-hd2: Off' }).click();
+    const dialog = page.getByRole('dialog', { name: 'Idle Timeout' });
+    await dialog.getByRole('combobox', { name: 'Spin down after' }).click();
+    await dialog.getByRole('option', { name: '10 minutes' }).click();
+    await dialog.getByRole('button', { name: 'Save' }).click();
+    await expect(dialog).toBeHidden();
+    await expect(page.getByRole('button', { name: 'Idle timeout of /dev/e2e-hd2: 10 minutes' })).toBeVisible();
+    const warning = disksCard(page).locator('.alert-warning');
+    await expect(warning).toContainText('The idle timeout was saved');
+    await expect(warning).toContainText(scansLeftOn('/dev/e2e-hd2', reason));
+    await warning.getByRole('button', { name: 'Dismiss' }).click();
+    await expect(warning).toBeHidden();
+    // A Save without a warning shows none.
+    await page.getByRole('button', { name: 'Idle timeout of /dev/e2e-hd2: 10 minutes' }).click();
+    await dialog.getByRole('combobox', { name: 'Spin down after' }).click();
+    await dialog.getByRole('option', { name: 'Off' }).click();
+    await dialog.getByRole('button', { name: 'Save' }).click();
+    await expect(page.getByRole('button', { name: 'Idle timeout of /dev/e2e-hd2: Off' })).toBeVisible();
+    await expect(warning).toBeHidden();
+    expect(writes).toEqual([
+      { method: 'PUT', path: '/disks/e2e-hd2/spindown', body: { minutes: 10 } },
+      { method: 'PUT', path: '/disks/e2e-hd2/spindown', body: { minutes: 0 } },
+    ]);
+  });
+
+  test('a timeout that the host refuses says why, and the dialog stays open', async ({ authenticatedPage: page }) => {
+    const writes = await fakeStorageApi(page, { spindownResponse: { status: 409, json: { detail: NO_HDPARM } } });
+    await page.goto('/storage');
+    await page.getByRole('button', { name: 'Idle timeout of /dev/e2e-hd2: Off' }).click();
+    const dialog = page.getByRole('dialog', { name: 'Idle Timeout' });
+    await dialog.getByRole('combobox', { name: 'Spin down after' }).click();
+    await dialog.getByRole('option', { name: '10 minutes' }).click();
+    await dialog.getByRole('button', { name: 'Save' }).click();
+    await expect(dialog).toContainText('The idle timeout was not set');
+    await expect(dialog).toContainText(NO_HDPARM);
+    await dialog.getByRole('button', { name: 'Cancel' }).click();
+    await expect(dialog).toBeHidden();
+    await expect(page.getByRole('button', { name: 'Idle timeout of /dev/e2e-hd2: Off' })).toBeVisible();
+    expect(writes).toEqual([{ method: 'PUT', path: '/disks/e2e-hd2/spindown', body: { minutes: 10 } }]);
+  });
+
+  // GET /pools and GET /filesystems/importable run btrfs filesystem show, which reads every disk and
+  // can spin a sleeping one up: the page asks for them once Power has been read (ADR-0378).
+  test('reads whether the disks sleep before it lists what the disks hold', async ({ authenticatedPage: page }) => {
+    const events: string[] = [];
+    await fakeStorageApi(page, {
+      holdReads: (path) => {
+        if (!['/disks', '/pools', '/filesystems/importable'].includes(path)) return undefined;
+        events.push(`asked ${path}`);
+        if (path !== '/disks') return undefined;
+        return new Promise<void>((resolve) =>
+          setTimeout(() => {
+            events.push('answered /disks');
+            resolve();
+          }, 500),
+        );
+      },
+    });
+    await page.goto('/storage');
+    await expect(poolCard(page, 'e2e_tank')).toBeVisible();
+    await expect.poll(() => events.length).toBeGreaterThanOrEqual(4);
+    expect(events.slice(0, 2)).toEqual(['asked /disks', 'answered /disks']);
+    expect(events.slice(2, 4).sort()).toEqual(['asked /filesystems/importable', 'asked /pools']);
+  });
+
+  test('a sleeping disk that the host knows nothing of was not read', async ({ authenticatedPage: page }) => {
+    // The server does not probe a sleeping disk for signatures, and counts it as holding data.
+    const asleep = {
+      ...FAKE_DISKS[2], name: 'e2e-hd5', path: '/dev/e2e-hd5', serial: 'E2E5', wwn: '0x5000e2e000000005',
+      has_data: true, power_state: 'standby',
+    };
+    await fakeStorageApi(page, { disks: () => [...FAKE_DISKS, asleep] });
+    await page.goto('/storage');
+    const cells = (path: string) =>
+      disksCard(page).getByRole('row').filter({ has: page.getByRole('cell', { name: path, exact: true }) }).getByRole('cell');
+    await expect(cells('/dev/e2e-hd5')).toHaveText([
+      '/dev/e2e-hd5', 'E2E Disk E2E5', '3.6 TB', 'HDD', 'Not read while the disk sleeps', '-', 'Has data',
+      'Standby Idle timeout of /dev/e2e-hd5: Off',
+    ]);
+    await expect(cells('/dev/e2e-hd2').nth(4)).toHaveText('Empty');
   });
 
   test('a disk list that cannot be loaded says why, and the pools are still shown', async ({
@@ -178,7 +341,11 @@ test.describe('Physical disks (fake data)', () => {
   // request, and the page asks again when the block devices of the stats stream change.
   const BOOT = ['e2e-sd0', 'e2e-sd0p1'];
   const STICK = LISTED_DISKS[4];
-  const STICK_CELLS = ['/dev/e2e-sd4', 'E2E Stick', '29.8 GB', 'SSD', 'exfat "CAMERA"', '-', 'Has data'];
+  // Its power cell: no serial, so no idle timeout (ADR-0378).
+  const STICK_POWER =
+    'Unknown Idle timeout of /dev/e2e-sd4: Off /dev/e2e-sd4 reports no serial number that a udev rule can match: ' +
+    'UNOS could not set its idle timeout again when it is connected';
+  const STICK_CELLS = ['/dev/e2e-sd4', 'E2E Stick', '29.8 GB', 'SSD', 'exfat "CAMERA"', '-', 'Has data', STICK_POWER];
 
   /** Count the page's requests for the disk list. */
   function diskListRequests(page: Page): () => number {
@@ -272,16 +439,19 @@ test.describe('Physical disks (fake data)', () => {
   type HostDisk = (typeof LISTED_DISKS)[number] | typeof MOUNTED_STICK;
 
   /**
-   * Hold the fake's answers to the reads asked between hold() and stop() until release(), each
-   * with the fake host's state when it was asked: a slow lsblk or btrfs.
+   * Hold the fake's answers to the reads of ``paths`` asked between hold() and stop() until
+   * release(), each with the fake host's state when it was asked: a slow lsblk or btrfs. A load of
+   * the lists asks for the disks first, and for the pools and the filesystems found once the disks
+   * answered (ADR-0378).
    */
-  function heldReads() {
+  function heldReads(paths: string[]) {
     let gate: Promise<void> | undefined;
     let open = () => {};
     const held: string[] = [];
     return {
       holdReads: (path: string) => {
-        if (gate) held.push(path);
+        if (!gate || !paths.includes(path)) return undefined;
+        held.push(path);
         return gate;
       },
       hold: () => {
@@ -290,9 +460,8 @@ test.describe('Physical disks (fake data)', () => {
       stop: () => {
         gate = undefined;
       },
-      /** Wait until the reads of a load of the lists are held. */
-      loadHeld: () =>
-        expect.poll(() => [...held].sort()).toEqual(['/disks', '/filesystems/importable', '/pools']),
+      /** Wait until the reads of ``paths`` of a load of the lists are held. */
+      loadHeld: () => expect.poll(() => [...held].sort()).toEqual([...paths].sort()),
       /** Send the held answers, and give the page the time to show them. */
       release: async (page: Page) => {
         const answered = held.map((path) =>
@@ -309,7 +478,7 @@ test.describe('Physical disks (fake data)', () => {
     authenticatedPage: page,
   }) => {
     let hostDisks: readonly HostDisk[] = FAKE_DISKS;
-    const reads = heldReads();
+    const reads = heldReads(['/disks']);
     await fakeStorageApi(page, { disks: () => hostDisks, holdReads: reads.holdReads });
     const sendDevices = await fakeBlockDevices(page);
     const requests = diskListRequests(page);
@@ -349,7 +518,7 @@ test.describe('Physical disks (fake data)', () => {
       .filter({ has: page.getByRole('cell', { name: '/dev/e2e-sd4', exact: true }) });
     await expect(row.getByRole('cell')).toHaveText([
       '/dev/e2e-sd4', 'E2E Stick', '29.8 GB', 'SSD', 'exfat "CAMERA"', '/media/camera',
-      'In use Mounted at /media/camera',
+      'In use Mounted at /media/camera', STICK_POWER,
     ]);
   });
 
@@ -357,7 +526,8 @@ test.describe('Physical disks (fake data)', () => {
     authenticatedPage: page,
   }) => {
     let hostDisks: readonly (typeof LISTED_DISKS)[number][] = FAKE_DISKS;
-    const reads = heldReads();
+    // The disks answer at once, and the pools late: still mounted, as when they were asked.
+    const reads = heldReads(['/filesystems/importable', '/pools']);
     const writes = await fakeStorageApi(page, {
       disks: () => hostDisks,
       pools: [HEALTHY_POOL],
@@ -949,6 +1119,283 @@ test.describe('Scrub (fake data)', () => {
     await expect(poolCard(page, 'e2e_halt').getByText('Last scrub: cancelled before it finished, 2 error(s) found'))
       .toHaveClass(/text-error/);
     await expect(page.getByText(/No errors/)).toHaveCount(0);
+  });
+});
+
+// A pool's balance (storage.pool-balance, ADR-0379), on route fakes and a fake events socket.
+test.describe('Balance (fake data)', () => {
+  const balance = (status: string, fields: Partial<FakeBalanceStatus> = {}): FakeBalanceStatus => ({
+    ...noBalance('e2e_data'), status, ...fields,
+  });
+  const running = (completed: number, secondsLeft: number | null = null) =>
+    balance('running', { completed, expected: 12, considered: completed, seconds_left: secondsLeft });
+  const reads = (page: Page) => {
+    let count = 0;
+    page.on('request', (request) => {
+      if (request.method() === 'GET' && new URL(request.url()).pathname === '/api/v1/storage/pools/e2e_data/balance') {
+        count += 1;
+      }
+    });
+    return () => count;
+  };
+
+  test('a balance of the chunks less than 20% full shows its progress, the time left and how it ended', async ({
+    authenticatedPage: page,
+  }) => {
+    await page.clock.install();
+    let host = noBalance('e2e_data');
+    const writes = await fakeStorageApi(page, {
+      pools: [HEALTHY_POOL],
+      balanceStatus: (_pool, action) => {
+        if (action === 'start') host = running(0); // btrfs runs it, nothing balanced yet
+        return host;
+      },
+    });
+    const events = await fakeScrubEvents(page);
+    const balanceReads = reads(page);
+    await page.goto('/storage');
+
+    const card = poolCard(page, 'e2e_data');
+    await card.getByRole('button', { name: 'Balance', exact: true }).click();
+    const dialog = page.getByRole('dialog', { name: 'Balance e2e_data' });
+    await expect(dialog.getByRole('combobox', { name: 'Chunks to rewrite' })).toContainText(
+      'Only chunks less full than a limit (recommended)'
+    );
+    await expect(dialog.getByLabel('Usage limit (%)')).toHaveValue('20');
+    await dialog.getByRole('button', { name: 'Start Balance' }).click();
+    await expect(dialog).toHaveCount(0);
+    expect(writes).toEqual([{ method: 'POST', path: '/pools/e2e_data/balance', body: { usage: 20 } }]);
+
+    await expect(card.getByText('Balance in progress')).toBeVisible();
+    await expect(card.getByRole('button', { name: 'Pause Balance' })).toBeVisible();
+    await expect(card.getByRole('button', { name: 'Cancel Balance' })).toBeVisible();
+    await expect(card.getByRole('button', { name: 'Balance', exact: true })).toHaveCount(0);
+    // No scrub beside a balance that runs.
+    await expect(card.getByRole('button', { name: 'Scrub', exact: true })).toBeDisabled();
+
+    await events.balances([running(3, 540)]);
+    const progress = card.getByRole('progressbar', { name: 'Balance progress' });
+    await expect(progress).toHaveAttribute('aria-valuenow', '25');
+    await expect(card.getByText('3 of about 12 chunks balanced')).toBeVisible();
+    await expect(card.getByText('25.0%')).toBeVisible();
+    await expect(card.getByText('About 9 min left')).toBeVisible();
+
+    // Time passes: the page does not ask for the status.
+    await page.clock.fastForward('01:00');
+    await page.waitForTimeout(300);
+    expect(balanceReads()).toBe(1);
+
+    await events.balances([running(9, 7300)]);
+    await expect(card.getByText('About 2 h 2 min left')).toBeVisible();
+    await events.balances([running(11, 30)]);
+    await expect(card.getByText('Less than a minute left')).toBeVisible();
+
+    await events.balances([balance('idle', { result: 'finished', completed: 12, considered: 40 })]);
+    await expect(card.getByText('Last balance: finished, 12 of 40 chunks rewritten')).toBeVisible();
+    await expect(card.getByText('Balance in progress')).toHaveCount(0);
+    await expect(progress).toHaveCount(0);
+    await expect(card.getByRole('button', { name: 'Balance', exact: true })).toBeEnabled();
+    await expect(card.getByRole('button', { name: 'Scrub', exact: true })).toBeEnabled();
+    expect(writes).toHaveLength(1);
+    expect(balanceReads()).toBe(1);
+  });
+
+  test('pause, resume and cancel act on the running balance', async ({ authenticatedPage: page }) => {
+    const answers: Record<string, FakeBalanceStatus> = {
+      status: running(4, 300),
+      pause: balance('paused', { completed: 5, expected: 12, considered: 5 }),
+      resume: running(0),
+      cancel: balance('idle', { result: 'cancelled' }),
+    };
+    const writes = await fakeStorageApi(page, {
+      pools: [HEALTHY_POOL],
+      balanceStatus: (_pool, action) => answers[action],
+    });
+    await fakeScrubEvents(page);
+    await page.goto('/storage');
+
+    const card = poolCard(page, 'e2e_data');
+    await expect(card.getByText('Balance in progress')).toBeVisible();
+    await expect(card.getByText('About 5 min left')).toBeVisible();
+
+    await card.getByRole('button', { name: 'Pause Balance' }).click();
+    await expect(card.getByText('Balance paused')).toBeVisible();
+    await expect(card.getByText('5 of about 12 chunks balanced')).toBeVisible();
+    await expect(card.getByText(/goes on when you resume it, and also when the pool is mounted again/)).toBeVisible();
+    // The kernel resumes a balance without a usage filter with usage=90 (ADR-0379).
+    await expect(
+      card.getByText(
+        /When a paused full balance goes on, it rewrites only the chunks less than 90% full \(the Linux kernel's rule\): to rewrite every chunk, cancel it and start a new full balance\./
+      )
+    ).toBeVisible();
+    await expect(card.getByRole('button', { name: 'Pause Balance' })).toHaveCount(0);
+    // A scrub may run beside a paused balance.
+    await expect(card.getByRole('button', { name: 'Scrub', exact: true })).toBeEnabled();
+
+    await card.getByRole('button', { name: 'Resume Balance' }).click();
+    await expect(card.getByText('Balance in progress')).toBeVisible();
+    await expect(card.getByRole('button', { name: 'Pause Balance' })).toBeVisible();
+
+    await card.getByRole('button', { name: 'Cancel Balance' }).click();
+    await expect(card.getByText('Last balance: cancelled before it finished')).toBeVisible();
+    await expect(card.getByText('Balance in progress')).toHaveCount(0);
+    await expect(card.getByRole('button', { name: 'Balance', exact: true })).toBeVisible();
+    expect(writes).toEqual([
+      { method: 'POST', path: '/pools/e2e_data/balance/pause', body: {} },
+      { method: 'POST', path: '/pools/e2e_data/balance/resume', body: {} },
+      { method: 'DELETE', path: '/pools/e2e_data/balance', body: null },
+    ]);
+  });
+
+  test('a pause that waits for the chunk being moved says so, and the events socket sends the pause', async ({
+    authenticatedPage: page,
+  }) => {
+    await fakeStorageApi(page, {
+      pools: [HEALTHY_POOL],
+      balanceStatus: (_pool, action) =>
+        action === 'pause' ? balance('pausing', { completed: 4, expected: 12, considered: 4 }) : running(4),
+    });
+    const events = await fakeScrubEvents(page);
+    await page.goto('/storage');
+
+    const card = poolCard(page, 'e2e_data');
+    await card.getByRole('button', { name: 'Pause Balance' }).click();
+    await expect(card.getByText('Pausing after the chunk being moved')).toBeVisible();
+    await expect(card.getByRole('button', { name: /^(Pause|Resume) Balance$/ })).toHaveCount(0);
+    // The kernel would pause it all the same: a cancel waits for the pause (ADR-0379).
+    await expect(card.getByRole('button', { name: 'Cancel Balance' })).toBeDisabled();
+    await events.balances([balance('paused', { completed: 5, expected: 12, considered: 5 })]);
+    await expect(card.getByText('Balance paused')).toBeVisible();
+    await expect(card.getByRole('button', { name: 'Resume Balance' })).toBeVisible();
+    await expect(card.getByRole('button', { name: 'Cancel Balance' })).toBeEnabled();
+  });
+
+  test('a paused balance resumes only without a scrub, and is cancelled only on a writable pool', async ({
+    authenticatedPage: page,
+  }) => {
+    const mounted = (name: string, uuid: string, readOnly = false) => ({
+      ...HEALTHY_POOL, name, uuid, mountpoint: `/mnt/pools/${name}`, read_only: readOnly,
+    });
+    const paused = (pool: string) => ({ ...noBalance(pool), status: 'paused', completed: 5, expected: 12, considered: 5 });
+    await fakeStorageApi(page, {
+      pools: [HEALTHY_POOL, mounted('e2e_ro', '00000000-0000-4000-8000-0000000000e8', true)],
+      scrubStatus: (pool) => (pool === 'e2e_data' ? { ...noScrub(pool), status: 'running' } : noScrub(pool)),
+      balanceStatus: (pool) => paused(pool),
+    });
+    await page.goto('/storage');
+
+    const scrubbing = poolCard(page, 'e2e_data');
+    await expect(scrubbing.getByText('Balance paused')).toBeVisible();
+    await expect(scrubbing.getByRole('button', { name: 'Resume Balance' })).toBeDisabled();
+    await expect(scrubbing.getByRole('button', { name: 'Cancel Balance' })).toBeEnabled();
+    const readOnly = poolCard(page, 'e2e_ro');
+    await expect(readOnly.getByText('Balance paused')).toBeVisible();
+    await expect(readOnly.getByRole('button', { name: 'Resume Balance' })).toBeDisabled();
+    await expect(readOnly.getByRole('button', { name: 'Cancel Balance' })).toBeDisabled();
+  });
+
+  test('a full balance starts only once it is confirmed, and a usage limit only from 1 to 99', async ({
+    authenticatedPage: page,
+  }) => {
+    const writes = await fakeStorageApi(page, {
+      pools: [HEALTHY_POOL],
+      balanceStatus: (_pool, action) => (action === 'start' ? running(0) : noBalance('e2e_data')),
+    });
+    await fakeScrubEvents(page);
+    await page.goto('/storage');
+
+    const card = poolCard(page, 'e2e_data');
+    await card.getByRole('button', { name: 'Balance', exact: true }).click();
+    const dialog = page.getByRole('dialog', { name: 'Balance e2e_data' });
+    const start = dialog.getByRole('button', { name: 'Start Balance' });
+    for (const value of ['0', '100', '2.5', '']) {
+      await dialog.getByLabel('Usage limit (%)').fill(value);
+      await expect(start).toBeDisabled();
+      await expect(dialog.getByText('Enter a whole number from 1 to 99')).toBeVisible();
+    }
+
+    await dialog.getByRole('combobox', { name: 'Chunks to rewrite' }).click();
+    await page.getByRole('option', { name: 'Every chunk (full balance)' }).click();
+    await expect(dialog.getByText('A full balance takes long')).toBeVisible();
+    await expect(dialog.getByText(/hours on a hard disk/)).toBeVisible();
+    await expect(
+      dialog.getByText(
+        /If it is paused, or the NAS stops before it ends, it then rewrites only the chunks less than 90% full: to rewrite every chunk, cancel it and start a new one\./
+      )
+    ).toBeVisible();
+    await expect(start).toBeDisabled();
+    await dialog.getByLabel('Rewrite every chunk of e2e_data').check();
+    await start.click();
+    await expect(dialog).toHaveCount(0);
+    expect(writes).toEqual([{ method: 'POST', path: '/pools/e2e_data/balance', body: { full: true } }]);
+    await expect(card.getByText('Balance in progress')).toBeVisible();
+  });
+
+  test('a start the server refuses keeps the dialog open with the reason', async ({ authenticatedPage: page }) => {
+    // The supervisor's 409 while a scrub of the pool runs (storage/balances.py).
+    const detail = 'A scrub of pool e2e_data runs: wait for its end or cancel it, then start the balance';
+    await fakeStorageApi(page, {
+      pools: [HEALTHY_POOL],
+      balanceStatus: (_pool, action) =>
+        action === 'start' ? { status: 409, json: { detail } } : noBalance('e2e_data'),
+    });
+    await fakeScrubEvents(page);
+    await page.goto('/storage');
+
+    await poolCard(page, 'e2e_data').getByRole('button', { name: 'Balance', exact: true }).click();
+    const dialog = page.getByRole('dialog', { name: 'Balance e2e_data' });
+    await dialog.getByLabel('Usage limit (%)').fill('5');
+    await dialog.getByRole('button', { name: 'Start Balance' }).click();
+    await expect(dialog.getByText('The balance did not start')).toBeVisible();
+    await expect(dialog.getByText(detail)).toBeVisible();
+    await expect(poolCard(page, 'e2e_data').getByText('Balance in progress')).toHaveCount(0);
+  });
+
+  test('a failed balance says why, a scrub or a read-only pool offers no balance', async ({
+    authenticatedPage: page,
+  }) => {
+    const error = "ERROR: error during balancing '/mnt/pools/e2e_data': No space left on device";
+    const mounted = (name: string, uuid: string, readOnly = false) => ({
+      ...HEALTHY_POOL, name, uuid, mountpoint: `/mnt/pools/${name}`, read_only: readOnly,
+    });
+    await fakeStorageApi(page, {
+      pools: [
+        HEALTHY_POOL,
+        mounted('e2e_ro', '00000000-0000-4000-8000-0000000000e8', true),
+        mounted('e2e_busy', '00000000-0000-4000-8000-0000000000e9'),
+      ],
+      scrubStatus: (pool) => (pool === 'e2e_busy' ? { ...noScrub(pool), status: 'running' } : noScrub(pool)),
+      balanceStatus: (pool) => (pool === 'e2e_data' ? balance('idle', { result: 'failed', error }) : noBalance(pool)),
+    });
+    await page.goto('/storage');
+
+    const card = poolCard(page, 'e2e_data');
+    await expect(card.getByText('Last balance failed')).toBeVisible();
+    await expect(card.getByText(error)).toBeVisible();
+    await expect(card.getByRole('button', { name: 'Balance', exact: true })).toBeEnabled();
+    await expect(poolCard(page, 'e2e_ro').getByRole('button', { name: 'Balance', exact: true })).toBeDisabled();
+    await expect(poolCard(page, 'e2e_busy').getByRole('button', { name: 'Balance', exact: true })).toBeDisabled();
+  });
+
+  test('after the events socket connects again, the page reads each balance it shows running', async ({
+    authenticatedPage: page,
+  }) => {
+    let restarted = false;
+    await fakeStorageApi(page, {
+      pools: [HEALTHY_POOL],
+      // It ended while the supervisor restarted.
+      balanceStatus: () => (restarted ? balance('idle', { result: 'finished', completed: 3, considered: 9 }) : running(1)),
+    });
+    const events = await fakeScrubEvents(page);
+    const balanceReads = reads(page);
+    await page.goto('/storage');
+
+    const card = poolCard(page, 'e2e_data');
+    await expect(card.getByText('Balance in progress')).toBeVisible();
+    restarted = true;
+    await events.restart();
+    await expect(card.getByText('Last balance: finished, 3 of 9 chunks rewritten')).toBeVisible();
+    expect(balanceReads()).toBe(2);
   });
 });
 
@@ -1817,6 +2264,9 @@ test.describe('The Storage page in Russian', () => {
       { name: 'e2e-sd5p2', path: '/dev/e2e-sd5p2', size: 5e6, fstype: 'vfat', label: null, mountpoints: [] },
     ],
     mountpoints: [], has_data: true, is_system: false, in_use: false, in_use_reason: null, pool: null,
+    power_state: 'active', spindown: 0,
+    spindown_problem: '/dev/e2e-sd5 reports no serial number that a udev rule can match: UNOS could not set its ' +
+      'idle timeout again when it is connected',
   };
   const scrubs: Record<string, FakeScrubStatus> = {
     e2e_data: {
@@ -1857,19 +2307,23 @@ test.describe('The Storage page in Russian', () => {
     // server's (in_use_reason) and stays in English.
     const disks = main.locator('.card').filter({ has: page.getByRole('heading', { name: 'Физические диски' }) });
     await expect(disks.locator('thead th')).toHaveText([
-      'Устройство', 'Модель', 'Размер', 'Тип', 'Содержимое', 'Точка монтирования', 'Статус',
+      'Устройство', 'Модель', 'Размер', 'Тип', 'Содержимое', 'Точка монтирования', 'Статус', 'Питание',
     ]);
     const cells = (path: string) =>
       disks.getByRole('row').filter({ has: page.getByRole('cell', { name: path, exact: true }) }).getByRole('cell');
     await expect(cells('/dev/e2e-sd0')).toHaveText([
       '/dev/e2e-sd0', 'Boot card E2E0', '59,6 ГБ', 'SSD',
       'Таблица разделов DOS, 1 раздел e2e-sd0p1 · 58,7 ГБ · ext4', '/', 'Системный Mounted at /',
+      'Работает Тайм-аут простоя /dev/e2e-sd0: Выкл. /dev/e2e-sd0 is the system disk (Mounted at /): it gets no idle ' +
+        'timeout',
     ]);
     await expect(cells('/dev/e2e-hd1')).toHaveText([
       '/dev/e2e-hd1', 'E2E Disk E2E1', '3,6 ТБ', 'HDD', 'btrfs «e2e_tank»', '-', 'Пул «e2e_tank»',
+      'Спит Тайм-аут простоя /dev/e2e-hd1: 20 минут',
     ]);
     await expect(cells('/dev/e2e-hd2')).toHaveText([
       '/dev/e2e-hd2', 'E2E Disk E2E2', '3,6 ТБ', 'HDD', 'Пустой', '-', 'Свободен',
+      'Работает Тайм-аут простоя /dev/e2e-hd2: Выкл.',
     ]);
     // In the middle of the list, the partition table goes on with a lower-case letter.
     await expect(cells('/dev/e2e-sd5')).toHaveText([
@@ -1877,6 +2331,8 @@ test.describe('The Storage page in Russian', () => {
       'iso9660 «Ubuntu», таблица разделов DOS, 2 раздела e2e-sd5p1 · 4,7 ГБ · iso9660 «Ubuntu» ' +
         'e2e-sd5p2 · 4,8 МБ · vfat',
       '-', 'Есть данные',
+      'Работает Тайм-аут простоя /dev/e2e-sd5: Выкл. /dev/e2e-sd5 reports no serial number that a udev rule can ' +
+        'match: UNOS could not set its idle timeout again when it is connected',
     ]);
 
     const found = main.getByRole('region', { name: 'Найдено на дисках' });

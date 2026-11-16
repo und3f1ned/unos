@@ -23,6 +23,20 @@ export const GUEST_WARNING =
   'anyone on your network. Guests can never write. While a guest share exists, connections to ' +
   'this server are not required to be signed. Windows 11 refuses guest access by default, and ' +
   'guest connections are neither signed nor encrypted.';
+// A guest share cannot require encryption, and Time Machine needs Samba's vfs modules (ADR-0380):
+// service.GUEST_ENCRYPTION and service.modules_problem('time_machine', ['fruit']);
+// supervisor/tests/test_share_options.py checks both against the server.
+export const GUEST_ENCRYPTION =
+  "A guest share cannot require encryption: guests' connections are never encrypted, so no guest could open it";
+export const TIME_MACHINE_MODULES =
+  'Samba on this NAS lacks the vfs module fruit that Time Machine needs: install the package samba-vfs-modules on the host';
+// Why Previous Versions of a folder in no snapshot of UNOS are left out of smb.conf:
+// service.no_snapshots_problem('/mnt/pools/data/media/restore_20261112_100000'), checked by
+// supervisor/tests/test_share_options.py.
+export const NO_SNAPSHOTS =
+  '/mnt/pools/data/media/restore_20261112_100000 is a subvolume or a file system of its own: UNOS makes ' +
+  "snapshots of pools and volumes only, and none of them holds this share's files, so Previous Versions " +
+  'would list nothing';
 // A change sent with an outdated expected_version (ADR-0135).
 export const VERSION_CONFLICT = 'The share was changed meanwhile; reload';
 // Why a share of a pool that UNOS does not manage, or no longer manages after an unmount, is not
@@ -116,6 +130,10 @@ export interface FakeShare {
   pool_mounted: boolean | null;
   permissions_ok: boolean | null;
   import_notes: string[];
+  encryption_required: boolean;
+  time_machine: boolean;
+  previous_versions: boolean;
+  not_rendered: Partial<Record<'guest_ok' | 'time_machine' | 'previous_versions', string>>;
 }
 
 export interface FakeServiceStatus {
@@ -293,6 +311,10 @@ export function fakeShare(name: string, extra: Partial<FakeShare> = {}): FakeSha
     pool_mounted: true,
     permissions_ok: true,
     import_notes: [],
+    encryption_required: false,
+    time_machine: false,
+    previous_versions: false,
+    not_rendered: {},
     ...extra,
   };
 }
@@ -596,6 +618,7 @@ export async function fakeSmbApi(page: Page, options: FakeSmbOptions = {}): Prom
       const refused = accessProblem(entries);
       if (refused) return refused;
       const guest = data.guest_ok === true;
+      if (guest && data.encryption_required === true) return detail(400, GUEST_ENCRYPTION);
       const share = withAvailability(
         fakeShare(name, {
           path: String(data.path),
@@ -603,6 +626,9 @@ export async function fakeSmbApi(page: Page, options: FakeSmbOptions = {}): Prom
           browseable: data.browseable !== false,
           guest_ok: guest,
           access: accessOf(fake.users, entries),
+          encryption_required: data.encryption_required === true,
+          time_machine: data.time_machine === true,
+          previous_versions: data.previous_versions === true,
         }),
       );
       fake.shares.push(share);
@@ -658,8 +684,18 @@ export async function fakeSmbApi(page: Page, options: FakeSmbOptions = {}): Prom
         if (!dismissOnly && !served && (granted || guest)) {
           return detail(400, share.path_problem ?? 'The share is not served');
         }
+        const encryption = 'encryption_required' in data ? data.encryption_required === true : share.encryption_required;
+        if (guest && encryption) return detail(400, GUEST_ENCRYPTION);
         let changed = false;
-        for (const key of ['path', 'comment', 'browseable', 'guest_ok'] as const) {
+        for (const key of [
+          'path',
+          'comment',
+          'browseable',
+          'guest_ok',
+          'encryption_required',
+          'time_machine',
+          'previous_versions',
+        ] as const) {
           if (key in data && data[key] !== share[key]) {
             (share as unknown as Record<string, unknown>)[key] = data[key];
             changed = true;

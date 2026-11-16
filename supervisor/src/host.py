@@ -14,8 +14,11 @@ they cannot inject extra shell syntax.
 Set ``UNOS_HOST_EXEC=local`` to run commands directly (no nsenter), e.g. when
 the supervisor runs natively on the host during development.
 
-btrfs scrubs, error stats resets and smartctl run in the container itself,
-on the pools and disks that the privileged container sees:
+btrfs scrubs, error stats resets, a balance's status, pause and cancel, and
+smartctl run in the container itself,
+on the pools and disks that the privileged container sees, and so does the
+pgrep that looks for a disk's stuck power read (the container has the host's
+process IDs, ``pid: host``):
 :func:`run_in_container` runs them, and at their timeout it kills them
 without waiting for them (ADR-0290).
 """
@@ -37,6 +40,8 @@ logger = logging.getLogger(__name__)
 
 # Programs the supervisor runs on the host through this module, with the
 # Debian/Ubuntu package that installs them. Callers: storage/pools.py,
+# storage/balances.py (systemd-run, which runs a pool's balance in a unit of
+# its own that outlives the supervisor's container: ADR-0379),
 # storage/disks.py (lsns and findmnt --task: the mount namespaces of other
 # processes, ADR-0288), shares/smb.py, shares/accounts.py (SMB accounts: getent
 # and the shadow tools, smbpasswd, pdbedit, smbstatus), health/router.py and
@@ -48,8 +53,9 @@ logger = logging.getLogger(__name__)
 # request from the host's network when the container connects nowhere, and ends
 # itself at its --max-time: ADR-0336). cat, od (the export files: shares/nfs.py), test,
 # mkdir, rmdir, rm, find, sync, sleep, timeout, hostname, readlink (the time zone:
-# scheduler/router.py, ADR-0266) and sh also run there but come from essential
-# packages. The startup check (main.check_host_tools) warns about the ones the
+# scheduler/router.py, ADR-0266) and sh (also apps/hardware.py, with cat: the device
+# tree and the device nodes of the host's SoC, ADR-0377) also run there but come from
+# essential packages. The startup check (main.check_host_tools) warns about the ones the
 # host lacks.
 HOST_TOOLS: dict[str, str] = {
     "btrfs": "btrfs-progs",
@@ -92,10 +98,16 @@ HOST_TOOLS: dict[str, str] = {
 # leaves them out, and the feature that runs one says when the host lacks it.
 # shares/nfs.py runs exportfs (under timeout), and the NFS tab names a missing
 # NFS server (ADR-0292). power/router.py runs NUT's upsc (under timeout), and the
-# UPS status names a missing NUT client (ADR-0356).
+# UPS status names a missing NUT client (ADR-0356). storage/spindown.py runs hdparm
+# -S (under timeout) for a disk's idle timeout, and the Storage page names a missing
+# hdparm (ADR-0378): install.sh installs it, but a host set up by hand may lack it.
+# storage/disks.py runs hdparm -C (under timeout) for a disk's power state, one
+# per disk at a time and none while a timed-out one still runs (ADR-0378), and
+# smartctl -n standby -i in the container without it.
 OPTIONAL_HOST_TOOLS: dict[str, str] = {
     "exportfs": "nfs-kernel-server",
     "upsc": "nut-client",
+    "hdparm": "hdparm",
 }
 
 # Enter all of PID 1's namespaces except the user and cgroup namespaces.

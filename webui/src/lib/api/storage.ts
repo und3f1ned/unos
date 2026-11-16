@@ -9,6 +9,19 @@ export interface PartitionInfo {
   mountpoints: string[];
 }
 
+/**
+ * A whole disk's power, read without waking it (hdparm -C on the host, smartctl -n idle for an EPC
+ * disk's power condition, or smartctl -n standby, ADR-0378): active (spinning, or idle), standby
+ * (spun down), or unknown (the disk could not be asked or did not answer).
+ */
+export type PowerState = 'active' | 'standby' | 'unknown';
+
+/**
+ * The idle timeouts the Storage page offers, in minutes, 0 for off (SPINDOWN_MINUTES of
+ * supervisor/src/storage/schemas.py): values that hdparm -S expresses (ADR-0378).
+ */
+export const SPINDOWN_MINUTES = [0, 5, 10, 20, 30, 60, 120, 180, 240, 300] as const;
+
 export interface Disk {
   name: string;
   path: string;
@@ -37,11 +50,19 @@ export interface Disk {
   in_use_reason: string | null;
   /** Label of the btrfs filesystem the disk (or a partition) belongs to. */
   pool: string | null;
+  /** Read first; a disk in standby is not probed for signatures, so has_data is true for it. */
+  power_state: PowerState;
+  /** The idle timeout in minutes that UNOS's udev rule sets for the disk, 0 for none. */
+  spindown: number;
+  /** Why the disk gets no idle timeout (the server's message), or null when it can have one. */
+  spindown_problem: string | null;
 }
 
 export interface SmartData {
   device: string;
-  healthy: boolean;
+  /** null when the disk sleeps: smartctl left it alone (power_state standby). */
+  healthy: boolean | null;
+  power_state: PowerState;
   temperature: number | null;
   power_on_hours: number | null;
   reallocated_sectors: number | null;
@@ -209,6 +230,36 @@ export interface ScrubStatus {
   last_run: string | null;
 }
 
+/** The usage limit of a balance that the dialog offers first (BALANCE_DEFAULT_USAGE, ADR-0379). */
+export const BALANCE_DEFAULT_USAGE = 20;
+
+/**
+ * What a balance rewrites (ADR-0379): the data and metadata chunks less than `usage` percent full
+ * (1 to 99), or every chunk with `full`, which takes no usage.
+ */
+export type BalanceStart = { usage: number } | { full: true };
+
+/** A pool's balance as `btrfs balance status` reports it, and how the last one ended (ADR-0379). */
+export interface BalanceStatus {
+  pool: string;
+  /**
+   * pausing and cancelling: a pause or a cancel waits for the chunk being moved; idle: none runs
+   * and none is paused.
+   */
+  status: 'running' | 'pausing' | 'cancelling' | 'paused' | 'idle';
+  /** Chunks balanced since the start or resume, of about `expected`; of a finished one, relocated. */
+  completed: number | null;
+  expected: number | null;
+  /** Of a finished balance: the chunks it considered. */
+  considered: number | null;
+  /** The estimate of a balance that runs; null until it has balanced a chunk. */
+  seconds_left: number | null;
+  /** Of an idle pool: how its last balance ended, when known. */
+  result: 'finished' | 'cancelled' | 'failed' | null;
+  /** btrfs's error of a failed one, in English. */
+  error: string | null;
+}
+
 export async function getDisks(): Promise<Disk[]> {
   return api.get<Disk[]>('/storage/disks');
 }
@@ -216,6 +267,30 @@ export async function getDisks(): Promise<Disk[]> {
 /** SMART data of a disk as getDisks() lists it, by name (HTTP 400 for any other device). */
 export async function getDiskSmart(name: string): Promise<SmartData> {
   return api.get<SmartData>(`/storage/disks/${name}/smart`);
+}
+
+/**
+ * What PUT /storage/disks/{name}/spindown answers: the timeout set, and `warning` (the server's
+ * text) when the disk's own automatic offline scans could not be turned off for it, or on again
+ * once it was removed; the timeout is set all the same (ADR-0378).
+ */
+export interface DiskSpindown {
+  name: string;
+  minutes: number;
+  warning: string | null;
+}
+
+/**
+ * Give a whole data disk the idle timeout `minutes` of SPINDOWN_MINUTES, 0 for off: hdparm -S on
+ * the host now, which spins a sleeping disk up, the disk's own automatic offline scans turned off
+ * for a timeout (on again when it is removed), and UNOS's udev rule, which sets it again whenever
+ * the disk appears. HTTP 400 for a boot or virtual device or a partition, 409 for the system disk
+ * and the other disks that spindown_problem names, 500 when hdparm fails.
+ */
+export async function setDiskSpindown(name: string, minutes: number): Promise<DiskSpindown> {
+  return api.put<DiskSpindown>(`/storage/disks/${encodeURIComponent(name)}/spindown`, {
+    minutes
+  });
 }
 
 export async function getPools(): Promise<Pool[]> {
@@ -300,4 +375,32 @@ export async function getScrubStatus(poolName: string): Promise<ScrubStatus> {
 
 export async function cancelScrub(poolName: string): Promise<ScrubStatus> {
   return api.delete<ScrubStatus>(`/storage/pools/${poolName}/scrub`);
+}
+
+function balancePath(poolName: string): string {
+  return `/storage/pools/${encodeURIComponent(poolName)}/balance`;
+}
+
+/**
+ * Start a balance; HTTP 409 when the pool is not mounted or read-only, while a scrub of it runs or
+ * a balance of it runs or is paused.
+ */
+export async function startBalance(poolName: string, what: BalanceStart): Promise<BalanceStatus> {
+  return api.post<BalanceStatus>(balancePath(poolName), what);
+}
+
+export async function getBalanceStatus(poolName: string): Promise<BalanceStatus> {
+  return api.get<BalanceStatus>(balancePath(poolName));
+}
+
+export async function pauseBalance(poolName: string): Promise<BalanceStatus> {
+  return api.post<BalanceStatus>(`${balancePath(poolName)}/pause`, {});
+}
+
+export async function resumeBalance(poolName: string): Promise<BalanceStatus> {
+  return api.post<BalanceStatus>(`${balancePath(poolName)}/resume`, {});
+}
+
+export async function cancelBalance(poolName: string): Promise<BalanceStatus> {
+  return api.delete<BalanceStatus>(balancePath(poolName));
 }

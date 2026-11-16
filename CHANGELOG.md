@@ -323,6 +323,159 @@ manager, encrypted backup uploads, health checks, CI checks).
   `ups_name`, `host` and `port` are checked before they reach `upsc`.
 
 ### Added
+- On a Rockchip RK3588 (such as the Banana Pi BPI-W3) whose kernel has
+  Rockchip MPP's `/dev/mpp_service`, Jellyfin from the App Store is installed
+  with the chip's video hardware for Rockchip MPP (RKMPP): those of `/dev/dri`,
+  `/dev/dma_heap`, `/dev/mpp_service`, `/dev/rga` and `/dev/mali0` that the
+  host has, Docker's masks without `/sys/firmware` (MPP reads the SoC from the
+  device tree) and no AppArmor profile, without privileged mode. The App Store
+  shows **Hardware acceleration** on its card and says in its details to
+  choose **Rockchip MPP (RKMPP)** in Jellyfin; an installed Jellyfin whose
+  container lacks the hardware shows **No hardware acceleration** on its card,
+  and the notice of its install and its details say that reinstalling it gives
+  it the hardware; the catalog API answers an app's `hardware` profiles that
+  apply on the host only, and the install's answer and the installed apps list
+  the `devices` their containers got. On other hosts, an RK3588 under the
+  mainline kernel included, nothing changes. `scripts/dev/scenario.sh hardware`
+  checks what the App Store offers on the dev device and the nodes the host
+  has (ADR-0377).
+- Idle timeouts of the data disks (`storage.disk-spindown`, ADR-0378):
+  **Storage** → **Physical Disks** has a **Power** column with each disk's
+  power state (Active, Standby, Unknown), read with `hdparm -C` on the host,
+  which sends CHECK POWER MODE alone: it does not wake a sleeping disk, and it
+  did not restart the standby timer of the dev device's disk
+  (`smartctl -n standby -i`, whose IDENTIFY does restart it, reads it on a
+  host without `hdparm` and for an NVMe disk; `smartctl -n idle`, which stops
+  after CHECK POWER MODE too, reads the EPC power conditions that `hdparm`
+  does not name: idle_a, idle_b and idle_c are Active, standby_y Standby; a
+  disk whose read did not answer is Unknown, with no other `hdparm -C`
+  started while that one still runs on the host), and a button that sets
+  the disk's idle timeout (Off, 5, 10, 20 or 30 minutes, 1 to 5 hours; a
+  disk with a minimum of its own sleeps later, as a WD6400AACS after about
+  10 minutes for 5) through `PUT /api/v1/storage/disks/{name}/spindown`:
+  `hdparm -S` on the host at once,
+  and a line in UNOS's udev rule `/etc/udev/rules.d/90-unos-disk-spindown.rules`,
+  matched by the disk's serial, at every boot and reconnection. While a disk
+  has a timeout, its own automatic offline scans (a surface scan every few
+  hours that keeps it awake; after a restart they kept the dev device's disk
+  awake for hours with its timeout of 20 minutes, and through 18 to 35
+  minutes of watching with 10 to 20 minutes) are off: the Save turns them off
+  (`smartctl -o off` in the container) and the rule records it, also when
+  `smartctl` gives no clear answer, and Off turns them on again for such a
+  disk alone; a disk whose scans were off, or that has none (NVMe, SCSI, an
+  ATA disk without SMART or with SMART off), is left as it is. When they
+  cannot be turned off, or it is unknown whether they were, the timeout is
+  set all the same and the answer's `warning`, shown on the page, says they
+  may keep the disk awake; when the rule cannot be written, the scans are put
+  back as the rule still records them. The dialog says that a scheduled
+  scrub reads the pool instead. The system
+  disk, boot and virtual devices, partitions, NVMe disks, disks without a
+  usable serial and a host without `hdparm` (now an optional host tool) are
+  refused with the reason, and so is every disk when the rule cannot be read.
+  The page reads the disks before it lists the pools, which read every disk.
+  The SMART reads of Storage and Disk Health leave a sleeping disk asleep
+  (health status `STANDBY`, `power_state` standby, and `standby` in
+  `GET /api/v1/health/overview`), and the hourly SMART monitor skips a disk
+  with an idle timeout that was not used since its last read, since a SMART
+  read restarts the disk's timer (its first pass after a start reads every
+  awake disk, and a disk found asleep at its last pass is read once awake).
+  The RAID monitor and the pool counts of `GET /api/v1/health/prometheus`
+  and `/health/full` read the pools without a scan of the disks
+  (`btrfs filesystem show --mounted`, whose exit status 1
+  with no btrfs filesystem mounted is no pool mounted, and udev's records);
+  the trash expiry asks a pool's disks whether they sleep only when its daily
+  pass is due, and passes over one whose disks sleep, asking no disk of it
+  again until the sleeping one had a read or write, and then that one first.
+  `install.sh`, once UNOS runs, and the manual installation turn off the
+  host's smartd (`systemctl disable --now smartmontools`): it would read every
+  awake disk every 30 minutes, and UNOS reads SMART itself; `uninstall.sh`
+  says how to turn it on again. `uninstall.sh` also undoes, on each disk
+  that the rule names, what UNOS set, with the host's tools (found also
+  where root's PATH lacks `/usr/sbin` and `/sbin`), each under `timeout`
+  (the script goes on after 35 seconds per command at most, also when the
+  kernel keeps a command past its kill, and so does whatever reads its
+  output, since the command's output and errors go to temporary files, its
+  errors shown once it has ended): the timeout off (`hdparm -S 0`), and
+  the scans that UNOS turned off on again (`smartctl -o on`, read back with
+  `-c`); then it removes the rule. It does so once UNOS has stopped and
+  before it removes `/opt/unos`: a run stopped while it undoes the disks,
+  also with Ctrl-C or a dropped SSH session (which end it once the command
+  running has ended), leaves the rule whole and can run again, which then
+  makes no backup, since the data volume is gone. It counts only the lines
+  that the supervisor's `read_rule` takes as UNOS's, read as udev reads a
+  rules file without NUL bytes (as `read_rule` now does too), never runs the
+  file, touches no other disk, and names at its end, with the command, what it
+  could not undo (no `hdparm` or `smartctl`, a disk not attached or not alone
+  with its serial, SMART off on the disk, for which the command is
+  `smartctl -s on -o on`, a failed command) and the lines edited by hand,
+  which go with the rule. A disk whose scans stay off keeps its record in the
+  rule, which then holds only such records, for a new installation's Off
+  (not on a disk with SMART off); a rule it cannot read, or with a NUL byte,
+  stays. `scripts/dev/scenario.sh smart` shows the system disk
+  refused a timeout, gives the pool's disk the
+  shortest timeout, waits for it to sleep (at most 1980 s: room for the dev
+  device's disk's own minimum of about 660 s twice, as after a read of the
+  hourly SMART monitor during the wait; it says whether the kernel counted
+  reads or writes on a disk still awake), reads SMART while it sleeps and
+  sets the timeout of UNOS's rule again, or Off; it reads the disk's
+  automatic offline scans first, shows them off after the Save and as found
+  at the end, also in its clean-up, which names what it left and the way
+  back, and fails an Off that answers a warning; it names them when they keep
+  the disk awake; it skips these steps when the disk has no timeout of
+  UNOS's and `/etc/hdparm.conf` sets one, and when it has one with its scans
+  on unrecorded.
+- **Balance** on the Storage page (ADR-0379): a mounted, writable pool's
+  balance rewrites the data and metadata chunks less full than a usage limit
+  (20% by default, 1 to 99) or, after a confirmation, every chunk (a full
+  balance). The pool card shows its progress (chunks balanced of about how
+  many) and an estimate of the time left, which UNOS sends the open page as
+  they change, and **Pause Balance**, **Resume Balance** and **Cancel Balance**
+  act on it; afterwards it says whether the last balance finished, was
+  cancelled or failed, with btrfs's error. The balance runs on the host in the
+  systemd unit `unos-balance-<pool>`, so a restart of UNOS neither stops nor
+  hides it, and a restart or shutdown of the host pauses it: it goes on when
+  the pool is mounted again. A full balance that goes on after a pause, by
+  **Resume Balance** or at a mount, rewrites only the chunks less than 90%
+  full (the Linux kernel's rule): the card of a paused balance, the full
+  balance's warning and the user guide say so, and that a new full balance,
+  after a cancel, rewrites every chunk. A balance is refused while the pool
+  is not mounted or is read-only, while a scrub of it runs and while another
+  balance of it runs or is paused, and a scrub (also a scheduled one) while a
+  balance of the pool runs. A cancel waits while a pause waits for the chunk
+  being moved, since btrfs would pause the balance all the same, and the
+  paused balance of a read-only pool is kept until it is mounted read-write.
+  The audit log records each start, pause, resume and cancel
+  (`GET`/`POST`/`DELETE /api/v1/storage/pools/{name}/balance`,
+  `POST .../balance/pause` and `.../balance/resume`). `scripts/dev/scenario.sh
+  balance` checks it on the dev device.
+- An SMB share can require encryption, serve Time Machine backups of Macs and
+  list the snapshots of its pool or volume as Windows' Previous Versions
+  (ADR-0380): three options of the share dialog, off by default, shown on the
+  share's card and stored in the new table `smb_share_options`
+  (`encryption_required`, `time_machine`, `previous_versions` of the share
+  API). Every share section now states `smb encrypt` and `vfs objects`, also
+  with the options off; while a Time Machine share exists every share loads
+  `catia fruit streams_xattr` and `[global]` has `fruit:aapl = yes` and
+  `fruit:nfs_aces = no`, and a change of the Time Machine shares restarts
+  avahi-daemon and waits for it, so that smbd announces them (`_adisk._tcp`);
+  a restart that fails is a warning and a problem of the SMB status until one
+  works. Previous Versions list the snapshots named `snap_<time>` and
+  `auto_<time>` in UTC; scheduled tasks snapshot pools only, so a share in a
+  volume lists the volume's snapshots of the Snapshots page. A guest share
+  cannot require encryption, and a restored one with both loses guest access;
+  Time Machine and Previous Versions need the package `samba-vfs-modules`,
+  which `install.sh` now installs, and are refused without it; Previous
+  Versions are refused for a folder in a subvolume or file system of its own
+  below the pool's top level other than a volume. An option that the NAS
+  cannot serve is left out of smb.conf and shown on the card as a warning
+  with the reason (`not_rendered` of the share API). Turning encryption on
+  and Previous Versions off disconnect the share's open connections. The
+  import of an smb.conf that UNOS did not write keeps required encryption
+  (of a section, or of `[global]` for every share) as the option with the
+  access, where it removed the access before, and Time Machine where fruit is
+  loaded. `scripts/dev/scenario.sh smb` shows the three options on a share in
+  a new volume, with open sessions across the encryption switch and the
+  `_adisk._tcp` service that Avahi resolves.
 - `scripts/dev/check.sh` shows each container's CPU, the load average and the
   temperatures, and reports a container of UNOS above 15% of a core or a
   thermal zone within 5 C of its throttling point as a problem (ADR-0374).
@@ -704,14 +857,15 @@ manager, encrypted backup uploads, health checks, CI checks).
   `smb.conf.unos-import-backup-<UTC time>`. Share options that UNOS does not know are not
   kept; they are listed on the Shares page. Hand-made global settings are
   replaced by the hardened defaults. Restrictions in the imported `[global]`
-  (`hosts allow`, `hosts deny`, `invalid users`, required encryption, a
-  script that refuses connections) or an `include` remove the access of the
-  imported shares, so that nothing becomes more open; `hosts allow`,
-  `hosts deny`, required encryption or such a script in a share's own section
-  remove that share's access. Required encryption is `required`, `mandatory`,
-  `force`, `forced` or `enforced`; a script that refuses connections is a
-  `preexec` (or `exec`) command with `preexec close = yes`, or a
-  `root preexec` command with `root preexec close = yes`.
+  (`hosts allow`, `hosts deny`, `invalid users`, a script that refuses
+  connections) or an `include` remove the access of the imported shares, so
+  that nothing becomes more open; `hosts allow`, `hosts deny` or such a
+  script in a share's own section remove that share's access. A script that
+  refuses connections is a `preexec` (or `exec`) command with
+  `preexec close = yes`, or a `root preexec` command with
+  `root preexec close = yes`. Required encryption (`required`, `mandatory`,
+  `force`, `forced` or `enforced`), in `[global]` or in a share's section,
+  keeps the access and becomes the share's option (see Added).
 - Share and user API: `PUT /api/v1/shares/smb/{name}` is replaced by `PATCH`,
   which changes only the fields it receives; an unknown share answers 404, and
   `expected_version` (from `version`) makes a PATCH fail with 409 when the

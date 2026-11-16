@@ -10,7 +10,8 @@
   share. The output is deterministic, so an unchanged state renders
   byte-identical text and nothing is written.
 * ``config_grants`` and ``shrunk_shares`` tell which shares lost access between
-  two files, so that their open tree connects can be closed after the reload.
+  two files, so that their open tree connects can be closed after the reload;
+  ``time_machine_shares`` which shares a file offers to Time Machine.
 
 smb.conf has no quoting: a newline in any value starts a new directive and a
 trailing backslash continues the line. Every value is checked once more by
@@ -51,6 +52,27 @@ _FIXED_SHARE_LINES: tuple[tuple[str, str], ...] = (
     ("directory mask", f"{constants.SHARE_DIR_MODE:o}"),
     ("force directory mode", f"{constants.SHARE_DIR_MODE:o}"),
 )
+
+# The protocol options of a share (ADR-0380). Every section states its encryption and its vfs
+# modules, also when an option is off: a line that disappears keeps its old value in a section in
+# use (ADR-0088). The vfs modules of the options compose one line, in this order: Apple's (fruit
+# on catia, with streams_xattr under it, as vfs_fruit asks), then the snapshots' (shadow_copy2 over
+# the file system's own module).
+FRUIT_MODULES = ("catia", "fruit", "streams_xattr")
+SNAPSHOT_MODULES = ("shadow_copy2", "btrfs")
+# Previous Versions list the snapshots that UNOS names in <root>/.snapshots of the share's pool or
+# volume: snap_<UTC time> (the Snapshots page) and auto_<UTC time> (the Scheduler, which snapshots
+# pools only, so a share in a volume lists only the volume's snapshots of the Snapshots page).
+SNAPSHOT_DIR = ".snapshots"
+_SNAPSHOT_LINES: tuple[tuple[str, str], ...] = (
+    ("shadow:snapdir", SNAPSHOT_DIR),
+    ("shadow:snapprefix", r"^\(snap\|auto\)$"),
+    ("shadow:delimiter", "_"),
+    ("shadow:format", "_%Y%m%d_%H%M%S"),
+)
+# [global] while a Time Machine share exists: Apple's SMB2 extensions (AAPL) on, and no change of
+# a file's mode through them, which would undo the modes of UNOS's share folders (ADR-0150).
+_TIME_MACHINE_GLOBALS: tuple[tuple[str, str], ...] = (("fruit:aapl", "yes"), ("fruit:nfs_aces", "no"))
 
 # Principals of config_grants besides user names (lower case).
 GUEST = "*guest*"
@@ -112,8 +134,9 @@ def _yes_no(value: bool) -> str:
     return "yes" if value else "no"
 
 
-def global_settings(guest_enabled: bool) -> list[tuple[str, str]]:
-    """The (key, value) lines of render_global, in order."""
+def global_settings(guest_enabled: bool, time_machine: bool = False) -> list[tuple[str, str]]:
+    """The (key, value) lines of render_global, in order; Apple's lines end it while a Time Machine
+    share exists (ADR-0380)."""
     return [
         ("workgroup", "WORKGROUP"),
         ("server string", "UNOS NAS"),
@@ -160,17 +183,39 @@ def global_settings(guest_enabled: bool) -> list[tuple[str, str]]:
         ("disable netbios", "yes"),
         ("smb ports", "445"),
         ("multicast dns register", "yes"),
+        # smbd also registers _adisk._tcp for the shares with fruit:time machine (ADR-0380).
+        *(_TIME_MACHINE_GLOBALS if time_machine else ()),
     ]
 
 
-def render_global(guest_enabled: bool) -> str:
-    """The ``[global]`` section (ADR-0281); three lines depend on whether a guest share exists (ADR-0339)."""
-    return "[global]\n" + "".join(_line(key, value) for key, value in global_settings(guest_enabled))
+def render_global(guest_enabled: bool, time_machine: bool = False) -> str:
+    """The ``[global]`` section (ADR-0281); three lines depend on whether a guest share exists (ADR-0339),
+    and two on whether a Time Machine share does (ADR-0380)."""
+    return "[global]\n" + "".join(_line(key, value) for key, value in global_settings(guest_enabled, time_machine))
 
 
-def render_share(s: service.ShareRender) -> str:
+def _option_lines(s: service.ShareRender, fruit: bool) -> list[str]:
+    """The lines of the share's protocol options (ADR-0380): encryption and the vfs modules always,
+    then Time Machine's and Previous Versions' own. ``fruit``: a Time Machine share exists, so that
+    every share loads fruit: macOS negotiates Apple's extensions (AAPL) on its first tree connect,
+    and a Mac whose first share has no fruit cannot use Time Machine in that session."""
+    modules = [*(FRUIT_MODULES if fruit or s.time_machine else ()), *(SNAPSHOT_MODULES if s.snapshot_root else ())]
+    lines = [
+        _line("smb encrypt", "required" if s.encryption_required else "default"),
+        _line("vfs objects", " ".join(modules)),
+    ]
+    if s.time_machine:
+        lines.append(_line("fruit:time machine", "yes"))
+    if s.snapshot_root:
+        lines.append(_line("shadow:mountpoint", _safe_path(s.snapshot_root)))
+        lines.extend(_line(key, value) for key, value in _SNAPSHOT_LINES)
+    return lines
+
+
+def render_share(s: service.ShareRender, fruit: bool = False) -> str:
     """The section of one served share (ADR-0088): read only everywhere, write access only
-    through ``write list``, and every access line always written."""
+    through ``write list``, every access line always written, then its protocol options
+    (ADR-0380)."""
     principals = sorted(set(s.readers) | set(s.writers))
     writers = sorted(set(s.writers))
     lines = [f"[{_safe_name(s.name)}]\n", _line("path", _safe_path(s.path))]
@@ -186,6 +231,7 @@ def render_share(s: service.ShareRender) -> str:
         lines.append(_line("valid users", valid))
     lines.append(_line("write list", ", ".join(_safe_user(name) for name in writers)))
     lines.append(_line("available", _yes_no(bool(s.available))))
+    lines.extend(_option_lines(s, fruit))
     lines.extend(_line(key, value) for key, value in _FIXED_SHARE_LINES)
     return "".join(lines)
 
@@ -193,14 +239,15 @@ def render_share(s: service.ShareRender) -> str:
 def render_config(shares: Sequence[service.ShareRender]) -> str:
     """The whole smb.conf: HEADER, an empty line, [global], then each share
     (sorted by name, case-insensitively) after an empty line."""
-    parts = [HEADER, "\n", render_global(any(s.guest_ok for s in shares))]
+    time_machine = any(s.time_machine for s in shares)
+    parts = [HEADER, "\n", render_global(any(s.guest_ok for s in shares), time_machine)]
     for share in sorted(shares, key=lambda s: s.name.lower()):
         parts.append("\n")
-        parts.append(render_share(share))
+        parts.append(render_share(share, time_machine))
     return "".join(parts)
 
 
-# --- parser (ADR-0086) ---------------------------------------------------------------
+# --- parser (ADR-0380) ---------------------------------------------------------------
 
 
 @dataclass
@@ -231,7 +278,7 @@ class ParsedSmbConf:
 
 
 def note_value(value: object) -> str:
-    """A value quoted in a note or report line (ADR-0086): bytes that were not UTF-8
+    """A value quoted in a note or report line (ADR-0380): bytes that were not UTF-8
     become U+FFFD, control characters '?', and at most 200 characters are kept."""
     text = value if isinstance(value, str) else str(value)
     try:
@@ -379,7 +426,7 @@ def parse_bool(value: str) -> bool | None:
     return None
 
 
-# --- effective values (ADR-0086) -------------------------------------------------------
+# --- effective values (ADR-0380) -------------------------------------------------------
 
 # Normalized key -> (canonical boolean, inverted).
 _BOOLEAN_KEYS: dict[str, tuple[str, bool]] = {
@@ -563,17 +610,22 @@ def global_options_considered(parsed: ParsedSmbConf) -> list[ParsedOption]:
     return _considered_globals(parsed, True)
 
 
-def _restricts(option: ParsedOption) -> bool:
+def _values_of(option: ParsedOption) -> SectionValues:
     values = SectionValues()
     _apply(values, option, False)
-    return bool(values.hosts_allow or values.hosts_deny or values.invalid_users or values.encryption_required)
+    return values
+
+
+def _restricts(option: ParsedOption) -> bool:
+    values = _values_of(option)
+    return bool(values.hosts_allow or values.hosts_deny or values.invalid_users)
 
 
 def global_restrictions(parsed: ParsedSmbConf) -> list[ParsedOption]:
-    """The [global] options that remove all access at the import (ADR-0086), in file order:
-    ``hosts allow``, ``hosts deny``, an ``invalid users`` entry, or ``smb encrypt`` set to
-    required, mandatory, force, forced or enforced. Scripts that refuse connections are
-    pairs of options: global_script_restrictions.
+    """The [global] options that remove all access at the import (ADR-0380), in file order:
+    ``hosts allow``, ``hosts deny`` or an ``invalid users`` entry. Scripts that refuse
+    connections are pairs of options: global_script_restrictions. Required encryption is
+    the shares' option instead (global_encryption, ADR-0380).
 
     Every [global] block counts, not only the last value of an option: Samba
     copies the share defaults when a section starts (loadparm.c lp_do_section),
@@ -582,6 +634,14 @@ def global_restrictions(parsed: ParsedSmbConf) -> list[ParsedOption]:
     are not restrictions.
     """
     return [option for option in global_options_considered(parsed) if _restricts(option)]
+
+
+def global_encryption(parsed: ParsedSmbConf) -> list[ParsedOption]:
+    """The [global] options that require encryption, in file order: ``smb encrypt`` or ``server
+    smb encrypt`` set to required, mandatory, force, forced or enforced. At the import every
+    share then requires encryption (ADR-0380); every [global] block counts, as in
+    global_restrictions."""
+    return [option for option in global_options_considered(parsed) if _values_of(option).encryption_required]
 
 
 @dataclass(frozen=True)
@@ -613,7 +673,7 @@ def _restricting(scripts: Mapping[str, Mapping[str, ParsedOption]]) -> list[Scri
 
 
 def section_script_restrictions(parsed: ParsedSmbConf, section: ParsedSection) -> list[ScriptRestriction]:
-    """The scripts that can refuse connections to ``section`` (ADR-0086): with its effective
+    """The scripts that can refuse connections to ``section`` (ADR-0380): with its effective
     values (the [global] options before its first header, then its own options, the last
     value of each), a command is set and its close option is true. The caller tells apart
     the restrictions that the section sets itself."""
@@ -641,7 +701,7 @@ def global_script_restrictions(parsed: ParsedSmbConf) -> list[ScriptRestriction]
 def _unos_global_lines() -> frozenset[tuple[str, str]]:
     lines: set[tuple[str, str]] = set()
     for guest_enabled in (False, True):
-        for key, value in global_settings(guest_enabled):
+        for key, value in global_settings(guest_enabled, time_machine=True):
             lines.add((normalize_key(key), value))
     return frozenset(lines)
 
@@ -651,13 +711,77 @@ _UNOS_SHARE_LINES = frozenset((normalize_key(key), value) for key, value in _FIX
 
 
 def is_unos_global_line(option: ParsedOption) -> bool:
-    """A [global] line equal to a line of either render_global variant."""
+    """A [global] line equal to a line of a render_global variant."""
     return (option.key, option.value) in _UNOS_GLOBAL_LINES
 
 
 def is_unos_share_line(option: ParsedOption) -> bool:
     """One of the fixed lines that end every share section (_FIXED_SHARE_LINES)."""
     return (option.key, option.value) in _UNOS_SHARE_LINES
+
+
+def _unos_option_lines() -> frozenset[tuple[str, str]]:
+    """The option lines of _option_lines with a fixed value (normalized key, value): each vfs
+    objects line it composes, Time Machine's line and the snapshots' lines."""
+    lines = {
+        (normalize_key("vfs objects"), " ".join((*fruit, *snapshots)))
+        for fruit in ((), FRUIT_MODULES)
+        for snapshots in ((), SNAPSHOT_MODULES)
+    }
+    lines.add((normalize_key("fruit:time machine"), "yes"))
+    lines.update((normalize_key(key), value) for key, value in _SNAPSHOT_LINES)
+    return frozenset(lines)
+
+
+_UNOS_OPTION_LINES = _unos_option_lines()
+_SNAPSHOT_MOUNTPOINT_KEY = normalize_key("shadow:mountpoint")
+
+
+def is_unos_option_line(option: ParsedOption) -> bool:
+    """A line that _option_lines renders for a share's protocol options (ADR-0380):
+    shadow:mountpoint with any path, the other lines with their values."""
+    return option.key == _SNAPSHOT_MOUNTPOINT_KEY or (option.key, option.value) in _UNOS_OPTION_LINES
+
+
+VFS_OBJECTS_KEYS = frozenset({normalize_key("vfs objects"), normalize_key("vfs object")})
+TIME_MACHINE_KEY = normalize_key("fruit:time machine")
+_SNAPSHOT_KEY_PREFIX = "shadow:"
+
+
+def _options_of(parsed: ParsedSmbConf, section: ParsedSection) -> tuple[ParsedOption, ...]:
+    """The options that apply to ``section`` in file order: the [global] options before its first
+    header (without UNOS's own lines in a file that starts with HEADER), then its own."""
+    return (*_considered_globals(parsed, True, section.global_count), *section.options)
+
+
+def vfs_objects(parsed: ParsedSmbConf, section: ParsedSection) -> ParsedOption | None:
+    """The ``vfs objects`` line that applies to ``section``: its own last one, else the last one of
+    [global] before it; None without one."""
+    found = None
+    for option in _options_of(parsed, section):
+        if option.key in VFS_OBJECTS_KEYS:
+            found = option
+    return found
+
+
+def last_option(parsed: ParsedSmbConf, section: ParsedSection, key: str) -> ParsedOption | None:
+    """The last option of ``key`` (normalized) that applies to ``section``, or None."""
+    found = None
+    for option in _options_of(parsed, section):
+        if option.key == key:
+            found = option
+    return found
+
+
+def _snapshot_settings(parsed: ParsedSmbConf, section: ParsedSection) -> tuple[tuple[str, str], ...] | None:
+    """What a tree connect of ``section`` lists as snapshots: the ``shadow:`` settings when its vfs
+    modules include shadow_copy2, which reads them at the tree connect; None without it."""
+    vfs = vfs_objects(parsed, section)
+    if vfs is None or "shadow_copy2" not in split_list(vfs.value):
+        return None
+    settings = {option.key: option.value for option in _options_of(parsed, section)
+                if option.key.startswith(_SNAPSHOT_KEY_PREFIX)}
+    return tuple(sorted(settings.items()))
 
 
 def is_unos_section(section: ParsedSection) -> bool:
@@ -676,6 +800,9 @@ class ShareGrants:
     grants: Mapping[str, int]               # principal -> READ or WRITE; see GUEST and ANY_USER
     unknown: bool                           # UNOS cannot evaluate the access exactly
     text: tuple[tuple[str, str], ...]       # the section's own options (key, value)
+    encryption_required: bool = False       # a client that cannot encrypt is refused (ADR-0380)
+    # The shadow: settings of a section that loads shadow_copy2 (Previous Versions, ADR-0380); None: none.
+    snapshots: tuple[tuple[str, str], ...] | None = None
 
 
 def _not_exact(values: SectionValues) -> bool:
@@ -731,6 +858,8 @@ def config_grants(parsed: ParsedSmbConf) -> dict[str, ShareGrants]:
             grants=grants,
             unknown=unknown,
             text=tuple((option.key, option.value) for option in section.options),
+            encryption_required=values.encryption_required,
+            snapshots=_snapshot_settings(parsed, section),
         )
     return result
 
@@ -746,7 +875,10 @@ def _level(grants: Mapping[str, int], principal: str) -> int:
 def shrunk_shares(old_text: str, new_text: str) -> list[str]:
     """Names (as in the old file) of the sections whose access shrank from ``old_text``
     to ``new_text`` (ADR-0103): removed, renamed or no longer served, path changed,
-    an unknown section whose text changed, or a principal that lost read or write."""
+    an unknown section whose text changed, a principal that lost read or write,
+    encryption required now, or snapshots listed before (shadow_copy2) and no longer
+    or others (ADR-0380): a tree connect keeps what it was granted, also a session
+    without encryption, and its vfs modules with their settings."""
     old = config_grants(parse_smb_conf(old_text))
     new = config_grants(parse_smb_conf(new_text))
     shrunk: list[str] = []
@@ -757,6 +889,25 @@ def shrunk_shares(old_text: str, new_text: str) -> list[str]:
             or after.path != before.path
             or (before.unknown and after.text != before.text)
             or any(_level(after.grants, p) < level for p, level in before.grants.items())
+            or (after.encryption_required and not before.encryption_required)
+            or (before.snapshots is not None and after.snapshots != before.snapshots)
         ):
             shrunk.append(before.name)
     return shrunk
+
+
+_AVAILABLE_KEY = normalize_key("available")
+
+
+def time_machine_shares(text: str) -> set[str]:
+    """The lower-case names of the sections of ``text`` that smbd announces to Time Machine with
+    _adisk._tcp (ADR-0380): ``fruit:time machine`` true in a section that is available, as
+    smbd's lp_snum_ok asks (a share without access has ``available = no``)."""
+    found = set()
+    for section in parse_smb_conf(text).sections:
+        values = {key: [option.value for option in section.options if option.key == key]
+                  for key in (TIME_MACHINE_KEY, _AVAILABLE_KEY)}
+        offered = values[TIME_MACHINE_KEY] and parse_bool(values[TIME_MACHINE_KEY][-1])
+        if offered and (not values[_AVAILABLE_KEY] or parse_bool(values[_AVAILABLE_KEY][-1]) is not False):
+            found.add(section.name.lower())
+    return found

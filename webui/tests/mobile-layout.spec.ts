@@ -1,8 +1,8 @@
 import type { Locator, Page, WebSocketRoute } from '@playwright/test';
 import { test, expect } from './fixtures';
 import { createAccount, deleteAccount, type Account } from './accounts';
-import { FAKE_IMPORTABLE, fakeStorageApi } from './storage-fakes';
-import { POOLS, accessOf, fakeNfsExport, fakeShare, fakeSmbApi, fakeUser } from './shares-fakes';
+import { FAKE_IMPORTABLE, fakeStorageApi, noBalance } from './storage-fakes';
+import { NO_SNAPSHOTS, POOLS, accessOf, fakeNfsExport, fakeShare, fakeSmbApi, fakeUser } from './shares-fakes';
 import { HEALTHY_HDD_2, REPLACE_SOON, fakeHealthApi, predictionsAnswer } from './health-fakes';
 import { fakeNetworkApi } from './network-fakes';
 import { fakeNotificationsApi, type Channel } from './notifications-fakes';
@@ -615,6 +615,12 @@ const USERS = [
 const SHARES = [
   fakeShare('family_photos_and_videos', {
     comment: 'Every photo and video of the family since 2019, sorted by year',
+    // The badges of every protocol option (ADR-0380) wrap on a phone, and so does the reason of
+    // one that smb.conf leaves out, with its long path.
+    encryption_required: true,
+    time_machine: true,
+    previous_versions: true,
+    not_rendered: { previous_versions: NO_SNAPSHOTS },
     access: accessOf(USERS, [
       { user_id: 2, username: 'alice', level: 'write' },
       { user_id: 3, username: 'bob_the_family_photographer', level: 'read' },
@@ -699,6 +705,21 @@ const VIEWS: View[] = [
     path: '/storage',
     fake: (page) => fakeStorageApi(page, { importable: FAKE_IMPORTABLE }),
     shows: (page) => page.getByText('e2e_frozen').first(),
+  },
+  {
+    // A pool card with a balance in progress: its buttons wrap, its progress and time left (ADR-0379).
+    name: 'Storage: a balance in progress',
+    path: '/storage',
+    fake: (page) =>
+      fakeStorageApi(page, {
+        balanceStatus: (pool) => ({
+          ...noBalance(pool),
+          ...(pool === 'e2e_media'
+            ? { status: 'running', completed: 123, expected: 4567, considered: 130, seconds_left: 98765 }
+            : {}),
+        }),
+      }),
+    shows: (page) => page.getByText(/^(About 27 h 27 min left|Осталось около 27 ч 27 мин)$/),
   },
   {
     name: 'Snapshots',
@@ -926,6 +947,30 @@ const VIEWS: View[] = [
     fake: (page) => fakeStorageApi(page),
     open: (page) => page.getByRole('button', { name: /^(Create Pool|Создать пул)$/ }).click(),
     shows: (page) => page.getByRole('dialog'),
+    start: dialogTitle,
+    end: dialogEnd,
+  },
+  {
+    name: "Dialog: a disk's idle timeout",
+    path: '/storage',
+    fake: (page) => fakeStorageApi(page),
+    open: (page) =>
+      page.getByRole('button', { name: /^(Idle timeout of|Тайм-аут простоя) \/dev\/e2e-hd1: / }).click(),
+    shows: (page) => page.getByRole('dialog'),
+    start: dialogTitle,
+    end: dialogEnd,
+  },
+  {
+    // A full balance: its warning and its confirmation make the dialog tallest (ADR-0379).
+    name: 'Dialog: balance a pool',
+    path: '/storage',
+    fake: (page) => fakeStorageApi(page),
+    open: async (page) => {
+      await page.getByRole('button', { name: /^(Balance|Балансировка)$/ }).first().click();
+      await page.getByRole('dialog').getByRole('combobox').click();
+      await page.getByRole('option', { name: /^(Every chunk \(full balance\)|Все блоки \(полная балансировка\))$/ }).click();
+    },
+    shows: (page) => page.getByRole('dialog').getByRole('checkbox'),
     start: dialogTitle,
     end: dialogEnd,
   },

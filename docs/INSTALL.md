@@ -196,8 +196,16 @@ board (ADR-0376).
   `soc-thermal` at 75 C on, and with this image it drives no fan: none is among
   its cooling devices. Fit a heatsink, and keep the dashboard's temperature
   below 70 C. The dev device idles at about 42 C.
-- **Apps.** ARM64 images of the App Store run. Apps do not get the RK3588's
-  video decoder or NPU yet.
+- **Samba's vfs modules.** A share's Time Machine and Previous Versions need
+  the package `samba-vfs-modules` (ADR-0380), which `install.sh` installs and
+  Debian's `samba` only recommends. On the dev device, set up by hand, check
+  that `ls /usr/lib/aarch64-linux-gnu/samba/vfs/fruit.so` finds it, else install
+  it with `sudo apt install samba-vfs-modules`; until then the Shares page
+  refuses both options and names the package.
+- **Apps.** ARM64 images of the App Store run. Jellyfin gets the RK3588's
+  video decoders and encoders, its RGA and its GPU for Rockchip MPP (RKMPP),
+  which needs the `vendor` kernel; choose RKMPP in Jellyfin (ADR-0377, see the
+  User Guide's Hardware Acceleration). No app uses the NPU yet.
 - **Temperature.** The dashboard shows the whole chip's sensor (`soc_thermal`).
 
 ### Network Requirements
@@ -304,9 +312,19 @@ sudo apt update
 sudo apt install -y \
     curl wget git ca-certificates gnupg lsb-release \
     btrfs-progs smartmontools lm-sensors \
-    samba samba-common-bin \
+    samba samba-common-bin samba-vfs-modules \
     hdparm parted mdadm nvme-cli \
     ethtool net-tools iproute2
+```
+
+UNOS reads the disks' SMART data itself. Turn off smartd, which the package
+smartmontools starts: it would read every awake disk every 30 minutes, and
+each read starts the disk's standby timer again, so a disk given an idle
+timeout of 30 minutes or more on the Storage page might never spin down
+(ADR-0378):
+
+```bash
+sudo systemctl disable --now smartmontools
 ```
 
 ### Step 2: Install Docker
@@ -660,7 +678,7 @@ NAS instead:
 | Service | For | What it answers |
 |---------|-----|-----------------|
 | `wsdd2` | Windows | WS-Discovery (UDP 3702 and TCP 3702), and LLMNR for the server's name (UDP and TCP 5355), over IPv4 only |
-| `avahi-daemon` | macOS | Bonjour (mDNS, UDP 5353), over IPv4 only: smbd registers its `_smb._tcp` service with it (`multicast dns register = yes`), and it answers for the server's name (`<name>.local`) with the server's IPv4 addresses |
+| `avahi-daemon` | macOS | Bonjour (mDNS, UDP 5353), over IPv4 only: smbd registers its `_smb._tcp` service with it (`multicast dns register = yes`), and `_adisk._tcp` for the shares that offer Time Machine (ADR-0380), and it answers for the server's name (`<name>.local`) with the server's IPv4 addresses. smbd registers them when it or avahi-daemon starts, so UNOS restarts avahi-daemon after a change of the Time Machine shares |
 
 Both answer over IPv4 only, as `install.sh` sets them up:
 

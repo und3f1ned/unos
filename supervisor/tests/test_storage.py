@@ -733,7 +733,10 @@ class TestScrubOffTheEventLoop:
             r = getattr(client, method)("/api/v1/storage/pools/data/scrub")
         assert r.status_code == 200, r.text
         assert r.json()["status"] == "running"
-        assert scrub_run[0][0] == ["btrfs", "scrub", first]
+        # A start first asks whether a balance runs (ADR-0379).
+        assert [cmd for cmd, _, _ in scrub_run if cmd[1] == "scrub"][0] == ["btrfs", "scrub", first]
+        assert [cmd for cmd, _, _ in scrub_run if cmd[1] == "balance"] == ([["btrfs", "balance", "status"]]
+                                                                           if first == "start" else [])
         assert [(on_loop, timeout) for _, on_loop, timeout in scrub_run] == [
             (False, pools.SCRUB_COMMAND_TIMEOUT)] * len(scrub_run)
 
@@ -962,8 +965,9 @@ class TestScrubStatus:
 
         assert response.status_code == 200, response.text
         assert (response.json()["status"], response.json()["bytes_scrubbed"]) == ("running", GIB)
+        # Not while a balance runs (ADR-0379).
         assert [cmd[:3] for cmd in btrfs_reports.commands] == [
-            ["btrfs", "scrub", "start"], ["btrfs", "scrub", "status"]]
+            ["btrfs", "balance", "status"], ["btrfs", "scrub", "start"], ["btrfs", "scrub", "status"]]
 
     def test_start_answers_running_before_btrfs_reports_the_scrub(self, btrfs_reports):
         """Right after btrfs accepted a start, its status can still say that no scrub is recorded
@@ -1033,7 +1037,10 @@ class TestScrubStatus:
         assert (response.status_code, status) == expected, response.text
         if response.status_code == 500:
             assert response.json()["detail"] == "Scrub status failed: ERROR: cannot read the scrub status"
-        assert commands == [["btrfs", "scrub", first], ["btrfs", "scrub", "status"]]
+        # A start asks first whether a balance runs: a balance status that cannot be read refuses no
+        # scrub (ADR-0379).
+        balance = [["btrfs", "balance", "status"]] if first == "start" else []
+        assert commands == balance + [["btrfs", "scrub", first], ["btrfs", "scrub", "status"]]
 
     def test_cancel_of_a_scrub_that_no_longer_runs_answers_its_status(self, monkeypatch):
         # btrfs scrub cancel fails when the scrub ended meanwhile: not an error.
@@ -1122,19 +1129,24 @@ class TestScrubsForTheEventsSocket:
         assert scrubs.current() == [ScrubStatus(pool="data", status="running").model_dump()]
 
 
+# A fake btrfs's answer to btrfs balance status, which a scrub's start asks first (ADR-0379).
+NO_BALANCE = '[ "$1" = balance ] && { echo "No balance found on \'$3\'"; exit 0; }\n'
 # What a fake btrfs does. Without -B, btrfs-progs forks the process that runs
 # the scrub and returns at once; that process keeps the standard output and
 # error of btrfs open (it closes none of them) until the scrub ends, hours
 # later on a large pool.
 FAKE_BTRFS = {
     "running": (
+        NO_BALANCE +
         'case "$2" in\n'
         '  start) sleep 300 & echo $! > "$0.pid"; echo "scrub started on $3, fsid 4d1c2b3a (pid=$!)";;\n'
         '  status) printf "Scrub started:    Thu Nov  6 07:00:00 2026\\nStatus:           running\\n";;\n'
         "esac\n"
     ),
-    "refused": 'echo "ERROR: not a btrfs filesystem: $3" >&2\nexit 1\n',
-    "hanging": "exec sleep 300\n",
+    "refused": NO_BALANCE + 'echo "ERROR: not a btrfs filesystem: $3" >&2\nexit 1\n',
+    # btrfs balance status, which a start asks first, answers; the start hangs (a hung balance status
+    # is test_command_timeouts.py's).
+    "hanging": NO_BALANCE + "exec sleep 300\n",
 }
 
 

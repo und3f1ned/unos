@@ -290,6 +290,49 @@ class FakeHost:
         self.subvolume_root = lambda path: False
         # How often the storage endpoints applied smb.conf after a pool change (install_fake_host).
         self.smb_applies = 0
+        # The power of the whole disks (ADR-0378): the paths of those in standby. A command that
+        # reads a sleeping disk, or sends it a command that spins it up, wakes it and is recorded
+        # in woken as (disk, command): btrfs filesystem show without --mounted (libblkid reads
+        # every block device), wipefs, blkid -p, mount, mkfs.btrfs and hdparm -S. hdparm -C reads
+        # a disk's power mode on the host and leaves it asleep; smartctl runs in the container
+        # (run_in_container), and only with -n standby or -n idle, which leave them asleep too.
+        self.asleep: set[str] = set()
+        self.woken: list[tuple[str, list[str]]] = []
+        # The power condition of an EPC disk (ACS: Extended Power Conditions), by its path, where it
+        # is one that CHECK POWER MODE answers with a value hdparm -C does not name (" drive state
+        # is:  unknown", exit status 0): "idle_a", "idle_b", "idle_c" (81h-83h, awake) or "standby_y"
+        # (01h; such a disk is in asleep too). smartctl -n names them; a command that reads the disk
+        # makes it active.
+        self.epc: dict[str, str] = {}
+        # Disks that stopped answering: hdparm -C on one hangs in the kernel, where the host's timeout
+        # cannot end it, so run_on_host's limit runs out (TimeoutExpired), and the hdparm stays on the
+        # host (stuck_hdparm: the disks whose hdparm -C still runs there, which pgrep finds).
+        self.hung: set[str] = set()
+        self.stuck_hdparm: set[str] = set()
+        # The disks whose identity smartctl read (IDENTIFY DEVICE, which restarts a disk's standby
+        # timer), in order.
+        self.identified: list[str] = []
+        # The standby timer that hdparm -S gave each disk, by its path: the -S value.
+        self.standby_timers: dict[str, int] = {}
+        # The automatic offline data collection of the ATA disks that have it (SFF-8035i; smartctl -c
+        # reads it, -o on and -o off switch it, ADR-0378), by the disk's path: True while it is on (the
+        # drive scans its surface every 4 hours, suspends the scan for each command and resumes it, so
+        # that it does not sleep meanwhile), False while off. A disk not here has no such feature: its
+        # capabilities lack "Auto Offline data collection on/off support", and -o is refused.
+        self.offline_collection: dict[str, bool] = {}
+        # The ATA disks without working SMART, by their path: "disabled" for one whose SMART is turned off
+        # (smartctl -s off, a BIOS or an enclosure), "unsupported" for one without SMART. Neither runs an
+        # automatic offline data collection: it is a SMART timer function, and SMART DISABLE OPERATIONS
+        # stops it.
+        self.smart_off: dict[str, str] = {}
+        # A function of a command run in the container that answers it instead of the fake (a
+        # CompletedProcess), or raises (subprocess.TimeoutExpired, as run_in_container at its timeout);
+        # None from it: the fake answers.
+        self.container_answer = None
+        # udev's ID_SERIAL_SHORT of a disk, by its path, where it is not lsblk's serial (None: none).
+        self.udev_serials: dict[str, str | None] = {}
+        # The commands run in the container (smartctl), in order.
+        self.container_calls: list[list[str]] = []
         self._minor = 0
         # The host boots from the SD card (ext4 root on mmcblk1p1), like the
         # ArmSoM board, and swaps to zram.
@@ -459,6 +502,123 @@ class FakeHost:
     def _fs_of(self, path):
         return next((fs for fs in self.filesystems if path in fs["devices"]), None)
 
+    def _disk_of(self, path):
+        """The path of the whole disk that ``path`` (a disk or a partition) is on, or None."""
+        for top in self.tree:
+            if any(node["path"] == path for node in self._walk(top)):
+                return top["path"]
+        return None
+
+    def _wake(self, path, cmd):
+        """A command that reads ``path`` or spins up its disk: a sleeping disk wakes (asleep)."""
+        disk = self._disk_of(path)
+        self.epc.pop(disk, None)
+        if disk in self.asleep:
+            self.asleep.discard(disk)
+            self.woken.append((disk, list(cmd)))
+
+    def run_in_container(self, cmd, *, timeout, **kwargs):
+        """host.run_in_container: smartctl -n standby or -n idle, which reads a disk's power mode
+        first and leaves the disk alone in the modes that -n names, with exit status 2 and the
+        message "Device is in <MODE> mode" in the JSON's (smartctl's names: SLEEP, STANDBY and
+        STANDBY_Y for -n standby, and IDLE_A, IDLE_B and IDLE_C too for -n idle; an awake disk of
+        the fake is ACTIVE or IDLE, FFh, which neither stops), and answers -i (the identity: the
+        power read of an NVMe disk, of a host without hdparm and of an EPC disk), -a (the SMART
+        data), and -c, also with -i (the SMART capabilities, with the automatic offline data
+        collection of offline_collection, and the identity's SMART support), also after -o on or
+        -o off, which switch it first, of a disk it goes on to read. And pgrep -f
+        '^hdparm -C <disk>$', which finds the hdparm -C of a disk that still runs on the host
+        (stuck_hdparm; the container shares the host's process IDs). Any other command fails the test, as smartctl without -n, which would
+        wake a sleeping disk. container_answer answers a command instead, when it does."""
+        cmd = list(cmd)
+        assert timeout, cmd
+        self.container_calls.append(cmd)
+        if self.container_answer is not None and (answer := self.container_answer(cmd)) is not None:
+            return answer
+        if cmd[:2] == ["pgrep", "-f"] and len(cmd) == 3:
+            found = re.fullmatch(r"\^hdparm -C (/dev/[a-z0-9]+)\$", cmd[2])
+            assert found, cmd
+            running = found[1] in self.stuck_hdparm
+            return subprocess.CompletedProcess(cmd, 0 if running else 1, "4242\n" if running else "", "")
+        if cmd[:2] != ["smartctl", "-n"] or cmd[2] not in ("standby", "idle") \
+                or cmd[3:-1] not in (["-i", "-j"], ["-j", "-a"],
+                                     *([*switch, *info, "-c", "-j"] for switch in ([], ["-o", "on"], ["-o", "off"])
+                                       for info in ([], ["-i"]))):
+            raise AssertionError(f"test tried to run a real command: {cmd!r}")
+        device = cmd[-1]
+        node = self._node_by_path(device)
+        if node is None or node["type"] != "disk":
+            message = f"Smartctl open device: {device} failed: No such device"
+            return subprocess.CompletedProcess(cmd, 2, json.dumps(
+                {"smartctl": {"messages": [{"string": message, "severity": "error"}], "exit_status": 2}}), "")
+        condition = self.epc.get(device)
+        mode = condition.upper() if condition else "STANDBY" if device in self.asleep else None
+        if mode is not None and (cmd[2] == "idle" or not mode.startswith("IDLE")):
+            return subprocess.CompletedProcess(cmd, 2, json.dumps({
+                "smartctl": {"messages": [{"string": f"Device is in {mode} mode, exit(2)", "severity": "information"}],
+                             "exit_status": 2},
+                "device": {"name": device, "type": "sat"},
+            }), "")
+        self.identified.append(device)
+        if "-c" in cmd:
+            return self._smart_capabilities(cmd, device, node)
+        data = {"device": {"name": device, "type": "sat"}, "model_name": node.get("model") or "Fake Disk",
+                "serial_number": node.get("serial") or "", "firmware_version": "1.0",
+                "user_capacity": {"bytes": node["size"]}, "smart_status": {"passed": True},
+                "temperature": {"current": 31}}
+        if "-a" in cmd:
+            data["ata_smart_attributes"] = {"table": [
+                {"id": 9, "name": "Power_On_Hours", "value": 99, "worst": 99, "thresh": 0, "raw": {"value": 51832}},
+                {"id": 12, "name": "Power_Cycle_Count", "value": 99, "worst": 99, "thresh": 0, "raw": {"value": 9}},
+            ]}
+        return subprocess.CompletedProcess(cmd, 0, json.dumps(data), "")
+
+    def _smart_capabilities(self, cmd, device, node):
+        """smartctl -c -j, with or without -i, after -o on or -o off: the JSON of smartmontools'
+        ataprint.cpp, whose ata_smart_data.offline_data_collection.status.value has bit 7 set while
+        the automatic offline data collection is on (0x84 as on the dev device's disk: suspended by a
+        command of the host, 0x05 once it was turned off), and whose capabilities.values[0] has bit 1
+        for a disk that can switch it (0x7b as on the dev device's disk; 0x59 without). -i adds
+        smart_support. An NVMe disk has none of it. -o on a disk without the feature is refused by the
+        disk: exit status bit 2, as smartctl's FAILSMART. A disk of smart_off reads no SMART data:
+        without SMART, smartctl writes smart_support.available false and fails (FAILSMART); with SMART
+        disabled it stops at "SMART Disabled", a message that -j drops, before -o and with exit status
+        0, and writes smart_support (enabled false) only for -i."""
+        if node["name"].startswith("nvme"):
+            return subprocess.CompletedProcess(cmd, 0, json.dumps(
+                {"device": {"name": device, "type": "nvme", "protocol": "NVMe"}, "smartctl": {"exit_status": 0}}), "")
+        ata = {"name": device, "info_name": f"{device} [SAT]", "type": "sat", "protocol": "ATA"}
+        if device in self.smart_off:
+            unsupported = self.smart_off[device] == "unsupported"
+            data = {"device": ata, "smartctl": {"exit_status": 4 if unsupported else 0}}
+            if unsupported:
+                data["smart_support"] = {"available": False}
+            elif "-i" in cmd:
+                data["smart_support"] = {"available": True, "enabled": False}
+            return subprocess.CompletedProcess(cmd, data["smartctl"]["exit_status"], json.dumps(data), "")
+        returncode = 0
+        if "-o" in cmd:
+            if device in self.offline_collection:
+                self.offline_collection[device] = cmd[cmd.index("-o") + 1] == "on"
+                self.changes.append(["smartctl", "-o", cmd[cmd.index("-o") + 1], device])
+            else:
+                returncode = 4
+        on = self.offline_collection.get(device)
+        status = 0x00 if on is None else 0x84 if on else 0x05
+        capabilities = 0x59 if on is None else 0x7b
+        data = {
+            "smartctl": {"exit_status": returncode},
+            "device": ata,
+            "ata_smart_data": {
+                "offline_data_collection": {"status": {"value": status}, "completion_seconds": 14760},
+                "capabilities": {"values": [capabilities, 3], "exec_offline_immediate_supported": True,
+                                 "offline_is_aborted_upon_new_cmd": False},
+            },
+        }
+        if "-i" in cmd:
+            data["smart_support"] = {"available": True, "enabled": True}
+        return subprocess.CompletedProcess(cmd, returncode, json.dumps(data), "")
+
     @staticmethod
     def _result(returncode=0, stdout="", stderr=""):
         return HostResult(returncode, stdout, stderr)
@@ -472,6 +632,9 @@ class FakeHost:
             # by default, so text with surrogate escapes needs errors="surrogateescape".
             input.encode("utf-8", errors or "strict")
         self.calls.append(cmd)
+        if (hung := self._hung_power_read(cmd)) is not None:
+            self.stuck_hdparm.add(hung)
+            raise subprocess.TimeoutExpired(cmd, timeout)
         result = None
         for prefix, (code, stderr) in self.fail.items():
             if tuple(cmd[: len(prefix)]) == prefix:
@@ -483,6 +646,15 @@ class FakeHost:
         if check and not result.ok:
             raise HostCommandError(cmd, result.returncode, result.stderr)
         return result
+
+    def _hung_power_read(self, cmd):
+        """The disk of ``cmd`` when it is hdparm -C (under timeout) of a disk in hung, else None."""
+        args = cmd[1:] if cmd[:1] == ["timeout"] else None
+        while args and args[0].startswith("-"):
+            args = args[1:]
+        if args and args[1:3] == ["hdparm", "-C"] and args[-1] in self.hung:
+            return args[-1]
+        return None
 
     @staticmethod
     def _decoded(result, errors):
@@ -592,12 +764,35 @@ class FakeHost:
             return self._result(stdout="".join(f"{s}\n" for s in self.swaps))
         if prog == "wipefs":
             assert "--no-act" in cmd and not {"-a", "--all"} & set(cmd), cmd
+            self._wake(cmd[-1], cmd)
             sigs = self.signatures.get(cmd[-1])
             return self._result(stdout=json.dumps({"signatures": sigs}) if sigs else "")
         if prog == "blkid":
+            if "-p" in cmd:  # probes the device itself, not the cache
+                self._wake(cmd[-1], cmd)
             fs = self._fs_of(cmd[-1])
             return self._result(0 if fs else 2, stdout=f"{fs['uuid']}\n" if fs else "")
+        if prog == "udevadm" and cmd[1:2] == ["info"]:
+            # The properties of the udev database (no disk is read): ID_SERIAL_SHORT, the serial
+            # that lsblk reports for a SATA disk, unless udev_serials says otherwise.
+            assert cmd[2:4] == ["--query=property", "--name"] and len(cmd) == 5, cmd
+            node = self._node_by_path(cmd[4])
+            if node is None:
+                return self._result(1, stderr=f"Unknown device \"{cmd[4]}\": No such device")
+            serial = self.udev_serials.get(cmd[4], node.get("serial"))
+            lines = [f"DEVNAME={cmd[4]}", f"DEVTYPE={node['type']}"]
+            if serial:
+                lines.append(f"ID_SERIAL_SHORT={serial}")
+            return self._result(stdout="".join(f"{line}\n" for line in lines))
         if prog in ("udevadm",):
+            return self._result()
+        if prog == "hdparm":
+            return self._hdparm(cmd)
+        if prog == "rm":
+            assert cmd[1:3] == ["-f", "--"], cmd
+            for path in cmd[3:]:
+                if self.files.pop(path, None) is not None:
+                    self.changes.append(["rm", path])
             return self._result()
         if prog == "btrfs":
             return self._btrfs(cmd)
@@ -675,7 +870,15 @@ class FakeHost:
     def _btrfs(self, cmd):
         sub = cmd[1:3]
         if sub == ["filesystem", "show"]:
-            return self._result(stdout=self._btrfs_show())
+            if "--mounted" not in cmd:
+                # Without --mounted, btrfs reads the superblock of every block device that
+                # libblkid finds: a disk that sleeps spins up (ADR-0378).
+                for disk in sorted(self.asleep):
+                    self._wake(disk, cmd)
+            shown = self._btrfs_show(mounted_only="--mounted" in cmd)
+            # With --mounted, btrfs-progs exits 1 without a word when no btrfs filesystem is
+            # mounted: cmd_filesystem_show returns btrfs_scan_kernel's "none found".
+            return self._result(1 if "--mounted" in cmd and not shown else 0, stdout=shown)
         if sub == ["device", "scan"]:
             return self._result()
         if sub == ["filesystem", "label"]:
@@ -727,9 +930,11 @@ class FakeHost:
         next(f for f in self.filesystems if f["uuid"] == mount["uuid"])["label"] = label
         return self._result()
 
-    def _btrfs_show(self):
+    def _btrfs_show(self, mounted_only=False):
         chunks = []
         for fs in self.filesystems:
+            if mounted_only and not any(m["fstype"] == "btrfs" and m["uuid"] == fs["uuid"] for m in self.mounts):
+                continue
             label = f"'{fs['label']}'" if fs["label"] else "none"
             total = len(fs["devices"]) + fs["missing"]
             lines = [f"Label: {label}  uuid: {fs['uuid']}",
@@ -742,9 +947,41 @@ class FakeHost:
             chunks.append("\n".join(lines) + "\n")
         return "\n".join(chunks)
 
+    def _hdparm(self, cmd):
+        """hdparm -S <value> <disk>: the IDLE command with a standby timer, which spins up a
+        sleeping disk. hdparm -C <disk>: CHECK POWER MODE, which reads the disk's power mode and
+        leaves it asleep (" drive state is:  standby", or "active/idle"); an NVMe disk takes no ATA
+        command, so hdparm fails for it with "unknown", and an EPC disk in a power condition that
+        hdparm does not name (epc) is "unknown" with exit status 0. A disk in hung never answers
+        (run). UNOS runs no other option."""
+        if "hdparm" in self.missing_programs:
+            return self._result(127, stderr="nsenter: failed to execute hdparm: No such file or directory")
+        if cmd[1:2] == ["-C"]:
+            assert len(cmd) == 3, cmd
+            device = cmd[2]
+            node = self._node_by_path(device)
+            if node is None:
+                return self._result(2, stderr=f"{device}: No such file or directory\n")
+            if node["name"].startswith("nvme"):
+                return self._result(25, stdout=f"\n{device}:\n drive state is:  unknown\n",
+                                    stderr=" HDIO_DRIVE_CMD(checkpowermode) failed: Inappropriate ioctl for device\n")
+            disk = self._disk_of(device)
+            state = "unknown" if disk in self.epc else "standby" if disk in self.asleep else "active/idle"
+            return self._result(stdout=f"\n{device}:\n drive state is:  {state}\n")
+        assert len(cmd) == 4 and cmd[1] == "-S" and cmd[2].isdigit(), cmd
+        device = cmd[3]
+        if self._node_by_path(device) is None:
+            return self._result(2, stderr=f"{device}: No such file or directory")
+        self._wake(device, cmd)
+        self.standby_timers[device] = int(cmd[2])
+        self.changes.append(cmd)
+        return self._result(stdout=f"\n{device}:\n setting standby to {cmd[2]}\n")
+
     def _mkfs_btrfs(self, cmd):
         args = cmd[1:]
         devices = [a for a in args if a.startswith("/dev/")]
+        for device in devices:
+            self._wake(device, cmd)
         label = args[args.index("-L") + 1]
         profile = args[args.index("-d") + 1]
         for device in devices:
@@ -793,6 +1030,8 @@ class FakeHost:
         fs = next((f for f in self.filesystems if f["uuid"] == uuid), None)
         if fs is None:
             return self._result(32, stderr=f"mount: {target}: can't find UUID={uuid}.")
+        for device in fs["devices"]:
+            self._wake(device, cmd)
         if fs["missing"]:
             return self._result(32, stderr=f"mount: {target}: wrong fs type, bad option, bad superblock")
         if target not in self.dirs:
@@ -874,8 +1113,9 @@ def install_fake_host(monkeypatch) -> FakeHost:
     fake = FakeHost()
     monkeypatch.setattr(host_module, "run_on_host", fake.run)
     monkeypatch.setattr(subprocess, "run", _forbidden_subprocess)
-    # btrfs scrubs and smartctl, which run in the container (ADR-0290).
-    monkeypatch.setattr(host_module, "run_in_container", _forbidden_subprocess)
+    # btrfs scrubs and smartctl, which run in the container (ADR-0290): only smartctl -n standby,
+    # which leaves a sleeping disk asleep, is answered (FakeHost.run_in_container).
+    monkeypatch.setattr(host_module, "run_in_container", fake.run_in_container)
     monkeypatch.setattr(pools, "_docker_api", fake.docker.api)
     monkeypatch.setattr(pools.settings, "pools_base_path", "/mnt/pools")
     # The checks before an app starts (apps.router.prepare_app_start) would look

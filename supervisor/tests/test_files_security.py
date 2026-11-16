@@ -20,6 +20,7 @@ from fastapi.testclient import TestClient
 from src.auth.utils import verify_token
 from src.main import app
 from src.shares import constants
+from src.storage import spindown
 
 # The package re-exports its APIRouter as ``router``; import the module itself.
 files_router = importlib.import_module("src.files.router")
@@ -2446,14 +2447,17 @@ def test_emptying_the_trash_deletes_deep_trees_without_following_symlinks(env, m
 
 
 def test_the_expiry_runs_at_the_start_and_then_once_a_day(monkeypatch, clock):
+    # Each pool's pass is due at the start and then once a day; the checks for the pools that are
+    # due, and whose disks are awake, come every hour (test_disk_spindown.py, ADR-0378).
     assert files_router.TRASH_EXPIRY_INTERVAL == 24 * 60 * 60
     passes = []
 
-    def expire(now):
-        passes.append((now, threading.current_thread() is threading.main_thread()))
+    def expire(now, due):
+        passes.append((now, threading.current_thread() is threading.main_thread(), due("data"), due("data")))
         return 0, []
 
     monkeypatch.setattr(files_router, "_expire_trash", expire)
+    monkeypatch.setattr(spindown, "pool_sleeps", lambda pool, asleep=None: False)
 
     async def run():
         task = asyncio.create_task(files_router.trash_expiry_loop())
@@ -2466,23 +2470,26 @@ def test_the_expiry_runs_at_the_start_and_then_once_a_day(monkeypatch, clock):
         await asyncio.gather(task, return_exceptions=True)
 
     asyncio.run(run())
-    # At once, in a worker thread, with the supervisor's clock.
-    assert passes == [(T0, False)]
+    # At once, in a worker thread, with the supervisor's clock; the pool's next pass is a day later.
+    assert passes == [(T0, False, True, False)]
 
 
 def test_the_expiry_logs_what_it_deleted_and_each_new_problem(monkeypatch, caplog):
     results = [(2, []), (0, []), (0, ["P"]), (0, ["P"]), OSError(errno.EIO, "Input/output error"), (0, []), (0, [])]
     calls = []
 
-    def expire(now):
+    def expire(now, due):
         calls.append(now)
+        assert due("data")  # a pass ran
         result = results[min(len(calls), len(results)) - 1]
         if isinstance(result, Exception):
             raise result
         return result
 
     monkeypatch.setattr(files_router, "_expire_trash", expire)
+    monkeypatch.setattr(spindown, "pool_sleeps", lambda pool, asleep=None: False)
     monkeypatch.setattr(files_router, "TRASH_EXPIRY_INTERVAL", 0)
+    monkeypatch.setattr(files_router, "TRASH_EXPIRY_CHECK", 0)
 
     async def run():
         task = asyncio.create_task(files_router.trash_expiry_loop())

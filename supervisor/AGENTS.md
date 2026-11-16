@@ -27,8 +27,10 @@ Python 3.11 and FastAPI. The package is `src`: tests import `src.*`, some from `
   commands, smartctl, bcrypt, Docker, e-mail) runs off the event loop with a timeout (ADR-0021).
   The timeout of `run_on_host` ends only nsenter, not the command on the host: a command that
   can run long runs under the host's `timeout` (ADR-0258).
-- btrfs and smartctl that run in the container (scrubs, the stats reset, SMART tests and reads)
-  go through `host.run_in_container`: at its timeout it kills the command's process group and
+- btrfs and smartctl that run in the container (scrubs, a balance's status, pause and cancel, the
+  stats reset, SMART tests and reads), and the pgrep of a disk's stuck power read (ADR-0378), go
+  through `host.run_in_container`: at its timeout it kills
+  the command's process group and
   leaves the wait to a daemon thread, so a command stuck in the kernel holds no worker thread;
   it runs one run of a command at a time, and none while a killed run of it is still stuck
   (ADR-0290). The fake hosts refuse it as they refuse `subprocess.run`. The Snapshots page's
@@ -71,6 +73,8 @@ The SMB flows of users (allow, turn on, password changes) are in `src/auth/route
   after taking it (ADR-0080, ADR-0081).
 - A share section states each restriction in a line of its own (ADR-0088). Values are checked when
   stored, when rendered (restored databases are untrusted, ADR-0144) and by `smbconf.py`'s guards.
+  A share's protocol options (`smb_share_options`, ADR-0380) are checked the same way: their vfs
+  modules on the host and the snapshots of the share's folder, when turned on and at every render.
 - `share_path_problem` alone judges share paths (ADR-0145, ADR-0146).
 - Only marked host accounts and their passdb entries are touched (ADR-0108), each after a fresh
   read right before a destructive command (ADR-0192).
