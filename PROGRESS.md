@@ -83,24 +83,22 @@ significant step. Features and their state live in `feature-list.json`, decision
   computer (Previous Versions); `apps.rk3588-hardware-acceleration` step 1's load on the RKMPP
   cores and its look in a browser, with Jellyfin installed again, and step 2, Immich's NPU, whose
   open parts the next bullet names.
-- That evening (Log): `apps.compose-stacks` (ADR-0381, ADR-0382) on its branch, not merged into
-  `main`: an app of several containers, Immich's server, database, Redis and machine learning, its
-  images pinned by tag and digest and its database's password generated on its pool, and Immich's
-  machine learning on the RK3588's NPU (step 2 of `apps.rk3588-hardware-acceleration`). The
-  branch merged with main ce5f86c (41ad495) runs on the dev device, Immich installed. Its device
-  check passed: the install (3661.938 MiB on the SD card with the images' pull), the containers,
-  mounts, password file and network, stop, start and restart in order, an uninstall that keeps the
-  data and a reinstall that uses the same database, 0.547 MiB in 30 idle minutes, the six models
-  of Immich's machine learning on the NPU and RKMPP in Immich's server; after a reboot from the
-  API the containers with those checks and the models on the NPU again, and then the pool's disk
-  awake while Immich runs (ADR-0381's cost). Open, first: Immich has no administrator, and until
-  the owner registers one, anyone on the LAN who opens port 2283 can register as its
-  administrator (Open owner actions, 12, at once). Then, the agent's: a logged read of GET
-  /apps/installed after a boot, one Immich with its three companions running, which the reboot
-  check did not show (only `scenario.sh hardware` read it, for the apps' names, unlogged), for
-  `apps.compose-stacks` (passes false until then). The owner's: photos and Immich's jobs (13)
-  and RKMPP chosen in Immich (14), for `apps.rk3588-hardware-acceleration` step 2, which stays
-  false with step 1's open parts (11).
+- That evening (Log): `apps.compose-stacks` (ADR-0381, ADR-0382), merged into `main` with the
+  record of its device check: an app of several containers, Immich's server, database, Redis and
+  machine learning, its images pinned by tag and digest and its database's password generated on
+  its pool, and Immich's machine learning on the RK3588's NPU (step 2 of
+  `apps.rk3588-hardware-acceleration`). The branch merged with main ce5f86c (41ad495) runs on the
+  dev device, Immich installed. Its device check passed: before a reboot the install (3661.938 MiB
+  on the SD card with the images' pull), the containers, mounts, password file and network, stop,
+  start and restart in order, an uninstall that keeps the data and a reinstall that uses the same
+  database, 0.547 MiB in 30 idle minutes, the six models of Immich's machine learning on the NPU
+  and RKMPP in Immich's server; after a reboot from the API the containers with those checks, the
+  models on the NPU again and GET /apps/installed with one Immich and its three companions running,
+  and then the pool's disk awake while Immich runs (ADR-0381's cost). `apps.compose-stacks`
+  passes. Open, first: Immich has no administrator, and until the owner registers one, anyone on
+  the LAN who opens port 2283 can register as its administrator (Open owner actions, 12, at once).
+  Then the owner's: photos and Immich's jobs (13) and RKMPP chosen in Immich (14), for
+  `apps.rk3588-hardware-acceleration` step 2, which stays false with step 1's open parts (11).
 - On the device the NFS server runs (nfs-server, rpcbind.socket and rpcbind, enabled since
   2026-11-08, ADR-0303) and exports nothing for now; over IPv6 only LAN sources reach it
   (ADR-0301). avahi-daemon and wsdd2 run (network discovery), and nmbd is disabled since
@@ -162,15 +160,19 @@ the UGREEN firmware on its eMMC, until the owner set that right on 2026-11-15 (A
   since boot, its own wear estimate 0 to 10%. Nothing writes to it.
 - SSH by key only, root by the workstation's key `~/.ssh/unos_dev_ed25519`; root's and the UNOS
   administrator's passwords were rotated and live only in `dev.env` (ADR-0226).
-- Runs 41ad495 of the branch `apps.compose-stacks` (ADR-0381, ADR-0382, not merged): its feature
-  commits and a merge of main ce5f86c, which holds the sixth batch. Deployed on 2026-11-16 at
+- Runs 41ad495 of the branch `apps.compose-stacks` (ADR-0381, ADR-0382), merged into `main` with
+  the record of its device check, whose commits change no runtime file: its feature commits and a
+  merge of main ce5f86c, which holds the sixth batch. Deployed on 2026-11-16 at
   21:38 to 21:40 UTC (SD MiB check.sh 0, status and sync --dry-run 0, sync 3.371,
   build-supervisor 11.934, build-webui 16.762, up 5.352, check.sh 0.227); both containers healthy
   after 7 s, check.sh OK: 112.8 MiB written to the SD card since the boot of 14:42 UTC. Immich
   installed on the pool `data` at 21:40 to 21:45 UTC, uninstalled and installed again at 21:52 to
   21:53 UTC, at the owner's word (Log, 2026-11-16, Immich). A reboot from the API at 22:24:02 UTC
   (the boot of 22:25:22; both UNOS containers healthy by 22:26:14, Immich's four by 22:26:35, with
-  RestartCount 0 each; check.sh OK at 22:27, 13.4 MiB on the card since the boot).
+  RestartCount 0 each; check.sh OK at 22:27, 13.4 MiB on the card since the boot). At 23:55 to
+  23:57 UTC, read only: GET /apps/installed listed Immich once with its three companions running,
+  in the same boot (its boot id) with RestartCount 0 each (0), and `deploy.sh status` found the
+  runtime files equal to the record's tree (0).
 - Before it, cc9482e of the branch `mvp.batch-6` (the sixth batch, ADR-0377 to ADR-0380, since
   merged into `main` as ce5f86c), whose runtime differs from the branch's head only in a comment of
   `deploy/uninstall.sh`, deployed on 2026-11-16 at 19:19 to 19:21 UTC (SD MiB check.sh 0.117,
@@ -571,29 +573,33 @@ Open owner actions:
   file, the network and the listeners as before (0.773); `scenario.sh hardware` 7 steps (0.125); a
   probe answered 200, its first call in 4.25 s, the medians 0.270 s and 0.024 s, with the six
   models loaded from `/cache` on the NPU and no failure line (0.055); no Traceback or Killed in the
-  supervisor's log, and check.sh OK (0). After the reboot only `scenario.sh hardware` read GET
-  /apps/installed, for the apps' names, which it compares at its start and its end and does not
-  log: one Immich with its three companions running was not shown.
+  supervisor's log, and check.sh OK (0). After the reboot `scenario.sh hardware` read GET
+  /apps/installed for the apps' names, which it compares at its start and its end and does not
+  log; the logged read of 23:55 below shows the listing.
 - The pool's disk, 22:28 to 22:48: sda got the shortest offered idle timeout, 5 minutes (0.105),
   with Immich running; 40 reads 30 s apart found it active/idle each time, with writes between every
   two reads (its count of completed writes rose from 112 to 467, its reads not), so that no stretch
   without I/O came near the 5 minutes (0.219); then Off again, as found, and the rule file gone
   (0.074). This is ADR-0381's cost: the pool's disk stays awake while Immich runs.
-- `apps.compose-stacks` stays passes false, its verified_by now `test_app_stacks.py`,
-  `test_apps.py`, `test_audit_storage_and_apps.py`, `apps-stacks.spec.ts` and `apps.spec.ts`: of its
-  notes' steps by hand, (9)'s GET /apps/installed with all four containers running after the reboot
-  was not shown, and (5)'s listing was not shown to hold one Immich with its three companions
-  running (the check asserted a listing of Immich, and its log is cut at 1500 characters after the
-  companion database); a logged read of GET /apps/installed after a boot with Immich installed
-  completes both. The owner's items of its notes, the administrator's registration and docker stats
-  while Immich's jobs run, are no condition of its three steps. `apps.rk3588-hardware-acceleration`
-  stays false, with `test_app_stacks.py` and `apps-stacks.spec.ts` added to its verified_by: step
-  2's (1), (2), (3), the server's part of (5) and (6) passed, and open are (4), the owner's photos
-  and Immich's jobs, (5)'s RKMPP chosen in Immich and the names of the App Store's hint, and step
-  1's open parts (Open owner actions, 11, 13 and 14). Of its (2), the reads of
-  `/proc/device-tree/compatible` and `/dev/dri` inside the container were not run (the models loaded
-  from their rk3588 files, and the log has no 'Could not read /proc/device-tree' line), and the log
-  of (6)'s probe was not searched for a download.
+- GET /apps/installed at 23:55:53, read only, in the boot that the reboot started (the boot id at
+  23:57 the same as at 22:26) and with RestartCount 0 in each of Immich's four containers (0):
+  200, two apps, immich and transmission; Immich once, running and healthy, with the five video
+  nodes, its companions database (running, healthy), redis (running, no health check) and
+  machine-learning (running, healthy, `/dev/dri`), each by its image's digest, and none missing.
+- `apps.compose-stacks` passes, its verified_by now `test_app_stacks.py`, `test_apps.py`,
+  `test_audit_storage_and_apps.py`, `apps-stacks.spec.ts` and `apps.spec.ts`: every condition of its
+  three steps passed on the dev device before and after the reboot, (9)'s GET /apps/installed after
+  the reboot by the read of 23:55, which also shows the one Immich with its three companions running
+  that (5)'s logged listing, cut at 1500 characters after the companion database, did not. The
+  owner's items of its notes, the administrator's registration and docker stats while Immich's jobs
+  run, are no condition of its three steps. `apps.rk3588-hardware-acceleration` stays false, with
+  `test_app_stacks.py` and `apps-stacks.spec.ts` added to its verified_by: step 2's (1), (2), (3),
+  the server's part of (5) and (6) passed, and open are (4), the owner's photos and Immich's jobs,
+  (5)'s RKMPP chosen in Immich and the names of the App Store's hint, and step 1's open parts (Open
+  owner actions, 11, 13 and 14). Of its (2), the reads of `/proc/device-tree/compatible` and
+  `/dev/dri` inside the container were not run (the models loaded from their rk3588 files, and the
+  log has no 'Could not read /proc/device-tree' line), and the log of (6)'s probe was not searched
+  for a download.
 - Review findings: the branch's history names the findings of its reviews in a fresh context as
   fixed (d587d32: an install that started every companion before it waited for any, and a
   rollback that removed the containers without a stop; 3071f26: the tests from the review of the
