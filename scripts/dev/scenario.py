@@ -159,13 +159,18 @@ SD writes of each check (ADR-0214). The areas:
            when its two restores push out none of the copies that UNOS keeps (the newest 5). Where
            the device has a guest share, Samba takes a user without a Samba account as a guest
            (ADR-0339), so the refused sign-ins of the second user are left out.
-  hardware The hardware of the host's SoC that apps get (ADR-0377): the SoC that the host's device
-           tree names; the App Store's catalog, which offers Jellyfin the RK3588's video hardware on
-           an RK3588 with Rockchip MPP's /dev/mpp_service and nowhere else, and no app the hardware
-           of another SoC; and on an RK3588 the device nodes of its video hardware, with their
-           modes, of which the host has Rockchip MPP's (/dev/mpp_service, /dev/dma_heap,
-           /dev/dri), a SKIP on another host. It only reads: it installs no app, whose image only
-           the owner pulls (ADR-0211).
+  hardware The hardware of the host's SoC that apps get (ADR-0382): the SoC that the host's device
+           tree names; the App Store's catalog, which offers Jellyfin and Immich's server the
+           RK3588's video hardware on an RK3588 with Rockchip MPP's /dev/mpp_service and nowhere
+           else, Immich's machine learning the RK3588's NPU, with Immich's -rknn image, on an RK3588
+           with the NPU's render node /dev/dri/by-path/platform-fdab0000.npu-render and its image
+           for the CPU elsewhere, and no app, in any of its containers, the hardware of another
+           SoC; and on an RK3588 the device nodes of its video hardware, with their modes, of which
+           the host has Rockchip MPP's (/dev/mpp_service, /dev/dma_heap, /dev/dri), and the NPU's
+           render node, its link followed, with an RKNPU driver of 0.9.8 or later
+           (/sys/kernel/debug/rknpu/version), each a SKIP on another host. It only reads: it
+           installs no app, whose images only the owner pulls (ADR-0211); Immich's machine learning
+           on the NPU is proved by hand, with scripts/dev/immich-ml-probe.py.
 
 Each check reads first how the device is (its baseline), and refuses to start beside leftovers
 of an earlier check. It makes what it needs through the API, under names made of "unoscheck"
@@ -181,11 +186,12 @@ without the lock of scenario.sh or a dev.env that cannot be read, 130 after an i
 
 The API is called through api.py's relay (ADR-0222). The commands on the device run through ssh.sh,
 in a private mount namespace with the root filesystem read-only (ADR-0221), with scratch files in
-/dev/shm: stat, the account files' digests, testparm, Samba's log sizes, smbclient and the smb
-check's smbpasswd -r with a client configuration of their own in RAM, the scan for passwords, the
-shares check's entries on the pool (which the namespace leaves writable), the balance check's files on
-the pool and its look at its unit's state (systemctl is-active), and getfacl; only pdbedit
-runs without that namespace, since tdbsam opens passdb.tdb read-write, and the smbconf check's edit
+/dev/shm: stat (and readlink for the hardware check's NPU node), the account files' digests,
+testparm, Samba's log sizes, smbclient and the smb check's smbpasswd -r with a client
+configuration of their own in RAM, the scan for passwords, the shares check's entries on the
+pool (which the namespace leaves writable), the balance check's files on the pool and its look
+at its unit's state (systemctl is-active), and getfacl; only pdbedit runs without that namespace,
+since tdbsam opens passdb.tdb read-write, and the smbconf check's edit
 of smb.conf by hand, which writes /etc/samba (ADR-0309), the scrub and balance checks' folder below the pools'
 base, on the root filesystem (ADR-0314), and the restore check's removal of the copies of the
 database that its restores keep in the supervisor's data volume (ADR-0341). The restore check lists
@@ -365,6 +371,17 @@ REMOTE_STAT = r'''
 for p in "$@"; do
     s=$(stat -c "%a %U:%G" -- "$p" 2> /dev/null) || s=missing
     printf "%s\t%s\n" "$p" "$s"
+done'''
+
+# $@: paths. Prints "<path>\t<the file it names, its links followed> <mode> <owner>:<group>" or
+# "<path>\tmissing" for each: a link whose file is gone is missing.
+REMOTE_NODES = r'''
+for p in "$@"; do
+    if s=$(stat -L -c "%a %U:%G" -- "$p" 2> /dev/null) && t=$(readlink -f -- "$p"); then
+        printf "%s\t%s %s\n" "$p" "$t" "$s"
+    else
+        printf "%s\tmissing\n" "$p"
+    fi
 done'''
 
 # $1: a file; prints "file <its bytes in base64>", or "missing".
@@ -1164,6 +1181,15 @@ class Device:
     def stat(self, paths: list[str]) -> dict[str, str]:
         found = {}
         for line in self.run(REMOTE_STAT, *paths).splitlines():
+            path, _, facts = line.partition("\t")
+            found[path] = facts
+        return found
+
+    def nodes(self, paths: list[str]) -> dict[str, str]:
+        """For each path, "<the file it names, its links followed> <mode> <owner>:<group>", or
+        "missing"."""
+        found = {}
+        for line in self.run(REMOTE_NODES, *paths).splitlines():
             path, _, facts = line.partition("\t")
             found[path] = facts
         return found
@@ -4212,11 +4238,27 @@ MPP_SERVICE = "/dev/mpp_service"
 # codecs, the DMA heaps and the DRM nodes (Jellyfin's guide to RKMPP); the RGA and the Mali GPU
 # only scale and tone-map.
 RKMPP_NODES = (MPP_SERVICE, "/dev/dma_heap", "/dev/dri")
+# The NPU's render node by the name that does not follow the probe order, a link into /dev/dri,
+# which only the RKNPU driver of Rockchip's kernel makes: the App Store offers Immich's machine
+# learning the NPU only with it (RK3588_NPU's requires). Immich's machine learning is its companion
+# container of that name, and runs the image whose tag ends in -rknn on the NPU.
+NPU_NODE = "/dev/dri/by-path/platform-fdab0000.npu-render"
+ML_COMPANION = "machine-learning"
+RKNN_TAG = "-rknn@"
+# The RKNPU driver's version, in debugfs, which root reads: Immich's guide to ML hardware
+# acceleration asks for 0.9.8 or later.
+RKNPU_VERSION_FILE = "/sys/kernel/debug/rknpu/version"
+RKNPU_OLDEST = (0, 9, 8)
+
+
+def profile_ids(spec: dict) -> str:
+    return ", ".join(p["id"] for p in spec["hardware"]) or "none"
 
 
 def hardware_check(c: Check) -> None:
-    """ADR-0377: what the App Store offers of the host's SoC, and the nodes the host has for it.
-    It installs nothing: Jellyfin's image is pulled only by the owner (ADR-0211)."""
+    """ADR-0382: what the App Store offers of the host's SoC to each container of an app, and the
+    nodes the host has for it. It installs nothing: app images are pulled only by the owner
+    (ADR-0211)."""
     socs: list[str] = []
 
     with c.step("the host's device tree names its SoC") as s:
@@ -4232,17 +4274,35 @@ def hardware_check(c: Check) -> None:
         c.expect(ids == want, f"it offers {', '.join(ids) or 'none'}, expected {', '.join(want) or 'none'}")
         s.text += ": " + (", ".join(ids) or "none")
 
+    with c.step("the App Store offers Immich's server the RK3588's video hardware where it offers Jellyfin's, and its "
+                "machine learning the NPU and its -rknn image exactly on an RK3588 with the NPU's node") as s:
+        npu = RK3588 in socs and c.device.nodes([NPU_NODE]).get(NPU_NODE, "missing") != "missing"
+        immich = c.get("/apps/catalog/immich")
+        c.expect(profile_ids(immich) == profile_ids({"hardware": profiles}),
+                 f"it offers its server {profile_ids(immich)}, and Jellyfin {profile_ids({'hardware': profiles})}")
+        ml = next((x for x in immich.get("companions", []) if x["name"] == ML_COMPANION), None)
+        c.expect(ml is not None, f"Immich has no container {ML_COMPANION}")
+        want = "rk3588-npu" if npu else "none"
+        c.expect(profile_ids(ml) == want, f"it offers its machine learning {profile_ids(ml)}, expected {want}")
+        c.expect((RKNN_TAG in ml["image"]) == npu,
+                 f"its machine learning runs {ml['image']}, " + ("not the -rknn image" if npu else "the -rknn image"))
+        s.text += f": server {profile_ids(immich)}; machine learning {profile_ids(ml)}, {ml['image']}"
+
     with c.step("the App Store offers each app only the hardware of this SoC") as s:
-        offered = {app["id"]: [p["soc"] for p in app["hardware"]] for app in c.get("/apps/catalog") if app["hardware"]}
-        other = {app: names for app, names in offered.items() if not set(names) <= set(socs)}
+        offered = {app["id"]: [p["soc"] for spec in (app, *app.get("companions", [])) for p in spec["hardware"]]
+                   for app in c.get("/apps/catalog")}
+        other = {app: sorted(set(names) - set(socs)) for app, names in offered.items() if not set(names) <= set(socs)}
         c.expect(not other, "it offers " + "; ".join(f"{app} the hardware of {', '.join(names)}" for app, names in other.items()))
-        s.text += ": " + (", ".join(sorted(offered)) or "none")
+        s.text += ": " + (", ".join(sorted(app for app, names in offered.items() if names)) or "none")
 
     # On an RK3588 the nodes are checked whatever the App Store offers: the dev device is to
-    # transcode in hardware (apps.rk3588-hardware-acceleration).
+    # transcode in hardware and run Immich's machine learning on its NPU
+    # (apps.rk3588-hardware-acceleration).
     text = "the host has the device nodes of the RK3588's video hardware"
+    npu_text = "the host has the NPU's render node and an RKNPU driver of 0.9.8 or later"
     if RK3588 not in socs:
         c.skip(text, "the host is no RK3588")
+        c.skip(npu_text, "the host is no RK3588")
         return
     with c.step(text) as s:
         devices = [d for p in profiles for d in p["devices"]] or list(RKMPP_NODES)
@@ -4250,6 +4310,17 @@ def hardware_check(c: Check) -> None:
         missing = [node for node in RKMPP_NODES if found.get(node, "missing") == "missing"]
         c.expect(not missing, f"the host lacks {', '.join(missing)}, which Rockchip MPP needs (Rockchip's kernel 5.10 or 6.1)")
         s.text += ": " + ", ".join(f"{d} {found.get(d, 'missing')}" for d in devices)
+
+    with c.step(npu_text) as s:
+        node = c.device.nodes([NPU_NODE]).get(NPU_NODE, "missing")
+        c.expect(node != "missing", f"the host lacks {NPU_NODE}, the NPU's render node (Rockchip's kernel with its RKNPU driver)")
+        version = (c.device.read(RKNPU_VERSION_FILE) or "").strip()
+        c.expect(version, f"the host has no {RKNPU_VERSION_FILE}, which names the RKNPU driver's version (debugfs)")
+        version = version.splitlines()[0][:80]
+        number = re.search(r"(\d+)\.(\d+)\.(\d+)", version)
+        c.expect(number and tuple(int(n) for n in number.groups()) >= RKNPU_OLDEST,
+                 f"{version} is not 0.9.8 or later, which Immich's machine learning needs")
+        s.text += f": {NPU_NODE} -> {node}; {version}"
 
 
 CHECKS: dict[str, Callable[[Check], None]] = {

@@ -1153,10 +1153,10 @@ and of their settings, and their memory recommendations, are in English.
 The list of categories filters the catalog, and each app's card and details
 name its category the same way. Some of them:
 
-- **Media** - Plex, Jellyfin, Emby
+- **Media** - Plex, Jellyfin, Emby, Immich
 - **Downloads** - qBittorrent, Transmission
 - **Productivity** - Nextcloud, Syncthing
-- **Documents** - Paperless-ngx, BookStack
+- **Documents** - Stirling PDF, Wiki.js
 - **Smart Home** - Home Assistant
 - **Development** - Gitea, Code Server
 - **Monitoring** - Grafana, Uptime Kuma
@@ -1174,8 +1174,70 @@ name its category the same way. Some of them:
    [Share Folders for Apps](#share-folders-for-apps))
 6. Wait for installation to complete
 
-Starting or restarting an app from UNOS fails while its data folders are not
-on a mounted pool.
+Before it downloads anything, the install checks that:
+
+- the app is not installed yet: each app of the catalog is installed once;
+- its host ports are free. A port that another container publishes, also a
+  stopped one, or that a program on the NAS listens on, is refused with a
+  message that names the container or the program: choose another host port on
+  the **Ports** tab. Home Assistant and Scrypted run in the NAS's own network
+  and listen on its ports, which cannot be changed: stop the program or remove
+  the container that the message names;
+- the system disk keeps at least 2 GiB free once the app's images are there,
+  for the apps whose images UNOS pins (Immich): otherwise remove unused images
+  on **Containers** > **Images** first.
+
+Downloading an app's images can take several minutes, during which the install
+waits. Starting or restarting an app from UNOS fails while its data folders are
+not on a mounted pool.
+
+### Apps of Several Containers
+
+Some apps run in several containers, which UNOS installs, starts, stops and
+uninstalls together as one app. Immich runs in four: its server `immich`,
+which serves its web page on port 2283, its database `immich-database`
+(PostgreSQL), `immich-redis` (Valkey, which queues its jobs) and
+`immich-machine-learning` (smart search, faces and text recognition). They
+reach each other on a Docker network of their own, `unos-app-immich`, and only
+the server publishes a port. The details of such an app list its containers
+with their images on **Overview**, and its folders and settings per container
+on **Volumes** and **Environment**, of which only the main container's can be
+changed.
+
+- **Pinned images.** UNOS installs each of Immich's images by its digest, so
+  that the install gets the version that UNOS was checked with (Immich
+  v3.4.1). They take about 3.6 GB on the system disk.
+- **Where the data is.** Everything Immich keeps is on the pool you choose: the
+  photos and videos, their thumbnails and Immich's daily dumps of its database
+  in `apps/immich/library`, the database in `apps/immich/postgres/data`,
+  Valkey's in `apps/immich/redis`, and the machine learning's models (about
+  2.6 GB, downloaded when they are first used) in `apps/immich/model-cache`.
+  The system disk holds only Immich's images, its containers' records and
+  their logs: what the containers write while they run is kept in memory.
+- **The database's password.** UNOS generates it at the install, keeps it in
+  the file `apps/immich/postgres/password` on the pool, which only root can
+  read, and gives it to the server and the database as that file: it is never
+  shown. Keep the file with the database. An install that finds the database
+  without its password file is refused, since a new password would not open
+  it: restore the file from a snapshot of the pool, or move the database folder
+  away to start with an empty database.
+- **The administrator.** Open Immich as soon as it is installed and create its
+  administrator: the first account that registers becomes the administrator.
+  The notice of the install says so.
+- **The pool's disks.** While Immich runs, the hard disks of its pool do not go
+  to sleep: its database and its jobs keep writing to them. Stop Immich on the
+  **Installed** tab to let them sleep.
+- **A failed install** removes the containers and the network that it made and
+  keeps the data folders, the password file and the downloaded images, so that
+  installing again uses them.
+- **Updates.** UNOS does not update an installed app yet. To move Immich to a
+  newer version of the catalog, take a snapshot of its pool, uninstall Immich
+  and install it again: Immich changes its database at its first start and
+  cannot go back to an older version, so the snapshot is the way back.
+
+BookStack, Paperless-ngx and Linkwarden are no longer in the catalog: each needs
+a database or a broker beside it, and they will come back as apps of several
+containers.
 
 ### Hardware Acceleration
 
@@ -1201,7 +1263,21 @@ the install, shows **No hardware acceleration** on its card, and the notice
 of its install and its details warn instead: uninstall it (its data folders
 are kept) and install it again on the same pool to give it the hardware. On
 any other NAS the App Store says nothing about hardware, and apps are
-installed as before. Immich from the App Store does not use the RK3588's NPU.
+installed as before.
+
+On the same NAS Immich's card shows **Hardware acceleration** too: UNOS
+installs its machine learning with the RK3588's NPU and the image of Immich's
+machine learning built for it, so that smart search, face recognition and text
+recognition run on the NPU. Its container gets `/dev/dri`, where the NPU's
+nodes are, can read the device tree and runs without Docker's AppArmor
+profile, in a container without privileged mode. Only Rockchip's kernel has
+the NPU's driver (RKNPU; Immich asks for 0.9.8 or later): under another
+kernel, and on any other NAS, Immich's machine learning runs on the CPU.
+Immich's server gets the video hardware as Jellyfin does: to transcode videos
+in hardware, choose **RKMPP** in Immich under **Administration** >
+**Settings** > **Video Transcoding Settings** > **Hardware Acceleration**. An
+Immich a container of which was installed without its hardware shows **No
+hardware acceleration**, and reinstalling it gives it the hardware.
 
 ### Share Folders for Apps
 
@@ -1247,13 +1323,28 @@ the app (its data is kept) and install it again in the group.
 
 Go to **App Store** → **Installed** to see the installed apps with their state,
 the pool that holds their data and, for the apps that run in the group
-`unos-smb`, **Runs in the group unos-smb**, and to act on them:
+`unos-smb`, **Runs in the group unos-smb**, and to act on them. An app of
+several containers has one card, which names its containers. When the app's
+image checks its own health, the card shows **Starting**, **Healthy** or
+**Unhealthy**.
 
 - **Start**, **Stop** and **Restart** an app; its card shows the new state. A
   start or restart is refused while the app's data folders are not on a mounted
-  pool, and the message names the pool to mount.
-- **Uninstall** removes the app's container after a confirmation and keeps its
-  data folders. Installing the app again on the same pool uses them again.
+  pool, and the message names the pool to mount. For an app of several
+  containers they act on all of them: a start starts the other containers
+  first and the main one once those it needs are ready (Immich's server once
+  its database and Valkey are), a stop stops them in the reverse order, and a
+  restart stops them all and starts them again.
+- **Uninstall** removes the app's containers, and the network of an app of
+  several, after a confirmation and keeps its data folders. Installing the app
+  again on the same pool uses them again.
+
+The **Containers** page lists the containers of an app of several containers
+one by one. An app one of whose containers was removed there is
+**Incomplete**: it cannot start, and its card asks to uninstall it (its data
+folders are kept) and install it again. The card of a running app also warns
+when one of its other containers has stopped: restart the app, and read that
+container's log on the **Containers** page if it stops again.
 
 These actions work only on apps installed from the App Store; other containers
 are started and stopped on the **Containers** page.

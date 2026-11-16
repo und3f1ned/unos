@@ -19,8 +19,11 @@ against a stand-in API, keeps the token in a private cache, reuses it, signs in 
 401, never reads a cache that is not its own private file, calls only a loopback address and
 deletes the cache on --forget-token; tree.py's manifests and comparisons on fixture trees,
 its git listing despite a hook's GIT_* variables, and status, sync and rollback end to end
-against a fixture "device checkout"; a static scan finds no secret put on a command line by
-any script; and the two device skills say what the scripts do (which lock, which report SD
+against a fixture "device checkout"; immich-ml-probe.py, run as python3 -I -B - against a
+stand-in of Immich's machine learning, sends Immich's requests for its default models, prints
+status, timings and the answers' shapes without an embedding's numbers or control characters,
+and writes nothing; a static scan finds no secret put on a command line by any script; and the
+two device skills say what the scripts do (which lock, which report SD
 writes) and run every other command on the device under sd.sh measure.
 
 git exports GIT_INDEX_FILE (and more) to its hooks, and the pre-commit hook runs these tests:
@@ -29,6 +32,9 @@ without them, so that they cannot write to the outer repository's index.
 """
 
 import ast
+import contextlib
+import email.parser
+import email.policy
 import fcntl
 import hashlib
 import http.server
@@ -37,7 +43,9 @@ import os
 import re
 import secrets
 import shutil
+import socket
 import stat
+import struct
 import subprocess
 import sys
 import tarfile
@@ -45,6 +53,7 @@ import textwrap
 import threading
 import time
 import types
+import zlib
 from pathlib import Path
 
 import pytest
@@ -287,7 +296,7 @@ def test_scripts_are_executable_except_env_sh(script):
     "argv",
     [["deploy.sh", "--help"], ["sd.sh", "--help"], ["check.sh", "--help"], ["linux-tests.sh", "--help"],
      ["ssh.sh", "--help"], ["api.py", "--help"], ["tree.py", "--help"], ["ipv6-filter.sh", "--help"],
-     ["scenario.sh", "--help"], ["scenario.py", "--help"]],
+     ["scenario.sh", "--help"], ["scenario.py", "--help"], ["immich-ml-probe.py", "--help"]],
     ids=lambda a: a[0],
 )
 def test_help_needs_no_dev_env(device, argv):
@@ -2310,3 +2319,190 @@ def test_ipv6_filter_sh_locks_and_measures_install_and_remove_only():
     main = (DEV / "ipv6-filter.sh").read_text().split("\n# --- main\n", 1)[1]
     assert main.count('dev_lock "ipv6-filter.sh ') == 2 and main.count('dev_sd_report "ipv6-filter ') == 2
     assert 'status) dev_remote_ro "$REMOTE_STATUS"' in main
+
+
+# --- immich-ml-probe.py ---------------------------------------------------------------------
+
+PROBE = DEV / "immich-ml-probe.py"
+# What the stand-in machine learning answers, in the shapes of Immich's /predict: an embedding is
+# a JSON text of numbers (orjson's), faces and OCR are lists.
+EMBEDDING = json.dumps([0.0123456 + n / 1e6 for n in range(512)])
+IMAGE_ANSWER = {
+    "clip": EMBEDDING,
+    "facial-recognition": [],
+    "ocr": {"box": [[288.0, 288.0, 1048.0, 288.0, 1048.0, 344.0, 288.0, 344.0]], "boxScore": [0.97],
+            "text": ["IMMICH ON THE NPU", "UNOS PROBE\x1b[2J 2026"], "textScore": [0.99, 0.98]},
+    "imageHeight": 720,
+    "imageWidth": 1280,
+}
+
+
+class FakeMachineLearning:
+    """Immich's machine learning as the probe meets it, over HTTP on 127.0.0.1: /ping answers pong,
+    /predict the answer of its entries (IMAGE_ANSWER, or CLIP's textual embedding), or `fail`'s
+    (status, detail) for a request with an image. Every request's method, path, Content-Type and
+    body are recorded."""
+
+    def __init__(self) -> None:
+        self.requests: list[tuple[str, str, str | None, bytes]] = []
+        self.fail: tuple[int, str] | None = None
+        fake = self
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def log_message(self, *args) -> None:
+                pass
+
+            def reply(self, status: int, data: bytes, kind: str = "application/json") -> None:
+                self.send_response(status)
+                self.send_header("Content-Type", kind)
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+
+            def serve(self) -> None:
+                body = self.rfile.read(int(self.headers.get("Content-Length") or 0))
+                fake.requests.append((self.command, self.path, self.headers.get("Content-Type"), body))
+                if (self.command, self.path) == ("GET", "/ping"):
+                    return self.reply(200, b"pong", "text/plain")
+                fields = probe_fields(self.headers.get("Content-Type"), body)
+                if "image" in fields and fake.fail:
+                    return self.reply(fake.fail[0], json.dumps({"detail": fake.fail[1]}).encode())
+                answer = IMAGE_ANSWER if "image" in fields else {"clip": EMBEDDING}
+                return self.reply(200, json.dumps(answer).encode())
+
+            do_GET = do_POST = serve
+
+        self.server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self.port = self.server.server_address[1]
+        threading.Thread(target=self.server.serve_forever, kwargs={"poll_interval": 0.05}, daemon=True).start()
+
+    def predictions(self) -> list[dict[str, object]]:
+        return [probe_fields(kind, body) for method, path, kind, body in self.requests if path == "/predict"]
+
+    def close(self) -> None:
+        self.server.shutdown()
+        self.server.server_close()
+
+
+def probe_fields(kind: str | None, body: bytes) -> dict[str, object]:
+    """The fields of a multipart/form-data body: name -> text, or (filename, Content-Type, bytes)
+    for a file."""
+    message = email.parser.BytesParser(policy=email.policy.HTTP).parsebytes(
+        b"Content-Type: " + (kind or "").encode() + b"\r\n\r\n" + body)
+    assert message.is_multipart(), kind
+    fields: dict[str, object] = {}
+    for part in message.iter_parts():
+        name = part.get_param("name", header="content-disposition")
+        data = part.get_payload(decode=True)
+        filename = part.get_filename()
+        fields[name] = (filename, part.get_content_type(), data) if filename else data.decode()
+    return fields
+
+
+@pytest.fixture
+def machine_learning():
+    fake = FakeMachineLearning()
+    yield fake
+    fake.close()
+
+
+def run_probe(tmp_path: Path, *args: str) -> subprocess.CompletedProcess:
+    """The probe as the device runs it, `python3 -I -B -` with the script on standard input, in an
+    empty working folder and HOME, with TMPDIR in tmp_path and a proxy that does not answer."""
+    work = tmp_path / "work"
+    work.mkdir(exist_ok=True)
+    (tmp_path / "tmp").mkdir(exist_ok=True)
+    env = {"PATH": os.environ["PATH"], "HOME": str(work), "TMPDIR": str(tmp_path / "tmp"),
+           "http_proxy": "http://127.0.0.1:9", "HTTP_PROXY": "http://127.0.0.1:9", "no_proxy": "", "NO_PROXY": ""}
+    return subprocess.run([sys.executable, "-I", "-B", "-", *args], input=PROBE.read_text(), cwd=work, env=env,
+                          capture_output=True, text=True, timeout=120)
+
+
+def test_the_probe_asks_for_immich_s_models_and_prints_status_timings_and_shapes(tmp_path, machine_learning):
+    """scripts/dev/immich-ml-probe.py, run as `python3 -I -B -` in Immich's machine-learning
+    container (ADR-0183, ADR-0382): /ping, then a picture of 1280x720 for CLIP's visual embedding,
+    faces and OCR, and the text "a photo of a dog" for CLIP's textual embedding, each once and
+    then --runs times, in the shapes of Immich's server's requests; it prints the status, the time
+    of the first call and the median of the others and the shape of the answer, with the text
+    that OCR read, never an embedding's numbers; it writes nothing."""
+    result = run_probe(tmp_path, "--port", str(machine_learning.port), "--runs", "3")
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    out = result.stdout
+    assert f"immich-ml-probe: http://127.0.0.1:{machine_learning.port} answers /ping" in out
+    assert re.search(r"^a picture of 1280x720 \(\d+ bytes of PNG\): CLIP visual, faces, OCR:\n"
+                     r"  first call: status 200 in \d+\.\d\d s \(it loads the models, and downloads them the first time\)\n"
+                     r"  3 more calls: median \d+\.\d{3} s \(fastest \d+\.\d{3} s, slowest \d+\.\d{3} s\), all status 200\n"
+                     r'  answer: \{"clip": an embedding of 512 numbers, "facial-recognition": list of 0, '
+                     r'"ocr": \{"box": list of 1 \[list of 8 \[float, \.\.\.\], \.\.\.\], "boxScore": list of 1 \[float, \.\.\.\], '
+                     r'"text": list of 2 \[text of 17 characters, \.\.\.\], "textScore": list of 2 \[float, \.\.\.\]\}, '
+                     r'"imageHeight": int, "imageWidth": int\}\n'
+                     r"  OCR read: 'IMMICH ON THE NPU', 'UNOS PROBE \[2J 2026'\n", out, re.M), out
+    assert re.search(r"^the text 'a photo of a dog': CLIP textual:\n  first call: status 200 in .*\n  3 more calls: "
+                     r'.*all status 200\n  answer: \{"clip": an embedding of 512 numbers\}\n', out, re.M), out
+    assert "0.012" not in out and "\x1b" not in out
+    assert [(m, p) for m, p, *_ in machine_learning.requests] == [("GET", "/ping")] + [("POST", "/predict")] * 8
+
+    predictions = machine_learning.predictions()
+    assert [json.loads(p["entries"]) for p in predictions] == [
+        {"clip": {"visual": {"modelName": "ViT-B-32__openai"}},
+         "facial-recognition": {"detection": {"modelName": "buffalo_l"}, "recognition": {"modelName": "buffalo_l"}},
+         "ocr": {"detection": {"modelName": "PP-OCRv5_mobile"}, "recognition": {"modelName": "PP-OCRv5_mobile"}}},
+    ] * 4 + [{"clip": {"textual": {"modelName": "ViT-B-32__openai"}}}] * 4
+    assert [sorted(p) for p in predictions] == [["entries", "image"]] * 4 + [["entries", "text"]] * 4
+    assert {p["text"] for p in predictions[4:]} == {"a photo of a dog"}
+    filename, kind, png = predictions[0]["image"]
+    assert (filename, kind) == ("probe.png", "image/png")
+    assert all(p["image"] == predictions[0]["image"] for p in predictions[:4])
+    # A PNG of 1280x720, RGB, with dark text on a light background.
+    assert png[:8] == b"\x89PNG\r\n\x1a\n" and png[12:16] == b"IHDR"
+    assert struct.unpack(">IIBBBBB", png[16:29]) == (1280, 720, 8, 2, 0, 0, 0)
+    idat = png.index(b"IDAT")
+    raw = zlib.decompress(png[idat + 4:idat + 4 + struct.unpack(">I", png[idat - 4:idat])[0]])
+    assert len(raw) == 720 * (1 + 1280 * 3) and all(raw[y * (1 + 3840)] == 0 for y in range(720))
+    rows = [raw[y * 3841 + 1:(y + 1) * 3841] for y in range(720)]
+    dark = sum(row[x:x + 3] == bytes((20, 24, 28)) for row in rows for x in range(0, 3840, 3))
+    assert 20_000 < dark < 200_000
+    # Nothing written: no bytecode, no temporary file, nothing in HOME or the working folder.
+    assert [p for p in tmp_path.rglob("*") if p.name not in ("work", "tmp")] == []
+
+
+def test_the_probe_reports_a_refusal_and_goes_on_with_the_text(tmp_path, machine_learning):
+    """A request that the machine learning refuses: its status and detail (without control
+    characters), no further calls of it, the text's request still, and exit status 1."""
+    machine_learning.fail = (500, "Failed to load model 'buffalo_l'\x1b[0m")
+
+    result = run_probe(tmp_path, "--port", str(machine_learning.port), "--runs", "2")
+
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert re.search(r"^  first call: status 500 after \d+\.\d\d s: \{\"detail\": \"Failed to load model 'buffalo_l'"
+                     r"\\u001b\[0m\"\}\n", result.stdout, re.M), result.stdout
+    assert "\x1b" not in result.stdout
+    assert [sorted(p) for p in machine_learning.predictions()] == [["entries", "image"]] + [["entries", "text"]] * 3
+
+
+def test_the_probe_stops_when_the_machine_learning_does_not_answer(tmp_path):
+    with socket_bound() as port:
+        result = run_probe(tmp_path, "--port", str(port), "--runs", "1")
+    assert result.returncode == 2
+    assert result.stdout == ""
+    assert result.stderr.startswith(f"immich-ml-probe: the machine learning does not answer /ping on port {port} "
+                                    "(127.0.0.1: ")
+
+
+@pytest.mark.parametrize("args", [["--runs", "-1"], ["--runs", "ten"], ["--port", "x"]])
+def test_the_probe_refuses_a_wrong_argument_before_any_call(tmp_path, machine_learning, args):
+    result = run_probe(tmp_path, "--port", str(machine_learning.port), *args)
+    assert result.returncode == 2
+    assert machine_learning.requests == []
+
+
+@contextlib.contextmanager
+def socket_bound():
+    """A port of 127.0.0.1 that is bound and not listening: a connection is refused."""
+    sock = socket.socket()
+    sock.bind(("127.0.0.1", 0))
+    try:
+        yield sock.getsockname()[1]
+    finally:
+        sock.close()

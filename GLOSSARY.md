@@ -245,8 +245,10 @@ the audit log records it by the user root (ADR-0284). Avoid: password recovery, 
 
 ## Apps and backups
 
-**App**: An application installed from the App Store catalog, with its data on a pool (ADR-0039).
-Avoid: container, service.
+**App**: An application installed from the App Store catalog, with its data on a pool (ADR-0039):
+its main container and, for some apps, companion containers, which UNOS installs, starts, stops
+and uninstalls together; each app of the catalog is installed once (ADR-0381). Avoid: container,
+service, stack.
 
 **App in unos-smb**: An app installed with the option to run in the group unos-smb (PUID 80000,
 PGID 70000, UMASK 007), which only apps of linuxserver.io images with a folder besides their own
@@ -256,12 +258,32 @@ in the SMB group.
 **Container**: Any Docker container on the host, as the Containers page lists it; an app runs as
 one or more containers. Avoid: app.
 
-**Hardware profile**: The hardware of a SoC that an app gets when it is installed on a host whose
-device tree names that SoC and that has the nodes the profile requires: the device nodes that the
-host has of the profile's list, and the Docker masks and AppArmor profile the app cannot work
-under, as Jellyfin's `rk3588-video` on an RK3588 with Rockchip MPP's `/dev/mpp_service`; on any
-other host the app is installed as elsewhere, and the App Store says nothing of it (ADR-0377).
-Avoid: hardware acceleration (what the App Store calls it for the user), passthrough.
+**Companion container**: A container of an app besides its main container (the one of the
+template's own image, ports and overrides, named after the app): named `<app>-<name>` and
+labelled `unos.app.companion=<name>`, on the app's network `unos-app-<app>`, where it answers to
+its name, as Immich's `database`, `redis` and `machine-learning`. It publishes no port and takes no
+override; the main container starts once those it depends on are ready (ADR-0381). Avoid:
+sidecar, service.
+
+**Generated secret**: A password file that UNOS writes once, at an app's install, beside the data
+it opens on the pool (64 hexadecimal digits, root, mode 0600), binds read-only into the
+containers that read it and never shows, replaces or makes at a start; an install that finds
+that data without the file is refused (ADR-0381). Avoid: password variable.
+
+**Pinned image**: An image of the catalog named by its tag and the digest of its index
+(`name:tag@sha256:...`), pulled and run by that digest, with its size on the system disk
+estimated for the install's space check (`PINNED_IMAGES`, ADR-0381). The templates of floating
+tags are listed in `UNPINNED_TEMPLATES`, which only shrinks. Avoid: locked image.
+
+**Hardware profile**: The hardware of a SoC that a container of an app gets when it is installed on
+a host whose device tree names that SoC and that has the nodes the profile requires: the device
+nodes that the host has of the profile's list, the Docker masks and AppArmor profile the
+container cannot work under, and for some an image built for that hardware, as Jellyfin's and
+Immich's server's `rk3588-video` on an RK3588 with Rockchip MPP's `/dev/mpp_service`, and Immich's
+machine learning's `rk3588-npu` with Immich's `-rknn` image on an RK3588 with the NPU's render
+node; on any other host the container is installed as elsewhere, and the App Store says nothing
+of it (ADR-0382). Avoid: hardware acceleration (what the App Store calls it for the user),
+passthrough.
 
 **Backup**: An archive of the UNOS database, encrypted if wanted, without the pools' files
 (ADR-0040). Avoid: snapshot.

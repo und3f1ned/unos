@@ -54,7 +54,7 @@ owner's firmware and is never written, so every write counts (ADR-0214, ADR-0225
   balances, pauses, resumes and cancels chunks of the pool that it leaves about 12% full (ADR-0379),
   the offsite check sets up an off-device copy to a folder of the pool and forgets it (ADR-0337),
   the restore check restores a backup it made moments before, twice, which puts the device's
-  database back as it was then (ADR-0341), and the hardware check only reads (ADR-0377). They change
+  database back as it was then (ADR-0341), and the hardware check only reads (ADR-0382). They change
   the device for their duration, so they run on the owner's request;
   the feature-pass skill names the check of each host-level entry, and after a reboot
   (ADR-0018) `scenario.sh all` runs again, with the checks by hand that its table lists.

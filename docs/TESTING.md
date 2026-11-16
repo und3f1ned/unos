@@ -386,6 +386,14 @@ secrets from the git-ignored `dev.env` (ADR-0212):
 - `scripts/dev/upload-speed.py [--mib N] [--runs R]`: how fast this workstation uploads to the
   device through Caddy and the upload route; it makes and deletes a folder `unoscheck<6 hex>` on
   the pool and signs in and out (about 0.1 MiB on the SD card).
+- `scripts/dev/immich-ml-probe.py [--runs N]`: whether Immich's machine learning answers, and how
+  fast: run inside its container with that container's python3, read from standard input
+  (`scripts/dev/ssh.sh 'docker exec -i immich-machine-learning python3 -I -B -' <
+  scripts/dev/immich-ml-probe.py`, ADR-0183), it sends a picture it draws in memory and a text
+  for Immich's default models and prints each request's status, the time of its first call (which
+  downloads the models to the pool), the median of N more and the answer's shape, never an
+  embedding. It writes nothing; the machine learning's log says whether the models ran on the NPU
+  (ADR-0382).
 - `scripts/dev/linux-tests.sh`: the backend tests on Linux in the device's RAM.
 - `scripts/dev/deploy.sh`: `status`, `sync --dry-run` and `backup` only read the device
   (ADR-0223). `backup` copies the device's fstab, smb.conf and `unos-data` volume into the
@@ -407,7 +415,8 @@ secrets from the git-ignored `dev.env` (ADR-0212):
   leaves about 12% full, and pauses, resumes and cancels the balance, ADR-0379; offsite sets up an off-device copy to a folder
   of the pool, with its restores, and forgets it, ADR-0337; restore restores a backup it made
   moments before, twice, ADR-0341; hardware only reads what the App Store offers of the host's SoC
-  and the device nodes the host has, ADR-0377), prints PASS or FAIL and the SD MiB of each step, removes what it made, also
+  to each container of an app, the device nodes the host has and the RKNPU driver's version,
+  ADR-0382), prints PASS or FAIL and the SD MiB of each step, removes what it made, also
   after a FAIL or Ctrl-C, and compares the
   device with how it found it. The feature-pass skill names the check of each host-level entry;
   after a reboot (ADR-0018) `scenario.sh all` runs again, with the checks by hand that its table
