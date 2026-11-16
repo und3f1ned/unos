@@ -97,11 +97,14 @@ export const en = {
 		'{name} can read and change the files of every share folder you give it. If it can be reached from the internet, whoever takes it over gets those files too.',
 	'apps.detail.runsInUnosSmb':
 		'{name} runs in the group unos-smb (PUID {puid}, PGID {pgid}): it reads and changes the files of the share folders it was given.',
-	// The hardware of the host's SoC that an app gets (ADR-0377): the badge of its card, the hint's
-	// title, what a hardware profile gives (by its id; generic for one without a text of its own),
-	// what to choose in the app (by the app's id) and the warning for an installed app whose
-	// container did not get it. Jellyfin's menu is named as in its English interface.
+	// The hardware of the host's SoC that an app gets (ADR-0377): the badge of its card, and of the
+	// card of an installed app whose container did not get it, the hint's title, what a hardware
+	// profile gives (by its id; generic for one without a text of its own), what to choose in the
+	// app (by the app's id) and the warning for an installed app whose container did not get it,
+	// in its details and in the notice of its install. Jellyfin's menu is named as in its English
+	// interface.
 	'apps.hardware.badge': 'Hardware acceleration',
+	'apps.hardware.badgeMissing': 'No hardware acceleration',
 	'apps.hardware.title': 'Hardware acceleration',
 	'apps.hardware.generic': 'UNOS installs {name} with the hardware of this NAS that the app uses.',
 	'apps.hardware.profile.rk3588Video':
@@ -259,6 +262,7 @@ export const ru: Translation<typeof en> = {
 	'apps.detail.runsInUnosSmb':
 		'Приложение {name} работает в группе unos-smb (PUID {puid}, PGID {pgid}): оно читает и изменяет файлы общих папок, которые ему отданы.',
 	'apps.hardware.badge': 'Аппаратное ускорение',
+	'apps.hardware.badgeMissing': 'Нет аппаратного ускорения',
 	'apps.hardware.title': 'Аппаратное ускорение',
 	'apps.hardware.generic': 'UNOS устанавливает {name} с оборудованием этого NAS, которое использует приложение.',
 	'apps.hardware.profile.rk3588Video':

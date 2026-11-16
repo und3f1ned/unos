@@ -330,13 +330,15 @@ manager, encrypted backup uploads, health checks, CI checks).
   host has, Docker's masks without `/sys/firmware` (MPP reads the SoC from the
   device tree) and no AppArmor profile, without privileged mode. The App Store
   shows **Hardware acceleration** on its card and says in its details to
-  choose **Rockchip MPP (RKMPP)** in Jellyfin, or, for an installed Jellyfin
-  whose container lacks the hardware, that reinstalling it gives it; the
-  catalog API answers an app's `hardware` profiles that apply on the host
-  only, and the install's answer and the installed apps list the `devices`
-  their containers got. On other hosts, an RK3588 under the mainline kernel
-  included, nothing changes. `scripts/dev/scenario.sh hardware` checks what
-  the App Store offers on the dev device and the nodes the host has (ADR-0377).
+  choose **Rockchip MPP (RKMPP)** in Jellyfin; an installed Jellyfin whose
+  container lacks the hardware shows **No hardware acceleration** on its card,
+  and the notice of its install and its details say that reinstalling it gives
+  it the hardware; the catalog API answers an app's `hardware` profiles that
+  apply on the host only, and the install's answer and the installed apps list
+  the `devices` their containers got. On other hosts, an RK3588 under the
+  mainline kernel included, nothing changes. `scripts/dev/scenario.sh hardware`
+  checks what the App Store offers on the dev device and the nodes the host
+  has (ADR-0377).
 - Idle timeouts of the data disks (`storage.disk-spindown`, ADR-0378):
   **Storage** → **Physical Disks** has a **Power** column with each disk's
   power state (Active, Standby, Unknown), read with `smartctl -n standby`

@@ -217,8 +217,9 @@ def soc(monkeypatch):
     test gives it a ``compatible`` (the bytes of /proc/device-tree/compatible) and ``devices``
     (the device nodes it has). ``commands`` records every host command; one that the fake does
     not know fails the test. ``fail`` is raised by every command, ``answer`` (a HostResult) is
-    every command's answer, as when nsenter cannot enter the host."""
-    fake = SimpleNamespace(compatible=None, devices=set(), commands=[], fail=None, answer=None)
+    every command's answer, as when nsenter cannot enter the host. ``lookup`` (a HostResult, or an
+    exception to raise) answers only the look for the device nodes, after a device tree it read."""
+    fake = SimpleNamespace(compatible=None, devices=set(), commands=[], fail=None, answer=None, lookup=None)
 
     def run(cmd, **kwargs):
         fake.commands.append(list(cmd))
@@ -229,6 +230,10 @@ def soc(monkeypatch):
         if _reads_device_tree(cmd):
             return NO_DEVICE_TREE if fake.compatible is None else HostResult(0, fake.compatible, "")
         if cmd[:2] == ["/bin/sh", "-c"] and cmd[3:4] == ["unos-devices"]:
+            if isinstance(fake.lookup, BaseException):
+                raise fake.lookup
+            if fake.lookup is not None:
+                return fake.lookup
             return HostResult(0, "".join(f"{path}\n" for path in cmd[4:] if path in fake.devices), "")
         raise AssertionError(f"unexpected host command: {cmd}")
 
@@ -2541,6 +2546,45 @@ class TestHardwareOfTheSoc:
             "nsenter: reassociate to namespace 'ns/mnt' failed: Operation not permitted"
         ]
 
+    # The look for the device nodes, the second host command, failing after a device tree that
+    # names the RK3588: nsenter exits non-zero, or the look runs past its timeout. With the
+    # message that each logs.
+    NODE_LOOKUP_FAILURES = [
+        pytest.param(
+            HostResult(1, "", "nsenter: reassociate to namespace 'ns/mnt' failed: Operation not permitted"),
+            "Could not look for the device nodes of the host's SoC: "
+            "nsenter: reassociate to namespace 'ns/mnt' failed: Operation not permitted",
+            id="exit-status",
+        ),
+        pytest.param(
+            subprocess.TimeoutExpired(["nsenter"], 15),
+            "Could not look for the device nodes of the host's SoC: "
+            "Command '['nsenter']' timed out after 15 seconds",
+            id="timeout",
+        ),
+    ]
+
+    @pytest.mark.parametrize(("lookup", "message"), NODE_LOOKUP_FAILURES)
+    def test_an_rk3588_whose_nodes_cannot_be_looked_for_installs_jellyfin_as_elsewhere(
+        self, api, pools, docker_client, low_level, soc, caplog, lookup, message
+    ):
+        # The host cannot say which nodes it has: none counts as present, so no profile applies,
+        # and the log says why.
+        soc.compatible = RK3588
+        soc.devices = set(RK3588_VIDEO)
+        soc.lookup = lookup
+
+        with caplog.at_level("WARNING", logger="src.apps.hardware"):
+            response = api.post(INSTALL, json={"template_id": "jellyfin"})
+
+        assert response.status_code == 200, response.text
+        docker_client.api.create_container.assert_not_called()
+        kwargs = docker_client.containers.create.call_args.kwargs
+        assert kwargs.get("devices") is None and kwargs.get("security_opt") is None
+        assert response.json()["devices"] == []
+        assert soc.commands[1][3:] == ["unos-devices", *RK3588_VIDEO]
+        assert [r.getMessage() for r in caplog.records if r.name == "src.apps.hardware"] == [message]
+
     def test_a_host_without_a_device_tree_is_not_logged(self, api, soc, caplog):
         with caplog.at_level("DEBUG", logger="src.apps.hardware"):
             assert api.get("/api/v1/apps/catalog/jellyfin").json()["hardware"] == []
@@ -2638,6 +2682,21 @@ class TestHardwareOfTheSoc:
 
         assert not [t["id"] for t in api.get("/api/v1/apps/catalog").json() if t["hardware"]]
         assert api.get("/api/v1/apps/catalog/jellyfin").json()["hardware"] == []
+
+    @pytest.mark.parametrize(("lookup", "message"), NODE_LOOKUP_FAILURES)
+    def test_on_an_rk3588_whose_nodes_cannot_be_looked_for_the_catalog_names_no_hardware(
+        self, api, soc, caplog, lookup, message
+    ):
+        soc.compatible = RK3588
+        soc.devices = set(RK3588_VIDEO)
+        soc.lookup = lookup
+
+        with caplog.at_level("WARNING", logger="src.apps.hardware"):
+            assert not [t["id"] for t in api.get("/api/v1/apps/catalog").json() if t["hardware"]]
+            assert api.get("/api/v1/apps/catalog/jellyfin").json()["hardware"] == []
+
+        # One look for the nodes, and one warning, for each request.
+        assert [r.getMessage() for r in caplog.records if r.name == "src.apps.hardware"] == [message, message]
 
     def test_the_catalog_reads_the_host_off_the_event_loop(self, api, soc, monkeypatch):
         soc.compatible = RK3588

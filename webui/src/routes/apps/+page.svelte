@@ -7,6 +7,7 @@
 		startApp,
 		stopApp,
 		restartApp,
+		missingHardware,
 		type AppTemplate,
 		type AppInstallResponse,
 		type InstalledApp
@@ -53,6 +54,9 @@
 	let installedError = '';
 	let error = '';
 	let notice = '';
+	// What an install's notice adds when the app's container did not get the hardware of this
+	// host's SoC that the details named (ADR-0377): the notice is then a warning.
+	let noticeWarning = '';
 	$: loading = catalogState === 'loading' || installedState === 'loading';
 	let searchQuery = '';
 	let selectedCategory = '';
@@ -160,6 +164,8 @@
 		notice = result.pool
 			? $t('apps.installedNoticePool', { name: app.name, pool: result.pool })
 			: $t('apps.installedNotice', { name: app.name });
+		noticeWarning =
+			missingHardware(app, result).length > 0 ? $t('apps.hardware.missing', { name: app.name }) : '';
 		await refresh();
 	}
 
@@ -200,13 +206,11 @@
 		}
 	}
 
-	function isInstalled(appId: string): boolean {
-		return installed.some((i) => i.template_id === appId);
-	}
-
-	function getInstalledInfo(appId: string): InstalledApp | undefined {
-		return installed.find((i) => i.template_id === appId);
-	}
+	// Reactive, so that the markup that calls them follows the installed list, which can answer
+	// after the catalog.
+	$: isInstalled = (appId: string): boolean => installed.some((i) => i.template_id === appId);
+	$: getInstalledInfo = (appId: string): InstalledApp | undefined =>
+		installed.find((i) => i.template_id === appId);
 
 	/** The badge of the source of an app's image (AppSource), with the key of its label. */
 	function getSourceBadge(
@@ -269,7 +273,19 @@
 	{/if}
 
 	{#if notice}
-		<Alert variant="success" dismissible on:dismiss={() => (notice = '')}>{notice}</Alert>
+		<Alert
+			variant={noticeWarning ? 'warning' : 'success'}
+			dismissible
+			on:dismiss={() => {
+				notice = '';
+				noticeWarning = '';
+			}}
+		>
+			<p>{notice}</p>
+			{#if noticeWarning}
+				<p class="mt-1">{noticeWarning}</p>
+			{/if}
+		</Alert>
 	{/if}
 
 	<!-- Tabs -->
@@ -445,7 +461,13 @@
 										<div class="flex flex-wrap items-center gap-2">
 											<Badge variant={source.variant} class="text-xs">{$t(source.key)}</Badge>
 											<span class="text-xs text-muted"><AppCategory category={app.category} /></span>
-											{#if app.hardware.length > 0}
+											{#if installedInfo && missingHardware(app, installedInfo).length > 0}
+												<!-- Its container did not get the hardware: its details say how to give it. -->
+												<Badge variant="warning" class="text-xs">
+													<Cpu class="w-3 h-3 mr-1" />
+													{$t('apps.hardware.badgeMissing')}
+												</Badge>
+											{:else if app.hardware.length > 0}
 												<Badge variant="info" class="text-xs">
 													<Cpu class="w-3 h-3 mr-1" />
 													{$t('apps.hardware.badge')}
