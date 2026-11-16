@@ -38,14 +38,17 @@ SD writes of each check (ADR-0214). The areas:
            Folder and Upload in the share's folder (2770 and 660 root:unos-smb) changed over SMB,
            the access lowered to read and then removed during open sessions, a comment saved with
            the expected version and a stale one refused; the protocol options (ADR-0380) of a
-           second share, of a folder in a new volume: Previous Versions, which list a snapshot of
-           the volume that the check makes on the Snapshots page with the name it gives as
-           @GMT-<its time> for a file the user wrote and no longer once it is deleted, encryption
-           required, which ends the share's open SMB 2.1 and unencrypted SMB3 sessions, refuses a
-           new SMB 2.1 client and serves one that encrypts while the SMB 2.1 client still opens
-           the first share, and with the option off the SMB 2.1 client again, and Time Machine
-           with Previous Versions, whose lines and those of [global] testparm takes and whose
-           change restarts avahi-daemon without a warning, after which Avahi resolves the share
+           second share, of a folder in a new volume: Previous Versions, which list two snapshots
+           of the volume that the check makes on the Snapshots page a second apart with the names
+           it gives as @GMT-<their times> for a file the user wrote, only the second once the
+           first is deleted, whose version of the file opens, and once both are deleted none (an
+           empty list, which smbclient reports as NT_STATUS_INVALID_NETWORK_RESPONSE), while the
+           file opens in neither, encryption required, which ends the share's open SMB 2.1 and
+           unencrypted SMB3 sessions, refuses a new SMB 2.1 client and serves one that encrypts
+           while the SMB 2.1 client still opens the first share, and with the option off the
+           SMB 2.1 client again, and Time Machine with Previous Versions, whose lines and those
+           of [global] testparm takes and whose change restarts avahi-daemon without a warning,
+           after which Avahi resolves the share
            in the device's _adisk._tcp service, and no longer with the option off, each with the
            section's lines, then that share's and that volume's Delete; a rename of the
            user with a new password
@@ -928,6 +931,25 @@ def gmt_token(snapshot: str) -> str | None:
     None for another name."""
     found = re.fullmatch(r"(?:snap|auto)_(\d{4})(\d\d)(\d\d)_(\d\d)(\d\d)(\d\d)", snapshot)
     return "@GMT-{}.{}.{}-{}.{}.{}".format(*found.groups()) if found else None
+
+
+def gmt_tokens(output: str) -> list[str]:
+    """The @GMT tokens in smbclient's OUTPUT, in order: allinfo prints one line for each shadow copy."""
+    return re.findall(r"@GMT-\d{4}\.\d\d\.\d\d-\d\d\.\d\d\.\d\d", output)
+
+
+def no_shadow_copies(result: SmbResult, name: str) -> bool:
+    """Whether smbclient's allinfo of NAME, a file in the share's top folder, answered as Samba 4.22's
+    smbclient answers smbd's list of shadow copies when it holds none. smbd answers
+    FSCTL_GET_SHADOW_COPY_DATA with the labels in 12 + num_volumes * 2 * sizeof(SHADOW_COPY_LABEL) + 2
+    bytes, 14 for none (source3/modules/vfs_default.c, vfswrap_fsctl, case FSCTL_GET_SHADOW_COPY_DATA);
+    smbclient refuses an answer shorter than 16 bytes with NT_STATUS_INVALID_NETWORK_RESPONSE
+    (source3/libsmb/cli_smb2_fnum.c, cli_smb2_shadow_copy_data_fnum_recv), and allinfo prints that
+    status in this line on its standard error and lists no shadow copy (source3/client/client.c,
+    do_allinfo). Any other error is not that answer."""
+    line = f"NT_STATUS_INVALID_NETWORK_RESPONSE getting shadow copy data for \\{name}"
+    return (not result.ended and re.findall(r"NT_STATUS_[A-Z_]+", result.output) == ["NT_STATUS_INVALID_NETWORK_RESPONSE"]
+            and line in [text.strip() for text in result.output.splitlines()])
 
 
 # smbd registers its _adisk._tcp service a moment after avahi-daemon runs again.
@@ -2359,8 +2381,11 @@ def smb_check(c: Check) -> None:
             done = smb.run("put data.txt v.txt")
         c.expect(done.ok, f"smbclient: {done.status} {tail(done.output, 200)}")
 
-    with c.step("a snapshot of the volume that the check makes on the Snapshots page, with the name it gives, is "
-                "listed for that file as @GMT-<its time>, and once deleted no longer") as s:
+    with c.step("two snapshots of the volume that the check makes on the Snapshots page a second apart, with the "
+                "names it gives, are listed for that file as @GMT-<their times>; after the first one's Delete only "
+                "the second is listed and the file opens in it with its bytes, and after the second one's Delete the "
+                "file opens in neither and none is listed (Samba 4.22's smbclient reports that empty list as "
+                "NT_STATUS_INVALID_NETWORK_RESPONSE)") as s:
         def delete_snapshots() -> None:
             """Every snapshot of the check's new volume is the check's, also one whose answer was lost."""
             found = c.get("/snapshots/", {"subvolume": vpath}, expect=(200, 404))
@@ -2368,20 +2393,40 @@ def smb_check(c: Check) -> None:
                 c.call("DELETE", f"/snapshots/{snapshot['name']}", params={"subvolume": vpath}, expect=(200, 404))
 
         c.on_cleanup(f"delete the snapshots of {vpath}", delete_snapshots)
-        snap = str(c.post("/snapshots/", {"subvolume": vpath}).get("name") or "")
-        token = gmt_token(snap)
-        c.expect(token is not None, f"the Snapshots page named the snapshot {snap!r}, which Previous Versions "
-                                    "do not list (shadow:snapprefix, shadow:format)")
+        made: list[str] = []
+        for _ in range(2):
+            if made:
+                # The Snapshots page names a snapshot to the second of the device's clock
+                # (snap_<UTC time>) and refuses a second one of the same name.
+                c.device.wait(1)
+            name = str(c.post("/snapshots/", {"subvolume": vpath}).get("name") or "")
+            c.expect(gmt_token(name) is not None, f"the Snapshots page named the snapshot {name!r}, which Previous "
+                                                  "Versions do not list (shadow:snapprefix, shadow:format)")
+            made.append(name)
+        first, second = (str(gmt_token(name)) for name in made)
         with c.device.smb_session(user, password, vshare) as smb:
             listed = smb.run("allinfo v.txt")
-        c.expect(listed.ok and token in listed.output.split(),
-                 f"allinfo v.txt answered {listed.status} without {token}: {tail(listed.output, 300)}")
-        c.call("DELETE", f"/snapshots/{snap}", params={"subvolume": vpath})
+        c.expect(listed.ok and {first, second} <= set(gmt_tokens(listed.output)),
+                 f"allinfo v.txt answered {listed.status} without {first} and {second}: {tail(listed.output, 300)}")
+        c.call("DELETE", f"/snapshots/{made[0]}", params={"subvolume": vpath})
         with c.device.smb_session(user, password, vshare) as smb:
-            done = smb.run("allinfo v.txt")
-        c.expect(done.ok and token not in done.output.split(),
-                 f"after the snapshot's Delete allinfo v.txt answered {done.status}: {tail(done.output, 300)}")
-        s.text += f": {token}"
+            listed = smb.run("allinfo v.txt")
+            kept = smb.run(f"get {second}/v.txt kept.txt", "!cat kept.txt")
+        c.expect(listed.ok and gmt_tokens(listed.output) == [second],
+                 f"after the Delete of {made[0]} allinfo v.txt answered {listed.status}: {tail(listed.output, 300)}")
+        c.expect(kept.ok and DATA.strip() in kept.output,
+                 f"v.txt in {second} answered {kept.status}: {tail(kept.output, 200)}")
+        c.call("DELETE", f"/snapshots/{made[1]}", params={"subvolume": vpath})
+        with c.device.smb_session(user, password, vshare) as smb:
+            listed = smb.run("allinfo v.txt")
+            gone = [smb.run(f"get {when}/v.txt gone.txt") for when in (first, second)]
+        for when, done in zip((first, second), gone):
+            c.expect(not done.ended and done.status.startswith("NT_STATUS_"),
+                     f"afterwards v.txt in {when} answered {done.status}: {tail(done.output, 200)}")
+        c.expect(not gmt_tokens(listed.output) and (listed.ok or no_shadow_copies(listed, "v.txt")),
+                 f"afterwards allinfo v.txt answered {listed.status}: {tail(listed.output, 300)}")
+        s.text += (f": {first} and {second}; afterwards v.txt in them answered {gone[0].status} and {gone[1].status}, "
+                   f"and allinfo's empty list {listed.status}")
 
     with c.step("with encryption required the share's section says so and testparm takes smb.conf; the open "
                 "sessions of an SMB 2.1 client and of an SMB3 client that does not encrypt end, a new SMB 2.1 client, "

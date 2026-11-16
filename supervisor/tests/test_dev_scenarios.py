@@ -61,7 +61,13 @@ Covered (the steps of the ledger entry device.scenario-checks-in-repo):
   an anonymous write, guest lines that stay after the last guest share, a password change over
   SAMR that Samba takes, or refuses while it writes passdb.tdb or stores the new password, a
   catalog that does not offer Jellyfin the RK3588's video hardware on an RK3588 with Rockchip MPP
-  or offers an app the hardware of another SoC;
+  or offers an app the hardware of another SoC, Previous Versions that list no snapshot, still
+  list or open a deleted one, or fail for a .snapshots deleted with its last snapshot;
+* the smb check reads Previous Versions as Samba 4.22 shows them (ADR-0380): smbclient's allinfo
+  lists the share's shadow copies with the file's times in each, and an empty list, which smbd
+  answers in 14 bytes, as NT_STATUS_INVALID_NETWORK_RESPONSE, since smbclient takes no answer
+  shorter than 16 bytes; get @GMT-<time>/<name> opens the file in a shadow copy; the Snapshots
+  page names a snapshot to the second of the device's clock and refuses a second one of that name;
 * no temporary password reaches the output, a command line or the environment: scenario.Device
   sends them on standard input, and the SMB helper keeps them in a file of mode 600 in RAM that
   it deletes, or gives them to smbpasswd -r on its standard input;
@@ -276,6 +282,7 @@ class FakeSmbSession:
 
     def command(self, line: str) -> str:
         nas = self.nas
+        nas.smb_lines.append((self.share, line))
         if line.startswith("!cat "):
             return self.local.get(line[5:], "cat: no such file")
         if self.killed:
@@ -288,24 +295,37 @@ class FakeSmbSession:
         if words[0] == "ls":
             return "\n".join(sorted(p.rsplit("/", 1)[1] for p in nas.children(folder)))
         if words[0] == "allinfo":
-            # The file's times, then those of each snapshot that shadow_copy2 lists (ADR-0380).
-            if f"{folder}/{words[1]}" not in nas.fs:
-                return "NT_STATUS_OBJECT_NAME_NOT_FOUND getting alt name for \\" + words[1]
-            lines = [f"altname: {words[1].upper()}", "create_time:    Thu Nov 12 10:00:00 2026 UTC"]
+            # The file's times and streams, then the shadow copies (FSCTL_GET_SHADOW_COPY_DATA) that
+            # shadow_copy2 lists for the share (ADR-0380), each with the file's times in it.
+            node = nas.fs.get(f"{folder}/{words[1]}")
+            shown = "\\" + words[1].replace("/", "\\")
+            if node is None:
+                return f"NT_STATUS_OBJECT_NAME_NOT_FOUND getting alt name for {shown}"
+            lines = [f"altname: {words[1].upper()}", "create_time:    Thu Nov 12 10:00:00 AM 2026 UTC",
+                     f"stream: [::$DATA], {len(node.content)} bytes"]
             section = scenario.smb_section(nas.installed, self.share) or {}
-            if "shadow_copy2" in section.get("vfs objects", "").split() and "snapshots-unlisted" not in nas.bugs:
-                snapdir = f"{section['shadow:mountpoint']}/.snapshots"
-                for path in sorted(nas.fs):
-                    found = re.fullmatch(r"(?:snap|auto)_(\d{4})(\d\d)(\d\d)_(\d\d)(\d\d)(\d\d)",
-                                         path.rsplit("/", 1)[1]) if os.path.dirname(path) == snapdir else None
-                    if found:
-                        lines += ["@GMT-{}.{}.{}-{}.{}.{}".format(*found.groups()),
-                                  "create_time:    Thu Nov 12 10:00:00 2026 UTC"]
+            if "shadow_copy2" in section.get("vfs objects", "").split():
+                versions = self.versions(listed=True)
+                if f"{section['shadow:mountpoint']}/.snapshots" not in nas.fs:
+                    # shadow_copy2 cannot open its folder (ENOSYS), which smbd answers as this status.
+                    lines.append(f"NT_STATUS_INVALID_DEVICE_REQUEST getting shadow copy data for {shown}")
+                elif not versions and not nas.smbclient_takes_an_empty_list:
+                    # Samba 4.22's smbd answers an empty list in 14 bytes, which its smbclient refuses
+                    # (cli_smb2_shadow_copy_data_fnum_recv): allinfo prints this line on its standard error.
+                    lines.append(f"NT_STATUS_INVALID_NETWORK_RESPONSE getting shadow copy data for {shown}")
+                for token in versions:
+                    held = self.version(token, words[1])
+                    lines += ([token, "create_time:    Thu Nov 12 10:00:00 AM 2026 UTC", f"size: {len(held.content)}"]
+                              if held is not None else
+                              [token, f"pathinfo({token}{shown}) failed: NT_STATUS_OBJECT_NAME_NOT_FOUND"])
             return "\n".join(lines)
         if words[0] == "get":
-            node = nas.fs.get(f"{folder}/{words[1]}")
-            if node is None:
-                return "NT_STATUS_OBJECT_NAME_NOT_FOUND opening remote file"
+            # A name that starts with an @GMT token is the file in that shadow copy (smbclient sends
+            # the token as the create's timewarp context).
+            found = re.fullmatch(r"(@GMT-\d{4}\.\d\d\.\d\d-\d\d\.\d\d\.\d\d)[/\\](.+)", words[1])
+            node = self.version(found[1], found[2]) if found else nas.fs.get(f"{folder}/{words[1]}")
+            if node is None or node.kind != "file":
+                return "NT_STATUS_OBJECT_NAME_NOT_FOUND opening remote file \\" + words[1].replace("/", "\\")
             self.local[words[2]] = node.content
             return f"getting file \\{words[1]}"
         if level != "write":
@@ -321,6 +341,37 @@ class FakeSmbSession:
             nas.fs[f"{folder}/{words[1]}"] = Node("dir", 0o2770, self.user, SMB_GROUP)
             return ""
         raise AssertionError(f"the fake smbclient does not know {line!r}")
+
+    def versions(self, listed: bool) -> dict[str, str]:
+        """The snapshots that shadow_copy2 finds for the share (ADR-0380): @GMT token -> the
+        snapshot's path, for the names snap_ and auto_<UTC time> in .snapshots of
+        shadow:mountpoint. LISTED: for the list of shadow copies, else for an open of a file in one.
+        Defects: snapshots-unlisted finds none, deleted-version-listed still finds a deleted
+        snapshot, and deleted-version-opens finds one that is no longer listed for an open."""
+        nas = self.nas
+        section = scenario.smb_section(nas.installed, self.share) or {}
+        if "shadow_copy2" not in section.get("vfs objects", "").split() or "snapshots-unlisted" in nas.bugs:
+            return {}
+        snapdir = f"{section['shadow:mountpoint']}/.snapshots"
+        paths = [p for p in nas.fs if os.path.dirname(p) == snapdir]
+        if "deleted-version-listed" in nas.bugs or ("deleted-version-opens" in nas.bugs and not listed):
+            paths += [p for p in nas.left_to_samba if os.path.dirname(p) == snapdir]
+        found = {}
+        for path in sorted(paths):
+            name = re.fullmatch(r"(?:snap|auto)_(\d{4})(\d\d)(\d\d)_(\d\d)(\d\d)(\d\d)", path.rsplit("/", 1)[1])
+            if name:
+                found["@GMT-{}.{}.{}-{}.{}.{}".format(*name.groups())] = path
+        return found
+
+    def version(self, token: str, name: str) -> Node | None:
+        """NAME of the share's folder in the shadow copy TOKEN, None where Samba opens none."""
+        snapshot = self.versions(listed=False).get(token)
+        if snapshot is None:
+            return None
+        section = scenario.smb_section(self.nas.installed, self.share) or {}
+        inner = self.nas.shares[self.share]["path"][len(section["shadow:mountpoint"]):]
+        held = self.nas.left_to_samba.get(snapshot) or self.nas.fs
+        return held.get(f"{snapshot}{inner}/{name}")
 
 
 def smb_password_problem(password: str) -> str | None:
@@ -410,6 +461,15 @@ class FakeNas:
         self.databases: dict[str, dict] = {}
         self.restored: list[str] = []
         self.restores = 0  # the restores of snapshots, which name their copies (restore_<time>)
+        # The seconds that passed on the device (wait), whose clock names snapshots (snap_<UTC time>),
+        # and the snapshots whose Delete left them to Samba (the defects deleted-version-listed and
+        # deleted-version-opens): path -> the snapshot's files and folders.
+        self.seconds = 0
+        self.left_to_samba: dict[str, dict[str, Node]] = {}
+        # The commands of the smbclient sessions: (share, line); and whether smbclient takes smbd's
+        # answer for no snapshot, which Samba 4.22's refuses (FakeSmbSession.command, allinfo).
+        self.smb_lines: list[tuple[str, str]] = []
+        self.smbclient_takes_an_empty_list = False
         # The copies of the database that the restores keep (the newest 5), and an API token.
         self.copies: list[str] = []
         self.api_tokens = [{"id": 1, "user_id": 1, "name": "home assistant", "token_prefix": "unos_ab12", "is_active": True,
@@ -659,8 +719,8 @@ class FakeNas:
         served = {name: info for name, info in sorted(self.shares.items()) if self.path_problem(info["path"]) is None}
         # The protocol options (ADR-0380): fruit in every section while a Time Machine share exists.
         # Defects: encryption-not-required never writes required, encryption-stays keeps it once
-        # written, snapshots-unlisted lists no snapshot (allinfo), fruit-without-global leaves
-        # [global] without Apple's lines.
+        # written, fruit-without-global leaves [global] without Apple's lines (the defects of
+        # shadow_copy2's snapshots are FakeSmbSession.versions').
         time_machine = any(info.get("time_machine") for info in served.values())
 
         def options(info: dict) -> str:
@@ -880,15 +940,22 @@ class FakeNas:
             raise Refused(404, f"Subvolume not found: {folder}")
         if parts == [] and method == "POST":
             # As src/snapshots/router.py names one without a name: snap_<UTC time> of the device's
-            # clock. The defect snapshot-other-names names it in another form.
+            # clock, to the second, so a second one in the same second is refused. The defect
+            # snapshot-other-names names it in another form.
             stamp = time.strftime("%Y%m%dT%H%M%S" if "snapshot-other-names" in self.bugs else "%Y%m%d_%H%M%S",
-                                  time.gmtime(1_800_000_000))
+                                  time.gmtime(1_800_000_000 + int(self.seconds)))
             name = body.get("name") or f"snap_{stamp}"
             path = f"{folder}/.snapshots/{name}"
             if path in self.fs:
                 raise Refused(400, f"Snapshot already exists: {name}")
             self.fs.setdefault(f"{folder}/.snapshots", Node("dir", 0o755))
+            # It holds the subvolume's files and folders as they were, without the subvolumes inside
+            # it (its snapshots and restored copies), as btrfs makes it.
+            inner = [p for p in self.subtree(folder) if p != folder and self.fs[p].kind == "subvolume"]
+            held = {path + p[len(folder):]: copy.copy(self.fs[p]) for p in sorted(self.subtree(folder))
+                    if p != folder and not any(p == q or p.startswith(q + "/") for q in inner)}
             self.fs[path] = Node("subvolume", 0o755)
+            self.fs.update(held)
             return {"id": name, "name": name, "subvolume": folder, "path": path, "created": "2026-11-12T10:00:00+00:00"}
         if parts == [] and method == "GET":
             return [{"id": p.rsplit("/", 1)[1], "name": p.rsplit("/", 1)[1], "subvolume": folder, "path": p,
@@ -925,7 +992,12 @@ class FakeNas:
             path = f"{folder}/.snapshots/{parts[0]}"
             if path not in self.fs:
                 raise Refused(404, f"Snapshot not found: {parts[0]}")
+            if {"deleted-version-listed", "deleted-version-opens"} & self.bugs:
+                # Gone from the Snapshots page, still where Samba finds it.
+                self.left_to_samba[path] = {p: self.fs[p] for p in self.subtree(path)}
             self.remove(path)
+            if "snapdir-removed" in self.bugs and not [p for p in self.fs if os.path.dirname(p) == f"{folder}/.snapshots"]:
+                del self.fs[f"{folder}/.snapshots"]  # the defect: the last snapshot's Delete takes .snapshots too
             return {"status": "deleted", "id": parts[0]}
         raise AssertionError(f"the fake does not know {method} /snapshots/{'/'.join(parts)}")
 
@@ -1190,6 +1262,7 @@ class FakeNas:
 
     def wait(self, seconds):
         """Time passes on the device: the disk sleeps once it was idle for its timeout."""
+        self.seconds += seconds
         self.idle += seconds
         if self.spindown and self.idle >= self.spindown * 60 and "never-sleeps" not in self.bugs:
             self.asleep = True
@@ -2264,21 +2337,33 @@ def test_the_smb_check_covers_the_flows_of_slice_2(nas):
 
 def test_the_smb_check_shows_the_protocol_options_of_its_share(nas):
     """shares.per-share-protocol-options (ADR-0380), on a share of a folder in a new volume:
-    Previous Versions list the snapshot that the check makes of the volume, and no longer once it
-    is deleted; encryption required refuses an SMB 2.1 client and serves one that encrypts; Time
-    Machine's lines; each option off again, then the share and the volume deleted."""
+    Previous Versions list the two snapshots that the check makes of the volume a second apart,
+    only the second once the first is deleted, whose version of the file opens, and once both are
+    deleted neither opens and the list is empty, which Samba 4.22's smbclient reports as
+    NT_STATUS_INVALID_NETWORK_RESPONSE; encryption required refuses an SMB 2.1 client and serves
+    one that encrypts; Time Machine's lines; each option off again, then the share and the volume
+    deleted."""
     status, output = run_check("smb", nas)
     assert status == 0, output
     text = "\n".join(step_lines(output))
-    for words in ("shadow:mountpoint = /mnt/pools/data/unoscheck1a2b3cv)", ": @GMT-2027.01.15-08.00.00",
+    for words in ("shadow:mountpoint = /mnt/pools/data/unoscheck1a2b3cv)",
+                  ": @GMT-2027.01.15-08.00.00 and @GMT-2027.01.15-08.00.01; afterwards v.txt in them answered "
+                  "NT_STATUS_OBJECT_NAME_NOT_FOUND and NT_STATUS_OBJECT_NAME_NOT_FOUND, and allinfo's empty list "
+                  "NT_STATUS_INVALID_NETWORK_RESPONSE",
                   "with encryption required the share's section says so and testparm takes smb.conf",
                   "the SMB 2.1 client still opens unoscheck1a2b3c,", ": NT_STATUS_ACCESS_DENIED",
                   "with Time Machine too", ": _adisk._tcp named unoscheck1a2b3cv",
                   "Delete of the share unoscheck1a2b3cv"):
         assert words in text, words
-    # The snapshot is made with the name the Snapshots page gives (no name of the check's own).
+    # Both snapshots are made with the names the Snapshots page gives (no name of the check's own),
+    # the second a second after the first, as the page names them to the second.
     made = [body for method, path, body, _ in nas.calls if method == "POST" and path == "/snapshots/"]
-    assert made == [{"subvolume": "/mnt/pools/data/unoscheck1a2b3cv"}]
+    assert made == [{"subvolume": "/mnt/pools/data/unoscheck1a2b3cv"}] * 2
+    # The listings and the opens of the file in the snapshots, over SMB.
+    first, second = "@GMT-2027.01.15-08.00.00", "@GMT-2027.01.15-08.00.01"
+    assert [line for share, line in nas.smb_lines if share == "unoscheck1a2b3cv" and ("allinfo" in line or "@GMT" in line)] == [
+        "allinfo v.txt", "allinfo v.txt", f"get {second}/v.txt kept.txt", "allinfo v.txt", f"get {first}/v.txt gone.txt",
+        f"get {second}/v.txt gone.txt"]
     created = [body for method, path, body, _ in nas.calls if method == "POST" and path == "/shares/smb"]
     assert [(b["name"], b["path"], b.get("previous_versions")) for b in created][-1] == (
         "unoscheck1a2b3cv", "/mnt/pools/data/unoscheck1a2b3cv/files", True)
@@ -2288,9 +2373,32 @@ def test_the_smb_check_shows_the_protocol_options_of_its_share(nas):
                        {"time_machine": True}, {"time_machine": False, "previous_versions": False}]
     snapshots = [(method, path, params) for method, path, _, params in nas.calls if path.startswith("/snapshots")]
     volume = {"subvolume": "/mnt/pools/data/unoscheck1a2b3cv"}
-    # The step's Delete, then the clean-up's list of the volume's snapshots, which finds none.
-    assert snapshots == [("POST", "/snapshots/", {}), ("DELETE", "/snapshots/snap_20270115_080000", volume),
-                         ("GET", "/snapshots/", volume)]
+    # The step's Deletes, then the clean-up's list of the volume's snapshots, which finds none.
+    assert snapshots == [("POST", "/snapshots/", {}), ("POST", "/snapshots/", {}),
+                         ("DELETE", "/snapshots/snap_20270115_080000", volume),
+                         ("DELETE", "/snapshots/snap_20270115_080001", volume), ("GET", "/snapshots/", volume)]
+
+
+def test_the_smb_check_takes_an_empty_list_of_previous_versions_without_an_error(nas):
+    """An smbclient that takes smbd's 14-byte answer for no snapshot prints no error for the empty
+    list: the check takes that too."""
+    nas.smbclient_takes_an_empty_list = True
+    status, output = run_check("smb", nas)
+    assert status == 0, output
+    assert "and allinfo's empty list no error" in "\n".join(step_lines(output))
+
+
+def test_the_smb_check_lets_a_second_pass_between_its_two_snapshots(nas, monkeypatch):
+    """The Snapshots page names a snapshot to the second (snap_<UTC time>) and refuses a second one of
+    the same name: the check lets a second pass on the device between its two snapshots, and without
+    that wait the second is refused, which fails the step and leaves no snapshot."""
+    monkeypatch.setattr(FakeNas, "wait", lambda self, seconds: None)
+    before = nas.snapshot()
+    status, output = run_check("smb", nas)
+    assert status == 1, output
+    failed = [line for line in step_lines(output) if line.startswith("FAIL  ")]
+    assert len(failed) == 1 and "Snapshot already exists: snap_20270115_080000" in failed[0], output
+    assert nas.snapshot() == before, output
 
 
 def test_the_smb_check_renames_its_user_and_goes_on_under_the_new_name(nas):
@@ -3044,7 +3152,11 @@ def test_the_pool_folder_helper_removes_only_an_empty_folder_that_is_no_mount_po
     ("hardware", "hardware-of-another-soc", "the App Store offers each app only the hardware of this SoC"),
     ("smb", "encryption-not-required", "with encryption required the share's section says so"),
     ("smb", "encryption-stays", "with the option off the section has smb encrypt = required"),
-    ("smb", "snapshots-unlisted", "allinfo v.txt answered no error without @GMT-2027.01.15-08.00.00"),
+    ("smb", "snapshots-unlisted", "allinfo v.txt answered NT_STATUS_INVALID_NETWORK_RESPONSE without "
+                                  "@GMT-2027.01.15-08.00.00 and @GMT-2027.01.15-08.00.01"),
+    ("smb", "deleted-version-listed", "after the Delete of snap_20270115_080000 allinfo v.txt answered no error"),
+    ("smb", "deleted-version-opens", "afterwards v.txt in @GMT-2027.01.15-08.00.00 answered no error"),
+    ("smb", "snapdir-removed", "afterwards allinfo v.txt answered NT_STATUS_INVALID_DEVICE_REQUEST"),
     ("smb", "fruit-without-global", "[global] has fruit:aapl = None, fruit:nfs_aces = None"),
     ("smb", "advertise-fails", "turning Time Machine on warns: avahi-daemon could not be restarted"),
     ("smb", "adisk-unannounced", "Avahi does not resolve unoscheck1a2b3cv in the device's _adisk._tcp service"),
