@@ -75,12 +75,13 @@ significant step. Features and their state live in `feature-list.json`, decision
   a pool's balance (`storage.pool-balance`) and per-share encryption, Time Machine and Previous
   Versions (`shares.per-share-protocol-options`). Checked on the dev device across four reboots,
   with fixes from what the device showed; the device runs cc9482e, whose runtime differs from the
-  branch's head only in a comment of `deploy/uninstall.sh`. Passing now: `storage.disk-spindown`.
-  Open, each the owner's (Open owner actions, 8 to 11): `storage.pool-balance` step 1 on the
-  Storage page in a browser; `shares.per-share-protocol-options` with a Mac (a Time Machine
-  backup) and a Windows computer (Previous Versions); `apps.rk3588-hardware-acceleration` step 2,
-  Immich's NPU, once `apps.compose-stacks` is merged, whose Immich administrator account only the
-  owner creates.
+  branch's head only in a comment of `deploy/uninstall.sh`. Passing now: `storage.disk-spindown`,
+  on two judgements the owner may overrule (Open owner actions, 10). Open, each waiting on the
+  owner (Open owner actions, 8, 9 and 11): `storage.pool-balance` step 1 on the Storage page in a
+  browser; `shares.per-share-protocol-options` with a Mac (a Time Machine backup) and a Windows
+  computer (Previous Versions); `apps.rk3588-hardware-acceleration` step 1's load on the RKMPP
+  cores and its look in a browser, with Jellyfin installed again, and step 2, Immich's NPU, once
+  `apps.compose-stacks` is merged, whose Immich administrator account only the owner creates.
 - On the device the NFS server runs (nfs-server, rpcbind.socket and rpcbind, enabled since
   2026-11-08, ADR-0303) and exports nothing for now; over IPv6 only LAN sources reach it
   (ADR-0301). avahi-daemon and wsdd2 run (network discovery), and nmbd is disabled since
@@ -157,13 +158,14 @@ the UGREEN firmware on its eMMC, until the owner set that right on 2026-11-15 (A
   the boot). The checks and their results are in the Log (2026-11-16).
 - sda, the pool's disk (WDC WD6400AACS-00G8B0, behind the JMB58x), as the batch found it: no idle
   timeout of UNOS and no `/etc/udev/rules.d/90-unos-disk-spindown.rules`, and its own automatic
-  offline data collection on (read at 19:21 UTC). UNOS's Off at 17:48 UTC ran `hdparm -S 0`, so
-  it has no standby timer until its next power cycle. smartd (smartmontools) is inactive and
-  disabled, as `deploy/install.sh`'s stop_smartd leaves it: it was active and enabled at 01:04 UTC
-  on 2026-11-16 and was turned off during that night's measurements of sda's timer. The Jellyfin
-  of the RK3588 checks is uninstalled, the folders `apps/jellyfin` and `media` that its install
-  made on the pool are removed, and its image is no longer on the device (check.sh's image list
-  at 19:19 UTC). The balance checks' fills are removed.
+  offline data collection on (read at 19:21 UTC). The smart check's Off at 19:21 UTC (its step
+  12), like UNOS's Off at 17:48 UTC before it, ran `hdparm -S 0`, so it has no standby timer until
+  its next power cycle. smartd (smartmontools) is inactive and disabled, as `deploy/install.sh`'s
+  stop_smartd leaves it: it was active and enabled at 01:04 UTC on 2026-11-16 and was turned off
+  during that night's measurements of sda's timer. The Jellyfin of the RK3588 checks is
+  uninstalled, the folders `apps/jellyfin` and `media` that its install made on the pool are
+  removed, and its image is no longer on the device (check.sh's image list at 19:19 UTC). The
+  balance checks' fills are removed.
 - The owner had Armbian upgraded on 2026-11-15 ("update Armbian on the W3 to the current one"):
   a copy of `/boot`, `/etc/fstab`, `/etc/apt` and the package list on the workstation (the
   worktree's `tmp/`), `apt-get update` (166.512 MiB on the card), then `apt-get full-upgrade` in a
@@ -429,15 +431,20 @@ Open owner actions:
 9. `shares.per-share-protocol-options`: a Mac on the LAN makes a Time Machine backup to a share
    with Time Machine on, and a Windows computer lists and opens a share's Previous Versions in File
    Explorer; then the Mac's list after a reboot (steps 3 to 5 of its notes' steps by hand).
-10. Two looks in a browser on the dev device, neither a condition of an entry's steps: the
-    Storage page with sda asleep, and GET /storage/disks a minute later, to record whether the
-    page's pool lists wake it (`storage.disk-spindown`, step 6 of its notes' steps by hand); and
-    the App Store's card and details of an installed Jellyfin, with RKMPP chosen in Jellyfin's
-    dashboard (`apps.rk3588-hardware-acceleration`, step 6; Jellyfin's image is a pull of about
-    1.3 GB onto the SD card).
-11. `apps.rk3588-hardware-acceleration` step 2, Immich's machine learning on the NPU, once
-    `apps.compose-stacks` and its Immich of several containers are merged; the Immich
-    administrator account, which only the owner creates.
+10. `storage.disk-spindown`: a look in a browser on the dev device, no condition of the entry's
+    steps: the Storage page with sda asleep, and GET /storage/disks a minute later, to record
+    whether the page's pool lists wake it (step 6 of its notes' steps by hand). And two judgements
+    of its pass (Log, 2026-11-16) for the owner to confirm or overrule, which sets it back to
+    passes false: that this look is no condition of it (the Storage page itself is the E2E
+    specs'), and that the reboot checks on 5d79302 stand for cc9482e, whose `read_rule` reads the
+    lines that UNOS writes as before.
+11. `apps.rk3588-hardware-acceleration`: step 1's open parts, with Jellyfin installed again at the
+    owner's word (its image is a pull of about 1.3 GB onto the SD card): the load on the decoder
+    and encoder cores in `/proc/mpp_service/load` while ffmpeg runs, with `load_interval` set first
+    (step 4 of its notes' steps by hand), and the owner's look at the App Store's card and details
+    of the installed Jellyfin, with RKMPP chosen in Jellyfin's dashboard (step 6); step 2, Immich's
+    machine learning on the NPU, once `apps.compose-stacks` and its Immich of several containers
+    are merged; the Immich administrator account, which only the owner creates.
 
 ## Log
 
@@ -484,13 +491,14 @@ Open owner actions:
   on the Mali-G610 (0); the same after a reboot from the API at 04:26:13 (0.121, 0.016, 0), then
   the uninstall and the folders `apps/jellyfin` and `media` removed (1.117).
   `/proc/mpp_service/load` showed no load: it wants `load_interval` set first, which the check did
-  not write.
+  not write, so step (4)'s load on the decoder and encoder cores was not shown.
 - 434d410 at 06:53: `scenario.sh smart` (12 steps, 0.492 MiB) and `smb` (37 steps, 5.336) OK; step
   18 recorded smbd's NT_STATUS_INVALID_DEVICE_REQUEST for a volume without `.snapshots`, which the
   user guide now names (cc8aba3). A reboot from the API at 07:17:10: `storage.pool-balance`'s step
   by hand (5) failed, the full balance idle after the boot (5 chunks, 2 balanced a minute before
   the reboot; 0.133), and `storage.disk-spindown`'s (3) and (4) failed: sda, with the rule's 20
-  minutes, still active after 22 minutes with no read or write (0.164).
+  minutes, still active after 22 minutes (0.164; the step read no I/O counts, and from 07:44 to
+  08:13 the kernel's counts since the boot stayed at 182 reads and 22 writes).
 - The finding of that reboot: sda's own automatic offline data collection ("Auto Offline Data
   Collection: Enabled", suspended by each command of the host and resumed later) kept it out of
   standby for hours, with `-S 240`, `180` and `120` through 35, 27 and 18 minutes of watching; with
@@ -506,8 +514,10 @@ Open owner actions:
   (0); sda in standby 1201 s after its last read or write, with `hdparm -C` a minute apart, so udev
   applied the rule's 20 minutes at boot; GET /storage/disks standby, Disk Health STANDBY, and sda
   still asleep after that read (0.168). `storage.pool-balance`'s (5) failed again: idle after the
-  boot (0.145), as the kernel had resumed the balance at the mount with usage=90, which passes over
-  full chunks, and it had ended at 14:04:32.
+  boot (0.145); the kernel log says the balance ended at 14:04:32, about a minute after the boot
+  (the cycle's log kept no earlier kernel line of that boot), as the kernel's resume with usage=90,
+  which passes over full chunks, ends it (0ccb107's measurement; the reboot of 14:42 showed that
+  resume line).
 - The finding of that reboot: on every resume, the kernel's at a mount and Resume Balance's, Linux
   6.1's update_balance_args() (fs/btrfs/volumes.c) gives each chunk type without a usage filter
   usage=90, so a paused full balance goes on only through the chunks less than 90% full. No
@@ -522,9 +532,11 @@ Open owner actions:
   supervisor's log, check.sh OK (30.1 MiB since the boot).
 - `storage.disk-spindown`'s step by hand (7): smartmontools inactive and disabled, as found (it was
   active and enabled at 01:04, and was turned off during that night's measurements of sda's timer);
-  sda got 1 hour at 15:17:52 (0.145) and was in standby at 17:47:55, so no periodic check of UNOS
-  woke it in 2.5 hours; then its timeout went back to 0, as found at 01:04 (0.309): the rule
-  removed and the collection on again.
+  sda got 1 hour at 15:17:52 (0.145) and was in standby at the step's one read at 17:47:55
+  (0.023): nothing restarted its timer in the hour before that read, so no hourly check of UNOS
+  kept it awake, as the step asks (one read does not show that nothing woke it earlier in the 2.5
+  hours); then its timeout went back to 0, as found at 01:04 (0.309): the rule removed and the
+  collection on again.
 - The uninstallation (c6b2fa5, then its reviews' fixes 93a4c81, 19593be and cc9482e; 1040834 a
   comment): `deploy/uninstall.sh`'s remove_disk_idle_timeouts runs `hdparm -S 0` on the disks of
   UNOS's rule and turns their recorded collection on again, then removes the rule, keeping the
@@ -536,7 +548,10 @@ Open owner actions:
   `deploy.sh status` equal, no Traceback or Killed in the supervisor's log, check.sh OK (71.6 MiB
   since the boot of 14:42). The reboot checks ran on 5d79302; cc9482e differs from it at runtime in
   `read_rule`'s reading of lines that UNOS does not write, the balance card's texts and
-  `deploy/uninstall.sh`. 1040834 and this record change no runtime behaviour.
+  `deploy/uninstall.sh`. `read_rule` reads the lines that UNOS writes as before, udev applies the
+  rule at boot, and the uninstallation is no step of `storage.disk-spindown`, so its pass rests on
+  the reboot checks of 5d79302, without a reboot of cc9482e (Open owner actions, 10). 1040834 and
+  this record change no runtime behaviour.
 - Review findings left unfixed, with the reason: (a) the balance card's 90% sentence shows under
   every paused balance, also one with a usage limit, where it does not apply; it is worded as a
   condition ("When a paused full balance goes on"), so it is not false, and telling the kinds apart
@@ -553,14 +568,23 @@ Open owner actions:
   (d70dd12: no rule of ADR-0203 asks it, and four older entries would fail it); and the pages that
   list the pools still scan every disk when an administrator opens them (ADR-0378, Consequences),
   which the browser look of `storage.disk-spindown`'s step by hand (6) would observe on the device.
+- A review of this record in a fresh context corrected it: the reason for `test_storage.py` in
+  `storage.disk-spindown`'s verified_by (the SMART monitor's read of a disk in standby leaves it
+  asleep; GET /health/full without a scan of the disks is `test_health_monitor.py`'s), its notes'
+  HUP sentence, which 1040834 made false, what step (7)'s one read shows, and the I/O counts of
+  07:17 and the 14:03 balance's resume, which the cycle's logs do not show; and
+  `apps.rk3588-hardware-acceleration`'s step 1, whose step by hand (4) did not show the load on the
+  decoder and encoder cores either. Its doubt of `storage.disk-spindown`'s pass (step (6) not run,
+  no reboot of cc9482e) is the owner's to settle (Open owner actions, 10).
 - Passing now: `storage.disk-spindown`, with `test_storage.py` and `test_files_security.py` added
-  to its verified_by. Open, the owner's (Open owner actions, 8 to 11): `storage.pool-balance` (its
-  step by hand (1), and the page's parts of (2) and (3), in a browser),
-  `shares.per-share-protocol-options` (a Mac's Time Machine backup, Previous Versions on a Windows
-  computer), and `apps.rk3588-hardware-acceleration` (step 2, Immich's NPU, once
-  `apps.compose-stacks` is merged, and the Immich administrator account; step 1 passed but for its
-  look at the App Store in a browser). `GLOSSARY.md` gained Protocol options. `make check` passed
-  on this record.
+  to its verified_by. Open, waiting on the owner (Open owner actions, 8 to 11):
+  `storage.pool-balance` (its step by hand (1), and the page's parts of (2) and (3), in a
+  browser), `shares.per-share-protocol-options` (a Mac's Time Machine backup, Previous Versions on
+  a Windows computer), and `apps.rk3588-hardware-acceleration` (step 1's load on the decoder and
+  encoder cores and its look at the App Store and Jellyfin's dashboard, with Jellyfin installed
+  again at the owner's word; step 2, Immich's NPU, once `apps.compose-stacks` is merged, and the
+  Immich administrator account). `GLOSSARY.md` gained Protocol options. `make check` passed on
+  this record.
 
 ### 2026-11-15: Armbian on the dev device upgraded to 26.11.0-trunk (kernel 6.1.172)
 
