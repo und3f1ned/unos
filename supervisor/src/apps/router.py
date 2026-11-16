@@ -959,6 +959,10 @@ class _NewContainer:
     environment: dict[str, str]
     planned: list[_PlannedMount]
     hardware: ContainerHardware | None = None
+    # The data folders that it binds and sets up with a generated password (secret_for) that were
+    # empty or absent before this install: one that fails while it is awaited may leave them
+    # half set up, and the next install would take them for its data (ADR-0381).
+    new_data: list[Path] = field(default_factory=list)
 
     @property
     def image(self) -> str:
@@ -1037,6 +1041,14 @@ def _install(template: AppTemplate, req: AppInstallRequest, shares: list[_ShareF
         _check_share_folders(template, c.planned, shares, run_in_unos_smb=req.run_in_unos_smb and c is main)
     _prepare_sources(planned, create=False)
     secrets_to_make = _secrets_to_make(template, planned)
+    for c in containers:
+        sources = {m.source for m in c.planned}
+        c.new_data = sorted({
+            m.secret_for
+            for m in c.planned
+            if m.generated_secret and m.secret_for in sources
+            and not app_secrets.holds_data(_pool_root_of(m), m.secret_for)
+        })
 
     # The first request to Docker: every container, stopped ones too, for the app's names and the
     # host ports; then the app's network, if it has companions.
@@ -1214,13 +1226,18 @@ def _create_and_start(
     pool: AppPool | None,
 ) -> list[Any]:
     """Make the app's network (unless ``network`` is its own, left from before), create its
-    containers in order, start the companions, wait for those the main container depends on and
-    start it: the containers, in their order. On a failure, everything this made is removed
-    again (_roll_back)."""
+    containers in order and start them in the same order, each companion that the main container
+    depends on ready before the next container starts: the containers, in their order. So a
+    container that fails to start later meets those companions set up, such as a database that
+    has finished its first start. On a failure, everything this made is removed again
+    (_roll_back)."""
     several = bool(template.companions)
     net = stacks.network_name(template.id) if several else None
+    depends_on = set(template.depends_on)
     made_network = None
     created: list[Any] = []
+    asked: set[str] = set()  # the containers it asked Docker to start
+    awaited: _NewContainer | None = None  # the companion it is waiting for
     failing = ""
     try:
         if several and network is None:
@@ -1238,32 +1255,48 @@ def _create_and_start(
                 alias=c.companion,
                 **_create_options(template, c, port_bindings, pool),
             ))
-        by_companion = {c.companion: container for c, container in zip(containers, created) if c.companion}
-        for c, container in zip(containers[:-1], created[:-1]):
-            failing = f"Failed to start container {c.name}"
+        for c, container in zip(containers, created):
+            failing = f"Failed to start container {c.name}" if several else "Failed to start container"
+            asked.add(c.name)
             container.start()
-        for name in template.depends_on:
-            failing = f"Failed to start container {by_companion[name].name}"
-            stacks.wait_ready(by_companion[name], started_now=True)
-        failing = f"Failed to start container {containers[-1].name}" if several else "Failed to start container"
-        created[-1].start()
-        created[-1].reload()
-        for container in created[:-1]:
+            if c.companion in depends_on:
+                awaited = c
+                stacks.wait_ready(container, started_now=True)
+                awaited = None
+        for container in created:
             container.reload()
     except stacks.NotReady as e:
-        _roll_back(template, created, made_network, str(e))
+        _roll_back(template, containers, created, asked, made_network, str(e), awaited)
     except _DOCKER_ERRORS as e:
-        _roll_back(template, created, made_network, f"{failing}: {e}")
+        _roll_back(template, containers, created, asked, made_network, f"{failing}: {e}", awaited)
     return created
 
 
-def _roll_back(template: AppTemplate, created: list[Any], network: Any | None, reason: str) -> NoReturn:
+def _roll_back(
+    template: AppTemplate,
+    containers: list[_NewContainer],
+    created: list[Any],
+    asked: set[str],
+    network: Any | None,
+    reason: str,
+    awaited: _NewContainer | None,
+) -> NoReturn:
     """Remove, forced and in reverse order, the containers and the network that a failed install
-    made: they would block a retry ("name already in use"). Its folders, password files and
-    images stay. 500 with ``reason``; _InstallFailed when something could not be removed."""
+    made: they would block a retry ("name already in use"). Each container that it asked to
+    start is stopped first with its stop timeout, so that one still setting up its data can
+    finish or shut down (a forced removal alone kills it at once). Its folders, password files
+    and images stay. 500 with ``reason``, and, when it failed while it waited for ``awaited``, the
+    data folders that this may have left half set up; _InstallFailed when something could not be
+    removed."""
     left: list[str] = []
     problems: list[str] = []
-    for container in reversed(created):
+    for c, container in reversed(list(zip(containers, created))):
+        if c.name in asked:
+            try:
+                timeout = c.spec.stop_timeout if c.spec.stop_timeout is not None else stacks.DEFAULT_STOP_TIMEOUT
+                container.stop(timeout=timeout)
+            except _DOCKER_ERRORS as e:
+                logger.warning("Could not stop %s before removing it: %s", c.name, e)
         try:
             container.remove(force=True)
         except _DOCKER_ERRORS as e:
@@ -1275,13 +1308,21 @@ def _roll_back(template: AppTemplate, created: list[Any], network: Any | None, r
         except _DOCKER_ERRORS as e:
             left.append(f"the network {network.name}")
             problems.append(f"then could not remove the network {network.name}: {e}")
+    unfinished = ""
+    if awaited is not None and awaited.new_data:
+        folders = [str(folder) for folder in awaited.new_data]
+        was, it = ("was", "it") if len(folders) == 1 else ("were", "them")
+        unfinished = (
+            f". {stacks.joined(folders)} {was} empty before this install and may now hold data that "
+            f"{awaited.name} did not finish setting up: move {it} away before you install {template.name} again."
+        )
     if not left:
         if template.companions:
-            raise HTTPException(500, f"{reason}; its containers were removed and its data folders kept")
+            raise HTTPException(500, f"{reason}; its containers were removed and its data folders kept{unfinished}")
         raise HTTPException(500, reason)
     made = [container.name for container in created] + ([f"the network {network.name}"] if network else [])
     raise _InstallFailed(
-        "; ".join([reason, *problems]),
+        "; ".join([reason, *problems]) + unfinished,
         f"Created {stacks.joined(made)}; then: {reason}; left behind: {stacks.joined(left)}",
     )
 
@@ -1479,25 +1520,24 @@ def _stop_all(app: stacks.InstalledContainers, done: _Done, *, action: str) -> N
 
 def _start_all(app: stacks.InstalledContainers, done: _Done, *, every: bool, action: str) -> None:
     """Start the app's containers in order (``every``: all of them; otherwise those that do not
-    run), the main container after the companions it depends on are ready."""
-    by_companion = {c.labels.get(COMPANION_LABEL): c for c in app.companions}
+    run). When the main container is to start, each companion that it depends on is ready before
+    the next container starts, as at the install."""
+    main_starts = app.main is not None and (every or app.main.status not in RUNNING_STATES)
+    depends_on = set(app.template.depends_on) if app.template is not None and main_starts else set()
     for container in app.containers:
-        if not every and container.status in RUNNING_STATES:
-            continue
-        if container is app.main and app.template is not None:
-            for name in app.template.depends_on:
-                dependency = by_companion[name]
-                try:
-                    stacks.wait_ready(dependency, started_now=dependency.name in done.started)
-                except stacks.NotReady as e:
-                    raise _failed(done, str(e))
-                except _DOCKER_ERRORS as e:
-                    raise _failed(done, _failure(app, action, dependency, e))
-        try:
-            container.start()
-        except _DOCKER_ERRORS as e:
-            raise _failed(done, _failure(app, action, container, e))
-        done.started.append(container.name)
+        if every or container.status not in RUNNING_STATES:
+            try:
+                container.start()
+            except _DOCKER_ERRORS as e:
+                raise _failed(done, _failure(app, action, container, e))
+            done.started.append(container.name)
+        if container.labels.get(COMPANION_LABEL) in depends_on:
+            try:
+                stacks.wait_ready(container, started_now=container.name in done.started)
+            except stacks.NotReady as e:
+                raise _failed(done, str(e))
+            except _DOCKER_ERRORS as e:
+                raise _failed(done, _failure(app, action, container, e))
     if app.main is not None:
         try:
             app.main.reload()

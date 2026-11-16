@@ -348,7 +348,7 @@ class TestInstall:
         assert len(warnings) == 4
         assert warnings[0].startswith(f"Could not tag example/photos-db@{_digest(2)} as example/photos-db:14: ")
 
-    def test_the_main_container_starts_only_after_the_companions_it_depends_on_are_ready(
+    def test_each_companion_the_main_container_depends_on_is_ready_before_the_next_container_starts(
         self, api, pools, docker, clock
     ):
         docker.script("photos-database", STARTING, STARTING, HEALTHY)
@@ -359,11 +359,15 @@ class TestInstall:
         calls = docker.called("container.start", "container.reload")
         start = calls.index(("container.start", "photos"))
         # The database was looked at until healthy, and the cache, which has no health check,
-        # until it had run for two seconds; the machine learning is waited for by nobody.
+        # until it had run for two seconds, each before the next container started; the machine
+        # learning is waited for by nobody. So a container that fails to start later meets the
+        # database set up, not half way.
         assert calls[:start] == [
-            *[("container.start", name) for name in NAMES[:3]],
+            ("container.start", "photos-database"),
             *[("container.reload", "photos-database")] * 3,
+            ("container.start", "photos-cache"),
             *[("container.reload", "photos-cache")] * 2,
+            ("container.start", "photos-machine-learning"),
         ]
         assert clock.slept == [2, 2, 2]
 
@@ -557,15 +561,85 @@ class TestRollback:
 
         response = api.post(INSTALL, json=PHOTOS_INSTALL)
 
-        assert (response.status_code, response.json()) == (
-            500, {"detail": f"{reason}; its containers were removed and its data folders kept"}
-        )
-        assert ("container.start", "photos") not in docker.called("container.start")
+        # Its data folder was empty before: the database may have left it half set up, which
+        # the next install would take for a database (its password file is kept).
+        data = pools.alpha / "apps/photos/database/data"
+        assert (response.status_code, response.json()) == (500, {
+            "detail": f"{reason}; its containers were removed and its data folders kept. {data} was empty before "
+            "this install and may now hold data that photos-database did not finish setting up: move it away "
+            "before you install Photos again."
+        })
+        # Nothing started after it, and it was stopped with its own timeout before its removal.
+        assert docker.called("container.start") == [("container.start", "photos-database")]
+        assert docker.called("container.stop", "container.remove")[-2:] == [
+            ("container.stop", "photos-database"), ("container.remove", "photos-database"),
+        ]
+        assert [c.kwargs for c in docker.calls if c.name == "container.stop"] == [{"timeout": 60}]
         _left_nothing(pools, docker)
         if reason.endswith("180 s"):
             assert sum(clock.slept) == 180
         else:
             assert sum(clock.slept) <= 2
+
+    def test_a_database_that_held_data_before_is_not_named_as_unfinished(self, api, pools, docker):
+        password = _password(pools)
+        password.parent.mkdir(parents=True)
+        password.write_text("f" * 64)
+        (password.parent / "data").mkdir()
+        (password.parent / "data/PG_VERSION").write_text("14\n")
+        docker.script("photos-database", {"Status": "exited", "Running": False, "ExitCode": 1})
+
+        response = api.post(INSTALL, json=PHOTOS_INSTALL)
+
+        assert (response.status_code, response.json()) == (500, {
+            "detail": "photos-database stopped (exit code 1); its containers were removed and its data folders kept"
+        })
+
+    def test_a_start_that_fails_after_the_companions_are_ready_stops_each_before_its_removal(
+        self, api, pools, docker
+    ):
+        # The machine learning, which nothing depends on, fails to start: the database is set
+        # up by then, and it gets its own stop timeout to shut down before it is removed.
+        docker.script("photos-database", STARTING, HEALTHY)
+        docker.fail("container.start", "photos-machine-learning", APIError("500 Server Error", explanation="no memory"))
+
+        response = api.post(INSTALL, json=PHOTOS_INSTALL)
+
+        assert (response.status_code, response.json()) == (500, {
+            "detail": 'Failed to start container photos-machine-learning: 500 Server Error ("no memory"); its '
+            "containers were removed and its data folders kept"
+        })
+        assert [(c.name, c.subject, c.kwargs) for c in docker.calls if c.name.startswith("container.")] == [
+            ("container.start", "photos-database", {}),
+            *[("container.reload", "photos-database", {})] * 2,
+            ("container.start", "photos-cache", {}),
+            *[("container.reload", "photos-cache", {})] * 2,
+            ("container.start", "photos-machine-learning", {}),
+            # Removed in reverse order; what it asked to start is stopped first, not killed.
+            ("container.remove", "photos", {"v": False, "force": True}),
+            ("container.stop", "photos-machine-learning", {"timeout": 10}),
+            ("container.remove", "photos-machine-learning", {"v": False, "force": True}),
+            ("container.stop", "photos-cache", {"timeout": 10}),
+            ("container.remove", "photos-cache", {"v": False, "force": True}),
+            ("container.stop", "photos-database", {"timeout": 60}),
+            ("container.remove", "photos-database", {"v": False, "force": True}),
+        ]
+        _left_nothing(pools, docker)
+
+    def test_a_stop_that_fails_in_the_clean_up_still_removes_the_container(self, api, pools, docker, caplog):
+        docker.fail("container.start", "photos-machine-learning", APIError("500 Server Error", explanation="no memory"))
+        docker.fail("container.stop", "photos-database", APIError("500 Server Error", explanation="stop refused"))
+
+        with caplog.at_level("WARNING", logger="src.apps.router"):
+            response = api.post(INSTALL, json=PHOTOS_INSTALL)
+
+        assert response.status_code == 500
+        assert response.json()["detail"].endswith("; its containers were removed and its data folders kept")
+        _left_nothing(pools, docker)
+        assert _audit() == []
+        assert [r.getMessage() for r in caplog.records if r.name == "src.apps.router"] == [
+            'Could not stop photos-database before removing it: 500 Server Error ("stop refused")'
+        ]
 
     def test_a_clean_up_that_fails_is_answered_and_audited(self, api, pools, docker):
         docker.fail("container.start", "photos-database", APIError("500 Server Error", explanation="no memory"))
@@ -1035,9 +1109,17 @@ class TestActions:
         response = api.post(START.format("photos"))
 
         assert (response.status_code, response.json()) == (200, {"status": "running", "id": "photos"})
-        assert docker.called("container.start") == [("container.start", name) for name in NAMES]
-        calls = docker.called("container.start", "container.reload")
-        assert calls.index(("container.reload", "photos-cache")) < calls.index(("container.start", "photos"))
+        # As at the install: each companion that the main container depends on is ready before
+        # the next container starts.
+        assert docker.called("container.start", "container.reload") == [
+            ("container.start", "photos-database"),
+            *[("container.reload", "photos-database")] * 2,
+            ("container.start", "photos-cache"),
+            *[("container.reload", "photos-cache")] * 2,
+            ("container.start", "photos-machine-learning"),
+            ("container.start", "photos"),
+            ("container.reload", "photos"),
+        ]
         assert _audit()[-1]["details"] == (
             "Started the app photos (photos-database, photos-cache, photos-machine-learning, photos)"
         )
@@ -1084,6 +1166,38 @@ class TestActions:
         assert response.status_code == 409
         assert str(library) in response.json()["detail"] and "symbolic link" in response.json()["detail"]
         assert docker.called("container.stop", "container.start") == []
+
+    @pytest.mark.parametrize("path", [START, RESTART])
+    def test_a_folder_that_only_a_companion_binds_is_checked_before_any_container_starts(
+        self, api, pools, docker, path
+    ):
+        # The cache's folder, which no other container binds, became a link that Docker would
+        # follow: each container's folders are checked, not only the main container's.
+        _installed(api, docker)
+        if path == START:
+            assert api.post(STOP.format("photos")).status_code == 200
+        cache = pools.alpha / "apps/photos/cache"
+        cache.rename(cache.with_name("cache-real"))
+        cache.symlink_to(cache.with_name("cache-real"))
+        docker.calls.clear()
+
+        response = api.post(path.format("photos"))
+
+        assert response.status_code == 409
+        assert str(cache) in response.json()["detail"] and "symbolic link" in response.json()["detail"]
+        assert docker.called("container.stop", "container.start") == []
+
+    def test_a_missing_folder_that_only_a_companion_binds_is_made_again_at_a_start(self, api, pools, docker):
+        # As on the install's pool: the companion's own volumes say that the folder is the app's.
+        _installed(api, docker)
+        assert api.post(STOP.format("photos")).status_code == 200
+        model_cache = pools.alpha / "apps/photos/model-cache"
+        model_cache.rmdir()
+
+        response = api.post(START.format("photos"))
+
+        assert response.status_code == 200, response.text
+        assert model_cache.is_dir()
 
     def test_a_restart_stops_every_container_then_starts_them_all(self, api, pools, docker):
         _installed(api, docker)
@@ -1164,6 +1278,19 @@ class TestActions:
             "Uninstalled the app photos: removed its containers photos, photos-machine-learning, photos-cache, "
             f"photos-database; its data folders were kept, the network {NETWORK} was left"
         )
+
+    def test_an_uninstall_leaves_the_network_of_another_app(self, api, pools, docker):
+        _installed(api, docker)
+        # Immich's network, which its stopped containers leave without endpoints.
+        docker.network("unos-app-immich", labels={"unos.app": "immich"})
+
+        response = api.delete(UNINSTALL.format("photos"))
+
+        assert response.status_code == 200, response.text
+        assert set(docker.networks_) == {"unos-app-immich"}
+        assert docker.called("networks.list", "network.remove") == [
+            ("networks.list", None), ("network.remove", NETWORK),
+        ]
 
     def test_an_incomplete_app_is_uninstalled(self, api, pools, docker):
         _installed(api, docker)

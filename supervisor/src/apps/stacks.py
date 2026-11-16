@@ -4,9 +4,11 @@ An app is its main container, named after its template id, and the companion con
 template, each named "<app id>-<companion>" and labelled ``unos.app.companion``; every container
 of an app carries ``unos.app=<app id>``. The containers of an app with companions share the bridge
 network ``unos-app-<app id>``, on which each companion answers to its name. Companions start in
-the catalog's order and the main container last, after the companions it depends on are ready;
-they stop in the reverse order. A container that the catalog's template has and Docker lacks
-makes the app incomplete (``missing``): it does not start, and an uninstall removes the rest.
+the catalog's order and the main container last, and each companion that the main container
+depends on is ready before the next container starts (so one that fails to start later meets a
+database set up); they stop in the reverse order. A container that the catalog's template has
+and Docker lacks makes the app incomplete (``missing``): it does not start, and an uninstall
+removes the rest.
 
 One change of an app runs at a time: an install, a start, a stop, a restart or an uninstall of
 an app that another one is changing answers 409. The supervisor runs one process (no uvicorn

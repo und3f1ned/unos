@@ -7,13 +7,19 @@ does not know raises TypeError, as docker-py does. Its host configs are docker-p
 high-level ``containers.create`` turns its arguments into those of the low-level create with
 docker-py's own conversion, which refuses what docker-py refuses.
 
+As with docker-py, a ``Container`` is the client's copy of what Docker said of a container (its
+``attrs``): ``start``, ``stop`` and ``remove`` only ask Docker, which changes its own containers
+(``containers_``), and the copy shows a change only after a ``reload``; ``containers.get`` and
+``containers.list`` give fresh copies. So an answer built from a container that the code did not
+reload after it changed it shows the state from before, as with the real client.
+
 Every call is logged in order (``calls``: the call, its subject and its arguments). ``fail(call,
 subject, error)`` makes that call raise ``error`` for that subject (a container's or network's
 name, an image reference; None: any) until ``clear``. ``publish(ref, ...)`` puts an image in the
-registry that a pull reads; ``script(name, *states)`` gives the states a container's reloads
-report after its start, the last one staying (an image with a health check is otherwise
-"starting" at its first reload and healthy from its second). ``info`` names ``root_dir`` as
-Docker's root folder.
+registry that a pull reads; ``script(name, *states)`` gives the states that a container reaches,
+one at each reload after its start, the last one staying (an image with a health check is
+otherwise "starting" at its first reload and healthy from its second). ``info`` names
+``root_dir`` as Docker's root folder.
 """
 
 from __future__ import annotations
@@ -71,14 +77,15 @@ class Image:
         }
 
 
-class Container:
-    """A container as docker-py's Container shows it: its inspect data in ``attrs``."""
+class _Live:
+    """A container as Docker has it: its inspect data, which Docker's own calls change."""
 
     def __init__(self, docker: StackDocker, attrs: dict, image: Image) -> None:
         self._docker = docker
         self.attrs = attrs
-        self._image = image
-        self._pending: list[dict] = []
+        self.image = image
+        # The states that its next reloads reach (StackDocker.script).
+        self.pending: list[dict] = []
 
     @property
     def id(self) -> str:
@@ -105,7 +112,6 @@ class Container:
         return None if mode in (None, "default", "bridge", "host", "none") else mode
 
     def start(self) -> None:
-        self._docker._call("container.start", self.name)
         if self.status == "running":
             return
         network = self._network()
@@ -113,12 +119,12 @@ class Container:
             raise NotFound(f"network {network} not found")
         state = self.attrs["State"]
         state.update(Status="running", Running=True, Restarting=False, ExitCode=0, StartedAt=CREATED)
-        if self._image.healthcheck:
+        if self.image.healthcheck:
             state["Health"] = {"Status": "starting", "FailingStreak": 0, "Log": []}
         scripted = self._docker.scripts.get(self.name)
-        self._pending = [copy.deepcopy(s) for s in scripted] if scripted else (
+        self.pending = [copy.deepcopy(s) for s in scripted] if scripted else (
             [{"Health": {"Status": status, "FailingStreak": 0, "Log": []}} for status in ("starting", "healthy")]
-            if self._image.healthcheck else []
+            if self.image.healthcheck else []
         )
         self.attrs["NetworkSettings"]["Ports"] = {
             spec: [{"HostIp": "0.0.0.0", "HostPort": b.get("HostPort", "")} for b in binds or []]
@@ -127,15 +133,11 @@ class Container:
         if network is not None:
             self._docker.networks_[network].attach(self)
 
-    def stop(self, timeout: int | None = None) -> None:
-        self._docker._call("container.stop", self.name, timeout=timeout)
-        self._halt()
-
-    def _halt(self) -> None:
+    def halt(self) -> None:
         if self.status in ("running", "restarting", "paused"):
             self.attrs["State"].update(Status="exited", Running=False, Restarting=False, ExitCode=0)
             self.attrs["State"].pop("Health", None)
-        self._pending = []
+        self.pending = []
         self._detach()
 
     def _detach(self) -> None:
@@ -143,19 +145,60 @@ class Container:
         for network in self._docker.networks_.values():
             network.detach(self)
 
-    def remove(self, v: bool = False, link: bool = False, force: bool = False) -> None:
-        self._docker._call("container.remove", self.name, v=v, force=force)
-        self._docker._remove(self, force=force)
-
-    def reload(self) -> None:
-        self._docker._call("container.reload", self.name)
-        if self._docker.containers_.get(self.name) is not self:
-            raise NotFound(f"No such container: {self.name}")
-        if self._pending:
-            change = self._pending.pop(0) if len(self._pending) > 1 else self._pending[0]
+    def advance(self) -> None:
+        """Move on to the next scripted state, if any."""
+        if self.pending:
+            change = self.pending.pop(0) if len(self.pending) > 1 else self.pending[0]
             self.attrs["State"].update(copy.deepcopy(change))
             if not self.attrs["State"].get("Running", True):
                 self._detach()
+
+
+class Container:
+    """A container as docker-py's Container shows it: a copy of its inspect data in ``attrs``,
+    read again only by ``reload``."""
+
+    def __init__(self, docker: StackDocker, live: _Live) -> None:
+        self._docker = docker
+        self.attrs = copy.deepcopy(live.attrs)
+
+    @property
+    def id(self) -> str:
+        return self.attrs["Id"]
+
+    @property
+    def short_id(self) -> str:
+        return self.id[:12]
+
+    @property
+    def name(self) -> str:
+        return self.attrs["Name"].lstrip("/")
+
+    @property
+    def labels(self) -> dict:
+        return self.attrs["Config"].get("Labels") or {}
+
+    @property
+    def status(self) -> str:
+        return self.attrs["State"]["Status"]
+
+    def start(self) -> None:
+        self._docker._call("container.start", self.name)
+        self._docker._find(self.id).start()
+
+    def stop(self, timeout: int | None = None) -> None:
+        self._docker._call("container.stop", self.name, timeout=timeout)
+        self._docker._find(self.id).halt()
+
+    def remove(self, v: bool = False, link: bool = False, force: bool = False) -> None:
+        self._docker._call("container.remove", self.name, v=v, force=force)
+        self._docker._remove(self._docker._find(self.id), force=force)
+
+    def reload(self) -> None:
+        self._docker._call("container.reload", self.name)
+        live = self._docker._find(self.id)
+        live.advance()
+        self.attrs = copy.deepcopy(live.attrs)
 
 
 class Network:
@@ -167,7 +210,7 @@ class Network:
         self.name = name
         self.labels = dict(labels)
         self.driver = driver
-        self.containers: dict[str, Container] = {}
+        self.containers: dict[str, _Live] = {}
 
     @property
     def attrs(self) -> dict:
@@ -179,10 +222,10 @@ class Network:
             "Containers": {c.id: {"Name": c.name} for c in self.containers.values()},
         }
 
-    def attach(self, container: Container) -> None:
+    def attach(self, container: _Live) -> None:
         self.containers[container.id] = container
 
-    def detach(self, container: Container) -> None:
+    def detach(self, container: _Live) -> None:
         self.containers.pop(container.id, None)
 
     def remove(self) -> None:
@@ -225,12 +268,12 @@ class _Containers:
                 key, sep, value = label.partition("=")
                 if key not in container.labels or (sep and container.labels[key] != value):
                     continue
-            result.append(container)
+            result.append(Container(self._docker, container))
         return result
 
     def get(self, container_id: str) -> Container:
         self._docker._call("containers.get", container_id)
-        return self._docker._find(container_id)
+        return Container(self._docker, self._docker._find(container_id))
 
     def create(self, image: str, command: Any = None, **kwargs: Any) -> Container:
         """docker-py's high-level create: its arguments become the low-level create's with
@@ -239,7 +282,7 @@ class _Containers:
         create = _create_container_args({**kwargs, "image": image, "command": command, "version": API_VERSION})
         create.pop("version", None)
         answer = self._docker.api._create(**create)
-        return self._docker.containers_[kwargs["name"]] if kwargs.get("name") else self._docker._find(answer["Id"])
+        return Container(self._docker, self._docker._find(answer["Id"]))
 
 
 class _Images:
@@ -368,7 +411,7 @@ class _Api:
                 net: {"Aliases": (endpoint or {}).get("Aliases")} for net, endpoint in endpoints.items()
             }},
         }
-        docker.containers_[name] = Container(docker, attrs, local)
+        docker.containers_[name] = _Live(docker, attrs, local)
         return {"Id": container_id, "Warnings": []}
 
     def remove_container(self, container: str, v: bool = False, force: bool = False) -> None:
@@ -392,7 +435,8 @@ class StackDocker:
         # The folder that Docker's info names as its root (DockerRootDir).
         self.root_dir = "/var/lib/docker"
         self.failures: dict[tuple[str, str | None], BaseException] = {}
-        self.containers_: dict[str, Container] = {}
+        # Docker's containers by name, as Docker has them now (a Container is a client's copy).
+        self.containers_: dict[str, _Live] = {}
         self.networks_: dict[str, Network] = {}
         self.images_: dict[str, Image] = {}
         self.registry: dict[str, Image] = {}
@@ -452,7 +496,8 @@ class StackDocker:
         return [(c.name, c.subject) for c in self.calls if not names or c.name in names]
 
     def container(self, name: str) -> Container:
-        return self.containers_[name]
+        """A fresh copy of the container ``name``, as containers.get gives it, without a call."""
+        return Container(self, self.containers_[name])
 
     # -- Docker's behaviour --------------------------------------------------
 
@@ -462,7 +507,7 @@ class StackDocker:
         if error is not None:
             raise error
 
-    def _find(self, key: str) -> Container:
+    def _find(self, key: str) -> _Live:
         for container in self.containers_.values():
             if key in (container.name, container.id) or (len(key) >= 12 and container.id.startswith(key)):
                 return container
@@ -471,10 +516,8 @@ class StackDocker:
     def _local_image(self, name: str) -> Image | None:
         return next((image for image in self.images_.values() if name in image.names), None)
 
-    def _remove(self, container: Container, *, force: bool) -> None:
-        if self.containers_.get(container.name) is not container:
-            raise NotFound(f"No such container: {container.name}")
+    def _remove(self, container: _Live, *, force: bool) -> None:
         if container.status == "running" and not force:
             raise _conflict(f"cannot remove container {container.name}: container is running")
-        container._halt()
+        container.halt()
         del self.containers_[container.name]

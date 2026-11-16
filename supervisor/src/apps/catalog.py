@@ -48,9 +48,9 @@ Companion named ^[a-z][a-z0-9-]*$. The main container is named <id>, a
 companion <id>-<name>, and all of them join the network unos-app-<id>, on
 which each companion answers to its name: the main container reaches it by
 that name (DB_HOSTNAME=database). The companions are created and started in
-their order before the main container, which first waits for those named in
-depends_on to be ready (healthy, or running if their image has no health
-check). A companion publishes no port, is never privileged, gets no
+their order before the main container; each one named in depends_on is ready
+(healthy, or running if its image has no health check) before the next
+container starts. A companion publishes no port, is never privileged, gets no
 capability and takes no override of the install; its pool folders are under
 {pool}/apps/<id>/.
 

@@ -183,7 +183,7 @@ class AppTemplate(ContainerSpec):
     # container, and stopped after it.
     companions: list[Companion] = []
     # The names of the companions that must be ready (healthy, or running without a health check)
-    # before the main container starts.
+    # before the next container starts, and so before the main container.
     depends_on: list[str] = []
 
     @model_validator(mode="after")

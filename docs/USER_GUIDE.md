@@ -1230,9 +1230,12 @@ changed.
 - **The pool's disks.** While Immich runs, the hard disks of its pool do not go
   to sleep: its database and its jobs keep writing to them. Stop Immich on the
   **Installed** tab to let them sleep.
-- **A failed install** removes the containers and the network that it made and
-  keeps the data folders, the password file and the downloaded images, so that
-  installing again uses them.
+- **A failed install** stops the containers that it started, removes them and
+  the network that it made, and keeps the data folders, the password file and
+  the downloaded images, so that installing again uses them. When Immich's
+  database failed at its first start, the message names its folder, which may
+  hold a database that was not finished: move that folder away before you
+  install again.
 - **Updates.** UNOS does not update an installed app yet. To move Immich to a
   newer version of the catalog, take a snapshot of its pool, uninstall Immich
   and install it again: Immich changes its database at its first start and
