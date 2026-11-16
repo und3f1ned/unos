@@ -24,6 +24,7 @@ import {
   mountedElsewhere,
   noBalance,
   noScrub,
+  scansLeftOn,
   stillInUse,
   usedByContainers,
   type FakeBalanceStatus,
@@ -182,6 +183,11 @@ test.describe('Physical disks (fake data)', () => {
     const dialog = page.getByRole('dialog', { name: 'Idle Timeout' });
     await expect(dialog).toContainText('/dev/e2e-hd1 (E2E Disk)');
     await expect(dialog).toContainText('Saving spins the disk up now.');
+    // Its own automatic offline scans, which keep it awake, are off while it has a timeout (ADR-0378).
+    await expect(dialog).toContainText(
+      'While the disk has a timeout, UNOS turns off its own automatic offline scans (a surface scan that the disk ' +
+        'runs every few hours, during which it does not sleep) and turns them on again when the timeout is removed.',
+    );
     const choice = dialog.getByRole('combobox', { name: 'Spin down after' });
     await expect(choice).toHaveText('20 minutes');
     await choice.click();
@@ -209,6 +215,39 @@ test.describe('Physical disks (fake data)', () => {
       { method: 'PUT', path: '/disks/e2e-hd1/spindown', body: { minutes: 5 } },
       { method: 'PUT', path: '/disks/e2e-hd2/spindown', body: { minutes: 120 } },
       { method: 'PUT', path: '/disks/e2e-hd1/spindown', body: { minutes: 0 } },
+    ]);
+  });
+
+  test("a timeout whose disk's own scans stay on is set, and the page says they may keep it awake", async ({
+    authenticatedPage: page,
+  }) => {
+    const reason = 'smartctl did not answer within 30 seconds';
+    const writes = await fakeStorageApi(page, {
+      spindownWarning: (path, minutes) => (minutes ? scansLeftOn(path, reason) : null),
+    });
+    await page.goto('/storage');
+    await page.getByRole('button', { name: 'Idle timeout of /dev/e2e-hd2: Off' }).click();
+    const dialog = page.getByRole('dialog', { name: 'Idle Timeout' });
+    await dialog.getByRole('combobox', { name: 'Spin down after' }).click();
+    await dialog.getByRole('option', { name: '10 minutes' }).click();
+    await dialog.getByRole('button', { name: 'Save' }).click();
+    await expect(dialog).toBeHidden();
+    await expect(page.getByRole('button', { name: 'Idle timeout of /dev/e2e-hd2: 10 minutes' })).toBeVisible();
+    const warning = disksCard(page).locator('.alert-warning');
+    await expect(warning).toContainText('The idle timeout was saved');
+    await expect(warning).toContainText(scansLeftOn('/dev/e2e-hd2', reason));
+    await warning.getByRole('button', { name: 'Dismiss' }).click();
+    await expect(warning).toBeHidden();
+    // A Save without a warning shows none.
+    await page.getByRole('button', { name: 'Idle timeout of /dev/e2e-hd2: 10 minutes' }).click();
+    await dialog.getByRole('combobox', { name: 'Spin down after' }).click();
+    await dialog.getByRole('option', { name: 'Off' }).click();
+    await dialog.getByRole('button', { name: 'Save' }).click();
+    await expect(page.getByRole('button', { name: 'Idle timeout of /dev/e2e-hd2: Off' })).toBeVisible();
+    await expect(warning).toBeHidden();
+    expect(writes).toEqual([
+      { method: 'PUT', path: '/disks/e2e-hd2/spindown', body: { minutes: 10 } },
+      { method: 'PUT', path: '/disks/e2e-hd2/spindown', body: { minutes: 0 } },
     ]);
   });
 

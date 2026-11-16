@@ -11,14 +11,23 @@ page says so (NO_HDPARM).
 
 ``hdparm -S`` sends the disk the IDLE command with the timer, which spins a sleeping disk up: it
 runs only when an administrator sets a timeout, never periodically.
+
+An ATA disk's own automatic offline data collection (SFF-8035i; ``smartctl -o on``) scans its surface
+every 4 hours for hours, suspends the scan for each command of the host and resumes it later, and
+does not sleep meanwhile: on the dev device's disk it kept an idle timeout from working for most of
+the time. While a disk has a timeout, UNOS turns it off (``smartctl -o off`` in the container) and its
+rule records that it did (RECORD); when the timeout is removed, UNOS turns it on again for such a
+disk alone. A failure there leaves the timeout set and says so (SCANS_LEFT_ON, SCANS_LEFT_OFF).
 """
 
 from __future__ import annotations
 
+import json
 import logging
 import re
+import subprocess
 import threading
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from fastapi import HTTPException
 
@@ -41,12 +50,30 @@ KILL_AFTER = 5
 UDEV_TIMEOUT = 15
 
 NO_HDPARM = "The host has no hdparm: install the package hdparm on the host to set idle timeouts"
+# Seconds smartctl -c, and -o with -c, may take in the container (host.run_in_container, ADR-0290):
+# they answer at once, unless the disk hangs.
+SMARTCTL_TIMEOUT = 30
+# What the answer of a change says when the disk's own automatic offline scans could not be turned
+# off for its timeout, or on again once it is removed: {path} is the disk's, {reason} why.
+SCANS_LEFT_ON = ("{path} has the idle timeout, but the disk's own automatic offline scans could not be turned off "
+                 "({reason}): they may keep it awake")
+SCANS_LEFT_OFF = ("{path} has no idle timeout now, but the disk's own automatic offline scans, which UNOS turned off "
+                  "for its timeout, could not be turned on again ({reason}): save Off again to try once more")
+# The bits of smartctl -c's JSON (smartmontools' ataprint.cpp): ata_smart_data.offline_data_collection.
+# status.value has bit 7 while the automatic offline data collection is on, and the first of
+# ata_smart_data.capabilities.values bit 1 when the disk can switch it ("Auto Offline data collection
+# on/off support", isSupportAutomaticTimer).
+_AUTO_OFFLINE_ON = 0x80
+_AUTO_OFFLINE_SWITCH = 0x02
 
 _HEADER = (
     "# Written by UNOS: the idle timeouts of the data disks, set on the Storage page (ADR-0378).\n"
     "# Each line sets the standby timer of one disk, found by its serial, with hdparm -S whenever\n"
-    "# udev adds the disk: at boot and when it is connected again. UNOS writes this file at each\n"
-    "# change of a timeout and keeps only its own lines; without a timeout it removes the file.\n"
+    "# udev adds the disk: at boot and when it is connected again. A comment \"UNOS turned off the\n"
+    "# automatic offline data collection\" records a disk whose own surface scans, which keep it\n"
+    "# awake, UNOS turned off for its timeout (smartctl -o off): the disk keeps that setting, and\n"
+    "# UNOS turns them on again when the timeout is removed. UNOS writes this file at each change\n"
+    "# of a timeout and keeps only its own lines; with none left it removes the file.\n"
 )
 _RULE = (
     'ACTION=="add", SUBSYSTEM=="block", ENV{{DEVTYPE}}=="disk", ENV{{ID_SERIAL_SHORT}}=="{serial}", '
@@ -59,6 +86,9 @@ _RULE_LINE = re.compile(
 # A serial that a udev rule matches as it is: udev's ID_SERIAL_SHORT keeps letters, digits and
 # "#+-.:=@_" (it replaces the rest), and none of them is a pattern character of a rule's match.
 _RULE_SERIAL = re.compile(r"[A-Za-z0-9#+.:=@_-]{1,64}")
+# The record that UNOS turned off the automatic offline data collection of the disk with the serial.
+RECORD = "# UNOS turned off the automatic offline data collection of the disk with the serial {serial}"
+_RECORD_LINE = re.compile(re.escape(RECORD.format(serial="")) + r"(?P<serial>\S+)")
 
 # One change of the rule file at a time: each reads it, changes its line and writes it.
 _lock = threading.Lock()
@@ -94,23 +124,43 @@ def _words(minutes: int) -> str:
 # --- the rule file ---------------------------------------------------------------------------
 
 
-def read_timeouts() -> dict[str, int]:
-    """The idle timeouts of UNOS's udev rule: serial -> minutes, in the file's order; {} without
-    the file. A line that UNOS did not write is no timeout, nor is one whose timeout is not offered
-    (SPINDOWN_MINUTES): one edited by hand. RuntimeError when the file cannot be read."""
+@dataclass(frozen=True)
+class Rule:
+    """What UNOS's udev rule keeps: the idle timeouts, serial -> minutes, in the file's order, and
+    the serials of the disks whose automatic offline data collection UNOS turned off (RECORD)."""
+
+    timeouts: dict[str, int]
+    scans_off: frozenset[str] = frozenset()
+
+
+def read_rule() -> Rule:
+    """UNOS's udev rule; empty without the file. A line that UNOS did not write is no timeout, nor
+    is one whose timeout is not offered (SPINDOWN_MINUTES): one edited by hand; nor is a record
+    edited by hand one. RuntimeError when the file cannot be read."""
     result = host.run_on_host(["cat", "--", RULES_PATH], timeout=UDEV_TIMEOUT, errors="replace")
     if not result.ok:
         if "No such file or directory" in result.stderr:
-            return {}
+            return Rule({})
         raise RuntimeError(f"Could not read {RULES_PATH}: {result.stderr.strip() or result.returncode}")
     found: dict[str, int] = {}
+    scans_off: set[str] = set()
     for line in result.stdout.splitlines():
-        match = _RULE_LINE.fullmatch(line.strip())
+        line = line.strip()
+        match = _RULE_LINE.fullmatch(line)
         if match and _RULE_SERIAL.fullmatch(match["serial"]):
             minutes = minutes_of(int(match["value"]))
             if minutes and minutes in SPINDOWN_MINUTES:
                 found[match["serial"]] = minutes
-    return found
+        record = _RECORD_LINE.fullmatch(line)
+        if record and _RULE_SERIAL.fullmatch(record["serial"]):
+            scans_off.add(record["serial"])
+    return Rule(found, frozenset(scans_off))
+
+
+def read_timeouts() -> dict[str, int]:
+    """The idle timeouts of UNOS's udev rule (read_rule): serial -> minutes, in the file's order; {}
+    without the file. RuntimeError when the file cannot be read."""
+    return read_rule().timeouts
 
 
 def timeouts_or_problem() -> tuple[dict[str, int], str | None]:
@@ -123,11 +173,17 @@ def timeouts_or_problem() -> tuple[dict[str, int], str | None]:
         return {}, f"The idle timeouts could not be read: {str(exc).strip() or type(exc).__name__}"
 
 
-def render(timeouts: dict[str, int]) -> str:
-    """The rule file for ``timeouts`` (serial -> minutes): its header and one line per disk."""
-    return _HEADER + "".join(
-        _RULE.format(serial=serial, value=hdparm_value(minutes)) + "\n" for serial, minutes in timeouts.items()
-    )
+def render(timeouts: dict[str, int], scans_off: frozenset[str] = frozenset()) -> str:
+    """The rule file for ``timeouts`` (serial -> minutes) and ``scans_off`` (the serials whose
+    automatic offline data collection UNOS turned off): its header and one line per disk, each
+    followed by its record, then the records of disks without a line (one edited by hand), sorted."""
+    lines = []
+    for serial, minutes in timeouts.items():
+        lines.append(_RULE.format(serial=serial, value=hdparm_value(minutes)))
+        if serial in scans_off:
+            lines.append(RECORD.format(serial=serial))
+    lines += [RECORD.format(serial=serial) for serial in sorted(scans_off - timeouts.keys())]
+    return _HEADER + "".join(line + "\n" for line in lines)
 
 
 def hdparm_missing() -> bool:
@@ -167,25 +223,121 @@ def _udev_serial(device: str) -> str | None:
     return None
 
 
+# --- the disk's own automatic offline scans ------------------------------------------------------
+
+
+class ScansUnknown(RuntimeError):
+    """The automatic offline data collection of a disk could not be read or switched: the reason."""
+
+
+@dataclass(frozen=True)
+class Scans:
+    """A disk's automatic offline data collection as smartctl -c read it: whether it is on, whether
+    the disk can switch it, and smartctl's exit status."""
+
+    on: bool
+    switchable: bool
+    exit_status: int
+
+
+def _scans(device: str, switch: str | None = None) -> Scans | None:
+    """The automatic offline data collection of the whole disk ``device``: ``smartctl -c -j`` in the
+    container, after ``-o on`` or ``-o off`` when ``switch`` is "on" or "off" (smartctl reads the
+    SMART data again after -o, so the answer is the state it left). None for a disk without ATA
+    SMART data, an NVMe or SCSI disk (smartctl -o is ATA's alone). ``-n standby`` leaves a sleeping
+    disk alone; the Save that runs this woke it with hdparm -S first. ScansUnknown when smartctl does
+    not answer within SMARTCTL_TIMEOUT (killed and not waited for, ADR-0290) or reads no state."""
+    cmd = ["smartctl", "-n", "standby", *(["-o", switch] if switch else []), "-c", "-j", device]
+    try:
+        result = host.run_in_container(cmd, timeout=SMARTCTL_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        raise ScansUnknown(f"smartctl did not answer within {SMARTCTL_TIMEOUT} seconds") from None
+    except OSError as exc:
+        raise ScansUnknown(f"smartctl could not run: {exc}") from None
+    if disks.smartctl_found_it_asleep(result):
+        raise ScansUnknown("smartctl found the disk in standby")
+    try:
+        data = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        data = None
+    if not isinstance(data, dict):
+        raise ScansUnknown(f"smartctl could not read them: exit status {result.returncode}")
+    status = _member(data, "ata_smart_data", "offline_data_collection", "status", "value")
+    values = _member(data, "ata_smart_data", "capabilities", "values")
+    capabilities = values[0] if isinstance(values, list) and values else None
+    if isinstance(status, int) and isinstance(capabilities, int):
+        return Scans(bool(status & _AUTO_OFFLINE_ON), bool(capabilities & _AUTO_OFFLINE_SWITCH), result.returncode)
+    if _member(data, "device", "protocol") in ("NVMe", "SCSI"):
+        return None
+    messages = _member(data, "smartctl", "messages")
+    said = [m["string"] for m in messages if isinstance(m, dict) and isinstance(m.get("string"), str) and m["string"]] \
+        if isinstance(messages, list) else []
+    raise ScansUnknown("smartctl could not read them: " + ("; ".join(said) or f"exit status {result.returncode}"))
+
+
+def _member(data: object, *keys: str) -> object:
+    """``data[keys[0]][keys[1]]...`` of smartctl's JSON, or None where a level is missing or no object."""
+    for key in keys:
+        if not isinstance(data, dict):
+            return None
+        data = data.get(key)
+    return data
+
+
+def _scans_off(device: str) -> bool:
+    """Turn off the automatic offline data collection of ``device`` when it is on: True when this
+    turned it off, False when it was off already or the disk has none. ScansUnknown with the reason
+    when it could not be read, the disk cannot switch it, or it is still on afterwards."""
+    found = _scans(device)
+    if found is None or not found.on:
+        return False
+    if not found.switchable:
+        raise ScansUnknown("the disk cannot switch them off")
+    after = _scans(device, "off")
+    if after is None or after.on:
+        raise ScansUnknown(f"smartctl -o off left them on, exit status {after.exit_status}" if after
+                           else "smartctl -o off read no state")
+    return True
+
+
+def _scans_on(device: str) -> None:
+    """Turn the automatic offline data collection of ``device`` on again (UNOS turned it off).
+    ScansUnknown with the reason when it is not on afterwards."""
+    after = _scans(device, "on")
+    if after is None or not after.on:
+        raise ScansUnknown(f"smartctl -o on left them off, exit status {after.exit_status}" if after
+                           else "smartctl -o on read no state")
+
+
 # --- setting a timeout -------------------------------------------------------------------------
 
 
 @dataclass(frozen=True)
 class Change:
-    """A timeout set: the disk's name and path, its serial, and whether the rule file changed."""
+    """A timeout set: the disk's name and path, its serial, whether the rule file changed, what UNOS
+    did to the disk's automatic offline data collection ("off", "on" or None), and the answer's
+    warning when it could not do what it should (SCANS_LEFT_ON, SCANS_LEFT_OFF), else None."""
 
     name: str
     path: str
     serial: str
     minutes: int
     changed: bool
+    scans: str | None = None
+    warning: str | None = None
 
     @property
     def what(self) -> str:
         """The change in words, for the audit log."""
         if not self.minutes:
-            return f"Turned off the idle timeout of {self.path} (serial {self.serial})"
-        return f"Set the idle timeout of {self.path} (serial {self.serial}) to {_words(self.minutes)}"
+            text = f"Turned off the idle timeout of {self.path} (serial {self.serial})"
+        else:
+            text = f"Set the idle timeout of {self.path} (serial {self.serial}) to {_words(self.minutes)}"
+        if self.scans == "off":
+            text += " and turned off its automatic offline data collection"
+        elif self.scans == "on":
+            text += " and turned its automatic offline data collection on again"
+        return f"{text}; {self.warning}" if self.warning else text
 
 
 class RuleNotWritten(Exception):
@@ -205,15 +357,22 @@ class RuleNotWritten(Exception):
 
 def set_timeout(name: str, minutes: int) -> Change:
     """Give the whole data disk ``name`` (as GET /storage/disks lists it) the idle timeout
-    ``minutes`` (0: none): ``hdparm -S`` on the host now, then UNOS's udev rule, written only
-    when the disk's line changes, after which udev reads its rules again. Blocking: call it in a
-    worker thread.
+    ``minutes`` (0: none): ``hdparm -S`` on the host now, then the disk's own automatic offline
+    data collection, then UNOS's udev rule, written only when the disk's line or record changes,
+    after which udev reads its rules again. Blocking: call it in a worker thread.
+
+    With a timeout, a collection that is on is turned off and recorded; with none, a collection
+    that the rule records UNOS turned off is turned on again and its record removed. One that was
+    off already, or a disk without it, is left as it is. When that fails, the timeout is still set:
+    the Change's warning says so, and the record is kept as the disk is (none for scans still on, the
+    record for scans still off, so that the next Off tries again).
 
     HTTPException 400 for a name that is no disk of this system, a boot or virtual device
     (HIDDEN_DISK_PREFIXES) and a partition; 409 for a disk that gets no timeout (problem()), a host
     without hdparm, and a disk that udev knows by another serial than lsblk; 500 when hdparm fails
     or the rule cannot be read, and nothing is changed then. RuleNotWritten when hdparm set it but
-    the rule could not be written.
+    the rule could not be written; collection turned off for it is then turned on again, since no
+    record could be kept.
     """
     shown = name.removeprefix("/dev/")
     if disks.is_hidden_disk(shown):
@@ -242,7 +401,7 @@ def set_timeout(name: str, minutes: int) -> Change:
         )
     value = hdparm_value(minutes)
     with _lock:
-        current = read_timeouts()
+        current = read_rule()
         cmd = ["timeout", f"--kill-after={KILL_AFTER}", str(HDPARM_TIMEOUT), "hdparm", "-S", str(value), facts.path]
         result = host.run_on_host(cmd, timeout=HDPARM_TIMEOUT + KILL_AFTER + 5, errors="replace")
         if not result.ok:
@@ -250,22 +409,52 @@ def set_timeout(name: str, minutes: int) -> Change:
             raise HTTPException(
                 status_code=500, detail=f"hdparm could not set the idle timeout of {facts.path}: {why[-1].strip()}"
             )
-        wanted = dict(current)  # a disk's line keeps its place; a new one comes last
+        scans, warning, scans_off = _switch_scans(facts.path, serial, minutes, current.scans_off)
+        timeouts = dict(current.timeouts)  # a disk's line keeps its place; a new one comes last
         if minutes:
-            wanted[serial] = minutes
+            timeouts[serial] = minutes
         else:
-            wanted.pop(serial, None)
-        change = Change(shown, facts.path, serial, minutes, changed=wanted != current)
+            timeouts.pop(serial, None)
+        wanted = Rule(timeouts, scans_off)
+        change = Change(shown, facts.path, serial, minutes, wanted != current, scans, warning)
         if change.changed:
             try:
-                if wanted:
-                    host.write_host_file_atomic(RULES_PATH, render(wanted))
+                if wanted.timeouts or wanted.scans_off:
+                    host.write_host_file_atomic(RULES_PATH, render(wanted.timeouts, wanted.scans_off))
                 else:
                     host.run_on_host(["rm", "-f", "--", RULES_PATH], timeout=UDEV_TIMEOUT, check=True)
             except Exception as exc:
-                raise RuleNotWritten(change, str(exc).strip() or type(exc).__name__) from exc
+                why = str(exc).strip() or type(exc).__name__
+                if scans == "off":  # the disk would keep them off with no record of it
+                    try:
+                        _scans_on(facts.path)
+                        change = replace(change, scans=None)
+                    except ScansUnknown as undo:
+                        logger.error("The automatic offline data collection of %s stays off with no record: %s",
+                                     facts.path, undo)
+                        why += f"; the disk's own automatic offline scans stay off: {undo}"
+                raise RuleNotWritten(change, why) from exc
             _reload_rules()
     return change
+
+
+def _switch_scans(path: str, serial: str, minutes: int, scans_off: frozenset[str]
+                  ) -> tuple[str | None, str | None, frozenset[str]]:
+    """The automatic offline data collection of the disk at ``path`` for its idle timeout
+    ``minutes`` (set_timeout): what UNOS did ("off", "on" or None), the warning when it could not,
+    and the serials of the rule's records afterwards. A failure is logged."""
+    try:
+        if minutes:
+            if _scans_off(path):
+                return "off", None, scans_off | {serial}
+        elif serial in scans_off:
+            _scans_on(path)
+            return "on", None, scans_off - {serial}
+    except ScansUnknown as exc:
+        warning = (SCANS_LEFT_ON if minutes else SCANS_LEFT_OFF).format(path=path, reason=exc)
+        logger.warning("%s", warning)
+        return None, warning, scans_off
+    return None, None, scans_off
 
 
 def _reload_rules() -> None:

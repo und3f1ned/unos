@@ -233,6 +233,20 @@ one that `/etc/hdparm.conf` or the disk's own default set, and after one it
 keeps those. A disk that is woken often wears faster, so give a disk in daily
 use a longer timeout.
 
+Many hard disks run automatic offline scans of their own: every few hours the
+disk reads its surface, for hours, and it does not sleep meanwhile, whatever
+its timeout (a WD6400AACS stayed awake for hours that way). While a disk has a
+timeout, UNOS turns its automatic offline scans off (`smartctl -o off`), notes
+that in its udev rule, and turns them on again when you set **Off**; a disk
+whose scans were off already, or that has none, is left as it is. The disk
+keeps the setting itself. When they cannot be turned off, the timeout is
+saved all the same, and **Storage** says that the scans may keep the disk
+awake. Without them the disk no longer reads its surface by itself: schedule
+a scrub of its pool (**System** → **Scheduler**), which reads every used
+block of the pool. A long SMART test reads the whole surface, but the
+Scheduler's SMART tests are short ones and no page starts a long one yet: run
+`sudo smartctl -t long /dev/sdX` on the host.
+
 The button is off, with the reason below it, for the system disk, an NVMe
 disk (it manages its own power), a disk that reports no serial number a udev
 rule can match or the serial of another disk, and on a host without `hdparm`:

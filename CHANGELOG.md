@@ -355,7 +355,16 @@ manager, encrypted backup uploads, health checks, CI checks).
   10 minutes for 5) through `PUT /api/v1/storage/disks/{name}/spindown`:
   `hdparm -S` on the host at once,
   and a line in UNOS's udev rule `/etc/udev/rules.d/90-unos-disk-spindown.rules`,
-  matched by the disk's serial, at every boot and reconnection. The system
+  matched by the disk's serial, at every boot and reconnection. While a disk
+  has a timeout, its own automatic offline scans (a surface scan every few
+  hours that keeps it awake; on the dev device's disk it kept every timeout
+  from working for hours) are off: the Save turns them off
+  (`smartctl -o off` in the container) and the rule records it, and Off turns
+  them on again for such a disk alone; a disk whose scans were off, or that
+  has none (NVMe, SCSI), is left as it is. When they cannot be turned off,
+  the timeout is set all the same and the answer's `warning`, shown on the
+  page, says they may keep the disk awake; the dialog says that a scheduled
+  scrub reads the pool instead. The system
   disk, boot and virtual devices, partitions, NVMe disks, disks without a
   usable serial and a host without `hdparm` (now an optional host tool) are
   refused with the reason, and so is every disk when the rule cannot be read.
@@ -382,8 +391,11 @@ manager, encrypted backup uploads, health checks, CI checks).
   device's disk's own minimum of about 660 s twice, as after a read of the
   hourly SMART monitor during the wait; it says whether the kernel counted
   reads or writes on a disk still awake), reads SMART while it sleeps and
-  sets the timeout of UNOS's rule again, or Off; it skips these steps when
-  the disk has no timeout of UNOS's and `/etc/hdparm.conf` sets one.
+  sets the timeout of UNOS's rule again, or Off; it reads the disk's
+  automatic offline scans first, shows them off after the Save and as found
+  at the end, and names them when they keep the disk awake; it skips these
+  steps when the disk has no timeout of UNOS's and `/etc/hdparm.conf` sets
+  one, and when it has one with its scans on unrecorded.
 - **Balance** on the Storage page (ADR-0379): a mounted, writable pool's
   balance rewrites the data and metadata chunks less full than a usage limit
   (20% by default, 1 to 99) or, after a confirmation, every chunk (a full

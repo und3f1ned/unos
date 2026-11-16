@@ -74,6 +74,9 @@ class SpindownSet(BaseModel):
 class DiskSpindown(BaseModel):
     name: str
     minutes: int
+    # Set when the disk's own automatic offline scans could not be turned off for the timeout, or on
+    # again once it was removed (ADR-0378): the timeout is set all the same.
+    warning: str | None = None
 
 
 class SmartData(BaseModel):

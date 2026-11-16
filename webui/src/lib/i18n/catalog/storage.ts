@@ -68,7 +68,12 @@ export const en = {
 	'storage.spindown.label': 'Spin down after',
 	'storage.spindown.hint':
 		'Saving spins the disk up now. A disk that is woken often wears faster: choose a longer timeout for a disk in daily use.',
+	// The disk's own automatic offline scans, which UNOS turns off while it has a timeout (ADR-0378).
+	'storage.spindown.scans':
+		'While the disk has a timeout, UNOS turns off its own automatic offline scans (a surface scan that the disk runs every few hours, during which it does not sleep) and turns them on again when the timeout is removed. Schedule a scrub of its pool (System, Scheduler) to read its data instead; a long SMART test reads the whole surface, but the SMART tests of the Scheduler are short ones.',
 	'storage.spindown.failed': 'The idle timeout was not set',
+	// Above the list of disks, before the server's warning: the timeout was set all the same.
+	'storage.spindown.saved': 'The idle timeout was saved',
 	'storage.spindown.save': 'Save',
 
 	// btrfs filesystems on the host's disks that are not pools yet (ADR-0283).
@@ -409,7 +414,10 @@ export const ru: Translation<typeof en> = {
 	'storage.spindown.label': 'Остановить через',
 	'storage.spindown.hint':
 		'Сохранение сейчас раскрутит диск. Диск, который часто будят, изнашивается быстрее: для диска, которым пользуются каждый день, выберите время подольше.',
+	'storage.spindown.scans':
+		'Пока у диска есть тайм-аут, UNOS выключает его собственное автоматическое офлайн-сканирование (проверку поверхности, которую диск сам запускает каждые несколько часов и во время которой не засыпает) и включает его снова, когда тайм-аут убирают. Чтобы вместо этого читать его данные, запланируйте проверку целостности его пула (Система, Планировщик); всю поверхность читает длинный тест SMART, но тесты SMART Планировщика короткие.',
 	'storage.spindown.failed': 'Тайм-аут простоя не установлен',
+	'storage.spindown.saved': 'Тайм-аут простоя сохранён',
 	'storage.spindown.save': 'Сохранить',
 
 	'storage.found.title': 'Найдено на дисках',

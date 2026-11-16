@@ -270,13 +270,25 @@ export async function getDiskSmart(name: string): Promise<SmartData> {
 }
 
 /**
+ * What PUT /storage/disks/{name}/spindown answers: the timeout set, and `warning` (the server's
+ * text) when the disk's own automatic offline scans could not be turned off for it, or on again
+ * once it was removed; the timeout is set all the same (ADR-0378).
+ */
+export interface DiskSpindown {
+  name: string;
+  minutes: number;
+  warning: string | null;
+}
+
+/**
  * Give a whole data disk the idle timeout `minutes` of SPINDOWN_MINUTES, 0 for off: hdparm -S on
- * the host now, which spins a sleeping disk up, and UNOS's udev rule, which sets it again whenever
+ * the host now, which spins a sleeping disk up, the disk's own automatic offline scans turned off
+ * for a timeout (on again when it is removed), and UNOS's udev rule, which sets it again whenever
  * the disk appears. HTTP 400 for a boot or virtual device or a partition, 409 for the system disk
  * and the other disks that spindown_problem names, 500 when hdparm fails.
  */
-export async function setDiskSpindown(name: string, minutes: number): Promise<{ name: string; minutes: number }> {
-  return api.put<{ name: string; minutes: number }>(`/storage/disks/${encodeURIComponent(name)}/spindown`, {
+export async function setDiskSpindown(name: string, minutes: number): Promise<DiskSpindown> {
+  return api.put<DiskSpindown>(`/storage/disks/${encodeURIComponent(name)}/spindown`, {
     minutes
   });
 }

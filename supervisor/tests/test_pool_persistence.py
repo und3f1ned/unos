@@ -314,6 +314,16 @@ class FakeHost:
         self.identified: list[str] = []
         # The standby timer that hdparm -S gave each disk, by its path: the -S value.
         self.standby_timers: dict[str, int] = {}
+        # The automatic offline data collection of the ATA disks that have it (SFF-8035i; smartctl -c
+        # reads it, -o on and -o off switch it, ADR-0378), by the disk's path: True while it is on (the
+        # drive scans its surface every 4 hours, suspends the scan for each command and resumes it, so
+        # that it does not sleep meanwhile), False while off. A disk not here has no such feature: its
+        # capabilities lack "Auto Offline data collection on/off support", and -o is refused.
+        self.offline_collection: dict[str, bool] = {}
+        # A function of a command run in the container that answers it instead of the fake (a
+        # CompletedProcess), or raises (subprocess.TimeoutExpired, as run_in_container at its timeout);
+        # None from it: the fake answers.
+        self.container_answer = None
         # udev's ID_SERIAL_SHORT of a disk, by its path, where it is not lsblk's serial (None: none).
         self.udev_serials: dict[str, str | None] = {}
         # The commands run in the container (smartctl), in order.
@@ -508,21 +518,26 @@ class FakeHost:
         message "Device is in <MODE> mode" in the JSON's (smartctl's names: SLEEP, STANDBY and
         STANDBY_Y for -n standby, and IDLE_A, IDLE_B and IDLE_C too for -n idle; an awake disk of
         the fake is ACTIVE or IDLE, FFh, which neither stops), and answers -i (the identity: the
-        power read of an NVMe disk, of a host without hdparm and of an EPC disk) and -a (the SMART
-        data) of a disk it goes on to read. And pgrep -f '^hdparm -C <disk>$', which finds the
+        power read of an NVMe disk, of a host without hdparm and of an EPC disk), -a (the SMART
+        data), and -c (the SMART capabilities, with the automatic offline data collection of
+        offline_collection), also after -o on or -o off, which switch it first, of a disk it goes
+        on to read. And pgrep -f '^hdparm -C <disk>$', which finds the
         hdparm -C of a disk that still runs on the host (stuck_hdparm; the container shares the
         host's process IDs). Any other command fails the test, as smartctl without -n, which would
-        wake a sleeping disk."""
+        wake a sleeping disk. container_answer answers a command instead, when it does."""
         cmd = list(cmd)
         assert timeout, cmd
         self.container_calls.append(cmd)
+        if self.container_answer is not None and (answer := self.container_answer(cmd)) is not None:
+            return answer
         if cmd[:2] == ["pgrep", "-f"] and len(cmd) == 3:
             found = re.fullmatch(r"\^hdparm -C (/dev/[a-z0-9]+)\$", cmd[2])
             assert found, cmd
             running = found[1] in self.stuck_hdparm
             return subprocess.CompletedProcess(cmd, 0 if running else 1, "4242\n" if running else "", "")
         if cmd[:2] != ["smartctl", "-n"] or cmd[2] not in ("standby", "idle") \
-                or cmd[3:-1] not in (["-i", "-j"], ["-j", "-a"]):
+                or cmd[3:-1] not in (["-i", "-j"], ["-j", "-a"], ["-c", "-j"], ["-o", "on", "-c", "-j"],
+                                     ["-o", "off", "-c", "-j"]):
             raise AssertionError(f"test tried to run a real command: {cmd!r}")
         device = cmd[-1]
         node = self._node_by_path(device)
@@ -539,6 +554,8 @@ class FakeHost:
                 "device": {"name": device, "type": "sat"},
             }), "")
         self.identified.append(device)
+        if "-c" in cmd:
+            return self._smart_capabilities(cmd, device, node)
         data = {"device": {"name": device, "type": "sat"}, "model_name": node.get("model") or "Fake Disk",
                 "serial_number": node.get("serial") or "", "firmware_version": "1.0",
                 "user_capacity": {"bytes": node["size"]}, "smart_status": {"passed": True},
@@ -549,6 +566,37 @@ class FakeHost:
                 {"id": 12, "name": "Power_Cycle_Count", "value": 99, "worst": 99, "thresh": 0, "raw": {"value": 9}},
             ]}
         return subprocess.CompletedProcess(cmd, 0, json.dumps(data), "")
+
+    def _smart_capabilities(self, cmd, device, node):
+        """smartctl -c -j, after -o on or -o off: the JSON of smartmontools' ataprint.cpp, whose
+        ata_smart_data.offline_data_collection.status.value has bit 7 set while the automatic
+        offline data collection is on (0x84 as on the dev device's disk: suspended by a command of the
+        host, 0x05 once it was turned off), and whose capabilities.values[0] has bit 1 for a disk that
+        can switch it (0x7b as on the dev device's disk; 0x59 without). An NVMe disk has none of it.
+        -o on a disk without the feature is refused by the disk: exit status bit 2, as smartctl's
+        FAILSMART."""
+        if node["name"].startswith("nvme"):
+            return subprocess.CompletedProcess(cmd, 0, json.dumps(
+                {"device": {"name": device, "type": "nvme", "protocol": "NVMe"}, "smartctl": {"exit_status": 0}}), "")
+        returncode = 0
+        if "-o" in cmd:
+            if device in self.offline_collection:
+                self.offline_collection[device] = cmd[cmd.index("-o") + 1] == "on"
+                self.changes.append(["smartctl", "-o", cmd[cmd.index("-o") + 1], device])
+            else:
+                returncode = 4
+        on = self.offline_collection.get(device)
+        status = 0x00 if on is None else 0x84 if on else 0x05
+        capabilities = 0x59 if on is None else 0x7b
+        return subprocess.CompletedProcess(cmd, returncode, json.dumps({
+            "smartctl": {"exit_status": returncode},
+            "device": {"name": device, "info_name": f"{device} [SAT]", "type": "sat", "protocol": "ATA"},
+            "ata_smart_data": {
+                "offline_data_collection": {"status": {"value": status}, "completion_seconds": 14760},
+                "capabilities": {"values": [capabilities, 3], "exec_offline_immediate_supported": True,
+                                 "offline_is_aborted_upon_new_cmd": False},
+            },
+        }), "")
 
     @staticmethod
     def _result(returncode=0, stdout="", stderr=""):

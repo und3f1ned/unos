@@ -156,6 +156,11 @@ device's disk (ADR-0378). "Standby-safe" is a command that
 sends a sleeping disk nothing that wakes it (ADR-0378). The user texts say a disk in standby "sleeps". Avoid: SLEEP
 mode (the deeper ATA state that needs a reset).
 
+**Automatic offline scan**: A hard disk's own surface scan every few hours (smartctl's automatic
+offline data collection, `smartctl -o on`), which keeps the disk awake while it runs; UNOS turns it
+off while the disk has an idle timeout and records that in its udev rule (ADR-0378). Avoid: offline
+test, self-test (a SMART test that UNOS starts).
+
 ## Shares and SMB
 
 **Share**: An SMB share: a folder inside a managed pool, or a volume, that Samba serves with
