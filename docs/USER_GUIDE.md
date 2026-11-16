@@ -256,11 +256,14 @@ rule can match or the serial of another disk, and on a host without `hdparm`:
 install the package `hdparm` on the host (`deploy/install.sh` does). When the
 host cannot read UNOS's udev rule, every disk's button is off with that reason.
 
-Uninstalling UNOS (`deploy/uninstall.sh`) removes the udev rule and, for each
-disk it names, does what **Off** does: the disk has no standby timer until it
-restarts, and its automatic offline scans are on again (with the host's
-`smartctl`). At its end it names what it could not undo, such as a disk that
-is not attached, with the command to run.
+Uninstalling UNOS (`deploy/uninstall.sh`) does what **Off** does for each
+disk the udev rule names, then removes the rule: the disk has no standby timer
+until it restarts, and its automatic offline scans are on again (with the
+host's `smartctl`). At its end it names what it could not undo, such as a disk
+that is not attached, with the command to run. Until such a disk's scans are
+on again, the rule stays with only their records, which do nothing at boot; a
+new installation of UNOS reads them, and saving **Off** for the disk turns its
+scans on.
 
 Nothing UNOS does on its own wakes a sleeping disk or keeps an idle one
 awake. Disk Health, the SMART data and the hourly SMART records leave a

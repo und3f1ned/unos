@@ -14,6 +14,7 @@ import http.server
 import json
 import os
 import re
+import shlex
 import shutil
 import signal
 import socket
@@ -1723,13 +1724,34 @@ _IMPORT_BACKUPS = ("smb.conf.unos-import-backup-20261101_120000_000000",
 _IDLE_TOOLS = ("lsblk", "hdparm", "smartctl", "udevadm", "timeout")
 
 # The host's whole devices as `lsblk -dnr -o NAME,TYPE,SERIAL` lists them: the system disk, the
-# data disks with the serials WD-1 and WD-2, an optical drive, a loop device and a disk without a
-# serial.
-_DISKS = "mmcblk1 disk 0x8f3a\nsda disk WD-1\nsdb disk WD-2\nsr0 rom WD-ROM\nloop0 loop \nsdc disk \n"
+# data disks with the serials WD-1 and WD-2, an optical drive that reports WD-1's serial too (as the
+# virtual CD drive of a USB enclosure can), a loop device and a disk without a serial.
+_DISKS = "mmcblk1 disk 0x8f3a\nsda disk WD-1\nsdb disk WD-2\nsr0 rom WD-1\nloop0 loop \nsdc disk \n"
 
-# timeout(1) of the host: runs the command after its two options; a call listed in
-# $STUB_DIR/fail ends as when it ran out of time (124).
-_TIMEOUT_STUB = _LOGGER + 'if grep -qxF -- "${0##*/} $*" "$STUB_DIR/fail"; then exit 124; fi\nshift 2\nexec "$@"\n'
+
+def _timeout_stub(status=124):
+    """timeout(1) of the host: runs the command after its two options; a call listed in
+    $STUB_DIR/fail ends with `status`, as when it ran out of time: 124 when its TERM ended the
+    command, 137 when its KILL did, which ends timeout too."""
+    return (_LOGGER + f'if grep -qxF -- "${{0##*/}} $*" "$STUB_DIR/fail"; then exit {status}; fi\n'
+            + 'shift 2\nexec "$@"\n')
+
+
+def _smartctl_stub(*lines, status=0):
+    """smartctl that logs its call, fails as listed in $STUB_DIR/fail, and otherwise prints `lines`
+    and exits with `status`."""
+    printed = " ".join(shlex.quote(line) for line in lines)
+    return _LOGGER + _FAILS + f"printf '%s\\n' {printed}\nexit {status}\n"
+
+
+# What smartctl -o on -c prints of the disk's own automatic offline data collection once it is on
+# (smartmontools' ataprint.cpp; the last line as the dev device's smartctl -c printed it).
+_SCANS_TURNED_ON = (
+    "SMART Automatic Offline Testing Enabled every four hours.",
+    "Offline data collection status:  (0x82)\tOffline data collection activity",
+    "\t\t\t\t\twas completed without error.",
+    "\t\t\t\t\tAuto Offline Data Collection: Enabled.",
+)
 
 _LSBLK = "lsblk -dnr -o NAME,TYPE,SERIAL"
 _RELOAD = "udevadm control --reload"
@@ -1741,14 +1763,22 @@ def _timer_off(path):
 
 
 def _scans_on(path):
-    """The calls that turn the disk's own automatic offline scans on again."""
-    return [f"timeout --kill-after=5 30 smartctl -o on {path}", f"smartctl -o on {path}"]
+    """The calls that turn the disk's own automatic offline scans on again and read them back."""
+    return [f"timeout --kill-after=5 30 smartctl -o on -c {path}", f"smartctl -o on -c {path}"]
 
 
 def _shown(line):
-    """A line of the rule as the uninstallation shows it: each byte that is no printable ASCII
-    character is a question mark."""
-    return "".join(ch if " " <= ch <= "~" else "?" * len(ch.encode()) for ch in line.strip())
+    """A line of the rule as the uninstallation shows it, without the spaces and tabs around it:
+    each byte that is no printable ASCII character is a question mark."""
+    return "".join(ch if " " <= ch <= "~" else "?" * len(ch.encode()) for ch in line.strip(" \t"))
+
+
+def _records(path):
+    """The records of UNOS's rule at `path` ("# UNOS turned off ... serial <serial>" lines), None
+    without the file."""
+    if not path.exists():
+        return None
+    return [line for line in path.read_text().splitlines() if line.startswith("# UNOS turned off")]
 
 
 class TestUninstallScript:
@@ -2419,19 +2449,19 @@ class TestUninstallScript:
     def _run_idle(self, tmp_path, rule, *, listing=_DISKS, missing=(), fail=(), stubs=None,
                   commands="remove_disk_idle_timeouts; print_completion"):
         """`commands` with UNOS's udev rule of the idle timeouts in tmp_path holding `rule` (no file
-        for None), and stubs of _IDLE_TOOLS that log their calls: lsblk lists `listing`, timeout
-        runs the command after its options, and those in `missing` are not there. The host's own
-        are never on PATH. The command lines in `fail` fail. Returns the result, the calls and the
-        rule's path."""
+        for None), and stubs of _IDLE_TOOLS that log their calls: lsblk lists `listing`, smartctl
+        prints that the scans are on, timeout runs the command after its options, and those in
+        `missing` are not there. The host's own are never on PATH. The command lines in `fail`
+        fail. Returns the result, the calls and the rule's path."""
         path = tmp_path / "90-unos-disk-spindown.rules"
         if rule is not None:
             path.write_text(rule)
         tools = {
             "lsblk": _LOGGER + _FAILS + f"cat <<'EOF'\n{listing}EOF\n",
             "hdparm": _LOGGER + _FAILS,
-            "smartctl": _LOGGER + _FAILS,
+            "smartctl": _smartctl_stub(*_SCANS_TURNED_ON),
             "udevadm": _LOGGER + _FAILS,
-            "timeout": _TIMEOUT_STUB,
+            "timeout": _timeout_stub(),
         }
         result, calls, _ = self._run(
             tmp_path,
@@ -2463,6 +2493,16 @@ class TestUninstallScript:
 
         return spindown.render({"WD-1": 20, "WD-2": 60}, frozenset({"WD-1"}))
 
+    @staticmethod
+    def _read_rule(monkeypatch, path):
+        """What spindown.read_rule reads from the rule file at `path`, as it is (\r and all)."""
+        from src import host
+        from src.storage import spindown
+
+        text = path.read_bytes().decode()
+        monkeypatch.setattr(host, "run_on_host", lambda cmd, **kwargs: host.HostResult(0, text, ""))
+        return spindown.read_rule()
+
     def test_without_the_rule_nothing_runs_and_nothing_is_said(self, tmp_path):
         result, calls, _ = self._run_idle(tmp_path, None, commands="remove_disk_idle_timeouts")
 
@@ -2476,22 +2516,23 @@ class TestUninstallScript:
         assert calls == []
         assert "idle timeout" not in result.stdout.lower()
 
-    def test_the_rule_goes_and_what_it_set_on_its_disks_is_undone(self, tmp_path):
-        """The rule goes once UNOS has stopped, udev reads its rules again, and each disk it names
-        gets the Off of the Storage page (hdparm -S 0); the disk whose automatic offline scans UNOS
-        turned off gets them on again (smartctl -o on), with the host's tools, each under the
-        host's timeout. No other disk is touched."""
+    def test_what_the_rule_set_on_its_disks_is_undone_then_the_rule_goes(self, tmp_path):
+        """Once UNOS has stopped, each disk the rule names gets the Off of the Storage page (hdparm
+        -S 0), and the disk whose automatic offline scans UNOS turned off gets them on again
+        (smartctl -o on, with -c to read them back), with the host's tools, each under the host's
+        timeout; then the rule goes and udev reads its rules again. No other disk is touched, nor
+        the optical drive that reports WD-1's serial too."""
         result, calls, path = self._run_idle(tmp_path, self._two_disks())
         text = self._text(result)
 
         assert result.returncode == 0, result.stdout + result.stderr
         assert not path.exists()
         assert calls == [
-            _RELOAD,
             _LSBLK,
             *_timer_off("/dev/sda"),
             *_scans_on("/dev/sda"),
             *_timer_off("/dev/sdb"),
+            _RELOAD,
         ]
         assert "WARN" not in result.stdout
         assert f"Removed UNOS's udev rule {path}" in text
@@ -2508,6 +2549,38 @@ class TestUninstallScript:
         ]
         assert self._left(result) == []
 
+    def test_an_uninstallation_stopped_on_the_way_keeps_the_rule_for_the_next_run(self, tmp_path):
+        """The rule goes only once its disks are done: a run that stops on the way (an SSH session
+        that drops) leaves it whole, and the next run undoes it all."""
+        rule = self._two_disks()
+        stopped = _LOGGER + 'kill -TERM "$PPID"\n'
+        result, calls, path = self._run_idle(tmp_path, rule, stubs={"hdparm": stopped})
+
+        assert result.returncode != 0
+        assert calls == [_LSBLK, *_timer_off("/dev/sda")]
+        assert path.read_text() == rule
+
+        again = tmp_path / "again"
+        again.mkdir()
+        result, calls, path = self._run_idle(again, path.read_text())
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert calls == [_LSBLK, *_timer_off("/dev/sda"), *_scans_on("/dev/sda"), *_timer_off("/dev/sdb"), _RELOAD]
+        assert not path.exists() and self._left(result) == []
+
+    def test_a_record_without_a_timeout_gets_only_its_scans_on(self, tmp_path):
+        """An Off whose smartctl -o on failed keeps the disk's record without its line (the record
+        comes last): the disk gets its scans on, and no hdparm -S 0."""
+        from src.storage import spindown
+
+        result, calls, path = self._run_idle(tmp_path, spindown.render({"WD-2": 60}, frozenset({"WD-1"})))
+
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert not path.exists()
+        assert calls == [_LSBLK, *_timer_off("/dev/sdb"), *_scans_on("/dev/sda"), _RELOAD]
+        assert self._paragraph(result, "Disk idle timeouts:")[3:] == ["  /dev/sdb (serial WD-2)"]
+        assert "Turned on again the automatic offline scans of /dev/sda (serial WD-1)" in self._text(result)
+        assert self._left(result) == []
+
     def test_a_disk_that_is_not_attached_or_not_alone_with_its_serial_is_named(self, tmp_path):
         """WD-7 is not attached, and two disks report WD-2: neither is touched, and the end names
         what is left on them with the command, for the disk's path once it is known."""
@@ -2518,8 +2591,7 @@ class TestUninstallScript:
         text = self._text(result)
 
         assert result.returncode == 0, result.stdout + result.stderr
-        assert not path.exists()
-        assert calls == [_RELOAD, _LSBLK, *_timer_off("/dev/sda"), *_scans_on("/dev/sda")]
+        assert calls == [_LSBLK, *_timer_off("/dev/sda"), *_scans_on("/dev/sda"), _RELOAD]
         assert self._left(result) == [
             "  The disk with the serial WD-2 may keep its idle timeout until it restarts: more than one "
             "disk reports this serial (/dev/sdb /dev/sdd).",
@@ -2539,13 +2611,90 @@ class TestUninstallScript:
         )
         assert "The disk with the serial WD-7 has its automatic offline scans off: it is not attached " \
                "(see the end of the uninstallation)" in text
+        # The rule keeps WD-7's record, and only that.
+        assert _records(path) == [spindown.RECORD.format(serial="WD-7")]
+
+    def test_scans_left_off_keep_their_records_for_a_new_installation_or_another_run(self, tmp_path, monkeypatch):
+        """smartctl fails on WD-1 and WD-7 is not attached: the rule then holds only their records
+        and comments, which udev runs nothing of and which read_rule takes as records without a
+        timeout: a new installation's Off turns their scans on, and so does another run of the
+        uninstallation, which then removes the rule."""
+        from src.storage import spindown
+
+        rule = spindown.render({"WD-1": 20, "WD-2": 60, "WD-7": 30}, frozenset({"WD-1", "WD-7"}))
+        result, calls, path = self._run_idle(tmp_path, rule, fail=("smartctl -o on -c /dev/sda",))
+
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert calls == [_LSBLK, *_timer_off("/dev/sda"), *_scans_on("/dev/sda"), *_timer_off("/dev/sdb"), _RELOAD]
+        kept = path.read_text()
+        assert kept.endswith("\n") and all(line.startswith("# ") for line in kept.splitlines())
+        assert self._read_rule(monkeypatch, path) == spindown.Rule({}, frozenset({"WD-1", "WD-7"}))
+        assert stat.S_IMODE(path.stat().st_mode) == 0o644
+        assert list(tmp_path.glob("*.unos-tmp*")) == []
+        assert (f"{path} now holds only the records of the disks whose automatic offline scans are still off "
+                "(see the end of the uninstallation)") in self._text(result)
+        assert self._left(result)[::2] == [
+            "  The disk with the serial WD-1 (/dev/sda) has its automatic offline scans off: smartctl -o on "
+            "failed (exit status 1).",
+            "  The disk with the serial WD-7 may keep its idle timeout until it restarts: it is not attached.",
+            "  The disk with the serial WD-7 has its automatic offline scans off: it is not attached.",
+        ]
+        assert self._paragraph(result, f"Disk idle timeouts: UNOS's udev rule {path}") == [
+            f"Disk idle timeouts: UNOS's udev rule {path} now holds only the",
+            "records of the disks whose automatic offline scans are still off (above),",
+            "which udev ignores. A new installation of UNOS reads them: saving Off for",
+            "such a disk turns its scans on again. Once they are on, remove the rule:",
+            f"  rm {path}",
+        ]
+
+        again = tmp_path / "again"
+        again.mkdir()
+        result, calls, path = self._run_idle(again, kept, listing=_DISKS + "sdd disk WD-7\n")
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert calls == [_LSBLK, *_scans_on("/dev/sda"), *_scans_on("/dev/sdd"), _RELOAD]
+        assert not path.exists() and self._left(result) == []
+        assert "Disk idle timeouts" not in result.stdout
+
+    @pytest.mark.parametrize("rm_fails", [False, True], ids=["removed", "kept"])
+    def test_records_that_cannot_be_written_leave_the_rule_removed_or_whole(self, tmp_path, rm_fails):
+        """WD-7 is not attached, and the rule cannot be replaced by its records: it is removed all
+        the same (it would set the timeouts at every boot), and the end names WD-7's scans; when it
+        cannot be removed either, it stays whole, records and all."""
+        from src.storage import spindown
+
+        rule = spindown.render({"WD-1": 20, "WD-7": 30}, frozenset({"WD-7"}))
+        mv = _LOGGER + 'echo "mv: cannot move: Read-only file system" >&2\nexit 1\n'
+        rm = (_LOGGER + 'case "$*" in *90-unos-disk-spindown.rules) echo "rm: cannot remove: Read-only file system"'
+              + f' >&2; exit 1 ;; esac\nexec {shutil.which("rm")} "$@"\n')
+        result, calls, path = self._run_idle(tmp_path, rule, stubs={"mv": mv, **({"rm": rm} if rm_fails else {})})
+        text = self._text(result)
+
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert list(tmp_path.glob("*.unos-tmp*")) == []
+        moves = [call for call in calls if call.startswith("mv ")]
+        rule_path = re.escape(str(path))
+        assert len(moves) == 1 and re.fullmatch(rf"mv -f -- {rule_path}\.unos-tmp\.\d+ {rule_path}", moves[0])
+        assert (f"Could not keep the records of the disks whose automatic offline scans are still off in {path}: "
+                "the end of the uninstallation names them") in text
+        assert self._left(result)[-2:] == [
+            "  The disk with the serial WD-7 has its automatic offline scans off: it is not attached.",
+            "    smartctl -o on DISK",
+        ]
+        if rm_fails:
+            assert path.read_text() == rule
+            assert _RELOAD not in calls
+            assert f"Could not remove {path} (see the end of the uninstallation)" in text
+        else:
+            assert not path.exists()
+            assert calls[-1] == _RELOAD
+            assert f"Removed UNOS's udev rule {path}" in text
 
     @pytest.mark.parametrize(
-        "missing, expected_calls, left",
+        "missing, expected_calls, left, records",
         [
             (
                 ("hdparm",),
-                [_RELOAD, _LSBLK, *_scans_on("/dev/sda")],
+                [_LSBLK, *_scans_on("/dev/sda"), _RELOAD],
                 [
                     "  The disk with the serial WD-1 (/dev/sda) may keep its idle timeout until it restarts: "
                     "the host has no hdparm (package hdparm).",
@@ -2554,19 +2703,26 @@ class TestUninstallScript:
                     "the host has no hdparm (package hdparm).",
                     "    hdparm -S 0 /dev/sdb",
                 ],
+                None,
             ),
             (
                 # The supervisor's container, whose smartctl UNOS used, is gone by now.
                 ("smartctl",),
-                [_RELOAD, _LSBLK, *_timer_off("/dev/sda"), *_timer_off("/dev/sdb")],
+                [_LSBLK, *_timer_off("/dev/sda"), *_timer_off("/dev/sdb"), _RELOAD],
                 [
                     "  The disk with the serial WD-1 (/dev/sda) has its automatic offline scans off: the host "
                     "has no smartctl (package smartmontools).",
                     "    smartctl -o on /dev/sda",
                 ],
+                ["WD-1"],
             ),
             # udev also reads a changed rules folder by itself.
-            (("udevadm",), [_LSBLK, *_timer_off("/dev/sda"), *_scans_on("/dev/sda"), *_timer_off("/dev/sdb")], []),
+            (
+                ("udevadm",),
+                [_LSBLK, *_timer_off("/dev/sda"), *_scans_on("/dev/sda"), *_timer_off("/dev/sdb")],
+                [],
+                None,
+            ),
             (
                 ("hdparm", "smartctl", "udevadm"),
                 [_LSBLK],
@@ -2581,57 +2737,53 @@ class TestUninstallScript:
                     "the host has no hdparm (package hdparm).",
                     "    hdparm -S 0 /dev/sdb",
                 ],
+                ["WD-1"],
             ),
         ],
         ids=["no-hdparm", "no-smartctl", "no-udevadm", "none"],
     )
-    def test_a_missing_tool_leaves_its_part_named(self, tmp_path, missing, expected_calls, left):
+    def test_a_missing_tool_leaves_its_part_named(self, tmp_path, missing, expected_calls, left, records):
+        from src.storage import spindown
+
         result, calls, path = self._run_idle(tmp_path, self._two_disks(), missing=missing)
 
         assert result.returncode == 0, result.stdout + result.stderr
-        assert not path.exists()
+        assert _records(path) == (None if records is None else [spindown.RECORD.format(serial=s) for s in records])
         assert calls == expected_calls
         assert self._left(result) == left
         assert "DISK" not in result.stdout
+        # Without udevadm there is nothing to fail.
+        assert "control --reload failed" not in result.stdout
         assert "UNOS Uninstallation Complete!" in result.stdout
 
     @pytest.mark.parametrize(
-        "fail, expected_calls, left, warning",
+        "fail, expected_calls, left, records, warning",
         [
             (
                 "hdparm -S 0 /dev/sda",
-                [_RELOAD, _LSBLK, *_timer_off("/dev/sda"), *_scans_on("/dev/sda"), *_timer_off("/dev/sdb")],
+                [_LSBLK, *_timer_off("/dev/sda"), *_scans_on("/dev/sda"), *_timer_off("/dev/sdb"), _RELOAD],
                 [
                     "  The disk with the serial WD-1 (/dev/sda) may keep its idle timeout until it restarts: "
                     "hdparm -S 0 failed (exit status 1).",
                     "    hdparm -S 0 /dev/sda",
                 ],
                 None,
+                None,
             ),
             (
-                "smartctl -o on /dev/sda",
-                [_RELOAD, _LSBLK, *_timer_off("/dev/sda"), *_scans_on("/dev/sda"), *_timer_off("/dev/sdb")],
+                "smartctl -o on -c /dev/sda",
+                [_LSBLK, *_timer_off("/dev/sda"), *_scans_on("/dev/sda"), *_timer_off("/dev/sdb"), _RELOAD],
                 [
                     "  The disk with the serial WD-1 (/dev/sda) has its automatic offline scans off: "
                     "smartctl -o on failed (exit status 1).",
                     "    smartctl -o on /dev/sda",
                 ],
-                None,
-            ),
-            (
-                # The host's timeout ended it: a disk that does not answer.
-                "timeout --kill-after=5 30 hdparm -S 0 /dev/sdb",
-                [_RELOAD, _LSBLK, *_timer_off("/dev/sda"), *_scans_on("/dev/sda"), _timer_off("/dev/sdb")[0]],
-                [
-                    "  The disk with the serial WD-2 (/dev/sdb) may keep its idle timeout until it restarts: "
-                    "hdparm -S 0 did not answer within 30 seconds.",
-                    "    hdparm -S 0 /dev/sdb",
-                ],
+                ["WD-1"],
                 None,
             ),
             (
                 _LSBLK,
-                [_RELOAD, _LSBLK],
+                [_LSBLK, _RELOAD],
                 [
                     "  The disk with the serial WD-1 may keep its idle timeout until it restarts: the disks "
                     "could not be listed (lsblk failed).",
@@ -2643,25 +2795,29 @@ class TestUninstallScript:
                     "could not be listed (lsblk failed).",
                     "    hdparm -S 0 DISK",
                 ],
+                ["WD-1"],
                 None,
             ),
             (
                 _RELOAD,
-                [_RELOAD, _LSBLK, *_timer_off("/dev/sda"), *_scans_on("/dev/sda"), *_timer_off("/dev/sdb")],
+                [_LSBLK, *_timer_off("/dev/sda"), *_scans_on("/dev/sda"), *_timer_off("/dev/sdb"), _RELOAD],
                 [],
+                None,
                 "udevadm control --reload failed: udev reads its rules again by itself",
             ),
         ],
-        ids=["hdparm", "smartctl", "timeout", "lsblk", "udevadm"],
+        ids=["hdparm", "smartctl", "lsblk", "udevadm"],
     )
     def test_a_failure_does_not_stop_the_uninstallation_and_is_named(
-        self, tmp_path, fail, expected_calls, left, warning
+        self, tmp_path, fail, expected_calls, left, records, warning
     ):
+        from src.storage import spindown
+
         # uninstall.sh runs with set -e: a failing command outside a condition would end it.
         result, calls, path = self._run_idle(tmp_path, self._two_disks(), fail=(fail,))
 
         assert result.returncode == 0, result.stdout + result.stderr
-        assert not path.exists()
+        assert _records(path) == (None if records is None else [spindown.RECORD.format(serial=s) for s in records])
         assert calls == expected_calls
         assert self._left(result) == left
         if left:
@@ -2671,23 +2827,96 @@ class TestUninstallScript:
             assert warning in self._text(result)
         assert "UNOS Uninstallation Complete!" in result.stdout
 
-    def test_a_rule_that_cannot_be_removed_is_named_and_its_disks_are_still_undone(self, tmp_path):
-        rm = (_LOGGER + 'case "$*" in *90-unos-disk-spindown.rules) echo "rm: cannot remove: Read-only file system"'
-              + f' >&2; exit 1 ;; esac\nexec {shutil.which("rm")} "$@"\n')
-        result, calls, path = self._run_idle(tmp_path, self._two_disks(), stubs={"rm": rm})
+    @pytest.mark.parametrize("status", [124, 137], ids=["term", "kill"])
+    def test_a_disk_that_does_not_answer_is_named(self, tmp_path, status):
+        """The host's timeout ended hdparm with its TERM (124) or its KILL, which ends timeout too
+        (137)."""
+        result, calls, path = self._run_idle(
+            tmp_path, self._two_disks(), fail=("timeout --kill-after=5 30 hdparm -S 0 /dev/sdb",),
+            stubs={"timeout": _timeout_stub(status)},
+        )
 
         assert result.returncode == 0, result.stdout + result.stderr
-        assert path.exists()
+        assert not path.exists()
+        assert calls == [_LSBLK, *_timer_off("/dev/sda"), *_scans_on("/dev/sda"), _timer_off("/dev/sdb")[0], _RELOAD]
+        assert self._left(result) == [
+            "  The disk with the serial WD-2 (/dev/sdb) may keep its idle timeout until it restarts: "
+            "hdparm -S 0 did not answer within 30 seconds.",
+            "    hdparm -S 0 /dev/sdb",
+        ]
+
+    @pytest.mark.parametrize(
+        "printed, why",
+        [
+            # SMART is off on the disk: smartctl says so and exits 0 without sending -o (ataprint.cpp).
+            (("SMART Disabled. Use option -s with argument 'on' to enable it.",), "smartctl -o on read no state"),
+            ((_SCANS_TURNED_ON[1], "\t\t\t\t\twas aborted by an interrupting command from host.",
+              "\t\t\t\t\tAuto Offline Data Collection: Disabled."), "smartctl -o on left them off (exit status 0)"),
+        ],
+        ids=["smart-off", "still-off"],
+    )
+    def test_scans_that_smartctl_does_not_show_on_are_named(self, tmp_path, printed, why):
+        """smartctl -o on exits 0 without proving the scans on: -c reads them back, as the
+        supervisor does, and only "Auto Offline Data Collection: Enabled." counts."""
+        from src.storage import spindown
+
+        result, calls, path = self._run_idle(
+            tmp_path, self._two_disks(), stubs={"smartctl": _smartctl_stub(*printed)})
+
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert calls == [_LSBLK, *_timer_off("/dev/sda"), *_scans_on("/dev/sda"), *_timer_off("/dev/sdb"), _RELOAD]
+        assert "Turned on again" not in result.stdout
+        assert self._left(result) == [
+            f"  The disk with the serial WD-1 (/dev/sda) has its automatic offline scans off: {why}.",
+            "    smartctl -o on /dev/sda",
+        ]
+        assert _records(path) == [spindown.RECORD.format(serial="WD-1")]
+
+    def test_a_rule_that_cannot_be_removed_is_named_and_its_disks_are_still_undone(self, tmp_path):
+        """It sets UNOS's timeouts again at every boot, which the end says, also of the disks whose
+        timeout it turned off; its lines edited by hand stay with it."""
+        rm = (_LOGGER + 'case "$*" in *90-unos-disk-spindown.rules) echo "rm: cannot remove: Read-only file system"'
+              + f' >&2; exit 1 ;; esac\nexec {shutil.which("rm")} "$@"\n')
+        edited = 'ACTION=="add", KERNEL=="sdb", RUN+="/sbin/hdparm -S 1 /dev/sdb"'
+        rule = self._two_disks() + edited + "\n"
+        result, calls, path = self._run_idle(tmp_path, rule, stubs={"rm": rm})
+
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert path.read_text() == rule
         # Nothing for udev to read again.
         assert calls == [
-            f"rm -f -- {path}", _LSBLK, *_timer_off("/dev/sda"), *_scans_on("/dev/sda"), *_timer_off("/dev/sdb")]
+            _LSBLK, *_timer_off("/dev/sda"), *_scans_on("/dev/sda"), *_timer_off("/dev/sdb"), f"rm -f -- {path}"]
+        assert self._paragraph(result, "Disk idle timeouts:") == [
+            "Disk idle timeouts: these disks had an idle timeout set in UNOS, now turned",
+            "off. They have no standby timer until they restart; then they have their",
+            "timeout of UNOS's rule again, until it is removed (see below):",
+            "  /dev/sda (serial WD-1)",
+            "  /dev/sdb (serial WD-2)",
+        ]
         assert self._paragraph(result, f"Disk idle timeouts: UNOS's udev rule {path}") == [
-            f"Disk idle timeouts: UNOS's udev rule {path} could not be removed: it would",
-            "set the idle timeouts again at every boot. Remove it with:",
+            f"Disk idle timeouts: UNOS's udev rule {path} could not be removed: it",
+            "sets the idle timeouts again at every boot. Remove it with:",
             f"  rm {path}",
+        ]
+        assert self._paragraph(result, "Disk idle timeouts: these lines") == [
+            "Disk idle timeouts: these lines of UNOS's udev rule are not as UNOS writes",
+            "them (edited by hand), so the uninstallation ran nothing for them:",
+            f"  {edited}",
         ]
         assert f"Could not remove {path} (see the end of the uninstallation)" in self._text(result)
         assert "UNOS Uninstallation Complete!" in result.stdout
+
+    _NOT_READ = [
+        "It stays, and so does what it set: the idle timeouts of the disks it names,",
+        "at every boot, and their own automatic offline scans, which UNOS turned off",
+        "where a line \"# UNOS turned off the automatic offline data collection of the",
+        "disk with the serial ...\" says so. Run for each disk it names, with the",
+        "disk's path (lsblk -o PATH,SERIAL) for DISK:",
+        "  hdparm -S 0 DISK",
+        "and, for each disk such a line names:",
+        "  smartctl -o on DISK",
+        "Then remove the rule:",
+    ]
 
     def test_a_rule_that_cannot_be_read_stays_with_its_disks(self, tmp_path):
         """It is the only record of the disks whose scans UNOS turned off: it is not removed, and
@@ -2700,24 +2929,41 @@ class TestUninstallScript:
         assert path.is_dir() and calls == []
         assert f"Could not read {path}, so it stays (see the end of the uninstallation)" in text
         assert self._paragraph(result, "Disk idle timeouts:") == [
-            f"Disk idle timeouts: UNOS's udev rule {path} could not be read, so it",
-            "stays, and so does what it set: the idle timeouts of the disks it names,",
-            "at every boot, and their own automatic offline scans, which UNOS turned",
-            "off where a line \"# UNOS turned off the automatic offline data collection",
-            "of the disk with the serial ...\" says so. Once it can be read, run for each",
-            "disk it names, with the disk's path (lsblk -o PATH,SERIAL) for DISK:",
-            "  hdparm -S 0 DISK",
-            "and, for each disk such a line names:",
-            "  smartctl -o on DISK",
-            "Then remove the rule:",
+            f"Disk idle timeouts: UNOS's udev rule {path} could not be read.",
+            *self._NOT_READ,
             f"  rm {path}",
         ]
         assert "UNOS Uninstallation Complete!" in result.stdout
 
-    def test_lines_edited_by_hand_are_left_alone_and_named(self, tmp_path):
+    def test_a_rule_with_a_nul_byte_stays_and_nothing_runs(self, tmp_path):
+        """Bash drops NUL bytes from what it reads, which would join the parts around one into a
+        line of UNOS's that read_rule does not count, nor udev, which ends a line there: such a
+        rule is not read, as one that cannot be read."""
+        from src.storage import spindown
+
+        rule = (self._two_disks() + spindown._RULE.format(serial="WD-9", value=240).replace("ACTION", "ACT\0ION")
+                + "\n" + spindown.RECORD.format(serial="WD\0-9") + "\n")
+        result, calls, path = self._run_idle(tmp_path, rule, listing=_DISKS + "sdd disk WD-9\n")
+        text = self._text(result)
+
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert calls == [] and path.read_bytes() == rule.encode()
+        assert "null byte" not in result.stderr
+        assert (f"{path} holds a NUL byte, which UNOS never writes: it stays, and nothing is run for it "
+                "(see the end of the uninstallation)") in text
+        assert self._paragraph(result, "Disk idle timeouts:") == [
+            f"Disk idle timeouts: UNOS's udev rule {path} holds a NUL byte,",
+            "which UNOS never writes, so the uninstallation ran nothing for it.",
+            *self._NOT_READ,
+            f"  rm {path}",
+        ]
+
+    def test_lines_edited_by_hand_are_named_and_go_with_the_rule(self, tmp_path):
         """Only the lines that UNOS writes count. The file is read as text, never run: a disk that
         another line names is not touched (WD-2 is attached as /dev/sdb), and the end shows those
-        lines, a control character as a question mark, so that it cannot drive the terminal."""
+        lines, other than comments, a control character as a question mark, so that it cannot drive
+        the terminal. They go with the rule, which keeps only UNOS's lines, as the supervisor's
+        writes of it do."""
         from src.storage import spindown
 
         pwned = tmp_path / "pwned"
@@ -2739,37 +2985,54 @@ class TestUninstallScript:
 
         assert result.returncode == 0, result.stdout + result.stderr
         assert not path.exists() and not pwned.exists()
-        assert calls == [_RELOAD, _LSBLK, *_timer_off("/dev/sda"), *_scans_on("/dev/sda")]
+        assert calls == [_LSBLK, *_timer_off("/dev/sda"), *_scans_on("/dev/sda"), _RELOAD]
         assert self._paragraph(result, "Disk idle timeouts: these lines") == [
             "Disk idle timeouts: these lines of UNOS's udev rule are not as UNOS writes",
-            "them (edited by hand), so the uninstallation ran nothing for them:",
+            "them (edited by hand). The uninstallation ran nothing for them, and they",
+            "are no longer in the rule:",
             *(f"  {_shown(line)}" for line in edited),
         ]
         assert "\x1b[31mred" not in result.stdout and '/bin/echo ?[31mred"' in result.stdout
+        assert "A note of the owner" not in result.stdout
         assert self._left(result) == []
 
-    def test_the_lines_that_count_are_those_the_supervisor_reads(self, tmp_path, monkeypatch):
+    @pytest.mark.parametrize("locale", ["C", "C.UTF-8"])
+    def test_the_lines_that_count_are_those_the_supervisor_reads(self, tmp_path, monkeypatch, locale):
         """spindown.read_rule decides which lines are UNOS's: the exact form that render writes,
-        with a serial that _RULE_SERIAL accepts and the hdparm -S value of an offered timeout.
-        The uninstallation takes the same lines, and no other."""
-        from src import host
+        with a serial that _RULE_SERIAL accepts and the hdparm -S value of an offered timeout, in
+        lines read as udev reads them (ended by \\n or \\r, with spaces and tabs around them). The
+        uninstallation takes the same lines, and no other, in any locale. A rule with a NUL byte it
+        does not read at all (test_a_rule_with_a_nul_byte_stays_and_nothing_runs)."""
         from src.storage import spindown
 
         serials = ["aZ09#+.:=@_-", "x" * 64, "-", "x" * 65, "a b", "a/b", "a*b", "a?b", "a[b]", "a,b", "a'b",
                    "é", "a$b", "a\\b", "a;b", "a|b", "a`b", "a~b", "a&b", "a<b", "a{b}", "a!b", "a%b", "a^b"]
         values = [0, 1, 12, 59, 60, 61, 120, 180, 239, 240, 241, 242, 243, 244, 245, 246, 247, 248, 249, 250, 251,
-                  252, 255, 256, 1000, "060", "0250", "00", "18446744073709551676"]
+                  252, 255, 256, 1000, "060", "0250", "00", "18446744073709551676", "٦٠"]
         lines = [spindown._RULE.format(serial=serial, value=240) for serial in serials]
         lines += [spindown.RECORD.format(serial=serial) for serial in serials]
         lines += [spindown._RULE.format(serial=f"V{value}", value=value) for value in values]
-        text = "".join(f"{line}\n" for line in lines)
-        monkeypatch.setattr(host, "run_on_host", lambda cmd, **kwargs: host.HostResult(0, text, ""))
-        expected = spindown.read_rule()
+        rule, record = spindown._RULE.format, spindown.RECORD.format
+        text = "".join(f"{line}\n" for line in lines) + (
+            # Ended by \r alone or by \r\n, with spaces and tabs around: lines of UNOS's.
+            rule(serial="CR1", value=240) + "\r" + rule(serial="CR2", value=241) + "\r\n"
+            + " \t" + record(serial="CR1") + "\t \r\n"
+            # Other blanks, and a form feed, which ends no line: none.
+            + " " + rule(serial="NBSP", value=240) + "\n"
+            + record(serial="IDEO") + "　\n"
+            + rule(serial="UNIT", value=240) + "\x1f\n"
+            + rule(serial="VT", value=240) + "\v\n"
+            + rule(serial="FF1", value=240) + "\f" + rule(serial="FF2", value=240) + "\n"
+        )
+        path = tmp_path / "rule"
+        path.write_text(text)
+        expected = self._read_rule(monkeypatch, path)
         disks = list(dict.fromkeys([*expected.timeouts, *expected.scans_off]))
-        assert len(expected.timeouts) == 3 + 11 and len(expected.scans_off) == 3
+        assert len(expected.timeouts) == 3 + 11 + 2 and len(expected.scans_off) == 3 + 1
 
         result, calls, _ = self._run_idle(
-            tmp_path, text, listing="".join(f"sd{i} disk {serial}\n" for i, serial in enumerate(disks))
+            tmp_path, text, listing="".join(f"sd{i} disk {serial}\n" for i, serial in enumerate(disks)),
+            commands=f"LC_ALL={locale}; remove_disk_idle_timeouts; print_completion",
         )
 
         assert result.returncode == 0, result.stdout + result.stderr
@@ -2782,8 +3045,9 @@ class TestUninstallScript:
                    for serial, minutes in expected.timeouts.items()}
         counted |= {spindown.RECORD.format(serial=serial) for serial in expected.scans_off}
         counted |= {spindown._RULE.format(serial=f"V{value}", value=value) for value in ("060", "0250")}
-        assert self._paragraph(result, "Disk idle timeouts: these lines")[2:] == [
-            f"  {_shown(line)}" for line in lines if line not in counted
+        read = [line.strip(" \t") for line in text.replace("\r", "\n").split("\n")]
+        assert self._paragraph(result, "Disk idle timeouts: these lines")[3:] == [
+            f"  {_shown(line)}" for line in read if line and line not in counted
         ]
 
     def test_the_rule_is_the_supervisors(self):
@@ -2793,6 +3057,7 @@ class TestUninstallScript:
 
         assert f'DISK_IDLE_RULE="{spindown.RULES_PATH}"' in script
         assert spindown.HDPARM_PATH == "/sbin/hdparm" and "/sbin/hdparm -S" in script
+        assert f"DISK_IDLE_RECORD='{spindown.RECORD.format(serial='')}'" in script
 
     def test_main_undoes_the_idle_timeouts_once_unos_has_stopped(self):
         # The supervisor writes the rule: it must not write it again meanwhile.

@@ -256,13 +256,16 @@ kept that file, whose shares it imported, as
 `/etc/samba/smb.conf.unos-import-backup-<UTC time>` (the newest 10 such
 copies), and the script lists them.
 
-It removes UNOS's udev rule of the disks' idle timeouts
-(`/etc/udev/rules.d/90-unos-disk-spindown.rules`). Each disk it names gets no
-standby timer until it restarts (`hdparm -S 0`), and a disk whose own
-automatic offline scans UNOS turned off gets them on again
-(`smartctl -o on`, where the host has smartctl). What it could not undo (a
-missing tool, a disk not attached, a command that failed) and the rule's
-lines that UNOS did not write are named at the end, with the command to run.
+It undoes what UNOS's udev rule of the disks' idle timeouts
+(`/etc/udev/rules.d/90-unos-disk-spindown.rules`) set, then removes the rule.
+Each disk it names gets no standby timer until it restarts (`hdparm -S 0`),
+and a disk whose own automatic offline scans UNOS turned off gets them on
+again (`smartctl -o on`, where the host has smartctl). What it could not undo
+(a missing tool, a disk not attached, a command that failed) is named at the
+end, with the command to run. A disk whose scans stay off keeps its record:
+the rule then holds only such records, which do nothing at boot, until they
+are on. The rule's lines other than comments that UNOS did not write go with
+it, and the end shows them.
 
 ## Contributing
 

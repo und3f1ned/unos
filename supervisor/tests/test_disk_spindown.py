@@ -715,6 +715,24 @@ def test_the_rule_file_keeps_its_records_and_drops_one_edited_by_hand(host):
             if "RULES_PATH" in (text := path.read_text()) or "90-unos-disk-spindown" in text] == ["storage/spindown.py"]
 
 
+def test_the_rule_is_read_as_udev_reads_it(host):
+    """A line ends at \\n or \\r, as udev's lines do, and only spaces and tabs around it are blanks; an
+    hdparm -S value is written in ASCII digits. deploy/uninstall.sh reads the rule the same way
+    (test_deploy_scripts.py), so it undoes no more and no less than the supervisor counts."""
+    host.files[spindown.RULES_PATH] = (
+        RULE.format(serial="WD-W3", value=60) + "\r" + RECORD.format(serial="WD-W3") + "\r\n"
+        + " \t" + RULE.format(serial="WD-SPARE", value=120) + "\t \n"
+        + " " + RULE.format(serial="NBSP", value=60) + "\n"
+        + RULE.format(serial="IDEO", value=60) + "　\n"
+        + RECORD.format(serial="UNIT") + "\x1f\n"
+        + RULE.format(serial="VT", value=60) + "\v\n"
+        + RULE.format(serial="FF1", value=60) + "\f" + RULE.format(serial="FF2", value=60) + "\n"
+        + RULE.format(serial="ARABIC", value="٦٠") + "\n"
+    )
+
+    assert spindown.read_rule() == spindown.Rule({"WD-W3": 5, "WD-SPARE": 10}, frozenset({"WD-W3"}))
+
+
 def test_the_e2e_fake_warns_with_the_server_s_text():
     """webui/tests/storage-fakes.ts answers a timeout whose disk's scans could not be turned off with the
     server's text, word for word (ADR-0189)."""

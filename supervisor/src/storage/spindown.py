@@ -88,8 +88,11 @@ _RULE = (
 )
 _RULE_LINE = re.compile(
     r'ACTION=="add", SUBSYSTEM=="block", ENV\{DEVTYPE\}=="disk", ENV\{ID_SERIAL_SHORT\}=="(?P<serial>[^"]+)", '
-    r'RUN\+="' + re.escape(HDPARM_PATH) + r' -S (?P<value>\d+) \$devnode"'
+    r'RUN\+="' + re.escape(HDPARM_PATH) + r' -S (?P<value>[0-9]+) \$devnode"'
 )
+# The blanks that udev skips around a line of a rules file; a line ends at "\n" or "\r" (udev's
+# read_line). read_rule reads the file the same way, and so does deploy/uninstall.sh.
+_BLANKS = " \t"
 # A serial that a udev rule matches as it is: udev's ID_SERIAL_SHORT keeps letters, digits and
 # "#+-.:=@_" (it replaces the rest), and none of them is a pattern character of a rule's match.
 _RULE_SERIAL = re.compile(r"[A-Za-z0-9#+.:=@_-]{1,64}")
@@ -143,7 +146,8 @@ class Rule:
 def read_rule() -> Rule:
     """UNOS's udev rule; empty without the file. A line that UNOS did not write is no timeout, nor
     is one whose timeout is not offered (SPINDOWN_MINUTES): one edited by hand; nor is a record
-    edited by hand one. RuntimeError when the file cannot be read."""
+    edited by hand one. Lines are read as udev reads them: one ends at "\n" or "\r", and only
+    spaces and tabs around it are blanks. RuntimeError when the file cannot be read."""
     result = host.run_on_host(["cat", "--", RULES_PATH], timeout=UDEV_TIMEOUT, errors="replace")
     if not result.ok:
         if "No such file or directory" in result.stderr:
@@ -151,8 +155,8 @@ def read_rule() -> Rule:
         raise RuntimeError(f"Could not read {RULES_PATH}: {result.stderr.strip() or result.returncode}")
     found: dict[str, int] = {}
     scans_off: set[str] = set()
-    for line in result.stdout.splitlines():
-        line = line.strip()
+    for line in result.stdout.replace("\r", "\n").split("\n"):
+        line = line.strip(_BLANKS)
         match = _RULE_LINE.fullmatch(line)
         if match and _RULE_SERIAL.fullmatch(match["serial"]):
             minutes = minutes_of(int(match["value"]))
