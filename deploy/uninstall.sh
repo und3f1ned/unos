@@ -6,6 +6,12 @@
 
 set -e
 
+# The system's folders of programs, after those of the PATH given: root's PATH
+# may lack them (su without "-" keeps the user's PATH, which on Debian has no
+# /usr/sbin and /sbin), and hdparm, smartctl, udevadm and exportfs are there,
+# as the disk idle rule's /sbin/hdparm is.
+export PATH="${PATH:+$PATH:}/usr/sbin:/usr/bin:/sbin:/bin"
+
 # Colors
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -36,6 +42,34 @@ NFS_EXPORTS_FILE="/etc/exports.d/unos.exports"
 # runs (configure_spacemit_k1, ADR-0370). They stay, as the pools on NVMe do:
 # print_completion names them.
 K1_NVME_RULE="/etc/udev/rules.d/60-unos-k1-nvme.rules"
+# UNOS's udev rule of the disks' idle timeouts, which the supervisor writes
+# (supervisor/src/storage/spindown.py, ADR-0378): remove_disk_idle_timeouts
+# undoes what UNOS set on the disks it names, then removes it.
+DISK_IDLE_RULE="/etc/udev/rules.d/90-unos-disk-spindown.rules"
+# The start of its record of a disk whose automatic offline data collection
+# UNOS turned off (spindown.RECORD), before the disk's serial.
+DISK_IDLE_RECORD='# UNOS turned off the automatic offline data collection of the disk with the serial '
+# What became of the rule when it is not simply gone (print_completion says
+# so): "unread" (it could not be read), "nul" (it holds a NUL byte), "kept" (it
+# could not be removed) or "records" (it now holds only the records of the
+# disks whose scans are still off).
+DISK_IDLE_RULE_LEFT=""
+# The disks whose idle timeout it turned off (print_completion says what they
+# have now).
+DISK_IDLE_OFF=()
+# What it could not undo, two entries each: what is left and why, then the
+# command that undoes it (print_completion names them).
+DISK_IDLE_LEFT=()
+# The serials of the disks whose scans, which UNOS turned off, are still off.
+DISK_IDLE_SCANS_OFF=()
+# The rule's lines other than comments that are not as UNOS writes them
+# (edited by hand): nothing was run for them, and print_completion shows them.
+DISK_IDLE_FOREIGN=()
+# The exit status of a Ctrl-C (130), a TERM (143) or a HUP (129) that came while
+# the step undid the disks: it stops once the command then running has ended.
+# After a dropped SSH session the next write to the closed terminal fails
+# first, so set -e ends the script there with status 1; the rule is whole too.
+DISK_IDLE_STOP=""
 
 log_info() { echo -e "${BLUE}[INFO]${NC} $1"; }
 log_success() { echo -e "${GREEN}[OK]${NC} $1"; }
@@ -66,6 +100,9 @@ confirm_uninstall() {
     echo "  - UNOS configuration (/etc/unos)"
     echo "  - The Samba passwords of the SMB accounts created by UNOS"
     echo "  - The NFS exports added in UNOS ($NFS_EXPORTS_FILE)"
+    echo "  - The disk idle timeouts set in UNOS ($DISK_IDLE_RULE):"
+    echo "    the disks get none, and their own automatic offline scans that UNOS"
+    echo "    turned off are turned on again"
     echo ""
     echo -e "${YELLOW}Your storage pools and data on them will NOT be affected.${NC}"
     echo "The SMB accounts themselves and the group unos-smb are kept: the end of"
@@ -80,6 +117,14 @@ confirm_uninstall() {
 }
 
 backup_before_uninstall() {
+    # A run after one that removed the volumes (one stopped in
+    # remove_disk_idle_timeouts, which says to run it again) has no data to back
+    # up: docker run -v would create the volume empty, and the newest final
+    # backup would be an empty archive beside the real one.
+    if ! docker volume inspect deploy_unos-data >/dev/null 2>&1; then
+        log_info "No backup: Docker shows no volume deploy_unos-data with UNOS's data (an earlier run of the uninstallation removes it)"
+        return 0
+    fi
     read -p "Create a backup before uninstalling? [Y/n] " -n 1 -r
     echo
     if [[ ! $REPLY =~ ^[Nn]$ ]]; then
@@ -328,6 +373,325 @@ remove_nfs_exports() {
     log_success "NFS exports of UNOS removed"
 }
 
+# Whether $1 is one of the other arguments.
+is_one_of() {
+    local want=$1 item
+    shift
+    for item in "$@"; do
+        if [ "$item" = "$want" ]; then
+            return 0
+        fi
+    done
+    return 1
+}
+
+# The disks' idle timeouts of UNOS (ADR-0378), once the supervisor that writes
+# their rule has stopped, and before remove_files removes this script with
+# $UNOS_INSTALL_DIR. On each disk the rule names, what UNOS set is undone
+# with the host's tools (the supervisor's container, whose smartctl UNOS used,
+# is gone): hdparm -S 0 for a disk's line, as Off on the Storage page, and
+# smartctl -o on for a disk whose own automatic offline data collection UNOS
+# turned off, which a comment of the rule records (a setting that the drive is
+# expected to keep across restarts: assumed, not confirmed). Then the rule goes,
+# as UNOS's configuration: a run stopped before that finds it whole again, with
+# the script still there to run. A disk whose scans stay off keeps its record in
+# the rule (write_disk_idle_records). Only the lines that spindown.py's
+# read_rule takes as UNOS's count, read as udev reads a file without NUL bytes
+# (a line ends at \n or \r, with spaces and tabs around it; udev also ends one at
+# a NUL byte, which UNOS never writes): its exact form, a serial that
+# _RULE_SERIAL accepts and the hdparm -S value of an offered timeout. The file is
+# read as text, never run; a disk is found by its serial with lsblk, which reads
+# no disk, and no other disk is touched. A rule that cannot be read, or that
+# holds a NUL byte, stays: it is the only record of the disks whose scans are
+# off. A Ctrl-C, a TERM or a HUP while the disks are undone ends the
+# uninstallation, with the rule whole (disk_idle_stop_if_asked); nothing else
+# here stops it: print_completion names what is left.
+remove_disk_idle_timeouts() {
+    remove_disk_idle_leftovers
+    [ -e "$DISK_IDLE_RULE" ] || return 0
+    log_info "Removing the disk idle timeouts of UNOS..."
+    local content byte
+    # Bash drops NUL bytes from what it reads, which would join the parts of a
+    # line around one: read_rule counts no such line, and udev ends a line at a
+    # NUL. read returns 0 only when it found one.
+    if IFS= read -r -d '' byte 2>/dev/null <"$DISK_IDLE_RULE"; then
+        DISK_IDLE_RULE_LEFT=nul
+        log_warn "$DISK_IDLE_RULE holds a NUL byte, which UNOS never writes: it stays, and nothing is run for it (see the end of the uninstallation)"
+        return 0
+    fi
+    if ! content=$(cat -- "$DISK_IDLE_RULE"); then
+        DISK_IDLE_RULE_LEFT=unread
+        log_warn "Could not read $DISK_IDLE_RULE, so it stays (see the end of the uninstallation)"
+        return 0
+    fi
+
+    # What spindown.py writes, spelled out, as are the blanks: [A-Z] and
+    # [[:space:]] can match other characters in some locales. The values are
+    # hdparm_value of SPINDOWN_MINUTES: 5, 10 and 20 minutes, then 30 minutes
+    # and 1 to 5 hours.
+    local serial_pattern='^[ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789#+.:=@_-]{1,64}$'
+    local rule_pattern='^ACTION=="add", SUBSYSTEM=="block", ENV[{]DEVTYPE[}]=="disk", ENV[{]ID_SERIAL_SHORT[}]=="([^"]+)", RUN[+]="/sbin/hdparm -S ([0123456789]+) [$]devnode"$'
+    local offered=' 60 120 240 241 242 244 246 248 250 '
+    local blanks=$' \t' cr=$'\r' nl=$'\n'
+    local line serial value
+    local -a serials=() timed=() recorded=()
+    while IFS= read -r line; do
+        line=${line#"${line%%[!$blanks]*}"}
+        line=${line%"${line##*[!$blanks]}"}
+        if [ -z "$line" ]; then
+            continue
+        elif [[ $line =~ $rule_pattern ]]; then
+            serial=${BASH_REMATCH[1]}
+            value=${BASH_REMATCH[2]}
+            # read_rule reads the value as a number: 060 is 60.
+            while [[ $value == 0?* ]]; do
+                value=${value#0}
+            done
+            if [[ $serial =~ $serial_pattern ]] && [[ $offered == *" $value "* ]]; then
+                is_one_of "$serial" "${serials[@]}" || serials+=("$serial")
+                is_one_of "$serial" "${timed[@]}" || timed+=("$serial")
+                continue
+            fi
+        elif [[ $line == "# UNOS turned off"* ]]; then
+            serial=${line#"$DISK_IDLE_RECORD"}
+            if [ "$serial" != "$line" ] && [[ $serial =~ $serial_pattern ]]; then
+                is_one_of "$serial" "${serials[@]}" || serials+=("$serial")
+                is_one_of "$serial" "${recorded[@]}" || recorded+=("$serial")
+                continue
+            fi
+        elif [[ $line == "#"* ]]; then
+            # Another comment, such as the header, does nothing.
+            continue
+        fi
+        # Shown at the end as printable ASCII: a control character of the file
+        # could drive the terminal.
+        DISK_IDLE_FOREIGN+=("$(LC_ALL=C; printf '%s' "${line//[![:print:]]/?}")")
+    done <<< "${content//$cr/$nl}"
+
+    if [ "${#serials[@]}" -gt 0 ]; then
+        # timeout runs hdparm and smartctl in a process group of their own,
+        # which Ctrl-C does not reach, and bash goes on after a SIGINT that its
+        # command survived: a Ctrl-C, a TERM or a HUP is noted, and the step
+        # stops once the command then running has ended and its temporary
+        # folder is gone, before anything is written.
+        trap 'DISK_IDLE_STOP=130' INT
+        trap 'DISK_IDLE_STOP=143' TERM
+        trap 'DISK_IDLE_STOP=129' HUP
+        # The whole disks, with the serials that udev gave them, as the
+        # supervisor's lsblk reads them.
+        local listing listed=yes
+        if ! listing=$(lsblk -dnr -o NAME,TYPE,SERIAL); then
+            listed=no
+        fi
+        disk_idle_stop_if_asked
+        local name type reported path why
+        local -a found
+        for serial in "${serials[@]}"; do
+            path=""
+            why=""
+            found=()
+            if [ "$listed" = yes ]; then
+                while read -r name type reported; do
+                    if [ "$type" = disk ] && [ "$reported" = "$serial" ]; then
+                        found+=("/dev/$name")
+                    fi
+                done <<< "$listing"
+                if [ "${#found[@]}" -eq 1 ]; then
+                    path=${found[0]}
+                elif [ "${#found[@]}" -eq 0 ]; then
+                    why="it is not attached"
+                else
+                    why="more than one disk reports this serial (${found[*]})"
+                fi
+            else
+                why="the disks could not be listed (lsblk failed)"
+            fi
+            if is_one_of "$serial" "${timed[@]}"; then
+                undo_disk_idle "$serial" "$path" "$why" timer
+                disk_idle_stop_if_asked
+            fi
+            if is_one_of "$serial" "${recorded[@]}"; then
+                undo_disk_idle "$serial" "$path" "$why" scans
+                disk_idle_stop_if_asked
+            fi
+        done
+        trap - INT TERM HUP
+    fi
+
+    # The timeouts must not come back at boot: when the records cannot be
+    # written, the rule goes all the same, and the end names those disks.
+    if [ "${#DISK_IDLE_SCANS_OFF[@]}" -gt 0 ]; then
+        if write_disk_idle_records; then
+            DISK_IDLE_RULE_LEFT=records
+            log_warn "$DISK_IDLE_RULE now holds only the records of the disks whose automatic offline scans are still off (see the end of the uninstallation)"
+        else
+            log_warn "Could not keep the records of the disks whose automatic offline scans are still off in $DISK_IDLE_RULE: the end of the uninstallation names them"
+        fi
+    fi
+    if [ "$DISK_IDLE_RULE_LEFT" != records ]; then
+        if rm -f -- "$DISK_IDLE_RULE"; then
+            log_success "Removed UNOS's udev rule $DISK_IDLE_RULE"
+        else
+            DISK_IDLE_RULE_LEFT=kept
+            log_warn "Could not remove $DISK_IDLE_RULE (see the end of the uninstallation)"
+            return 0
+        fi
+    fi
+    if command -v udevadm >/dev/null 2>&1 && ! udevadm control --reload; then
+        log_warn "udevadm control --reload failed: udev reads its rules again by itself"
+    fi
+}
+
+# Ends the uninstallation when a Ctrl-C, a TERM or a HUP came while the disks
+# were undone (DISK_IDLE_STOP): nothing is written yet, so the rule stays whole
+# for the next run, and so does this script ($UNOS_INSTALL_DIR goes after this
+# step).
+disk_idle_stop_if_asked() {
+    [ -n "$DISK_IDLE_STOP" ] || return 0
+    trap - INT TERM HUP
+    log_warn "Stopped: UNOS's udev rule $DISK_IDLE_RULE stays as it was, and the disks it names may keep what UNOS set. Run the uninstallation again to finish."
+    exit "$DISK_IDLE_STOP"
+}
+
+# Removes the temporary files that a run killed in write_disk_idle_records left
+# next to the rule, <rule>.unos-tmp.<pid>, and no file of another name. udev
+# does not read them: their names do not end in .rules.
+remove_disk_idle_leftovers() {
+    local staged
+    for staged in "$DISK_IDLE_RULE".unos-tmp.*; do
+        [[ ${staged#"$DISK_IDLE_RULE.unos-tmp."} =~ ^[0123456789]+$ ]] && [ -f "$staged" ] || continue
+        if ! rm -f -- "$staged"; then
+            log_warn "Could not remove $staged, a temporary file of an earlier uninstallation, which udev does not read: remove it with rm $staged"
+        fi
+    done
+}
+
+# Replaces UNOS's rule with comments and the records of the disks whose scans
+# are still off (DISK_IDLE_SCANS_OFF), in the form that read_rule reads: udev
+# runs nothing of it, a new installation of UNOS takes them as records without a
+# timeout, which its Off turns on again (not on a disk with SMART off, whose
+# scans it does not read), and another run of this script (from a checkout of
+# UNOS: the uninstallation removes $UNOS_INSTALL_DIR) tries them again. Written
+# next to the rule under a name that udev does not read, then renamed over it,
+# as the supervisor writes it; a run killed in between leaves that file, which
+# the next run removes (remove_disk_idle_leftovers).
+write_disk_idle_records() {
+    local staged="$DISK_IDLE_RULE.unos-tmp.$$" text serial
+    text="# Left by the uninstallation of UNOS (deploy/uninstall.sh, ADR-0378). UNOS turned off the
+# automatic offline data collection of the disks below for their idle timeouts, and the
+# uninstallation could not turn it on again. udev runs nothing of this file. Once each disk
+# has it on again (smartctl -o on DISK, or smartctl -s on -o on DISK where SMART is off on the
+# disk, which turns SMART on too; DISK is the disk's path, from lsblk -o PATH,SERIAL), remove
+# this file.
+"
+    for serial in "${DISK_IDLE_SCANS_OFF[@]}"; do
+        text+="$DISK_IDLE_RECORD$serial"$'\n'
+    done
+    if printf '%s' "$text" >"$staged" && chmod 644 "$staged" && mv -f -- "$staged" "$DISK_IDLE_RULE"; then
+        return 0
+    fi
+    rm -f -- "$staged" 2>/dev/null || true
+    return 1
+}
+
+# Runs the command "$@" under the host's timeout, with /dev/null as its
+# standard input and its standard output and errors in the files out and errors
+# of the folder $1: TERM after 30 seconds, then KILL 5 seconds later, which
+# timeout sends to its own process group and so dies of too (137). The script
+# goes on then, 35 seconds at most after the start; a command that the kernel
+# holds in uninterruptible sleep (a disk that does not answer) outlives the KILL
+# until the kernel lets it go, with the files it was given open. So it gets
+# none of the script's own: not the pipe of a command substitution, for which
+# bash would wait as long, nor the script's output or errors, which may be a
+# pipe too (uninstall.sh 2>&1 | tee log, or ssh without a terminal), whose
+# reader would wait as long. bash's own line on a command that a signal ended
+# ("Killed") is not shown, since the end of the uninstallation says what
+# happened; the command's errors are, once it has ended (undo_disk_idle).
+run_bounded() {
+    local folder=$1
+    shift
+    { timeout --kill-after=5 30 "$@" </dev/null >"$folder/out" 2>"$folder/errors"; } 2>/dev/null
+}
+
+# Undoes on the disk with the serial $1 at the path $2 ("" when it was not
+# found, $3 says why) what UNOS set: $4 "timer", its idle timeout (hdparm -S 0,
+# which wakes the disk as Off does), or "scans", its automatic offline scans
+# (smartctl -o on, with -c, which reads them back, as the supervisor does:
+# smartctl exits 0 without sending -o to a disk with SMART off, and the end
+# then names the command that turns SMART on too, which UNOS did not turn off).
+# Each command runs under the host's timeout (run_bounded), its output and
+# errors in a temporary folder of mktemp -d ($TMPDIR or /tmp), removed once
+# they are read: its errors are shown then, and smartctl's answer is read.
+undo_disk_idle() {
+    local serial=$1 path=$2 why=$3 tool left package output="" undone=no status=0 folder
+    local -a undo
+    if [ "$4" = timer ]; then
+        tool=hdparm
+        package=hdparm
+        undo=(hdparm -S 0)
+        left="may keep its idle timeout until it restarts"
+    else
+        tool=smartctl
+        package=smartmontools
+        undo=(smartctl -o on)
+        left="has its automatic offline scans off"
+    fi
+    if [ -z "$why" ] && ! command -v "$tool" >/dev/null 2>&1; then
+        why="the host has no $tool (package $package)"
+    fi
+    if [ -z "$why" ] && ! folder=$(mktemp -d); then
+        why="no temporary folder for the output of $tool could be made (mktemp -d failed)"
+    fi
+    if [ -z "$why" ]; then
+        if [ "$4" = timer ]; then
+            run_bounded "$folder" "${undo[@]}" "$path" || status=$?
+            [ "$status" -ne 0 ] || undone=yes
+        else
+            run_bounded "$folder" "${undo[@]}" -c "$path" || status=$?
+            output=$(cat -- "$folder/out") || output=""
+            # smartctl's line of -c on them (smartmontools' ataprint.cpp).
+            case $output in
+                *"Auto Offline Data Collection: Enabled."*) undone=yes ;;
+            esac
+        fi
+        cat -- "$folder/errors" >&2 || true
+        rm -rf -- "$folder" || true
+        if [ "$undone" = yes ]; then
+            if [ "$4" = timer ]; then
+                DISK_IDLE_OFF+=("$path (serial $serial)")
+                log_success "Turned off the idle timeout of $path (serial $serial)"
+            else
+                log_success "Turned on again the automatic offline scans of $path (serial $serial)"
+            fi
+            return 0
+        fi
+        # 124: the timeout's TERM ended it; 137: its KILL, which ends timeout too.
+        if [ "$status" -eq 124 ] || [ "$status" -eq 137 ]; then
+            why="${undo[*]} did not answer within 30 seconds"
+        elif [[ $output == *"Auto Offline Data Collection: Disabled."* ]]; then
+            why="${undo[*]} left them off (exit status $status)"
+        elif [[ $output == *"SMART Disabled."* ]]; then
+            # SMART is off on the disk (ataprint.cpp): -o reaches it only
+            # with -s on, which the uninstallation leaves to the user.
+            why="SMART is off on the disk, and smartctl sends -o on only to a disk with SMART on; smartctl -s on -o on turns SMART on too"
+            undo=(smartctl -s on -o on)
+        elif [ "$status" -ne 0 ]; then
+            why="${undo[*]} failed (exit status $status)"
+        else
+            why="${undo[*]} read no state"
+        fi
+    fi
+    if [ "$4" = scans ]; then
+        DISK_IDLE_SCANS_OFF+=("$serial")
+    fi
+    local who="The disk with the serial $serial"
+    if [ -n "$path" ]; then
+        who+=" ($path)"
+    fi
+    DISK_IDLE_LEFT+=("$who $left: $why" "${undo[*]} ${path:-DISK}")
+    log_warn "$who $left: $why (see the end of the uninstallation)"
+}
+
 # What stays of UNOS's SMB setup, and how to remove it.
 print_smb_leftovers() {
     local name
@@ -410,6 +774,85 @@ print_smb_leftovers() {
     echo ""
 }
 
+# What stays of UNOS's disk idle timeouts, and how to undo it.
+print_disk_idle_leftovers() {
+    local i placeholder=no
+    if [ "$DISK_IDLE_RULE_LEFT" = unread ] || [ "$DISK_IDLE_RULE_LEFT" = nul ]; then
+        if [ "$DISK_IDLE_RULE_LEFT" = nul ]; then
+            echo "Disk idle timeouts: UNOS's udev rule $DISK_IDLE_RULE holds a NUL byte,"
+            echo "which UNOS never writes, so the uninstallation ran nothing for it."
+        else
+            echo "Disk idle timeouts: UNOS's udev rule $DISK_IDLE_RULE could not be read."
+        fi
+        echo "It stays, and so does what it set: the idle timeouts of the disks it names,"
+        echo "at every boot, and their own automatic offline scans, which UNOS turned off"
+        echo "where a line \"# UNOS turned off the automatic offline data collection of the"
+        echo "disk with the serial ...\" says so. Run for each disk it names, with the"
+        echo "disk's path (lsblk -o PATH,SERIAL) for DISK:"
+        echo "  hdparm -S 0 DISK"
+        echo "and, for each disk such a line names:"
+        echo "  smartctl -o on DISK"
+        echo "(smartctl -s on -o on DISK where SMART is off on the disk, which turns SMART"
+        echo "on too). Then remove the rule:"
+        echo "  rm $DISK_IDLE_RULE"
+        echo ""
+        return 0
+    fi
+    if [ "${#DISK_IDLE_OFF[@]}" -gt 0 ]; then
+        echo "Disk idle timeouts: these disks had an idle timeout set in UNOS, now turned"
+        echo "off. They have no standby timer until they restart; then they have their"
+        if [ "$DISK_IDLE_RULE_LEFT" = kept ]; then
+            echo "timeout of UNOS's rule again, until it is removed (see below):"
+        else
+            echo "own, or the one that /etc/hdparm.conf sets:"
+        fi
+        printf '  %s\n' "${DISK_IDLE_OFF[@]}"
+        echo ""
+    fi
+    if [ "${#DISK_IDLE_LEFT[@]}" -gt 0 ]; then
+        echo "Disk idle timeouts left: the uninstallation could not undo all that UNOS set"
+        echo "on the disks of its udev rule. To undo the rest, run as root:"
+        for ((i = 0; i < ${#DISK_IDLE_LEFT[@]}; i += 2)); do
+            echo "  ${DISK_IDLE_LEFT[i]}."
+            echo "    ${DISK_IDLE_LEFT[i + 1]}"
+            if [[ ${DISK_IDLE_LEFT[i + 1]} == *" DISK" ]]; then
+                placeholder=yes
+            fi
+        done
+        if [ "$placeholder" = yes ]; then
+            echo "DISK: the path of the disk with that serial, which lsblk -o PATH,SERIAL"
+            echo "shows while it is attached."
+        fi
+        echo ""
+    fi
+    if [ "$DISK_IDLE_RULE_LEFT" = kept ]; then
+        echo "Disk idle timeouts: UNOS's udev rule $DISK_IDLE_RULE could not be removed: it"
+        echo "sets the idle timeouts again at every boot. Remove it with:"
+        echo "  rm $DISK_IDLE_RULE"
+        echo ""
+    elif [ "$DISK_IDLE_RULE_LEFT" = records ]; then
+        echo "Disk idle timeouts: UNOS's udev rule $DISK_IDLE_RULE now holds only the"
+        echo "records of the disks whose automatic offline scans are still off (above),"
+        # The supervisor reads no scans of a disk with SMART off (spindown._scans).
+        echo "which udev ignores. A new installation of UNOS reads them: saving Off for"
+        echo "such a disk turns its scans on again, unless SMART is off on the disk: then"
+        echo "only smartctl -s on -o on does. Once they are on, remove the rule:"
+        echo "  rm $DISK_IDLE_RULE"
+        echo ""
+    fi
+    if [ "${#DISK_IDLE_FOREIGN[@]}" -gt 0 ]; then
+        echo "Disk idle timeouts: these lines of UNOS's udev rule are not as UNOS writes"
+        if [ "$DISK_IDLE_RULE_LEFT" = kept ]; then
+            echo "them (edited by hand), so the uninstallation ran nothing for them:"
+        else
+            echo "them (edited by hand). The uninstallation ran nothing for them, and they"
+            echo "are no longer in the rule:"
+        fi
+        printf '  %s\n' "${DISK_IDLE_FOREIGN[@]}"
+        echo ""
+    fi
+}
+
 print_completion() {
     echo ""
     echo -e "${GREEN}╔══════════════════════════════════════════════════════════╗${NC}"
@@ -439,6 +882,7 @@ print_completion() {
     echo "SMART data itself. To have smartd watch the disks again, run:"
     echo "  systemctl enable --now smartmontools"
     echo ""
+    print_disk_idle_leftovers
     if [ -f "$K1_NVME_RULE" ]; then
         echo "SpacemiT K1: the udev rule $K1_NVME_RULE keeps turning off the power"
         echo "saving of NVMe drives, because without that an NVMe drive on the K1 can hang"
@@ -460,6 +904,10 @@ main() {
     remove_docker_images
     remove_docker_volumes
     remove_systemd_service
+    # Once the supervisor, which writes the disk idle rule, has stopped, and
+    # before remove_files removes this script: a run stopped in the step can
+    # be run again, and finds the rule whole.
+    remove_disk_idle_timeouts
     remove_files
     remove_samba_passwords
     restore_samba_config

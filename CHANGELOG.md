@@ -386,7 +386,20 @@ manager, encrypted backup uploads, health checks, CI checks).
   10 minutes for 5) through `PUT /api/v1/storage/disks/{name}/spindown`:
   `hdparm -S` on the host at once,
   and a line in UNOS's udev rule `/etc/udev/rules.d/90-unos-disk-spindown.rules`,
-  matched by the disk's serial, at every boot and reconnection. The system
+  matched by the disk's serial, at every boot and reconnection. While a disk
+  has a timeout, its own automatic offline scans (a surface scan every few
+  hours that keeps it awake; after a restart they kept the dev device's disk
+  awake for hours with its timeout of 20 minutes, and through 18 to 35
+  minutes of watching with 10 to 20 minutes) are off: the Save turns them off
+  (`smartctl -o off` in the container) and the rule records it, also when
+  `smartctl` gives no clear answer, and Off turns them on again for such a
+  disk alone; a disk whose scans were off, or that has none (NVMe, SCSI, an
+  ATA disk without SMART or with SMART off), is left as it is. When they
+  cannot be turned off, or it is unknown whether they were, the timeout is
+  set all the same and the answer's `warning`, shown on the page, says they
+  may keep the disk awake; when the rule cannot be written, the scans are put
+  back as the rule still records them. The dialog says that a scheduled
+  scrub reads the pool instead. The system
   disk, boot and virtual devices, partitions, NVMe disks, disks without a
   usable serial and a host without `hdparm` (now an optional host tool) are
   refused with the reason, and so is every disk when the rule cannot be read.
@@ -407,14 +420,41 @@ manager, encrypted backup uploads, health checks, CI checks).
   `install.sh`, once UNOS runs, and the manual installation turn off the
   host's smartd (`systemctl disable --now smartmontools`): it would read every
   awake disk every 30 minutes, and UNOS reads SMART itself; `uninstall.sh`
-  says how to turn it on again. `scripts/dev/scenario.sh
-  smart` shows the system disk refused a timeout, gives the pool's disk the
+  says how to turn it on again. `uninstall.sh` also undoes, on each disk
+  that the rule names, what UNOS set, with the host's tools (found also
+  where root's PATH lacks `/usr/sbin` and `/sbin`), each under `timeout`
+  (the script goes on after 35 seconds per command at most, also when the
+  kernel keeps a command past its kill, and so does whatever reads its
+  output, since the command's output and errors go to temporary files, its
+  errors shown once it has ended): the timeout off (`hdparm -S 0`), and
+  the scans that UNOS turned off on again (`smartctl -o on`, read back with
+  `-c`); then it removes the rule. It does so once UNOS has stopped and
+  before it removes `/opt/unos`: a run stopped while it undoes the disks,
+  also with Ctrl-C or a dropped SSH session (which end it once the command
+  running has ended), leaves the rule whole and can run again, which then
+  makes no backup, since the data volume is gone. It counts only the lines
+  that the supervisor's `read_rule` takes as UNOS's, read as udev reads a
+  rules file without NUL bytes (as `read_rule` now does too), never runs the
+  file, touches no other disk, and names at its end, with the command, what it
+  could not undo (no `hdparm` or `smartctl`, a disk not attached or not alone
+  with its serial, SMART off on the disk, for which the command is
+  `smartctl -s on -o on`, a failed command) and the lines edited by hand,
+  which go with the rule. A disk whose scans stay off keeps its record in the
+  rule, which then holds only such records, for a new installation's Off
+  (not on a disk with SMART off); a rule it cannot read, or with a NUL byte,
+  stays. `scripts/dev/scenario.sh smart` shows the system disk
+  refused a timeout, gives the pool's disk the
   shortest timeout, waits for it to sleep (at most 1980 s: room for the dev
   device's disk's own minimum of about 660 s twice, as after a read of the
   hourly SMART monitor during the wait; it says whether the kernel counted
   reads or writes on a disk still awake), reads SMART while it sleeps and
-  sets the timeout of UNOS's rule again, or Off; it skips these steps when
-  the disk has no timeout of UNOS's and `/etc/hdparm.conf` sets one.
+  sets the timeout of UNOS's rule again, or Off; it reads the disk's
+  automatic offline scans first, shows them off after the Save and as found
+  at the end, also in its clean-up, which names what it left and the way
+  back, and fails an Off that answers a warning; it names them when they keep
+  the disk awake; it skips these steps when the disk has no timeout of
+  UNOS's and `/etc/hdparm.conf` sets one, and when it has one with its scans
+  on unrecorded.
 - **Balance** on the Storage page (ADR-0379): a mounted, writable pool's
   balance rewrites the data and metadata chunks less full than a usage limit
   (20% by default, 1 to 99) or, after a confirmation, every chunk (a full
@@ -425,13 +465,17 @@ manager, encrypted backup uploads, health checks, CI checks).
   cancelled or failed, with btrfs's error. The balance runs on the host in the
   systemd unit `unos-balance-<pool>`, so a restart of UNOS neither stops nor
   hides it, and a restart or shutdown of the host pauses it: it goes on when
-  the pool is mounted again. A balance is refused while the pool is not
-  mounted or is read-only, while a scrub of it runs and while another balance
-  of it runs or is paused, and a scrub (also a scheduled one) while a balance
-  of the pool runs. A cancel waits while a pause waits for the chunk being
-  moved, since btrfs would pause the balance all the same, and the paused
-  balance of a read-only pool is kept until it is mounted read-write. The
-  audit log records each start, pause, resume and cancel
+  the pool is mounted again. A full balance that goes on after a pause, by
+  **Resume Balance** or at a mount, rewrites only the chunks less than 90%
+  full (the Linux kernel's rule): the card of a paused balance, the full
+  balance's warning and the user guide say so, and that a new full balance,
+  after a cancel, rewrites every chunk. A balance is refused while the pool
+  is not mounted or is read-only, while a scrub of it runs and while another
+  balance of it runs or is paused, and a scrub (also a scheduled one) while a
+  balance of the pool runs. A cancel waits while a pause waits for the chunk
+  being moved, since btrfs would pause the balance all the same, and the
+  paused balance of a read-only pool is kept until it is mounted read-write.
+  The audit log records each start, pause, resume and cancel
   (`GET`/`POST`/`DELETE /api/v1/storage/pools/{name}/balance`,
   `POST .../balance/pause` and `.../balance/resume`). `scripts/dev/scenario.sh
   balance` checks it on the dev device.

@@ -112,6 +112,9 @@
 	let spindownChoice = '0';
 	let spindownBusy = false;
 	let spindownError = '';
+	// The server's warning after a Save: the disk's own automatic offline scans could not be turned
+	// off for its timeout, or on again (ADR-0378); the timeout was set all the same.
+	let spindownWarning = '';
 
 	// Mount / unmount confirmation
 	let poolAction: { kind: 'mount' | 'unmount'; pool: Pool } | null = null;
@@ -678,6 +681,7 @@
 		spindownDisk = disk;
 		spindownChoice = String(disk.spindown);
 		spindownError = '';
+		spindownWarning = '';
 	}
 
 	function closeSpindown() {
@@ -691,8 +695,9 @@
 		spindownBusy = true;
 		spindownError = '';
 		try {
-			await setDiskSpindown(spindownDisk.name, Number(spindownChoice));
+			const answer = await setDiskSpindown(spindownDisk.name, Number(spindownChoice));
 			spindownBusy = false;
+			spindownWarning = answer.warning ?? '';
 			closeSpindown();
 			await loadData(false);
 		} catch (e) {
@@ -1141,6 +1146,17 @@
 				{$t('storage.disks.title')}
 			</h2>
 
+			{#if spindownWarning}
+				<Alert
+					variant="warning"
+					title={$t('storage.spindown.saved')}
+					dismissible
+					class="mb-4"
+					on:dismiss={() => (spindownWarning = '')}
+				>
+					{spindownWarning}
+				</Alert>
+			{/if}
 			{#if disksError}
 				<Alert variant="error" title={$t('storage.disks.loadError')}>{disksError}</Alert>
 			{:else if disks.length === 0}
@@ -1885,6 +1901,7 @@
 				hint={$t('storage.spindown.hint')}
 				disabled={spindownBusy}
 			/>
+			<p class="form-hint">{$t('storage.spindown.scans')}</p>
 			{#if spindownError}
 				<Alert variant="error" title={$t('storage.spindown.failed')}>{spindownError}</Alert>
 			{/if}

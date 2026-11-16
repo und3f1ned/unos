@@ -250,6 +250,15 @@ interface DiskIdentity {
 /** What PUT /storage/disks/{name}/spindown answers for a host without hdparm (spindown.NO_HDPARM). */
 export const NO_HDPARM = 'The host has no hdparm: install the package hdparm on the host to set idle timeouts';
 
+/**
+ * The warning of PUT /storage/disks/{name}/spindown when the disk's own automatic offline scans
+ * could not be turned off for its timeout (spindown.SCANS_LEFT_ON, ADR-0378): `path` is the disk's,
+ * `reason` why. The timeout is set all the same.
+ */
+export function scansLeftOn(path: string, reason: string): string {
+  return `${path} has the idle timeout, but the disk's own automatic offline scans could not be turned off (${reason}): they may keep it awake`;
+}
+
 export interface FakeResponse {
   status: number;
   json: unknown;
@@ -300,6 +309,11 @@ export interface FakeStorageOptions {
   importResponse?: { status: number; json: unknown };
   /** Answer PUT /disks/<name>/spindown with this instead of setting the idle timeout. */
   spindownResponse?: FakeResponse;
+  /**
+   * The warning of a PUT /disks/<name>/spindown that sets the timeout (default none): the server's
+   * text, as scansLeftOn makes it, for the disk's path and the minutes.
+   */
+  spindownWarning?: (path: string, minutes: number) => string | null;
   /**
    * Called with the path of each GET (such as '/disks') when it is asked: its answer, made of the
    * fake host's state at that moment, is sent once the promise returned resolves, as the answer
@@ -472,7 +486,8 @@ export async function fakeStorageApi(page: Page, options: FakeStorageOptions = {
         if (!disk) return route.fulfill({ status: 400, json: { detail: `${name} is not a disk of this system` } });
         if (disk.spindown_problem) return route.fulfill({ status: 409, json: { detail: disk.spindown_problem } });
         timeouts.set(disk.serial, body.minutes);
-        return route.fulfill({ json: { name, minutes: body.minutes } });
+        const warning = options.spindownWarning?.(disk.path, body.minutes) ?? null;
+        return route.fulfill({ json: { name, minutes: body.minutes, warning } });
       }
       if (method === 'GET' && path === '/pools') {
         return answer({ json: pools.filter((pool) => !sharesItsLabel(pool)) });

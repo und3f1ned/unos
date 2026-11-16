@@ -156,6 +156,11 @@ device's disk (ADR-0378). "Standby-safe" is a command that
 sends a sleeping disk nothing that wakes it (ADR-0378). The user texts say a disk in standby "sleeps". Avoid: SLEEP
 mode (the deeper ATA state that needs a reset).
 
+**Automatic offline scan**: A hard disk's own surface scan every few hours (smartctl's automatic
+offline data collection, `smartctl -o on`), which keeps the disk awake while it runs; UNOS turns it
+off while the disk has an idle timeout and records that in its udev rule (ADR-0378). Avoid: offline
+test, self-test (a SMART test that UNOS starts).
+
 ## Shares and SMB
 
 **Share**: An SMB share: a folder inside a managed pool, or a volume, that Samba serves with
@@ -171,6 +176,11 @@ Avoid: permission, ACL.
 
 **Guest share**: A share that guests may read without a password; guests never write (ADR-0096,
 ADR-0100). Avoid: public share, anonymous share.
+
+**Protocol options**: A share's three SMB settings beside its access, each off by default: Require
+encryption (only clients that encrypt with SMB 3 open it), Time Machine backups of Macs, and
+Previous Versions from the snapshots of its pool or volume. Each is checked when stored and when
+smb.conf is rendered (ADR-0380).
 
 **SMB account**: A UNOS user's allowance to use SMB and, while it is active, the marked host account
 and the Samba password behind it (ADR-0105, ADR-0118). Avoid: Samba user, SMB user.

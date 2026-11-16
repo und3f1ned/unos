@@ -91,15 +91,19 @@ async def list_disks_endpoint(_=Depends(verify_token)):
 @router.put("/disks/{name}/spindown", response_model=DiskSpindown)
 async def set_disk_spindown(request: Request, name: str, body: SpindownSet, user: User = Depends(verify_token)):
     """Give a whole data disk of GET /disks an idle timeout, ``minutes`` of SPINDOWN_MINUTES, 0 for
-    off (ADR-0378): hdparm -S on the host now, which spins a sleeping disk up, and UNOS's udev
-    rule, which sets it again whenever the disk appears.
+    off (ADR-0378): hdparm -S on the host now, which spins a sleeping disk up, the disk's own
+    automatic offline data collection turned off for a timeout and on again when UNOS turned it off,
+    and UNOS's udev rule, which sets the timeout again whenever the disk appears and records the
+    collection UNOS turned off. When that collection cannot be switched, the timeout is set all the
+    same and ``warning`` says so.
 
     400 for a name that is no disk of this system, a boot or virtual device or a partition; 409 for
     the system disk, an NVMe disk, a disk without a serial that a udev rule can match or one that
     another disk reports too, a disk that udev knows by another serial, and a host without hdparm;
     422 for minutes that are not offered; 500 when hdparm fails or the rule cannot be read (nothing
     changed then), and when the rule cannot be written after hdparm set the timeout, which the
-    audit log records as failed. A change of the rule is audited as settings_changed.
+    audit log records as failed. A change of the rule or of the disk's automatic offline data
+    collection is audited as settings_changed.
     """
     try:
         change = await asyncio.to_thread(spindown.set_timeout, name, body.minutes)
@@ -114,12 +118,12 @@ async def set_disk_spindown(request: Request, name: str, body: SpindownSet, user
         raise HTTPException(status_code=500, detail=sanitize_error_message(RuntimeError(exc.detail))) from exc
     except Exception as exc:
         raise _http_error(exc) from exc
-    if change.changed:
+    if change.changed or change.scans:  # the rule, or the disk's own offline data collection
         await audit_change(
             AuditAction.SETTINGS_CHANGED, request, user.username, resource_type="disk",
             resource_id=change.name, details=change.what,
         )
-    return DiskSpindown(name=change.name, minutes=change.minutes)
+    return DiskSpindown(name=change.name, minutes=change.minutes, warning=change.warning)
 
 
 @router.get("/disks/{name}/smart", response_model=SmartData)

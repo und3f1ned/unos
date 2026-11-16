@@ -233,11 +233,42 @@ one that `/etc/hdparm.conf` or the disk's own default set, and after one it
 keeps those. A disk that is woken often wears faster, so give a disk in daily
 use a longer timeout.
 
+Many hard disks run automatic offline scans of their own: every few hours the
+disk reads its surface, for hours, and it does not sleep meanwhile, whatever
+its timeout (a WD6400AACS stayed awake for hours that way). While a disk has a
+timeout, UNOS turns its automatic offline scans off (`smartctl -o off`), notes
+that in its udev rule, and turns them on again when you set **Off**; a disk
+whose scans were off already, or that has none (also one whose SMART is
+turned off), is left as it is. The disk is expected to keep the setting when
+it restarts, but that is not confirmed for every disk: if a disk no longer
+sleeps after a restart, save its timeout again, which turns its scans off
+again. When they cannot be turned off, or UNOS cannot tell whether they were,
+the timeout is saved all the same, and **Storage** says that the scans may
+keep the disk awake. Without them the disk no longer reads its surface by itself: schedule
+a scrub of its pool (**System** → **Scheduler**), which reads every used
+block of the pool. A long SMART test reads the whole surface, but the
+Scheduler's SMART tests are short ones and no page starts a long one yet: run
+`sudo smartctl -t long /dev/sdX` on the host.
+
 The button is off, with the reason below it, for the system disk, an NVMe
 disk (it manages its own power), a disk that reports no serial number a udev
 rule can match or the serial of another disk, and on a host without `hdparm`:
 install the package `hdparm` on the host (`deploy/install.sh` does). When the
 host cannot read UNOS's udev rule, every disk's button is off with that reason.
+
+Uninstalling UNOS (`deploy/uninstall.sh`) does what **Off** does for each
+disk the udev rule names, then removes the rule: the disk has no standby timer
+until it restarts, and its automatic offline scans are on again (with the
+host's `smartctl`). At its end it names what it could not undo, such as a disk
+that is not attached or has SMART off, with the command to run. Until such a
+disk's scans are on again, the rule stays with only their records, which do
+nothing at boot; a new installation of UNOS reads them, and saving **Off** for
+the disk turns its scans on, unless SMART is off on the disk: then only the
+command named at the end does. If the uninstallation stops while it undoes the
+disks (Ctrl-C or a dropped connection, which take effect once the disk command
+then running has ended), the rule is still whole: run the uninstallation again
+to finish. That run makes no backup: the first one offered it, then removed
+UNOS's data volume.
 
 Nothing UNOS does on its own wakes a sleeping disk or keeps an idle one
 awake. Disk Health, the SMART data and the hourly SMART records leave a
@@ -400,8 +431,14 @@ For each pool, you can:
   goes on by itself when the pool is mounted again, for example at the next
   start of the NAS: cancel it to stop it for good. A restart or shutdown of
   the host pauses a balance that runs, which then goes on after the start in
-  the same way. **Resume Balance** waits for a scrub of the pool to end, and
-  the paused balance of a read-only pool can be resumed or cancelled only once
+  the same way. A full balance that goes on after a pause, by
+  **Resume Balance** or at a mount, rewrites only the chunks less than 90%
+  full, a rule of the Linux kernel for a resumed balance without a usage
+  limit: the chunks at least 90% full that it had not reached stay as they
+  are. To rewrite every chunk, cancel it and start a new full balance; a
+  balance with a usage limit keeps its limit when it goes on.
+  **Resume Balance** waits for a scrub of the pool to end, and the paused
+  balance of a read-only pool can be resumed or cancelled only once
   the pool is mounted read-write again. Afterwards the pool says
   whether the last balance finished (with the chunks it rewrote), was
   cancelled or failed (with btrfs's error, such as no space left); after a
@@ -691,14 +728,17 @@ marks one that the NAS cannot serve now with the reason (see below).
   those of scheduled snapshot tasks (`auto_<time>`). Scheduled tasks
   snapshot pools only, and a pool's snapshot does not hold the files of its
   volumes: a share in a volume lists only the volume's snapshots made on the
-  **Snapshots** page. When none is listed (the pool or volume has no
-  snapshot, or only snapshots of other names), `smbclient` of Samba 4.22
-  prints `NT_STATUS_INVALID_NETWORK_RESPONSE getting shadow copy data`
-  (smbd answers the empty list in 14 bytes, and that `smbclient` wants at
-  least 16): it means the list is empty. A pool or volume without a
-  `.snapshots` folder, such as a new one before its first snapshot (the
-  first snapshot makes the folder, and deleting snapshots keeps it), lists
-  none either. In each case Windows shows no previous versions. A folder
+  **Snapshots** page. When a pool or volume that has a `.snapshots` folder
+  lists none (all its snapshots were deleted, or it holds only snapshots
+  of other names), `smbclient` of Samba 4.22 prints
+  `NT_STATUS_INVALID_NETWORK_RESPONSE getting shadow copy data` (smbd
+  answers the empty list in 14 bytes, and that `smbclient` wants at least
+  16): it means the list is empty. A pool or volume without a `.snapshots`
+  folder, such as a new one before its first snapshot (the first snapshot
+  makes the folder, and deleting snapshots keeps it), has no list: there
+  `smbclient` prints `NT_STATUS_INVALID_DEVICE_REQUEST getting shadow copy
+  data`, as the dev device showed. In each case Windows shows no previous
+  versions. A folder
   in a subvolume or file system of its own
   further below the pool's top level than a volume (such as a restored copy
   inside a volume, a subvolume made by hand or another file system mounted
