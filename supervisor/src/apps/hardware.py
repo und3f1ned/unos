@@ -1,14 +1,18 @@
-"""The hardware of the host's SoC that apps get (ADR-0377).
+"""The hardware of the host's SoC that the containers of apps get (ADR-0382).
 
-A template's HardwareProfile names a SoC by a compatible of the host's device tree, and the
-device nodes without which the app cannot use that hardware. A profile applies on a host whose
-device tree names its SoC and that has every node it requires: there the app's container gets
-those of the profile's device nodes that the host has; a profile whose app must read paths that
-Docker masks gets Docker's masks without them, and runs without Docker's AppArmor profile where
-Docker applies one. Where no profile applies, the app is installed as on every host, and the
-catalog API names no profile. The device tree and the nodes are the host's, read through
-src/host.py (ADR-0020); a read that fails counts as a host without a device tree or without the
-nodes, and is logged; a host without a device tree (a PC) is not.
+A container's HardwareProfile names a SoC by a compatible of the host's device tree, and the
+device nodes without which the container cannot use that hardware; the main container's
+profiles are its template's, a companion's are its own. A profile applies on a host whose
+device tree names its SoC and that has every node it requires, which may lie in a folder that
+it passes (the host's ``[ -e ]`` follows links): there the container gets those of the
+profile's device nodes that the host has, and the profile's image if it names one; a profile
+whose container must read paths that Docker masks gets Docker's masks without them, and runs
+without Docker's AppArmor profile where Docker applies one. Where no profile of a container
+applies, the container is installed as on every host, with its own image, and the catalog API
+names no profile of it. The device tree and the nodes are the host's, read once for the
+profiles of all of an app's containers through src/host.py (ADR-0020); a read that fails counts
+as a host without a device tree or without the nodes, and is logged; a host without a device
+tree (a PC) is not.
 """
 
 from __future__ import annotations
@@ -18,7 +22,7 @@ import subprocess
 from dataclasses import dataclass, field
 
 from .. import host
-from .schemas import AppTemplate, HardwareProfile
+from .schemas import AppTemplate, ContainerSpec, HardwareProfile
 
 logger = logging.getLogger(__name__)
 
@@ -46,8 +50,9 @@ DOCKER_MASKED_PATHS = (
     "/sys/firmware",
 )
 
-# Prints those of its arguments that exist on the host, one per line. The paths reach the
-# shell as positional arguments, never as script text.
+# Prints those of its arguments that exist on the host, one per line; a link counts when what
+# it points to exists (the NPU's /dev/dri/by-path link). The paths reach the shell as
+# positional arguments, never as script text.
 _PRESENT_SCRIPT = 'for p do if [ -e "$p" ]; then printf "%s\\n" "$p"; fi; done'
 # Prints the file $1, the device tree's compatible; exits 3 where the host has none, a status
 # that neither nsenter nor cat uses: a host without a device tree is told from a read that fails.
@@ -102,6 +107,16 @@ class HostHardware:
         return profile.soc in self.socs and all(node in self.nodes for node in profile.requires)
 
 
+def all_profiles(template: AppTemplate) -> list[HardwareProfile]:
+    """The hardware profiles of every container of ``template``, its main container's and then
+    its companions', each id once: what the host is read for, once per install or request."""
+    profiles: dict[str, HardwareProfile] = {}
+    for spec in (template, *template.companions):
+        for profile in spec.hardware:
+            profiles.setdefault(profile.id, profile)
+    return list(profiles.values())
+
+
 def read_host_hardware(profiles: list[HardwareProfile]) -> HostHardware:
     """The host's SoC and nodes for ``profiles``: one read of its device tree, and one look for
     the nodes of the profiles of its SoC, if any; nothing is read for no profiles. Blocks: call
@@ -113,35 +128,50 @@ def read_host_hardware(profiles: list[HardwareProfile]) -> HostHardware:
     return HostHardware(socs, frozenset(_present_on_host(wanted)) if wanted else frozenset())
 
 
+def _image(spec: ContainerSpec, profiles: list[HardwareProfile]) -> str:
+    """The image of a container of ``spec`` with the applying ``profiles``: that of the first of
+    them that names one, else its own."""
+    return next((p.image for p in profiles if p.image), spec.image)
+
+
+def _on_host(spec: ContainerSpec, hardware: HostHardware) -> dict:
+    """The fields of ``spec`` as the catalog API answers them on a host that has ``hardware``:
+    the profiles that apply there only, and the image that the container runs there."""
+    profiles = [p for p in spec.hardware if hardware.applies(p)]
+    return {"hardware": profiles, "image": _image(spec, profiles)}
+
+
 def for_host(template: AppTemplate, hardware: HostHardware) -> AppTemplate:
-    """The template as the catalog API answers it on a host that has ``hardware``: with the
-    hardware profiles that apply there only."""
-    if not template.hardware:
+    """The template as the catalog API answers it on a host that has ``hardware``: each of its
+    containers with the hardware profiles that apply there only, and with the image that its
+    install pulls there."""
+    if not all_profiles(template):
         return template
-    return template.model_copy(update={"hardware": [p for p in template.hardware if hardware.applies(p)]})
+    companions = [companion.model_copy(update=_on_host(companion, hardware)) for companion in template.companions]
+    return template.model_copy(update={**_on_host(template, hardware), "companions": companions})
 
 
 @dataclass(frozen=True)
 class ContainerHardware:
-    """What an app's container gets of the host's hardware: the host's device nodes, each passed
-    in under its own path, read and write; Docker's MaskedPaths (None: Docker's defaults) and
-    its security options."""
+    """What a container of an app gets of the host's hardware: the image it runs (its own, or
+    that of a profile that applies), the host's device nodes, each passed in under its own path,
+    read and write; Docker's MaskedPaths (None: Docker's defaults) and its security options."""
 
+    image: str
     devices: list[str] = field(default_factory=list)
     masked_paths: list[str] | None = None
     security_opt: list[str] = field(default_factory=list)
 
 
-def container_hardware(template: AppTemplate) -> ContainerHardware:
-    """What the container of ``template`` gets on this host: nothing for a template without
-    hardware profiles, whose install reads nothing of the host, or where none applies. Blocks:
-    call it in a worker thread."""
-    hardware = read_host_hardware(template.hardware)
-    profiles = [p for p in template.hardware if hardware.applies(p)]
+def container_hardware(spec: ContainerSpec, hardware: HostHardware) -> ContainerHardware:
+    """What a container of ``spec`` gets on a host that has ``hardware`` (read once for all of
+    an app's containers): its own image and nothing more where none of its profiles applies."""
+    profiles = [p for p in spec.hardware if hardware.applies(p)]
     if not profiles:
-        return ContainerHardware()
+        return ContainerHardware(image=spec.image)
     unmasked = {path for p in profiles for path in p.unmasked_paths}
     return ContainerHardware(
+        image=_image(spec, profiles),
         devices=[node for node in dict.fromkeys(node for p in profiles for node in p.devices) if node in hardware.nodes],
         masked_paths=[path for path in DOCKER_MASKED_PATHS if path not in unmasked] if unmasked else None,
         security_opt=["apparmor=unconfined"] if any(p.apparmor_unconfined for p in profiles) else [],

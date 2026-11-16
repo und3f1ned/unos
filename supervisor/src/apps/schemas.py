@@ -86,9 +86,10 @@ class EnvVar(BaseModel):
 
 
 class HardwareProfile(BaseModel):
-    """Hardware of a SoC that an app gets when it is installed on a host with that SoC (ADR-0377).
+    """Hardware of a SoC that a container of an app gets when it is installed on a host with that
+    SoC (ADR-0382).
 
-    Off that SoC the app is installed as on every host.
+    Off that SoC the container is installed as on every host.
     """
     # Names the profile in the API; the App Store's hint is chosen by it.
     id: str
@@ -98,8 +99,9 @@ class HardwareProfile(BaseModel):
     # and write, when the host has them. The container stays unprivileged: its root opens
     # them whatever their owner and mode, and the device cgroup allows these nodes only.
     devices: list[str]
-    # Those of the devices without which the app cannot use the hardware: the profile applies,
-    # and the catalog API names it, only on a host that has every one of them.
+    # Those of the devices without which the container cannot use the hardware, or paths inside
+    # a folder of them (a link in /dev/dri/by-path): the profile applies, and the catalog API
+    # names it, only on a host that has every one of them.
     requires: list[str]
     # Paths that Docker masks in every unprivileged container and the app must read: the rest
     # of Docker's masks stay (hardware.DOCKER_MASKED_PATHS).
@@ -107,32 +109,53 @@ class HardwareProfile(BaseModel):
     # Run without Docker's AppArmor profile (docker-default), which denies reading what is
     # unmasked under /sys/firmware, where Docker applies one.
     apparmor_unconfined: bool = False
+    # Where the profile applies, its container runs this image in place of its own: one built
+    # for the hardware, pinned by tag and digest (ADR-0381). A profile shared by templates
+    # names none; a template gives its copy one (model_copy). At most one profile of a
+    # container names an image.
+    image: str | None = None
 
 
-class AppTemplate(BaseModel):
+class ContainerSpec(BaseModel):
+    """What UNOS needs to create one container of an app (ADR-0381): the main container's are
+    its template's own fields, a companion's its own."""
+    image: str
+    volumes: list[VolumeMapping] = []
+    environment: list[EnvVar] = []
+    # The hardware of the SoCs that the container gets (ADR-0382). The catalog API answers only
+    # the profiles of the host's SoC, and the image of one of them that names one.
+    hardware: list[HardwareProfile] = []
+
+
+class Companion(ContainerSpec):
+    """A companion container of an app, beside its main container (ADR-0381)."""
+    # The container's name in the app, its DNS alias on the app's network: the container is
+    # "<app id>-<name>".
+    name: str
+
+
+class AppTemplate(ContainerSpec):
+    """An app of the catalog: its main container (image, volumes, environment and hardware of
+    ContainerSpec, with the fields below) and its companion containers."""
     id: str
     name: str
     description: str
     icon: str
     category: AppCategory
-    image: str
     version: str
     website: str = ""
     source: AppSource = AppSource.COMMUNITY
     github: str = ""
     documentation: str = ""
     ports: list[PortMapping] = []
-    volumes: list[VolumeMapping] = []
-    environment: list[EnvVar] = []
     restart_policy: str = "unless-stopped"
     privileged: bool = False
     network_mode: str | None = None
     capabilities: list[str] = []
-    # The hardware of the SoCs that the app gets (ADR-0377). The catalog API answers only
-    # the profiles of the host's SoC.
-    hardware: list[HardwareProfile] = []
     min_memory: str = "256m"  # Minimum recommended memory
     recommended_memory: str = "512m"
+    # The app's other containers (ADR-0381).
+    companions: list[Companion] = []
 
     @computed_field  # type: ignore[misc]
     @property
@@ -179,7 +202,7 @@ class InstalledApp(BaseModel):
     # The app runs in the group unos-smb: its container's PGID is 70000
     # (ADR-0274). Only such an app is given a share's folder.
     runs_in_unos_smb: bool = False
-    # The host's device nodes passed into the container (ADR-0377), as Docker keeps them.
+    # The host's device nodes passed into the container (ADR-0382), as Docker keeps them.
     devices: list[str] = []
 
 
@@ -217,6 +240,6 @@ class AppInstallResponse(BaseModel):
     # Pool holding the app's data (None if the app stores nothing on a pool).
     pool: str | None = None
     volumes: list[AppVolume] = []
-    # The host's device nodes passed into the container (ADR-0377): none where no hardware
-    # profile of the app applies, or where the host could not be read.
+    # The host's device nodes passed into the container (ADR-0382): none where no hardware
+    # profile of the container applies, or where the host could not be read.
     devices: list[str] = []

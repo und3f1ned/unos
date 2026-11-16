@@ -32,7 +32,7 @@ from ..shares.models import SmbShare
 from ..snapshots.router import SNAPSHOT_DIR_NAME
 from . import preflight
 from .catalog import APP_CATALOG, get_app_by_id, get_apps_by_category, search_apps
-from .hardware import container_hardware, for_host, read_host_hardware
+from .hardware import all_profiles, container_hardware, for_host, read_host_hardware
 from .schemas import (
     POOL_PLACEHOLDER,
     AppCategory,
@@ -99,7 +99,7 @@ async def list_apps(
     query: str | None = None,
     _: dict = Depends(verify_token)
 ):
-    """List available apps from catalog, with the hardware they get on this host (ADR-0377)."""
+    """List available apps from catalog, with the hardware they get on this host (ADR-0382)."""
     if query:
         apps = search_apps(query)
     elif category:
@@ -111,7 +111,7 @@ async def list_apps(
 
 @router.get("/catalog/{app_id}", response_model=AppTemplate)
 async def get_app(app_id: str, _: dict = Depends(verify_token)):
-    """Get app template by ID, with the hardware it gets on this host (ADR-0377)."""
+    """Get app template by ID, with the hardware it gets on this host (ADR-0382)."""
     app = get_app_by_id(app_id)
     if not app:
         raise HTTPException(404, f"App {app_id} not found")
@@ -119,9 +119,10 @@ async def get_app(app_id: str, _: dict = Depends(verify_token)):
 
 
 async def _for_this_host(apps: list[AppTemplate]) -> list[AppTemplate]:
-    """The templates with only the hardware profiles that apply on this host; the host is read,
-    in a worker thread, only when one of them has a profile."""
-    profiles = [profile for app in apps for profile in app.hardware]
+    """The templates with only the hardware profiles that apply on this host, each container
+    with the image that its install pulls here; the host is read once, in a worker thread, and
+    only when a container of one of them has a profile."""
+    profiles = [profile for app in apps for profile in all_profiles(app)]
     if not profiles:
         return apps
     hardware = await asyncio.to_thread(read_host_hardware, profiles)
@@ -184,7 +185,7 @@ def _list_installed() -> list[InstalledApp]:
 
 
 def _devices(container: Any) -> list[str]:
-    """The host's device nodes passed into the container, as Docker keeps them (ADR-0377)."""
+    """The host's device nodes passed into the container, as Docker keeps them (ADR-0382)."""
     devices = (container.attrs.get("HostConfig") or {}).get("Devices") or []
     return [str(device.get("PathOnHost", "")) for device in devices]
 
@@ -892,10 +893,11 @@ def _install_app(req: AppInstallRequest, shares: list[_ShareFolder]) -> AppInsta
         raise _docker_error(e)
     preflight.check_ports(port_bindings, containers)
 
-    hardware = container_hardware(template)
+    # The host is read once for the profiles of all the app's containers (ADR-0382).
+    hardware = container_hardware(template, read_host_hardware(all_profiles(template)))
 
     try:
-        client.images.pull(template.image)
+        client.images.pull(hardware.image)
     except _DOCKER_ERRORS as e:
         raise HTTPException(500, f"Failed to pull image: {e}")
 
@@ -917,7 +919,7 @@ def _install_app(req: AppInstallRequest, shares: list[_ShareFolder]) -> AppInsta
     try:
         container = _create_container(
             client,
-            template.image,
+            hardware.image,
             hardware.masked_paths,
             name=name,
             ports=port_bindings or None,
@@ -968,7 +970,7 @@ def _install_app(req: AppInstallRequest, shares: list[_ShareFolder]) -> AppInsta
 
 def _create_container(client: Any, image: str, masked_paths: list[str] | None, **options: Any) -> Any:
     """``client.containers.create(image, **options)``; with ``masked_paths``, the same container
-    with Docker's MaskedPaths set to them in place of Docker's defaults (ADR-0377). docker-py's
+    with Docker's MaskedPaths set to them in place of Docker's defaults (ADR-0382). docker-py's
     create has no argument for them, so that container is made through its low-level API: the
     host config that its create would build, with MaskedPaths added."""
     if masked_paths is None:

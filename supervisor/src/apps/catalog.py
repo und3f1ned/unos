@@ -42,11 +42,16 @@ Volume host paths:
 Mark passwords, tokens and keys with secret=True and never ship a default
 value for them; required secrets must be set by the administrator.
 
-Hardware of a SoC that an app uses (a video engine, a GPU) is a HardwareProfile
-in the template's hardware: on a host whose device tree names that SoC and that
-has the nodes the profile requires, the container gets the profile's device
-nodes that the host has; elsewhere the app is installed as on every host
-(src/apps/hardware.py, ADR-0377).
+Hardware of a SoC that a container uses (a video engine, a GPU, an NPU) is a
+HardwareProfile in that container's hardware: the template's for its main
+container, a companion's own for it. On a host whose device tree names that SoC
+and that has the nodes the profile requires (each a device of the profile or a
+path inside a device folder of it), the container gets the profile's device
+nodes that the host has, and the profile's image in place of its own if the
+profile names one; elsewhere the container is installed as on every host
+(src/apps/hardware.py, ADR-0382). A profile shared by templates names no image:
+a template gives its copy one with model_copy, and a container has at most one
+profile with an image.
 """
 
 from .schemas import (
@@ -69,7 +74,7 @@ POOL = POOL_PLACEHOLDER
 # mapping). Only Rockchip's kernel has MPP's /dev/mpp_service: without it (the mainline kernel)
 # RKMPP cannot work, and the profile does not apply. Rockchip's MPP names the SoC from
 # /proc/device-tree/compatible, a link into /sys/firmware, which Docker masks and its AppArmor
-# profile denies (ADR-0377).
+# profile denies (ADR-0382).
 RK3588_VIDEO = HardwareProfile(
     id="rk3588-video",
     soc="rockchip,rk3588",

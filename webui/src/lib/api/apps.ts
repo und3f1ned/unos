@@ -47,19 +47,24 @@ export interface EnvVar {
 }
 
 /**
- * Hardware of a SoC that an app gets when it is installed on a host with that SoC and the nodes
- * of `requires` (ADR-0377): the device nodes the host has of `devices`, Docker's masks without
- * `unmasked_paths`.
+ * Hardware of a SoC that a container of an app gets when it is installed on a host with that SoC
+ * and the nodes of `requires` (ADR-0382): the device nodes the host has of `devices`, Docker's
+ * masks without `unmasked_paths`, and `image` in place of the container's own.
  */
 export interface HardwareProfile {
   id: string;
   /** A name of the SoC in the host's device tree. */
   soc: string;
   devices: string[];
-  /** The nodes without which the app cannot use the hardware; a container without them did not get it. */
+  /**
+   * The nodes without which the container cannot use the hardware, each a device of `devices` or
+   * a path inside a device folder of it; a container without them did not get it.
+   */
   requires: string[];
   unmasked_paths: string[];
   apparmor_unconfined: boolean;
+  /** The image the container runs where the profile applies; the catalog's template names it already. */
+  image: string | null;
 }
 
 export interface AppTemplate {
@@ -105,19 +110,22 @@ export interface InstalledApp {
   data_outside_pools: string[];
   /** The app runs in the group unos-smb (PUID 80000, PGID 70000): its container says so. */
   runs_in_unos_smb: boolean;
-  /** The host's device nodes passed into the container (ADR-0377), as Docker keeps them. */
+  /** The host's device nodes passed into the container (ADR-0382), as Docker keeps them. */
   devices: string[];
 }
 
 /**
- * Whether an app's container got the hardware of `profile`: every node it requires. The container
- * is an installed app, or the answer of its install.
+ * Whether an app's container got the hardware of `profile`: every node it requires, as a device it
+ * got or inside a device folder it got (ADR-0382: the NPU's link in /dev/dri). The container is an
+ * installed app, or the answer of its install.
  */
 export function hasHardware(container: Pick<InstalledApp, "devices">, profile: HardwareProfile): boolean {
-  return profile.requires.every((node) => container.devices.includes(node));
+  return profile.requires.every((node) =>
+    container.devices.some((device) => node === device || node.startsWith(`${device}/`)),
+  );
 }
 
-/** The hardware profiles of `app` that its container did not get (ADR-0377). */
+/** The hardware profiles of `app` that its container did not get (ADR-0382). */
 export function missingHardware(app: AppTemplate, container: Pick<InstalledApp, "devices">): HardwareProfile[] {
   return app.hardware.filter((profile) => !hasHardware(container, profile));
 }
@@ -163,7 +171,7 @@ export interface AppInstallResponse {
   /** Pool holding the app's data, or null if it stores nothing on a pool. */
   pool: string | null;
   volumes: AppVolume[];
-  /** The host's device nodes passed into the container (ADR-0377). */
+  /** The host's device nodes passed into the container (ADR-0382). */
   devices: string[];
 }
 

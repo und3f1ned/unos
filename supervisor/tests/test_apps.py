@@ -12,6 +12,7 @@ import asyncio
 import fcntl
 import importlib
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -38,6 +39,9 @@ from src.apps.schemas import (
     AppPool,
     AppSource,
     AppTemplate,
+    Companion,
+    HardwareProfile,
+    PortMapping,
     VolumeMapping,
 )
 from src import host as host_module
@@ -51,6 +55,7 @@ from src.shares.models import SmbShare
 # The package re-exports its APIRouter as ``router``; import the module.
 apps_router = importlib.import_module("src.apps.router")
 hardware_module = importlib.import_module("src.apps.hardware")
+catalog_module = importlib.import_module("src.apps.catalog")
 audit_router = importlib.import_module("src.audit.router")
 
 INSTALL = "/api/v1/apps/install"
@@ -201,7 +206,7 @@ def docker_client(monkeypatch):
     return client
 
 
-# What the host of the hardware reads answers (src/apps/hardware.py, ADR-0377). The device tree
+# What the host of the hardware reads answers (src/apps/hardware.py, ADR-0382). The device tree
 # is read by a shell that exits 3 where the host has none (NO_DEVICE_TREE).
 DEVICE_TREE = "/proc/device-tree/compatible"
 NO_DEVICE_TREE = HostResult(3, "", "")
@@ -2613,7 +2618,7 @@ class TestStopAndUninstall:
 
 
 # ---------------------------------------------------------------------------
-# The hardware of the host's SoC (apps.rk3588-hardware-acceleration, ADR-0377)
+# The hardware of the host's SoC (apps.rk3588-hardware-acceleration, ADR-0382)
 # ---------------------------------------------------------------------------
 
 # The device tree of the dev device, a Banana Pi BPI-W3 (ADR-0376), and of other boards.
@@ -2631,6 +2636,14 @@ DOCKER_MASKED_PATHS = [
     "/sys/devices/virtual/powercap", "/sys/firmware",
 ]
 CREATED_ID = "c0ffee0123456789"
+# An image pinned by tag and digest (ADR-0381).
+PINNED_IMAGE = re.compile(r"[^@\s]+:[^@\s]+@sha256:[0-9a-f]{64}")
+
+
+def _catalog_containers() -> list:
+    """The specs of every container of the catalog: each template's main container and its
+    companions."""
+    return [spec for template in APP_CATALOG for spec in (template, *template.companions)]
 
 
 @pytest.fixture
@@ -2910,6 +2923,7 @@ class TestHardwareOfTheSoc:
             "requires": ["/dev/mpp_service"],
             "unmasked_paths": ["/sys/firmware"],
             "apparmor_unconfined": True,
+            "image": None,
         }]
         assert [p["id"] for p in found[0]["hardware"]] == ["rk3588-video"]
 
@@ -2980,14 +2994,235 @@ class TestHardwareOfTheSoc:
         }
 
     def test_every_profile_names_device_nodes_and_masks_of_docker(self):
-        profiles = [p for t in APP_CATALOG for p in t.hardware]
+        profiles = [p for spec in _catalog_containers() for p in spec.hardware]
         assert profiles
         for profile in profiles:
             assert all(path.startswith("/dev/") for path in profile.devices), profile.id
-            # A profile applies only with the nodes it requires, which the container gets.
-            assert profile.requires and set(profile.requires) <= set(profile.devices), profile.id
+            # A profile applies only with the nodes it requires, which the container gets: each
+            # is one of its devices or lies in a folder of them (ADR-0382).
+            assert profile.requires, profile.id
+            for path in profile.requires:
+                assert any(path == device or path.startswith(f"{device}/") for device in profile.devices), path
             assert set(profile.unmasked_paths) <= set(DOCKER_MASKED_PATHS), profile.id
         for template in APP_CATALOG:
-            if template.hardware:
+            if hardware_module.all_profiles(template):
                 # The device cgroup and Docker's other limits stay as they are: no privileges.
                 assert not template.privileged and not template.capabilities, template.id
+
+    def test_a_container_has_at_most_one_profile_that_chooses_its_image_and_it_is_pinned(self):
+        for spec in _catalog_containers():
+            images = [p.image for p in spec.hardware if p.image]
+            assert len(images) <= 1, spec.image
+            assert all(PINNED_IMAGE.fullmatch(image) for image in images), images
+
+    def test_profiles_of_one_id_are_one_profile_but_for_its_image(self):
+        # The host is read once for each id (hardware.all_profiles); a template gives a shared
+        # profile its image with model_copy, and the shared profile names none.
+        seen: dict[str, dict] = {}
+        for spec in _catalog_containers():
+            for profile in spec.hardware:
+                rest = profile.model_dump(exclude={"image"})
+                assert seen.setdefault(profile.id, rest) == rest, profile.id
+        shared = [v for v in vars(catalog_module).values() if isinstance(v, HardwareProfile)]
+        assert shared and not [p.id for p in shared if p.image]
+
+
+# ---------------------------------------------------------------------------
+# Hardware per container, and an image of a profile's own (ADR-0382)
+# ---------------------------------------------------------------------------
+
+# The NPU of the RK3588 under Rockchip's kernel, as ADR-0382's RK3588_NPU: the folder of DRM
+# nodes, required by the stable name of the NPU's render node, a link inside it.
+NPU_LINK = "/dev/dri/by-path/platform-fdab0000.npu-render"
+NPU = HardwareProfile(
+    id="rk3588-npu",
+    soc="rockchip,rk3588",
+    devices=["/dev/dri"],
+    requires=[NPU_LINK],
+    unmasked_paths=["/sys/firmware"],
+    apparmor_unconfined=True,
+)
+VIDEO = get_app_by_id("jellyfin").hardware[0]
+PHOTOS_ML = "example/photos-ml:1"
+PHOTOS_ML_NPU = "example/photos-ml:1-rknn"
+
+
+def _photos(**changes) -> AppTemplate:
+    """An app of three containers in the manner of Immich: its server with the RK3588's video
+    hardware, a database without any, and a machine learning service that gets the NPU and an
+    image built for it where the NPU applies."""
+    template = AppTemplate(
+        id="photos",
+        name="Photos",
+        description="Photos of three containers",
+        icon="P",
+        category=AppCategory.MEDIA,
+        image="example/photos-server:1",
+        version="1",
+        ports=[PortMapping(host=2283, container=2283)],
+        hardware=[VIDEO],
+        companions=[
+            Companion(name="database", image="example/postgres:14"),
+            Companion(
+                name="machine-learning",
+                image=PHOTOS_ML,
+                hardware=[NPU.model_copy(update={"image": PHOTOS_ML_NPU})],
+            ),
+        ],
+    )
+    return template.model_copy(update=changes)
+
+
+@pytest.fixture
+def in_catalog(monkeypatch):
+    """``in_catalog(template)`` adds ``template`` to the catalog that the API answers and installs."""
+
+    def add(template: AppTemplate) -> AppTemplate:
+        catalog = [*APP_CATALOG, template]
+        monkeypatch.setattr(catalog_module, "APP_CATALOG", catalog)
+        monkeypatch.setattr(apps_router, "APP_CATALOG", catalog)
+        return template
+
+    return add
+
+
+def _rk3588(soc, *, npu: bool = True) -> None:
+    """The dev device: an RK3588 under Rockchip's kernel with its video nodes, and the NPU's."""
+    soc.compatible = RK3588
+    soc.devices = {*RK3588_VIDEO, *([NPU_LINK] if npu else [])}
+
+
+def _containers(template: dict) -> dict[str, dict]:
+    """The containers of a template as the catalog API answers it, by name ("" for the main one)."""
+    return {"": template, **{c["name"]: c for c in template["companions"]}}
+
+
+class TestHardwarePerContainer:
+    def test_a_profile_applies_to_its_own_container_and_may_choose_its_image(self, soc):
+        _rk3588(soc)
+        template = _photos()
+        host = hardware_module.read_host_hardware(hardware_module.all_profiles(template))
+        server, database, learning = template, *template.companions
+
+        got = {
+            "server": hardware_module.container_hardware(server, host),
+            "database": hardware_module.container_hardware(database, host),
+            "machine-learning": hardware_module.container_hardware(learning, host),
+        }
+
+        unmasked = [path for path in DOCKER_MASKED_PATHS if path != "/sys/firmware"]
+        assert got["server"] == hardware_module.ContainerHardware(
+            image="example/photos-server:1",
+            devices=RK3588_VIDEO,
+            masked_paths=unmasked,
+            security_opt=["apparmor=unconfined"],
+        )
+        assert got["database"] == hardware_module.ContainerHardware(image="example/postgres:14")
+        # The folder is passed in; the link that the profile requires is inside it.
+        assert got["machine-learning"] == hardware_module.ContainerHardware(
+            image=PHOTOS_ML_NPU,
+            devices=["/dev/dri"],
+            masked_paths=unmasked,
+            security_opt=["apparmor=unconfined"],
+        )
+
+    def test_the_host_is_read_once_for_the_profiles_of_every_container(self, soc):
+        _rk3588(soc)
+
+        hardware_module.read_host_hardware(hardware_module.all_profiles(_photos()))
+
+        # One read of the device tree, and one look for the nodes of all profiles, each once.
+        assert len(soc.commands) == 2 and _reads_device_tree(soc.commands[0])
+        assert soc.commands[1][3:] == ["unos-devices", *RK3588_VIDEO, NPU_LINK]
+
+    def test_a_profile_that_two_containers_share_is_read_once(self):
+        template = _photos(companions=[Companion(name="worker", image="example/worker:1", hardware=[VIDEO])])
+
+        assert hardware_module.all_profiles(template) == [VIDEO]
+
+    @pytest.mark.parametrize(
+        ("compatible", "nodes"),
+        [(None, set()), (RK3568, {*RK3588_VIDEO, NPU_LINK}), (RK3588, set(RK3588_VIDEO))],
+        ids=["pc", "rk3568", "rk3588-without-the-npu"],
+    )
+    def test_where_a_profile_does_not_apply_its_container_keeps_its_own_image(self, soc, compatible, nodes):
+        # Under the mainline kernel the NPU's driver (rocket, /dev/accel) makes no such link.
+        soc.compatible = compatible
+        soc.devices = nodes
+        learning = _photos().companions[1]
+        host = hardware_module.read_host_hardware(hardware_module.all_profiles(_photos()))
+
+        assert hardware_module.container_hardware(learning, host) == hardware_module.ContainerHardware(image=PHOTOS_ML)
+
+    def test_the_catalog_names_each_containers_hardware_and_the_image_it_installs(self, api, soc, in_catalog):
+        _rk3588(soc)
+        in_catalog(_photos())
+
+        one = api.get("/api/v1/apps/catalog/photos").json()
+        listed = next(t for t in api.get("/api/v1/apps/catalog").json() if t["id"] == "photos")
+
+        for answer in (one, listed):
+            containers = _containers(answer)
+            assert {name: [p["id"] for p in c["hardware"]] for name, c in containers.items()} == {
+                "": ["rk3588-video"],
+                "database": [],
+                "machine-learning": ["rk3588-npu"],
+            }
+            # The App Store shows the image that the install pulls.
+            assert {name: c["image"] for name, c in containers.items()} == {
+                "": "example/photos-server:1",
+                "database": "example/postgres:14",
+                "machine-learning": PHOTOS_ML_NPU,
+            }
+            assert containers["machine-learning"]["hardware"][0]["image"] == PHOTOS_ML_NPU
+        # The host was read once for each request, for every container's profiles.
+        assert [cmd[3] for cmd in soc.commands] == ["unos-device-tree", "unos-devices"] * 2
+
+    @pytest.mark.parametrize(
+        ("compatible", "nodes", "server"),
+        [(None, set(), []), (RK3588, set(RK3588_VIDEO), ["rk3588-video"])],
+        ids=["pc", "rk3588-without-the-npu"],
+    )
+    def test_where_the_npu_does_not_apply_the_catalog_names_the_image_without_it(
+        self, api, soc, in_catalog, compatible, nodes, server
+    ):
+        soc.compatible = compatible
+        soc.devices = nodes
+        in_catalog(_photos())
+
+        containers = _containers(api.get("/api/v1/apps/catalog/photos").json())
+
+        assert [p["id"] for p in containers[""]["hardware"]] == server
+        assert containers["machine-learning"]["hardware"] == []
+        assert containers["machine-learning"]["image"] == PHOTOS_ML
+
+    def test_a_template_whose_only_profiles_are_its_companions_reads_the_host(self, api, soc, in_catalog):
+        _rk3588(soc)
+        in_catalog(_photos(hardware=[]))
+
+        containers = _containers(api.get("/api/v1/apps/catalog/photos").json())
+
+        assert containers["machine-learning"]["image"] == PHOTOS_ML_NPU
+        assert len(soc.commands) == 2
+
+    @pytest.mark.parametrize(
+        ("compatible", "image"),
+        [(RK3588, "example/photos-server:1-rk3588"), (None, "example/photos-server:1")],
+        ids=["rk3588", "pc"],
+    )
+    def test_an_install_pulls_and_creates_the_image_of_the_profile_that_applies(
+        self, api, pools, docker_client, low_level, soc, in_catalog, compatible, image
+    ):
+        soc.compatible = compatible
+        soc.devices = set(RK3588_VIDEO)
+        in_catalog(_photos(hardware=[VIDEO.model_copy(update={"image": "example/photos-server:1-rk3588"})], companions=[]))
+
+        response = api.post(INSTALL, json={"template_id": "photos"})
+
+        assert response.status_code == 200, response.text
+        docker_client.images.pull.assert_called_once_with(image)
+        if compatible is None:
+            assert docker_client.containers.create.call_args.args == (image,)
+        else:
+            assert low_level.create_container.call_args.args == (image,)
+            assert response.json()["devices"] == RK3588_VIDEO
