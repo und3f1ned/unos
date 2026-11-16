@@ -211,6 +211,16 @@ def _reads_device_tree(cmd: list[str]) -> bool:
     return cmd[:2] == ["/bin/sh", "-c"] and cmd[3:] == ["unos-device-tree", DEVICE_TREE]
 
 
+# The host's listening TCP and bound UDP sockets with their programs, which every install of an
+# app that publishes a port reads before the pull (src/apps/preflight.py, ADR-0381).
+SS = ["ss", "-H", "-l", "-n", "-t", "-u", "-p"]
+
+
+def _hardware_reads(soc) -> list[list[str]]:
+    """The host commands of ``soc`` but the look for the ports in use: the reads of the hardware."""
+    return [cmd for cmd in soc.commands if cmd != SS]
+
+
 @pytest.fixture(autouse=True)
 def soc(monkeypatch):
     """The host for the reads of its SoC and device nodes: no device tree, as on a PC, until a
@@ -218,8 +228,12 @@ def soc(monkeypatch):
     (the device nodes it has). ``commands`` records every host command; one that the fake does
     not know fails the test. ``fail`` is raised by every command, ``answer`` (a HostResult) is
     every command's answer, as when nsenter cannot enter the host. ``lookup`` (a HostResult, or an
-    exception to raise) answers only the look for the device nodes, after a device tree it read."""
-    fake = SimpleNamespace(compatible=None, devices=set(), commands=[], fail=None, answer=None, lookup=None)
+    exception to raise) answers only the look for the device nodes, after a device tree it read.
+    ``sockets`` are the lines that ``ss`` prints for the host's listening sockets (none by
+    default), and ``ss`` (a HostResult, or an exception to raise) answers only that read."""
+    fake = SimpleNamespace(
+        compatible=None, devices=set(), commands=[], fail=None, answer=None, lookup=None, sockets=[], ss=None
+    )
 
     def run(cmd, **kwargs):
         fake.commands.append(list(cmd))
@@ -227,6 +241,12 @@ def soc(monkeypatch):
             raise fake.fail
         if fake.answer is not None:
             return fake.answer
+        if cmd == SS:
+            if isinstance(fake.ss, BaseException):
+                raise fake.ss
+            if fake.ss is not None:
+                return fake.ss
+            return HostResult(0, "".join(f"{line}\n" for line in fake.sockets), "")
         if _reads_device_tree(cmd):
             return NO_DEVICE_TREE if fake.compatible is None else HostResult(0, fake.compatible, "")
         if cmd[:2] == ["/bin/sh", "-c"] and cmd[3:4] == ["unos-devices"]:
@@ -967,6 +987,230 @@ class TestDockerFlow:
 
 
 # ---------------------------------------------------------------------------
+# The host ports of an install, checked before the pull (ADR-0381)
+# ---------------------------------------------------------------------------
+
+
+def _published(port: int, protocol: str = "tcp", host_ip: str = "") -> dict[str, list[dict]]:
+    """Docker's PortBindings of a container that publishes ``port`` under the same number."""
+    return {f"{port}/{protocol}": [{"HostIp": host_ip, "HostPort": str(port)}]}
+
+
+# Lines that `ss -H -l -n -t -u -p` prints: the type, the state, the queues, the local address
+# and port, the peer and the programs that hold the socket.
+EMBY_ANY = 'tcp   LISTEN 0      4096         0.0.0.0:8096       0.0.0.0:*    users:(("EmbyServer",pid=812,fd=7))'
+RESOLVED = [
+    'udp   UNCONN 0      0      127.0.0.53%lo:53          0.0.0.0:*    users:(("systemd-resolve",pid=520,fd=13))',
+    'tcp   LISTEN 0      4096   127.0.0.53%lo:53          0.0.0.0:*    users:(("systemd-resolve",pid=520,fd=14))',
+]
+PIHOLE_LOGIN = {"WEBPASSWORD": "k7-Unique-pass"}
+
+
+class TestPortCheck:
+    """An install checks the host ports its container would publish before it pulls anything: a
+    port that a container publishes, running or stopped, or that a program on the host listens
+    on, answers 409 instead of a start that fails after a pull of minutes (ADR-0381)."""
+
+    @pytest.mark.parametrize("status", ["running", "exited", "created"])
+    def test_a_port_that_a_container_publishes_answers_409(self, api, pools, docker_client, installed, soc, status):
+        installed(_container("emby", status=status, port_bindings=_published(8096)))
+        # A running container's port is also a listener of Docker's proxy on the host.
+        soc.sockets = ['tcp   LISTEN 0      4096   0.0.0.0:8096   0.0.0.0:*   users:(("docker-proxy",pid=9,fd=7))']
+
+        response = api.post(INSTALL, json={"template_id": "jellyfin"})
+
+        assert (response.status_code, response.json()) == (409, {
+            "detail": f"Port 8096/tcp is already used by the container emby ({status}): "
+            "choose another host port for 8096/tcp"
+        })
+        # Stopped containers too: Docker binds their ports when they start.
+        docker_client.containers.list.assert_called_once_with(all=True, ignore_removed=True)
+        docker_client.images.pull.assert_not_called()
+        docker_client.containers.create.assert_not_called()
+        assert not (pools.alpha / "apps").exists()
+
+    def test_a_container_that_publishes_the_port_on_one_address_holds_it(self, api, pools, docker_client, installed):
+        installed(_container("emby", status="running", port_bindings=_published(8096, host_ip="127.0.0.1")))
+
+        response = api.post(INSTALL, json={"template_id": "jellyfin"})
+
+        assert response.status_code == 409
+        assert response.json()["detail"].startswith("Port 8096/tcp is already used by the container emby (running)")
+
+    @pytest.mark.parametrize("port_bindings", [
+        None,
+        _published(8096, "udp"),
+        _published(18096),
+        # A port that Docker chooses when the container starts.
+        {"8096/tcp": [{"HostIp": "", "HostPort": ""}]},
+    ], ids=["none", "other-protocol", "other-port", "chosen-by-docker"])
+    def test_other_ports_of_containers_do_not_count(self, api, pools, docker_client, installed, port_bindings):
+        installed(_container("emby", status="running", port_bindings=port_bindings))
+
+        response = api.post(INSTALL, json={"template_id": "jellyfin"})
+
+        assert response.status_code == 200, response.text
+
+    @pytest.mark.parametrize(("line", "holder"), [
+        (EMBY_ANY, "EmbyServer"),
+        ('tcp   LISTEN 0      4096            [::]:8096          [::]:*    users:(("EmbyServer",pid=812,fd=8))',
+         "EmbyServer"),
+        ('tcp   LISTEN 0      4096       127.0.0.1:8096       0.0.0.0:*    users:(("EmbyServer",pid=812,fd=9))',
+         "EmbyServer"),
+        ('tcp   LISTEN 0      4096      192.0.2.10:8096       0.0.0.0:*    users:(("EmbyServer",pid=812,fd=9))',
+         "EmbyServer"),
+        ('tcp   LISTEN 0      4096               *:8096             *:*    users:(("EmbyServer",pid=812,fd=9))',
+         "EmbyServer"),
+        # Without the right to read a process's descriptors, ss names no program.
+        ("tcp   LISTEN 0      4096         0.0.0.0:8096       0.0.0.0:*", "a program"),
+    ], ids=["any-ipv4", "any-ipv6", "loopback", "one-address", "any", "no-program"])
+    def test_a_port_that_a_program_on_the_host_listens_on_answers_409(
+        self, api, pools, docker_client, soc, line, holder
+    ):
+        soc.sockets = [line]
+
+        response = api.post(INSTALL, json={"template_id": "jellyfin"})
+
+        assert (response.status_code, response.json()) == (409, {
+            "detail": f"Port 8096/tcp is already in use on the host by {holder}: choose another host port for 8096/tcp"
+        })
+        assert soc.commands[0] == SS
+        docker_client.images.pull.assert_not_called()
+        assert not (pools.alpha / "apps").exists()
+
+    def test_listeners_of_other_ports_and_protocols_do_not_count(self, api, pools, docker_client, soc):
+        soc.sockets = [
+            'udp   UNCONN 0      0            0.0.0.0:8096       0.0.0.0:*    users:(("EmbyServer",pid=8,fd=7))',
+            'tcp   LISTEN 0      4096         0.0.0.0:18096      0.0.0.0:*    users:(("EmbyServer",pid=8,fd=8))',
+            'tcp   LISTEN 0      4096            [::]:80960         [::]:*    users:(("EmbyServer",pid=8,fd=9))',
+            'tcp   LISTEN 0      4096         0.0.0.0:809        0.0.0.0:*    users:(("EmbyServer",pid=8,fd=9))',
+        ]
+
+        response = api.post(INSTALL, json={"template_id": "jellyfin"})
+
+        assert response.status_code == 200, response.text
+
+    def test_every_taken_port_is_named(self, api, pools, docker_client, soc):
+        # The resolver of systemd listens on port 53 of 127.0.0.53 by TCP and UDP.
+        soc.sockets = RESOLVED
+
+        response = api.post(INSTALL, json={"template_id": "pihole", "env_overrides": PIHOLE_LOGIN})
+
+        assert (response.status_code, response.json()) == (409, {
+            "detail": "Port 53/tcp is already in use on the host by systemd-resolve: "
+            "choose another host port for 53/tcp; "
+            "Port 53/udp is already in use on the host by systemd-resolve: "
+            "choose another host port for 53/udp"
+        })
+        docker_client.images.pull.assert_not_called()
+
+    def test_a_port_is_taken_only_for_its_protocol(self, api, pools, docker_client, soc):
+        # Transmission's peer port is a TCP and a UDP port of one number; one override moves both.
+        soc.sockets = ['udp   UNCONN 0      0      0.0.0.0:51413      0.0.0.0:*    users:(("qbittorrent-nox",pid=4,fd=9))']
+
+        taken = api.post(INSTALL, json=TRANSMISSION)
+        moved = api.post(INSTALL, json={**TRANSMISSION, "port_overrides": {51413: 51414}})
+
+        assert (taken.status_code, taken.json()) == (409, {
+            "detail": "Port 51413/udp is already in use on the host by qbittorrent-nox: "
+            "choose another host port for 51413/udp"
+        })
+        assert moved.status_code == 200, moved.text
+        assert docker_client.containers.create.call_args.kwargs["ports"] == {
+            "9091/tcp": 9091, "51413/tcp": 51414, "51413/udp": 51414,
+        }
+        docker_client.images.pull.assert_called_once()
+
+    def test_a_free_host_port_given_for_a_taken_one_installs(self, api, pools, docker_client, installed, soc):
+        installed(_container("emby", status="running", port_bindings=_published(8096)))
+        soc.sockets = ['tcp   LISTEN 0      4096   0.0.0.0:8096   0.0.0.0:*   users:(("docker-proxy",pid=9,fd=7))']
+
+        response = api.post(INSTALL, json={"template_id": "jellyfin", "port_overrides": {8096: 8097}})
+
+        assert response.status_code == 200, response.text
+        assert docker_client.containers.create.call_args.kwargs["ports"] == {"8096/tcp": 8097}
+        assert response.json()["web_url"] == "http://localhost:8097"
+
+    @pytest.mark.parametrize("port", [0, -1, 65536])
+    def test_a_host_port_outside_the_range_answers_400(self, api, pools, docker_client, soc, port):
+        response = api.post(INSTALL, json={"template_id": "jellyfin", "port_overrides": {8096: port}})
+
+        assert (response.status_code, response.json()) == (
+            400, {"detail": "Host port for 8096/tcp must be between 1 and 65535"}
+        )
+        docker_client.containers.get.assert_not_called()
+        assert soc.commands == []
+
+    def test_a_host_port_given_twice_answers_400(self, api, pools, docker_client, soc):
+        # Pi-hole's web page (80/tcp, on 8053) moved onto its DNS port (53/tcp).
+        response = api.post(
+            INSTALL, json={"template_id": "pihole", "env_overrides": PIHOLE_LOGIN, "port_overrides": {80: 53}}
+        )
+
+        assert (response.status_code, response.json()) == (400, {"detail": "Host port 53/tcp is given twice"})
+        docker_client.containers.get.assert_not_called()
+        assert soc.commands == []
+
+    @pytest.mark.parametrize(("answer", "message"), [
+        (
+            HostResult(1, "", "nsenter: reassociate to namespace 'ns/net' failed: Operation not permitted"),
+            "Could not read the ports in use on the host (exit status 1): "
+            "nsenter: reassociate to namespace 'ns/net' failed: Operation not permitted",
+        ),
+        (
+            subprocess.TimeoutExpired(SS, 15),
+            f"Could not read the ports in use on the host: Command '{SS}' timed out after 15 seconds",
+        ),
+        (
+            FileNotFoundError(2, "No such file or directory", "nsenter"),
+            "Could not read the ports in use on the host: [Errno 2] No such file or directory: 'nsenter'",
+        ),
+    ], ids=["exit-status", "timeout", "oserror"])
+    def test_a_read_of_the_host_that_fails_is_logged_and_the_install_goes_on(
+        self, api, pools, docker_client, soc, caplog, answer, message
+    ):
+        # Docker's own bind refuses a taken port when the container starts.
+        soc.ss = answer
+
+        with caplog.at_level("WARNING", logger="src.apps.preflight"):
+            response = api.post(INSTALL, json={"template_id": "jellyfin"})
+
+        assert response.status_code == 200, response.text
+        assert [r.getMessage() for r in caplog.records if r.name == "src.apps.preflight"] == [message]
+        docker_client.containers.create.return_value.start.assert_called_once()
+
+    def test_an_app_that_publishes_no_port_reads_nothing_of_the_host(self, api, pools, docker_client, soc):
+        # Tailscale runs in the host's network and publishes no port.
+        response = api.post(INSTALL, json={"template_id": "tailscale"})
+
+        assert response.status_code == 200, response.text
+        assert soc.commands == []
+
+    def test_the_host_is_read_off_the_event_loop(self, api, pools, docker_client, soc, monkeypatch):
+        seen: list[bool] = []
+        real = host_module.run_on_host
+
+        def run(cmd, **kwargs):
+            seen.append(_on_event_loop())
+            return real(cmd, **kwargs)
+
+        monkeypatch.setattr(host_module, "run_on_host", run)
+
+        # Dozzle has no hardware profile: its install reads the host's ports only.
+        assert api.post(INSTALL, json={"template_id": "dozzle"}).status_code == 200
+        assert seen == [False]
+
+    def test_a_listing_that_docker_does_not_answer_answers_503(self, api, pools, docker_client):
+        error = requests.exceptions.ConnectionError("('Connection aborted.', ConnectionResetError(104, 'reset'))")
+        docker_client.containers.list.side_effect = error
+
+        response = api.post(INSTALL, json={"template_id": "jellyfin"})
+
+        assert (response.status_code, response.json()) == (503, {"detail": f"Docker is not available: {error}"})
+        docker_client.images.pull.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
 # Installed containers (mocked Docker objects)
 # ---------------------------------------------------------------------------
 
@@ -999,9 +1243,11 @@ def _container(
     policy: str = "unless-stopped",
     env: list[str] = (),
     devices: list[str] | None = None,
+    port_bindings: dict[str, list[dict]] | None = None,
 ) -> MagicMock:
     """``devices``: the host's device nodes passed in, as Docker keeps them (it answers null for
-    a container that has none)."""
+    a container that has none). ``port_bindings``: the host ports it publishes, as Docker keeps
+    them ("8096/tcp": [{"HostIp": "", "HostPort": "8096"}]; null for none)."""
     labels = {}
     if template is not None:
         labels["unos.app"] = template
@@ -1027,6 +1273,7 @@ def _container(
             "Devices": None if devices is None else [
                 {"PathOnHost": path, "PathInContainer": path, "CgroupPermissions": "rwm"} for path in devices
             ],
+            "PortBindings": port_bindings,
         },
         "NetworkSettings": {"Ports": {}},
         "Mounts": list(mounts),
@@ -2467,7 +2714,7 @@ class TestHardwareOfTheSoc:
             "/dev/dri", "/dev/dma_heap", "/dev/mpp_service",
         ]
         # The host was asked about the profile's nodes, in one command.
-        assert soc.commands[1][3:] == ["unos-devices", *RK3588_VIDEO]
+        assert _hardware_reads(soc)[1][3:] == ["unos-devices", *RK3588_VIDEO]
 
     @pytest.mark.parametrize("compatible", [None, RK3568, SPACEMIT_K1], ids=["pc", "rk3568", "spacemit-k1"])
     def test_off_an_rk3588_jellyfin_is_installed_as_before(self, api, pools, docker_client, soc, compatible):
@@ -2483,7 +2730,8 @@ class TestHardwareOfTheSoc:
         assert kwargs["privileged"] is False and kwargs["cap_add"] is None
         assert response.json()["devices"] == []
         # Only the device tree was read; no node was looked for.
-        assert len(soc.commands) == 1 and _reads_device_tree(soc.commands[0])
+        reads = _hardware_reads(soc)
+        assert len(reads) == 1 and _reads_device_tree(reads[0])
 
     def test_an_rk3588_without_any_of_the_nodes_installs_jellyfin_as_elsewhere(self, api, pools, docker_client, soc):
         soc.compatible = RK3588
@@ -2582,7 +2830,7 @@ class TestHardwareOfTheSoc:
         kwargs = docker_client.containers.create.call_args.kwargs
         assert kwargs.get("devices") is None and kwargs.get("security_opt") is None
         assert response.json()["devices"] == []
-        assert soc.commands[1][3:] == ["unos-devices", *RK3588_VIDEO]
+        assert _hardware_reads(soc)[1][3:] == ["unos-devices", *RK3588_VIDEO]
         assert [r.getMessage() for r in caplog.records if r.name == "src.apps.hardware"] == [message]
 
     def test_a_host_without_a_device_tree_is_not_logged(self, api, soc, caplog):
@@ -2609,7 +2857,8 @@ class TestHardwareOfTheSoc:
         response = api.post(INSTALL, json={"template_id": "dozzle"})
 
         assert response.status_code == 200, response.text
-        assert soc.commands == []
+        # Only the host ports that the app would take were read (ADR-0381).
+        assert soc.commands == [SS]
         assert docker_client.containers.create.call_args.kwargs.get("devices") is None
 
     def test_a_failed_start_on_an_rk3588_removes_the_container(self, api, pools, docker_client, low_level, soc):

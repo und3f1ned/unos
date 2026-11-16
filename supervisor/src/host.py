@@ -46,7 +46,8 @@ logger = logging.getLogger(__name__)
 # processes, ADR-0288), shares/smb.py, shares/accounts.py (SMB accounts: getent
 # and the shadow tools, smbpasswd, pdbedit, smbstatus), health/router.py and
 # network/ (ip, ss, systemd-run, hostnamectl; resolvectl only where
-# systemd-resolved runs, else /etc/resolv.conf), power/router.py (shutdown,
+# systemd-resolved runs, else /etc/resolv.conf), apps/preflight.py (ss: the host
+# ports that an app's install would take, ADR-0381), power/router.py (shutdown,
 # busctl, systemctl, ip, ethtool: ADR-0233), logs/router.py (journalctl, under
 # timeout: ADR-0257, ADR-0258), system/router.py (timedatectl under timeout, hostname:
 # ADR-0331) and notifications/router.py (curl, which sends a notification channel's

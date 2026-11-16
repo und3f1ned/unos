@@ -33,8 +33,10 @@ from sqlalchemy.pool import NullPool
 
 from src.audit import router as audit_router
 from src.auth.utils import verify_token
+from src import host as host_module
 from src.containers import docker as docker_module
 from src.database import Base, get_db
+from src.host import HostResult
 from src.main import app
 from src.storage import pools
 from src.storage import router as storage_router
@@ -412,6 +414,19 @@ def docker(monkeypatch):
     return client
 
 
+@pytest.fixture
+def host_ports(monkeypatch):
+    """The host of an install's port check (src/apps/preflight.py, ADR-0381): no program listens
+    on a port. Any other host command fails the test."""
+
+    def run(cmd, **kwargs):
+        if cmd == ["ss", "-H", "-l", "-n", "-t", "-u", "-p"]:
+            return HostResult(0, "", "")
+        raise AssertionError(f"unexpected host command: {cmd}")
+
+    monkeypatch.setattr(host_module, "run_on_host", run)
+
+
 def running(container: MagicMock) -> MagicMock:
     container.status = "running"
     return container
@@ -523,13 +538,13 @@ def database(tmp_path_factory) -> Iterator[None]:
 
 
 class TestApps:
-    def test_installing_an_app_writes_app_installed(self, admin, audit_file, docker, database):
+    def test_installing_an_app_writes_app_installed(self, admin, audit_file, docker, database, host_ports):
         response = admin.post(f"{APPS}/install", json={"template_id": "dozzle"})
 
         assert response.status_code == 200, response.text
         assert entries(audit_file) == [entry("app_installed", "app", "dozzle", "Installed Dozzle from the catalog as dozzle")]
 
-    def test_a_refused_or_failed_install_writes_nothing(self, admin, audit_file, docker, database):
+    def test_a_refused_or_failed_install_writes_nothing(self, admin, audit_file, docker, database, host_ports):
         docker.add(_container("dozzle", {}, []))
         taken = admin.post(f"{APPS}/install", json={"template_id": "dozzle"})
         docker.images.pull.side_effect = APIError("pull access denied")

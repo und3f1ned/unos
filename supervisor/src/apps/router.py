@@ -30,6 +30,7 @@ from ..security.validators import open_dir_nofollow, pools_base, validate_pools_
 from ..shares.constants import SMB_APP_UID, SMB_GROUP_GID, SMB_GROUP_NAME
 from ..shares.models import SmbShare
 from ..snapshots.router import SNAPSHOT_DIR_NAME
+from . import preflight
 from .catalog import APP_CATALOG, get_app_by_id, get_apps_by_category, search_apps
 from .hardware import container_hardware, for_host, read_host_hardware
 from .schemas import (
@@ -59,9 +60,9 @@ _DOCKER_ERRORS = (DockerException, RequestException, Urllib3Error)
 
 def _docker_error(error: Exception) -> HTTPException:
     """The answer to an error of the first request of a route to Docker (the listing, the lookup
-    of the app, the name check of an install): 503 with the reason when Docker did not answer
-    (NO_ANSWER), 500 otherwise (ADR-0323). An operation that fails after it keeps its own 500
-    "Failed to ..." (ADR-0254, ADR-0256)."""
+    of the app, the name check of an install and the listing of its port check): 503 with the
+    reason when Docker did not answer (NO_ANSWER), 500 otherwise (ADR-0323). An operation that
+    fails after it keeps its own 500 "Failed to ..." (ADR-0254, ADR-0256)."""
     if isinstance(error, NO_ANSWER):
         return HTTPException(503, no_answer_detail(error))
     return HTTPException(500, f"Docker failed: {error}")
@@ -860,6 +861,7 @@ def _install_app(req: AppInstallRequest, shares: list[_ShareFolder]) -> AppInsta
 
     if req.run_in_unos_smb and not template.can_run_in_unos_smb:
         raise HTTPException(400, _cannot_run_in_the_group(template))
+    port_bindings = preflight.plan_ports(template, req.port_overrides)
     environment = _build_environment(
         template, req.env_overrides, run_in_unos_smb=req.run_in_unos_smb
     )
@@ -883,11 +885,13 @@ def _install_app(req: AppInstallRequest, shares: list[_ShareFolder]) -> AppInsta
         raise _docker_error(e)
     else:
         raise HTTPException(409, f"A container named '{name}' already exists")
+    # The host ports, against every container's (stopped ones too) and the host's listeners.
+    try:
+        containers = client.containers.list(all=True, ignore_removed=True)
+    except _DOCKER_ERRORS as e:
+        raise _docker_error(e)
+    preflight.check_ports(port_bindings, containers)
 
-    port_bindings = {}
-    for p in template.ports:
-        host_port = req.port_overrides.get(p.container, p.host)
-        port_bindings[f"{p.container}/{p.protocol}"] = host_port
     hardware = container_hardware(template)
 
     try:
