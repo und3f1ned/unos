@@ -447,6 +447,12 @@ def test_a_power_condition_that_hdparm_does_not_name_is_read_with_smartctl_n_idl
         "/dev/sdg": stopped("SLEEP"),
         "/dev/sdh": stopped("IDLE_B", as_json=False),
         "/dev/sdi": stopped("STANDBY_Y", as_json=False),
+        # smartctl names a SCSI disk's power conditions in several words (its scsiprint.cpp), and one
+        # of them "IDLE_" for IDLE_B by command.
+        "/dev/sdo": stopped("IDLE BY TIMER"),
+        "/dev/sdp": stopped("IDLE_ BY COMMAND"),
+        "/dev/sdq": stopped("IDLE_C BY TIMER", as_json=False),
+        "/dev/sdr": stopped("STANDBY_Y BY COMMAND"),
         # It went on to read the identity (exit status 4: a SMART command failed after it).
         "/dev/sdj": (0, '{"model_name": "X"}'),
         "/dev/sdk": (4, '{"model_name": "X"}'),
@@ -465,11 +471,11 @@ def test_a_power_condition_that_hdparm_does_not_name_is_read_with_smartctl_n_idl
 
     monkeypatch.setattr(host_module, "run_on_host", run_on_host)
     monkeypatch.setattr(host_module, "run_in_container", smartctl)
-    assert {c: disks.power_state(f"/dev/sd{c}") for c in "abcdefghijklmn"} == {
+    assert {c: disks.power_state(f"/dev/sd{c}") for c in "abcdefghijklmnopqr"} == {
         "a": "active", "b": "active", "c": "active", "d": "active", "e": "standby", "f": "standby",
         "g": "standby", "h": "active", "i": "standby", "j": "unknown", "k": "unknown", "l": "unknown",
-        "m": "unknown", "n": "unknown"}
-    assert [cmd for cmd, _ in seen] == [EPC_READ + [f"/dev/sd{c}"] for c in "abcdefghijklmn"]
+        "m": "unknown", "n": "unknown", "o": "active", "p": "active", "q": "active", "r": "standby"}
+    assert [cmd for cmd, _ in seen] == [EPC_READ + [f"/dev/sd{c}"] for c in "abcdefghijklmnopqr"]
     assert {timeout for _, timeout in seen} == {disks.POWER_CHECK_TIMEOUT}
 
 
@@ -865,7 +871,7 @@ def test_the_power_state_is_read_with_hdparm_c_on_the_host(monkeypatch):
         "/dev/sdg": (0, "\n/dev/sdg:\n drive state is:  unknown\n", ""),
         "/dev/sdh": (0, "\n/dev/sdh:\n", ""),
         # hdparm could not ask the disk (a USB bridge without ATA pass-through, an I/O error), the disk is
-        # gone, or the host's timeout ended hdparm (124) or killed it (137).
+        # gone, or the host's timeout ended hdparm (124) or killed it (-9; 137 through a shell).
         "/dev/sdi": (5, "\n/dev/sdi:\n drive state is:  unknown\n",
                      " HDIO_DRIVE_CMD(checkpowermode) failed: Input/output error\n"),
         "/dev/sdj": (2, "", "/dev/sdj: No such file or directory\n"),
@@ -924,13 +930,18 @@ def test_without_hdparm_the_power_state_is_read_with_smartctl_n_standby(monkeypa
                "/dev/sde": (4, '{"model_name": "X"}'),
                # An EPC disk's standby_y, in the JSON and in the text output.
                "/dev/sdg": (2, '{"smartctl": {"messages": [{"string": "Device is in STANDBY_Y mode, exit(2)"}]}}'),
-               "/dev/sdh": (2, "smartctl 7.3\n\nDevice is in STANDBY_Y mode, exit(2)\n")}[cmd[-1]]
+               "/dev/sdh": (2, "smartctl 7.3\n\nDevice is in STANDBY_Y mode, exit(2)\n"),
+               # A SCSI disk's power conditions, as smartctl's scsiprint.cpp names them.
+               "/dev/sdi": (2, '{"smartctl": {"messages": [{"string": "Device is in STANDBY BY TIMER mode, exit(2)"}]}}'),
+               "/dev/sdj": (2, "smartctl 7.3\n\nDevice is in STANDBY_Y BY COMMAND mode, exit(2)\n"),
+               "/dev/sdk": (2, '{"smartctl": {"messages": [{"string": "Device is in LOW POWER mode, exit(2)"}]}}')}[cmd[-1]]
         return subprocess.CompletedProcess(cmd, *out, "")
 
     monkeypatch.setattr(host_module, "run_on_host", run_on_host)
     monkeypatch.setattr(host_module, "run_in_container", smartctl)
-    assert [disks.power_state(f"/dev/sd{c}") for c in "abcdefgh"] == [
-        "standby", "standby", "active", "unknown", "active", "unknown", "standby", "standby"]
+    assert [disks.power_state(f"/dev/sd{c}") for c in "abcdefghijk"] == [
+        "standby", "standby", "active", "unknown", "active", "unknown", "standby", "standby", "standby", "standby",
+        "standby"]
     assert seen[0] == (IDENTIFY + ["/dev/sda"], disks.POWER_CHECK_TIMEOUT)
 
 
@@ -972,9 +983,11 @@ def test_a_disk_that_does_not_answer_keeps_no_more_than_one_hdparm_on_the_host(h
     assert power_reads(host).count("/dev/sdb") == 2
 
 
-@pytest.mark.parametrize("status", [124, 137])
+@pytest.mark.parametrize("status", [124, -9, 137])
 def test_a_power_read_that_the_host_s_timeout_ended_runs_again_once_its_hdparm_is_gone(host, status):
-    # The host's timeout ended hdparm with TERM (124) or KILL (137): checked, and gone, so read again.
+    # The host's timeout ended hdparm with TERM (124), or killed it with KILL: timeout sends KILL to its
+    # own process group, so it dies by it too, and nsenter passes that on (-9); 137 through a shell.
+    # Checked, and gone, so read again.
     host.fail[tuple(power_read("/dev/sdb"))] = (status, "")
     assert disks.power_state("/dev/sdb") == "unknown"
     host.fail.clear()

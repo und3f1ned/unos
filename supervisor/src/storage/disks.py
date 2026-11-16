@@ -64,12 +64,19 @@ POWER_STUCK_CHECK_TIMEOUT = 5
 # leaves a disk alone after CHECK POWER MODE, with exit status bit 1: "Device is in STANDBY mode,
 # exit(2)". It names the mode as its ataprint.cpp does; -n standby stops for SLEEP, STANDBY and
 # STANDBY_Y, -n idle for IDLE, IDLE_A, IDLE_B and IDLE_C too (EPC's power conditions, ADR-0378).
-_STOPPED_IN = re.compile(r"Device is in ([A-Z][A-Z_]*) mode\b")
+# A SCSI disk's power condition (scsiprint.cpp, from the sense data's 5Eh) takes several words,
+# "STANDBY BY TIMER", "STANDBY_Y BY COMMAND", "IDLE_C BY TIMER", "LOW POWER", and IDLE_B by command
+# is "IDLE_ BY COMMAND": smartctl_stopped_in leaves out how it was reached (" BY TIMER", " BY
+# COMMAND"). LOW POWER stops where SLEEP does.
+_STOPPED_IN = re.compile(r"Device is in ([A-Z][A-Z_]*(?: [A-Z][A-Z_]*)*) mode\b")
+_REACHED_BY = re.compile(r" BY (?:TIMER|COMMAND)$")
 _SMARTCTL_MODES: dict[str, PowerState] = {
     "SLEEP": "standby",
+    "LOW POWER": "standby",
     "STANDBY": "standby",
     "STANDBY_Y": "standby",
     "IDLE": "active",
+    "IDLE_": "active",
     "IDLE_A": "active",
     "IDLE_B": "active",
     "IDLE_C": "active",
@@ -91,8 +98,10 @@ _HDPARM_STATES: dict[str, PowerState] = {
 }
 # The exit status of the host's timeout(1) when it cannot find the program: the host has no hdparm.
 _NOT_FOUND = 127
-# The exit statuses of the host's timeout(1) when it ended the program: with TERM, or with KILL.
-_ENDED_BY_TIMEOUT = (124, 137)
+# The exit status of the host's timeout(1) when it ended the program with TERM. When TERM does not
+# end it, timeout sends KILL to its own process group and dies by it too: nsenter passes that on, so
+# run_on_host answers -9 (137 through a shell). _ended_by_timeout.
+_ENDED_BY_TERM = 124
 
 # The hdparm -C reads, by disk (power_state), bounded as run_in_container bounds its commands
 # (ADR-0290): the disks whose read runs, and those whose last read timed out, whose hdparm may still
@@ -601,7 +610,7 @@ def smartctl_stopped_in(result: subprocess.CompletedProcess[str]) -> str | None:
     if not result.returncode & 0b10:
         return None
     found = _STOPPED_IN.search(result.stdout or "")
-    return found[1] if found else None
+    return _REACHED_BY.sub("", found[1]) if found else None
 
 
 def smartctl_found_it_asleep(result: subprocess.CompletedProcess[str]) -> bool:
@@ -635,7 +644,7 @@ def power_state(device: str) -> PowerState:
     if result.returncode == _NOT_FOUND:
         return _smartctl_power_state(device)
     found = _DRIVE_STATE.search(result.stdout)
-    if not result.ok or found is None:  # also when the host's timeout ended it (124, or 137 killed)
+    if not result.ok or found is None:  # also when the host's timeout ended it (124, or killed)
         return "unknown"
     state = _HDPARM_STATES.get(found[1])
     return state if state is not None else _epc_power_state(device)
@@ -648,10 +657,10 @@ def _hdparm_power_read(device: str) -> host.HostResult | None:
     Bounded per disk as run_in_container bounds its commands (ADR-0290): the host's timeout cannot
     end an hdparm stuck in the kernel on a disk that stopped answering, and run_on_host's limit ends
     only nsenter. So one read of a disk runs at a time: a second waits for the first, at most
-    POWER_READ_LIMIT. After a read that timed out (run_on_host's limit, or the host's timeout: 124,
-    137), no hdparm is started for the disk until pgrep shows that the earlier one has ended
-    (_hdparm_has_ended); until then it answers None at once, logged once for each such read. So a
-    disk that hangs keeps at most one stuck hdparm, and its timeout, on the host.
+    POWER_READ_LIMIT. After a read that timed out (run_on_host's limit, or the host's timeout ended
+    hdparm: _ended_by_timeout), no hdparm is started for the disk until pgrep shows that the earlier
+    one has ended (_hdparm_has_ended); until then it answers None at once, logged once for each such
+    read. So a disk that hangs keeps at most one stuck hdparm on the host.
     """
     with _power_reads:
         if not _power_reads.wait_for(lambda: device not in _power_reading, POWER_READ_LIMIT):
@@ -675,7 +684,7 @@ def _hdparm_power_read(device: str) -> host.HostResult | None:
             result = None
         except (OSError, subprocess.SubprocessError):
             return None
-        if result is None or result.returncode in _ENDED_BY_TIMEOUT:
+        if result is None or _ended_by_timeout(result.returncode):
             logger.warning("hdparm -C %s did not answer within %s seconds", device, POWER_CHECK_TIMEOUT)
             with _power_reads:
                 _power_stuck[device] = False
@@ -684,6 +693,12 @@ def _hdparm_power_read(device: str) -> host.HostResult | None:
         with _power_reads:
             _power_reading.discard(device)
             _power_reads.notify_all()
+
+
+def _ended_by_timeout(returncode: int) -> bool:
+    """Whether the host's timeout(1) ended the program: 124 for TERM; killed with KILL, which also
+    ends timeout itself, a negative status from run_on_host (-9), or 137 through a shell."""
+    return returncode in (_ENDED_BY_TERM, 128 + 9) or returncode < 0
 
 
 def _hdparm_has_ended(device: str) -> bool:
