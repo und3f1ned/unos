@@ -29,7 +29,10 @@ from src.apps.schemas import APPS_DATA_PATH, AppCategory, AppTemplate, Companion
 from . import test_apps
 from .docker_fake import Call, StackDocker
 from .test_apps import (
+    CONTAINERD_ROOT,
     DOCKER_MASKED_PATHS,
+    DOCKER_ROOT,
+    GIB,
     INSTALL,
     INSTALLED,
     NPU,
@@ -1373,3 +1376,53 @@ class TestImmich:
         assert ("images.pull", _by_digest(catalog_module.IMMICH_ML_RKNN)) not in docker.called("images.pull")
         for name, config in _host_configs(docker).items():
             assert not {"Devices", "MaskedPaths", "SecurityOpt", "Privileged", "CapAdd"} & set(config), name
+
+    def test_the_system_disk_keeps_2_gib_free_after_immichs_images(self, api, pools, docker, immich_images, soc):
+        c = catalog_module
+        need = sum(pin.disk_bytes for pin in (c.IMMICH_POSTGRES, c.VALKEY, c.IMMICH_ML, c.IMMICH_SERVER))
+        soc.free = {DOCKER_ROOT: 64 * GIB, CONTAINERD_ROOT: need + 2 * GIB - 1}
+
+        response = api.post(INSTALL, json={"template_id": "immich"})
+
+        assert (response.status_code, response.json()) == (409, {
+            "detail": "Immich's images need about 3.4 GiB on the system disk, which has 5.4 GiB free; at least "
+            "2 GiB must stay free. Remove unused images on Containers > Images first."
+        })
+        # Docker was asked which of the images it has, after the checks of the ports and before
+        # anything was pulled, made or written.
+        assert docker.called("images.get") == [("images.get", _by_digest(pin)) for pin in (
+            c.IMMICH_POSTGRES, c.VALKEY, c.IMMICH_ML, c.IMMICH_SERVER,
+        )]
+        assert docker.called("images.pull", "networks.create", "api.create_container") == []
+        assert not (pools.alpha / "apps").exists()
+
+        soc.free[CONTAINERD_ROOT] += 1
+
+        assert api.post(INSTALL, json={"template_id": "immich"}).status_code == 200
+
+    def test_the_images_that_docker_has_are_not_counted(self, api, pools, docker, immich_images, soc):
+        c = catalog_module
+        docker.pulled(c.IMMICH_SERVER.ref)
+        docker.pulled(c.IMMICH_POSTGRES.ref)
+        # Just enough for the two it lacks, in the whole KiB that df counts.
+        soc.free = {DOCKER_ROOT: c.VALKEY.disk_bytes + c.IMMICH_ML.disk_bytes + 2 * GIB + 1023}
+
+        response = api.post(INSTALL, json={"template_id": "immich"})
+
+        assert response.status_code == 200, response.text
+        assert [subject for _, subject in docker.called("images.pull")] == [
+            _by_digest(c.VALKEY), _by_digest(c.IMMICH_ML),
+        ]
+
+    def test_on_the_rk3588_the_image_for_the_npu_is_the_one_counted(self, api, pools, docker, immich_images, soc):
+        _rk3588(soc)
+        c = catalog_module
+        # Just enough for the image for the NPU, which is smaller than the one for the CPU, in the
+        # whole KiB that df counts.
+        assert c.IMMICH_ML_RKNN.disk_bytes < c.IMMICH_ML.disk_bytes - 1024
+        need = sum(pin.disk_bytes for pin in (c.IMMICH_POSTGRES, c.VALKEY, c.IMMICH_ML_RKNN, c.IMMICH_SERVER))
+        soc.free = {DOCKER_ROOT: need + 2 * GIB + 1023}
+
+        response = api.post(INSTALL, json={"template_id": "immich"})
+
+        assert response.status_code == 200, response.text

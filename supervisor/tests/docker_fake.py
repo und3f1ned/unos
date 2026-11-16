@@ -12,7 +12,8 @@ subject, error)`` makes that call raise ``error`` for that subject (a container'
 name, an image reference; None: any) until ``clear``. ``publish(ref, ...)`` puts an image in the
 registry that a pull reads; ``script(name, *states)`` gives the states a container's reloads
 report after its start, the last one staying (an image with a health check is otherwise
-"starting" at its first reload and healthy from its second).
+"starting" at its first reload and healthy from its second). ``info`` names ``root_dir`` as
+Docker's root folder.
 """
 
 from __future__ import annotations
@@ -388,6 +389,8 @@ class StackDocker:
 
     def __init__(self) -> None:
         self.calls: list[Call] = []
+        # The folder that Docker's info names as its root (DockerRootDir).
+        self.root_dir = "/var/lib/docker"
         self.failures: dict[tuple[str, str | None], BaseException] = {}
         self.containers_: dict[str, Container] = {}
         self.networks_: dict[str, Network] = {}
@@ -399,6 +402,11 @@ class StackDocker:
         self.images = _Images(self)
         self.networks = _Networks(self)
         self.api = _Api(self)
+
+    def info(self) -> dict:
+        """What Docker says of itself: here only the folder of its data."""
+        self._call("info", None)
+        return {"DockerRootDir": self.root_dir}
 
     # -- set up -----------------------------------------------------------
 

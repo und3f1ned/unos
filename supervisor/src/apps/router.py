@@ -1053,6 +1053,8 @@ def _install(template: AppTemplate, req: AppInstallRequest, shares: list[_ShareF
     host_hardware = read_host_hardware(all_profiles(template))
     for c in containers:
         c.hardware = container_hardware(c.spec, host_hardware)
+    # Room on the system disk for the images that the hardware chose (ADR-0381).
+    preflight.check_space(client, template, [c.image for c in containers])
 
     images = _pull_images(client, template, containers)
     _check_image_volumes(template, containers, images)

@@ -13,6 +13,7 @@ import fcntl
 import importlib
 import os
 import re
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -58,6 +59,7 @@ from src.shares.models import SmbShare
 apps_router = importlib.import_module("src.apps.router")
 hardware_module = importlib.import_module("src.apps.hardware")
 catalog_module = importlib.import_module("src.apps.catalog")
+preflight_module = importlib.import_module("src.apps.preflight")
 stacks_module = importlib.import_module("src.apps.stacks")
 audit_router = importlib.import_module("src.audit.router")
 
@@ -205,6 +207,7 @@ def docker_client(monkeypatch):
     client = MagicMock(name="docker")
     client.containers.get.side_effect = NotFound("No such container")
     client.containers.list.return_value = []
+    client.info.return_value = {"DockerRootDir": DOCKER_ROOT}
     container = MagicMock(name="container", short_id="c0ffee", status="running")
     container.attrs = {"State": {"Status": "running", "Running": True}}
     client.containers.create.return_value = container
@@ -225,11 +228,38 @@ def _reads_device_tree(cmd: list[str]) -> bool:
 # The host's listening TCP and bound UDP sockets with their programs, which every install of an
 # app that publishes a port reads before the pull (src/apps/preflight.py, ADR-0381).
 SS = ["ss", "-H", "-l", "-n", "-t", "-u", "-p"]
+# Docker's root folder, as Docker's info names it, and the containerd image store's: every install
+# reads the free space of their file systems before the pull (ADR-0381).
+DOCKER_ROOT = "/var/lib/docker"
+CONTAINERD_ROOT = "/var/lib/containerd"
+GIB = 1024**3
+
+
+def _reads_free_space(cmd: list[str]) -> bool:
+    return cmd[:2] == ["/bin/sh", "-c"] and cmd[3:4] == ["unos-free-space"]
+
+
+def _free_space_read(root: str = DOCKER_ROOT) -> list[str]:
+    """The read of the free space of the system disk, for Docker's root folder ``root``."""
+    return ["/bin/sh", "-c", preflight_module.FREE_SPACE_SCRIPT, "unos-free-space", root, CONTAINERD_ROOT]
+
+
+def _df(free: dict[str, int], paths: list[str]) -> str:
+    """What df -P -k prints for those of ``paths`` that are in ``free`` (their free bytes)."""
+    lines = []
+    for path in paths:
+        if path in free:
+            lines += [
+                "Filesystem     1024-blocks      Used Available Capacity Mounted on",
+                f"/dev/mmcblk1p2   {free[path] // 1024 + 2048} 2048 {free[path] // 1024} 50% /",
+            ]
+    return "".join(f"{line}\n" for line in lines)
 
 
 def _hardware_reads(soc) -> list[list[str]]:
-    """The host commands of ``soc`` but the look for the ports in use: the reads of the hardware."""
-    return [cmd for cmd in soc.commands if cmd != SS]
+    """The host commands of ``soc`` but the reads of the ports in use and of the free space: the
+    reads of the hardware."""
+    return [cmd for cmd in soc.commands if cmd != SS and not _reads_free_space(cmd)]
 
 
 @pytest.fixture(autouse=True)
@@ -237,21 +267,27 @@ def soc(monkeypatch):
     """The host for the reads of its SoC and device nodes: no device tree, as on a PC, until a
     test gives it a ``compatible`` (the bytes of /proc/device-tree/compatible) and ``devices``
     (the device nodes it has). ``commands`` records every host command; one that the fake does
-    not know fails the test. ``fail`` is raised by every command, ``answer`` (a HostResult) is
-    every command's answer, as when nsenter cannot enter the host. ``lookup`` (a HostResult, or an
-    exception to raise) answers only the look for the device nodes, after a device tree it read.
-    ``sockets`` are the lines that ``ss`` prints for the host's listening sockets (none by
-    default), and ``ss`` (a HostResult, or an exception to raise) answers only that read."""
+    not know fails the test. ``tree`` (a HostResult, or an exception to raise) answers only the
+    read of the device tree, as when nsenter cannot enter the host. ``lookup`` (a HostResult, or
+    an exception to raise) answers only the look for the device nodes, after a device tree it
+    read. ``sockets`` are the lines that ``ss`` prints for the host's listening sockets (none by
+    default), and ``ss`` (a HostResult, or an exception to raise) answers only that read.
+    ``free`` gives the free bytes of the file systems of the folders that exist (Docker's root
+    folder and the containerd image store, 64 GiB each by default), and ``df`` (a HostResult, or
+    an exception to raise) answers only the read of the free space."""
     fake = SimpleNamespace(
-        compatible=None, devices=set(), commands=[], fail=None, answer=None, lookup=None, sockets=[], ss=None
+        compatible=None, devices=set(), commands=[], tree=None, lookup=None, sockets=[], ss=None,
+        free={DOCKER_ROOT: 64 * GIB, CONTAINERD_ROOT: 64 * GIB}, df=None,
     )
 
     def run(cmd, **kwargs):
         fake.commands.append(list(cmd))
-        if fake.fail is not None:
-            raise fake.fail
-        if fake.answer is not None:
-            return fake.answer
+        if _reads_free_space(cmd):
+            if isinstance(fake.df, BaseException):
+                raise fake.df
+            if fake.df is not None:
+                return fake.df
+            return HostResult(0, _df(fake.free, cmd[4:]), "")
         if cmd == SS:
             if isinstance(fake.ss, BaseException):
                 raise fake.ss
@@ -259,6 +295,10 @@ def soc(monkeypatch):
                 return fake.ss
             return HostResult(0, "".join(f"{line}\n" for line in fake.sockets), "")
         if _reads_device_tree(cmd):
+            if isinstance(fake.tree, BaseException):
+                raise fake.tree
+            if fake.tree is not None:
+                return fake.tree
             return NO_DEVICE_TREE if fake.compatible is None else HostResult(0, fake.compatible, "")
         if cmd[:2] == ["/bin/sh", "-c"] and cmd[3:4] == ["unos-devices"]:
             if isinstance(fake.lookup, BaseException):
@@ -1222,7 +1262,7 @@ class TestPortCheck:
         assert response.status_code == 200, response.text
         assert docker_client.containers.create.call_args.kwargs["ports"] == {f"{port}/tcp": port}
         assert response.json()["web_url"] == f"http://localhost:{port}"
-        assert soc.commands == [SS]
+        assert soc.commands == [SS, _free_space_read()]
 
     @pytest.mark.parametrize(("template_id", "name", "port"), HOST_NETWORK_APPS, ids=[a[0] for a in HOST_NETWORK_APPS])
     def test_a_taken_port_of_an_app_in_the_hosts_network_asks_to_stop_the_program(
@@ -1300,12 +1340,12 @@ class TestPortCheck:
         assert [r.getMessage() for r in caplog.records if r.name == "src.apps.preflight"] == [message]
         docker_client.containers.create.return_value.start.assert_called_once()
 
-    def test_an_app_that_publishes_no_port_reads_nothing_of_the_host(self, api, pools, docker_client, soc):
-        # Tailscale runs in the host's network and publishes no port.
+    def test_an_app_that_publishes_no_port_reads_no_port_of_the_host(self, api, pools, docker_client, soc):
+        # Tailscale runs in the host's network and publishes no port: only the free space is read.
         response = api.post(INSTALL, json={"template_id": "tailscale"})
 
         assert response.status_code == 200, response.text
-        assert soc.commands == []
+        assert soc.commands == [_free_space_read()]
 
     def test_the_host_is_read_off_the_event_loop(self, api, pools, docker_client, soc, monkeypatch):
         seen: list[bool] = []
@@ -1317,9 +1357,9 @@ class TestPortCheck:
 
         monkeypatch.setattr(host_module, "run_on_host", run)
 
-        # Dozzle has no hardware profile: its install reads the host's ports only.
+        # Dozzle has no hardware profile: its install reads the host's ports and free space only.
         assert api.post(INSTALL, json={"template_id": "dozzle"}).status_code == 200
-        assert seen == [False]
+        assert seen == [False, False]
 
     def test_a_listing_that_docker_does_not_answer_answers_503(self, api, pools, docker_client):
         error = requests.exceptions.ConnectionError("('Connection aborted.', ConnectionResetError(104, 'reset'))")
@@ -2915,7 +2955,7 @@ class TestHardwareOfTheSoc:
     def test_a_device_tree_that_cannot_be_read_installs_jellyfin_as_elsewhere(
         self, api, pools, docker_client, soc, error
     ):
-        soc.fail = error
+        soc.tree = error
 
         response = api.post(INSTALL, json={"template_id": "jellyfin"})
 
@@ -2927,7 +2967,7 @@ class TestHardwareOfTheSoc:
     def test_a_device_tree_read_that_fails_is_logged(self, api, pools, docker_client, soc, caplog):
         # nsenter exits non-zero when it cannot enter the host: the board counts as one without a
         # device tree, and the log says why.
-        soc.answer = HostResult(1, "", "nsenter: reassociate to namespace 'ns/mnt' failed: Operation not permitted")
+        soc.tree = HostResult(1, "", "nsenter: reassociate to namespace 'ns/mnt' failed: Operation not permitted")
 
         with caplog.at_level("WARNING", logger="src.apps.hardware"):
             response = api.post(INSTALL, json={"template_id": "jellyfin"})
@@ -3002,8 +3042,8 @@ class TestHardwareOfTheSoc:
         response = api.post(INSTALL, json={"template_id": "dozzle"})
 
         assert response.status_code == 200, response.text
-        # Only the host ports that the app would take were read (ADR-0381).
-        assert soc.commands == [SS]
+        # Only the host ports that the app would take and the free space were read (ADR-0381).
+        assert soc.commands == [SS, _free_space_read()]
         assert docker_client.containers.create.call_args.kwargs.get("devices") is None
 
     def test_a_failed_start_on_an_rk3588_removes_the_container(self, api, pools, docker_client, low_level, soc):
@@ -3570,3 +3610,126 @@ class TestStackCatalog:
 
         assert response.status_code == 404
         docker_client.images.pull.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# The free space of the system disk before a pull (ADR-0381)
+# ---------------------------------------------------------------------------
+
+FREE_SPACE_FLOOR = 2 * GIB
+NO_SPACE_REMEDY = "Remove unused images on Containers > Images first."
+
+
+def _unread_free_space(reason: str) -> dict:
+    return {"detail": f"Could not read the free space of the system disk: {reason}; nothing was pulled"}
+
+
+class TestSystemDiskSpace:
+    def test_every_install_reads_the_free_space_where_docker_keeps_images(self, api, pools, docker_client, soc):
+        docker_client.info.return_value = {"DockerRootDir": "/srv/docker"}
+        soc.free = {"/srv/docker": 64 * GIB, CONTAINERD_ROOT: 64 * GIB}
+
+        response = api.post(INSTALL, json={"template_id": "tailscale"})
+
+        assert response.status_code == 200, response.text
+        # Docker's root folder as Docker names it, and the containerd image store's folder.
+        assert soc.commands == [_free_space_read("/srv/docker")]
+
+    @pytest.mark.parametrize("lower", [DOCKER_ROOT, CONTAINERD_ROOT])
+    def test_the_lower_free_space_of_the_two_counts(self, api, pools, docker_client, soc, lower):
+        soc.free = {DOCKER_ROOT: 64 * GIB, CONTAINERD_ROOT: 64 * GIB, lower: FREE_SPACE_FLOOR - GIB // 2}
+
+        response = api.post(INSTALL, json={"template_id": "jellyfin"})
+
+        assert (response.status_code, response.json()) == (409, {
+            "detail": "The system disk has 1.5 GiB free; at least 2 GiB must stay free when Jellyfin is installed. "
+            + NO_SPACE_REMEDY
+        })
+        docker_client.images.pull.assert_not_called()
+        docker_client.containers.create.assert_not_called()
+        assert not (pools.alpha / "apps").exists()
+
+    def test_an_image_of_a_floating_tag_counts_nothing_before_its_pull(self, api, pools, docker_client, soc):
+        # Its size is not known before its pull: the floor alone must be free.
+        soc.free = {DOCKER_ROOT: FREE_SPACE_FLOOR, CONTAINERD_ROOT: 64 * GIB}
+
+        response = api.post(INSTALL, json={"template_id": "jellyfin"})
+
+        assert response.status_code == 200, response.text
+        docker_client.images.get.assert_not_called()
+        docker_client.images.pull.assert_called_once_with("jellyfin/jellyfin:latest")
+
+    def test_a_folder_that_the_host_lacks_is_left_out(self, api, pools, docker_client, soc):
+        # Docker's own image store keeps everything in its root folder: no /var/lib/containerd.
+        soc.free = {DOCKER_ROOT: 64 * GIB}
+
+        response = api.post(INSTALL, json={"template_id": "jellyfin"})
+
+        assert response.status_code == 200, response.text
+
+    @pytest.mark.parametrize(("df", "reason"), [
+        (HostResult(1, "", "df: /var/lib/docker: Input/output error\n"), "df: /var/lib/docker: Input/output error"),
+        (HostResult(0, "", ""), "df printed no free space"),
+        (subprocess.TimeoutExpired(["nsenter"], 15), "Command '['nsenter']' timed out after 15 seconds"),
+        (FileNotFoundError(2, "No such file or directory", "nsenter"), "[Errno 2] No such file or directory: 'nsenter'"),
+    ], ids=["exit-status", "no-output", "timeout", "oserror"])
+    def test_a_free_space_that_cannot_be_read_answers_500_before_any_pull(
+        self, api, pools, docker_client, soc, df, reason
+    ):
+        soc.df = df
+
+        response = api.post(INSTALL, json={"template_id": "jellyfin"})
+
+        assert (response.status_code, response.json()) == (500, _unread_free_space(reason))
+        docker_client.images.pull.assert_not_called()
+        assert not (pools.alpha / "apps").exists()
+
+    @pytest.mark.parametrize("info", [{}, {"DockerRootDir": ""}, {"DockerRootDir": "var/lib/docker"}],
+                             ids=["none", "empty", "relative"])
+    def test_a_docker_that_names_no_root_folder_answers_500(self, api, pools, docker_client, soc, info):
+        docker_client.info.return_value = info
+
+        response = api.post(INSTALL, json={"template_id": "jellyfin"})
+
+        assert (response.status_code, response.json()) == (500, _unread_free_space("Docker names no root folder"))
+        assert not [cmd for cmd in soc.commands if _reads_free_space(cmd)]
+        docker_client.images.pull.assert_not_called()
+
+    def test_a_docker_whose_info_fails_answers_500(self, api, pools, docker_client, soc):
+        docker_client.info.side_effect = APIError("500 Server Error: Internal Server Error")
+
+        response = api.post(INSTALL, json={"template_id": "jellyfin"})
+
+        assert (response.status_code, response.json()) == (
+            500, _unread_free_space("500 Server Error: Internal Server Error")
+        )
+        docker_client.images.pull.assert_not_called()
+
+    def test_an_install_refused_before_reads_no_free_space(self, api, pools, docker_client, soc):
+        soc.sockets = ['tcp   LISTEN 0      4096   0.0.0.0:8096   0.0.0.0:*   users:(("EmbyServer",pid=8,fd=7))']
+
+        response = api.post(INSTALL, json={"template_id": "jellyfin"})
+
+        assert response.status_code == 409
+        assert soc.commands == [SS]
+        docker_client.info.assert_not_called()
+
+    def test_the_script_skips_a_folder_that_is_not_there(self, tmp_path):
+        # The script as the host runs it, on this machine's sh and df.
+        result = subprocess.run(
+            ["/bin/sh", "-c", preflight_module.FREE_SPACE_SCRIPT, "unos-free-space", str(tmp_path), str(tmp_path / "x")],
+            capture_output=True, text=True, check=False,
+        )
+
+        assert (result.returncode, result.stderr) == (0, "")
+        [free] = preflight_module._available(result.stdout)
+        assert abs(free - shutil.disk_usage(tmp_path).free) < GIB // 4
+
+    def test_a_file_system_whose_name_or_folder_holds_spaces_is_read(self):
+        listing = (
+            "Filesystem   1024-blocks      Used Available Capacity  Mounted on\n"
+            "map auto_home          0         0         0   100%    /System/Volumes/Data/home\n"
+            "//nas/a share        100        50        50    50%    /mnt/a 75% b\n"
+        )
+
+        assert preflight_module._available(listing) == [0, 50 * 1024]

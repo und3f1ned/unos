@@ -388,6 +388,7 @@ def docker(monkeypatch):
     to ``add``, by name; a container that ``containers.create`` makes is added too."""
     by_name: dict[str, MagicMock] = {}
     client = MagicMock(name="docker")
+    client.info.return_value = {"DockerRootDir": "/var/lib/docker"}
 
     def get(name):
         try:
@@ -416,12 +417,15 @@ def docker(monkeypatch):
 
 @pytest.fixture
 def host_ports(monkeypatch):
-    """The host of an install's port check (src/apps/preflight.py, ADR-0381): no program listens
-    on a port. Any other host command fails the test."""
+    """The host of an install's checks (src/apps/preflight.py, ADR-0381): no program listens on a
+    port, and the system disk has 64 GiB free. Any other host command fails the test."""
 
     def run(cmd, **kwargs):
         if cmd == ["ss", "-H", "-l", "-n", "-t", "-u", "-p"]:
             return HostResult(0, "", "")
+        if cmd[:2] == ["/bin/sh", "-c"] and cmd[3:4] == ["unos-free-space"]:
+            listing = "Filesystem 1024-blocks Used Available Capacity Mounted on\n/dev/sda1 67110912 2048 67108864 1% /\n"
+            return HostResult(0, listing * len(cmd[4:]), "")
         raise AssertionError(f"unexpected host command: {cmd}")
 
     monkeypatch.setattr(host_module, "run_on_host", run)

@@ -47,14 +47,16 @@ logger = logging.getLogger(__name__)
 # and the shadow tools, smbpasswd, pdbedit, smbstatus), health/router.py and
 # network/ (ip, ss, systemd-run, hostnamectl; resolvectl only where
 # systemd-resolved runs, else /etc/resolv.conf), apps/preflight.py (ss: the host
-# ports that an app's install would take, ADR-0381), power/router.py (shutdown,
+# ports that an app's install would take; sh with df: the free space of the system
+# disk before its pulls, ADR-0381), power/router.py (shutdown,
 # busctl, systemctl, ip, ethtool: ADR-0233), logs/router.py (journalctl, under
 # timeout: ADR-0257, ADR-0258), system/router.py (timedatectl under timeout, hostname:
 # ADR-0331) and notifications/router.py (curl, which sends a notification channel's
 # request from the host's network when the container connects nowhere, and ends
 # itself at its --max-time: ADR-0336). cat, od (the export files: shares/nfs.py), test,
 # mkdir, rmdir, rm, find, sync, sleep, timeout, hostname, readlink (the time zone:
-# scheduler/router.py, ADR-0266) and sh (also apps/hardware.py, with cat: the device
+# scheduler/router.py, ADR-0266), df (apps/preflight.py) and sh (also
+# apps/hardware.py, with cat: the device
 # tree and the device nodes of the host's SoC, ADR-0382) also run there but come from
 # essential packages. The startup check (main.check_host_tools) warns about the ones the
 # host lacks.
