@@ -429,15 +429,16 @@ esac
 if btrfs subvolume show "$2" > /dev/null 2>&1; then echo subvolume; else echo none; fi'''
 
 # $1: a whole disk's path; $2: never or standby, smartctl's -n (never reads a sleeping disk too, which
-# wakes it). smartctl -c -j of the disk in the supervisor's running container, which has smartctl
+# wakes it). smartctl -i -c -j of the disk in the supervisor's running container, which has smartctl
 # (docker exec, no new container, ADR-0183): it reads the disk's SMART capabilities, its automatic
-# offline data collection among them, and changes nothing. Prints "status <smartctl's exit status>",
-# then its JSON.
+# offline data collection among them, and whether it has SMART and SMART is on (-i: smart_support), as
+# src/storage/spindown.py does, and changes nothing. Prints "status <smartctl's exit status>", then its
+# JSON.
 REMOTE_OFFLINE = r'''
 set -uo pipefail
 if ! [[ $1 =~ ^/dev/[a-z][a-z0-9]*$ ]]; then echo "not a whole disk: $1" >&2; exit 2; fi
 case $2 in never | standby) ;; *) echo "not a power mode of smartctl -n: $2" >&2; exit 2 ;; esac
-out=$(docker exec unos-supervisor smartctl -n "$2" -c -j "$1")
+out=$(docker exec unos-supervisor smartctl -n "$2" -i -c -j "$1")
 echo "status $?"
 printf "%s\n" "$out"'''
 
@@ -2029,8 +2030,9 @@ def timeout_words(minutes: int) -> str:
 def offline_collection_state(out: str) -> str:
     """A disk's automatic offline data collection from REMOTE_OFFLINE's output OUT: "on" while it is
     on, "off" while a disk that can switch it has it off, "none" for a disk without it (no switch
-    for it, or no ATA SMART data: an NVMe or SCSI disk), "standby" when smartctl -n standby left the
-    disk alone. Failed when smartctl read no state."""
+    for it; no ATA SMART data: an NVMe or SCSI disk; an ATA disk without SMART or with SMART off,
+    which smart_support says), "standby" when smartctl -n standby left the disk alone. Failed when
+    smartctl read no state."""
     first, _, text = out.partition("\n")
     status = first.removeprefix("status ").strip()
     try:
@@ -2051,6 +2053,9 @@ def offline_collection_state(out: str) -> str:
             return "on"
         return "off" if capabilities[0] & AUTO_OFFLINE_SWITCH else "none"
     if (data.get("device") or {}).get("protocol") in ("NVMe", "SCSI"):
+        return "none"
+    support = data.get("smart_support") if isinstance(data.get("smart_support"), dict) else {}
+    if support.get("available") is False or support.get("enabled") is False:
         return "none"
     raise Failed(f"smartctl -c read no offline data collection (exit status {status}): {'; '.join(said) or '-'}")
 
@@ -2099,10 +2104,36 @@ def spindown_steps(c: Check, disk: dict, hdparm_conf: str | None) -> None:
         return next((d for d in c.get("/storage/disks") if d.get("name") == name), {})
 
     def restore() -> None:
-        c.call("PUT", f"/storage/disks/{name}/spindown", {"minutes": previous})
+        answer = c.call("PUT", f"/storage/disks/{name}/spindown", {"minutes": previous})
+        warning = answer.get("warning") if isinstance(answer, dict) else None
+        c.expect(not warning, f"UNOS answered: {warning}")
 
     def recorded() -> bool:
         return record in (c.device.read(SPINDOWN_RULES) or "").splitlines()
+
+    def scans_words(state: str, rec: bool) -> str:
+        return state + (", recorded in UNOS's udev rule" if rec else "")
+
+    def scans_as_found() -> None:
+        """After the restore (cleanups run last first): the disk's automatic offline data collection
+        and UNOS's record of it as found, which the final comparison does not read (its first read
+        would wake a sleeping disk); otherwise what is left, and the way back."""
+        now, now_recorded = c.device.offline_collection(path, wake=True), recorded()
+        if (now, now_recorded) == (found, found_recorded):
+            return
+        if found_recorded and now == "on":
+            fix = f"save {name}'s idle timeout of {timeout_words(previous)} on the Storage page again"
+        elif found == "on" and now_recorded and not previous:
+            fix = f"save Off for {name} on the Storage page again"
+        elif found in ("on", "off") and now_recorded == found_recorded:
+            fix = f"turn it {found} again with smartctl -o {found} {path} in the supervisor's container"
+        elif found_recorded:
+            fix = (f"turn it on with smartctl -o on {path} in the supervisor's container, then save {name}'s idle "
+                   f"timeout of {timeout_words(previous)} on the Storage page again")
+        else:
+            fix = f"put it back by hand: smartctl -o in the supervisor's container, and UNOS's record in {SPINDOWN_RULES}"
+        unrecorded = ", with no record in UNOS's udev rule" if found_recorded and not now_recorded else ""
+        raise Failed(f"it is {scans_words(now, now_recorded)}{unrecorded}: {fix}")
 
     with c.step(texts[0]) as s:
         # It wakes a disk that sleeps, as the Save of the next step does.
@@ -2131,6 +2162,8 @@ def spindown_steps(c: Check, disk: dict, hdparm_conf: str | None) -> None:
     warning = None
     with c.step(texts[1]) as s:
         c.expect(problem is None, f"the Storage page says: {problem}")
+        c.on_cleanup(f"{name}'s automatic offline data collection {scans_words(found, found_recorded)}, as the check "
+                     "found it", scans_as_found)
         c.on_cleanup(f"the idle timeout of {name} {timeout_words(previous)} again", restore)
         answer = c.call("PUT", f"/storage/disks/{name}/spindown", {"minutes": SPINDOWN_SHORTEST})
         c.expect(isinstance(answer, dict) and answer.get("name") == name and answer.get("minutes") == SPINDOWN_SHORTEST,

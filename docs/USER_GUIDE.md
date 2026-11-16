@@ -238,10 +238,13 @@ disk reads its surface, for hours, and it does not sleep meanwhile, whatever
 its timeout (a WD6400AACS stayed awake for hours that way). While a disk has a
 timeout, UNOS turns its automatic offline scans off (`smartctl -o off`), notes
 that in its udev rule, and turns them on again when you set **Off**; a disk
-whose scans were off already, or that has none, is left as it is. The disk
-keeps the setting itself. When they cannot be turned off, the timeout is
-saved all the same, and **Storage** says that the scans may keep the disk
-awake. Without them the disk no longer reads its surface by itself: schedule
+whose scans were off already, or that has none (also one whose SMART is
+turned off), is left as it is. The disk is expected to keep the setting when
+it restarts, but that is not confirmed for every disk: if a disk no longer
+sleeps after a restart, save its timeout again, which turns its scans off
+again. When they cannot be turned off, or UNOS cannot tell whether they were,
+the timeout is saved all the same, and **Storage** says that the scans may
+keep the disk awake. Without them the disk no longer reads its surface by itself: schedule
 a scrub of its pool (**System** → **Scheduler**), which reads every used
 block of the pool. A long SMART test reads the whole surface, but the
 Scheduler's SMART tests are short ones and no page starts a long one yet: run

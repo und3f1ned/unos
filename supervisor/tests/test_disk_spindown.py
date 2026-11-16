@@ -114,7 +114,9 @@ def stuck_check(device: str) -> list[str]:
     return ["pgrep", "-f", f"^hdparm -C {device}$"]
 
 
-SCANS_READ = ["smartctl", "-n", "standby", "-c", "-j"]  # and the disk: its automatic offline data collection
+# And the disk: its automatic offline data collection (-c), and whether it has SMART and SMART is on (-i,
+# which reads the identity that -c reads anyway).
+SCANS_READ = ["smartctl", "-n", "standby", "-i", "-c", "-j"]
 RECORD = "# UNOS turned off the automatic offline data collection of the disk with the serial {serial}"
 # What the answer says when a disk's own automatic offline scans could not be turned off for its timeout,
 # or on again when it is removed: {path} is the disk's, {reason} why.
@@ -122,11 +124,14 @@ SCANS_LEFT_ON = ("{path} has the idle timeout, but the disk's own automatic offl
                  "({reason}): they may keep it awake")
 SCANS_LEFT_OFF = ("{path} has no idle timeout now, but the disk's own automatic offline scans, which UNOS turned off "
                   "for its timeout, could not be turned on again ({reason}): save Off again to try once more")
+# What it says when smartctl -o off gave no clear answer: the drive may have taken it, so the rule records it.
+SCANS_MAYBE_ON = ("{path} has the idle timeout, but whether the disk's own automatic offline scans were turned off "
+                  "is unknown ({reason}): they may keep it awake")
 
 
 def scans_switch(value: str, device: str) -> list[str]:
     """smartctl -o on or -o off of DEVICE in the container, which then reads the state it left."""
-    return ["smartctl", "-n", "standby", "-o", value, "-c", "-j", device]
+    return ["smartctl", "-n", "standby", "-o", value, "-i", "-c", "-j", device]
 
 
 def switched(fake) -> list[list[str]]:
@@ -406,6 +411,41 @@ def test_when_the_rule_cannot_be_written_the_answer_says_the_disk_has_it_until_i
     assert host.offline_collection["/dev/sda"] is True
 
 
+@pytest.mark.parametrize("undo_fails", [False, True])
+def test_when_the_rule_cannot_be_written_after_off_turned_the_scans_on_they_are_turned_off_again(
+        host, tmp_path, undo_fails):
+    # sdc keeps its line, so the file is written again rather than removed.
+    with admin_client() as api:
+        assert api.put(f"{DISKS}/sda/spindown", json={"minutes": 5}).status_code == 200
+        assert api.put(f"{DISKS}/sdc/spindown", json={"minutes": 5}).status_code == 200
+        host.fail[("/bin/sh", "-c")] = (1, "mv: cannot move: Read-only file system")
+        if undo_fails:
+            host.container_answer = lambda cmd: _timeout(cmd) if cmd == scans_switch("off", "/dev/sda") else None
+        response = api.put(f"{DISKS}/sda/spindown", json={"minutes": 0})
+    assert response.status_code == 500
+    assert response.json()["detail"].startswith(
+        "/dev/sda has no idle timeout until it restarts: the udev rule could not be written: ")
+    assert host.standby_timers["/dev/sda"] == 0
+    # The file still holds sda's line and its record, which udev applies at the next boot: the scans are
+    # turned off again, as it records them, so that the timeout works then.
+    assert rules(host) == [RULE.format(serial="WD-W3", value=60), RULE.format(serial="ZFL0BLANK", value=60)]
+    assert records(host) == ["WD-W3"]
+    [*_, (action, _, _, details, success)] = entries(tmp_path / "audit.jsonl")
+    # Turned off again, UNOS changed nothing of them; otherwise they are on, as the entry says.
+    turned = " and turned its automatic offline data collection on again" if undo_fails else ""
+    assert (action, success) == ("settings_changed", False) and details.startswith(
+        f"Turned off the idle timeout of /dev/sda (serial WD-W3){turned} until it restarts; then: ")
+    if undo_fails:
+        assert switched(host) == [["smartctl", "-o", "off", "/dev/sda"], ["smartctl", "-o", "on", "/dev/sda"]]
+        assert host.offline_collection["/dev/sda"] is True
+        assert details.endswith(
+            "; the disk's own automatic offline scans may stay on: smartctl did not answer within 30 seconds")
+    else:
+        assert switched(host) == [["smartctl", "-o", "off", "/dev/sda"], ["smartctl", "-o", "on", "/dev/sda"],
+                                  ["smartctl", "-o", "off", "/dev/sda"]]
+        assert host.offline_collection["/dev/sda"] is False
+
+
 # --- the disk's own automatic offline scans ------------------------------------------------------
 # An ATA disk with automatic offline data collection on (SFF-8035i, smartctl -o on) scans its surface
 # every 4 hours for hours, suspends the scan for each command of the host and resumes it later: it does
@@ -517,6 +557,25 @@ def test_a_disk_without_automatic_offline_scans_is_left_alone(host):
     assert switched(host) == [] and records(host) == []
 
 
+@pytest.mark.parametrize("smart", ["disabled", "unsupported"])
+def test_a_disk_whose_smart_is_off_or_missing_is_left_alone(host, tmp_path, smart):
+    # SMART turned off (smartctl -s off, a BIOS or an enclosure), or none at all: no automatic offline data
+    # collection runs, which is a SMART timer function that SMART DISABLE OPERATIONS stops. smartctl -c
+    # alone would say nothing of it (ataprint.cpp prints "SMART Disabled" with pout, which -j drops); -i
+    # writes smart_support.
+    host.smart_off["/dev/sdc"] = smart
+    with admin_client() as api:
+        assert api.put(f"{DISKS}/sdc/spindown", json={"minutes": 5}).json() == {
+            "name": "sdc", "minutes": 5, "warning": None}
+        assert api.put(f"{DISKS}/sdc/spindown", json={"minutes": 0}).json() == {
+            "name": "sdc", "minutes": 0, "warning": None}
+    assert [call for call in host.container_calls if "-c" in call] == [SCANS_READ + ["/dev/sdc"]]
+    assert switched(host) == [] and spindown.RULES_PATH not in host.files
+    assert [e[3] for e in entries(tmp_path / "audit.jsonl")] == [
+        "Set the idle timeout of /dev/sdc (serial ZFL0BLANK) to 5 minutes",
+        "Turned off the idle timeout of /dev/sdc (serial ZFL0BLANK)"]
+
+
 def timed_out(match: list[str]):
     """A container_answer under which the command MATCH does not answer within its timeout."""
     def answer(cmd):
@@ -538,7 +597,6 @@ def timed_out(match: list[str]):
     (lambda cmd: subprocess.CompletedProcess(cmd, 0, json.dumps({"ata_smart_data": {
         "offline_data_collection": {"status": 132}, "capabilities": {"values": {}}}, "smartctl": {"messages": "x"}}), "")
      if cmd == SCANS_READ + ["/dev/sda"] else None, "smartctl could not read them: exit status 0"),
-    (timed_out(scans_switch("off", "/dev/sda")), "smartctl did not answer within 30 seconds"),
     # The drive refused the command (exit status bit 2, smartctl's FAILSMART) and still has them on.
     (lambda cmd: capabilities(cmd, 0x84, 0x7b, returncode=4) if cmd == scans_switch("off", "/dev/sda") else None,
      "smartctl -o off left them on, exit status 4"),
@@ -559,6 +617,57 @@ def test_scans_that_cannot_be_turned_off_leave_the_timeout_set_and_the_answer_sa
     assert warning in caplog.text
     assert [e[3:] for e in entries(tmp_path / "audit.jsonl")] == [
         (f"Set the idle timeout of /dev/sda (serial WD-W3) to 5 minutes; {warning}", True)]
+
+
+def _timeout(cmd):
+    raise subprocess.TimeoutExpired(cmd, 30)
+
+
+# smartctl sends -o off first and then reads the SMART data again (ataprint.cpp): an answer without that
+# state does not say that the drive did not take the command.
+@pytest.mark.parametrize("applied, answer, reason", [
+    # Killed at its timeout, before or after the drive took it.
+    (False, _timeout, "smartctl did not answer within 30 seconds"),
+    (True, _timeout, "smartctl did not answer within 30 seconds"),
+    # The re-read failed: smart_val_ok is false, and -c prints no ata_smart_data (FAILSMART).
+    (True, lambda cmd: subprocess.CompletedProcess(cmd, 4, json.dumps({
+        "device": {"name": cmd[-1], "type": "sat", "protocol": "ATA"},
+        "smart_support": {"available": True, "enabled": True}, "smartctl": {"exit_status": 4}}), ""),
+     "smartctl could not read them: exit status 4"),
+    (True, lambda cmd: subprocess.CompletedProcess(cmd, 4, "Read SMART Data failed", ""),
+     "smartctl could not read them: exit status 4"),
+    # An answer of no ATA disk.
+    (True, lambda cmd: subprocess.CompletedProcess(cmd, 0, json.dumps(
+        {"device": {"name": cmd[-1], "type": "scsi", "protocol": "SCSI"}}), ""), "smartctl -o off read no state"),
+])
+def test_scans_whose_switch_gave_no_clear_answer_are_recorded_and_off_turns_them_on_again(
+        host, tmp_path, caplog, applied, answer, reason):
+    def respond(cmd):
+        if cmd != scans_switch("off", "/dev/sda"):
+            return None
+        if applied:  # the drive took it
+            host.offline_collection["/dev/sda"] = False
+            host.changes.append(["smartctl", "-o", "off", "/dev/sda"])
+        return answer(cmd)
+
+    host.container_answer = respond
+    with admin_client() as api:
+        response = api.put(f"{DISKS}/sda/spindown", json={"minutes": 5})
+        assert response.status_code == 200, response.text
+        warning = SCANS_MAYBE_ON.format(path="/dev/sda", reason=reason)
+        assert response.json() == {"name": "sda", "minutes": 5, "warning": warning}
+        assert warning in caplog.text
+        # The drive may have turned them off: recorded, so that Off puts back what UNOS found (on).
+        assert (rules(host), records(host)) == ([RULE.format(serial="WD-W3", value=60)], ["WD-W3"])
+        host.container_answer = None
+        assert api.put(f"{DISKS}/sda/spindown", json={"minutes": 0}).json() == {
+            "name": "sda", "minutes": 0, "warning": None}
+    assert host.container_calls[-1] == scans_switch("on", "/dev/sda")
+    assert host.offline_collection["/dev/sda"] is True and spindown.RULES_PATH not in host.files
+    assert [e[3] for e in entries(tmp_path / "audit.jsonl")] == [
+        f"Set the idle timeout of /dev/sda (serial WD-W3) to 5 minutes; {warning}",
+        "Turned off the idle timeout of /dev/sda (serial WD-W3) and turned its automatic offline data collection on "
+        "again"]
 
 
 def test_scans_that_cannot_be_turned_on_again_stay_recorded_until_off_is_saved_again(host, tmp_path, caplog):

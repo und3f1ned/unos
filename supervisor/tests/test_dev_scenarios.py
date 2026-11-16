@@ -614,8 +614,10 @@ class FakeNas:
         # The disk's own automatic offline data collection (ADR-0378): "on", "off", or "none" for a disk
         # without it, and whether UNOS's udev rule records that UNOS turned it off. While it is on, the
         # drive's surface scan, suspended for each command and resumed, keeps it awake, as it kept the dev
-        # device's sda (the defect unos-leaves-scans-on: UNOS's Save leaves it on; scans-on-again: something
-        # turns it on again once the wait for standby begins, as smartd with -o on would).
+        # device's sda (the defect unos-leaves-scans-on: UNOS's Save leaves it on; scans-off-unrecorded: the
+        # Save turns it off but its rule does not record that; scans-stay-off: Off cannot turn it on again,
+        # keeps the record and answers SCANS_LEFT_OFF's warning; scans-on-again: something turns it on
+        # again once the wait for standby begins, as smartd with -o on would).
         self.offline = "on"
         self.scans_recorded = False
 
@@ -1320,18 +1322,26 @@ class FakeNas:
         self.spindown = minutes
         # Then smartctl -o off for a timeout when the collection is on, and -o on without one when UNOS
         # turned it off.
+        warning = None
         if minutes and self.offline == "on" and "unos-leaves-scans-on" not in self.bugs:
-            self.offline, self.scans_recorded = "off", True
+            self.offline, self.scans_recorded = "off", "scans-off-unrecorded" not in self.bugs
         elif not minutes and self.scans_recorded:
-            self.offline, self.scans_recorded = "on", False
+            if "scans-stay-off" in self.bugs:
+                warning = (f"/dev/{DISK} has no idle timeout now, but the disk's own automatic offline scans, which "
+                           "UNOS turned off for its timeout, could not be turned on again (smartctl did not answer "
+                           "within 30 seconds): save Off again to try once more")
+            else:
+                self.offline, self.scans_recorded = "on", False
         record = scenario.SPINDOWN_SCANS_RECORD.format(serial="W1") + "\n" if self.scans_recorded else ""
         if minutes:
             self.rules = ("# Written by UNOS\n" 'ACTION=="add", SUBSYSTEM=="block", ENV{DEVTYPE}=="disk", '
                           f'ENV{{ID_SERIAL_SHORT}}=="W1", RUN+="/sbin/hdparm -S {values[minutes]} $devnode"\n'
                           + record)
+        elif record:
+            self.rules = "# Written by UNOS\n" + record
         elif "off-keeps-the-rule" not in self.bugs:
             self.rules = None
-        return {"name": name, "minutes": minutes, "warning": None}
+        return {"name": name, "minutes": minutes, "warning": warning}
 
     def offline_collection(self, path, wake=False):
         """REMOTE_OFFLINE: smartctl -c of the disk in the container; -n standby leaves a sleeping disk
@@ -3785,6 +3795,10 @@ def test_the_smart_check_gives_the_disk_the_shortest_timeout_and_reads_smart_whi
     # Before the self-test, which keeps the disk busy.
     assert text.index("sleeps once the timeout ran out") < text.index("a short self-test starts on sda")
     assert (nas.spindown, nas.rules, nas.offline, nas.scans_recorded) == (0, None, "on", False)
+    # The clean-up sets the timeout as found once more, then reads the offline data collection it left.
+    assert re.search(r"^done  clean up: the idle timeout of sda off again  \[SD .*\n"
+                     r"done  clean up: sda's automatic offline data collection on, as the check found it  \[SD ",
+                     output, re.M), output
 
 
 # force_spindown_time is spindown_time for a disk without APM, which Debian's hdparm applies only with APM.
@@ -3926,8 +3940,9 @@ def test_the_smart_check_takes_a_disk_that_sleeps_when_it_starts(nas):
 
 
 # --- the disk's own automatic offline data collection (ADR-0378) ----------------------------------
-# On, it kept the dev device's sda awake for hours with any timeout: the drive scans its surface every 4
-# hours, suspends the scan for each command and resumes it. UNOS turns it off while the disk has a timeout.
+# On, it kept the dev device's sda awake after a reboot, for hours with its timeout of 20 minutes: the drive
+# scans its surface every 4 hours, suspends the scan for each command and resumes it. UNOS turns it off while
+# the disk has a timeout.
 
 
 def test_the_smart_check_fails_a_save_that_leaves_the_disk_s_own_scans_on(nas):
@@ -3997,6 +4012,46 @@ def test_the_smart_check_fails_scans_on_that_the_rule_records_as_turned_off(nas)
     assert not [call for call in nas.calls if call[0] == "PUT" and DISK in call[1]]
 
 
+def test_the_smart_check_s_clean_up_names_scans_that_it_left_unlike_it_found_them(nas):
+    # The Save turns them off but records nothing: the restore's Off leaves them off. The final comparison
+    # reads no offline data collection (it would wake a sleeping disk at the start), so the clean-up says
+    # what is left and the way back.
+    nas.bugs.add("scans-off-unrecorded")
+    status, output = run_check("smart", nas)
+    assert status == 1, output
+    assert re.search(r"^FAIL  \d+\. sda's automatic offline data collection is off while it has the timeout: UNOS's "
+                     r"udev rule does not record that UNOS turned it off \(found on\)  \[SD ", output, re.M), output
+    assert "done  clean up: the idle timeout of sda off again" in output
+    assert re.search(r"^FAIL  clean up: sda's automatic offline data collection on, as the check found it: it is "
+                     r"off: turn it on again with smartctl -o on /dev/sda in the supervisor's container  \[SD ",
+                     output, re.M), output
+    # The restore runs first, then the read of what it left.
+    assert output.index("clean up: the idle timeout of sda off again") < output.index(
+        "clean up: sda's automatic offline data collection")
+
+
+@pytest.mark.parametrize("bugs, failed", [
+    # The wait fails, and the clean-up's Off cannot turn them on again.
+    ({"never-sleeps", "scans-stay-off"}, "sda sleeps once the timeout ran out: it is active after 1980 s"),
+    # The last step's Off cannot turn them on again: its warning fails the step.
+    ({"scans-stay-off"}, "sda has no idle timeout again: no line in UNOS's udev rule, and no standby timer (hdparm -S "
+                         "0) until its next power cycle, and its automatic offline data collection is as the check "
+                         "found it: UNOS answered: /dev/sda has no idle timeout now, but the disk's own automatic "
+                         "offline scans, which UNOS turned off for its timeout, could not be turned on again"),
+])
+def test_the_smart_check_fails_an_off_that_answers_a_warning_and_names_the_scans_left_off(nas, bugs, failed):
+    nas.bugs.update(bugs)
+    status, output = run_check("smart", nas)
+    assert status == 1, output
+    assert failed in [line for line in step_lines(output) if line.startswith("FAIL  ")][0], output
+    assert re.search(r"^FAIL  clean up: the idle timeout of sda off again: UNOS answered: /dev/sda has no idle timeout "
+                     r"now, but .*: save Off again to try once more  \[SD ", output, re.M), output
+    assert re.search(r"^FAIL  clean up: sda's automatic offline data collection on, as the check found it: it is off, "
+                     r"recorded in UNOS's udev rule: save Off for sda on the Storage page again  \[SD ",
+                     output, re.M), output
+    assert (nas.offline, nas.scans_recorded) == ("off", True)
+
+
 @pytest.mark.parametrize("spindown, offline, recorded, why", [
     # A timeout saved before UNOS turned the scans off, as the dev device's sda has it: the Save would turn
     # them off for good.
@@ -4035,6 +4090,10 @@ def test_the_smart_check_skips_scans_that_it_could_not_leave_as_found(nas, spind
      '{"values": [89, 3]}}}', "none"),
     ('status 0\n{"device": {"protocol": "NVMe"}, "nvme_smart_health_information_log": {}}', "none"),
     ('status 4\n{"device": {"protocol": "SCSI"}}', "none"),
+    # An ATA disk whose SMART is off (smartctl -s off), or that has none: no automatic offline data
+    # collection runs (ataprint.cpp; -i writes smart_support).
+    ('status 0\n{"device": {"protocol": "ATA"}, "smart_support": {"available": true, "enabled": false}}', "none"),
+    ('status 4\n{"device": {"protocol": "ATA"}, "smart_support": {"available": false}}', "none"),
     ('status 2\n{"smartctl": {"messages": [{"string": "Device is in STANDBY mode, exit(2)"}]}}', "standby"),
 ])
 def test_the_smart_check_reads_a_disk_s_offline_data_collection_from_smartctl_c(out, state):
@@ -4051,7 +4110,7 @@ def test_the_smart_check_fails_a_smartctl_c_that_reads_no_state(out):
 
 
 def test_the_offline_helper_runs_smartctl_c_in_the_supervisor_s_container(tmp_path):
-    """REMOTE_OFFLINE runs smartctl -c -j through docker exec (no new container), with -n standby or
+    """REMOTE_OFFLINE runs smartctl -i -c -j through docker exec (no new container), with -n standby or
     never, for a whole disk's path alone, and prints smartctl's exit status before its JSON."""
     stubs = tmp_path / "bin"
     stubs.mkdir()
@@ -4076,7 +4135,8 @@ def test_the_offline_helper_runs_smartctl_c_in_the_supervisor_s_container(tmp_pa
     for args in (("/dev/sda; true", "standby"), ("/dev/../etc/passwd", "standby"), ("/dev/sda", "idle")):
         assert run(*args).returncode == 2, args
     assert (tmp_path / "docker.log").read_text().splitlines() == [
-        "exec unos-supervisor smartctl -n standby -c -j /dev/sda", "exec unos-supervisor smartctl -n never -c -j /dev/sda"]
+        "exec unos-supervisor smartctl -n standby -i -c -j /dev/sda",
+        "exec unos-supervisor smartctl -n never -i -c -j /dev/sda"]
 
 
 def test_the_smart_check_expects_unos_s_idle_timeouts():

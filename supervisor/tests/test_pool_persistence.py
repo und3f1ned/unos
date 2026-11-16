@@ -320,6 +320,11 @@ class FakeHost:
         # that it does not sleep meanwhile), False while off. A disk not here has no such feature: its
         # capabilities lack "Auto Offline data collection on/off support", and -o is refused.
         self.offline_collection: dict[str, bool] = {}
+        # The ATA disks without working SMART, by their path: "disabled" for one whose SMART is turned off
+        # (smartctl -s off, a BIOS or an enclosure), "unsupported" for one without SMART. Neither runs an
+        # automatic offline data collection: it is a SMART timer function, and SMART DISABLE OPERATIONS
+        # stops it.
+        self.smart_off: dict[str, str] = {}
         # A function of a command run in the container that answers it instead of the fake (a
         # CompletedProcess), or raises (subprocess.TimeoutExpired, as run_in_container at its timeout);
         # None from it: the fake answers.
@@ -519,11 +524,11 @@ class FakeHost:
         STANDBY_Y for -n standby, and IDLE_A, IDLE_B and IDLE_C too for -n idle; an awake disk of
         the fake is ACTIVE or IDLE, FFh, which neither stops), and answers -i (the identity: the
         power read of an NVMe disk, of a host without hdparm and of an EPC disk), -a (the SMART
-        data), and -c (the SMART capabilities, with the automatic offline data collection of
-        offline_collection), also after -o on or -o off, which switch it first, of a disk it goes
-        on to read. And pgrep -f '^hdparm -C <disk>$', which finds the
-        hdparm -C of a disk that still runs on the host (stuck_hdparm; the container shares the
-        host's process IDs). Any other command fails the test, as smartctl without -n, which would
+        data), and -c, also with -i (the SMART capabilities, with the automatic offline data
+        collection of offline_collection, and the identity's SMART support), also after -o on or
+        -o off, which switch it first, of a disk it goes on to read. And pgrep -f
+        '^hdparm -C <disk>$', which finds the hdparm -C of a disk that still runs on the host
+        (stuck_hdparm; the container shares the host's process IDs). Any other command fails the test, as smartctl without -n, which would
         wake a sleeping disk. container_answer answers a command instead, when it does."""
         cmd = list(cmd)
         assert timeout, cmd
@@ -536,8 +541,9 @@ class FakeHost:
             running = found[1] in self.stuck_hdparm
             return subprocess.CompletedProcess(cmd, 0 if running else 1, "4242\n" if running else "", "")
         if cmd[:2] != ["smartctl", "-n"] or cmd[2] not in ("standby", "idle") \
-                or cmd[3:-1] not in (["-i", "-j"], ["-j", "-a"], ["-c", "-j"], ["-o", "on", "-c", "-j"],
-                                     ["-o", "off", "-c", "-j"]):
+                or cmd[3:-1] not in (["-i", "-j"], ["-j", "-a"],
+                                     *([*switch, *info, "-c", "-j"] for switch in ([], ["-o", "on"], ["-o", "off"])
+                                       for info in ([], ["-i"]))):
             raise AssertionError(f"test tried to run a real command: {cmd!r}")
         device = cmd[-1]
         node = self._node_by_path(device)
@@ -568,16 +574,28 @@ class FakeHost:
         return subprocess.CompletedProcess(cmd, 0, json.dumps(data), "")
 
     def _smart_capabilities(self, cmd, device, node):
-        """smartctl -c -j, after -o on or -o off: the JSON of smartmontools' ataprint.cpp, whose
-        ata_smart_data.offline_data_collection.status.value has bit 7 set while the automatic
-        offline data collection is on (0x84 as on the dev device's disk: suspended by a command of the
-        host, 0x05 once it was turned off), and whose capabilities.values[0] has bit 1 for a disk that
-        can switch it (0x7b as on the dev device's disk; 0x59 without). An NVMe disk has none of it.
-        -o on a disk without the feature is refused by the disk: exit status bit 2, as smartctl's
-        FAILSMART."""
+        """smartctl -c -j, with or without -i, after -o on or -o off: the JSON of smartmontools'
+        ataprint.cpp, whose ata_smart_data.offline_data_collection.status.value has bit 7 set while
+        the automatic offline data collection is on (0x84 as on the dev device's disk: suspended by a
+        command of the host, 0x05 once it was turned off), and whose capabilities.values[0] has bit 1
+        for a disk that can switch it (0x7b as on the dev device's disk; 0x59 without). -i adds
+        smart_support. An NVMe disk has none of it. -o on a disk without the feature is refused by the
+        disk: exit status bit 2, as smartctl's FAILSMART. A disk of smart_off reads no SMART data:
+        without SMART, smartctl writes smart_support.available false and fails (FAILSMART); with SMART
+        disabled it stops at "SMART Disabled", a message that -j drops, before -o and with exit status
+        0, and writes smart_support (enabled false) only for -i."""
         if node["name"].startswith("nvme"):
             return subprocess.CompletedProcess(cmd, 0, json.dumps(
                 {"device": {"name": device, "type": "nvme", "protocol": "NVMe"}, "smartctl": {"exit_status": 0}}), "")
+        ata = {"name": device, "info_name": f"{device} [SAT]", "type": "sat", "protocol": "ATA"}
+        if device in self.smart_off:
+            unsupported = self.smart_off[device] == "unsupported"
+            data = {"device": ata, "smartctl": {"exit_status": 4 if unsupported else 0}}
+            if unsupported:
+                data["smart_support"] = {"available": False}
+            elif "-i" in cmd:
+                data["smart_support"] = {"available": True, "enabled": False}
+            return subprocess.CompletedProcess(cmd, data["smartctl"]["exit_status"], json.dumps(data), "")
         returncode = 0
         if "-o" in cmd:
             if device in self.offline_collection:
@@ -588,15 +606,18 @@ class FakeHost:
         on = self.offline_collection.get(device)
         status = 0x00 if on is None else 0x84 if on else 0x05
         capabilities = 0x59 if on is None else 0x7b
-        return subprocess.CompletedProcess(cmd, returncode, json.dumps({
+        data = {
             "smartctl": {"exit_status": returncode},
-            "device": {"name": device, "info_name": f"{device} [SAT]", "type": "sat", "protocol": "ATA"},
+            "device": ata,
             "ata_smart_data": {
                 "offline_data_collection": {"status": {"value": status}, "completion_seconds": 14760},
                 "capabilities": {"values": [capabilities, 3], "exec_offline_immediate_supported": True,
                                  "offline_is_aborted_upon_new_cmd": False},
             },
-        }), "")
+        }
+        if "-i" in cmd:
+            data["smart_support"] = {"available": True, "enabled": True}
+        return subprocess.CompletedProcess(cmd, returncode, json.dumps(data), "")
 
     @staticmethod
     def _result(returncode=0, stdout="", stderr=""):
