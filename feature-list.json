@@ -4092,14 +4092,14 @@
       "category": "apps",
       "description": "BookStack, Paperless-ngx and Linkwarden are back in the catalog as apps with the companion containers they need",
       "steps": [
-        "BookStack installs with its MariaDB, Paperless-ngx with its Redis broker and Linkwarden with its PostgreSQL, each as a companion container whose password UNOS generates on the pool",
+        "BookStack installs with its MariaDB, Paperless-ngx with its Redis broker and Linkwarden with its PostgreSQL, each as a companion container; UNOS generates the password of each database (BookStack's MariaDB and Linkwarden's PostgreSQL) on the pool, and the broker, like Immich's Valkey, has none",
         "Each app starts after its install and serves its web page, with all its data on the pool"
       ],
       "passes": false,
       "adr": [
         "ADR-0381"
       ],
-      "notes": "ADR-0381 removed the three templates: each named a database or a broker that no container of the catalog gave it. Related apps that need another container or the host: open-webui reaches Ollama at host.docker.internal, which does not resolve on Linux without a host-gateway entry, and zigbee2mqtt needs an MQTT broker (the mosquitto app) that its template does not name."
+      "notes": "ADR-0381 removed the three templates: each needs a database or a broker that a one-container template never gave it. BookStack's named its database's host (DB_HOST=bookstack-db); Paperless-ngx's named no broker (PAPERLESS_REDIS) and Linkwarden's no database (DATABASE_URL). Related apps that need another container or the host: open-webui reaches Ollama at host.docker.internal, which does not resolve on Linux without a host-gateway entry, and zigbee2mqtt needs an MQTT broker (the mosquitto app) that its template does not name."
     },
     {
       "id": "apps.pinned-catalog-images",
