@@ -422,6 +422,33 @@ test.describe('An installed app of several containers', () => {
     expect(requests).toEqual(['DELETE /api/v1/apps/installed/e2e-immich-id']);
   });
 
+  test('an incomplete app whose server runs can be stopped, but not restarted or opened', async ({
+    authenticatedPage: page,
+  }) => {
+    // The server runs, so the card draws the actions of a running app: only the check of the
+    // missing container keeps Restart away, which the server would refuse (409).
+    const installed = [installedImmich(POOL.path, { missing: ['immich-redis'] })];
+    const { requests } = await fakeApps(page, installed);
+    await openAppStore(page);
+    await installedTab(page, 1);
+
+    const immich = installedCard(page, 'immich');
+    await expect(immich.getByText('Incomplete', { exact: true })).toBeVisible();
+    await expect(immich.locator('.alert-warning')).toHaveText(incomplete('immich-redis'));
+    await expect(immich.getByRole('button', { name: 'Uninstall', exact: true })).toBeVisible();
+    for (const action of ['Restart', 'Start']) {
+      await expect(immich.getByRole('button', { name: action, exact: true })).toHaveCount(0);
+    }
+    await expect(immich.getByRole('link', { name: 'Open' })).toHaveCount(0);
+
+    await immich.getByRole('button', { name: 'Stop', exact: true }).click();
+    await expect(immich.getByRole('button', { name: 'Stop', exact: true })).toHaveCount(0);
+    for (const action of ['Restart', 'Start']) {
+      await expect(immich.getByRole('button', { name: action, exact: true })).toHaveCount(0);
+    }
+    expect(requests).toEqual(['POST /api/v1/apps/installed/e2e-immich-id/stop']);
+  });
+
   test('an app without its server is named by a companion, and its uninstall removes the rest', async ({
     authenticatedPage: page,
   }) => {
@@ -542,17 +569,25 @@ test.describe('Apps of several containers in Russian', () => {
       .toBe('Удалить приложение immich? Его 4 контейнера будут удалены, а папки с данными останутся.');
   });
 
-  test('an incomplete app', async ({ authenticatedPage: page }) => {
-    await fakeApps(page, [installedImmich(POOL.path, { main: { status: 'exited' }, missing: ['immich-redis'] })]);
-    await openAppStore(page);
-    await page.getByRole('button', { name: 'Установленные (1)', exact: true }).click();
+  for (const status of ['exited', 'running']) {
+    test(`an incomplete app whose server is ${status}`, async ({ authenticatedPage: page }) => {
+      await fakeApps(page, [installedImmich(POOL.path, { main: { status }, missing: ['immich-redis'] })]);
+      await openAppStore(page);
+      await page.getByRole('button', { name: 'Установленные (1)', exact: true }).click();
 
-    const immich = installedCard(page, 'immich');
-    await expect(immich.getByText('Неполное', { exact: true })).toBeVisible();
-    await expect(immich.locator('.alert-warning')).toHaveText(
-      'Приложение Immich неполное: в Docker нет immich-redis. Его нельзя запустить: удалите его (папки с данными ' +
-        'останутся) и установите снова.',
-    );
-    await expect(immich.getByRole('button', { name: 'Запустить', exact: true })).toHaveCount(0);
-  });
+      const immich = installedCard(page, 'immich');
+      await expect(immich.getByText('Неполное', { exact: true })).toBeVisible();
+      await expect(immich.locator('.alert-warning')).toHaveText(
+        'Приложение Immich неполное: в Docker нет immich-redis. Его нельзя запустить: удалите его (папки с данными ' +
+          'останутся) и установите снова.',
+      );
+      for (const action of ['Запустить', 'Перезапустить']) {
+        await expect(immich.getByRole('button', { name: action, exact: true })).toHaveCount(0);
+      }
+      await expect(immich.getByRole('button', { name: 'Остановить', exact: true })).toHaveCount(
+        status === 'running' ? 1 : 0,
+      );
+      await expect(immich.getByRole('button', { name: 'Удалить', exact: true })).toBeVisible();
+    });
+  }
 });
