@@ -686,20 +686,20 @@ marks one that the NAS cannot serve now with the reason (see below).
   share's pool, or of its volume when the share is in one, under
   **Properties** → **Previous Versions** of its files and folders, and can
   open, copy or restore them; `smbclient` reaches them as `@GMT-` paths.
-  With no snapshot, `smbclient` of Samba 4.22 prints
-  `NT_STATUS_INVALID_NETWORK_RESPONSE getting shadow copy data` (smbd
-  answers the empty list in 14 bytes, and that `smbclient` wants at least
-  16): it means no snapshot. A pool or volume without a `.snapshots`
-  folder, such as a new one before its first snapshot (the first snapshot
-  makes the folder, and deleting snapshots keeps it), makes smbd answer
-  `NT_STATUS_INVALID_DEVICE_REQUEST` instead. In both cases Windows shows
-  no previous versions.
   Only the snapshots that UNOS names are listed: those made on the
   [Snapshots](#snapshots) page with the default name (`snap_<time>`) and
   those of scheduled snapshot tasks (`auto_<time>`). Scheduled tasks
   snapshot pools only, and a pool's snapshot does not hold the files of its
   volumes: a share in a volume lists only the volume's snapshots made on the
-  **Snapshots** page. A folder in a subvolume or file system of its own
+  **Snapshots** page. When none is listed (the pool or volume has no
+  snapshot, or only snapshots of other names), `smbclient` of Samba 4.22
+  prints `NT_STATUS_INVALID_NETWORK_RESPONSE getting shadow copy data`
+  (smbd answers the empty list in 14 bytes, and that `smbclient` wants at
+  least 16): it means the list is empty. A pool or volume without a
+  `.snapshots` folder, such as a new one before its first snapshot (the
+  first snapshot makes the folder, and deleting snapshots keeps it), lists
+  none either. In each case Windows shows no previous versions. A folder
+  in a subvolume or file system of its own
   further below the pool's top level than a volume (such as a restored copy
   inside a volume, a subvolume made by hand or another file system mounted
   there) is in no snapshot of UNOS, and the option is refused there with the

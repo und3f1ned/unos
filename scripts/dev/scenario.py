@@ -38,14 +38,18 @@ SD writes of each check (ADR-0214). The areas:
            Folder and Upload in the share's folder (2770 and 660 root:unos-smb) changed over SMB,
            the access lowered to read and then removed during open sessions, a comment saved with
            the expected version and a stale one refused; the protocol options (ADR-0380) of a
-           second share, of a folder in a new volume: Previous Versions, which list two snapshots
-           of the volume that the check makes on the Snapshots page a second apart with the names
-           it gives as @GMT-<their times> for a file the user wrote and then overwrote, only the
-           second once the first is deleted, whose version of the file opens with the bytes from
-           before the overwrite, and once both are deleted none (an empty list, which smbclient
+           second share, of a folder in a new volume: Previous Versions, with smbd's answer for
+           the shadow copies of the volume before its first snapshot, without .snapshots,
+           recorded (any answer passes), which list two snapshots of the volume that the check
+           makes on the Snapshots page a second apart with the names it gives as @GMT-<their
+           times> for a file the user wrote and then overwrote, only the second once the first
+           is deleted, whose version of the file opens with exactly the bytes from before the
+           overwrite (the SHA-256 of the copy smbclient gets, which sha256sum reads where
+           smbclient runs), and once both are deleted none (an empty list, which smbclient
            reports as NT_STATUS_INVALID_NETWORK_RESPONSE), while smbd refuses to open the file in
-           either and the session goes on, encryption required, which ends the share's open
-           SMB 2.1 and unencrypted SMB3 sessions, refuses a new SMB 2.1 client and serves one
+           either, the session goes on and the volume keeps its .snapshots, encryption required,
+           which ends the share's open SMB 2.1 and unencrypted SMB3 sessions, refuses a new
+           SMB 2.1 client and serves one
            that encrypts while the SMB 2.1 client still opens the first share, and with the
            option off the SMB 2.1 client again, and Time Machine with Previous Versions, whose
            lines and those of [global] testparm takes and whose change restarts avahi-daemon
@@ -943,6 +947,27 @@ def gmt_token(snapshot: str) -> str | None:
 def gmt_tokens(output: str) -> list[str]:
     """The @GMT tokens in smbclient's OUTPUT, in order: allinfo prints one line for each shadow copy."""
     return re.findall(r"@GMT-\d{4}\.\d\d\.\d\d-\d\d\.\d\d\.\d\d", output)
+
+
+def shadow_copy_answer(result: SmbResult) -> str:
+    """What smbclient's allinfo of a file printed for its shadow copies (FSCTL_GET_SHADOW_COPY_DATA):
+    its line "<status> getting shadow copy data for <name>" (do_allinfo of Samba 4.22's
+    source3/client/client.c), else no error with the @GMT tokens it listed, or the error or end of
+    smbclient that came before any such line."""
+    found = re.search(r"NT_STATUS_[A-Z_]+ getting shadow copy data for \S+", result.output)
+    if found:
+        return found[0]
+    if result.ended or not result.ok:
+        return f"{result.status} before any line for the shadow copies"
+    tokens = gmt_tokens(result.output)
+    return f"no error and the shadow copies {', '.join(tokens)}" if tokens else "no error and no shadow copy"
+
+
+def sha256_digests(output: str, name: str) -> list[str]:
+    """The digests that coreutils' sha256sum printed for the file NAME ("<64 hex digits>  NAME", or
+    " *NAME" in binary mode) in smbclient's OUTPUT, run there with smbclient's !: found wherever
+    smbclient's prompts or the line of a get, which may end without a line break, put them."""
+    return re.findall(r"(?<![0-9a-f])([0-9a-f]{64}) [ *]" + re.escape(name) + r"(?!\S)", output)
 
 
 def no_shadow_copies(result: SmbResult, name: str) -> bool:
@@ -2397,7 +2422,8 @@ def smb_check(c: Check) -> None:
 
     with c.step(f"a share {vshare} of a new folder in a new volume {volume}, with Previous Versions on, lists the "
                 f"volume's snapshots (shadow_copy2 with shadow:mountpoint = {vpath}), testparm takes smb.conf, and "
-                "in a session the user writes a file there"):
+                "in a session the user writes a file there, whose allinfo before the volume's first snapshot shows "
+                "what smbd answers for the shadow copies of a volume without .snapshots (any answer passes)") as s:
         c.on_cleanup(f"delete the volume {volume}", lambda: c.delete_volume(pool["name"], volume))
         c.post(f"/storage/pools/{pool['name']}/volumes", {"name": volume})
         c.on_cleanup(f"delete the share {vshare}", lambda: c.delete_share(vshare))
@@ -2411,14 +2437,21 @@ def smb_check(c: Check) -> None:
         c.expect(c.device.facts()["testparm"], "testparm refuses smb.conf")
         with c.device.smb_session(user, password, vshare) as smb:
             done = smb.run("put data.txt v.txt")
+            # Recorded, not judged: what smbd answers here has not been seen on the device yet. The
+            # first snapshot makes .snapshots (make_snapshot of src/snapshots/router.py).
+            info = smb.run("allinfo v.txt")
         c.expect(done.ok, f"smbclient: {done.status} {tail(done.output, 200)}")
+        snapdir = c.device.stat([f"{vpath}/.snapshots"])[f"{vpath}/.snapshots"]
+        s.text += (": the volume has " + ("no .snapshots" if snapdir == "missing" else f".snapshots ({snapdir})")
+                   + f", and allinfo v.txt answered {shadow_copy_answer(info)}")
 
     with c.step("two snapshots of the volume that the check makes on the Snapshots page a second apart, with the "
                 "names it gives, are listed for that file as @GMT-<their times> once the user has overwritten it; "
-                "after the first one's Delete only the second is listed and the file opens in it with the bytes it "
-                "held before the overwrite, not the new ones, and after the second one's Delete smbd refuses to open "
-                "the file in either while the session goes on, and none is listed (Samba 4.22's smbclient reports "
-                "that empty list as NT_STATUS_INVALID_NETWORK_RESPONSE)") as s:
+                "after the first one's Delete only the second is listed and the file opens in it with exactly the "
+                "bytes it held before the overwrite (the SHA-256 of the copy smbclient gets), and after the second "
+                "one's Delete smbd refuses to open the file in either while the session goes on, and none is listed "
+                "(Samba 4.22's smbclient reports that empty list as NT_STATUS_INVALID_NETWORK_RESPONSE), while the "
+                "volume keeps its .snapshots") as s:
         def delete_snapshots() -> None:
             """Every snapshot of the check's new volume is the check's, also one whose answer was lost."""
             found = c.get("/snapshots/", {"subvolume": vpath}, expect=(200, 404))
@@ -2449,14 +2482,18 @@ def smb_check(c: Check) -> None:
         c.call("DELETE", f"/snapshots/{made[0]}", params={"subvolume": vpath})
         with c.device.smb_session(user, password, vshare) as smb:
             listed = smb.run("allinfo v.txt")
-            kept = smb.run(f"get {second}/v.txt kept.txt", "!cat kept.txt")
+            # get writes the version into the helper's folder in RAM, where smbclient's ! runs
+            # coreutils' sha256sum: its digest proves the exact bytes, which neither smbclient's
+            # prompts nor its line of the get can blur (the text of DATA is a part of DATA2's line).
+            kept = smb.run(f"get {second}/v.txt kept.txt", "!sha256sum kept.txt")
         c.expect(listed.ok and gmt_tokens(listed.output) == [second],
                  f"after the Delete of {made[0]} allinfo v.txt answered {listed.status}: {tail(listed.output, 300)}")
-        # Whole lines: the text of DATA is a part of DATA2's line.
-        held = [line.strip() for line in kept.output.splitlines()]
-        c.expect(kept.ok and DATA.strip() in held and DATA2.strip() not in held,
+        digests = sha256_digests(kept.output, "kept.txt")
+        earlier, later = (hashlib.sha256(text.encode()).hexdigest() for text in (DATA, DATA2))
+        c.expect(kept.ok and digests == [earlier],
                  f"v.txt in {second} answered {kept.status}"
-                 + (", with the bytes put after the snapshots" if DATA2.strip() in held else "")
+                 + (", with the bytes put after the snapshots" if digests == [later]
+                    else ", with other bytes than before the overwrite" if digests else "")
                  + f": {tail(kept.output, 200)}")
         c.call("DELETE", f"/snapshots/{made[1]}", params={"subvolume": vpath})
         with c.device.smb_session(user, password, vshare) as smb:
@@ -2473,6 +2510,9 @@ def smb_check(c: Check) -> None:
                  f"{tail(after.output, 200)}")
         c.expect(not gmt_tokens(listed.output) and (listed.ok or no_shadow_copies(listed, "v.txt")),
                  f"afterwards allinfo v.txt answered {listed.status}: {tail(listed.output, 300)}")
+        # Seen directly: smbd's answer for a volume without .snapshots may look like an empty list.
+        c.expect(c.device.stat([f"{vpath}/.snapshots"])[f"{vpath}/.snapshots"] != "missing",
+                 "after both Deletes the volume has no .snapshots, which the first snapshot made and a Delete keeps")
         s.text += (f": {first} and {second}; afterwards v.txt in them answered {gone[0].status} and {gone[1].status}, "
                    f"and allinfo's empty list {listed.status}")
 

@@ -62,14 +62,19 @@ Covered (the steps of the ledger entry device.scenario-checks-in-repo):
   SAMR that Samba takes, or refuses while it writes passdb.tdb or stores the new password, a
   catalog that does not offer Jellyfin the RK3588's video hardware on an RK3588 with Rockchip MPP
   or offers an app the hardware of another SoC, Previous Versions that list no snapshot, still
-  list or open a deleted one, open the file as it is now in place of the snapshot's copy, drop the
-  session at the open of a file in a deleted one, or fail for a .snapshots deleted with its last
-  snapshot;
+  list or open a deleted one, open the file as it is now in place of the snapshot's copy, serve a
+  copy with other bytes than the file held (its bytes and more, or a line that only contains their
+  text), drop the session at the open of a file in a deleted one, or delete .snapshots with its
+  last snapshot (seen with stat, whatever smbd answers then);
 * the smb check reads Previous Versions as Samba 4.22 shows them (ADR-0380): smbclient's allinfo
   lists the share's shadow copies with the file's times in each, and an empty list, which smbd
   answers in 14 bytes, as NT_STATUS_INVALID_NETWORK_RESPONSE, since smbclient takes no answer
   shorter than 16 bytes; get @GMT-<time>/<name> opens the file in a shadow copy, the snapshot's
-  copy and not the file as it is now; an open of a file in a shadow copy that is gone counts as
+  copy and not the file as it is now, and the check proves its bytes with the SHA-256 of the copy
+  that smbclient wrote (coreutils' sha256sum, which smbclient's ! runs in the helper's folder);
+  allinfo before the volume's first snapshot, while the volume has no .snapshots, passes with any
+  answer, which the step records (what smbd answers then has not been seen on the device: the
+  fake's status for it is an assumption); an open of a file in a shadow copy that is gone counts as
   refused only with a status of smbd's, not one that says the connection, the session or the tree
   connect broke, and only while the same session lists the file afterwards; the Snapshots
   page names a snapshot to the second of the device's clock and refuses a second one of that name;
@@ -79,7 +84,8 @@ Covered (the steps of the ledger entry device.scenario-checks-in-repo):
 * every call the checks make is a route of the supervisor in this tree, with a body its model
   accepts (the contract with the API);
 * the scripts that run on the device parse; the SMB helper's session and share-list protocol
-  works against a stand-in smbclient, with signing required except for the null session, and its
+  works against a stand-in smbclient, with signing required except for the null session and with
+  a get whose copy sha256sum reads past smbclient's prompts, and its
   password change against a stand-in smbpasswd; the
   subvolume helper touches only a check's own folder;
 * scenario.sh holds the device lock and reports the SD writes of each check, also of one that a
@@ -293,6 +299,13 @@ class FakeSmbSession:
         nas.smb_lines.append((self.share, line))
         if line.startswith("!cat "):
             return self.local.get(line[5:], "cat: no such file")
+        if line.startswith("!sha256sum "):
+            # smbclient's ! runs a command where smbclient runs, in the helper's folder in RAM that
+            # get writes to: coreutils' sha256sum prints "<digest>  <name>", or its error on stderr.
+            name = line[len("!sha256sum "):]
+            if name not in self.local:
+                return f"sha256sum: {name}: No such file or directory"
+            return f"{digest(self.local[name])}  {name}"
         if self.killed or self.dropped:
             return "NT_STATUS_CONNECTION_DISCONNECTED"
         if self.tree_closed:
@@ -315,8 +328,11 @@ class FakeSmbSession:
             if "shadow_copy2" in section.get("vfs objects", "").split():
                 versions = self.versions(listed=True)
                 if f"{section['shadow:mountpoint']}/.snapshots" not in nas.fs:
-                    # shadow_copy2 cannot open its folder (ENOSYS), which smbd answers as this status.
-                    lines.append(f"NT_STATUS_INVALID_DEVICE_REQUEST getting shadow copy data for {shown}")
+                    # shadow_copy2 cannot open its folder. What smbd answers then has not been seen on
+                    # the device yet (the smb check records it before the volume's first snapshot, and
+                    # sees a .snapshots gone after its Deletes with stat): no_snapdir_status, an assumption.
+                    if nas.no_snapdir_status is not None:
+                        lines.append(f"{nas.no_snapdir_status} getting shadow copy data for {shown}")
                 elif not versions and not nas.smbclient_takes_an_empty_list:
                     # Samba 4.22's smbd answers an empty list in 14 bytes, which its smbclient refuses
                     # (cli_smb2_shadow_copy_data_fnum_recv): allinfo prints this line on its standard error.
@@ -346,7 +362,8 @@ class FakeSmbSession:
             if node is None or node.kind != "file":
                 return f"NT_STATUS_OBJECT_NAME_NOT_FOUND opening remote file {shown}"
             self.local[words[2]] = node.content
-            return f"getting file \\{words[1]}"
+            # do_get of Samba 4.22's source3/client/client.c, without the rate it may add.
+            return f"getting file {shown} of size {len(node.content.encode())} as {words[2]}"
         if level != "write":
             return f"NT_STATUS_ACCESS_DENIED opening remote file \\{words[-1]}"
         if words[0] == "put":
@@ -489,6 +506,9 @@ class FakeNas:
         # answer for no snapshot, which Samba 4.22's refuses (FakeSmbSession.command, allinfo).
         self.smb_lines: list[tuple[str, str]] = []
         self.smbclient_takes_an_empty_list = False
+        # The status of allinfo's line for the shadow copies of a share whose shadow:mountpoint has no
+        # .snapshots, None for no such line; the smb check records it, whatever it is.
+        self.no_snapdir_status: str | None = "NT_STATUS_INVALID_DEVICE_REQUEST"
         # The copies of the database that the restores keep (the newest 5), and an API token.
         self.copies: list[str] = []
         self.api_tokens = [{"id": 1, "user_id": 1, "name": "home assistant", "token_prefix": "unos_ab12", "is_active": True,
@@ -980,6 +1000,13 @@ class FakeNas:
             inner = [p for p in self.subtree(folder) if p != folder and self.fs[p].kind == "subvolume"]
             held = {path + p[len(folder):]: copy.copy(self.fs[p]) for p in sorted(self.subtree(folder))
                     if p != folder and not any(p == q or p.startswith(q + "/") for q in inner)}
+            # The defects version-extra-bytes and version-line-contains-data give the snapshot's copy of
+            # a file other bytes: the file's bytes and more, or a line that only contains its text.
+            for node in held.values():
+                if node.kind == "file" and "version-extra-bytes" in self.bugs:
+                    node.content += "trailing bytes not in the original\n"
+                if node.kind == "file" and "version-line-contains-data" in self.bugs:
+                    node.content = "a copy of " + node.content
             self.fs[path] = Node("subvolume", 0o755)
             self.fs.update(held)
             return {"id": name, "name": name, "subvolume": folder, "path": path, "created": "2026-11-12T10:00:00+00:00"}
@@ -2377,9 +2404,11 @@ def test_the_smb_check_covers_the_flows_of_slice_2(nas):
 
 def test_the_smb_check_shows_the_protocol_options_of_its_share(nas):
     """shares.per-share-protocol-options (ADR-0380), on a share of a folder in a new volume:
-    Previous Versions list the two snapshots that the check makes of the volume a second apart,
-    after which it overwrites the file, only the second once the first is deleted, whose version of
-    the file opens with the bytes from before the overwrite, and once both are deleted neither opens
+    before the volume's first snapshot allinfo shows what smbd answers for a volume without
+    .snapshots, which the step records; Previous Versions list the two snapshots that the check
+    makes of the volume a second apart, after which it overwrites the file, only the second once the
+    first is deleted, whose version of the file opens with exactly the bytes from before the
+    overwrite (sha256sum of the copy that smbclient wrote), and once both are deleted neither opens
     while the session goes on, and the list is empty, which Samba 4.22's smbclient reports as
     NT_STATUS_INVALID_NETWORK_RESPONSE; encryption required refuses an SMB 2.1 client and serves
     one that encrypts; Time Machine's lines; each option off again, then the share and the volume
@@ -2388,6 +2417,8 @@ def test_the_smb_check_shows_the_protocol_options_of_its_share(nas):
     assert status == 0, output
     text = "\n".join(step_lines(output))
     for words in ("shadow:mountpoint = /mnt/pools/data/unoscheck1a2b3cv)",
+                  "(any answer passes): the volume has no .snapshots, and allinfo v.txt answered "
+                  "NT_STATUS_INVALID_DEVICE_REQUEST getting shadow copy data for \\v.txt",
                   ": @GMT-2027.01.15-08.00.00 and @GMT-2027.01.15-08.00.01; afterwards v.txt in them answered "
                   "NT_STATUS_OBJECT_NAME_NOT_FOUND and NT_STATUS_OBJECT_NAME_NOT_FOUND, and allinfo's empty list "
                   "NT_STATUS_INVALID_NETWORK_RESPONSE",
@@ -2400,13 +2431,16 @@ def test_the_smb_check_shows_the_protocol_options_of_its_share(nas):
     # the second a second after the first, as the page names them to the second.
     made = [body for method, path, body, _ in nas.calls if method == "POST" and path == "/snapshots/"]
     assert made == [{"subvolume": "/mnt/pools/data/unoscheck1a2b3cv"}] * 2
-    # Over SMB: the file written, overwritten after the snapshots (the fake's snapshots hold the
-    # first bytes), the listings, the opens of the file in the snapshots, and after the opens of the
-    # deleted ones a plain ls in the same session; then the encryption step's sessions.
+    # Over SMB: the file written and its list of shadow copies before the first snapshot, the file
+    # overwritten after the snapshots (the fake's snapshots hold the first bytes), the listings, the
+    # open of the file in the snapshot left and the digest of the copy that smbclient wrote, the
+    # opens in the deleted ones and after them a plain ls in the same session; then the encryption
+    # step's sessions.
     first, second = "@GMT-2027.01.15-08.00.00", "@GMT-2027.01.15-08.00.01"
-    assert [line for share, line in nas.smb_lines if share == "unoscheck1a2b3cv"][:10] == [
-        "put data.txt v.txt", "put data2.txt v.txt", "allinfo v.txt", "allinfo v.txt", f"get {second}/v.txt kept.txt",
-        "!cat kept.txt", "allinfo v.txt", f"get {first}/v.txt gone.txt", f"get {second}/v.txt gone.txt", "ls"]
+    assert [line for share, line in nas.smb_lines if share == "unoscheck1a2b3cv"][:11] == [
+        "put data.txt v.txt", "allinfo v.txt", "put data2.txt v.txt", "allinfo v.txt", "allinfo v.txt",
+        f"get {second}/v.txt kept.txt", "!sha256sum kept.txt", "allinfo v.txt", f"get {first}/v.txt gone.txt",
+        f"get {second}/v.txt gone.txt", "ls"]
     created = [body for method, path, body, _ in nas.calls if method == "POST" and path == "/shares/smb"]
     assert [(b["name"], b["path"], b.get("previous_versions")) for b in created][-1] == (
         "unoscheck1a2b3cv", "/mnt/pools/data/unoscheck1a2b3cv/files", True)
@@ -2429,6 +2463,56 @@ def test_the_smb_check_takes_an_empty_list_of_previous_versions_without_an_error
     status, output = run_check("smb", nas)
     assert status == 0, output
     assert "and allinfo's empty list no error" in "\n".join(step_lines(output))
+
+
+@pytest.mark.parametrize("answer, recorded", [
+    ("NT_STATUS_INVALID_DEVICE_REQUEST", "NT_STATUS_INVALID_DEVICE_REQUEST getting shadow copy data for \\v.txt"),
+    ("NT_STATUS_INVALID_NETWORK_RESPONSE", "NT_STATUS_INVALID_NETWORK_RESPONSE getting shadow copy data for \\v.txt"),
+    ("NT_STATUS_UNSUCCESSFUL", "NT_STATUS_UNSUCCESSFUL getting shadow copy data for \\v.txt"),
+    (None, "no error and no shadow copy"),
+])
+def test_the_smb_check_records_what_smbd_answers_for_a_volume_without_snapshots(nas, answer, recorded):
+    """What smbd answers for the shadow copies of a volume without .snapshots (a new one before its
+    first snapshot) has not been seen on the device: the step that makes the share records
+    allinfo's line for them, and passes with any answer or none."""
+    nas.no_snapdir_status = answer
+    status, output = run_check("smb", nas)
+    assert status == 0, output
+    found = [line for line in step_lines(output) if "(any answer passes)" in line]
+    assert len(found) == 1 and found[0].startswith("PASS"), output
+    assert f"(any answer passes): the volume has no .snapshots, and allinfo v.txt answered {recorded}  [" in found[0]
+
+
+@pytest.mark.parametrize("answer", ["NT_STATUS_INVALID_NETWORK_RESPONSE", None])
+def test_the_smb_check_sees_snapshots_deleted_with_the_last_snapshot_whatever_smbd_answers(nas, answer):
+    """A .snapshots deleted with the volume's last snapshot fails the step also where smbd's answer for a
+    volume without .snapshots (not seen on the device yet) looks like an empty list: the step sees the
+    folder itself."""
+    nas.no_snapdir_status = answer
+    nas.bugs.add("snapdir-removed")
+    before = nas.snapshot()
+    status, output = run_check("smb", nas)
+    assert status == 1, output
+    failed = [line for line in step_lines(output) if line.startswith("FAIL  ")]
+    assert len(failed) == 1 and "after both Deletes the volume has no .snapshots" in failed[0], output
+    assert nas.snapshot() == before, output
+
+
+@pytest.mark.parametrize("output, digests", [
+    (f"{digest(scenario.DATA)}  kept.txt", [digest(scenario.DATA)]),
+    # The line of the get, which ends without a line break when smbclient prints no rate, and its
+    # prompt (removed by SmbSession.run) put the digest in the middle of a line.
+    (f"getting file \\@GMT-2027.01.15-08.00.01\\v.txt of size 20 as kept.txt {digest(scenario.DATA)}  kept.txt",
+     [digest(scenario.DATA)]),
+    (f"{digest(scenario.DATA)} *kept.txt", [digest(scenario.DATA)]),
+    ("sha256sum: kept.txt: No such file or directory", []),
+    (f"{digest(scenario.DATA)}  other.txt", []),
+    (f"{digest(scenario.DATA)}  kept.txt.old", []),
+    (f"0{digest(scenario.DATA)}  kept.txt", []),
+    (f"{digest(scenario.DATA)}  kept.txt\n{digest(scenario.DATA2)}  kept.txt", [digest(scenario.DATA), digest(scenario.DATA2)]),
+])
+def test_the_digest_of_a_version_is_read_wherever_smbclient_puts_it(output, digests):
+    assert scenario.sha256_digests(output, "kept.txt") == digests
 
 
 @pytest.mark.parametrize("output, ended, refused", [
@@ -3237,6 +3321,10 @@ def test_the_pool_folder_helper_removes_only_an_empty_folder_that_is_no_mount_po
     ("smb", "snapdir-removed", "afterwards allinfo v.txt answered NT_STATUS_INVALID_DEVICE_REQUEST"),
     ("smb", "version-opens-live-file", "v.txt in @GMT-2027.01.15-08.00.01 answered no error, with the bytes put "
                                        "after the snapshots"),
+    ("smb", "version-extra-bytes", "v.txt in @GMT-2027.01.15-08.00.01 answered no error, with other bytes than "
+                                   "before the overwrite"),
+    ("smb", "version-line-contains-data", "v.txt in @GMT-2027.01.15-08.00.01 answered no error, with other bytes "
+                                          "than before the overwrite"),
     ("smb", "missing-version-drops-session", "afterwards v.txt in @GMT-2027.01.15-08.00.00 answered "
                                              "NT_STATUS_CONNECTION_DISCONNECTED, which says the session broke"),
     ("smb", "fruit-without-global", "[global] has fruit:aapl = None, fruit:nfs_aces = None"),
@@ -4766,8 +4854,10 @@ def test_the_smb_helper_makes_the_files_the_checks_compare():
 
 # The smbclient of the SMB helper's session test: it checks its arguments (the auth file, the
 # client configuration in RAM, signing), keeps the auth file's mode and content where the test
-# finds them, and answers ls, put and the ! commands, line by line on standard input, as smbclient
-# does without a terminal; "put" of the name "denied" fails, "quit-now" ends it.
+# finds them, and answers ls, put, get and the ! commands, line by line on standard input, as
+# smbclient does without a terminal; "put" of the name "denied" fails, "get" writes the bytes of
+# data.txt to its local name and prints smbclient's line without its rate, which leaves the line
+# open, and "quit-now" ends it.
 STUB_SMBCLIENT = textwrap.dedent(
     """\
     #!@PYTHON@
@@ -4805,6 +4895,11 @@ STUB_SMBCLIENT = textwrap.dedent(
         elif line.startswith("put "):
             name = line.split()[2]
             print("NT_STATUS_ACCESS_DENIED opening remote file \\\\" + name if name == "denied" else "putting file " + name)
+        elif line.startswith("get "):
+            remote, local = line.split()[1:3]
+            data = open("data.txt", "rb").read()
+            open(local, "wb").write(data)
+            sys.stdout.write("getting file \\\\%s of size %d as %s " % (remote.replace("/", "\\\\"), len(data), local))
         elif line == "quit-now":
             sys.exit(0)
         sys.stdout.flush()
@@ -4820,6 +4915,9 @@ def local_stub(stub):
         stub.stub("flock", STUB_FLOCK)
     stub.stub("smbclient", STUB_SMBCLIENT)
     stub.stub("stdbuf", '#!/usr/bin/env bash\nwhile [ "${1#-}" != "$1" ]; do shift; done\nexec "$@"\n')
+    if shutil.which("sha256sum") is None:  # coreutils' format, where this host has no sha256sum
+        stub.stub("sha256sum", '#!@PYTHON@\nimport hashlib, sys\nfor name in sys.argv[1:]:\n'
+                               '    print(hashlib.sha256(open(name, "rb").read()).hexdigest() + "  " + name)\n')
     (stub.tmp / "shm").mkdir()
     return stub
 
@@ -4841,6 +4939,7 @@ def test_the_smb_helper_runs_a_session_step_by_step_and_removes_its_files(local_
         first = session.run("ls", "put data.txt a.txt")
         second = session.run("put data.txt denied")
         third = session.run("!cat data.txt")
+        version = session.run("get @GMT-2027.01.15-08.00.01/v.txt kept.txt", "!sha256sum kept.txt")
         session.run("quit-now")
         fourth = session.run("ls")
     with device.smb_guest_session("unoscheck1a2b3c") as session:
@@ -4852,6 +4951,10 @@ def test_the_smb_helper_runs_a_session_step_by_step_and_removes_its_files(local_
     assert first.ok and "putting file a.txt" in first.output and not first.ended, first.output
     assert not second.ok and second.status == "NT_STATUS_ACCESS_DENIED"
     assert third.ok and scenario.DATA.strip() in third.output
+    # sha256sum runs in the helper's folder, where get wrote the copy, and its digest is read past
+    # the get's open line and smbclient's prompts.
+    assert version.ok and "getting file \\@GMT-2027.01.15-08.00.01\\v.txt of size 20 as kept.txt" in version.output
+    assert scenario.sha256_digests(version.output, "kept.txt") == [digest(scenario.DATA)], version.output
     assert not fourth.ok and fourth.ended
     assert guest.ok and ".  D  0" in guest.output, guest.output
     log = (stub.tmp / "smb.log").read_text()
