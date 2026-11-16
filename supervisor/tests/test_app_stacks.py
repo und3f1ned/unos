@@ -34,6 +34,7 @@ from .test_apps import (
     INSTALLED,
     NPU,
     RESTART,
+    RK3588_VIDEO,
     START,
     STOP,
     UNINSTALL,
@@ -1248,3 +1249,127 @@ class TestTemplateRules:
     def test_the_names_of_an_apps_containers_and_its_network(self):
         assert stacks_module.container_names(PHOTOS) == NAMES
         assert stacks_module.network_name("photos") == NETWORK
+
+
+# ---------------------------------------------------------------------------
+# Immich of the catalog (ADR-0381, ADR-0382)
+# ---------------------------------------------------------------------------
+
+IMMICH_NAMES = ["immich-database", "immich-redis", "immich-machine-learning", "immich"]
+
+
+@pytest.fixture
+def immich_images(docker) -> None:
+    """Immich's pinned images in the registry, each with the VOLUMEs and the health check of its
+    upstream image: Valkey's declares neither (its compose file gives it the health check)."""
+    docker.publish(catalog_module.IMMICH_SERVER.ref, volumes=("/data",), healthcheck=True)
+    docker.publish(catalog_module.IMMICH_POSTGRES.ref, volumes=("/var/lib/postgresql/data",), healthcheck=True)
+    docker.publish(catalog_module.VALKEY.ref)
+    docker.publish(catalog_module.IMMICH_ML.ref, healthcheck=True)
+    docker.publish(catalog_module.IMMICH_ML_RKNN.ref, healthcheck=True)
+
+
+def _by_digest(pin) -> str:
+    return f"{pin.name}@{pin.digest}"
+
+
+def _host_configs(docker: StackDocker) -> dict[str, dict]:
+    return {name: _created(docker, name).kwargs["host_config"] for name in IMMICH_NAMES}
+
+
+class TestImmich:
+    def test_on_the_rk3588_it_installs_four_containers_with_the_npu_for_its_machine_learning(
+        self, api, pools, docker, immich_images, soc
+    ):
+        _rk3588(soc)
+        c = catalog_module
+
+        response = api.post(INSTALL, json={"template_id": "immich", "pool": "alpha"})
+
+        assert response.status_code == 200, response.text
+        assert docker.called("networks.create", "api.create_container", "container.start") == [
+            ("networks.create", "unos-app-immich"),
+            *[("api.create_container", name) for name in IMMICH_NAMES],
+            *[("container.start", name) for name in IMMICH_NAMES],
+        ]
+        # Each from its pinned digest; the machine learning's CPU image is never pulled.
+        assert {name: _created(docker, name).args for name in IMMICH_NAMES} == {
+            "immich-database": (_by_digest(c.IMMICH_POSTGRES),),
+            "immich-redis": (_by_digest(c.VALKEY),),
+            "immich-machine-learning": (_by_digest(c.IMMICH_ML_RKNN),),
+            "immich": (_by_digest(c.IMMICH_SERVER),),
+        }
+        assert [subject for _, subject in docker.called("images.pull")] == [
+            _by_digest(pin) for pin in (c.IMMICH_POSTGRES, c.VALKEY, c.IMMICH_ML_RKNN, c.IMMICH_SERVER)
+        ]
+        configs = _host_configs(docker)
+        apps = pools.alpha / "apps/immich"
+        password = (str(apps / "postgres/password"), "/run/secrets/db-password", True)
+        # Every VOLUME of the images and every folder they write lies on the pool: Valkey's
+        # snapshots in /data too, which its image declares no VOLUME for.
+        assert {name: [(m["Source"], m["Target"], m["ReadOnly"]) for m in config["Mounts"]]
+                for name, config in configs.items()} == {
+            "immich-database": [(str(apps / "postgres/data"), "/var/lib/postgresql/data", False), password],
+            "immich-redis": [(str(apps / "redis"), "/data", False)],
+            "immich-machine-learning": [(str(apps / "model-cache"), "/cache", False)],
+            "immich": [(str(apps / "library"), "/data", False), ("/etc/localtime", "/etc/localtime", True), password],
+        }
+        # What they write at run time, the gunicorn heartbeat of the machine learning among it,
+        # stays in RAM, not on the system disk.
+        assert {name: config.get("Tmpfs") for name, config in configs.items()} == {
+            "immich-database": {"/etc/postgresql": "size=1m,mode=1777", "/var/run/postgresql": "size=1m"},
+            "immich-redis": None,
+            "immich-machine-learning": {"/tmp": "size=64m"},
+            "immich": {"/tmp": "size=512m"},
+        }
+        assert configs["immich-database"]["ShmSize"] == 128 * 1024 * 1024
+        assert _created(docker, "immich-database").kwargs["stop_timeout"] == 60
+        # The NPU's folder for the machine learning, the video hardware for the server (RKMPP),
+        # each unprivileged with /sys/firmware unmasked; the database and Valkey as Docker makes them.
+        assert {name: [d["PathOnHost"] for d in config.get("Devices") or []] for name, config in configs.items()} == {
+            "immich-database": [],
+            "immich-redis": [],
+            "immich-machine-learning": ["/dev/dri"],
+            "immich": RK3588_VIDEO,
+        }
+        unmasked = [path for path in DOCKER_MASKED_PATHS if path != "/sys/firmware"]
+        for name in ("immich-machine-learning", "immich"):
+            assert configs[name]["MaskedPaths"] == unmasked and configs[name]["SecurityOpt"] == ["apparmor=unconfined"]
+        for name in ("immich-database", "immich-redis"):
+            assert not {"MaskedPaths", "SecurityOpt"} & set(configs[name]), name
+        for config in configs.values():
+            assert not {"Privileged", "CapAdd"} & set(config)
+        # The password reaches both only as a file.
+        assert _created(docker, "immich").kwargs["environment"] == {
+            "DB_HOSTNAME": "database", "DB_USERNAME": "postgres", "DB_DATABASE_NAME": "immich",
+            "DB_PASSWORD_FILE": "/run/secrets/db-password", "REDIS_HOSTNAME": "redis",
+            "IMMICH_MACHINE_LEARNING_URL": "http://machine-learning:3003",
+        }
+        assert _created(docker, "immich-database").kwargs["environment"] == {
+            "POSTGRES_USER": "postgres", "POSTGRES_DB": "immich", "POSTGRES_PASSWORD_FILE": "/run/secrets/db-password",
+            "POSTGRES_INITDB_ARGS": "--data-checksums", "DB_STORAGE_TYPE": "HDD",
+        }
+        secret = (apps / "postgres/password").read_text()
+        assert stat.S_IMODE((apps / "postgres/password").stat().st_mode) == 0o600 and len(secret) == 64
+        assert secret not in repr(docker.calls) and secret not in response.text
+        answer = response.json()
+        assert answer["web_url"] == "http://localhost:2283" and answer["devices"] == RK3588_VIDEO
+        assert [(m["name"], m["image"], m["devices"]) for m in answer["companions"]] == [
+            ("database", _by_digest(c.IMMICH_POSTGRES), []),
+            ("redis", _by_digest(c.VALKEY), []),
+            ("machine-learning", _by_digest(c.IMMICH_ML_RKNN), ["/dev/dri"]),
+        ]
+        assert _audit()[0]["details"] == (
+            "Installed Immich v3.4.1 from the catalog as immich with the containers immich-database, immich-redis, "
+            f"immich-machine-learning and immich, with its data on the pool alpha; generated its password file "
+            f"{apps / 'postgres/password'}"
+        )
+
+    def test_off_the_rk3588_its_machine_learning_runs_on_the_cpu(self, api, pools, docker, immich_images, soc):
+        response = api.post(INSTALL, json={"template_id": "immich"})
+
+        assert response.status_code == 200, response.text
+        assert _created(docker, "immich-machine-learning").args == (_by_digest(catalog_module.IMMICH_ML),)
+        assert ("images.pull", _by_digest(catalog_module.IMMICH_ML_RKNN)) not in docker.called("images.pull")
+        for name, config in _host_configs(docker).items():
+            assert not {"Devices", "MaskedPaths", "SecurityOpt", "Privileged", "CapAdd"} & set(config), name

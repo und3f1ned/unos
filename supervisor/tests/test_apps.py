@@ -34,6 +34,8 @@ from sqlalchemy.pool import NullPool
 
 from src.apps.catalog import APP_CATALOG, get_app_by_id
 from src.apps.schemas import (
+    APPS_DATA_PATH,
+    COMPANION_NAME,
     POOL_PLACEHOLDER,
     AppCategory,
     AppPool,
@@ -56,6 +58,7 @@ from src.shares.models import SmbShare
 apps_router = importlib.import_module("src.apps.router")
 hardware_module = importlib.import_module("src.apps.hardware")
 catalog_module = importlib.import_module("src.apps.catalog")
+stacks_module = importlib.import_module("src.apps.stacks")
 audit_router = importlib.import_module("src.audit.router")
 
 INSTALL = "/api/v1/apps/install"
@@ -472,6 +475,17 @@ EXPECTED_PATHS = {
         "/host/proc": FIXED,
         "/host/sys": FIXED,
     },
+    # An app of several containers (ADR-0381): a companion's folders are "<companion>:<path>".
+    # The password file is bound into the server and the database, beside the database's folder.
+    "immich": {
+        "/data": "apps/immich/library",
+        "/etc/localtime": FIXED,
+        "/run/secrets/db-password": "apps/immich/postgres/password",
+        "database:/var/lib/postgresql/data": "apps/immich/postgres/data",
+        "database:/run/secrets/db-password": "apps/immich/postgres/password",
+        "redis:/data": "apps/immich/redis",
+        "machine-learning:/cache": "apps/immich/model-cache",
+    },
 }
 
 
@@ -490,10 +504,17 @@ class TestCatalogPaths:
         template = get_app_by_id(app_id)
 
         planned = apps_router._plan_volumes(template, {}, pool, [pool])
-
-        sources = {m.target: m for m in planned}
-        assert set(sources) == set(EXPECTED_PATHS[app_id])
         volumes = {v.container: v for v in template.volumes}
+        for companion in template.companions:
+            planned += apps_router._plan_volumes(
+                template, {}, pool, [pool], spec=companion, container=f"{app_id}-{companion.name}",
+                companion=companion.name,
+            )
+            volumes |= {f"{companion.name}:{v.container}": v for v in companion.volumes}
+
+        sources = {m.target if m.companion is None else f"{m.companion}:{m.target}": m for m in planned}
+        assert len(sources) == len(planned)
+        assert set(sources) == set(EXPECTED_PATHS[app_id])
         for target, relative in EXPECTED_PATHS[app_id].items():
             if relative is FIXED:
                 assert sources[target].source == Path(volumes[target].host)
@@ -505,17 +526,23 @@ class TestCatalogPaths:
 
     def test_catalog_has_no_hard_coded_pool_paths(self):
         for template in APP_CATALOG:
-            targets = [v.container for v in template.volumes]
-            assert len(targets) == len(set(targets)), template.id
-            for volume in template.volumes:
-                assert "/mnt/pools" not in volume.host, template.id
-                assert volume.on_pool or volume.host.startswith("/"), template.id
-                assert ".." not in volume.host.split("/"), template.id
+            for spec in (template, *template.companions):
+                targets = [v.container for v in spec.volumes]
+                assert len(targets) == len(set(targets)), template.id
+                for volume in spec.volumes:
+                    assert "/mnt/pools" not in volume.host, template.id
+                    assert volume.on_pool or volume.host.startswith("/"), template.id
+                    assert ".." not in volume.host.split("/"), template.id
 
     def test_every_template_keeps_pool_data_inside_the_pool(self, pool_dir):
         pool = _pool(pool_dir)
         for template in APP_CATALOG:
-            for m in apps_router._plan_volumes(template, {}, pool, [pool]):
+            planned = [
+                m
+                for spec in (template, *template.companions)
+                for m in apps_router._plan_volumes(template, {}, pool, [pool], spec=spec)
+            ]
+            for m in planned:
                 if m.pool is not None:
                     assert m.source.is_relative_to(pool_dir), (template.id, m)
                 else:
@@ -523,7 +550,7 @@ class TestCatalogPaths:
 
     def test_catalog_ships_no_placeholder_secrets(self):
         for template in APP_CATALOG:
-            for var in template.environment:
+            for var in (var for spec in (template, *template.companions) for var in spec.environment):
                 if var.secret:
                     assert var.value.strip().lower() not in apps_router.PLACEHOLDER_SECRETS, (
                         template.id,
@@ -789,7 +816,7 @@ class TestEnvironment:
         [
             ("photoprism", "PHOTOPRISM_ADMIN_PASSWORD", "changeme"),
             ("grafana", "GF_SECURITY_ADMIN_PASSWORD", "Admin"),
-            ("bookstack", "DB_PASSWORD", " password "),
+            ("code-server", "PASSWORD", " password "),
             ("aria2", "RPC_SECRET", "secret"),  # optional secrets are checked too
             ("transmission", "PASS", "changeme"),
         ],
@@ -1434,15 +1461,16 @@ NON_ROOT_IMAGES = {
 
 
 def _image_name(image: str) -> str:
+    image = image.partition("@")[0]  # a pinned image: name:tag@digest (ADR-0381)
     name, sep, tag = image.rpartition(":")
     return name if sep and "/" not in tag else image
 
 
 class TestDataFolderOwner:
     def test_catalog_gives_writable_folders_of_non_root_images_to_their_user(self):
-        for template in APP_CATALOG:
-            user = NON_ROOT_IMAGES.get(_image_name(template.image))
-            for volume in template.volumes:
+        for spec in _catalog_containers():
+            user = NON_ROOT_IMAGES.get(_image_name(spec.image))
+            for volume in spec.volumes:
                 # Never the pool root, and only folders the app writes to.
                 owned = (
                     user is not None
@@ -1451,7 +1479,7 @@ class TestDataFolderOwner:
                     and volume.host != POOL_PLACEHOLDER
                 )
                 expected = user if owned else (None, None)
-                assert (volume.uid, volume.gid) == expected, (template.id, volume.container)
+                assert (volume.uid, volume.gid) == expected, (spec.image, volume.container)
 
     def test_new_folders_belong_to_the_image_user(self, api, pools, docker_client, chown_calls):
         response = api.post(INSTALL, json={"template_id": "filebrowser"})
@@ -1698,7 +1726,8 @@ class TestNestedFolders:
         {pool}/downloads could replace "watch" with a link to "/", and the
         host's root directory would be mounted at /watch at the next start.
         """
-        volumes = [(t, v) for t in APP_CATALOG for v in t.volumes if v.on_pool]
+        # Every container's folders: a companion's are its app's (ADR-0381).
+        volumes = [(t, v) for t in APP_CATALOG for spec in (t, *t.companions) for v in spec.volumes if v.on_pool]
         for outer_template, outer in volumes:
             if outer.readonly:
                 continue
@@ -1781,7 +1810,7 @@ IN_UNOS_SMB = {**TRANSMISSION, "run_in_unos_smb": True}
 # linuxserver.io apps whose every pool folder is their own data under {pool}/apps,
 # which is never a share's folder: the group would give them nothing.
 ONLY_OWN_DATA = (
-    "prowlarr", "overseerr", "tautulli", "nextcloud", "bookstack", "wikijs", "heimdall", "wireguard", "code-server",
+    "prowlarr", "overseerr", "tautulli", "nextcloud", "wikijs", "heimdall", "wireguard", "code-server",
 )
 
 
@@ -1838,9 +1867,9 @@ class TestRunInUnosSmb:
         assert (environment["USER"], environment["PASS"]) == ("e2e", "k7-Unique-pass")
 
     def test_no_catalog_app_runs_as_the_user_of_the_group(self):
-        for template in APP_CATALOG:
-            assert all(volume.uid != 80000 for volume in template.volumes), template.id
-            assert all(var.value.strip() != "80000" for var in template.environment), template.id
+        for spec in _catalog_containers():
+            assert all(volume.uid != 80000 for volume in spec.volumes), spec.image
+            assert all(var.value.strip() != "80000" for var in spec.environment), spec.image
 
     def test_without_the_option_the_app_stays_outside_the_group(self, api, pools, docker_client):
         response = api.post(INSTALL, json=TRANSMISSION)
@@ -3018,7 +3047,11 @@ class TestHardwareOfTheSoc:
         one = api.get("/api/v1/apps/catalog/jellyfin").json()["hardware"]
         found = api.get("/api/v1/apps/catalog", params={"query": "jelly"}).json()
 
-        assert {app_id: ids for app_id, ids in listed.items() if ids} == {"jellyfin": ["rk3588-video"]}
+        # Immich's server too, for RKMPP (ADR-0382); its machine learning only with the NPU's node.
+        assert {app_id: ids for app_id, ids in listed.items() if ids} == {
+            "jellyfin": ["rk3588-video"],
+            "immich": ["rk3588-video"],
+        }
         assert one == [{
             "id": "rk3588-video",
             "soc": "rockchip,rk3588",
@@ -3329,3 +3362,211 @@ class TestHardwarePerContainer:
         else:
             assert low_level.create_container.call_args.args == (image,)
             assert response.json()["devices"] == RK3588_VIDEO
+
+
+# ---------------------------------------------------------------------------
+# The catalog's apps of several containers and its pinned images (ADR-0381, ADR-0382)
+# ---------------------------------------------------------------------------
+
+# The templates whose images floated on a tag when the catalog pinned its first app (ADR-0381):
+# catalog.UNPINNED_TEMPLATES may only lose ids, until apps.pinned-catalog-images empties it.
+UNPINNED_AT_MOST = frozenset({
+    "actual-budget", "adguard-home", "aria2", "audiobookshelf", "authelia", "bazarr", "calibre-web",
+    "changedetection", "code-server", "crowdsec", "deluge", "dozzle", "duplicati", "emby", "filebrowser",
+    "frigate", "gitea", "glances", "grafana", "heimdall", "homarr", "homeassistant", "homepage",
+    "jdownloader2", "jellyfin", "kavita", "lidarr", "localai", "mealie", "mosquitto", "n8n", "navidrome",
+    "netdata", "nextcloud", "nginx-proxy-manager", "node-red", "nzbget", "ollama", "open-webui", "overseerr",
+    "photoprism", "pihole", "plex", "portainer", "prometheus", "prowlarr", "qbittorrent", "radarr", "readarr",
+    "restic-rest-server", "sabnzbd", "scrypted", "sonarr", "stirling-pdf", "syncthing", "tailscale",
+    "tautulli", "traefik", "transmission", "trilium", "uptime-kuma", "vaultwarden", "vikunja", "wikijs",
+    "wireguard", "zigbee2mqtt",
+})
+# Templates that named a database or a broker no container gave them: apps.catalog-companions
+# brings them back with companions (ADR-0381).
+REMOVED_TEMPLATES = ("bookstack", "paperless-ngx", "linkwarden")
+# The variables of Immich's server that UNOS sets to reach its companions and its password.
+IMMICH_WIRING = {
+    "DB_HOSTNAME", "DB_USERNAME", "DB_DATABASE_NAME", "DB_PASSWORD_FILE", "REDIS_HOSTNAME",
+    "IMMICH_MACHINE_LEARNING_URL",
+}
+
+
+def _images(spec) -> list[str]:
+    """The images that a container runs: its own, and that of a hardware profile that names one."""
+    return [spec.image, *(profile.image for profile in spec.hardware if profile.image)]
+
+
+def _companion(template: AppTemplate, name: str) -> Companion:
+    return next(companion for companion in template.companions if companion.name == name)
+
+
+def _with_companions() -> list[AppTemplate]:
+    return [template for template in APP_CATALOG if template.companions]
+
+
+class TestStackCatalog:
+    def test_immich_is_the_catalogs_app_of_several_containers(self):
+        immich = get_app_by_id("immich")
+
+        assert [template.id for template in _with_companions()] == ["immich"]
+        assert [companion.name for companion in immich.companions] == ["database", "redis", "machine-learning"]
+        assert immich.depends_on == ["database", "redis"]
+        assert stacks_module.container_names(immich) == [
+            "immich-database", "immich-redis", "immich-machine-learning", "immich",
+        ]
+
+    def test_companions_are_named_for_the_network_and_publish_nothing(self):
+        # A companion has no ports, privileges, capabilities or network mode to set: it runs on its
+        # app's network, which the main container joins too.
+        assert not {"ports", "privileged", "capabilities", "network_mode"} & set(Companion.model_fields)
+        for template in _with_companions():
+            names = [companion.name for companion in template.companions]
+            assert len(set(names)) == len(names), template.id
+            assert all(re.fullmatch(COMPANION_NAME, name) for name in names), names
+            assert set(template.depends_on) <= set(names), template.id
+            assert template.network_mode is None, template.id
+        # Docker names: none is hidden as a container of UNOS's own (is_system_container).
+        names = [name for template in APP_CATALOG for name in stacks_module.container_names(template)]
+        assert not [name for name in names if name.startswith("unos-")]
+        assert len(set(names)) == len(names)
+
+    def test_a_companion_keeps_its_data_in_its_apps_folder(self):
+        for template in _with_companions():
+            for companion in template.companions:
+                for volume in companion.volumes:
+                    assert volume.on_pool, (template.id, companion.name, volume.host)
+                    assert volume.host.startswith(f"{APPS_DATA_PATH}/{template.id}/"), (companion.name, volume.host)
+
+    def test_a_generated_password_is_a_read_only_file_beside_the_data_it_unlocks(self):
+        secrets = 0
+        for template in APP_CATALOG:
+            containers = (template, *template.companions)
+            hosts = {volume.host for spec in containers for volume in spec.volumes}
+            unlocks: dict[str, str | None] = {}
+            for spec in containers:
+                for volume in spec.volumes:
+                    if not volume.generated_secret:
+                        assert volume.secret_for is None, (template.id, volume.host)
+                        continue
+                    secrets += 1
+                    assert volume.is_file and volume.readonly, (template.id, volume.host)
+                    assert volume.host.startswith(f"{APPS_DATA_PATH}/{template.id}/"), volume.host
+                    assert volume.secret_for in hosts and volume.secret_for != volume.host, volume.secret_for
+                    # Every mapping of one file names the same data, and every container that
+                    # binds it names its path in a *_FILE variable: the value is in no variable.
+                    assert unlocks.setdefault(volume.host, volume.secret_for) == volume.secret_for, volume.host
+                    assert volume.container in {
+                        var.value for var in spec.environment if var.name.endswith("_FILE")
+                    }, (template.id, volume.host)
+            # An app of several containers asks the administrator for no secret.
+            if template.companions:
+                assert not [var.name for spec in containers for var in spec.environment if var.secret], template.id
+        assert secrets == 2  # Immich's password file, bound into its server and its database
+
+    def test_pinned_images_are_named_by_tag_and_digest(self):
+        pins = catalog_module.PINNED_IMAGES
+        for ref, pin in pins.items():
+            assert ref == pin.ref == f"{pin.name}:{pin.tag}@{pin.digest}"
+            assert PINNED_IMAGE.fullmatch(ref), ref
+            # Its size on the system disk, for the check of the free space before a pull.
+            assert pin.disk_bytes > 0, ref
+        # Each pin is an image that a container of the catalog runs.
+        assert set(pins) <= {image for spec in _catalog_containers() for image in _images(spec)}
+
+    def test_every_image_of_a_pinned_template_is_pinned(self):
+        unpinned = catalog_module.UNPINNED_TEMPLATES
+        pins = catalog_module.PINNED_IMAGES
+        for template in APP_CATALOG:
+            images = [image for spec in (template, *template.companions) for image in _images(spec)]
+            if template.id in unpinned:
+                # Listed while an image of it floats: a template that is pinned leaves the list.
+                assert not template.companions, template.id
+                assert [image for image in images if image not in pins], template.id
+            else:
+                assert all(image in pins for image in images), (template.id, images)
+        # The image of a hardware profile is pinned, whatever its template (ADR-0382).
+        for spec in _catalog_containers():
+            assert all(profile.image in pins for profile in spec.hardware if profile.image), spec.image
+
+    def test_the_templates_with_floating_images_only_become_fewer(self):
+        unpinned = catalog_module.UNPINNED_TEMPLATES
+
+        assert isinstance(unpinned, frozenset)
+        assert unpinned <= UNPINNED_AT_MOST, sorted(unpinned - UNPINNED_AT_MOST)
+        assert unpinned <= {template.id for template in APP_CATALOG}, sorted(unpinned)
+
+    def test_immichs_server_and_machine_learning_are_one_version(self):
+        immich = get_app_by_id("immich")
+        learning = _companion(immich, "machine-learning")
+
+        assert catalog_module.IMMICH_SERVER.tag == catalog_module.IMMICH_ML.tag == catalog_module.IMMICH_VERSION
+        assert immich.version == catalog_module.IMMICH_VERSION
+        assert catalog_module.IMMICH_ML_RKNN.tag == f"{catalog_module.IMMICH_VERSION}-rknn"
+        assert catalog_module.IMMICH_ML_RKNN.name == catalog_module.IMMICH_ML.name
+        assert immich.image == catalog_module.IMMICH_SERVER.ref
+        assert _companion(immich, "database").image == catalog_module.IMMICH_POSTGRES.ref
+        assert _companion(immich, "redis").image == catalog_module.VALKEY.ref
+        assert learning.image == catalog_module.IMMICH_ML.ref
+        assert [profile.image for profile in learning.hardware] == [catalog_module.IMMICH_ML_RKNN.ref]
+
+    def test_immichs_server_logs_into_the_database_that_its_install_sets_up(self):
+        immich = get_app_by_id("immich")
+        server = {var.name: var for var in immich.environment}
+        database = {var.name: var.value for var in _companion(immich, "database").environment}
+
+        assert server["DB_USERNAME"].value == database["POSTGRES_USER"]
+        assert server["DB_DATABASE_NAME"].value == database["POSTGRES_DB"]
+        assert server["DB_PASSWORD_FILE"].value == database["POSTGRES_PASSWORD_FILE"]
+        # Its companions answer to their names on the app's network.
+        assert (server["DB_HOSTNAME"].value, server["REDIS_HOSTNAME"].value) == ("database", "redis")
+        assert server["IMMICH_MACHINE_LEARNING_URL"].value == "http://machine-learning:3003"
+        assert {name for name, var in server.items() if not var.editable} == IMMICH_WIRING
+        # The database's folder is on an HDD pool; the models' files at v2 include the RK3588's OCR.
+        assert database["DB_STORAGE_TYPE"] == "HDD"
+        learning = {var.name: var.value for var in _companion(immich, "machine-learning").environment}
+        assert learning == {"MACHINE_LEARNING_MODEL_REVISION": "v2"}
+
+    def test_immichs_machine_learning_gets_the_npu_and_its_server_the_video_hardware(self):
+        immich = get_app_by_id("immich")
+
+        assert catalog_module.RK3588_NPU == NPU
+        assert immich.hardware == [catalog_module.RK3588_VIDEO]
+        assert _companion(immich, "machine-learning").hardware == [
+            NPU.model_copy(update={"image": catalog_module.IMMICH_ML_RKNN.ref}),
+        ]
+        assert _companion(immich, "database").hardware == _companion(immich, "redis").hardware == []
+
+    @pytest.mark.parametrize(
+        ("compatible", "nodes", "server", "npu"),
+        [
+            (RK3588, {*RK3588_VIDEO, NPU_LINK}, ["rk3588-video"], True),
+            (RK3588, set(RK3588_VIDEO), ["rk3588-video"], False),
+            (None, set(), [], False),
+        ],
+        ids=["rk3588", "rk3588-without-the-npu", "pc"],
+    )
+    def test_the_catalog_offers_immich_the_hardware_of_this_host(self, api, soc, compatible, nodes, server, npu):
+        soc.compatible = compatible
+        soc.devices = nodes
+
+        containers = _containers(api.get("/api/v1/apps/catalog/immich").json())
+
+        assert [p["id"] for p in containers[""]["hardware"]] == server
+        assert [p["id"] for p in containers["machine-learning"]["hardware"]] == (["rk3588-npu"] if npu else [])
+        assert containers["machine-learning"]["image"] == (
+            catalog_module.IMMICH_ML_RKNN.ref if npu else catalog_module.IMMICH_ML.ref
+        )
+        assert containers["database"]["hardware"] == containers["redis"]["hardware"] == []
+        assert containers[""]["image"] == catalog_module.IMMICH_SERVER.ref
+
+    @pytest.mark.parametrize("app_id", REMOVED_TEMPLATES)
+    def test_the_apps_that_lack_their_companions_are_not_in_the_catalog(self, api, pools, docker_client, app_id):
+        assert get_app_by_id(app_id) is None
+        assert app_id not in UNPINNED_AT_MOST
+        assert app_id not in {template["id"] for template in api.get("/api/v1/apps/catalog").json()}
+        assert api.get(f"/api/v1/apps/catalog/{app_id}").status_code == 404
+
+        response = api.post(INSTALL, json={"template_id": app_id})
+
+        assert response.status_code == 404
+        docker_client.images.pull.assert_not_called()
