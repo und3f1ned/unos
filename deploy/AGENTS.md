@@ -20,7 +20,9 @@
 - `install.sh`, `update.sh` and `uninstall.sh` run as root on a user's host. `update.sh` refuses
   local changes and other branches, backs up, waits for health and rolls back on failure
   (ADR-0049); `uninstall.sh` keeps the SMB host accounts and removes only their exact passdb
-  entries, with one restart of smbd (ADR-0322). There are no upgrade paths from older UNOS
+  entries, with one restart of smbd (ADR-0322), and removes UNOS's udev rule of the disks' idle
+  timeouts, undoing on its disks what UNOS set with the host's hdparm and smartctl; its tests run
+  stubs of them, never the host's own (ADR-0378). There are no upgrade paths from older UNOS
   versions (ADR-0207).
 - `reset-admin.sh` also runs as root on a user's host: it runs the emergency command line,
   `python -m src.emergency reset-admin`, in the supervisor container, with the new password on
