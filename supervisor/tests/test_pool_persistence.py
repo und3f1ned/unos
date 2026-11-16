@@ -295,9 +295,23 @@ class FakeHost:
         # in woken as (disk, command): btrfs filesystem show without --mounted (libblkid reads
         # every block device), wipefs, blkid -p, mount, mkfs.btrfs and hdparm -S. hdparm -C reads
         # a disk's power mode on the host and leaves it asleep; smartctl runs in the container
-        # (run_in_container), and only with -n standby, which leaves them asleep too.
+        # (run_in_container), and only with -n standby or -n idle, which leave them asleep too.
         self.asleep: set[str] = set()
         self.woken: list[tuple[str, list[str]]] = []
+        # The power condition of an EPC disk (ACS: Extended Power Conditions), by its path, where it
+        # is one that CHECK POWER MODE answers with a value hdparm -C does not name (" drive state
+        # is:  unknown", exit status 0): "idle_a", "idle_b", "idle_c" (81h-83h, awake) or "standby_y"
+        # (01h; such a disk is in asleep too). smartctl -n names them; a command that reads the disk
+        # makes it active.
+        self.epc: dict[str, str] = {}
+        # Disks that stopped answering: hdparm -C on one hangs in the kernel, where the host's timeout
+        # cannot end it, so run_on_host's limit runs out (TimeoutExpired), and the hdparm stays on the
+        # host (stuck_hdparm: the disks whose hdparm -C still runs there, which pgrep finds).
+        self.hung: set[str] = set()
+        self.stuck_hdparm: set[str] = set()
+        # The disks whose identity smartctl read (IDENTIFY DEVICE, which restarts a disk's standby
+        # timer), in order.
+        self.identified: list[str] = []
         # The standby timer that hdparm -S gave each disk, by its path: the -S value.
         self.standby_timers: dict[str, int] = {}
         # udev's ID_SERIAL_SHORT of a disk, by its path, where it is not lsblk's serial (None: none).
@@ -483,20 +497,32 @@ class FakeHost:
     def _wake(self, path, cmd):
         """A command that reads ``path`` or spins up its disk: a sleeping disk wakes (asleep)."""
         disk = self._disk_of(path)
+        self.epc.pop(disk, None)
         if disk in self.asleep:
             self.asleep.discard(disk)
             self.woken.append((disk, list(cmd)))
 
     def run_in_container(self, cmd, *, timeout, **kwargs):
-        """host.run_in_container: smartctl -n standby, which reads a disk's power mode first and
-        leaves a sleeping one alone (exit status 2, "Device is in STANDBY mode"), and answers -i
-        (the identity: the power read of an NVMe disk, and of a host without hdparm) and -a (the
-        SMART data) of an awake one. Any other command fails the test, as smartctl without -n
-        standby, which would wake a sleeping disk."""
+        """host.run_in_container: smartctl -n standby or -n idle, which reads a disk's power mode
+        first and leaves the disk alone in the modes that -n names, with exit status 2 and the
+        message "Device is in <MODE> mode" in the JSON's (smartctl's names: SLEEP, STANDBY and
+        STANDBY_Y for -n standby, and IDLE_A, IDLE_B and IDLE_C too for -n idle; an awake disk of
+        the fake is ACTIVE or IDLE, FFh, which neither stops), and answers -i (the identity: the
+        power read of an NVMe disk, of a host without hdparm and of an EPC disk) and -a (the SMART
+        data) of a disk it goes on to read. And pgrep -f '^hdparm -C <disk>$', which finds the
+        hdparm -C of a disk that still runs on the host (stuck_hdparm; the container shares the
+        host's process IDs). Any other command fails the test, as smartctl without -n, which would
+        wake a sleeping disk."""
         cmd = list(cmd)
         assert timeout, cmd
         self.container_calls.append(cmd)
-        if cmd[:3] != ["smartctl", "-n", "standby"] or cmd[3:-1] not in (["-i", "-j"], ["-j", "-a"]):
+        if cmd[:2] == ["pgrep", "-f"] and len(cmd) == 3:
+            found = re.fullmatch(r"\^hdparm -C (/dev/[a-z0-9]+)\$", cmd[2])
+            assert found, cmd
+            running = found[1] in self.stuck_hdparm
+            return subprocess.CompletedProcess(cmd, 0 if running else 1, "4242\n" if running else "", "")
+        if cmd[:2] != ["smartctl", "-n"] or cmd[2] not in ("standby", "idle") \
+                or cmd[3:-1] not in (["-i", "-j"], ["-j", "-a"]):
             raise AssertionError(f"test tried to run a real command: {cmd!r}")
         device = cmd[-1]
         node = self._node_by_path(device)
@@ -504,12 +530,15 @@ class FakeHost:
             message = f"Smartctl open device: {device} failed: No such device"
             return subprocess.CompletedProcess(cmd, 2, json.dumps(
                 {"smartctl": {"messages": [{"string": message, "severity": "error"}], "exit_status": 2}}), "")
-        if device in self.asleep:
+        condition = self.epc.get(device)
+        mode = condition.upper() if condition else "STANDBY" if device in self.asleep else None
+        if mode is not None and (cmd[2] == "idle" or not mode.startswith("IDLE")):
             return subprocess.CompletedProcess(cmd, 2, json.dumps({
-                "smartctl": {"messages": [{"string": "Device is in STANDBY mode, exit(2)", "severity": "information"}],
+                "smartctl": {"messages": [{"string": f"Device is in {mode} mode, exit(2)", "severity": "information"}],
                              "exit_status": 2},
                 "device": {"name": device, "type": "sat"},
             }), "")
+        self.identified.append(device)
         data = {"device": {"name": device, "type": "sat"}, "model_name": node.get("model") or "Fake Disk",
                 "serial_number": node.get("serial") or "", "firmware_version": "1.0",
                 "user_capacity": {"bytes": node["size"]}, "smart_status": {"passed": True},
@@ -534,6 +563,9 @@ class FakeHost:
             # by default, so text with surrogate escapes needs errors="surrogateescape".
             input.encode("utf-8", errors or "strict")
         self.calls.append(cmd)
+        if (hung := self._hung_power_read(cmd)) is not None:
+            self.stuck_hdparm.add(hung)
+            raise subprocess.TimeoutExpired(cmd, timeout)
         result = None
         for prefix, (code, stderr) in self.fail.items():
             if tuple(cmd[: len(prefix)]) == prefix:
@@ -545,6 +577,15 @@ class FakeHost:
         if check and not result.ok:
             raise HostCommandError(cmd, result.returncode, result.stderr)
         return result
+
+    def _hung_power_read(self, cmd):
+        """The disk of ``cmd`` when it is hdparm -C (under timeout) of a disk in hung, else None."""
+        args = cmd[1:] if cmd[:1] == ["timeout"] else None
+        while args and args[0].startswith("-"):
+            args = args[1:]
+        if args and args[1:3] == ["hdparm", "-C"] and args[-1] in self.hung:
+            return args[-1]
+        return None
 
     @staticmethod
     def _decoded(result, errors):
@@ -841,7 +882,9 @@ class FakeHost:
         """hdparm -S <value> <disk>: the IDLE command with a standby timer, which spins up a
         sleeping disk. hdparm -C <disk>: CHECK POWER MODE, which reads the disk's power mode and
         leaves it asleep (" drive state is:  standby", or "active/idle"); an NVMe disk takes no ATA
-        command, so hdparm fails for it with "unknown". UNOS runs no other option."""
+        command, so hdparm fails for it with "unknown", and an EPC disk in a power condition that
+        hdparm does not name (epc) is "unknown" with exit status 0. A disk in hung never answers
+        (run). UNOS runs no other option."""
         if "hdparm" in self.missing_programs:
             return self._result(127, stderr="nsenter: failed to execute hdparm: No such file or directory")
         if cmd[1:2] == ["-C"]:
@@ -853,7 +896,8 @@ class FakeHost:
             if node["name"].startswith("nvme"):
                 return self._result(25, stdout=f"\n{device}:\n drive state is:  unknown\n",
                                     stderr=" HDIO_DRIVE_CMD(checkpowermode) failed: Inappropriate ioctl for device\n")
-            state = "standby" if self._disk_of(device) in self.asleep else "active/idle"
+            disk = self._disk_of(device)
+            state = "unknown" if disk in self.epc else "standby" if disk in self.asleep else "active/idle"
             return self._result(stdout=f"\n{device}:\n drive state is:  {state}\n")
         assert len(cmd) == 4 and cmd[1] == "-S" and cmd[2].isdigit(), cmd
         device = cmd[3]

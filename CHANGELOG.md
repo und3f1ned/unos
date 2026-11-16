@@ -342,13 +342,18 @@ manager, encrypted backup uploads, health checks, CI checks).
 - Idle timeouts of the data disks (`storage.disk-spindown`, ADR-0378):
   **Storage** → **Physical Disks** has a **Power** column with each disk's
   power state (Active, Standby, Unknown), read with `hdparm -C` on the host,
-  which neither wakes a sleeping disk nor restarts an awake one's standby
-  timer (`smartctl -n standby -i`, which does restart it, reads it on a host
-  without `hdparm` and for an NVMe disk), and a button that sets the disk's
-  idle timeout (Off, 5, 10, 20 or 30 minutes, 1 to 5 hours; a disk with a
-  minimum of its own sleeps later, as a WD6400AACS after about 10 minutes for
-  5) through `PUT /api/v1/storage/disks/{name}/spindown`: `hdparm -S` on the
-  host at once,
+  which sends CHECK POWER MODE alone: it does not wake a sleeping disk, and it
+  did not restart the standby timer of the dev device's disk
+  (`smartctl -n standby -i`, whose IDENTIFY does restart it, reads it on a
+  host without `hdparm` and for an NVMe disk; `smartctl -n idle`, which stops
+  after CHECK POWER MODE too, reads the EPC power conditions that `hdparm`
+  does not name: idle_a, idle_b and idle_c are Active, standby_y Standby; a
+  disk whose read did not answer is Unknown, with no other `hdparm -C`
+  started while that one still runs on the host), and a button that sets
+  the disk's idle timeout (Off, 5, 10, 20 or 30 minutes, 1 to 5 hours; a
+  disk with a minimum of its own sleeps later, as a WD6400AACS after about
+  10 minutes for 5) through `PUT /api/v1/storage/disks/{name}/spindown`:
+  `hdparm -S` on the host at once,
   and a line in UNOS's udev rule `/etc/udev/rules.d/90-unos-disk-spindown.rules`,
   matched by the disk's serial, at every boot and reconnection. The system
   disk, boot and virtual devices, partitions, NVMe disks, disks without a
@@ -359,9 +364,11 @@ manager, encrypted backup uploads, health checks, CI checks).
   (health status `STANDBY`, `power_state` standby, and `standby` in
   `GET /api/v1/health/overview`), and the hourly SMART monitor skips a disk
   with an idle timeout that was not used since its last read, since a SMART
-  read restarts the disk's timer. The RAID monitor and the pool counts of
-  `GET /api/v1/health/prometheus` and `/health/full` read the pools without a
-  scan of the disks (`btrfs filesystem show --mounted`, whose exit status 1
+  read restarts the disk's timer (its first pass after a start reads every
+  awake disk, and a disk found asleep at its last pass is read once awake).
+  The RAID monitor and the pool counts of `GET /api/v1/health/prometheus`
+  and `/health/full` read the pools without a scan of the disks
+  (`btrfs filesystem show --mounted`, whose exit status 1
   with no btrfs filesystem mounted is no pool mounted, and udev's records);
   the trash expiry asks a pool's disks whether they sleep only when its daily
   pass is due, and passes over one whose disks sleep, asking no disk of it
@@ -371,11 +378,12 @@ manager, encrypted backup uploads, health checks, CI checks).
   awake disk every 30 minutes, and UNOS reads SMART itself; `uninstall.sh`
   says how to turn it on again. `scripts/dev/scenario.sh
   smart` shows the system disk refused a timeout, gives the pool's disk the
-  shortest timeout, waits for it to sleep (at most 990 s, and says whether
-  the kernel counted reads or writes on a disk still awake), reads SMART while
-  it sleeps and sets the timeout of UNOS's rule again, or Off; it skips these
-  steps when the disk has no timeout of UNOS's and `/etc/hdparm.conf` sets
-  one.
+  shortest timeout, waits for it to sleep (at most 1980 s: room for the dev
+  device's disk's own minimum of about 660 s twice, as after a read of the
+  hourly SMART monitor during the wait; it says whether the kernel counted
+  reads or writes on a disk still awake), reads SMART while it sleeps and
+  sets the timeout of UNOS's rule again, or Off; it skips these steps when
+  the disk has no timeout of UNOS's and `/etc/hdparm.conf` sets one.
 - **Balance** on the Storage page (ADR-0379): a mounted, writable pool's
   balance rewrites the data and metadata chunks less full than a usage limit
   (20% by default, 1 to 99) or, after a confirmation, every chunk (a full

@@ -16,7 +16,9 @@ the supervisor runs natively on the host during development.
 
 btrfs scrubs, error stats resets, a balance's status, pause and cancel, and
 smartctl run in the container itself,
-on the pools and disks that the privileged container sees:
+on the pools and disks that the privileged container sees, and so does the
+pgrep that looks for a disk's stuck power read (the container has the host's
+process IDs, ``pid: host``):
 :func:`run_in_container` runs them, and at their timeout it kills them
 without waiting for them (ADR-0290).
 """
@@ -99,7 +101,8 @@ HOST_TOOLS: dict[str, str] = {
 # UPS status names a missing NUT client (ADR-0356). storage/spindown.py runs hdparm
 # -S (under timeout) for a disk's idle timeout, and the Storage page names a missing
 # hdparm (ADR-0378): install.sh installs it, but a host set up by hand may lack it.
-# storage/disks.py runs hdparm -C (under timeout) for a disk's power state, and
+# storage/disks.py runs hdparm -C (under timeout) for a disk's power state, one
+# per disk at a time and none while a timed-out one still runs (ADR-0378), and
 # smartctl -n standby -i in the container without it.
 OPTIONAL_HOST_TOOLS: dict[str, str] = {
     "exportfs": "nfs-kernel-server",

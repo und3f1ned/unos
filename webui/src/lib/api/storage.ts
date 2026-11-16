@@ -10,9 +10,9 @@ export interface PartitionInfo {
 }
 
 /**
- * A whole disk's power, read without waking it (hdparm -C on the host, or smartctl -n standby,
- * ADR-0378): active (spinning, or idle), standby (spun down), or unknown (the disk could not be
- * asked or did not answer).
+ * A whole disk's power, read without waking it (hdparm -C on the host, smartctl -n idle for an EPC
+ * disk's power condition, or smartctl -n standby, ADR-0378): active (spinning, or idle), standby
+ * (spun down), or unknown (the disk could not be asked or did not answer).
  */
 export type PowerState = 'active' | 'standby' | 'unknown';
 

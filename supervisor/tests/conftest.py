@@ -60,6 +60,16 @@ def _no_problems_yet(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _no_power_reads_yet(monkeypatch):
+    """The hdparm -C reads of the disks' power that run, and those that timed out, are kept in RAM
+    (storage.disks.power_state, ADR-0378): every test starts without them, as the supervisor does."""
+    disks = sys.modules.get("src.storage.disks")
+    if disks is not None:
+        monkeypatch.setattr(disks, "_power_reading", set())
+        monkeypatch.setattr(disks, "_power_stuck", {})
+
+
+@pytest.fixture(autouse=True)
 def _no_scrubs_seen_yet(monkeypatch):
     """The scrubs that the events socket follows are kept in RAM (ADR-0367): every test starts
     without them, as the supervisor does."""

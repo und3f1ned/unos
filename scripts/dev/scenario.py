@@ -308,16 +308,20 @@ FRIENDLY_NT_STATUS = (
 # The idle timeouts of the disks (storage.disk-spindown, ADR-0378), as src/storage/spindown.py has them
 # (test_dev_scenarios.py compares): UNOS's udev rule, the shortest timeout in minutes and its value of
 # hdparm -S, and what the Storage page says of a host without hdparm. The check waits the timeout and
-# SPINDOWN_SETTLE seconds before it asks whether the disk sleeps, at most SPINDOWN_ROUNDS times, 990 s
-# in all: each question is GET /storage/disks, whose power read (hdparm -C on the host) does not
-# restart the disk's standby timer, so a disk with a minimum of its own that sleeps later than the
-# timeout is found asleep too (the dev device's WD6400AACS: after about 10 minutes for 5).
+# SPINDOWN_SETTLE seconds before it asks whether the disk sleeps, at most SPINDOWN_ROUNDS times, 1980 s
+# in all, and stops at the first standby: each question is GET /storage/disks, whose power read
+# (hdparm -C on the host, CHECK POWER MODE alone) did not restart the dev device's disk's standby
+# timer, so a disk with a minimum of its own that sleeps later than the timeout is found asleep too
+# (the dev device's WD6400AACS: after about 10 minutes for 5, 660 s). The hourly SMART monitor may read
+# the awake disk meanwhile, since the files and volumes checks used the pool just before smart in
+# scenario.sh all, and its IDENTIFY and SMART commands restart the timer: the wait allows one more
+# full minimum after such a read.
 SPINDOWN_RULES = "/etc/udev/rules.d/90-unos-disk-spindown.rules"
 SPINDOWN_SHORTEST = 5
 SPINDOWN_SHORTEST_VALUE = 60
 NO_HDPARM = "The host has no hdparm: install the package hdparm on the host to set idle timeouts"
 SPINDOWN_SETTLE = 30
-SPINDOWN_ROUNDS = 3
+SPINDOWN_ROUNDS = 6
 # Debian's hdparm sets what /etc/hdparm.conf asks whenever udev adds a disk (its rule 85-hdparm.rules,
 # before UNOS's 90-). ATA reads no standby timer back: when UNOS's rule has none for the disk, the
 # check's Off at its end (hdparm -S 0) would clear a timer set there, so it leaves the disk alone.

@@ -3,9 +3,10 @@ from typing import Literal
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 # A whole disk's power as disks.power_state reads it without waking the disk (ADR-0378): hdparm -C
-# on the host, or smartctl -n standby without hdparm and for an NVMe disk. Active (spinning, or
-# idle), standby (spun down, or asleep), or unknown (the disk cannot be asked, as behind some USB
-# bridges, names no power mode, or did not answer).
+# on the host (smartctl -n idle for a power condition it does not name, as an EPC disk's), or
+# smartctl -n standby without hdparm and for an NVMe disk. Active (spinning, or idle), standby (spun
+# down, or asleep), or unknown (the disk cannot be asked, as behind some USB bridges, names no power
+# mode, did not answer, or its earlier read is still stuck).
 PowerState = Literal["active", "standby", "unknown"]
 
 # The idle timeouts that the Storage page offers, in minutes, 0 for off (ADR-0378): values that

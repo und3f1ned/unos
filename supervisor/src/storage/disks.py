@@ -13,6 +13,7 @@ import json
 import logging
 import re
 import subprocess
+import threading
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from typing import Any
@@ -51,20 +52,35 @@ FINDMNT_COLUMNS = "TARGET,SOURCE,FSTYPE,UUID,MAJ:MIN,FSROOT,VFS-OPTIONS,FS-OPTIO
 SMARTCTL_TIMEOUT = 60
 # Seconds the read of a disk's power state may take (power_state): hdparm -C and smartctl -n standby
 # answer at once, unless the disk or its USB bridge hangs. hdparm runs on the host under its timeout
-# (ADR-0258), which kills it POWER_CHECK_KILL_AFTER seconds after its TERM.
+# (ADR-0258), which kills it POWER_CHECK_KILL_AFTER seconds after its TERM; POWER_READ_LIMIT ends
+# nsenter after both, and bounds the wait of a second read of the disk for the first.
 POWER_CHECK_TIMEOUT = 15
 POWER_CHECK_KILL_AFTER = 5
+POWER_READ_LIMIT = POWER_CHECK_TIMEOUT + POWER_CHECK_KILL_AFTER + 5
+# Seconds the check whether a timed-out hdparm -C still runs on the host may take (pgrep).
+POWER_STUCK_CHECK_TIMEOUT = 5
 
-# What smartctl -n standby prints, as its message and in the JSON's, when it leaves a disk alone
-# because the disk sleeps: "Device is in STANDBY mode, exit(2)" (or SLEEP; SCSI disks add their
-# variant, "STANDBY_Y").
-_ASLEEP = re.compile(r"Device is in (?:STANDBY|SLEEP)\b")
+# What smartctl -n prints, as its message and as one of the JSON's smartctl.messages, when it
+# leaves a disk alone after CHECK POWER MODE, with exit status bit 1: "Device is in STANDBY mode,
+# exit(2)". It names the mode as its ataprint.cpp does; -n standby stops for SLEEP, STANDBY and
+# STANDBY_Y, -n idle for IDLE, IDLE_A, IDLE_B and IDLE_C too (EPC's power conditions, ADR-0378).
+_STOPPED_IN = re.compile(r"Device is in ([A-Z][A-Z_]*) mode\b")
+_SMARTCTL_MODES: dict[str, PowerState] = {
+    "SLEEP": "standby",
+    "STANDBY": "standby",
+    "STANDBY_Y": "standby",
+    "IDLE": "active",
+    "IDLE_A": "active",
+    "IDLE_B": "active",
+    "IDLE_C": "active",
+}
 
 # How hdparm -C prints the disk's answer to CHECK POWER MODE: " drive state is:  standby".
 _DRIVE_STATE = re.compile(r"^\s*drive state is:\s*(\S+)\s*$", re.MULTILINE)
 # hdparm's names of the power modes: active/idle (FFh), idle (80h), standby (00h), sleeping (older
 # versions, for a disk in SLEEP) and those of a disk with an NV cache (41h spinning, 40h spun down).
-# "unknown", and any other, is no power mode that hdparm knows.
+# "unknown" with exit status 0 is an answer hdparm does not name, as EPC's idle_a, idle_b, idle_c
+# (81h-83h) and standby_y (01h): _epc_power_state asks smartctl.
 _HDPARM_STATES: dict[str, PowerState] = {
     "active/idle": "active",
     "idle": "active",
@@ -75,6 +91,15 @@ _HDPARM_STATES: dict[str, PowerState] = {
 }
 # The exit status of the host's timeout(1) when it cannot find the program: the host has no hdparm.
 _NOT_FOUND = 127
+# The exit statuses of the host's timeout(1) when it ended the program: with TERM, or with KILL.
+_ENDED_BY_TIMEOUT = (124, 137)
+
+# The hdparm -C reads, by disk (power_state), bounded as run_in_container bounds its commands
+# (ADR-0290): the disks whose read runs, and those whose last read timed out, whose hdparm may still
+# be stuck in the kernel on the host, each with whether a read not started for it was logged.
+_power_reads = threading.Condition()
+_power_reading: set[str] = set()
+_power_stuck: dict[str, bool] = {}
 
 _SUBVOLUME_SUFFIX = re.compile(r"\[[^\]]*\]$")
 
@@ -564,21 +589,38 @@ def io_counts() -> dict[str, tuple[int, int]]:
     return {name: (c.read_count, c.write_count) for name, c in counters.items()}
 
 
-def smartctl_found_it_asleep(result: subprocess.CompletedProcess[str]) -> bool:
-    """Whether ``smartctl -n standby`` left the disk alone because it sleeps (ADR-0378).
+def smartctl_stopped_in(result: subprocess.CompletedProcess[str]) -> str | None:
+    """The power mode in which ``smartctl -n`` left the disk alone (ADR-0378), as smartctl names it
+    ("STANDBY", "IDLE_A"); None when it did not stop there.
 
-    smartctl first asks the disk for its power mode, which does not spin it up, and stops for a
-    disk in standby or sleep: exit status bit 1, which also means that the device could not be
-    opened, and its message "Device is in STANDBY mode".
+    smartctl first asks the disk for its power mode with CHECK POWER MODE, which does not spin it up,
+    and stops for the modes that -n names: exit status bit 1, which also means that the device could
+    not be opened, and its message "Device is in STANDBY mode", which -j puts in the JSON's
+    smartctl.messages (the search finds it in both forms of the output).
     """
-    return bool(result.returncode & 0b10) and _ASLEEP.search(result.stdout or "") is not None
+    if not result.returncode & 0b10:
+        return None
+    found = _STOPPED_IN.search(result.stdout or "")
+    return found[1] if found else None
+
+
+def smartctl_found_it_asleep(result: subprocess.CompletedProcess[str]) -> bool:
+    """Whether ``smartctl -n standby`` left the disk alone because it sleeps (ADR-0378): in SLEEP,
+    STANDBY, or EPC's STANDBY_Y."""
+    return _SMARTCTL_MODES.get(smartctl_stopped_in(result) or "") == "standby"
 
 
 def power_state(device: str) -> PowerState:
     """Whether the whole disk ``device`` is active (spinning, or idle) or in standby, read without
-    waking it and without restarting its standby timer (ADR-0378): ``hdparm -C`` on the host sends
-    the disk CHECK POWER MODE alone. "unknown" when hdparm fails (a disk it cannot ask, as behind
-    some USB bridges), names no power mode, or does not answer within POWER_CHECK_TIMEOUT.
+    waking it (ADR-0378): ``hdparm -C`` on the host sends the disk CHECK POWER MODE alone, which did
+    not restart the standby timer of the dev device's disk (IDENTIFY does). "unknown" when hdparm
+    fails (a disk it cannot ask, as behind some USB bridges), names no power mode, or does not answer
+    within POWER_CHECK_TIMEOUT.
+
+    A disk that answers with a power condition that hdparm does not name (it prints "unknown" and
+    exits 0), as an EPC disk's idle_a, idle_b, idle_c and standby_y, is asked again with smartctl
+    (_epc_power_state). A disk whose last read timed out is not asked again while that hdparm still
+    runs on the host (_hdparm_power_read).
 
     On a host without hdparm (an optional host tool), and for an NVMe disk, which hdparm cannot ask
     and which gets no idle timeout, ``smartctl -n standby -i`` in the container reads it
@@ -587,22 +629,102 @@ def power_state(device: str) -> PowerState:
     """
     if device.removeprefix("/dev/").startswith("nvme"):
         return _smartctl_power_state(device)
-    cmd = ["timeout", f"--kill-after={POWER_CHECK_KILL_AFTER}", str(POWER_CHECK_TIMEOUT), "hdparm", "-C", device]
-    try:
-        result = host.run_on_host(cmd, timeout=POWER_CHECK_TIMEOUT + POWER_CHECK_KILL_AFTER + 5, errors="replace")
-    except (OSError, subprocess.SubprocessError):
+    result = _hdparm_power_read(device)
+    if result is None:
         return "unknown"
     if result.returncode == _NOT_FOUND:
         return _smartctl_power_state(device)
     found = _DRIVE_STATE.search(result.stdout)
     if not result.ok or found is None:  # also when the host's timeout ended it (124, or 137 killed)
         return "unknown"
-    return _HDPARM_STATES.get(found[1], "unknown")
+    state = _HDPARM_STATES.get(found[1])
+    return state if state is not None else _epc_power_state(device)
+
+
+def _hdparm_power_read(device: str) -> host.HostResult | None:
+    """``hdparm -C <device>`` on the host under its timeout; None when it was not started, or did
+    not answer (run_on_host's limit ran out, or it could not run).
+
+    Bounded per disk as run_in_container bounds its commands (ADR-0290): the host's timeout cannot
+    end an hdparm stuck in the kernel on a disk that stopped answering, and run_on_host's limit ends
+    only nsenter. So one read of a disk runs at a time: a second waits for the first, at most
+    POWER_READ_LIMIT. After a read that timed out (run_on_host's limit, or the host's timeout: 124,
+    137), no hdparm is started for the disk until pgrep shows that the earlier one has ended
+    (_hdparm_has_ended); until then it answers None at once, logged once for each such read. So a
+    disk that hangs keeps at most one stuck hdparm, and its timeout, on the host.
+    """
+    with _power_reads:
+        if not _power_reads.wait_for(lambda: device not in _power_reading, POWER_READ_LIMIT):
+            return None
+        _power_reading.add(device)
+        stuck = device in _power_stuck
+    try:
+        if stuck:
+            if not _hdparm_has_ended(device):
+                with _power_reads:
+                    if not _power_stuck.get(device):
+                        logger.warning("Not started: hdparm -C %s: an earlier run of it has not ended", device)
+                        _power_stuck[device] = True
+                return None
+            with _power_reads:
+                _power_stuck.pop(device, None)
+        cmd = ["timeout", f"--kill-after={POWER_CHECK_KILL_AFTER}", str(POWER_CHECK_TIMEOUT), "hdparm", "-C", device]
+        try:
+            result = host.run_on_host(cmd, timeout=POWER_READ_LIMIT, errors="replace")
+        except subprocess.TimeoutExpired:
+            result = None
+        except (OSError, subprocess.SubprocessError):
+            return None
+        if result is None or result.returncode in _ENDED_BY_TIMEOUT:
+            logger.warning("hdparm -C %s did not answer within %s seconds", device, POWER_CHECK_TIMEOUT)
+            with _power_reads:
+                _power_stuck[device] = False
+        return result
+    finally:
+        with _power_reads:
+            _power_reading.discard(device)
+            _power_reads.notify_all()
+
+
+def _hdparm_has_ended(device: str) -> bool:
+    """Whether no ``hdparm -C <device>`` runs on the host any more: ``pgrep -f`` in the container,
+    which has the host's process IDs (pid: host) and procps; False when pgrep finds one, fails, or
+    does not answer (run_in_container, ADR-0290)."""
+    try:
+        found = host.run_in_container(
+            ["pgrep", "-f", f"^hdparm -C {_ere_literal(device)}$"], timeout=POWER_STUCK_CHECK_TIMEOUT
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return found.returncode == 1  # 0: found one; 2 and 3: pgrep failed
+
+
+def _ere_literal(text: str) -> str:
+    """``text`` as a POSIX extended regular expression that matches it alone."""
+    return re.sub(r"([.\[\]()*+?{}|^$\\])", r"\\\1", text)
+
+
+def _epc_power_state(device: str) -> PowerState:
+    """power_state of a disk whose answer to CHECK POWER MODE hdparm does not name, as an EPC disk's
+    power conditions (ACS: 81h-83h idle_a, idle_b, idle_c; 01h standby_y): ``smartctl -n idle -i -j``
+    in the container asks it again and stops there for SLEEP, STANDBY, STANDBY_Y, IDLE and
+    IDLE_A/B/C, which it names, without IDENTIFY (smartctl_stopped_in): IDLE* is active, the others
+    standby. "unknown" otherwise: smartctl went on to read the identity, so the disk answered a mode
+    that smartctl does not stop for (it is active by now) or does not name either, and that IDENTIFY
+    says nothing of its mode; or smartctl cannot open the disk or does not answer within
+    POWER_CHECK_TIMEOUT."""
+    try:
+        # Killed at its timeout and not waited for (ADR-0290).
+        result = host.run_in_container(["smartctl", "-n", "idle", "-i", "-j", device], timeout=POWER_CHECK_TIMEOUT)
+    except (OSError, subprocess.SubprocessError):
+        return "unknown"
+    return _SMARTCTL_MODES.get(smartctl_stopped_in(result) or "", "unknown")
 
 
 def _smartctl_power_state(device: str) -> PowerState:
     """power_state with ``smartctl -n standby -i`` in the container, which asks the disk for its
-    power mode and stops for a sleeping one; an awake one answers its identity. "unknown" when
+    power mode and stops for a sleeping one (smartctl_found_it_asleep); an awake one, an EPC disk
+    in idle_a, idle_b or idle_c too, answers its identity. "unknown" when
     smartctl cannot open the disk (behind some USB bridges) or does not answer within
     POWER_CHECK_TIMEOUT."""
     try:

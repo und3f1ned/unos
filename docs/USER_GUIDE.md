@@ -204,11 +204,18 @@ only once the supervisor has restarted.
 
 The **Power** column shows whether each disk is **Active** (spinning, or
 idle) or in **Standby** (spun down), or **Unknown** when the disk cannot say,
-as behind some USB bridges. UNOS asks the disk for its power mode with
-`hdparm -C` on the host, which neither wakes a sleeping disk nor starts an
-awake one's idle timeout again, and a disk in standby is not read for what it
-holds: the **Contents** column then says "Not read while the disk sleeps"
-unless the host already knows its filesystem or partitions. On a host without
+as behind some USB bridges, or does not answer: after a power read of a disk
+that did not answer, UNOS shows it Unknown without asking again until that
+read has ended on the host. UNOS asks the disk for its power mode with
+`hdparm -C` on the host, which sends it only the CHECK POWER MODE command:
+that does not wake a sleeping disk, and it did not start the idle timeout
+again on the disk UNOS was measured with (a WD6400AACS). A disk in standby is
+not read for what it holds: the **Contents** column then says "Not read while
+the disk sleeps" unless the host already knows its filesystem or partitions.
+Disks with the Extended Power Conditions (EPC) of many NAS drives answer with
+power conditions that `hdparm` does not name; UNOS then asks with
+`smartctl -n idle`, which also sends only CHECK POWER MODE and shows them
+Active (idle_a, idle_b, idle_c) or Standby (standby_y). On a host without
 `hdparm`, and for an NVMe disk, UNOS asks with `smartctl` instead, which also
 leaves a sleeping disk asleep but starts an awake one's timer again.
 
@@ -236,7 +243,10 @@ Nothing UNOS does on its own wakes a sleeping disk or keeps an idle one
 awake. Disk Health, the SMART data and the hourly SMART records leave a
 sleeping disk asleep, and the hourly records skip a disk with an idle timeout
 that was not used since its last record: a SMART read of an awake disk
-starts its timer again. The pool health check every 5 minutes, and the pool
+starts its timer again. The first records after UNOS starts read every awake
+disk, and a disk that was asleep at its last record is read once it is awake
+again, also when only saving its idle timeout woke it. The pool health check
+every 5 minutes, and the pool
 counts of `/api/v1/health/prometheus` and `/api/v1/health/full` for
 monitoring, read only what the kernel and udev know. The trash of a pool is
 cleared out once a day, when its disks are awake. `deploy/install.sh` turns
