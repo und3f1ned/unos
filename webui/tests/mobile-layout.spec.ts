@@ -6,6 +6,7 @@ import { NO_SNAPSHOTS, POOLS, accessOf, fakeNfsExport, fakeShare, fakeSmbApi, fa
 import { HEALTHY_HDD_2, REPLACE_SOON, fakeHealthApi, predictionsAnswer } from './health-fakes';
 import { fakeNetworkApi } from './network-fakes';
 import { fakeNotificationsApi, type Channel } from './notifications-fakes';
+import { installedImmich } from './apps-fakes';
 
 // The web UI on a phone (feature webui.mobile-layout, ADR-0302). At 375 x 812, a small phone,
 // every page of the navigation, the views behind its tabs, each tab of System, the main dialogs,
@@ -220,24 +221,30 @@ const SNAPSHOTS_API = {
   '/api/v1/snapshots/copies': COPIES,
 };
 
-const INSTALLED_APPS = [
-  {
-    id: 'e2e-jellyfin',
-    template_id: 'jellyfin',
-    name: 'e2e-jellyfin',
-    container_id: 'e2e-jellyfin',
-    status: 'running',
-    web_port: 8096,
-    created_at: '2026-11-01T10:00:00Z',
-    pool: 'e2e_media',
-    volumes: [
-      { host: `${POOLS}/e2e_media/apps/jellyfin/config`, container: '/config', readonly: false },
-      { host: `${POOLS}/e2e_media/Movies and TV shows`, container: '/media', readonly: true },
-    ],
-    data_outside_pools: [],
-    runs_in_unos_smb: false,
-  },
-];
+const INSTALLED_JELLYFIN = {
+  id: 'e2e-jellyfin',
+  template_id: 'jellyfin',
+  name: 'e2e-jellyfin',
+  container_id: 'e2e-jellyfin',
+  status: 'running',
+  web_port: 8096,
+  created_at: '2026-11-01T10:00:00Z',
+  pool: 'e2e_media',
+  volumes: [
+    { host: `${POOLS}/e2e_media/apps/jellyfin/config`, container: '/config', readonly: false, companion: null },
+    { host: `${POOLS}/e2e_media/Movies and TV shows`, container: '/media', readonly: true, companion: null },
+  ],
+  data_outside_pools: [],
+  runs_in_unos_smb: false,
+  devices: [],
+  health: null,
+  companions: [],
+  missing: [],
+};
+// An app of several containers whose machine learning stopped: its card names its containers and
+// warns about the one that does not run (ADR-0381).
+const INSTALLED_IMMICH = installedImmich(DATA, { companions: { 'machine-learning': { status: 'exited' } } });
+const INSTALLED_APPS = [INSTALLED_JELLYFIN, INSTALLED_IMMICH];
 
 // The Files page: the pools folder holds e2e_data, which holds a folder and files with long names.
 const FAMILY = `${DATA}/Family photos and videos 2019-2026`;
@@ -800,8 +807,8 @@ const VIEWS: View[] = [
     name: 'App Store (installed)',
     path: '/apps',
     fake: (page) => serve(page, { '/api/v1/apps/installed': INSTALLED_APPS }),
-    open: (page) => page.getByRole('button', { name: /^(Installed|Установленные) \(1\)$/ }).click(),
-    shows: (page) => page.getByText('e2e-jellyfin').first(),
+    open: (page) => page.getByRole('button', { name: /^(Installed|Установленные) \(2\)$/ }).click(),
+    shows: (page) => page.getByText('immich-machine-learning').first(),
   },
   {
     name: 'Users',
@@ -1036,12 +1043,39 @@ const VIEWS: View[] = [
     end: (page) => page.getByRole('dialog').locator('code').last(),
   },
   {
+    // An app of several containers to install: its containers and their pinned images.
     name: 'Dialog: an app of the catalog',
     path: '/apps',
-    fake: (page) => serve(page, { '/api/v1/apps/installed': INSTALLED_APPS }),
+    fake: (page) => serve(page, { '/api/v1/apps/installed': [INSTALLED_JELLYFIN] }),
     open: (page) => page.getByRole('button', { name: /Immich/ }).first().click(),
-    shows: (page) => page.getByRole('dialog'),
+    shows: (page) => page.getByRole('dialog').getByText('immich-machine-learning', { exact: true }),
     start: dialogTitle,
+    end: dialogEnd,
+  },
+  {
+    // The variables of every container of an app of several containers, none of them editable.
+    name: 'Dialog: the variables of an app of several containers',
+    path: '/apps',
+    fake: (page) => serve(page, { '/api/v1/apps/installed': [INSTALLED_JELLYFIN] }),
+    open: async (page) => {
+      await page.getByRole('button', { name: /Immich/ }).first().click();
+      await page.getByRole('dialog').getByRole('button', { name: /^(Environment|Окружение) \(\d+\)$/ }).click();
+    },
+    shows: (page) => page.getByRole('dialog').getByLabel('MACHINE_LEARNING_MODEL_REVISION'),
+    // Opened on a tab that the click scrolled to: the view above checks the title as the dialog opens.
+    end: dialogEnd,
+  },
+  {
+    // The folders of an installed app of several containers, per container, with long paths.
+    name: 'Dialog: the folders of an installed app of several containers',
+    path: '/apps',
+    fake: (page) => serve(page, { '/api/v1/apps/installed': INSTALLED_APPS }),
+    open: async (page) => {
+      await page.getByRole('button', { name: /Immich/ }).first().click();
+      await page.getByRole('dialog').getByRole('button', { name: /^(Volumes|Тома) \(\d+\)$/ }).click();
+    },
+    shows: (page) => page.getByRole('dialog').getByRole('group', { name: 'immich-machine-learning' }),
+    // Opened on a tab that the click may scroll to, as the view of the variables.
     end: dialogEnd,
   },
   {

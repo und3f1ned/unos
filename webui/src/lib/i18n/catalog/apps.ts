@@ -26,9 +26,18 @@ export const en = {
 	'apps.open': 'Open',
 	'apps.installedNotice': '{name} was installed.',
 	'apps.installedNoticePool': '{name} was installed. Its data is stored on the "{pool}" pool.',
-	// The states of an installed app: running, or any other state of its container.
+	// The notice of the install of an app whose first account to register becomes its administrator.
+	'apps.install.firstAdmin':
+		'Open {name} now and create its administrator: the first account that registers becomes the administrator.',
+	// The states of an installed app: its main container runs, or is in any other state; an app
+	// that lacks one of its containers is incomplete (ADR-0381).
 	'apps.state.running': 'Running',
 	'apps.state.stopped': 'Stopped',
+	'apps.state.incomplete': 'Incomplete',
+	// Docker's health of an installed app's main container, by the word Docker answers.
+	'apps.health.starting': 'Starting',
+	'apps.health.healthy': 'Healthy',
+	'apps.health.unhealthy': 'Unhealthy',
 
 	// The categories of AppCategory (supervisor/src/apps/schemas.py), as the category list names
 	// them; all is every app.
@@ -61,11 +70,22 @@ export const en = {
 	'apps.installed.pool': 'Data on pool:',
 	// Followed by the name of the group, unos-smb.
 	'apps.installed.inGroup': 'Runs in the group',
+	// Followed by the names of the containers of an app of several containers (ADR-0381).
+	'apps.installed.containers': 'Containers:',
+	// {containers} is a list of the names of containers.
+	'apps.installed.missing':
+		'{name} is incomplete: Docker lacks {containers}. It cannot start: uninstall it (its data folders are kept) and install it again.',
+	'apps.installed.companionStopped':
+		'{name} runs without {containers}. Restart {name} to start all its containers; the Containers page shows the log of one that keeps stopping.',
 	'apps.installed.start': 'Start',
 	'apps.installed.stop': 'Stop',
 	'apps.installed.restart': 'Restart',
 	'apps.installed.uninstall': 'Uninstall',
-	'apps.installed.confirmUninstall': 'Uninstall {name}? This removes its container and keeps its data folders.',
+	// {n} is the number of the app's containers that Docker has.
+	'apps.installed.confirmUninstall': {
+		one: 'Uninstall {name}? This removes its container and keeps its data folders.',
+		other: 'Uninstall {name}? This removes its {n} containers and keeps its data folders.'
+	},
 	'apps.installed.loadError': 'The installed apps could not be loaded: {error}',
 	'apps.installed.startFailed': 'Start failed',
 	'apps.installed.stopFailed': 'Stop failed',
@@ -97,30 +117,46 @@ export const en = {
 		'{name} can read and change the files of every share folder you give it. If it can be reached from the internet, whoever takes it over gets those files too.',
 	'apps.detail.runsInUnosSmb':
 		'{name} runs in the group unos-smb (PUID {puid}, PGID {pgid}): it reads and changes the files of the share folders it was given.',
-	// The hardware of the host's SoC that an app gets (ADR-0377): the badge of its card, and of the
-	// card of an installed app whose container did not get it, the hint's title, what a hardware
-	// profile gives (by its id; generic for one without a text of its own), what to choose in the
-	// app (by the app's id) and the warning for an installed app whose container did not get it,
-	// in its details and in the notice of its install. Jellyfin's menu is named as in its English
-	// interface.
+	// The hardware of the host's SoC that an app's containers get (ADR-0382): the badge of its card,
+	// and of the card of an installed app a container of which did not get it, the hint's title,
+	// what a hardware profile gives (by its id; generic for one without a text of its own), what to
+	// choose in the app (by the app's id and the profile's) and the warning for an installed app a
+	// container of which did not get it, in its details and in the notice of its install. The menus
+	// of Jellyfin and Immich are named as in their English interfaces.
 	'apps.hardware.badge': 'Hardware acceleration',
 	'apps.hardware.badgeMissing': 'No hardware acceleration',
 	'apps.hardware.title': 'Hardware acceleration',
 	'apps.hardware.generic': 'UNOS installs {name} with the hardware of this NAS that the app uses.',
 	'apps.hardware.profile.rk3588Video':
 		"UNOS installs {name} with the video hardware of this NAS's Rockchip RK3588 that its kernel provides: the video decoders and encoders (MPP), the RGA and the GPU, in a container without privileged mode.",
+	'apps.hardware.profile.rk3588Npu':
+		"UNOS installs {name}'s machine learning with the NPU of this NAS's Rockchip RK3588: smart search, face recognition and text recognition run on it, in a container without privileged mode.",
 	'apps.hardware.missing':
 		'{name} was installed without the hardware of this NAS that it can use, so hardware acceleration does not work in it. To give it the hardware, uninstall {name} (its data folders are kept) and install it again on the same pool.',
-	'apps.hardware.setting.jellyfin':
+	'apps.hardware.setting.jellyfin.rk3588Video':
 		'In Jellyfin, choose Dashboard > Playback > Transcoding > Hardware acceleration: Rockchip MPP (RKMPP), and the codecs to decode in hardware.',
+	'apps.hardware.setting.immich.rk3588Video':
+		'To transcode videos in hardware, choose RKMPP in Immich under Administration > Settings > Video Transcoding Settings > Hardware Acceleration.',
 	'apps.detail.tabs.overview': 'Overview',
 	'apps.detail.tabs.ports': 'Ports ({count})',
 	'apps.detail.tabs.volumes': 'Volumes ({count})',
 	'apps.detail.tabs.environment': 'Environment ({count})',
 	'apps.detail.image': 'Docker Image',
+	// The containers of an app of several containers (ADR-0381), each with its image.
+	'apps.detail.containers': 'Containers',
+	'apps.detail.containersHint':
+		'{name} runs in {count} containers on a network of its own: UNOS installs, starts, stops and uninstalls them together. Each image is pinned by its digest.',
+	// An app whose database keeps the pool's disks awake while it runs (ADR-0381).
+	'apps.detail.diskAwake':
+		'While {name} runs, the hard disks of its pool do not go to sleep: its database and its jobs keep writing to them. Stop {name} on the Installed tab to let them sleep.',
 	'apps.detail.dataLocations': 'Data locations on {pool}',
 	'apps.detail.mountedAt': 'mounted at {path}',
 	'apps.detail.mountedAtReadOnly': 'mounted at {path} (read-only)',
+	// The same in one of the containers of an app of several.
+	'apps.detail.mountedAtIn': 'mounted at {path} in {container}',
+	'apps.detail.mountedAtInReadOnly': 'mounted at {path} in {container} (read-only)',
+	// A password file that UNOS generates at the install (ADR-0381).
+	'apps.detail.generatedSecret': 'A password that UNOS generates at the install and keeps in this file; it is never shown.',
 	'apps.detail.resources': 'Resource Recommendations',
 	'apps.detail.minMemory': 'Minimum Memory',
 	'apps.detail.recommendedMemory': 'Recommended Memory',
@@ -196,8 +232,14 @@ export const ru: Translation<typeof en> = {
 	'apps.open': 'Открыть',
 	'apps.installedNotice': 'Приложение {name} установлено.',
 	'apps.installedNoticePool': 'Приложение {name} установлено. Его данные хранятся в пуле «{pool}».',
+	'apps.install.firstAdmin':
+		'Откройте {name} сейчас и создайте его администратора: администратором становится первая зарегистрированная учётная запись.',
 	'apps.state.running': 'Работает',
 	'apps.state.stopped': 'Остановлено',
+	'apps.state.incomplete': 'Неполное',
+	'apps.health.starting': 'Запускается',
+	'apps.health.healthy': 'Исправно',
+	'apps.health.unhealthy': 'Неисправно',
 
 	'apps.category.all': 'Все приложения',
 	'apps.category.homeAutomation': 'Умный дом',
@@ -225,12 +267,20 @@ export const ru: Translation<typeof en> = {
 	'apps.installed.port': 'Порт:',
 	'apps.installed.pool': 'Данные в пуле:',
 	'apps.installed.inGroup': 'Работает в группе',
+	'apps.installed.containers': 'Контейнеры:',
+	'apps.installed.missing':
+		'Приложение {name} неполное: в Docker нет {containers}. Его нельзя запустить: удалите его (папки с данными останутся) и установите снова.',
+	'apps.installed.companionStopped':
+		'Приложение {name} работает без {containers}. Перезапустите {name}, чтобы запустить все его контейнеры; журнал контейнера, который снова останавливается, есть на странице «Контейнеры».',
 	'apps.installed.start': 'Запустить',
 	'apps.installed.stop': 'Остановить',
 	'apps.installed.restart': 'Перезапустить',
 	'apps.installed.uninstall': 'Удалить',
-	'apps.installed.confirmUninstall':
-		'Удалить приложение {name}? Его контейнер будет удалён, а папки с данными останутся.',
+	'apps.installed.confirmUninstall': {
+		one: 'Удалить приложение {name}? Его контейнер будет удалён, а папки с данными останутся.',
+		few: 'Удалить приложение {name}? Его {n} контейнера будут удалены, а папки с данными останутся.',
+		many: 'Удалить приложение {name}? Его {n} контейнеров будут удалены, а папки с данными останутся.'
+	},
 	'apps.installed.loadError': 'Не удалось загрузить установленные приложения: {error}',
 	'apps.installed.startFailed': 'Не удалось запустить приложение',
 	'apps.installed.stopFailed': 'Не удалось остановить приложение',
@@ -267,18 +317,30 @@ export const ru: Translation<typeof en> = {
 	'apps.hardware.generic': 'UNOS устанавливает {name} с оборудованием этого NAS, которое использует приложение.',
 	'apps.hardware.profile.rk3588Video':
 		'UNOS устанавливает {name} с видеооборудованием Rockchip RK3588 этого NAS, которое даёт его ядро: видеодекодерами и кодировщиками (MPP), RGA и GPU, в контейнере без привилегированного режима.',
+	'apps.hardware.profile.rk3588Npu':
+		'UNOS устанавливает машинное обучение {name} с NPU Rockchip RK3588 этого NAS: на нём работают умный поиск, распознавание лиц и распознавание текста, в контейнере без привилегированного режима.',
 	'apps.hardware.missing':
 		'Приложение {name} установлено без оборудования этого NAS, которое оно может использовать, поэтому аппаратное ускорение в нём не работает. Чтобы дать ему это оборудование, удалите {name} (папки с данными останутся) и установите его снова в тот же пул.',
-	'apps.hardware.setting.jellyfin':
+	'apps.hardware.setting.jellyfin.rk3588Video':
 		'В Jellyfin выберите Dashboard > Playback > Transcoding > Hardware acceleration: Rockchip MPP (RKMPP) (так пункты названы в английском интерфейсе Jellyfin) и отметьте кодеки для аппаратного декодирования.',
+	'apps.hardware.setting.immich.rk3588Video':
+		'Чтобы перекодировать видео аппаратно, выберите RKMPP в Immich в разделе Administration > Settings > Video Transcoding Settings > Hardware Acceleration (так пункты названы в английском интерфейсе Immich).',
 	'apps.detail.tabs.overview': 'Обзор',
 	'apps.detail.tabs.ports': 'Порты ({count})',
 	'apps.detail.tabs.volumes': 'Тома ({count})',
 	'apps.detail.tabs.environment': 'Окружение ({count})',
 	'apps.detail.image': 'Образ Docker',
+	'apps.detail.containers': 'Контейнеры',
+	'apps.detail.containersHint':
+		'Приложение {name} работает в {count} контейнерах в собственной сети: UNOS устанавливает, запускает, останавливает и удаляет их вместе. Каждый образ закреплён по дайджесту.',
+	'apps.detail.diskAwake':
+		'Пока {name} работает, жёсткие диски его пула не засыпают: его база данных и задания постоянно пишут на них. Чтобы они могли заснуть, остановите {name} на вкладке «Установленные».',
 	'apps.detail.dataLocations': 'Расположение данных в пуле {pool}',
 	'apps.detail.mountedAt': 'монтируется в {path}',
 	'apps.detail.mountedAtReadOnly': 'монтируется в {path} (только чтение)',
+	'apps.detail.mountedAtIn': 'монтируется в {path} в контейнере {container}',
+	'apps.detail.mountedAtInReadOnly': 'монтируется в {path} в контейнере {container} (только чтение)',
+	'apps.detail.generatedSecret': 'Пароль, который UNOS создаёт при установке и хранит в этом файле; он нигде не показывается.',
 	'apps.detail.resources': 'Рекомендуемые ресурсы',
 	'apps.detail.minMemory': 'Минимум памяти',
 	'apps.detail.recommendedMemory': 'Рекомендуемая память',

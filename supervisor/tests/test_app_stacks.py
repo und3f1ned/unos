@@ -1426,3 +1426,41 @@ class TestImmich:
         response = api.post(INSTALL, json={"template_id": "immich"})
 
         assert response.status_code == 200, response.text
+
+
+# ---------------------------------------------------------------------------
+# The App Store's route fakes (webui/tests/apps-fakes.ts, apps-stacks.spec.ts)
+# ---------------------------------------------------------------------------
+
+WEBUI_TESTS = Path(__file__).resolve().parents[2] / "webui" / "tests"
+
+
+def _interface_fields(source: str, name: str) -> list[str]:
+    """The fields of the TypeScript interface ``name`` of ``source``, in their order."""
+    body = source.split(f"export interface {name} {{", 1)[1].split("\n}", 1)[0]
+    return [line.strip().split(":", 1)[0] for line in body.splitlines() if line.strip().endswith(";")]
+
+
+def test_the_e2e_fakes_list_an_installed_app_as_the_server_does():
+    """apps-fakes.ts lists installed apps with the fields of the server's InstalledApp, and their
+    companions with those of CompanionContainer (ADR-0189), so that the App Store's specs see what
+    the server answers."""
+    fakes = (WEBUI_TESTS / "apps-fakes.ts").read_text(encoding="utf-8")
+    schemas = importlib.import_module("src.apps.schemas")
+
+    assert _interface_fields(fakes, "FakeInstalledApp") == list(schemas.InstalledApp.model_fields)
+    assert _interface_fields(fakes, "FakeCompanion") == list(schemas.CompanionContainer.model_fields)
+    assert _interface_fields(fakes, "FakeVolume") == list(schemas.AppVolume.model_fields)
+
+
+def test_the_e2e_fakes_refuse_a_taken_port_with_the_servers_text(api, pools, docker, immich_images, soc):
+    """apps-stacks.spec.ts answers an install of Immich whose port a container publishes with the
+    server's 409, word for word (ADR-0189)."""
+    spec = (WEBUI_TESTS / "apps-stacks.spec.ts").read_text(encoding="utf-8")
+    docker.pulled("example/other:1")
+    docker.containers.create("example/other:1", name="e2e-photos", ports={"2283/tcp": 2283}).start()
+
+    response = api.post(INSTALL, json={"template_id": "immich"})
+
+    assert response.status_code == 409, response.text
+    assert f"'{response.json()['detail']}'" in spec

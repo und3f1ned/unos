@@ -71,11 +71,15 @@ test.describe('App data outside the storage pools', () => {
     created_at: '2026-01-01T00:00:00Z',
     pool: 'e2e_data',
     volumes: [
-      { host: '/mnt/pools/e2e_data/apps/transmission/config', container: '/config', readonly: false },
-      { host: '/mnt/pools/e2e_data/downloads', container: '/downloads', readonly: false },
+      { host: '/mnt/pools/e2e_data/apps/transmission/config', container: '/config', readonly: false, companion: null },
+      { host: '/mnt/pools/e2e_data/downloads', container: '/downloads', readonly: false, companion: null },
     ],
     data_outside_pools: ['/mnt/pools/e2e_data/apps/transmission/config', '/mnt/pools/e2e_data/downloads'],
     runs_in_unos_smb: false,
+    devices: [],
+    health: null,
+    companions: [],
+    missing: [],
   };
 
   test.beforeEach(async ({ authenticatedPage: page }) => {
@@ -128,8 +132,13 @@ test.describe('Installed apps', () => {
     web_port: number | null;
     created_at: string;
     pool: string | null;
-    volumes: { host: string; container: string; readonly: boolean }[];
+    volumes: { host: string; container: string; readonly: boolean; companion: string | null }[];
     data_outside_pools: string[];
+    runs_in_unos_smb: boolean;
+    devices: string[];
+    health: string | null;
+    companions: never[];
+    missing: string[];
   }
 
   function installedApp(name: string, templateId: string, pool: string, status: string): FakeInstalledApp {
@@ -143,8 +152,13 @@ test.describe('Installed apps', () => {
       web_port: null,
       created_at: '2026-11-01T10:00:00Z',
       pool,
-      volumes: [{ host: config, container: '/config', readonly: false }],
+      volumes: [{ host: config, container: '/config', readonly: false, companion: null }],
       data_outside_pools: [],
+      runs_in_unos_smb: false,
+      devices: [],
+      health: null,
+      companions: [],
+      missing: [],
     };
   }
 
@@ -283,6 +297,9 @@ test.describe('Install in the group unos-smb', () => {
             web_url: 'http://localhost:9091',
             pool: POOL.name,
             volumes: [],
+            devices: [],
+            health: null,
+            companions: [],
           },
         });
       },
@@ -389,9 +406,15 @@ test.describe('Installed apps in the group unos-smb', () => {
       web_port: null,
       created_at: '2026-11-08T10:00:00Z',
       pool: 'e2e_data',
-      volumes: [{ host: `/mnt/pools/e2e_data/apps/${templateId}/config`, container: '/config', readonly: false }],
+      volumes: [
+        { host: `/mnt/pools/e2e_data/apps/${templateId}/config`, container: '/config', readonly: false, companion: null },
+      ],
       data_outside_pools: [],
       runs_in_unos_smb: runsInUnosSmb,
+      devices: [],
+      health: null,
+      companions: [],
+      missing: [],
     };
   }
 
@@ -499,10 +522,14 @@ test.describe('The App Store in Russian', () => {
       web_port: null,
       created_at: '2026-11-08T10:00:00Z',
       pool,
-      volumes: [{ host: config, container: '/config', readonly: false }],
+      volumes: [{ host: config, container: '/config', readonly: false, companion: null }],
       // The folders of an app whose pool is not mounted.
       data_outside_pools: mounted ? [] : [config],
       runs_in_unos_smb: false,
+      devices: [],
+      health: null,
+      companions: [],
+      missing: [],
     };
   }
 
