@@ -69,19 +69,36 @@ significant step. Features and their state live in `feature-list.json`, decision
   `install.sh` on a second microSD card and an NVMe pool (Open owner actions, 6 and 7). That
   afternoon the device's Armbian was upgraded to 26.11.0-trunk (kernel 6.1.172), and hdparm,
   nvme-cli and acl installed (Log).
-- On 2026-11-16 (Log): a sixth batch on the branch `mvp.batch-6`, not merged into `main`, four
-  entries with ADR-0377 to ADR-0380: Jellyfin with the RK3588's video hardware
+- On 2026-11-16 (Log): a sixth batch on the branch `mvp.batch-6`, merged into `main` as ce5f86c,
+  four entries with ADR-0377 to ADR-0380: Jellyfin with the RK3588's video hardware
   (`apps.rk3588-hardware-acceleration`), idle timeouts of data disks (`storage.disk-spindown`),
   a pool's balance (`storage.pool-balance`) and per-share encryption, Time Machine and Previous
   Versions (`shares.per-share-protocol-options`). Checked on the dev device across four reboots,
-  with fixes from what the device showed; the device runs cc9482e, whose runtime differs from the
-  branch's head only in a comment of `deploy/uninstall.sh`. Passing now: `storage.disk-spindown`,
+  with fixes from what the device showed; the device ran cc9482e, whose runtime differs from the
+  branch's head only in a comment of `deploy/uninstall.sh`, until the deploy of the next bullet's
+  branch at 21:38 UTC. Passing now: `storage.disk-spindown`,
   on two judgements the owner may overrule (Open owner actions, 10). Open, each waiting on the
   owner (Open owner actions, 8, 9 and 11): `storage.pool-balance` step 1 on the Storage page in a
   browser; `shares.per-share-protocol-options` with a Mac (a Time Machine backup) and a Windows
   computer (Previous Versions); `apps.rk3588-hardware-acceleration` step 1's load on the RKMPP
-  cores and its look in a browser, with Jellyfin installed again, and step 2, Immich's NPU, once
-  `apps.compose-stacks` is merged, whose Immich administrator account only the owner creates.
+  cores and its look in a browser, with Jellyfin installed again, and step 2, Immich's NPU, whose
+  open parts the next bullet names.
+- That evening (Log): `apps.compose-stacks` (ADR-0381, ADR-0382) on its branch, not merged into
+  `main`: an app of several containers, Immich's server, database, Redis and machine learning, its
+  images pinned by tag and digest and its database's password generated on its pool, and Immich's
+  machine learning on the RK3588's NPU (step 2 of `apps.rk3588-hardware-acceleration`). The
+  branch merged with main ce5f86c (41ad495) runs on the dev device, Immich installed. Its device
+  check passed before and after a reboot from the API: the install (3661.938 MiB on the SD card
+  with the images' pull), the containers, mounts, password file and network, stop, start and
+  restart in order, an uninstall that keeps the data and a reinstall that uses the same database,
+  0.547 MiB in 30 idle minutes, the six models of Immich's machine learning on the NPU, RKMPP in
+  Immich's server, and the pool's disk awake while Immich runs (ADR-0381's cost). Open, first:
+  Immich has no administrator, and until the owner registers one, anyone on the LAN who opens port
+  2283 can register as its administrator (Open owner actions, 12, at once). Then, the agent's: a
+  read of GET /apps/installed after a boot with Immich installed, which the reboot check left out,
+  for `apps.compose-stacks` (passes false until then). The owner's: photos and Immich's jobs (13)
+  and RKMPP chosen in Immich (14), for `apps.rk3588-hardware-acceleration` step 2, which stays
+  false with step 1's open parts (11).
 - On the device the NFS server runs (nfs-server, rpcbind.socket and rpcbind, enabled since
   2026-11-08, ADR-0303) and exports nothing for now; over IPv6 only LAN sources reach it
   (ADR-0301). avahi-daemon and wsdd2 run (network discovery), and nmbd is disabled since
@@ -132,7 +149,7 @@ significant step. Features and their state live in `feature-list.json`, decision
 
 ## Dev device
 
-State on 2026-11-16, 19:35 UTC. A Banana Pi BPI-W3 (ArmSoM W3, Rockchip RK3588, 8 GB), running
+State on 2026-11-16, 22:48 UTC. A Banana Pi BPI-W3 (ArmSoM W3, Rockchip RK3588, 8 GB), running
 Armbian's community image for `armsom-w3`, upgraded on 2026-11-15 from 26.2.0-trunk.151 to
 26.11.0-trunk.133 (Debian 13, kernel 6.1.172-vendor-rk35xx);
 its address and logins are in `dev.env` (ADR-0212). This journal called it a UGREEN board, after
@@ -143,10 +160,20 @@ the UGREEN firmware on its eMMC, until the owner set that right on 2026-11-15 (A
   since boot, its own wear estimate 0 to 10%. Nothing writes to it.
 - SSH by key only, root by the workstation's key `~/.ssh/unos_dev_ed25519`; root's and the UNOS
   administrator's passwords were rotated and live only in `dev.env` (ADR-0226).
-- Runs cc9482e of the branch `mvp.batch-6` (the sixth batch, ADR-0377 to ADR-0380, not merged),
-  whose runtime differs from the branch's head only in a comment of `deploy/uninstall.sh`,
-  deployed on 2026-11-16 at 19:19 to 19:21 UTC (SD MiB check.sh 0.117, status and sync --dry-run
-  0, sync 1.652, build-supervisor 11.859, build-webui 16.672, up 6.102, check.sh 0.234); both
+- Runs 41ad495 of the branch `apps.compose-stacks` (ADR-0381, ADR-0382, not merged): its feature
+  commits and a merge of main ce5f86c, which holds the sixth batch. Deployed on 2026-11-16 at
+  21:38 to 21:40 UTC (SD MiB check.sh 0, status and sync --dry-run 0, sync 3.371,
+  build-supervisor 11.934, build-webui 16.762, up 5.352, check.sh 0.227); both containers healthy
+  after 7 s, check.sh OK: 112.8 MiB written to the SD card since the boot of 14:42 UTC. Immich
+  installed on the pool `data` at 21:40 to 21:45 UTC, uninstalled and installed again at 21:52 to
+  21:53 UTC, at the owner's word (Log, 2026-11-16, Immich). A reboot from the API at 22:24:02 UTC
+  (the boot of 22:25:22; both UNOS containers healthy by 22:26:14, Immich's four by 22:26:35, with
+  RestartCount 0 each; check.sh OK at 22:27, 13.4 MiB on the card since the boot).
+- Before it, cc9482e of the branch `mvp.batch-6` (the sixth batch, ADR-0377 to ADR-0380, since
+  merged into `main` as ce5f86c), whose runtime differs from the branch's head only in a comment of
+  `deploy/uninstall.sh`, deployed on 2026-11-16 at 19:19 to 19:21 UTC (SD MiB check.sh 0.117,
+  status and sync --dry-run 0, sync 1.652, build-supervisor 11.859, build-webui 16.672, up 6.102,
+  check.sh 0.234); both
   containers healthy after 6 s. Then `scenario.sh smart` (14 steps, 0.328 MiB) and `balance` (11
   steps, 0.234) OK, `deploy.sh status` equal (0), no Traceback or Killed in the supervisor's log
   (0.016), and check.sh OK (0): 71.6 MiB written to the SD card since the boot of 14:42 UTC,
@@ -165,7 +192,9 @@ the UGREEN firmware on its eMMC, until the owner set that right on 2026-11-15 (A
   during that night's measurements of sda's timer. The Jellyfin of the RK3588 checks is
   uninstalled, the folders `apps/jellyfin` and `media` that its install made on the pool are
   removed, and its image is no longer on the device (check.sh's image list at 19:19 UTC). The
-  balance checks' fills are removed.
+  balance checks' fills are removed. From 22:28 to 22:48 UTC sda had UNOS's shortest idle timeout,
+  5 minutes, while Immich ran, and never went to standby (Log); then UNOS's Off again, as found,
+  and the rule file is gone.
 - The owner had Armbian upgraded on 2026-11-15 ("update Armbian on the W3 to the current one"):
   a copy of `/boot`, `/etc/fstab`, `/etc/apt` and the package list on the workstation (the
   worktree's `tmp/`), `apt-get update` (166.512 MiB on the card), then `apt-get full-upgrade` in a
@@ -292,10 +321,17 @@ the UGREEN firmware on its eMMC, until the owner set that right on 2026-11-15 (A
   07:17 UTC deleted the 11 dangling images (the old builds' layers) and reclaimed only 134.9 kB,
   where this file had said about 351 MB.
 - Containers: unos-supervisor and unos-webui (both healthy), transmission (web login, data on the
-  pool `data`). Images (check.sh at 19:21 UTC on 2026-11-16): deploy-supervisor:latest
-  (`3847c5c5...`, cc9482e) and `:rollback` (`501848cd...`), deploy-webui:latest (`2276488b...`)
-  and `:rollback` (`121bdda5...`), the rollback images those of 5d79302, deployed at 13:39 UTC;
-  54 dangling images (the old builds' layers);
+  pool `data`), and Immich's four since 2026-11-16 (ADR-0381): immich, immich-database,
+  immich-redis and immich-machine-learning, on the network `unos-app-immich`, running and healthy
+  where they have a health check (22:26 UTC), with its folders in `apps/immich` of the pool `data`
+  (library, model-cache with the machine learning's models, postgres with the database's data and
+  its password file, redis). Immich has no administrator yet (Open owner actions, 12). Images
+  (check.sh at 21:40 UTC on 2026-11-16): deploy-supervisor:latest (`3c6accde...`, 41ad495) and
+  `:rollback` (`3847c5c5...`, cc9482e), deploy-webui:latest (`a855e354...`) and `:rollback`
+  (`2276488b...`); 56 dangling images (the old builds' layers); Immich's four, pulled by digest
+  at 21:40 to 21:45 UTC (3661.938 MiB on the SD card with the install): immich-server v3.4.1
+  (`7c489add...`), immich-machine-learning v3.4.1-rknn (`b7baeb12...`), Immich's postgres
+  14-vectorchord0.4.3-pgvectors0.2.0 (`bcf63357...`) and valkey 9 (`418652cf...`);
   lscr.io/linuxserver/transmission, alpine (the
   final backup of `deploy/uninstall.sh`) and caddy:2-alpine (the web UI's base: Caddy 2.10.2 of
   January 2026, `sha256:f2b257f2...`). The slice-2 rollback images and files were deleted on
@@ -337,6 +373,11 @@ the UGREEN firmware on its eMMC, until the owner set that right on 2026-11-15 (A
   `unos-ipv6-inbound.service` (ADR-0301, `scripts/dev/ipv6-filter.sh status`). IPv4 is not
   filtered on the device. Samba admits only private, unique-local and link-local addresses.
   smbd runs unconfined by AppArmor (ADR-0162). The NFS server runs (ADR-0303), with no export.
+- SD writes on 2026-11-16 (Immich; the deploy above): Immich's install with the pull of its four
+  images 3661.938 MiB, its second install with the images there 6.059; stop 2.254, start 2.785,
+  restart 5.023, the uninstall 3.695; 30 idle minutes 0.547; the reads and probes of the checks
+  0 to 0.895 each, `scenario.sh hardware` 0 and 0.125, the reboot call 0.027, sda's idle timeout
+  set and put back 0.105 and 0.074 and its 20 minutes of reads 0.219 (the Log).
 - SD writes on 2026-11-16 (the sixth batch; the deploys above): `scenario.sh all` from 01:05 UTC
   20.160 MiB (files 0.551, volumes 0.859, smart 0.340, backups 0.441, smb 3.148, smbconf 2.906,
   shares 3.145, scrub 0.543, balance 0.234, offsite 0.527, restore 7.465, hardware 0) and from
@@ -442,11 +483,113 @@ Open owner actions:
     owner's word (its image is a pull of about 1.3 GB onto the SD card): the load on the decoder
     and encoder cores in `/proc/mpp_service/load` while ffmpeg runs, with `load_interval` set first
     (step 4 of its notes' steps by hand), and the owner's look at the App Store's card and details
-    of the installed Jellyfin, with RKMPP chosen in Jellyfin's dashboard (step 6); step 2, Immich's
-    machine learning on the NPU, once `apps.compose-stacks` and its Immich of several containers
-    are merged; the Immich administrator account, which only the owner creates.
+    of the installed Jellyfin, with RKMPP chosen in Jellyfin's dashboard (step 6). Step 2's open
+    parts are 13 and 14.
+12. At once, Immich's administrator on the dev device: open Immich on port 2283 of the device and
+    register its administrator. Until then anyone on the LAN who opens that port can register as
+    Immich's administrator (it had none at the check's last read, 21:53 UTC on 2026-11-16).
+13. Immich with photos (`apps.rk3588-hardware-acceleration`, step 2's (4) of its notes' steps by
+    hand): upload about 30 photos (faces, text, one HEVC video), run Smart Search, Face Detection
+    and OCR in Administration > Jobs, record their durations and search for dog; while the jobs
+    run, the agent reads the NPU's load, the log's recognition lines, check.sh's thermal margin and
+    `docker stats` (`apps.compose-stacks`'s (7), whose peaks go to
+    `apps.container-resource-limits`).
+14. RKMPP in Immich (`apps.rk3588-hardware-acceleration`, the owner's part of step 2's (5)):
+    choose it in Administration > Settings > Video Transcoding Settings > Hardware Acceleration,
+    and confirm that the App Store's hint names that menu as Immich does.
 
 ## Log
+
+### 2026-11-16: Immich of four containers on the dev device, its machine learning on the NPU
+
+- `apps.compose-stacks` (ADR-0381, ADR-0382), built test-first on its branch: an app of several
+  containers installs, lists and changes as one app through the Docker API, with images pinned by
+  tag and digest, a database password generated on its pool and checks of the host ports and the
+  system disk's space before any pull. Immich is its server, database, Redis and machine learning,
+  the last on the RK3588's NPU with the -rknn image (step 2 of
+  `apps.rk3588-hardware-acceleration`). The branch was merged with main ce5f86c (the sixth batch)
+  as 41ad495. Before the deploy `make check` passed (8048 passed, 118 skipped, 1 xfailed), and so
+  did the E2E specs apps, apps-stacks, apps-hardware, appstore and storage on the stand-in (121
+  passed).
+- Device check (the dev device, kernel 6.1.172, RKNPU driver v0.9.8, the pool `data` on sda; times
+  UTC; each step's SD MiB; the deploy's MiB in Dev device), the pulls, the installs, the app
+  actions and the reboot at the owner's word, run by the agent through the API. On 2625f84 at
+  20:07, read only: check.sh OK (0.016), 24206 MiB free on the system disk, port 2283 free, 3
+  Docker volumes, and the NPU's render node at its stable name (0.031). Then the deploy of 41ad495
+  at 21:38 to 21:40.
+- The install at 21:40: the catalog gave the server rk3588-video and the machine learning
+  rk3588-npu with the -rknn image (0), `scenario.sh hardware` passed its 7 steps (0), and the
+  install answered 200 in 299 s with the three companions, the machine learning with `/dev/dri` and
+  the server with the five video nodes (3661.938 MiB, the four images' pull included). All four
+  containers ran, healthy where they have a health check, by 21:46:24, with pong, 3.4.1 and GET
+  /apps/installed listing Immich (0.230); docker inspect, the password file, the network and the
+  listeners as the entry's notes ask, and docker diff naming only the mount points `/data`,
+  `/run/secrets` with its file and `/cache` and their parent `/run` (0.895). The probe of Immich's
+  machine learning answered 200 to every request: the picture first in 32.17 s (the models'
+  download into the new model-cache on the pool), then a median of 0.281 s, the text first in
+  1.49 s, then 0.025 s (0.129); the NPU's load during a second probe Core0 61 to 75%, Core1 6 to
+  18%, Core2 0 to 4%, in 10 of 10 reads (0.016); RKMPP in Immich's server, a decode with
+  `-hwaccel rkmpp` and an hevc_rkmpp encode, exit 0 (0).
+- That run printed 7 FAILs, all faults of the check script, not of Immich, confirmed by hand and
+  then by the recheck: (a) the machine learning's image, tested for "rknn" in its Config.Image,
+  which Docker fills with name@digest without the tag (the image's RepoTags name
+  ghcr.io/immich-app/immich-machine-learning:v3.4.1-rknn, and its digest is the -rknn one that
+  `supervisor/src/apps/catalog.py` pins); (b) the six "runs on the NPU" checks, which read the log
+  line by line, while Immich's machine-learning log (Python's rich) wraps each record at 80
+  columns, so that a line holds "Loaded RKNN model from" and the model's path follows on the next
+  lines. The script was fixed: it reads the tag from the RepoTags of the container's image, and it
+  takes the colours off the log and joins each record's continuation lines before it picks the
+  RKNN lines. Its recheck at 21:49 to 21:50 passed all 24 checks (0.730, 0): the -rknn image, and
+  all six models loaded from their rknpu/rk3588 files (CLIP's visual and textual
+  ViT-B-32__openai, buffalo_l's detection and recognition, PP-OCRv5_mobile's detection res736 and
+  recognition), with no failure line. The grep of the log in `apps.rk3588-hardware-acceleration`'s
+  notes had the same fault: it is `grep -E -A3` with a larger tail now.
+- Its life, 21:50 to 21:53: stop (2.254), start (2.785) and restart (5.023) answered 200, docker
+  events showed the starts database, redis, machine-learning, immich and the stops in reverse, and
+  all four were healthy again after each; GET /audit/logs had the entries and transmission still
+  ran (0.016); the uninstall left no container or network of Immich and kept its folders and the
+  password file, 600 root 64 (3.695); the second install answered 200, healthy, with no 'password
+  authentication failed', and used the same database: its version_history's first record
+  (2026-11-16 21:46:29 UTC, v3.4.1) and its administrator state were the same before and after
+  (6.059). The entry's notes ask that the administrator still signs in; the owner had not
+  registered one (isInitialized false at 21:52 and at 21:53), so the check compared the database's
+  own first-start record instead.
+- 30 idle minutes, 21:53 to 22:24: 0.547 MiB. docker stats then: immich 577 MiB and 0.06% of a
+  core, immich-machine-learning 144.9 MiB and 0.41%, immich-redis 5.664 MiB and 0.92%,
+  immich-database 70.42 MiB and 0.00%, unos-supervisor 103.2 MiB and 0.24%, transmission 14.7 MiB
+  and 0.08%, unos-webui 12.57 MiB and 0.00%.
+- A reboot from the API at 22:24:02 (0.027), the boot of 22:25:22, check.sh OK (0.016): all four
+  running and healthy by 22:26:35, RestartCount 0 each, pong (0); docker inspect, the password
+  file, the network and the listeners as before (0.773); `scenario.sh hardware` 7 steps (0.125); a
+  probe answered 200, its first call in 4.25 s, the medians 0.270 s and 0.024 s, with the six
+  models loaded from `/cache` on the NPU and no failure line (0.055); no Traceback or Killed in the
+  supervisor's log, and check.sh OK (0). GET /apps/installed was not read after the reboot.
+- The pool's disk, 22:28 to 22:48: sda got the shortest offered idle timeout, 5 minutes (0.105),
+  with Immich running; 40 reads 30 s apart found it active/idle each time, with writes in every
+  window (its count of completed writes rose from 112 to 467, its reads not) and at most 31 s
+  without I/O (0.219); then Off again, as found, and the rule file gone (0.074). This is
+  ADR-0381's cost: the pool's disk stays awake while Immich runs.
+- `apps.compose-stacks` stays passes false, its verified_by now `test_app_stacks.py`,
+  `test_apps.py`, `test_audit_storage_and_apps.py`, `apps-stacks.spec.ts` and `apps.spec.ts`: of
+  its notes' steps by hand, (9)'s GET /apps/installed after the reboot was not run, and (5)'s
+  listing was not shown to hold Immich once (the check asserted a listing of Immich, and its log
+  is cut short); a read of GET /apps/installed after a boot with Immich installed completes both.
+  The owner's items of its notes, the administrator's registration and docker stats while
+  Immich's jobs run, are no condition of its three steps. `apps.rk3588-hardware-acceleration`
+  stays false, with `test_app_stacks.py` and `apps-stacks.spec.ts` added to its verified_by: step
+  2's (1), (2), (3), the server's part of (5) and (6) passed, and open are (4), the owner's photos
+  and Immich's jobs, (5)'s RKMPP chosen in Immich and the names of the App Store's hint, and step
+  1's open parts (Open owner actions, 11, 13 and 14). Of its (2), the reads of
+  `/proc/device-tree/compatible` and `/dev/dri` inside the container were not run (the models
+  loaded from their rk3588 files, and the log has no 'Could not read /proc/device-tree' line), and
+  the log of (6)'s probe was not searched for a download.
+- Review findings: the branch's history names the findings of its reviews in a fresh context as
+  fixed (d587d32: an install that started every companion before it waited for any, and a
+  rollback that removed the containers without a stop; 3071f26: the tests from the review of the
+  web UI stage) and records none left unfixed.
+- Open, the administrator first: Immich has no administrator, and until the owner registers one,
+  anyone on the LAN who opens port 2283 can register as its administrator (Open owner actions,
+  12). Immich stays installed on the dev device. `make check` passed on this record.
 
 ### 2026-11-16: A sixth batch: the RK3588's video hardware, disk idle timeouts, a pool's balance, share options
 
