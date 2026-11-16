@@ -393,21 +393,25 @@ manager, encrypted backup uploads, health checks, CI checks).
   that the rule names, what UNOS set, with the host's tools (found also
   where root's PATH lacks `/usr/sbin` and `/sbin`), each under `timeout`
   (the script goes on after 35 seconds per command at most, also when the
-  kernel keeps a command past its kill): the timeout off (`hdparm -S 0`), and
+  kernel keeps a command past its kill, and so does whatever reads its
+  output, since the command's output and errors go to temporary files, its
+  errors shown once it has ended): the timeout off (`hdparm -S 0`), and
   the scans that UNOS turned off on again (`smartctl -o on`, read back with
   `-c`); then it removes the rule. It does so once UNOS has stopped and
   before it removes `/opt/unos`: a run stopped while it undoes the disks,
-  also with Ctrl-C (which ends it once the command running has ended), leaves
-  the rule whole and can run again. It counts only the lines that the
-  supervisor's `read_rule` takes as UNOS's, read as udev reads a rules file
-  without NUL bytes (as `read_rule` now does too), never runs the file,
-  touches no other disk, and names at its end, with the command, what it
+  also with Ctrl-C or a dropped SSH session (which end it once the command
+  running has ended), leaves the rule whole and can run again, which then
+  makes no backup, since the data volume is gone. It counts only the lines
+  that the supervisor's `read_rule` takes as UNOS's, read as udev reads a
+  rules file without NUL bytes (as `read_rule` now does too), never runs the
+  file, touches no other disk, and names at its end, with the command, what it
   could not undo (no `hdparm` or `smartctl`, a disk not attached or not alone
   with its serial, SMART off on the disk, for which the command is
   `smartctl -s on -o on`, a failed command) and the lines edited by hand,
   which go with the rule. A disk whose scans stay off keeps its record in the
-  rule, which then holds only such records; a rule it cannot read, or with a
-  NUL byte, stays. `scripts/dev/scenario.sh smart` shows the system disk
+  rule, which then holds only such records, for a new installation's Off
+  (not on a disk with SMART off); a rule it cannot read, or with a NUL byte,
+  stays. `scripts/dev/scenario.sh smart` shows the system disk
   refused a timeout, gives the pool's disk the
   shortest timeout, waits for it to sleep (at most 1980 s: room for the dev
   device's disk's own minimum of about 660 s twice, as after a read of the

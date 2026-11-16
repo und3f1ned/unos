@@ -715,10 +715,12 @@ def test_the_rule_file_keeps_its_records_and_drops_one_edited_by_hand(host):
             if "RULES_PATH" in (text := path.read_text()) or "90-unos-disk-spindown" in text] == ["storage/spindown.py"]
 
 
-def test_the_rule_is_read_as_udev_reads_it(host):
+def test_the_rule_is_read_as_udev_reads_a_file_without_nul_bytes(host):
     """A line ends at \\n or \\r, as udev's lines do, and only spaces and tabs around it are blanks; an
-    hdparm -S value is written in ASCII digits. deploy/uninstall.sh reads the rule the same way
-    (test_deploy_scripts.py), so it undoes no more and no less than the supervisor counts."""
+    hdparm -S value is written in ASCII digits. udev also ends a line at a NUL byte, which UNOS never
+    writes, and read_rule does not. deploy/uninstall.sh reads the rule as read_rule does, and does not
+    read a rule with a NUL byte at all (test_deploy_scripts.py), so it undoes no more and no less than
+    the supervisor counts."""
     host.files[spindown.RULES_PATH] = (
         RULE.format(serial="WD-W3", value=60) + "\r" + RECORD.format(serial="WD-W3") + "\r\n"
         + " \t" + RULE.format(serial="WD-SPARE", value=120) + "\t \n"

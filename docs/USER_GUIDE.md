@@ -263,10 +263,12 @@ host's `smartctl`). At its end it names what it could not undo, such as a disk
 that is not attached or has SMART off, with the command to run. Until such a
 disk's scans are on again, the rule stays with only their records, which do
 nothing at boot; a new installation of UNOS reads them, and saving **Off** for
-the disk turns its scans on. If the uninstallation stops while it undoes the
-disks (Ctrl-C, which takes effect once the disk command then running has ended,
-or a dropped connection), the rule is still whole: run the uninstallation again
-to finish.
+the disk turns its scans on, unless SMART is off on the disk: then only the
+command named at the end does. If the uninstallation stops while it undoes the
+disks (Ctrl-C or a dropped connection, which take effect once the disk command
+then running has ended), the rule is still whole: run the uninstallation again
+to finish. That run makes no backup: the first one offered it, then removed
+UNOS's data volume.
 
 Nothing UNOS does on its own wakes a sleeping disk or keeps an idle one
 awake. Disk Health, the SMART data and the hourly SMART records leave a
