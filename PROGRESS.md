@@ -88,15 +88,17 @@ significant step. Features and their state live in `feature-list.json`, decision
   images pinned by tag and digest and its database's password generated on its pool, and Immich's
   machine learning on the RK3588's NPU (step 2 of `apps.rk3588-hardware-acceleration`). The
   branch merged with main ce5f86c (41ad495) runs on the dev device, Immich installed. Its device
-  check passed before and after a reboot from the API: the install (3661.938 MiB on the SD card
-  with the images' pull), the containers, mounts, password file and network, stop, start and
-  restart in order, an uninstall that keeps the data and a reinstall that uses the same database,
-  0.547 MiB in 30 idle minutes, the six models of Immich's machine learning on the NPU, RKMPP in
-  Immich's server, and the pool's disk awake while Immich runs (ADR-0381's cost). Open, first:
-  Immich has no administrator, and until the owner registers one, anyone on the LAN who opens port
-  2283 can register as its administrator (Open owner actions, 12, at once). Then, the agent's: a
-  read of GET /apps/installed after a boot with Immich installed, which the reboot check left out,
-  for `apps.compose-stacks` (passes false until then). The owner's: photos and Immich's jobs (13)
+  check passed: the install (3661.938 MiB on the SD card with the images' pull), the containers,
+  mounts, password file and network, stop, start and restart in order, an uninstall that keeps the
+  data and a reinstall that uses the same database, 0.547 MiB in 30 idle minutes, the six models
+  of Immich's machine learning on the NPU and RKMPP in Immich's server; after a reboot from the
+  API the containers with those checks and the models on the NPU again, and then the pool's disk
+  awake while Immich runs (ADR-0381's cost). Open, first: Immich has no administrator, and until
+  the owner registers one, anyone on the LAN who opens port 2283 can register as its
+  administrator (Open owner actions, 12, at once). Then, the agent's: a logged read of GET
+  /apps/installed after a boot, one Immich with its three companions running, which the reboot
+  check did not show (only `scenario.sh hardware` read it, for the apps' names, unlogged), for
+  `apps.compose-stacks` (passes false until then). The owner's: photos and Immich's jobs (13)
   and RKMPP chosen in Immich (14), for `apps.rk3588-hardware-acceleration` step 2, which stays
   false with step 1's open parts (11).
 - On the device the NFS server runs (nfs-server, rpcbind.socket and rpcbind, enabled since
@@ -194,7 +196,9 @@ the UGREEN firmware on its eMMC, until the owner set that right on 2026-11-15 (A
   removed, and its image is no longer on the device (check.sh's image list at 19:19 UTC). The
   balance checks' fills are removed. From 22:28 to 22:48 UTC sda had UNOS's shortest idle timeout,
   5 minutes, while Immich ran, and never went to standby (Log); then UNOS's Off again, as found,
-  and the rule file is gone.
+  and the rule file is gone. Saving that timeout turns the disk's own offline data collection off
+  and Off turns it on again (ADR-0378): both answers had no warning, and the collection was not
+  read after them.
 - The owner had Armbian upgraded on 2026-11-15 ("update Armbian on the W3 to the current one"):
   a copy of `/boot`, `/etc/fstab`, `/etc/apt` and the package list on the workstation (the
   worktree's `tmp/`), `apt-get update` (166.512 MiB on the card), then `apt-get full-upgrade` in a
@@ -349,7 +353,8 @@ the UGREEN firmware on its eMMC, until the owner set that right on 2026-11-15 (A
   running"), and two of each run of the scenario check `scrub`, named `unoscheck<6 hex digits>`
   (one failed with the 409's text, one "Scrub started").
 - Storage: the pool `data` (btrfs on /dev/sda) at /mnt/pools/data, root:root 755 (ADR-0220),
-  with 1.7 GiB used of 597 GiB at 19:21 UTC on 2026-11-16. The share DATA is served from
+  with 1.7 GiB used of 597 GiB at 19:21 UTC on 2026-11-16, before Immich's install put its
+  folders in `apps/immich` (not read since). The share DATA is served from
   /mnt/pools/data/shared (root:unos-smb 2770); no account has access to it yet. The regular
   account `test` stays for checks of a regular user's view.
 - Scenario checks (ADR-0304): `scripts/dev/scenario.sh all` passed on 2026-11-08 at about 17:15
@@ -530,30 +535,33 @@ Open owner actions:
   1.49 s, then 0.025 s (0.129); the NPU's load during a second probe Core0 61 to 75%, Core1 6 to
   18%, Core2 0 to 4%, in 10 of 10 reads (0.016); RKMPP in Immich's server, a decode with
   `-hwaccel rkmpp` and an hevc_rkmpp encode, exit 0 (0).
-- That run printed 7 FAILs, all faults of the check script, not of Immich, confirmed by hand and
-  then by the recheck: (a) the machine learning's image, tested for "rknn" in its Config.Image,
-  which Docker fills with name@digest without the tag (the image's RepoTags name
+- That run printed 7 FAILs, all faults of the check script, not of Immich, as its recheck showed:
+  (a) the machine learning's image, tested for "rknn" in its Config.Image, which Docker fills with
+  name@digest without the tag (the image's RepoTags name
   ghcr.io/immich-app/immich-machine-learning:v3.4.1-rknn, and its digest is the -rknn one that
   `supervisor/src/apps/catalog.py` pins); (b) the six "runs on the NPU" checks, which read the log
-  line by line, while Immich's machine-learning log (Python's rich) wraps each record at 80
-  columns, so that a line holds "Loaded RKNN model from" and the model's path follows on the next
-  lines. The script was fixed: it reads the tag from the RepoTags of the container's image, and it
-  takes the colours off the log and joins each record's continuation lines before it picks the
-  RKNN lines. Its recheck at 21:49 to 21:50 passed all 24 checks (0.730, 0): the -rknn image, and
-  all six models loaded from their rknpu/rk3588 files (CLIP's visual and textual
-  ViT-B-32__openai, buffalo_l's detection and recognition, PP-OCRv5_mobile's detection res736 and
-  recognition), with no failure line. The grep of the log in `apps.rk3588-hardware-acceleration`'s
-  notes had the same fault: it is `grep -E -A3` with a larger tail now.
+  line by line, while Immich's machine-learning log (Python's rich) wraps each record at 80 columns,
+  so that a line holds "Loaded RKNN model from" and the model's path follows on the next lines. The
+  script was fixed: it reads the tag from the RepoTags of the container's image, and it takes the
+  colours off the log and joins each record's continuation lines before it picks the RKNN lines. Its
+  recheck at 21:49 to 21:50 passed all 24 checks (0.730, 0): the -rknn image, and all six models
+  loaded from their rknpu/rk3588 files (CLIP's visual and textual ViT-B-32__openai, buffalo_l's
+  detection and recognition, PP-OCRv5_mobile's detection res736 and recognition), with no failure
+  line. The grep of the log in `apps.rk3588-hardware-acceleration`'s notes had the same fault, and
+  the log's colours, which rich puts into a path, could hide a failure line from it: like the
+  script, it now takes the colours off and joins each record before the grep (tried on the
+  workstation on a log that rich wrote with the settings of Immich's handler, not yet on the
+  device).
 - Its life, 21:50 to 21:53: stop (2.254), start (2.785) and restart (5.023) answered 200, docker
   events showed the starts database, redis, machine-learning, immich and the stops in reverse, and
-  all four were healthy again after each; GET /audit/logs had the entries and transmission still
-  ran (0.016); the uninstall left no container or network of Immich and kept its folders and the
-  password file, 600 root 64 (3.695); the second install answered 200, healthy, with no 'password
-  authentication failed', and used the same database: its version_history's first record
-  (2026-11-16 21:46:29 UTC, v3.4.1) and its administrator state were the same before and after
-  (6.059). The entry's notes ask that the administrator still signs in; the owner had not
-  registered one (isInitialized false at 21:52 and at 21:53), so the check compared the database's
-  own first-start record instead.
+  all four were healthy again after the start and after the restart; GET /audit/logs had the entries
+  and transmission still ran (0.016); the uninstall left no container or network of Immich and kept
+  its folders and the password file, 600 root 64 (3.695); the second install answered 200, healthy,
+  with no 'password authentication failed', and used the same database: its version_history's first
+  record (2026-11-16 21:46:29 UTC, 3.4.1) and its administrator state were the same before and after
+  (6.059). The entry's notes ask that the administrator still signs in; the owner had not registered
+  one (isInitialized false at 21:52 and at 21:53), so the check compared the database's own
+  first-start record instead.
 - 30 idle minutes, 21:53 to 22:24: 0.547 MiB. docker stats then: immich 577 MiB and 0.06% of a
   core, immich-machine-learning 144.9 MiB and 0.41%, immich-redis 5.664 MiB and 0.92%,
   immich-database 70.42 MiB and 0.00%, unos-supervisor 103.2 MiB and 0.24%, transmission 14.7 MiB
@@ -563,30 +571,38 @@ Open owner actions:
   file, the network and the listeners as before (0.773); `scenario.sh hardware` 7 steps (0.125); a
   probe answered 200, its first call in 4.25 s, the medians 0.270 s and 0.024 s, with the six
   models loaded from `/cache` on the NPU and no failure line (0.055); no Traceback or Killed in the
-  supervisor's log, and check.sh OK (0). GET /apps/installed was not read after the reboot.
+  supervisor's log, and check.sh OK (0). After the reboot only `scenario.sh hardware` read GET
+  /apps/installed, for the apps' names, which it compares at its start and its end and does not
+  log: one Immich with its three companions running was not shown.
 - The pool's disk, 22:28 to 22:48: sda got the shortest offered idle timeout, 5 minutes (0.105),
-  with Immich running; 40 reads 30 s apart found it active/idle each time, with writes in every
-  window (its count of completed writes rose from 112 to 467, its reads not) and at most 31 s
-  without I/O (0.219); then Off again, as found, and the rule file gone (0.074). This is
-  ADR-0381's cost: the pool's disk stays awake while Immich runs.
+  with Immich running; 40 reads 30 s apart found it active/idle each time, with writes between every
+  two reads (its count of completed writes rose from 112 to 467, its reads not), so that no stretch
+  without I/O came near the 5 minutes (0.219); then Off again, as found, and the rule file gone
+  (0.074). This is ADR-0381's cost: the pool's disk stays awake while Immich runs.
 - `apps.compose-stacks` stays passes false, its verified_by now `test_app_stacks.py`,
-  `test_apps.py`, `test_audit_storage_and_apps.py`, `apps-stacks.spec.ts` and `apps.spec.ts`: of
-  its notes' steps by hand, (9)'s GET /apps/installed after the reboot was not run, and (5)'s
-  listing was not shown to hold Immich once (the check asserted a listing of Immich, and its log
-  is cut short); a read of GET /apps/installed after a boot with Immich installed completes both.
-  The owner's items of its notes, the administrator's registration and docker stats while
-  Immich's jobs run, are no condition of its three steps. `apps.rk3588-hardware-acceleration`
+  `test_apps.py`, `test_audit_storage_and_apps.py`, `apps-stacks.spec.ts` and `apps.spec.ts`: of its
+  notes' steps by hand, (9)'s GET /apps/installed with all four containers running after the reboot
+  was not shown, and (5)'s listing was not shown to hold one Immich with its three companions
+  running (the check asserted a listing of Immich, and its log is cut at 1500 characters after the
+  companion database); a logged read of GET /apps/installed after a boot with Immich installed
+  completes both. The owner's items of its notes, the administrator's registration and docker stats
+  while Immich's jobs run, are no condition of its three steps. `apps.rk3588-hardware-acceleration`
   stays false, with `test_app_stacks.py` and `apps-stacks.spec.ts` added to its verified_by: step
   2's (1), (2), (3), the server's part of (5) and (6) passed, and open are (4), the owner's photos
   and Immich's jobs, (5)'s RKMPP chosen in Immich and the names of the App Store's hint, and step
   1's open parts (Open owner actions, 11, 13 and 14). Of its (2), the reads of
-  `/proc/device-tree/compatible` and `/dev/dri` inside the container were not run (the models
-  loaded from their rk3588 files, and the log has no 'Could not read /proc/device-tree' line), and
-  the log of (6)'s probe was not searched for a download.
+  `/proc/device-tree/compatible` and `/dev/dri` inside the container were not run (the models loaded
+  from their rk3588 files, and the log has no 'Could not read /proc/device-tree' line), and the log
+  of (6)'s probe was not searched for a download.
 - Review findings: the branch's history names the findings of its reviews in a fresh context as
   fixed (d587d32: an install that started every companion before it waited for any, and a
   rollback that removed the containers without a stop; 3071f26: the tests from the review of the
-  web UI stage) and records none left unfixed.
+  web UI stage) and records none left unfixed. The review of this record in a fresh context found
+  a false sentence (that nothing read GET /apps/installed after the reboot), the grep that could
+  miss a failure line, and inexact wording (a sampling interval given as the longest stretch
+  without I/O, health after each action where it was read after the start and the restart, the
+  Now bullet's before and after the reboot, the listing of (5), a confirmation by hand that no
+  log records, the sda and pool bullets' older reads): all fixed in the record's next commit.
 - Open, the administrator first: Immich has no administrator, and until the owner registers one,
   anyone on the LAN who opens port 2283 can register as its administrator (Open owner actions,
   12). Immich stays installed on the dev device. `make check` passed on this record.
