@@ -6,6 +6,7 @@
   echo '{"name": "x", "path": "/mnt/pools/data/x"}' | scripts/dev/api.py POST /shares/smb -
   scripts/dev/api.py --forget-token
   some-command | scripts/dev/api.py --redact     (a filter: text with the same redaction)
+  echo '{"template_id": "x"}' | scripts/dev/api.py --timeout 3600 POST /apps/install -
 
 PATH is relative to /api/v1. The request runs on the device itself, against
 https://127.0.0.1/api/v1 (through Caddy, like a browser's): the device's web ports do not
@@ -23,7 +24,9 @@ against the login rate limit (5 per minute), so the relay keeps the token in the
 and signs in again only when the API refuses it. A cache that is not a regular file of root
 with mode 600 (a symlink, a FIFO, a file another user put in the shared /dev/shm) is never
 read: the relay signs in and replaces it, through a new file renamed over it. --forget-token
-deletes it. --no-login sends the request without a token.
+deletes it. --no-login sends the request without a token. --timeout SECONDS is how long the
+relay waits for the API's answer (150 s by default; ssh gets 60 s more): an app's install pulls
+its images before it answers.
 
 Output: "HTTP <status>", then the body (JSON pretty-printed) with secrets redacted: values of
 keys that name a password, token, secret, key, webhook URL or recovery codes; KEY=value text
@@ -437,6 +440,17 @@ def parse_params(items: list[str]) -> dict[str, list[str]]:
     return params
 
 
+def positive_seconds(value: str) -> int:
+    """--timeout's value: a whole number of seconds, 1 or more."""
+    try:
+        seconds = int(value)
+    except ValueError:
+        seconds = 0
+    if seconds < 1:
+        raise argparse.ArgumentTypeError(f"not a number of seconds, 1 or more: {value!r}")
+    return seconds
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="api.py", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
@@ -449,6 +463,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--raw", action="store_true", help="print the JSON body on one line")
     parser.add_argument("--forget-token", action="store_true", help="delete the token kept on the device")
     parser.add_argument("--redact", action="store_true", help="copy standard input to standard output, redacted")
+    parser.add_argument("--timeout", type=positive_seconds, default=150, metavar="SECONDS",
+                        help="how long to wait for the answer (default 150)")
     args = parser.parse_args(argv)
     try:
         if args.redact:
@@ -475,7 +491,7 @@ def main(argv: list[str] | None = None) -> int:
                 body = json.load(sys.stdin)
             except ValueError as e:
                 parser.error(f"standard input is not JSON: {e}")
-        api = DeviceApi()
+        api = DeviceApi(timeout=args.timeout)
         answer = api.request(args.method, args.path, json_body=body, params=params, auth=not args.no_login)
     except (ApiError, ValueError) as e:
         print(f"api.py: {e}", file=sys.stderr)

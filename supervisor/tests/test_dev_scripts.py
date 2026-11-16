@@ -1341,6 +1341,26 @@ def test_api_cli_reads_a_json_body_and_reports_http_errors(device):
     assert bad.returncode == 2
 
 
+def test_api_cli_timeout_reaches_the_request(device):
+    """An install that pulls large images answers after the default 150 s: --timeout gives the
+    relay's request longer."""
+    relay_reply(device, 200, {})
+    result = device.run(DEV / "api.py", "--timeout", "3600", "GET", "/apps/installed")
+    assert result.returncode == 0, result.stderr
+    assert json.loads((device.log / "stdin").read_text())["timeout"] == 3600
+    (device.log / "stdin").unlink()  # the stub ssh appends each run's standard input
+    result = device.run(DEV / "api.py", "GET", "/apps/installed")
+    assert result.returncode == 0, result.stderr
+    assert json.loads((device.log / "stdin").read_text())["timeout"] == 150
+
+
+@pytest.mark.parametrize("value", ["0", "-5", "ten"])
+def test_api_cli_refuses_a_timeout_that_is_not_a_positive_number(device, value):
+    result = device.run(DEV / "api.py", "--timeout", value, "GET", "/apps/installed")
+    assert result.returncode == 2 and "--timeout" in result.stderr
+    assert not (device.log / "argv").exists()
+
+
 def test_api_cli_reports_relay_errors_redacted(device):
     (device.log / "reply").write_text(json.dumps({"error": f"login with {device.admin_password} failed"}))
     result = device.run(DEV / "api.py", "GET", "/system/info")

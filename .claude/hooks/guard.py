@@ -580,6 +580,19 @@ def _positionals(args: list, value_options: set) -> list:
     return out
 
 
+# The options of scripts/dev/api.py that take a value (its argparse parser, which also takes a
+# long option by a unique abbreviation: --par for --param).
+_API_VALUE_OPTIONS = ("--param", "--timeout")
+
+
+def _api_positionals(args: list) -> list:
+    """METHOD, PATH and the body of scripts/dev/api.py as its parser reads them: the value of
+    --param KEY=VALUE or --timeout SECONDS is not the method."""
+    value_options = {arg for arg in args
+                     if len(arg) > 2 and "=" not in arg and any(o.startswith(arg) for o in _API_VALUE_OPTIONS)}
+    return _positionals(args, value_options)
+
+
 def _after_options(args: list, value_options: set = frozenset()) -> int:
     """The index of the first argument that is not an option (the wrapped command)."""
     i = 0
@@ -1662,7 +1675,7 @@ class Guard:
                               "(scripts/standin/e2e.sh)")
 
     def check_api(self, args: list) -> None:
-        positionals = [arg for arg in args if not arg.startswith("-")]
+        positionals = _api_positionals(args)
         if len(positionals) < 2:
             return
         method = positionals[0].upper()
