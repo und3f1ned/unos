@@ -1,13 +1,16 @@
 ---
-status: accepted
+status: superseded
 date: 2026-11-15
 area: apps
 decided-by: agent
+superseded-by: ADR-0382
 ---
 
 # ADR-0377: On an RK3588 Jellyfin gets the video hardware without privileges, through the hardware profiles of the catalog
 
 ## Context
+
+Superseded by ADR-0382: hardware profiles apply per container and may choose the container's image, a required node may lie inside a passed folder, and Immich's machine learning gets the RK3588's NPU as a companion container (ADR-0381).
 
 The owner's words for this work, in translation: "then we continue developing UNOS's features with our test hardware in mind", under the standing delegation "work on through the features, ask no questions; I allow everything" (as for ADR-0340). The dev device is a Banana Pi BPI-W3 with a Rockchip RK3588 under Armbian's vendor kernel 6.1 (ADR-0376), whose video codecs (MPP), 2D engine (RGA) and Mali GPU no app used. Jellyfin's guide to RKMPP passes `/dev/dri`, `/dev/dma_heap`, `/dev/mpp_service`, `/dev/rga` and `/dev/mali0` (the GPU only for OpenCL tone mapping) into the container and runs it with `systempaths=unconfined` and `apparmor=unconfined`; under the vendor kernel most of these nodes are `root:root` 0600. Rockchip's MPP names the SoC from `/proc/device-tree/compatible` (`read_soc_name` of its `osal/mpp_soc.c`), a link into `/sys/firmware`, which Docker masks in every unprivileged container and its AppArmor profile `docker-default` denies; without the name MPP takes the decoders and encoders of older SoCs and refuses HEVC, VP9, AV1 and the RK3588's encoders.
 

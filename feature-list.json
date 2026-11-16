@@ -4058,13 +4058,75 @@
     {
       "id": "apps.compose-stacks",
       "category": "apps",
-      "description": "Apps install as compose stacks with pinned versions, generated secrets, resource limits and a port check, and update in place",
+      "description": "An app of several containers installs as one app, with pinned images, generated secrets and a port check before anything is pulled",
       "steps": [
-        "Install an app that needs two containers (for example an app with its database) as one stack",
-        "Its secrets are generated, its versions pinned and its ports checked for conflicts before the start",
-        "Updating the app keeps its data and can be rolled back"
+        "Install an app of several containers (Immich: its server, database, Redis and machine learning) as one app: the Apps page lists it once, and start, stop, restart and uninstall act on all its containers in order",
+        "Its secrets are generated and kept on its pool, its images pinned by tag and digest, and its ports checked for conflicts before anything is pulled",
+        "An install that fails leaves no container or network behind and keeps the data folders and secrets; nothing of the app but its images, container records and logs is written to the system disk"
       ],
-      "passes": false
+      "passes": false,
+      "adr": [
+        "ADR-0381",
+        "ADR-0382",
+        "ADR-0018"
+      ]
+    },
+    {
+      "id": "apps.update-in-place",
+      "category": "apps",
+      "description": "An installed app updates in place to the catalog's newer pinned images, keeps its data and can be rolled back",
+      "steps": [
+        "Updating an installed app to the newer images of the catalog keeps its data folders, its generated secrets and its settings",
+        "Before the new version migrates the app's database, UNOS copies the database; a rollback returns to the earlier image digests and that copy",
+        "The update first shows what it writes to the system disk, then runs as a background job that reports its progress over /ws/v1/events"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0381"
+      ],
+      "notes": "Split from apps.compose-stacks (ADR-0381). Immich migrates its database at the server's start and refuses a downgrade, so the earlier digests alone cannot roll it back; Immich's own dumps go to its library's backups folder daily and not before an update. Until this entry, updating is an uninstall and an install of a newer catalog after a snapshot of the pool."
+    },
+    {
+      "id": "apps.catalog-companions",
+      "category": "apps",
+      "description": "BookStack, Paperless-ngx and Linkwarden are back in the catalog as apps with the companion containers they need",
+      "steps": [
+        "BookStack installs with its MariaDB, Paperless-ngx with its Redis broker and Linkwarden with its PostgreSQL, each as a companion container whose password UNOS generates on the pool",
+        "Each app starts after its install and serves its web page, with all its data on the pool"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0381"
+      ],
+      "notes": "ADR-0381 removed the three templates: each named a database or a broker that no container of the catalog gave it. Related apps that need another container or the host: open-webui reaches Ollama at host.docker.internal, which does not resolve on Linux without a host-gateway entry, and zigbee2mqtt needs an MQTT broker (the mosquitto app) that its template does not name."
+    },
+    {
+      "id": "apps.pinned-catalog-images",
+      "category": "apps",
+      "description": "Every image of the catalog is pinned by tag and digest, and a weekly audit finds tags that moved",
+      "steps": [
+        "UNPINNED_TEMPLATES of supervisor/src/apps/catalog.py is empty: every template's image is name:tag@sha256:<index digest>",
+        "A weekly audit compares each pinned tag with its registry and reports the templates whose tag points to another digest"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0381"
+      ],
+      "notes": "ADR-0381 pins the images of apps with companions and keeps the templates that still use a floating tag in UNPINNED_TEMPLATES, which may only shrink. The weekly audit overlaps the one of apps.catalog-platforms, which compares the recorded platforms with the registries (ADR-0218)."
+    },
+    {
+      "id": "apps.install-progress",
+      "category": "apps",
+      "description": "An app's install runs as a background job whose progress the App Store shows",
+      "steps": [
+        "POST /api/v1/apps/install answers at once with a job, and the checks, pulls, creates and starts run in the background",
+        "The App Store shows the progress of each image's pull and each container's start, and the result, also after the page is loaded again"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0381"
+      ],
+      "notes": "ADR-0381 keeps the install one request that answers after its pulls, without a deadline (ADR-0254): Immich's images take minutes to pull."
     },
     {
       "id": "system.emergency-runbook-and-cli",
@@ -4120,7 +4182,8 @@
         "ADR-0211",
         "ADR-0228",
         "ADR-0376",
-        "ADR-0377"
+        "ADR-0377",
+        "ADR-0382"
       ],
       "notes": "Built (ADR-0377); host-level, as a Docker app's container gets the host's devices (ADR-0018). Jellyfin's guide to RKMPP (jellyfin.org, Hardware Acceleration, Rockchip) asks for Rockchip's BSP kernel 5.10 or 6.1 and passes /dev/dri, /dev/dma_heap, /dev/mpp_service and /dev/rga, and /dev/mali0 for OpenCL tone mapping only, with systempaths=unconfined and apparmor=unconfined; Rockchip's MPP reads the SoC from /proc/device-tree/compatible, a link into /sys/firmware, which Docker masks. UNOS: Jellyfin's template has the hardware profile RK3588_VIDEO (supervisor/src/apps/catalog.py), which requires /dev/mpp_service; on a host whose device tree names rockchip,rk3588 and that has /dev/mpp_service its container gets those of the five nodes that the host has, Docker's masks without /sys/firmware and apparmor=unconfined, unprivileged and without extra capabilities: the image runs as root, which opens the root:root 0600 nodes of the vendor kernel. Off the RK3588, without /dev/mpp_service (the mainline kernel, which may still have /dev/dri and /dev/dma_heap), or when the host cannot be read (logged; a host without a device tree is not), Jellyfin is installed as before. The catalog API answers a template's profiles that apply on the host only; the App Store shows Hardware acceleration on the card and, in the details, what Jellyfin gets and to choose Dashboard > Playback > Transcoding > Hardware acceleration: Rockchip MPP (RKMPP), which UNOS does not set (Jellyfin's own encoding.xml). The install's answer and GET /apps/installed name the host's nodes the container got (devices); the details of an installed Jellyfin whose container lacks /dev/mpp_service warn that it was installed without the hardware and that uninstalling it and installing it again gives it, in place of the RKMPP line; its card shows the warning badge No hardware acceleration in place of Hardware acceleration (also when the installed list answers after the catalog), and the notice of an install whose answer's devices lack it adds the same warning (missingHardware of webui/src/lib/api/apps.ts, which AppHardwareHint uses too). A failed look for the nodes after a device tree that names the RK3588 (non-zero exit or timeout) gives a plain container, devices [] and a logged warning, and the catalog no hardware (test_apps.py). Step 2 is open: the catalog's Immich is one immich-server container without its database, Redis or machine-learning service, and Immich's NPU (docs.immich.app, ML hardware acceleration: RK3566, RK3568, RK3576 or RK3588, RKNPU driver 0.9.8 or later, cat /sys/kernel/debug/rknpu/version) belongs to the immich-machine-learning container with the -rknn image tag and the NPU's device: it needs an Immich of several containers in the catalog first. Device check, before and after a reboot: scripts/dev/scenario.sh hardware (it only reads: the SoC, what the App Store offers of it, the nodes with their modes; also in all), then by hand, each command wrapped in scripts/dev/sd.sh measure <label> -- and its SD MiB reported: (1) the owner installs Jellyfin, whose image the install pulls onto the SD card, where Docker's data root is (ADR-0211, ADR-0228): echo '{\"template_id\": \"jellyfin\", \"pool\": \"data\"}' | scripts/dev/api.py POST /apps/install - answers 200 with the container running and devices naming the five nodes; (2) scripts/dev/ssh.sh \"docker inspect -f '{{.HostConfig.Privileged}} {{json .HostConfig.Devices}} {{json .HostConfig.MaskedPaths}} {{json .HostConfig.SecurityOpt}}' jellyfin\" shows false, the five nodes (rwm), Docker's masks without /sys/firmware and [\"apparmor=unconfined\"], and scripts/dev/ssh.sh 'docker exec jellyfin cat /proc/device-tree/compatible' names rockchip,rk3588; (3) a clip in the container's RAM: scripts/dev/ssh.sh 'docker exec jellyfin /usr/lib/jellyfin-ffmpeg/ffmpeg -hide_banner -f lavfi -i testsrc2=size=1920x1080:rate=30 -t 20 -c:v libx264 -pix_fmt yuv420p -y /dev/shm/unos-in.mp4'; (4) decode and encode in hardware: scripts/dev/ssh.sh 'docker exec jellyfin /usr/lib/jellyfin-ffmpeg/ffmpeg -hide_banner -v verbose -hwaccel rkmpp -hwaccel_output_format drm_prime -i /dev/shm/unos-in.mp4 -c:v hevc_rkmpp -b:v 4M -y /dev/shm/unos-out.mp4' exits 0 with the stream mapped to hevc_rkmpp and no 'Failed to init MPP context' or 'is not supported', at a speed well above that of the same run with -c:v libx265 and without -hwaccel; the same with -c:v h264_rkmpp; while it runs, scripts/dev/ssh.sh 'cat /proc/mpp_service/load' shows load on the decoder and encoder cores (reliable from BSP kernel 6.1.84, Jellyfin's guide); (5) scripts/dev/ssh.sh 'docker exec jellyfin /usr/lib/jellyfin-ffmpeg/ffmpeg -v debug -init_hw_device rkmpp=rk -init_hw_device opencl=ocl@rk' names the Mali GPU's OpenCL device (the GPU through /dev/mali0); (6) in the App Store the installed Jellyfin's card shows Hardware acceleration, not No hardware acceleration, and its details show Hardware acceleration with what it got and the RKMPP line, not the warning of one installed without the hardware, and in Jellyfin, Dashboard > Playback > Transcoding > Hardware acceleration: Rockchip MPP (RKMPP) can be chosen and saved; (7) clean up: scripts/dev/ssh.sh 'docker exec jellyfin rm -f /dev/shm/unos-in.mp4 /dev/shm/unos-out.mp4', scripts/dev/api.py DELETE /apps/installed/jellyfin answers 200, the folders apps/jellyfin and media that the install made on the pool data are removed by hand when they were not there before, and the image stays until the owner prunes it (ADR-0211). The App Store's badge and hint on the dev device are a look at the App Store in the browser."
     },
