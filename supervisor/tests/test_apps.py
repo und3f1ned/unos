@@ -1009,6 +1009,8 @@ RESOLVED = [
     'tcp   LISTEN 0      4096   127.0.0.53%lo:53          0.0.0.0:*    users:(("systemd-resolve",pid=520,fd=14))',
 ]
 PIHOLE_LOGIN = {"WEBPASSWORD": "k7-Unique-pass"}
+# The apps of the catalog that run in the host's network with a port: id, name and the port.
+HOST_NETWORK_APPS = [("homeassistant", "Home Assistant", 8123), ("scrypted", "Scrypted", 10443)]
 
 
 class TestPortCheck:
@@ -1135,6 +1137,70 @@ class TestPortCheck:
         assert response.status_code == 200, response.text
         assert docker_client.containers.create.call_args.kwargs["ports"] == {"8096/tcp": 8097}
         assert response.json()["web_url"] == "http://localhost:8097"
+
+    def test_the_catalogs_apps_in_the_hosts_network_name_the_ports_they_bind(self):
+        # Docker discards the port bindings of a container in the host's network: the app binds
+        # its container port on the host itself, which the catalog shows as its host port.
+        in_host_network = [t for t in APP_CATALOG if t.network_mode == "host"]
+
+        for template in in_host_network:
+            assert all(port.host == port.container for port in template.ports), template.id
+        assert sorted((t.id, t.name, [p.container for p in t.ports]) for t in in_host_network if t.ports) == [
+            (template_id, name, [port]) for template_id, name, port in HOST_NETWORK_APPS
+        ]
+
+    @pytest.mark.parametrize(("template_id", "name", "port"), HOST_NETWORK_APPS, ids=[a[0] for a in HOST_NETWORK_APPS])
+    def test_the_port_of_an_app_in_the_hosts_network_cannot_be_moved(
+        self, api, pools, docker_client, soc, template_id, name, port
+    ):
+        response = api.post(INSTALL, json={"template_id": template_id, "port_overrides": {port: port + 1}})
+
+        assert (response.status_code, response.json()) == (
+            400, {"detail": f"{name} runs in the host's network: its port {port}/tcp cannot be moved"}
+        )
+        docker_client.containers.get.assert_not_called()
+        docker_client.images.pull.assert_not_called()
+        assert soc.commands == []
+        assert not (pools.alpha / "apps").exists()
+
+    @pytest.mark.parametrize(("template_id", "name", "port"), HOST_NETWORK_APPS, ids=[a[0] for a in HOST_NETWORK_APPS])
+    def test_an_app_in_the_hosts_network_may_name_the_port_it_binds(
+        self, api, pools, docker_client, soc, template_id, name, port
+    ):
+        response = api.post(INSTALL, json={"template_id": template_id, "port_overrides": {port: port}})
+
+        assert response.status_code == 200, response.text
+        assert docker_client.containers.create.call_args.kwargs["ports"] == {f"{port}/tcp": port}
+        assert response.json()["web_url"] == f"http://localhost:{port}"
+        assert soc.commands == [SS]
+
+    @pytest.mark.parametrize(("template_id", "name", "port"), HOST_NETWORK_APPS, ids=[a[0] for a in HOST_NETWORK_APPS])
+    def test_a_taken_port_of_an_app_in_the_hosts_network_asks_to_stop_the_program(
+        self, api, pools, docker_client, soc, template_id, name, port
+    ):
+        soc.sockets = [f'tcp   LISTEN 0      4096   0.0.0.0:{port}   0.0.0.0:*   users:(("python3",pid=7,fd=9))']
+
+        response = api.post(INSTALL, json={"template_id": template_id})
+
+        assert (response.status_code, response.json()) == (409, {
+            "detail": f"Port {port}/tcp is already in use on the host by python3: "
+            f"{name} runs in the host's network and cannot move its port; stop that program first"
+        })
+        docker_client.images.pull.assert_not_called()
+
+    @pytest.mark.parametrize(("template_id", "name", "port"), HOST_NETWORK_APPS, ids=[a[0] for a in HOST_NETWORK_APPS])
+    def test_a_port_of_an_app_in_the_hosts_network_that_a_container_publishes_asks_to_remove_it(
+        self, api, pools, docker_client, installed, soc, template_id, name, port
+    ):
+        installed(_container("other", status="exited", port_bindings=_published(port)))
+
+        response = api.post(INSTALL, json={"template_id": template_id})
+
+        assert (response.status_code, response.json()) == (409, {
+            "detail": f"Port {port}/tcp is already used by the container other (exited): "
+            f"{name} runs in the host's network and cannot move its port; remove that container first"
+        })
+        docker_client.images.pull.assert_not_called()
 
     @pytest.mark.parametrize("port", [0, -1, 65536])
     def test_a_host_port_outside_the_range_answers_400(self, api, pools, docker_client, soc, port):
@@ -2863,7 +2929,7 @@ class TestHardwareOfTheSoc:
         assert (missing.returncode, missing.stdout, missing.stderr) == (3, b"", b"")
         assert (found.returncode, found.stdout) == (0, RK3588.encode())
 
-    def test_an_app_without_hardware_reads_nothing_of_the_host(self, api, pools, docker_client, soc):
+    def test_an_app_without_hardware_reads_no_hardware_of_the_host(self, api, pools, docker_client, soc):
         soc.compatible = RK3588
         soc.devices = set(RK3588_VIDEO)
 

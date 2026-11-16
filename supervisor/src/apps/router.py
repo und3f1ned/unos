@@ -891,7 +891,7 @@ def _install_app(req: AppInstallRequest, shares: list[_ShareFolder]) -> AppInsta
         containers = client.containers.list(all=True, ignore_removed=True)
     except _DOCKER_ERRORS as e:
         raise _docker_error(e)
-    preflight.check_ports(port_bindings, containers)
+    preflight.check_ports(template, port_bindings, containers)
 
     # The host is read once for the profiles of all the app's containers (ADR-0382).
     hardware = container_hardware(template, read_host_hardware(all_profiles(template)))

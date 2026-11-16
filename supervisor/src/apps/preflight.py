@@ -7,6 +7,11 @@ a program on the host listens on, at any address, answers 409 that names the con
 program and asks for another host port, before a pull that can take minutes. The host's
 sockets are read with ``ss`` through src/host.py (ADR-0020); a read that fails is logged and
 the install goes on, and Docker's own bind at the start is then the last check.
+
+An app in the host's network (``network_mode`` "host") binds its container ports on the host
+itself: Docker discards the port bindings of such a container, so its ports cannot be moved
+(400 for an override that moves one), they are the ports checked, and a taken one asks to
+remove the container or stop the program that holds it.
 """
 
 from __future__ import annotations
@@ -38,12 +43,18 @@ MAX_PORT = 65535
 def plan_ports(template: AppTemplate, overrides: dict[int, int]) -> dict[str, int]:
     """The host port of each port of ``template``, as "<container port>/<protocol>" to the host
     port, with ``overrides`` (by container port) in place of the template's: 400 for a host port
-    outside 1 to 65535 and for a host port and protocol given twice."""
+    outside 1 to 65535 and for a host port and protocol given twice. An app in the host's network
+    binds its container port: 400 for an override that moves it."""
     bindings: dict[str, int] = {}
     given: set[tuple[int, str]] = set()
     for mapping in template.ports:
         spec = f"{mapping.container}/{mapping.protocol}"
-        port = overrides.get(mapping.container, mapping.host)
+        if _in_host_network(template):
+            port = mapping.container
+            if overrides.get(mapping.container, port) != port:
+                raise HTTPException(400, f"{template.name} runs in the host's network: its port {spec} cannot be moved")
+        else:
+            port = overrides.get(mapping.container, mapping.host)
         if not MIN_PORT <= port <= MAX_PORT:
             raise HTTPException(400, f"Host port for {spec} must be between {MIN_PORT} and {MAX_PORT}")
         if (port, mapping.protocol) in given:
@@ -53,12 +64,12 @@ def plan_ports(template: AppTemplate, overrides: dict[int, int]) -> dict[str, in
     return bindings
 
 
-def check_ports(bindings: dict[str, int], containers: Iterable[Any]) -> None:
-    """409 when a host port of ``bindings`` ("<container port>/<protocol>" to the host port) is
-    taken: published by one of ``containers`` (Docker's, running or stopped: docker-py's
-    Container objects with their inspect data), or held by a program on the host. The host is
-    read only for ports that no container publishes; nothing is read for an app without ports.
-    Blocks: call it in a worker thread."""
+def check_ports(template: AppTemplate, bindings: dict[str, int], containers: Iterable[Any]) -> None:
+    """409 when a host port of ``bindings`` (``template``'s, from ``plan_ports``) is taken:
+    published by one of ``containers`` (Docker's, running or stopped: docker-py's Container
+    objects with their inspect data), or held by a program on the host. The host is read only for
+    ports that no container publishes; nothing is read for an app without ports. Blocks: call it
+    in a worker thread."""
     if not bindings:
         return
     wanted = {spec: (port, spec.partition("/")[2]) for spec, port in bindings.items()}
@@ -69,17 +80,25 @@ def check_ports(bindings: dict[str, int], containers: Iterable[Any]) -> None:
     problems: list[str] = []
     for spec, (port, protocol) in wanted.items():
         if (port, protocol) in published:
-            problems.append(
-                f"Port {port}/{protocol} is already used by the container {published[port, protocol]}: "
-                f"choose another host port for {spec}"
-            )
+            taken = f"Port {port}/{protocol} is already used by the container {published[port, protocol]}"
+            remedy = "remove that container first"
         elif (port, protocol) in listening:
-            problems.append(
-                f"Port {port}/{protocol} is already in use on the host by {listening[port, protocol] or 'a program'}: "
-                f"choose another host port for {spec}"
-            )
+            taken = f"Port {port}/{protocol} is already in use on the host by {listening[port, protocol] or 'a program'}"
+            remedy = "stop that program first"
+        else:
+            continue
+        if _in_host_network(template):
+            problems.append(f"{taken}: {template.name} runs in the host's network and cannot move its port; {remedy}")
+        else:
+            problems.append(f"{taken}: choose another host port for {spec}")
     if problems:
         raise HTTPException(409, "; ".join(problems))
+
+
+def _in_host_network(template: AppTemplate) -> bool:
+    """Whether the app runs in the host's network: Docker discards its container's port
+    bindings, and the app binds its container ports on the host itself."""
+    return template.network_mode == "host"
 
 
 def _published_ports(containers: Iterable[Any]) -> dict[tuple[int, str], str]:
