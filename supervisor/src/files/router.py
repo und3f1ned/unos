@@ -2030,14 +2030,18 @@ def _expire_trash(now: datetime, due: Callable[[str], bool] | None = None) -> tu
     return count, problems
 
 
-def _expire_due_trash(now: datetime, done: dict[str, float], clock: float) -> tuple[int, list[str], bool]:
+def _expire_due_trash(
+    now: datetime, done: dict[str, float], clock: float, asleep: dict[str, spindown.Asleep]
+) -> tuple[int, list[str], bool]:
     """One check of the expiry (ADR-0378): the pass of each pool that is due, at the start and then
     TRASH_EXPIRY_INTERVAL after its last (``done``: pool -> ``clock`` of its last pass, which this
     updates), unless the pool's disks sleep (storage.spindown.pool_sleeps): reading its folders
     could spin them up, so it waits for a check when they are awake. Only the disks of a pool
     whose pass is due are asked whether they sleep, since asking an awake disk restarts its
-    standby timer; a pool whose disks cannot be asked gets no pass. Returns how many entries it
-    deleted, the problems, and whether a pass ran (or a pool's disks could not be asked).
+    standby timer, and none of them while the disk found asleep at an earlier check had no read
+    or write since (``asleep``, which pool_sleeps updates); a pool whose disks cannot be asked
+    gets no pass. Returns how many entries it deleted, the problems, and whether a pass ran (or a
+    pool's disks could not be asked).
     """
     passed: list[str] = []
     unasked: list[str] = []
@@ -2046,7 +2050,7 @@ def _expire_due_trash(now: datetime, done: dict[str, float], clock: float) -> tu
         if clock - done.get(pool, clock - TRASH_EXPIRY_INTERVAL) < TRASH_EXPIRY_INTERVAL:
             return False
         try:
-            if spindown.pool_sleeps(pool):
+            if spindown.pool_sleeps(pool, asleep):
                 return False
         except Exception as exc:
             unasked.append(
@@ -2076,9 +2080,12 @@ async def trash_expiry_loop() -> None:
     """
     reported: list[str] = []
     done: dict[str, float] = {}
+    asleep: dict[str, spindown.Asleep] = {}
     while True:
         try:
-            count, problems, ran = await asyncio.to_thread(_expire_due_trash, _now(), done, time.monotonic())
+            count, problems, ran = await asyncio.to_thread(
+                _expire_due_trash, _now(), done, time.monotonic(), asleep
+            )
         except Exception as exc:  # e.g. the pools directory cannot be read
             count, problems, ran = 0, [str(exc) or type(exc).__name__], True
         if count:

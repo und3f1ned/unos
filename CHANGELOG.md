@@ -358,7 +358,12 @@ manager, encrypted backup uploads, health checks, CI checks).
   scan of the disks (`btrfs filesystem show --mounted`, whose exit status 1
   with no btrfs filesystem mounted is no pool mounted, and udev's records);
   the trash expiry asks a pool's disks whether they sleep only when its daily
-  pass is due, and passes over one whose disks sleep. `scripts/dev/scenario.sh
+  pass is due, and passes over one whose disks sleep, asking no disk of it
+  again until the sleeping one had a read or write, and then that one first.
+  `install.sh`, once UNOS runs, and the manual installation turn off the
+  host's smartd (`systemctl disable --now smartmontools`): it would read every
+  awake disk every 30 minutes, and UNOS reads SMART itself; `uninstall.sh`
+  says how to turn it on again. `scripts/dev/scenario.sh
   smart` shows the system disk refused a timeout, gives the pool's disk the
   shortest timeout, waits for it to sleep, reads SMART while it sleeps and
   sets the timeout of UNOS's rule again, or Off; it skips these steps when

@@ -315,8 +315,9 @@ SPINDOWN_ROUNDS = 3
 # Debian's hdparm sets what /etc/hdparm.conf asks whenever udev adds a disk (its rule 85-hdparm.rules,
 # before UNOS's 90-). ATA reads no standby timer back: when UNOS's rule has none for the disk, the
 # check's Off at its end (hdparm -S 0) would clear a timer set there, so it leaves the disk alone.
+# force_spindown_time is spindown_time also for a disk without APM, which spindown_time skips.
 HDPARM_CONF = "/etc/hdparm.conf"
-_HDPARM_CONF_TIMER = re.compile(r"spindown_time\s*=|command_line\s*=.*\s-S\s*\d")
+_HDPARM_CONF_TIMER = re.compile(r"(?:force_)?spindown_time\s*=|command_line\s*=.*\s-S\s*\d")
 # The token cache in the device's RAM of the shares check's user (api.py's relay, ADR-0222).
 USER_TOKEN = "/dev/shm/unos-scenario-{}.token"
 # What REMOTE_ENTRIES repair makes in the shares check's share folder, and how Repair permissions

@@ -1433,6 +1433,42 @@ class TestInstallScript:
 
         assert steps.index("check_compose_wait") < steps.index("start_unos") < steps.index("create_systemd_service")
 
+    def test_smartd_is_turned_off(self, tmp_path):
+        # UNOS reads the disks' SMART data itself (ADR-0235, ADR-0332). smartd, which the package
+        # smartmontools starts, would send every awake disk SMART commands every 30 minutes, and
+        # each restarts the disk's standby timer: a disk with an idle timeout of 30 minutes or more
+        # would never spin down (ADR-0378).
+        bin_dir = tmp_path / "bin"
+        bin_dir.mkdir()
+        (bin_dir / "systemctl").write_text('#!/bin/sh\necho "systemctl $*" >> "$CALLS"\n')
+        (bin_dir / "systemctl").chmod(0o755)
+        (tmp_path / "systemctl-calls").write_text("")
+        result = subprocess.run(
+            ["bash", "-c", '. "$LIB"; stop_smartd'],
+            env={
+                **os.environ,
+                "PATH": f"{bin_dir}:{os.environ['PATH']}",
+                "LIB": str(_install_lib(tmp_path, [])),
+                "CALLS": str(tmp_path / "systemctl-calls"),
+            },
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert self._systemctl_calls(tmp_path) == ["systemctl disable --now smartmontools"]
+        assert "smartd is off: UNOS reads the disks' SMART data itself" in self._text(result)
+
+    def test_main_turns_smartd_off_once_unos_runs(self):
+        # Not before: an installation that stops earlier leaves the host's SMART monitoring on.
+        script = (REPO_ROOT / "deploy" / "install.sh").read_text()
+        body = re.search(r"^main\(\) \{\n(.*?)^\}", script, re.M | re.S).group(1)
+        steps = [line.strip() for line in body.splitlines() if line.strip() and not line.strip().startswith("#")]
+
+        assert steps.index("install_dependencies") < steps.index("start_unos") < steps.index("stop_smartd")
+
     def test_missing_compose_plugin_stops_before_anything_changes(self, tmp_path):
         # The docker CLI without its Compose plugin (Debian's docker.io, say):
         # install.sh warned that Compose "(version unknown)" has no
@@ -2331,6 +2367,19 @@ class TestUninstallScript:
         )
         assert not any(path.startswith("/etc/unos/") for path in DISCOVERY_FILES)
 
+    def test_the_completion_says_how_to_turn_smartd_on_again(self, tmp_path):
+        # install.sh turned smartd off, since UNOS read SMART itself (ADR-0378); without UNOS,
+        # nothing watches the disks until it runs again.
+        result, calls, _ = self._run(tmp_path, "print_completion")
+        text = self._text(result)
+
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert calls == []
+        assert (
+            "SMART monitoring: install.sh turned off smartd, since UNOS read the disks' SMART data "
+            "itself. To have smartd watch the disks again, run: systemctl enable --now smartmontools" in text
+        )
+
 
 @pytest.mark.parametrize("script", ["update.sh", "install.sh"])
 def test_compose_versions_before_2_30(script):
@@ -2587,6 +2636,19 @@ class TestInstallGuide:
         command = re.search(r"^sudo apt install -y (.*?)\n```", step, re.M | re.S).group(1)
 
         assert command.replace("\\", " ").split() == _install_packages(tmp_path)
+
+    def test_turns_smartd_off_as_install_sh_does(self):
+        # UNOS reads SMART data itself, and smartd's reads would keep a disk with an idle timeout
+        # of 30 minutes or more from spinning down (stop_smartd of install.sh, ADR-0378).
+        guide = (REPO_ROOT / "docs" / "INSTALL.md").read_text()
+        script = (REPO_ROOT / "deploy" / "install.sh").read_text()
+        step = guide[guide.index("### Step 1: Install System Dependencies") : guide.index("### Step 2:")]
+        stop = re.search(r"^stop_smartd\(\) \{\n(.*?)^\}", script, re.M | re.S).group(1)
+
+        assert [line for line in step.splitlines() if line.startswith("sudo systemctl")] == [
+            "sudo systemctl disable --now smartmontools"
+        ]
+        assert "    systemctl disable --now smartmontools\n" in stop
 
     def test_samba_runs_without_netbios_and_discovery_as_install_sh_sets_it_up(self, tmp_path):
         # What configure_samba and configure_discovery run (ADR-0275): the files that keep
