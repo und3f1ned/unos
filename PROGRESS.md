@@ -69,6 +69,18 @@ significant step. Features and their state live in `feature-list.json`, decision
   `install.sh` on a second microSD card and an NVMe pool (Open owner actions, 6 and 7). That
   afternoon the device's Armbian was upgraded to 26.11.0-trunk (kernel 6.1.172), and hdparm,
   nvme-cli and acl installed (Log).
+- On 2026-11-16 (Log): a sixth batch on the branch `mvp.batch-6`, not merged into `main`, four
+  entries with ADR-0377 to ADR-0380: Jellyfin with the RK3588's video hardware
+  (`apps.rk3588-hardware-acceleration`), idle timeouts of data disks (`storage.disk-spindown`),
+  a pool's balance (`storage.pool-balance`) and per-share encryption, Time Machine and Previous
+  Versions (`shares.per-share-protocol-options`). Checked on the dev device across four reboots,
+  with fixes from what the device showed; the device runs cc9482e, whose runtime differs from the
+  branch's head only in a comment of `deploy/uninstall.sh`. Passing now: `storage.disk-spindown`.
+  Open, each the owner's (Open owner actions, 8 to 11): `storage.pool-balance` step 1 on the
+  Storage page in a browser; `shares.per-share-protocol-options` with a Mac (a Time Machine
+  backup) and a Windows computer (Previous Versions); `apps.rk3588-hardware-acceleration` step 2,
+  Immich's NPU, once `apps.compose-stacks` is merged, whose Immich administrator account only the
+  owner creates.
 - On the device the NFS server runs (nfs-server, rpcbind.socket and rpcbind, enabled since
   2026-11-08, ADR-0303) and exports nothing for now; over IPv6 only LAN sources reach it
   (ADR-0301). avahi-daemon and wsdd2 run (network discovery), and nmbd is disabled since
@@ -110,15 +122,16 @@ significant step. Features and their state live in `feature-list.json`, decision
      checks around the reboot of 04:35 UTC, `storage.restore-copies-deletable` on the checks
      around the reboot of 13:11 UTC, `shares.keep-every-replaced-copy` on those around the
      reboot of 14:45 UTC, and `shares.repair-in-background`, `backup.streaming-restore`,
-     `webui.no-http-polling` and `auth.user-rename` on those around the reboot of 19:37 UTC
-     (Log); `shares.repair-permissions` waits for its ACL step before and after a reboot
+     `webui.no-http-polling` and `auth.user-rename` on those around the reboot of 19:37 UTC,
+     and on 2026-11-16 `storage.disk-spindown` on those around the reboots of 14:03 and 14:42
+     UTC (Log); `shares.repair-permissions` waits for its ACL step before and after a reboot
      (setfacl is on the device since 2026-11-15, and the step passed once after a reboot) and `shares.acl-aware-parent-check` for the owner's word
      on ADR-0193; the others need a device check first or, as `storage.pool-health`, a step the
      re-check could not show.
 
 ## Dev device
 
-State on 2026-11-15, 16:17 UTC. A Banana Pi BPI-W3 (ArmSoM W3, Rockchip RK3588, 8 GB), running
+State on 2026-11-16, 19:35 UTC. A Banana Pi BPI-W3 (ArmSoM W3, Rockchip RK3588, 8 GB), running
 Armbian's community image for `armsom-w3`, upgraded on 2026-11-15 from 26.2.0-trunk.151 to
 26.11.0-trunk.133 (Debian 13, kernel 6.1.172-vendor-rk35xx);
 its address and logins are in `dev.env` (ADR-0212). This journal called it a UGREEN board, after
@@ -129,6 +142,28 @@ the UGREEN firmware on its eMMC, until the owner set that right on 2026-11-15 (A
   since boot, its own wear estimate 0 to 10%. Nothing writes to it.
 - SSH by key only, root by the workstation's key `~/.ssh/unos_dev_ed25519`; root's and the UNOS
   administrator's passwords were rotated and live only in `dev.env` (ADR-0226).
+- Runs cc9482e of the branch `mvp.batch-6` (the sixth batch, ADR-0377 to ADR-0380, not merged),
+  whose runtime differs from the branch's head only in a comment of `deploy/uninstall.sh`,
+  deployed on 2026-11-16 at 19:19 to 19:21 UTC (SD MiB check.sh 0.117, status and sync --dry-run
+  0, sync 1.652, build-supervisor 11.859, build-webui 16.672, up 6.102, check.sh 0.234); both
+  containers healthy after 6 s. Then `scenario.sh smart` (14 steps, 0.328 MiB) and `balance` (11
+  steps, 0.234) OK, `deploy.sh status` equal (0), no Traceback or Killed in the supervisor's log
+  (0.016), and check.sh OK (0): 71.6 MiB written to the SD card since the boot of 14:42 UTC,
+  14.70 MiB an hour. The batch's earlier trees that day: 57be517 at 01:02 UTC (sync 5.805,
+  build-supervisor 12.461, build-webui 16.402, up 5.805), 434d410 at 06:53 UTC (1.996, 11.531,
+  16.211, 5.578) and 5d79302 at 13:39 UTC (2.312, 12.051, 16.527, 5.906). Reboots from the API at
+  04:26:13, 07:17:10, 14:03:25 and 14:42:26 UTC (both containers healthy by 04:27:26, 07:17:56,
+  14:04:38 and 14:43:37; check.sh OK after each, with 9.6, 8.5, 9.2 and 8.1 MiB on the card since
+  the boot). The checks and their results are in the Log (2026-11-16).
+- sda, the pool's disk (WDC WD6400AACS-00G8B0, behind the JMB58x), as the batch found it: no idle
+  timeout of UNOS and no `/etc/udev/rules.d/90-unos-disk-spindown.rules`, and its own automatic
+  offline data collection on (read at 19:21 UTC). UNOS's Off at 17:48 UTC ran `hdparm -S 0`, so
+  it has no standby timer until its next power cycle. smartd (smartmontools) is inactive and
+  disabled, as `deploy/install.sh`'s stop_smartd leaves it: it was active and enabled at 01:04 UTC
+  on 2026-11-16 and was turned off during that night's measurements of sda's timer. The Jellyfin
+  of the RK3588 checks is uninstalled, the folders `apps/jellyfin` and `media` that its install
+  made on the pool are removed, and its image is no longer on the device (check.sh's image list
+  at 19:19 UTC). The balance checks' fills are removed.
 - The owner had Armbian upgraded on 2026-11-15 ("update Armbian on the W3 to the current one"):
   a copy of `/boot`, `/etc/fstab`, `/etc/apt` and the package list on the workstation (the
   worktree's `tmp/`), `apt-get update` (166.512 MiB on the card), then `apt-get full-upgrade` in a
@@ -142,16 +177,16 @@ the UGREEN firmware on its eMMC, until the owner set that right on 2026-11-15 (A
   installed (63.137 MiB): the first two are in `deploy/install.sh`'s list and were missing, acl
   gives the scenario checks setfacl. `scenario.sh all` OK at 16:17 UTC, 157 steps without a skip
   (20.047 MiB).
-- Runs main e80e2d5 (the merge of #81, the BPI-F3's change, ADR-0369 to ADR-0375), deployed to
-  this device at 12:52 to 12:55 UTC on 2026-11-15 (SD MiB sync 2.520, build-supervisor 440.910:
-  the pip layer built again for #81's pip 26.3, build-webui 18.504, up 6.473, check.sh 0.453);
-  both containers healthy after 7 s, check.sh OK: unos-supervisor 0.6% of a core, unos-webui 0.0%,
-  soc-thermal 42 C, first passive trip 75 C. Then `scenario.sh all` OK (10 areas, 156 steps, one
-  skipped for want of setfacl; 20.109 MiB), a reboot from the API at 13:39:55 UTC (the boot of
-  13:40:11; both containers healthy by 13:40:40; check.sh OK), and `scenario.sh all` OK again
-  (20.125 MiB). Then the checks by hand of `deploy.arm64-bpi-w3` (its notes) before and after a
-  second reboot from the API at about 14:21 UTC (the boot of 14:21:23; both containers healthy by
-  14:21:51; check.sh OK): all passed.
+- Before batch 6, main e80e2d5 (the merge of #81, the BPI-F3's change, ADR-0369 to ADR-0375),
+  deployed to this device at 12:52 to 12:55 UTC on 2026-11-15 (SD MiB sync 2.520, build-supervisor
+  440.910: the pip layer built again for #81's pip 26.3, build-webui 18.504, up 6.473, check.sh
+  0.453); both containers healthy after 7 s, check.sh OK: unos-supervisor 0.6% of a core,
+  unos-webui 0.0%, soc-thermal 42 C, first passive trip 75 C. Then `scenario.sh all` OK (10 areas,
+  156 steps, one skipped for want of setfacl; 20.109 MiB), a reboot from the API at 13:39:55 UTC
+  (the boot of 13:40:11; both containers healthy by 13:40:40; check.sh OK), and `scenario.sh all`
+  OK again (20.125 MiB). Then the checks by hand of `deploy.arm64-bpi-w3` (its notes) before and
+  after a second reboot from the API at about 14:21 UTC (the boot of 14:21:23; both containers
+  healthy by 14:21:51; check.sh OK): all passed.
 - Before it, the tree of main 7827340 (the fifth batch, ADR-0363 to ADR-0368), deployed as 5deee90 at
   20:14 UTC (SD MiB sync 2.941, build-supervisor 13.473, build-webui 19.176, up 6.012, check.sh
   0.016), then `scenario.sh shares`, `restore` and `smb` OK. Before it, the integration tree
@@ -254,10 +289,11 @@ the UGREEN firmware on its eMMC, until the owner set that right on 2026-11-15 (A
   21:14:29). The prune before the reboot of
   07:17 UTC deleted the 11 dangling images (the old builds' layers) and reclaimed only 134.9 kB,
   where this file had said about 351 MB.
-- Containers: unos-supervisor, unos-webui, transmission (web login, data on the pool `data`).
-  Images: deploy-supervisor:latest (`460919ca...` of 2026-11-11, 15:16 UTC, `c4b0e9d2...` of
-  13:08 UTC as `:rollback`), deploy-webui:latest (`fbd48f90...` of 13:08 UTC, `ee17d90f...` of
-  12:30 UTC as `:rollback`),
+- Containers: unos-supervisor and unos-webui (both healthy), transmission (web login, data on the
+  pool `data`). Images (check.sh at 19:21 UTC on 2026-11-16): deploy-supervisor:latest
+  (`3847c5c5...`, cc9482e) and `:rollback` (`501848cd...`), deploy-webui:latest (`2276488b...`)
+  and `:rollback` (`121bdda5...`), the rollback images those of 5d79302, deployed at 13:39 UTC;
+  54 dangling images (the old builds' layers);
   lscr.io/linuxserver/transmission, alpine (the
   final backup of `deploy/uninstall.sh`) and caddy:2-alpine (the web UI's base: Caddy 2.10.2 of
   January 2026, `sha256:f2b257f2...`). The slice-2 rollback images and files were deleted on
@@ -274,9 +310,10 @@ the UGREEN firmware on its eMMC, until the owner set that right on 2026-11-15 (A
   and four of `unos check scrub` (2026-11-09, two of them failed with "Scrub is already
   running"), and two of each run of the scenario check `scrub`, named `unoscheck<6 hex digits>`
   (one failed with the 409's text, one "Scrub started").
-- Storage: the pool `data` (btrfs on /dev/sda) at /mnt/pools/data, root:root 755 (ADR-0220).
-  The share DATA is served from /mnt/pools/data/shared (root:unos-smb 2770); no account has
-  access to it yet. The regular account `test` stays for checks of a regular user's view.
+- Storage: the pool `data` (btrfs on /dev/sda) at /mnt/pools/data, root:root 755 (ADR-0220),
+  with 1.7 GiB used of 597 GiB at 19:21 UTC on 2026-11-16. The share DATA is served from
+  /mnt/pools/data/shared (root:unos-smb 2770); no account has access to it yet. The regular
+  account `test` stays for checks of a regular user's view.
 - Scenario checks (ADR-0304): `scripts/dev/scenario.sh all` passed on 2026-11-08 at about 17:15
   UTC, at 22:33 UTC after the deploy and at 23:03 UTC after the reboot, and on 2026-11-09 at
   07:43 UTC after the deploy of main 12483dd, and left none of its users, shares, volumes,
@@ -298,6 +335,15 @@ the UGREEN firmware on its eMMC, until the owner set that right on 2026-11-15 (A
   `unos-ipv6-inbound.service` (ADR-0301, `scripts/dev/ipv6-filter.sh status`). IPv4 is not
   filtered on the device. Samba admits only private, unique-local and link-local addresses.
   smbd runs unconfined by AppArmor (ADR-0162). The NFS server runs (ADR-0303), with no export.
+- SD writes on 2026-11-16 (the sixth batch; the deploys above): `scenario.sh all` from 01:05 UTC
+  20.160 MiB (files 0.551, volumes 0.859, smart 0.340, backups 0.441, smb 3.148, smbconf 2.906,
+  shares 3.145, scrub 0.543, balance 0.234, offsite 0.527, restore 7.465, hardware 0) and from
+  14:45 UTC, after the reboot of 14:42, 21.832 MiB (0.137, 0.914, 0.512, 0.426, 5.074, 2.816,
+  3.055, 0.594, 0.234, 0.531, 7.539, 0); `scenario.sh smart` and `smb` 0.492 and 5.336 MiB from
+  06:54 UTC, and 0.414 and 5.371 from 13:42 UTC; `smart` and `balance` 0.328 and 0.234 from 19:21
+  UTC. Jellyfin's install, its image pulled onto the card, 1262.047 MiB; its uninstall 1.117. The
+  other steps by hand, each at most 1.418 MiB (a full balance across a restart of the
+  supervisor): the Log.
 - SD writes on 2026-11-08: the deploy of main 78769b4 31.836 MiB (sync 1.527, build-supervisor
   6.094, build-webui 18.539, up 5.676, backup 0); the scenario checks 5.946 MiB at 17:15 UTC
   (files 0.418, volumes 0.938, smart 0.098, backups 0.512, smb 3.980, of which the smb check's
@@ -376,8 +422,145 @@ Open owner actions:
    Armbian's `armsom-w3` image (`deploy.arm64-bpi-w3`, step 1).
 7. An NVMe drive for the BPI-W3's M.2 Key M slot, for an NVMe pool before and after a reboot
    (`deploy.arm64-bpi-w3`).
+8. `storage.pool-balance`, on the dev device's Storage page in a browser (the agents do not sign
+   in there as its administrator): step 1 of its notes' steps by hand, a full balance of `data`
+   with its progress, Pause, Resume and the 90% note, and the page's parts of steps 2 and 3 (the
+   reloaded page during a balance, the card's Last balance).
+9. `shares.per-share-protocol-options`: a Mac on the LAN makes a Time Machine backup to a share
+   with Time Machine on, and a Windows computer lists and opens a share's Previous Versions in File
+   Explorer; then the Mac's list after a reboot (steps 3 to 5 of its notes' steps by hand).
+10. Two looks in a browser on the dev device, neither a condition of an entry's steps: the
+    Storage page with sda asleep, and GET /storage/disks a minute later, to record whether the
+    page's pool lists wake it (`storage.disk-spindown`, step 6 of its notes' steps by hand); and
+    the App Store's card and details of an installed Jellyfin, with RKMPP chosen in Jellyfin's
+    dashboard (`apps.rk3588-hardware-acceleration`, step 6; Jellyfin's image is a pull of about
+    1.3 GB onto the SD card).
+11. `apps.rk3588-hardware-acceleration` step 2, Immich's machine learning on the NPU, once
+    `apps.compose-stacks` and its Immich of several containers are merged; the Immich
+    administrator account, which only the owner creates.
 
 ## Log
+
+### 2026-11-16: A sixth batch: the RK3588's video hardware, disk idle timeouts, a pool's balance, share options
+
+- Four entries, each built test-first on a branch of its own on 2026-11-15, merged into the branch
+  `mvp.batch-6` (not into `main`) with their ADRs numbered in merge order: Jellyfin gets the
+  RK3588's video hardware for RKMPP through a hardware profile, unprivileged
+  (`apps.rk3588-hardware-acceleration`, ADR-0377); data disks get an idle timeout kept in UNOS's
+  udev rule, and nothing UNOS does periodically wakes a sleeping disk (`storage.disk-spindown`,
+  ADR-0378); a pool's balance runs in a host unit, by default with a usage limit of 20% and a full
+  balance behind a confirmation, with pause, resume and cancel (`storage.pool-balance`, ADR-0379);
+  a share can require encryption, serve Time Machine and list its snapshots as Previous Versions
+  (`shares.per-share-protocol-options`, ADR-0380, superseding ADR-0086 and ADR-0161). The merge of
+  the disk branch renumbered the hardware entry's own ADR in its adr list, set right in d70dd12.
+- Reviews in a fresh context before the device, the findings fixed with tests: the hardware profile
+  applies only with Rockchip MPP's node, and a Jellyfin installed without it says so on its card
+  and after the install; a balance's pause and cancel kept apart (the kernel pauses a balance with
+  both asked), and a shutdown pauses a balance instead of cancelling it; the RAID monitor, the
+  monitoring endpoints, the trash expiry and the SMART monitor leave sleeping disks asleep, and
+  `install.sh` turns smartd off, whose reads every 30 minutes restart a disk's standby timer; the
+  share options' checks at the render and the import, avahi-daemon's restart, and an smb check that
+  asks Avahi itself.
+- Device check (the dev device, kernel 6.1.172, the pool `data` on sda; times UTC; each step's SD
+  MiB; the deploys' MiB in Dev device). The integration tree 57be517 at 01:02: `scenario.sh all`
+  from 01:05 (20.160 MiB) passed 10 areas and failed two steps. `smart`: sda still active 990 s
+  after its 5 minutes, with no read or write; the power read of GET /storage/disks, `smartctl -n
+  standby -i`, sent an awake disk IDENTIFY, which restarted its timer (smartd also ran then).
+  `smb`: after the last snapshot's Delete, Samba 4.22's smbclient reports smbd's empty list of
+  shadow copies as NT_STATUS_INVALID_NETWORK_RESPONSE. Fixed on the branch: the power read is
+  `hdparm -C` (97bc1a4; its reviews: EPC and SCSI power conditions, a hung read bounded, c9a2b68
+  and 434d410), and the smb check proves Previous Versions with two snapshots and the SHA-256 of
+  the version it opens (8921320, 784fb5f, 677610a). By hand then: Samba's vfs modules fruit,
+  shadow_copy2 and btrfs installed (0.016), the 19 tests of `test_smbconf_testparm.py` passed with
+  the device's testparm (0; the cycle script's FAIL line there looked for a summary line that
+  pytest's `-q -q` leaves out), `storage.disk-spindown`'s step by hand (2), the rule's line with
+  `-S 240` and udevadm test's RUN for sda (0.105), and `storage.pool-balance`'s (2), a full balance
+  running on across `docker restart unos-supervisor` (1.418), and (3), pause, resume and cancel
+  with their audit entries (0.047).
+- RK3588 at 04:21 on that tree, at the owner's word for the image: Jellyfin installed (1262.047
+  MiB, the image's pull), its container unprivileged with the five nodes, Docker's masks without
+  `/sys/firmware` and AppArmor unconfined (1.137), ffmpeg in it decoding with rkmpp and encoding
+  with hevc_rkmpp at 15.4x and h264_rkmpp at 16.9x, where libx265 ran at 0.267x (0.227), and OpenCL
+  on the Mali-G610 (0); the same after a reboot from the API at 04:26:13 (0.121, 0.016, 0), then
+  the uninstall and the folders `apps/jellyfin` and `media` removed (1.117).
+  `/proc/mpp_service/load` showed no load: it wants `load_interval` set first, which the check did
+  not write.
+- 434d410 at 06:53: `scenario.sh smart` (12 steps, 0.492 MiB) and `smb` (37 steps, 5.336) OK; step
+  18 recorded smbd's NT_STATUS_INVALID_DEVICE_REQUEST for a volume without `.snapshots`, which the
+  user guide now names (cc8aba3). A reboot from the API at 07:17:10: `storage.pool-balance`'s step
+  by hand (5) failed, the full balance idle after the boot (5 chunks, 2 balanced a minute before
+  the reboot; 0.133), and `storage.disk-spindown`'s (3) and (4) failed: sda, with the rule's 20
+  minutes, still active after 22 minutes with no read or write (0.164).
+- The finding of that reboot: sda's own automatic offline data collection ("Auto Offline Data
+  Collection: Enabled", suspended by each command of the host and resumed later) kept it out of
+  standby for hours, with `-S 240`, `180` and `120` through 35, 27 and 18 minutes of watching; with
+  `smartctl -o off` and `-S 120` it slept 661 s later (10:29 to 10:40), and it was then restored
+  (ADR-0378). Fixed: a Save with a timeout turns the collection off and records that in the rule,
+  and Off turns it on again for a recorded disk alone (7f33ede; its review: an unclear answer
+  recorded, the old state put back when the rule cannot be written, 5d79302); the smart check reads
+  it, proves it off and restores it.
+- 5d79302 at 13:39: the Save of sda's 20 minutes turned its collection off and recorded it (0.398);
+  `scenario.sh smart` (14 steps, 0.414) and `smb` (37, 5.371) OK. Then 20 GiB of zeros into the
+  pool (0.070), sda's own timer off (`hdparm -S 0`, so that only the rule could set it), a full
+  balance started, and a reboot from the API at 14:03:25: sda's collection still off and recorded
+  (0); sda in standby 1201 s after its last read or write, with `hdparm -C` a minute apart, so udev
+  applied the rule's 20 minutes at boot; GET /storage/disks standby, Disk Health STANDBY, and sda
+  still asleep after that read (0.168). `storage.pool-balance`'s (5) failed again: idle after the
+  boot (0.145), as the kernel had resumed the balance at the mount with usage=90, which passes over
+  full chunks, and it had ended at 14:04:32.
+- The finding of that reboot: on every resume, the kernel's at a mount and Resume Balance's, Linux
+  6.1's update_balance_args() (fs/btrfs/volumes.c) gives each chunk type without a usage filter
+  usage=90, so a paused full balance goes on only through the chunks less than 90% full. No
+  behaviour change: the card's note of a paused balance and the full balance's warning (en, ru),
+  the user guide, ADR-0379 and the entry's notes say so, with the way to rewrite every chunk:
+  cancel it and start a new full balance (0ccb107, 26921a6).
+- With 256 MiB files in the pool, every second removed (chunks about half full; 0.078), a full
+  balance and a reboot from the API at 14:42:26: the kernel log said `balance: paused` before it
+  and `balance: resume -dusage=90 -musage=90 -susage=90` at the mount, no unit `unos-balance-data`
+  was loaded, GET answered running at 6 of about 31 chunks, and Cancel ended it (0.160). Then
+  `scenario.sh all` OK, 12 areas, 187 steps (21.832 MiB), no Traceback or Killed in the
+  supervisor's log, check.sh OK (30.1 MiB since the boot).
+- `storage.disk-spindown`'s step by hand (7): smartmontools inactive and disabled, as found (it was
+  active and enabled at 01:04, and was turned off during that night's measurements of sda's timer);
+  sda got 1 hour at 15:17:52 (0.145) and was in standby at 17:47:55, so no periodic check of UNOS
+  woke it in 2.5 hours; then its timeout went back to 0, as found at 01:04 (0.309): the rule
+  removed and the collection on again.
+- The uninstallation (c6b2fa5, then its reviews' fixes 93a4c81, 19593be and cc9482e; 1040834 a
+  comment): `deploy/uninstall.sh`'s remove_disk_idle_timeouts runs `hdparm -S 0` on the disks of
+  UNOS's rule and turns their recorded collection on again, then removes the rule, keeping the
+  records of the disks it could not undo, each tool bounded and its output in files of its own, and
+  a stop in the step leaves the rule whole. It has not run on a host: only the stub tests of
+  TestUninstallScript in `test_deploy_scripts.py` show it.
+- The final tree cc9482e at 19:19 to 19:21, with sda as found (timeout 0, the collection on, no
+  rule; 0): `scenario.sh smart` (14 steps, 0.328 MiB) and `balance` (11 steps, 0.234) OK,
+  `deploy.sh status` equal, no Traceback or Killed in the supervisor's log, check.sh OK (71.6 MiB
+  since the boot of 14:42). The reboot checks ran on 5d79302; cc9482e differs from it at runtime in
+  `read_rule`'s reading of lines that UNOS does not write, the balance card's texts and
+  `deploy/uninstall.sh`. 1040834 and this record change no runtime behaviour.
+- Review findings left unfixed, with the reason: (a) the balance card's 90% sentence shows under
+  every paused balance, also one with a usage limit, where it does not apply; it is worded as a
+  condition ("When a paused full balance goes on"), so it is not false, and telling the kinds apart
+  needs the supervisor to report the balance's filters (`btrfs balance status -v`), a behaviour
+  change left for later. (b) The uninstaller: when Docker cannot be reached, its backup step says
+  the data volume is gone (as after an earlier run) although the daemon is only down; before this
+  change it printed a false "Backup created" in that case. (c) The uninstaller: a failed `mktemp
+  -d` also skips `hdparm -S 0`, on purpose: the tools' output must go to files, so that a stuck
+  tool cannot hold the script's output, and the end names the command. (d) The uninstaller: no test
+  asserts that hdparm and smartctl read from /dev/null (the tests already run with standard input
+  at /dev/null). (e) A byte-for-byte copy of the rule in the backup folder was rejected: nothing
+  would read it, while the records-only rule is read by a new installation and by another run. From
+  the branch's history: no test checks that the ADR an entry's notes open with is in its adr list
+  (d70dd12: no rule of ADR-0203 asks it, and four older entries would fail it); and the pages that
+  list the pools still scan every disk when an administrator opens them (ADR-0378, Consequences),
+  which the browser look of `storage.disk-spindown`'s step by hand (6) would observe on the device.
+- Passing now: `storage.disk-spindown`, with `test_storage.py` and `test_files_security.py` added
+  to its verified_by. Open, the owner's (Open owner actions, 8 to 11): `storage.pool-balance` (its
+  step by hand (1), and the page's parts of (2) and (3), in a browser),
+  `shares.per-share-protocol-options` (a Mac's Time Machine backup, Previous Versions on a Windows
+  computer), and `apps.rk3588-hardware-acceleration` (step 2, Immich's NPU, once
+  `apps.compose-stacks` is merged, and the Immich administrator account; step 1 passed but for its
+  look at the App Store in a browser). `GLOSSARY.md` gained Protocol options. `make check` passed
+  on this record.
 
 ### 2026-11-15: Armbian on the dev device upgraded to 26.11.0-trunk (kernel 6.1.172)
 
