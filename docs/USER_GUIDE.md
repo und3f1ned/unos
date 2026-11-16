@@ -1183,9 +1183,12 @@ Before it downloads anything, the install checks that:
   the **Ports** tab. Home Assistant and Scrypted run in the NAS's own network
   and listen on its ports, which cannot be changed: stop the program or remove
   the container that the message names;
-- the system disk keeps at least 2 GiB free once the app's images are there,
-  for the apps whose images UNOS pins (Immich): otherwise remove unused images
-  on **Containers** > **Images** first.
+- the system disk has at least 2 GiB free, whatever the app. For an app whose
+  images UNOS pins (Immich), the 2 GiB must also stay free once the images it
+  lacks are downloaded, each counted with its known size; the size of any
+  other app's images is not known before the download, so only the 2 GiB
+  count. When there is too little space, remove unused images on
+  **Containers** > **Images** first.
 
 Downloading an app's images can take several minutes, during which the install
 waits. Starting or restarting an app from UNOS fails while its data folders are

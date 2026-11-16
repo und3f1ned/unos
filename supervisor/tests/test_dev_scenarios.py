@@ -1264,10 +1264,12 @@ class FakeNas:
         other = {**RK3588_VIDEO, "id": "rk3568-video", "soc": "rockchip,rk3568"}
         npu = RK3588_NPU["soc"] in socs and all(self.resolve(path) for path in RK3588_NPU["requires"])
         npu_offered = npu != ("npu-not-offered" in self.bugs)
-        machine_learning = {"name": "machine-learning", "image": IMMICH_ML, "hardware": []}
+        machine_learning = {"name": "machine-learning", "hardware": [],
+                            "image": IMMICH_ML_RKNN if "rknn-without-npu" in self.bugs else IMMICH_ML}
         if npu_offered:
             machine_learning.update(hardware=[RK3588_NPU], image=IMMICH_ML if "npu-cpu-image" in self.bugs else IMMICH_ML_RKNN)
-        immich = {"id": "immich", "name": "Immich", "hardware": [RK3588_VIDEO] if offered else [], "companions": [
+        server_offered = offered and "server-hardware-not-offered" not in self.bugs
+        immich = {"id": "immich", "name": "Immich", "hardware": [RK3588_VIDEO] if server_offered else [], "companions": [
             {"name": "database", "image": IMMICH_POSTGRES,
              "hardware": [other] if "companion-hardware-of-another-soc" in self.bugs else []},
             {"name": "redis", "image": VALKEY, "hardware": []},
@@ -3216,6 +3218,24 @@ def test_on_an_rk3588_without_the_npu_s_node_immich_s_machine_learning_runs_on_t
             "RKNPU driver)") in text, output
 
 
+def test_the_hardware_check_fails_for_the_rknn_image_where_the_npu_does_not_apply(nas):
+    """Where the NPU's node is missing the profile does not apply, and Immich's machine learning
+    is to run the image for the CPU: a catalog that offers no NPU but still gives the -rknn image,
+    which loads no model there, fails step 3, and the check stops."""
+    del nas.fs[NPU_NODE]
+    before = nas.snapshot()
+    nas.bugs.add("rknn-without-npu")
+
+    status, output = run_check("hardware", nas)
+
+    assert status == 1, output
+    failed = [line for line in step_lines(output) if line.startswith("FAIL  ")]
+    assert len(failed) == 1, output
+    assert failed[0].startswith(f"FAIL  3. {IMMICH_STEP}: its machine learning runs {IMMICH_ML_RKNN}, "
+                                "the -rknn image  ["), output
+    assert nas.snapshot() == before, output
+
+
 @pytest.mark.parametrize("version, problem", [
     ("RKNPU driver: v0.9.6\n", "RKNPU driver: v0.9.6 is not 0.9.8 or later, which Immich's machine learning needs"),
     ("RKNPU driver: v0.10.0\n", None),
@@ -3466,6 +3486,7 @@ def test_the_pool_folder_helper_removes_only_an_empty_folder_that_is_no_mount_po
     ("hardware", "hardware-of-another-soc", "the App Store offers each app only the hardware of this SoC"),
     ("hardware", "npu-not-offered", "it offers its machine learning none, expected rk3588-npu"),
     ("hardware", "npu-cpu-image", f"its machine learning runs {IMMICH_ML}, not the -rknn image"),
+    ("hardware", "server-hardware-not-offered", "it offers its server none, and Jellyfin rk3588-video"),
     ("hardware", "companion-hardware-of-another-soc", "it offers immich the hardware of rockchip,rk3568"),
     ("smb", "encryption-not-required", "with encryption required the share's section says so"),
     ("smb", "encryption-stays", "with the option off the section has smb encrypt = required"),
