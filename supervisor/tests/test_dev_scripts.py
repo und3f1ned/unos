@@ -2448,7 +2448,7 @@ def test_the_probe_asks_for_immich_s_models_and_prints_status_timings_and_shapes
         {"clip": {"visual": {"modelName": "ViT-B-32__openai"}},
          "facial-recognition": {"detection": {"modelName": "buffalo_l"}, "recognition": {"modelName": "buffalo_l"}},
          "ocr": {"detection": {"modelName": "PP-OCRv5_mobile"}, "recognition": {"modelName": "PP-OCRv5_mobile"}}},
-    ] * 4 + [{"clip": {"textual": {"modelName": "ViT-B-32__openai"}}}] * 4
+    ] * 4 + [{"clip": {"textual": {"modelName": "ViT-B-32__openai", "options": {}}}}] * 4
     assert [sorted(p) for p in predictions] == [["entries", "image"]] * 4 + [["entries", "text"]] * 4
     assert {p["text"] for p in predictions[4:]} == {"a photo of a dog"}
     filename, kind, png = predictions[0]["image"]
@@ -2465,6 +2465,28 @@ def test_the_probe_asks_for_immich_s_models_and_prints_status_timings_and_shapes
     assert 20_000 < dark < 200_000
     # Nothing written: no bytecode, no temporary file, nothing in HOME or the working folder.
     assert [p for p in tmp_path.rglob("*") if p.name not in ("work", "tmp")] == []
+
+
+def test_the_probe_asks_for_the_clip_model_and_language_it_is_given(tmp_path, machine_learning):
+    """--clip-model names the CLIP model that Immich's settings chose (the dev device's Smart
+    Search uses nllb-clip-base-siglip__v1), for the picture's and the text's requests; --language
+    goes into the text's options, as Immich's server sends a search's language, and --text sets
+    the text. The faces' and OCR's models stay Immich's defaults."""
+    result = run_probe(tmp_path, "--port", str(machine_learning.port), "--runs", "1",
+                       "--clip-model", "nllb-clip-base-siglip__v1", "--language", "ru", "--text", "фото собаки")
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "the text 'фото собаки': CLIP textual:" in result.stdout
+    predictions = machine_learning.predictions()
+    entries = [json.loads(p["entries"]) for p in predictions]
+    assert [e["clip"] for e in entries] == (
+        [{"visual": {"modelName": "nllb-clip-base-siglip__v1"}}] * 2
+        + [{"textual": {"modelName": "nllb-clip-base-siglip__v1", "options": {"language": "ru"}}}] * 2)
+    assert entries[0]["facial-recognition"] == {"detection": {"modelName": "buffalo_l"},
+                                                "recognition": {"modelName": "buffalo_l"}}
+    assert entries[0]["ocr"] == {"detection": {"modelName": "PP-OCRv5_mobile"},
+                                 "recognition": {"modelName": "PP-OCRv5_mobile"}}
+    assert {p["text"] for p in predictions[2:]} == {"фото собаки"}
 
 
 def test_the_probe_reports_a_refusal_and_goes_on_with_the_text(tmp_path, machine_learning):
@@ -2490,7 +2512,8 @@ def test_the_probe_stops_when_the_machine_learning_does_not_answer(tmp_path):
                                     "(127.0.0.1: ")
 
 
-@pytest.mark.parametrize("args", [["--runs", "-1"], ["--runs", "ten"], ["--port", "x"]])
+@pytest.mark.parametrize("args", [["--runs", "-1"], ["--runs", "ten"], ["--port", "x"], ["--clip-model", ""],
+                                  ["--clip-model", "../x"], ["--language", "r u"]])
 def test_the_probe_refuses_a_wrong_argument_before_any_call(tmp_path, machine_learning, args):
     result = run_probe(tmp_path, "--port", str(machine_learning.port), *args)
     assert result.returncode == 2

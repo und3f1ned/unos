@@ -386,13 +386,16 @@ secrets from the git-ignored `dev.env` (ADR-0212):
 - `scripts/dev/upload-speed.py [--mib N] [--runs R]`: how fast this workstation uploads to the
   device through Caddy and the upload route; it makes and deletes a folder `unoscheck<6 hex>` on
   the pool and signs in and out (about 0.1 MiB on the SD card).
-- `scripts/dev/immich-ml-probe.py [--runs N]`: whether Immich's machine learning answers, and how
-  fast: run inside its container with that container's python3, read from standard input
-  (`scripts/dev/ssh.sh 'docker exec -i immich-machine-learning python3 -I -B -' <
-  scripts/dev/immich-ml-probe.py`, ADR-0183), it sends a picture it draws in memory and a text
-  for Immich's default models and prints each request's status, the time of its first call (which
-  downloads the models to the pool), the median of N more and the answer's shape, never an
-  embedding. It writes nothing; the machine learning's log says whether the models ran on the NPU
+- `scripts/dev/immich-ml-probe.py [--runs N] [--clip-model NAME] [--language CODE] [--text TEXT]`:
+  whether Immich's machine learning answers, and how fast: run inside its container with that
+  container's python3, read from standard input (`scripts/dev/ssh.sh 'docker exec -i
+  immich-machine-learning python3 -I -B -' < scripts/dev/immich-ml-probe.py`, ADR-0183; arguments
+  follow `python3 -I -B -`), it sends a picture it draws in memory and a text, as Immich's server
+  asks for them, and prints each request's status, the time of its first call (which downloads
+  the models to the pool), the median of N more and the answer's shape, never an embedding.
+  CLIP's model is Immich's default, ViT-B-32__openai, unless `--clip-model` names the one that
+  Immich's settings chose: the dev device's Immich uses nllb-clip-base-siglip__v1, so pass that
+  name, or the probe downloads a model Immich does not use. It writes nothing; the machine learning's log says whether the models ran on the NPU
   (ADR-0382).
 - `scripts/dev/linux-tests.sh`: the backend tests on Linux in the device's RAM.
 - `scripts/dev/deploy.sh`: `status`, `sync --dry-run` and `backup` only read the device

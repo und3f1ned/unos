@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Whether Immich's machine learning answers, and how fast: immich-ml-probe.py [--runs N] [--port P]
+[--clip-model NAME] [--language CODE] [--text TEXT]
 
 It runs inside Immich's machine-learning container, under the container's own python3, read from
 standard input, so that nothing of it is written to a disk (ADR-0183):
@@ -10,12 +11,17 @@ python3 -I ignores the PYTHON* variables and the user's site folder, -B writes n
 - reads the script from standard input; arguments follow the -. The probe keeps everything in
 memory: it draws a picture of 1280x720 with two lines of text as a PNG (standard library only),
 asks the machine learning at 127.0.0.1, or ::1, on port 3003 (IMMICH_PORT) whether it answers
-/ping, and sends /predict the requests of Immich's server for its default models:
+/ping, and sends /predict the requests of Immich's server:
 
-1. the picture, for CLIP's visual embedding (ViT-B-32__openai), faces (buffalo_l's detection and
-   recognition) and text (PP-OCRv5_mobile's detection and recognition), as the jobs Smart Search,
-   Face Detection and OCR ask;
-2. the text "a photo of a dog", for CLIP's textual embedding, as a smart search asks.
+1. the picture, for CLIP's visual embedding, faces (buffalo_l's detection and recognition) and
+   text (PP-OCRv5_mobile's detection and recognition), as the jobs Smart Search, Face Detection
+   and OCR ask;
+2. the text "a photo of a dog" (--text), for CLIP's textual embedding with the options of a
+   search (its language, --language), as a smart search asks.
+
+CLIP's model is Immich's default, ViT-B-32__openai, unless --clip-model names the one that
+Immich's settings chose (Administration > Settings > Machine Learning > Smart Search): ask for the
+model Immich uses, since the probe's first call downloads the model it names into /cache.
 
 Each request is sent once, which loads its models and the first time downloads them into the
 container's /cache, on the pool, and then N more times (--runs, 20). For each it prints the HTTP
@@ -33,6 +39,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import statistics
 import struct
 import sys
@@ -42,13 +49,26 @@ import urllib.request
 import zlib
 
 # Immich's default models (its server's machine-learning settings) and the requests of its jobs.
-IMAGE_ENTRIES = {
-    "clip": {"visual": {"modelName": "ViT-B-32__openai"}},
-    "facial-recognition": {"detection": {"modelName": "buffalo_l"}, "recognition": {"modelName": "buffalo_l"}},
-    "ocr": {"detection": {"modelName": "PP-OCRv5_mobile"}, "recognition": {"modelName": "PP-OCRv5_mobile"}},
-}
-TEXT_ENTRIES = {"clip": {"textual": {"modelName": "ViT-B-32__openai"}}}
+CLIP_MODEL = "ViT-B-32__openai"
 QUERY = "a photo of a dog"
+# A model's name as Immich's catalog of models writes it, and a language code of a search.
+MODEL_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,99}")
+LANGUAGE = re.compile(r"[A-Za-z]{2,3}([-_][A-Za-z0-9]{2,8})?")
+
+
+def image_entries(clip_model: str) -> dict:
+    return {
+        "clip": {"visual": {"modelName": clip_model}},
+        "facial-recognition": {"detection": {"modelName": "buffalo_l"}, "recognition": {"modelName": "buffalo_l"}},
+        "ocr": {"detection": {"modelName": "PP-OCRv5_mobile"}, "recognition": {"modelName": "PP-OCRv5_mobile"}},
+    }
+
+
+def text_entries(clip_model: str, language: str | None) -> dict:
+    """As Immich's server asks for a search's embedding: the model and the search's options."""
+    options = {"language": language} if language else {}
+    return {"clip": {"textual": {"modelName": clip_model, "options": options}}}
+
 HOSTS = ("127.0.0.1", "[::1]")
 WIDTH, HEIGHT, SCALE = 1280, 720, 8
 LINES = ("IMMICH ON THE NPU", "UNOS PROBE 2026")
@@ -198,6 +218,18 @@ def probe(base: str, name: str, entries: dict, runs: int, timeout: float, **inpu
     return not failed
 
 
+def model_name(value: str) -> str:
+    if not MODEL_NAME.fullmatch(value) or ".." in value:
+        raise argparse.ArgumentTypeError(f"not a model's name: {value!r}")
+    return value
+
+
+def language_code(value: str) -> str:
+    if not LANGUAGE.fullmatch(value):
+        raise argparse.ArgumentTypeError(f"not a language code: {value!r}")
+    return value
+
+
 def runs_count(value: str) -> int:
     if not value.isdigit():
         raise argparse.ArgumentTypeError(f"not a number of calls: {value!r}")
@@ -212,6 +244,11 @@ def main(argv: list[str] | None = None) -> int:
                         help="the machine learning's port (IMMICH_PORT, 3003)")
     parser.add_argument("--timeout", type=float, default=1800,
                         help="seconds a call may take; the first downloads the models (1800)")
+    parser.add_argument("--clip-model", type=model_name, default=CLIP_MODEL,
+                        help=f"CLIP's model, the one Immich's settings chose ({CLIP_MODEL})")
+    parser.add_argument("--language", type=language_code, default=None,
+                        help="the language of the text's search, as Immich's server sends it (none)")
+    parser.add_argument("--text", default=QUERY, help=f"the text of the search ({QUERY!r})")
     args = parser.parse_args(argv)
 
     base, reasons = None, []
@@ -228,8 +265,9 @@ def main(argv: list[str] | None = None) -> int:
     print(f"immich-ml-probe: {base} answers /ping", flush=True)
     image = picture()
     ok = probe(base, f"a picture of {WIDTH}x{HEIGHT} ({len(image)} bytes of PNG): CLIP visual, faces, OCR",
-               IMAGE_ENTRIES, args.runs, args.timeout, image=image)
-    ok = probe(base, f"the text {QUERY!r}: CLIP textual", TEXT_ENTRIES, args.runs, args.timeout, text=QUERY) and ok
+               image_entries(args.clip_model), args.runs, args.timeout, image=image)
+    ok = probe(base, f"the text {args.text!r}: CLIP textual", text_entries(args.clip_model, args.language),
+               args.runs, args.timeout, text=args.text) and ok
     return 0 if ok else 1
 
 
