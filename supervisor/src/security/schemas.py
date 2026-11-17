@@ -1,9 +1,9 @@
 import ipaddress
 import re
 import unicodedata
-from typing import Annotated
+from typing import Annotated, Literal
 
-from pydantic import AfterValidator, BaseModel, ConfigDict
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field
 from datetime import datetime, timezone
 from enum import Enum
 
@@ -230,3 +230,26 @@ class SelfSignedCertRequest(BaseModel):
 class CertificateStatus(BaseModel):
     """What browsers get from https://<host>/ (ADR-0357)."""
     served_by: ServedCertificate = ServedCertificate.CADDY_LOCAL_CA
+
+
+# Every account must have two-factor authentication. The grace periods are
+# GRACE_DAYS_CHOICES of src/auth/requirement.py.
+GraceDays = Literal[0, 1, 3, 7, 14, 30]
+
+
+class TwoFactorRequirementStatus(BaseModel):
+    enabled: bool
+    grace_days: int | None = None
+    enabled_at: UtcDatetime | None = None   # when it was turned on
+    enabled_by: str | None = None           # the administrator who turned it on
+
+
+class TwoFactorRequirementEnable(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    grace_days: GraceDays = 7
+    code: str = Field(max_length=16)        # a current code of the administrator's own authenticator
+
+
+class TwoFactorRequirementDisable(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    code: str = Field(max_length=16)

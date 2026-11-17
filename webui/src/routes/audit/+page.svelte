@@ -91,6 +91,9 @@
 		share_updated: 'audit.action.shareUpdated',
 		share_deleted: 'audit.action.shareDeleted',
 		share_permissions_repaired: 'audit.action.sharePermissionsRepaired',
+		group_created: 'audit.action.groupCreated',
+		group_updated: 'audit.action.groupUpdated',
+		group_deleted: 'audit.action.groupDeleted',
 		smb_account_updated: 'audit.action.smbAccountUpdated',
 		smb_shares_imported: 'audit.action.smbSharesImported',
 		smb_reconciled: 'audit.action.smbReconciled',
@@ -128,6 +131,7 @@
 		snapshot: 'audit.resource.snapshot',
 		share: 'audit.resource.share',
 		smb: 'audit.resource.smb',
+		group: 'audit.resource.group',
 		smb_account: 'audit.resource.smbAccount',
 		nfs_export: 'audit.resource.nfsExport',
 		api_token: 'audit.resource.apiToken',
@@ -138,7 +142,8 @@
 		backup: 'audit.resource.backup',
 		host: 'audit.resource.host',
 		network_interface: 'audit.resource.networkInterface',
-		task: 'audit.resource.task'
+		task: 'audit.resource.task',
+		two_factor_requirement: 'audit.resource.twoFactorRequirement'
 	};
 
 	/** The text of `value` by its key in `keys`, in the language of the page; else `value`. */

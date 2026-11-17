@@ -1,13 +1,16 @@
 ---
-status: accepted
+status: superseded
 date: 2026-11-16
 area: apps
 decided-by: agent
+superseded-by: ADR-0384
 ---
 
 # ADR-0381: An app of several containers installs through the Docker API with pinned images and a password on its pool
 
 ## Context
+
+Superseded by ADR-0384: only in part, the install as one request that answers after its pulls, which now runs as a background job whose progress the App Store shows, and the device check's `scripts/dev/api.py --timeout 3600 POST`; every other rule here stays in force.
 
 The owner's words for this work, in translation: "first Immich of several containers must appear" and "so install it", under the standing delegation "work on through the features, ask no questions; I allow everything" (as for ADR-0340). Every app of the catalog is one container (`supervisor/src/apps/router.py`): the installed list, the actions and the audit work per container, an install pulls a floating tag and checks no port, and the `VOLUME`s an image declares become anonymous volumes in Docker's data root, which is on the dev device's SD card (ADR-0228). The catalog's Immich is one `immich-server` container whose `DB_HOSTNAME` and `REDIS_HOSTNAME` name containers that do not exist, on Docker's default bridge without name resolution, so it cannot work, and ADR-0377 left Immich's NPU to an Immich of several containers. Immich v3.4.1 runs four: its server, Postgres with VectorChord, Valkey and its machine learning service, which find each other by name and share the database's password.
 

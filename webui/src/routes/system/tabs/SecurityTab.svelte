@@ -1,8 +1,9 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { toDataURL } from "qrcode";
-  import { user } from "$lib/stores/auth";
+  import { loadCurrentUser, user } from "$lib/stores/auth";
   import SmbAccessCard from "$lib/components/account/SmbAccessCard.svelte";
+  import TwoFactorRequirementCard from "$lib/components/account/TwoFactorRequirementCard.svelte";
   import RecoveryCodes from "$lib/components/account/RecoveryCodes.svelte";
   import LanguageCard from "$lib/components/account/LanguageCard.svelte";
   import { intlLocale, t } from "$lib/i18n";
@@ -35,6 +36,8 @@
   // 2FA state. Until the status has loaded, the card offers neither Enable nor Disable: a
   // status that could not be loaded is reported, not shown as off.
   let totpEnabled = false;
+  // Every account must have two-factor authentication: turning it off says what follows.
+  let totpRequired = false;
   let totpStatusLoaded = false;
   let totpStatusLoading = false;
   let totpStatusError = "";
@@ -167,6 +170,7 @@
     try {
       const status = await getTOTPStatus();
       totpEnabled = status.enabled;
+      totpRequired = status.required;
       totpStatusLoaded = true;
       totpStatusError = "";
     } catch (e) {
@@ -274,6 +278,9 @@
       void smbCard?.refresh();
       showDisableModal = false;
       disableCode = "";
+      // While it is required, an account past its grace period can now only set it up again: the
+      // account, loaded again, says so, and the layout leads to the setup page.
+      if (totpRequired) void loadCurrentUser().catch(() => {});
     } catch (e: any) {
       totpError = e.message || $t("account.totp.invalidCode");
     } finally {
@@ -719,6 +726,10 @@
   <SmbAccessCard bind:this={smbCard} />
 
   {#if isAdmin}
+  {#if totpStatusLoaded}
+    <TwoFactorRequirementCard ownTwoFactor={totpEnabled} />
+  {/if}
+
   <!-- Firewall -->
   <div class="bg-slate-800 rounded-lg p-4">
     <div class="flex flex-wrap items-center justify-between gap-2 mb-4">
@@ -1151,6 +1162,9 @@
         <p class="text-sm text-slate-400">
           {$t("account.totp.disableHint")}
         </p>
+        {#if totpRequired}
+          <Alert variant="warning">{$t("twofactor.disableRequired")}</Alert>
+        {/if}
 
         <div>
           <label for="disableCode" class="block text-sm font-medium text-slate-400 mb-1">

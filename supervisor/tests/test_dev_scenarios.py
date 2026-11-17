@@ -114,6 +114,7 @@ import stat
 import subprocess
 import sys
 import textwrap
+import threading
 import time
 import types
 from collections.abc import Callable
@@ -986,8 +987,23 @@ class FakeNas:
                 return {"device": f"/dev/{DISK}", "healthy": None, "power_state": "standby"}
             return {"device": f"/dev/{DISK}", "healthy": True, "power_state": "active", "temperature": 33}
         if parts[:2] == ["pools", "data"] and parts[2] == "volumes":
+            def use(path: str) -> dict:
+                # As the kernel counts it (storage.volume-quota-usage): nothing while quotas are off.
+                if "quota-use-missing" in self.bugs:
+                    return {"quota": None}
+                if not self.quotas:
+                    return {"used": None, "quota": None, "usage": "quotas_off"}
+                return {"used": 16384, "quota": self.quota_of.get(path), "usage": "counted"}
+
+            if method == "GET" and parts[4:] == ["usage"]:
+                path = f"{ROOT}/{parts[3]}"
+                if path not in self.fs:
+                    raise Refused(404, "Volume not found")
+                now = use(path)
+                point = {"time": "2027-01-15T08:00:00+00:00", "used": now.get("used"), "quota": now.get("quota")}
+                return {"name": parts[3], "pool": "data", **now, "points": [point] if self.quotas else []}
             if method == "GET":
-                return [{"name": p.rsplit("/", 1)[1], "pool": "data", "path": p, "quota": None}
+                return [{"name": p.rsplit("/", 1)[1], "pool": "data", "path": p, **use(p)}
                         for p in self.children(ROOT) if self.fs[p].kind == "subvolume"]
             if method == "POST":
                 path = f"{ROOT}/{body['name']}"
@@ -2434,9 +2450,11 @@ def nas():
 def _checks_without_pauses(monkeypatch):
     """The scrub check asks btrfs every SCRUB_POLL seconds, for up to SCRUB_WAIT seconds, the
     shares check asks for the end of a repair every REPAIR_POLL seconds, for up to REPAIR_WAIT
-    seconds, and the smb check resolves the _adisk._tcp service every ADISK_POLL seconds, for up to
-    ADISK_WAIT seconds: the fake's scrubs are recorded and end after a few requests, its repairs
-    after one, and its service follows smb.conf at once."""
+    seconds, the smb check resolves the _adisk._tcp service every ADISK_POLL seconds, for up to
+    ADISK_WAIT seconds, and the offsite check asks for the end of a copy or a restore every
+    OFFSITE_POLL seconds, for up to OFFSITE_WAIT seconds: the fake's scrubs are recorded and end
+    after a few requests, its repairs, copies and restores after one, and its service follows
+    smb.conf at once."""
     monkeypatch.setattr(scenario, "SCRUB_POLL", 0)
     monkeypatch.setattr(scenario, "SCRUB_WAIT", 2)
     monkeypatch.setattr(scenario, "REPAIR_POLL", 0)
@@ -2445,6 +2463,8 @@ def _checks_without_pauses(monkeypatch):
     monkeypatch.setattr(scenario, "BALANCE_WAIT", 2)
     monkeypatch.setattr(scenario, "ADISK_POLL", 0)
     monkeypatch.setattr(scenario, "ADISK_WAIT", 0.2)
+    monkeypatch.setattr(scenario, "OFFSITE_POLL", 0)
+    monkeypatch.setattr(scenario, "OFFSITE_WAIT", 2)
 
 
 def run_check(area: str, nas: FakeNas, **kw) -> tuple[int, str]:
@@ -3068,12 +3088,19 @@ def test_an_answer_of_an_unexpected_shape_in_the_clean_up_is_a_fail_and_the_rest
 def test_signals_wait_while_the_clean_up_runs(nas):
     """With signals on (main), SIGINT, SIGTERM and SIGHUP are blocked during the clean-up: one
     that arrives then waits until the clean-up has run to its end, and then ends the run as
-    interrupted (130). The mask is as before afterwards."""
+    interrupted (130). The mask is as before afterwards.
+
+    The mask is the main thread's, and scenario.py has no other thread, so SIGINT goes to the main
+    thread, as the kernel sends one for the process there. A worker of a parallel run has threads
+    of its own (pytest-xdist's), which would take a signal for the process."""
     done = []
+
+    def interrupt():
+        signal.pthread_kill(threading.main_thread().ident, signal.SIGINT)
 
     def check(c):
         c.on_cleanup("second", lambda: done.append("second"))
-        c.on_cleanup("first", lambda: (os.kill(os.getpid(), signal.SIGINT), done.append("first")))
+        c.on_cleanup("first", lambda: (interrupt(), done.append("first")))
 
     def raise_interrupt(signum, frame):
         raise Interrupt()
@@ -3357,9 +3384,12 @@ def test_the_balance_check_starts_pauses_resumes_and_cancels_a_balance_with_a_lo
 def test_the_balance_check_s_clean_up_cancels_a_balance_whose_pause_outlasts_its_step(nas, monkeypatch):
     """A pause waits for the chunk being moved, and the supervisor refuses a cancel meanwhile (409),
     since the kernel would pause the balance all the same: the clean-up waits for the pause, then
-    cancels the paused balance, and the device is as it was."""
-    monkeypatch.setattr(scenario, "BALANCE_WAIT", 0.5)
-    nas.pause_takes = 0.75
+    cancels the paused balance, and the device is as it was. The pause outlasts the step's wait by
+    a second and ends a second before the clean-up's wait does: a test process that a busy machine
+    stops for a moment (parallel runs) still sees the same."""
+    monkeypatch.setattr(scenario, "BALANCE_WAIT", 2)
+    monkeypatch.setattr(scenario, "BALANCE_POLL", 0.05)
+    nas.pause_takes = 3
     before = nas.snapshot()
     status, output = run_check("balance", nas)
     assert status == 1, output
@@ -3554,6 +3584,7 @@ def test_the_pool_folder_helper_removes_only_an_empty_folder_that_is_no_mount_po
     ("files", "volume-deletable", "refused with 409"),
     ("files", "upload-mode", "644 root:root"),
     ("volumes", "volume-delete-ignores-shares", "names the share"),
+    ("volumes", "quota-use-missing", "the list does not say that quotas are off"),
     ("volumes", "copies-not-listed", "listed with the volume's restored copies"),
     ("volumes", "copy-delete-ignores-shares", "the copy's Delete is refused while the share"),
     ("smbconf", "status-misses-replaced-file", "names smb.conf as not UNOS's"),
@@ -3839,7 +3870,13 @@ def test_the_volumes_check_takes_either_answer_to_a_quota(nas):
     nas = FakeNas()
     nas.quotas = True
     status, output = run_check("volumes", nas)
-    assert status == 0 and "made with a limit of 1 GiB" in output, output
+    assert status == 0 and "made with a limit of 1 GiB on its quota group, listed with its use against it" in output, output
+    # storage.volume-quota-usage: a list without the use against the quota fails the step.
+    nas = FakeNas()
+    nas.quotas = True
+    nas.bugs.add("quota-use-missing")
+    status, output = run_check("volumes", nas)
+    assert status == 1 and "the list does not show its use against the quota" in output, output
 
 
 def test_the_volumes_check_restores_a_snapshot_and_deletes_the_copy_and_then_the_volume(nas):

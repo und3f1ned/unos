@@ -1,10 +1,12 @@
 import { writable } from 'svelte/store';
-import { getToken, handleUnauthorized } from '$lib/api/client';
+import { getToken, handleSetupRequired, handleUnauthorized } from '$lib/api/client';
 import { problems, type Problem } from '$lib/stores/problems';
 import { scrubs, type ScrubUpdate } from '$lib/stores/scrubs';
 import { balances, type BalanceUpdate } from '$lib/stores/balances';
 import { repairJob } from '$lib/stores/repair';
+import { appInstalls } from '$lib/stores/appInstalls';
 import type { RepairResult } from '$lib/api/shares';
+import type { AppInstallJob } from '$lib/api/apps';
 
 // The parts of the stats message of /ws/v1/events (supervisor/src/websocket/events.py)
 export interface CpuStats {
@@ -190,9 +192,10 @@ export function connectWebSocket() {
       wsConnected.set(true);
       // A new socket, maybe to a supervisor that restarted: the scrubs the last one sent need not
       // run any more, and this one sends those that its supervisor saw running (ADR-0367); the
-      // balances likewise (ADR-0379).
+      // balances likewise (ADR-0379), and the installs of apps (ADR-0384).
       scrubs.set([]);
       balances.set([]);
+      appInstalls.set([]);
     } else if (message.type === 'stats' && message.data) {
       if (!authenticatedAt) authenticatedAt = Date.now();
       wsConnected.set(true);
@@ -210,6 +213,9 @@ export function connectWebSocket() {
       // Administrators only, right after auth_ok and on each change: the running or last repair of
       // a share's permissions, null when none has run since the supervisor started (ADR-0363).
       repairJob.set((message.data ?? null) as RepairResult | null);
+    } else if (message.type === 'app_installs' && Array.isArray(message.data)) {
+      // Administrators only: the running install of an app and the last of each app (ADR-0384).
+      appInstalls.set(message.data as AppInstallJob[]);
     }
   };
 
@@ -227,6 +233,9 @@ export function connectWebSocket() {
     }
     if (event.code === WS_CLOSE_FORBIDDEN) {
       wsForbidden.set(true);
+      // The events socket is forbidden to an account only once its grace period to set up
+      // two-factor authentication has ended: the layout loads the account again and leads to the setup.
+      handleSetupRequired();
       return;
     }
     if (authenticatedAt && Date.now() - authenticatedAt >= STABLE_CONNECTION_MS) {
@@ -247,6 +256,7 @@ export function disconnectWebSocket() {
   scrubs.set([]);
   balances.set([]);
   repairJob.set(null);
+  appInstalls.set([]);
 }
 
 export function formatBytes(bytes: number): string {

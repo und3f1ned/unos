@@ -88,6 +88,30 @@ export function handleUnauthorized(rejectedToken: string | null): void {
   }
 }
 
+// The server's answer (403) to every request of an account that can only set up two-factor
+// authentication, once its grace period is over (ADR-0386; TWO_FACTOR_SETUP_REQUIRED of
+// supervisor/src/auth/requirement.py, which supervisor/tests/test_two_factor_requirement.py
+// compares with this text). Server messages stay English (ADR-0287).
+export const TWO_FACTOR_SETUP_REQUIRED = 'Two-factor authentication is required: set it up to continue';
+
+let setupRequiredHandler: (() => void) | null = null;
+
+/**
+ * Register what happens when the server answers that the account can only set up two-factor
+ * authentication: the root layout reloads the account and leads to the setup page.
+ */
+export function setSetupRequiredHandler(handler: (() => void) | null): void {
+  setupRequiredHandler = handler;
+}
+
+/**
+ * The server refused the account because it can only set up two-factor authentication: a 403 with
+ * TWO_FACTOR_SETUP_REQUIRED, or the events socket closed with 4403, which it sends for nothing else.
+ */
+export function handleSetupRequired(): void {
+  setupRequiredHandler?.();
+}
+
 // These endpoints answer 401 for wrong credentials, not for an expired session.
 const CREDENTIAL_ENDPOINTS = ['/auth/login'];
 
@@ -135,7 +159,11 @@ export async function apiFetch(path: string, init: RequestInit = {}): Promise<Re
     if (response.status === 401 && !CREDENTIAL_ENDPOINTS.includes(path.split('?')[0])) {
       handleUnauthorized(token);
     }
-    throw new ApiError(response.status, errorDetail(response.status, payload));
+    const detail = errorDetail(response.status, payload);
+    if (response.status === 403 && detail === TWO_FACTOR_SETUP_REQUIRED && getToken() === token) {
+      handleSetupRequired();
+    }
+    throw new ApiError(response.status, detail);
   }
 
   return response;

@@ -33,7 +33,6 @@ from .test_apps import (
     DOCKER_MASKED_PATHS,
     DOCKER_ROOT,
     GIB,
-    INSTALL,
     INSTALLED,
     NPU,
     RESTART,
@@ -44,6 +43,7 @@ from .test_apps import (
     _fd_path,
     _rk3588,
     _tree,
+    install,
 )
 
 # The fixtures of test_apps: the API as an administrator, the pools, the host of the SoC and port
@@ -123,6 +123,9 @@ PHOTOS = AppTemplate(
         ),
     ],
 )
+# How long the install waits for Docker to connect, and then for each line of a pull: a pull that
+# sends nothing for 10 minutes has stalled (ADR-0384).
+PULL_TIMEOUT = (60, 600)
 # The app's containers in their start order, and its network.
 NAMES = ["photos-database", "photos-cache", "photos-machine-learning", "photos"]
 NETWORK = "unos-app-photos"
@@ -187,7 +190,7 @@ def _created(docker: StackDocker, name: str) -> Call:
 
 def _installed(api, docker: StackDocker) -> None:
     """Photos installed and running; the calls of its install forgotten."""
-    response = api.post(INSTALL, json=PHOTOS_INSTALL)
+    response = install(api, PHOTOS_INSTALL)
     assert response.status_code == 200, response.text
     docker.calls.clear()
 
@@ -207,7 +210,7 @@ def _icon(app_id: str) -> str:
 
 class TestInstall:
     def test_the_network_is_made_then_each_container_is_created_and_started_in_order(self, api, pools, docker):
-        response = api.post(INSTALL, json=PHOTOS_INSTALL)
+        response = install(api, PHOTOS_INSTALL)
 
         assert response.status_code == 200, response.text
         assert docker.called("networks.create", "api.create_container", "container.start") == [
@@ -223,7 +226,7 @@ class TestInstall:
         assert docker.called("containers.create") == []
 
     def test_each_container_gets_its_labels_alias_mounts_and_settings(self, api, pools, docker):
-        response = api.post(INSTALL, json=PHOTOS_INSTALL)
+        response = install(api, PHOTOS_INSTALL)
 
         assert response.status_code == 200, response.text
         apps = pools.alpha / "apps/photos"
@@ -295,7 +298,7 @@ class TestInstall:
     def test_on_an_rk3588_the_machine_learning_gets_the_npu_and_its_image(self, api, pools, docker, soc):
         _rk3588(soc)
 
-        response = api.post(INSTALL, json=PHOTOS_INSTALL)
+        response = install(api, PHOTOS_INSTALL)
 
         assert response.status_code == 200, response.text
         learning = _created(docker, "photos-machine-learning")
@@ -307,23 +310,24 @@ class TestInstall:
         assert config["NetworkMode"] == NETWORK
         assert learning.kwargs["networking_config"] == {"EndpointsConfig": {NETWORK: {"Aliases": ["machine-learning"]}}}
         # Its own image was never pulled.
-        assert ("images.pull", f"example/photos-ml@{_digest(4)}") not in docker.called("images.pull")
+        assert ("api.pull", f"example/photos-ml@{_digest(4)}") not in docker.called("api.pull")
         companions = {c["name"]: c for c in response.json()["companions"]}
         assert companions["machine-learning"]["devices"] == ["/dev/dri"]
         assert companions["machine-learning"]["image"] == f"example/photos-ml@{_digest(5)}"
         assert response.json()["devices"] == []
 
     def test_the_images_are_pulled_by_digest_and_tagged(self, api, pools, docker):
-        response = api.post(INSTALL, json=PHOTOS_INSTALL)
+        response = install(api, PHOTOS_INSTALL)
 
         assert response.status_code == 200, response.text
         refs = [(DATABASE, "example/photos-db", "14", 2), (CACHE, "example/valkey", "9", 3),
                 (LEARNING, "example/photos-ml", "1.0", 4), (SERVER, "example/photos-server", "1.0", 1)]
-        assert [(c.name, c.subject, c.args, c.kwargs) for c in docker.calls if c.name in ("images.pull", "api.tag")] == [
+        assert [(c.name, c.subject, c.args, c.kwargs) for c in docker.calls if c.name in ("api.pull", "api.tag")] == [
             item
             for _, name, tag, n in refs
             for item in (
-                ("images.pull", f"{name}@{_digest(n)}", (name,), {"tag": _digest(n)}),
+                # Docker's pull stream, read line by line for the job's progress (ADR-0384).
+                ("api.pull", f"{name}@{_digest(n)}", (name,), {"tag": _digest(n), "timeout": PULL_TIMEOUT}),
                 ("api.tag", f"{name}@{_digest(n)}", (name,), {"tag": tag}),
             )
         ]
@@ -331,17 +335,17 @@ class TestInstall:
     def test_an_image_that_docker_has_is_not_pulled(self, api, pools, docker):
         docker.pulled(DATABASE)
 
-        response = api.post(INSTALL, json=PHOTOS_INSTALL)
+        response = install(api, PHOTOS_INSTALL)
 
         assert response.status_code == 200, response.text
-        assert ("images.pull", f"example/photos-db@{_digest(2)}") not in docker.called("images.pull")
-        assert len(docker.called("images.pull")) == 3
+        assert ("api.pull", f"example/photos-db@{_digest(2)}") not in docker.called("api.pull")
+        assert len(docker.called("api.pull")) == 3
 
     def test_a_tag_that_fails_only_logs_a_warning(self, api, pools, docker, caplog):
         docker.fail("api.tag", None, APIError("500 Server Error", explanation="tag refused"))
 
         with caplog.at_level("WARNING", logger="src.apps.router"):
-            response = api.post(INSTALL, json=PHOTOS_INSTALL)
+            response = install(api, PHOTOS_INSTALL)
 
         assert response.status_code == 200, response.text
         warnings = [r.getMessage() for r in caplog.records if r.name == "src.apps.router"]
@@ -353,7 +357,7 @@ class TestInstall:
     ):
         docker.script("photos-database", STARTING, STARTING, HEALTHY)
 
-        response = api.post(INSTALL, json=PHOTOS_INSTALL)
+        response = install(api, PHOTOS_INSTALL)
 
         assert response.status_code == 200, response.text
         calls = docker.called("container.start", "container.reload")
@@ -372,7 +376,7 @@ class TestInstall:
         assert clock.slept == [2, 2, 2]
 
     def test_the_answer_names_every_container_and_tags_each_volume(self, api, pools, docker):
-        response = api.post(INSTALL, json=PHOTOS_INSTALL)
+        response = install(api, PHOTOS_INSTALL)
 
         assert response.status_code == 200, response.text
         apps = pools.alpha / "apps/photos"
@@ -414,7 +418,7 @@ class TestInstall:
             assert (apps / folder).is_dir(), folder
 
     def test_the_audit_entry_names_the_containers_and_the_password_file(self, api, pools, docker):
-        response = api.post(INSTALL, json=PHOTOS_INSTALL)
+        response = install(api, PHOTOS_INSTALL)
 
         assert response.status_code == 200, response.text
         assert _audit() == [{
@@ -428,13 +432,13 @@ class TestInstall:
     def test_an_app_of_one_container_takes_no_network(self, api, pools, docker, soc):
         docker.publish("amir20/dozzle:latest")
 
-        response = api.post(INSTALL, json={"template_id": "dozzle"})
+        response = install(api, {"template_id": "dozzle"})
 
         assert response.status_code == 200, response.text
-        assert docker.called("containers.list", "networks.list", "networks.create", "images.pull",
+        assert docker.called("containers.list", "networks.list", "networks.create", "api.pull",
                              "containers.create", "container.start") == [
             ("containers.list", None),
-            ("images.pull", "amir20/dozzle:latest"),
+            ("api.pull", "amir20/dozzle:latest"),
             ("containers.create", "dozzle"),
             ("container.start", "dozzle"),
         ]
@@ -461,7 +465,7 @@ class TestInstall:
         monkeypatch.setattr(catalog_module, "APP_CATALOG", catalog)
         monkeypatch.setattr(apps_router, "APP_CATALOG", catalog)
 
-        response = api.post(INSTALL, json={"template_id": "alone"})
+        response = install(api, {"template_id": "alone"})
 
         assert response.status_code == 200, response.text
         created = _created(docker, "alone")
@@ -497,9 +501,9 @@ def _left_nothing(pools, docker: StackDocker) -> None:
 class TestRollback:
     def test_a_pull_that_fails_creates_nothing(self, api, pools, docker):
         error = APIError("500 Server Error", explanation="pull access denied")
-        docker.fail("images.pull", f"example/valkey@{_digest(3)}", error)
+        docker.fail("api.pull", f"example/valkey@{_digest(3)}", error)
 
-        response = api.post(INSTALL, json=PHOTOS_INSTALL)
+        response = install(api, PHOTOS_INSTALL)
 
         assert (response.status_code, response.json()) == (500, {"detail": f"Failed to pull image {CACHE}: {error}"})
         assert docker.called("networks.create", "api.create_container") == []
@@ -510,7 +514,7 @@ class TestRollback:
     def test_a_create_that_fails_removes_what_the_install_made(self, api, pools, docker, failing):
         docker.fail("api.create_container", failing, APIError("500 Server Error", explanation="no space left on device"))
 
-        response = api.post(INSTALL, json=PHOTOS_INSTALL)
+        response = install(api, PHOTOS_INSTALL)
 
         assert response.status_code == 500
         assert response.json()["detail"] == (
@@ -527,7 +531,7 @@ class TestRollback:
     def test_a_network_that_cannot_be_made_creates_nothing(self, api, pools, docker):
         docker.fail("networks.create", NETWORK, APIError("500 Server Error", explanation="no address pool left"))
 
-        response = api.post(INSTALL, json=PHOTOS_INSTALL)
+        response = install(api, PHOTOS_INSTALL)
 
         assert response.status_code == 500
         assert response.json()["detail"].startswith(f"Failed to create the network {NETWORK}: ")
@@ -537,7 +541,7 @@ class TestRollback:
     def test_a_start_that_fails_removes_every_container(self, api, pools, docker):
         docker.fail("container.start", "photos-cache", APIError("500 Server Error", explanation="port is already allocated"))
 
-        response = api.post(INSTALL, json=PHOTOS_INSTALL)
+        response = install(api, PHOTOS_INSTALL)
 
         assert response.status_code == 500
         assert response.json()["detail"] == (
@@ -559,7 +563,7 @@ class TestRollback:
     ):
         docker.script("photos-database", *states)
 
-        response = api.post(INSTALL, json=PHOTOS_INSTALL)
+        response = install(api, PHOTOS_INSTALL)
 
         # Its data folder was empty before: the database may have left it half set up, which
         # the next install would take for a database (its password file is kept).
@@ -589,7 +593,7 @@ class TestRollback:
         (password.parent / "data/PG_VERSION").write_text("14\n")
         docker.script("photos-database", {"Status": "exited", "Running": False, "ExitCode": 1})
 
-        response = api.post(INSTALL, json=PHOTOS_INSTALL)
+        response = install(api, PHOTOS_INSTALL)
 
         assert (response.status_code, response.json()) == (500, {
             "detail": "photos-database stopped (exit code 1); its containers were removed and its data folders kept"
@@ -603,7 +607,7 @@ class TestRollback:
         docker.script("photos-database", STARTING, HEALTHY)
         docker.fail("container.start", "photos-machine-learning", APIError("500 Server Error", explanation="no memory"))
 
-        response = api.post(INSTALL, json=PHOTOS_INSTALL)
+        response = install(api, PHOTOS_INSTALL)
 
         assert (response.status_code, response.json()) == (500, {
             "detail": 'Failed to start container photos-machine-learning: 500 Server Error ("no memory"); its '
@@ -631,7 +635,7 @@ class TestRollback:
         docker.fail("container.stop", "photos-database", APIError("500 Server Error", explanation="stop refused"))
 
         with caplog.at_level("WARNING", logger="src.apps.router"):
-            response = api.post(INSTALL, json=PHOTOS_INSTALL)
+            response = install(api, PHOTOS_INSTALL)
 
         assert response.status_code == 500
         assert response.json()["detail"].endswith("; its containers were removed and its data folders kept")
@@ -645,7 +649,7 @@ class TestRollback:
         docker.fail("container.start", "photos-database", APIError("500 Server Error", explanation="no memory"))
         docker.fail("container.remove", "photos-cache", APIError("500 Server Error", explanation="device busy"))
 
-        response = api.post(INSTALL, json=PHOTOS_INSTALL)
+        response = install(api, PHOTOS_INSTALL)
 
         reason = 'Failed to start container photos-database: 500 Server Error ("no memory")'
         assert (response.status_code, response.json()) == (500, {
@@ -676,7 +680,7 @@ class TestPassword:
 
         monkeypatch.setattr(os, "link", link)
 
-        response = api.post(INSTALL, json=PHOTOS_INSTALL)
+        response = install(api, PHOTOS_INSTALL)
 
         assert response.status_code == 200, response.text
         password = _password(pools)
@@ -699,7 +703,7 @@ class TestPassword:
 
         monkeypatch.setattr(os, "fsync", fsync)
 
-        response = api.post(INSTALL, json=PHOTOS_INSTALL)
+        response = install(api, PHOTOS_INSTALL)
 
         assert response.status_code == 200, response.text
         calls = docker.called("os.fsync", "api.create_container")
@@ -717,7 +721,7 @@ class TestPassword:
         (password.parent / "data").mkdir()
         (password.parent / "data/PG_VERSION").write_text("14\n")
 
-        response = api.post(INSTALL, json=PHOTOS_INSTALL)
+        response = install(api, PHOTOS_INSTALL)
 
         assert response.status_code == 200, response.text
         assert password.read_text() == "f" * 64
@@ -726,7 +730,7 @@ class TestPassword:
     def test_one_that_is_missing_beside_an_empty_data_folder_is_made(self, api, pools, docker):
         (pools.alpha / "apps/photos/database/data").mkdir(parents=True)
 
-        response = api.post(INSTALL, json=PHOTOS_INSTALL)
+        response = install(api, PHOTOS_INSTALL)
 
         assert response.status_code == 200, response.text
         assert _password(pools).is_file()
@@ -736,7 +740,7 @@ class TestPassword:
         data.mkdir(parents=True)
         (data / "PG_VERSION").write_text("14\n")
 
-        response = api.post(INSTALL, json=PHOTOS_INSTALL)
+        response = install(api, PHOTOS_INSTALL)
 
         assert (response.status_code, response.json()) == (409, {
             "detail": f"{data} holds the data of Photos, but its password file {_password(pools)} is missing: "
@@ -765,7 +769,7 @@ class TestPassword:
             password.write_text("a" * 257)
         before = _tree(pools.root)
 
-        response = api.post(INSTALL, json=PHOTOS_INSTALL)
+        response = install(api, PHOTOS_INSTALL)
 
         data = password.parent / "data"
         assert (response.status_code, response.json()) == (409, {
@@ -778,8 +782,8 @@ class TestPassword:
         assert _tree(pools.root) == before
 
     def test_it_cannot_be_moved(self, api, pools, docker):
-        response = api.post(
-            INSTALL, json={**PHOTOS_INSTALL, "volume_overrides": {"/run/secrets/db-password": str(pools.alpha / "pw")}}
+        response = install(
+            api, {**PHOTOS_INSTALL, "volume_overrides": {"/run/secrets/db-password": str(pools.alpha / "pw")}}
         )
 
         assert (response.status_code, response.json()) == (400, {
@@ -791,7 +795,7 @@ class TestPassword:
     def test_its_value_is_nowhere_but_in_the_file(self, api, pools, docker, soc, caplog):
         _rk3588(soc)
         with caplog.at_level(logging.DEBUG):
-            installed = api.post(INSTALL, json=PHOTOS_INSTALL)
+            installed = install(api, PHOTOS_INSTALL)
             attrs = repr([c.attrs for c in docker.containers_.values()])
             listed = api.get(INSTALLED)
             stopped = api.post(STOP.format("photos"))
@@ -837,7 +841,7 @@ class TestChecksBeforeThePull:
     def test_an_installed_app_is_not_installed_again(self, api, pools, docker):
         _installed(api, docker)
 
-        response = api.post(INSTALL, json=PHOTOS_INSTALL)
+        response = install(api, PHOTOS_INSTALL)
 
         assert (response.status_code, response.json()) == (409, {"detail": "Photos is already installed"})
         assert docker.called() == [("containers.list", None)]
@@ -847,42 +851,42 @@ class TestChecksBeforeThePull:
         docker.container("photos-cache").remove(force=True)
         docker.calls.clear()
 
-        response = api.post(INSTALL, json=PHOTOS_INSTALL)
+        response = install(api, PHOTOS_INSTALL)
 
         assert (response.status_code, response.json()) == (409, {
             "detail": "Photos is already installed, incomplete (missing: photos-cache): uninstall it first "
             "(its data folders are kept)"
         })
-        assert docker.called("images.pull", "api.create_container") == []
+        assert docker.called("api.pull", "api.create_container") == []
 
     def test_a_container_with_one_of_its_names_is_refused(self, api, pools, docker):
         docker.pulled("example/other:1")
         docker.containers.create("example/other:1", name="photos-cache")
         docker.calls.clear()
 
-        response = api.post(INSTALL, json=PHOTOS_INSTALL)
+        response = install(api, PHOTOS_INSTALL)
 
         assert (response.status_code, response.json()) == (
             409, {"detail": "A container named 'photos-cache' already exists"}
         )
-        assert docker.called("images.pull") == []
+        assert docker.called("api.pull") == []
 
     @pytest.mark.parametrize("labels", [{}, {"unos.app": "other"}], ids=["unlabelled", "another-apps"])
     def test_a_network_of_its_name_that_is_not_its_own_is_refused(self, api, pools, docker, labels):
         docker.network(NETWORK, labels=labels)
 
-        response = api.post(INSTALL, json=PHOTOS_INSTALL)
+        response = install(api, PHOTOS_INSTALL)
 
         assert (response.status_code, response.json()) == (
             409, {"detail": f"A Docker network named '{NETWORK}' already exists"}
         )
-        assert docker.called("images.pull") == []
+        assert docker.called("api.pull") == []
         assert not (pools.alpha / "apps").exists()
 
     def test_a_network_whose_name_merely_begins_like_its_own_counts_for_nothing(self, api, pools, docker):
         docker.network(f"{NETWORK}-old")
 
-        response = api.post(INSTALL, json=PHOTOS_INSTALL)
+        response = install(api, PHOTOS_INSTALL)
 
         assert response.status_code == 200, response.text
         assert docker.called("networks.create") == [("networks.create", NETWORK)]
@@ -890,7 +894,7 @@ class TestChecksBeforeThePull:
     def test_its_own_network_left_from_before_is_used_again(self, api, pools, docker):
         docker.network(NETWORK, labels={"unos.app": "photos"})
 
-        response = api.post(INSTALL, json=PHOTOS_INSTALL)
+        response = install(api, PHOTOS_INSTALL)
 
         assert response.status_code == 200, response.text
         assert docker.called("networks.create") == []
@@ -901,7 +905,7 @@ class TestChecksBeforeThePull:
         docker.pulled("example/other:1")
         docker.containers.create("example/other:1", name="intruder", network_mode=NETWORK).start()
 
-        response = api.post(INSTALL, json=PHOTOS_INSTALL)
+        response = install(api, PHOTOS_INSTALL)
 
         assert (response.status_code, response.json()) == (409, {
             "detail": f"The Docker network '{NETWORK}' of Photos is used by intruder: remove them first"
@@ -911,41 +915,41 @@ class TestChecksBeforeThePull:
         docker.pulled("example/other:1")
         docker.containers.create("example/other:1", name="other", ports={"2283/tcp": 2283})
 
-        response = api.post(INSTALL, json=PHOTOS_INSTALL)
+        response = install(api, PHOTOS_INSTALL)
 
         assert (response.status_code, response.json()) == (409, {
             "detail": "Port 2283/tcp is already used by the container other (created): "
             "choose another host port for 2283/tcp"
         })
-        assert docker.called("images.pull") == []
+        assert docker.called("api.pull") == []
 
     @pytest.mark.parametrize("call", ["containers.list", "networks.list"])
     def test_a_docker_that_does_not_answer_answers_503(self, api, pools, docker, call):
         error = requests.exceptions.ConnectionError("('Connection aborted.', ConnectionResetError(104, 'reset'))")
         docker.fail(call, None, error)
 
-        response = api.post(INSTALL, json=PHOTOS_INSTALL)
+        response = install(api, PHOTOS_INSTALL)
 
         assert (response.status_code, response.json()) == (503, {"detail": f"Docker is not available: {error}"})
-        assert docker.called("images.pull") == []
+        assert docker.called("api.pull") == []
 
     def test_another_change_of_the_app_under_way_is_refused(self, api, pools, docker):
         with stacks_module.app_lock("photos", "Photos"):
-            response = api.post(INSTALL, json=PHOTOS_INSTALL)
+            response = install(api, PHOTOS_INSTALL)
 
         assert (response.status_code, response.json()) == (
             409, {"detail": "Another change of Photos is under way; try again when it has finished"}
         )
         assert docker.calls == []
         # The lock is free again.
-        assert api.post(INSTALL, json=PHOTOS_INSTALL).status_code == 200
+        assert install(api, PHOTOS_INSTALL).status_code == 200
 
     def test_an_image_volume_that_is_neither_on_the_pool_nor_in_ram_is_refused_before_any_write(
         self, api, pools, docker
     ):
         docker.publish(LEARNING, volumes=("/cache", "/root/.config"))
 
-        response = api.post(INSTALL, json=PHOTOS_INSTALL)
+        response = install(api, PHOTOS_INSTALL)
 
         assert (response.status_code, response.json()) == (500, {
             "detail": f"The image {LEARNING} declares the volume /root/.config, which the template of Photos "
@@ -958,13 +962,13 @@ class TestChecksBeforeThePull:
         # The machine learning keeps /tmp in RAM (a tmpfs) and binds only /cache.
         docker.publish(LEARNING, volumes=("/tmp", "/tmp/models"))
 
-        response = api.post(INSTALL, json=PHOTOS_INSTALL)
+        response = install(api, PHOTOS_INSTALL)
 
         assert response.status_code == 200, response.text
         assert _created(docker, "photos-machine-learning").kwargs["host_config"]["Tmpfs"] == {"/tmp": "size=64m"}
 
     def test_a_name_in_the_request_is_refused(self, api, pools, docker):
-        response = api.post(INSTALL, json={**PHOTOS_INSTALL, "name": "photos2"})
+        response = install(api, {**PHOTOS_INSTALL, "name": "photos2"})
 
         assert response.status_code == 422
         assert docker.calls == []
@@ -975,13 +979,13 @@ class TestChecksBeforeThePull:
          "DB_HOSTNAME and DB_PASSWORD_FILE are set by UNOS and cannot be changed"),
     ])
     def test_wiring_that_unos_sets_cannot_be_changed(self, api, pools, docker, overrides, detail):
-        response = api.post(INSTALL, json={**PHOTOS_INSTALL, "env_overrides": overrides})
+        response = install(api, {**PHOTOS_INSTALL, "env_overrides": overrides})
 
         assert (response.status_code, response.json()) == (400, {"detail": detail})
         assert docker.calls == []
 
     def test_a_variable_that_unos_does_not_set_can_be_changed(self, api, pools, docker):
-        response = api.post(INSTALL, json={**PHOTOS_INSTALL, "env_overrides": {"LOG_LEVEL": "debug"}})
+        response = install(api, {**PHOTOS_INSTALL, "env_overrides": {"LOG_LEVEL": "debug"}})
 
         assert response.status_code == 200, response.text
         assert _created(docker, "photos").kwargs["environment"]["LOG_LEVEL"] == "debug"
@@ -991,7 +995,7 @@ class TestChecksBeforeThePull:
         }
 
     def test_an_app_with_companions_does_not_run_in_the_group(self, api, pools, docker):
-        response = api.post(INSTALL, json={**PHOTOS_INSTALL, "run_in_unos_smb": True})
+        response = install(api, {**PHOTOS_INSTALL, "run_in_unos_smb": True})
 
         assert (response.status_code, response.json()) == (400, {
             "detail": "Photos cannot run in the group unos-smb: it runs in several containers, and the group "
@@ -1000,8 +1004,8 @@ class TestChecksBeforeThePull:
         assert PHOTOS.can_run_in_unos_smb is False
 
     def test_a_folder_of_a_companion_inside_a_writable_folder_of_another_is_refused(self, api, pools, docker):
-        response = api.post(
-            INSTALL, json={**PHOTOS_INSTALL, "volume_overrides": {"/data": str(pools.alpha / "apps/photos")}}
+        response = install(
+            api, {**PHOTOS_INSTALL, "volume_overrides": {"/data": str(pools.alpha / "apps/photos")}}
         )
 
         assert response.status_code == 400
@@ -1414,7 +1418,7 @@ class TestImmich:
         _rk3588(soc)
         c = catalog_module
 
-        response = api.post(INSTALL, json={"template_id": "immich", "pool": "alpha"})
+        response = install(api, {"template_id": "immich", "pool": "alpha"})
 
         assert response.status_code == 200, response.text
         assert docker.called("networks.create", "api.create_container", "container.start") == [
@@ -1429,7 +1433,7 @@ class TestImmich:
             "immich-machine-learning": (_by_digest(c.IMMICH_ML_RKNN),),
             "immich": (_by_digest(c.IMMICH_SERVER),),
         }
-        assert [subject for _, subject in docker.called("images.pull")] == [
+        assert [subject for _, subject in docker.called("api.pull")] == [
             _by_digest(pin) for pin in (c.IMMICH_POSTGRES, c.VALKEY, c.IMMICH_ML_RKNN, c.IMMICH_SERVER)
         ]
         configs = _host_configs(docker)
@@ -1496,11 +1500,11 @@ class TestImmich:
         )
 
     def test_off_the_rk3588_its_machine_learning_runs_on_the_cpu(self, api, pools, docker, immich_images, soc):
-        response = api.post(INSTALL, json={"template_id": "immich"})
+        response = install(api, {"template_id": "immich"})
 
         assert response.status_code == 200, response.text
         assert _created(docker, "immich-machine-learning").args == (_by_digest(catalog_module.IMMICH_ML),)
-        assert ("images.pull", _by_digest(catalog_module.IMMICH_ML_RKNN)) not in docker.called("images.pull")
+        assert ("api.pull", _by_digest(catalog_module.IMMICH_ML_RKNN)) not in docker.called("api.pull")
         for name, config in _host_configs(docker).items():
             assert not {"Devices", "MaskedPaths", "SecurityOpt", "Privileged", "CapAdd"} & set(config), name
 
@@ -1509,7 +1513,7 @@ class TestImmich:
         need = sum(pin.disk_bytes for pin in (c.IMMICH_POSTGRES, c.VALKEY, c.IMMICH_ML, c.IMMICH_SERVER))
         soc.free = {DOCKER_ROOT: 64 * GIB, CONTAINERD_ROOT: need + 2 * GIB - 1}
 
-        response = api.post(INSTALL, json={"template_id": "immich"})
+        response = install(api, {"template_id": "immich"})
 
         assert (response.status_code, response.json()) == (409, {
             "detail": "Immich's images need about 3.4 GiB on the system disk, which has 5.4 GiB free; at least "
@@ -1520,12 +1524,12 @@ class TestImmich:
         assert docker.called("images.get") == [("images.get", _by_digest(pin)) for pin in (
             c.IMMICH_POSTGRES, c.VALKEY, c.IMMICH_ML, c.IMMICH_SERVER,
         )]
-        assert docker.called("images.pull", "networks.create", "api.create_container") == []
+        assert docker.called("api.pull", "networks.create", "api.create_container") == []
         assert not (pools.alpha / "apps").exists()
 
         soc.free[CONTAINERD_ROOT] += 1
 
-        assert api.post(INSTALL, json={"template_id": "immich"}).status_code == 200
+        assert install(api, {"template_id": "immich"}).status_code == 200
 
     def test_the_images_that_docker_has_are_not_counted(self, api, pools, docker, immich_images, soc):
         c = catalog_module
@@ -1534,10 +1538,10 @@ class TestImmich:
         # Just enough for the two it lacks, in the whole KiB that df counts.
         soc.free = {DOCKER_ROOT: c.VALKEY.disk_bytes + c.IMMICH_ML.disk_bytes + 2 * GIB + 1023}
 
-        response = api.post(INSTALL, json={"template_id": "immich"})
+        response = install(api, {"template_id": "immich"})
 
         assert response.status_code == 200, response.text
-        assert [subject for _, subject in docker.called("images.pull")] == [
+        assert [subject for _, subject in docker.called("api.pull")] == [
             _by_digest(c.VALKEY), _by_digest(c.IMMICH_ML),
         ]
 
@@ -1550,7 +1554,7 @@ class TestImmich:
         need = sum(pin.disk_bytes for pin in (c.IMMICH_POSTGRES, c.VALKEY, c.IMMICH_ML_RKNN, c.IMMICH_SERVER))
         soc.free = {DOCKER_ROOT: need + 2 * GIB + 1023}
 
-        response = api.post(INSTALL, json={"template_id": "immich"})
+        response = install(api, {"template_id": "immich"})
 
         assert response.status_code == 200, response.text
 
@@ -1587,7 +1591,7 @@ def test_the_e2e_fakes_refuse_a_taken_port_with_the_servers_text(api, pools, doc
     docker.pulled("example/other:1")
     docker.containers.create("example/other:1", name="e2e-photos", ports={"2283/tcp": 2283}).start()
 
-    response = api.post(INSTALL, json={"template_id": "immich"})
+    response = install(api, {"template_id": "immich"})
 
     assert response.status_code == 409, response.text
     assert f"'{response.json()['detail']}'" in spec

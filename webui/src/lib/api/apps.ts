@@ -311,6 +311,59 @@ export interface AppInstallResponse {
   companions: CompanionContainer[];
 }
 
+/** The pull of one image of an install job, as Docker's pull stream reports it (ADR-0384). */
+export interface ImagePull {
+  /** The reference as the install pulls it: name:tag@sha256:... for a pinned image. */
+  image: string;
+  /** present: a pinned image that Docker has, not pulled. */
+  state: "waiting" | "present" | "pulling" | "pulled" | "failed";
+  /** The layers that Docker named so far, and those it has. */
+  layers: number;
+  layers_done: number;
+  /** The bytes of the layers whose download size Docker reported so far, and of them downloaded. */
+  bytes_total: number;
+  bytes_done: number;
+}
+
+/** One container of an install job, in the start order (ADR-0384). */
+export interface ContainerStart {
+  /** Docker's name. */
+  name: string;
+  /** The companion's name in the app; null for the main container. */
+  companion: string | null;
+  /** failed: its create, start or readiness failed; removed: by the clean-up of a failed install. */
+  state: "waiting" | "created" | "starting" | "running" | "failed" | "removed";
+}
+
+/**
+ * An app's install, which runs in the background (ADR-0384): POST /apps/install answers it at once,
+ * running, and /ws/v1/events sends administrators each new state and its end (`appInstalls` of
+ * $lib/stores/appInstalls). Kept in the supervisor's memory: the running one and the last of each app.
+ */
+export interface AppInstallJob {
+  id: string;
+  template_id: string;
+  /** The app's name in the catalog. */
+  name: string;
+  /** cancelled: an administrator cancelled it, and what it made was removed. */
+  state: "running" | "succeeded" | "failed" | "cancelled";
+  /**
+   * The step reached: the checks before any pull, the pulls, the creates, the starts, and the
+   * removal of what a failed or cancelled install made.
+   */
+  step: "checking" | "pulling" | "creating" | "starting" | "cleaning";
+  started_at: string;
+  finished_at: string | null;
+  /** Each image once, listed once the checks passed. */
+  images: ImagePull[];
+  containers: ContainerStart[];
+  /** What the install made, once it succeeded. */
+  result: AppInstallResponse | null;
+  /** Why it failed or what its cancel did (the server's message), and the HTTP status of a failure. */
+  error: string | null;
+  error_status: number | null;
+}
+
 export async function getAppCatalog(category?: string, query?: string): Promise<AppTemplate[]> {
   const params = new URLSearchParams();
   if (category) params.append("category", category);
@@ -332,8 +385,27 @@ export async function getInstalledApps(): Promise<InstalledApp[]> {
   return api.get<InstalledApp[]>("/apps/installed");
 }
 
-export async function installApp(req: AppInstallRequest): Promise<AppInstallResponse> {
-  return api.post<AppInstallResponse>("/apps/install", req);
+/** Start an install: the job, running at its checks (202); its progress comes over /ws/v1/events. */
+export async function installApp(req: AppInstallRequest): Promise<AppInstallJob> {
+  return api.post<AppInstallJob>("/apps/install", req);
+}
+
+/** An install job as the server keeps it now; ApiError 404 once it is gone (the supervisor restarted). */
+export async function getInstallJob(id: string): Promise<AppInstallJob> {
+  return api.get<AppInstallJob>(`/apps/install/jobs/${encodeURIComponent(id)}`);
+}
+
+/** Forget an ended install job (Dismiss): the App Store no longer shows it. */
+export async function dismissInstallJob(id: string): Promise<void> {
+  await api.delete(`/apps/install/jobs/${encodeURIComponent(id)}`);
+}
+
+/**
+ * Cancel the running install job: it stops at its next step, also during a pull, and what it made
+ * is removed; the events socket then sends it cancelled (ADR-0384).
+ */
+export async function cancelInstallJob(id: string): Promise<void> {
+  await api.delete(`/apps/install/jobs/${encodeURIComponent(id)}`);
 }
 
 export async function uninstallApp(containerId: string): Promise<void> {

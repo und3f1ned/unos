@@ -7,6 +7,8 @@
       "Read(./**/dev.env)",
       "Read(//**/dev.env)",
       "Read(//**/tmp/dev/backup/**)",
+      "Write(//**/tmp/stop-check/**)",
+      "Edit(//**/tmp/stop-check/**)",
       "mcp__plugin_desktop-commander_desktop-commander"
     ]
   },

@@ -1,9 +1,10 @@
 <script lang="ts">
 	import { createEventDispatcher } from 'svelte';
 	import { Edit, Trash2, Wrench } from 'lucide-svelte';
-	import type { ShareAccess, SmbShare } from '$lib/api/shares';
+	import type { ShareAccess, ShareGroupMember, SmbShare } from '$lib/api/shares';
 	import { Alert, Badge, Button } from '$lib/components/ui';
 	import { t } from '$lib/i18n';
+	import { effectiveLevel } from './access';
 	import { smbUrl, windowsAddress } from './texts';
 
 	type Setting = keyof SmbShare['not_rendered'];
@@ -35,7 +36,15 @@
 		{ label: $t('shares.level.write'), entries: writers },
 		{ label: $t('shares.card.read'), entries: readers }
 	].filter((group) => group.entries.length > 0);
-	$: someNotEffective = share.access.some((entry) => !entry.effective);
+	// Groups: each member gets the group's level, or the higher level of their own.
+	$: groupAccess = share.group_access ?? [];
+	$: someNotEffective =
+		share.access.some((entry) => !entry.effective) ||
+		groupAccess.some((entry) => entry.members.some((member) => !member.effective));
+	// Users whose own level is Read but who write through a group: the higher level counts.
+	$: raised = share.access.filter(
+		(entry) => entry.level === 'read' && effectiveLevel(entry.username, share.access, groupAccess) === 'write'
+	);
 	// The stored settings that smb.conf leaves out, with the server's reason (ADR-0380).
 	let off: SmbShare['not_rendered'] = {};
 	$: off = share.not_rendered ?? {};
@@ -44,7 +53,7 @@
 	);
 
 	/** Why an access entry does not count yet (it is not in smb.conf). */
-	function reason(entry: ShareAccess): string {
+	function reason(entry: ShareAccess | ShareGroupMember): string {
 		if (!share.served) return $t('shares.card.reason.notServed');
 		const { username } = entry;
 		switch (entry.smb_state) {
@@ -135,14 +144,14 @@
 	</div>
 
 	<div class="text-sm space-y-1">
-		{#if groups.length === 0}
+		{#if groups.length === 0 && groupAccess.length === 0}
 			<p class="text-muted">
 				{share.guest_ok ? $t('shares.card.nobodyOwn') : $t('shares.card.nobody')}
 			</p>
 		{:else}
 			<!-- "Read & write: alice, bob · Read: carol"; entries that do not count are crossed out,
 			     with the reason as hover text and as text for screen readers (not <s>: it means "deleted"). -->
-			<p>
+			{#if groups.length > 0}<p>
 				{#each groups as group, g}{#if g > 0}<span class="text-muted">{' · '}</span>{/if}<span
 						class="text-secondary">{group.label}:</span
 					>{' '}{#each group.entries as entry, i}{#if i > 0}{', '}{/if}{#if entry.effective}{entry.username}{:else}<span
@@ -151,7 +160,28 @@
 							><span class="sr-only"
 								>{` ${$t('shares.card.notActive', { reason: reason(entry) })}`}</span
 							>{/if}{/each}{/each}
-			</p>
+			</p>{/if}
+			<!-- "Group family (Read & write): bob, carol", crossed out as above. -->
+			{#each groupAccess as entry (entry.group_id)}
+				<p>
+					<span class="text-secondary"
+						>{$t('shares.card.group', {
+							group: entry.group,
+							level: entry.level === 'write' ? $t('shares.level.write') : $t('shares.card.read')
+						})}</span
+					>{' '}{#if entry.members.length === 0}<span class="text-muted"
+							>{$t('shares.card.groupEmpty')}</span
+						>{:else}{#each entry.members as member, i}{#if i > 0}{', '}{/if}{#if member.effective}{member.username}{:else}<span
+									class="line-through text-muted"
+									title={reason(member)}>{member.username}</span
+								><span class="sr-only"
+									>{` ${$t('shares.card.notActive', { reason: reason(member) })}`}</span
+								>{/if}{/each}{/if}
+				</p>
+			{/each}
+			{#each raised as entry (entry.username)}
+				<p class="text-xs text-muted">{$t('shares.card.raised', { username: entry.username })}</p>
+			{/each}
 			{#if someNotEffective}
 				<p class="text-xs text-muted">
 					{share.served ? $t('shares.card.crossedOut') : $t('shares.card.crossedOutNotServed')}

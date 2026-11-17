@@ -11,6 +11,7 @@ the Docker client is a MagicMock, and ``os.fchown`` only records its calls.
 import asyncio
 import fcntl
 import importlib
+import json
 import os
 import re
 import shutil
@@ -62,6 +63,7 @@ catalog_module = importlib.import_module("src.apps.catalog")
 preflight_module = importlib.import_module("src.apps.preflight")
 stacks_module = importlib.import_module("src.apps.stacks")
 audit_router = importlib.import_module("src.audit.router")
+install_jobs = importlib.import_module("src.apps.install_jobs")
 
 INSTALL = "/api/v1/apps/install"
 POOLS = "/api/v1/apps/pools"
@@ -121,6 +123,36 @@ def _as_user(is_admin: bool):
             app.dependency_overrides.pop(verify_token, None)
         else:
             app.dependency_overrides[verify_token] = previous
+
+
+class _Ended:
+    """The end of an install job as the answer of its request: 200 with the install's answer, or
+    the status and detail of the failure (ADR-0384)."""
+
+    def __init__(self, status_code: int, body: dict) -> None:
+        self.status_code = status_code
+        self._body = body
+        self.text = repr(body)
+
+    def json(self) -> dict:
+        return self._body
+
+
+def install(client: TestClient, body: dict):
+    """POST /apps/install and, when it starts a job (202), the job's end as an answer (_Ended):
+    the checks, pulls, creates and starts run in the job (ADR-0384). An answer other than 202,
+    such as a 400 for a request that the template refuses, is returned as it came."""
+    response = client.post(INSTALL, json=body)
+    if response.status_code != 202:
+        return response
+    job_id = response.json()["id"]
+    ended = client.get(f"{INSTALL}/jobs/{job_id}", params={"wait": 30})
+    assert ended.status_code == 200, ended.text
+    job = ended.json()
+    assert job["state"] != "running", job
+    if job["state"] == "succeeded":
+        return _Ended(200, job["result"])
+    return _Ended(job["error_status"], {"detail": job["error"]})
 
 
 @pytest.fixture
@@ -201,10 +233,30 @@ def pools(tmp_path, monkeypatch):
     )
 
 
+def pull_answer(*lines: dict) -> SimpleNamespace:
+    """What Docker answers a pull (POST /images/create, streamed): 200 and ``lines``."""
+    return SimpleNamespace(
+        status_code=200, reason="OK", iter_lines=lambda: iter([json.dumps(line).encode() for line in lines]),
+        close=lambda: None, raw=SimpleNamespace(shutdown=lambda: None),
+    )
+
+
+def pulled(docker_client) -> list[str]:
+    """The images that the install asked Docker to pull, as name:tag (or name@digest)."""
+    refs = []
+    for call in docker_client.api.post.call_args_list:
+        assert call.args[0].endswith("/images/create") and call.kwargs["stream"] is True, call
+        params = call.kwargs["params"]
+        refs.append(f"{params['fromImage']}{'@' if params['tag'].startswith('sha256:') else ':'}{params['tag']}")
+    return refs
+
+
 @pytest.fixture
 def docker_client(monkeypatch):
-    """Docker without containers; ``containers.create`` makes a running container "c0ffee"."""
+    """Docker without containers; ``containers.create`` makes a running container "c0ffee"; a pull
+    answers an empty stream."""
     client = MagicMock(name="docker")
+    client.api.post.return_value = pull_answer()
     client.containers.get.side_effect = NotFound("No such container")
     client.containers.list.return_value = []
     client.info.return_value = {"DockerRootDir": DOCKER_ROOT}
@@ -381,7 +433,7 @@ class TestPoolsEndpoint:
 
 class TestPoolSelection:
     def test_defaults_to_first_mounted_pool_by_name(self, api, pools, docker_client):
-        response = api.post(INSTALL, json={"template_id": "jellyfin"})
+        response = install(api, {"template_id": "jellyfin"})
 
         assert response.status_code == 200, response.text
         body = response.json()
@@ -408,7 +460,7 @@ class TestPoolSelection:
             assert (pools.alpha / sub).is_dir()
 
     def test_uses_requested_pool(self, api, pools, docker_client):
-        response = api.post(INSTALL, json={"template_id": "jellyfin", "pool": "beta"})
+        response = install(api, {"template_id": "jellyfin", "pool": "beta"})
 
         assert response.status_code == 200, response.text
         assert response.json()["pool"] == "beta"
@@ -423,30 +475,30 @@ class TestPoolSelection:
         pools.mounted.clear()
         before = _tree(pools.root)
 
-        response = api.post(INSTALL, json={**TRANSMISSION})
+        response = install(api, {**TRANSMISSION})
 
         assert response.status_code == 409
         assert response.json()["detail"] == (
             "No mounted storage pool — create or mount a pool first"
         )
-        docker_client.images.pull.assert_not_called()
+        docker_client.api.post.assert_not_called()
         assert _tree(pools.root) == before
 
     @pytest.mark.parametrize("pool", ["ghost", "nope", "../alpha", ""])
     def test_unknown_or_unmounted_pool_is_rejected(self, api, pools, docker_client, pool):
         before = _tree(pools.root)
 
-        response = api.post(INSTALL, json={**TRANSMISSION, "pool": pool})
+        response = install(api, {**TRANSMISSION, "pool": pool})
 
         assert response.status_code == 400
         assert "not mounted" in response.json()["detail"]
-        docker_client.images.pull.assert_not_called()
+        docker_client.api.post.assert_not_called()
         assert _tree(pools.root) == before
 
     def test_app_without_pool_data_installs_without_a_pool(self, api, pools, docker_client):
         pools.mounted.clear()
 
-        response = api.post(INSTALL, json={"template_id": "dozzle"})
+        response = install(api, {"template_id": "dozzle"})
 
         assert response.status_code == 200, response.text
         assert response.json()["pool"] is None
@@ -467,10 +519,10 @@ class TestPoolSelection:
     def test_requested_pool_is_validated_but_not_reported_without_pool_data(
         self, api, pools, docker_client
     ):
-        bad = api.post(INSTALL, json={"template_id": "dozzle", "pool": "ghost"})
+        bad = install(api, {"template_id": "dozzle", "pool": "ghost"})
         assert bad.status_code == 400
 
-        good = api.post(INSTALL, json={"template_id": "dozzle", "pool": "beta"})
+        good = install(api, {"template_id": "dozzle", "pool": "beta"})
         assert good.status_code == 200, good.text
         assert good.json()["pool"] is None
         assert "unos.app.pool" not in docker_client.containers.create.call_args.kwargs["labels"]
@@ -479,7 +531,7 @@ class TestPoolSelection:
         response = user_api.post(INSTALL, json={"template_id": "jellyfin"})
 
         assert response.status_code == 403
-        docker_client.images.pull.assert_not_called()
+        docker_client.api.post.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -652,7 +704,7 @@ class TestNoWritesOutsidePool:
         before = _tree(pools.root)
 
         # netdata mixes pool data with fixed host paths (/proc, /etc/passwd...).
-        response = api.post(INSTALL, json={"template_id": "netdata"})
+        response = install(api, {"template_id": "netdata"})
 
         assert response.status_code == 200, response.text
         assert mkdir_calls, "expected the app directories to be created"
@@ -664,7 +716,7 @@ class TestNoWritesOutsidePool:
         assert mounts["/host/etc/passwd"]["Source"] == "/etc/passwd"
 
     def test_fixed_host_paths_are_never_created(self, api, pools, docker_client, mkdir_calls):
-        response = api.post(INSTALL, json={"template_id": "portainer"})
+        response = install(api, {"template_id": "portainer"})
 
         assert response.status_code == 200, response.text
         assert mkdir_calls == [
@@ -675,10 +727,11 @@ class TestNoWritesOutsidePool:
         assert _mounts(docker_client)["/var/run/docker.sock"]["Source"] == "/var/run/docker.sock"
 
     def test_pool_unmounted_during_pull_writes_nothing(self, api, pools, docker_client):
-        docker_client.images.pull.side_effect = lambda *a, **k: pools.mounted.discard(str(pools.alpha))
+        # The pool goes while Docker's pull stream is read: an empty stream once it is gone.
+        docker_client.api.post.side_effect = lambda *a, **k: pools.mounted.discard(str(pools.alpha)) or pull_answer()
         before = _tree(pools.root)
 
-        response = api.post(INSTALL, json={**TRANSMISSION})
+        response = install(api, {**TRANSMISSION})
 
         assert response.status_code == 409
         assert "no longer mounted" in response.json()["detail"]
@@ -690,7 +743,7 @@ class TestNoWritesOutsidePool:
         config.mkdir(parents=True)
         (config / "settings.json").write_text("{}")
 
-        response = api.post(INSTALL, json={**TRANSMISSION})
+        response = install(api, {**TRANSMISSION})
 
         assert response.status_code == 200, response.text
         assert (config / "settings.json").read_text() == "{}"
@@ -720,29 +773,29 @@ class TestVolumeOverrides:
         (pools.alpha / "escape").symlink_to(pools.outside)
         before = _tree(pools.root)
 
-        response = api.post(
-            INSTALL,
-            json={**TRANSMISSION, "volume_overrides": {"/downloads": make_path(pools)}},
+        response = install(
+            api,
+            {**TRANSMISSION, "volume_overrides": {"/downloads": make_path(pools)}},
         )
 
         assert response.status_code == 400, response.text
-        docker_client.images.pull.assert_not_called()
+        docker_client.api.post.assert_not_called()
         assert _tree(pools.root) == before
 
     def test_unknown_volume_cannot_be_added(self, api, pools, docker_client):
-        response = api.post(
-            INSTALL,
-            json={**TRANSMISSION, "volume_overrides": {"/host-root": str(pools.alpha)}},
+        response = install(
+            api,
+            {**TRANSMISSION, "volume_overrides": {"/host-root": str(pools.alpha)}},
         )
 
         assert response.status_code == 400
         assert "/host-root" in response.json()["detail"]
-        docker_client.images.pull.assert_not_called()
+        docker_client.api.post.assert_not_called()
 
     def test_fixed_host_mount_cannot_be_changed(self, api, pools, docker_client):
-        response = api.post(
-            INSTALL,
-            json={
+        response = install(
+            api,
+            {
                 "template_id": "portainer",
                 "volume_overrides": {"/var/run/docker.sock": str(pools.alpha / "docker.sock")},
             },
@@ -750,14 +803,14 @@ class TestVolumeOverrides:
 
         assert response.status_code == 400
         assert "fixed host mount" in response.json()["detail"]
-        docker_client.images.pull.assert_not_called()
+        docker_client.api.post.assert_not_called()
 
     def test_path_in_selected_pool_is_created_and_normalised(self, api, pools, docker_client):
         raw = f"{pools.alpha}//torrents/./new/"
 
-        response = api.post(
-            INSTALL,
-            json={**TRANSMISSION, "volume_overrides": {"/downloads": raw}},
+        response = install(
+            api,
+            {**TRANSMISSION, "volume_overrides": {"/downloads": raw}},
         )
 
         assert response.status_code == 200, response.text
@@ -767,9 +820,9 @@ class TestVolumeOverrides:
     def test_dotdot_is_refused_even_inside_the_pool(self, api, pools, docker_client):
         before = _tree(pools.root)
 
-        response = api.post(
-            INSTALL,
-            json={
+        response = install(
+            api,
+            {
                 **TRANSMISSION,
                 "volume_overrides": {"/downloads": f"{pools.alpha}/media/../torrents"},
             },
@@ -777,7 +830,7 @@ class TestVolumeOverrides:
 
         assert response.status_code == 400
         assert "traversal" in response.json()["detail"]
-        docker_client.images.pull.assert_not_called()
+        docker_client.api.post.assert_not_called()
         assert _tree(pools.root) == before
 
     def test_link_to_another_pools_folder_is_not_resolved(self, api, pools, docker_client):
@@ -788,15 +841,15 @@ class TestVolumeOverrides:
         (pools.alpha / "shared").symlink_to(private)
         before = _tree(pools.root)
 
-        response = api.post(
-            INSTALL,
-            json={**TRANSMISSION, "volume_overrides": {"/downloads": str(pools.alpha / "shared")}},
+        response = install(
+            api,
+            {**TRANSMISSION, "volume_overrides": {"/downloads": str(pools.alpha / "shared")}},
         )
 
         assert response.status_code == 400
         detail = response.json()["detail"]
         assert "symbolic link" in detail and str(pools.alpha / "shared") in detail
-        docker_client.images.pull.assert_not_called()
+        docker_client.api.post.assert_not_called()
         assert _tree(pools.root) == before
 
     @pytest.mark.parametrize("override", ["alias", "alias/torrents"])
@@ -805,23 +858,23 @@ class TestVolumeOverrides:
         (pools.alpha / "alias").symlink_to(pools.alpha / "library")
         before = _tree(pools.root)
 
-        response = api.post(
-            INSTALL,
-            json={**TRANSMISSION, "volume_overrides": {"/downloads": str(pools.alpha / override)}},
+        response = install(
+            api,
+            {**TRANSMISSION, "volume_overrides": {"/downloads": str(pools.alpha / override)}},
         )
 
         assert response.status_code == 400
         assert "symbolic link" in response.json()["detail"]
-        docker_client.images.pull.assert_not_called()
+        docker_client.api.post.assert_not_called()
         assert _tree(pools.root) == before
 
     def test_existing_path_in_another_mounted_pool_is_used(self, api, pools, docker_client):
         library = pools.beta / "torrents"
         library.mkdir()
 
-        response = api.post(
-            INSTALL,
-            json={**TRANSMISSION, "volume_overrides": {"/downloads": str(library)}},
+        response = install(
+            api,
+            {**TRANSMISSION, "volume_overrides": {"/downloads": str(library)}},
         )
 
         assert response.status_code == 200, response.text
@@ -832,15 +885,15 @@ class TestVolumeOverrides:
     def test_missing_path_in_another_pool_is_not_created(self, api, pools, docker_client):
         before = _tree(pools.root)
 
-        response = api.post(
-            INSTALL,
-            json={**TRANSMISSION, "volume_overrides": {"/downloads": str(pools.beta / "torrents")}},
+        response = install(
+            api,
+            {**TRANSMISSION, "volume_overrides": {"/downloads": str(pools.beta / "torrents")}},
         )
 
         assert response.status_code == 400
         assert "does not exist" in response.json()["detail"]
         assert _tree(pools.root) == before
-        docker_client.images.pull.assert_not_called()
+        docker_client.api.post.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -853,11 +906,11 @@ class TestEnvironment:
     def test_required_variable_must_be_set(self, api, pools, docker_client, value):
         env = {} if value is None else {"PHOTOPRISM_ADMIN_PASSWORD": value}
 
-        response = api.post(INSTALL, json={"template_id": "photoprism", "env_overrides": env})
+        response = install(api, {"template_id": "photoprism", "env_overrides": env})
 
         assert response.status_code == 400
         assert "PHOTOPRISM_ADMIN_PASSWORD is required" in response.json()["detail"]
-        docker_client.images.pull.assert_not_called()
+        docker_client.api.post.assert_not_called()
 
     @pytest.mark.parametrize(
         "app_id,name,value",
@@ -870,17 +923,17 @@ class TestEnvironment:
         ],
     )
     def test_placeholder_secrets_are_rejected(self, api, pools, docker_client, app_id, name, value):
-        response = api.post(INSTALL, json={"template_id": app_id, "env_overrides": {name: value}})
+        response = install(api, {"template_id": app_id, "env_overrides": {name: value}})
 
         assert response.status_code == 400
         assert name in response.json()["detail"]
         assert "placeholder" in response.json()["detail"]
-        docker_client.images.pull.assert_not_called()
+        docker_client.api.post.assert_not_called()
 
     def test_unique_secret_is_passed_to_the_container(self, api, pools, docker_client):
-        response = api.post(
-            INSTALL,
-            json={
+        response = install(
+            api,
+            {
                 "template_id": "grafana",
                 "env_overrides": {"GF_SECURITY_ADMIN_PASSWORD": "k7-Unique-pass"},
             },
@@ -897,14 +950,14 @@ class TestEnvironment:
         assert (variables["USER"].required, variables["USER"].secret) == (True, False)
         assert (variables["PASS"].required, variables["PASS"].secret) == (True, True)
 
-        response = api.post(INSTALL, json={"template_id": "transmission", "env_overrides": login})
+        response = install(api, {"template_id": "transmission", "env_overrides": login})
 
         assert response.status_code == 400
         assert "is required" in response.json()["detail"]
-        docker_client.images.pull.assert_not_called()
+        docker_client.api.post.assert_not_called()
 
     def test_transmission_login_is_passed_to_the_container(self, api, pools, docker_client):
-        response = api.post(INSTALL, json=TRANSMISSION)
+        response = install(api, TRANSMISSION)
 
         assert response.status_code == 200, response.text
         environment = docker_client.containers.create.call_args.kwargs["environment"]
@@ -916,17 +969,17 @@ class TestEnvironment:
         assert (key.required, key.secret) == (False, True)
         assert "logs" in key.description and "login URL" in key.description
 
-        response = api.post(INSTALL, json={"template_id": "tailscale"})
+        response = install(api, {"template_id": "tailscale"})
 
         assert response.status_code == 200, response.text
         assert docker_client.containers.create.call_args.kwargs["environment"]["TS_AUTHKEY"] == ""
 
     def test_tailscale_auth_key_is_passed_and_checked(self, api, pools, docker_client):
-        bad = api.post(INSTALL, json={"template_id": "tailscale", "env_overrides": {"TS_AUTHKEY": "changeme"}})
+        bad = install(api, {"template_id": "tailscale", "env_overrides": {"TS_AUTHKEY": "changeme"}})
         assert bad.status_code == 400
         assert "placeholder" in bad.json()["detail"]
 
-        good = api.post(INSTALL, json={"template_id": "tailscale", "env_overrides": {"TS_AUTHKEY": "tskey-auth-k1"}})
+        good = install(api, {"template_id": "tailscale", "env_overrides": {"TS_AUTHKEY": "tskey-auth-k1"}})
         assert good.status_code == 200, good.text
         assert docker_client.containers.create.call_args.kwargs["environment"]["TS_AUTHKEY"] == "tskey-auth-k1"
 
@@ -960,7 +1013,7 @@ class TestFileVolumes:
         )
 
     def test_missing_file_is_created_empty(self, api, pools, docker_client):
-        response = api.post(INSTALL, json={"template_id": "demo"})
+        response = install(api, {"template_id": "demo"})
 
         assert response.status_code == 200, response.text
         db = pools.alpha / "apps/demo/app.db"
@@ -973,7 +1026,7 @@ class TestFileVolumes:
         db.parent.mkdir(parents=True)
         db.write_bytes(b"data")
 
-        response = api.post(INSTALL, json={"template_id": "demo"})
+        response = install(api, {"template_id": "demo"})
 
         assert response.status_code == 200, response.text
         assert db.read_bytes() == b"data"
@@ -982,19 +1035,19 @@ class TestFileVolumes:
         # What Docker leaves behind when it auto-creates a missing file source.
         (pools.alpha / "apps/demo/app.db").mkdir(parents=True)
 
-        response = api.post(INSTALL, json={"template_id": "demo"})
+        response = install(api, {"template_id": "demo"})
 
         assert response.status_code == 400
         assert "needs a file" in response.json()["detail"]
-        docker_client.images.pull.assert_not_called()
+        docker_client.api.post.assert_not_called()
 
     def test_file_override_is_normalised(self, api, pools, docker_client):
         (pools.beta / "db").mkdir()
         (pools.beta / "db/app.db").write_bytes(b"data")
 
-        response = api.post(
-            INSTALL,
-            json={"template_id": "demo", "volume_overrides": {"/app.db": f"{pools.beta}//db/./app.db"}},
+        response = install(
+            api,
+            {"template_id": "demo", "volume_overrides": {"/app.db": f"{pools.beta}//db/./app.db"}},
         )
 
         assert response.status_code == 200, response.text
@@ -1004,39 +1057,39 @@ class TestFileVolumes:
         (pools.alpha / "linked").symlink_to(pools.outside)
         before = _tree(pools.root)
 
-        response = api.post(
-            INSTALL,
-            json={"template_id": "demo", "volume_overrides": {"/app.db": str(pools.alpha / "linked/app.db")}},
+        response = install(
+            api,
+            {"template_id": "demo", "volume_overrides": {"/app.db": str(pools.alpha / "linked/app.db")}},
         )
 
         assert response.status_code == 400
         assert "symbolic link" in response.json()["detail"]
-        docker_client.images.pull.assert_not_called()
+        docker_client.api.post.assert_not_called()
         assert _tree(pools.root) == before
 
     def test_link_in_place_of_the_file_is_refused(self, api, pools, docker_client):
         (pools.alpha / "apps/demo").mkdir(parents=True)
         (pools.alpha / "apps/demo/app.db").symlink_to(pools.outside / "app.db")
 
-        response = api.post(INSTALL, json={"template_id": "demo"})
+        response = install(api, {"template_id": "demo"})
 
         assert response.status_code == 409
         assert "symbolic link" in response.json()["detail"]
-        docker_client.images.pull.assert_not_called()
+        docker_client.api.post.assert_not_called()
         assert list(pools.outside.iterdir()) == []
 
     @pytest.mark.parametrize(
         "path", ["{alpha}/apps/demo/..", "{alpha}/apps/demo/.", "/", "{alpha}/apps/demo/app\n.db"]
     )
     def test_file_override_must_name_a_file(self, api, pools, docker_client, path):
-        response = api.post(
-            INSTALL,
-            json={"template_id": "demo", "volume_overrides": {"/app.db": path.format(alpha=pools.alpha)}},
+        response = install(
+            api,
+            {"template_id": "demo", "volume_overrides": {"/app.db": path.format(alpha=pools.alpha)}},
         )
 
         assert response.status_code == 400
         assert "must name a file" in response.json()["detail"]
-        docker_client.images.pull.assert_not_called()
+        docker_client.api.post.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -1048,7 +1101,7 @@ class TestDockerFlow:
     def test_existing_container_is_a_conflict(self, api, pools, docker_client, installed):
         installed(_container("jellyfin"))
 
-        response = api.post(INSTALL, json={"template_id": "jellyfin"})
+        response = install(api, {"template_id": "jellyfin"})
 
         assert (response.status_code, response.json()) == (
             409, {"detail": "A container named 'jellyfin' already exists"}
@@ -1056,7 +1109,7 @@ class TestDockerFlow:
         # One listing of Docker's containers names them all (ADR-0381).
         docker_client.containers.list.assert_called_once_with(all=True, ignore_removed=True)
         docker_client.containers.get.assert_not_called()
-        docker_client.images.pull.assert_not_called()
+        docker_client.api.post.assert_not_called()
         assert not (pools.alpha / "apps").exists()
 
     @pytest.mark.parametrize("name", ["jellyfin", "media"], ids=["its-name", "another-name"])
@@ -1064,16 +1117,16 @@ class TestDockerFlow:
         # One instance per template: its data folders are named after the template (ADR-0381).
         installed(_jellyfin(pools, name=name))
 
-        response = api.post(INSTALL, json={"template_id": "jellyfin"})
+        response = install(api, {"template_id": "jellyfin"})
 
         assert (response.status_code, response.json()) == (409, {"detail": "Jellyfin is already installed"})
-        docker_client.images.pull.assert_not_called()
+        docker_client.api.post.assert_not_called()
 
     def test_failed_start_removes_the_container(self, api, pools, docker_client):
         container = docker_client.containers.create.return_value
         container.start.side_effect = APIError("port is already allocated")
 
-        response = api.post(INSTALL, json={"template_id": "jellyfin"})
+        response = install(api, {"template_id": "jellyfin"})
 
         assert response.status_code == 500
         assert "port is already allocated" in response.json()["detail"]
@@ -1082,11 +1135,11 @@ class TestDockerFlow:
     @pytest.mark.parametrize("name", ["jellyfin2", "../etc"])
     def test_a_name_in_the_request_is_refused(self, api, pools, docker_client, name):
         # The containers of an app are named after its template (ADR-0381).
-        response = api.post(INSTALL, json={"template_id": "jellyfin", "name": name})
+        response = install(api, {"template_id": "jellyfin", "name": name})
 
         assert response.status_code == 422
         docker_client.containers.list.assert_not_called()
-        docker_client.images.pull.assert_not_called()
+        docker_client.api.post.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -1122,7 +1175,7 @@ class TestPortCheck:
         # A running container's port is also a listener of Docker's proxy on the host.
         soc.sockets = ['tcp   LISTEN 0      4096   0.0.0.0:8096   0.0.0.0:*   users:(("docker-proxy",pid=9,fd=7))']
 
-        response = api.post(INSTALL, json={"template_id": "jellyfin"})
+        response = install(api, {"template_id": "jellyfin"})
 
         assert (response.status_code, response.json()) == (409, {
             "detail": f"Port 8096/tcp is already used by the container emby ({status}): "
@@ -1130,14 +1183,14 @@ class TestPortCheck:
         })
         # Stopped containers too: Docker binds their ports when they start.
         docker_client.containers.list.assert_called_once_with(all=True, ignore_removed=True)
-        docker_client.images.pull.assert_not_called()
+        docker_client.api.post.assert_not_called()
         docker_client.containers.create.assert_not_called()
         assert not (pools.alpha / "apps").exists()
 
     def test_a_container_that_publishes_the_port_on_one_address_holds_it(self, api, pools, docker_client, installed):
         installed(_container("emby", status="running", port_bindings=_published(8096, host_ip="127.0.0.1")))
 
-        response = api.post(INSTALL, json={"template_id": "jellyfin"})
+        response = install(api, {"template_id": "jellyfin"})
 
         assert response.status_code == 409
         assert response.json()["detail"].startswith("Port 8096/tcp is already used by the container emby (running)")
@@ -1152,7 +1205,7 @@ class TestPortCheck:
     def test_other_ports_of_containers_do_not_count(self, api, pools, docker_client, installed, port_bindings):
         installed(_container("emby", status="running", port_bindings=port_bindings))
 
-        response = api.post(INSTALL, json={"template_id": "jellyfin"})
+        response = install(api, {"template_id": "jellyfin"})
 
         assert response.status_code == 200, response.text
 
@@ -1174,13 +1227,13 @@ class TestPortCheck:
     ):
         soc.sockets = [line]
 
-        response = api.post(INSTALL, json={"template_id": "jellyfin"})
+        response = install(api, {"template_id": "jellyfin"})
 
         assert (response.status_code, response.json()) == (409, {
             "detail": f"Port 8096/tcp is already in use on the host by {holder}: choose another host port for 8096/tcp"
         })
         assert soc.commands[0] == SS
-        docker_client.images.pull.assert_not_called()
+        docker_client.api.post.assert_not_called()
         assert not (pools.alpha / "apps").exists()
 
     def test_listeners_of_other_ports_and_protocols_do_not_count(self, api, pools, docker_client, soc):
@@ -1191,7 +1244,7 @@ class TestPortCheck:
             'tcp   LISTEN 0      4096         0.0.0.0:809        0.0.0.0:*    users:(("EmbyServer",pid=8,fd=9))',
         ]
 
-        response = api.post(INSTALL, json={"template_id": "jellyfin"})
+        response = install(api, {"template_id": "jellyfin"})
 
         assert response.status_code == 200, response.text
 
@@ -1199,7 +1252,7 @@ class TestPortCheck:
         # The resolver of systemd listens on port 53 of 127.0.0.53 by TCP and UDP.
         soc.sockets = RESOLVED
 
-        response = api.post(INSTALL, json={"template_id": "pihole", "env_overrides": PIHOLE_LOGIN})
+        response = install(api, {"template_id": "pihole", "env_overrides": PIHOLE_LOGIN})
 
         assert (response.status_code, response.json()) == (409, {
             "detail": "Port 53/tcp is already in use on the host by systemd-resolve: "
@@ -1207,14 +1260,14 @@ class TestPortCheck:
             "Port 53/udp is already in use on the host by systemd-resolve: "
             "choose another host port for 53/udp"
         })
-        docker_client.images.pull.assert_not_called()
+        docker_client.api.post.assert_not_called()
 
     def test_a_port_is_taken_only_for_its_protocol(self, api, pools, docker_client, soc):
         # Transmission's peer port is a TCP and a UDP port of one number; one override moves both.
         soc.sockets = ['udp   UNCONN 0      0      0.0.0.0:51413      0.0.0.0:*    users:(("qbittorrent-nox",pid=4,fd=9))']
 
-        taken = api.post(INSTALL, json=TRANSMISSION)
-        moved = api.post(INSTALL, json={**TRANSMISSION, "port_overrides": {51413: 51414}})
+        taken = install(api, TRANSMISSION)
+        moved = install(api, {**TRANSMISSION, "port_overrides": {51413: 51414}})
 
         assert (taken.status_code, taken.json()) == (409, {
             "detail": "Port 51413/udp is already in use on the host by qbittorrent-nox: "
@@ -1224,13 +1277,13 @@ class TestPortCheck:
         assert docker_client.containers.create.call_args.kwargs["ports"] == {
             "9091/tcp": 9091, "51413/tcp": 51414, "51413/udp": 51414,
         }
-        docker_client.images.pull.assert_called_once()
+        docker_client.api.post.assert_called_once()
 
     def test_a_free_host_port_given_for_a_taken_one_installs(self, api, pools, docker_client, installed, soc):
         installed(_container("emby", status="running", port_bindings=_published(8096)))
         soc.sockets = ['tcp   LISTEN 0      4096   0.0.0.0:8096   0.0.0.0:*   users:(("docker-proxy",pid=9,fd=7))']
 
-        response = api.post(INSTALL, json={"template_id": "jellyfin", "port_overrides": {8096: 8097}})
+        response = install(api, {"template_id": "jellyfin", "port_overrides": {8096: 8097}})
 
         assert response.status_code == 200, response.text
         assert docker_client.containers.create.call_args.kwargs["ports"] == {"8096/tcp": 8097}
@@ -1251,13 +1304,13 @@ class TestPortCheck:
     def test_the_port_of_an_app_in_the_hosts_network_cannot_be_moved(
         self, api, pools, docker_client, soc, template_id, name, port
     ):
-        response = api.post(INSTALL, json={"template_id": template_id, "port_overrides": {port: port + 1}})
+        response = install(api, {"template_id": template_id, "port_overrides": {port: port + 1}})
 
         assert (response.status_code, response.json()) == (
             400, {"detail": f"{name} runs in the host's network: its port {port}/tcp cannot be moved"}
         )
         docker_client.containers.get.assert_not_called()
-        docker_client.images.pull.assert_not_called()
+        docker_client.api.post.assert_not_called()
         assert soc.commands == []
         assert not (pools.alpha / "apps").exists()
 
@@ -1265,7 +1318,7 @@ class TestPortCheck:
     def test_an_app_in_the_hosts_network_may_name_the_port_it_binds(
         self, api, pools, docker_client, soc, template_id, name, port
     ):
-        response = api.post(INSTALL, json={"template_id": template_id, "port_overrides": {port: port}})
+        response = install(api, {"template_id": template_id, "port_overrides": {port: port}})
 
         assert response.status_code == 200, response.text
         assert docker_client.containers.create.call_args.kwargs["ports"] == {f"{port}/tcp": port}
@@ -1278,13 +1331,13 @@ class TestPortCheck:
     ):
         soc.sockets = [f'tcp   LISTEN 0      4096   0.0.0.0:{port}   0.0.0.0:*   users:(("python3",pid=7,fd=9))']
 
-        response = api.post(INSTALL, json={"template_id": template_id})
+        response = install(api, {"template_id": template_id})
 
         assert (response.status_code, response.json()) == (409, {
             "detail": f"Port {port}/tcp is already in use on the host by python3: "
             f"{name} runs in the host's network and cannot move its port; stop that program first"
         })
-        docker_client.images.pull.assert_not_called()
+        docker_client.api.post.assert_not_called()
 
     @pytest.mark.parametrize(("template_id", "name", "port"), HOST_NETWORK_APPS, ids=[a[0] for a in HOST_NETWORK_APPS])
     def test_a_port_of_an_app_in_the_hosts_network_that_a_container_publishes_asks_to_remove_it(
@@ -1292,17 +1345,17 @@ class TestPortCheck:
     ):
         installed(_container("other", status="exited", port_bindings=_published(port)))
 
-        response = api.post(INSTALL, json={"template_id": template_id})
+        response = install(api, {"template_id": template_id})
 
         assert (response.status_code, response.json()) == (409, {
             "detail": f"Port {port}/tcp is already used by the container other (exited): "
             f"{name} runs in the host's network and cannot move its port; remove that container first"
         })
-        docker_client.images.pull.assert_not_called()
+        docker_client.api.post.assert_not_called()
 
     @pytest.mark.parametrize("port", [0, -1, 65536])
     def test_a_host_port_outside_the_range_answers_400(self, api, pools, docker_client, soc, port):
-        response = api.post(INSTALL, json={"template_id": "jellyfin", "port_overrides": {8096: port}})
+        response = install(api, {"template_id": "jellyfin", "port_overrides": {8096: port}})
 
         assert (response.status_code, response.json()) == (
             400, {"detail": "Host port for 8096/tcp must be between 1 and 65535"}
@@ -1312,8 +1365,8 @@ class TestPortCheck:
 
     def test_a_host_port_given_twice_answers_400(self, api, pools, docker_client, soc):
         # Pi-hole's web page (80/tcp, on 8053) moved onto its DNS port (53/tcp).
-        response = api.post(
-            INSTALL, json={"template_id": "pihole", "env_overrides": PIHOLE_LOGIN, "port_overrides": {80: 53}}
+        response = install(
+            api, {"template_id": "pihole", "env_overrides": PIHOLE_LOGIN, "port_overrides": {80: 53}}
         )
 
         assert (response.status_code, response.json()) == (400, {"detail": "Host port 53/tcp is given twice"})
@@ -1342,7 +1395,7 @@ class TestPortCheck:
         soc.ss = answer
 
         with caplog.at_level("WARNING", logger="src.apps.preflight"):
-            response = api.post(INSTALL, json={"template_id": "jellyfin"})
+            response = install(api, {"template_id": "jellyfin"})
 
         assert response.status_code == 200, response.text
         assert [r.getMessage() for r in caplog.records if r.name == "src.apps.preflight"] == [message]
@@ -1350,7 +1403,7 @@ class TestPortCheck:
 
     def test_an_app_that_publishes_no_port_reads_no_port_of_the_host(self, api, pools, docker_client, soc):
         # Tailscale runs in the host's network and publishes no port: only the free space is read.
-        response = api.post(INSTALL, json={"template_id": "tailscale"})
+        response = install(api, {"template_id": "tailscale"})
 
         assert response.status_code == 200, response.text
         assert soc.commands == [_free_space_read()]
@@ -1366,17 +1419,17 @@ class TestPortCheck:
         monkeypatch.setattr(host_module, "run_on_host", run)
 
         # Dozzle has no hardware profile: its install reads the host's ports and free space only.
-        assert api.post(INSTALL, json={"template_id": "dozzle"}).status_code == 200
+        assert install(api, {"template_id": "dozzle"}).status_code == 200
         assert seen == [False, False]
 
     def test_a_listing_that_docker_does_not_answer_answers_503(self, api, pools, docker_client):
         error = requests.exceptions.ConnectionError("('Connection aborted.', ConnectionResetError(104, 'reset'))")
         docker_client.containers.list.side_effect = error
 
-        response = api.post(INSTALL, json={"template_id": "jellyfin"})
+        response = install(api, {"template_id": "jellyfin"})
 
         assert (response.status_code, response.json()) == (503, {"detail": f"Docker is not available: {error}"})
-        docker_client.images.pull.assert_not_called()
+        docker_client.api.post.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -1530,7 +1583,7 @@ class TestDataFolderOwner:
                 assert (volume.uid, volume.gid) == expected, (spec.image, volume.container)
 
     def test_new_folders_belong_to_the_image_user(self, api, pools, docker_client, chown_calls):
-        response = api.post(INSTALL, json={"template_id": "filebrowser"})
+        response = install(api, {"template_id": "filebrowser"})
 
         assert response.status_code == 200, response.text
         assert sorted(chown_calls) == [
@@ -1542,7 +1595,7 @@ class TestDataFolderOwner:
     def test_existing_folders_keep_their_owner(self, api, pools, docker_client, chown_calls):
         (pools.alpha / "apps/filebrowser/config").mkdir(parents=True)
 
-        response = api.post(INSTALL, json={"template_id": "filebrowser"})
+        response = install(api, {"template_id": "filebrowser"})
 
         assert response.status_code == 200, response.text
         assert [call[0] for call in chown_calls] == [pools.alpha / "apps/filebrowser/database"]
@@ -1550,7 +1603,7 @@ class TestDataFolderOwner:
     def test_images_that_start_as_root_get_root_owned_folders(
         self, api, pools, docker_client, chown_calls
     ):
-        response = api.post(INSTALL, json={"template_id": "jellyfin"})
+        response = install(api, {"template_id": "jellyfin"})
 
         assert response.status_code == 200, response.text
         assert chown_calls == []
@@ -1561,7 +1614,7 @@ class TestDataFolderOwner:
 
         monkeypatch.setattr(os, "fchown", refuse)
 
-        response = api.post(INSTALL, json={"template_id": "filebrowser"})
+        response = install(api, {"template_id": "filebrowser"})
 
         assert response.status_code == 500
         assert "Operation not permitted" in response.json()["detail"]
@@ -1796,9 +1849,9 @@ class TestNestedFolders:
     ):
         before = _tree(pools.root)
 
-        response = api.post(
-            INSTALL,
-            json={
+        response = install(
+            api,
+            {
                 **TRANSMISSION,
                 "volume_overrides": {"/watch": str(pools.alpha / "downloads/watch")},
             },
@@ -1806,23 +1859,23 @@ class TestNestedFolders:
 
         assert response.status_code == 400
         assert "inside the folder for /downloads" in response.json()["detail"]
-        docker_client.images.pull.assert_not_called()
+        docker_client.api.post.assert_not_called()
         assert _tree(pools.root) == before
 
     def test_writable_folder_cannot_be_moved_to_the_pool_root(self, api, pools, docker_client):
         # Syncthing's /data on the pool root would contain its own /config.
-        response = api.post(
-            INSTALL,
-            json={"template_id": "syncthing", "volume_overrides": {"/data": str(pools.alpha)}},
+        response = install(
+            api,
+            {"template_id": "syncthing", "volume_overrides": {"/data": str(pools.alpha)}},
         )
 
         assert response.status_code == 400
         assert "inside the folder for /data" in response.json()["detail"]
-        docker_client.images.pull.assert_not_called()
+        docker_client.api.post.assert_not_called()
 
     @pytest.mark.parametrize("app_id", ["filebrowser", "duplicati"])
     def test_templates_built_for_the_pool_root_install(self, api, pools, docker_client, app_id):
-        response = api.post(INSTALL, json={"template_id": app_id})
+        response = install(api, {"template_id": app_id})
 
         assert response.status_code == 200, response.text
         sources = {m["Source"] for m in _mounts(docker_client).values()}
@@ -1841,12 +1894,12 @@ class TestNestedFolders:
 
         monkeypatch.setattr(apps_router, "_plan_volumes", plan_then_plant)
 
-        response = api.post(INSTALL, json={**TRANSMISSION})
+        response = install(api, {**TRANSMISSION})
 
         assert response.status_code == 409
         assert "symbolic link" in response.json()["detail"]
         assert list(pools.outside.iterdir()) == []
-        docker_client.images.pull.assert_not_called()
+        docker_client.api.post.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -1904,7 +1957,7 @@ class TestRunInUnosSmb:
         assert listed["syncthing"] is True and listed["filebrowser"] is False and listed["prowlarr"] is False
 
     def test_the_option_runs_the_app_as_user_80000_in_the_group_with_umask_007(self, api, pools, docker_client):
-        response = api.post(INSTALL, json=IN_UNOS_SMB)
+        response = install(api, IN_UNOS_SMB)
 
         assert response.status_code == 200, response.text
         environment = _environment(docker_client)
@@ -1920,7 +1973,7 @@ class TestRunInUnosSmb:
             assert all(var.value.strip() != "80000" for var in spec.environment), spec.image
 
     def test_without_the_option_the_app_stays_outside_the_group(self, api, pools, docker_client):
-        response = api.post(INSTALL, json=TRANSMISSION)
+        response = install(api, TRANSMISSION)
 
         assert response.status_code == 200, response.text
         environment = _environment(docker_client)
@@ -1948,9 +2001,9 @@ class TestRunInUnosSmb:
     def test_puid_and_pgid_are_not_environment_settings(
         self, api, pools, docker_client, run_in_unos_smb, overrides, names
     ):
-        response = api.post(
-            INSTALL,
-            json={
+        response = install(
+            api,
+            {
                 **TRANSMISSION,
                 "run_in_unos_smb": run_in_unos_smb,
                 "env_overrides": {**LOGIN, **overrides},
@@ -1959,7 +2012,7 @@ class TestRunInUnosSmb:
 
         assert response.status_code == 400
         assert response.json()["detail"] == _set_by_unos(names)
-        docker_client.images.pull.assert_not_called()
+        docker_client.api.post.assert_not_called()
 
     @pytest.mark.parametrize(
         "app_id,name", [("jellyfin", "Jellyfin"), ("plex", "Plex Media Server"), ("filebrowser", "File Browser")]
@@ -1967,14 +2020,14 @@ class TestRunInUnosSmb:
     def test_other_images_cannot_run_in_the_group(self, api, pools, docker_client, app_id, name):
         before = _tree(pools.root)
 
-        response = api.post(INSTALL, json={"template_id": app_id, "run_in_unos_smb": True})
+        response = install(api, {"template_id": app_id, "run_in_unos_smb": True})
 
         assert response.status_code == 400
         assert response.json()["detail"] == (
             f"{name} cannot run in the group unos-smb: only linuxserver.io images take the user and "
             "group of their processes from PUID and PGID"
         )
-        docker_client.images.pull.assert_not_called()
+        docker_client.api.post.assert_not_called()
         assert _tree(pools.root) == before
 
     @pytest.mark.parametrize("app_id", ONLY_OWN_DATA)
@@ -1982,14 +2035,14 @@ class TestRunInUnosSmb:
         template = get_app_by_id(app_id)
         before = _tree(pools.root)
 
-        response = api.post(INSTALL, json={"template_id": app_id, "run_in_unos_smb": True})
+        response = install(api, {"template_id": app_id, "run_in_unos_smb": True})
 
         assert response.status_code == 400
         assert response.json()["detail"] == (
             f"{template.name} cannot run in the group unos-smb: its folders on the pool hold only its "
             "own data (apps/), and none of them can be a share's folder"
         )
-        docker_client.images.pull.assert_not_called()
+        docker_client.api.post.assert_not_called()
         assert _tree(pools.root) == before
 
 
@@ -2028,20 +2081,20 @@ class TestShareFolders:
     ):
         before = _tree(pools.root)
 
-        response = api.post(
-            INSTALL,
-            json={"template_id": app_id, "env_overrides": env, "volume_overrides": {target: str(family)}},
+        response = install(
+            api,
+            {"template_id": app_id, "env_overrides": env, "volume_overrides": {target: str(family)}},
         )
 
         assert response.status_code == 400
         assert response.json()["detail"] == (
             f"The folder for {target} ({family}) is the folder of the share family ({family}). {needs}"
         )
-        docker_client.images.pull.assert_not_called()
+        docker_client.api.post.assert_not_called()
         assert _tree(pools.root) == before
 
     def test_an_app_in_the_group_gets_the_share_folder(self, api, pools, docker_client, family):
-        response = api.post(INSTALL, json={**IN_UNOS_SMB, "volume_overrides": {"/downloads": str(family)}})
+        response = install(api, {**IN_UNOS_SMB, "volume_overrides": {"/downloads": str(family)}})
 
         assert response.status_code == 200, response.text
         assert _mounts(docker_client)["/downloads"] == {
@@ -2058,16 +2111,16 @@ class TestShareFolders:
         downloads.mkdir()
         shares("Downloads", downloads)
 
-        refused = api.post(INSTALL, json=TRANSMISSION)
+        refused = install(api, TRANSMISSION)
 
         assert refused.status_code == 400
         assert refused.json()["detail"] == (
             f"The folder for /downloads ({downloads}) is the folder of the share Downloads ({downloads}). "
             + _needs_the_group("Transmission")
         )
-        docker_client.images.pull.assert_not_called()
+        docker_client.api.post.assert_not_called()
 
-        allowed = api.post(INSTALL, json=IN_UNOS_SMB)
+        allowed = install(api, IN_UNOS_SMB)
 
         assert allowed.status_code == 200, allowed.text
         assert _mounts(docker_client)["/downloads"]["Source"] == str(downloads)
@@ -2078,9 +2131,9 @@ class TestShareFolders:
         torrents.mkdir()
         before = _tree(pools.root)
 
-        response = api.post(
-            INSTALL,
-            json={**TRANSMISSION, "run_in_unos_smb": run_in_unos_smb,
+        response = install(
+            api,
+            {**TRANSMISSION, "run_in_unos_smb": run_in_unos_smb,
                   "volume_overrides": {"/downloads": str(torrents)}},
         )
 
@@ -2091,7 +2144,7 @@ class TestShareFolders:
             "app given its folder, can put a symbolic link in the place of a folder inside it, and Docker "
             "would follow that link at the next start."
         )
-        docker_client.images.pull.assert_not_called()
+        docker_client.api.post.assert_not_called()
         assert _tree(pools.root) == before
 
     @pytest.mark.parametrize("run_in_unos_smb", [False, True])
@@ -2103,9 +2156,9 @@ class TestShareFolders:
         movies.mkdir(parents=True)
         shares("movies", movies)
 
-        response = api.post(
-            INSTALL,
-            json={**TRANSMISSION, "run_in_unos_smb": run_in_unos_smb,
+        response = install(
+            api,
+            {**TRANSMISSION, "run_in_unos_smb": run_in_unos_smb,
                   "volume_overrides": {"/downloads": str(media)}},
         )
 
@@ -2117,20 +2170,20 @@ class TestShareFolders:
             if run_in_unos_smb
             else f"{where}. " + _needs_the_group("Transmission")
         )
-        docker_client.images.pull.assert_not_called()
+        docker_client.api.post.assert_not_called()
 
     def test_a_read_only_folder_that_holds_shares_needs_the_option(self, api, pools, docker_client, family):
         # Duplicati backs up the whole pool, mounted read-only at /source.
-        refused = api.post(INSTALL, json={"template_id": "duplicati"})
+        refused = install(api, {"template_id": "duplicati"})
 
         assert refused.status_code == 400
         assert refused.json()["detail"] == (
             f"The folder for /source ({pools.alpha}) holds the folder of the share family ({family}). "
             + _needs_the_group("Duplicati")
         )
-        docker_client.images.pull.assert_not_called()
+        docker_client.api.post.assert_not_called()
 
-        allowed = api.post(INSTALL, json={"template_id": "duplicati", "run_in_unos_smb": True})
+        allowed = install(api, {"template_id": "duplicati", "run_in_unos_smb": True})
 
         assert allowed.status_code == 200, allowed.text
         assert _mounts(docker_client)["/source"] == {
@@ -2138,7 +2191,7 @@ class TestShareFolders:
         }
 
     def test_an_app_outside_the_group_gets_no_pool_that_holds_shares(self, api, pools, docker_client, family):
-        response = api.post(INSTALL, json={"template_id": "filebrowser"})
+        response = install(api, {"template_id": "filebrowser"})
 
         assert response.status_code == 400
         assert response.json()["detail"] == (
@@ -2146,10 +2199,10 @@ class TestShareFolders:
             "File Browser cannot run in the group unos-smb, so it gets no share's files: choose a "
             "folder that holds no share."
         )
-        docker_client.images.pull.assert_not_called()
+        docker_client.api.post.assert_not_called()
 
     def test_the_apps_own_data_never_goes_into_a_share_folder(self, api, pools, docker_client, family):
-        response = api.post(INSTALL, json={**IN_UNOS_SMB, "volume_overrides": {"/config": str(family)}})
+        response = install(api, {**IN_UNOS_SMB, "volume_overrides": {"/config": str(family)}})
 
         assert response.status_code == 400
         assert response.json()["detail"] == (
@@ -2157,7 +2210,7 @@ class TestShareFolders:
             f"family ({family}): SMB users would read and change the app's settings. Choose a folder "
             "that is not shared."
         )
-        docker_client.images.pull.assert_not_called()
+        docker_client.api.post.assert_not_called()
 
     @pytest.mark.parametrize(
         "stored",
@@ -2174,14 +2227,14 @@ class TestShareFolders:
         downloads.mkdir()
         shares("Downloads", stored.format(alpha=pools.alpha))
 
-        response = api.post(INSTALL, json=TRANSMISSION)
+        response = install(api, TRANSMISSION)
 
         assert response.status_code == 400
         assert response.json()["detail"] == (
             f"The folder for /downloads ({downloads}) is the folder of the share Downloads ({downloads}). "
             + _needs_the_group("Transmission")
         )
-        docker_client.images.pull.assert_not_called()
+        docker_client.api.post.assert_not_called()
 
     @pytest.mark.parametrize(
         "folder,name",
@@ -2211,7 +2264,7 @@ class TestShareFolders:
         source.mkdir(parents=True)
         before = _tree(pools.root)
 
-        response = api.post(INSTALL, json={**request_body, "volume_overrides": {target: str(source)}})
+        response = install(api, {**request_body, "volume_overrides": {target: str(source)}})
 
         assert response.status_code == 400
         what = "a snapshot folder (.snapshots)" if name == ".snapshots" else "the trash (.unos-trash)"
@@ -2219,7 +2272,7 @@ class TestShareFolders:
             f"The folder for {target} ({source}) is in {what}, which keeps files of shares outside "
             f"their folders: no app gets a snapshot or the trash. Choose a folder outside {name}."
         )
-        docker_client.images.pull.assert_not_called()
+        docker_client.api.post.assert_not_called()
         assert _tree(pools.root) == before
 
     def test_snapshots_are_refused_also_where_no_share_is(self, api, pools, docker_client):
@@ -2227,20 +2280,20 @@ class TestShareFolders:
         snapshot = pools.beta / ".snapshots/daily"
         snapshot.mkdir(parents=True)
 
-        response = api.post(INSTALL, json={"template_id": "jellyfin", "volume_overrides": {"/media": str(snapshot)}})
+        response = install(api, {"template_id": "jellyfin", "volume_overrides": {"/media": str(snapshot)}})
 
         assert response.status_code == 400
         assert response.json()["detail"].startswith(
             f"The folder for /media ({snapshot}) is in a snapshot folder (.snapshots)"
         )
-        docker_client.images.pull.assert_not_called()
+        docker_client.api.post.assert_not_called()
 
     def test_a_share_of_a_whole_pool_counts_for_nothing(self, api, pools, docker_client, shares):
         # Imported from an old smb.conf: never served (ADR-0145), and no app would install on the pool.
         shares("data", pools.alpha)
         shares("everything", pools.base)
 
-        response = api.post(INSTALL, json=TRANSMISSION)
+        response = install(api, TRANSMISSION)
 
         assert response.status_code == 200, response.text
         assert _mounts(docker_client)["/downloads"]["Source"] == str(pools.alpha / "downloads")
@@ -2254,7 +2307,7 @@ class TestShareFolders:
         shares("beta", pools.beta / "downloads")
         shares("broken", "not/a/folder")
 
-        response = api.post(INSTALL, json=TRANSMISSION)
+        response = install(api, TRANSMISSION)
 
         assert response.status_code == 200, response.text
         assert _mounts(docker_client)["/downloads"]["Source"] == str(pools.alpha / "downloads")
@@ -2671,7 +2724,8 @@ class TestADockerThatDoesNotAnswer:
 
         monkeypatch.setattr(docker, "from_env", _no_socket)
 
-        response = api.request(method, path, json={"template_id": "jellyfin"} if path == INSTALL else None)
+        # The install answers it from its job (ADR-0384).
+        response = install(api, {"template_id": "jellyfin"}) if path == INSTALL else api.request(method, path)
 
         assert (response.status_code, response.json()) == (503, {"detail": f"Docker is not available: {NO_SOCKET}"})
 
@@ -2695,17 +2749,17 @@ class TestADockerThatDoesNotAnswer:
     def test_a_pull_that_breaks_off_keeps_the_500_of_the_operation(self, api, pools, docker_client, error):
         # Docker answered the name check: the operation that fails after it keeps its own answer
         # (ADR-0254), also when the connection broke during it.
-        docker_client.images.pull.side_effect = error
+        docker_client.api.post.side_effect = error
 
-        response = api.post(INSTALL, json={"template_id": "jellyfin"})
+        response = install(api, {"template_id": "jellyfin"})
 
         assert (response.status_code, response.json()) == (500, {"detail": f"Failed to pull image: {error}"})
         docker_client.containers.create.assert_not_called()
 
     def test_a_pull_that_docker_refuses_keeps_its_status(self, api, pools, docker_client):
-        docker_client.images.pull.side_effect = APIError("404 Client Error", explanation="manifest unknown")
+        docker_client.api.post.side_effect = APIError("404 Client Error", explanation="manifest unknown")
 
-        response = api.post(INSTALL, json={"template_id": "jellyfin"})
+        response = install(api, {"template_id": "jellyfin"})
 
         assert response.status_code == 500
         assert response.json()["detail"].startswith("Failed to pull image: ")
@@ -2854,7 +2908,7 @@ class TestHardwareOfTheSoc:
         soc.compatible = RK3588
         soc.devices = set(RK3588_VIDEO)
 
-        response = api.post(INSTALL, json={"template_id": "jellyfin"})
+        response = install(api, {"template_id": "jellyfin"})
 
         assert response.status_code == 200, response.text
         docker_client.containers.create.assert_not_called()
@@ -2900,7 +2954,7 @@ class TestHardwareOfTheSoc:
         soc.compatible = RK3588
         soc.devices = {"/dev/mpp_service", "/dev/dri", "/dev/dma_heap"}
 
-        response = api.post(INSTALL, json={"template_id": "jellyfin"})
+        response = install(api, {"template_id": "jellyfin"})
 
         assert response.status_code == 200, response.text
         assert [d["PathOnHost"] for d in _host_config(docker_client)["Devices"]] == [
@@ -2914,7 +2968,7 @@ class TestHardwareOfTheSoc:
         soc.compatible = compatible
         soc.devices = set(RK3588_VIDEO)
 
-        response = api.post(INSTALL, json={"template_id": "jellyfin"})
+        response = install(api, {"template_id": "jellyfin"})
 
         assert response.status_code == 200, response.text
         docker_client.api.create_container.assert_not_called()
@@ -2929,7 +2983,7 @@ class TestHardwareOfTheSoc:
     def test_an_rk3588_without_any_of_the_nodes_installs_jellyfin_as_elsewhere(self, api, pools, docker_client, soc):
         soc.compatible = RK3588
 
-        response = api.post(INSTALL, json={"template_id": "jellyfin"})
+        response = install(api, {"template_id": "jellyfin"})
 
         assert response.status_code == 200, response.text
         docker_client.api.create_container.assert_not_called()
@@ -2949,7 +3003,7 @@ class TestHardwareOfTheSoc:
         soc.compatible = RK3588
         soc.devices = devices
 
-        response = api.post(INSTALL, json={"template_id": "jellyfin"})
+        response = install(api, {"template_id": "jellyfin"})
 
         assert response.status_code == 200, response.text
         docker_client.api.create_container.assert_not_called()
@@ -2965,7 +3019,7 @@ class TestHardwareOfTheSoc:
     ):
         soc.tree = error
 
-        response = api.post(INSTALL, json={"template_id": "jellyfin"})
+        response = install(api, {"template_id": "jellyfin"})
 
         assert response.status_code == 200, response.text
         docker_client.api.create_container.assert_not_called()
@@ -2978,7 +3032,7 @@ class TestHardwareOfTheSoc:
         soc.tree = HostResult(1, "", "nsenter: reassociate to namespace 'ns/mnt' failed: Operation not permitted")
 
         with caplog.at_level("WARNING", logger="src.apps.hardware"):
-            response = api.post(INSTALL, json={"template_id": "jellyfin"})
+            response = install(api, {"template_id": "jellyfin"})
 
         assert response.status_code == 200, response.text
         assert docker_client.containers.create.call_args.kwargs.get("devices") is None
@@ -3016,7 +3070,7 @@ class TestHardwareOfTheSoc:
         soc.lookup = lookup
 
         with caplog.at_level("WARNING", logger="src.apps.hardware"):
-            response = api.post(INSTALL, json={"template_id": "jellyfin"})
+            response = install(api, {"template_id": "jellyfin"})
 
         assert response.status_code == 200, response.text
         docker_client.api.create_container.assert_not_called()
@@ -3047,7 +3101,7 @@ class TestHardwareOfTheSoc:
         soc.compatible = RK3588
         soc.devices = set(RK3588_VIDEO)
 
-        response = api.post(INSTALL, json={"template_id": "dozzle"})
+        response = install(api, {"template_id": "dozzle"})
 
         assert response.status_code == 200, response.text
         # Only the host ports that the app would take and the free space were read (ADR-0381).
@@ -3060,7 +3114,7 @@ class TestHardwareOfTheSoc:
         container = docker_client.containers.create.return_value
         container.start.side_effect = APIError("error gathering device information while adding custom device")
 
-        response = api.post(INSTALL, json={"template_id": "jellyfin"})
+        response = install(api, {"template_id": "jellyfin"})
 
         assert response.status_code == 500
         assert response.json()["detail"].startswith("Failed to start container: ")
@@ -3071,7 +3125,7 @@ class TestHardwareOfTheSoc:
         soc.devices = set(RK3588_VIDEO)
         low_level.create_container.side_effect = APIError("400 Client Error", explanation="invalid masked path")
 
-        response = api.post(INSTALL, json={"template_id": "jellyfin"})
+        response = install(api, {"template_id": "jellyfin"})
 
         assert response.status_code == 500
         assert response.json()["detail"].startswith("Failed to create container: ")
@@ -3081,7 +3135,7 @@ class TestHardwareOfTheSoc:
         soc.devices = set(RK3588_VIDEO)
         docker_client.containers.get.side_effect = NotFound("No such container")
 
-        response = api.post(INSTALL, json={"template_id": "jellyfin"})
+        response = install(api, {"template_id": "jellyfin"})
 
         assert response.status_code == 500
         assert response.json()["detail"].startswith("Failed to create container: ")
@@ -3401,10 +3455,10 @@ class TestHardwarePerContainer:
         soc.devices = set(RK3588_VIDEO)
         in_catalog(_photos(hardware=[VIDEO.model_copy(update={"image": "example/photos-server:1-rk3588"})], companions=[]))
 
-        response = api.post(INSTALL, json={"template_id": "photos"})
+        response = install(api, {"template_id": "photos"})
 
         assert response.status_code == 200, response.text
-        docker_client.images.pull.assert_called_once_with(image)
+        assert pulled(docker_client) == [image]
         if compatible is None:
             assert docker_client.containers.create.call_args.args == (image,)
         else:
@@ -3614,10 +3668,10 @@ class TestStackCatalog:
         assert app_id not in {template["id"] for template in api.get("/api/v1/apps/catalog").json()}
         assert api.get(f"/api/v1/apps/catalog/{app_id}").status_code == 404
 
-        response = api.post(INSTALL, json={"template_id": app_id})
+        response = install(api, {"template_id": app_id})
 
         assert response.status_code == 404
-        docker_client.images.pull.assert_not_called()
+        docker_client.api.post.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -3637,7 +3691,7 @@ class TestSystemDiskSpace:
         docker_client.info.return_value = {"DockerRootDir": "/srv/docker"}
         soc.free = {"/srv/docker": 64 * GIB, CONTAINERD_ROOT: 64 * GIB}
 
-        response = api.post(INSTALL, json={"template_id": "tailscale"})
+        response = install(api, {"template_id": "tailscale"})
 
         assert response.status_code == 200, response.text
         # Docker's root folder as Docker names it, and the containerd image store's folder.
@@ -3647,13 +3701,13 @@ class TestSystemDiskSpace:
     def test_the_lower_free_space_of_the_two_counts(self, api, pools, docker_client, soc, lower):
         soc.free = {DOCKER_ROOT: 64 * GIB, CONTAINERD_ROOT: 64 * GIB, lower: FREE_SPACE_FLOOR - GIB // 2}
 
-        response = api.post(INSTALL, json={"template_id": "jellyfin"})
+        response = install(api, {"template_id": "jellyfin"})
 
         assert (response.status_code, response.json()) == (409, {
             "detail": "The system disk has 1.5 GiB free; at least 2 GiB must stay free when Jellyfin is installed. "
             + NO_SPACE_REMEDY
         })
-        docker_client.images.pull.assert_not_called()
+        docker_client.api.post.assert_not_called()
         docker_client.containers.create.assert_not_called()
         assert not (pools.alpha / "apps").exists()
 
@@ -3661,17 +3715,17 @@ class TestSystemDiskSpace:
         # Its size is not known before its pull: the floor alone must be free.
         soc.free = {DOCKER_ROOT: FREE_SPACE_FLOOR, CONTAINERD_ROOT: 64 * GIB}
 
-        response = api.post(INSTALL, json={"template_id": "jellyfin"})
+        response = install(api, {"template_id": "jellyfin"})
 
         assert response.status_code == 200, response.text
         docker_client.images.get.assert_not_called()
-        docker_client.images.pull.assert_called_once_with("jellyfin/jellyfin:latest")
+        assert pulled(docker_client) == ["jellyfin/jellyfin:latest"]
 
     def test_a_folder_that_the_host_lacks_is_left_out(self, api, pools, docker_client, soc):
         # Docker's own image store keeps everything in its root folder: no /var/lib/containerd.
         soc.free = {DOCKER_ROOT: 64 * GIB}
 
-        response = api.post(INSTALL, json={"template_id": "jellyfin"})
+        response = install(api, {"template_id": "jellyfin"})
 
         assert response.status_code == 200, response.text
 
@@ -3685,7 +3739,7 @@ class TestSystemDiskSpace:
         soc.free = {}
 
         with caplog.at_level("WARNING", logger="src.apps.preflight"):
-            response = api.post(INSTALL, json={"template_id": "dozzle"})
+            response = install(api, {"template_id": "dozzle"})
 
         assert response.status_code == 200, response.text
         assert [cmd for cmd in soc.commands if _reads_free_space(cmd)] == [_free_space_read()]
@@ -3693,7 +3747,7 @@ class TestSystemDiskSpace:
             f"Could not read the free space of the system disk: the host has none of {DOCKER_ROOT}, "
             f"{CONTAINERD_ROOT}; the install goes on"
         ]
-        docker_client.images.pull.assert_called_once()
+        docker_client.api.post.assert_called_once()
         docker_client.containers.create.return_value.start.assert_called_once()
 
     @pytest.mark.parametrize(("df", "reason"), [
@@ -3707,10 +3761,10 @@ class TestSystemDiskSpace:
     ):
         soc.df = df
 
-        response = api.post(INSTALL, json={"template_id": "jellyfin"})
+        response = install(api, {"template_id": "jellyfin"})
 
         assert (response.status_code, response.json()) == (500, _unread_free_space(reason))
-        docker_client.images.pull.assert_not_called()
+        docker_client.api.post.assert_not_called()
         assert not (pools.alpha / "apps").exists()
 
     @pytest.mark.parametrize("info", [{}, {"DockerRootDir": ""}, {"DockerRootDir": "var/lib/docker"}],
@@ -3718,26 +3772,26 @@ class TestSystemDiskSpace:
     def test_a_docker_that_names_no_root_folder_answers_500(self, api, pools, docker_client, soc, info):
         docker_client.info.return_value = info
 
-        response = api.post(INSTALL, json={"template_id": "jellyfin"})
+        response = install(api, {"template_id": "jellyfin"})
 
         assert (response.status_code, response.json()) == (500, _unread_free_space("Docker names no root folder"))
         assert not [cmd for cmd in soc.commands if _reads_free_space(cmd)]
-        docker_client.images.pull.assert_not_called()
+        docker_client.api.post.assert_not_called()
 
     def test_a_docker_whose_info_fails_answers_500(self, api, pools, docker_client, soc):
         docker_client.info.side_effect = APIError("500 Server Error: Internal Server Error")
 
-        response = api.post(INSTALL, json={"template_id": "jellyfin"})
+        response = install(api, {"template_id": "jellyfin"})
 
         assert (response.status_code, response.json()) == (
             500, _unread_free_space("500 Server Error: Internal Server Error")
         )
-        docker_client.images.pull.assert_not_called()
+        docker_client.api.post.assert_not_called()
 
     def test_an_install_refused_before_reads_no_free_space(self, api, pools, docker_client, soc):
         soc.sockets = ['tcp   LISTEN 0      4096   0.0.0.0:8096   0.0.0.0:*   users:(("EmbyServer",pid=8,fd=7))']
 
-        response = api.post(INSTALL, json={"template_id": "jellyfin"})
+        response = install(api, {"template_id": "jellyfin"})
 
         assert response.status_code == 409
         assert soc.commands == [SS]

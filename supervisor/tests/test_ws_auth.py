@@ -28,6 +28,8 @@ from starlette.websockets import WebSocketDisconnect
 from websockets.exceptions import ConnectionClosed
 from websockets.sync.client import connect as ws_connect
 
+from src.apps import install_jobs
+from src.apps.schemas import AppInstallJob, ContainerStart, ImagePull
 from src.auth import utils as auth_utils
 from src.auth.models import APIToken, User, UserSession
 from src.auth.utils import create_access_token, generate_api_token
@@ -1146,6 +1148,89 @@ class TestTheRepairOnTheEventsSocket:
             _auth(ws, user_token)
             assert ws.receive_json() == {"type": "auth_ok"}
             repair_router._publish(_repair_job(visited=5000))
+            assert [ws.receive_json()["type"] for _ in range(10)] == ["stats"] * 10
+
+
+def _install_job(state: str = "running", **changes) -> AppInstallJob:
+    """An install job as install_jobs publishes it (ADR-0384): Dozzle pulling its image, then its end."""
+    return AppInstallJob(
+        id="job1", template_id="dozzle", name="Dozzle", state=state, step="pulling",
+        started_at=datetime(2026, 11, 17, 10, 0, tzinfo=timezone.utc),
+        finished_at=None if state == "running" else datetime(2026, 11, 17, 10, 5, tzinfo=timezone.utc),
+        images=[ImagePull(image="amir20/dozzle:latest", state="pulling", layers=3, layers_done=1,
+                          bytes_total=9000, bytes_done=4000)],
+        containers=[ContainerStart(name="dozzle")],
+        error=None if state != "failed" else "Failed to pull image: unexpected EOF",
+        error_status=None if state != "failed" else 500,
+    ).model_copy(update=changes)
+
+
+def _next_installs(ws, until=lambda data: True, timeout: float = 5.0) -> dict:
+    """The next app_installs message on ``ws`` whose jobs ``until`` accepts, skipping the others."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        message = ws.receive_json()
+        if message["type"] == "app_installs" and until(message["data"]):
+            return message
+    pytest.fail("no such app_installs message")
+
+
+class TestTheInstallsOnTheEventsSocket:
+    """The events socket sends administrators the install jobs of apps (ADR-0384)."""
+
+    def test_an_administrator_gets_the_jobs_after_auth_ok_and_whenever_they_change(
+            self, client, admin_token, fast_recheck, alerts, no_repair):
+        install_jobs._publish(_install_job())
+
+        with client.websocket_connect("/ws/v1/events") as ws:
+            _auth(ws, admin_token)
+            assert ws.receive_json() == {"type": "auth_ok"}
+            assert ws.receive_json() == {"type": "problems", "data": []}
+            assert ws.receive_json() == {"type": "repair", "data": None}
+            assert ws.receive_json() == {"type": "app_installs", "data": [{
+                "id": "job1", "template_id": "dozzle", "name": "Dozzle", "state": "running", "step": "pulling",
+                "started_at": "2026-11-17T10:00:00Z", "finished_at": None,
+                "images": [{"image": "amir20/dozzle:latest", "state": "pulling", "layers": 3, "layers_done": 1,
+                            "bytes_total": 9000, "bytes_done": 4000}],
+                "containers": [{"name": "dozzle", "companion": None, "state": "waiting"}],
+                "result": None, "error": None, "error_status": None,
+            }]}
+
+            install_jobs._publish(_install_job(images=[ImagePull(image="amir20/dozzle:latest", state="pulled")]))
+            assert _next_installs(ws)["data"][0]["images"][0]["state"] == "pulled"
+
+            install_jobs._publish(_install_job("failed"))
+            end = _next_installs(ws)["data"][0]
+            assert (end["state"], end["error_status"]) == ("failed", 500)
+
+            # A job dismissed: the list without it.
+            install_jobs.forget("job1")
+            assert _next_installs(ws)["data"] == []
+
+    @pytest.mark.parametrize("before", ["no job", "a job dismissed"])
+    def test_nothing_is_sent_while_there_is_no_job(self, client, admin_token, fast_recheck, alerts, no_repair, before):
+        # A web UI that signs in again after a restart empties its jobs at auth_ok; the jobs that it
+        # dismissed are gone for every new socket.
+        if before == "a job dismissed":
+            install_jobs._publish(_install_job("failed"))
+            install_jobs.forget("job1")
+        with client.websocket_connect("/ws/v1/events") as ws:
+            _auth(ws, admin_token)
+            assert ws.receive_json() == {"type": "auth_ok"}
+            assert ws.receive_json()["type"] == "problems"
+            assert ws.receive_json()["type"] == "repair"
+            assert [ws.receive_json()["type"] for _ in range(10)] == ["stats"] * 10
+
+            install_jobs._publish(_install_job())
+            assert _next_installs(ws)["data"][0]["state"] == "running"
+
+    def test_a_regular_user_never_gets_them(self, client, user_token, fast_recheck, alerts, no_repair):
+        install_jobs._publish(_install_job())
+
+        with client.websocket_connect("/ws/v1/events") as ws:
+            _auth(ws, user_token)
+            assert ws.receive_json() == {"type": "auth_ok"}
+            install_jobs._publish(_install_job("failed"))
             assert [ws.receive_json()["type"] for _ in range(10)] == ["stats"] * 10
 
 

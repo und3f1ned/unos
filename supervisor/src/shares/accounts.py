@@ -1533,9 +1533,12 @@ async def finish_promotion(db: AsyncSession, revoke: PromotionRevoke) -> list[st
 
 
 async def _has_access_rows(db: AsyncSession, user_id: int) -> bool:
-    table = models.SmbShareAccess.__table__
-    found = await db.execute(select(table.c.id).where(table.c.user_id == user_id).limit(1))
-    return found.first() is not None
+    """Whether the user has an access row or is a member of a group."""
+    for table in (models.SmbShareAccess.__table__, models.UserGroupMember.__table__):
+        found = await db.execute(select(table.c.id).where(table.c.user_id == user_id).limit(1))
+        if found.first() is not None:
+            return True
+    return False
 
 
 async def begin_user_removal(db: AsyncSession, user: User, row: models.SmbAccount | None) -> UserRemoval | None:

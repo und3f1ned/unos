@@ -67,8 +67,8 @@ The make targets use these environments when they exist, and `python3`, `ruff`, 
 | `make check` | `lint`, `test` and `frontend`: what CI's Unit Tests, Lint and Frontend jobs run, without the network audits |
 | `make check-fast` | `lint` and `test-fast`: the pre-commit hook and the Stop hook |
 | `make lint` | `ruff check --select F,E9 supervisor scripts .claude/hooks` (pyflakes findings and syntax errors in the supervisor and in the repository's own tooling), `bash -n` on every shell script of `deploy/`, `scripts/` and `.claude/hooks/`, and the JSON syntax of `feature-list.json` and `.claude/settings.json` |
-| `make test` | all backend tests (`supervisor/tests`), with the checks of the web UI's code that run under node: `test_i18n.py` and `test_webui_polling.py` (`webui/scripts/polling-check.mjs`: no `setInterval` reaches the API, ADR-0365); `TESTS=tests/test_auth.py` for one file, `PYTEST_ARGS='-x -k smb'` for pytest options |
-| `make test-fast` | the convention tests: `test_adrs.py`, `test_feature_list.py`, `test_agent_guard.py`, `test_repo_tooling.py` (with the secret scan below), `test_dev_scripts.py`, `test_dev_scenarios.py`, `test_standin.py` |
+| `make test` | all backend tests (`supervisor/tests`), in parallel worker processes (below), with the checks of the web UI's code that run under node: `test_i18n.py` and `test_webui_polling.py` (`webui/scripts/polling-check.mjs`: no `setInterval` reaches the API, ADR-0365); `TESTS=tests/test_auth.py` for one file, `PYTEST_ARGS='-x -k smb'` for pytest options, `TEST_WORKERS=4` for the number of workers |
+| `make test-fast` | the convention tests, in parallel worker processes: `test_adrs.py`, `test_feature_list.py`, `test_agent_guard.py`, `test_repo_tooling.py` (with the secret scan below), `test_dev_scripts.py`, `test_dev_scenarios.py`, `test_standin.py` |
 | `make smoke` | backend tests that start the app and serve requests, in a few seconds: the startup and `/api/v1/health` (`test_lifespan.py`), the first-run setup, a login through the proxy layer and the refusal of anonymous requests |
 | `make frontend` | `npm run check` (svelte-kit sync, then svelte-check), `npm run i18n` (`scripts/i18n-check.mjs`: the texts of every `.svelte` file that `scripts/i18n-untranslated.txt` does not list come from the catalogs in English and Russian; texts put together at run time and `.ts` modules are for review, ADR-0287) and `npm run build` in `webui/` |
 | `make e2e-local` | the Playwright specs against the local stand-in (`scripts/standin/e2e.sh`); `E2E_ARGS='tests/auth.spec.ts'` for a part |
@@ -79,10 +79,18 @@ The make targets use these environments when they exist, and `python3`, `ruff`, 
 has failed, and fail at the end, naming the parts that failed (ADR-0190): one run reports every
 problem. Each part starts with a line `== make <target>: <part>`.
 
-The backend tests use fixed paths under `/tmp` (`supervisor/tests/conftest.py`), so only one run
-per machine may use them at a time, also across worktrees: `make test`, `make test-fast` and
-`make smoke` wait for the lock `/tmp/unos-backend-tests.lock` (`flock` on Linux, `lockf` on macOS;
-`TEST_LOCK=` turns it off).
+`make test` and `make test-fast` run the tests in `TEST_WORKERS` processes of pytest-xdist
+(`auto`, the default: one per CPU core; `0`: in pytest's own process), and `make smoke` in one
+process, where workers would take longer to start than its tests (ADR-0383). Each pytest process,
+a run's or a worker's, keeps the paths that the supervisor reads from its settings (smb.conf, the
+NFS export file, the pools' folder) in a temporary folder of its own, which it removes at its end
+(`supervisor/tests/conftest.py`); every other file of a test is in its `tmp_path`. So runs in
+several worktrees go at once, and no lock serializes them. A test must not write to a fixed path
+outside its `tmp_path`, and must give every parametrized case the same id in every process (the
+workers compare what they collected). A Python without pytest-xdist runs the tests in one
+process, with a line that says so; `make setup` installs it. On the workstation (10 cores) the
+backend tests take about 2 minutes instead of 12, `make check` about 2.2 minutes and
+`make check-fast` about 1 minute.
 
 ## Commits and Git Hooks
 
@@ -92,7 +100,15 @@ rule and [scripts/check-commit-msg.py](../scripts/check-commit-msg.py) checks it
 has the details). The hooks in `scripts/git-hooks/` (installed by `make setup`) run before every
 commit:
 
-- `pre-commit` runs `make check-fast`.
+- `pre-commit` runs `make check-fast`, unless the commit holds all of the working tree in which
+  `make check` or `make check-fast` last passed: both record its state when they pass with
+  `make setup`'s tools and every check (`scripts/green-run.py`, in the git-ignored
+  `tmp/stop-check/green`), and the commit's index then has no change from the working tree and
+  no file is untracked. It says in one line which it did (ADR-0383). The state covers HEAD, the
+  index and the working tree: stage everything before `make check`, or commit with
+  `git commit -a`, and the commit reuses the green run. Only make records it: the guard refuses
+  `scripts/green-run.py record` and writes into `tmp/stop-check`, and the settings deny the
+  Write and Edit tools that folder.
 - `commit-msg` runs `scripts/check-commit-msg.py` on the message.
 
 CI's Commit Messages job runs the same script over the commits of a pull request (CI is off,
@@ -122,7 +138,8 @@ hooks:
   by paths from the filesystem's root (`Read(//**/dev.env)`), so that a worktree's session cannot
   read the main checkout's either, and every tool of the Desktop Commander plugin.
 - The Stop hook, `.claude/hooks/stop-check.sh` (ADR-0216), runs `make check-fast` when the agent
-  is about to finish and the working tree has changed since the last green run. A failure sends
+  is about to finish and the working tree has changed since the last green run of `make check` or
+  `make check-fast` (`scripts/green-run.py`, ADR-0383). A failure sends
   the agent back to work with the last lines of the failing part; the whole output is in
   `tmp/stop-check/check-fast.log`. When the tools of `make setup` are missing it lets the session
   end with a warning that Claude Code shows to the user (the `systemMessage` of its answer).
@@ -169,7 +186,9 @@ os.environ["UNOS_DB_PATH"] = ":memory:"  # In-memory database
 # Random per run: secrets this repository published (such as "test-secret-key")
 # are refused at startup.
 os.environ["UNOS_JWT_SECRET"] = secrets.token_hex(32)
-os.environ["UNOS_POOLS_BASE_PATH"] = "/tmp/test_pools"
+# A temporary folder of this pytest process alone, removed at its end (ADR-0383).
+_RUN_DIR = tempfile.mkdtemp(prefix="unos-tests-")
+os.environ["UNOS_POOLS_BASE_PATH"] = os.path.join(_RUN_DIR, "pools")
 ```
 
 ### Faking the Host
@@ -386,13 +405,16 @@ secrets from the git-ignored `dev.env` (ADR-0212):
 - `scripts/dev/upload-speed.py [--mib N] [--runs R]`: how fast this workstation uploads to the
   device through Caddy and the upload route; it makes and deletes a folder `unoscheck<6 hex>` on
   the pool and signs in and out (about 0.1 MiB on the SD card).
-- `scripts/dev/immich-ml-probe.py [--runs N]`: whether Immich's machine learning answers, and how
-  fast: run inside its container with that container's python3, read from standard input
-  (`scripts/dev/ssh.sh 'docker exec -i immich-machine-learning python3 -I -B -' <
-  scripts/dev/immich-ml-probe.py`, ADR-0183), it sends a picture it draws in memory and a text
-  for Immich's default models and prints each request's status, the time of its first call (which
-  downloads the models to the pool), the median of N more and the answer's shape, never an
-  embedding. It writes nothing; the machine learning's log says whether the models ran on the NPU
+- `scripts/dev/immich-ml-probe.py [--runs N] [--clip-model NAME] [--language CODE] [--text TEXT]`:
+  whether Immich's machine learning answers, and how fast: run inside its container with that
+  container's python3, read from standard input (`scripts/dev/ssh.sh 'docker exec -i
+  immich-machine-learning python3 -I -B -' < scripts/dev/immich-ml-probe.py`, ADR-0183; arguments
+  follow `python3 -I -B -`), it sends a picture it draws in memory and a text, as Immich's server
+  asks for them, and prints each request's status, the time of its first call (which downloads
+  the models to the pool), the median of N more and the answer's shape, never an embedding.
+  CLIP's model is Immich's default, ViT-B-32__openai, unless `--clip-model` names the one that
+  Immich's settings chose: the dev device's Immich uses nllb-clip-base-siglip__v1, so pass that
+  name, or the probe downloads a model Immich does not use. It writes nothing; the machine learning's log says whether the models ran on the NPU
   (ADR-0382).
 - `scripts/dev/linux-tests.sh`: the backend tests on Linux in the device's RAM.
 - `scripts/dev/deploy.sh`: `status`, `sync --dry-run` and `backup` only read the device

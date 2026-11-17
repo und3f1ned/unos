@@ -9,8 +9,10 @@
 		user,
 		isAdmin,
 		isAdminOnlyRoute,
+		isSetupOnly,
 		loadCurrentUser,
-		clearCurrentUser
+		clearCurrentUser,
+		TWO_FACTOR_SETUP_PATH
 	} from '$lib/stores/auth';
 	import { connectWebSocket, disconnectWebSocket } from '$lib/stores/stats';
 	import ProblemsBanner from '$lib/components/ProblemsBanner.svelte';
@@ -19,6 +21,7 @@
 		getToken,
 		isPublicRoute,
 		onTokenChangedElsewhere,
+		setSetupRequiredHandler,
 		setUnauthorizedHandler
 	} from '$lib/api/client';
 	import { logout, type User } from '$lib/api/auth';
@@ -63,7 +66,9 @@
 		{ href: '/system#security', icon: UserCog, label: $t('layout.nav.account') }
 	];
 
-	$: navItems = !$user ? [] : $user.is_admin ? adminNavItems : userNavItems;
+	// An account that can only set up two-factor authentication gets its setup page alone.
+	$: setupOnly = isSetupOnly($user);
+	$: navItems = !$user || setupOnly ? [] : $user.is_admin ? adminNavItems : userNavItems;
 
 	let mounted = false;
 	let userLoadError = '';
@@ -85,6 +90,7 @@
 
 	function gateFor(path: string, currentUser: User | null): Gate {
 		if (isPublicRoute(path)) return 'public';
+		if (isSetupOnly(currentUser)) return path === TWO_FACTOR_SETUP_PATH ? 'allowed' : 'blocked';
 		if (currentUser && (currentUser.is_admin || !isAdminOnlyRoute(path))) return 'allowed';
 		return 'blocked';
 	}
@@ -99,6 +105,10 @@
 			ensureUser();
 			return;
 		}
+		if (isSetupOnly(currentUser)) {
+			if (path !== TWO_FACTOR_SETUP_PATH) goto(TWO_FACTOR_SETUP_PATH, { replaceState: true });
+			return;
+		}
 		if (!currentUser.is_admin && isAdminOnlyRoute(path)) {
 			goto('/', { replaceState: true });
 		}
@@ -107,8 +117,9 @@
 	async function ensureUser() {
 		userLoadError = '';
 		try {
-			await loadCurrentUser();
-			connectWebSocket();
+			const me = await loadCurrentUser();
+			// No socket serves an account that can only set up two-factor authentication.
+			if (!isSetupOnly(me)) connectWebSocket();
 		} catch (e) {
 			// 401 already ended the session (see setUnauthorizedHandler below).
 			if (e instanceof ApiError && e.status === 401) return;
@@ -137,13 +148,30 @@
 		guardRoute(pathname, null);
 	}
 
+	// A request or the events socket refused because the grace period to set up two-factor
+	// authentication has ended meanwhile: the account, loaded again, says so, and the guard leads to
+	// the setup page. An account that has its rights after all (2FA set up in another tab, the
+	// requirement turned off) gets its live data again.
+	function handleSetupRequired() {
+		disconnectWebSocket();
+		loadCurrentUser()
+			.then((me) => {
+				if (!isSetupOnly(me)) connectWebSocket();
+			})
+			.catch(() => {
+				// A 401 ended the session; anything else leaves the page as it is.
+			});
+	}
+
 	onMount(() => {
 		// Any request (or the stats socket) rejected with 401 lands here.
 		setUnauthorizedHandler(endSession);
+		setSetupRequiredHandler(handleSetupRequired);
 		const stopWatchingToken = onTokenChangedElsewhere(handleTokenChange);
 		mounted = true;
 		return () => {
 			setUnauthorizedHandler(null);
+			setSetupRequiredHandler(null);
 			stopWatchingToken();
 		};
 	});
@@ -330,7 +358,7 @@
 		<!-- Main content -->
 		<main class="flex-1 overflow-auto bg-surface p-4 md:p-6 scrollbar-thin">
 			<!-- The problems of the NAS, above every page of an administrator (ADR-0332). -->
-			{#if gate === 'allowed' && $isAdmin}
+			{#if gate === 'allowed' && $isAdmin && !setupOnly}
 				<ProblemsBanner />
 			{/if}
 			{#if gate === 'allowed' && showSlot}

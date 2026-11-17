@@ -10,9 +10,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, NoReturn
 
-from docker.errors import NotFound
+from docker.errors import DockerException, NotFound
 from docker.types import Mount
-from fastapi import APIRouter, Depends, HTTPException, Request
+from docker.utils import parse_repository_tag
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
+from fastapi.responses import JSONResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -28,12 +30,13 @@ from ..security.validators import open_dir_nofollow, pools_base, validate_pools_
 from ..shares.constants import SMB_APP_UID, SMB_GROUP_GID, SMB_GROUP_NAME
 from ..shares.models import SmbShare
 from ..snapshots.router import SNAPSHOT_DIR_NAME
-from . import app_secrets, preflight, stacks
+from . import app_secrets, install_jobs, preflight, pulls, stacks
 from .catalog import APP_CATALOG, get_app_by_id, get_apps_by_category, search_apps
 from .hardware import ContainerHardware, all_profiles, container_hardware, for_host, read_host_hardware
 from .schemas import (
     POOL_PLACEHOLDER,
     AppCategory,
+    AppInstallJob,
     AppInstallRequest,
     AppInstallResponse,
     AppPool,
@@ -988,27 +991,33 @@ class _InstallFailed(HTTPException):
         self.done = done
 
 
-def _install_app(req: AppInstallRequest, shares: list[_ShareFolder]) -> _Installed:
-    """Validate the request, then pull the images and create and start the containers.
-
-    Everything that can be rejected is checked before the (slow) image pulls, and nothing is
-    written to the pool before them. One change of the app at a time (stacks.app_lock).
-    ``shares``: the folders of the shares when the request came in. Runs in a worker thread:
-    Docker and filesystem calls block.
-    """
-    template = get_app_by_id(req.template_id)
-    if not template:
-        raise HTTPException(404, f"App {req.template_id} not found")
-    with stacks.app_lock(template.id, template.name):
-        return _install(template, req, shares)
-
-
-def _install(template: AppTemplate, req: AppInstallRequest, shares: list[_ShareFolder]) -> _Installed:
-    several = bool(template.companions)
+def _check_request(template: AppTemplate, req: AppInstallRequest) -> tuple[dict[str, int], dict[str, str]]:
+    """400 for a request that ``template`` refuses whatever Docker, the host and the pools hold:
+    the group option, the host ports, the variables. Reads nothing: the install request answers it
+    at once, before its job starts (ADR-0384). The host ports and the main container's
+    environment."""
     if req.run_in_unos_smb and not template.can_run_in_unos_smb:
         raise HTTPException(400, _cannot_run_in_the_group(template))
     port_bindings = preflight.plan_ports(template, req.port_overrides)
     environment = _build_environment(template, req.env_overrides, run_in_unos_smb=req.run_in_unos_smb)
+    for companion in template.companions:
+        _build_environment(companion, {}, run_in_unos_smb=False)
+    return port_bindings, environment
+
+
+def _install(
+    template: AppTemplate, req: AppInstallRequest, shares: list[_ShareFolder], progress: install_jobs.Progress
+) -> _Installed:
+    """Check what Docker, the host and the pools hold, then pull the images and create and start
+    the containers, reporting each step to ``progress`` (ADR-0384).
+
+    Everything that can be rejected is checked before the (slow) image pulls, and nothing is
+    written to the pool before them. Runs in the install job's thread, which holds the app's lock
+    (stacks.app_lock): Docker and filesystem calls block. ``shares``: the folders of the shares
+    when the request came in.
+    """
+    several = bool(template.companions)
+    port_bindings, environment = _check_request(template, req)
 
     pools = list_mounted_pools()
     needs_pool = any(volume.on_pool for spec in (template, *template.companions) for volume in spec.volumes)
@@ -1068,10 +1077,14 @@ def _install(template: AppTemplate, req: AppInstallRequest, shares: list[_ShareF
     # Room on the system disk for the images that the hardware chose (ADR-0381).
     preflight.check_space(client, template, [c.image for c in containers])
 
-    images = _pull_images(client, template, containers)
+    progress.check()
+    progress.pulling(list(dict.fromkeys(c.image for c in containers)))
+    images = _pull_images(client, template, containers, progress)
     _check_image_volumes(template, containers, images)
 
     # The pulls can take minutes: re-check the pools right before writing.
+    progress.check()
+    progress.step("creating")
     _prepare_sources(planned, create=True)
     generated = [
         str(m.source)
@@ -1079,7 +1092,7 @@ def _install(template: AppTemplate, req: AppInstallRequest, shares: list[_ShareF
         if app_secrets.create(_pool_root_of(m), m.source, m.target, uid=m.uid, gid=m.gid)
     ]
 
-    created = _create_and_start(client, template, containers, network, port_bindings, pool)
+    created = _create_and_start(client, template, containers, network, port_bindings, pool, progress)
     started = created[-1]
 
     web_url = None
@@ -1128,36 +1141,75 @@ def _secrets_to_make(template: AppTemplate, planned: list[_PlannedMount]) -> lis
     return list(missing.values())
 
 
-def _pull_images(client: Any, template: AppTemplate, containers: list[_NewContainer]) -> dict[str, Any]:
+def _pull_images(
+    client: Any, template: AppTemplate, containers: list[_NewContainer], progress: install_jobs.Progress
+) -> dict[str, Any]:
     """Pull the image of each container, each once, in the order of the containers: a floating
     one always (as Docker's pull of a tag), a pinned one by its digest when Docker lacks it,
     then tagged for the Images tab. The images of the pinned ones, by reference."""
     images: dict[str, Any] = {}
     for ref in dict.fromkeys(c.image for c in containers):
         try:
-            images[ref] = _pull(client, ref)
+            images[ref] = _pull(client, ref, progress)
+        except install_jobs.Stopped:
+            progress.pulled(ref, "failed")
+            raise
         except _DOCKER_ERRORS as e:
+            progress.pulled(ref, "failed")
             raise HTTPException(500, f"Failed to pull image {ref}: {e}" if template.companions else f"Failed to pull image: {e}")
     return images
 
 
-def _pull(client: Any, ref: str) -> Any | None:
+def _pull(client: Any, ref: str, progress: install_jobs.Progress) -> Any | None:
+    """Pull ``ref``, reporting each line of Docker's pull stream to ``progress`` (ADR-0384); the
+    image of a pinned one."""
     pinned = _pinned(ref)
     if pinned is None:
-        client.images.pull(ref)
+        repository, tag = parse_repository_tag(ref)
+        progress.image(ref, "pulling")
+        _read_pull(pulls.open_pull(client, repository, tag or "latest"), ref, progress)
+        progress.pulled(ref, "pulled")
         return None
     name, tag, digest = pinned
     try:
-        return client.images.get(f"{name}@{digest}")
+        image = client.images.get(f"{name}@{digest}")
     except NotFound:
         pass
+    else:
+        progress.image(ref, "present")
+        return image
+    progress.image(ref, "pulling")
     # By digest: Docker pulls exactly that image, whatever the tag names now.
-    image = client.images.pull(name, tag=digest)
+    _read_pull(pulls.open_pull(client, name, digest), ref, progress)
+    image = client.images.get(f"{name}@{digest}")
     try:
         client.api.tag(f"{name}@{digest}", name, tag)
     except _DOCKER_ERRORS as e:
         logger.warning("Could not tag %s@%s as %s:%s: %s", name, digest, name, tag, e)
+    progress.pulled(ref, "pulled")
     return image
+
+
+def _read_pull(response: Any, ref: str, progress: install_jobs.Progress) -> None:
+    """Read Docker's pull stream of ``ref`` to its end, which the pull needs (Docker stops a pull
+    whose client went away), each line to ``progress``. A stop of the supervisor or a cancel ends
+    it (install_jobs.Stopped), also while a read blocks (``progress.abort``); a pull that sends
+    nothing for pulls.PULL_STALL_SECONDS fails with pulls.STALLED (ADR-0384)."""
+    progress.reading(response)
+    try:
+        for line in pulls.lines(response):
+            progress.check()
+            progress.pull_line(ref, line)
+    except install_jobs.Stopped:
+        raise
+    except Exception as e:
+        progress.check()  # a stop or a cancel that broke the read off
+        if pulls.stalled(e):
+            raise DockerException(pulls.STALLED) from e
+        raise
+    finally:
+        progress.reading(None)
+        response.close()
 
 
 def _check_image_volumes(template: AppTemplate, containers: list[_NewContainer], images: dict[str, Any]) -> None:
@@ -1224,13 +1276,14 @@ def _create_and_start(
     network: Any | None,
     port_bindings: dict[str, int],
     pool: AppPool | None,
+    progress: install_jobs.Progress,
 ) -> list[Any]:
     """Make the app's network (unless ``network`` is its own, left from before), create its
     containers in order and start them in the same order, each companion that the main container
     depends on ready before the next container starts: the containers, in their order. So a
     container that fails to start later meets those companions set up, such as a database that
-    has finished its first start. On a failure, everything this made is removed again
-    (_roll_back)."""
+    has finished its first start. On a failure or a cancel, everything this made is removed again
+    (_roll_back); a stop of the supervisor leaves what it made (_left_by_a_stop)."""
     several = bool(template.companions)
     net = stacks.network_name(template.id) if several else None
     depends_on = set(template.depends_on)
@@ -1238,14 +1291,18 @@ def _create_and_start(
     created: list[Any] = []
     asked: set[str] = set()  # the containers it asked Docker to start
     awaited: _NewContainer | None = None  # the companion it is waiting for
+    current: _NewContainer | None = None  # the container it creates or starts
     failing = ""
     try:
         if several and network is None:
+            progress.check()
             failing = f"Failed to create the network {net}"
             made_network = client.networks.create(
                 net, driver="bridge", labels={UNOS_APP_LABEL: template.id}, check_duplicate=True
             )
         for c in containers:
+            progress.check()
+            current = c
             failing = f"Failed to create container {c.name}" if several else "Failed to create container"
             created.append(_create_container(
                 client,
@@ -1255,21 +1312,73 @@ def _create_and_start(
                 alias=c.companion,
                 **_create_options(template, c, port_bindings, pool),
             ))
+            progress.container(c.name, "created")
+        progress.step("starting")
         for c, container in zip(containers, created):
+            progress.check()
+            current = c
             failing = f"Failed to start container {c.name}" if several else "Failed to start container"
             asked.add(c.name)
+            progress.container(c.name, "starting")
             container.start()
             if c.companion in depends_on:
                 awaited = c
-                stacks.wait_ready(container, started_now=True)
+                stacks.wait_ready(container, started_now=True, check=progress.check)
                 awaited = None
+            progress.container(c.name, "running")
+        current = None
         for container in created:
             container.reload()
+    except install_jobs.Stopped as e:
+        if e.cancelled_by is None:
+            _left_by_a_stop(template, created, made_network, awaited)
+        if not created and made_network is None:
+            raise
+        # A cancel: everything this made goes, as after a failure (ADR-0384).
+        _roll_back(template, containers, created, asked, made_network, f"Cancelled by {e.cancelled_by}", awaited,
+                   progress, None)
     except stacks.NotReady as e:
-        _roll_back(template, containers, created, asked, made_network, str(e), awaited)
+        _roll_back(template, containers, created, asked, made_network, str(e), awaited, progress, current)
     except _DOCKER_ERRORS as e:
-        _roll_back(template, containers, created, asked, made_network, f"{failing}: {e}", awaited)
+        _roll_back(template, containers, created, asked, made_network, f"{failing}: {e}", awaited, progress, current)
     return created
+
+
+def _left_by_a_stop(
+    template: AppTemplate, created: list[Any], network: Any | None, awaited: _NewContainer | None
+) -> NoReturn:
+    """A stop of the supervisor stopped the install (ADR-0384): what it made stays as it is, not
+    stopped and not removed, since a forced removal would kill a database halfway through its
+    first start; the app is then listed, and its Start or Uninstall goes on from there, or, when
+    only the network was made, the next install uses it again. Stopped again when it had made
+    nothing; otherwise _InstallFailed, whose audit entry names what is left. When it stopped while
+    it waited for ``awaited``, the message names the data folders that may be half set up, as
+    ADR-0381's clean-up does."""
+    made = [container.name for container in created] + ([f"the network {network.name}"] if network else [])
+    if not made:
+        raise install_jobs.Stopped()
+    left = stacks.joined(made)
+    done = f"Created {left}; then: stopped by a stop of the supervisor; left behind: {left}"
+    if not created:
+        raise _InstallFailed(
+            f"A stop of the supervisor stopped the install of {template.name} after it made {left} and before any "
+            f"container: install {template.name} again, which uses that network again",
+            done,
+        )
+    unfinished = ""
+    if awaited is not None and awaited.new_data:
+        folders = [str(folder) for folder in awaited.new_data]
+        was, it = ("was", "it") if len(folders) == 1 else ("were", "them")
+        unfinished = (
+            f". {stacks.joined(folders)} {was} empty before this install and may hold data that {awaited.name} did "
+            f"not finish setting up: if you uninstall {template.name}, move {it} away before you install "
+            f"{template.name} again."
+        )
+    raise _InstallFailed(
+        f"A stop of the supervisor stopped the install of {template.name}; it left {left}: start or uninstall "
+        f"{template.name} on the Installed tab{unfinished}",
+        done,
+    )
 
 
 def _roll_back(
@@ -1280,6 +1389,8 @@ def _roll_back(
     network: Any | None,
     reason: str,
     awaited: _NewContainer | None,
+    progress: install_jobs.Progress,
+    failed: _NewContainer | None,
 ) -> NoReturn:
     """Remove, forced and in reverse order, the containers and the network that a failed install
     made: they would block a retry ("name already in use"). Each container that it asked to
@@ -1287,7 +1398,11 @@ def _roll_back(
     finish or shut down (a forced removal alone kills it at once). Its folders, password files
     and images stay. 500 with ``reason``, and, when it failed while it waited for ``awaited``, the
     data folders that this may have left half set up; _InstallFailed when something could not be
+    removed. ``progress`` gets the step cleaning, the container that ``failed`` and each one
     removed."""
+    progress.step("cleaning")
+    if failed is not None:
+        progress.container(failed.name, "failed")
     left: list[str] = []
     problems: list[str] = []
     for c, container in reversed(list(zip(containers, created))):
@@ -1302,6 +1417,9 @@ def _roll_back(
         except _DOCKER_ERRORS as e:
             left.append(container.name)
             problems.append(f"then could not remove {container.name}: {e}")
+        else:
+            if c is not failed:
+                progress.container(c.name, "removed")
     if network is not None:
         try:
             network.remove()
@@ -1392,34 +1510,94 @@ def _installed_details(template: AppTemplate, installed: _Installed) -> str:
     return text
 
 
-@router.post("/install", response_model=AppInstallResponse)
+@router.post("/install", response_model=AppInstallJob, status_code=202)
 async def install_app(
     req: AppInstallRequest,
     request: Request,
     user: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
-) -> AppInstallResponse:
-    """Install an app from the catalog with its data on a mounted pool.
+) -> AppInstallJob:
+    """Install an app from the catalog with its data on a mounted pool, as a background job: 202
+    at once with the job running (ADR-0384).
 
-    The audit log gets app_installed (ADR-0350); an install that failed and left a container or
-    its network behind writes it as failed (ADR-0381).
+    Answered at once: 404 for an app the catalog lacks, 400 for a request that its template
+    refuses (the group option, the host ports, the variables), 409 while an install runs or
+    another change of the app is under way. Everything else is checked in the job, before any
+    pull, and a refusal ends the job failed with the status and detail of the refusal. The job
+    writes the audit entry app_installed at its end (ADR-0350); an install that failed and left a
+    container or its network behind writes it as failed (ADR-0381).
     """
-    shares = await _share_folders(db)
-    # Pulling an image can take minutes; keep the event loop responsive.
-    try:
-        installed = await asyncio.to_thread(_install_app, req, shares)
-    except _InstallFailed as exc:
-        await audit_change(
-            AuditAction.APP_INSTALLED, request, user.username, resource_type="app", resource_id=req.template_id,
-            details=exc.done, success=False,
-        )
-        raise
     template = get_app_by_id(req.template_id)
-    await audit_change(
-        AuditAction.APP_INSTALLED, request, user.username, resource_type="app", resource_id=installed.answer.name,
-        details=_installed_details(template, installed),
-    )
+    if not template:
+        raise HTTPException(404, f"App {req.template_id} not found")
+    _check_request(template, req)
+    shares = await _share_folders(db)
+    username = user.username
+
+    def work(progress: install_jobs.Progress) -> AppInstallResponse:
+        return _install_and_audit(template, req, shares, request, username, progress)
+
+    return install_jobs.start(template, work)
+
+
+def _install_and_audit(
+    template: AppTemplate,
+    req: AppInstallRequest,
+    shares: list[_ShareFolder],
+    request: Request,
+    username: str,
+    progress: install_jobs.Progress,
+) -> AppInstallResponse:
+    """The install job's work, in its thread: the install, then its audit entry, written before
+    the job's end is published."""
+    try:
+        installed = _install(template, req, shares, progress)
+    except _InstallFailed as exc:
+        _audit_from_the_job(request, username, template.id, exc.done, success=False)
+        raise
+    _audit_from_the_job(request, username, installed.answer.name, _installed_details(template, installed))
     return installed.answer
+
+
+def _audit_from_the_job(request: Request, username: str, app_id: str, details: str, *, success: bool = True) -> None:
+    """app_installed from the install job's thread, which has no event loop of its own."""
+    asyncio.run(audit_change(
+        AuditAction.APP_INSTALLED, request, username, resource_type="app", resource_id=app_id,
+        details=details, success=success,
+    ))
+
+
+@router.get("/install/jobs", response_model=list[AppInstallJob])
+async def list_install_jobs(_: User = Depends(require_admin)) -> list[AppInstallJob]:
+    """The running install and the last one of each app since UNOS started, the oldest first."""
+    return install_jobs.current()
+
+
+@router.get("/install/jobs/{job_id}", response_model=AppInstallJob)
+async def get_install_job(
+    job_id: str,
+    wait: int = Query(0, ge=0, le=install_jobs.MAX_WAIT_SECONDS),
+    _: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+) -> AppInstallJob:
+    """An install job; with ``wait``, once it has ended or ``wait`` seconds have passed, for scripts
+    that wait for an install (ADR-0384). 404 for a job that is not kept."""
+    # The credentials were checked with this session: no database connection, nor a read
+    # transaction that would hold back the checkpoints of the database's log, is kept while it
+    # waits (ADR-0306).
+    await db.close()
+    return await install_jobs.wait_for_end(job_id, wait)
+
+
+@router.delete("/install/jobs/{job_id}", status_code=204, responses={202: {"model": AppInstallJob}})
+async def dismiss_or_cancel_install_job(job_id: str, user: User = Depends(require_admin)) -> Response:
+    """Forget an ended install job, as the App Store's Dismiss does (204), or cancel the running one
+    (202 with the job as it is): the install stops at its next step, also during a pull, and what
+    it made is removed, as after a failure (ADR-0384). 404 for a job that is not kept."""
+    job = install_jobs.dismiss_or_cancel(job_id, user.username)
+    if job is None:
+        return Response(status_code=204)
+    return JSONResponse(status_code=202, content=job.model_dump(mode="json"))
 
 
 # ---------------------------------------------------------------------------

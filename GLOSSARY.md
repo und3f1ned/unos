@@ -71,10 +71,11 @@ health of a pool that UNOS does not manage, and for a disk's rising SMART counte
 Avoid: alarm.
 
 **Problem**: A condition of the NAS that needs an administrator while it lasts: a managed pool
-that is not mounted, degraded, read-only after an error or almost full, a failing disk, a
-scheduled task whose last run failed or that missed a run. It is alerted once when it is found and
-shown in the health banner until it is gone; UNOS keeps it in RAM only (ADR-0332). Avoid: issue,
-incident, event.
+that is not mounted, degraded, read-only after an error or almost full, a volume at 80, 90 or 95
+percent of its quota, a failing disk, a scheduled task whose last run failed or that missed a run.
+It is alerted once when it is found (a volume's again at each further level) and shown in
+the health banner until it is gone; UNOS keeps it in RAM only (ADR-0332). Avoid: issue, incident,
+event.
 
 **Health banner**: The list of the current problems above every page of an administrator, in the
 language of the page (ADR-0332). Avoid: alert bar, notification banner.
@@ -110,6 +111,11 @@ pool is mounted too).
 
 **Volume**: A btrfs subvolume at the top of a pool, with an optional quota (ADR-0069).
 Avoid: subvolume (snapshots are subvolumes too), dataset.
+
+**Quota use**: The bytes that a volume's quota group references, which its quota limits, data
+shared with its snapshots included; UNOS reads it from the kernel's counters in sysfs, alerts at
+80, 90 and 95 percent of the quota and keeps one point per hour for 30 days (ADR-0387). Avoid:
+volume size, disk usage.
 
 **Snapshot**: A read-only btrfs snapshot of a pool or a volume. Restoring one makes a writable copy
 and overwrites nothing (ADR-0011). Avoid: backup.
@@ -173,6 +179,13 @@ show as "Not served" and grant nothing (ADR-0145). Avoid: active share, enabled 
 **Share access**: One user's level on one share, read or write. Without it a user has no access to
 the share, and it counts only while the user's SMB account is active (ADR-0075).
 Avoid: permission, ACL.
+
+**Group**: A named set of UNOS users, kept in UNOS's database only, that can be given share access:
+each member whose SMB account is active gets it, and a user gets the higher of their own level and
+their groups' (ADR-0385). It is no host group: smb.conf names the members. Avoid: SMB group, host
+group, unos-smb (the host group of every SMB account).
+
+**Group access**: A group's level on one share, read or write (ADR-0385). Avoid: group permission.
 
 **Guest share**: A share that guests may read without a password; guests never write (ADR-0096,
 ADR-0100). Avoid: public share, anonymous share.
@@ -253,6 +266,15 @@ Account page and keeps; each one signs in once in place of a code of the authent
 two-factor authentication off, with `deploy/reset-admin.sh`, when no administrator can sign in;
 the audit log records it by the user root (ADR-0284). Avoid: password recovery, factory reset.
 
+**Two-factor requirement**: An administrator's setting that every account must have two-factor
+authentication, after a grace period that starts when it is turned on or when the account is
+created, whichever is later (ADR-0386). Avoid: mandatory 2FA policy, enforcement.
+
+**Setup-only account**: An account without two-factor authentication whose grace period under the
+two-factor requirement has ended: its sessions reach only the setup of two-factor authentication,
+its status and the sign-out, and its API tokens and WebSockets nothing (ADR-0386). Avoid: locked
+account, restricted user.
+
 ## Apps and backups
 
 **App**: An application installed from the App Store catalog, with its data on a pool (ADR-0039):
@@ -274,6 +296,13 @@ labelled `unos.app.companion=<name>`, on the app's network `unos-app-<app>`, whe
 its name, as Immich's `database`, `redis` and `machine-learning`. It publishes no port and takes no
 override; the main container starts once those it depends on are ready (ADR-0381). Avoid:
 sidecar, service.
+
+**Install job**: An app's install as it runs in the background: `POST /api/v1/apps/install`
+answers it at once, and it checks, pulls the images, creates and starts the containers and
+reports each step, each image's download and each container's state, then its result or its
+error, to the App Store over the events socket. Kept in memory only, the running one and the last
+of each app; one runs at a time (ADR-0384). Avoid: install task (a task is the Scheduler's), pull
+(one step of it).
 
 **Generated secret**: A password file that UNOS writes once, at an app's install, beside the data
 it opens on the pool (64 hexadecimal digits, root, mode 0600), binds read-only into the
@@ -337,6 +366,11 @@ it moves the base (ADR-0305). Avoid: parent image.
 
 **Quality gate**: `make check`: the same steps as CI's test, lint and frontend jobs (ADR-0216).
 Avoid: CI (which also runs the audits and the Linux-only tests).
+
+**Green run**: The state of a working tree (HEAD, the index, the changes and the untracked files)
+in which `make check` or `make check-fast` last passed, recorded by `scripts/green-run.py`; the
+pre-commit hook and the Stop hook do not run `make check-fast` again for it (ADR-0383).
+Avoid: cache, stamp.
 
 **Independent review**: The review of a change by an agent with a fresh context, which gets the
 diff, the ledger entry and its ADRs and tries to refute the change (ADR-0017).

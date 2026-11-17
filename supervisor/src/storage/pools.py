@@ -62,7 +62,7 @@ from collections.abc import Callable, Iterable, Iterator
 from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Literal
 
 import docker
 from docker.models.containers import Container
@@ -79,7 +79,7 @@ from ..security.validators import (
     validate_volume_name,
 )
 from ..shares import nfs, smb
-from . import disks
+from . import disks, qgroups
 from .schemas import (
     DeviceIdentity,
     ImportableFilesystem,
@@ -2216,7 +2216,13 @@ def _mounted_subvolume_id(target: str) -> int:
 
 
 def _mounted_pool_target(name: str, *, write: bool = False) -> str:
-    """The mountpoint of a pool, checked to be mounted there on the host.
+    """The mountpoint of a pool, checked to be mounted there on the host (_mounted_pool)."""
+    return _mounted_pool(name, write=write)[0]
+
+
+def _mounted_pool(name: str, *, write: bool = False) -> tuple[str, str]:
+    """The mountpoint of a pool, checked to be mounted there on the host, and the UUID of the
+    filesystem mounted there.
 
     Volumes are created, listed and deleted below it, by commands that run
     on the host, where the mount was checked. PoolNotFoundError (HTTP 404)
@@ -2237,6 +2243,7 @@ def _mounted_pool_target(name: str, *, write: bool = False) -> str:
     if not candidates:
         raise PoolNotFoundError(f"Pool '{name}' not found")
     here = [m for m in mounts if m.target == target and any(_mount_matches(m, fs) for fs in candidates)]
+    mounted = [fs for fs in candidates if any(m.target == target and _mount_matches(m, fs) for m in mounts)]
     if not here:
         raise PoolConflictError(
             f"Pool '{name}' is not mounted at {target}. Mount it on the Storage page first."
@@ -2247,13 +2254,19 @@ def _mounted_pool_target(name: str, *, write: bool = False) -> str:
         if any(m.forced_read_only for m in here):
             message += " btrfs made it read-only after an error; check the kernel log (dmesg)."
         raise PoolConflictError(message)
+    _top_level_mounted(name, target)
+    return target, mounted[0].uuid
+
+
+def _top_level_mounted(name: str, target: str) -> None:
+    """PoolConflictError (HTTP 409) when the pool ``name`` mounted at ``target`` shows another
+    subvolume than its top level: volumes are the subvolumes directly below the top level."""
     subvolume = _mounted_subvolume_id(target)
     if subvolume != _TOP_LEVEL_SUBVOLUME:
         raise PoolConflictError(
             f"Pool '{name}' is mounted at subvolume {subvolume}, not the top level; "
             "volumes are not available for this pool."
         )
-    return target
 
 
 def _list_subvolumes(target: str, *, newest_first: bool = False) -> list[tuple[int, int, str]]:
@@ -2294,8 +2307,11 @@ def _list_subvolumes(target: str, *, newest_first: bool = False) -> list[tuple[i
     return subvolumes
 
 
-def _volume_candidates(target: str) -> dict[str, list[int]]:
-    """What the subvolume list of the pool mounted at ``target`` gives each volume name: ids.
+def _volume_candidates(
+    target: str, subvolumes: list[tuple[int, int, str]] | None = None
+) -> dict[str, list[int]]:
+    """What the subvolume list of the pool mounted at ``target`` (``subvolumes`` when given, from
+    _list_subvolumes) gives each volume name: ids.
 
     A volume is a subvolume in the pool's top directory whose name is a
     valid volume name (ADR-0069). Only pools whose top level is mounted get
@@ -2306,7 +2322,7 @@ def _volume_candidates(target: str) -> dict[str, list[int]]:
     name of its own (_list_subvolumes): _volume_ids checks them.
     """
     candidates: dict[str, list[int]] = {}
-    for subvol_id, parent, path in _list_subvolumes(target):
+    for subvol_id, parent, path in _list_subvolumes(target) if subvolumes is None else subvolumes:
         if parent == _TOP_LEVEL_SUBVOLUME and VOLUME_NAME_PATTERN.fullmatch(path):
             ids = candidates.setdefault(path, [])
             if subvol_id not in ids:
@@ -2688,7 +2704,9 @@ def _delete_subvolume(what: str, target: str, subvol_id: int, path: str, *, refu
     Unless ``refuse_if_used`` is False, its users are checked right before
     (_refuse_used_subvolume). PoolConflictError (HTTP 409) when it holds
     snapshots or other subvolumes or is busy; RuntimeError (HTTP 500) when
-    btrfs fails otherwise.
+    btrfs fails otherwise. With quotas on, its quota group stays until btrfs
+    has dropped its data: the volume usage monitor destroys it then
+    (destroy_quota_group, storage.volume_usage).
     """
     from ..offsite import service as offsite  # it imports this module
 
@@ -2712,6 +2730,42 @@ def _delete_subvolume(what: str, target: str, subvol_id: int, path: str, *, refu
         if "busy" in message.lower():
             raise PoolConflictError(f"{what} is in use ({message}).")
         raise RuntimeError(f"Deleting {what[:1].lower()}{what[1:]} failed: {message}")
+
+
+# How long ``btrfs qgroup destroy`` may run on the host, under its timeout (ADR-0258).
+QGROUP_DESTROY_TIMEOUT = 60
+
+# destroyed; absent: no such group, or quotas are off; busy: Linux 6.1 refuses a group that still
+# counts bytes; hung: btrfs did not answer in time; failed: any other refusal.
+GroupDestroy = Literal["destroyed", "absent", "busy", "hung", "failed"]
+
+
+def destroy_quota_group(target: str, subvol_id: int) -> tuple[GroupDestroy, str]:
+    """``btrfs qgroup destroy 0/<id>``: the quota group of the subvolume ``subvol_id``, gone from the
+    pool mounted at ``target`` (storage.volume_usage), and why not, as btrfs gave it.
+
+    Linux 6.1 keeps the group of a deleted subvolume, with its limit, and refuses to destroy it as
+    busy until btrfs has dropped the subvolume's data and committed its counts. Every call starts
+    a transaction of the pool, refused or not.
+    """
+    hung = f"btrfs did not answer within {QGROUP_DESTROY_TIMEOUT} seconds"
+    try:
+        result = host.run_on_host(
+            ["timeout", "--signal=KILL", str(QGROUP_DESTROY_TIMEOUT),
+             "btrfs", "qgroup", "destroy", f"0/{int(subvol_id)}", target],
+            timeout=QGROUP_DESTROY_TIMEOUT + 5,
+        )
+    except subprocess.TimeoutExpired:
+        return "hung", hung
+    # timeout(1)'s SIGKILL reaches the supervisor as -9 through nsenter (_host_paths).
+    if result.returncode in (124, 137, -signal.SIGKILL):
+        return "hung", hung
+    if result.ok:
+        return "destroyed", ""
+    reason = result.stderr.strip() or f"exit status {result.returncode}"
+    if _quotas_not_enabled(reason) or "no such file" in reason.lower():
+        return "absent", reason
+    return ("busy" if "busy" in reason.lower() else "failed"), reason
 
 
 def _quotas_not_enabled(reason: str) -> bool:
@@ -2913,16 +2967,57 @@ def create_volume(pool_name: str, volume: VolumeCreate) -> VolumeInfo:
 
 
 def list_volumes(pool_name: str) -> list[VolumeInfo]:
-    """List the volumes of a mounted pool, read-only ones included.
+    """List the volumes of a mounted pool, read-only ones included, each with its quota use.
 
-    HTTP 409 when it is not mounted or not at its top level (see _mounted_pool_target).
+    The use and the quota come from the kernel's counters of each volume's quota group in sysfs
+    (storage.qgroups). HTTP 409 when the pool is not mounted or not at its top level
+    (see _mounted_pool).
     """
     pool = validate_pool_name(pool_name)
-    target = _mounted_pool_target(pool)
-    return [
-        VolumeInfo(name=name, pool=pool, path=os.path.join(target, name))
-        for name in sorted(_pool_volumes(target))
-    ]
+    target, fsid = _mounted_pool(pool)
+    volumes = _pool_volumes(target)
+    listed = []
+    for name in sorted(volumes):
+        usage = qgroups.usage(fsid, volumes[name])
+        listed.append(VolumeInfo(name=name, pool=pool, path=os.path.join(target, name),
+                                 used=usage.used, quota=usage.quota, usage=usage.state))
+    return listed
+
+
+def volume_quota_group(pool_name: str, volume_name: str) -> tuple[str, int]:
+    """The UUID of a mounted pool's filesystem and the subvolume id of its volume ``volume_name``:
+    what the volume's quota group is read by (storage.volume_usage).
+
+    PoolNotFoundError or VolumeNotFoundError (HTTP 404) for an unknown pool or volume; HTTP 409 as
+    for list_volumes, and when the pool's subvolume list gives the name only ids of other subvolumes.
+    """
+    pool = validate_pool_name(pool_name)
+    name = validate_volume_name(volume_name)
+    target, fsid = _mounted_pool(pool)
+    subvol_id = _volume_id(pool, target, name, outcome="cannot be read")
+    if subvol_id is None:
+        raise VolumeNotFoundError(f"Volume '{name}' not found in pool '{pool}'")
+    return fsid, subvol_id
+
+
+def mounted_pool_volumes(name: str, target: str) -> tuple[dict[str, int], set[int], set[int]]:
+    """The volumes of the pool ``name`` whose filesystem the RAID monitor found mounted at its
+    mountpoint ``target`` (name -> subvolume id), the ids that btrfs could not resolve, and the id
+    of every line of the pool's subvolume list, snapshots' included (storage.volume_usage).
+
+    Without a scan of the disks, which _mounted_pool's list of the filesystems would make (ADR-0378):
+    ``btrfs inspect-internal rootid`` and the pool's own subvolume list, checked against the
+    filesystem (_volume_ids): a volume whose id btrfs could not resolve is not among them, and its
+    id is in the second set. A line that a name with a line break forged can add an id to the third
+    set, but cannot take the id of a subvolume out of it (_list_subvolumes). PoolConflictError when
+    the pool shows another subvolume than its top level; RuntimeError, or
+    subprocess.TimeoutExpired, when btrfs fails or does not answer.
+    """
+    _top_level_mounted(name, target)
+    subvolumes = _list_subvolumes(target)
+    found, verdicts, _ = _volume_ids(target, _volume_candidates(target, subvolumes))
+    unresolved = {subvol_id for (subvol_id, _), verdict in verdicts.items() if verdict == "failed"}
+    return found, unresolved, {subvol_id for subvol_id, _, _ in subvolumes}
 
 
 def delete_volume(pool_name: str, volume_name: str) -> None:

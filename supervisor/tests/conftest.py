@@ -1,6 +1,8 @@
 import pytest
+import atexit
 import os
 import secrets
+import shutil
 import sys
 import tempfile
 from unittest.mock import patch, MagicMock
@@ -17,9 +19,19 @@ os.environ["UNOS_DB_PATH"] = ":memory:"
 # Random per run: secrets this repo published (such as the "test-secret-key"
 # used here before) are refused at startup (config.INSECURE_JWT_SECRETS).
 os.environ["UNOS_JWT_SECRET"] = secrets.token_hex(32)
-os.environ["UNOS_SMB_CONF_PATH"] = "/tmp/test_smb.conf"
-os.environ["UNOS_NFS_EXPORTS_PATH"] = "/tmp/test_exports"
-os.environ["UNOS_POOLS_BASE_PATH"] = "/tmp/test_pools"
+# smb.conf, the NFS export file and the pools' folder are in a temporary folder of this process
+# alone, removed when the run ends: two runs at once, in two worktrees, and the workers of one
+# parallel run (pytest-xdist) never share them (ADR-0383). pytest_unconfigure removes it at the end
+# of a run or a worker, atexit when pytest stops before (a usage error).
+_RUN_DIR = tempfile.mkdtemp(prefix="unos-tests-")
+os.environ["UNOS_SMB_CONF_PATH"] = os.path.join(_RUN_DIR, "smb.conf")
+os.environ["UNOS_NFS_EXPORTS_PATH"] = os.path.join(_RUN_DIR, "exports")
+os.environ["UNOS_POOLS_BASE_PATH"] = os.path.join(_RUN_DIR, "pools")
+atexit.register(shutil.rmtree, _RUN_DIR, ignore_errors=True)
+
+
+def pytest_unconfigure(config):
+    shutil.rmtree(_RUN_DIR, ignore_errors=True)
 
 
 @pytest.fixture(autouse=True)
@@ -45,6 +57,30 @@ def _smart_history_not_read_yet(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _no_install_jobs_yet(monkeypatch):
+    """The install jobs of apps are kept in RAM (ADR-0384): every test starts without them, as the
+    supervisor does, and a job that a test left running is stopped and waited for at its end. It
+    takes monkeypatch so that it ends before monkeypatch puts back what the test replaced: a job
+    left running must never meet the real Docker or host."""
+    install_jobs = sys.modules.get("src.apps.install_jobs")
+    if install_jobs is not None:
+        install_jobs._jobs.clear()
+        install_jobs._version = 0
+        # A GET that waits for a job's end looks at it often: the install tests wait for each end.
+        monkeypatch.setattr(install_jobs, "WAIT_STEP_SECONDS", 0.01)
+    yield
+    install_jobs = sys.modules.get("src.apps.install_jobs")
+    if install_jobs is not None:
+        install_jobs.stop_for_shutdown(timeout=10)
+        running = install_jobs._running
+        assert running is None or running.thread is None or not running.thread.is_alive(), (
+            "an install job of the test still runs"
+        )
+        install_jobs._jobs.clear()
+        install_jobs._version = 0
+
+
+@pytest.fixture(autouse=True)
 def _no_problems_yet(monkeypatch):
     """The problems of the NAS, the SMART monitor's verdicts of the disks (and the disks' I/O counts at
     its reads, ADR-0378) and the pools that the RAID monitor read last are kept in RAM (ADR-0332): every
@@ -57,6 +93,22 @@ def _no_problems_yet(monkeypatch):
         monkeypatch.setattr(health_router, "_disk_verdicts", {})
         monkeypatch.setattr(health_router, "_disk_io_at_read", {})
         monkeypatch.setattr(health_router, "_pools_read", None)
+
+
+@pytest.fixture(autouse=True)
+def _no_volume_use_read_yet(monkeypatch, tmp_path_factory):
+    """The use of the volumes' quotas that the RAID monitor reads, with its history, is kept in RAM and
+    written to /data only at shutdown (storage.volume_usage): every test starts without it, its file is in a
+    temporary folder of its own, and the kernel's sysfs of this machine is never read (a test that
+    reads sysfs gives qgroups.SYS_FS_BTRFS a folder of its own)."""
+    volume_usage = sys.modules.get("src.storage.volume_usage")
+    if volume_usage is not None:
+        monkeypatch.setattr(volume_usage, "_state", volume_usage._State())
+        folder = tmp_path_factory.mktemp("volume-usage")
+        monkeypatch.setattr(volume_usage, "HISTORY_FILE", str(folder / "volume_usage.json"))
+    qgroups = sys.modules.get("src.storage.qgroups")
+    if qgroups is not None:
+        monkeypatch.setattr(qgroups, "SYS_FS_BTRFS", "/nonexistent/unos-tests/sys/fs/btrfs")
 
 
 @pytest.fixture(autouse=True)

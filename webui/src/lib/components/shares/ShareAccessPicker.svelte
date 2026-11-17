@@ -1,9 +1,10 @@
 <script lang="ts">
 	import type { User } from '$lib/api/auth';
+	import type { Group } from '$lib/api/groups';
 	import { Button, Select } from '$lib/components/ui';
 	import { t } from '$lib/i18n';
 	import SmbStateBadge from './SmbStateBadge.svelte';
-	import { accessKey, canBeGivenAccess, pickableUsers, type AccessChoice } from './access';
+	import { accessKey, canBeGivenAccess, groupKey, pickableUsers, type AccessChoice } from './access';
 
 	/** Every UNOS user (GET /auth/users); administrators are not listed. */
 	export let users: User[] = [];
@@ -19,6 +20,12 @@
 	export let reduceOnlyHint = '';
 	/** The levels the share has saved, by accessKey(). Missing: no access. */
 	export let savedLevels: Record<string, AccessChoice> = {};
+	/** Every group (GET /groups), sorted by name. */
+	export let groups: Group[] = [];
+	/** The choice per group, by groupKey(). Missing: no access. */
+	export let groupLevels: Record<string, AccessChoice> = {};
+	/** The levels the share has saved for groups, by groupKey(). */
+	export let savedGroupLevels: Record<string, AccessChoice> = {};
 
 	type Option = { value: AccessChoice; label: string; disabled?: boolean };
 
@@ -47,9 +54,9 @@
 
 	$: rows = pickableUsers(users);
 	$: selectable = rows.filter(canBeGivenAccess);
-	$: someAccess = selectable.some(
-		(user) => (levels[accessKey(user.id, user.username)] ?? 'none') !== 'none'
-	);
+	$: someAccess =
+		selectable.some((user) => (levels[accessKey(user.id, user.username)] ?? 'none') !== 'none') ||
+		groups.some((group) => (groupLevels[groupKey(group.id, group.name)] ?? 'none') !== 'none');
 
 	function choice(value: unknown): AccessChoice {
 		return value === 'read' || value === 'write' ? value : 'none';
@@ -59,11 +66,24 @@
 		levels = { ...levels, [accessKey(user.id, user.username)]: choice(value) };
 	}
 
-	// Bulk changes only fill the picker; nothing is sent before the form is saved.
+	function setGroupLevel(group: Group, value: unknown) {
+		groupLevels = { ...groupLevels, [groupKey(group.id, group.name)]: choice(value) };
+	}
+
+	// Bulk changes only fill the picker; nothing is sent before the form is saved. "Everyone" sets
+	// the level of every user (ADR-0076); Clear also takes away the access of every group.
 	function setAll(level: AccessChoice) {
 		const next = { ...levels };
 		for (const user of selectable) next[accessKey(user.id, user.username)] = level;
 		levels = next;
+		if (level === 'none') groupLevels = {};
+	}
+
+	function membersText(group: Group): string {
+		if (group.members.length === 0) return $t('shares.access.groupEmpty');
+		return $t('shares.access.groupMembers', {
+			names: group.members.map((member) => member.username).join(', ')
+		});
 	}
 
 	function badgeHint(user: User): string {
@@ -109,7 +129,7 @@
 			<Button
 				variant="ghost"
 				size="sm"
-				disabled={selectable.length === 0 || (reduceOnly && !someAccess)}
+				disabled={(selectable.length === 0 && groups.length === 0) || (reduceOnly && !someAccess)}
 				on:click={() => setAll('none')}
 			>
 				{$t('shares.access.clear')}
@@ -145,4 +165,32 @@
 	{/if}
 
 	<p class="form-hint">{$t('shares.access.adminsNotListed')}</p>
+
+	<div class="space-y-3">
+		<p class="form-label">{$t('shares.access.groups')}</p>
+		{#if groups.length === 0}
+			<p class="text-sm text-muted">{$t('shares.access.noGroups')}</p>
+		{:else}
+			<ul class="space-y-3">
+				{#each groups as group, i (group.id)}
+					{@const key = groupKey(group.id, group.name)}
+					{@const level = groupLevels[key] ?? 'none'}
+					{@const saved = choice(savedGroupLevels[key])}
+					<li class="flex items-start gap-3">
+						<Select
+							id="share-group-access-{i}"
+							class="flex-1 min-w-0"
+							label={$t('shares.access.groupLabel', { name: group.name })}
+							options={reduceOnly ? reducedOptions[saved] : options}
+							value={level}
+							disabled={reduceOnly && level === 'none' && saved === 'none'}
+							hint={membersText(group)}
+							on:change={(event) => setGroupLevel(group, event.detail?.value)}
+						/>
+					</li>
+				{/each}
+			</ul>
+			<p class="form-hint">{$t('shares.access.groupsHint')}</p>
+		{/if}
+	</div>
 </fieldset>

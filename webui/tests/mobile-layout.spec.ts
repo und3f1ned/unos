@@ -1,8 +1,18 @@
 import type { Locator, Page, WebSocketRoute } from '@playwright/test';
 import { test, expect } from './fixtures';
 import { createAccount, deleteAccount, type Account } from './accounts';
-import { FAKE_IMPORTABLE, fakeStorageApi, noBalance } from './storage-fakes';
-import { NO_SNAPSHOTS, POOLS, accessOf, fakeNfsExport, fakeShare, fakeSmbApi, fakeUser } from './shares-fakes';
+import { FAKE_IMPORTABLE, fakeStorageApi, fakeVolumesWithUse, noBalance } from './storage-fakes';
+import {
+  NO_SNAPSHOTS,
+  POOLS,
+  accessOf,
+  fakeGroup,
+  fakeNfsExport,
+  fakeShare,
+  fakeSmbApi,
+  fakeUser,
+  groupAccessOf,
+} from './shares-fakes';
 import { HEALTHY_HDD_2, REPLACE_SOON, fakeHealthApi, predictionsAnswer } from './health-fakes';
 import { fakeNetworkApi } from './network-fakes';
 import { fakeNotificationsApi, type Channel } from './notifications-fakes';
@@ -509,6 +519,34 @@ const SECURITY = {
 const TOTP_SECRET = 'JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP';
 const TOTP_SETUP = { secret: TOTP_SECRET, qr_uri: `otpauth://totp/UNOS:admin?secret=${TOTP_SECRET}&issuer=UNOS` };
 
+// Two-factor authentication for every account: the administrator's card with the
+// requirement on, and the signed-in account as GET /auth/me answers it while it must set it up.
+const TWO_FACTOR_REQUIRED = {
+  ...SECURITY,
+  '/api/v1/auth/totp/status': { enabled: true, required: true },
+  '/api/v1/auth/recovery-codes/status': { remaining: 10, generated: true },
+  '/api/v1/security/two-factor-requirement': {
+    enabled: true, grace_days: 14, enabled_at: '2026-11-10T09:00:00Z', enabled_by: 'administrator_of_the_household',
+  },
+};
+function meToSetUp(setupOnly: boolean) {
+  return {
+    '/api/v1/auth/me': {
+      id: 1, username: 'admin', is_admin: true, totp_enabled: false, created_at: '2026-11-01T09:00:00Z',
+      two_factor_required: { by: '2026-11-24T09:00:00Z', setup_only: setupOnly },
+    },
+  };
+}
+
+/** The setup page of an account that must set up two-factor authentication, with a new secret. */
+async function fakeTwoFactorSetup(page: Page, setupOnly: boolean): Promise<void> {
+  await serve(page, meToSetUp(setupOnly));
+  await page.route(
+    (url) => url.pathname === '/api/v1/auth/totp/setup',
+    (route) => (route.request().method() === 'POST' ? route.fulfill({ json: TOTP_SETUP }) : route.abort()),
+  );
+}
+
 // GET /security/login-history (LoginHistoryResponse of supervisor/src/security/schemas.py), with an
 // IPv6 address and a long user name.
 const LOGIN_HISTORY = {
@@ -633,7 +671,14 @@ const SHARES = [
       { user_id: 3, username: 'bob_the_family_photographer', level: 'read' },
     ]),
   }),
-  fakeShare('documents', { access: accessOf(USERS, [{ user_id: 2, username: 'alice', level: 'write' }]) }),
+  fakeShare('documents', {
+    access: accessOf(USERS, [{ user_id: 2, username: 'alice', level: 'write' }]),
+    // A group's line with its members wraps on a phone.
+    group_access: groupAccessOf(
+      [fakeGroup(1, 'family_and_friends_of_the_house', USERS, [2, 3])],
+      [{ group: 'family_and_friends_of_the_house', level: 'read' }],
+    ),
+  }),
 ];
 
 /** A page or a part of it, opened on the phone. */
@@ -813,7 +858,8 @@ const VIEWS: View[] = [
   {
     name: 'Users',
     path: '/users',
-    fake: (page) => fakeSmbApi(page, { users: USERS }),
+    // With a group whose members and shares wrap.
+    fake: (page) => fakeSmbApi(page, { users: USERS, groups: [fakeGroup(1, 'family_and_friends', USERS, [2, 3])] }),
     shows: (page) => page.getByText('bob_the_family_photographer').first(),
   },
   {
@@ -844,6 +890,27 @@ const VIEWS: View[] = [
         await page.locator('main').getByRole('button', { name }).click();
       }
     },
+  },
+  {
+    name: 'System: Security, two-factor authentication for every account',
+    path: '/system#security',
+    fake: (page) => serve(page, TWO_FACTOR_REQUIRED),
+    shows: (page) => page.getByText(/administrator_of_the_household/),
+    end: (page) => page.getByRole('button', { name: /^(Stop requiring|Не требовать)$/ }),
+  },
+  {
+    name: 'Two-factor setup, asked during the grace period',
+    path: '/two-factor-setup',
+    fake: (page) => fakeTwoFactorSetup(page, false),
+    shows: (page) => page.getByRole('link', { name: /^(Later|Позже)$/ }),
+  },
+  {
+    name: 'Two-factor setup, the one page after the grace period',
+    path: '/two-factor-setup',
+    fake: (page) => fakeTwoFactorSetup(page, true),
+    open: (page) => page.getByRole('button', { name: /^(Set up now|Настроить сейчас)$/ }).click(),
+    shows: (page) => page.getByText(TOTP_SECRET),
+    end: (page) => page.getByRole('button', { name: /^(Sign out|Выйти)$/ }),
   },
   {
     name: 'System: Security, the sign-in history',
@@ -964,6 +1031,51 @@ const VIEWS: View[] = [
     open: (page) =>
       page.getByRole('button', { name: /^(Idle timeout of|Тайм-аут простоя) \/dev\/e2e-hd1: / }).click(),
     shows: (page) => page.getByRole('dialog'),
+    start: dialogTitle,
+    end: dialogEnd,
+  },
+  {
+    // Each volume's use against its quota, and one volume's use over time.
+    name: "Dialog: a pool's volumes and their use",
+    path: '/storage',
+    fake: async (page) => {
+      const gib = 1024 ** 3;
+      await fakeStorageApi(page);
+      await fakeVolumesWithUse(
+        page,
+        {
+          e2e_media: [
+            { name: 'documents-of-the-whole-family-since-2009', used: 9.6 * gib, quota: 10 * gib, usage: 'counted' },
+            { name: 'photos', used: 3 * gib, quota: null, usage: 'counted' },
+          ],
+        },
+        {
+          'e2e_media/documents-of-the-whole-family-since-2009': {
+            used: 9.6 * gib,
+            quota: 10 * gib,
+            usage: 'counted',
+            points: [
+              { time: '2026-11-01T10:00:00+00:00', used: 2 * gib, quota: 10 * gib },
+              { time: '2026-11-17T11:15:00+00:00', used: 9.6 * gib, quota: 10 * gib },
+            ],
+          },
+        },
+      );
+    },
+    open: async (page) => {
+      await page
+        .locator('.card-nested')
+        .filter({ has: page.locator('h3', { hasText: /^e2e_media$/ }) })
+        .getByRole('button', { name: /^(Volumes|Тома)$/ })
+        .click();
+      await page
+        .getByRole('dialog')
+        .getByRole('button', {
+          name: /^(Use over time of documents-of-the-whole-family-since-2009|Заполнение тома documents-of-the-whole-family-since-2009 во времени)$/,
+        })
+        .click();
+    },
+    shows: (page) => page.getByRole('dialog').getByRole('figure'),
     start: dialogTitle,
     end: dialogEnd,
   },
@@ -1094,6 +1206,16 @@ const VIEWS: View[] = [
     fake: (page) => fakeSmbApi(page, { users: USERS }),
     open: (page) => page.getByRole('button', { name: /^(Add user|Добавить пользователя)$/ }).click(),
     shows: (page) => page.getByRole('dialog'),
+    start: dialogTitle,
+    end: dialogEnd,
+  },
+  {
+    // Its list of members, each with the SMB state's badge.
+    name: 'Dialog: a new group',
+    path: '/users',
+    fake: (page) => fakeSmbApi(page, { users: USERS, groups: [fakeGroup(1, 'family_and_friends', USERS, [2, 3])] }),
+    open: (page) => page.getByRole('button', { name: /^(New group|Новая группа)$/ }).click(),
+    shows: (page) => page.getByRole('dialog').getByText('bob_the_family_photographer'),
     start: dialogTitle,
     end: dialogEnd,
   },

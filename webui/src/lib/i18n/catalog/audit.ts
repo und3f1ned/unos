@@ -75,6 +75,9 @@ export const en = {
 	'audit.action.shareUpdated': 'Share updated',
 	'audit.action.shareDeleted': 'Share deleted',
 	'audit.action.sharePermissionsRepaired': 'Share permissions repaired',
+	'audit.action.groupCreated': 'Group created',
+	'audit.action.groupUpdated': 'Group updated',
+	'audit.action.groupDeleted': 'Group deleted',
 	'audit.action.smbAccountUpdated': 'Smb account updated',
 	'audit.action.smbSharesImported': 'Smb shares imported',
 	'audit.action.smbReconciled': 'Smb reconciled',
@@ -107,6 +110,7 @@ export const en = {
 	'audit.resource.snapshot': 'snapshot',
 	'audit.resource.share': 'share',
 	'audit.resource.smb': 'smb',
+	'audit.resource.group': 'group',
 	'audit.resource.smbAccount': 'smb_account',
 	'audit.resource.nfsExport': 'nfs_export',
 	'audit.resource.apiToken': 'api_token',
@@ -117,7 +121,8 @@ export const en = {
 	'audit.resource.backup': 'backup',
 	'audit.resource.host': 'host',
 	'audit.resource.networkInterface': 'network_interface',
-	'audit.resource.task': 'task'
+	'audit.resource.task': 'task',
+	'audit.resource.twoFactorRequirement': 'two_factor_requirement'
 };
 
 export const ru: Translation<typeof en> = {
@@ -187,6 +192,9 @@ export const ru: Translation<typeof en> = {
 	'audit.action.shareUpdated': 'Общая папка изменена',
 	'audit.action.shareDeleted': 'Общая папка удалена',
 	'audit.action.sharePermissionsRepaired': 'Права в общей папке исправлены',
+	'audit.action.groupCreated': 'Группа создана',
+	'audit.action.groupUpdated': 'Группа изменена',
+	'audit.action.groupDeleted': 'Группа удалена',
 	'audit.action.smbAccountUpdated': 'Учётная запись SMB изменена',
 	'audit.action.smbSharesImported': 'Общие папки импортированы из smb.conf',
 	'audit.action.smbReconciled': 'Состояние SMB согласовано при запуске',
@@ -218,6 +226,7 @@ export const ru: Translation<typeof en> = {
 	'audit.resource.snapshot': 'снимок',
 	'audit.resource.share': 'общая папка',
 	'audit.resource.smb': 'SMB',
+	'audit.resource.group': 'группа',
 	'audit.resource.smbAccount': 'учётная запись SMB',
 	'audit.resource.nfsExport': 'экспорт NFS',
 	'audit.resource.apiToken': 'API-токен',
@@ -228,5 +237,6 @@ export const ru: Translation<typeof en> = {
 	'audit.resource.backup': 'резервная копия',
 	'audit.resource.host': 'хост',
 	'audit.resource.networkInterface': 'сетевой интерфейс',
-	'audit.resource.task': 'задача'
+	'audit.resource.task': 'задача',
+	'audit.resource.twoFactorRequirement': 'требование двухфакторной аутентификации'
 };

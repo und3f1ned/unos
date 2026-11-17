@@ -5,7 +5,8 @@ existing databases (there is no migration framework, and columns are never
 added to existing tables). A restore checks the first four in the extracted
 backup database and refuses one that lacks them (ADR-0319); smb_uids it
 makes anew from the live database's, adding the backup's rows that it can
-read only for uids still missing (ADR-0353). SQLite does not enforce
+read only for uids still missing (ADR-0353); the options and the group tables
+it checks when the backup has them. SQLite does not enforce
 foreign keys here (no PRAGMA foreign_keys): code that deletes a user or a
 share deletes the dependent rows itself, in the same transaction
 (SQLite reuses the highest rowid, so an orphan row would attach to the next
@@ -56,6 +57,10 @@ class SmbShare(Base):
     options = relationship(
         "SmbShareOptions", back_populates="share", cascade="all, delete-orphan", lazy="selectin", uselist=False
     )
+    # The groups that have access.
+    group_access = relationship(
+        "SmbShareGroupAccess", back_populates="share", cascade="all, delete-orphan", lazy="selectin"
+    )
 
 
 class SmbShareAccess(Base):
@@ -94,6 +99,59 @@ class SmbShareOptions(Base):
     previous_versions = Column(Boolean, nullable=False, default=False, server_default="0")
 
     share = relationship("SmbShare", back_populates="options")
+
+
+class UserGroup(Base):
+    """A group of UNOS users (ADR-0385). It lives in this database only: no host group is made, and
+    smb.conf names its members, not the group. Its rows of user_group_members and of
+    smb_share_group_access are deleted with it, in the same transaction. Its id is never handed out
+    again (AUTOINCREMENT), so that a request for a deleted group never reaches a new one; a new
+    group still deletes the rows that a restored database left for its id."""
+
+    __tablename__ = "user_groups"
+    __table_args__ = {"sqlite_autoincrement": True}
+
+    id = Column(Integer, primary_key=True)
+    # The rule of usernames (shares.groups.GROUP_NAME_RULE), unique whatever the letter case.
+    name = Column(String(32, collation="NOCASE"), nullable=False, unique=True)
+    # Incremented on every change of the group (PATCH expected_version).
+    version = Column(Integer, nullable=False, default=1, server_default="1")
+
+
+class UserGroupMember(Base):
+    """A user's membership of a group. Like an access row, it keeps the username it was written for:
+    a row whose user now has another name, or is an administrator, counts for nothing and is purged
+    (ADR-0137)."""
+
+    __tablename__ = "user_group_members"
+    __table_args__ = (
+        UniqueConstraint("group_id", "user_id", name="uq_user_group_members_group_user"),
+        Index("ix_user_group_members_user_id", "user_id"),
+    )
+
+    id = Column(Integer, primary_key=True)
+    group_id = Column(Integer, ForeignKey("user_groups.id", ondelete="CASCADE"), nullable=False)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    username = Column(String(64), nullable=False)
+
+
+class SmbShareGroupAccess(Base):
+    """Access of one group to one share: each member with an active SMB account gets the
+    level, or the higher level that the member has of their own. No row: the group has no access."""
+
+    __tablename__ = "smb_share_group_access"
+    __table_args__ = (
+        UniqueConstraint("share_id", "group_id", name="uq_smb_share_group_access_share_group"),
+        CheckConstraint("level IN ('read', 'write')", name="ck_smb_share_group_access_level"),
+        Index("ix_smb_share_group_access_group_id", "group_id"),
+    )
+
+    id = Column(Integer, primary_key=True)
+    share_id = Column(Integer, ForeignKey("smb_shares.id", ondelete="CASCADE"), nullable=False)
+    group_id = Column(Integer, ForeignKey("user_groups.id", ondelete="CASCADE"), nullable=False)
+    level = Column(String(8), nullable=False)
+
+    share = relationship("SmbShare", back_populates="group_access")
 
 
 class SmbAccount(Base):

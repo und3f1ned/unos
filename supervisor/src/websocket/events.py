@@ -13,13 +13,15 @@ URL, because request URLs end up in the uvicorn and proxy access logs:
 The server closes the socket with 4401 ("unauthorized") when the first
 message is missing, late, malformed or carries an invalid token, and with
 4403 ("forbidden") when the user may not use the socket (container logs
-require an administrator). A ``?token=`` query parameter is refused (4401).
+require an administrator) or can only set up two-factor authentication, which
+no socket serves (ADR-0386). A ``?token=`` query parameter is refused (4401).
 
 While a socket is open, its token is checked again every
 ``WS_REAUTH_INTERVAL_SECONDS``. A token that stopped being valid (expired
 JWT, disabled or expired API token, deleted user) closes the socket with
-4401; a logs socket whose user is no longer an administrator is closed with
-4403. If the check itself fails (database error), the socket is closed with
+4401; a logs socket whose user is no longer an administrator, and every socket
+of an account whose grace period to set up two-factor authentication has ended,
+is closed with 4403. If the check itself fails (database error), the socket is closed with
 1011 and the client reconnects through the handshake. A check in progress
 when the socket closes runs to its end, and its answer is dropped.
 
@@ -55,6 +57,11 @@ ended (``shares.repair_router.current_job``), right after auth_ok, with
 ``"data": null`` when none has run since the start (a web UI that reconnects
 after a restart learns that its repair no longer runs), and whenever it
 changes; regular users never get it (ADR-0363).
+
+It sends administrators ``{"type": "app_installs", "data": [...]}``, the running install of an
+app with its progress and the last install of each app since the start, each as
+``GET /api/v1/apps/install/jobs`` answers it (``apps.install_jobs.current``), after auth_ok once
+there is one and whenever they change (ADR-0384); regular users never get it.
 """
 import asyncio
 import functools
@@ -73,6 +80,7 @@ from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
 from ..auth.models import User
 from ..auth.utils import authenticate_token
 from ..config import get_settings
+from ..apps import install_jobs
 from ..database import async_session
 from ..health import problems
 from ..logs import router as logs
@@ -358,13 +366,22 @@ def _token_from_auth_message(message: dict[str, Any]) -> str | None:
     return token
 
 
+class _SetupOnly(Exception):
+    """The token's account can only set up two-factor authentication: its session
+    stays, so the socket closes with 4403, not 4401."""
+
+
 async def _user_for_token(token: str) -> User | None:
+    """The user of ``token``, or None when it is not valid; raises _SetupOnly for an account that
+    can only set up two-factor authentication."""
     # Short-lived session: a socket can stay open for hours and must not hold
     # a pooled database connection that long.
     try:
         async with async_session() as db:
             return await authenticate_token(token, db)
-    except HTTPException:
+    except HTTPException as exc:
+        if exc.status_code == 403:
+            raise _SetupOnly() from None
         return None
 
 
@@ -419,7 +436,11 @@ async def _handshake(websocket: WebSocket, admin_only: bool) -> tuple[str, User]
         return None
 
     token = _token_from_auth_message(message)
-    user = await _user_for_token(token) if token else None
+    try:
+        user = await _user_for_token(token) if token else None
+    except _SetupOnly:
+        await _close(websocket, WS_CLOSE_FORBIDDEN, "forbidden")
+        return None
     if user is None:
         await _close(websocket, WS_CLOSE_UNAUTHORIZED, "unauthorized")
         return None
@@ -459,6 +480,8 @@ async def _watch_credential(
             check.add_done_callback(_checks_left_running.discard)
             check.add_done_callback(_consume_result)
             raise
+        except _SetupOnly:
+            return WS_CLOSE_FORBIDDEN, "forbidden"
         except Exception:
             logger.exception("Could not re-check a WebSocket's credentials")
             return WS_CLOSE_INTERNAL_ERROR, "re-authentication failed"
@@ -524,6 +547,22 @@ async def _send_repair(websocket: WebSocket, is_admin: bool, sent: object) -> ob
     return job
 
 
+async def _send_installs(websocket: WebSocket, is_admin: bool, sent: int | None) -> int | None:
+    """Send an administrator the install jobs of apps when they changed since the version ``sent``,
+    and a socket that got none yet (None) only when there is a job: the web UI empties its jobs at
+    auth_ok. Returns the version it is up to date with (ADR-0384)."""
+    if not is_admin:
+        return sent
+    version = install_jobs.version()
+    if version == sent:
+        return sent
+    jobs = install_jobs.current()
+    if sent is None and not jobs:
+        return version
+    await websocket.send_json({"type": "app_installs", "data": [job.model_dump(mode="json") for job in jobs]})
+    return version
+
+
 @router.websocket("/ws/v1/events")
 async def websocket_endpoint(websocket: WebSocket):
     signed_in = await authenticate_websocket(websocket)
@@ -544,6 +583,7 @@ async def websocket_endpoint(websocket: WebSocket):
     sent_scrubs = 0
     sent_balances = 0
     sent_repair: object = _NO_REPAIR_SENT
+    sent_installs: int | None = None
     try:
         # Start sending stats
         while not (disconnected.done() or revoked.done()):
@@ -551,6 +591,7 @@ async def websocket_endpoint(websocket: WebSocket):
             sent_scrubs = await _send_scrubs(websocket, role["admin"], sent_scrubs)
             sent_balances = await _send_balances(websocket, role["admin"], sent_balances)
             sent_repair = await _send_repair(websocket, role["admin"], sent_repair)
+            sent_installs = await _send_installs(websocket, role["admin"], sent_installs)
             stats = await asyncio.to_thread(shared_system_stats)
             await websocket.send_json(stats)
             await asyncio.wait(

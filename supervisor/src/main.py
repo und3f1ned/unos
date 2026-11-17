@@ -45,9 +45,11 @@ from .auth.router import router as auth_router
 from .system.router import router as system_router
 from .storage.router import router as storage_router
 from .shares.router import router as shares_router
+from .shares.groups import router as groups_router
 from .shares import repair_router
 from .shares.repair_router import router as shares_repair_router
 from .containers.router import router as containers_router
+from .apps import install_jobs
 from .apps.router import router as apps_router
 from .files.router import router as files_router
 from .files.router import (
@@ -188,8 +190,13 @@ async def lifespan(app: FastAPI):
         # with their restic, and are recorded as stopped (ADR-0337); the Scheduler's end with it.
         await stop_offsite()
         # A running repair of a share's permissions stops before its next entry and writes its audit
-        # entry, for which the stop waits a few seconds (ADR-0363).
-        await asyncio.to_thread(repair_router.stop_for_shutdown)
+        # entry, for which the stop waits a few seconds (ADR-0363); a running install of an app
+        # stops at its next step, leaving what it made, and writes its audit entry when it made
+        # something (ADR-0384). Both waits at once, within Docker's 10 s before it kills the container.
+        await asyncio.gather(
+            asyncio.to_thread(repair_router.stop_for_shutdown),
+            asyncio.to_thread(install_jobs.stop_for_shutdown),
+        )
         # Last, when nothing uses the database any more: its last commits go from unos.db-wal
         # into unos.db (ADR-0306).
         await checkpoint_db()
@@ -269,6 +276,7 @@ for _router in (
     storage_router,
     shares_router,
     shares_repair_router,
+    groups_router,
     containers_router,
     apps_router,
     files_router,

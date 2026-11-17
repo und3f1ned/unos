@@ -121,6 +121,7 @@ and this index, and `make check-fast` runs it.
 | [0284](0284-root-on-the-host-resets-an-administrators-password-and-two-factor-authentication.md) | Only root on the host resets an administrator's password and two-factor authentication, with the emergency command line | accepted | 2026-11-08 |
 | [0312](0312-a-websockets-credential-re-check-in-progress-runs-to-its-end.md) | A WebSocket's credential re-check in progress runs to its end when the socket closes | accepted | 2026-11-09 |
 | [0329](0329-a-session-is-a-row-and-ending-it-deletes-the-row.md) | A session is a row of user_sessions, and ending a session deletes its row | accepted | 2026-11-10 |
+| [0386](0386-two-factor-authentication-required-for-every-account-after-a-grace-period.md) | An administrator with two-factor authentication requires it for every account, and after a grace period an account without it reaches only its setup | accepted | 2026-11-17 |
 
 ## Storage
 
@@ -157,6 +158,7 @@ and this index, and `make check-fast` runs it.
 | [0367](0367-the-storage-page-follows-a-running-scrub-over-the-events-socket.md) | A scrub runs from its start, its result names how it ended, and the Storage page follows it over the events socket | accepted | 2026-11-12 |
 | [0378](0378-data-disks-get-an-idle-timeout-kept-in-a-udev-rule-and-nothing-periodic-wakes-a-sleeping-disk.md) | Data disks get an idle timeout that UNOS keeps in a udev rule, and nothing UNOS does periodically wakes a sleeping disk | accepted | 2026-11-15 |
 | [0379](0379-a-balance-runs-in-a-host-unit-with-a-usage-limit-of-20-percent-and-a-full-balance-behind-a-confirmation.md) | A balance runs in a unit of the host, rewrites the chunks less than 20% full by default, and a full one needs a confirmation | accepted | 2026-11-15 |
+| [0387](0387-volume-quota-use-is-read-from-sysfs-alerted-at-80-90-and-95-percent-and-kept-in-ram.md) | A volume's quota use is read from the kernel's sysfs, alerted once per level of 80, 90 and 95 percent, and its hourly history is kept in RAM and written at shutdown | accepted | 2026-11-17 |
 
 ## Shares
 
@@ -166,7 +168,7 @@ and this index, and `make check-fast` runs it.
 | [0038](0038-share-name-rule.md) | Share names have 1 to 32 letters, digits, '_' or '-' and do not start with '-' | accepted | 2026-11-05 |
 | [0074](0074-smb-state-in-sqlite-and-unos-writes-smb-conf.md) | Shares and SMB accounts live in SQLite, and UNOS alone writes smb.conf | accepted | 2026-11-06 |
 | [0075](0075-per-user-share-access-levels.md) | Each share grants each user none, read or write, and new users get no access | accepted | 2026-11-06 |
-| [0076](0076-no-group-principals-for-smb-yet.md) | Share access names individual users, not groups, for now | accepted | 2026-11-06 |
+| [0076](0076-no-group-principals-for-smb-yet.md) | Share access names individual users, not groups, for now | superseded by [0385](0385-groups-of-users-get-share-access-and-smb-conf-names-their-active-members.md) | 2026-11-06 |
 | [0077](0077-smb-tables-through-create-all-without-migrations.md) | The SMB tables come from create_all, and existing tables are never altered | superseded by [0319](0319-a-restore-refuses-backups-without-smb-tables-and-a-backups-database-alone-holds-its-shares.md) | 2026-11-06 |
 | [0078](0078-accept-the-sqlite-power-cut-window.md) | SQLite's power-cut rollback window is accepted, and the startup reconcile repairs the host | superseded by [0306](0306-the-database-writes-ahead-with-synchronous-normal.md) | 2026-11-06 |
 | [0079](0079-sqlite-busy-timeout-and-unbounded-pool-overflow.md) | The SQLite engine waits 15 s for locks and has an unbounded pool overflow | accepted | 2026-11-06 |
@@ -284,6 +286,7 @@ and this index, and `make check-fast` runs it.
 | [0362](0362-every-replaced-smb-conf-is-kept-in-a-dated-copy-and-the-newest-10-stay.md) | Every replaced smb.conf is kept in a copy named with its UTC time, and the newest 10 of each kind stay | accepted | 2026-11-12 |
 | [0368](0368-a-rename-moves-the-users-smb-account-to-the-new-name-keeping-its-uid.md) | An administrator renames a user, and the user's SMB account moves to the new name with its uid | accepted | 2026-11-12 |
 | [0380](0380-a-share-can-require-encryption-serve-time-machine-and-list-snapshots-as-previous-versions.md) | A share can require encryption, serve Time Machine and list snapshots as Previous Versions | accepted | 2026-11-15 |
+| [0385](0385-groups-of-users-get-share-access-and-smb-conf-names-their-active-members.md) | Groups of users get share access in UNOS's database, and smb.conf names their active members | accepted | 2026-11-17 |
 
 ## Apps
 
@@ -299,8 +302,9 @@ and this index, and `make check-fast` runs it.
 | [0323](0323-the-container-and-app-routes-answer-503-with-the-reason-when-docker-does-not-answer.md) | The container and app routes answer 503 with the reason when Docker does not answer | accepted | 2026-11-10 |
 | [0327](0327-the-app-store-lists-its-catalog-when-the-installed-apps-cannot-be-loaded.md) | The App Store lists its catalog when the installed apps cannot be loaded | accepted | 2026-11-10 |
 | [0377](0377-on-an-rk3588-jellyfin-gets-the-video-hardware-without-privileges-through-hardware-profiles.md) | On an RK3588 Jellyfin gets the video hardware without privileges, through the hardware profiles of the catalog | superseded by [0382](0382-hardware-profiles-apply-per-container-may-choose-its-image-and-give-immichs-machine-learning-the-rk3588-npu.md) | 2026-11-15 |
-| [0381](0381-an-app-of-several-containers-installs-through-the-docker-api-with-pinned-images-and-a-password-on-its-pool.md) | An app of several containers installs through the Docker API with pinned images and a password on its pool | accepted | 2026-11-16 |
+| [0381](0381-an-app-of-several-containers-installs-through-the-docker-api-with-pinned-images-and-a-password-on-its-pool.md) | An app of several containers installs through the Docker API with pinned images and a password on its pool | superseded by [0384](0384-an-apps-install-runs-as-a-background-job-whose-progress-the-app-store-shows.md) | 2026-11-16 |
 | [0382](0382-hardware-profiles-apply-per-container-may-choose-its-image-and-give-immichs-machine-learning-the-rk3588-npu.md) | Hardware profiles apply per container, may choose the container's image and give Immich's machine learning the RK3588's NPU | accepted | 2026-11-16 |
+| [0384](0384-an-apps-install-runs-as-a-background-job-whose-progress-the-app-store-shows.md) | An app's install runs as a background job whose progress the App Store shows | accepted | 2026-11-17 |
 
 ## Backup
 
@@ -459,6 +463,7 @@ and this index, and `make check-fast` runs it.
 | [0215](0215-e2e-only-against-a-local-stand-in.md) | E2E tests run only against local targets, never against the device | accepted | 2026-11-07 |
 | [0261](0261-the-stand-ins-test-administrator-is-created-through-the-setup-page.md) | The stand-in's test administrator is created through the setup page, by a first Playwright run | accepted | 2026-11-07 |
 | [0317](0317-the-e2e-specs-skip-only-on-listed-conditions-of-the-local-target-and-expect-no-failure.md) | The E2E specs skip only on listed conditions of the local target, and expect no failure | accepted | 2026-11-10 |
+| [0383](0383-backend-tests-run-in-parallel-with-paths-of-their-own-and-a-green-tree-skips-the-pre-commit-check.md) | Backend tests run in parallel with paths of their own, and a green tree skips the pre-commit check | accepted | 2026-11-17 |
 
 ## CI
 

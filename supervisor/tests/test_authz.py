@@ -40,11 +40,12 @@ from starlette.requests import Request
 
 import src.host
 from src.auth import utils as auth_utils
-from src.auth.models import APIToken, User
+from src.auth.models import APIToken, TwoFactorRequirement, User
 from src.auth.router import MAX_API_TOKENS_PER_USER, TOO_MANY_API_TOKENS
 from src.auth.router import limiter as auth_limiter
 from src.auth.schemas import API_TOKEN_NAME_CHARS
-from src.auth.utils import SESSION_NEEDED, require_admin, verify_token
+from src.auth.requirement import TWO_FACTOR_SETUP_REQUIRED
+from src.auth.utils import SESSION_NEEDED, require_admin, verify_token, verify_token_allowing_setup
 from src.database import Base, get_db
 from src.main import app
 from src.main import limiter as app_limiter
@@ -98,6 +99,18 @@ USER_ALLOWED = {
     ("GET", f"{API}/system/temperatures"),
     # Own login history only (admins see everyone's)
     ("GET", f"{API}/security/login-history"),
+}
+
+# What the session of a setup-only account reaches: an account without two-factor authentication
+# after its grace period, while every account must have it (ADR-0386). These routes depend on
+# verify_token_allowing_setup; every other one answers 403, and so does every route to an API
+# token of such an account.
+SETUP_ONLY_ALLOWED = {
+    ("GET", f"{API}/auth/me"),
+    ("GET", f"{API}/auth/totp/status"),
+    ("POST", f"{API}/auth/totp/setup"),
+    ("POST", f"{API}/auth/totp/enable"),
+    ("POST", f"{API}/auth/logout"),
 }
 
 # Authenticated by their own handshake; see test_ws_auth.py.
@@ -222,6 +235,14 @@ def bob_headers(authz_db):
     return _auth(session_token(authz_db.engine, "bob"))
 
 
+def _require_two_factor_now(authz_db) -> None:
+    """Every account must have two-factor authentication, without a grace period, since before the
+    accounts were made: those without it are setup-only."""
+    with Session(authz_db.engine) as session:
+        session.add(TwoFactorRequirement(id=1, grace_days=0, enabled_at=datetime(2026, 1, 1), enabled_by="admin"))
+        session.commit()
+
+
 class TestRouteMatrix:
     def test_listed_routes_exist(self):
         operations = {(method, path) for method, path, _ in _http_operations()}
@@ -229,6 +250,7 @@ class TestRouteMatrix:
         assert PUBLIC - operations == set(), "stale PUBLIC entries"
         assert USER_ALLOWED - operations == set(), "stale USER_ALLOWED entries"
         assert not PUBLIC & USER_ALLOWED
+        assert SETUP_ONLY_ALLOWED <= USER_ALLOWED
         # Routes of included routers are enumerated too (guards against the
         # matrix silently checking nothing).
         assert {
@@ -274,11 +296,14 @@ class TestRouteMatrix:
         for method, path, dependant in _http_operations():
             calls = _dependency_calls(dependant)
             key = (method, path)
+            signed_in = verify_token in calls or verify_token_allowing_setup in calls
+            if (verify_token_allowing_setup in calls) != (key in SETUP_ONLY_ALLOWED):
+                problems.append(f"{method} {path}: verify_token_allowing_setup exactly for SETUP_ONLY_ALLOWED")
             if key in PUBLIC:
-                if verify_token in calls:
+                if signed_in:
                     problems.append(f"{method} {path}: listed as PUBLIC but requires a login")
             elif key in USER_ALLOWED:
-                if verify_token not in calls:
+                if not signed_in:
                     problems.append(f"{method} {path}: listed in USER_ALLOWED but requires no login")
                 if require_admin in calls:
                     problems.append(f"{method} {path}: listed in USER_ALLOWED but requires an admin")
@@ -311,6 +336,37 @@ class TestRouteMatrix:
                     problems.append(f"{method} {path}: user route returned {response.status_code}")
             elif response.status_code != 403:
                 problems.append(f"{method} {path}: regular user got {response.status_code}, expected 403")
+        assert problems == []
+
+    @pytest.mark.parametrize("name", ["alice", "admin"])
+    def test_a_setup_only_account_reaches_only_the_setup_routes(self, client, authz_db, name):
+        """After the grace period, an account without two-factor authentication can only set it up
+        (SETUP_ONLY_ALLOWED): its session reaches SETUP_ONLY_ALLOWED, and every other route answers 403 with
+        the reason, before its handler runs (no_side_effects)."""
+        _require_two_factor_now(authz_db)
+        problems = []
+        for method, path, _ in _http_operations():
+            if (method, path) in PUBLIC:
+                continue
+            # A session of its own for each route: signing out ends the one it is called with.
+            response = _call(client, method, path, _auth(session_token(authz_db.engine, name)))
+            if (method, path) in SETUP_ONLY_ALLOWED:
+                if response.status_code in (401, 403):
+                    problems.append(f"{method} {path}: setup route returned {response.status_code}")
+            elif (response.status_code, response.json().get("detail")) != (403, TWO_FACTOR_SETUP_REQUIRED):
+                problems.append(f"{method} {path}: setup-only account got {response.status_code} {response.text[:80]}")
+        assert problems == []
+
+    def test_an_api_token_of_a_setup_only_account_reaches_nothing(self, client, authz_db, alice_headers):
+        token = client.post(f"{API}/auth/tokens", json={"name": "cli"}, headers=alice_headers).json()["token"]
+        _require_two_factor_now(authz_db)
+        problems = []
+        for method, path, _ in _http_operations():
+            if (method, path) in PUBLIC:
+                continue
+            response = _call(client, method, path, _auth(token))
+            if (response.status_code, response.json().get("detail")) != (403, TWO_FACTOR_SETUP_REQUIRED):
+                problems.append(f"{method} {path}: API token got {response.status_code} {response.text[:80]}")
         assert problems == []
 
     def test_a_user_without_smb_reaches_the_smb_routes_without_host_commands(self, client, alice_headers):

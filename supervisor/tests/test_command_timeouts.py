@@ -61,7 +61,7 @@ SCRUB_STATUS = (
 # The process ids of FakeProcess: above every pid that Linux (at most 2**22) and macOS hand out.
 FIRST_FAKE_PID = 5_000_000
 # Seconds after which a wait without a timeout for a process that hangs fails: waiting so is
-# the fault these tests look for, and the test must fail, not hang the machine-wide test lock.
+# the fault these tests look for, and the test must fail, not hang the run.
 HANG_LIMIT = 20
 ADMIN = SimpleNamespace(id=1, username="admin", is_admin=True, is_active=True)
 

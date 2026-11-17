@@ -137,6 +137,7 @@ class FakeSubvolumes:
         ("subvolume", "create"): "ERROR: cannot create subvolume",
         ("subvolume", "delete"): "ERROR: Could not destroy subvolume/snapshot",
         ("qgroup", "limit"): "ERROR: unable to limit requested quota group",
+        ("qgroup", "destroy"): "ERROR: unable to destroy quota group",
     }
 
     def _volume_paths(self, cmd: list[str]) -> HostResult:
@@ -206,7 +207,8 @@ class FakeSubvolumes:
         if failure is not None:
             # The mountpoint: the last argument of delete and of a limit by
             # quota group id, the parent of the others'.
-            by_id = action == ["subvolume", "delete"] or (action == ["qgroup", "limit"] and len(cmd) == 6)
+            by_id = action in (["subvolume", "delete"], ["qgroup", "destroy"]) or (
+                action == ["qgroup", "limit"] and len(cmd) == 6)
             written = cmd[-1] if by_id else os.path.dirname(cmd[-1])
             if self._read_only(written):
                 return HostResult(1, "", f"{failure}: Read-only file system")
@@ -307,6 +309,18 @@ class FakeSubvolumes:
             return HostResult(0, "".join(lines), "")
         if action == ["qgroup", "limit"]:
             return self._qgroup_limit(cmd)
+        if action == ["qgroup", "destroy"]:
+            # ``btrfs qgroup destroy 0/<id> <path>``: a quota group of the filesystem at <path>, which
+            # Linux 6.1 keeps after its subvolume is deleted, with its limit.
+            assert len(cmd) == 5 and cmd[3].startswith("0/") and cmd[3][2:].isdigit(), cmd
+            uuid = self._mounted_at(cmd[4])
+            if uuid is None:
+                return HostResult(1, "", f"ERROR: not a btrfs filesystem: {cmd[4]}")
+            if uuid not in self.quotas:
+                return HostResult(1, "", "ERROR: unable to destroy quota group: Transport endpoint is not connected")
+            self.fake.changes.append(cmd)
+            self.limits.pop(int(cmd[3][2:]), None)
+            return HostResult(0, "", "")
         if action == ["inspect-internal", "subvolid-resolve"]:
             # The path from the top level, as it is named now.
             assert len(cmd) == 5, cmd
@@ -359,7 +373,14 @@ def api(host):
 
 
 def _volume(name: str, pool: str = "data", quota: int | None = None) -> dict:
-    return {"name": name, "pool": pool, "path": f"/mnt/pools/{pool}/{name}", "used": None, "quota": quota}
+    """A volume as the answer to its create gives it: the quota asked for, nothing read."""
+    return {"name": name, "pool": pool, "path": f"/mnt/pools/{pool}/{name}", "used": None, "quota": quota,
+            "usage": None}
+
+
+def _listed(name: str, pool: str = "data") -> dict:
+    """A volume as the list gives it on a host whose sysfs has no quota groups: quotas are off."""
+    return {**_volume(name, pool), "usage": "quotas_off"}
 
 
 def _btrfs_calls(host, *action: str) -> list[list[str]]:
@@ -417,7 +438,7 @@ class TestCreate:
         # On the host, in the pool's mounted filesystem.
         assert host.changes == [["btrfs", "subvolume", "create", "/mnt/pools/data/documents"]]
         assert host.subvols.paths(DATA_UUID) == ["documents"]
-        assert api.get(f"{API}/data/volumes").json() == [_volume("documents")]
+        assert api.get(f"{API}/data/volumes").json() == [_listed("documents")]
 
     def test_name_only(self, api, host):
         response = api.post(f"{API}/data/volumes", json={"name": "photos"})
@@ -1161,7 +1182,7 @@ class TestList:
         response = api.get(f"{API}/data/volumes")
 
         assert response.status_code == 200, response.text
-        assert response.json() == [_volume("documents"), _volume("photos")]
+        assert response.json() == [_listed("documents"), _listed("photos")]
         assert host.changes == []
 
     def test_empty_pool(self, api, host):
@@ -1214,7 +1235,22 @@ class TestDelete:
         assert response.status_code == 200, response.text
         assert response.json() == {"status": "deleted"}
         assert host.changes == [["btrfs", "subvolume", "delete", "--subvolid", str(documents), "/mnt/pools/data"]]
-        assert api.get(f"{API}/data/volumes").json() == [_volume("photos")]
+        assert api.get(f"{API}/data/volumes").json() == [_listed("photos")]
+
+    def test_with_quotas_on_the_quota_group_is_left_to_the_monitor(self, api, host, caplog):
+        # Linux 6.1 refuses to destroy a deleted subvolume's quota group as busy until btrfs has
+        # dropped its data: the volume usage monitor destroys it then (test_volume_usage.py).
+        host.subvols.quotas.add(DATA_UUID)
+        documents = host.subvols.add(DATA_UUID, "documents")
+        host.subvols.limits[documents] = GIB
+        host.dirs.add("/mnt/pools/data/documents")
+
+        response = api.delete(f"{API}/data/volumes/documents")
+
+        assert response.status_code == 200, response.text
+        assert host.changes == [["btrfs", "subvolume", "delete", "--subvolid", str(documents), "/mnt/pools/data"]]
+        assert _btrfs_calls(host, "qgroup", "destroy") == []
+        assert "quota group" not in caplog.text
 
     def test_link_planted_under_a_volume_name_is_not_followed(self, api, host):
         # Pool contents are writable by SMB users and apps. btrfs-progs would
@@ -1238,7 +1274,7 @@ class TestDelete:
         documents = host.subvols.add(DATA_UUID, "documents")
         # A phantom volume "trash" with the id of "documents": no longer listed (storage.edge-cases, step 2).
         host.subvols.add(DATA_UUID, f"apps/evil\nID {documents} gen 1 top level {TOP_LEVEL} path trash")
-        assert api.get(f"{API}/data/volumes").json() == [_volume("documents")]
+        assert api.get(f"{API}/data/volumes").json() == [_listed("documents")]
 
         response = api.delete(f"{API}/data/volumes/trash")
 
@@ -1269,7 +1305,7 @@ class TestDelete:
         photos = host.subvols.add(DATA_UUID, "photos")
         host.subvols.add(DATA_UUID, "photos\nold")
 
-        assert api.get(f"{API}/data/volumes").json() == [_volume("photos")]
+        assert api.get(f"{API}/data/volumes").json() == [_listed("photos")]
         response = api.delete(f"{API}/data/volumes/photos")
 
         assert response.status_code == 200, response.text
@@ -1294,7 +1330,7 @@ class TestDelete:
         documents = host.subvols.add(DATA_UUID, "documents")
         host.subvols.add(DATA_UUID, f"documents{separator}old")
 
-        assert api.get(f"{API}/data/volumes").json() == [_volume("documents")]
+        assert api.get(f"{API}/data/volumes").json() == [_listed("documents")]
         response = api.delete(f"{API}/data/volumes/documents")
 
         assert response.status_code == 200, response.text
@@ -1397,7 +1433,7 @@ class TestNamesThatAreNotUtf8:
         response = api.get(f"{API}/data/volumes")
 
         assert response.status_code == 200, response.text
-        assert response.json() == [_volume("documents")]
+        assert response.json() == [_listed("documents")]
 
     def test_delete(self, api, host):
         documents = host.subvols.add(DATA_UUID, "documents")
@@ -1450,7 +1486,7 @@ class TestNamesThatAreNotUtf8:
 
         response = api.get(f"{API}/data/volumes")
         assert response.status_code == 200, response.text
-        assert response.json() == [_volume("documents"), _volume("photos")]
+        assert response.json() == [_listed("documents"), _listed("photos")]
 
         response = api.post(f"{API}/data/volumes", json={"name": "music"})
         assert response.status_code == 200, response.text
@@ -1482,7 +1518,7 @@ class TestNamesThatAreNotUtf8:
         if operation == "list":
             response = api.get(f"{API}/data/volumes")
             assert response.status_code == 200, response.text
-            assert response.json() == [_volume("documents")]
+            assert response.json() == [_listed("documents")]
         else:
             response = api.delete(f"{API}/data/volumes/documents")
             assert response.status_code == 200, response.text
@@ -1918,7 +1954,7 @@ class TestReadOnlyPool:
         response = api.get(f"{API}/data/volumes")
 
         assert response.status_code == 200, response.text
-        assert response.json() == [_volume("documents")]
+        assert response.json() == [_listed("documents")]
 
     def test_the_pool_reports_read_only_too(self, api, host, read_only):
         # The Storage page disables Create and Delete from this flag.

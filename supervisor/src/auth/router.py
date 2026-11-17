@@ -18,13 +18,14 @@ from ..security.validators import validate_new_username
 from ..shares import accounts, service
 from ..shares.account_state import SmbAccountState, derive_smb_state
 from ..shares.constants import smb_password_problem
-from ..shares.models import SmbAccount, SmbShare
+from ..shares.models import SmbAccount, SmbShare, UserGroup, UserGroupMember
 
 # Rate limiter for auth endpoints
 limiter = Limiter(key_func=get_remote_address)
+from . import requirement
 from .models import User, APIToken, UsernameTaken
 from .schemas import (
-    UserCreate, UserResponse, Token, LoginRequest, PasswordChange,
+    UserCreate, UserResponse, TwoFactorRequired, Token, LoginRequest, PasswordChange,
     UserUpdate, TOTPSetupResponse, TOTPVerifyRequest, TOTPEnableRequest,
     APITokenCreate, APITokenResponse, APITokenCreated,
     RecoveryCodesResponse, RecoveryCodesStatus,
@@ -33,7 +34,7 @@ from .schemas import (
 from .utils import (
     hash_password, verify_password, start_session, purge_expired_sessions, end_sessions, end_session,
     keep_unstored_session, session_id_of,
-    verify_token, security,
+    verify_token, verify_token_allowing_setup, security,
     require_admin, require_session, generate_api_token, generate_recovery_codes,
     TOTP_CODE_REUSED, TotpCheck, check_totp_code, forget_totp_steps,
     RECOVERY_CODE_INVALID, recovery_code_hash, recovery_code_hashes, recovery_codes_left,
@@ -127,14 +128,27 @@ async def _my_smb_status(db: AsyncSession, user: User, row: SmbAccount | None) -
     """The SMB state of ``user`` and the shares they can use. Database only."""
     account = derive_smb_state(user, row)
     active = account.state is SmbAccountState.ACTIVE
+    # The groups the user is a member of under their current name.
+    groups = set((await db.execute(
+        select(UserGroupMember.group_id)
+        .join(UserGroup, UserGroup.id == UserGroupMember.group_id)
+        .where(UserGroupMember.user_id == user.id, UserGroupMember.username == user.username)
+    )).scalars())
     shares: list[MySmbShare] = []
     for share in (await db.execute(select(SmbShare))).scalars():
         if not isinstance(share.name, str):
             continue
-        levels = {
-            entry.level for entry in share.access
-            if entry.user_id == user.id and entry.username == user.username and entry.level in ("read", "write")
-        }
+        # The level that smb.conf gives: two rows of one grant (a restored table without its UNIQUE
+        # constraint) give the lower level, as the render takes them (ADR-0144); across grants, the
+        # user's own and each group's, the higher level counts.
+        grants: dict[object, set[str]] = {}
+        for entry in share.access:
+            if entry.user_id == user.id and entry.username == user.username and entry.level in ("read", "write"):
+                grants.setdefault("own", set()).add(entry.level)
+        for entry in share.group_access:
+            if entry.group_id in groups and entry.level in ("read", "write"):
+                grants.setdefault(entry.group_id, set()).add(entry.level)
+        levels = {"read" if "read" in rows else "write" for rows in grants.values()}
         guest = bool(share.guest_ok)
         if not levels and not guest:
             continue
@@ -249,6 +263,9 @@ async def login(
 
     # A login attempt that cannot be stored rolls the session back, which expires the user.
     username, user_id = user.username, user.id
+    # The password is the way to the setup of an account that can only set it up.
+    two_factor = await requirement.account_state(db, user)
+    setup_only = two_factor is not None and two_factor.setup_only
 
     # The session's row, and the purge of expired ones, go into the commit of the login history
     # (ADR-0329): a sign-in writes no more than before (ADR-0308).
@@ -261,13 +278,18 @@ async def login(
     await keep_unstored_session(db, access_token, user_id)
 
     # Audit log
+    details = None
+    if used_recovery_code:
+        details = "Signed in with a recovery code"
+    elif setup_only:
+        details = "Signed in after the grace period: can only set up two-factor authentication"
     await _audit_sign_in(
         action=AuditAction.LOGIN_SUCCESS,
         request=request,
         username=username,
-        details="Signed in with a recovery code" if used_recovery_code else None,
+        details=details,
         success=True,
-        severity=AuditSeverity.WARNING if used_recovery_code else AuditSeverity.INFO,
+        severity=AuditSeverity.WARNING if details else AuditSeverity.INFO,
     )
 
     return Token(access_token=access_token, requires_totp=False)
@@ -303,7 +325,7 @@ async def _own_account_audit(
 async def logout(
     request: Request,
     credentials: HTTPAuthorizationCredentials = Depends(security),
-    current_user: User = Depends(verify_token),
+    current_user: User = Depends(verify_token_allowing_setup),
     db: AsyncSession = Depends(get_db),
 ):
     """End the session of this token on the server (ADR-0329); an API token is not a session.
@@ -320,8 +342,14 @@ async def logout(
 
 
 @router.get("/me", response_model=UserResponse)
-async def get_current_user(user: User = Depends(verify_token)):
-    return user
+async def get_current_user(user: User = Depends(verify_token_allowing_setup), db: AsyncSession = Depends(get_db)):
+    """The signed-in user, and what the requirement of two-factor authentication asks of them
+    (src/auth/requirement.py): by when to set it up, and whether the grace period is over."""
+    response = UserResponse.model_validate(user)
+    state = await requirement.account_state(db, user)
+    if state is not None:
+        response.two_factor_required = TwoFactorRequired(by=state.by, setup_only=state.setup_only)
+    return response
 
 
 @router.get("/status")
@@ -391,7 +419,7 @@ async def change_password(
 
 @router.post("/totp/setup", response_model=TOTPSetupResponse)
 async def setup_totp(
-    current_user: User = Depends(verify_token),
+    current_user: User = Depends(verify_token_allowing_setup),
     db: AsyncSession = Depends(get_db)
 ):
     """Generate TOTP secret for 2FA setup."""
@@ -421,7 +449,7 @@ async def setup_totp(
 async def enable_totp(
     request: Request,
     data: TOTPEnableRequest,
-    current_user: User = Depends(verify_token),
+    current_user: User = Depends(verify_token_allowing_setup),
     db: AsyncSession = Depends(get_db)
 ):
     """Enable 2FA after verifying TOTP code. Only the request that turned it on writes a
@@ -507,9 +535,9 @@ async def disable_totp(
 
 
 @router.get("/totp/status")
-async def totp_status(current_user: User = Depends(verify_token)):
-    """Check if 2FA is enabled for current user."""
-    return {"enabled": current_user.totp_enabled}
+async def totp_status(current_user: User = Depends(verify_token_allowing_setup), db: AsyncSession = Depends(get_db)):
+    """Whether 2FA is on for the current user, and whether every account must have it."""
+    return {"enabled": bool(current_user.totp_enabled), "required": await requirement.current(db) is not None}
 
 
 # ==================== User Management (admin only) ====================

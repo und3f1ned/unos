@@ -19,6 +19,7 @@
 		deviceIdentity,
 		isChangedDiskError,
 		getVolumes,
+		getVolumeUsage,
 		createVolume,
 		deleteVolume,
 		quotaBytes,
@@ -38,10 +39,13 @@
 		type RaidLevel,
 		type ScrubStatus,
 		type BalanceStatus,
-		type Volume
+		type Volume,
+		type VolumeUsagePoint
 	} from '$lib/api/storage';
+	import VolumeUsageChart from '$lib/components/storage/VolumeUsageChart.svelte';
 	import { ApiError } from '$lib/api/client';
 	import {
+		LineChart,
 		HardDrive,
 		Database,
 		Plus,
@@ -1004,9 +1008,66 @@
 		? $t('storage.volumes.quotaError', { max: MAX_QUOTA_GIB })
 		: '';
 
+	// The volume whose use over time the dialog shows, loaded when it is opened.
+	let usageOf: string | null = null;
+	let usagePoints: VolumeUsagePoint[] = [];
+	let usageLoading = false;
+	let usageError = '';
+	let usageRequest = 0;
+
+	async function toggleUsage(volume: Volume) {
+		const pool = volumesPool?.name;
+		if (!pool) return;
+		const request = ++usageRequest;
+		if (usageOf === volume.name) {
+			usageOf = null;
+			return;
+		}
+		usageOf = volume.name;
+		usagePoints = [];
+		usageError = '';
+		usageLoading = true;
+		try {
+			const history = await getVolumeUsage(pool, volume.name);
+			if (request === usageRequest) usagePoints = history.points;
+		} catch (e) {
+			if (request === usageRequest) usageError = messageOf(e);
+		} finally {
+			if (request === usageRequest) usageLoading = false;
+		}
+	}
+
+	// The commands that the notes of the dialog name, run on the host: the same in every language.
+	$: volumesMountpoint = volumesPool ? volumesPool.mountpoint || poolMountpoint(volumesPool.name) : '';
+	// i18n-ignore: a command
+	$: quotaEnableCommand = 'btrfs quota enable ' + volumesMountpoint;
+	// i18n-ignore: a command
+	$: quotaRescanCommand = 'btrfs quota rescan ' + volumesMountpoint;
+	$: quotasOff = volumes.some((volume) => volume.usage === 'quotas_off');
+	$: needsRescan = volumes.some((volume) => volume.usage === 'inconsistent');
+	// The bar's colour follows the alerts' levels (supervisor/src/storage/volume_usage.py): a warning from 80% of
+	// the quota, an error from 95%. A quota of 0 bytes is full.
+	function quotaVariant(volume: Volume): 'success' | 'warning' | 'error' {
+		const used = volume.used ?? 0;
+		const quota = volume.quota ?? 0;
+		if (used * 100 >= 95 * quota) return 'error';
+		return used * 100 >= 80 * quota ? 'warning' : 'success';
+	}
+
+	$: usedOfQuota = (volume: Volume): string =>
+		volume.used === null || volume.quota === null
+			? ''
+			: $t('storage.volumes.usedOfQuota', {
+					used: formatBytes(volume.used),
+					quota: formatBytes(volume.quota),
+					percent: percentFormat.format(volume.quota > 0 ? volume.used / volume.quota : 1)
+				});
+
 	async function openVolumes(pool: Pool) {
 		volumesPool = pool;
 		volumes = [];
+		usageOf = null;
+		usageRequest++;
 		newVolumeName = '';
 		newVolumeQuota = '';
 		createVolumeError = '';
@@ -2102,22 +2163,78 @@
 			{:else if volumes.length === 0}
 				<p class="text-muted text-sm">{$t('storage.volumes.none')}</p>
 			{:else}
+				<!-- The use of each volume's quota, as the kernel counts it. -->
+				{#if quotasOff}
+					<Alert variant="info" title={$t('storage.volumes.quotasOffTitle')}>
+						{$t('storage.volumes.quotasOff')}
+						<span class="mono-xs break-all">{quotaEnableCommand}</span>
+					</Alert>
+				{/if}
+				{#if needsRescan}
+					<Alert variant="warning" title={$t('storage.volumes.rescanTitle')}>
+						{$t('storage.volumes.rescan')}
+						<span class="mono-xs break-all">{quotaRescanCommand}</span>
+					</Alert>
+				{/if}
 				<ul class="space-y-2">
 					{#each volumes as volume (volume.name)}
-						<li class="card-nested flex items-center justify-between gap-2">
-							<div class="min-w-0">
-								<p class="font-semibold">{volume.name}</p>
-								<p class="mono-xs text-muted break-all">{volume.path}</p>
+						<li class="card-nested space-y-2">
+							<div class="flex items-center justify-between gap-2">
+								<div class="min-w-0">
+									<p class="font-semibold break-all">{volume.name}</p>
+									<p class="mono-xs text-muted break-all">{volume.path}</p>
+								</div>
+								<div class="flex flex-shrink-0 items-center gap-1">
+									{#if volume.used !== null}
+										<Button
+											variant="ghost"
+											size="icon-sm"
+											pressed={usageOf === volume.name}
+											on:click={() => toggleUsage(volume)}
+										>
+											<LineChart class="w-4 h-4" />
+											<span class="sr-only">{$t('storage.volumes.chartShow', { name: volume.name })}</span>
+										</Button>
+									{/if}
+									<Button
+										variant="ghost"
+										size="icon-sm"
+										disabled={volumeBusy || volumesReadOnly}
+										on:click={() => askDeleteVolume(volume)}
+									>
+										<Trash2 class="w-4 h-4 text-error" />
+										<span class="sr-only">{$t('storage.volumes.deleteOne', { name: volume.name })}</span>
+									</Button>
+								</div>
 							</div>
-							<Button
-								variant="ghost"
-								size="icon-sm"
-								disabled={volumeBusy || volumesReadOnly}
-								on:click={() => askDeleteVolume(volume)}
-							>
-								<Trash2 class="w-4 h-4 text-error" />
-								<span class="sr-only">{$t('storage.volumes.deleteOne', { name: volume.name })}</span>
-							</Button>
+							{#if volume.used !== null && volume.quota !== null}
+								<ProgressBar
+									value={volume.quota === 0 ? 1 : volume.used}
+									max={volume.quota === 0 ? 1 : volume.quota}
+									size="sm"
+									variant={quotaVariant(volume)}
+									label={$t('storage.volumes.useOf', { name: volume.name })}
+								/>
+								<p class="text-xs text-secondary">{usedOfQuota(volume)}</p>
+							{:else if volume.used !== null}
+								<p class="text-xs text-secondary">
+									{$t('storage.volumes.usedNoQuota', { used: formatBytes(volume.used) })}
+								</p>
+							{:else if volume.usage === 'unknown'}
+								<p class="text-xs text-muted">{$t('storage.volumes.useUnknown')}</p>
+							{/if}
+							{#if usageOf === volume.name}
+								<div class="space-y-1">
+									<p class="text-xs font-medium text-secondary">{$t('storage.volumes.chartTitle')}</p>
+									{#if usageLoading}
+										<p class="loading-text text-xs">{$t('storage.volumes.chartLoading')}</p>
+									{:else if usageError}
+										<Alert variant="error" title={$t('storage.volumes.chartError')}>{usageError}</Alert>
+									{:else}
+										<VolumeUsageChart points={usagePoints} {formatBytes} />
+									{/if}
+								</div>
+							{/if}
 						</li>
 					{/each}
 				</ul>

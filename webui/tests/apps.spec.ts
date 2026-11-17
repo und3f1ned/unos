@@ -1,6 +1,6 @@
 import type { Page, Request, Route } from '@playwright/test';
 import { test, expect } from './fixtures';
-import { catalogCard, installAnswer, oneContainerApp } from './apps-fakes';
+import { answerInstall, catalogCard, fakeInstallEvents, oneContainerApp } from './apps-fakes';
 
 test.describe('App Store', () => {
   test('should display App Store page', async ({ authenticatedPage: page }) => {
@@ -272,6 +272,8 @@ test.describe('Install in the group unos-smb', () => {
 
   async function fakeInstall(page: Page): Promise<Record<string, unknown>[]> {
     const installs: Record<string, unknown>[] = [];
+    // The install answers its job, which the events socket ends (ADR-0384).
+    const events = await fakeInstallEvents(page);
     await page.route(
       (url: URL) => url.pathname === '/api/v1/apps/installed',
       (route: Route) => route.fulfill({ json: [] }),
@@ -282,27 +284,18 @@ test.describe('Install in the group unos-smb', () => {
     );
     await page.route(
       (url: URL) => url.pathname === '/api/v1/apps/install',
-      (route: Route) => {
+      async (route: Route) => {
         const body = route.request().postDataJSON() as Record<string, unknown>;
         installs.push(body);
         const volumes = (body.volume_overrides ?? {}) as Record<string, string>;
-        if (volumes['/downloads'] === FAMILY && body.run_in_unos_smb !== true) {
-          return route.fulfill({ status: 400, json: { detail: SHARE_REFUSED } });
-        }
-        return route.fulfill({
-          json: {
-            id: 'e2e-id',
-            name: 'transmission',
-            container_id: 'e2e-id',
-            status: 'running',
-            web_url: 'http://localhost:9091',
-            pool: POOL.name,
-            volumes: [],
-            devices: [],
-            health: null,
-            companions: [],
-          },
-        });
+        // The job's checks refuse the share's folder (ADR-0274).
+        const refused = volumes['/downloads'] === FAMILY && body.run_in_unos_smb !== true;
+        await answerInstall(
+          route,
+          events,
+          'Transmission',
+          refused ? { status: 400, detail: SHARE_REFUSED } : oneContainerApp('transmission', POOL.path, { port: 9091 }),
+        );
       },
     );
     return installs;
@@ -404,9 +397,10 @@ test.describe('Ports of an app', () => {
   const hostNetwork = (name: string) =>
     `${name} runs in the host's network: it listens on these ports of the host itself, so they cannot be changed.`;
 
-  /** Answers the pools and the install of `app`; returns the bodies of the installs. */
-  async function fakeInstall(page: Page, app: ReturnType<typeof oneContainerApp>): Promise<unknown[]> {
+  /** Answers the pools and the install of `app`, named `name`; returns the bodies of the installs. */
+  async function fakeInstall(page: Page, name: string, app: ReturnType<typeof oneContainerApp>): Promise<unknown[]> {
     const installs: unknown[] = [];
+    const events = await fakeInstallEvents(page);
     await page.route(
       (url: URL) => url.pathname === '/api/v1/apps/installed',
       (route: Route) => route.fulfill({ json: [] }),
@@ -417,9 +411,9 @@ test.describe('Ports of an app', () => {
     );
     await page.route(
       (url: URL) => url.pathname === '/api/v1/apps/install',
-      (route: Route) => {
+      async (route: Route) => {
         installs.push(route.request().postDataJSON());
-        return route.fulfill({ json: installAnswer(app) });
+        await answerInstall(route, events, name, app);
       },
     );
     return installs;
@@ -442,7 +436,7 @@ test.describe('Ports of an app', () => {
     test(`${name} runs in the host's network: its port cannot be moved, and the install moves none`, async ({
       authenticatedPage: page,
     }) => {
-      const installs = await fakeInstall(page, oneContainerApp(id, POOL.path, { port }));
+      const installs = await fakeInstall(page, name, oneContainerApp(id, POOL.path, { port }));
       const dialog = await portsOf(page, name);
 
       const host = dialog.getByLabel('Host Port');
@@ -458,7 +452,7 @@ test.describe('Ports of an app', () => {
   }
 
   test('an app in a network of its own may move its host port', async ({ authenticatedPage: page }) => {
-    const installs = await fakeInstall(page, oneContainerApp('jellyfin', POOL.path, { port: 8097 }));
+    const installs = await fakeInstall(page, 'Jellyfin', oneContainerApp('jellyfin', POOL.path, { port: 8097 }));
     const dialog = await portsOf(page, 'Jellyfin');
 
     const host = dialog.getByLabel('Host Port');

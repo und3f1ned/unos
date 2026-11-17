@@ -12,6 +12,28 @@ features (SMB access per user and per share, volumes, copy and move in the file
 manager, encrypted backup uploads, health checks, CI checks).
 
 ### Security
+- An administrator can require two-factor authentication for every account
+  (**System** → **Security**, **Two-factor authentication for every
+  account**), with a grace period of none, 1, 3, 7 (the default), 14 or 30
+  days from the time it is turned on or the account is created, whichever is
+  later. Turning it on or off takes an administrator with two-factor
+  authentication and a current code of it, and a session, not an API token
+  (`GET /api/v1/security/two-factor-requirement`, `POST .../enable` with
+  `grace_days` and `code`, `POST .../disable` with `code`); the audit log
+  records both as `settings_changed` of `two_factor_requirement`. During the
+  grace period an account without two-factor authentication is asked to set
+  it up after each sign-in (`/two-factor-setup`); after it, the account can
+  only set it up: the server answers 403 "Two-factor authentication is
+  required: set it up to continue" to every request but `GET /auth/me`,
+  `GET /auth/totp/status`, `POST /auth/totp/setup`, `POST /auth/totp/enable`
+  and `POST /auth/logout` of its sessions, to every request of its API
+  tokens, and closes its WebSockets with 4403; open sessions follow at their
+  next request. `GET /api/v1/auth/me` answers `two_factor_required` and
+  `GET /api/v1/auth/totp/status` `required`. SMB still signs in with the
+  password alone. Off by default. A restore that turns the requirement on or
+  off says so among its warnings and in the audit log; a start ahead of the
+  clock counts as now, and a stored requirement that cannot be read holds
+  without a grace period, without errors, and can be turned off.
 - **System** → **Security** no longer names a stored certificate as the one
   in use: its **SSL/TLS Certificates** card and
   `GET /api/v1/security/certificates/status` (now
@@ -323,6 +345,41 @@ manager, encrypted backup uploads, health checks, CI checks).
   `ups_name`, `host` and `port` are checked before they reach `upsc`.
 
 ### Added
+- Groups of users (ADR-0385). The **Users** page has a **Groups** card: make
+  a group, choose its members (users who are not administrators), rename it
+  or delete it. On the **Shares** page a share's access list gives each group
+  **No access**, **Read only** or **Read & write**, and the share's card lists
+  each group with its members. Every member whose SMB is on gets the group's
+  access, and so does a user added to the group later; a user who also has a
+  level of their own, or through another group, gets the higher one. Removing
+  a member, lowering a group's level or deleting the group disconnects the
+  open connections to its shares. A group lives in UNOS's database only:
+  smb.conf names its members, and no group is made on the host, so the host's
+  own groups, uninstall.sh and the restore of a backup (which brings the
+  groups back with the database) have nothing more to handle. A deleted user,
+  or one made an administrator, leaves every group, and a renamed user stays
+  in them under the new name. The API: `GET`, `POST /api/v1/groups`, `GET`,
+  `PATCH`, `DELETE /api/v1/groups/{id}`, which take the group's name as the
+  page saw it (409 after a rename), and `group_access` in the share API; the
+  audit log records `group_created`, `group_updated` and `group_deleted`.
+- The use of each volume's quota (ADR-0387): the Volumes dialog shows how much
+  of its quota each volume uses, with a bar, or its use alone without a quota,
+  says when quotas are off on the pool or btrfs's counts need a rescan, and
+  draws a volume's use over time (one point per hour for 30 days, the quota as
+  a dashed line). `GET /api/v1/storage/pools/{pool}/volumes` adds `used`,
+  `quota` and `usage` to each volume, and
+  `GET /api/v1/storage/pools/{pool}/volumes/{name}/usage` answers the points.
+  The use is read from the kernel's counters in sysfs, with no command and no
+  disk read. At each pass of the RAID monitor (every 5 minutes), a volume that
+  reaches 80, 90 or 95% of its quota is alerted once per level to every
+  enabled channel and shown in the health banner (an error at 95%); a level
+  counts again once the use fell 5 points below it, and a restart keeps the
+  level reached. While btrfs's counts need a rescan they change no alert and
+  no point. The points stay in memory and are written to the system disk only
+  when the supervisor stops. Once btrfs has finished deleting a volume,
+  restored copy or snapshot and its quota group counts nothing, the monitor's
+  lists of the pool destroy that group, which btrfs keeps with its limit for a
+  later subvolume of the same id.
 - Apps of several containers (ADR-0381): an app of the catalog may have
   companion containers beside its main one, on a Docker network of its own
   (`unos-app-<app>`, where each answers to its name), which UNOS installs,
@@ -768,6 +825,34 @@ manager, encrypted backup uploads, health checks, CI checks).
 - A status panel on the Shares page.
 
 ### Changed
+- An app's install runs in the background (ADR-0384, which supersedes the
+  one-request install of ADR-0381): `POST /api/v1/apps/install` answers 202 at
+  once with the install's job, and the checks of the pool, the folders, the
+  ports and the free space, the pulls, the creates and the starts run in the
+  job; the request itself answers only 404, 400 for a request that the
+  template refuses, and 409 while another install runs (one at a time on the
+  NAS) or the app is being changed. The job reports each image's pull as
+  Docker's pull stream says it (its layers and the bytes downloaded), each
+  container's state and the end: the install's answer, or the error with the
+  status the request would have answered. `/ws/v1/events` sends administrators
+  an `app_installs` message with the running install and the last of each app,
+  `GET /api/v1/apps/install/jobs` lists them, `GET
+  /api/v1/apps/install/jobs/{id}?wait=SECONDS` (up to 3600) answers once the
+  job has ended, and `DELETE /api/v1/apps/install/jobs/{id}` forgets an ended
+  one; `DELETE` on the running job cancels it (202): it stops at its next
+  step, also in a download, and what it made is removed as after a failure.
+  A pull that sends nothing for 10 minutes fails the install. Up to 4 such
+  GETs wait at once (429 beyond). The jobs are kept in memory only; a stop of
+  UNOS stops an install at its next step, leaving the containers it made
+  (audited as a failed `app_installed`), and uvicorn now ends the requests
+  still open 3 s after a stop (`--timeout-graceful-shutdown 3`), so that a
+  waiting GET cannot hold back that stop. The App Store's details wait while
+  the install checks and show a refusal there; then a card above the tabs
+  shows each image's download, each container's start and the result, also
+  after the page is loaded again, with **Cancel install** while it runs and
+  **Dismiss** once it ended. `scripts/dev/api.py` waits for an install
+  with `GET /apps/install/jobs/<id> --param wait=3600` instead of a
+  `--timeout 3600 POST`.
 - `GET /api/v1/apps/installed` lists an app once, with `health`, `missing`
   and its `companions` (name, container, status, health, image, devices), and
   each of its `volumes` names its `companion`; the install answers `health`

@@ -65,8 +65,11 @@ their audit entry cannot be written once the change is stored, and so do the
 changes of pools, volumes, snapshots, containers and apps once they are made,
 backups created, uploaded, restored and deleted, reboots and shutdowns
 scheduled or cancelled, changes of scheduled tasks and runs started by hand,
-and changes of network interfaces, Wake-on-LAN, the host name and the time
-zone; the supervisor's log reports that entry.
+and changes of network interfaces, Wake-on-LAN, the host name, the time
+zone and the requirement of two-factor authentication for every account; the
+supervisor's log reports that entry. An account that can only set up two-factor
+authentication cannot set it up while the disk is full: the setup answers an
+error until there is room again.
 A recovery code does not sign you in while the disk is full, because UNOS
 cannot mark it as used; a code of your authenticator app does.
 
@@ -122,8 +125,9 @@ print in the tables of the **Network** tab, such as a connection's state
 
 The dashboard provides an at-a-glance view of your NAS. Above it, as above
 every page, administrators see the health banner while UNOS knows of a
-problem: a pool not mounted, degraded or almost full, a failing disk, a task
-that failed or missed its run (see [Alerts](#alerts)).
+problem: a pool not mounted, degraded or almost full, a volume near its
+quota, a failing disk, a task that failed or missed its run (see
+[Alerts](#alerts)).
 
 ### System Stats
 - **CPU** - Current processor usage
@@ -474,6 +478,28 @@ For each pool, you can:
   that a running container mounts is on a network or FUSE mount that does
   not answer, the delete stops after 10 seconds and says so. A pool mounted
   read-only lists its volumes but cannot create or delete them.
+  Each volume shows its use: with a quota, a bar and "8.0 GB of 10.0 GB used
+  (80.0%)", yellow from 80% and red from 95%; without one, the use alone. The
+  use is what btrfs counts against the quota, the data the volume shares with
+  its snapshots included (a limit on exclusive data, `btrfs qgroup limit -e`,
+  is not shown as a quota). With quotas off on the pool nothing is counted,
+  and the dialog says how to enable them and what they cost: deleting
+  snapshots and balancing get slower, the more so the more snapshots the pool
+  has. When btrfs says its counts need a rescan, the dialog shows
+  `btrfs quota rescan /mnt/pools/<pool>` to run on the host; until the counts
+  are right again, UNOS keeps the alerts as they were and adds no point to
+  the graph. Once btrfs has finished deleting a volume, snapshot or restored
+  copy, the monitor deletes its quota group at a later pass, once the group
+  counts nothing (usually within 10 minutes; after a restart of UNOS, after
+  the next write to the pool), so that a later subvolume does not meet its
+  limit; when btrfs's counts need a rescan, the group waits for it. The graph button
+  of a volume shows its use over time below it: one point per hour for the
+  last 30 days, with the quota as a dashed line. UNOS keeps the points in
+  memory and writes them to the system disk only when the supervisor stops,
+  so an update or a reboot keeps them, while a power cut loses the points
+  since the last stop. A renamed volume keeps its points; a deleted one loses
+  them. A volume that reaches 80, 90 or 95% of its quota is alerted (see
+  [Alerts](#alerts)); a restart keeps the level it reached.
 - **Balance** - Redistribute data across devices
 - **Remove pool** (the trash button) - After **Continue**, type the pool's
   name to enable **Remove Pool**. UNOS unmounts the pool, removes it from
@@ -620,6 +646,13 @@ the import backup in the same way.
   with their UNOS username and password.
 - **Each share has its own access list:** for each user **No access**,
   **Read only** or **Read & write**. New users have no access to any share.
+- **Groups get access too:** a share's access list also gives each
+  [group](#groups) **No access**, **Read only** or **Read & write**. Every
+  member of the group whose SMB is on gets that access, and so does a user
+  added to the group later. A user who has access of their own and through a
+  group, or through several groups, gets the higher level: **Read & write**
+  wins over **Read only**, and there is no way to give a member less than the
+  group has.
 - **Administrators cannot use SMB.** Their password controls the whole NAS,
   and SMB has no two-factor authentication: its lock after wrong passwords
   (see [SMB Access](#smb-access)) only slows down guessing. Use a regular
@@ -678,7 +711,11 @@ every served share below such a folder until the command has run.
    - **Protocol options** - **Require encryption**, **Time Machine backups of
      Macs** and **Previous Versions from snapshots**, each off by default:
      see [Protocol Options](#protocol-options)
-   - **Access** - For each user: No access, Read only or Read & write
+   - **Access** - For each user, and below them for each group (with its
+     members under it): No access, Read only or Read & write. **Everyone:
+     Read only** and **Everyone: Read & write** set the level of every user,
+     not of the groups; **Clear** sets every user and every group to No
+     access.
 3. Click **Create**
 
 Folders that apps use (downloads, media) can be shared. SMB users with write
@@ -760,11 +797,12 @@ encryption required loses guest access at the restore, with a note.
 #### Editing a Share
 
 - **Edit** changes the comment, network browsing, guest access, the protocol
-  options and the access list (and the folder of a share marked **Not
-  served**). Removing or lowering someone's access, turning guest access off,
-  requiring encryption and turning Previous Versions off disconnect every
-  open connection to that share; the computers reconnect by themselves.
-  Adding access disconnects nobody.
+  options and the access list of users and groups (and the folder of a share
+  marked **Not served**). Removing or lowering someone's access, also a
+  group's (and removing a member from a group, see [Groups](#groups)),
+  turning guest access off, requiring encryption and turning Previous
+  Versions off disconnect every open connection to that share; the computers
+  reconnect by themselves. Adding access disconnects nobody.
 - **Repair permissions** fixes the permissions of the files that are already
   in the share (see below).
 - **Delete** removes the share; the folder and its files are kept. Open
@@ -1212,7 +1250,22 @@ name its category the same way. Some of them:
 5. To give the app a share's folder, tick **Run in the group unos-smb** and
    enter the share's folder on the **Volumes** tab (see
    [Share Folders for Apps](#share-folders-for-apps))
-6. Wait for installation to complete
+6. Click **Install** in the details: the details stay open while the install
+   checks the pool, the ports and the free space, and show why it is refused
+   if it is, so that you can change the settings and try again
+7. Once the checks have passed, the details close, and a card at the top of
+   the **App Store** follows the install: each image with its download (a bar
+   of its size, and how many of its layers are there), each container as it is
+   created and started, and at the end the result, or why the install failed.
+   You can leave the page or reload it meanwhile: the install goes on in the
+   background, and the card shows where it is when you come back. **Cancel
+   install** stops an install that runs, after a question: what it made so far
+   (containers, the app's network) is removed, and its data folders and the
+   downloaded images are kept. **Dismiss** removes the card of an install that
+   has ended
+
+Only one app installs at a time: while an install runs, the App Store offers
+no other install until it has ended.
 
 Before it downloads anything, the install checks that:
 
@@ -1230,9 +1283,21 @@ Before it downloads anything, the install checks that:
   count. When there is too little space, remove unused images on
   **Containers** > **Images** first.
 
-Downloading an app's images can take several minutes, during which the install
-waits. Starting or restarting an app from UNOS fails while its data folders are
-not on a mounted pool.
+Downloading an app's images can take several minutes. A pinned image (one of
+Immich's) that the NAS already has shows as **Already on the NAS** and is not
+downloaded again; any other app's image is asked for again, and only the layers
+that the NAS lacks are downloaded. A download that makes no progress at all for
+10 minutes is stopped, and the install fails with a message that says so:
+install the app again to try once more.
+Starting or restarting an app from UNOS fails while its data folders are not on
+a mounted pool.
+
+UNOS keeps the progress of installs in memory only: when UNOS restarts during an
+install, the install stops there and its card is gone (the details of an app
+whose install was still being checked say so). If it had made some of
+the app's containers already, the app is listed on the **Installed** tab,
+stopped or incomplete: start it, or uninstall it (its data folders are kept)
+and install it again. Containers that UNOS had started are left running.
 
 ### Apps of Several Containers
 
@@ -1447,6 +1512,38 @@ end, nothing is renamed and the dialog says why. When SMB could not be turned
 on again under the new name, the user is renamed with SMB **Password needed**,
 and the page shows why.
 
+### Groups
+
+A group gives several users the same access to shares. Under **Groups** on
+the **Users** page, click **New group**, enter a name (1 to 32 lowercase
+letters, digits, `_` or `-`, starting with a letter; no two groups may have
+the same name in any letter case) and tick its members, then click **Create
+group**. Administrators are not listed, since they cannot use SMB, and users
+whose names SMB cannot use cannot be members. A user whose SMB is off or
+needs a password can be a member: the group's access counts for them once
+their SMB is on.
+
+Give the group access on the **Shares** page: in a share's access list each
+group has its own level (see [How Access Works](#how-access-works)). Each
+group on the **Users** page lists its members and the shares it has access
+to.
+
+- **Edit** renames the group or changes its members. A member added gets the
+  group's access at once; a member removed loses it, and their open
+  connections to the group's shares are closed (the computers reconnect with
+  the access they still have).
+- **Delete** removes the group and its access to shares; its members lose
+  what the group gave them, and the users themselves stay.
+- A deleted user, and a user made an administrator, leave every group; a
+  renamed user stays in their groups under the new name.
+
+A group exists only in UNOS: Samba's configuration lists the members by name,
+and no group is made on the NAS itself, so a group of the NAS's own (such as
+`users` or `staff`) is never affected and may have the same name. Groups are
+part of the database, so a backup holds them and a restore brings them back as
+they were at the backup; a member counts again once their SMB account is
+active after the restore.
+
 ### User Roles
 
 | Role | Permissions |
@@ -1456,8 +1553,8 @@ and the page shows why.
 
 Every other page and API is for administrators only; regular users do not see
 them. At least one administrator must remain: the last one cannot be demoted
-or deleted. Making a user an administrator removes the user's SMB access and
-share permissions and ends the user's open SMB connections.
+or deleted. Making a user an administrator removes the user's SMB access,
+share permissions and groups and ends the user's open SMB connections.
 
 ### SMB Access
 
@@ -1480,7 +1577,8 @@ one of two ways:
 - or you set a new password for the user in the edit dialog, with **Also turn
   SMB on with this password** ticked.
 
-Then give the user access to shares on the **Shares** page.
+Then give the user access to shares on the **Shares** page, or add the user
+to a group that has access (see [Groups](#groups)).
 
 SMB passwords need at least 8 characters, and they must not be common
 passwords: UNOS refuses about 1450 passwords that attackers try first, such as
@@ -1642,6 +1740,52 @@ Scripts send the code as `recovery_code` in place of `totp_code` to
 answers new codes, and `GET /api/v1/auth/recovery-codes/status` how many are
 left.
 
+#### Two-Factor Authentication for Every Account
+
+An administrator can require two-factor authentication for every account,
+administrators included. Under **System** → **Security**, the card **Two-factor
+authentication for every account** says whether it is **Required**. To turn it
+on, your own account needs 2FA: choose the **Grace period** (none, 1, 3, 7, 14
+or 30 days; 7 is offered first), enter a current code of your authenticator
+app and click **Require for every account**. **Stop requiring** turns it off,
+with a code as well. The audit log records both (`settings_changed`, resource
+`two_factor_requirement`; turning it off as a **Warning**).
+
+What it means for an account without 2FA:
+
+- The grace period starts when the requirement is turned on, or when the
+  account is created, if that is later. The card shows the name the
+  administrator had when turning it on.
+- During it, everything works as before, and after each sign-in a page asks
+  to set up 2FA by the end of the grace period: **Set up now** shows the QR
+  code and asks for a code, **Later** goes on to the dashboard.
+- After it, the password still signs in, but the account can only set up 2FA:
+  the same page, without **Later**, with **Sign out**. A session that was open
+  when the grace period ended is led there at its next request; the server
+  refuses every other request of the account (HTTP 403 "Two-factor
+  authentication is required: set it up to continue"), and the account's API
+  tokens stop working. Once 2FA is on, the account has its rights again at
+  once: generate recovery codes next.
+- An account that turns 2FA off after its grace period can only set it up
+  again at once; there is no new grace period.
+- SMB has no second factor: an account with SMB on still signs in to SMB with
+  its password alone. Turn SMB off for a user on the **Users** page where that
+  matters.
+
+A restore whose database requires it, or no longer requires it, says so among
+its warnings, and the audit log records the change. A start of the requirement
+that lies ahead of the NAS's clock, as on a board without a real-time clock
+before it has set its time from the network, counts as now: the grace period is
+never skipped. When the database holds a requirement whose start cannot be read,
+the card says so, and accounts without 2FA get no grace period.
+
+Turning the requirement off gives every account its rights back at its next
+request. Scripts read it with `GET /api/v1/security/two-factor-requirement`
+and change it with `POST /api/v1/security/two-factor-requirement/enable`
+(`grace_days`, `code`) and `/disable` (`code`), with a session, not an API
+token; `GET /api/v1/auth/me` answers `two_factor_required` for the signed-in
+account.
+
 ### Login History
 
 Under **Login History** on the **Account** page (administrators: **System** →
@@ -1751,7 +1895,8 @@ regular users have no access to it.
   restored, containers started, restarted, stopped and removed on the
   **Containers** page, apps started, restarted and stopped on the **Apps**
   page (a restart as **Container started**), apps installed and uninstalled
-  (removals and deletions as a **Warning**), the SMB access of users, shares
+  (removals and deletions as a **Warning**), the SMB access of users, groups
+  created, changed and deleted (deletions as a **Warning**), shares
   created, changed, deleted and repaired, NFS exports created and deleted,
   shares imported from smb.conf, the corrections of the SMB check at startup
   and the SMB state after a restore (by the user `system`), API tokens
@@ -1766,8 +1911,12 @@ regular users have no access to it.
   names of the fields that changed and, for a rename, the old name; never
   the command or the passphrase), enabled, disabled, deleted and run with
   **Run now** (**Task run**); a network interface disabled, its
-  disable kept, and enabled; Wake-on-LAN turned on or off; and a new host
-  name or time zone (**Settings changed**, from the old value to the new).
+  disable kept, and enabled; Wake-on-LAN turned on or off; a new host
+  name or time zone (**Settings changed**, from the old value to the new);
+  and two-factor authentication required for every account or no longer
+  (**Settings changed**, resource `two_factor_requirement`; no longer as a
+  **Warning**), with the sign-ins of accounts that can only set it up (a
+  **Warning**).
   Only a change that was made writes an entry: a refused or failed one, or
   one that changes nothing (the same host name, a task saved unchanged,
   removing a pool that is not there, starting a running container or
@@ -2184,7 +2333,8 @@ A run on a pool that is not mounted fails with `Pool <name> is not mounted at
 
 Go to **System** → **Backup & Restore**. A backup holds the UNOS database:
 user accounts with their passwords, two-factor authentication, API tokens,
-the login history, and the SMB shares with their access lists. It does not
+the login history, the groups of users with their members, and the SMB
+shares with their access lists, those of groups included. It does not
 hold the files in your pools, Samba's own password database, nor settings
 kept elsewhere, such as notification channels, scheduled tasks, firewall
 rules, UPS settings, the network settings and the host's `/etc/fstab`. Each
@@ -2207,11 +2357,16 @@ backup in the list has **Restore**, **Download** and **Delete** buttons.
   tasks also hold are named in the result as not restored.
 
 SMB after a restore:
-- The shares and their access lists come back with the database, and UNOS
-  writes smb.conf from them; a backup holds no smb.conf. A backup whose
-  database never imported its shares gets the shares of the current smb.conf,
-  without guest access, and a backup of a UNOS from before shares were stored
-  in the database is refused.
+- The shares and their access lists, and the groups with their members, come
+  back with the database, and UNOS writes smb.conf from them; a backup holds
+  no smb.conf. A backup made before UNOS had groups restores without groups,
+  and one whose groups break the name rule or share a name is refused. A
+  backup whose database never imported its shares gets the shares of the
+  current smb.conf, without guest access: smb.conf names users, not groups,
+  so every user who has access in it, also through a group, gets that access
+  of their own, which stays when they leave the group, and the groups come
+  back without access to shares. A backup of a UNOS from before shares were
+  stored in the database is refused.
 - SMB keeps working for users whose password did not change since the backup
   was made. Everyone else shows **Password needed** and must turn SMB on
   again (see [SMB Access](#smb-access)), and so must a user whose SMB user id
@@ -2381,6 +2536,7 @@ enabled channel, when it finds it:
 | A managed pool is degraded: a disk is missing, or its disks count errors (also errors a scrub found) | error | every 5 minutes |
 | btrfs made a managed pool read-only after a serious error | error | every 5 minutes |
 | A mounted managed pool is 90% full: the banner shows it as an error from 95%, and keeps it until the pool is below 85% | warning | every 5 minutes |
+| A volume of a mounted pool has used 80%, then 90%, then 95% of its quota: one alert per level, the last an error; a level counts again once the use fell 5 points below it, and the banner drops the volume below 75% | warning, at 95% error | every 5 minutes |
 | A disk fails its SMART health self-assessment (health FAILED; for an NVMe disk not when it is only too hot) | error | every hour |
 | The latest SMART self-test of a disk failed | error | every hour |
 | The last run of an enabled scheduled task failed | warning | every 5 minutes |
@@ -2398,6 +2554,10 @@ counts, unless the problem that the rise causes is alerted at the same check,
 and once when it cannot read the state of a managed pool. For a pool that UNOS
 does not manage, it alerts the changes of its health instead: a status that is
 no longer healthy, a filesystem made read-only.
+
+The use of the volumes' quotas is read from the kernel's own counters, which
+reads no disk; the volumes are listed again only after something wrote to the
+pool. UNOS does not watch a volume of a pool with quotas off.
 
 A disk that sleeps is not woken for the check and keeps what UNOS knew of it,
 unless another disk is at its place. Runs are not made up after the supervisor
@@ -2479,7 +2639,8 @@ yet: every enabled channel receives every alert, and no other event
 
 1. ✅ Create the administrator account right after installing, with a strong password
 2. ✅ Enable two-factor authentication (2FA), and keep its recovery codes
-   somewhere safe
+   somewhere safe; an administrator can require it for every account
+   (**System** → **Security**)
 3. ✅ Use strong, unique passwords, above all for accounts with SMB: SMB has
    no two-factor authentication, and its lock after 5 wrong passwords still
    lets anyone on the network try 5 passwords per account every 5 minutes.

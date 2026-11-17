@@ -31,6 +31,17 @@ export function isAdminOnlyRoute(pathname: string): boolean {
   );
 }
 
+/**
+ * The page of an account that every account's requirement of two-factor authentication applies to:
+ * it asks during the grace period, and after it is the one page of the account.
+ */
+export const TWO_FACTOR_SETUP_PATH = '/two-factor-setup';
+
+/** The account can only set up two-factor authentication: the server refuses it everything else. */
+export function isSetupOnly(currentUser: User | null): boolean {
+  return currentUser?.two_factor_required?.setup_only === true;
+}
+
 let pending: { token: string | null; request: Promise<User> } | null = null;
 
 /**

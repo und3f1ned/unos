@@ -13,7 +13,8 @@ SD writes of each check (ADR-0214). The areas:
            goes into the volume's own trash, and a folder with a subvolume below it that Delete
            refuses.
   volumes  A volume made without a quota and listed, one with a quota of 1 GiB (refused while
-           quotas are off on the pool, else made with that limit), a Delete refused while a share
+           quotas are off on the pool, which the list says, else made with that limit and listed
+           with its use against it, as is its use over time: ADR-0387), a Delete refused while a share
            uses the volume; a snapshot of the volume, whose Restore makes the copy restore_<time>
            in it, a subvolume on the host listed with the volume's restored copies (ADR-0358), the
            copy's Delete refused while the share uses the copy and done once the share is gone,
@@ -1992,13 +1993,27 @@ def volumes_check(c: Check) -> None:
         if isinstance(answer, dict) and "path" in answer:
             limit = c.device.quota_limit(answer["path"])
             c.expect(limit == str(GIB), f"btrfs shows the limit {limit} on {answer['path']}, not {GIB}")
+            # storage.volume-quota-usage: the list and the use over time show its use against the
+            # quota, as the kernel counts it in sysfs.
+            listed = next((v for v in volumes() if v["name"] == quoted), {})
+            c.expect(listed.get("quota") == GIB and isinstance(listed.get("used"), int)
+                     and listed.get("usage") in ("counted", "inconsistent"),
+                     f"the list does not show its use against the quota: {listed}")
+            over_time = c.get(f"/storage/pools/{name}/volumes/{quoted}/usage")
+            last = (over_time.get("points") or [{}])[-1]
+            c.expect(last.get("quota") == GIB and isinstance(last.get("used"), int),
+                     f"its use over time does not end with its current use against the quota: {over_time}")
             c.delete_volume(name, quoted)
             c.expect(quoted not in [v["name"] for v in volumes()], "it is still listed after its Delete")
-            s.text += " is made with a limit of 1 GiB on its quota group, and deleted"
+            s.text += " is made with a limit of 1 GiB on its quota group, listed with its use against it, and deleted"
         else:
             c.expect("not enabled" in json.dumps(answer).lower(), f"the 409 is not the one for quotas that are off: {answer}")
             c.expect(quoted not in [v["name"] for v in volumes()], "it was made anyway")
-            s.text += " is refused while quotas are off on the pool"
+            # storage.volume-quota-usage: nothing is counted, and the list says why.
+            listed = next((v for v in volumes() if v["name"] == volume), {})
+            c.expect(listed.get("usage") == "quotas_off" and listed.get("used") is None,
+                     f"the list does not say that quotas are off: {listed}")
+            s.text += " is refused while quotas are off on the pool, which the list says"
 
     with c.step(f"Delete is refused while the share {share} uses the volume, and names the share"):
         c.on_cleanup(f"delete the share {share}", lambda: c.delete_share(share))

@@ -1,4 +1,4 @@
-import type { Page, Route } from '@playwright/test';
+import { expect, type Page, type Route, type WebSocketRoute } from '@playwright/test';
 
 // Route fakes of the App Store for what the stand-in lacks (ADR-0189): its catalog is the
 // stand-in's own, answered on a machine without a device tree, so it names no hardware; Docker's
@@ -245,4 +245,171 @@ export function catalogCard(page: Page, name: string) {
 /** The card of the installed app `name` on the Installed tab. */
 export function installedCard(page: Page, name: string) {
   return page.locator('main .card', { has: page.locator('h3', { hasText: new RegExp(`^${name}$`) }) });
+}
+
+/** An image's pull in an install job (ImagePull of supervisor/src/apps/schemas.py). */
+export interface FakeImagePull {
+  image: string;
+  state: 'waiting' | 'present' | 'pulling' | 'pulled' | 'failed';
+  layers: number;
+  layers_done: number;
+  bytes_total: number;
+  bytes_done: number;
+}
+
+/** A container of an install job (ContainerStart). */
+export interface FakeContainerStart {
+  name: string;
+  companion: string | null;
+  state: 'waiting' | 'created' | 'starting' | 'running' | 'failed' | 'removed';
+}
+
+/** An install job as POST /api/v1/apps/install answers it and /ws/v1/events sends it (AppInstallJob, ADR-0384). */
+export interface FakeInstallJob {
+  id: string;
+  template_id: string;
+  name: string;
+  state: 'running' | 'succeeded' | 'failed' | 'cancelled';
+  step: 'checking' | 'pulling' | 'creating' | 'starting' | 'cleaning';
+  started_at: string;
+  finished_at: string | null;
+  images: FakeImagePull[];
+  containers: FakeContainerStart[];
+  result: ReturnType<typeof installAnswer> | null;
+  error: string | null;
+  error_status: number | null;
+}
+
+let jobCount = 0;
+
+/**
+ * A new install job of the app `templateId` named `name`, as the server starts it: running, at its
+ * checks, its containers (companions first, then the main container, named after the app) waiting.
+ */
+export function newInstallJob(templateId: string, name: string, companions: string[] = []): FakeInstallJob {
+  jobCount += 1;
+  return {
+    id: `e2e-job-${jobCount}`,
+    template_id: templateId,
+    name,
+    state: 'running',
+    step: 'checking',
+    started_at: '2026-11-17T10:00:00Z',
+    finished_at: null,
+    images: [],
+    containers: [
+      ...companions.map((companion) => ({ name: `${templateId}-${companion}`, companion, state: 'waiting' as const })),
+      { name: templateId, companion: null, state: 'waiting' as const },
+    ],
+    result: null,
+    error: null,
+    error_status: null,
+  };
+}
+
+/** `job` once it ended as `end` says: succeeded with the answer of the install that made the app, or failed. */
+export function endedJob(
+  job: FakeInstallJob,
+  end: FakeInstalledApp | { status: number; detail: string },
+): FakeInstallJob {
+  if ('detail' in end) {
+    return { ...job, state: 'failed', finished_at: '2026-11-17T10:00:02Z', error: end.detail, error_status: end.status };
+  }
+  return {
+    ...job,
+    state: 'succeeded',
+    step: 'starting',
+    finished_at: '2026-11-17T10:05:00Z',
+    containers: job.containers.map((container) => ({ ...container, state: 'running' })),
+    result: installAnswer(end),
+  };
+}
+
+/** The fake /ws/v1/events of fakeInstallEvents. */
+export interface FakeInstallEvents {
+  /** The jobs that the server keeps: sent after each sign-in when there is one, as the server does. */
+  jobs: FakeInstallJob[];
+  /** Keep `job` in place of the app's last one and send the jobs, as the server does on each change. */
+  update(job: FakeInstallJob): Promise<void>;
+  /** Forget the job `id` and send the jobs (DELETE /api/v1/apps/install/jobs/{id}). */
+  forget(id: string): Promise<void>;
+  /** How many times the page signed in to the socket. */
+  signIns(): number;
+  /**
+   * Close the socket as a supervisor that restarts does (1012), which forgets its jobs, and wait
+   * until the page has signed in again.
+   */
+  restart(): Promise<void>;
+}
+
+/**
+ * Stand in for /ws/v1/events with the install jobs of apps (supervisor/src/websocket/events.py,
+ * ADR-0384): the fake answers the page's auth message with auth_ok and, when it keeps a job, an
+ * app_installs message with the jobs, as the server does after a reload; `update` sends the jobs
+ * again on the latest socket, as the server does whenever a job changes.
+ */
+export async function fakeInstallEvents(page: Page): Promise<FakeInstallEvents> {
+  let socket: WebSocketRoute | null = null;
+  let signIns = 0;
+  const jobs: FakeInstallJob[] = [];
+  const send = (ws: WebSocketRoute) => ws.send(JSON.stringify({ type: 'app_installs', data: jobs }));
+  await page.routeWebSocket('**/ws/v1/events', (ws) => {
+    ws.onMessage((message) => {
+      if (JSON.parse(String(message)).type !== 'auth') return;
+      ws.send(JSON.stringify({ type: 'auth_ok' }));
+      if (jobs.length > 0) send(ws);
+      socket = ws;
+      signIns += 1;
+    });
+  });
+  const signedIn = () =>
+    expect.poll(() => socket !== null, { message: 'the page signed in to the events socket' }).toBe(true);
+  return {
+    jobs,
+    update: async (job) => {
+      const index = jobs.findIndex((kept) => kept.template_id === job.template_id);
+      if (index === -1) jobs.push(job);
+      else jobs[index] = job;
+      await signedIn();
+      send(socket!);
+    },
+    forget: async (id) => {
+      const index = jobs.findIndex((kept) => kept.id === id);
+      if (index !== -1) jobs.splice(index, 1);
+      await signedIn();
+      send(socket!);
+    },
+    signIns: () => signIns,
+    restart: async () => {
+      await signedIn();
+      const before = signIns;
+      const closing = socket!;
+      socket = null;
+      jobs.splice(0, jobs.length);
+      await closing.close({ code: 1012, reason: 'Service Restart' });
+      await expect.poll(() => signIns, { message: 'the page signed in to the events socket again' }).toBe(before + 1);
+    },
+  };
+}
+
+/**
+ * Answer POST /api/v1/apps/install as the server does (ADR-0384): 202 with a new job of the
+ * template that the request names, the app `name`, running at its checks, which `events` then
+ * ends as `end` says: an installed app, which joins `installed`, or a refusal of its checks with
+ * the server's status and detail. Returns the job as it started.
+ */
+export async function answerInstall(
+  route: Route,
+  events: FakeInstallEvents,
+  name: string,
+  end: FakeInstalledApp | { status: number; detail: string },
+  installed: FakeInstalledApp[] = [],
+): Promise<FakeInstallJob> {
+  const body = route.request().postDataJSON() as { template_id: string };
+  const companions = 'detail' in end ? [] : end.companions.map((companion) => companion.name);
+  const job = newInstallJob(body.template_id, name, companions);
+  await route.fulfill({ status: 202, json: job });
+  if (!('detail' in end)) installed.push(end);
+  await events.update(endedJob(job, end));
+  return job;
 }

@@ -464,6 +464,50 @@ def _label(value: object) -> str:
     return smbconf.note_value(value)
 
 
+@dataclass
+class _Groups:
+    """The group rows as stored now: every group's name by id, the member rows and the
+    group access rows (of one share with ``only``)."""
+
+    names: dict[object, object]
+    members: list
+    access: list
+
+    def levels(self) -> dict[object, dict[object, str]]:
+        """share id -> group id -> level, from the access rows of existing groups with a valid
+        level; two rows of one group (no constraint in a restored database) give the lower level."""
+        levels: dict[object, dict[object, str]] = {}
+        for row in self.access:
+            if row.group_id not in self.names or row.level not in ("read", "write"):
+                continue
+            current = levels.setdefault(row.share_id, {}).get(row.group_id)
+            levels[row.share_id][row.group_id] = "read" if "read" in (current, row.level) else "write"
+        return levels
+
+
+async def _read_groups(db: AsyncSession, only: object = None) -> _Groups:
+    names = {
+        row.id: row.name
+        for row in (
+            await db.execute(select(models.UserGroup.id, models.UserGroup.name).execution_options(**_FRESH))
+        ).all()
+    }
+    members = (
+        await db.execute(
+            select(models.UserGroupMember.group_id, models.UserGroupMember.user_id, models.UserGroupMember.username)
+            .order_by(models.UserGroupMember.id)
+            .execution_options(**_FRESH)
+        )
+    ).all()
+    query = select(
+        models.SmbShareGroupAccess.share_id, models.SmbShareGroupAccess.group_id, models.SmbShareGroupAccess.level
+    ).order_by(models.SmbShareGroupAccess.id)
+    if only is not None:
+        query = query.where(models.SmbShareGroupAccess.share_id == only)
+    access = (await db.execute(query.execution_options(**_FRESH))).all()
+    return _Groups(names=names, members=list(members), access=list(access))
+
+
 async def _read_render_input(db: AsyncSession, pool_names: Collection[str]) -> tuple[RenderInput, set[str]]:
     """build_render_input, plus the lower-case names of every share row."""
     share_rows = (
@@ -574,6 +618,19 @@ async def _read_render_input(db: AsyncSession, pool_names: Collection[str]) -> t
         current = levels.setdefault(row.share_id, {}).get(name)
         # Two rows for one user (no constraint in a restored database): the lower level.
         levels[row.share_id][name] = "read" if "read" in (current, row.level) else "write"
+    # Groups (ADR-0385): each member with an active account under the member row's name gets the
+    # group's level, or keeps the higher level of their own or of another group.
+    groups = await _read_groups(db)
+    members: dict[object, set[str]] = {}
+    for row in groups.members:
+        name = active.get(row.user_id)
+        if row.group_id in groups.names and name is not None and row.username == name:
+            members.setdefault(row.group_id, set()).add(name)
+    for share_id, granted_groups in groups.levels().items():
+        for group_id, level in granted_groups.items():
+            for name in members.get(group_id, ()):
+                current = levels.setdefault(share_id, {}).get(name)
+                levels[share_id][name] = "write" if "write" in (current, level) else "read"
 
     # The options of the served shares (ADR-0380), checked as they are rendered.
     wanted = {
@@ -642,14 +699,15 @@ def _sort_key(value: object) -> tuple[int, int, str]:
 async def build_render_input(db: AsyncSession, pool_names: Collection[str]) -> RenderInput:
     """The served shares and their active principals, from rows read now (ADR-0081).
 
-    Shares, access rows, users, SMB accounts and the shares' options are read with
-    one query each. Every value is validated again (ADR-0144): a share with an
-    invalid or duplicate name or a path that breaks ADR-0145 is not served, a
-    comment that fails validation is left out, a principal is rendered only for
-    an access row of an existing user with that user's current name and an active
-    account, Time Machine and Previous Versions only as _rendered_options
-    allows (ADR-0380), and guest access not where encryption is required, each
-    with a problem for the status when it does not.
+    Shares, access rows, users, SMB accounts, the shares' options and the groups
+    are read with one query each. Every value is validated again (ADR-0144): a
+    share with an invalid or duplicate name or a path that breaks ADR-0145 is not
+    served, a comment that fails validation is left out, a principal is rendered
+    only for an access row of an existing user with that user's current name and
+    an active account, or for a member row of the same kind of a group with
+    access, with the higher of the levels, Time Machine and Previous Versions
+    only as _rendered_options allows (ADR-0380), and guest access not where
+    encryption is required, each with a problem for the status when it does not.
     """
     render, _ = await _read_render_input(db, pool_names)
     return render
@@ -1679,7 +1737,9 @@ async def _delete_access_rows(db: AsyncSession, row_ids: Collection[int], share_
 
 
 async def delete_access_of_user(db: AsyncSession, user_id: int) -> int:
-    """Delete the user's access rows and bump the versions of their shares (flushed, not committed).
+    """Delete the user's access rows and memberships of groups, and bump the versions of
+    the shares that lost an access row (flushed, not committed): a new user starts with none, a
+    deleted one leaves none, and an administrator has none (ADR-0117).
 
     Returns the number of rows deleted. The caller holds smb_lock().
     """
@@ -1690,17 +1750,34 @@ async def delete_access_of_user(db: AsyncSession, user_id: int) -> int:
             .execution_options(**_FRESH)
         )
     ).all()
+    memberships = (
+        await db.execute(delete(models.UserGroupMember).where(models.UserGroupMember.user_id == user_id))
+    ).rowcount or 0
     if not rows:
-        return 0
+        if memberships:
+            await db.flush()
+        return memberships
     await _delete_access_rows(db, [row.id for row in rows], {row.share_id for row in rows})
-    return len(rows)
+    return len(rows) + memberships
 
 
 async def rename_access_of_user(db: AsyncSession, user_id: int, old: str, new: str) -> None:
-    """A user's rename (ADR-0368): their access rows, written for ``old``, name ``new`` (ADR-0133);
-    a row of the id written for another name is stale (ADR-0137) and is deleted, so that it never
-    becomes access of the new name. The shares of these rows get version + 1 (flushed, not
-    committed). The caller holds smb_lock()."""
+    """A user's rename (ADR-0368): their access rows and memberships of groups, written for
+    ``old``, name ``new`` (ADR-0133); a row of the id written for another name is stale (ADR-0137)
+    and is deleted, so that it never becomes access of the new name. The shares of these access
+    rows get version + 1 (flushed, not committed). The caller holds smb_lock()."""
+    members = (
+        await db.execute(
+            select(models.UserGroupMember)
+            .where(models.UserGroupMember.user_id == user_id)
+            .execution_options(**_FRESH)
+        )
+    ).scalars().all()
+    for member in members:  # their groups, like their access rows
+        if member.username == old:
+            member.username = new
+        else:
+            await db.delete(member)
     rows = (
         await db.execute(
             select(models.SmbShareAccess)
@@ -1709,6 +1786,7 @@ async def rename_access_of_user(db: AsyncSession, user_id: int, old: str, new: s
         )
     ).scalars().all()
     if not rows:
+        await db.flush()
         return
     stale = [row.id for row in rows if row.username != old]
     for row in rows:
@@ -1719,12 +1797,14 @@ async def rename_access_of_user(db: AsyncSession, user_id: int, old: str, new: s
 
 
 async def purge_orphans(db: AsyncSession) -> int:
-    """Delete stale access rows (ADR-0137), flushed in the caller's transaction.
+    """Delete stale access rows (ADR-0137) and stale rows of groups, flushed in the
+    caller's transaction.
 
-    A row is stale when its share or its user does not exist, when its
-    username is not the user's current username, or when the user is an
-    administrator. The shares that lost rows get version + 1. Only a SELECT
-    runs when there is nothing to delete. The caller holds smb_lock() and
+    An access row or a member row is stale when its share or group, or its user,
+    does not exist, when its username is not the user's current username, or
+    when the user is an administrator; a group access row when its share or its
+    group does not exist. The shares that lost rows get version + 1. Only
+    SELECTs run when there is nothing to delete. The caller holds smb_lock() and
     commits; returns the number of rows deleted.
     """
     rows = (
@@ -1737,20 +1817,22 @@ async def purge_orphans(db: AsyncSession) -> int:
             ).execution_options(**_FRESH)
         )
     ).all()
-    if not rows:
+    groups = await _read_groups(db)
+    if not rows and not groups.members and not groups.access:
         return 0
     share_ids = {share_id for (share_id,) in (await db.execute(select(models.SmbShare.id))).all()}
     users = {
         row.id: (row.username, bool(row.is_admin))
         for row in (await db.execute(select(User.id, User.username, User.is_admin))).all()
     }
+    purged = await _purge_group_rows(db, groups, share_ids, users)
     stale = []
     for row in rows:
         user = users.get(row.user_id)
         if row.share_id not in share_ids or user is None or user[0] != row.username or user[1]:
             stale.append(row)
     if not stale:
-        return 0
+        return purged
     for row in stale:
         logger.info(
             "Removing the stale access row of user %s (id %s) to share id %s",
@@ -1759,7 +1841,66 @@ async def purge_orphans(db: AsyncSession) -> int:
             row.share_id,
         )
     await _delete_access_rows(db, [row.id for row in stale], {row.share_id for row in stale} & share_ids)
-    return len(stale)
+    return purged + len(stale)
+
+
+async def _purge_group_rows(
+    db: AsyncSession, groups: _Groups, share_ids: Collection[object], users: Mapping[object, tuple[object, bool]]
+) -> int:
+    """purge_orphans for the member rows and the group access rows; flushed."""
+    members = (
+        await db.execute(
+            select(
+                models.UserGroupMember.id,
+                models.UserGroupMember.group_id,
+                models.UserGroupMember.user_id,
+                models.UserGroupMember.username,
+            ).execution_options(**_FRESH)
+        )
+    ).all()
+    stale_members = []
+    for row in members:
+        user = users.get(row.user_id)
+        if row.group_id not in groups.names or user is None or user[0] != row.username or user[1]:
+            stale_members.append(row.id)
+            logger.info(
+                "Removing the stale member row of user %s (id %s) of group id %s",
+                _label(row.username), row.user_id, row.group_id,
+            )
+    access = (
+        await db.execute(
+            select(
+                models.SmbShareGroupAccess.id, models.SmbShareGroupAccess.share_id, models.SmbShareGroupAccess.group_id
+            ).execution_options(**_FRESH)
+        )
+    ).all()
+    stale_access = [row for row in access if row.share_id not in share_ids or row.group_id not in groups.names]
+    for row in stale_access:
+        logger.info("Removing the stale access row of group id %s to share id %s", row.group_id, row.share_id)
+    if stale_members:
+        await db.execute(delete(models.UserGroupMember).where(models.UserGroupMember.id.in_(stale_members)))
+    if stale_access:
+        await _delete_group_access_rows(
+            db, [row.id for row in stale_access], {row.share_id for row in stale_access} & set(share_ids)
+        )
+    if stale_members:
+        await db.flush()
+    return len(stale_members) + len(stale_access)
+
+
+async def _delete_group_access_rows(db: AsyncSession, row_ids: Collection[int], share_ids: Collection[object]) -> None:
+    """Delete group access rows and increment the version of the shares that lost one (flushed)."""
+    await db.execute(delete(models.SmbShareGroupAccess).where(models.SmbShareGroupAccess.id.in_(list(row_ids))))
+    await db.flush()
+    if share_ids:
+        shares = (
+            await db.execute(
+                select(models.SmbShare).where(models.SmbShare.id.in_(list(share_ids))).execution_options(**_FRESH)
+            )
+        ).scalars().all()
+        for share in shares:
+            share.version = _next_version(share.version)
+        await db.flush()
 
 
 async def purge_orphan_options(db: AsyncSession) -> int:
@@ -2301,6 +2442,33 @@ async def _check_access(
     return access
 
 
+async def _check_group_access(
+    db: AsyncSession, entries: Sequence[schemas.ShareGroupAccessEntry]
+) -> dict[int, tuple[str, str]]:
+    """The group access entries of a create or PATCH, checked against the groups as stored now
+    (as users are, ADR-0133): group id -> (name, level). An unknown id is refused (400),
+    and an id whose group now has another name (409)."""
+    if not entries:
+        return {}
+    rows = (
+        await db.execute(
+            select(models.UserGroup.id, models.UserGroup.name)
+            .where(models.UserGroup.id.in_([entry.group_id for entry in entries]))
+            .execution_options(**_FRESH)
+        )
+    ).all()
+    groups = {row.id: row.name for row in rows}
+    access: dict[int, tuple[str, str]] = {}
+    for entry in entries:
+        if entry.group_id not in groups:
+            raise HTTPException(status_code=400, detail=f"Group {entry.group_id} does not exist")
+        if groups[entry.group_id] != entry.group:
+            now = _text(groups[entry.group_id])
+            raise HTTPException(status_code=409, detail=f"Group {entry.group_id} is now '{now}'; reload the page")
+        access[entry.group_id] = (entry.group, entry.level.value)
+    return access
+
+
 async def _stage_commit_install(db: AsyncSession) -> tuple[interfaces.ApplyResult, RenderInput]:
     """Stage smb.conf from the flushed changes of a share mutation, commit, install (ADR-0089).
 
@@ -2366,6 +2534,40 @@ def _replace_access(share: models.SmbShare, wanted: Mapping[int, tuple[str, str]
     return added + changed + removed
 
 
+def _replace_group_access(
+    share: models.SmbShare, wanted: Mapping[int, tuple[str, str]], names: Mapping[object, object]
+) -> list[str]:
+    """Make the share's group access rows exactly ``wanted`` (group id -> (name, level)); ``names``:
+    every group's name by id, for the rows that go. Returns the diff for the audit entry, such as
+    "+family=read", "family read→write" and "-kids"."""
+    added: list[str] = []
+    changed: list[str] = []
+    removed: list[str] = []
+    kept: set[object] = set()
+    for row in list(share.group_access):
+        target = wanted.get(row.group_id) if row.group_id not in kept else None
+        if target is None:
+            share.group_access.remove(row)
+            if row.group_id in names and row.group_id not in kept:
+                removed.append(f"-{_label(names[row.group_id])}")
+            continue
+        kept.add(row.group_id)
+        if row.level != target[1]:
+            changed.append(f"{_label(target[0])} {_label(row.level)}→{target[1]}")
+            row.level = target[1]
+    for group_id, (name, level) in sorted(wanted.items(), key=lambda item: item[1][0].lower()):
+        if group_id not in kept:
+            share.group_access.append(models.SmbShareGroupAccess(group_id=group_id, level=level))
+            added.append(f"+{_label(name)}={level}")
+    return added + changed + removed
+
+
+async def _valid_group_access_rows(db: AsyncSession, share_id: object) -> int:
+    """How many group access rows of the share grant something to a group that exists."""
+    groups = await _read_groups(db, only=share_id)
+    return sum(len(granted) for granted in groups.levels().values())
+
+
 async def _valid_access_rows(db: AsyncSession, share_id: object) -> int:
     """How many access rows of the share grant something to an existing non-administrator with
     the row's username (the rows the API lists)."""
@@ -2415,6 +2617,7 @@ async def _create_share_locked(db: AsyncSession, data: schemas.SmbShareCreate) -
     pool_names = await _pool_names()
     path, parts = await asyncio.to_thread(_new_path, data.path, None, rows, pool_names)
     access = await _check_access(db, data.access)
+    group_access = await _check_group_access(db, data.group_access)
     options = {name: bool(getattr(data, name)) for name in OPTION_LABELS}
     await _check_new_options(
         guest_ok=data.guest_ok,
@@ -2439,9 +2642,13 @@ async def _create_share_locked(db: AsyncSession, data: schemas.SmbShareCreate) -
     db.add(share)
     await db.flush()
     share_id = share.id
-    # SQLite reuses the highest rowid: a row of options left by a share deleted outside UNOS (a
-    # restored database) would attach to this one.
+    # SQLite reuses the highest rowid: a row of options or of group access left by a share deleted
+    # outside UNOS (a restored database) would attach to this one.
     await db.execute(delete(models.SmbShareOptions).where(models.SmbShareOptions.share_id == share_id))
+    await db.execute(delete(models.SmbShareGroupAccess).where(models.SmbShareGroupAccess.share_id == share_id))
+    for group_id, (_, level) in sorted(group_access.items()):
+        db.add(models.SmbShareGroupAccess(share_id=share_id, group_id=group_id, level=level))
+    await db.flush()
     if any(options.values()):
         share.options = models.SmbShareOptions(**options)
         await db.flush()
@@ -2461,6 +2668,8 @@ async def _create_share_locked(db: AsyncSession, data: schemas.SmbShareCreate) -
         details += ", guests can read it"
     if access:
         details += f"; access: {_access_text(access)}"
+    if group_access:
+        details += f"; group access: {_access_text(group_access)}"
     if any(options.values()):
         details += f"; {_options_text(options)}"
     severity = AuditSeverity.WARNING if data.guest_ok else AuditSeverity.INFO
@@ -2501,6 +2710,7 @@ async def _update_share_locked(db: AsyncSession, name: str, data: schemas.SmbSha
         pool_names = await _pool_names()
         new_path, parts = await asyncio.to_thread(_new_path, data.path, share_id, rows, pool_names)
     access = await _check_access(db, data.access) if "access" in sent else None
+    group_access = await _check_group_access(db, data.group_access) if "group_access" in sent else None
     guest_ok = data.guest_ok if "guest_ok" in sent else bool(share.guest_ok)
 
     # The protocol options (ADR-0380): what is on now, and what this PATCH turns on.
@@ -2521,7 +2731,9 @@ async def _update_share_locked(db: AsyncSession, name: str, data: schemas.SmbSha
     # dismisses the import notes grants nothing new and needs no valid folder.
     dismiss_only = sent - {"expected_version"} == {"import_notes"}
     grants = not dismiss_only and (
-        guest_ok or (bool(access) if access is not None else await _valid_access_rows(db, share_id) > 0)
+        guest_ok
+        or (bool(access) if access is not None else await _valid_access_rows(db, share_id) > 0)
+        or (bool(group_access) if group_access is not None else await _valid_group_access_rows(db, share_id) > 0)
     )
     if grants:
         if pool_names is None:
@@ -2562,6 +2774,10 @@ async def _update_share_locked(db: AsyncSession, name: str, data: schemas.SmbSha
         diff = _replace_access(share, access)
         if diff:
             changes.append(f"access: {', '.join(diff)}")
+    if group_access is not None:
+        diff = _replace_group_access(share, group_access, (await _read_groups(db, only=share_id)).names)
+        if diff:
+            changes.append(f"group access: {', '.join(diff)}")
     if "import_notes" in sent and share.import_notes is not None:
         changes.append("import notes dismissed")
         share.import_notes = None
@@ -2615,7 +2831,8 @@ def _stop_repair(share_id: object, stopped_by: str, *, deleted: bool = False) ->
 
 
 async def delete_share(db: AsyncSession, name: str) -> ShareChange:
-    """DELETE /shares/smb/{name}: the row, its access rows and its options; the folder is kept.
+    """DELETE /shares/smb/{name}: the row, its access rows (of users and of groups) and its options;
+    the folder is kept.
 
     The shrink rule (ADR-0103) closes the share's open tree connects, and a
     running repair of the share stops (ADR-0363). Takes smb_lock().
@@ -2625,7 +2842,7 @@ async def delete_share(db: AsyncSession, name: str) -> ShareChange:
             await _import_if_needed_locked(db)
             share = await _load_share(db, name)
             share_id, share_name, share_path = share.id, _text(share.name), _text(share.path)
-            await db.delete(share)  # the ORM cascade deletes its access rows and its options
+            await db.delete(share)  # the ORM cascade deletes its access rows, group access and options
             await db.flush()
             result, _ = await _stage_commit_install(db)
             _stop_repair(share_id, "the deletion of the share", deleted=True)
@@ -2745,6 +2962,26 @@ async def _account_states(db: AsyncSession) -> dict[object, _UserState]:
     return states
 
 
+def _listed_members(groups: _Groups, states: Mapping[object, _UserState]) -> dict[object, list[object]]:
+    """group id -> the user ids of its members as the API lists them, sorted by username: member rows
+    of an existing user with the row's username who is not an administrator (ADR-0137)."""
+    found: dict[object, dict[object, str]] = {}
+    for row in groups.members:
+        user = states.get(row.user_id)
+        if (
+            row.group_id in groups.names
+            and user is not None
+            and not user.is_admin
+            and isinstance(row.username, str)
+            and row.username == user.username
+        ):
+            found.setdefault(row.group_id, {})[row.user_id] = row.username
+    return {
+        group_id: sorted(users, key=lambda user_id: users[user_id])
+        for group_id, users in found.items()
+    }
+
+
 async def _infos(
     db: AsyncSession, render: RenderInput, mounts: list | None, only: object = None
 ) -> list[schemas.SmbShareInfo]:
@@ -2779,6 +3016,9 @@ async def _infos(
     access_rows = (await db.execute(access_query.execution_options(**_FRESH))).all()
     option_rows = {row.share_id: row for row in (await db.execute(options_query.execution_options(**_FRESH))).all()}
     states = await _account_states(db)
+    groups = await _read_groups(db, only)
+    group_levels = groups.levels()
+    members = _listed_members(groups, states)
 
     rendered = {share.name.lower(): share for share in render.shares}
     served: dict[object, ShareRender] = {}
@@ -2826,6 +3066,23 @@ async def _infos(
             for user_id, level in levels.get(row.id, {}).items()
         ]
         access.sort(key=lambda entry: entry.username)
+        group_access = [
+            schemas.ShareGroupAccessInfo(
+                group_id=group_id,
+                group=_text(groups.names[group_id]),
+                level=schemas.ShareAccessLevel(level),
+                members=[
+                    schemas.ShareGroupMemberInfo(
+                        username=states[user_id].username,
+                        smb_state=states[user_id].state,
+                        effective=states[user_id].username in rendered_names,
+                    )
+                    for user_id in members.get(group_id, ())
+                ],
+            )
+            for group_id, level in group_levels.get(row.id, {}).items()
+        ]
+        group_access.sort(key=lambda entry: entry.group.lower())
         if share is None:
             problem = render.unserved.get(row.id) or "The share is not in the current rendering of smb.conf; reload"
         else:
@@ -2838,6 +3095,7 @@ async def _infos(
                 browseable=bool(row.browseable),
                 guest_ok=bool(row.guest_ok),
                 access=access,
+                group_access=group_access,
                 version=_stored_version(row.version),
                 served=share is not None,
                 path_problem=problem,
@@ -3096,7 +3354,7 @@ async def _active_and_waiting(db: AsyncSession) -> tuple[set[str], list[str]]:
 
 async def _remove_access_of_unserved(db: AsyncSession) -> list[str]:
     """Post-restore step 2 (_reconcile): every share whose stored path breaks a rule of ADR-0145
-    loses its access rows and guest access, with a note (flushed, not committed).
+    loses its access rows, those of groups too, and guest access, with a note (flushed, not committed).
 
     Shares without access and without guest access are left alone (nothing to
     remove, nothing written). Returns the names of the shares changed.
@@ -3116,9 +3374,10 @@ async def _remove_access_of_unserved(db: AsyncSession) -> list[str]:
     ).scalars().all()
     changed = []
     for share in shares:
-        if not share.access and not share.guest_ok:
+        if not share.access and not share.group_access and not share.guest_ok:
             continue
         share.access.clear()  # delete-orphan: the rows are deleted at the flush
+        share.group_access.clear()
         share.guest_ok = False
         notes = json_lines(share.import_notes)
         _add(notes, f"Not served: {problems[share.id]}; its access was removed at the restore")
@@ -3261,7 +3520,7 @@ async def _reconcile(db: AsyncSession, run: _Run, *, after_restore: bool) -> Non
         if purged or orphan_options or cleaned:
             await db.commit()
         if purged:
-            run.changes.append(f"Removed {purged} stale share access row(s)")
+            run.changes.append(f"Removed {purged} stale row(s) of share access and of groups")
         if orphan_options:
             run.changes.append(f"Removed the options of {orphan_options} deleted share(s)")
         if cleaned:
@@ -3409,14 +3668,20 @@ _SMB_TABLES = (
     models.SmbAccount.__table__,
     models.SmbState.__table__,
 )
-# Checked like them when the backup has it: one made before the shares had options (ADR-0380)
-# lacks it, and init_db makes it empty after the restore (every option off).
-_OPTIONAL_SMB_TABLES = (models.SmbShareOptions.__table__,)
+# Checked like them when the backup has them: one made before the shares had options (ADR-0380)
+# or before groups lacks them, and init_db makes them empty after the restore (every
+# option off, no group).
+_OPTIONAL_SMB_TABLES = (
+    models.SmbShareOptions.__table__,
+    models.UserGroup.__table__,
+    models.UserGroupMember.__table__,
+    models.SmbShareGroupAccess.__table__,
+)
 
 
 def check_smb_tables(db_file: os.PathLike | str) -> None:
-    """Check the four SMB tables of an extracted backup database, and the shares' options when it
-    has them (sync).
+    """Check the four SMB tables of an extracted backup database, and the shares' options and the
+    group tables when it has them (sync).
 
     A database without one of them comes from a UNOS before shares were stored
     in the database, whose backups are not restored (ADR-0319). A table that
@@ -3427,7 +3692,10 @@ def check_smb_tables(db_file: os.PathLike | str) -> None:
     accepted. An smb_accounts table that gives one non-NULL uid to two or more
     rows is refused too (ADR-0349): a uid owns its files on the pools, and
     belongs to one account (ADR-0109, ADR-0112); UNOS's table keeps it unique,
-    a backup's need not. Raises BackupValidationError.
+    a backup's need not; and so is a user_groups table that gives one name, in any letter case, to
+    two or more groups, which UNOS's table keeps unique, or that has a group whose name breaks the
+    rule of group names: no request could name it, so its access could be neither changed nor
+    deleted. Raises BackupValidationError.
     """
     from ..backup.router import BackupValidationError  # backup.router imports this module
 
@@ -3435,7 +3703,8 @@ def check_smb_tables(db_file: os.PathLike | str) -> None:
     absent: list[str] = []
     missing: list[str] = []
     extra: list[str] = []
-    shared_uid = None
+    shared_uid = shared_name = None
+    bad_names: list[object] = []
     try:
         for table in (*_SMB_TABLES, *_OPTIONAL_SMB_TABLES):
             info = conn.execute(f'PRAGMA table_info("{table.name}")').fetchall()
@@ -3456,6 +3725,14 @@ def check_smb_tables(db_file: os.PathLike | str) -> None:
                 "SELECT uid, COUNT(*) FROM smb_accounts WHERE uid IS NOT NULL GROUP BY uid HAVING COUNT(*) > 1 "
                 "ORDER BY uid LIMIT 1"
             ).fetchone()
+            if conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'user_groups'").fetchone():
+                shared_name = conn.execute(
+                    "SELECT MIN(name), COUNT(*) FROM user_groups GROUP BY lower(name) HAVING COUNT(*) > 1 LIMIT 1"
+                ).fetchone()
+                bad_names = [
+                    name for (name,) in conn.execute("SELECT name FROM user_groups ORDER BY id")
+                    if not isinstance(name, str) or not constants.LINUX_NAME_PATTERN.fullmatch(name)
+                ]
     finally:
         conn.close()
     if absent:
@@ -3474,6 +3751,13 @@ def check_smb_tables(db_file: os.PathLike | str) -> None:
         uid, count = shared_uid
         shown = uid if isinstance(uid, int) else repr(uid)[:64]
         raise BackupValidationError(f"unos.db in the backup gives the uid {shown} to {count} SMB accounts")
+    if shared_name is not None:
+        name, count = shared_name
+        raise BackupValidationError(f"unos.db in the backup gives the name {_label(name)} to {count} groups")
+    if bad_names:
+        raise BackupValidationError(
+            f"unos.db in the backup has a group whose name UNOS does not accept: {_label(bad_names[0])[:64]}"
+        )
 
 
 _SQLITE = sqlite_dialect.dialect()
@@ -3529,12 +3813,14 @@ def restored_smb_authoritative(conn: sqlite3.Connection) -> bool:
 def prepare_restored_shares(conn: sqlite3.Connection, authoritative: bool) -> list[str]:
     """The share rules of a restore (ADR-0319) on an extracted database, in the caller's transaction (sync).
 
-    Not authoritative: every share, access and options row is deleted, and the
-    next import reads the live file; such an import never turns guest access on.
-    Authoritative: the rows are kept but the options of shares that do not exist
-    (ADR-0380), DateTime values that SQLAlchemy cannot read are replaced, every
-    share whose stored path breaks a rule of ADR-0145 loses its access rows
-    and guest access, with a note, and a share that requires encryption loses
+    Not authoritative: every share, access, group access and options row is
+    deleted (the groups and their members stay), and the next import
+    reads the live file; such an import never turns guest access on.
+    Authoritative: the rows are kept but the options and the group access of
+    shares that do not exist (ADR-0380), DateTime values that
+    SQLAlchemy cannot read are replaced, every share whose stored path breaks a
+    rule of ADR-0145 loses its access rows, those of groups too, and guest
+    access, with a note, and a share that requires encryption loses
     guest access, with a note. Returns the names of the shares with guest
     access afterwards. Raises PoolListUnavailable when the pool list cannot be
     read.
@@ -3542,10 +3828,15 @@ def prepare_restored_shares(conn: sqlite3.Connection, authoritative: bool) -> li
     has_options = conn.execute(
         "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'smb_share_options'"
     ).fetchone() is not None
+    has_groups = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'smb_share_group_access'"
+    ).fetchone() is not None
     if not authoritative:
         conn.execute("DELETE FROM smb_share_access")
         if has_options:
             conn.execute("DELETE FROM smb_share_options")
+        if has_groups:
+            conn.execute("DELETE FROM smb_share_group_access")  # the groups and their members stay
         conn.execute("DELETE FROM smb_shares")
         if conn.execute("SELECT 1 FROM smb_state WHERE id = 1").fetchone() is None:
             conn.execute(
@@ -3570,9 +3861,14 @@ def prepare_restored_shares(conn: sqlite3.Connection, authoritative: bool) -> li
     if has_options:
         # The options of a share that the backup does not have would attach to the next share (ADR-0380).
         conn.execute("DELETE FROM smb_share_options WHERE share_id NOT IN (SELECT id FROM smb_shares)")
+    if has_groups:
+        # So would the group access of a share that the backup does not have.
+        conn.execute("DELETE FROM smb_share_group_access WHERE share_id NOT IN (SELECT id FROM smb_shares)")
     rows = conn.execute("SELECT id, name, path, guest_ok, import_notes, version FROM smb_shares").fetchall()
     problems = _check_paths([(row[0], row[1], row[2]) for row in rows], pool_names)
     granted = {row[0] for row in conn.execute("SELECT DISTINCT share_id FROM smb_share_access")}
+    if has_groups:
+        granted |= {row[0] for row in conn.execute("SELECT DISTINCT share_id FROM smb_share_group_access")}
     for share_id, name, _path, guest_ok, import_notes, version in rows:
         problem = problems.get(share_id)
         if problem is None or not (share_id in granted or bool(guest_ok)):
@@ -3580,6 +3876,8 @@ def prepare_restored_shares(conn: sqlite3.Connection, authoritative: bool) -> li
         notes = json_lines(import_notes)
         _add(notes, f"Not served: {problem}; its access was removed at the restore")
         conn.execute("DELETE FROM smb_share_access WHERE share_id = ?", (share_id,))
+        if has_groups:
+            conn.execute("DELETE FROM smb_share_group_access WHERE share_id = ?", (share_id,))
         conn.execute(
             "UPDATE smb_shares SET guest_ok = 0, import_notes = ?, version = ? WHERE id = ?",
             (json.dumps(notes), _next_version(version), share_id),
