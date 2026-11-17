@@ -2705,12 +2705,16 @@
         "GET /api/v1/system/stats is removed, and scripts/dev/api.py names another path in its usage",
         "test_authz.py and webui/tests/api.spec.ts no longer name them, and the stats message of /ws/v1/events stays the one source of live stats"
       ],
+      "verified_by": [
+        "supervisor/tests/test_authz.py",
+        "supervisor/tests/test_ws_stats.py"
+      ],
       "passes": false,
       "adr": [
         "ADR-0207",
         "ADR-0388"
       ],
-      "notes": "Found by the review of system.dashboard on 2026-11-17 (ADR-0388, Consequences): no page calls these endpoints (webui/src asks for no /monitor/ path, and test_ws_stats.py test_the_web_ui_keeps_no_unread_stats_code checks that no client asks for /system/stats). supervisor/src/monitor/router.py reads psutil in the supervisor container's network namespace: /monitor/network answers the container's interfaces with ipv4, speed and is_up, and rates over the wall clock that turn negative when the clock is set; /monitor/disk-io answers psutil's totals over every device of /sys/block, zram, loop, device mapper and md included, over the wall clock; supervisor/src/system/router.py's /system/stats answers the container's network counters. Today only webui/tests/api.spec.ts and test_authz.py name them, and scripts/dev/api.py's usage and test_dev_scripts.py use /system/stats as a sample path against a fake. The rest of the monitor router (/cpu, /memory, /processes, /history/cpu, /history/memory) has no page caller either: the pass decides, with an ADR, whether it goes too."
+      "notes": "Found by the review of system.dashboard on 2026-11-17 (ADR-0388, Consequences): no page calls these endpoints (webui/src asks for no /monitor/ path, and test_ws_stats.py test_the_web_ui_keeps_no_unread_stats_code checks that no client asks for /system/stats). supervisor/src/monitor/router.py reads psutil in the supervisor container's network namespace: /monitor/network answers the container's interfaces with ipv4, speed and is_up, and rates over the wall clock that turn negative when the clock is set; /monitor/disk-io answers psutil's totals over every device of /sys/block, zram, loop, device mapper and md included, over the wall clock; supervisor/src/system/router.py's /system/stats answers the container's network counters. Today only webui/tests/api.spec.ts and test_authz.py name them, and scripts/dev/api.py's usage and test_dev_scripts.py use /system/stats as a sample path against a fake. The rest of the monitor router (/cpu, /memory, /processes, /history/cpu, /history/memory) has no page caller either: the pass decides, with an ADR, whether it goes too. Built: the five routes and the network and disk_io of /monitor/all are removed with their samplers and history buffers (the rest of the monitor router stays: no ADR decided it); /system/stats too, and scripts/dev/api.py, the device-checks skill and test_dev_scripts.py use /system/info as the sample path. Asserted by test_authz.py (404 for each route, /monitor/all without them) and test_ws_stats.py test_nothing_asks_for_the_removed_container_stats_endpoints (no webui/src, webui/tests or scripts file names them). No ADR: ADR-0388 and ADR-0207 decided it."
     },
     {
       "id": "system.resource-monitor",

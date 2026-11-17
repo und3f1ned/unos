@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Call the UNOS API of the dev device.
 
-  scripts/dev/api.py GET /system/stats
+  scripts/dev/api.py GET /system/info
   scripts/dev/api.py GET /audit/logs --param limit=20
   echo '{"name": "x", "path": "/mnt/pools/data/x"}' | scripts/dev/api.py POST /shares/smb -
   scripts/dev/api.py --forget-token
@@ -37,7 +37,7 @@ with such a KEY; the user part of URLs (user:password@, token@); JWTs; and the v
 dev.env's secrets wherever they appear. Exit status: 0 for a 2xx answer, 1 for another HTTP
 status, 2 for a usage error or when the device could not be asked.
 
-Importable: DeviceApi().get("/system/stats").json(); also post, put, patch, delete, request, and
+Importable: DeviceApi().get("/system/info").json(); also post, put, patch, delete, request, and
 upload, which sends a file as the form field "file" (multipart/form-data, as the web UI's uploads
 do; the relay gets its bytes in base64 on standard input); as_user gives the same API signed in
 as another user, with a token cache of its own (the scenario checks' temporary user).

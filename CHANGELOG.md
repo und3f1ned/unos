@@ -1015,7 +1015,7 @@ manager, encrypted backup uploads, health checks, CI checks).
   `network_*` fields are gone, and so are the `disk_*` fields of the container's
   root and the `history` of the last two minutes, which no page read.
 - The stats message of `/ws/v1/events` sends the CPU's temperature as
-  `cpu.temperature`, and `GET /api/v1/system/stats` as `cpu_temperature`
+  `cpu.temperature`
   (degrees Celsius, or null without sensors); their `temperatures` objects,
   which held the first reading of every sensor group, are gone.
   `GET /api/v1/system/temperatures` lists every sensor.
@@ -1268,6 +1268,12 @@ manager, encrypted backup uploads, health checks, CI checks).
   `read_bytes`, `write_bytes`, `read_count` and `write_count`, and those of
   each block device in `disk_io.disks`, which no page read. Regular users get
   the network's rates without the host's interfaces (ADR-0388).
+- `GET /api/v1/monitor/network`, `/monitor/disk-io`, `/monitor/history/network`,
+  `/monitor/history/disk-io` and `GET /api/v1/system/stats`, and the `network`
+  and `disk_io` of `/monitor/all`: no page called them, and they reported the
+  supervisor container's network and every block device. They answer 404; the
+  stats message of `/ws/v1/events` is the one source of live stats (ADR-0388,
+  ADR-0207).
 - BookStack, Paperless-ngx and Linkwarden from the App Store's catalog: each
   needs a database or a broker beside it, which they will get as apps of
   several containers (ADR-0381).

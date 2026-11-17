@@ -1,5 +1,4 @@
 import psutil
-import time
 from datetime import datetime
 from collections import deque
 from fastapi import APIRouter, Depends
@@ -13,12 +12,6 @@ router = APIRouter(prefix="/monitor", tags=["monitor"])
 HISTORY_SIZE = 60
 cpu_history = deque(maxlen=HISTORY_SIZE)
 memory_history = deque(maxlen=HISTORY_SIZE)
-network_history = deque(maxlen=HISTORY_SIZE)
-disk_io_history = deque(maxlen=HISTORY_SIZE)
-
-last_net_io = None
-last_disk_io = None
-last_time = None
 
 
 class CpuStats(BaseModel):
@@ -40,26 +33,6 @@ class MemoryStats(BaseModel):
     swap_total: int
     swap_used: int
     swap_percent: float
-
-
-class NetworkStats(BaseModel):
-    bytes_sent: int
-    bytes_recv: int
-    bytes_sent_rate: float  # bytes per second
-    bytes_recv_rate: float
-    packets_sent: int
-    packets_recv: int
-    interfaces: list[dict]
-
-
-class DiskIOStats(BaseModel):
-    read_bytes: int
-    write_bytes: int
-    read_rate: float  # bytes per second
-    write_rate: float
-    read_count: int
-    write_count: int
-    disks: list[dict]
 
 
 class ProcessInfo(BaseModel):
@@ -127,119 +100,6 @@ async def get_memory_stats(_: dict = Depends(verify_token)) -> MemoryStats:
     )
 
 
-@router.get("/network")
-async def get_network_stats(_: dict = Depends(verify_token)) -> NetworkStats:
-    """Get current network statistics."""
-    global last_net_io, last_time
-
-    net_io = psutil.net_io_counters()
-    current_time = time.time()
-
-    # Calculate rates
-    bytes_sent_rate = 0.0
-    bytes_recv_rate = 0.0
-    if last_net_io and last_time:
-        time_diff = current_time - last_time
-        if time_diff > 0:
-            bytes_sent_rate = (net_io.bytes_sent - last_net_io.bytes_sent) / time_diff
-            bytes_recv_rate = (net_io.bytes_recv - last_net_io.bytes_recv) / time_diff
-
-    last_net_io = net_io
-    last_time = current_time
-
-    # Get per-interface stats
-    interfaces = []
-    net_if_stats = psutil.net_if_stats()
-    net_if_addrs = psutil.net_if_addrs()
-    net_if_counters = psutil.net_io_counters(pernic=True)
-
-    for name, stats in net_if_stats.items():
-        if name == "lo" or not stats.isup:
-            continue
-        
-        addrs = net_if_addrs.get(name, [])
-        ipv4 = next((a.address for a in addrs if a.family.name == "AF_INET"), None)
-        
-        counters = net_if_counters.get(name)
-        interfaces.append({
-            "name": name,
-            "ipv4": ipv4,
-            "speed": stats.speed,
-            "is_up": stats.isup,
-            "bytes_sent": counters.bytes_sent if counters else 0,
-            "bytes_recv": counters.bytes_recv if counters else 0
-        })
-
-    # Store in history (total rate)
-    network_history.append({
-        "timestamp": datetime.now().isoformat(),
-        "sent": bytes_sent_rate,
-        "recv": bytes_recv_rate
-    })
-
-    return NetworkStats(
-        bytes_sent=net_io.bytes_sent,
-        bytes_recv=net_io.bytes_recv,
-        bytes_sent_rate=bytes_sent_rate,
-        bytes_recv_rate=bytes_recv_rate,
-        packets_sent=net_io.packets_sent,
-        packets_recv=net_io.packets_recv,
-        interfaces=interfaces
-    )
-
-
-@router.get("/disk-io")
-async def get_disk_io_stats(_: dict = Depends(verify_token)) -> DiskIOStats:
-    """Get current disk I/O statistics."""
-    global last_disk_io, last_time
-
-    disk_io = psutil.disk_io_counters()
-    current_time = time.time()
-
-    # Calculate rates
-    read_rate = 0.0
-    write_rate = 0.0
-    if last_disk_io and last_time:
-        time_diff = current_time - last_time
-        if time_diff > 0:
-            read_rate = (disk_io.read_bytes - last_disk_io.read_bytes) / time_diff
-            write_rate = (disk_io.write_bytes - last_disk_io.write_bytes) / time_diff
-
-    last_disk_io = disk_io
-    last_time = current_time
-
-    # Get per-disk stats
-    disks = []
-    disk_io_per = psutil.disk_io_counters(perdisk=True)
-    for name, counters in disk_io_per.items():
-        if name.startswith("loop") or name.startswith("ram"):
-            continue
-        disks.append({
-            "name": name,
-            "read_bytes": counters.read_bytes,
-            "write_bytes": counters.write_bytes,
-            "read_count": counters.read_count,
-            "write_count": counters.write_count
-        })
-
-    # Store in history
-    disk_io_history.append({
-        "timestamp": datetime.now().isoformat(),
-        "read": read_rate,
-        "write": write_rate
-    })
-
-    return DiskIOStats(
-        read_bytes=disk_io.read_bytes,
-        write_bytes=disk_io.write_bytes,
-        read_rate=read_rate,
-        write_rate=write_rate,
-        read_count=disk_io.read_count,
-        write_count=disk_io.write_count,
-        disks=disks
-    )
-
-
 @router.get("/processes")
 async def get_top_processes(
     sort_by: str = "cpu",
@@ -285,30 +145,14 @@ async def get_memory_history(_: dict = Depends(verify_token)) -> list[HistoryPoi
     return [HistoryPoint(**p) for p in memory_history]
 
 
-@router.get("/history/network")
-async def get_network_history(_: dict = Depends(verify_token)) -> list[dict]:
-    """Get network usage history."""
-    return list(network_history)
-
-
-@router.get("/history/disk-io")
-async def get_disk_io_history(_: dict = Depends(verify_token)) -> list[dict]:
-    """Get disk I/O history."""
-    return list(disk_io_history)
-
-
 @router.get("/all")
 async def get_all_stats(_: dict = Depends(verify_token)):
     """Get all monitoring stats in one request."""
     cpu = await get_cpu_stats(_)
     memory = await get_memory_stats(_)
-    network = await get_network_stats(_)
-    disk_io = await get_disk_io_stats(_)
 
     return {
         "cpu": cpu,
         "memory": memory,
-        "network": network,
-        "disk_io": disk_io,
         "timestamp": datetime.now().isoformat()
     }

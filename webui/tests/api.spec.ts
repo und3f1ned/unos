@@ -97,16 +97,6 @@ test.describe('API Tests', () => {
     expect(data).not.toHaveProperty('uptime');
   });
 
-  test('GET /api/v1/system/stats should return stats', async ({ request }) => {
-    const response = await request.get(`${BASE_URL}/api/v1/system/stats`, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    expect(response.ok()).toBeTruthy();
-    const data = await response.json();
-    expect(data).toHaveProperty('cpu_percent');
-    expect(data).toHaveProperty('memory_percent');
-  });
-
   test('GET /api/v1/system/temperatures should return temps', async ({ request }) => {
     const response = await request.get(`${BASE_URL}/api/v1/system/temperatures`, {
       headers: { Authorization: `Bearer ${token}` },
@@ -418,20 +408,6 @@ test.describe('API Tests', () => {
 
   test('GET /api/v1/monitor/memory should return memory stats', async ({ request }) => {
     const response = await request.get(`${BASE_URL}/api/v1/monitor/memory`, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    expect(response.ok()).toBeTruthy();
-  });
-
-  test('GET /api/v1/monitor/network should return network stats', async ({ request }) => {
-    const response = await request.get(`${BASE_URL}/api/v1/monitor/network`, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    expect(response.ok()).toBeTruthy();
-  });
-
-  test('GET /api/v1/monitor/disk-io should return disk IO stats', async ({ request }) => {
-    const response = await request.get(`${BASE_URL}/api/v1/monitor/disk-io`, {
       headers: { Authorization: `Bearer ${token}` },
     });
     expect(response.ok()).toBeTruthy();
