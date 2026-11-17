@@ -23,7 +23,8 @@ Counts that btrfs marks inconsistent (a rescan is needed) feed neither the probl
 a volume keeps its problem and stage, and gets no point, until they are consistent again.
 
 Each list also destroys the quota groups whose subvolume is gone (``_destroy_stale_groups``), which
-Linux 6.1 keeps with their limits and refuses to destroy until btrfs has dropped the subvolume.
+Linux 6.1 keeps with their limits and refuses to destroy until btrfs has dropped the subvolume: only
+a group that two lists in a row found without its subvolume and whose counts read 0 in sysfs.
 """
 
 from __future__ import annotations
@@ -112,8 +113,12 @@ class _State:
         self.unsaved = False
         self.listed: dict[str, _Listed] = {}  # by the pool's filesystem UUID
         self.series: dict[tuple[str, int], _Series] = {}  # by (filesystem UUID, subvolume id)
-        # Why a stale quota group could not be destroyed, by (filesystem UUID, subvolume id): once logged.
-        self.group_failures: dict[tuple[str, int], str] = {}
+        # The ids of the quota groups without a subvolume in each pool's last list, by filesystem UUID.
+        self.stale: dict[str, set[int]] = {}
+        # The destroys of such a group that did not destroy it, by (filesystem UUID, subvolume id).
+        self.destroy_attempts: dict[tuple[str, int], int] = {}
+        # The stale groups whose counts that need a rescan were logged, by (filesystem UUID, id).
+        self.rescan_logged: set[tuple[str, int]] = set()
 
 
 _state = _State()
@@ -352,12 +357,11 @@ def _volumes_of(state: _State, info: PoolInfo, uuid: str) -> dict[str, int] | No
     groups = qgroups.subvolume_group_ids(uuid)
     try:
         target = pools.pool_mountpoint(info.name)
-        volumes, unresolved, listed = pools.mounted_pool_volumes(info.name, target)
+        volumes, unresolved, listed_ids = pools.mounted_pool_volumes(info.name, target)
     except Exception as exc:
         failure = str(exc) or type(exc).__name__
     else:
-        if groups:
-            _destroy_stale_groups(state, info.name, target, uuid, groups - listed)
+        _destroy_stale_groups(state, info.name, target, uuid, (groups or set()) - listed_ids)
         lost = unresolved & set((known.volumes or {}).values()) if known is not None else set()
         if lost:
             volumes, failure = known.volumes, f"btrfs could not resolve the subvolume ids {sorted(lost)}"
@@ -376,29 +380,77 @@ def _volumes_of(state: _State, info: PoolInfo, uuid: str) -> dict[str, int] | No
     return None if failure else volumes
 
 
+# How many destroys of a stale quota group that leave it may run: each starts a transaction, which
+# moves the generation and so brings the next list, so that an endless retry would write to the pool
+# at every pass and keep its disks awake (ADR-0378).
+DESTROY_ATTEMPTS = 3
+
+
+def _forget_groups(state: _State, gone: Callable[[str, int], bool]) -> None:
+    """Forget the stale groups for which ``gone(uuid, id)`` holds (``state.lock`` held)."""
+    for uuid in list(state.stale):
+        state.stale[uuid] = {subvol_id for subvol_id in state.stale[uuid] if not gone(uuid, subvol_id)}
+        if not state.stale[uuid]:
+            del state.stale[uuid]
+    for key in [key for key in state.destroy_attempts if gone(*key)]:
+        del state.destroy_attempts[key]
+    state.rescan_logged = {key for key in state.rescan_logged if not gone(*key)}
+
+
 def _destroy_stale_groups(state: _State, pool: str, target: str, uuid: str, stale: set[int]) -> None:
-    """Destroy the quota groups 0/<id> of the pool whose subvolume the list no longer has: a deleted
-    volume's, restored copy's or snapshot's.
+    """Destroy the quota groups 0/<id> of the pool that this list, and the one before it, found
+    without a subvolume (``stale``): a deleted volume's, restored copy's or snapshot's.
 
     Linux 6.1 keeps them, with their limits, and a subvolume that btrfs later gives the same id (the
-    highest one, after a remount) would meet its group. It refuses to destroy one as busy until
-    btrfs has dropped the subvolume's data and committed: that moves the generation, so the next
-    pass lists the pool again and tries again. Any other failure is logged once.
+    highest one, after a remount) would meet its group. It refuses to destroy one as busy while it
+    counts bytes or holds reservations, until btrfs has dropped the subvolume's data and committed:
+    such a group gets no command, and a later list, which a write to the pool brings, tries it
+    again. Two lists in a row: a subvolume that one list missed (one made while it ran) keeps its
+    group. A group that DESTROY_ATTEMPTS destroys left is given up, with one warning; a destroy that
+    does not answer ends this pass's destroys.
     """
-    for subvol_id in sorted(stale):
-        reason = pools.destroy_quota_group(target, subvol_id)
-        if reason is None:
-            logger.info("Destroyed the quota group 0/%s of pool %s, whose subvolume is gone", subvol_id, pool)
-        if reason is None or "busy" in reason.lower():
+    with state.lock:
+        earlier = state.stale.get(uuid, set())
+        state.stale[uuid] = set(stale)
+        _forget_groups(state, lambda other, subvol_id: other == uuid and subvol_id not in stale)
+    needs_rescan = qgroups.inconsistent(uuid)
+    for subvol_id in sorted(stale & earlier):
+        key = (uuid, subvol_id)
+        in_use = qgroups.group_in_use(uuid, subvol_id)
+        if in_use:
             with state.lock:
-                state.group_failures.pop((uuid, subvol_id), None)
+                log = needs_rescan and key not in state.rescan_logged
+                if log:
+                    state.rescan_logged.add(key)
+            if log:
+                logger.warning(
+                    "The quota group 0/%s of pool %s, whose subvolume is gone, still counts bytes, and "
+                    "btrfs says that its counts need a rescan: 'btrfs quota rescan %s' on the host",
+                    subvol_id, pool, target)
+            continue
+        if in_use is None:  # its files cannot be read: gone meanwhile, or quotas turned off
             continue
         with state.lock:
-            logged = state.group_failures.get((uuid, subvol_id)) == reason
-            state.group_failures[(uuid, subvol_id)] = reason
-        if not logged:
-            logger.warning("Could not destroy the quota group 0/%s of pool %s, whose subvolume is gone: %s",
-                           subvol_id, pool, reason)
+            if state.destroy_attempts.get(key, 0) >= DESTROY_ATTEMPTS:
+                continue
+        try:
+            outcome, reason = pools.destroy_quota_group(target, subvol_id)
+        except Exception as exc:
+            outcome, reason = "failed", str(exc) or type(exc).__name__
+        if outcome == "destroyed":
+            logger.info("Destroyed the quota group 0/%s of pool %s, whose subvolume is gone", subvol_id, pool)
+            with state.lock:
+                _forget_groups(state, lambda other, gone_id: (other, gone_id) == key)
+            continue
+        with state.lock:
+            attempts = state.destroy_attempts[key] = state.destroy_attempts.get(key, 0) + 1
+        if attempts == DESTROY_ATTEMPTS and outcome != "absent":
+            logger.warning(
+                "Gave up destroying the quota group 0/%s of pool %s, whose subvolume is gone, after %s "
+                "attempts: %s. 'btrfs qgroup destroy 0/%s %s' on the host destroys it",
+                subvol_id, pool, attempts, reason, subvol_id, target)
+        if outcome == "hung":
+            break
 
 
 def _series(state: _State, key: tuple[str, int], pool: str, volume: str) -> _Series:
@@ -452,6 +504,7 @@ def _sample(infos: list[PoolInfo], earlier: dict[str, problems.Problem]) -> dict
         for uuid in [uuid for uuid in state.listed if uuid not in pools_found]:
             del state.listed[uuid]
             state.unsaved = True
+        _forget_groups(state, lambda uuid, _: uuid not in pools_found)
     found: dict[str, problems.Problem] = {}
 
     def keep(pool: str) -> None:

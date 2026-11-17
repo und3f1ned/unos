@@ -97,6 +97,36 @@ def subvolume_group_ids(fsid: str) -> set[int] | None:
     return ids
 
 
+# What Linux 6.1 counts in a quota group besides its bytes: its reservations. A kernel without these
+# files (before 5.x) counts none of them here.
+_RESERVATIONS = ("rsv_data", "rsv_meta_pertrans", "rsv_meta_prealloc")
+
+
+def group_in_use(fsid: str, subvol_id: int) -> bool | None:
+    """Whether the quota group 0/<id> of the mounted filesystem ``fsid`` still counts bytes or holds
+    reservations, which Linux 6.1 refuses to destroy (busy); None when its files cannot be read."""
+    filesystem = _folder(fsid)
+    if filesystem is None:
+        return None
+    group = os.path.join(filesystem, "qgroups", f"0_{int(subvol_id)}")
+    counts = [_number(os.path.join(group, name)) for name in ("referenced", "exclusive")]
+    if None in counts:
+        return None
+    for name in _RESERVATIONS:
+        path = os.path.join(group, name)
+        if os.path.exists(path):
+            counts.append(_number(path))
+    if None in counts:
+        return None
+    return any(counts)
+
+
+def inconsistent(fsid: str) -> bool:
+    """Whether btrfs says that the quota counts of the mounted filesystem ``fsid`` need a rescan."""
+    folder = _folder(fsid)
+    return folder is not None and _number(os.path.join(folder, "qgroups", "inconsistent")) == 1
+
+
 def usage(fsid: str, subvol_id: int) -> Usage:
     """The use and quota of the subvolume ``subvol_id`` of the mounted filesystem ``fsid``: unknown
     for an ``fsid`` that is no UUID, whose folder the kernel cannot have."""

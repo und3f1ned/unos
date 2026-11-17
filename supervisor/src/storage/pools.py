@@ -62,7 +62,7 @@ from collections.abc import Callable, Iterable, Iterator
 from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Literal
 
 import docker
 from docker.models.containers import Container
@@ -2732,26 +2732,40 @@ def _delete_subvolume(what: str, target: str, subvol_id: int, path: str, *, refu
         raise RuntimeError(f"Deleting {what[:1].lower()}{what[1:]} failed: {message}")
 
 
-def destroy_quota_group(target: str, subvol_id: int) -> str | None:
+# How long ``btrfs qgroup destroy`` may run on the host, under its timeout (ADR-0258).
+QGROUP_DESTROY_TIMEOUT = 60
+
+# destroyed; absent: no such group, or quotas are off; busy: Linux 6.1 refuses a group that still
+# counts bytes; hung: btrfs did not answer in time; failed: any other refusal.
+GroupDestroy = Literal["destroyed", "absent", "busy", "hung", "failed"]
+
+
+def destroy_quota_group(target: str, subvol_id: int) -> tuple[GroupDestroy, str]:
     """``btrfs qgroup destroy 0/<id>``: the quota group of the subvolume ``subvol_id``, gone from the
-    pool mounted at ``target`` (storage.volume_usage). None once the group is destroyed, or when
-    there is none or quotas are off; otherwise why not, as btrfs gave it.
+    pool mounted at ``target`` (storage.volume_usage), and why not, as btrfs gave it.
 
     Linux 6.1 keeps the group of a deleted subvolume, with its limit, and refuses to destroy it as
-    busy until btrfs has dropped the subvolume's data and committed its counts.
+    busy until btrfs has dropped the subvolume's data and committed its counts. Every call starts
+    a transaction of the pool, refused or not.
     """
+    hung = f"btrfs did not answer within {QGROUP_DESTROY_TIMEOUT} seconds"
     try:
         result = host.run_on_host(
-            ["btrfs", "qgroup", "destroy", f"0/{int(subvol_id)}", target], timeout=VOLUME_TIMEOUT
+            ["timeout", "--signal=KILL", str(QGROUP_DESTROY_TIMEOUT),
+             "btrfs", "qgroup", "destroy", f"0/{int(subvol_id)}", target],
+            timeout=QGROUP_DESTROY_TIMEOUT + 5,
         )
     except subprocess.TimeoutExpired:
-        return "btrfs did not answer in time"
+        return "hung", hung
+    # timeout(1)'s SIGKILL reaches the supervisor as -9 through nsenter (_host_paths).
+    if result.returncode in (124, 137, -signal.SIGKILL):
+        return "hung", hung
     if result.ok:
-        return None
+        return "destroyed", ""
     reason = result.stderr.strip() or f"exit status {result.returncode}"
     if _quotas_not_enabled(reason) or "no such file" in reason.lower():
-        return None
-    return reason
+        return "absent", reason
+    return ("busy" if "busy" in reason.lower() else "failed"), reason
 
 
 def _quotas_not_enabled(reason: str) -> bool:

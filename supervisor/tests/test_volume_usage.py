@@ -32,6 +32,8 @@ from src.health import problems
 from src.storage import pools, qgroups, volume_usage
 from src.storage.schemas import PoolInfo
 
+from src.host import HostResult
+
 from .test_pool_persistence import DATA_UUID, admin_client, install_fake_host, wait_for_app_starts
 from .test_volumes import GIB, FakeSubvolumes
 
@@ -107,13 +109,21 @@ def host(monkeypatch, tmp_path):
     run_btrfs = fake.subvols._run
 
     def btrfs(cmd):
-        # A quota group that btrfs destroyed leaves sysfs.
+        # Linux 6.1.y: the destroy starts a transaction, refused or not (the generation moves), and
+        # refuses a group that counts bytes or that ``busy`` names; a destroyed group leaves sysfs.
+        if cmd[1:3] != ["qgroup", "destroy"]:
+            return run_btrfs(cmd)
+        subvol_id = int(cmd[3][2:])
+        write(fake)
+        if subvol_id in fake.busy or qgroups.group_in_use(DATA_UUID, subvol_id):
+            return HostResult(1, "", BUSY)
         result = run_btrfs(cmd)
-        if cmd[1:3] == ["qgroup", "destroy"] and result.ok:
-            sysfs.remove_group(int(cmd[3][2:]))
+        if result.ok:
+            sysfs.remove_group(subvol_id)
         return result
 
     fake.subvols._run = btrfs
+    fake.busy = set()
     yield fake
     wait_for_app_starts()
 
@@ -540,51 +550,150 @@ class TestNoDiskIsWoken:
 
 
 BUSY = "ERROR: unable to destroy quota group: Device or resource busy"
+DESTROY = ("timeout", "--signal=KILL", "60", "btrfs", "qgroup", "destroy")
 
 
 def destroys(host) -> list[list[str]]:
-    return [cmd for cmd in host_commands(host) if cmd[:3] == ["btrfs", "qgroup", "destroy"]]
+    return [cmd for cmd in host_commands(host) if cmd[:6] == list(DESTROY)]
 
 
-def delete_subvolume(host, subvol_id: int) -> None:
-    """``btrfs subvolume delete``: gone from the list, its quota group left in sysfs (Linux 6.1)."""
+def delete_subvolume(host, subvol_id: int, *, dropped: bool = True) -> None:
+    """``btrfs subvolume delete``: gone from the list, its quota group left in sysfs with its limit
+    (Linux 6.1); once btrfs has ``dropped`` its data and committed, the group counts nothing."""
     del host.subvols.subvolumes[DATA_UUID][subvol_id]
+    if dropped:
+        folder = host.sysfs.root / DATA_UUID / "qgroups" / f"0_{subvol_id}"
+        for name in ("referenced", "exclusive"):
+            (folder / name).write_text("0\n")
     write(host)
+
+
+def settled(host) -> None:
+    """Passes until the lists settle, then one more pass that must run no command."""
+    for _ in range(6):
+        check()
+    before = len(host.calls)
+    check()
+    assert len(host.calls) == before
 
 
 class TestStaleQuotaGroups:
     """Linux 6.1 keeps the quota group 0/<id> of a deleted subvolume, with its limit, and refuses to
-    destroy it as busy until btrfs has dropped the subvolume's data and committed. A pass that lists
-    the pool destroys the groups whose subvolume the list no longer has (ADR-0387)."""
+    destroy it as busy until btrfs has dropped the subvolume's data and committed. A list of the
+    pool destroys a group that it and the list before it found without a subvolume, once its counts
+    read 0 in sysfs; every destroy starts a transaction, which moves the generation (ADR-0387)."""
 
-    def test_the_group_of_a_deleted_volume_is_destroyed_at_the_next_list(self, host, clock, caplog):
+    def test_the_group_of_a_deleted_volume_is_destroyed_at_the_second_list(self, host, clock, caplog):
         caplog.set_level(logging.INFO, logger=volume_usage.__name__)
         check()
         delete_subvolume(host, host.documents)
         check()
+        assert destroys(host) == []  # one list: the subvolume may only have been missed
 
-        assert destroys(host) == [["btrfs", "qgroup", "destroy", f"0/{host.documents}", "/mnt/pools/data"]]
+        check()  # the list once more: the generation stayed the same
+        assert destroys(host) == [[*DESTROY, f"0/{host.documents}", "/mnt/pools/data"]]
         assert f"Destroyed the quota group 0/{host.documents} of pool data" in caplog.text
         assert qgroups.subvolume_group_ids(DATA_UUID) == {host.photos}
+        # The destroy moved the generation: two more lists, then sysfs alone.
+        settled(host)
+        assert len(destroys(host)) == 1
 
-    def test_a_group_btrfs_refuses_as_busy_is_tried_again_after_the_drop_without_a_warning(
-        self, host, clock, caplog
-    ):
+    def test_a_group_that_still_counts_bytes_gets_no_command_until_it_reads_0(self, host, clock):
         check()
-        host.fail[("btrfs", "qgroup", "destroy")] = (1, BUSY)
-        delete_subvolume(host, host.documents)
-        check()
-        check()  # the same generation: listed once more
-        check()  # settled: no list
-        assert len(destroys(host)) == 2
+        delete_subvolume(host, host.documents, dropped=False)
+        settled(host)  # no destroy, so no transaction of UNOS's: the disks may sleep
+        assert destroys(host) == []
 
-        del host.fail[("btrfs", "qgroup", "destroy")]
+        folder = host.sysfs.root / DATA_UUID / "qgroups" / f"0_{host.documents}"
+        for name in ("referenced", "exclusive"):
+            (folder / name).write_text("0\n")
         write(host)  # the commit of the drop
         check()
+        check()
+
+        assert len(destroys(host)) == 1
+        assert qgroups.subvolume_group_ids(DATA_UUID) == {host.photos}
+
+    def test_a_group_with_a_reservation_gets_no_command(self, host, clock):
+        check()
+        delete_subvolume(host, host.documents)
+        host.sysfs._write(f"{DATA_UUID}/qgroups/0_{host.documents}/rsv_meta_pertrans", 16384)
+        settled(host)
+
+        assert destroys(host) == []
+
+    def test_counts_that_need_a_rescan_are_logged_once_with_the_rescan(self, host, clock, caplog):
+        host.sysfs.quotas(inconsistent=True)
+        check()
+        delete_subvolume(host, host.documents, dropped=False)
+        for _ in range(3):
+            check()
+            write(host)
+        settled(host)
+
+        assert destroys(host) == []
+        assert caplog.text.count(f"The quota group 0/{host.documents} of pool data") == 1
+        assert "'btrfs quota rescan /mnt/pools/data' on the host" in caplog.text
+
+    def test_a_group_refused_without_counting_bytes_is_given_up_after_3_attempts(self, host, clock, caplog):
+        check()
+        delete_subvolume(host, host.documents)
+        host.busy.add(host.documents)
+        settled(host)  # each refused destroy moved the generation, and brought two more lists
+
+        assert len(destroys(host)) == volume_usage.DESTROY_ATTEMPTS == 3
+        assert caplog.text.count(f"Gave up destroying the quota group 0/{host.documents} of pool data") == 1
+        assert f"'btrfs qgroup destroy 0/{host.documents} /mnt/pools/data' on the host" in caplog.text
+
+    @pytest.mark.parametrize("stderr", ["ERROR: unable to destroy quota group: Invalid argument"])
+    def test_another_failure_is_given_up_after_3_attempts_too(self, host, clock, caplog, stderr):
+        check()
+        host.fail[DESTROY] = (1, stderr)
+        delete_subvolume(host, host.documents)
+        for _ in range(8):
+            check()
+            write(host)
 
         assert len(destroys(host)) == 3
-        assert qgroups.subvolume_group_ids(DATA_UUID) == {host.photos}
-        assert not [r for r in caplog.records if r.levelno >= logging.WARNING and "quota group" in r.getMessage()]
+        assert caplog.text.count("Gave up destroying the quota group") == 1
+        assert stderr in caplog.text
+
+    def test_quotas_turned_off_meanwhile_destroy_nothing_and_log_nothing(self, host, clock, caplog):
+        caplog.set_level(logging.INFO, logger=volume_usage.__name__)
+        check()
+        host.fail[DESTROY] = (1, "ERROR: unable to destroy quota group: Transport endpoint is not connected")
+        delete_subvolume(host, host.documents)
+        for _ in range(8):
+            check()
+            write(host)
+
+        assert len(destroys(host)) == 3
+        assert "quota group" not in caplog.text
+
+    def test_a_destroy_that_does_not_answer_ends_the_pass_s_destroys(self, host, clock, caplog):
+        check()
+        host.fail[DESTROY] = (-9, "")  # timeout(1)'s SIGKILL
+        delete_subvolume(host, host.documents)
+        delete_subvolume(host, host.photos)
+        check()
+        check()
+
+        assert len(destroys(host)) == 1
+
+    def test_a_destroy_that_raises_is_a_failure_of_its_own(self, host, clock, caplog, monkeypatch):
+        def broken(target, subvol_id):
+            raise OSError("nsenter: cannot open /proc/1/ns/mnt")
+
+        monkeypatch.setattr(pools, "destroy_quota_group", broken)
+        use(host, 91, host.photos)
+        check()
+        delete_subvolume(host, host.documents)
+        for _ in range(5):
+            check()
+            write(host)
+
+        assert "Gave up destroying the quota group" in caplog.text and "cannot open" in caplog.text
+        assert [p.subject for p in volume_problems()] == ["data/photos"]
 
     def test_the_groups_of_listed_subvolumes_snapshots_included_of_the_top_level_and_of_level_1_stay(
         self, host, clock
@@ -592,13 +701,30 @@ class TestStaleQuotaGroups:
         snapshots = host.subvols.add(DATA_UUID, ".snapshots")
         snapshot = host.subvols.add(DATA_UUID, ".snapshots/documents_1", parent=snapshots,
                                     snapshot_of=host.documents, read_only=True)
-        host.sysfs.group(snapshots, 16384)
-        host.sysfs.group(snapshot, 5 * GIB)
-        host.sysfs.group(5, 8 * GIB)
+        host.sysfs.group(snapshots, 0)
+        host.sysfs.group(snapshot, 0)
+        host.sysfs.group(5, 0)
         host.sysfs._write(f"{DATA_UUID}/qgroups/1_1/referenced", 0)
         write(host)
-        check()
-        check()
+        settled(host)
+
+        assert destroys(host) == []
+
+    def test_a_subvolume_that_one_list_missed_keeps_its_group(self, host, clock, monkeypatch):
+        # Linux 6.1 makes a new subvolume's group, counting 0, before its root item: a list run
+        # meanwhile misses it.
+        music = host.subvols.add(DATA_UUID, "music")
+        host.sysfs.group(music, 0)
+        listed = pools.mounted_pool_volumes
+        calls = []
+
+        def first_misses_music(name, target):
+            found, unresolved, ids = listed(name, target)
+            calls.append(name)
+            return found, unresolved, ids - {music} if len(calls) == 1 else ids
+
+        monkeypatch.setattr(pools, "mounted_pool_volumes", first_misses_music)
+        settled(host)
 
         assert destroys(host) == []
 
@@ -612,29 +738,20 @@ class TestStaleQuotaGroups:
             found = listed(name, target)
             if not made:
                 made.append(host.subvols.add(DATA_UUID, "music"))
-                host.sysfs.group(made[0], 16384)
+                host.sysfs.group(made[0], 0)
             return found
 
         monkeypatch.setattr(pools, "mounted_pool_volumes", list_then_make)
-        check()
+        settled(host)
 
         assert destroys(host) == []
-
-    def test_another_failure_is_logged_once(self, host, clock, caplog):
-        check()
-        host.fail[("btrfs", "qgroup", "destroy")] = (1, "ERROR: unable to destroy quota group: Invalid argument")
-        delete_subvolume(host, host.documents)
-        for _ in range(3):
-            check()
-            write(host)
-
-        assert len(destroys(host)) == 3
-        assert caplog.text.count(f"Could not destroy the quota group 0/{host.documents} of pool data") == 1
 
     def test_a_list_that_fails_destroys_nothing(self, host, clock):
         delete_subvolume(host, host.documents)
         host.fail[("btrfs", "subvolume", "list")] = (1, "ERROR: can't perform the search")
-        check()
+        for _ in range(3):
+            check()
+            write(host)
 
         assert destroys(host) == []
 
