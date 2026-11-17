@@ -2654,14 +2654,17 @@
       "verified_by": [
         "webui/tests/dashboard.spec.ts",
         "webui/tests/websocket.spec.ts",
+        "supervisor/tests/test_ws_stats.py",
         "supervisor/tests/test_system.py",
-        "supervisor/tests/test_ws_auth.py"
+        "supervisor/tests/test_ws_auth.py",
+        "supervisor/tests/test_webui_polling.py"
       ],
       "passes": false,
       "adr": [
-        "ADR-0006"
+        "ADR-0006",
+        "ADR-0388"
       ],
-      "notes": "The E2E specs check the stats socket and the storage widget, but only the labels of the CPU and memory cards."
+      "notes": "Built: /ws/v1/events sends the stats every 2 seconds (ADR-0363), and the dashboard's five stats cards (CPU, Memory, Network, Disk I/O, Temperature) show each message; the storage widget shows each pool with the health that GET /storage/pools reports (ADR-0036), read when the page loads and on Refresh. Fixed with ADR-0388: the Disk I/O card was missing, though the message carried disk_io; the network of the message was the supervisor container's own (psutil reads /proc/net/dev in the container's network namespace) and is now the host's, from /proc/1/net/dev over the interfaces that System > Network lists (not lo, docker0, veth*, br-*), each rate the sum of the interfaces that both samples have, so an interface that comes or goes never makes it negative, over the monotonic clock, and none for the first sample after a gap of more than 10 s (the average since the dashboard was last open was shown as the current rate); a disk that goes away makes the disk rates 0, not negative; the interfaces' ipv4, speed and is_up (the container's, unread) are gone. Step 1: dashboard.spec.ts 'the stats cards follow each stats message of the socket, and nothing polls the API' (a fake socket sends three messages, the CPU, memory, network and disk I/O cards show each, and the page sends no request to the API while page.clock runs a minute; it failed first on the missing Disk I/O card, and it fails for a setInterval that loads the page's data again), 'the stats cards show the stats messages of the server as they arrive' (the stand-in's own socket: the cards show each of three messages, no API request between them), 'the stats cards write sizes, rates and the temperature with their units' and 'shows the dashboard in Russian'; websocket.spec.ts (the socket's sign-in and the order of its messages); test_ws_stats.py (the host's interfaces from PID 1's /proc/net/dev and never psutil's view of the container, the hidden interfaces left out, interfaces that come, go or start again, the monotonic clock, a sample after a gap, an unreadable file logged once, the disk rates, the message's shape; they failed first on the container's view, the wall clock and the gap's average); test_ws_auth.py; test_webui_polling.py (no setInterval of the web UI reaches the API, ADR-0365). Step 2: dashboard.spec.ts 'storage widget shows the health the API reports' (not mounted, degraded, error, unknown and healthy pools of the fakes) and 'storage widget follows the health the API reports for each pool' (a pool healthy, then degraded with a device missing, then not mounted, at each Refresh, beside one that stays healthy). mobile-layout.spec.ts: the dashboard with its five cards fits a phone in both languages. Open: the check on the device, as the stand-in has no network namespace apart from the host's (ADR-0215): with the dashboard open, a copy to a share over SMB shows its rate on the Network card (received) and on the Disk I/O card (Write) within a few seconds, the rates of System > Network follow the host's `cat /proc/net/dev`, and the supervisor's log has no \"The host's network counters cannot be read\"."
     },
     {
       "id": "system.resource-monitor",

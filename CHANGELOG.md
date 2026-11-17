@@ -345,6 +345,8 @@ manager, encrypted backup uploads, health checks, CI checks).
   `ups_name`, `host` and `port` are checked before they reach `upsc`.
 
 ### Added
+- The dashboard has a **Disk I/O** card: the bytes per second read from and
+  written to the host's disks, from the live statistics (ADR-0388).
 - Groups of users (ADR-0385). The **Users** page has a **Groups** card: make
   a group, choose its members (users who are not administrators), rename it
   or delete it. On the **Shares** page a share's access list gives each group
@@ -1170,6 +1172,15 @@ manager, encrypted backup uploads, health checks, CI checks).
   installed once, under its id, and a request with `name` answers 422.
 
 ### Fixed
+- The dashboard's **Network** card, the Resource Monitor and the live rates of
+  **System** → **Network** showed the traffic of the supervisor's container,
+  which has a network of its own, instead of the host's. They now show the
+  host's interfaces that **System** → **Network** lists, without the loopback
+  and Docker's. A rate no longer turns negative for a moment when an
+  interface or a disk goes away, nor when the board sets its clock at boot,
+  and the first rates after the dashboard is opened are no longer the average
+  since it was last open (ADR-0388). The live statistics' interfaces no longer carry the container's
+  address, speed and state (`ipv4`, `speed`, `is_up`).
 - The dashboard's live stats cost a slow board a large share of a core: every
   open tab took its own sample every two seconds, in the supervisor's event loop,
   and listed every process of the host each time (0.4 s of CPU on a SpacemiT

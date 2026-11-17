@@ -372,6 +372,7 @@ and this index, and `make check-fast` runs it.
 | [0366](0366-system-logs-follows-new-journal-entries-over-the-journal-socket.md) | System > Logs reads every source from the host's journal, newest first, and its Auto follows new entries over the journal socket | accepted | 2026-11-12 |
 | [0374](0374-unos-keeps-its-idle-load-within-a-budget-and-check-sh-reports-load-and-heat.md) | UNOS keeps its idle load within a budget, and check.sh reports load and heat | accepted | 2026-11-13 |
 | [0375](0375-the-supervisor-s-healthcheck-runs-bash-and-the-process-list-reads-ten-processes-in-full.md) | The supervisor's healthcheck runs bash, and the process list reads ten processes in full | accepted | 2026-11-13 |
+| [0388](0388-the-dashboard-shows-disk-io-and-the-stats-network-is-the-hosts-interfaces.md) | The dashboard shows the disks' I/O, and the network of the stats message is the traffic of the host's interfaces | accepted | 2026-11-17 |
 
 ## Web UI
 

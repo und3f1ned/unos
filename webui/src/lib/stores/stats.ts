@@ -33,17 +33,16 @@ export interface MemoryStats {
   swap_percent: number;
 }
 
+// An interface of the host that System > Network lists, with its counters and rates (ADR-0388).
 export interface NetworkInterface {
   name: string;
-  ipv4: string | null;
-  speed: number;
-  is_up: boolean;
   bytes_sent: number;
   bytes_recv: number;
   bytes_sent_rate: number;
   bytes_recv_rate: number;
 }
 
+// The host's traffic, over the interfaces of NetworkInterface (ADR-0388).
 export interface NetworkStats {
   bytes_sent: number;
   bytes_recv: number;
@@ -62,6 +61,8 @@ export interface DiskIO {
   write_count: number;
 }
 
+// The host's disks: the totals and rates are of whole disks, without their partitions (ADR-0388);
+// `disks` lists every block device, partitions too (ADR-0360).
 export interface DiskIOStats {
   read_bytes: number;
   write_bytes: number;

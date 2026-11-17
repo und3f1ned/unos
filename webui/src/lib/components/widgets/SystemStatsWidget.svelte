@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Cpu, MemoryStick, Network, Thermometer } from 'lucide-svelte';
+	import { Cpu, HardDrive, MemoryStick, Network, Thermometer } from 'lucide-svelte';
 	import { Card, ProgressBar } from '$lib/components/ui';
 	import { t } from '$lib/i18n';
 
@@ -9,6 +9,9 @@
 	export let memoryTotal: number = 0;
 	export let networkUp: number = 0;
 	export let networkDown: number = 0;
+	// The bytes per second read from and written to the host's disks (ADR-0388).
+	export let diskRead: number = 0;
+	export let diskWrite: number = 0;
 	export let temperature: number | null = null;
 	export let compact: boolean = false;
 
@@ -55,7 +58,7 @@
 		{/if}
 	</div>
 {:else}
-	<div class="grid grid-cols-2 lg:grid-cols-4 gap-4">
+	<div class="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-4">
 		<!-- CPU -->
 		<Card>
 			<div class="stat-card-header">
@@ -91,6 +94,23 @@
 				<span class="icon-temperature">↑</span>
 				<span class="text-lg font-semibold">{formatRate(networkUp)}</span>
 			</div>
+		</Card>
+
+		<!-- Disk I/O: read, then written. A label goes above its rate where the card has no room for
+		     both (ADR-0302). -->
+		<Card>
+			<div class="stat-card-header">
+				<HardDrive class="w-5 h-5 icon-storage flex-shrink-0" />
+				<span class="stat-card-label">{$t('dashboard.stats.diskIo')}</span>
+			</div>
+			<p class="flex flex-wrap items-baseline gap-x-2">
+				<span class="stat-card-sublabel">{$t('dashboard.stats.read')}</span>
+				<span class="text-lg font-semibold">{formatRate(diskRead)}</span>
+			</p>
+			<p class="flex flex-wrap items-baseline gap-x-2">
+				<span class="stat-card-sublabel">{$t('dashboard.stats.write')}</span>
+				<span class="text-lg font-semibold">{formatRate(diskWrite)}</span>
+			</p>
 		</Card>
 
 		<!-- Temperature -->
