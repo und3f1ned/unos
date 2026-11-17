@@ -95,10 +95,21 @@ significant step. Features and their state live in `feature-list.json`, decision
   and RKMPP in Immich's server; after a reboot from the API the containers with those checks, the
   models on the NPU again, then the pool's disk awake while Immich runs (ADR-0381's cost), and at
   23:55 GET /apps/installed with one Immich and its three companions running. `apps.compose-stacks`
-  passes. Open, first: Immich has no administrator, and until the owner registers one, anyone on
-  the LAN who opens port 2283 can register as its administrator (Open owner actions, 12, at once).
-  Then the owner's: photos and Immich's jobs (13) and RKMPP chosen in Immich (14), for
-  `apps.rk3588-hardware-acceleration` step 2, which stays false with step 1's open parts (11).
+  passes. The owner registered Immich's administrator and chose RKMPP in Immich by 2026-11-17;
+  open: photos and Immich's jobs (Open owner actions, 13) and a look at the App Store's hint (14),
+  for `apps.rk3588-hardware-acceleration` step 2, which stays false with step 1's open parts (11).
+- On 2026-11-17 (Log): Immich searches with the CLIP model nllb-clip-base-siglip__v1, which
+  understands Russian, and the seventh batch on the branch `mvp.batch-7`, merged into `main` with
+  its record: an install as a background job whose progress the App Store shows
+  (`apps.install-progress`, ADR-0384), groups of users with share access (`shares.group-access`,
+  ADR-0385), two-factor authentication required after a grace period
+  (`auth.mandatory-two-factor`, ADR-0386), each volume's use against its quota with alerts and a
+  history (`storage.volume-quota-usage`, ADR-0387), and backend tests in parallel workers with a
+  commit that reuses a green run (`testing.per-test-temp-paths`, `ci.pre-commit-reuses-green-run`,
+  ADR-0383): `make check` takes about 2 minutes instead of 12. Checked on the dev device across a
+  reboot; the check found that deleted volumes kept their quota groups, which the monitor now
+  destroys, checked again across a second reboot. All pass but `apps.install-progress`, whose
+  install with Immich's pulls and App Store card wait for the owner (Open owner actions, 15).
 - On the device the NFS server runs (nfs-server, rpcbind.socket and rpcbind, enabled since
   2026-11-08, ADR-0303) and exports nothing for now; over IPv6 only LAN sources reach it
   (ADR-0301). avahi-daemon and wsdd2 run (network discovery), and nmbd is disabled since
@@ -149,7 +160,7 @@ significant step. Features and their state live in `feature-list.json`, decision
 
 ## Dev device
 
-State on 2026-11-17, 00:09 UTC. A Banana Pi BPI-W3 (ArmSoM W3, Rockchip RK3588, 8 GB), running
+State on 2026-11-17, 15:50 UTC. A Banana Pi BPI-W3 (ArmSoM W3, Rockchip RK3588, 8 GB), running
 Armbian's community image for `armsom-w3`, upgraded on 2026-11-15 from 26.2.0-trunk.151 to
 26.11.0-trunk.133 (Debian 13, kernel 6.1.172-vendor-rk35xx);
 its address and logins are in `dev.env` (ADR-0212). This journal called it a UGREEN board, after
@@ -160,7 +171,20 @@ the UGREEN firmware on its eMMC, until the owner set that right on 2026-11-15 (A
   since boot, its own wear estimate 0 to 10%. Nothing writes to it.
 - SSH by key only, root by the workstation's key `~/.ssh/unos_dev_ed25519`; root's and the UNOS
   administrator's passwords were rotated and live only in `dev.env` (ADR-0226).
-- Runs 41ad495 of the branch `apps.compose-stacks` (ADR-0381, ADR-0382): its feature commits and a
+- Runs b17889f of the branch `mvp.batch-7` (the seventh batch, ADR-0383 to ADR-0387), merged into
+  `main` with the record of its device check, whose commits on top of b17889f change no runtime
+  file. Deployed on 2026-11-17 at 15:31 to 15:32 UTC, the supervisor alone (SD MiB status 0, sync
+  0.406, build-supervisor 12.473, up 2.898, check.sh 0.016, status 0). Before it that day: 7cca7e9
+  at 12:47 to 12:49 UTC (sync 6.777, build-supervisor 13.957, build-webui 17.262, up 5.652,
+  check.sh 0.270), 73f547a at 14:45 (sync 0.875, build-supervisor 12.758, up 3.082) and 9ecd228 at
+  15:01 (0.711, 12.062, 2.941). Reboots from the API at 13:31:12 UTC (the boot of 13:32:28; both
+  UNOS containers healthy by 13:33:21, check.sh OK with 12.9 MiB on the card since the boot) and
+  15:22:55 UTC (the boot of 15:24:14; check.sh OK at 15:30). Quotas are off on the pool `data`, as
+  before the checks. Immich's four containers run, its CLIP model nllb-clip-base-siglip__v1 (only
+  that model in its cache), its administrator registered and RKMPP chosen by the owner. The SD card
+  holds 60 dangling images, the layers of the supervisor's builds, and about 60 MB of blobs of
+  cancelled pulls in containerd's content store; pruning them is the owner's call.
+- Before it, 41ad495 of the branch `apps.compose-stacks` (ADR-0381, ADR-0382): its feature commits and a
   merge of main ce5f86c, which holds the sixth batch. The branch is merged into `main` by #86 with
   the record of its device check, whose commits on top of 41ad495 change no runtime file. Deployed
   on 2026-11-16 at 21:38 to 21:40 UTC (SD MiB check.sh 0, status and sync --dry-run 0, sync 3.371,
@@ -493,24 +517,134 @@ Open owner actions:
     (step 4 of its notes' steps by hand), and the owner's look at the App Store's card and details
     of the installed Jellyfin, with RKMPP chosen in Jellyfin's dashboard (step 6). Step 2's open
     parts are 13 and 14.
-12. At once, Immich's administrator on the dev device: open Immich on port 2283 of the device and
-    register its administrator. Until then anyone on the LAN who opens that port can register as
-    Immich's administrator (it had none at the check's last read, 21:53 UTC on 2026-11-16). With
-    none registered, the device check took the database's own first-start record, the same before
-    and after the reinstall, and no 'password authentication failed' for the administrator's
-    sign-in after it (`apps.compose-stacks`'s (6)), and `apps.compose-stacks` passes on that: a
-    judgement the owner may overrule, by signing in after a reinstall.
 13. Immich with photos (`apps.rk3588-hardware-acceleration`, step 2's (4) of its notes' steps by
     hand): upload about 30 photos (faces, text, one HEVC video), run Smart Search, Face Detection
     and OCR in Administration > Jobs, record their durations and search for dog; while the jobs
     run, the agent reads the NPU's load, the log's recognition lines, check.sh's thermal margin and
     `docker stats` (`apps.compose-stacks`'s (7), whose peaks go to
     `apps.container-resource-limits`).
-14. RKMPP in Immich (`apps.rk3588-hardware-acceleration`, the owner's part of step 2's (5)):
-    choose it in Administration > Settings > Video Transcoding Settings > Hardware Acceleration,
-    and confirm that the App Store's hint names that menu as Immich does.
+14. RKMPP in Immich (`apps.rk3588-hardware-acceleration`, the owner's part of step 2's (5)): the
+    owner chose it (Immich's system-config reads ffmpeg.accel rkmpp on 2026-11-17); left: confirm
+    that the App Store's hint names that menu, Administration > Settings > Video Transcoding
+    Settings > Hardware Acceleration, as Immich does.
+15. `apps.install-progress`, the steps of its notes that wait for the owner: (3) Immich installed
+    from the App Store in a browser on the LAN with its four images pulled (after an uninstall that
+    keeps its data and a removal of its images: a pull of about 3.6 GB onto the SD card), the card
+    with each image's bar and layers, a reload of the page and a second tab during the pulls, and a
+    second install refused with 409 meanwhile; (3b) Cancel install on the card during the pulls;
+    (4) a restart of the supervisor during Immich's wait for its database. The agent reads the job's
+    API, the SD MiB and the audit log meanwhile.
 
 ## Log
+
+### 2026-11-17: A seventh batch: install progress, groups, required 2FA, quota use; faster gates
+
+- Immich's smart search, at the owner's word: its CLIP model is nllb-clip-base-siglip__v1, which
+  understands Russian, instead of the English-only ViT-B-32__openai (Immich's system-config,
+  `machineLearning.clip.modelName`), and the search index was rebuilt to 768 dimensions; Immich's
+  server stopped once during the rebuild with "could not open relation with OID 17716" (a race of
+  Immich's) and came up clean at Docker's restart. Both nllb models load from their rk3588 files on
+  the NPU; `scripts/dev/immich-ml-probe.py --clip-model nllb-clip-base-siglip__v1 --language ru`
+  answered the picture in 46.19 s first (the models' load), then 0.373 s, the text in 0.049 s, and a
+  Russian "photo of a dog" against the English one at a cosine of 0.988 (0.090 MiB). ViT-B-32 was
+  then deleted from the model cache on the pool, at the owner's word: only nllb's 3.4 GB are left.
+- The branch `mvp.batch-7` (from main dd95822) holds six entries, each built test-first in a
+  worktree of its own by a builder, then reviewed in a fresh context (ADR-0017) as soon as its
+  builder finished, its findings fixed, and merged; the ADRs that the builders all numbered 0383
+  were renumbered at the merges: `testing.per-test-temp-paths` and
+  `ci.pre-commit-reuses-green-run` (ADR-0383), `apps.install-progress` (ADR-0384),
+  `shares.group-access` (ADR-0385), `auth.mandatory-two-factor` (ADR-0386) and
+  `storage.volume-quota-usage` (ADR-0387); and `scripts/dev/immich-ml-probe.py`'s
+  `--clip-model`, `--language` and `--text` (f577ef2), since Immich on the dev device searches
+  with nllb-clip-base-siglip__v1.
+- The gates are faster (ADR-0383): backend tests run in pytest-xdist workers, each process with
+  temporary paths of its own, without the machine-wide lock; on the workstation the backend
+  tests take 112 s instead of 719 s, `make check` 132 s instead of 746 s and `make check-fast`
+  60 s instead of 324 s. A passing `make check` or `make check-fast` records the working tree's
+  state, and the pre-commit hook skips `make check-fast` for a commit that holds all of that
+  tree. A second review recorded a failing tree as green in several ways (a TEST_WORKERS value
+  that reached pytest's command line unquoted, another makefile, tools from the environment, a
+  write into `tmp/stop-check` by hand); each is closed and tested (cffcae9), and
+  `.claude/settings.json` gained the deny rules `Write(//**/tmp/stop-check/**)` and
+  `Edit(//**/tmp/stop-check/**)` (a tightening only). Disclosure: that entry's builder used
+  `git commit --no-verify` once, in a scratch clone of its own without hooks, which skipped
+  nothing there; the guard forbids the flag to agents.
+- The reviews' findings, all fixed before the merges: the install job's waiting GET held
+  uvicorn's shutdown back from the lifespan (both images and the stand-in now run uvicorn with
+  `--timeout-graceful-shutdown 3`), installs could not be cancelled and a stalled pull held the
+  one install slot (Cancel install, a 10-minute read timeout on Docker's pull stream), at most 4
+  GETs wait at once (63056a1); a group's rename did not raise its shares' versions, a restore
+  took a group whose name breaks the rule, the account page showed the wrong level of duplicate
+  grants (955f46a); a stored 2FA requirement that cannot be read could fail requests, a start
+  ahead of the clock could skip the grace period, a restore did not say that it turned the
+  requirement on or off (a320b04); counts that need a rescan moved the quota alerts, points
+  ahead of the clock stopped the history, a restart forgot the levels reached, a quota of 0
+  bytes was not full (cf7b656).
+- `make check` passed after each merge (about 2.5 minutes, 8144 tests and more), and the full
+  E2E run on the stand-in passed before the deploy: 840 passed, 14 skipped, 16.1 minutes. The
+  balance dialog of mobile-layout.spec.ts, flaky on main before the batch, passed in it. The 2FA
+  builder found that the Audit Log page overflows on a phone for an API token of 64 characters, a
+  bug from before the batch.
+- The deploy of 7cca7e9 on 2026-11-17 at 12:47 to 12:49 UTC (SD MiB status 0, sync 6.777,
+  build-supervisor 13.957, build-webui 17.262, up 5.652, check.sh 0.270, status 0). The device
+  check (12:53 to 14:28 UTC; each step's SD MiB in the ledger's notes), with a reboot from the
+  API at 13:31:12 (the boot of 13:32:28, both UNOS containers healthy by 13:33:21, check.sh OK
+  with 12.9 MiB on the card since the boot): `scenario.sh volumes`, `shares`, `smb` and
+  `hardware` passed before the reboot (0.875, 3.176, 5.031, 0.059); the install job through its
+  API with restic-rest-server, a cancel during mosquitto's pull, a restart of the supervisor
+  during heimdall's pull with a GET waiting, and Immich uninstalled and installed again without
+  a pull, the same database and settings (`apps.install-progress`); the ML probe with
+  nllb-clip-base-siglip__v1 and `--language ru`, the models loaded from their rk3588 files and
+  none downloaded (0.066); the group's access over smbclient (`shares.group-access`); the 2FA
+  requirement read, off (`auth.mandatory-two-factor`); quotas enabled on `data` (btrfs quota
+  enable and rescan -w, inconsistent 0), `scenario.sh volumes` with the 1 GiB quota, and a volume
+  of 100 MiB filled to 84, 92 and 97 MiB, each with one alert at the next pass (80% failed to
+  send to Telegram, a ConnectTimeout from the device's network, recorded as failed; 90% and 95%
+  sent), then down to 50 MiB, the problem gone and nothing sent (`storage.volume-quota-usage`).
+  After the reboot: the group, the apps, the 2FA requirement and the quota history kept, and
+  `scenario.sh all` with 185 steps passed and one FAIL, smart step 10: sda stayed awake for 1980
+  s with 13 reads and 649 writes, which Immich, transmission and restic on the pool cause
+  (ADR-0381's cost), not UNOS; the check put the disk's settings back as found.
+- Two faults found by the device check. (1) A deleted volume's quota group was never destroyed:
+  Linux 6.1.172 refused `btrfs qgroup destroy` as busy right after every delete, and the code
+  only logged it, so the scenario runs left 14 stale groups, one with the 1 GiB limit. The group
+  can be destroyed only once btrfs has dropped the subvolume and committed its counts (the device
+  showed it after `btrfs subvolume sync` and `btrfs filesystem sync`). Fixed in 68c5724: each
+  list of a pool's volumes by the volume usage monitor, after a change of the pool's generation,
+  destroys the groups whose subvolume is gone (ADR-0387 rewritten in place); the tests failed on
+  the old code. Its review in a fresh context found that a group that stays busy (counts that need
+  a rescan, a deleted subvolume still open) would bring a destroy at every pass, each starting a
+  transaction that moves the generation, so the disks would never sleep: 9ecd228 destroys a group
+  only once two lists in a row found it without its subvolume and sysfs reads 0 for its counts, and
+  gives a group up after three refused destroys. A second review found that the two lists could
+  straddle a remount after which btrfs gives the id to a new subvolume: b17889f counts them only
+  within one quota tree (the inode of sysfs's `qgroups` folder) and stops every pool's destroys
+  after one that hangs. Not fixed, accepted in ADR-0387: another btrfs mounted over the pool's
+  mountpoint between the RAID monitor's read and a destroy could lose a group of the same id that
+  counts nothing. The re-checks on the device, quotas on: 73f547a destroyed a deleted volume's group
+  and the four that `scenario.sh volumes` left at the next pass; 9ecd228 left a deleted volume's
+  group, reading 0, after the first pass and destroyed it at the second, did the same with the
+  four groups of `scenario.sh volumes` (0.984), and after a reboot from the API at 15:22:55 UTC (the
+  boot of 15:24:14) destroyed the group of a volume deleted just before it by the second list after
+  the start, with no warning in the log; b17889f, deployed at 15:31 UTC, kept a deleted volume's group
+  after the first pass and destroyed it at the second, of the id 257 that btrfs had given out
+  again after the reboot (the highest live subvolume is 256): the reuse that ADR-0387 guards
+  against. Each step's SD MiB is in the entry's notes. check.sh 23 s after that boot found the
+  containers still starting, and OK at 15:30. (2) A GET that waits for an install's end gets 500
+  at a stop of the supervisor, with an "Exception in ASGI application" error in the log, when uvicorn cancels it
+  at its graceful bound: ADR-0384's choice, now named among its consequences; the web UI never
+  waits that way.
+- Left on the device: containerd's content store on the SD card holds about 60 MB of blobs of
+  the cancelled pulls (no image record; pruning them is the owner's call), the
+  supervisor's `/data/volume_usage.json` (306 B), the notification history's 3 alerts and the
+  audit log's entries of the checks, and 60 dangling images (the layers of the supervisor's
+  builds). Quotas are off on `data` again (btrfs quota disable), as before the check.
+- Passing now: `shares.group-access`, `auth.mandatory-two-factor` (not host-level; the
+  requirement stays off on the dev device, the owner's choice) and `storage.volume-quota-usage`,
+  with `testing.per-test-temp-paths` and `ci.pre-commit-reuses-green-run` (passing since their
+  merge). `apps.install-progress` stays false: Immich's install with its images pulled and its Cancel during the pulls, the App
+  Store's card with a reload and a second tab, a second install refused during the pulls and a
+  restart during Immich's wait for its database wait for the owner (Open owner actions, 15).
 
 ### 2026-11-16: Immich of four containers on the dev device, its machine learning on the NPU
 
