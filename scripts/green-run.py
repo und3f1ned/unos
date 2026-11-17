@@ -4,6 +4,10 @@
 
     scripts/green-run.py state          print the state of the working tree
     scripts/green-run.py check          exit 0 when the tree is in the state recorded as green
+    scripts/green-run.py check-commit [INDEX]
+                                        exit 0 when the tree is in the state recorded as green and
+                                        a commit made from INDEX (git's own index without one) holds
+                                        all of it: no change outside that index, no untracked file
     scripts/green-run.py record STATE   record STATE as green, if the tree is still in it
     scripts/green-run.py forget         remove the record
 
@@ -13,7 +17,9 @@ the work tree that the current directory belongs to (tmp/ is git-ignored). make 
 check-fast record their state when they pass, and record compares it with the tree once more: a
 run during which the tree changed records nothing. The Stop hook (.claude/hooks/stop-check.sh)
 and the pre-commit hook (scripts/git-hooks/pre-commit) skip make check-fast for a tree in the
-recorded state.
+recorded state; the pre-commit hook only when the commit holds that tree, as check-commit says.
+The record is reliable as long as only make writes it: the guard refuses writes of agents, and a
+person can write anything (ADR-0383).
 
 git takes no optional locks here: the hooks run beside other git commands, and git commit -a and
 a commit of paths hold the index's lock while the pre-commit hook runs. The diffs are git's own:
@@ -33,18 +39,29 @@ import tempfile
 from pathlib import Path
 
 RECORD = Path("tmp") / "stop-check" / "green"
-USAGE = "usage: green-run.py state | check | record STATE | forget"
+USAGE = "usage: green-run.py state | check | check-commit [INDEX] | record STATE | forget"
 
 
 class GitFailed(Exception):
     pass
 
 
-def git(*args: str, may_fail: bool = False) -> bytes:
-    result = subprocess.run(["git", *args], capture_output=True, check=False,
-                            env=dict(os.environ, GIT_OPTIONAL_LOCKS="0"))
+def run_git(args: tuple, index: str = "") -> subprocess.CompletedProcess:
+    """git with INDEX, another index than its own, when given."""
+    env = dict(os.environ, GIT_OPTIONAL_LOCKS="0")
+    if index:
+        env["GIT_INDEX_FILE"] = index
+    return subprocess.run(["git", *args], capture_output=True, check=False, env=env)
+
+
+def failed(args: tuple, result: subprocess.CompletedProcess) -> GitFailed:
+    return GitFailed(f"git {' '.join(args)} failed: {result.stderr.decode(errors='replace').strip()}")
+
+
+def git(*args: str, may_fail: bool = False, index: str = "") -> bytes:
+    result = run_git(args, index)
     if result.returncode != 0 and not may_fail:
-        raise GitFailed(f"git {' '.join(args)} failed: {result.stderr.decode(errors='replace').strip()}")
+        raise failed(args, result)
     return result.stdout
 
 
@@ -58,9 +75,7 @@ def state() -> str:
     for args in (("status", "--porcelain=v1", "-z", "--untracked-files=all"),
                  ("diff", *DIFF), ("diff", "--cached", *DIFF)):
         digest.update(git(*args) + b"\0")
-    for name in git("ls-files", "-z", "--others", "--exclude-standard").split(b"\0"):
-        if not name or name.startswith(b"tmp/stop-check/"):
-            continue
+    for name in untracked():
         digest.update(name + b"\0")
         try:
             if os.path.islink(name):
@@ -73,6 +88,21 @@ def state() -> str:
             digest.update(b"?")
         digest.update(b"\0")
     return digest.hexdigest()
+
+
+def untracked(index: str = "") -> list[bytes]:
+    return [name for name in git("ls-files", "-z", "--others", "--exclude-standard", index=index).split(b"\0")
+            if name and not name.startswith(b"tmp/stop-check/")]
+
+
+def commits_the_tree(index: str) -> bool:
+    """Whether a commit made from INDEX holds the working tree: no change between that index and
+    the working tree, and no untracked file, which a check may read and a commit leaves out."""
+    args = ("diff", "--quiet", "--no-ext-diff", "--no-textconv")
+    diff = run_git(args, index)
+    if diff.returncode not in (0, 1):
+        raise failed(args, diff)
+    return diff.returncode == 0 and not untracked(index)
 
 
 def recorded() -> str:
@@ -96,6 +126,8 @@ def record(expected: str) -> int:
 
 
 def main(argv: list[str]) -> int:
+    # An index given as a relative path is the caller's.
+    index = os.path.abspath(argv[1]) if argv[:1] == ["check-commit"] and len(argv) == 2 and argv[1] else ""
     top = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True, check=False)
     if top.returncode != 0:
         print("green-run.py: not a git work tree", file=sys.stderr)
@@ -107,6 +139,8 @@ def main(argv: list[str]) -> int:
             return 0
         if argv == ["check"]:
             return 0 if recorded() == state() else 1
+        if argv[:1] == ["check-commit"] and len(argv) <= 2:
+            return 0 if recorded() == state() and commits_the_tree(index) else 1
         if len(argv) == 2 and argv[0] == "record" and re.fullmatch(r"[0-9a-f]{64}", argv[1]):
             return record(argv[1])
     except GitFailed as error:

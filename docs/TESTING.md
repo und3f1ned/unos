@@ -100,12 +100,15 @@ rule and [scripts/check-commit-msg.py](../scripts/check-commit-msg.py) checks it
 has the details). The hooks in `scripts/git-hooks/` (installed by `make setup`) run before every
 commit:
 
-- `pre-commit` runs `make check-fast`, unless the working tree is the one in which `make check`
-  or `make check-fast` last passed: both record its state when they pass (`scripts/green-run.py`,
-  in the git-ignored `tmp/stop-check/green`). It says in one line which it did (ADR-0383). The
-  state covers HEAD, the index and the working tree: stage what you commit before `make check`,
-  or commit with `git commit -a`, and the commit reuses the green run. Only make records it: the
-  guard refuses `scripts/green-run.py record` and writes to the record.
+- `pre-commit` runs `make check-fast`, unless the commit holds all of the working tree in which
+  `make check` or `make check-fast` last passed: both record its state when they pass with
+  `make setup`'s tools and every check (`scripts/green-run.py`, in the git-ignored
+  `tmp/stop-check/green`), and the commit's index then has no change from the working tree and
+  no file is untracked. It says in one line which it did (ADR-0383). The state covers HEAD, the
+  index and the working tree: stage everything before `make check`, or commit with
+  `git commit -a`, and the commit reuses the green run. Only make records it: the guard refuses
+  `scripts/green-run.py record` and writes into `tmp/stop-check`, and the settings deny the
+  Write and Edit tools that folder.
 - `commit-msg` runs `scripts/check-commit-msg.py` on the message.
 
 CI's Commit Messages job runs the same script over the commits of a pull request (CI is off,

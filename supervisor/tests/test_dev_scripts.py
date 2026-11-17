@@ -681,14 +681,16 @@ def test_a_signal_to_the_holders_process_group_keeps_the_lock_until_the_holder_e
     the lock while the holder still works: scenario.sh waits for its check to clean up. The
     session that holds the lock ignores both, and the holder's exit releases it. (On the device
     the lock's own commands never get the workstation's signal; here they run in the same group,
-    so timeout is the plain stand-in.) The holder works until the test creates the file GO, not
-    for a fixed time, which a busy machine (parallel runs) could use up before the test looks."""
+    so timeout is the plain stand-in.) The holder's work says held once it ignores the signals, and
+    goes on until the test creates the file GO, not for a fixed time: a busy machine (parallel runs)
+    could otherwise use that time up, or let the signal come before the work's own trap."""
     device = local_device
     device.stub("timeout", "#!/usr/bin/env bash\nshift\nexec \"$@\"\n")
     go = local_device.lock.parent / "go"
     holder = subprocess.Popen(
-        ["bash", "-c", ('. ./env.sh || exit 9; dev_lock "holder"; trap "stop=1" HUP TERM; echo held; '
-                        'bash -c "trap \\"\\" HUP TERM; until [ -e \\"\\$GO\\" ]; do sleep 0.05; done"; echo done')],
+        ["bash", "-c", ('. ./env.sh || exit 9; dev_lock "holder"; trap "stop=1" HUP TERM; '
+                        'bash -c "trap \\"\\" HUP TERM; echo held; until [ -e \\"\\$GO\\" ]; do sleep 0.05; done"; '
+                        'echo done')],
         cwd=DEV, env=local_device.env(FAKE_SSH_MODE="local", GO=str(go)), stdout=subprocess.PIPE,
         stderr=subprocess.PIPE, stdin=subprocess.DEVNULL, text=True, start_new_session=True,
     )
