@@ -13,13 +13,15 @@ URL, because request URLs end up in the uvicorn and proxy access logs:
 The server closes the socket with 4401 ("unauthorized") when the first
 message is missing, late, malformed or carries an invalid token, and with
 4403 ("forbidden") when the user may not use the socket (container logs
-require an administrator). A ``?token=`` query parameter is refused (4401).
+require an administrator) or can only set up two-factor authentication, which
+no socket serves (ADR-0383). A ``?token=`` query parameter is refused (4401).
 
 While a socket is open, its token is checked again every
 ``WS_REAUTH_INTERVAL_SECONDS``. A token that stopped being valid (expired
 JWT, disabled or expired API token, deleted user) closes the socket with
-4401; a logs socket whose user is no longer an administrator is closed with
-4403. If the check itself fails (database error), the socket is closed with
+4401; a logs socket whose user is no longer an administrator, and every socket
+of an account whose grace period to set up two-factor authentication has ended,
+is closed with 4403. If the check itself fails (database error), the socket is closed with
 1011 and the client reconnects through the handshake. A check in progress
 when the socket closes runs to its end, and its answer is dropped.
 
@@ -358,13 +360,22 @@ def _token_from_auth_message(message: dict[str, Any]) -> str | None:
     return token
 
 
+class _SetupOnly(Exception):
+    """The token's account can only set up two-factor authentication: its session
+    stays, so the socket closes with 4403, not 4401."""
+
+
 async def _user_for_token(token: str) -> User | None:
+    """The user of ``token``, or None when it is not valid; raises _SetupOnly for an account that
+    can only set up two-factor authentication."""
     # Short-lived session: a socket can stay open for hours and must not hold
     # a pooled database connection that long.
     try:
         async with async_session() as db:
             return await authenticate_token(token, db)
-    except HTTPException:
+    except HTTPException as exc:
+        if exc.status_code == 403:
+            raise _SetupOnly() from None
         return None
 
 
@@ -419,7 +430,11 @@ async def _handshake(websocket: WebSocket, admin_only: bool) -> tuple[str, User]
         return None
 
     token = _token_from_auth_message(message)
-    user = await _user_for_token(token) if token else None
+    try:
+        user = await _user_for_token(token) if token else None
+    except _SetupOnly:
+        await _close(websocket, WS_CLOSE_FORBIDDEN, "forbidden")
+        return None
     if user is None:
         await _close(websocket, WS_CLOSE_UNAUTHORIZED, "unauthorized")
         return None
@@ -459,6 +474,8 @@ async def _watch_credential(
             check.add_done_callback(_checks_left_running.discard)
             check.add_done_callback(_consume_result)
             raise
+        except _SetupOnly:
+            return WS_CLOSE_FORBIDDEN, "forbidden"
         except Exception:
             logger.exception("Could not re-check a WebSocket's credentials")
             return WS_CLOSE_INTERNAL_ERROR, "re-authentication failed"

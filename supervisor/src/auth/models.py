@@ -75,3 +75,18 @@ class UsernameTaken(Base):
     username = Column(String, primary_key=True)
     # SQLite's CURRENT_TIMESTAMP, as users.created_at and login_attempts.timestamp have it.
     taken_at = Column(DateTime, nullable=False, server_default=func.now())
+
+
+class TwoFactorRequirement(Base):
+    """Every account must have two-factor authentication: the one row (id 1) while an
+    administrator requires it, none while it is off. An account without it has ``grace_days`` from
+    the later of ``enabled_at`` and its creation to set it up; after that it is setup-only
+    (src/auth/requirement.py), which reads the row of a restored database as untrusted."""
+
+    __tablename__ = "two_factor_requirement"
+
+    id = Column(Integer, primary_key=True)
+    grace_days = Column(Integer, nullable=False)
+    # When it was turned on (UTC, without a zone, as SQLite keeps it).
+    enabled_at = Column(DateTime, nullable=False)
+    enabled_by = Column(String, nullable=False)

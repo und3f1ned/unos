@@ -221,7 +221,10 @@ Afterwards:
 
 1. Sign in with the new password: no two-factor code is asked.
 2. Turn two-factor authentication on again (**System** → **Security**) and generate new recovery
-   codes.
+   codes. When an administrator requires two-factor authentication for every account and the
+   administrator's grace period is over, the sign-in leads straight to the setup, and the account
+   can do nothing else until two-factor authentication is on again: have an authenticator app at
+   hand. The reset leaves that requirement as it is.
 
 The reset ends every session of the administrator that was signed in before; the account's API
 tokens keep working, and the sessions of other accounts too.

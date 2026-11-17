@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..config import get_settings
 from ..database import get_db
+from . import requirement
 from .models import APIToken, User, UserSession
 from .schemas import MAX_PASSWORD_BYTES
 
@@ -326,15 +327,20 @@ def _unauthorized(detail: str) -> HTTPException:
     )
 
 
-async def authenticate_token(token: str, db: AsyncSession) -> User:
+async def authenticate_token(token: str, db: AsyncSession, *, allow_setup_only: bool = False) -> User:
     """Resolve a bearer credential (JWT or ``unos_`` API token) to its user.
 
     Shared by HTTP requests (``verify_token``) and the WebSocket handshake so
     both apply the same rules. Raises ``HTTPException(401)`` when the
-    credential is invalid, expired or disabled, or its user no longer exists.
+    credential is invalid, expired or disabled, or its user no longer exists,
+    and ``HTTPException(403)`` with TWO_FACTOR_SETUP_REQUIRED for an account that
+    can only set up two-factor authentication (ADR-0383): unless
+    ``allow_setup_only``, and then only for a session token.
     """
     if token.startswith(API_TOKEN_PREFIX):
-        return await verify_api_token(token, db)
+        user = await verify_api_token(token, db)
+        await _refuse_setup_only(db, user, allowed=False)
+        return user
 
     try:
         username, session_id = decode_access_token(token)
@@ -351,15 +357,36 @@ async def authenticate_token(token: str, db: AsyncSession) -> User:
     owner = session.user_id if session is not None else _unstored_sessions.get(session_id)
     if owner != user.id:
         raise _unauthorized("Session ended")
+    await _refuse_setup_only(db, user, allowed=allow_setup_only)
     return user
+
+
+async def _refuse_setup_only(db: AsyncSession, user: User, *, allowed: bool) -> None:
+    """403 for an account that can only set up two-factor authentication, unless ``allowed``. An
+    account with it costs no read."""
+    if user.totp_enabled or allowed:
+        return
+    state = await requirement.account_state(db, user)
+    if state is not None and state.setup_only:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=requirement.TWO_FACTOR_SETUP_REQUIRED)
 
 
 async def verify_token(
     credentials: HTTPAuthorizationCredentials = Depends(security),
     db: AsyncSession = Depends(get_db),
 ) -> User:
-    """Verify JWT token or API token."""
+    """Verify JWT token or API token. A setup-only account gets 403."""
     return await authenticate_token(credentials.credentials, db)
+
+
+async def verify_token_allowing_setup(
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+    db: AsyncSession = Depends(get_db),
+) -> User:
+    """``verify_token`` for the routes that a setup-only account reaches with a session token: its
+    own account, the setup of two-factor authentication, its status and the sign-out
+    (SETUP_ONLY_ALLOWED of tests/test_authz.py). Its API tokens still get 403."""
+    return await authenticate_token(credentials.credentials, db, allow_setup_only=True)
 
 
 async def require_admin(user: User = Depends(verify_token)) -> User:

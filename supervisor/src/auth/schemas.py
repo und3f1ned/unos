@@ -3,6 +3,7 @@ from typing import Annotated, Literal
 
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, StringConstraints, model_validator
 
+from ..security.schemas import UtcDatetime
 from ..shares.account_state import SmbAccountStatus
 
 # bcrypt takes at most 72 bytes of a password: new passwords longer than that
@@ -34,6 +35,13 @@ class UserCreate(BaseModel):
     smb_enabled: bool = False
 
 
+class TwoFactorRequired(BaseModel):
+    """What the requirement of two-factor authentication asks of an account without it."""
+
+    by: UtcDatetime     # the end of the account's grace period
+    setup_only: bool    # it is over: the account reaches only the setup, its status and the sign-out
+
+
 class UserResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -46,6 +54,9 @@ class UserResponse(BaseModel):
     # Account page uses GET /auth/me/smb).
     smb: SmbAccountStatus | None = None
     warnings: list[str] = []
+    # Set by GET /auth/me only: null while every account need not have two-factor authentication,
+    # or this one has it.
+    two_factor_required: TwoFactorRequired | None = None
 
 
 class Token(BaseModel):

@@ -12,6 +12,25 @@ features (SMB access per user and per share, volumes, copy and move in the file
 manager, encrypted backup uploads, health checks, CI checks).
 
 ### Security
+- An administrator can require two-factor authentication for every account
+  (**System** → **Security**, **Two-factor authentication for every
+  account**), with a grace period of none, 1, 3, 7 (the default), 14 or 30
+  days from the time it is turned on or the account is created, whichever is
+  later. Turning it on or off takes an administrator with two-factor
+  authentication and a current code of it, and a session, not an API token
+  (`GET /api/v1/security/two-factor-requirement`, `POST .../enable` with
+  `grace_days` and `code`, `POST .../disable` with `code`); the audit log
+  records both as `settings_changed` of `two_factor_requirement`. During the
+  grace period an account without two-factor authentication is asked to set
+  it up after each sign-in (`/two-factor-setup`); after it, the account can
+  only set it up: the server answers 403 "Two-factor authentication is
+  required: set it up to continue" to every request but `GET /auth/me`,
+  `GET /auth/totp/status`, `POST /auth/totp/setup`, `POST /auth/totp/enable`
+  and `POST /auth/logout` of its sessions, to every request of its API
+  tokens, and closes its WebSockets with 4403; open sessions follow at their
+  next request. `GET /api/v1/auth/me` answers `two_factor_required` and
+  `GET /api/v1/auth/totp/status` `required`. SMB still signs in with the
+  password alone. Off by default.
 - **System** → **Security** no longer names a stored certificate as the one
   in use: its **SSL/TLS Certificates** card and
   `GET /api/v1/security/certificates/status` (now

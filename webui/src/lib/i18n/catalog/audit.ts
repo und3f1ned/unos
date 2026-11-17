@@ -117,7 +117,8 @@ export const en = {
 	'audit.resource.backup': 'backup',
 	'audit.resource.host': 'host',
 	'audit.resource.networkInterface': 'network_interface',
-	'audit.resource.task': 'task'
+	'audit.resource.task': 'task',
+	'audit.resource.twoFactorRequirement': 'two_factor_requirement'
 };
 
 export const ru: Translation<typeof en> = {
@@ -228,5 +229,6 @@ export const ru: Translation<typeof en> = {
 	'audit.resource.backup': 'резервная копия',
 	'audit.resource.host': 'хост',
 	'audit.resource.networkInterface': 'сетевой интерфейс',
-	'audit.resource.task': 'задача'
+	'audit.resource.task': 'задача',
+	'audit.resource.twoFactorRequirement': 'требование двухфакторной аутентификации'
 };

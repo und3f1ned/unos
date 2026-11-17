@@ -9,17 +9,25 @@ import threading
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from sqlalchemy.exc import OperationalError
+from fastapi.security import HTTPAuthorizationCredentials
+from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession
 from pydantic import TypeAdapter
-from sqlalchemy import select, func, desc
+from sqlalchemy import delete, select, func, desc
 
 from .. import state_files
+from ..audit.changes import audit_change
+from ..audit.schemas import AuditAction, AuditSeverity
 from ..database import get_db
-from ..auth.utils import client_ip, require_admin, verify_token
-from ..auth.models import User, UsernameTaken
+from ..auth import requirement
+from ..auth.utils import (
+    API_TOKEN_PREFIX, TOTP_CODE_REUSED, TotpCheck, check_totp_code, client_ip, require_admin, security,
+    verify_token,
+)
+from ..auth.models import TwoFactorRequirement, User, UsernameTaken
 from .models import LoginAttempt
 from .schemas import (
+    TwoFactorRequirementDisable, TwoFactorRequirementEnable, TwoFactorRequirementStatus,
     LoginAttemptResponse, LoginHistoryResponse,
     FirewallRule, FirewallStatus, FirewallRuleCreate, FirewallAction,
     FirewallDirection, FirewallProtocol,
@@ -792,6 +800,110 @@ async def delete_certificate(
     if not deleted:
         raise HTTPException(404, "Certificate not found")
     return {"status": "ok", "message": "Certificate deleted"}
+
+
+# ==================== Two-factor authentication for every account (ADR-0383) ====================
+
+REQUIREMENT_SESSION_NEEDED = "An API token cannot change the two-factor requirement: sign in to do it"
+OWN_TWO_FACTOR_NEEDED = "Turn on two-factor authentication for your own account first"
+ALREADY_REQUIRED = "Two-factor authentication is already required for every account"
+NOT_REQUIRED = "Two-factor authentication is not required"
+
+
+def _requirement_status(current: requirement.Requirement | None) -> TwoFactorRequirementStatus:
+    if current is None:
+        return TwoFactorRequirementStatus(enabled=False)
+    return TwoFactorRequirementStatus(
+        enabled=True, grace_days=current.grace_days, enabled_at=current.enabled_at, enabled_by=current.enabled_by
+    )
+
+
+def _require_own_second_factor(credentials: HTTPAuthorizationCredentials, user: User) -> None:
+    """What turning the requirement on or off takes of the administrator before anything else: a
+    session, not an API token, and two-factor authentication of their own."""
+    if credentials.credentials.startswith(API_TOKEN_PREFIX):
+        raise HTTPException(status_code=403, detail=REQUIREMENT_SESSION_NEEDED)
+    if not user.totp_enabled:
+        raise HTTPException(status_code=409, detail=OWN_TWO_FACTOR_NEEDED)
+
+
+def _use_own_code(user: User, code: str) -> None:
+    """A current code of the administrator's own authenticator, used up as every code is (ADR-0067).
+    Checked last, so that a request refused for anything else uses no code."""
+    check = check_totp_code(user.id, user.totp_secret, code)
+    if check is not TotpCheck.OK:
+        raise HTTPException(
+            status_code=400, detail=TOTP_CODE_REUSED if check is TotpCheck.REUSED else "Invalid TOTP code"
+        )
+
+
+@router.get("/two-factor-requirement", response_model=TwoFactorRequirementStatus)
+async def get_two_factor_requirement(_: User = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    """Whether every account must have two-factor authentication, and with which grace period."""
+    return _requirement_status(await requirement.current(db))
+
+
+@router.post("/two-factor-requirement/enable", response_model=TwoFactorRequirementStatus)
+async def enable_two_factor_requirement(
+    request: Request,
+    data: TwoFactorRequirementEnable,
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+    current_user: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Require two-factor authentication for every account, after ``grace_days``. Only an
+    administrator who has it turns it on, with a current code: the one who imposes it meets it."""
+    _require_own_second_factor(credentials, current_user)
+    if await requirement.current(db) is not None:
+        raise HTTPException(status_code=409, detail=ALREADY_REQUIRED)
+    _use_own_code(current_user, data.code)
+    username = current_user.username
+    enabled_at = requirement._now()
+    db.add(TwoFactorRequirement(
+        id=requirement.REQUIREMENT_ID, grace_days=data.grace_days, enabled_at=enabled_at, enabled_by=username
+    ))
+    try:
+        await db.commit()
+    except IntegrityError:  # another administrator turned it on meanwhile
+        await db.rollback()
+        raise HTTPException(status_code=409, detail=ALREADY_REQUIRED) from None
+    days = data.grace_days
+    grace = "without a grace period" if days == 0 else f"with a grace period of {days} day{'' if days == 1 else 's'}"
+    await audit_change(
+        AuditAction.SETTINGS_CHANGED, request, username, resource_type="two_factor_requirement",
+        details=f"Two-factor authentication required for every account, {grace}",
+    )
+    return _requirement_status(requirement.Requirement(data.grace_days, enabled_at, username))
+
+
+@router.post("/two-factor-requirement/disable", response_model=TwoFactorRequirementStatus)
+async def disable_two_factor_requirement(
+    request: Request,
+    data: TwoFactorRequirementDisable,
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+    current_user: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Stop requiring two-factor authentication: accounts without it have their rights again at
+    their next request. It weakens every sign-in, so it takes what turning it on takes."""
+    _require_own_second_factor(credentials, current_user)
+    if await requirement.current(db) is None:
+        raise HTTPException(status_code=409, detail=NOT_REQUIRED)
+    _use_own_code(current_user, data.code)
+    username = current_user.username
+    result = await db.execute(
+        delete(TwoFactorRequirement)
+        .where(TwoFactorRequirement.id == requirement.REQUIREMENT_ID)
+        .execution_options(synchronize_session=False)
+    )
+    await db.commit()
+    if result.rowcount != 1:  # another administrator turned it off meanwhile
+        raise HTTPException(status_code=409, detail=NOT_REQUIRED)
+    await audit_change(
+        AuditAction.SETTINGS_CHANGED, request, username, resource_type="two_factor_requirement",
+        details="Two-factor authentication no longer required for every account", severity=AuditSeverity.WARNING,
+    )
+    return _requirement_status(None)
 
 
 # ==================== Helper for login tracking ====================

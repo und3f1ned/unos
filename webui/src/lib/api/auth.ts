@@ -20,6 +20,17 @@ export interface SmbAccountStatus {
   reason: string | null;
 }
 
+/**
+ * What the requirement of two-factor authentication for every account asks of an account without it
+ * (src/routes/two-factor-setup).
+ */
+export interface TwoFactorRequired {
+  /** The end of the account's grace period (UTC, with its offset). */
+  by: string;
+  /** The grace period is over: the account can only set up two-factor authentication. */
+  setup_only: boolean;
+}
+
 export interface User {
   id: number;
   username: string;
@@ -30,6 +41,8 @@ export interface User {
   smb?: SmbAccountStatus | null;
   /** Problems after a change that went through (e.g. smb.conf not updated). */
   warnings?: string[];
+  /** In GET /auth/me only: null unless every account must have 2FA and this one has none. */
+  two_factor_required?: TwoFactorRequired | null;
 }
 
 export interface Token {
@@ -96,6 +109,8 @@ export interface TOTPSetupResponse {
 
 export interface TOTPStatus {
   enabled: boolean;
+  /** Every account must have two-factor authentication. */
+  required: boolean;
 }
 
 /** GET /auth/recovery-codes/status. */

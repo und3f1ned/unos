@@ -673,7 +673,17 @@
         "Turn on the requirement: accounts without two-factor authentication are asked to set it up at their next sign-in",
         "After the grace period such an account can only set up two-factor authentication"
       ],
-      "passes": false
+      "verified_by": [
+        "supervisor/tests/test_two_factor_requirement.py",
+        "supervisor/tests/test_authz.py",
+        "webui/tests/mandatory-two-factor.spec.ts",
+        "webui/tests/mobile-layout.spec.ts"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0383"
+      ],
+      "notes": "Database only, not host-level (GLOSSARY.md): the requirement is the one row of two_factor_requirement, and the setup-only state is derived at each request. Step 1: test_two_factor_requirement.py TestTurningItOn (an administrator with 2FA and a current code turns it on with a grace period of 0, 1, 3, 7, 14 or 30 days, 7 by default; without own 2FA 409, a wrong or used code 400, an API token 403, a regular user 403, twice 409; the settings_changed entry of two_factor_requirement), TestTurningItOff and TestGracePeriod (during the grace period everything works and GET /auth/me answers by when; it starts at the later of the requirement's start and the account's creation); mandatory-two-factor.spec.ts on the stand-in: the card of System > Security turned on with 14 days and a code, then the sign-in of an account without 2FA lands on /two-factor-setup with the end of its grace period, Later reaches the dashboard and the Account page, the next sign-in asks again, and Stop requiring with a newer code ends it; an administrator without 2FA is told to turn it on first. Step 2: TestSetupOnly (the password still signs in, audited as a warning; only GET /auth/me, GET /auth/totp/status, POST /auth/totp/setup, POST /auth/totp/enable and POST /auth/logout are reached, and after the setup the same session has its rights again; API tokens are refused until the account has 2FA; turning 2FA off gives no new grace period; after reset-admin the administrator can only set it up), TestWebSocket (4403 at the handshake, and at the re-check when the grace period ends) and test_authz.py's walk of every route for a setup-only regular user, administrator and API token; the spec: a session open when the requirement came without a grace period is led to /two-factor-setup at its next request, without navigation, the API answers it 403, the password signs in to the setup alone, and the setup with a code of the QR code's secret gives the account its rights back. mobile-layout.spec.ts walks the card and both states of the setup page. Not checked on the dev device: nothing differs there but the real clock and Caddy in front, and E2E specs never run against it (ADR-0215)."
     },
     {
       "id": "auth.security-keys",

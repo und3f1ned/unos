@@ -65,8 +65,9 @@ their audit entry cannot be written once the change is stored, and so do the
 changes of pools, volumes, snapshots, containers and apps once they are made,
 backups created, uploaded, restored and deleted, reboots and shutdowns
 scheduled or cancelled, changes of scheduled tasks and runs started by hand,
-and changes of network interfaces, Wake-on-LAN, the host name and the time
-zone; the supervisor's log reports that entry.
+and changes of network interfaces, Wake-on-LAN, the host name, the time
+zone and the requirement of two-factor authentication for every account; the
+supervisor's log reports that entry.
 A recovery code does not sign you in while the disk is full, because UNOS
 cannot mark it as used; a code of your authenticator app does.
 
@@ -1642,6 +1643,44 @@ Scripts send the code as `recovery_code` in place of `totp_code` to
 answers new codes, and `GET /api/v1/auth/recovery-codes/status` how many are
 left.
 
+#### Two-Factor Authentication for Every Account
+
+An administrator can require two-factor authentication for every account,
+administrators included. Under **System** → **Security**, the card **Two-factor
+authentication for every account** says whether it is **Required**. To turn it
+on, your own account needs 2FA: choose the **Grace period** (none, 1, 3, 7, 14
+or 30 days; 7 is offered first), enter a current code of your authenticator
+app and click **Require for every account**. **Stop requiring** turns it off,
+with a code as well. The audit log records both (`settings_changed`, resource
+`two_factor_requirement`; turning it off as a **Warning**).
+
+What it means for an account without 2FA:
+
+- The grace period starts when the requirement is turned on, or when the
+  account is created, if that is later.
+- During it, everything works as before, and after each sign-in a page asks
+  to set up 2FA by the end of the grace period: **Set up now** shows the QR
+  code and asks for a code, **Later** goes on to the dashboard.
+- After it, the password still signs in, but the account can only set up 2FA:
+  the same page, without **Later**, with **Sign out**. A session that was open
+  when the grace period ended is led there at its next request; the server
+  refuses every other request of the account (HTTP 403 "Two-factor
+  authentication is required: set it up to continue"), and the account's API
+  tokens stop working. Once 2FA is on, the account has its rights again at
+  once: generate recovery codes next.
+- An account that turns 2FA off after its grace period can only set it up
+  again at once; there is no new grace period.
+- SMB has no second factor: an account with SMB on still signs in to SMB with
+  its password alone. Turn SMB off for a user on the **Users** page where that
+  matters.
+
+Turning the requirement off gives every account its rights back at its next
+request. Scripts read it with `GET /api/v1/security/two-factor-requirement`
+and change it with `POST /api/v1/security/two-factor-requirement/enable`
+(`grace_days`, `code`) and `/disable` (`code`), with a session, not an API
+token; `GET /api/v1/auth/me` answers `two_factor_required` for the signed-in
+account.
+
 ### Login History
 
 Under **Login History** on the **Account** page (administrators: **System** →
@@ -1766,8 +1805,12 @@ regular users have no access to it.
   names of the fields that changed and, for a rename, the old name; never
   the command or the passphrase), enabled, disabled, deleted and run with
   **Run now** (**Task run**); a network interface disabled, its
-  disable kept, and enabled; Wake-on-LAN turned on or off; and a new host
-  name or time zone (**Settings changed**, from the old value to the new).
+  disable kept, and enabled; Wake-on-LAN turned on or off; a new host
+  name or time zone (**Settings changed**, from the old value to the new);
+  and two-factor authentication required for every account or no longer
+  (**Settings changed**, resource `two_factor_requirement`; no longer as a
+  **Warning**), with the sign-ins of accounts that can only set it up (a
+  **Warning**).
   Only a change that was made writes an entry: a refused or failed one, or
   one that changes nothing (the same host name, a task saved unchanged,
   removing a pool that is not there, starting a running container or
@@ -2479,7 +2522,8 @@ yet: every enabled channel receives every alert, and no other event
 
 1. ✅ Create the administrator account right after installing, with a strong password
 2. ✅ Enable two-factor authentication (2FA), and keep its recovery codes
-   somewhere safe
+   somewhere safe; an administrator can require it for every account
+   (**System** → **Security**)
 3. ✅ Use strong, unique passwords, above all for accounts with SMB: SMB has
    no two-factor authentication, and its lock after 5 wrong passwords still
    lets anyone on the network try 5 passwords per account every 5 minutes.
