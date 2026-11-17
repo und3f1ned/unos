@@ -158,6 +158,36 @@ export function appContainers(app: AppTemplate): AppContainer[] {
   ];
 }
 
+/**
+ * A container's limits as Docker keeps them and its use as UNOS last read it from the kernel
+ * (ADR-0390): bytes and CPUs; null for no limit, and for a use not read (a container that does
+ * not run, or before the first read).
+ */
+export interface ContainerResources {
+  memory_limit: number | null;
+  cpu_limit: number | null;
+  memory_used: number | null;
+  /** The CPUs it used on average between the last two reads. */
+  cpu_used: number | null;
+  sampled_at: string | null;
+}
+
+/** What the limits of a container may be on this NAS (GET /apps/limits). */
+export interface LimitBounds {
+  memory_min: number;
+  /** The memory of the NAS: a memory limit must be below it. */
+  memory_max: number;
+  cpu_min: number;
+  cpu_max: number;
+}
+
+/** The limits of one container after a change: null for none. */
+export interface ContainerLimits {
+  container: string;
+  memory_limit: number | null;
+  cpu_limit: number | null;
+}
+
 /** A companion container of an installed app, as Docker reports it (ADR-0381). */
 export interface CompanionContainer {
   /** The companion's name in the app, and its container's name and id. */
@@ -170,6 +200,7 @@ export interface CompanionContainer {
   image: string;
   /** The host's device nodes passed into the container (ADR-0382). */
   devices: string[];
+  resources: ContainerResources;
 }
 
 /**
@@ -201,6 +232,8 @@ export interface InstalledApp {
   companions: CompanionContainer[];
   /** The names of the app's containers that Docker lacks: such an app does not start. */
   missing: string[];
+  /** The main container's limits and use (ADR-0390). */
+  resources: ContainerResources;
 }
 
 /** A hardware profile of one container of an app: `container` is its companion's name, or null for the main container. */
@@ -422,6 +455,21 @@ export async function stopApp(containerId: string): Promise<void> {
 
 export async function restartApp(containerId: string): Promise<void> {
   return api.post(`/apps/installed/${containerId}/restart`);
+}
+
+export async function getLimitBounds(): Promise<LimitBounds> {
+  return api.get<LimitBounds>("/apps/limits");
+}
+
+/**
+ * Set the limits of one container of an app, named by its name or id; null removes a limit
+ * (ADR-0390). Docker gets them at once, and UNOS keeps them for the app's next install.
+ */
+export async function setContainerLimits(
+  container: string,
+  limits: { memory_limit: number | null; cpu_limit: number | null },
+): Promise<ContainerLimits> {
+  return api.put<ContainerLimits>(`/apps/installed/${encodeURIComponent(container)}/limits`, limits);
 }
 
 /** Host path a catalog volume gets on a pool; fixed host paths are returned unchanged. */

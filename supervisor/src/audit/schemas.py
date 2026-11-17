@@ -60,6 +60,7 @@ class AuditAction(str, Enum):
     CONTAINER_REMOVED = "container_removed"
     APP_INSTALLED = "app_installed"
     APP_UNINSTALLED = "app_uninstalled"
+    APP_LIMITS_CHANGED = "app_limits_changed"  # the memory or CPU limit of an app's container (ADR-0390)
 
     # System
     BACKUP_CREATED = "backup_created"

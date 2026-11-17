@@ -77,7 +77,8 @@ Avoid: alarm.
 
 **Problem**: A condition of the NAS that needs an administrator while it lasts: a managed pool
 that is not mounted, degraded, read-only after an error or almost full, a volume at 80, 90 or 95
-percent of its quota, a failing disk, a scheduled task whose last run failed or that missed a run.
+percent of its quota, a failing disk, a scheduled task whose last run failed or that missed a run,
+a container of an app at its memory or CPU limit or out of memory (ADR-0390).
 It is alerted once when it is found (a volume's again at each further level) and shown in
 the health banner until it is gone; UNOS keeps it in RAM only (ADR-0332). Avoid: issue, incident,
 event.
@@ -328,6 +329,17 @@ machine learning's `rk3588-npu` with Immich's `-rknn` image on an RK3588 with th
 node; on any other host the container is installed as elsewhere, and the App Store says nothing
 of it (ADR-0382). Avoid: hardware acceleration (what the App Store calls it for the user),
 passthrough.
+
+**Container limits**: The memory limit and the CPU limit that an administrator sets for one
+container of an app on the Installed tab, each optional: Docker keeps them in the container's
+HostConfig (`docker inspect`: Memory and MemorySwap, CpuQuota per CpuPeriod), and UNOS keeps them
+in its database for the app's next install. Each container of an app has its own (ADR-0390).
+Avoid: quota (a volume's), app limits.
+
+**Container use**: The memory and the CPUs that a running container of an app uses, which UNOS
+reads every 30 seconds from the container's cgroup in the kernel: memory.current without the
+inactive page cache, and the CPU time between two reads (ADR-0390). Avoid: stats (Docker's
+stats stream, which UNOS does not read).
 
 **Backup**: An archive of the UNOS database, encrypted if wanted, without the pools' files
 (ADR-0040). Avoid: snapshot.

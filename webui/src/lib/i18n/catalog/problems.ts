@@ -2,7 +2,7 @@ import type { Translation } from '../translate';
 
 // The health banner above every page of an administrator: src/lib/components/ProblemsBanner.svelte.
 // One text per kind of problem (supervisor/src/health/problems.py, ADR-0332), with {subject}: the
-// pool's name, the disk's path, the task's name or <pool>/<volume>.
+// pool's name, the disk's path, the task's name, <pool>/<volume> or a container's name.
 
 export const en = {
 	'problems.title': {
@@ -23,6 +23,10 @@ export const en = {
 	'problems.kind.volume_quota_80': 'Volume {subject} has reached 80% of its quota',
 	'problems.kind.volume_quota_90': 'Volume {subject} has reached 90% of its quota',
 	'problems.kind.volume_quota_95': 'Volume {subject} has reached 95% of its quota',
+	// A container of an app at its limits (ADR-0390): {subject} is the container's name.
+	'problems.kind.app_memory': 'Container {subject} is near its memory limit',
+	'problems.kind.app_cpu': 'Container {subject} is held at its CPU limit',
+	'problems.kind.app_oom': 'Container {subject} ran out of memory: the kernel ended a process of it',
 	// A kind that this web UI does not know yet.
 	'problems.kind.other': 'A problem with {subject}'
 };
@@ -46,5 +50,8 @@ export const ru: Translation<typeof en> = {
 	'problems.kind.volume_quota_80': 'Том {subject} заполнен на 80% квоты',
 	'problems.kind.volume_quota_90': 'Том {subject} заполнен на 90% квоты',
 	'problems.kind.volume_quota_95': 'Том {subject} заполнен на 95% квоты',
+	'problems.kind.app_memory': 'Контейнер {subject} близок к ограничению памяти',
+	'problems.kind.app_cpu': 'Контейнер {subject} упирается в ограничение ЦП',
+	'problems.kind.app_oom': 'Контейнеру {subject} не хватило памяти: ядро завершило его процесс',
 	'problems.kind.other': 'Проблема: {subject}'
 };

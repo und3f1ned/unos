@@ -369,6 +369,23 @@ manager, encrypted backup uploads, health checks, CI checks).
   deleted elsewhere in the meantime is not deleted and is named with the
   reason; when testparm rejects the new smb.conf or the database is busy,
   none is deleted.
+- Memory and CPU limits for the containers of apps (ADR-0390). On the App
+  Store's **Installed** tab each app's card lists its containers with the
+  memory and the CPUs each uses against its limits, and **Limits** sets a
+  container's memory limit (from 64 MB to below the NAS's memory, leaving a
+  running container a margin above what it uses now) and CPU limit (from 0.1 to the NAS's
+  CPUs); an empty field is no limit. Docker applies them at once and keeps
+  them across restarts and reboots (`docker inspect`: `Memory`,
+  `MemorySwap`, `CpuQuota`, `CpuPeriod`), and UNOS keeps them for the app's
+  next install, also after an uninstall. Every 30 seconds UNOS reads each
+  running container's use from its cgroup in the kernel, with no command,
+  no disk read and nothing written, and alerts once a container at 90% of
+  its memory limit (until below 80%), one held at 90% of its CPU limit for
+  5 minutes (until below 70%) and, as an error, one whose process the
+  kernel ended for lack of memory (Docker's `oom` event, kept an hour). The
+  API: `PUT /api/v1/apps/installed/{container}/limits`,
+  `GET /api/v1/apps/limits` and `resources` of each container in
+  `GET /api/v1/apps/installed`; the audit log records `app_limits_changed`.
 - Groups of users (ADR-0385). The **Users** page has a **Groups** card: make
   a group, choose its members (users who are not administrators), rename it
   or delete it. On the **Shares** page a share's access list gives each group

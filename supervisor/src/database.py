@@ -103,6 +103,7 @@ async def init_db():
     from .auth.models import User  # noqa: F401
     from .security.models import LoginAttempt  # noqa: F401
     from .shares.models import SmbAccount, SmbShare, SmbShareAccess, SmbState, SmbUid  # noqa: F401
+    from .apps.models import AppResourceLimit  # noqa: F401
 
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
