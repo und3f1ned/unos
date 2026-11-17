@@ -11,10 +11,13 @@ import {
   TIME_MACHINE_MODULES,
   VERSION_CONFLICT,
   accessOf,
+  fakeGroup,
   fakeRepairEvents,
   fakeShare,
   fakeSmbApi,
   fakeUser,
+  groupAccessOf,
+  groupMissing,
   repairResult,
   repairStarted,
   smbStatus,
@@ -25,7 +28,7 @@ const POOL_ROOT_MESSAGE =
   'Share a folder inside the pool or a volume: the top level of a pool holds app data (apps/), volumes and snapshots';
 const NOT_SERVED_HINT = 'Fix the folder first: a share that is not served cannot be given access';
 const NOT_SERVED_GRANTS_NOTE =
-  'Its access entries and guest access do not count while it is not served. To save other changes without a new folder, remove them: No access for every user, and guest access off.';
+  'Its access entries and guest access do not count while it is not served. To save other changes without a new folder, remove them: No access for every user and group, and guest access off.';
 
 test.describe('Shares Management', () => {
   test('should navigate to shares page', async ({ authenticatedPage: page }) => {
@@ -171,6 +174,7 @@ test.describe('SMB shares page (fake data)', () => {
             { user_id: 2, username: 'alice', level: 'write' },
             { user_id: 3, username: 'bob', level: 'read' },
           ],
+          group_access: [],
           encryption_required: false,
           time_machine: false,
           previous_versions: false,
@@ -1746,5 +1750,136 @@ test.describe('Seeded SMB share (stand-in)', () => {
     });
     expect(response.status()).toBe(200);
     expect((await seed(request)).import_notes).toEqual([]);
+  });
+});
+
+// ---- Group access (shares.group-access) ----
+
+test.describe('Group access (fake data)', () => {
+  test('a group gets access in the dialog of a new share, and the card shows its members', async ({
+    authenticatedPage: page,
+  }) => {
+    const users = fakeUsers();
+    const fake = await fakeSmbApi(page, {
+      users,
+      groups: [fakeGroup(1, 'family', users, [2, 3]), fakeGroup(2, 'guests_of_honour', users, [])],
+    });
+    await page.goto('/shares');
+    await page.getByRole('button', { name: 'Add SMB share' }).click();
+    const dialog = page.getByRole('dialog', { name: 'Add SMB share' });
+    const access = dialog.getByRole('group', { name: 'Access' });
+
+    // Each group with its members under its level, after the users.
+    await expect(access.getByRole('combobox', { name: 'Group family' })).toHaveText('No access');
+    await expect(access.getByText('Members: alice, bob')).toBeVisible();
+    await expect(access.getByText('No members yet')).toBeVisible();
+    await expect(
+      access.getByText(
+        'Every member of a group gets its level once their SMB is on, and so does every user added to the group later. A user who also has a level of their own, or through another group, gets the higher one.',
+      ),
+    ).toBeVisible();
+    // "Everyone" sets the users only; Clear takes the groups' access away too.
+    await pick(access, 'Group family', 'Read only');
+    await access.getByRole('button', { name: 'Everyone: Read only' }).click();
+    await expect(access.getByRole('combobox', { name: 'Group family' })).toHaveText('Read only');
+    await access.getByRole('button', { name: 'Clear' }).click();
+    await expect(access.getByRole('combobox', { name: 'Group family' })).toHaveText('No access');
+
+    await dialog.getByLabel(/^Name/).fill('docs');
+    await dialog.getByLabel('Folder', { exact: true }).fill('docs');
+    await pick(access, 'alice', 'Read only');
+    await pick(access, 'Group family', 'Read & write');
+    await dialog.getByRole('button', { name: 'Create share' }).click();
+    await expect(dialog).toBeHidden();
+    expect(fake.writes.at(-1)?.body).toMatchObject({
+      name: 'docs',
+      access: [{ user_id: 2, username: 'alice', level: 'read' }],
+      group_access: [{ group_id: 1, group: 'family', level: 'write' }],
+    });
+
+    const card = shareCard(page, 'docs');
+    // bob's SMB is not on: crossed out, with the reason for screen readers.
+    const line = card.getByText('Group family (Read & write):').locator('..');
+    await expect(line).toHaveText(
+      'Group family (Read & write): alice, bob (not active yet: SMB is allowed for bob, but not turned on yet)',
+    );
+    await expect(line.locator('.line-through')).toHaveText('bob');
+    // alice reads by her own level and writes through the group: the higher level counts.
+    await expect(card.getByText('alice also writes through a group: the higher level counts.')).toBeVisible();
+    await expect(card.locator('.badge', { hasText: /^No access$/ })).toHaveCount(0);
+  });
+
+  test('the edit dialog sends a changed group access only, and the server\'s refusal is shown', async ({
+    authenticatedPage: page,
+  }) => {
+    const users = fakeUsers();
+    const groups = [fakeGroup(1, 'family', users, [2])];
+    const fake = await fakeSmbApi(page, {
+      users,
+      groups,
+      shares: [
+        fakeShare('docs', {
+          available: true,
+          group_access: groupAccessOf(groups, [{ group: 'family', level: 'read' }]),
+        }),
+      ],
+    });
+    await page.goto('/shares');
+    const card = shareCard(page, 'docs');
+    await expect(card.getByText('Group family (Read):').locator('..')).toHaveText('Group family (Read): alice');
+    await expect(card.getByText('No user has access.')).toHaveCount(0);
+
+    await card.getByRole('button', { name: 'Edit' }).click();
+    const dialog = page.getByRole('dialog', { name: 'Edit share docs' });
+    const access = dialog.getByRole('group', { name: 'Access' });
+    await expect(access.getByRole('combobox', { name: 'Group family' })).toHaveText('Read only');
+    await dialog.getByLabel('Comment').fill('Family files');
+    await dialog.getByRole('button', { name: 'Save' }).click();
+    await expect(dialog).toBeHidden();
+    expect(fake.writes.at(-1)).toEqual({
+      method: 'PATCH',
+      path: '/shares/smb/docs',
+      body: { expected_version: 1, comment: 'Family files' },
+    });
+
+    // The group was deleted meanwhile: the server refuses, and the dialog shows why.
+    await card.getByRole('button', { name: 'Edit' }).click();
+    await pick(access, 'Group family', 'Read & write');
+    fake.groups = [];
+    await dialog.getByRole('button', { name: 'Save' }).click();
+    await expect(dialog.locator('.alert', { hasText: 'Share was not saved' })).toContainText(groupMissing(1));
+    expect(fake.writes.at(-1)).toEqual({
+      method: 'PATCH',
+      path: '/shares/smb/docs',
+      body: { expected_version: 2, group_access: [{ group_id: 1, group: 'family', level: 'write' }] },
+    });
+    await dialog.getByRole('button', { name: 'Cancel' }).click();
+
+    // Without groups the picker says where to make them.
+    await card.getByRole('button', { name: 'Edit' }).click();
+    await expect(access.getByText('No groups yet: make them on the Users page.')).toBeVisible();
+  });
+
+  test('the group access of the dialog and the card are in Russian once Russian is chosen', async ({
+    authenticatedPage: page,
+  }) => {
+    const users = fakeUsers();
+    const groups = [fakeGroup(1, 'family', users, [2])];
+    await fakeSmbApi(page, {
+      users,
+      groups,
+      shares: [fakeShare('docs', { group_access: groupAccessOf(groups, [{ group: 'family', level: 'write' }]) })],
+    });
+    await page.evaluate(() => localStorage.setItem('unos-locale', 'ru'));
+    await page.goto('/shares');
+    const card = shareCard(page, 'docs');
+    await expect(card.getByText('Группа family (Чтение и запись):').locator('..')).toHaveText(
+      'Группа family (Чтение и запись): alice',
+    );
+    await card.getByRole('button', { name: /^Изменить/ }).click();
+    const dialog = page.getByRole('dialog');
+    await expect(dialog.getByRole('combobox', { name: 'Группа family' })).toHaveText('Чтение и запись');
+    await expect(dialog.getByText('Участники: alice')).toBeVisible();
+    await expect(dialog.getByText('Группы', { exact: true })).toBeVisible();
   });
 });

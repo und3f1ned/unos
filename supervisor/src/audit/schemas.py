@@ -40,6 +40,10 @@ class AuditAction(str, Enum):
     SHARE_UPDATED = "share_updated"
     SHARE_DELETED = "share_deleted"
     SHARE_PERMISSIONS_REPAIRED = "share_permissions_repaired"
+    # Groups of users and their members; their access is part of share_updated
+    GROUP_CREATED = "group_created"
+    GROUP_UPDATED = "group_updated"
+    GROUP_DELETED = "group_deleted"
     # SMB (ADR-0320): a user's SMB account, the import of smb.conf, the startup reconcile and
     # the SMB state after a restore
     SMB_ACCOUNT_UPDATED = "smb_account_updated"

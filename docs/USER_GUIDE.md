@@ -620,6 +620,13 @@ the import backup in the same way.
   with their UNOS username and password.
 - **Each share has its own access list:** for each user **No access**,
   **Read only** or **Read & write**. New users have no access to any share.
+- **Groups get access too:** a share's access list also gives each
+  [group](#groups) **No access**, **Read only** or **Read & write**. Every
+  member of the group whose SMB is on gets that access, and so does a user
+  added to the group later. A user who has access of their own and through a
+  group, or through several groups, gets the higher level: **Read & write**
+  wins over **Read only**, and there is no way to give a member less than the
+  group has.
 - **Administrators cannot use SMB.** Their password controls the whole NAS,
   and SMB has no two-factor authentication: its lock after wrong passwords
   (see [SMB Access](#smb-access)) only slows down guessing. Use a regular
@@ -678,7 +685,11 @@ every served share below such a folder until the command has run.
    - **Protocol options** - **Require encryption**, **Time Machine backups of
      Macs** and **Previous Versions from snapshots**, each off by default:
      see [Protocol Options](#protocol-options)
-   - **Access** - For each user: No access, Read only or Read & write
+   - **Access** - For each user, and below them for each group (with its
+     members under it): No access, Read only or Read & write. **Everyone:
+     Read only** and **Everyone: Read & write** set the level of every user,
+     not of the groups; **Clear** sets every user and every group to No
+     access.
 3. Click **Create**
 
 Folders that apps use (downloads, media) can be shared. SMB users with write
@@ -760,11 +771,12 @@ encryption required loses guest access at the restore, with a note.
 #### Editing a Share
 
 - **Edit** changes the comment, network browsing, guest access, the protocol
-  options and the access list (and the folder of a share marked **Not
-  served**). Removing or lowering someone's access, turning guest access off,
-  requiring encryption and turning Previous Versions off disconnect every
-  open connection to that share; the computers reconnect by themselves.
-  Adding access disconnects nobody.
+  options and the access list of users and groups (and the folder of a share
+  marked **Not served**). Removing or lowering someone's access, also a
+  group's (and removing a member from a group, see [Groups](#groups)),
+  turning guest access off, requiring encryption and turning Previous
+  Versions off disconnect every open connection to that share; the computers
+  reconnect by themselves. Adding access disconnects nobody.
 - **Repair permissions** fixes the permissions of the files that are already
   in the share (see below).
 - **Delete** removes the share; the folder and its files are kept. Open
@@ -1474,6 +1486,38 @@ end, nothing is renamed and the dialog says why. When SMB could not be turned
 on again under the new name, the user is renamed with SMB **Password needed**,
 and the page shows why.
 
+### Groups
+
+A group gives several users the same access to shares. Under **Groups** on
+the **Users** page, click **New group**, enter a name (1 to 32 lowercase
+letters, digits, `_` or `-`, starting with a letter; no two groups may have
+the same name in any letter case) and tick its members, then click **Create
+group**. Administrators are not listed, since they cannot use SMB, and users
+whose names SMB cannot use cannot be members. A user whose SMB is off or
+needs a password can be a member: the group's access counts for them once
+their SMB is on.
+
+Give the group access on the **Shares** page: in a share's access list each
+group has its own level (see [How Access Works](#how-access-works)). Each
+group on the **Users** page lists its members and the shares it has access
+to.
+
+- **Edit** renames the group or changes its members. A member added gets the
+  group's access at once; a member removed loses it, and their open
+  connections to the group's shares are closed (the computers reconnect with
+  the access they still have).
+- **Delete** removes the group and its access to shares; its members lose
+  what the group gave them, and the users themselves stay.
+- A deleted user, and a user made an administrator, leave every group; a
+  renamed user stays in their groups under the new name.
+
+A group exists only in UNOS: Samba's configuration lists the members by name,
+and no group is made on the NAS itself, so a group of the NAS's own (such as
+`users` or `staff`) is never affected and may have the same name. Groups are
+part of the database, so a backup holds them and a restore brings them back as
+they were at the backup; a member counts again once their SMB account is
+active after the restore.
+
 ### User Roles
 
 | Role | Permissions |
@@ -1483,8 +1527,8 @@ and the page shows why.
 
 Every other page and API is for administrators only; regular users do not see
 them. At least one administrator must remain: the last one cannot be demoted
-or deleted. Making a user an administrator removes the user's SMB access and
-share permissions and ends the user's open SMB connections.
+or deleted. Making a user an administrator removes the user's SMB access,
+share permissions and groups and ends the user's open SMB connections.
 
 ### SMB Access
 
@@ -1507,7 +1551,8 @@ one of two ways:
 - or you set a new password for the user in the edit dialog, with **Also turn
   SMB on with this password** ticked.
 
-Then give the user access to shares on the **Shares** page.
+Then give the user access to shares on the **Shares** page, or add the user
+to a group that has access (see [Groups](#groups)).
 
 SMB passwords need at least 8 characters, and they must not be common
 passwords: UNOS refuses about 1450 passwords that attackers try first, such as
@@ -1778,7 +1823,8 @@ regular users have no access to it.
   restored, containers started, restarted, stopped and removed on the
   **Containers** page, apps started, restarted and stopped on the **Apps**
   page (a restart as **Container started**), apps installed and uninstalled
-  (removals and deletions as a **Warning**), the SMB access of users, shares
+  (removals and deletions as a **Warning**), the SMB access of users, groups
+  created, changed and deleted (deletions as a **Warning**), shares
   created, changed, deleted and repaired, NFS exports created and deleted,
   shares imported from smb.conf, the corrections of the SMB check at startup
   and the SMB state after a restore (by the user `system`), API tokens
@@ -2211,7 +2257,8 @@ A run on a pool that is not mounted fails with `Pool <name> is not mounted at
 
 Go to **System** → **Backup & Restore**. A backup holds the UNOS database:
 user accounts with their passwords, two-factor authentication, API tokens,
-the login history, and the SMB shares with their access lists. It does not
+the login history, the groups of users with their members, and the SMB
+shares with their access lists, those of groups included. It does not
 hold the files in your pools, Samba's own password database, nor settings
 kept elsewhere, such as notification channels, scheduled tasks, firewall
 rules, UPS settings, the network settings and the host's `/etc/fstab`. Each
@@ -2234,11 +2281,16 @@ backup in the list has **Restore**, **Download** and **Delete** buttons.
   tasks also hold are named in the result as not restored.
 
 SMB after a restore:
-- The shares and their access lists come back with the database, and UNOS
-  writes smb.conf from them; a backup holds no smb.conf. A backup whose
-  database never imported its shares gets the shares of the current smb.conf,
-  without guest access, and a backup of a UNOS from before shares were stored
-  in the database is refused.
+- The shares and their access lists, and the groups with their members, come
+  back with the database, and UNOS writes smb.conf from them; a backup holds
+  no smb.conf. A backup made before UNOS had groups restores without groups,
+  and one whose groups break the name rule or share a name is refused. A
+  backup whose database never imported its shares gets the shares of the
+  current smb.conf, without guest access: smb.conf names users, not groups,
+  so every user who has access in it, also through a group, gets that access
+  of their own, which stays when they leave the group, and the groups come
+  back without access to shares. A backup of a UNOS from before shares were
+  stored in the database is refused.
 - SMB keeps working for users whose password did not change since the backup
   was made. Everyone else shows **Password needed** and must turn SMB on
   again (see [SMB Access](#smb-access)), and so must a user whose SMB user id

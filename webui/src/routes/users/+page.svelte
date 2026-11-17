@@ -14,11 +14,13 @@
 		type UserUpdate
 	} from '$lib/api/auth';
 	import { ApiError } from '$lib/api/client';
+	import { getGroups } from '$lib/api/groups';
 	import { getSmbShares } from '$lib/api/shares';
 	import { user as currentUser } from '$lib/stores/auth';
 	import { Edit, LogOut, Shield, ShieldOff, Trash2, UserPlus, Users } from 'lucide-svelte';
 	import { Alert, Badge, Button, Card, Input, Modal } from '$lib/components/ui';
 	import { SmbStateBadge } from '$lib/components/shares';
+	import { GroupsCard } from '$lib/components/users';
 	import { intlLocale, t } from '$lib/i18n';
 
 	const MIN_PASSWORD_LENGTH = 8;
@@ -220,11 +222,14 @@
 		void loadShareAccess(user);
 	}
 
+	// Access of the user's own, or as a member of a group: a promotion removes both.
 	async function loadShareAccess(user: User) {
 		const request = ++shareAccessRequest;
 		try {
-			const shares = await getSmbShares();
-			const hasAccess = shares.some((share) => share.access.some((a) => a.user_id === user.id));
+			const [shares, groups] = await Promise.all([getSmbShares(), getGroups()]);
+			const hasAccess =
+				shares.some((share) => share.access.some((a) => a.user_id === user.id)) ||
+				groups.some((group) => group.members.some((m) => m.user_id === user.id));
 			if (request === shareAccessRequest) editHasShareAccess = hasAccess;
 		} catch {
 			// Unknown: the promotion warning is shown.
@@ -529,6 +534,8 @@
 					</div>
 				{/if}
 			</Card>
+
+			<GroupsCard {users} />
 
 			<Card>
 				<h2 class="section-title mb-4">{$t('users.about.title')}</h2>

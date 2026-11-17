@@ -174,6 +174,13 @@ show as "Not served" and grant nothing (ADR-0145). Avoid: active share, enabled 
 the share, and it counts only while the user's SMB account is active (ADR-0075).
 Avoid: permission, ACL.
 
+**Group**: A named set of UNOS users, kept in UNOS's database only, that can be given share access:
+each member whose SMB account is active gets it, and a user gets the higher of their own level and
+their groups' (ADR-0385). It is no host group: smb.conf names the members. Avoid: SMB group, host
+group, unos-smb (the host group of every SMB account).
+
+**Group access**: A group's level on one share, read or write (ADR-0385). Avoid: group permission.
+
 **Guest share**: A share that guests may read without a password; guests never write (ADR-0096,
 ADR-0100). Avoid: public share, anonymous share.
 

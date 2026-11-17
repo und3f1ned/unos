@@ -149,10 +149,12 @@ class TestTablesOnAnOldDatabase:
         await _init_db_on(old_db, monkeypatch)
 
         # And the sessions' table (ADR-0329), the record of handed-out uids (ADR-0353), the names of
-        # renamed uids and when a rename gave a name (ADR-0368), and the shares' protocol options
-        # (ADR-0380), new beside them.
-        renames = {"smb_uid_names", "usernames_taken", "smb_share_options"}
-        assert _tables(old_db) == OLD_TABLES | SMB_TABLES | {"user_sessions", "smb_uids"} | renames
+        # renamed uids and when a rename gave a name (ADR-0368), the shares' protocol options
+        # (ADR-0380) and the groups of users with their share access, new beside them.
+        renames = {"smb_uid_names", "usernames_taken", "smb_share_options", "user_groups", "user_group_members",
+                   "smb_share_group_access"}
+        # sqlite_sequence is SQLite's own: it keeps the AUTOINCREMENT counter of user_groups.
+        assert _tables(old_db) == OLD_TABLES | SMB_TABLES | {"user_sessions", "smb_uids", "sqlite_sequence"} | renames
         assert _rows(old_db, "users") == users
         assert _schema(old_db, "users") == users_schema  # no column added to users
         # Nothing is written into the new tables: the SmbState row is made on first use.
