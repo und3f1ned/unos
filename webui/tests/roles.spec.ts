@@ -170,10 +170,11 @@ test.describe('Regular user account', () => {
 
     await expect(page).toHaveURL('/login');
     await expect(page.locator('#username')).toBeVisible();
-    // Only once: nothing on the sign-in page needs a session.
+    // Only the requests of the Refresh, which go out together (the system's information and the
+    // user's dashboard layout), each once: nothing on the sign-in page needs a session.
     await page.waitForTimeout(1000);
     await expect(page).toHaveURL('/login');
-    expect(unauthorized).toEqual(['/api/v1/system/info']);
+    expect([...unauthorized].sort()).toEqual(['/api/v1/auth/me/dashboard-layout', '/api/v1/system/info']);
   });
 
   test('a logout in another tab ends the session in this one', async ({ page, context, request }) => {
