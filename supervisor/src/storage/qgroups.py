@@ -78,6 +78,20 @@ def generation(fsid: str) -> int | None:
     return None if folder is None else _number(os.path.join(folder, "generation"))
 
 
+def quota_tree_id(fsid: str) -> int | None:
+    """What tells this mount's quota groups of the filesystem ``fsid`` from those of another mount
+    or of quotas enabled again: the inode number of its sysfs folder ``qgroups``, which kernfs
+    gives anew (with a generation) each time it makes the folder; None when quotas are off or the
+    folder cannot be read."""
+    filesystem = _folder(fsid)
+    if filesystem is None:
+        return None
+    try:
+        return os.stat(os.path.join(filesystem, "qgroups")).st_ino
+    except OSError:
+        return None
+
+
 def subvolume_group_ids(fsid: str) -> set[int] | None:
     """The subvolume ids of the quota groups 0/<id> of the mounted filesystem ``fsid``, the top
     level's 0/5 left out; None when quotas are off or the folder cannot be read. A list of the

@@ -24,6 +24,7 @@ import json
 import logging
 import math
 import os
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -115,7 +116,12 @@ def host(monkeypatch, tmp_path):
             return run_btrfs(cmd)
         subvol_id = int(cmd[3][2:])
         write(fake)
-        if subvol_id in fake.busy or qgroups.group_in_use(DATA_UUID, subvol_id):
+        group = sysfs.root / DATA_UUID / "qgroups" / f"0_{subvol_id}"
+        if not group.is_dir():
+            return HostResult(1, "", "ERROR: unable to destroy quota group: No such file or directory")
+        counts = [int(file.read_text()) for file in group.iterdir()
+                  if file.name in ("referenced", "exclusive") or file.name.startswith("rsv_")]
+        if subvol_id in fake.busy or any(counts):
             return HostResult(1, "", BUSY)
         result = run_btrfs(cmd)
         if result.ok:
@@ -742,9 +748,162 @@ class TestStaleQuotaGroups:
             return found
 
         monkeypatch.setattr(pools, "mounted_pool_volumes", list_then_make)
+        check()
+        assert volume_usage._state.stale[DATA_UUID][1] == set()  # not even a candidate
         settled(host)
 
         assert destroys(host) == []
+
+    def test_an_id_given_out_again_after_a_remount_is_not_taken_for_the_stale_one(
+        self, host, clock, monkeypatch
+    ):
+        # A list before the remount found 0/<id> stale; after the remount btrfs gives the id to a new
+        # subvolume, whose group (counting 0) the first list after the remount misses.
+        check()
+        delete_subvolume(host, host.documents)
+        check()  # a candidate
+        assert volume_usage._state.stale[DATA_UUID][1] == {host.documents}
+        tree = qgroups.quota_tree_id(DATA_UUID)
+        monkeypatch.setattr(qgroups, "quota_tree_id", lambda fsid: tree + 1)  # the folder made anew
+        host.subvols.subvolumes[DATA_UUID][host.documents] = (5, "music")
+        listed = pools.mounted_pool_volumes
+        calls = []
+
+        def first_misses_music(name, target):
+            found, unresolved, ids = listed(name, target)
+            calls.append(name)
+            return found, unresolved, ids - {host.documents} if len(calls) == 1 else ids
+
+        monkeypatch.setattr(pools, "mounted_pool_volumes", first_misses_music)
+        write(host)
+        settled(host)
+
+        assert destroys(host) == []
+
+    def test_a_pass_with_the_pool_unmounted_starts_the_two_lists_again(self, host, clock):
+        check()
+        delete_subvolume(host, host.documents)
+        check()  # a candidate
+        check(data_pool(mounted=False, mountpoint=None, health="unmounted"))
+        write(host)  # mounted again
+        check()
+        assert destroys(host) == []
+
+        check()
+        assert len(destroys(host)) == 1
+
+    def test_a_start_needs_two_lists(self, host, clock, monkeypatch):
+        check()
+        delete_subvolume(host, host.documents)
+        check()  # a candidate
+        monkeypatch.setattr(volume_usage, "_state", volume_usage._State())  # a new start
+        write(host)
+        check()
+        assert destroys(host) == []
+
+        check()
+        assert len(destroys(host)) == 1
+
+    def test_the_groups_of_a_pool_that_is_gone_are_forgotten(self, host, clock):
+        check()
+        delete_subvolume(host, host.documents)
+        check()
+        check(data_pool(name="other", uuid="0b1e7a65-1b0f-4ec6-9d6c-6e4c3f1a2b3c"))
+
+        assert DATA_UUID not in volume_usage._state.stale
+
+    def test_a_group_whose_files_cannot_be_read_gets_no_command(self, host, clock):
+        check()
+        delete_subvolume(host, host.documents)
+        (host.sysfs.root / DATA_UUID / "qgroups" / f"0_{host.documents}" / "exclusive").unlink()
+        settled(host)
+
+        assert destroys(host) == []
+
+    def test_a_folder_that_cannot_be_read_once_does_not_start_the_attempts_again(
+        self, host, clock, caplog, monkeypatch
+    ):
+        check()
+        delete_subvolume(host, host.documents)
+        host.busy.add(host.documents)
+        settled(host)
+        assert len(destroys(host)) == 3
+        read = qgroups.subvolume_group_ids
+        monkeypatch.setattr(qgroups, "subvolume_group_ids", lambda fsid: None)
+        write(host)
+        check()
+        monkeypatch.setattr(qgroups, "subvolume_group_ids", read)
+        write(host)
+        settled(host)
+
+        assert len(destroys(host)) == 3
+        assert caplog.text.count("Gave up destroying the quota group") == 1
+
+    def test_a_group_that_has_its_subvolume_again_may_be_tried_again_later(self, host, clock, caplog):
+        check()
+        delete_subvolume(host, host.documents)
+        host.busy.add(host.documents)
+        settled(host)
+        assert len(destroys(host)) == 3
+
+        host.subvols.subvolumes[DATA_UUID][host.documents] = (5, "documents")  # listed again
+        write(host)
+        check()
+        delete_subvolume(host, host.documents)
+        settled(host)
+
+        assert len(destroys(host)) == 6
+
+    def test_a_hung_destroy_is_one_per_pass_and_the_others_come_later(self, host, clock):
+        check()
+        host.fail[DESTROY] = (-9, "")
+        delete_subvolume(host, host.documents)
+        delete_subvolume(host, host.photos)
+        counts = []
+        for _ in range(10):
+            before = len(destroys(host))
+            check()
+            counts.append(len(destroys(host)) - before)
+            write(host)
+
+        assert max(counts) == 1
+        assert [cmd[6] for cmd in destroys(host)] == [f"0/{host.documents}"] * 3 + [f"0/{host.photos}"] * 3
+
+
+class TestDestroyQuotaGroup:
+    """``pools.destroy_quota_group``: what btrfs answered, under the host's timeout (ADR-0258)."""
+
+    @pytest.mark.parametrize(("returncode", "stderr", "outcome"), [
+        (0, "", "destroyed"),
+        (1, "ERROR: unable to destroy quota group: No such file or directory", "absent"),
+        (1, "ERROR: unable to destroy quota group: Transport endpoint is not connected", "absent"),
+        (1, "ERROR: unable to destroy quota group: quota not enabled", "absent"),
+        (1, BUSY, "busy"),
+        (1, "ERROR: unable to destroy quota group: Invalid argument", "failed"),
+        (124, "", "hung"),
+        (137, "", "hung"),
+        (-9, "", "hung"),
+    ])
+    def test_outcomes(self, monkeypatch, returncode, stderr, outcome):
+        sent = []
+
+        def run_on_host(cmd, **kwargs):
+            sent.append((cmd, kwargs.get("timeout")))
+            return HostResult(returncode, "", stderr)
+
+        monkeypatch.setattr("src.host.run_on_host", run_on_host)
+
+        assert pools.destroy_quota_group("/mnt/pools/data", 300)[0] == outcome
+        assert sent == [([*DESTROY, "0/300", "/mnt/pools/data"], 65)]
+
+    def test_no_answer_within_the_supervisor_s_timeout_is_hung(self, monkeypatch):
+        def run_on_host(cmd, **kwargs):
+            raise subprocess.TimeoutExpired(cmd, kwargs.get("timeout"))
+
+        monkeypatch.setattr("src.host.run_on_host", run_on_host)
+
+        assert pools.destroy_quota_group("/mnt/pools/data", 300) == (
+            "hung", "btrfs did not answer within 60 seconds")
 
     def test_a_list_that_fails_destroys_nothing(self, host, clock):
         delete_subvolume(host, host.documents)

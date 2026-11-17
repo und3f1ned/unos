@@ -489,9 +489,10 @@ For each pool, you can:
   `btrfs quota rescan /mnt/pools/<pool>` to run on the host; until the counts
   are right again, UNOS keeps the alerts as they were and adds no point to
   the graph. Once btrfs has finished deleting a volume, snapshot or restored
-  copy, the monitor deletes its quota group a few minutes later, so that a
-  later subvolume does not meet its limit; when btrfs's counts need a rescan,
-  the group waits for it. The graph button
+  copy, the monitor deletes its quota group at a later pass, once the group
+  counts nothing (usually within 10 minutes; after a restart of UNOS, after
+  the next write to the pool), so that a later subvolume does not meet its
+  limit; when btrfs's counts need a rescan, the group waits for it. The graph button
   of a volume shows its use over time below it: one point per hour for the
   last 30 days, with the quota as a dashed line. UNOS keeps the points in
   memory and writes them to the system disk only when the supervisor stops,
