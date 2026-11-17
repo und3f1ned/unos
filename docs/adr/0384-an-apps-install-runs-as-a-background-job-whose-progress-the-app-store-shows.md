@@ -35,6 +35,7 @@ ADR-0381 kept the install of an app one request that answered after its pulls: I
 - Only one app installs at a time. A stalled pull ends the install after 10 minutes without a line, and an administrator can cancel any install at once; a pull that keeps sending lines without end (a registry that trickles) still holds the slot until it is cancelled.
 - A restart during an install can leave an app installed but not started, or incomplete; the Installed tab shows it, and Start or Uninstall handles it. The App Store does not show the last result of an install across a restart.
 - Scripts and device checks that installed with one request and `--timeout 3600` now need the waiting GET.
+- A GET that still waits 3 s after the SIGTERM is cancelled by uvicorn: its client gets 500, and the supervisor's log an "Exception in ASGI application" error with the CancelledError, which `scripts/dev/check.sh` lists for a day (seen on the dev device on 2026-11-17). The web UI never waits that way: it learns the end from the events socket.
 
 ## Considered options
 
