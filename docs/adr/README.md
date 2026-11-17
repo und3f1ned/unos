@@ -122,6 +122,7 @@ and this index, and `make check-fast` runs it.
 | [0312](0312-a-websockets-credential-re-check-in-progress-runs-to-its-end.md) | A WebSocket's credential re-check in progress runs to its end when the socket closes | accepted | 2026-11-09 |
 | [0329](0329-a-session-is-a-row-and-ending-it-deletes-the-row.md) | A session is a row of user_sessions, and ending a session deletes its row | accepted | 2026-11-10 |
 | [0386](0386-two-factor-authentication-required-for-every-account-after-a-grace-period.md) | An administrator with two-factor authentication requires it for every account, and after a grace period an account without it reaches only its setup | accepted | 2026-11-17 |
+| [0392](0392-an-api-token-can-be-limited-to-reading-and-to-areas-of-the-api.md) | An API token can be limited to reading and to areas of the API, checked where every credential is checked | accepted | 2026-11-17 |
 
 ## Storage
 

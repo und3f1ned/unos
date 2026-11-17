@@ -266,8 +266,19 @@ it expires or its session ends: Logout, a password change, an administrator (ADR
 ADR-0329). Avoid: cookie, API token.
 
 **API token**: A long-lived token that a user creates for scripts, with that user's rights, shown
-once (ADR-0239); only a session token creates, disables and deletes API tokens (ADR-0253). Avoid:
-session token, API key.
+once (ADR-0239); only a session token creates, disables and deletes API tokens (ADR-0253). It is
+full or limited by its scope (ADR-0392). Avoid: session token, API key.
+
+**Scope**: What an API token may reach: its access, read only or read and change, and its areas of
+the API, every area or a list (ADR-0392). Avoid: permissions (the column that keeps it), role.
+
+**Area of the API**: The first segment of an API path after `/api/v1/`, one per router prefix, such
+as `storage` or `backup`: what a scope lists (ADR-0392). Avoid: module, section, router.
+
+**Limited token**: An API token that is read only or limited to areas; through the API it never
+changes accounts, users, API tokens or two-factor authentication and never restores a backup. The
+others are **full** and act with all of their user's rights (ADR-0392). Avoid: scoped key,
+restricted token.
 
 **Recovery code**: One of the ten codes that a user with two-factor authentication generates on the
 Account page and keeps; each one signs in once in place of a code of the authenticator app

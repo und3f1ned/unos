@@ -18,7 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..config import get_settings
 from ..database import get_db
-from . import requirement
+from . import requirement, scopes
 from .models import APIToken, User, UserSession
 from .schemas import MAX_PASSWORD_BYTES
 
@@ -327,7 +327,9 @@ def _unauthorized(detail: str) -> HTTPException:
     )
 
 
-async def authenticate_token(token: str, db: AsyncSession, *, allow_setup_only: bool = False) -> User:
+async def authenticate_token(
+    token: str, db: AsyncSession, *, operation: scopes.Operation, allow_setup_only: bool = False
+) -> User:
     """Resolve a bearer credential (JWT or ``unos_`` API token) to its user.
 
     Shared by HTTP requests (``verify_token``) and the WebSocket handshake so
@@ -335,11 +337,17 @@ async def authenticate_token(token: str, db: AsyncSession, *, allow_setup_only: 
     credential is invalid, expired or disabled, or its user no longer exists,
     and ``HTTPException(403)`` with TWO_FACTOR_SETUP_REQUIRED for an account that
     can only set up two-factor authentication (ADR-0386): unless
-    ``allow_setup_only``, and then only for a session token.
+    ``allow_setup_only``, and then only for a session token. An API token whose
+    scope does not let it reach ``operation``, what the request or the socket
+    asks for, gets 403 too (ADR-0392): ``operation`` is required, so that no
+    check of a credential leaves the scope out.
     """
     if token.startswith(API_TOKEN_PREFIX):
-        user = await verify_api_token(token, db)
+        user, permissions = await verify_api_token(token, db)
         await _refuse_setup_only(db, user, allowed=False)
+        refused = scopes.stored_refusal(permissions, operation)
+        if refused is not None:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=refused)
         return user
 
     try:
@@ -371,22 +379,32 @@ async def _refuse_setup_only(db: AsyncSession, user: User, *, allowed: bool) -> 
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=requirement.TWO_FACTOR_SETUP_REQUIRED)
 
 
+def request_operation(request: Request) -> scopes.Operation:
+    """What a request asks for, as an API token's scope judges it: its method and its path as routed."""
+    return scopes.Operation(request.method, scopes.routed_path(request.scope))
+
+
 async def verify_token(
+    request: Request,
     credentials: HTTPAuthorizationCredentials = Depends(security),
     db: AsyncSession = Depends(get_db),
 ) -> User:
-    """Verify JWT token or API token. A setup-only account gets 403."""
-    return await authenticate_token(credentials.credentials, db)
+    """Verify JWT token or API token. A setup-only account gets 403, and so does an API token whose
+    scope does not reach the request (ADR-0392)."""
+    return await authenticate_token(credentials.credentials, db, operation=request_operation(request))
 
 
 async def verify_token_allowing_setup(
+    request: Request,
     credentials: HTTPAuthorizationCredentials = Depends(security),
     db: AsyncSession = Depends(get_db),
 ) -> User:
     """``verify_token`` for the routes that a setup-only account reaches with a session token: its
     own account, the setup of two-factor authentication, its status and the sign-out
     (SETUP_ONLY_ALLOWED of tests/test_authz.py). Its API tokens still get 403."""
-    return await authenticate_token(credentials.credentials, db, allow_setup_only=True)
+    return await authenticate_token(
+        credentials.credentials, db, operation=request_operation(request), allow_setup_only=True
+    )
 
 
 async def require_admin(user: User = Depends(verify_token)) -> User:
@@ -422,8 +440,9 @@ async def require_session(
     return user
 
 
-async def verify_api_token(token: str, db: AsyncSession) -> User:
-    """Verify an API token and return the associated user.
+async def verify_api_token(token: str, db: AsyncSession) -> tuple[User, Optional[str]]:
+    """Verify an API token and return the associated user and the token's scope as stored
+    (api_tokens.permissions as text, None when it is none; ``scopes.parse`` reads it: ADR-0392).
 
     The token's last use is committed only when the stored one is empty or LAST_USE_INTERVAL
     old (ADR-0252). A commit that fails, such as on a full /data, is rolled back and logged,
@@ -432,12 +451,14 @@ async def verify_api_token(token: str, db: AsyncSession) -> User:
     token_hash = hash_api_token(token)
 
     result = await db.execute(
-        select(APIToken).where(APIToken.token_hash == token_hash)
+        select(APIToken, *scopes.stored_columns(APIToken.permissions)).where(APIToken.token_hash == token_hash)
     )
-    api_token = result.scalar_one_or_none()
+    found = result.one_or_none()
 
-    if api_token is None:
+    if found is None:
         raise _unauthorized("Invalid API token")
+    api_token, kind, raw = found
+    permissions = scopes.stored_text(kind, raw)
 
     if not api_token.is_active:
         raise _unauthorized("API token is disabled")
@@ -465,4 +486,4 @@ async def verify_api_token(token: str, db: AsyncSession) -> User:
     if user is None:
         raise _unauthorized("User not found")
 
-    return user
+    return user, permissions

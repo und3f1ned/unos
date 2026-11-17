@@ -70,7 +70,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from .. import database
 from ..audit.changes import audit_change
 from ..audit.schemas import AuditAction, AuditSeverity
-from ..auth import requirement
+from ..auth import requirement, scopes
 from ..auth.utils import CallerSession, caller_session, forget_unstored_sessions, verify_token
 from ..config import get_settings
 from ..database import init_db
@@ -884,9 +884,13 @@ def _restore_locked(backup_path: Path, passphrase: str | None) -> dict:
                 _verify_page_size(db_file, db_path)
 
         two_factor_change = None
+        unreadable_scopes = 0
         if db_file is not None:
             warnings.extend(_prepare_smb(db_file, db_path))
             two_factor_change = _two_factor_requirement_change(db_path, db_file)
+            # API tokens come back with their scopes; one that cannot be read refuses its token
+            # everywhere until it is deleted (ADR-0392).
+            unreadable_scopes = scopes.unreadable_in(db_file)
 
         if db_file is not None:
             previous_db = _keep_copy_of_database(db_path)
@@ -895,6 +899,8 @@ def _restore_locked(backup_path: Path, passphrase: str | None) -> dict:
             restored.append("database")
             if two_factor_change is not None:
                 warnings.append(TWO_FACTOR_REQUIRED_BY_RESTORE if two_factor_change else TWO_FACTOR_NOT_REQUIRED_BY_RESTORE)
+            if unreadable_scopes:
+                warnings.append(scopes.unreadable_warning(unreadable_scopes))
 
         for name in _NOT_RESTORED:
             if name in members:

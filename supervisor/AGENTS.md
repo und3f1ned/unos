@@ -44,6 +44,11 @@ Python 3.11 and FastAPI. The package is `src`: tests import `src.*`, some from `
   regular user or nobody signed in may reach is listed in `USER_ALLOWED` or `PUBLIC` of
   `tests/test_authz.py`, which fails for a route without a decision. Request bodies are limited
   before the credentials are checked (ADR-0062).
+- An API token's scope (ADR-0392) is checked in `authenticate_token` for every request and
+  WebSocket. A new router's prefix joins `AREAS` of `src/auth/scopes.py`, a new WebSocket its
+  `SOCKET_AREAS`, and a GET whose answer holds secrets, or a POST that only reads, its
+  `OPERATION_KINDS`; `tests/test_token_scopes.py` walks every route for each scope and fails for
+  a prefix without an area.
 
 ## Writes and data paths
 

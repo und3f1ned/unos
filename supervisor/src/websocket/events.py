@@ -13,14 +13,16 @@ URL, because request URLs end up in the uvicorn and proxy access logs:
 The server closes the socket with 4401 ("unauthorized") when the first
 message is missing, late, malformed or carries an invalid token, and with
 4403 ("forbidden") when the user may not use the socket (container logs
-require an administrator) or can only set up two-factor authentication, which
-no socket serves (ADR-0386). A ``?token=`` query parameter is refused (4401).
+require an administrator), can only set up two-factor authentication, which
+no socket serves (ADR-0386), or signs in with an API token whose scope does not
+reach the socket (ADR-0392). A ``?token=`` query parameter is refused (4401).
 
 While a socket is open, its token is checked again every
 ``WS_REAUTH_INTERVAL_SECONDS``. A token that stopped being valid (expired
 JWT, disabled or expired API token, deleted user) closes the socket with
-4401; a logs socket whose user is no longer an administrator, and every socket
+4401; a logs socket whose user is no longer an administrator, every socket
 of an account whose grace period to set up two-factor authentication has ended,
+and every socket of an API token whose scope, read again, no longer reaches it,
 is closed with 4403. If the check itself fails (database error), the socket is closed with
 1011 and the client reconnects through the handshake. A check in progress
 when the socket closes runs to its end, and its answer is dropped.
@@ -79,6 +81,7 @@ import psutil
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
 
 from .. import host
+from ..auth import scopes
 from ..auth.models import User
 from ..auth.utils import authenticate_token
 from ..config import get_settings
@@ -388,18 +391,20 @@ def _token_from_auth_message(message: dict[str, Any]) -> str | None:
 
 
 class _SetupOnly(Exception):
-    """The token's account can only set up two-factor authentication: its session
-    stays, so the socket closes with 4403, not 4401."""
+    """The token is valid but may not use the socket: its account can only set up two-factor
+    authentication, whose session stays, or the API token's scope does not reach the socket
+    (ADR-0392). The socket closes with 4403, not 4401."""
 
 
-async def _user_for_token(token: str) -> User | None:
-    """The user of ``token``, or None when it is not valid; raises _SetupOnly for an account that
-    can only set up two-factor authentication."""
+async def _user_for_token(token: str, path: str) -> User | None:
+    """The user of ``token`` for the socket at ``path``, or None when it is not valid; raises
+    _SetupOnly for an account that can only set up two-factor authentication and for an API token
+    whose scope does not reach the socket."""
     # Short-lived session: a socket can stay open for hours and must not hold
     # a pooled database connection that long.
     try:
         async with async_session() as db:
-            return await authenticate_token(token, db)
+            return await authenticate_token(token, db, operation=scopes.Operation(scopes.WEBSOCKET, path))
     except HTTPException as exc:
         if exc.status_code == 403:
             raise _SetupOnly() from None
@@ -458,7 +463,7 @@ async def _handshake(websocket: WebSocket, admin_only: bool) -> tuple[str, User]
 
     token = _token_from_auth_message(message)
     try:
-        user = await _user_for_token(token) if token else None
+        user = await _user_for_token(token, scopes.routed_path(websocket.scope)) if token else None
     except _SetupOnly:
         await _close(websocket, WS_CLOSE_FORBIDDEN, "forbidden")
         return None
@@ -479,9 +484,9 @@ _checks_left_running: set["asyncio.Task[Any]"] = set()
 
 
 async def _watch_credential(
-    token: str, *, admin_only: bool = False, on_user: Callable[[User], None] | None = None
+    token: str, path: str, *, admin_only: bool = False, on_user: Callable[[User], None] | None = None
 ) -> tuple[int, str]:
-    """Check ``token`` every WS_REAUTH_INTERVAL_SECONDS while a socket is open.
+    """Check ``token`` for the socket at ``path`` every WS_REAUTH_INTERVAL_SECONDS while it is open.
 
     Returns the close code and reason once the socket must be closed; a check
     that keeps it open gives ``on_user`` the user as it is now. Each check
@@ -493,7 +498,7 @@ async def _watch_credential(
     """
     while True:
         await asyncio.sleep(WS_REAUTH_INTERVAL_SECONDS)
-        check = asyncio.ensure_future(_user_for_token(token))
+        check = asyncio.ensure_future(_user_for_token(token, path))
         try:
             user = await asyncio.shield(check)
         except asyncio.CancelledError:
@@ -609,7 +614,9 @@ async def websocket_endpoint(websocket: WebSocket):
     # Reading the socket notices a closed client right away (not only when the
     # next send fails) and drains anything the client sends.
     disconnected = asyncio.ensure_future(_wait_for_disconnect(websocket))
-    revoked = asyncio.ensure_future(_watch_credential(token, on_user=note_role))
+    revoked = asyncio.ensure_future(
+        _watch_credential(token, scopes.routed_path(websocket.scope), on_user=note_role)
+    )
     sent_problems: int | None = None
     sent_scrubs = 0
     sent_balances = 0
@@ -671,7 +678,7 @@ async def journal_endpoint(websocket: WebSocket):
 async def _follow_journal(websocket: WebSocket, token: str) -> None:
     disconnected = asyncio.ensure_future(_wait_for_disconnect(websocket))
     # Runs on its own timer, so access is re-checked while the journal is quiet too.
-    revoked = asyncio.ensure_future(_watch_credential(token, admin_only=True))
+    revoked = asyncio.ensure_future(_watch_credential(token, scopes.routed_path(websocket.scope), admin_only=True))
     stream = None
 
     async def until_done(work: "asyncio.Future[Any]") -> bool:
@@ -769,7 +776,7 @@ async def _stream_container_logs(websocket: WebSocket, container_id: str, token:
 
     disconnected = asyncio.ensure_future(_wait_for_disconnect(websocket))
     # Runs on its own timer, so access is re-checked while the container is quiet too.
-    revoked = asyncio.ensure_future(_watch_credential(token, admin_only=True))
+    revoked = asyncio.ensure_future(_watch_credential(token, scopes.routed_path(websocket.scope), admin_only=True))
     client = None
     stream = None
     try:

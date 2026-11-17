@@ -391,9 +391,9 @@ def fast_recheck(monkeypatch):
     checks = []
     real_authenticate = events.authenticate_token
 
-    async def counting_authenticate(token, db):
+    async def counting_authenticate(token, db, **kwargs):
         checks.append(token)
-        return await real_authenticate(token, db)
+        return await real_authenticate(token, db, **kwargs)
 
     monkeypatch.setattr(events, "authenticate_token", counting_authenticate)
     return checks
@@ -661,12 +661,12 @@ class TestReauthentication:
         real_user_for_token = events._user_for_token
         calls = 0
 
-        async def failing_after_handshake(token):
+        async def failing_after_handshake(token, path):
             nonlocal calls
             calls += 1
             if calls > 1:
                 raise RuntimeError("database is locked")
-            return await real_user_for_token(token)
+            return await real_user_for_token(token, path)
 
         monkeypatch.setattr(events, "_user_for_token", failing_after_handshake)
         with client.websocket_connect("/ws/v1/events") as ws:
@@ -689,25 +689,25 @@ class TestReauthentication:
         ends = []
         calls = 0
 
-        async def held_after_handshake(token):
+        async def held_after_handshake(token, path):
             nonlocal calls
             calls += 1
             if calls == 1:
-                return await real_user_for_token(token)  # the handshake
+                return await real_user_for_token(token, path)  # the handshake
             started.set()
             try:
                 while not release.is_set():
                     await asyncio.sleep(0.01)
-                user = await real_user_for_token(token)
+                user = await real_user_for_token(token, path)
             except asyncio.CancelledError:
                 ends.append("cancelled")
                 raise
             ends.append(user.username)
             return user
 
-        async def watch(token, **kwargs):
+        async def watch(token, path, **kwargs):
             try:
-                return await real_watch(token, **kwargs)
+                return await real_watch(token, path, **kwargs)
             finally:
                 watch_ended.set()
 
@@ -732,11 +732,11 @@ class TestReauthentication:
         started, release, failed = threading.Event(), threading.Event(), threading.Event()
         calls = 0
 
-        async def failing_after_the_close(token):
+        async def failing_after_the_close(token, path):
             nonlocal calls
             calls += 1
             if calls == 1:
-                return await real_user_for_token(token)  # the handshake
+                return await real_user_for_token(token, path)  # the handshake
             started.set()
             while not release.is_set():
                 await asyncio.sleep(0.01)

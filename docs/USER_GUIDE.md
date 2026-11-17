@@ -1912,19 +1912,97 @@ the reason, and **Retry** loads it again.
 
 Tokens give scripts access to the UNOS API with the rights of the account that
 created them: a regular user's token cannot use the administrator-only APIs.
-There is no page for them yet; create one with the API, using the
-`access_token` that `POST /api/v1/auth/login` returns. `name` has 1 to 64
-characters. `expires_in_days` is the token's lifetime, from 1 to 3650 days;
-without it the token does not expire. A token acts with all the rights of its
-user, and `permissions` takes only `*`. A user has at most 100 tokens. The
-answer is the only place that shows the full token (`token`, which starts with
-`unos_`): UNOS keeps only a hash of it, so save it right away.
+A token can be limited to reading, or to areas of the API, so that a script
+gets only what it needs.
+
+**On the Account page** (**System** → **Security**), **API Tokens** lists your
+tokens: each with its name and first 12 characters, its access (**Full
+access**, **Read only** or **Read and change**), its areas, whether it is
+disabled or expired, when it was created, when it expires and when it was last
+used. **Disable Token** and **Enable Token** turn a token off and on again, and
+**Delete Token** revokes it for good, after a confirmation. **New Token** opens
+a dialog:
+
+- **Name**: what the token is for, 1 to 64 characters.
+- **Expires**: never, or after 30, 90 or 365 days.
+- **Access**: **Read only**, which the dialog starts with, or **Read and
+  change**.
+- **Areas of the API**: **Every area**, which the dialog starts with, or
+  **Only these areas** and the areas to tick. With **Read and change**, a
+  warning appears when the areas include **Apps**, **Backups**,
+  **Containers**, **Off-device copy**, **Scheduler** or **Updates** (below).
+
+**Create Token** then shows the token once, with **Copy**: UNOS keeps only a
+hash of it, so save it right away. **Read and change** with **Every area** is a
+full token, which acts with all the rights of your account.
+
+**What a limited token can do.** An area is the part of a path after
+`/api/v1/`, as the API is organised: `apps`, `audit`, `auth` (your account,
+the users and the API tokens), `backup`, `containers`, `files`, `groups`,
+`health` (with `/api/v1/health/full` and `/api/v1/health/prometheus`), `logs`,
+`monitor`, `network`, `notifications`, `offsite`, `power`, `scheduler`,
+`security`, `shares`, `snapshots`, `storage`, `system` and `updates`. A token
+that is read only or limited to areas:
+
+- reaches only its areas: anything else answers 403 "This API token is
+  limited to other areas of the API";
+- when it is read only, only reads: `GET` requests, and two `POST`s that only
+  read, `POST /api/v1/power/ups/test` and
+  `POST /api/v1/files/upload-leftovers/check`. Every other request answers 403
+  "This API token can only read", also the tests of notification channels and
+  `POST /api/v1/notifications/send`, which send messages, and the start of a
+  SMART self-test. Two reads hold secrets and answer 403 "A read-only API token
+  cannot read this: the answer holds secrets": the download of a backup
+  (`GET /api/v1/backup/download/<name>`, the database with the password hashes
+  and the two-factor secrets) and `GET /api/v1/notifications/configs` (the
+  passwords and tokens of the channels). Other reads show what their area
+  shows: a files token reads every file of the pools, the passwords that apps
+  keep there included, and a containers token the logs of the apps;
+- never changes the accounts, the users, the API tokens, its own password,
+  two-factor authentication or the recovery codes, never restores a backup
+  (which replaces the accounts and their tokens) and never turns the
+  requirement of two-factor authentication on or off: these answer 403 "A
+  limited API token cannot change accounts, users, API tokens or two-factor
+  authentication, nor restore a backup: sign in to do it", whatever its access
+  and areas. It reads them with the area `auth`, `GET /api/v1/auth/me`
+  included;
+- opens the WebSockets that its areas reach, also when read only:
+  `/ws/v1/logs/<container>` with `containers`, `/ws/v1/journal` with `logs`,
+  and `/ws/v1/events`, which carries the data of several areas, only with every
+  area. Another socket closes with 4403.
+
+**Read and change** in an area gives the administrator's power over it. In
+**Apps**, **Containers**, **Scheduler** and **Updates** that includes running
+programs as root on the NAS (a privileged app, a container's folders, a custom
+task, the source of updates), from where a token can do everything that a full
+token can. In **Backups** and **Off-device copy** it includes the database,
+with the password hashes and two-factor secrets of every account (a backup
+that the token makes and downloads, an off-device copy to a store of its
+choice), from which a weak password can be guessed offline. Give such a token
+only to a script you trust as much as your password. In **Shares** a token can
+open a guest share, and **Off-device copy** also sends copies of the pools to
+another store.
+
+**With the API**, use the `access_token` that `POST /api/v1/auth/login`
+returns. `name` has 1 to 64 characters. `expires_in_days` is the token's
+lifetime, from 1 to 3650 days; without it the token does not expire.
+`read_only` (`true` or `false`, default `false`) and `areas` (a list of 1 to 21
+area names, each once; without it, or `null`, every area) limit the token;
+without either, the token is full, as before. A field the API does not know,
+such as the `permissions` that earlier versions took, answers 422. A user has at
+most 100 tokens. The answer is the only place that shows the full token
+(`token`, which starts with `unos_`), with its `read_only` and `areas`.
 
 ```bash
 curl --cacert unos-root-ca.crt -X POST https://unos/api/v1/auth/tokens \
   -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"name": "Backup Script", "expires_in_days": 365}'
+  -d '{"name": "Backup Script", "expires_in_days": 365, "areas": ["backup"]}'
+```
+
+A token for monitoring that only reads:
+```bash
+  -d '{"name": "Prometheus", "read_only": true, "areas": ["health", "monitor"]}'
 ```
 
 Use tokens in API requests:
@@ -1937,20 +2015,26 @@ curl --cacert unos-root-ca.crt -H "Authorization: Bearer YOUR_TOKEN" https://uno
 and `unos` the name on the certificate.
 
 - `GET /api/v1/auth/tokens` lists your tokens with their first 12 characters
-  (`token_prefix`), whether they are active, their expiry and their last use,
-  never the full token. Other users, administrators too, neither see nor
-  change your tokens.
+  (`token_prefix`), whether they are active, their expiry, their last use,
+  `read_only` and `areas`, never the full token. `scope_known` is `false` for
+  a token whose stored scope UNOS cannot read, as after a restore of a damaged
+  or foreign database: every request with it answers 403 "This API token's
+  scope cannot be read: delete it and create a new one" until you delete it.
+  Other users, administrators too, neither see nor change your tokens.
 - `POST /api/v1/auth/tokens/<id>/toggle` disables a token, and enables it
   again the next time. A disabled token is refused with 401 "API token is
   disabled", an expired one with 401 "API token has expired".
 - `DELETE /api/v1/auth/tokens/<id>` revokes a token for good.
 - Creating, disabling, enabling and deleting tokens needs the `access_token` of
-  a sign-in: a request made with an API token gets 403, so that a token cannot
-  make tokens that outlive its expiry or its revocation. A token can list
-  them.
+  a sign-in: a request made with a full API token gets 403, so that a token
+  cannot make tokens that outlive its expiry or its revocation. A full token
+  can list them, and so can a limited one whose areas include `auth`. A token's access and
+  areas cannot be changed: create a new token instead.
 - The last use (`last_used_at`) is stored at most once an hour, so that
   scripts do not write to the system disk with every request: it can be up to
   an hour older than the token's latest request.
+- The audit log records each new token with its access and areas, such as
+  `Created API token: Prometheus (read only: health, monitor)`.
 
 ---
 
@@ -2437,11 +2521,11 @@ A run on a pool that is not mounted fails with `Pool <name> is not mounted at
 ### System Backup
 
 Go to **System** → **Backup & Restore**. A backup holds the UNOS database:
-user accounts with their passwords, two-factor authentication, API tokens,
-the login history, the groups of users with their members, the SMB
-shares with their access lists, those of groups included, the memory and CPU
-limits kept for the apps' next installs, and the network interfaces that SMB
-listens on. It does not
+user accounts with their passwords, two-factor authentication, API tokens
+with their access and areas, the login history, the groups of users with their
+members, the SMB shares with their access lists, those of groups included, the
+memory and CPU limits kept for the apps' next installs, and the network
+interfaces that SMB listens on. It does not
 hold the files in your pools, Samba's own password database, nor settings
 kept elsewhere, such as notification channels, scheduled tasks, firewall
 rules, UPS settings, the network settings and the host's `/etc/fstab`. Each
@@ -2459,7 +2543,10 @@ backup in the list has **Restore**, **Download** and **Delete** buttons.
   also needs its passphrase. Restoring replaces the database with the one in
   the backup: the user accounts with their passwords, two-factor
   authentication, API tokens and the login history are then those of the
-  backup, so an API token revoked after the backup was made works again.
+  backup, so an API token revoked after the backup was made works again, with
+  the access and areas it had then. A restored token whose access and areas
+  UNOS cannot read is refused everywhere until it is deleted, and the restore
+  says how many such tokens it brought back.
   Nothing else is restored: the scheduled tasks that the backups of backup
   tasks also hold are named in the result as not restored. The limits kept
   for the apps' next installs become the backup's, while the installed apps'
@@ -2774,7 +2861,8 @@ yet: every enabled channel receives every alert, and no other event
 6. ✅ Keep guest shares few (guests can only read)
 7. ✅ Keep UNOS updated
 8. ✅ Don't expose to the internet without VPN
-9. ✅ Use API tokens instead of passwords for scripts
+9. ✅ Use API tokens instead of passwords for scripts, each limited to what its
+   script needs ([API Tokens](#api-tokens))
 10. ✅ Review the [audit log](#audit-log) periodically
 
 ### Storage
