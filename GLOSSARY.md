@@ -21,6 +21,11 @@ API and WebSocket calls to the supervisor (ADR-0002, ADR-0025). Avoid: frontend 
 (`webui/src/lib/i18n/catalog/<area>.ts`), which the pages show in the language chosen on the
 Account page; the server's messages stay English (ADR-0287). Avoid: dictionary, locale file.
 
+**Command palette**: The dialog that Ctrl+K (Cmd+K on macOS), or the search button of a phone's
+header bar, opens over a signed-in page: typing narrows the pages and actions of the user's role,
+and Enter opens the chosen one. It runs only the actions that change nothing on the NAS; the
+others open their page's own dialog (ADR-0388). Avoid: quick switcher, command bar, search.
+
 **Table frame**: The element of the class `table-frame` around a table that can be wider than a
 phone's screen: the table scrolls sideways inside it, while the page never does (ADR-0302).
 Avoid: scroll wrapper, responsive table.

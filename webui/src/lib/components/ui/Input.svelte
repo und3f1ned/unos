@@ -17,6 +17,9 @@
 	export let size: "md" | "sm" = "md";
 	// Take the keyboard focus with the whole text selected when the field appears: typing replaces it.
 	export let selectOnMount: boolean = false;
+	// A text field that narrows a list shown under it, as the command palette's (ADR-0388): a
+	// combobox whose list has the id `id` and whose chosen option has the id `activeId`.
+	export let listbox: { id: string; activeId: string | null } | null = null;
 
 	$: inputId = id || `input-${Math.random().toString(36).slice(2, 9)}`;
 	$: sizeClass = size === "sm" ? "px-2 py-1" : "";
@@ -52,6 +55,11 @@
 			{autocomplete}
 			{spellcheck}
 			aria-label={ariaLabel || undefined}
+			role={listbox ? "combobox" : undefined}
+			aria-autocomplete={listbox ? "list" : undefined}
+			aria-expanded={listbox ? true : undefined}
+			aria-controls={listbox?.id}
+			aria-activedescendant={listbox?.activeId ?? undefined}
 			use:focusAndSelect={selectOnMount}
 			{maxlength}
 			class="form-input {sizeClass} disabled:cursor-not-allowed disabled:opacity-50"

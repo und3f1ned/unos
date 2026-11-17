@@ -3333,7 +3333,16 @@
         "Ctrl+K opens the palette, and typing narrows the choices",
         "Enter opens the chosen page or starts the action"
       ],
-      "passes": false
+      "verified_by": [
+        "webui/tests/command-palette.spec.ts",
+        "supervisor/tests/test_command_palette.py",
+        "webui/tests/mobile-layout.spec.ts"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0388"
+      ],
+      "notes": "Built (ADR-0388): webui/src/lib/components/palette/CommandPalette.svelte, mounted by +layout.svelte on a signed-in page once the account is loaded, not for a setup-only account; on a phone also a button of the header bar. It offers an administrator every page of the sidebar, the Trash and every tab of System, a regular user Dashboard and Account; it switches the language and logs out itself, and Add a user, Reboot, Shut down and Suspend open the Users page's Add user dialog and System > Power's confirmations through the store paletteRequest, which act only once confirmed. match.ts ranks the English and Russian names and keywords: a prefix of a name, then of its words, then a part of a name, then the keywords. Ctrl+K or Cmd+K, also in a text field (on macOS Ctrl+K in a field stays the field's), never over an open dialog, and left to the browser where there is no palette. Step 1: webui/tests/command-palette.spec.ts ('Ctrl+K opens it with every page and action, and typing narrows them', the Russian page, the regular user, no request while it opens, narrows and closes); step 2: 'Enter opens the chosen page, the arrows choose another, and a click opens one too', the language and Logout, the power confirmations and the Add user dialog with nothing sent; the keyboard: Escape over the open menu, the focus given back, Tab kept inside, Ctrl+K in a field and on macOS, not over a dialog, not on the sign-in page; supervisor/tests/test_command_palette.py runs match.ts with node; webui/tests/mobile-layout.spec.ts fits it on a phone in both languages and sideways. Not checked: a real Mac's or phone's browser (the specs drive Chromium, with navigator.platform set for macOS), and a screen reader. No step changes the host: no device check is needed."
     },
     {
       "id": "webui.bulk-actions",

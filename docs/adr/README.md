@@ -393,6 +393,7 @@ and this index, and `make check-fast` runs it.
 | [0302](0302-below-the-md-breakpoint-the-sidebar-is-a-drawer-and-only-a-table-scrolls-sideways.md) | Below the md breakpoint the sidebar is a drawer, and on a phone only a table scrolls sideways | accepted | 2026-11-08 |
 | [0361](0361-open-dialogs-form-a-stack-whose-top-one-alone-answers-escape.md) | Open dialogs form a stack whose top one alone answers Escape, and the focus moves into a dialog and back to its opener | accepted | 2026-11-12 |
 | [0365](0365-a-check-of-webui-src-fails-for-a-setinterval-that-reaches-the-api.md) | A check of webui/src fails for a setInterval whose callback reaches the API | accepted | 2026-11-12 |
+| [0388](0388-ctrl-k-opens-a-command-palette-that-runs-only-actions-that-change-nothing-on-the-nas.md) | Ctrl+K opens a command palette of the pages and actions of the user's role, which runs only actions that change nothing on the NAS | accepted | 2026-11-17 |
 
 ## Deploy
 

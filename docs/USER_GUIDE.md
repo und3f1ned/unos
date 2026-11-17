@@ -99,6 +99,28 @@ turning off SMB in a user's edit dialog, opens over that dialog, and Escape
 closes only the dialog on top. Until the question closes, the dialog under it
 takes neither the focus nor clicks: Tab skips its fields and buttons.
 
+### Command Palette
+
+Press **Ctrl+K** (on a Mac **Cmd+K**) on any page after signing in to open the
+command palette; on a phone, tap the search button at the right end of the bar
+at the top. Type part of the name of a page or an action, in English or in
+Russian: the list keeps what matches, names that start with what you typed
+first. **↓** and **↑** choose, **Enter** or a click opens the chosen page or
+starts the action, and **Escape** closes the palette. Ctrl+K also works while
+you are typing in a field, except that on a Mac, Ctrl+K in a field keeps
+deleting to the end of the line (use Cmd+K there); while a dialog is open,
+Ctrl+K does nothing but what the browser does with it.
+
+The palette lists what your account may open: an administrator every page,
+the **Trash**, every tab of **System** and the actions; a regular user
+**Dashboard**, **Account**, the language and **Logout**. It switches the
+language and logs out by itself. The actions that change the NAS end with
+"…" and only open the dialog of their page, which asks before anything
+happens: **Add a user…** opens the **Users** page's **Add user**, and
+**Reboot the host…**, **Shut down the host…** and **Suspend the host…** open
+the confirmations of **System** → **Power Management**. Other changes, such
+as deleting something, are made on their pages.
+
 ### Language
 
 The web interface is in English or Russian. Choose the language on the **Account**
