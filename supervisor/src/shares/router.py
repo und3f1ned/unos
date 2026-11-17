@@ -33,6 +33,8 @@ from .schemas import (
     SmbShareCreate,
     SmbShareDeleted,
     SmbShareInfo,
+    SmbSharesDelete,
+    SmbSharesDeleted,
     SmbShareUpdate,
 )
 
@@ -195,6 +197,45 @@ async def update_smb_share(
     change = await _call(service.update_share, db, name, changes)
     await _audit(request, actor, AuditAction.SHARE_UPDATED, change)
     return change.info
+
+
+@router.post("/smb/bulk-delete", response_model=SmbSharesDeleted)
+@limiter.limit("10/minute")  # as a single deletion: one request for all the shares it names
+async def delete_smb_shares(
+    request: Request,
+    body: SmbSharesDelete,
+    user=Depends(verify_token),
+    db: AsyncSession = Depends(get_db),
+):
+    """Delete several SMB shares with one apply (ADR-0389); their folders and files are kept.
+
+    Each share is sent with the version and the folder the client loaded: one changed since, and a
+    name that no share has, are reported in its result and not deleted, while the others are. A
+    failed apply deletes none of them and answers as a single deletion does. Each deleted share
+    gets its own audit entry; one that cannot be written is a warning of the answer.
+    """
+    actor = user.username
+    deletion = await _call(service.delete_shares, db, body.shares)
+    # Every deleted share's entry is written, also after one that could not be: log_action reports
+    # such an entry in the supervisor's log. The answer still names each share's result, as the
+    # shares are deleted, and says which entries are missing (ADR-0389).
+    unrecorded: list[str] = []
+    reasons: list[str] = []
+    for change in deletion.changes:
+        try:
+            await _audit(request, actor, AuditAction.SHARE_DELETED, change)
+        except OSError as exc:
+            unrecorded.append(change.name)
+            reason = exc.strerror or str(exc)
+            if reason not in reasons:
+                reasons.append(reason)
+    warnings = list(deletion.warnings)
+    if unrecorded:
+        warnings.append(
+            f"The audit log could not record the deletion of {', '.join(unrecorded)} "
+            f"({'; '.join(reasons)}); the supervisor's log has the entries"
+        )
+    return SmbSharesDeleted(results=deletion.results, warnings=warnings)
 
 
 @router.delete("/smb/{name}", response_model=SmbShareDeleted)

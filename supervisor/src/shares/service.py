@@ -2851,8 +2851,75 @@ async def delete_share(db: AsyncSession, name: str) -> ShareChange:
             raise
     return ShareChange(
         name=share_name,
-        details=f"Deleted share {share_name}; its folder {share_path} and the files in it were kept",
+        details=_deleted_details(share_name, share_path),
         severity=AuditSeverity.WARNING,
+        warnings=list(result.warnings),
+    )
+
+
+def _deleted_details(name: str, path: str) -> str:
+    """The audit details of a deleted share, the same whether it was deleted alone or with others."""
+    return f"Deleted share {name}; its folder {path} and the files in it were kept"
+
+
+@dataclass
+class SharesDeletion:
+    """What POST /shares/smb/bulk-delete did: a result per share sent, and the audit entries (ADR-0389)."""
+
+    results: list[schemas.SmbShareDeleteResult]
+    changes: list[ShareChange]                  # one per deleted share, for its audit entry
+    warnings: list[str] = field(default_factory=list)
+
+
+async def delete_shares(db: AsyncSession, wanted: Sequence[schemas.SmbShareToDelete]) -> SharesDeletion:
+    """POST /shares/smb/bulk-delete: delete each share sent whose version and folder are still the ones
+    sent, with one apply for all of them, under one hold of smb_lock (ADR-0389). The folders are kept.
+
+    A name that no share has is ``not_found``, a share of another version or folder ``changed`` (a
+    share made again under the name starts at version 1 again); the others are
+    deleted all the same. A failed staging or commit deletes none of them and raises as a single
+    delete does. As delete_share: the shrink rule closes their open connections (ADR-0103), and a
+    running repair of one of them stops (ADR-0363).
+    """
+    results: list[schemas.SmbShareDeleteResult] = []
+    deleted: list[tuple[object, str, str]] = []  # (id, name, path) of each share deleted
+    async with smb_lock():
+        try:
+            await _import_if_needed_locked(db)
+            for item in wanted:
+                try:
+                    share = await _load_share(db, item.name)
+                except HTTPException as exc:
+                    if exc.status_code != 404:
+                        raise
+                    results.append(schemas.SmbShareDeleteResult(
+                        name=item.name, status="not_found", detail=SHARE_NOT_FOUND))
+                    continue
+                if (
+                    item.expected_version != _stored_version(share.version)
+                    or item.expected_path != _text(share.path)
+                ):
+                    results.append(schemas.SmbShareDeleteResult(
+                        name=item.name, status="changed", detail=VERSION_CONFLICT))
+                    continue
+                deleted.append((share.id, _text(share.name), _text(share.path)))
+                await db.delete(share)  # the ORM cascade deletes its access rows, group access and options
+                results.append(schemas.SmbShareDeleteResult(name=item.name, status="deleted"))
+            if not deleted:
+                return SharesDeletion(results=results, changes=[])
+            await db.flush()
+            result, _ = await _stage_commit_install(db)
+            for share_id, _name, _path in deleted:
+                _stop_repair(share_id, "the deletion of the share", deleted=True)
+        except Exception:
+            await _rollback(db)
+            raise
+    return SharesDeletion(
+        results=results,
+        changes=[
+            ShareChange(name=name, details=_deleted_details(name, path), severity=AuditSeverity.WARNING)
+            for _id, name, path in deleted
+        ],
         warnings=list(result.warnings),
     )
 

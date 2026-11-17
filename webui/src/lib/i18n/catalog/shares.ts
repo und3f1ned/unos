@@ -286,7 +286,35 @@ export const en = {
 	'shares.repair.warning': 'This changes the permissions of existing files. It cannot be undone automatically.',
 	'shares.repair.close': 'Close',
 	'shares.repair.run': 'Repair permissions',
-	'shares.repair.stop': 'Stop repair'
+	'shares.repair.stop': 'Stop repair',
+
+	// Several shares at once (ADR-0389): the selection above the list, its one question and the
+	// results. A share's status in the answer is shown through shares.bulk.status.*.
+	'shares.bulk.toolbar': 'Selected shares',
+	'shares.bulk.selectAll': 'Select all',
+	'shares.bulk.selected': { one: '{n} share selected', other: '{n} shares selected' },
+	'shares.bulk.delete': 'Delete selected',
+	'shares.card.select': 'Select share {name}',
+	'shares.bulk.deleteTitle': { one: 'Delete {n} share', other: 'Delete {n} shares' },
+	'shares.bulk.question': {
+		one: 'Delete this share? Open connections to it are closed.',
+		other: 'Delete these {n} shares? Open connections to them are closed.'
+	},
+	'shares.bulk.list': 'Shares to delete',
+	'shares.bulk.kept': {
+		one: 'The folder and the files in it are kept.',
+		other: 'Their folders and the files in them are kept.'
+	},
+	'shares.bulk.confirm': { one: 'Delete {n} share', other: 'Delete {n} shares' },
+	'shares.bulk.noneDeleted': 'No share was deleted',
+	'shares.bulk.someGone': 'The deletion failed, and some of these shares are no longer listed',
+	'shares.bulk.notKnown': 'The deletion failed, and the list could not be read again: which shares are left is not known',
+	'shares.bulk.tooMany': 'One deletion takes at most {max} shares: select fewer',
+	'shares.bulk.deleted': { one: 'Deleted {n} share: {names}', other: 'Deleted {n} shares: {names}' },
+	'shares.bulk.notDeleted': { one: '{n} share was not deleted', other: '{n} shares were not deleted' },
+	'shares.bulk.notDeletedItem': '{name}: {reason}',
+	'shares.bulk.status.notFound': 'no share has this name any more: it was deleted or renamed meanwhile',
+	'shares.bulk.status.changed': 'it was changed meanwhile, so it was not deleted: check it and delete it again'
 };
 
 export const ru: Translation<typeof en> = {
@@ -534,5 +562,53 @@ export const ru: Translation<typeof en> = {
 	'shares.repair.warning': 'Это меняет права существующих файлов. Автоматически отменить это нельзя.',
 	'shares.repair.close': 'Закрыть',
 	'shares.repair.run': 'Исправить права',
-	'shares.repair.stop': 'Остановить исправление'
+	'shares.repair.stop': 'Остановить исправление',
+
+	'shares.bulk.toolbar': 'Выбранные общие папки',
+	'shares.bulk.selectAll': 'Выбрать все',
+	'shares.bulk.selected': {
+		one: 'Выбрана {n} общая папка',
+		few: 'Выбраны {n} общие папки',
+		many: 'Выбрано {n} общих папок'
+	},
+	'shares.bulk.delete': 'Удалить выбранные',
+	'shares.card.select': 'Выбрать общую папку {name}',
+	'shares.bulk.deleteTitle': {
+		one: 'Удаление {n} общей папки',
+		few: 'Удаление {n} общих папок',
+		many: 'Удаление {n} общих папок'
+	},
+	'shares.bulk.question': {
+		one: 'Удалить {n} общую папку? Открытые подключения будут закрыты.',
+		few: 'Удалить эти {n} общие папки? Открытые подключения к ним будут закрыты.',
+		many: 'Удалить эти {n} общих папок? Открытые подключения к ним будут закрыты.'
+	},
+	'shares.bulk.list': 'Удаляемые общие папки',
+	'shares.bulk.kept': {
+		one: 'Папка каждой общей папки и файлы в ней сохранятся.',
+		few: 'Папка каждой общей папки и файлы в ней сохранятся.',
+		many: 'Папка каждой общей папки и файлы в ней сохранятся.'
+	},
+	'shares.bulk.confirm': {
+		one: 'Удалить {n} общую папку',
+		few: 'Удалить {n} общие папки',
+		many: 'Удалить {n} общих папок'
+	},
+	'shares.bulk.noneDeleted': 'Ни одна общая папка не удалена',
+	'shares.bulk.someGone': 'Удаление не удалось, и некоторых из этих общих папок больше нет в списке',
+	'shares.bulk.notKnown': 'Удаление не удалось, и список не удалось прочитать снова: неизвестно, какие общие папки остались',
+	'shares.bulk.tooMany': 'За один раз можно удалить не больше {max} общих папок: выберите меньше',
+	'shares.bulk.deleted': {
+		one: 'Удалена {n} общая папка: {names}',
+		few: 'Удалены {n} общие папки: {names}',
+		many: 'Удалено {n} общих папок: {names}'
+	},
+	'shares.bulk.notDeleted': {
+		one: '{n} общая папка не удалена',
+		few: '{n} общие папки не удалены',
+		many: '{n} общих папок не удалено'
+	},
+	'shares.bulk.notDeletedItem': '{name}: {reason}',
+	'shares.bulk.status.notFound': 'общей папки с таким именем больше нет: её удалили или переименовали',
+	'shares.bulk.status.changed': 'её изменили, поэтому она не удалена: проверьте её и удалите снова'
 };

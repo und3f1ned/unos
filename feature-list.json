@@ -3381,7 +3381,17 @@
         "Select containers: Start, Stop and Restart act on all of them",
         "Select shares: Delete asks once and deletes all of them"
       ],
-      "passes": false
+      "verified_by": [
+        "supervisor/tests/test_share_bulk_delete.py",
+        "webui/tests/containers.spec.ts",
+        "webui/tests/shares.spec.ts",
+        "webui/tests/mobile-layout.spec.ts"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0389"
+      ],
+      "notes": "Built (ADR-0389), not passing yet: both steps change the host (Docker containers, smb.conf and Samba), so they pass only after a device check and a re-check after a reboot (ADR-0018), by hand with the device-checks skill once the owner has deployed the branch, and a walk through both pages in Russian. Device check, step 1: two containers that are not UNOS's own, made or chosen by the owner, selected on the Containers page; Stop selected, Start selected and Restart selected each change both (docker ps -a on the host, or GET /api/v1/containers), the page lists each one's new state, the audit log has one container_stopped or container_started entry per container and action, and unos-supervisor and unos-webui are not in the list and so cannot be selected. Step 2: two test shares made for the check on the device's pool, both selected on the Shares page and deleted after the one question; one POST /api/v1/shares/smb/bulk-delete in the front's log, smb.conf on the host without either section (testparm -s), both folders still there with their files, one reload of Samba for both, two share_deleted entries in the audit log, and the SD MiB of the step; a share of another version is refused with status changed and stays (scripts/dev/api.py POST /api/v1/shares/smb/bulk-delete with an old expected_version and its folder as expected_path). After the reboot the same steps again with new test containers and shares."
     },
     {
       "id": "webui.no-http-polling",

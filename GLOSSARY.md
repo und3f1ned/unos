@@ -25,6 +25,11 @@ Account page; the server's messages stay English (ADR-0287). Avoid: dictionary, 
 phone's screen: the table scrolls sideways inside it, while the page never does (ADR-0302).
 Avoid: scroll wrapper, responsive table.
 
+**Bulk action**: An action that an administrator takes at once on the containers or SMB shares
+selected on their page: Start, Stop or Restart of containers, each through its own endpoint, and
+Delete of shares, after one question and with one apply. Each one selected gets its own result
+(ADR-0389). Avoid: batch, mass action.
+
 **Dev device**: The Banana Pi BPI-W3 (ArmSoM W3, Rockchip RK3588) that UNOS is developed and checked
 on; PROGRESS.md (Dev device) has its state. It holds no data to
 preserve (ADR-0220). Avoid: production NAS, the server.

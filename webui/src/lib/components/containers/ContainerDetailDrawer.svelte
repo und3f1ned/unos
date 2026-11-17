@@ -29,6 +29,8 @@
 
 	export let container: Container | null = null;
 	export let open = false;
+	/** An action on several containers runs (ADR-0389): the drawer's own actions wait for its end. */
+	export let busy = false;
 
 	const dispatch = createEventDispatcher();
 
@@ -280,6 +282,7 @@
 					size="sm"
 					icon={Square}
 					loading={actionLoading === 'stop'}
+					disabled={busy}
 					on:click={() => handleAction('stop')}
 				>
 					{$t('containers.action.stop')}
@@ -289,6 +292,7 @@
 					size="sm"
 					icon={RotateCw}
 					loading={actionLoading === 'restart'}
+					disabled={busy}
 					on:click={() => handleAction('restart')}
 				>
 					{$t('containers.action.restart')}
@@ -299,6 +303,7 @@
 					size="sm"
 					icon={Play}
 					loading={actionLoading === 'start'}
+					disabled={busy}
 					on:click={() => handleAction('start')}
 				>
 					{$t('containers.action.start')}
@@ -310,6 +315,7 @@
 				size="sm"
 				icon={Trash2}
 				loading={actionLoading === 'remove'}
+				disabled={busy}
 				on:click={() => handleAction('remove')}
 			>
 				{$t('containers.action.remove')}

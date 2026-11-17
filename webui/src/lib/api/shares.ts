@@ -143,6 +143,34 @@ export interface SmbShareDeleted {
   warnings: string[];
 }
 
+/**
+ * A share to delete with others, with the version and the folder the page loaded: one whose version
+ * or folder differs now is not deleted (ADR-0389).
+ */
+export interface SmbShareToDelete {
+  name: string;
+  expected_version: number;
+  expected_path: string;
+}
+
+/**
+ * What happened to one share of a deletion of several: deleted; not_found, no share has the
+ * name (deleted or renamed meanwhile); changed, its version or its folder is no longer the one
+ * sent, and it was not deleted. `detail` is the server's reason for the last two.
+ */
+export interface SmbShareDeleteResult {
+  name: string;
+  status: "deleted" | "not_found" | "changed";
+  detail: string | null;
+}
+
+export interface SmbSharesDeleted {
+  /** One per share sent, in the order sent. */
+  results: SmbShareDeleteResult[];
+  /** Of the one apply of smb.conf. */
+  warnings: string[];
+}
+
 export type RepairState = "running" | "done" | "incomplete" | "failed";
 
 /** A repair of a share's permissions: while it runs (the counts so far), then its result. */
@@ -261,6 +289,11 @@ export async function updateSmbShare(name: string, patch: SmbShareUpdate): Promi
 
 export async function deleteSmbShare(name: string): Promise<SmbShareDeleted> {
   return api.delete<SmbShareDeleted>(smbSharePath(name));
+}
+
+/** Delete several shares with one apply of smb.conf; their folders are kept (ADR-0389). */
+export async function deleteSmbShares(shares: SmbShareToDelete[]): Promise<SmbSharesDeleted> {
+  return api.post<SmbSharesDeleted>("/shares/smb/bulk-delete", { shares });
 }
 
 /**

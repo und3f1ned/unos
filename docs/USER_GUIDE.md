@@ -821,6 +821,15 @@ encryption required loses guest access at the restore, with a note.
   in the share (see below).
 - **Delete** removes the share; the folder and its files are kept. Open
   connections to the share are closed.
+- To delete several shares at once, tick their checkboxes (or **Select all**)
+  and click **Delete selected**, for up to 200 shares at a time. The dialog asks once and names each share
+  with its folder; **Delete N shares** then deletes all of them in one change
+  of smb.conf. Their folders and files are kept, and the open connections to
+  them are closed. A share that someone changed or deleted in the meantime is
+  not deleted: the page names it with the reason and keeps a changed share
+  selected, so you can look at it and delete it again. If Samba's check
+  (testparm) rejects the new smb.conf, or the database is busy, no share is
+  deleted and the dialog says why.
 
 #### Repair Permissions
 
@@ -1203,6 +1212,17 @@ state, and the search box finds containers by name or image.
   its new state. An app from the App Store does not start while its data folders
   are not on a mounted pool: the message names the pool to mount.
 - **Remove** deletes the container, also a running one, after a confirmation.
+- To act on several containers, tick their checkboxes (in the table or on the
+  cards), or **Select all shown** for every container the search and the state
+  filter show; a container they hide is unselected. **Start selected**, **Stop
+  selected** and **Restart selected** act on each of them in turn, and the page
+  shows which one it is at; meanwhile the containers' own buttons wait.
+  **Restart selected** restarts the running ones only, as a container's own
+  **Restart** does: one that does not run is listed as not restarted. Then the
+  page lists each container with its new state, or why it failed: one
+  container's failure does not stop the others, and what was not done stays
+  selected for another try. Leaving the page stops the run after the container
+  it is at. Removal is one container at a time.
 - Click a container for its details: **Overview**, **Logs** and **Network**.
   **Logs** shows the last 200 lines of its log and then each new line as the
   container writes it, each line with the time Docker received it. When the log
