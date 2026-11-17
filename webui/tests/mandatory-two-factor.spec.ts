@@ -2,6 +2,7 @@ import { test, expect } from './fixtures';
 import { apiLogin, createAccount, deleteAccount, type Account, type Credentials } from './accounts';
 import { currentTotpCode, startOfStepAfter, totpCode, totpStep, TOTP_STEP_MS } from './totp';
 import type { APIRequestContext, Page } from '@playwright/test';
+import { browserSession, useSessionCookie } from './session';
 
 // Two-factor authentication for every account (feature auth.mandatory-two-factor, ADR-0386)
 // against the stand-in's real supervisor: no route fakes. The file makes three accounts through
@@ -57,27 +58,22 @@ async function requirementOff(request: APIRequestContext) {
   expect(off.ok(), `turn the requirement off: ${await off.text()}`).toBeTruthy();
 }
 
-/** The browser goes on in `token`'s session, as the sign-in form keeps it. */
+/** The browser goes on in `token`'s session, in its session cookie (ADR-0397). */
 async function useSession(page: Page, token: string, path: string) {
-  await page.goto('/login');
-  await page.evaluate((value) => localStorage.setItem('token', value), token);
+  await useSessionCookie(page, token);
   await page.goto(path);
 }
 
 /** Sign in through the form with the password alone, without the session the browser had. */
 async function signIn(page: Page, who: Credentials) {
+  await page.context().clearCookies();
   await page.goto('/login');
-  await page.evaluate(() => localStorage.removeItem('token'));
   await page.getByLabel('Username').fill(who.username);
   await page.getByLabel('Password').fill(who.password);
   await page.getByRole('button', { name: 'Sign In' }).click();
 }
 
-async function browserToken(page: Page): Promise<string> {
-  const token = await page.evaluate(() => localStorage.getItem('token'));
-  expect(token).toBeTruthy();
-  return token!;
-}
+
 
 test.describe('Two-factor authentication for every account', () => {
   test.describe.configure({ mode: 'serial' });
@@ -151,7 +147,7 @@ test.describe('Two-factor authentication for every account', () => {
     // of its grace period, 14 days after the requirement's start (the account is older).
     await signIn(page, USER);
     await expect(page).toHaveURL('/two-factor-setup');
-    const me = await (await request.get('/api/v1/auth/me', { headers: bearer(await browserToken(page)) })).json();
+    const me = await (await request.get('/api/v1/auth/me', { headers: await browserSession(page) })).json();
     expect(me.two_factor_required.setup_only).toBe(false);
     expect(Date.parse(me.two_factor_required.by)).toBe(Date.parse(requirement.enabled_at) + 14 * DAY_MS);
     const by = await page.evaluate(
@@ -191,7 +187,7 @@ test.describe('Two-factor authentication for every account', () => {
     // A session of LATE from before the requirement.
     await signIn(page, LATE);
     await expect(page).toHaveURL('/');
-    const before = await browserToken(page);
+    const before = await browserSession(page);
 
     // Required, without a grace period: LATE's grace period is over at once.
     const on = await request.post(`${REQUIREMENT}/enable`, {
@@ -205,14 +201,16 @@ test.describe('Two-factor authentication for every account', () => {
     await expect(page).toHaveURL('/two-factor-setup');
     await expect(page.getByText('the time to set it up has ended')).toBeVisible();
     await expect(page.locator('aside nav a')).toHaveCount(0);
-    const refused = await request.get('/api/v1/auth/me/smb', { headers: bearer(before) });
+    const refused = await request.get('/api/v1/auth/me/smb', { headers: before });
     expect([refused.status(), (await refused.json()).detail]).toEqual([403, SETUP_REQUIRED]);
     // Any other page leads back to the setup.
     await page.goto('/system#security');
     await expect(page).toHaveURL('/two-factor-setup');
 
     // The password still signs in, to the setup alone.
+    const signedOut = page.waitForResponse('**/api/v1/auth/logout');
     await page.getByRole('button', { name: 'Sign out' }).click();
+    expect((await signedOut).status()).toBe(200);
     await expect(page).toHaveURL('/login');
     await signIn(page, LATE);
     await expect(page).toHaveURL('/two-factor-setup');
@@ -232,8 +230,8 @@ test.describe('Two-factor authentication for every account', () => {
     await expect(page.getByText('Two-factor authentication is on')).toBeVisible();
 
     // The same session has the account's rights again.
-    const after = await browserToken(page);
-    expect((await request.get('/api/v1/auth/me/smb', { headers: bearer(after) })).status()).toBe(200);
+    const after = await browserSession(page);
+    expect((await request.get('/api/v1/auth/me/smb', { headers: after })).status()).toBe(200);
     await page.getByRole('link', { name: 'Continue' }).click();
     await expect(page).toHaveURL('/');
     await expect(page.locator('aside nav a[href="/system#security"]')).toBeVisible();

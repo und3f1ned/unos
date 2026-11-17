@@ -12,6 +12,24 @@ features (SMB access per user and per share, volumes, copy and move in the file
 manager, encrypted backup uploads, health checks, CI checks).
 
 ### Security
+- The web UI keeps its session in an HttpOnly cookie, `__Host-unos-session`
+  (`Secure`, `SameSite=Strict`, ending with the browser), instead of
+  `localStorage`, so that no script of the page reads the session token
+  (ADR-0397). `POST /api/v1/auth/login` with `"cookie": true` sets it and
+  answers no token, only a `session_key` that the page sends with the cookie
+  (`X-UNOS-Session-Key`, and `"key"` in a WebSocket's first message
+  `{"type": "auth"}`), so that a server on another port of the NAS, to which
+  the browser sends the cookie too, cannot use it; the cookie's token is no
+  Bearer token. Without `cookie` the sign-in answers the token for a Bearer
+  header, as scripts use it. The API takes the cookie only from the web UI's
+  own origin: a change without the page's `Origin`, or a request that the
+  browser marks as from another site, answers 403 "The session cookie is
+  accepted only from the web UI's own page", and a cookie without its key 401.
+  Logout deletes the cookie; when the NAS does not confirm it the login page
+  says so and offers **Sign Out Again**. A reload keeps the session, and so
+  does a new tab while another tab of the web UI is open; the tabs follow each
+  other's sign-ins and sign-outs. The token that earlier versions kept in
+  `localStorage` is removed.
 - An API token can be limited to reading, or to areas of the API (ADR-0392).
   The areas are the prefixes of the API's paths after `/api/v1/` (`storage`,
   `backup`, `monitor` and 18 more); `POST /api/v1/auth/tokens` takes

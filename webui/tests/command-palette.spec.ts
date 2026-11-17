@@ -1,6 +1,7 @@
 import type { Locator, Page } from '@playwright/test';
 import { test, expect } from './fixtures';
 import { createAccount, deleteAccount, type Account } from './accounts';
+import { sessionToken } from './session';
 
 // The command palette (feature webui.command-palette, ADR-0393): Ctrl+K (Cmd+K on macOS) opens it
 // over a signed-in page, typing narrows its pages and actions, and Enter opens the chosen page or
@@ -279,9 +280,11 @@ test.describe('The command palette of an administrator', () => {
 
     await openPalette(page);
     await search(page, 'logout');
+    const signedOut = page.waitForResponse('**/api/v1/auth/logout');
     await page.keyboard.press('Enter');
+    expect((await signedOut).status()).toBe(200);
     await expect(page).toHaveURL('/login');
-    expect(await page.evaluate(() => localStorage.getItem('token'))).toBeNull();
+    expect(await sessionToken(page)).toBeNull();
   });
 
   test('Reboot, Shut down and Suspend open their confirmation on System > Power and run nothing', async ({

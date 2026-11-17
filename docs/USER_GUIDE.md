@@ -41,6 +41,16 @@ Welcome to UNOS! This guide will help you get the most out of your NAS.
    administrator with "Admin user already exists. Use /login instead." and
    creates nobody; administrators add further users on the **Users** page.
 
+The browser keeps your session in a cookie that no script of the page can
+read, and the page keeps a key that goes with it (ADR-0397). Reloading a page
+keeps you signed in, and so does opening another tab while a tab of UNOS is
+open; a new tab when none is open asks you to sign in again. The NAS takes the
+cookie only from its own web pages and only with that key, so neither another
+web site nor an app on another port of the NAS can act with your session, even
+an app that the browser sends the cookie to. Closing the browser usually ends
+the cookie; a browser that restores your tabs may keep it, so use **Logout** on
+a computer that others use.
+
 A session lasts 24 hours, or until it is ended: **Logout** ends it on the
 server too, a password change ends your other sessions, and an administrator
 can end all of a user's sessions with the log-out icon in the user's row on
@@ -48,10 +58,12 @@ the **Users** page. When it has ended, the page you have open goes to the
 login page once, at its next request (also during an upload or a download) or
 when the server ends its live statistics. **Logout** in one browser tab signs
 out the other tabs too, and signing in as another account in one tab switches
-the other tabs to that account. Restoring a backup ends every session but that
-of the administrator who restored it: everyone else signs in again. API tokens
-are not sessions: they keep working until they are disabled, expire or are
-deleted.
+the other tabs to that account. When **Logout** cannot reach the NAS,
+the login page says "The NAS did not confirm the sign-out, so this browser may
+still be signed in": click **Sign Out Again** once the NAS can be reached.
+Restoring a backup ends every session but that of the administrator who
+restored it: everyone else signs in again. API tokens are not sessions: they
+keep working until they are disabled, expire or are deleted.
 
 Signing in works also while the disk that holds the UNOS data (`/data`, on the
 system disk) is full, so that an administrator can sign in and free space, for
@@ -2047,7 +2059,11 @@ open a guest share, and **Off-device copy** also sends copies of the pools to
 another store.
 
 **With the API**, use the `access_token` that `POST /api/v1/auth/login`
-returns. `name` has 1 to 64 characters. `expires_in_days` is the token's
+returns, in an `Authorization: Bearer` header. (The web UI signs in with
+`"cookie": true` instead: the answer then sets its session cookie and carries
+no token, only the `session_key` that goes with the cookie; the API takes that
+cookie only from the web UI's own pages and with its key, and its token is no
+Bearer token.) `name` has 1 to 64 characters. `expires_in_days` is the token's
 lifetime, from 1 to 3650 days; without it the token does not expire.
 `read_only` (`true` or `false`, default `false`) and `areas` (a list of 1 to 21
 area names, each once; without it, or `null`, every area) limit the token;

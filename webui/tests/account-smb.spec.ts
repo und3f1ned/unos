@@ -1,6 +1,7 @@
 import type { APIRequestContext, Page } from '@playwright/test';
 import { E2E_ADMIN, test, expect } from './fixtures';
 import { ADMIN_REASON, COMMON_PASSWORD_RULE, fakeSmbApi, smbStatus, type FakeMySmb } from './shares-fakes';
+import { signInPage } from './session';
 
 // The "Network file access (SMB)" card of the Account page (System → Security).
 
@@ -399,10 +400,8 @@ test.describe('SMB activation on the Account page (stand-in)', () => {
     await request.delete(`/api/v1/auth/users/${userId}?username=${name}`, { headers: asAdmin() });
   });
 
-  test('the user enters the password and sees why SMB cannot be turned on', async ({ page, request }) => {
-    const token = await apiLogin(request, user);
-    await page.goto('/login');
-    await page.evaluate((value) => localStorage.setItem('token', value), token);
+  test('the user enters the password and sees why SMB cannot be turned on', async ({ page }) => {
+    await signInPage(page, user);
     await openAccount(page);
 
     const card = smbCard(page);
@@ -445,10 +444,8 @@ test.describe('A common password on the Account page (stand-in)', () => {
     await request.delete(`/api/v1/auth/users/${userId}?username=${name}`, { headers: asAdmin() });
   });
 
-  test('turning SMB on with it is refused with the reason and how to go on', async ({ page, request }) => {
-    const token = await apiLogin(request, user);
-    await page.goto('/login');
-    await page.evaluate((value) => localStorage.setItem('token', value), token);
+  test('turning SMB on with it is refused with the reason and how to go on', async ({ page }) => {
+    await signInPage(page, user);
     await openAccount(page);
 
     const card = smbCard(page);

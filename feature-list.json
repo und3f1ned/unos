@@ -732,9 +732,18 @@
       "passes": false,
       "adr": [
         "ADR-0033",
-        "ADR-0009"
+        "ADR-0009",
+        "ADR-0397"
       ],
-      "notes": "Needs an ADR on the storage; cookies conflict with ADR-0009."
+      "verified_by": [
+        "supervisor/tests/test_session_cookie.py",
+        "supervisor/tests/test_backup_restore.py",
+        "webui/tests/session-cookie.spec.ts",
+        "webui/tests/first-run.spec.ts",
+        "webui/tests/roles.spec.ts",
+        "webui/tests/websocket.spec.ts"
+      ],
+      "notes": "Built (ADR-0397, superseding ADR-0009): the web UI's session token is in the HttpOnly cookie __Host-unos-session (Secure, SameSite=Strict, Path=/, no Max-Age). POST /auth/login with cookie true sets it and answers no token, only session_key (an HMAC of the session id under the JWT secret), which the page keeps in its tab's sessionStorage and sends as X-UNOS-Session-Key and as key in a WebSocket's first message. A cookie counts only with the key of its session (401 otherwise, every route), so a server on another port of the NAS that the browser sends the cookie to (the catalog's Nextcloud serves HTTPS on 8443) cannot use it, and the cookie's token (marked cookie in the JWT) is refused as a Bearer token and in a WebSocket message. The cookie also counts only from the web UI's own origin: Sec-Fetch-Site same-origin when sent, Origin https://<Host> when sent and required for every method but GET and HEAD, else 403 (test_session_cookie.py walks every route); the cookie sign-in checks it before the password. Programs (scripts/dev/api.py, unchanged) sign in without cookie and get the token for a Bearer header. Logout sends the key, ends the session and deletes the cookie; one the NAS does not confirm leaves the session and the login page offers Sign Out Again. Tabs follow each other's sign-ins and sign-outs and hand the key to a new tab over the BroadcastChannel unos-session. The token that earlier versions left in localStorage is removed at each load. Step 1: session-cookie.spec.ts (no token in localStorage or sessionStorage, document.cookie without it, the login answer without a token, the cookie's attributes, an earlier version's token removed); first-run.spec.ts. Step 2, the chosen design: a reload keeps the session, and so does a new tab while another tab of the web UI is open; a new tab with none open asks to sign in again (session-cookie.spec.ts). No E2E spec reads a token from the page's storage (test_session_cookie.py TestNoTokenInWebStorage). Two reviews (ADR-0017). Fixed: the cookie alone was a full session for an HTTPS app on another port of the NAS's name (now the session key, and the cookie's token is no Bearer token); the token left in localStorage by earlier versions (removed at load); Sign Out Again could end a newer session (it ends only the unconfirmed one, forgotten at any sign-in); docs that said closing the browser always signs out. Left, with reasons: only Chromium runs the specs (Firefox and Safari send Origin with fetch and WebSockets per the Fetch standard: check them by hand once); a 401 to the sign-out counts as signed out, also for a cookie that another server replaced (nothing that the browser holds is that session then); a sign-out whose session had already ended leaves the dead cookie (logout answers 401 before it could delete it); the sign-out notice lives in the page's memory, so a reload of the sign-in page hides it; a tab that learns of another tab's sign-in only after a request of its own was refused, or a reopened tab with a stale key, goes to the sign-in page instead of asking the other tabs; the earlier versions' localStorage token is removed, not ended (its session expires within 24 h); scripts/dev/api.py does not redact session_key, harmless without the token, which it redacts; the Vite development server over plain HTTP no longer signs in. Database and web UI only: not host-level (GLOSSARY.md)."
     },
     {
       "id": "auth.api-token-scopes",

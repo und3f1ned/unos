@@ -2,6 +2,7 @@ import { readFile } from 'node:fs/promises';
 import type { Page, Request } from '@playwright/test';
 import { test, expect } from './fixtures';
 import { targetUrl } from './target';
+import { browserSession } from './session';
 
 // Backup and restore flows against the real API. Backups, users and
 // scheduled tasks created here are removed afterwards.
@@ -29,12 +30,13 @@ const RESTORE_SKIPPED =
   'Restores the database and smb.conf of the target: runs only when the target is on this machine ' +
   '(localhost, 127.0.0.1, ::1, *.localhost) or E2E_ALLOW_RESTORE=1 is set';
 
-let token = '';
+// The browser's session, for the API calls of the spec (ADR-0397).
+let session: Record<string, string> = {};
 let backups: string[] = [];
 let users: string[] = [];
 let tasks: string[] = [];
 
-const auth = () => ({ Authorization: `Bearer ${token}` });
+const auth = () => session;
 
 const isApi = (path: string) => (request: Request) =>
   new URL(request.url()).pathname === `/api/v1${path}`;
@@ -91,8 +93,7 @@ async function openBackupTab(page: Page) {
  */
 function signInAndCleanUp() {
   test.beforeEach(async ({ authenticatedPage: page }) => {
-    token = (await page.evaluate(() => localStorage.getItem('token'))) ?? '';
-    expect(token, 'signed in').not.toBe('');
+    session = await browserSession(page);
   });
 
   test.afterEach(async ({ request }) => {
@@ -121,14 +122,17 @@ function signInAndCleanUp() {
 test.describe('Backup files', () => {
   signInAndCleanUp();
 
-  test('downloads a backup with the session token', async ({ authenticatedPage: page }) => {
+  test('downloads a backup with the session', async ({ authenticatedPage: page }) => {
     const name = await createBackupViaApi(page);
     await openBackupTab(page);
 
     const requestSent = page.waitForRequest(isApi(`/backup/download/${name}`));
     const downloadStarted = page.waitForEvent('download');
     await page.getByRole('button', { name: `Download ${name}` }).click();
-    expect((await requestSent).headers()['authorization']).toBe(`Bearer ${token}`);
+    // The session cookie with the page's session key, no Authorization header (ADR-0397).
+    const sent = (await requestSent).headers();
+    expect(sent['authorization']).toBeUndefined();
+    expect(sent['x-unos-session-key']).toBe(session['X-UNOS-Session-Key']);
     const download = await downloadStarted;
     expect(download.suggestedFilename()).toBe(name);
 
@@ -187,8 +191,9 @@ test.describe('Backup files', () => {
   test('a download with an expired session leads to the sign-in page', async ({ authenticatedPage: page }) => {
     const name = await createBackupViaApi(page);
     await openBackupTab(page);
-    // As if the token had expired: same tab, so no storage event.
-    await page.evaluate(() => localStorage.setItem('token', 'expired-session-token'));
+    // As if the session had ended: the browser's next request carries no session cookie, and the
+    // page learns of it only from the answer.
+    await page.context().clearCookies();
     await page.getByRole('button', { name: `Download ${name}` }).click();
     await expect(page).toHaveURL('/login');
     await expect(page.locator('#username')).toBeVisible();
@@ -196,7 +201,7 @@ test.describe('Backup files', () => {
 
   test('an upload with an expired session leads to the sign-in page', async ({ authenticatedPage: page }) => {
     await openBackupTab(page);
-    await page.evaluate(() => localStorage.setItem('token', 'expired-session-token'));
+    await page.context().clearCookies();
     await uploadInput(page).setInputFiles({
       name: 'late.tar.gz',
       mimeType: 'application/gzip',

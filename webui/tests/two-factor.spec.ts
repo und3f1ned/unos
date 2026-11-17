@@ -3,6 +3,7 @@ import { test, expect } from './fixtures';
 import { createAccount, deleteAccount, type Account } from './accounts';
 import { currentTotpCode, startOfStepAfter, totpCode, totpStep, TOTP_STEP_MS } from './totp';
 import type { APIRequestContext, Locator, Page } from '@playwright/test';
+import { browserSession, pageSessionKey, sessionToken, useSessionCookie } from './session';
 
 // Two-factor authentication with TOTP (feature auth.two-factor, ADR-0067, ADR-0027) against the
 // real supervisor: no route fakes. A regular account is created for this file through the API
@@ -20,8 +21,9 @@ const REUSED = 'This two-factor code was already used; wait for the next one';
 
 let account: Account | undefined;
 
-async function twoFactorEnabled(request: APIRequestContext, token: string): Promise<boolean> {
-  const status = await request.get('/api/v1/auth/totp/status', { headers: { Authorization: `Bearer ${token}` } });
+/** Whether two-factor authentication is on, asked in a session of the browser (browserSession). */
+async function twoFactorEnabled(request: APIRequestContext, session: Record<string, string>): Promise<boolean> {
+  const status = await request.get('/api/v1/auth/totp/status', { headers: session });
   expect(status.ok(), `2FA status: HTTP ${status.status()}`).toBeTruthy();
   return (await status.json()).enabled;
 }
@@ -80,7 +82,7 @@ async function expectCodeForm(page: Page) {
   await expect(page.getByRole('heading', { name: 'Two-Factor Authentication' })).toBeVisible();
   await expect(page.getByLabel('Authentication Code')).toBeVisible();
   await expect(page.locator('#password')).toHaveCount(0);
-  expect(await page.evaluate(() => localStorage.getItem('token'))).toBeNull();
+  expect(await sessionToken(page)).toBeNull();
 }
 
 test.describe('Two-factor authentication', () => {
@@ -143,14 +145,15 @@ test.describe('Two-factor authentication', () => {
     await expect(page.getByText('Two-Factor Authentication enabled successfully')).toBeVisible();
     await expect(setup).toHaveCount(0);
     await expect(card.getByText('Enabled', { exact: true })).toBeVisible();
-    const before = (await page.evaluate(() => localStorage.getItem('token')))!;
-    expect(await twoFactorEnabled(request, before)).toBe(true);
+    expect(await twoFactorEnabled(request, await browserSession(page))).toBe(true);
 
     // Step 3: after the password, the code form appears; a valid code opens the dashboard. The
     // code of the setup was used, so this one is of the next step.
     const loginStep = await startOfStepAfter(enableStep);
     const loginCode = totpCode(secret, loginStep * TOTP_STEP_MS);
+    const signedOut = page.waitForResponse('**/api/v1/auth/logout');
     await page.getByRole('button', { name: 'Logout' }).click();
+    expect((await signedOut).status()).toBe(200);
     await expect(page).toHaveURL('/login');
     await submitPassword(page);
     await expectCodeForm(page);
@@ -158,12 +161,14 @@ test.describe('Two-factor authentication', () => {
     await page.getByRole('button', { name: 'Verify' }).click();
     await expect(page).toHaveURL('/');
     await expect(page.getByText(`Signed in as ${USER.username}`)).toBeVisible();
-    // Step 4 drops this session's token in the browser only, without Logout, which would end it
+    // Step 4 drops this session's cookie in the browser only, without Logout, which would end it
     // on the server (ADR-0329): step 5 goes on in it.
-    const session = (await page.evaluate(() => localStorage.getItem('token')))!;
+    const session = (await sessionToken(page))!;
+    const key = (await pageSessionKey(page))!;
+    const inSession = await browserSession(page);
 
     // Step 4: the same code a second time is refused, and the code form stays and says to wait.
-    await page.evaluate(() => localStorage.removeItem('token'));
+    await page.context().clearCookies();
     await page.goto('/login');
     await submitPassword(page);
     await expectCodeForm(page);
@@ -175,7 +180,7 @@ test.describe('Two-factor authentication', () => {
     await expectCodeForm(page);
 
     // Step 5: in the session of step 3, a code of a newer step turns two-factor authentication off.
-    await page.evaluate((token) => localStorage.setItem('token', token), session);
+    await useSessionCookie(page, session, key);
     await page.goto('/system#security');
     await expect(card.getByText('Enabled', { exact: true })).toBeVisible();
     await card.getByRole('button', { name: 'Disable', exact: true }).click();
@@ -186,7 +191,7 @@ test.describe('Two-factor authentication', () => {
     await expect(page.getByText('Two-Factor Authentication disabled')).toBeVisible();
     await expect(disable).toHaveCount(0);
     await expect(card.getByText('Disabled', { exact: true })).toBeVisible();
-    expect(await twoFactorEnabled(request, session)).toBe(false);
+    expect(await twoFactorEnabled(request, inSession)).toBe(false);
 
     // The password alone signs in again.
     await page.getByRole('button', { name: 'Logout' }).click();

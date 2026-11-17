@@ -1,5 +1,6 @@
 import type { Locator, Page, Route, WebSocketRoute } from '@playwright/test';
 import { test, expect } from './fixtures';
+import { pageSessionKey } from './session';
 
 // The stand-in has no Docker. The page's requests to /api/v1/containers are
 // answered from memory, and so is the log socket /ws/v1/logs/{id}: nothing
@@ -147,7 +148,9 @@ interface FakeLogSocket {
 
 /**
  * Answer /ws/v1/logs/{id} like the server (supervisor/src/websocket/events.py): the first
- * message must carry the token, else 4401; then auth_ok and the first lines of the log.
+ * message must be the web UI's {"type": "auth", "key": ...}, which the server answers with the
+ * session cookie of the handshake and its session key (ADR-0397), else 4401; then auth_ok and the
+ * first lines of the log.
  */
 async function fakeLogSockets(page: Page, firstLines: string[]): Promise<FakeLogSocket[]> {
   const sockets: FakeLogSocket[] = [];
@@ -160,14 +163,14 @@ async function fakeLogSockets(page: Page, firstLines: string[]): Promise<FakeLog
       ws.onMessage((message) => {
         socket.received.push(String(message));
         if (socket.received.length > 1) return;
-        let token: unknown;
+        let auth = false;
         try {
           const first = JSON.parse(String(message));
-          token = first.type === 'auth' ? first.token : undefined;
+          auth = first.type === 'auth' && !('token' in first) && typeof first.key === 'string' && first.key !== '';
         } catch {
-          token = undefined;
+          auth = false;
         }
-        if (typeof token !== 'string' || !token) {
+        if (!auth) {
           ws.close({ code: 4401, reason: 'unauthorized' });
           return;
         }
@@ -326,12 +329,12 @@ test.describe('Containers', () => {
     const log = drawer.getByLabel('Log of e2e-web');
     await expect(drawer.getByText(LIVE)).toBeVisible();
     await expect.poll(() => log.textContent()).toBe(LINE_1 + LINE_2);
-    // The token travels in the first message, never in the URL (ADR-0031).
+    // The first message authenticates the socket, with the session cookie of the handshake and the
+    // session key: no token in it nor in the URL (ADR-0031, ADR-0397).
     expect(sockets).toHaveLength(1);
     expect(sockets[0].url.pathname).toBe(`/ws/v1/logs/${WEB.id}`);
     expect(sockets[0].url.search).toBe('');
-    const token = await page.evaluate(() => localStorage.getItem('token'));
-    expect(JSON.parse(sockets[0].received[0])).toEqual({ type: 'auth', token });
+    expect(JSON.parse(sockets[0].received[0])).toEqual({ type: 'auth', key: await pageSessionKey(page) });
 
     // A line the container writes now appears without a reload.
     sockets[0].route.send(JSON.stringify({ type: 'log', container_id: WEB.id, data: LINE_3 }));
@@ -380,7 +383,7 @@ test.describe('Containers', () => {
     const sockets = await fakeLogSockets(page, [LINE_1]);
     const drawer = await openLogsOf(page, 'e2e-web');
 
-    // 1011: the server could not check the token again; any close but 1000 is a lost connection.
+    // 1011: the server could not check the session again; any close but 1000 is a lost connection.
     await sockets[0].route.close({ code: 1011, reason: 're-authentication failed' });
 
     await expect(drawer.getByText('The connection to the log was lost')).toBeVisible();
@@ -395,7 +398,6 @@ test.describe('Containers', () => {
     await fakeContainersApi(page);
     const sockets = await fakeLogSockets(page, [LINE_1]);
     const drawer = await openLogsOf(page, 'e2e-web');
-    const token = await page.evaluate(() => localStorage.getItem('token'));
 
     // The account is no administrator any more (supervisor/src/websocket/events.py).
     await sockets[0].route.close({ code: 4403, reason: 'forbidden' });
@@ -403,7 +405,7 @@ test.describe('Containers', () => {
     await expect(drawer.getByText('Only administrators can read container logs')).toBeVisible();
     await expect(drawer.getByRole('button', { name: 'Reconnect' })).toHaveCount(0);
     await expect(page).toHaveURL('/containers');
-    expect(await page.evaluate(() => localStorage.getItem('token'))).toBe(token);
+    await expect(page.locator('aside').getByText('Administrator', { exact: true })).toBeVisible();
   });
 
   test('a log socket closed with 4401 ends the session', async ({ authenticatedPage: page }) => {
@@ -411,11 +413,12 @@ test.describe('Containers', () => {
     const sockets = await fakeLogSockets(page, [LINE_1]);
     await openLogsOf(page, 'e2e-web');
 
-    // The token is no longer valid (supervisor/src/websocket/events.py): as an HTTP 401 does.
+    // The session is no longer valid (supervisor/src/websocket/events.py): as an HTTP 401 does.
     await sockets[0].route.close({ code: 4401, reason: 'unauthorized' });
 
     await expect(page).toHaveURL('/login');
-    expect(await page.evaluate(() => localStorage.getItem('token'))).toBeNull();
+    await expect(page.locator('aside')).toHaveCount(0);
+    expect(await pageSessionKey(page)).toBeNull();
   });
 
   test('the log view keeps the newest 500,000 characters and follows new lines at its end', async ({

@@ -3,9 +3,17 @@
   import { goto } from "$app/navigation";
   import { login, getAuthStatus, getMe } from "$lib/api/auth";
   import { ApiError } from "$lib/api/client";
-  import { user, isLoggedIn, isSetupOnly, TWO_FACTOR_SETUP_PATH } from "$lib/stores/auth";
+  import {
+    user,
+    isLoggedIn,
+    isSetupOnly,
+    forgetFailedSignOut,
+    signOutAgain as endUnconfirmedSession,
+    signOutFailed,
+    TWO_FACTOR_SETUP_PATH,
+  } from "$lib/stores/auth";
   import { connectWebSocket } from "$lib/stores/stats";
-  import { Button, Input } from "$lib/components/ui";
+  import { Alert, Button, Input } from "$lib/components/ui";
   import { t } from "$lib/i18n";
   import { KeyRound, Server, ShieldCheck } from "lucide-svelte";
 
@@ -42,14 +50,15 @@
         requiresTOTP && useRecoveryCode ? recoveryCode : undefined
       );
 
-      if (result.requires_totp && !result.access_token) {
+      if (result.requires_totp) {
         // 2FA is required, show TOTP input
         requiresTOTP = true;
         loading = false;
         return;
       }
 
-      // Login successful - fetch user data and update stores
+      // Signed in: the session cookie replaced one that a failed sign-out left.
+      forgetFailedSignOut();
       const me = await getMe();
       user.set(me);
       isLoggedIn.set(true);
@@ -80,6 +89,17 @@
     error = "";
   }
 
+  let signingOut = false;
+
+  async function signOutAgain() {
+    signingOut = true;
+    try {
+      await endUnconfirmedSession();
+    } finally {
+      signingOut = false;
+    }
+  }
+
   function switchCode() {
     useRecoveryCode = !useRecoveryCode;
     totpCode = "";
@@ -94,6 +114,17 @@
       <Server class="w-10 h-10 text-blue-500" />
       <span class="text-2xl font-bold">{$t("common.product")}</span>
     </div>
+
+    {#if $signOutFailed}
+      <!-- The page cannot delete the session cookie: only the server's answer to the sign-out does
+           (ADR-0397). -->
+      <Alert variant="warning" class="mb-4">
+        <p>{$t("login.signOutFailed")}</p>
+        <Button variant="secondary" size="sm" class="mt-2" loading={signingOut} on:click={signOutAgain}>
+          {$t("login.signOutAgain")}
+        </Button>
+      </Alert>
+    {/if}
 
     <form on:submit|preventDefault={handleSubmit} class="space-y-4">
       {#if error}

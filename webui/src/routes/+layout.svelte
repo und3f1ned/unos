@@ -12,6 +12,7 @@
 		isSetupOnly,
 		loadCurrentUser,
 		clearCurrentUser,
+		signOut,
 		TWO_FACTOR_SETUP_PATH
 	} from '$lib/stores/auth';
 	import { connectWebSocket, disconnectWebSocket } from '$lib/stores/stats';
@@ -19,13 +20,15 @@
 	import CommandPalette from '$lib/components/palette/CommandPalette.svelte';
 	import {
 		ApiError,
-		getToken,
 		isPublicRoute,
-		onTokenChangedElsewhere,
+		knownSignedOut,
+		obtainSessionKey,
+		onSessionChangedElsewhere,
+		sessionStopped,
 		setSetupRequiredHandler,
 		setUnauthorizedHandler
 	} from '$lib/api/client';
-	import { logout, type User } from '$lib/api/auth';
+	import type { User } from '$lib/api/auth';
 	import { Alert, Button } from '$lib/components/ui';
 	import { t } from '$lib/i18n';
 	import {
@@ -103,12 +106,11 @@
 
 	function guardRoute(path: string, currentUser: User | null) {
 		if (isPublicRoute(path)) return;
-		if (!getToken()) {
-			goto('/login', { replaceState: true });
-			return;
-		}
+		// The page cannot read the session cookie (ADR-0397): the account comes from the server,
+		// and a 401 leads to the sign-in page. Once the session has ended in this tab, nothing asks.
 		if (!currentUser) {
-			ensureUser();
+			if (knownSignedOut()) goto('/login', { replaceState: true });
+			else ensureUser();
 			return;
 		}
 		if (isSetupOnly(currentUser)) {
@@ -122,6 +124,12 @@
 
 	async function ensureUser() {
 		userLoadError = '';
+		// A new tab asks the others for the session key; without one there is no session to go on
+		// with (ADR-0397).
+		if (!(await obtainSessionKey())) {
+			endSession();
+			return;
+		}
 		try {
 			const me = await loadCurrentUser();
 			// No socket serves an account that can only set up two-factor authentication.
@@ -137,19 +145,21 @@
 		}
 	}
 
+	// The server ended the session (401) or refused the account (403): nothing is left to end.
 	function endSession() {
-		void logout();
+		sessionStopped();
 		disconnectWebSocket();
 		clearCurrentUser();
 		goto('/login');
 	}
 
-	// Another tab logged out, or logged in again (possibly as another account).
-	function handleTokenChange() {
+	// Another tab signed out, or signed in again (possibly as another account): the tabs share
+	// the session cookie.
+	function handleSessionChange() {
 		disconnectWebSocket();
 		// Without a user, a page that needs a session is unmounted. The guard
-		// then sends this tab to /login, or loads the account of the new token,
-		// so the menus and the page follow its role.
+		// then loads the account of the new session, so the menus and the page
+		// follow its role; after a sign-out it sends this tab to /login.
 		clearCurrentUser();
 		guardRoute(pathname, null);
 	}
@@ -173,17 +183,19 @@
 		// Any request (or the stats socket) rejected with 401 lands here.
 		setUnauthorizedHandler(endSession);
 		setSetupRequiredHandler(handleSetupRequired);
-		const stopWatchingToken = onTokenChangedElsewhere(handleTokenChange);
+		const stopWatchingSession = onSessionChangedElsewhere(handleSessionChange);
 		mounted = true;
 		return () => {
 			setUnauthorizedHandler(null);
 			setSetupRequiredHandler(null);
-			stopWatchingToken();
+			stopWatchingSession();
 		};
 	});
 
 	function handleLogout() {
-		endSession();
+		disconnectWebSocket();
+		void signOut();
+		goto('/login');
 	}
 
 	// Check if current path matches nav item
