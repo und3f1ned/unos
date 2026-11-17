@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { existsSync, utimesSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, utimesSync, writeFileSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { Locator, Page, Request } from '@playwright/test';
@@ -778,6 +778,49 @@ test.describe('File Browser operations', () => {
     await expect(row(page, 'c.txt')).toBeVisible();
     expect(await listNames(page, sub)).toEqual(['b.txt', 'c.txt']);
     expect(await listNames(page, dir)).toEqual(['sub']);
+  });
+
+  test('outside share folders, Copy and Move keep the permissions of the items', async ({
+    authenticatedPage: page,
+  }) => {
+    // Only what Copy, or a Move from another pool or volume, puts into a share folder (setgid, the
+    // group unos-smb, mode 2770) gets the modes of shares (ADR-0396); the stand-in cannot make one.
+    // Elsewhere the copies and the moved items keep their permissions, which the spec sets here.
+    test.skip(!process.env.E2E_STANDIN_STATE, ONLY_THE_STAND_IN_FOLDERS);
+    const { path: dir, name } = scratch!;
+    await putFile(page, dir, 'a.txt', Buffer.from('alpha'));
+    const tree = await makeFolder(page, dir, 'tree');
+    await putFile(page, tree, 'b.txt', Buffer.from('bravo'));
+    chmodSync(join(dir, 'a.txt'), 0o640);
+    chmodSync(tree, 0o750);
+    chmodSync(join(tree, 'b.txt'), 0o604);
+    await makeFolder(page, dir, 'copies');
+    await makeFolder(page, dir, 'moved');
+    const permissions = { 'a.txt': '-rw-r-----', tree: 'drwxr-x---', 'tree/b.txt': '-rw----r--' };
+    await openScratch(page);
+
+    for (const [action, into] of [
+      ['Copy', 'copies'],
+      ['Move', 'moved'],
+    ] as const) {
+      await row(page, 'a.txt').getByRole('checkbox').check();
+      await row(page, 'tree').getByRole('checkbox').check();
+      await selectionBar(page).getByRole('button', { name: action, exact: true }).click();
+      await openFolder(page, into);
+      const answered = page.waitForResponse((response) =>
+        isApi(`/files/${action.toLowerCase()}`)(response.request()),
+      );
+      await page.getByRole('button', { name: `${action} here` }).click();
+      expect((await answered).status()).toBe(200);
+      await expect(row(page, 'a.txt')).toBeVisible();
+      await expect(row(page, 'tree')).toBeVisible();
+      for (const [item, shown] of Object.entries(permissions)) {
+        expect((await infoOf(page, `${dir}/${into}/${item}`)).permissions, `${action}: ${item}`).toBe(shown);
+      }
+      await crumb(page, name).click();
+      await expect(row(page, into)).toBeVisible();
+    }
+    expect(await listNames(page, dir)).toEqual(['copies', 'moved']);
   });
 
   test('uploads files into the open folder', async ({ authenticatedPage: page }) => {

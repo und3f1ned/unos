@@ -339,6 +339,7 @@ and this index, and `make check-fast` runs it.
 | [0347](0347-an-upload-that-gets-no-data-for-120-seconds-is-cut-off-with-408.md) | An upload that gets no data for 120 seconds is cut off with 408 | accepted | 2026-11-11 |
 | [0348](0348-the-file-manager-refuses-bind-mounts-before-a-move-and-busy-entries-with-409.md) | The file manager never deletes, renames or moves volumes, subvolumes or mounts, bind mounts included, and a busy entry is a conflict | accepted | 2026-11-11 |
 | [0354](0354-leftovers-of-uploads-are-found-after-each-start-and-removed-only-when-an-administrator-asks.md) | Leftovers of uploads are found after each start and removed only when an administrator asks | accepted | 2026-11-12 |
+| [0396](0396-copies-and-moves-from-another-volume-into-a-share-folder-get-the-modes-of-repair-permissions.md) | Copies, and moves from another pool or volume, into a share folder get the modes of Repair permissions | accepted | 2026-11-17 |
 
 ## System
 

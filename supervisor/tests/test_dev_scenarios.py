@@ -403,12 +403,31 @@ class FakeSmbSession:
             if os.path.dirname(path) not in nas.fs:
                 return "NT_STATUS_OBJECT_PATH_NOT_FOUND"
             old = nas.fs.get(path)
+            # smbd opens the file as the user, a member of unos-smb: every folder on the way from the
+            # share's must let the user search it, a file to overwrite must let the user write it,
+            # and the folder of a new one must let the user write it.
+            parent = os.path.dirname(path)
+            on_the_way = [folder] + [f"{folder}/{'/'.join(words[2].split('/')[:i])}"
+                                     for i in range(1, words[2].count("/") + 1)]
+            allowed = (all(self.may(nas.fs[f], 0o1) for f in on_the_way)
+                       and (self.may(old, 0o2) if old else self.may(nas.fs[parent], 0o2)))
+            if not allowed:
+                return f"NT_STATUS_ACCESS_DENIED opening remote file \\{words[2]}"
             nas.fs[path] = Node("file", 0o660, old.owner if old else self.user, SMB_GROUP, self.local[words[1]])
             return f"putting file {words[1]} as \\{words[2]}"
         if words[0] == "mkdir":
             nas.fs[f"{folder}/{words[1]}"] = Node("dir", 0o2770, self.user, SMB_GROUP)
             return ""
         raise AssertionError(f"the fake smbclient does not know {line!r}")
+
+    def may(self, node: Node, bits: int) -> bool:
+        """Whether the session's user, a member of unos-smb, has the permissions BITS (rwx as 4, 2, 1)
+        on NODE by its owner, group or other bits."""
+        if node.owner == self.user:
+            return node.mode >> 6 & bits == bits
+        if node.group == SMB_GROUP:
+            return node.mode >> 3 & bits == bits
+        return node.mode & bits == bits
 
     def versions(self, listed: bool) -> dict[str, str]:
         """The snapshots that shadow_copy2 finds for the share (ADR-0380): @GMT token -> the
@@ -716,6 +735,12 @@ class FakeNas:
     def remove(self, path: str) -> None:
         for p in self.subtree(path):
             del self.fs[p]
+
+    def share_folder(self, path: str) -> bool:
+        """Whether PATH is set up as a share's folder: setgid, of the group unos-smb, which has rwx,
+        and nothing for others (_share_folder of src/files/router.py, ADR-0273)."""
+        node = self.fs[path]
+        return node.group == SMB_GROUP and node.mode & 0o2070 == 0o2070 and not node.mode & 0o007
 
     def volume_of(self, path: str) -> str | None:
         """The volume that holds PATH, or None for the pool's own folders."""
@@ -1507,13 +1532,13 @@ class FakeNas:
         if what == "upload":
             folder = params["path"]
             name, content = upload
-            share_folder = self.fs[folder].mode & 0o2000 and self.fs[folder].group == SMB_GROUP
+            share_folder = self.share_folder(folder)
             mode = 0o640 if "upload-mode" in self.bugs else (0o660 if share_folder else 0o644)
             self.fs[f"{folder}/{name}"] = Node("file", mode, "root", SMB_GROUP if share_folder else "root", content)
             return {"name": name}
         if what == "mkdir":
             folder = body["path"]
-            share_folder = self.fs[folder].mode & 0o2000 and self.fs[folder].group == SMB_GROUP
+            share_folder = self.share_folder(folder)
             self.fs[f"{folder}/{body['name']}"] = Node("dir", 0o2770 if share_folder else 0o755, "root",
                                                        SMB_GROUP if share_folder else "root")
             return {"name": body["name"]}
@@ -1525,14 +1550,37 @@ class FakeNas:
             self.move(body["path"], new)
             return {"name": body["new_name"]}
         if what in ("copy", "move"):
+            destination = params["destination"]
             if what == "move":
                 self.refuse_volumes(body)
+            # What Copy, and a Move to another pool or volume, which copies and deletes, put into a
+            # share folder gets the modes of Repair permissions in the group of the folder, except
+            # private entries and what is in a private folder (ADR-0396); elsewhere copies keep their
+            # modes, in root's group or that of a setgid folder, and a move within a pool or volume is
+            # a rename. Defects: copy-keeps-modes keeps the modes in share folders too, move-keeps-modes
+            # does so for moves alone, copy-opens-modes gives copies outside share folders group write.
+            share_folder = self.share_folder(destination)
+            folder_group = self.fs[destination].group if self.fs[destination].mode & 0o2000 else "root"
             for source in body:
-                target = f"{params['destination']}/{source.rsplit('/', 1)[1]}"
+                target = f"{destination}/{source.rsplit('/', 1)[1]}"
+                copies = what == "copy" or self.volume_of(source) != self.volume_of(target)
+                kept = ("copy-keeps-modes" in self.bugs or ("move-keeps-modes" in self.bugs and what == "move"))
+                private: list[str] = []  # the private folders of the source, whose entries keep their modes
                 for p in sorted(self.subtree(source)):
                     node = copy.copy(self.fs[p])
                     if node.kind == "subvolume":
                         node.kind = "dir"
+                    if copies and node.kind in ("dir", "file"):
+                        node.owner = "root"
+                        in_share = share_folder and not any(p.startswith(f + "/") for f in private)
+                        node.group = SMB_GROUP if share_folder else folder_group
+                        if not node.mode & 0o077:
+                            if node.kind == "dir":
+                                private.append(p)
+                        elif in_share and not kept:
+                            node.mode = 0o2770 if node.kind == "dir" else (0o770 if node.mode & 0o100 else 0o660)
+                        elif not share_folder and "copy-opens-modes" in self.bugs:
+                            node.mode |= 0o020
                     if what == "move":
                         del self.fs[p]
                     if not p[len(source):].startswith("/.unos-trash"):
@@ -2581,6 +2629,45 @@ def test_the_smb_check_covers_the_flows_of_slice_2(nas):
     assert levels == [("read",), (), ("write",)]
 
 
+def test_the_smb_check_copies_and_moves_items_of_a_new_volume_into_its_share_folder(nas):
+    """files.group-writable-copies-and-moves-in-shares (ADR-0396): a Copy and a Move from another
+    subvolume into the share's folder, whose items get 660 and 2770 root:unos-smb, and the user's
+    writes to them over SMB; the volume goes with the clean-up."""
+    status, output = run_check("smb", nas)
+    assert status == 0, output
+    folder, volume = f"{ROOT}/unoscheck1a2b3c", f"{ROOT}/unoscheck1a2b3cm"
+    transfers = [(path.split("?")[0], body, params) for method, path, body, params in nas.calls
+                 if method == "POST" and path.split("?")[0] in ("/files/copy", "/files/move")]
+    assert transfers == [
+        ("/files/copy", [f"{volume}/cp.txt", f"{volume}/cpd"], {"destination": folder}),
+        ("/files/move", [f"{volume}/mv.txt", f"{volume}/mvd"], {"destination": folder}),
+    ]
+    assert ("POST", "/storage/pools/data/volumes") in {(m, p.split("?")[0]) for m, p, _, _ in nas.calls}
+    assert ("DELETE", "/storage/pools/data/volumes/unoscheck1a2b3cm") in {(m, p) for m, p, _, _ in nas.calls}
+    puts = [line for share, line in nas.smb_lines if share == "unoscheck1a2b3c" and line.startswith("put ")]
+    for line in ("put data2.txt cp.txt", "put data2.txt mv.txt", "put data2.txt cpd/i.txt", "put data2.txt mvd/i.txt",
+                 "put data.txt cpd/n.txt", "put data.txt mvd/n.txt"):
+        assert line in puts, line
+    text = "\n".join(step_lines(output))
+    assert re.search(r"^PASS  \d+\. Copy of a file and a folder of a new volume unoscheck1a2b3cm .* 660 and 2770 "
+                     r"root:unos-smb", text, re.M), text
+    assert re.search(r"^PASS  \d+\. Move of a file and a folder from unoscheck1a2b3cm into the share's folder", text,
+                     re.M), text
+    assert re.search(r"^PASS  \d+\. over SMB the user changes the copied and moved files", text, re.M), text
+
+
+def test_the_files_check_shows_that_copies_and_moves_keep_their_modes_outside_share_folders(nas):
+    status, output = run_check("files", nas)
+    assert status == 0, output
+    text = "\n".join(step_lines(output))
+    assert re.search(r"^PASS  \d+\. Copy puts b.txt into a new folder, and Move takes the copy on into another, both "
+                     r"keeping 644 root:root outside share folders", text, re.M), text
+    assert re.search(r"^PASS  \d+\. Move of a file and a folder from the volume into .* keeps 644 and 755 root:root",
+                     text, re.M), text
+    moves = [body for method, path, body, _ in nas.calls if method == "POST" and path.split("?")[0] == "/files/move"]
+    assert [f"{ROOT}/unoscheck1a2b3cv/w.txt", f"{ROOT}/unoscheck1a2b3cv/wd"] in moves
+
+
 def test_the_smb_check_shows_the_protocol_options_of_its_share(nas):
     """shares.per-share-protocol-options (ADR-0380), on a share of a folder in a new volume:
     before the volume's first snapshot allinfo shows what smbd answers for a volume without
@@ -3591,6 +3678,14 @@ def test_the_pool_folder_helper_removes_only_an_empty_folder_that_is_no_mount_po
     ("smb", "sessions-stay", "a new password set by an administrator ends the user's open session"),
     ("smb", "share-folder-mode", "2770 root:unos-smb"),
     ("smb", "upload-mode", "660 root:unos-smb"),
+    ("smb", "move-keeps-modes", "Move of a file and a folder from unoscheck1a2b3cm into the share's folder (another "
+                                "subvolume: a copy and a delete) gives them 660 and 2770 root:unos-smb, and they leave "
+                                "the volume: /mnt/pools/data/unoscheck1a2b3c/mv.txt is 644 root:unos-smb, not "
+                                "660 root:unos-smb"),
+    ("smb", "copy-keeps-modes", "Copy of a file and a folder of a new volume unoscheck1a2b3cm (644 and 755 root:root "
+                                "there) into the share's folder gives them 660 and 2770 root:unos-smb, and the file in "
+                                "the folder 660: /mnt/pools/data/unoscheck1a2b3c/cp.txt is 644 root:unos-smb, not "
+                                "660 root:unos-smb"),
     ("smb", "no-history", "Samba's password history is '0', not 3"),
     ("smb", "no-lockout", "Samba's bad lockout attempt is '0', not 5"),
     ("smb", "long-lockout", "Samba's lockout duration is '30', not 5"),
@@ -3638,6 +3733,7 @@ def test_the_pool_folder_helper_removes_only_an_empty_folder_that_is_no_mount_po
     ("smb", "snapshot-other-names", "the Snapshots page named the snapshot 'snap_20270115T080000'"),
     ("files", "volume-deletable", "refused with 409"),
     ("files", "upload-mode", "644 root:root"),
+    ("files", "copy-opens-modes", "/copied/b.txt is 664 root:root, not 644 root:root"),
     ("volumes", "volume-delete-ignores-shares", "names the share"),
     ("volumes", "quota-use-missing", "the list does not say that quotas are off"),
     ("volumes", "copies-not-listed", "listed with the volume's restored copies"),

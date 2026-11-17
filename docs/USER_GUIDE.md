@@ -877,10 +877,12 @@ encryption required loses guest access at the restore, with a note.
 UNOS creates share folders with the group `unos-smb` and the mode 2770, and
 files created over SMB get that group and the mode 660. In such a folder,
 folders made with **New Folder** in the File Browser get the mode 2770 and
-uploaded files 660 as well (see [File Browser](#file-browser)). Files that
-came in another way (from an app, copied or moved in the File Browser, or
-already in the folder when the share was created) keep their permissions
-until you press **Repair permissions** on the share. A share marked
+uploaded files 660 as well, and items copied there, or moved there from
+another pool or volume, get the permissions that a repair gives (see
+[File Browser](#file-browser)). Files that came in another way (from an app,
+moved within the same pool or volume in the File Browser, or already in the
+folder when the share was created) keep their permissions until you press
+**Repair permissions** on the share. A share marked
 **Permissions need repair** needs it. Repairing:
 - gives every file and folder of the share the group `unos-smb` and group
   read and write access (folders 2770, files 660, or 770 for files their
@@ -1193,9 +1195,29 @@ file that replaces one, both in the group `unos-smb`: the users with **Read &
 write** access to the share can change them, and add files to the new
 folder, over SMB at once. Elsewhere new folders get the mode 755 (2755 in a
 folder with the setgid bit) and uploaded files 644, which let other accounts
-read them but not change them. **Copy** and **Move** keep the permissions of
-the items, also into a share: run **Repair permissions** on the share
-afterwards.
+read them but not change them.
+
+In such a share folder, **Copy**, and **Move** from another pool or volume
+(which copies the items and then deletes them where they were), give the
+items the permissions that **Repair permissions** gives, in the group
+`unos-smb`: folders 2770, files 660, or 770 for files their owner may run,
+everything in a copied folder included, so that the users with **Read &
+write** access change them at once. Private files and folders, which only
+their owner can use (such as a 0600 key or a 0700 folder), keep their
+permissions, and so does what is in a private folder; symbolic links are
+copied as links. An item gets its permissions only once it is copied in
+full: when a copy stops part way (for example, the pool is full), the
+message says why, the items copied in full before it have their
+permissions, and the item whose copy stopped stays private, so that SMB
+users cannot open it; delete it in the File Browser and copy it again. A
+move deletes an item where it was only after its copy is complete. A
+**Move** within the same pool or volume only renames the items, which keep
+their owners and permissions: run **Repair permissions** on the share
+afterwards. Everywhere else **Copy** and **Move** keep the permissions of
+the items (a copied file never keeps the set-user-ID and set-group-ID bits).
+If another folder takes the place of a folder that a copy has just made in a
+share folder (an SMB user renamed one to its name), the copy stops there and
+says so, and that folder is left as it was.
 
 Uploads, new folders, copies and moves go into the folders of a pool, not
 into the pools directory itself. The folder of a pool, its volumes, and other
