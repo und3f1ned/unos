@@ -359,7 +359,14 @@ def api(host):
 
 
 def _volume(name: str, pool: str = "data", quota: int | None = None) -> dict:
-    return {"name": name, "pool": pool, "path": f"/mnt/pools/{pool}/{name}", "used": None, "quota": quota}
+    """A volume as the answer to its create gives it: the quota asked for, nothing read."""
+    return {"name": name, "pool": pool, "path": f"/mnt/pools/{pool}/{name}", "used": None, "quota": quota,
+            "usage": None}
+
+
+def _listed(name: str, pool: str = "data") -> dict:
+    """A volume as the list gives it on a host whose sysfs has no quota groups: quotas are off."""
+    return {**_volume(name, pool), "usage": "quotas_off"}
 
 
 def _btrfs_calls(host, *action: str) -> list[list[str]]:
@@ -417,7 +424,7 @@ class TestCreate:
         # On the host, in the pool's mounted filesystem.
         assert host.changes == [["btrfs", "subvolume", "create", "/mnt/pools/data/documents"]]
         assert host.subvols.paths(DATA_UUID) == ["documents"]
-        assert api.get(f"{API}/data/volumes").json() == [_volume("documents")]
+        assert api.get(f"{API}/data/volumes").json() == [_listed("documents")]
 
     def test_name_only(self, api, host):
         response = api.post(f"{API}/data/volumes", json={"name": "photos"})
@@ -1161,7 +1168,7 @@ class TestList:
         response = api.get(f"{API}/data/volumes")
 
         assert response.status_code == 200, response.text
-        assert response.json() == [_volume("documents"), _volume("photos")]
+        assert response.json() == [_listed("documents"), _listed("photos")]
         assert host.changes == []
 
     def test_empty_pool(self, api, host):
@@ -1214,7 +1221,7 @@ class TestDelete:
         assert response.status_code == 200, response.text
         assert response.json() == {"status": "deleted"}
         assert host.changes == [["btrfs", "subvolume", "delete", "--subvolid", str(documents), "/mnt/pools/data"]]
-        assert api.get(f"{API}/data/volumes").json() == [_volume("photos")]
+        assert api.get(f"{API}/data/volumes").json() == [_listed("photos")]
 
     def test_link_planted_under_a_volume_name_is_not_followed(self, api, host):
         # Pool contents are writable by SMB users and apps. btrfs-progs would
@@ -1238,7 +1245,7 @@ class TestDelete:
         documents = host.subvols.add(DATA_UUID, "documents")
         # A phantom volume "trash" with the id of "documents": no longer listed (storage.edge-cases, step 2).
         host.subvols.add(DATA_UUID, f"apps/evil\nID {documents} gen 1 top level {TOP_LEVEL} path trash")
-        assert api.get(f"{API}/data/volumes").json() == [_volume("documents")]
+        assert api.get(f"{API}/data/volumes").json() == [_listed("documents")]
 
         response = api.delete(f"{API}/data/volumes/trash")
 
@@ -1269,7 +1276,7 @@ class TestDelete:
         photos = host.subvols.add(DATA_UUID, "photos")
         host.subvols.add(DATA_UUID, "photos\nold")
 
-        assert api.get(f"{API}/data/volumes").json() == [_volume("photos")]
+        assert api.get(f"{API}/data/volumes").json() == [_listed("photos")]
         response = api.delete(f"{API}/data/volumes/photos")
 
         assert response.status_code == 200, response.text
@@ -1294,7 +1301,7 @@ class TestDelete:
         documents = host.subvols.add(DATA_UUID, "documents")
         host.subvols.add(DATA_UUID, f"documents{separator}old")
 
-        assert api.get(f"{API}/data/volumes").json() == [_volume("documents")]
+        assert api.get(f"{API}/data/volumes").json() == [_listed("documents")]
         response = api.delete(f"{API}/data/volumes/documents")
 
         assert response.status_code == 200, response.text
@@ -1397,7 +1404,7 @@ class TestNamesThatAreNotUtf8:
         response = api.get(f"{API}/data/volumes")
 
         assert response.status_code == 200, response.text
-        assert response.json() == [_volume("documents")]
+        assert response.json() == [_listed("documents")]
 
     def test_delete(self, api, host):
         documents = host.subvols.add(DATA_UUID, "documents")
@@ -1450,7 +1457,7 @@ class TestNamesThatAreNotUtf8:
 
         response = api.get(f"{API}/data/volumes")
         assert response.status_code == 200, response.text
-        assert response.json() == [_volume("documents"), _volume("photos")]
+        assert response.json() == [_listed("documents"), _listed("photos")]
 
         response = api.post(f"{API}/data/volumes", json={"name": "music"})
         assert response.status_code == 200, response.text
@@ -1482,7 +1489,7 @@ class TestNamesThatAreNotUtf8:
         if operation == "list":
             response = api.get(f"{API}/data/volumes")
             assert response.status_code == 200, response.text
-            assert response.json() == [_volume("documents")]
+            assert response.json() == [_listed("documents")]
         else:
             response = api.delete(f"{API}/data/volumes/documents")
             assert response.status_code == 200, response.text
@@ -1918,7 +1925,7 @@ class TestReadOnlyPool:
         response = api.get(f"{API}/data/volumes")
 
         assert response.status_code == 200, response.text
-        assert response.json() == [_volume("documents")]
+        assert response.json() == [_listed("documents")]
 
     def test_the_pool_reports_read_only_too(self, api, host, read_only):
         # The Storage page disables Create and Delete from this flag.

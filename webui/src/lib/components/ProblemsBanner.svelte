@@ -15,7 +15,10 @@
 		disk_failed: 'problems.kind.disk_failed',
 		disk_test_failed: 'problems.kind.disk_test_failed',
 		task_failed: 'problems.kind.task_failed',
-		task_missed: 'problems.kind.task_missed'
+		task_missed: 'problems.kind.task_missed',
+		volume_quota_80: 'problems.kind.volume_quota_80',
+		volume_quota_90: 'problems.kind.volume_quota_90',
+		volume_quota_95: 'problems.kind.volume_quota_95'
 	};
 
 	$: text = (problem: Problem): string =>

@@ -578,3 +578,56 @@ export async function fakeStorageApi(page: Page, options: FakeStorageOptions = {
   );
   return writes;
 }
+
+/** A volume as GET /storage/pools/{pool}/volumes lists it, with its quota use. */
+export interface FakeVolume {
+  name: string;
+  used: number | null;
+  quota: number | null;
+  usage: 'counted' | 'inconsistent' | 'quotas_off' | 'unknown';
+}
+
+/** A volume's use over time, as GET /storage/pools/{pool}/volumes/{name}/usage answers it. */
+export interface FakeVolumeUsage {
+  used: number | null;
+  quota: number | null;
+  usage: FakeVolume['usage'];
+  points: { time: string; used: number; quota: number | null }[];
+}
+
+/**
+ * The volumes of the fake pools with their use, and the use over time of each by "<pool>/<name>"
+ * (an answer, or a FakeResponse such as a 404). Registered after fakeStorageApi, so these routes
+ * answer the volume requests first; anything else is aborted. Returns the paths of the requests of
+ * the use over time, in order.
+ */
+export async function fakeVolumesWithUse(
+  page: Page,
+  volumes: Record<string, FakeVolume[]>,
+  usage: Record<string, FakeVolumeUsage | FakeResponse> = {},
+): Promise<string[]> {
+  const asked: string[] = [];
+  const volumePath = /^\/pools\/([^/]+)\/volumes(?:\/([^/]+)\/usage)?$/;
+  await page.route(
+    (url) => volumePath.test(url.pathname.slice('/api/v1/storage'.length)),
+    async (route) => {
+      const request = route.request();
+      const path = new URL(request.url()).pathname.slice('/api/v1/storage'.length);
+      const [, poolPart, namePart] = path.match(volumePath) ?? [];
+      const pool = decodeURIComponent(poolPart);
+      if (request.method() !== 'GET') return route.abort();
+      if (!namePart) {
+        return route.fulfill({
+          json: (volumes[pool] ?? []).map((volume) => ({ pool, path: `/mnt/pools/${pool}/${volume.name}`, ...volume })),
+        });
+      }
+      const name = decodeURIComponent(namePart);
+      asked.push(path);
+      const answer = usage[`${pool}/${name}`];
+      if (answer === undefined) return route.abort();
+      if ('status' in answer) return route.fulfill(answer);
+      return route.fulfill({ json: { name, pool, ...answer } });
+    },
+  );
+  return asked;
+}

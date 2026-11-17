@@ -145,6 +145,25 @@ class TestTheRegistry:
         await problems.update("pools", _found(_problem()))
         assert [event.title for event in alerts] == ["Pool 'data' is degraded"] * 2
 
+    async def test_a_problem_whose_stage_rises_is_alerted_again_and_one_whose_stage_falls_is_not(self, alerts):
+        # A volume that passes further levels of its quota (storage.volume_usage): one problem, a stage per level.
+        def at(stage: int) -> dict[str, problems.Problem]:
+            return _found(_problem("volume_quota:data/256", "warning", f"Volume at {stage}", stage=stage,
+                                   since="2026-11-01T10:00:00+00:00"))
+
+        for stage in (80, 90, 90, 80, 90, 95):
+            await problems.update("volumes", at(stage))
+
+        assert [event.title for event in alerts] == ["Volume at 80", "Volume at 90", "Volume at 90", "Volume at 95"]
+        [current] = problems.current()
+        assert current.stage == 95
+        # The problem is there since its first find; an alert of a further stage is of its own time.
+        assert alerts[0].timestamp == current.since
+        assert all(event.timestamp > current.since for event in alerts[1:])
+
+    def test_the_stage_stays_out_of_what_the_web_ui_gets(self):
+        assert "stage" not in _problem(stage=90).model_dump()
+
     async def test_the_sources_are_kept_apart(self, alerts):
         await problems.update("disks", _found(_problem("disk_failed:/dev/sda", title="Disk /dev/sda is failing")))
         await problems.update("pools", _found(_problem()))

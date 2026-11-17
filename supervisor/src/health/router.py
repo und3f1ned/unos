@@ -20,7 +20,7 @@ from ..auth.utils import verify_token
 from ..security.validators import validate_pool_name
 from ..storage import disks as storage_disks
 from ..storage import pools as storage_pools
-from ..storage import spindown
+from ..storage import spindown, volume_usage
 from ..storage.schemas import PoolInfo
 from ..notifications.router import load_configs as load_notification_configs
 from ..notifications.router import history_entry, save_logs, send_email, send_through
@@ -983,6 +983,16 @@ async def _update_pool_problems() -> tuple[set[str], set[str]]:
     return {info.name for info in read.pools if info.persistent}, alerted
 
 
+async def _update_volume_usage(pools: list[PoolInfo]) -> None:
+    """Read the quota use of the volumes of the pools that the RAID check just read, keep the hour's
+    points of their history and report the volumes at a level of their quota (storage.volume_usage).
+    A failure is logged: the pass's other alerts went before."""
+    try:
+        await volume_usage.check(pools)
+    except Exception:
+        logger.exception("RAID monitor: could not read the quota use of the volumes")
+
+
 async def send_raid_alert(pool: str, status: str, errors: int, details: str):
     """Send notification about RAID health issues."""
     event = NotificationEvent(
@@ -1052,9 +1062,10 @@ async def raid_monitor_loop():
     """Background loop for RAID health monitoring.
 
     The pools that UNOS manages report their problems (pool_problems), which alert a pool that
-    is not mounted, degraded, read-only or low on space once (ADR-0332); for them the loop alerts
-    new device errors, unless the pool's new pool_degraded or pool_read_only problem of the same
-    check names them, and a state that could not be read. For the other pools it alerts new
+    is not mounted, degraded, read-only or low on space once (ADR-0332), and so do the volumes of
+    the mounted pools that reached a level of their quota (storage.volume_usage); for the pools the
+    loop alerts new device errors, unless the pool's new pool_degraded or pool_read_only problem of
+    the same check names them, and a state that could not be read. For the other pools it alerts new
     errors, a filesystem forced read-only, and a status that turned from healthy.
     """
     global _raid_monitor_running
@@ -1062,6 +1073,8 @@ async def raid_monitor_loop():
     while _raid_monitor_running:
         try:
             health_info = await check_raid_health()
+            # The same read of the pools for the quotas of their volumes, after the RAID alerts.
+            read = _pools_read
             managed, alerted = await _update_pool_problems()
             previous_status = load_previous_raid_status()
             current_status = {}
@@ -1134,6 +1147,8 @@ async def raid_monitor_loop():
                     )
 
             save_raid_status(current_status)
+            if read is not None:
+                await _update_volume_usage(read.pools)
 
         except Exception as e:
             logger.error("RAID monitor error: %s", e)
@@ -1780,3 +1795,5 @@ async def stop_health_monitors():
         _smart_monitor_task.cancel()
     # The snapshots since the history was last written (ADR-0269).
     await asyncio.to_thread(save_unsaved_smart_history)
+    # The points of the volumes' use since their history was last written (storage.volume_usage).
+    await asyncio.to_thread(volume_usage.save_unsaved)

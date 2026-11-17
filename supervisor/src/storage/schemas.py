@@ -179,12 +179,42 @@ class VolumeCreate(BaseModel):
     quota: int | None = Field(default=None, gt=0, le=MAX_VOLUME_QUOTA)
 
 
+# A volume's quota use as the kernel counts it (storage.qgroups): counted; inconsistent
+# (counted, but btrfs says a rescan is needed); quotas_off (quotas are off on the pool: nothing is
+# counted); unknown (its quota group cannot be read).
+VolumeUsageState = Literal["counted", "inconsistent", "quotas_off", "unknown"]
+
+
 class VolumeInfo(BaseModel):
     name: str
     pool: str
     path: str
+    # The bytes it references, which its quota limits; None unless counted.
+    used: int | None = None
+    # The limit of its quota group on them, in bytes; None without one.
+    quota: int | None = None
+    # How the list read them; None in the answer to a create, which reads nothing.
+    usage: VolumeUsageState | None = None
+
+
+class VolumeUsagePoint(BaseModel):
+    """A volume's use at one time."""
+
+    time: str  # ISO 8601 with the UTC offset
+    used: int
+    quota: int | None = None
+
+
+class VolumeUsageHistory(BaseModel):
+    """GET /storage/pools/{pool}/volumes/{name}/usage: one point per hour of the last 30 days that
+    the supervisor kept, oldest first, and the current reading last (storage.volume_usage)."""
+
+    name: str
+    pool: str
     used: int | None = None
     quota: int | None = None
+    usage: VolumeUsageState
+    points: list[VolumeUsagePoint]
 
 
 class RestoreCopyInfo(BaseModel):

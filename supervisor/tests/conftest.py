@@ -60,6 +60,22 @@ def _no_problems_yet(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _no_volume_use_read_yet(monkeypatch, tmp_path_factory):
+    """The use of the volumes' quotas that the RAID monitor reads, with its history, is kept in RAM and
+    written to /data only at shutdown (storage.volume_usage): every test starts without it, its file is in a
+    temporary folder of its own, and the kernel's sysfs of this machine is never read (a test that
+    reads sysfs gives qgroups.SYS_FS_BTRFS a folder of its own)."""
+    volume_usage = sys.modules.get("src.storage.volume_usage")
+    if volume_usage is not None:
+        monkeypatch.setattr(volume_usage, "_state", volume_usage._State())
+        folder = tmp_path_factory.mktemp("volume-usage")
+        monkeypatch.setattr(volume_usage, "HISTORY_FILE", str(folder / "volume_usage.json"))
+    qgroups = sys.modules.get("src.storage.qgroups")
+    if qgroups is not None:
+        monkeypatch.setattr(qgroups, "SYS_FS_BTRFS", "/nonexistent/unos-tests/sys/fs/btrfs")
+
+
+@pytest.fixture(autouse=True)
 def _no_power_reads_yet(monkeypatch):
     """The hdparm -C reads of the disks' power that run, and those that timed out, are kept in RAM
     (storage.disks.power_state, ADR-0378): every test starts without them, as the supervisor does."""

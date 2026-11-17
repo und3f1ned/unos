@@ -361,7 +361,27 @@ export const en = {
 	'storage.volumes.quotaHint': 'Empty for no limit. A quota needs quotas enabled on the pool.',
 	'storage.volumes.createFailed': 'Volume was not created',
 	'storage.volumes.create': 'Create Volume',
-	'storage.volumes.close': 'Close'
+	'storage.volumes.close': 'Close',
+	// A volume's use of its quota, as the kernel counts it: {used} and {quota} are sizes,
+	// {percent} a percentage, in the format of the page.
+	'storage.volumes.useOf': 'Use of {name}',
+	'storage.volumes.usedOfQuota': '{used} of {quota} used ({percent})',
+	'storage.volumes.usedNoQuota': '{used} used, no quota',
+	'storage.volumes.useUnknown': 'Use unknown: its quota group cannot be read',
+	// Followed by the command that turns quotas on, or counts them again, on the host.
+	'storage.volumes.quotasOffTitle': 'Quotas are off on this pool',
+	'storage.volumes.quotasOff': "The volumes' use is not counted. To count it and set quotas, enable them on the host:",
+	'storage.volumes.rescanTitle': 'The counts need a rescan',
+	'storage.volumes.rescan': 'btrfs says that the use counted on this pool may be wrong until it is counted again. Run on the host:',
+	// The use over time: one point per hour of the last 30 days, the current reading last.
+	'storage.volumes.chartShow': 'Use over time of {name}',
+	'storage.volumes.chartTitle': 'Use over time',
+	'storage.volumes.chartLoading': 'Loading the use over time...',
+	'storage.volumes.chartError': 'Could not load the use over time',
+	'storage.volumes.chartTooFew': 'Not enough points yet: UNOS keeps one per hour, for 30 days.',
+	// {from} and {to} are dates and times; {start} and {end} the sizes used then.
+	'storage.volumes.chartSummary': 'From {from} to {to}: {start} to {end} used.',
+	'storage.volumes.chartQuota': 'Quota: {quota}.'
 };
 
 export const ru: Translation<typeof en> = {
@@ -688,5 +708,20 @@ export const ru: Translation<typeof en> = {
 	'storage.volumes.quotaHint': 'Оставьте пустым, чтобы не ограничивать. Для квоты в пуле должны быть включены квоты.',
 	'storage.volumes.createFailed': 'Не удалось создать том',
 	'storage.volumes.create': 'Создать том',
-	'storage.volumes.close': 'Закрыть'
+	'storage.volumes.close': 'Закрыть',
+	'storage.volumes.useOf': 'Заполнение тома {name}',
+	'storage.volumes.usedOfQuota': 'Занято {used} из {quota} ({percent})',
+	'storage.volumes.usedNoQuota': 'Занято {used}, квоты нет',
+	'storage.volumes.useUnknown': 'Заполнение неизвестно: группу квоты тома не удаётся прочитать',
+	'storage.volumes.quotasOffTitle': 'В этом пуле квоты выключены',
+	'storage.volumes.quotasOff': 'Заполнение томов не считается. Чтобы считать его и задавать квоты, включите их на хосте:',
+	'storage.volumes.rescanTitle': 'Счётчики нужно пересчитать',
+	'storage.volumes.rescan': 'btrfs сообщает, что заполнение в этом пуле может быть посчитано неверно, пока его не пересчитают. Выполните на хосте:',
+	'storage.volumes.chartShow': 'Заполнение тома {name} во времени',
+	'storage.volumes.chartTitle': 'Заполнение во времени',
+	'storage.volumes.chartLoading': 'Загрузка заполнения во времени...',
+	'storage.volumes.chartError': 'Не удалось загрузить заполнение во времени',
+	'storage.volumes.chartTooFew': 'Пока мало точек: UNOS хранит по одной в час за 30 дней.',
+	'storage.volumes.chartSummary': 'С {from} по {to}: занято от {start} до {end}.',
+	'storage.volumes.chartQuota': 'Квота: {quota}.'
 };

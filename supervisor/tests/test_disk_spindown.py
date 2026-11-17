@@ -17,10 +17,10 @@ disk's, is read with smartctl -n idle, which stops after CHECK POWER MODE too, a
 timed out gets no other while that one still runs on the host. The SMART reads of Storage and Disk
 Health run smartctl -n standby, which leaves a sleeping disk alone.
 
-Nothing UNOS does periodically wakes a sleeping disk: the SMART monitor, the RAID monitor, the
-monitoring endpoints, the trash expiry and the live statistics are run here with every disk asleep, on
-the FakeHost of test_pool_persistence, which wakes a disk for every command that would read it or spin
-it up. Nor do they keep an idle disk awake: IDENTIFY and SMART commands restart its standby timer (CHECK
+Nothing UNOS does periodically wakes a sleeping disk: the SMART monitor, the RAID monitor and its pass
+over the quotas of the volumes, the monitoring endpoints, the trash expiry and the live statistics are
+run here with every disk asleep, on the FakeHost of test_pool_persistence, which wakes a disk for every
+command that would read it or spin it up. Nor do they keep an idle disk awake: IDENTIFY and SMART commands restart its standby timer (CHECK
 POWER MODE did not on the dev device's disk), so the SMART monitor leaves alone a disk with a timeout
 that was not used since its last read, and the trash expiry asks a pool's disks whether they sleep only
 when the pool's pass is due, and none of them again while the disk it found asleep had no read or
@@ -966,6 +966,34 @@ async def test_the_raid_monitor_reads_no_disk(host):
     # The pool on the sleeping disk that is not mounted, as udev recorded it.
     assert health["spare"].status == "unmounted"
     assert ["btrfs", "filesystem", "show", "--mounted", "--raw"] in host.calls
+    assert not [c for c in host.calls if c[:3] == ["btrfs", "filesystem", "show"] and "--mounted" not in c]
+
+
+async def test_the_quota_use_of_the_volumes_reads_no_disk(host, tmp_path, monkeypatch):
+    # The RAID monitor's pass over the quotas of the volumes (storage.volume_usage): the kernel's
+    # counters in sysfs, and the list of the volumes without a scan of the disks, after a write.
+    from src.storage import qgroups, volume_usage
+
+    from .test_volume_usage import FakeSysfs
+    from .test_volumes import FakeSubvolumes
+
+    host.subvols = FakeSubvolumes(host)
+    host.subvols.quotas.add(DATA_UUID)
+    documents = host.subvols.add(DATA_UUID, "documents")
+    sysfs = FakeSysfs(tmp_path / "sys" / "fs" / "btrfs")
+    monkeypatch.setattr(qgroups, "SYS_FS_BTRFS", str(sysfs.root))
+    sysfs.quotas()
+    sysfs.group(documents, 9 << 30, 10 << 30)
+    sysfs.generation(7)
+    asleep = all_asleep(host)
+
+    await health_router.check_raid_health()
+    pools_read = health_router._take_pools_read()
+    for _ in range(3):
+        await volume_usage.check(pools_read.pools)
+
+    assert host.woken == [] and host.asleep == asleep
+    assert [p.kind for p in health_router.problems.of_source(volume_usage.SOURCE).values()] == ["volume_quota_90"]
     assert not [c for c in host.calls if c[:3] == ["btrfs", "filesystem", "show"] and "--mounted" not in c]
 
 
