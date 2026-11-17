@@ -231,6 +231,38 @@ test.describe('API Tests', () => {
     expect(data.length).toBeGreaterThan(0);
   });
 
+  test('GET /api/v1/apps/catalog/immich answers an app of several containers with pinned images', async ({
+    request,
+  }) => {
+    const response = await request.get(`${BASE_URL}/api/v1/apps/catalog/immich`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    expect(response.status(), await response.text()).toBe(200);
+    const immich = await response.json();
+    // Its server is the main container; the server waits for its database and Valkey (ADR-0381).
+    expect(immich.companions.map((companion: { name: string }) => companion.name)).toEqual([
+      'database',
+      'redis',
+      'machine-learning',
+    ]);
+    expect(immich.depends_on).toEqual(['database', 'redis']);
+    expect(immich.can_run_in_unos_smb).toBe(false);
+    for (const image of [immich.image, ...immich.companions.map((companion: { image: string }) => companion.image)]) {
+      expect(image).toMatch(/^[^@\s]+:[^@\s]+@sha256:[0-9a-f]{64}$/);
+    }
+  });
+
+  test('POST /api/v1/apps/install refuses a name: there is one instance of each app', async ({ request }) => {
+    // Refused as the request is read, before anything is checked or pulled (ADR-0381). The template
+    // does not exist: should the name ever be accepted, the answer is a 404 and nothing is installed,
+    // also on the compose test stack, whose supervisor reaches the host's Docker.
+    const response = await request.post(`${BASE_URL}/api/v1/apps/install`, {
+      headers: { Authorization: `Bearer ${token}` },
+      data: { template_id: 'e2e-no-such-app', name: 'e2e-second' },
+    });
+    expect(response.status(), await response.text()).toBe(422);
+  });
+
   test('GET /api/v1/apps/installed answers 503 without Docker', async ({ request }) => {
     test.skip(!process.env.E2E_STANDIN_STATE, ONLY_THE_STAND_IN);
     const response = await request.get(`${BASE_URL}/api/v1/apps/installed`, {

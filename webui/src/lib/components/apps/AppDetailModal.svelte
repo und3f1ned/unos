@@ -20,19 +20,24 @@
 	import AppStorageWarning from './AppStorageWarning.svelte';
 	import AppHardwareHint from './AppHardwareHint.svelte';
 	import {
+		type AppContainer,
 		type AppTemplate,
 		type AppPool,
 		type AppInstallRequest,
 		type AppInstallResponse,
+		type AppVolume,
 		type InstalledApp,
+		type PortMapping,
 		type VolumeMapping,
 		type EnvVar,
+		appContainers,
 		getAppPools,
 		installApp,
 		poolHostPath,
 		isInsidePools,
 		describeApiError,
 		isSetByUnos,
+		isUserOrGroup,
 		UNOS_SMB_IDS
 	} from '$lib/api/apps';
 
@@ -72,6 +77,13 @@
 	// Whether the app runs (installed) or is to run (the form) in the group unos-smb.
 	$: inUnosSmb = isInstalled ? (installedApp?.runs_in_unos_smb ?? false) : runInUnosSmb;
 
+	// An app in the host's network binds its container ports on the host: they cannot be moved (ADR-0381).
+	$: inHostNetwork = app ? isInHostNetwork(app) : false;
+
+	// The app's containers, its main container first (ADR-0381): an app of several lists each.
+	$: containers = app ? appContainers(app) : [];
+	$: several = containers.length > 1;
+
 	$: selectedPool = pools.find((pool) => pool.name === selectedPoolName) ?? null;
 	$: poolOptions = pools.map((pool) => ({
 		value: pool.name,
@@ -81,11 +93,15 @@
 			total: formatSize(pool.total_bytes)
 		})
 	}));
-	$: poolVolumes = app ? app.volumes.filter((volume) => volume.on_pool) : [];
-	$: needsPool = poolVolumes.length > 0;
-	// An installed app lists the folders its container really uses.
+	$: needsPool = containers.some((container) => container.spec.volumes.some((volume) => volume.on_pool));
+	$: dataLocations = selectedPool ? locationsOf(containers, selectedPool, volumeOverrides) : [];
+	// An installed app lists the folders its containers really use.
 	$: volumeCount =
-		isInstalled && installedApp ? installedApp.volumes.length : (app?.volumes.length ?? 0);
+		isInstalled && installedApp
+			? installedApp.volumes.length
+			: containers.reduce((sum, container) => sum + container.spec.volumes.length, 0);
+	$: variableCount = containers.reduce((sum, container) => sum + container.spec.environment.length, 0);
+	$: installedVolumes = isInstalled && installedApp ? volumesPerContainer(installedApp) : [];
 
 	// Client-side checks for a clear form; the server validates everything again.
 	$: missingRequired = app
@@ -122,6 +138,9 @@
 		(!needsPool || selectedPool !== null) &&
 		blockers.length === 0;
 
+	// The apps whose database and jobs keep the pool's hard disks awake while they run (ADR-0381).
+	const DISK_AWAKE: ReadonlySet<string> = new Set(['immich']);
+
 	// The units of a size, by powers of 1024, as formatBytes of $lib/stores/stats writes them.
 	const SIZE_UNITS = ['apps.size.bytes', 'apps.size.kb', 'apps.size.mb', 'apps.size.gb', 'apps.size.tb'];
 
@@ -134,9 +153,19 @@
 		return $t(SIZE_UNITS[power], { size });
 	};
 
+	/** Whether `template` runs in the host's network, where Docker discards its port bindings. */
+	function isInHostNetwork(template: AppTemplate): boolean {
+		return template.network_mode === 'host';
+	}
+
+	/** The host port of `port`: the container port itself for an app in the host's network. */
+	function hostPortOf(template: AppTemplate, port: PortMapping): number {
+		return isInHostNetwork(template) ? port.container : port.host;
+	}
+
 	function resetForm(template: AppTemplate) {
 		portValues = Object.fromEntries(
-			template.ports.map((port) => [port.container, String(port.host)])
+			template.ports.map((port) => [port.container, String(hostPortOf(template, port))])
 		);
 		volumeOverrides = {};
 		envValues = Object.fromEntries(template.environment.map((env) => [env.name, env.value]));
@@ -199,6 +228,63 @@
 		return pool ? poolHostPath(volume, pool.path) : volume.host;
 	}
 
+	/** A folder or file on the selected pool, with where each of the app's containers mounts it. */
+	interface DataLocation {
+		host: string;
+		/** A password file that UNOS generates (ADR-0381). */
+		secret: boolean;
+		mounts: { container: string; path: string; readonly: boolean }[];
+	}
+
+	/**
+	 * Where the app's data goes on `pool`: each source once, with its mounts. Only the main
+	 * container's folders take an override; a password file has a fixed path.
+	 */
+	function locationsOf(
+		ofApp: AppContainer[],
+		pool: AppPool,
+		overrides: Record<string, string>
+	): DataLocation[] {
+		const byHost = new Map<string, DataLocation>();
+		for (const container of ofApp) {
+			for (const volume of container.spec.volumes) {
+				if (!volume.on_pool) continue;
+				const host =
+					container.companion === null && !volume.generated_secret
+						? effectiveHostPath(volume, pool, overrides)
+						: poolHostPath(volume, pool.path);
+				const location = byHost.get(host) ?? { host, secret: volume.generated_secret, mounts: [] };
+				location.mounts.push({ container: container.name, path: volume.container, readonly: volume.readonly });
+				byHost.set(host, location);
+			}
+		}
+		return [...byHost.values()];
+	}
+
+	/**
+	 * The folders of an installed app per container, as its containers really use them: the main
+	 * container's first, then each companion's in the catalog's order.
+	 */
+	function volumesPerContainer(installed: InstalledApp): { name: string; volumes: AppVolume[] }[] {
+		const groups = [
+			{ companion: null as string | null, name: installed.name },
+			...installed.companions.map((companion) => ({ companion: companion.name as string | null, name: companion.container }))
+		];
+		return groups
+			.map((group) => ({
+				name: group.name,
+				volumes: installed.volumes.filter((volume) => volume.companion === group.companion)
+			}))
+			.filter((group) => group.volumes.length > 0);
+	}
+
+	/** Whether an installed app's folder is a password file that UNOS generated (ADR-0381). */
+	function isGeneratedSecret(template: AppTemplate, volume: AppVolume): boolean {
+		const spec =
+			volume.companion === null ? template : template.companions.find((companion) => companion.name === volume.companion);
+		return spec?.volumes.some((mapping) => mapping.generated_secret && mapping.container === volume.container) ?? false;
+	}
+
 	function setVolumePath(volume: VolumeMapping, value: string) {
 		const defaultPath = selectedPool ? poolHostPath(volume, selectedPool.path) : volume.host;
 		const next = { ...volumeOverrides };
@@ -216,6 +302,8 @@
 
 	function changedPorts(template: AppTemplate): Record<number, number> {
 		const result: Record<number, number> = {};
+		// The server refuses to move a port of an app in the host's network: none is sent.
+		if (isInHostNetwork(template)) return result;
 		for (const port of template.ports) {
 			const value = Number(portValues[port.container]);
 			if (value !== port.host) result[port.container] = value;
@@ -226,25 +314,28 @@
 	function changedEnv(template: AppTemplate): Record<string, string> {
 		const result: Record<string, string> = {};
 		for (const env of template.environment) {
-			// The server sets PUID and PGID: the template's values, or the group's with the option.
-			if (isSetByUnos(env.name)) continue;
+			// The server sets PUID and PGID (the template's values, or the group's with the option) and
+			// the wiring between the app's containers.
+			if (isSetByUnos(env)) continue;
 			const value = envValues[env.name] ?? env.value;
 			if (value !== env.value) result[env.name] = value;
 		}
 		return result;
 	}
 
-	/** PUID or PGID as UNOS sets it: the group's in unos-smb, otherwise the template's. */
+	/** A variable as UNOS sets it: PUID and PGID the group's in unos-smb, otherwise the template's value. */
 	function setByUnosValue(env: EnvVar, inGroup: boolean): string {
-		return inGroup && isSetByUnos(env.name) ? String(UNOS_SMB_IDS[env.name]) : env.value;
+		return inGroup && isUserOrGroup(env.name) ? String(UNOS_SMB_IDS[env.name]) : env.value;
 	}
 
 	// Reactive: the hint follows the language of the page.
 	$: setByUnosHint = (template: AppTemplate, env: EnvVar, installed: boolean, inGroup: boolean): string => {
+		// The wiring between an app's containers, and every variable of a companion.
+		if (!isUserOrGroup(env.name)) return $t('apps.detail.setByUnos');
 		if (installed) {
 			return $t(inGroup ? 'apps.detail.setByUnosIn' : 'apps.detail.setByUnosOutside', { name: template.name });
 		}
-		if (!template.can_run_in_unos_smb || !isSetByUnos(env.name)) return $t('apps.detail.setByUnos');
+		if (!template.can_run_in_unos_smb) return $t('apps.detail.setByUnos');
 		return $t(env.name === 'PGID' ? 'apps.detail.setByUnosOptionGroup' : 'apps.detail.setByUnosOption', {
 			id: UNOS_SMB_IDS[env.name],
 			value: env.value
@@ -482,7 +573,7 @@
 					{$t('apps.detail.tabs.volumes', { count: volumeCount })}
 				</button>
 			{/if}
-			{#if app.environment?.length > 0}
+			{#if variableCount > 0}
 				<button
 					class="flex items-center gap-2 px-4 py-2.5 text-sm font-medium transition-colors {activeTab ===
 					'environment'
@@ -491,7 +582,7 @@
 					on:click={() => (activeTab = 'environment')}
 				>
 					<Settings class="w-4 h-4" />
-					{$t('apps.detail.tabs.environment', { count: app.environment.length })}
+					{$t('apps.detail.tabs.environment', { count: variableCount })}
 				</button>
 			{/if}
 		</div>
@@ -500,13 +591,35 @@
 		<div class="min-h-[200px]">
 			{#if activeTab === 'overview'}
 				<div class="space-y-4">
-					<!-- Docker Image: on a phone it goes below its label and breaks (ADR-0302). -->
-					<div class="card-nested">
-						<div class="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
-							<span class="text-secondary text-sm">{$t('apps.detail.image')}</span>
-							<code class="mono text-sm min-w-0 break-all">{app.image}</code>
+					{#if several}
+						<!-- Each container with the image it is created from (ADR-0381); the images break on a phone. -->
+						<div class="card-nested">
+							<h4 class="text-sm font-medium mb-1">{$t('apps.detail.containers')}</h4>
+							<p class="text-xs text-muted mb-3">
+								{$t('apps.detail.containersHint', { name: app.name, count: containers.length })}
+							</p>
+							<ul class="space-y-2">
+								{#each containers as container (container.name)}
+									<li class="text-sm min-w-0">
+										<p class="mono break-all">{container.name}</p>
+										<code class="mono text-xs text-muted break-all">{container.spec.image}</code>
+									</li>
+								{/each}
+							</ul>
 						</div>
-					</div>
+					{:else}
+						<!-- Docker Image: on a phone it goes below its label and breaks (ADR-0302). -->
+						<div class="card-nested">
+							<div class="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
+								<span class="text-secondary text-sm">{$t('apps.detail.image')}</span>
+								<code class="mono text-sm min-w-0 break-all">{app.image}</code>
+							</div>
+						</div>
+					{/if}
+
+					{#if DISK_AWAKE.has(app.id)}
+						<Alert variant="info">{$t('apps.detail.diskAwake', { name: app.name })}</Alert>
+					{/if}
 
 					<!-- Where the data goes on the selected pool -->
 					{#if needsPool && selectedPool && !isInstalled}
@@ -518,16 +631,26 @@
 								</h4>
 							</div>
 							<ul class="space-y-2">
-								{#each poolVolumes as volume}
+								{#each dataLocations as location (location.host)}
 									<li class="text-sm">
-										<p class="mono break-all">
-											{effectiveHostPath(volume, selectedPool, volumeOverrides)}
-										</p>
-										<p class="text-xs text-muted">
-											{$t(volume.readonly ? 'apps.detail.mountedAtReadOnly' : 'apps.detail.mountedAt', {
-												path: volume.container
-											})}
-										</p>
+										<p class="mono break-all">{location.host}</p>
+										{#each location.mounts as mount}
+											<p class="text-xs text-muted break-all">
+												{#if several}
+													{$t(mount.readonly ? 'apps.detail.mountedAtInReadOnly' : 'apps.detail.mountedAtIn', {
+														path: mount.path,
+														container: mount.container
+													})}
+												{:else}
+													{$t(mount.readonly ? 'apps.detail.mountedAtReadOnly' : 'apps.detail.mountedAt', {
+														path: mount.path
+													})}
+												{/if}
+											</p>
+										{/each}
+										{#if location.secret}
+											<p class="text-xs text-muted">{$t('apps.detail.generatedSecret')}</p>
+										{/if}
 									</li>
 								{/each}
 							</ul>
@@ -569,14 +692,18 @@
 						</div>
 						<div class="card-nested text-center">
 							<Settings class="w-5 h-5 mx-auto mb-1 text-orange-400" />
-							<p class="text-2xl font-bold">{app.environment?.length || 0}</p>
+							<p class="text-2xl font-bold">{variableCount}</p>
 							<p class="text-xs text-secondary">{$t('apps.detail.variables')}</p>
 						</div>
 					</div>
 				</div>
 			{:else if activeTab === 'ports'}
 				<div class="space-y-3">
-					<p class="text-sm text-secondary mb-4">{$t('apps.detail.portsHint')}</p>
+					<p class="text-sm text-secondary mb-4">
+						{inHostNetwork
+							? $t('apps.detail.portsHostNetwork', { name: app.name })
+							: $t('apps.detail.portsHint')}
+					</p>
 					{#each app.ports as port}
 						<div class="card-nested">
 							<div class="flex items-start gap-4">
@@ -585,7 +712,7 @@
 									type="number"
 									label={$t('apps.detail.hostPort')}
 									bind:value={portValues[port.container]}
-									disabled={isInstalled}
+									disabled={isInstalled || inHostNetwork}
 									error={invalidPorts.includes(port.container) ? $t('apps.detail.portRange') : ''}
 								/>
 								<span class="text-secondary pt-8">→</span>
@@ -604,33 +731,50 @@
 					{/each}
 				</div>
 			{:else if activeTab === 'volumes' && isInstalled}
-				<!-- The folders the installed container really uses, not paths on a pool -->
+				<!-- The folders the installed containers really use, not paths on a pool -->
 				<div class="space-y-3">
 					<p class="text-sm text-secondary mb-4">{$t('apps.detail.installedVolumesHint')}</p>
-					{#if installedApp && installedApp.volumes.length > 0}
-						{#each installedApp.volumes as volume}
-							<div class="card-nested">
-								<div class="flex items-start gap-4">
-									<div class="flex-1 min-w-0">
-										<p class="form-label">{$t('apps.detail.hostPath')}</p>
-										<p class="mono text-sm break-all py-2">{volume.host}</p>
-									</div>
-									<span class="text-secondary pt-8">→</span>
-									<div class="flex-1 min-w-0">
-										<p class="form-label">{$t('apps.detail.containerPath')}</p>
-										<p class="mono text-sm break-all py-2">{volume.container}</p>
-									</div>
-									<div class="pt-8 flex flex-col items-end gap-1">
-										{#if volume.readonly}
-											<Badge variant="warning">{$t('apps.detail.readOnly')}</Badge>
-										{:else}
-											<Badge variant="neutral">{$t('apps.detail.readWrite')}</Badge>
+					{#if installedApp && installedVolumes.length > 0}
+						{#each installedVolumes as group (group.name)}
+							<!-- An app of several containers groups the folders per container (ADR-0381). -->
+							<div
+								class="space-y-3"
+								role={several ? 'group' : undefined}
+								aria-labelledby={several ? `app-volumes-${group.name}` : undefined}
+							>
+								{#if several}
+									<h4 id={`app-volumes-${group.name}`} class="text-sm font-medium mono break-all pt-2">
+										{group.name}
+									</h4>
+								{/if}
+								{#each group.volumes as volume}
+									<div class="card-nested">
+										<div class="flex items-start gap-4">
+											<div class="flex-1 min-w-0">
+												<p class="form-label">{$t('apps.detail.hostPath')}</p>
+												<p class="mono text-sm break-all py-2">{volume.host}</p>
+											</div>
+											<span class="text-secondary pt-8">→</span>
+											<div class="flex-1 min-w-0">
+												<p class="form-label">{$t('apps.detail.containerPath')}</p>
+												<p class="mono text-sm break-all py-2">{volume.container}</p>
+											</div>
+											<div class="pt-8 flex flex-col items-end gap-1">
+												{#if volume.readonly}
+													<Badge variant="warning">{$t('apps.detail.readOnly')}</Badge>
+												{:else}
+													<Badge variant="neutral">{$t('apps.detail.readWrite')}</Badge>
+												{/if}
+												{#if installedApp.data_outside_pools.includes(volume.host)}
+													<Badge variant="error">{$t('apps.detail.notOnPool')}</Badge>
+												{/if}
+											</div>
+										</div>
+										{#if isGeneratedSecret(app, volume)}
+											<p class="text-xs text-muted mt-2">{$t('apps.detail.generatedSecret')}</p>
 										{/if}
-										{#if installedApp.data_outside_pools.includes(volume.host)}
-											<Badge variant="error">{$t('apps.detail.notOnPool')}</Badge>
-										{/if}
 									</div>
-								</div>
+								{/each}
 							</div>
 						{/each}
 					{:else}
@@ -645,80 +789,128 @@
 						{/if}
 						{$t('apps.detail.volumesSystemHint')}
 					</p>
-					{#each app.volumes as volume}
-						<div class="card-nested">
-							<div class="flex items-start gap-4">
-								<div class="flex-1 min-w-0">
-									{#if volume.on_pool}
-										<Input
-											class="font-mono text-sm"
-											label={$t('apps.detail.hostPath')}
-											value={effectiveHostPath(volume, selectedPool, volumeOverrides)}
-											on:input={(e) => setVolumePath(volume, inputValue(e))}
-											disabled={isInstalled || selectedPool === null}
-											autocomplete="off"
-											error={invalidVolumes.includes(volume.container)
-												? $t('apps.detail.insidePool')
-												: ''}
-										/>
-									{:else}
-										<p class="form-label">{$t('apps.detail.hostPath')}</p>
-										<p class="mono text-sm break-all py-2">{volume.host}</p>
-									{/if}
-								</div>
-								<span class="text-secondary pt-8">→</span>
-								<div class="flex-1 min-w-0">
-									<p class="form-label">{$t('apps.detail.containerPath')}</p>
-									<p class="mono text-sm break-all py-2">{volume.container}</p>
-								</div>
-								<div class="pt-8 flex flex-col items-end gap-1">
-									{#if volume.readonly}
-										<Badge variant="warning">{$t('apps.detail.readOnly')}</Badge>
-									{:else}
-										<Badge variant="neutral">{$t('apps.detail.readWrite')}</Badge>
-									{/if}
-									{#if !volume.on_pool}
-										<Badge variant="info">{$t('apps.detail.system')}</Badge>
-									{/if}
-									{#if volume.is_file}
-										<Badge variant="neutral">{$t('apps.detail.file')}</Badge>
-									{/if}
-								</div>
+					{#each containers as container (container.name)}
+						{#if container.spec.volumes.length > 0}
+							<!-- An app of several containers groups the folders per container; only the main
+							     container's data folders can be moved, a password file never (ADR-0381). -->
+							<div
+								class="space-y-3"
+								role={several ? 'group' : undefined}
+								aria-labelledby={several ? `app-volumes-${container.name}` : undefined}
+							>
+								{#if several}
+									<h4 id={`app-volumes-${container.name}`} class="text-sm font-medium mono break-all pt-2">
+										{container.name}
+									</h4>
+								{/if}
+								{#each container.spec.volumes as volume}
+									<div class="card-nested">
+										<div class="flex items-start gap-4">
+											<div class="flex-1 min-w-0">
+												{#if volume.on_pool && container.companion === null && !volume.generated_secret}
+													<Input
+														class="font-mono text-sm"
+														label={$t('apps.detail.hostPath')}
+														value={effectiveHostPath(volume, selectedPool, volumeOverrides)}
+														on:input={(e) => setVolumePath(volume, inputValue(e))}
+														disabled={isInstalled || selectedPool === null}
+														autocomplete="off"
+														error={invalidVolumes.includes(volume.container)
+															? $t('apps.detail.insidePool')
+															: ''}
+													/>
+												{:else}
+													<p class="form-label">{$t('apps.detail.hostPath')}</p>
+													<p class="mono text-sm break-all py-2">
+														{volume.on_pool && selectedPool ? poolHostPath(volume, selectedPool.path) : volume.host}
+													</p>
+												{/if}
+											</div>
+											<span class="text-secondary pt-8">→</span>
+											<div class="flex-1 min-w-0">
+												<p class="form-label">{$t('apps.detail.containerPath')}</p>
+												<p class="mono text-sm break-all py-2">{volume.container}</p>
+											</div>
+											<div class="pt-8 flex flex-col items-end gap-1">
+												{#if volume.readonly}
+													<Badge variant="warning">{$t('apps.detail.readOnly')}</Badge>
+												{:else}
+													<Badge variant="neutral">{$t('apps.detail.readWrite')}</Badge>
+												{/if}
+												{#if !volume.on_pool}
+													<Badge variant="info">{$t('apps.detail.system')}</Badge>
+												{/if}
+												{#if volume.is_file}
+													<Badge variant="neutral">{$t('apps.detail.file')}</Badge>
+												{/if}
+											</div>
+										</div>
+										{#if volume.generated_secret}
+											<p class="text-xs text-muted mt-2">{$t('apps.detail.generatedSecret')}</p>
+										{/if}
+									</div>
+								{/each}
 							</div>
-						</div>
+						{/if}
 					{/each}
 				</div>
 			{:else if activeTab === 'environment'}
 				<div class="space-y-3">
 					<p class="text-sm text-secondary mb-4">{$t('apps.detail.environmentHint')}</p>
-					{#each app.environment as env}
-						<div class="card-nested">
-							{#if isSetByUnos(env.name)}
-								<!-- The server sets PUID and PGID; the install option decides them (ADR-0274). -->
-								<Input
-									class="font-mono text-sm"
-									label={env.name}
-									value={setByUnosValue(env, inUnosSmb)}
-									disabled
-									hint={setByUnosHint(app, env, isInstalled, inUnosSmb)}
-								/>
-							{:else}
-								<Input
-									class="font-mono text-sm"
-									label={env.name}
-									type={env.secret ? 'password' : 'text'}
-									bind:value={envValues[env.name]}
-									required={env.required}
-									disabled={isInstalled}
-									hint={env.description}
-									placeholder={env.secret
-										? $t(env.required ? 'apps.detail.secretPlaceholder' : 'apps.detail.optional')
-										: $t('apps.detail.enter', { name: env.name })}
-									autocomplete={env.secret ? 'new-password' : 'off'}
-									error={missingRequired.includes(env.name) ? $t('apps.detail.required') : ''}
-								/>
-							{/if}
-						</div>
+					{#each containers as container (container.name)}
+						{#if container.spec.environment.length > 0}
+							<!-- An app of several containers groups the variables per container (ADR-0381). -->
+							<div
+								class="space-y-3"
+								role={several ? 'group' : undefined}
+								aria-labelledby={several ? `app-environment-${container.name}` : undefined}
+							>
+								{#if several}
+									<h4 id={`app-environment-${container.name}`} class="text-sm font-medium mono break-all pt-2">
+										{container.name}
+									</h4>
+								{/if}
+								{#each container.spec.environment as env}
+									<div class="card-nested">
+										{#if container.companion !== null}
+											<!-- A companion takes no override: UNOS sets all its variables (ADR-0381). -->
+											<Input
+												class="font-mono text-sm"
+												label={env.name}
+												value={env.value}
+												disabled
+												hint={$t('apps.detail.setByUnos')}
+											/>
+										{:else if isSetByUnos(env)}
+											<!-- The server sets PUID and PGID, which the install option decides (ADR-0274), and
+											     the wiring between the app's containers (ADR-0381). -->
+											<Input
+												class="font-mono text-sm"
+												label={env.name}
+												value={setByUnosValue(env, inUnosSmb)}
+												disabled
+												hint={setByUnosHint(app, env, isInstalled, inUnosSmb)}
+											/>
+										{:else}
+											<Input
+												class="font-mono text-sm"
+												label={env.name}
+												type={env.secret ? 'password' : 'text'}
+												bind:value={envValues[env.name]}
+												required={env.required}
+												disabled={isInstalled}
+												hint={env.description}
+												placeholder={env.secret
+													? $t(env.required ? 'apps.detail.secretPlaceholder' : 'apps.detail.optional')
+													: $t('apps.detail.enter', { name: env.name })}
+												autocomplete={env.secret ? 'new-password' : 'off'}
+												error={missingRequired.includes(env.name) ? $t('apps.detail.required') : ''}
+											/>
+										{/if}
+									</div>
+								{/each}
+							</div>
+						{/if}
 					{/each}
 				</div>
 			{/if}

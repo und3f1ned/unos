@@ -37,10 +37,13 @@ Covered (the steps of the ledger entry device.scenario-checks-in-repo):
   mandatory signing where the device has other guest shares and in place of the ACL step without
   setfacl; its entries helper makes the check's entries with their owners and modes and touches
   only a check's own folders;
-* the hardware check (ADR-0377) reads the host's device tree and the device nodes of the RK3588's
-  video hardware, says so in place of the nodes' step on a host that is no RK3588, takes a
-  catalog without the hardware as right on an RK3588 without /dev/mpp_service, and fails for an
-  RK3588 without a node that Rockchip MPP needs;
+* the hardware check (ADR-0382) reads the host's device tree, the device nodes of the RK3588's
+  video hardware, the NPU's render node (its link in /dev/dri/by-path, followed) and the RKNPU
+  driver's version, says so in place of the nodes' steps on a host that is no RK3588, takes a
+  catalog without the hardware as right on an RK3588 without /dev/mpp_service or without the
+  NPU's node (Immich's machine learning then runs its image for the CPU), and fails for an RK3588
+  without a node that Rockchip MPP needs, without the NPU's node or with an RKNPU driver older
+  than 0.9.8 (compared by number); the fake's profiles and images are the catalog's;
 * a failure at any API call of a step, before or after the call changed something (a lost
   answer), an interruption, an output that can no longer be written or a refusal of the device
   still removes what the check made, and the check fails; only a backup whose answer was lost is
@@ -60,8 +63,10 @@ Covered (the steps of the ledger entry device.scenario-checks-in-repo):
   7 characters or keeps the account the user turned off, a guest share without the warning,
   an anonymous write, guest lines that stay after the last guest share, a password change over
   SAMR that Samba takes, or refuses while it writes passdb.tdb or stores the new password, a
-  catalog that does not offer Jellyfin the RK3588's video hardware on an RK3588 with Rockchip MPP
-  or offers an app the hardware of another SoC, Previous Versions that list no snapshot, still
+  catalog that does not offer Jellyfin the RK3588's video hardware on an RK3588 with Rockchip MPP,
+  does not offer Immich's machine learning the NPU on an RK3588 with the NPU's node or keeps its
+  image for the CPU there, or offers an app, in its main container or a companion, the hardware
+  of another SoC, Previous Versions that list no snapshot, still
   list or open a deleted one, open the file as it is now in place of the snapshot's copy, serve a
   copy with other bytes than the file held (its bytes and more, or a line that only contains their
   text), drop the session at the open of a file in a deleted one, or delete .snapshots with its
@@ -96,10 +101,12 @@ Covered (the steps of the ledger entry device.scenario-checks-in-repo):
 from __future__ import annotations
 
 import copy
+import grp
 import hashlib
 import io
 import json
 import os
+import pwd
 import re
 import shutil
 import signal
@@ -138,13 +145,29 @@ Answer = scenario.relay.Answer
 ROOT = "/mnt/pools/data"
 SMB_GROUP = "unos-smb"
 DISK = "sda"
-# The SoC of the dev device, a BPI-W3 (ADR-0376), and the hardware profile that the catalog API
-# answers for Jellyfin on it (src/apps/catalog.py, ADR-0377).
+# The SoC of the dev device, a BPI-W3 (ADR-0376), and the hardware profiles that the catalog API
+# answers on it (src/apps/catalog.py, ADR-0382): the video hardware of Jellyfin and of Immich's
+# server, and the NPU of Immich's machine learning, which runs the -rknn image where the NPU's
+# profile applies and the image for the CPU elsewhere; the RKNPU driver's version as its debugfs
+# file names it on the dev device. test_the_fake_catalog_has_the_catalog_s_profiles_and_images
+# compares them with the catalog.
 DEVICE_TREE = "/proc/device-tree/compatible"
 RK3588 = "rockchip,rk3588-armsom-w3\0rockchip,rk3588\0"
 RK3588_VIDEO = {"id": "rk3588-video", "soc": "rockchip,rk3588",
                 "devices": ["/dev/dri", "/dev/dma_heap", "/dev/mpp_service", "/dev/rga", "/dev/mali0"],
-                "requires": ["/dev/mpp_service"], "unmasked_paths": ["/sys/firmware"], "apparmor_unconfined": True}
+                "requires": ["/dev/mpp_service"], "unmasked_paths": ["/sys/firmware"], "apparmor_unconfined": True,
+                "image": None}
+NPU_NODE = "/dev/dri/by-path/platform-fdab0000.npu-render"
+IMMICH_ML = ("ghcr.io/immich-app/immich-machine-learning:v3.4.1"
+             "@sha256:8adebf414256f6e4f837bfbb66fa94f14f4da7260e3a1d65cbba49e4e35d8764")
+IMMICH_ML_RKNN = ("ghcr.io/immich-app/immich-machine-learning:v3.4.1-rknn"
+                  "@sha256:b7baeb12cab0093803f09f0299b7c863bed46f36349c532096f40bfbf4f10c84")
+RK3588_NPU = {"id": "rk3588-npu", "soc": "rockchip,rk3588", "devices": ["/dev/dri"], "requires": [NPU_NODE],
+              "unmasked_paths": ["/sys/firmware"], "apparmor_unconfined": True, "image": IMMICH_ML_RKNN}
+IMMICH_POSTGRES = ("ghcr.io/immich-app/postgres:14-vectorchord0.4.3-pgvectors0.2.0"
+                   "@sha256:bcf63357191b76a916ae5eb93464d65c07511da41e3bf7a8416db519b40b1c23")
+VALKEY = "docker.io/valkey/valkey:9@sha256:418652cfb58ef879d4978c33553735d7147016032d5aefaa14c828e611eb9dfd"
+RKNPU_VERSION = "/sys/kernel/debug/rknpu/version"
 LEFTOVER = re.compile(r"unoscheck[0-9a-f]{6}")
 HEADER = "# Generated by UNOS from its database.\n"
 # The texts of GET /shares/smb-status that the smbconf check reads, as UNOS words them
@@ -476,6 +499,11 @@ class FakeNas:
             "/dev/mpp_service": Node("char", 0o600),
             "/dev/rga": Node("char", 0o600),
             "/dev/mali0": Node("char", 0o600),
+            # The NPU of the RK3588 under the vendor kernel 6.1: a DRM device with its render node
+            # by a stable name, and its driver's version in debugfs.
+            "/dev/dri/renderD129": Node("char", 0o660, "root", "render"),
+            NPU_NODE: Node("link", 0o777, content="../renderD129"),
+            RKNPU_VERSION: Node("file", 0o444, content="RKNPU driver: v0.9.8\n"),
         }
         self.trash: dict[str, str] = {}  # the item's folder in a trash -> the path it was deleted from
         self.trash_entries = 100
@@ -1237,16 +1265,32 @@ class FakeNas:
 
     def api_apps(self, method, parts, body, params, upload):
         """The App Store's catalog with the hardware profiles that apply on the host (its SoC, with
-        the nodes the profile requires: ADR-0377), and no app installed."""
+        the nodes the profile requires, links followed: ADR-0382) in each container, and the
+        image of the profile where one applies; no app installed."""
         node = self.fs.get(DEVICE_TREE)
         socs = set(node.content.split("\0")) - {""} if node is not None else set()
         applies = RK3588_VIDEO["soc"] in socs and all(path in self.fs for path in RK3588_VIDEO["requires"])
         offered = applies != ("hardware-not-offered" in self.bugs)
         other = {**RK3588_VIDEO, "id": "rk3568-video", "soc": "rockchip,rk3568"}
+        npu = RK3588_NPU["soc"] in socs and all(self.resolve(path) for path in RK3588_NPU["requires"])
+        npu_offered = npu != ("npu-not-offered" in self.bugs)
+        machine_learning = {"name": "machine-learning", "hardware": [],
+                            "image": IMMICH_ML_RKNN if "rknn-without-npu" in self.bugs else IMMICH_ML}
+        if npu_offered:
+            machine_learning.update(hardware=[RK3588_NPU], image=IMMICH_ML if "npu-cpu-image" in self.bugs else IMMICH_ML_RKNN)
+        server_offered = offered and "server-hardware-not-offered" not in self.bugs
+        immich = {"id": "immich", "name": "Immich", "hardware": [RK3588_VIDEO] if server_offered else [], "companions": [
+            {"name": "database", "image": IMMICH_POSTGRES,
+             "hardware": [other] if "companion-hardware-of-another-soc" in self.bugs else []},
+            {"name": "redis", "image": VALKEY, "hardware": []},
+            machine_learning,
+        ]}
         catalog = [
-            {"id": "plex", "name": "Plex Media Server", "hardware": [other] if "hardware-of-another-soc" in self.bugs else []},
-            {"id": "jellyfin", "name": "Jellyfin", "hardware": [RK3588_VIDEO] if offered else []},
-            {"id": "dozzle", "name": "Dozzle", "hardware": []},
+            {"id": "plex", "name": "Plex Media Server", "hardware": [other] if "hardware-of-another-soc" in self.bugs else [],
+             "companions": []},
+            {"id": "jellyfin", "name": "Jellyfin", "hardware": [RK3588_VIDEO] if offered else [], "companions": []},
+            immich,
+            {"id": "dozzle", "name": "Dozzle", "hardware": [], "companions": []},
         ]
         if method == "GET" and parts == ["catalog"]:
             return catalog
@@ -2060,6 +2104,27 @@ class FakeNas:
         for path in paths:
             node = self.fs.get(path)
             out[path] = "missing" if node is None else f"{node.mode:o} {node.owner}:{node.group}"
+        return out
+
+    def resolve(self, path):
+        """The path that PATH names once its links are followed, or None for one that is missing
+        (readlink -f and stat -L, as REMOTE_NODES runs them)."""
+        for _ in range(8):
+            node = self.fs.get(path)
+            if node is None:
+                return None
+            if node.kind != "link":
+                return path
+            path = os.path.normpath(os.path.join(os.path.dirname(path), node.content))
+        return None
+
+    def nodes(self, paths):
+        self.device_call("nodes")
+        out = {}
+        for path in paths:
+            target = self.resolve(path)
+            node = self.fs[target] if target else None
+            out[path] = "missing" if node is None else f"{target} {node.mode:o} {node.owner}:{node.group}"
         return out
 
     def read(self, path):
@@ -3102,11 +3167,12 @@ def test_the_hardware_check_reads_the_soc_the_catalog_and_the_nodes_jellyfin_get
     assert "the host's device tree names its SoC: rockchip,rk3588-armsom-w3, rockchip,rk3588" in text
     assert ("the App Store offers Jellyfin the RK3588's video hardware exactly on an RK3588 with Rockchip MPP: "
             "rk3588-video") in text
-    assert "the App Store offers each app only the hardware of this SoC: jellyfin" in text
+    assert "the App Store offers each app only the hardware of this SoC: immich, jellyfin" in text
     assert ("the host has the device nodes of the RK3588's video hardware: /dev/dri 755 root:root, /dev/dma_heap "
             "755 root:root, /dev/mpp_service 600 root:root, /dev/rga 600 root:root, /dev/mali0 600 root:root") in text
     assert {method for method, *_ in nas.calls} == {"GET"}
-    assert {path for _, path, *_ in nas.calls} == {"/apps/installed", "/apps/catalog/jellyfin", "/apps/catalog"}
+    assert {path for _, path, *_ in nas.calls} == {"/apps/installed", "/apps/catalog/jellyfin", "/apps/catalog/immich",
+                                                   "/apps/catalog"}
 
 
 def test_off_an_rk3588_the_hardware_check_finds_no_hardware_offered(nas):
@@ -3118,8 +3184,10 @@ def test_off_an_rk3588_the_hardware_check_finds_no_hardware_offered(nas):
     text = "\n".join(step_lines(output))
     assert "the host's device tree names its SoC: no device tree" in text
     assert "the App Store offers Jellyfin the RK3588's video hardware exactly on an RK3588 with Rockchip MPP: none" in text
+    assert f"{IMMICH_STEP}: server none; machine learning none, {IMMICH_ML}" in text
     assert re.search(r"^SKIP  \d+\. the host has the device nodes of the RK3588's video hardware: the host is no "
                      r"RK3588", output, re.M), output
+    assert re.search(r"^SKIP  6\. " + re.escape(NPU_STEP) + ": the host is no RK3588", output, re.M), output
 
 
 @pytest.mark.parametrize("node", ["/dev/mpp_service", "/dev/dma_heap", "/dev/dri"])
@@ -3145,8 +3213,112 @@ def test_on_an_rk3588_without_rockchip_mpp_the_app_store_offers_no_hardware(nas)
     text = "\n".join(step_lines(output))
     assert ("PASS  2. the App Store offers Jellyfin the RK3588's video hardware exactly on an RK3588 with Rockchip "
             "MPP: none") in text
-    assert ("FAIL  4. the host has the device nodes of the RK3588's video hardware: the host lacks /dev/mpp_service"
+    assert ("FAIL  5. the host has the device nodes of the RK3588's video hardware: the host lacks /dev/mpp_service"
             in text), output
+
+
+# The steps of the hardware check for Immich (ADR-0382).
+IMMICH_STEP = ("the App Store offers Immich's server the RK3588's video hardware where it offers Jellyfin's, and its "
+               "machine learning the NPU and its -rknn image exactly on an RK3588 with the NPU's node")
+NPU_STEP = "the host has the NPU's render node and an RKNPU driver of 0.9.8 or later"
+
+
+def test_the_hardware_check_reads_what_immich_gets_of_the_rk3588_and_the_npu_s_node_and_driver(nas):
+    """ADR-0382: on the BPI-W3 the App Store offers Immich's server the video hardware and its
+    machine learning the NPU with the -rknn image, and the host has the NPU's render node, by the
+    stable name that the profile requires, and an RKNPU driver of 0.9.8 or later (Immich's
+    guide to ML hardware acceleration); the check only reads."""
+    status, output = run_check("hardware", nas)
+
+    assert status == 0, output
+    lines = step_lines(output)
+    assert any(line.startswith(f"PASS  3. {IMMICH_STEP}: server rk3588-video; machine learning rk3588-npu, "
+                               f"{IMMICH_ML_RKNN}  [") for line in lines), output
+    assert any(line.startswith(f"PASS  6. {NPU_STEP}: {NPU_NODE} -> /dev/dri/renderD129 660 root:render; "
+                               "RKNPU driver: v0.9.8  [") for line in lines), output
+    assert len(lines) == 7 and lines[6].startswith("PASS  7. the device is as the check found it"), output
+    assert {method for method, *_ in nas.calls} == {"GET"}
+
+
+@pytest.mark.parametrize("gone", [NPU_NODE, "/dev/dri/renderD129"])
+def test_on_an_rk3588_without_the_npu_s_node_immich_s_machine_learning_runs_on_the_cpu_and_the_check_fails(nas, gone):
+    """The mainline kernel's NPU driver (rocket, /dev/accel) makes no such node, and a link whose
+    node is gone names none (the catalog's [ -e ] follows it): the App Store offers no NPU and the
+    image for the CPU, which the check takes as right, and it fails for the node the device lacks,
+    since the dev device is to run Immich's machine learning on its NPU."""
+    del nas.fs[gone]
+
+    status, output = run_check("hardware", nas)
+
+    assert status == 1, output
+    text = "\n".join(step_lines(output))
+    assert f"PASS  3. {IMMICH_STEP}: server rk3588-video; machine learning none, {IMMICH_ML}" in text
+    assert (f"FAIL  6. {NPU_STEP}: the host lacks {NPU_NODE}, the NPU's render node (Rockchip's kernel with its "
+            "RKNPU driver)") in text, output
+
+
+def test_the_hardware_check_fails_for_the_rknn_image_where_the_npu_does_not_apply(nas):
+    """Where the NPU's node is missing the profile does not apply, and Immich's machine learning
+    is to run the image for the CPU: a catalog that offers no NPU but still gives the -rknn image,
+    which loads no model there, fails step 3, and the check stops."""
+    del nas.fs[NPU_NODE]
+    before = nas.snapshot()
+    nas.bugs.add("rknn-without-npu")
+
+    status, output = run_check("hardware", nas)
+
+    assert status == 1, output
+    failed = [line for line in step_lines(output) if line.startswith("FAIL  ")]
+    assert len(failed) == 1, output
+    assert failed[0].startswith(f"FAIL  3. {IMMICH_STEP}: its machine learning runs {IMMICH_ML_RKNN}, "
+                                "the -rknn image  ["), output
+    assert nas.snapshot() == before, output
+
+
+@pytest.mark.parametrize("version, problem", [
+    ("RKNPU driver: v0.9.6\n", "RKNPU driver: v0.9.6 is not 0.9.8 or later, which Immich's machine learning needs"),
+    ("RKNPU driver: v0.10.0\n", None),
+    ("RKNPU driver: v0.9.10\n", None),
+    ("RKNPU driver: unknown\n", "RKNPU driver: unknown is not 0.9.8 or later, which Immich's machine learning needs"),
+    (None, f"the host has no {RKNPU_VERSION}, which names the RKNPU driver's version (debugfs)"),
+])
+def test_the_hardware_check_needs_an_rknpu_driver_of_0_9_8_or_later(nas, version, problem):
+    """Immich asks for the RKNPU driver 0.9.8 or later (cat /sys/kernel/debug/rknpu/version): the
+    numbers are compared, so 0.9.10 and 0.10.0 are later than 0.9.8."""
+    if version is None:
+        del nas.fs[RKNPU_VERSION]
+    else:
+        nas.fs[RKNPU_VERSION].content = version
+
+    status, output = run_check("hardware", nas)
+
+    if problem is None:
+        assert status == 0, output
+        assert f"; {version.strip()}  [" in output
+        return
+    assert status == 1, output
+    failed = [line for line in step_lines(output) if line.startswith("FAIL  ")]
+    assert failed == [line for line in failed if line.startswith(f"FAIL  6. {NPU_STEP}: {problem}  [")], output
+    assert len(failed) == 1, output
+
+
+def test_the_fake_catalog_has_the_catalog_s_profiles_and_images():
+    """The profiles and images of the fake's catalog are those that the catalog API answers on the
+    dev device (ADR-0189), and the check looks for the nodes that the profiles require."""
+    from src.apps import catalog
+
+    immich = next(app for app in catalog.APP_CATALOG if app.id == "immich")
+    jellyfin = next(app for app in catalog.APP_CATALOG if app.id == "jellyfin")
+    companions = {c.name: c for c in immich.companions}
+    machine_learning = companions[scenario.ML_COMPANION]
+    assert [p.model_dump() for p in jellyfin.hardware] == [p.model_dump() for p in immich.hardware] == [RK3588_VIDEO]
+    assert [p.model_dump() for p in machine_learning.hardware] == [RK3588_NPU]
+    assert (machine_learning.image, companions["database"].image, companions["redis"].image) == (
+        IMMICH_ML, IMMICH_POSTGRES, VALKEY)
+    assert scenario.RKNN_TAG in IMMICH_ML_RKNN and scenario.RKNN_TAG not in IMMICH_ML
+    assert catalog.RK3588_NPU.requires == [scenario.NPU_NODE] == [NPU_NODE]
+    assert catalog.RK3588_VIDEO.requires == [scenario.MPP_SERVICE]
+    assert scenario.RKNPU_VERSION_FILE == RKNPU_VERSION
 
 
 def test_the_scrub_check_covers_storage_scrub_and_the_start_through_one_helper(nas):
@@ -3351,6 +3523,10 @@ def test_the_pool_folder_helper_removes_only_an_empty_folder_that_is_no_mount_po
     ("smb", "rename-drops-access", "the share's access follows the new name"),
     ("hardware", "hardware-not-offered", "the App Store offers Jellyfin the RK3588's video hardware"),
     ("hardware", "hardware-of-another-soc", "the App Store offers each app only the hardware of this SoC"),
+    ("hardware", "npu-not-offered", "it offers its machine learning none, expected rk3588-npu"),
+    ("hardware", "npu-cpu-image", f"its machine learning runs {IMMICH_ML}, not the -rknn image"),
+    ("hardware", "server-hardware-not-offered", "it offers its server none, and Jellyfin rk3588-video"),
+    ("hardware", "companion-hardware-of-another-soc", "it offers immich the hardware of rockchip,rk3568"),
     ("smb", "encryption-not-required", "with encryption required the share's section says so"),
     ("smb", "encryption-stays", "with the option off the section has smb encrypt = required"),
     ("smb", "snapshots-unlisted", "allinfo v.txt answered NT_STATUS_INVALID_NETWORK_RESPONSE without "
@@ -4801,6 +4977,53 @@ def test_the_device_s_facts_are_parsed(stub):
     assert facts["group"] == "unos-smb:x:70000:" and facts["testparm"] is True
     assert facts["passdb"] == "2026-11-08 12:00:00.123456789 +0000"
     assert facts["sizes"] == {"/run/samba/log.samba": "800", "/var/log/samba/log.nmbd": "missing"}
+
+
+def test_the_device_reads_nodes_with_their_links_followed_in_the_read_only_namespace(stub):
+    """The hardware check's look at the NPU's node (ADR-0382): the file each path names once its
+    links are followed, with its mode and owner, or missing."""
+    device = device_with_stub(stub)
+    (stub.log / "reply").write_text(f"{NPU_NODE}\t/dev/dri/renderD129 660 root:render\n/dev/dri/x\tmissing\n")
+    assert device.nodes([NPU_NODE, "/dev/dri/x"]) == {NPU_NODE: "/dev/dri/renderD129 660 root:render",
+                                                       "/dev/dri/x": "missing"}
+    assert f"unshare --mount --propagation private bash -s -- {NPU_NODE} /dev/dri/x" in (stub.log / "argv").read_text()
+    assert (stub.log / "stdin").read_text().startswith("{\n" + scenario.RO_ROOT + "\n")
+
+
+def gnu_stat_path(tmp_path: Path) -> str | None:
+    """A PATH whose stat is GNU's (stat -c, -L), as the device's: the system's, or Homebrew's
+    gstat behind a shim; None where there is none."""
+    if subprocess.run(["stat", "--version"], capture_output=True).returncode == 0:
+        return os.environ["PATH"]
+    gstat = shutil.which("gstat")
+    if gstat is None:
+        return None
+    shims = tmp_path / "gnu"
+    shims.mkdir()
+    (shims / "stat").write_text(f'#!/usr/bin/env bash\nexec {gstat} "$@"\n')
+    (shims / "stat").chmod(0o755)
+    return f"{shims}:{os.environ['PATH']}"
+
+
+def test_the_nodes_helper_follows_links_and_names_a_missing_node(tmp_path):
+    """REMOTE_NODES, run here: a link in by-path names the node it leads to, with that node's
+    mode and owner; a link whose node is gone and a path that does not exist are missing."""
+    path = gnu_stat_path(tmp_path)
+    if path is None:
+        pytest.skip("needs GNU stat (stat -c, -L), as the device has")
+    dri = tmp_path / "dri"
+    (dri / "by-path").mkdir(parents=True)
+    (dri / "renderD129").write_text("")
+    (dri / "renderD129").chmod(0o660)
+    (dri / "by-path" / "platform-fdab0000.npu-render").symlink_to("../renderD129")
+    (dri / "by-path" / "gone").symlink_to("../renderD130")
+    paths = [str(dri / "by-path" / "platform-fdab0000.npu-render"), str(dri / "by-path" / "gone"), str(dri / "none")]
+    result = subprocess.run(["bash", "-s", "--", *paths], input=scenario.REMOTE_NODES, capture_output=True, text=True,
+                            env={"PATH": path})
+    assert result.returncode == 0, result.stderr
+    owner = f"{pwd.getpwuid(os.getuid()).pw_name}:{grp.getgrgid((dri / 'renderD129').stat().st_gid).gr_name}"
+    assert result.stdout.splitlines() == [f"{paths[0]}\t{os.path.realpath(dri / 'renderD129')} 660 {owner}",
+                                          f"{paths[1]}\tmissing", f"{paths[2]}\tmissing"]
 
 
 @pytest.mark.parametrize("bash", bashes())

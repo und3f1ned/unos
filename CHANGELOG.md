@@ -323,6 +323,37 @@ manager, encrypted backup uploads, health checks, CI checks).
   `ups_name`, `host` and `port` are checked before they reach `upsc`.
 
 ### Added
+- Apps of several containers (ADR-0381): an app of the catalog may have
+  companion containers beside its main one, on a Docker network of its own
+  (`unos-app-<app>`, where each answers to its name), which UNOS installs,
+  starts (in order, the main container once those it depends on are ready),
+  stops (in reverse order), restarts and uninstalls together. The App Store
+  shows one card per app with its containers and its health, warns about an
+  incomplete app or a stopped companion, and lists each container with its
+  image, folders and settings in the details. A password that the containers
+  share is generated at the install into a file on the app's pool (root,
+  0600), given to them as a file and never shown; an install that finds the
+  database without it is refused. An install that fails removes the containers
+  and the network it made and keeps the folders, the password file and the
+  images.
+- Immich in four containers: its server, its database (Immich's PostgreSQL),
+  Valkey and its machine learning, each image pinned by tag and digest
+  (v3.4.1), with all its data on the pool and what the containers write at run
+  time in memory. On a Rockchip RK3588 whose kernel has the RKNPU driver, its
+  machine learning runs on the NPU with Immich's `-rknn` image and
+  `/dev/dri`, and its server gets the video hardware for RKMPP (ADR-0382).
+  `scripts/dev/scenario.sh hardware` also checks what the App Store offers
+  Immich, the NPU's render node and the RKNPU driver's version, and
+  `scripts/dev/immich-ml-probe.py` measures Immich's machine learning inside
+  its container.
+- Checks before an app's images are pulled (ADR-0381): its host ports (409
+  for a port that a container publishes, a stopped one too, or that a program
+  on the host listens on, read with `ss`; 400 for a port outside 1 to 65535,
+  a host port given twice, or a moved port of an app in the host's network,
+  whose port field the App Store no longer lets you change), the system disk's
+  free space (409 when less than 2 GiB would stay free after the catalog's
+  pinned images; `df` on the host), and an app that is already installed
+  (409); a second change of an app while one runs answers 409 too.
 - On a Rockchip RK3588 (such as the Banana Pi BPI-W3) whose kernel has
   Rockchip MPP's `/dev/mpp_service`, Jellyfin from the App Store is installed
   with the chip's video hardware for Rockchip MPP (RKMPP): those of `/dev/dri`,
@@ -737,6 +768,15 @@ manager, encrypted backup uploads, health checks, CI checks).
 - A status panel on the Shares page.
 
 ### Changed
+- `GET /api/v1/apps/installed` lists an app once, with `health`, `missing`
+  and its `companions` (name, container, status, health, image, devices), and
+  each of its `volumes` names its `companion`; the install answers `health`
+  and `companions`; the catalog's templates have `companions`, `depends_on`,
+  `tmpfs`, `shm_size`, `stop_timeout`, `editable` variables,
+  `generated_secret` volumes and a hardware profile's `image`. Hardware
+  profiles apply per container (ADR-0382, which supersedes ADR-0377).
+  Restarting an app stops and starts all its containers, and a stop waits for
+  each container's stop timeout.
 - No page polls the API any more. **System** → **Logs**' **Auto** follows the
   journal over the new WebSocket `/ws/v1/journal` (administrators only): the
   newest entries of the chosen source, level, search and time range, then
@@ -1036,6 +1076,13 @@ manager, encrypted backup uploads, health checks, CI checks).
   `install.sh` kept the file it replaced (`smb.conf.original`),
   which is restored through a temporary file: a copy that fails leaves
   smb.conf as UNOS wrote it.
+
+### Removed
+- BookStack, Paperless-ngx and Linkwarden from the App Store's catalog: each
+  needs a database or a broker beside it, which they will get as apps of
+  several containers (ADR-0381).
+- The `name` of an app's install request: each app of the catalog is
+  installed once, under its id, and a request with `name` answers 422.
 
 ### Fixed
 - The dashboard's live stats cost a slow board a large share of a core: every

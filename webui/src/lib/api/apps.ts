@@ -13,9 +13,17 @@ export const POOL_PLACEHOLDER = "{pool}";
  */
 export const UNOS_SMB_IDS: Readonly<Record<"PUID" | "PGID", number>> = { PUID: 80000, PGID: 70000 };
 
-/** The variables of the user and group of an app's processes, which only the server sets. */
-export function isSetByUnos(name: string): name is "PUID" | "PGID" {
+/** The variables of the user and group of an app's processes, which only the server sets (ADR-0274). */
+export function isUserOrGroup(name: string): name is "PUID" | "PGID" {
   return name === "PUID" || name === "PGID";
+}
+
+/**
+ * Whether only the server sets a variable of an app's main container: PUID and PGID, and the wiring
+ * between the app's containers (`editable` false, ADR-0381), whose override the server refuses.
+ */
+export function isSetByUnos(env: Pick<EnvVar, "name" | "editable">): boolean {
+  return isUserOrGroup(env.name) || env.editable === false;
 }
 
 export interface PortMapping {
@@ -35,6 +43,13 @@ export interface VolumeMapping {
   gid?: number | null;
   /** The source lives on the selected pool; otherwise it is a fixed host path. */
   on_pool: boolean;
+  /**
+   * A password file that the server creates at the install, never shows and never replaces
+   * (ADR-0381); its host path cannot be changed.
+   */
+  generated_secret: boolean;
+  /** The template host path of the data folder that was set up with that password. */
+  secret_for: string | null;
 }
 
 export interface EnvVar {
@@ -44,31 +59,60 @@ export interface EnvVar {
   required: boolean;
   /** Password, token or key: mask it; placeholders like "changeme" are rejected. */
   secret: boolean;
+  /** False for wiring that the server sets, such as the name of a companion; an override is refused (ADR-0381). */
+  editable: boolean;
 }
 
 /**
- * Hardware of a SoC that an app gets when it is installed on a host with that SoC and the nodes
- * of `requires` (ADR-0377): the device nodes the host has of `devices`, Docker's masks without
- * `unmasked_paths`.
+ * Hardware of a SoC that a container of an app gets when it is installed on a host with that SoC
+ * and the nodes of `requires` (ADR-0382): the device nodes the host has of `devices`, Docker's
+ * masks without `unmasked_paths`, and `image` in place of the container's own.
  */
 export interface HardwareProfile {
   id: string;
   /** A name of the SoC in the host's device tree. */
   soc: string;
   devices: string[];
-  /** The nodes without which the app cannot use the hardware; a container without them did not get it. */
+  /**
+   * The nodes without which the container cannot use the hardware, each a device of `devices` or
+   * a path inside a device folder of it; a container without them did not get it.
+   */
   requires: string[];
   unmasked_paths: string[];
   apparmor_unconfined: boolean;
+  /** The image the container runs where the profile applies; the catalog's template names it already. */
+  image: string | null;
 }
 
-export interface AppTemplate {
+/** What the server needs to create one container of an app (ADR-0381): the main container's or a companion's. */
+export interface ContainerSpec {
+  image: string;
+  volumes: VolumeMapping[];
+  environment: EnvVar[];
+  /** The hardware of this host's SoC that the container gets; empty on any other host. */
+  hardware: HardwareProfile[];
+  /** Container paths kept in RAM, with Docker's tmpfs options. */
+  tmpfs: Record<string, string>;
+  shm_size: string | null;
+  /** Seconds Docker gives the container to stop; null: 10. */
+  stop_timeout: number | null;
+}
+
+/**
+ * A companion container of an app (ADR-0381): it publishes no port and takes no override, and is
+ * the container `<app id>-<name>` on the app's network, where it answers to `name`.
+ */
+export interface Companion extends ContainerSpec {
+  name: string;
+}
+
+/** An app of the catalog: its main container's spec, with its companions'. */
+export interface AppTemplate extends ContainerSpec {
   id: string;
   name: string;
   description: string;
   icon: string;
   category: string;
-  image: string;
   version: string;
   website: string;
   source?: string;
@@ -76,50 +120,143 @@ export interface AppTemplate {
   documentation?: string;
   min_memory?: string;
   recommended_memory?: string;
+  /** The main container's ports; companions publish none. */
   ports: PortMapping[];
-  volumes: VolumeMapping[];
-  environment: EnvVar[];
+  /**
+   * "host" for an app in the host's network: Docker discards its port bindings, so the app binds
+   * its container ports on the host itself, and the server refuses an override that moves one
+   * (ADR-0381). Null: a network of Docker's.
+   */
+  network_mode: string | null;
   /**
    * The app can be installed to run in the group unos-smb: its image takes PUID, PGID and
    * UMASK (linuxserver.io), and it has a folder besides its own data. Only such an app is
    * given a share's folder.
    */
   can_run_in_unos_smb: boolean;
-  /** The hardware of this host's SoC that the app gets; empty on any other host. */
-  hardware: HardwareProfile[];
+  /** Created and started in this order before the main container, and stopped after it. */
+  companions: Companion[];
+  /** The companions that must be ready before the main container starts. */
+  depends_on: string[];
 }
 
+/** A container of an app: its Docker name, its companion's name (null for the main container) and its spec. */
+export interface AppContainer {
+  name: string;
+  companion: string | null;
+  spec: ContainerSpec;
+}
+
+/**
+ * The containers of `app`, the main container first: it is named after the app, a companion
+ * `<app id>-<name>` (ADR-0381).
+ */
+export function appContainers(app: AppTemplate): AppContainer[] {
+  return [
+    { name: app.id, companion: null, spec: app },
+    ...app.companions.map((companion) => ({ name: `${app.id}-${companion.name}`, companion: companion.name, spec: companion })),
+  ];
+}
+
+/** A companion container of an installed app, as Docker reports it (ADR-0381). */
+export interface CompanionContainer {
+  /** The companion's name in the app, and its container's name and id. */
+  name: string;
+  container: string;
+  container_id: string;
+  status: string;
+  /** Docker's health of the container (starting, healthy, unhealthy); null without a health check. */
+  health: string | null;
+  image: string;
+  /** The host's device nodes passed into the container (ADR-0382). */
+  devices: string[];
+}
+
+/**
+ * An installed app (ADR-0381): the fields of one container are its main container's; while Docker
+ * lacks that, `status` is "missing" and `container_id` is a companion's, which names the app too.
+ */
 export interface InstalledApp {
   id: string;
   template_id: string;
   name: string;
   container_id: string;
+  /** The main container's status (Docker's), or "missing". */
   status: string;
   web_port: number | null;
   created_at: string;
   /** Pool chosen at install time; null for an app without data on a pool. */
   pool: string | null;
-  /** The container's bind mounts with the host paths it really uses. */
+  /** The bind mounts of the app's containers with the host paths they really use. */
   volumes: AppVolume[];
   /** Data folders that are not on a mounted pool, as their pool is not mounted. The server refuses to start such an app. */
   data_outside_pools: string[];
   /** The app runs in the group unos-smb (PUID 80000, PGID 70000): its container says so. */
   runs_in_unos_smb: boolean;
-  /** The host's device nodes passed into the container (ADR-0377), as Docker keeps them. */
+  /** The host's device nodes passed into the main container (ADR-0382), as Docker keeps them. */
   devices: string[];
+  /** Docker's health of the main container; null without a health check. */
+  health: string | null;
+  /** The app's companion containers that Docker has, in the catalog's order. */
+  companions: CompanionContainer[];
+  /** The names of the app's containers that Docker lacks: such an app does not start. */
+  missing: string[];
+}
+
+/** A hardware profile of one container of an app: `container` is its companion's name, or null for the main container. */
+export interface ContainerProfile {
+  container: string | null;
+  profile: HardwareProfile;
+}
+
+/** The hardware profiles of every container of `app`, the main container's first (ADR-0382). */
+export function allProfiles(app: AppTemplate): ContainerProfile[] {
+  return [
+    ...app.hardware.map((profile) => ({ container: null, profile })),
+    ...app.companions.flatMap((companion) => companion.hardware.map((profile) => ({ container: companion.name, profile }))),
+  ];
 }
 
 /**
- * Whether an app's container got the hardware of `profile`: every node it requires. The container
- * is an installed app, or the answer of its install.
+ * Whether an app's container got the hardware of `profile`: every node it requires, as a device it
+ * got or inside a device folder it got (ADR-0382: the NPU's link in /dev/dri). The container is an
+ * installed app's main container, the answer of its install, or one of their companions.
  */
 export function hasHardware(container: Pick<InstalledApp, "devices">, profile: HardwareProfile): boolean {
-  return profile.requires.every((node) => container.devices.includes(node));
+  return profile.requires.every((node) =>
+    container.devices.some((device) => node === device || node.startsWith(`${device}/`)),
+  );
 }
 
-/** The hardware profiles of `app` that its container did not get (ADR-0377). */
-export function missingHardware(app: AppTemplate, container: Pick<InstalledApp, "devices">): HardwareProfile[] {
-  return app.hardware.filter((profile) => !hasHardware(container, profile));
+/** An installed app or the answer of its install: its main container's state and devices, and its companions. */
+export type InstalledContainers = Pick<InstalledApp, "status" | "devices" | "companions">;
+
+/** The container of an installed app that `entry` is for; null when Docker lacks it. */
+function containerOf(installed: InstalledContainers, entry: ContainerProfile): Pick<InstalledApp, "devices"> | null {
+  if (entry.container === null) return installed.status === "missing" ? null : installed;
+  return installed.companions.find((companion) => companion.name === entry.container) ?? null;
+}
+
+/**
+ * The hardware profiles of `app` whose container in `installed` got the hardware, and those whose
+ * container did not (ADR-0382). A container that Docker lacks is in neither: the app is incomplete.
+ */
+export function installedHardware(
+  app: AppTemplate,
+  installed: InstalledContainers,
+): { got: ContainerProfile[]; missing: ContainerProfile[] } {
+  const got: ContainerProfile[] = [];
+  const missing: ContainerProfile[] = [];
+  for (const entry of allProfiles(app)) {
+    const container = containerOf(installed, entry);
+    if (container !== null) (hasHardware(container, entry.profile) ? got : missing).push(entry);
+  }
+  return { got, missing };
+}
+
+/** The hardware profiles of `app` whose container in `installed` did not get the hardware (ADR-0382). */
+export function missingHardware(app: AppTemplate, installed: InstalledContainers): ContainerProfile[] {
+  return installedHardware(app, installed).missing;
 }
 
 /** A mounted storage pool that can hold app data. */
@@ -135,17 +272,20 @@ export interface AppVolume {
   host: string;
   container: string;
   readonly: boolean;
+  /** The companion whose container has the mount; null: the main container's. */
+  companion: string | null;
 }
 
+/** An install: one instance of each app, named after its template (ADR-0381). */
 export interface AppInstallRequest {
   template_id: string;
-  name?: string;
   /** Pool for the app's data; omitted = first mounted pool by name. */
   pool?: string;
+  /** The overrides change the main container only; companions take none (ADR-0381). */
   port_overrides?: Record<number, number>;
-  /** Container path -> host path inside a mounted pool. */
+  /** Container path -> host path inside a mounted pool; never a generated password file's. */
   volume_overrides?: Record<string, string>;
-  /** Values of the template's variables; never PUID or PGID, which the server sets. */
+  /** Values of the main container's variables; never those that the server sets (isSetByUnos). */
   env_overrides?: Record<string, string>;
   /**
    * Run the app in the group unos-smb (PUID 80000, PGID 70000, UMASK 007); only with
@@ -163,8 +303,12 @@ export interface AppInstallResponse {
   /** Pool holding the app's data, or null if it stores nothing on a pool. */
   pool: string | null;
   volumes: AppVolume[];
-  /** The host's device nodes passed into the container (ADR-0377). */
+  /** The host's device nodes passed into the main container (ADR-0382). */
   devices: string[];
+  /** Docker's health of the main container right after its start ("starting"); null without a health check. */
+  health: string | null;
+  /** The app's companion containers, in the order they were started. */
+  companions: CompanionContainer[];
 }
 
 export async function getAppCatalog(category?: string, query?: string): Promise<AppTemplate[]> {

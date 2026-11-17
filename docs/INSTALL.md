@@ -204,8 +204,10 @@ board (ADR-0376).
   refuses both options and names the package.
 - **Apps.** ARM64 images of the App Store run. Jellyfin gets the RK3588's
   video decoders and encoders, its RGA and its GPU for Rockchip MPP (RKMPP),
-  which needs the `vendor` kernel; choose RKMPP in Jellyfin (ADR-0377, see the
-  User Guide's Hardware Acceleration). No app uses the NPU yet.
+  which needs the `vendor` kernel; choose RKMPP in Jellyfin (see the User Guide's
+  Hardware Acceleration). Immich's machine learning runs on the RK3588's NPU,
+  which needs the `vendor` kernel's RKNPU driver 0.9.8 or later, and its server
+  gets the video hardware for RKMPP, which you choose in Immich (ADR-0382).
 - **Temperature.** The dashboard shows the whole chip's sensor (`soc_thermal`).
 
 ### Network Requirements

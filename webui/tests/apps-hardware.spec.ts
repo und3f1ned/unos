@@ -1,18 +1,23 @@
 import type { Page, Route } from '@playwright/test';
 import { test, expect } from './fixtures';
+import {
+  catalogCard as card,
+  installAnswer,
+  installedImmich,
+  NPU_LINK,
+  onAnRk3588,
+  oneContainerApp,
+  RK3588_VIDEO,
+  type FakeInstalledApp,
+} from './apps-fakes';
 
-// The hardware of the host's SoC that an app gets (apps.rk3588-hardware-acceleration, ADR-0377).
-// The catalog API answers each app's hardware profiles of the host's SoC only. The stand-in runs
-// on a machine without a device tree, so its catalog names none; on an RK3588 the catalog is the
-// stand-in's own with Jellyfin's profile as supervisor/src/apps/catalog.py has it.
-const RK3588_VIDEO = {
-  id: 'rk3588-video',
-  soc: 'rockchip,rk3588',
-  devices: ['/dev/dri', '/dev/dma_heap', '/dev/mpp_service', '/dev/rga', '/dev/mali0'],
-  requires: ['/dev/mpp_service'],
-  unmasked_paths: ['/sys/firmware'],
-  apparmor_unconfined: true,
-};
+// The hardware of the host's SoC that an app's containers get (apps.rk3588-hardware-acceleration,
+// ADR-0382). The catalog API answers each container's hardware profiles of the host's SoC only.
+// The stand-in runs on a machine without a device tree, so its catalog names none; on an RK3588
+// the catalog is the stand-in's own with the profiles of supervisor/src/apps/catalog.py
+// (apps-fakes.ts): Jellyfin's video hardware, and Immich's server's, and the NPU of Immich's
+// machine learning, a companion container, required by the stable name of its render node, a
+// link inside the folder /dev/dri that the container gets.
 
 const WHAT_IT_GETS =
   "UNOS installs Jellyfin with the video hardware of this NAS's Rockchip RK3588 that its kernel provides: " +
@@ -20,53 +25,58 @@ const WHAT_IT_GETS =
 const WHAT_TO_CHOOSE =
   'In Jellyfin, choose Dashboard > Playback > Transcoding > Hardware acceleration: Rockchip MPP (RKMPP), ' +
   'and the codecs to decode in hardware.';
-const INSTALLED_WITHOUT =
-  'Jellyfin was installed without the hardware of this NAS that it can use, so hardware acceleration does not ' +
-  'work in it. To give it the hardware, uninstall Jellyfin (its data folders are kept) and install it again on ' +
+const installedWithout = (name: string) =>
+  `${name} was installed without the hardware of this NAS that it can use, so hardware acceleration does not ` +
+  `work in it. To give it the hardware, uninstall ${name} (its data folders are kept) and install it again on ` +
   'the same pool.';
+const INSTALLED_WITHOUT = installedWithout('Jellyfin');
 // The badge of the card of an installed app whose container did not get the hardware.
 const NO_HARDWARE = 'No hardware acceleration';
 
 const POOL = { name: 'data', path: '/mnt/pools/data', free_bytes: 2 ** 34, total_bytes: 2 ** 35 };
 
-/** Jellyfin installed on the pool data, its container with ``devices``, as the installed list names it. */
-function jellyfinApp(devices: string[]) {
-  return {
-    id: 'e2e-jellyfin-id',
-    template_id: 'jellyfin',
-    name: 'jellyfin',
-    container_id: 'e2e-jellyfin-id',
-    status: 'running',
-    web_port: 8096,
-    created_at: '2026-11-15T10:00:00Z',
-    pool: POOL.name,
-    volumes: [{ host: `${POOL.path}/apps/jellyfin/config`, container: '/config', readonly: false }],
-    data_outside_pools: [],
-    runs_in_unos_smb: false,
-    devices,
-  };
-}
+/** Jellyfin installed on the pool data, its container with ``devices``. */
+const jellyfinApp = (devices: string[]) => oneContainerApp('jellyfin', POOL.path, { port: 8096, devices });
+/** Immich installed on the pool data with the video hardware for its server, its machine learning with ``devices``. */
+const immichApp = (devices: string[]) =>
+  installedImmich(POOL.path, {
+    main: { devices: RK3588_VIDEO.devices },
+    companions: { 'machine-learning': { devices } },
+  });
+// Immich's install notice asks to create its administrator at once.
+const FIRST_ADMIN =
+  'Open Immich now and create its administrator: the first account that registers becomes the administrator.';
 
 /**
- * An installed Jellyfin whose container got ``devices``, as GET /api/v1/apps/installed lists it: the
- * stand-in has no Docker, so the answer is faked. The list answers once ``answered`` resolves.
+ * The installed ``app``, as GET /api/v1/apps/installed lists it: the stand-in has no Docker, so the
+ * answer is faked. The list answers once ``answered`` resolves.
  */
-async function installedJellyfin(page: Page, devices: string[], answered: Promise<unknown> = Promise.resolve()) {
+async function installedApp(page: Page, app: FakeInstalledApp, answered: Promise<unknown> = Promise.resolve()) {
   await page.route(
     (url: URL) => url.pathname === '/api/v1/apps/installed',
     async (route: Route) => {
       await answered;
-      await route.fulfill({ json: [jellyfinApp(devices)] });
+      await route.fulfill({ json: [app] });
     },
   );
 }
 
-/**
- * An install of Jellyfin on the pool data whose container gets ``devices``, as POST
- * /api/v1/apps/install answers it, with the installed list before and after it.
- */
+/** An installed Jellyfin whose container got ``devices``. */
+async function installedJellyfin(page: Page, devices: string[], answered: Promise<unknown> = Promise.resolve()) {
+  await installedApp(page, jellyfinApp(devices), answered);
+}
+
+/** An install of Jellyfin whose container gets ``devices``. */
 async function installsJellyfin(page: Page, devices: string[]) {
-  const installed: ReturnType<typeof jellyfinApp>[] = [];
+  await installs(page, jellyfinApp(devices));
+}
+
+/**
+ * An install on the pool data that makes ``app``, as POST /api/v1/apps/install answers it, with
+ * the installed list before and after it.
+ */
+async function installs(page: Page, app: FakeInstalledApp) {
+  const installed: FakeInstalledApp[] = [];
   await page.route(
     (url: URL) => url.pathname === '/api/v1/apps/pools',
     (route: Route) => route.fulfill({ json: [POOL] }),
@@ -78,31 +88,10 @@ async function installsJellyfin(page: Page, devices: string[]) {
   await page.route(
     (url: URL) => url.pathname === '/api/v1/apps/install',
     (route: Route) => {
-      const app = jellyfinApp(devices);
       installed.push(app);
-      const { id, name, container_id, status, pool, volumes } = app;
-      return route.fulfill({
-        json: { id, name, container_id, status, web_url: 'http://localhost:8096', pool, volumes, devices },
-      });
+      return route.fulfill({ json: installAnswer(app) });
     },
   );
-}
-
-async function onAnRk3588(page: Page) {
-  await page.route(
-    (url: URL) => url.pathname === '/api/v1/apps/catalog',
-    async (route: Route) => {
-      const response = await route.fetch();
-      const catalog = (await response.json()) as { id: string; hardware: unknown[] }[];
-      const json = catalog.map((app) => (app.id === 'jellyfin' ? { ...app, hardware: [RK3588_VIDEO] } : app));
-      await route.fulfill({ response, json });
-    },
-  );
-}
-
-/** The card of the app ``name`` in the catalog's grid (Featured Apps lists some of them too). */
-function card(page: Page, name: string) {
-  return page.locator('.card[role="button"]', { has: page.locator('h3', { hasText: new RegExp(`^${name}$`) }) });
 }
 
 async function details(page: Page, name: string) {
@@ -215,6 +204,65 @@ test.describe('Hardware acceleration of the host SoC', () => {
     await expect(notice).toHaveText('Jellyfin was installed. Its data is stored on the "data" pool.');
     await expect(notice).toHaveClass(/alert-success/);
     await expect(card(page, 'Jellyfin').getByText('Hardware acceleration', { exact: true })).toBeVisible();
+  });
+
+  test('on an RK3588 a container that got the folder of a required node has the hardware', async ({
+    authenticatedPage: page,
+  }) => {
+    // The NPU's profile of Immich's machine learning requires a link in /dev/dri; the container got
+    // the folder, which holds it.
+    await onAnRk3588(page);
+    await installedApp(page, immichApp(['/dev/dri']));
+    await page.goto('/apps');
+
+    const immich = card(page, 'Immich');
+    await expect(immich.getByText('Running', { exact: true })).toBeVisible();
+    await expect(immich.getByText('Hardware acceleration', { exact: true })).toBeVisible();
+    await expect(immich.getByText(NO_HARDWARE)).toHaveCount(0);
+    const dialog = await details(page, 'Immich');
+    const hint = dialog.locator('.alert', { hasText: 'Hardware acceleration' });
+    await expect(hint).toHaveCount(1);
+    await expect(hint).toHaveClass(/alert-info/);
+    await expect(hint).toContainText("UNOS installs Immich's machine learning with the NPU");
+    await expect(dialog.getByText(installedWithout('Immich'))).toHaveCount(0);
+  });
+
+  for (const [what, devices] of [
+    ['only a node of the folder', ['/dev/dri/renderD128']],
+    ['a node whose name begins with the required one', [NPU_LINK.slice(0, -'-render'.length)]],
+  ] as const) {
+    test(`on an RK3588 a container that got ${what} lacks the required node`, async ({ authenticatedPage: page }) => {
+      await onAnRk3588(page);
+      await installedApp(page, immichApp([...devices]));
+      await page.goto('/apps');
+
+      const immich = card(page, 'Immich');
+      await expect(immich.locator('.badge-warning', { hasText: NO_HARDWARE })).toBeVisible();
+      const dialog = await details(page, 'Immich');
+      const warning = dialog.locator('.alert-warning', { hasText: 'Hardware acceleration' });
+      await expect(warning).toContainText(installedWithout('Immich'));
+      await expect(dialog.getByText("UNOS installs Immich's machine learning with the NPU")).toHaveCount(0);
+    });
+  }
+
+  test('on an RK3588 an install whose container got the folder of a required node only says that it was installed', async ({
+    authenticatedPage: page,
+  }) => {
+    await onAnRk3588(page);
+    await installs(page, immichApp(['/dev/dri']));
+    await page.goto('/apps');
+
+    const dialog = await details(page, 'Immich');
+    await dialog.getByRole('button', { name: 'Install Immich' }).click();
+
+    // What it says besides is that Immich's administrator is to be created at once.
+    const notice = page.locator('.alert', { hasText: 'Immich was installed.' });
+    await expect(notice.locator('p')).toHaveText([
+      'Immich was installed. Its data is stored on the "data" pool.',
+      FIRST_ADMIN,
+    ]);
+    await expect(notice).toHaveClass(/alert-success/);
+    await expect(card(page, 'Immich').getByText('Hardware acceleration', { exact: true })).toBeVisible();
   });
 
   test('off an RK3588 the App Store says nothing about hardware', async ({ authenticatedPage: page }) => {

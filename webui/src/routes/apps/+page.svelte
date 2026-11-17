@@ -7,6 +7,7 @@
 		startApp,
 		stopApp,
 		restartApp,
+		allProfiles,
 		missingHardware,
 		type AppTemplate,
 		type AppInstallResponse,
@@ -54,9 +55,11 @@
 	let installedError = '';
 	let error = '';
 	let notice = '';
-	// What an install's notice adds when the app's container did not get the hardware of this
-	// host's SoC that the details named (ADR-0377): the notice is then a warning.
+	// What an install's notice adds when a container of the app did not get the hardware of this
+	// host's SoC that the details named (ADR-0382): the notice is then a warning.
 	let noticeWarning = '';
+	// What it adds for an app whose first account to register becomes its administrator.
+	let noticeAdmin = '';
 	$: loading = catalogState === 'loading' || installedState === 'loading';
 	let searchQuery = '';
 	let selectedCategory = '';
@@ -84,6 +87,17 @@
 
 	// The group of the apps that are given share folders (ADR-0274): a name, the same in every language.
 	const UNOS_SMB = 'unos-smb';
+
+	// The apps whose first account to register becomes their administrator: the notice of their
+	// install asks to create it at once, before anyone else on the network can.
+	const FIRST_ADMIN: ReadonlySet<string> = new Set(['immich']);
+
+	// Docker's health of a running app's main container: its word, and its badge.
+	const HEALTH: Record<string, { key: string; variant: 'info' | 'success' | 'error' }> = {
+		starting: { key: 'apps.health.starting', variant: 'info' },
+		healthy: { key: 'apps.health.healthy', variant: 'success' },
+		unhealthy: { key: 'apps.health.unhealthy', variant: 'error' }
+	};
 
 	// Update category counts
 	$: categoriesWithCounts = categories.map((cat) => ({
@@ -166,11 +180,13 @@
 			: $t('apps.installedNotice', { name: app.name });
 		noticeWarning =
 			missingHardware(app, result).length > 0 ? $t('apps.hardware.missing', { name: app.name }) : '';
+		noticeAdmin = FIRST_ADMIN.has(app.id) ? $t('apps.install.firstAdmin', { name: app.name }) : '';
 		await refresh();
 	}
 
 	async function handleUninstall(app: InstalledApp) {
-		if (!confirm($t('apps.installed.confirmUninstall', { name: app.name }))) return;
+		const question = $t('apps.installed.confirmUninstall', { name: app.name, n: containerNames(app).length });
+		if (!confirm(question)) return;
 		try {
 			await uninstallApp(app.container_id);
 			await refresh();
@@ -229,6 +245,24 @@
 		}
 	}
 
+	/** The state of an installed app: incomplete while Docker lacks one of its containers (ADR-0381). */
+	function stateOf(app: InstalledApp): { key: string; variant: 'success' | 'neutral' | 'warning' } {
+		if (app.missing.length > 0) return { key: 'apps.state.incomplete', variant: 'warning' };
+		if (app.status === 'running') return { key: 'apps.state.running', variant: 'success' };
+		return { key: 'apps.state.stopped', variant: 'neutral' };
+	}
+
+	/** The names of the containers of an installed app that Docker has, its main container first. */
+	function containerNames(app: InstalledApp): string[] {
+		return [...(app.status === 'missing' ? [] : [app.name]), ...app.companions.map((c) => c.container)];
+	}
+
+	/** The names of the companions that do not run while the app's main container runs. */
+	function stoppedCompanions(app: InstalledApp): string[] {
+		if (app.status !== 'running') return [];
+		return app.companions.filter((c) => c.status !== 'running').map((c) => c.container);
+	}
+
 	function getWebUrl(app: InstalledApp): string | null {
 		if (app.web_port) {
 			return `http://${window.location.hostname}:${app.web_port}`;
@@ -279,9 +313,13 @@
 			on:dismiss={() => {
 				notice = '';
 				noticeWarning = '';
+				noticeAdmin = '';
 			}}
 		>
 			<p>{notice}</p>
+			{#if noticeAdmin}
+				<p class="mt-1">{noticeAdmin}</p>
+			{/if}
 			{#if noticeWarning}
 				<p class="mt-1">{noticeWarning}</p>
 			{/if}
@@ -462,12 +500,12 @@
 											<Badge variant={source.variant} class="text-xs">{$t(source.key)}</Badge>
 											<span class="text-xs text-muted"><AppCategory category={app.category} /></span>
 											{#if installedInfo && missingHardware(app, installedInfo).length > 0}
-												<!-- Its container did not get the hardware: its details say how to give it. -->
+												<!-- A container of it did not get the hardware: its details say how to give it. -->
 												<Badge variant="warning" class="text-xs">
 													<Cpu class="w-3 h-3 mr-1" />
 													{$t('apps.hardware.badgeMissing')}
 												</Badge>
-											{:else if app.hardware.length > 0}
+											{:else if allProfiles(app).length > 0}
 												<Badge variant="info" class="text-xs">
 													<Cpu class="w-3 h-3 mr-1" />
 													{$t('apps.hardware.badge')}
@@ -479,13 +517,10 @@
 								<p class="text-sm text-secondary line-clamp-2 mb-3">{app.description}</p>
 								<div class="flex items-center justify-between pt-3 border-t border-border">
 									{#if installedInfo}
-										<Badge variant={installedInfo.status === 'running' ? 'success' : 'neutral'}>
-											{installedInfo.status === 'running'
-												? $t('apps.state.running')
-												: $t('apps.state.stopped')}
-										</Badge>
+										{@const state = stateOf(installedInfo)}
+										<Badge variant={state.variant}>{$t(state.key)}</Badge>
 										<div class="flex items-center gap-1">
-											{#if getWebUrl(installedInfo)}
+											{#if getWebUrl(installedInfo) && installedInfo.missing.length === 0}
 												<a
 													href={getWebUrl(installedInfo)}
 													target="_blank"
@@ -529,6 +564,9 @@
 			<div class="space-y-4">
 				{#each installed as app}
 					{@const template = catalog.find((c) => c.id === app.template_id)}
+					{@const state = stateOf(app)}
+					{@const health = app.status === 'running' && app.health ? HEALTH[app.health] : undefined}
+					{@const stopped = app.missing.length === 0 ? stoppedCompanions(app) : []}
 					<Card>
 						<!-- On a narrow screen the buttons wrap below the app (ADR-0302). -->
 						<div class="flex flex-wrap items-center gap-4">
@@ -540,9 +578,10 @@
 							<div class="flex-1 min-w-0">
 								<div class="flex flex-wrap items-center gap-2 mb-1">
 									<h3 class="font-semibold text-lg break-all">{app.name}</h3>
-									<Badge variant={app.status === 'running' ? 'success' : 'neutral'}>
-										{app.status === 'running' ? $t('apps.state.running') : $t('apps.state.stopped')}
-									</Badge>
+									<Badge variant={state.variant}>{$t(state.key)}</Badge>
+									{#if health}
+										<Badge variant={health.variant}>{$t(health.key)}</Badge>
+									{/if}
 								</div>
 								<p class="text-sm text-secondary truncate">
 									{template?.description || app.template_id}
@@ -563,9 +602,16 @@
 										{$t('apps.installed.inGroup')} <span class="mono">{UNOS_SMB}</span>
 									</p>
 								{/if}
+								{#if app.companions.length > 0 || app.missing.length > 0}
+									<!-- An app of several containers (ADR-0381): those that Docker has. -->
+									<p class="text-xs text-muted mt-1">
+										{$t('apps.installed.containers')}
+										<span class="mono break-words">{containerNames(app).join(', ')}</span>
+									</p>
+								{/if}
 							</div>
 							<div class="flex flex-wrap items-center gap-2">
-								{#if getWebUrl(app)}
+								{#if getWebUrl(app) && app.missing.length === 0}
 									<a
 										href={getWebUrl(app)}
 										target="_blank"
@@ -576,6 +622,7 @@
 										{$t('apps.open')}
 									</a>
 								{/if}
+								<!-- An incomplete app does not start (409): a stop of what runs, and Uninstall. -->
 								{#if app.status === 'running'}
 									<Button
 										variant="warning"
@@ -585,15 +632,17 @@
 									>
 										{$t('apps.installed.stop')}
 									</Button>
-									<Button
-										variant="secondary"
-										size="sm"
-										icon={RotateCw}
-										on:click={() => handleRestart(app)}
-									>
-										{$t('apps.installed.restart')}
-									</Button>
-								{:else}
+									{#if app.missing.length === 0}
+										<Button
+											variant="secondary"
+											size="sm"
+											icon={RotateCw}
+											on:click={() => handleRestart(app)}
+										>
+											{$t('apps.installed.restart')}
+										</Button>
+									{/if}
+								{:else if app.missing.length === 0}
 									<Button
 										variant="success"
 										size="sm"
@@ -613,6 +662,25 @@
 								</Button>
 							</div>
 						</div>
+						{#if app.missing.length > 0}
+							<Alert variant="warning" class="mt-4">
+								<p>
+									{$t('apps.installed.missing', {
+										name: template?.name ?? app.name,
+										containers: app.missing.join(', ')
+									})}
+								</p>
+							</Alert>
+						{:else if stopped.length > 0}
+							<Alert variant="warning" class="mt-4">
+								<p>
+									{$t('apps.installed.companionStopped', {
+										name: template?.name ?? app.name,
+										containers: stopped.join(', ')
+									})}
+								</p>
+							</Alert>
+						{/if}
 						<AppStorageWarning {app} class="mt-4" />
 					</Card>
 				{/each}

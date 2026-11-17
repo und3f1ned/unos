@@ -33,8 +33,10 @@ from sqlalchemy.pool import NullPool
 
 from src.audit import router as audit_router
 from src.auth.utils import verify_token
+from src import host as host_module
 from src.containers import docker as docker_module
 from src.database import Base, get_db
+from src.host import HostResult
 from src.main import app
 from src.storage import pools
 from src.storage import router as storage_router
@@ -386,6 +388,7 @@ def docker(monkeypatch):
     to ``add``, by name; a container that ``containers.create`` makes is added too."""
     by_name: dict[str, MagicMock] = {}
     client = MagicMock(name="docker")
+    client.info.return_value = {"DockerRootDir": "/var/lib/docker"}
 
     def get(name):
         try:
@@ -410,6 +413,22 @@ def docker(monkeypatch):
     # No pool is mounted: the apps of these tests keep no data on one.
     monkeypatch.setattr(apps_router, "list_mounted_pools", lambda: [])
     return client
+
+
+@pytest.fixture
+def host_ports(monkeypatch):
+    """The host of an install's checks (src/apps/preflight.py, ADR-0381): no program listens on a
+    port, and the system disk has 64 GiB free. Any other host command fails the test."""
+
+    def run(cmd, **kwargs):
+        if cmd == ["ss", "-H", "-l", "-n", "-t", "-u", "-p"]:
+            return HostResult(0, "", "")
+        if cmd[:2] == ["/bin/sh", "-c"] and cmd[3:4] == ["unos-free-space"]:
+            listing = "Filesystem 1024-blocks Used Available Capacity Mounted on\n/dev/sda1 67110912 2048 67108864 1% /\n"
+            return HostResult(0, listing * len(cmd[4:]), "")
+        raise AssertionError(f"unexpected host command: {cmd}")
+
+    monkeypatch.setattr(host_module, "run_on_host", run)
 
 
 def running(container: MagicMock) -> MagicMock:
@@ -523,19 +542,20 @@ def database(tmp_path_factory) -> Iterator[None]:
 
 
 class TestApps:
-    def test_installing_an_app_writes_app_installed(self, admin, audit_file, docker, database):
+    def test_installing_an_app_writes_app_installed(self, admin, audit_file, docker, database, host_ports):
         response = admin.post(f"{APPS}/install", json={"template_id": "dozzle"})
 
         assert response.status_code == 200, response.text
         assert entries(audit_file) == [entry("app_installed", "app", "dozzle", "Installed Dozzle from the catalog as dozzle")]
 
-    def test_a_refused_or_failed_install_writes_nothing(self, admin, audit_file, docker, database):
+    def test_a_refused_or_failed_install_writes_nothing(self, admin, audit_file, docker, database, host_ports):
         docker.add(_container("dozzle", {}, []))
         taken = admin.post(f"{APPS}/install", json={"template_id": "dozzle"})
+        named = admin.post(f"{APPS}/install", json={"template_id": "dozzle", "name": "logs"})
         docker.images.pull.side_effect = APIError("pull access denied")
-        failed = admin.post(f"{APPS}/install", json={"template_id": "dozzle", "name": "logs"})
+        failed = admin.post(f"{APPS}/install", json={"template_id": "glances"})
 
-        assert [r.status_code for r in (taken, failed)] == [409, 500]
+        assert [r.status_code for r in (taken, named, failed)] == [409, 422, 500]
         assert entries(audit_file) == []
 
     def test_uninstalling_an_app_writes_app_uninstalled(self, admin, audit_file, docker):
@@ -549,13 +569,14 @@ class TestApps:
             entry("app_uninstalled", "app", "logs", "Uninstalled the app logs; its data folders were kept", "warning")
         ]
 
-    @pytest.mark.parametrize(("status", "action", "verb", "written"), [
-        ("exited", "start", "Started", "container_started"),
-        ("running", "stop", "Stopped", "container_stopped"),
-        ("running", "restart", "Restarted", "container_started"),
+    @pytest.mark.parametrize(("status", "action", "verb", "written", "calls"), [
+        ("exited", "start", "Started", "container_started", ["start"]),
+        ("running", "stop", "Stopped", "container_stopped", ["stop"]),
+        # A restart is a stop, then a start (ADR-0381).
+        ("running", "restart", "Restarted", "container_started", ["stop", "start"]),
     ])
     def test_starting_and_stopping_an_app_write_their_entries(
-        self, admin, audit_file, docker, status, action, verb, written
+        self, admin, audit_file, docker, status, action, verb, written, calls
     ):
         logs = docker.add(app_container("logs"))
         logs.status = status
@@ -563,7 +584,7 @@ class TestApps:
         response = admin.post(f"{APPS}/installed/logs/{action}")
 
         assert response.status_code == 200, response.text
-        getattr(logs, action).assert_called_once()
+        assert [call[0] for call in logs.method_calls if call[0] in ("start", "stop", "restart")] == calls
         assert entries(audit_file) == [entry(written, "container", "logs", f"{verb} the app logs")]
 
     @pytest.mark.parametrize(("status", "action"), [("running", "start"), ("exited", "stop")])
@@ -598,7 +619,7 @@ class TestApps:
         response = admin.delete(f"{APPS}/installed/logs")
 
         assert response.status_code == 500, response.text
-        logs.stop.assert_called_once_with()
+        logs.stop.assert_called_once_with(timeout=10)
         assert entries(audit_file) == [
             entry("container_stopped", "container", "logs", "Stopped the app logs; then: Failed to remove: "
                   "removal of container logs is already in progress", success=False)

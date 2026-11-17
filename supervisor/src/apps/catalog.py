@@ -42,12 +42,52 @@ Volume host paths:
 Mark passwords, tokens and keys with secret=True and never ship a default
 value for them; required secrets must be set by the administrator.
 
-Hardware of a SoC that an app uses (a video engine, a GPU) is a HardwareProfile
-in the template's hardware: on a host whose device tree names that SoC and that
-has the nodes the profile requires, the container gets the profile's device
-nodes that the host has; elsewhere the app is installed as on every host
-(src/apps/hardware.py, ADR-0377).
+An app may have companion containers beside its main container, which the
+template's own fields describe (ADR-0381): AppTemplate.companions, each a
+Companion named ^[a-z][a-z0-9-]*$. The main container is named <id>, a
+companion <id>-<name>, and all of them join the network unos-app-<id>, on
+which each companion answers to its name: the main container reaches it by
+that name (DB_HOSTNAME=database). The companions are created and started in
+their order before the main container; each one named in depends_on is ready
+(healthy, or running if its image has no health check) before the next
+container starts. A companion publishes no port, is never privileged, gets no
+capability and takes no override of the install; its pool folders are under
+{pool}/apps/<id>/.
+
+A password that containers of an app share is a file that UNOS generates on
+the pool, never a variable: a VolumeMapping with generated_secret=True
+(is_file, readonly, under {pool}/apps/<id>/, the same mapping in each
+container that reads it), named there by a *_FILE variable, with secret_for
+naming the data folder that was set up with it. Wiring that UNOS sets, such
+as a companion's name or a password file's path, is EnvVar(editable=False).
+Such an app asks the administrator for no secret.
+
+The images of an app with companions are pinned: a PinnedImage
+(name:tag@sha256 of the multi-platform index, as ADR-0305 pins the
+Dockerfiles) with its estimated size on the system disk, listed in
+PINNED_IMAGES. The templates whose images still float on a tag are listed in
+UNPINNED_TEMPLATES, which may only shrink.
+
+Nothing an app writes may land on the system disk, where Docker's data root
+is (ADR-0381): every VOLUME that its image declares lies at or under a bind on
+the pool or a tmpfs (an install refuses a pinned image whose VOLUME is not),
+and a path that a container writes at run time outside its data (/tmp, a run
+folder, a configuration made at every start) is kept in RAM with
+ContainerSpec.tmpfs.
+
+Hardware of a SoC that a container uses (a video engine, a GPU, an NPU) is a
+HardwareProfile in that container's hardware: the template's for its main
+container, a companion's own for it. On a host whose device tree names that SoC
+and that has the nodes the profile requires (each a device of the profile or a
+path inside a device folder of it), the container gets the profile's device
+nodes that the host has, and the profile's image in place of its own if the
+profile names one; elsewhere the container is installed as on every host
+(src/apps/hardware.py, ADR-0382). A profile shared by templates names no image:
+a template gives its copy one with model_copy, and a container has at most one
+profile with an image.
 """
+
+from dataclasses import dataclass
 
 from .schemas import (
     APPS_DATA_PATH,
@@ -55,6 +95,7 @@ from .schemas import (
     AppCategory,
     AppSource,
     AppTemplate,
+    Companion,
     EnvVar,
     HardwareProfile,
     PortMapping,
@@ -69,7 +110,7 @@ POOL = POOL_PLACEHOLDER
 # mapping). Only Rockchip's kernel has MPP's /dev/mpp_service: without it (the mainline kernel)
 # RKMPP cannot work, and the profile does not apply. Rockchip's MPP names the SoC from
 # /proc/device-tree/compatible, a link into /sys/firmware, which Docker masks and its AppArmor
-# profile denies (ADR-0377).
+# profile denies (ADR-0382).
 RK3588_VIDEO = HardwareProfile(
     id="rk3588-video",
     soc="rockchip,rk3588",
@@ -77,6 +118,86 @@ RK3588_VIDEO = HardwareProfile(
     requires=["/dev/mpp_service"],
     unmasked_paths=["/sys/firmware"],
     apparmor_unconfined=True,
+)
+
+# The NPU of the Rockchip RK3588 under Rockchip's kernel: its RKNPU driver (Immich asks for 0.9.8
+# or later) makes it a DRM device in /dev/dri, whose card and render numbers follow the probe order
+# (renderD129 on the dev device); its render node's name in /dev/dri/by-path does not. The whole
+# folder is passed, since the runtime's choice of node is not documented. Immich's -rknn image
+# loads librknnrt and names the SoC from /proc/device-tree/compatible, a link into /sys/firmware,
+# which Docker masks and its AppArmor profile denies (as for RK3588_VIDEO). The mainline kernel's
+# NPU driver (rocket, /dev/accel) makes no such node, and the profile does not apply (ADR-0382).
+RK3588_NPU = HardwareProfile(
+    id="rk3588-npu",
+    soc="rockchip,rk3588",
+    devices=["/dev/dri"],
+    requires=["/dev/dri/by-path/platform-fdab0000.npu-render"],
+    unmasked_paths=["/sys/firmware"],
+    apparmor_unconfined=True,
+)
+
+
+@dataclass(frozen=True)
+class PinnedImage:
+    """An image of the catalog pinned by tag and by the digest of its multi-platform index
+    (ADR-0381, as ADR-0305 pins the Dockerfiles): pulled and run by digest whatever the tag names
+    later."""
+    name: str
+    tag: str
+    digest: str
+    # About what it takes on the system disk once pulled, from the registry: its compressed layers
+    # plus their unpacked size (the containerd image store keeps both). The install checks the
+    # free space with it before a pull.
+    disk_bytes: int
+
+    @property
+    def ref(self) -> str:
+        return f"{self.name}:{self.tag}@{self.digest}"
+
+
+# Immich's server and machine learning are one release: they move together (a test ties them).
+# The digests are the indexes that Immich's release workflow pushed for v3.4.1, its latest release
+# on 2026-11-16; Postgres and Valkey are pinned as Immich's own docker-compose.yml of v3.4.1 pins them.
+IMMICH_VERSION = "v3.4.1"
+IMMICH_SERVER = PinnedImage(
+    "ghcr.io/immich-app/immich-server", IMMICH_VERSION,
+    "sha256:7c489add298fc2f92cda4c777de6462aa206877e04087b815f62c7664af0b53b", 1_482_000_000,
+)
+# The machine learning for the CPU (amd64 and arm64). Its size is an estimate, about the -rknn
+# image's: their compressed arm64 layers are 238 MB and 242 MB, and its unpacked size was not
+# measured. The two images are built apart and share only 2 of their 11 and 12 arm64 layers, so
+# both on one disk take about twice the size of one.
+IMMICH_ML = PinnedImage(
+    "ghcr.io/immich-app/immich-machine-learning", IMMICH_VERSION,
+    "sha256:8adebf414256f6e4f837bfbb66fa94f14f4da7260e3a1d65cbba49e4e35d8764", 950_000_000,
+)
+# The machine learning for Rockchip's NPU (arm64 only), with librknnrt.
+IMMICH_ML_RKNN = PinnedImage(
+    "ghcr.io/immich-app/immich-machine-learning", f"{IMMICH_VERSION}-rknn",
+    "sha256:b7baeb12cab0093803f09f0299b7c863bed46f36349c532096f40bfbf4f10c84", 947_000_000,
+)
+IMMICH_POSTGRES = PinnedImage(
+    "ghcr.io/immich-app/postgres", "14-vectorchord0.4.3-pgvectors0.2.0",
+    "sha256:bcf63357191b76a916ae5eb93464d65c07511da41e3bf7a8416db519b40b1c23", 984_000_000,
+)
+VALKEY = PinnedImage(
+    "docker.io/valkey/valkey", "9",
+    "sha256:418652cfb58ef879d4978c33553735d7147016032d5aefaa14c828e611eb9dfd", 184_000_000,
+)
+# Every pinned image of the catalog, by reference.
+PINNED_IMAGES: dict[str, PinnedImage] = {
+    image.ref: image for image in (IMMICH_SERVER, IMMICH_ML, IMMICH_ML_RKNN, IMMICH_POSTGRES, VALKEY)
+}
+
+# Immich's database and the password it was set up with (ADR-0381).
+IMMICH_DB_DATA = f"{APPS_DATA_PATH}/immich/postgres/data"
+IMMICH_DB_PASSWORD = VolumeMapping(
+    host=f"{APPS_DATA_PATH}/immich/postgres/password",
+    container="/run/secrets/db-password",
+    readonly=True,
+    is_file=True,
+    generated_secret=True,
+    secret_for=IMMICH_DB_DATA,
 )
 
 APP_CATALOG: list[AppTemplate] = [
@@ -220,6 +341,15 @@ APP_CATALOG: list[AppTemplate] = [
         ],
     ),
     
+    # Immich of four containers (ADR-0381): its server is the main container, its database, Valkey
+    # and machine learning are companions on the network unos-app-immich, where each answers to its
+    # name. The database's password is a file UNOS generates on the pool, beside the database; the
+    # server and the database read it through *_FILE (the database's entrypoint reads it as root,
+    # before it drops to the postgres user). Every VOLUME of the images is on the pool, and what the
+    # containers write at run time is in RAM: the server's /tmp, the gunicorn heartbeat in the
+    # machine learning's /tmp, Postgres's configuration (made from DB_STORAGE_TYPE at every start)
+    # and its socket. The machine learning runs on the RK3588's NPU where RK3588_NPU applies
+    # (ADR-0382), and the server gets the video hardware for RKMPP, which the user chooses in Immich.
     AppTemplate(
         id="immich",
         name="Immich",
@@ -227,22 +357,67 @@ APP_CATALOG: list[AppTemplate] = [
         icon="🖼️",
         category=AppCategory.MEDIA,
         source=AppSource.COMMUNITY,
-        image="ghcr.io/immich-app/immich-server:release",
-        version="release",
+        image=IMMICH_SERVER.ref,
+        version=IMMICH_VERSION,
         website="https://immich.app",
         github="https://github.com/immich-app/immich",
-        documentation="https://immich.app/docs/overview/introduction",
-        min_memory="2g",
-        recommended_memory="4g",
+        documentation="https://docs.immich.app/",
+        min_memory="6g",
+        recommended_memory="8g",
         ports=[PortMapping(host=2283, container=2283)],
         volumes=[
-            VolumeMapping(host=f"{APPS_DATA_PATH}/immich/upload", container="/usr/src/app/upload"),
-            VolumeMapping(host=f"{POOL}/photos", container="/usr/src/app/external", readonly=True),
+            # The image's VOLUME: the originals, thumbnails, encoded videos and the daily dumps of
+            # the database (backups/).
+            VolumeMapping(host=f"{APPS_DATA_PATH}/immich/library", container="/data"),
+            VolumeMapping(host="/etc/localtime", container="/etc/localtime", readonly=True),
+            IMMICH_DB_PASSWORD,
         ],
         environment=[
-            EnvVar(name="DB_HOSTNAME", value="immich-db"),
-            EnvVar(name="REDIS_HOSTNAME", value="immich-redis"),
-            EnvVar(name="UPLOAD_LOCATION", value="/usr/src/app/upload"),
+            EnvVar(name="DB_HOSTNAME", value="database", editable=False),
+            EnvVar(name="DB_USERNAME", value="postgres", editable=False),
+            EnvVar(name="DB_DATABASE_NAME", value="immich", editable=False),
+            EnvVar(name="DB_PASSWORD_FILE", value=IMMICH_DB_PASSWORD.container, editable=False),
+            EnvVar(name="REDIS_HOSTNAME", value="redis", editable=False),
+            EnvVar(name="IMMICH_MACHINE_LEARNING_URL", value="http://machine-learning:3003", editable=False),
+        ],
+        tmpfs={"/tmp": "size=512m"},
+        hardware=[RK3588_VIDEO],
+        depends_on=["database", "redis"],
+        companions=[
+            Companion(
+                name="database",
+                image=IMMICH_POSTGRES.ref,
+                volumes=[
+                    VolumeMapping(host=IMMICH_DB_DATA, container="/var/lib/postgresql/data"),
+                    IMMICH_DB_PASSWORD,
+                ],
+                environment=[
+                    EnvVar(name="POSTGRES_USER", value="postgres"),
+                    EnvVar(name="POSTGRES_DB", value="immich"),
+                    EnvVar(name="POSTGRES_PASSWORD_FILE", value=IMMICH_DB_PASSWORD.container),
+                    EnvVar(name="POSTGRES_INITDB_ARGS", value="--data-checksums"),
+                    # The database is on a pool's hard disk: Immich's settings for one.
+                    EnvVar(name="DB_STORAGE_TYPE", value="HDD"),
+                ],
+                tmpfs={"/etc/postgresql": "size=1m,mode=1777", "/var/run/postgresql": "size=1m"},
+                shm_size="128m",
+                stop_timeout=60,
+            ),
+            Companion(
+                name="redis",
+                image=VALKEY.ref,
+                # Its snapshots of the queued jobs; the image declares no VOLUME for its /data.
+                volumes=[VolumeMapping(host=f"{APPS_DATA_PATH}/immich/redis", container="/data")],
+            ),
+            Companion(
+                name="machine-learning",
+                image=IMMICH_ML.ref,
+                volumes=[VolumeMapping(host=f"{APPS_DATA_PATH}/immich/model-cache", container="/cache")],
+                # At v2 the models have files for the RK3588 for every task, OCR included.
+                environment=[EnvVar(name="MACHINE_LEARNING_MODEL_REVISION", value="v2")],
+                tmpfs={"/tmp": "size=64m"},
+                hardware=[RK3588_NPU.model_copy(update={"image": IMMICH_ML_RKNN.ref})],
+            ),
         ],
     ),
     
@@ -826,34 +1001,6 @@ APP_CATALOG: list[AppTemplate] = [
     ),
     
     AppTemplate(
-        id="paperless-ngx",
-        name="Paperless-ngx",
-        description="Document management system that transforms physical documents into searchable archive",
-        icon="📄",
-        category=AppCategory.DOCUMENTS,
-        source=AppSource.COMMUNITY,
-        image="ghcr.io/paperless-ngx/paperless-ngx:latest",
-        version="latest",
-        website="https://docs.paperless-ngx.com",
-        github="https://github.com/paperless-ngx/paperless-ngx",
-        documentation="https://docs.paperless-ngx.com/",
-        min_memory="1g",
-        recommended_memory="2g",
-        ports=[PortMapping(host=8010, container=8000)],
-        volumes=[
-            VolumeMapping(host=f"{APPS_DATA_PATH}/paperless/data", container="/usr/src/paperless/data"),
-            VolumeMapping(host=f"{APPS_DATA_PATH}/paperless/media", container="/usr/src/paperless/media"),
-            VolumeMapping(host=f"{APPS_DATA_PATH}/paperless/export", container="/usr/src/paperless/export"),
-            VolumeMapping(host=f"{APPS_DATA_PATH}/paperless/consume", container="/usr/src/paperless/consume"),
-        ],
-        environment=[
-            EnvVar(name="PAPERLESS_SECRET_KEY", value="", description="Secret key for encryption (long random string)", required=True, secret=True),
-            EnvVar(name="PAPERLESS_OCR_LANGUAGE", value="eng", description="OCR language (e.g., eng, deu, fra)"),
-            EnvVar(name="PAPERLESS_TIME_ZONE", value="UTC"),
-        ],
-    ),
-    
-    AppTemplate(
         id="trilium",
         name="Trilium Notes",
         description="Hierarchical note-taking app with focus on knowledge building",
@@ -870,36 +1017,6 @@ APP_CATALOG: list[AppTemplate] = [
         ports=[PortMapping(host=8082, container=8080)],
         volumes=[
             VolumeMapping(host=f"{APPS_DATA_PATH}/trilium/data", container="/home/node/trilium-data"),
-        ],
-    ),
-    
-    AppTemplate(
-        id="bookstack",
-        name="BookStack",
-        description="Simple, self-hosted wiki platform for organizing and storing information",
-        icon="📚",
-        category=AppCategory.DOCUMENTS,
-        source=AppSource.LINUXSERVER,
-        image="lscr.io/linuxserver/bookstack:latest",
-        version="latest",
-        website="https://bookstackapp.com",
-        github="https://github.com/BookStackApp/BookStack",
-        documentation="https://www.bookstackapp.com/docs/",
-        min_memory="256m",
-        recommended_memory="512m",
-        ports=[PortMapping(host=6875, container=80)],
-        volumes=[
-            VolumeMapping(host=f"{APPS_DATA_PATH}/bookstack/config", container="/config"),
-        ],
-        environment=[
-            EnvVar(name="PUID", value="1000"),
-            EnvVar(name="PGID", value="1000"),
-            EnvVar(name="TZ", value="UTC"),
-            EnvVar(name="APP_URL", value="http://localhost:6875", description="Application URL"),
-            EnvVar(name="DB_HOST", value="bookstack-db"),
-            EnvVar(name="DB_DATABASE", value="bookstack"),
-            EnvVar(name="DB_USERNAME", value="bookstack"),
-            EnvVar(name="DB_PASSWORD", value="", description="Password of the BookStack database user", required=True, secret=True),
         ],
     ),
     
@@ -1714,30 +1831,6 @@ APP_CATALOG: list[AppTemplate] = [
     ),
 
     AppTemplate(
-        id="linkwarden",
-        name="Linkwarden",
-        description="Collaborative bookmark manager to collect, organize and preserve webpages",
-        icon="🔖",
-        category=AppCategory.PRODUCTIVITY,
-        source=AppSource.COMMUNITY,
-        image="ghcr.io/linkwarden/linkwarden:latest",
-        version="latest",
-        website="https://linkwarden.app",
-        github="https://github.com/linkwarden/linkwarden",
-        documentation="https://docs.linkwarden.app/",
-        min_memory="256m",
-        recommended_memory="512m",
-        ports=[PortMapping(host=3000, container=3000)],
-        volumes=[
-            VolumeMapping(host=f"{APPS_DATA_PATH}/linkwarden/data", container="/data/data"),
-        ],
-        environment=[
-            EnvVar(name="NEXTAUTH_SECRET", value="", description="Secret for session encryption", required=True, secret=True),
-            EnvVar(name="NEXTAUTH_URL", value="http://localhost:3000"),
-        ],
-    ),
-
-    AppTemplate(
         id="vikunja",
         name="Vikunja",
         description="Open source to-do app with lists, kanban boards, and team collaboration",
@@ -1885,6 +1978,22 @@ APP_CATALOG: list[AppTemplate] = [
         ],
     ),
 ]
+
+
+# The templates whose images still float on a tag, pulled as the tag names them at the install. The
+# set may only shrink (a test holds it to the ids it had when the first app was pinned), and a
+# template leaves it once its images are pinned; apps.pinned-catalog-images empties it (ADR-0381).
+UNPINNED_TEMPLATES = frozenset({
+    "actual-budget", "adguard-home", "aria2", "audiobookshelf", "authelia", "bazarr", "calibre-web",
+    "changedetection", "code-server", "crowdsec", "deluge", "dozzle", "duplicati", "emby", "filebrowser",
+    "frigate", "gitea", "glances", "grafana", "heimdall", "homarr", "homeassistant", "homepage",
+    "jdownloader2", "jellyfin", "kavita", "lidarr", "localai", "mealie", "mosquitto", "n8n", "navidrome",
+    "netdata", "nextcloud", "nginx-proxy-manager", "node-red", "nzbget", "ollama", "open-webui", "overseerr",
+    "photoprism", "pihole", "plex", "portainer", "prometheus", "prowlarr", "qbittorrent", "radarr", "readarr",
+    "restic-rest-server", "sabnzbd", "scrypted", "sonarr", "stirling-pdf", "syncthing", "tailscale",
+    "tautulli", "traefik", "transmission", "trilium", "uptime-kuma", "vaultwarden", "vikunja", "wikijs",
+    "wireguard", "zigbee2mqtt",
+})
 
 
 def get_app_by_id(app_id: str) -> AppTemplate | None:

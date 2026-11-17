@@ -80,8 +80,8 @@ use the main checkout's. Output shows secrets as `<redacted>`.
    the owner's decision), and removes the 2 that its restores make, unless a restore changed a
    user, share, API token of the relay's administrator or account that is not the check's: then
    they stay, named by its FAIL, as they hold that data, and removing them is the owner's decision.
-   `hardware` only reads: the SoC, what the App Store offers of it and the nodes the host has
-   (ADR-0377).
+   `hardware` only reads: the SoC, what the App Store offers of it to each container of
+   Jellyfin and Immich, the nodes the host has and the RKNPU driver's version (ADR-0382).
    `all` takes several minutes: run it in the background as
    `timeout 3600 scripts/dev/scenario.sh all > <log> 2>&1` (a background command has a deadline,
    ADR-0335), or in the foreground with a tool timeout long enough, since a check that is killed

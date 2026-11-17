@@ -6,15 +6,13 @@ import os
 import re
 import shutil
 import stat
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, NoReturn
 
-from docker.errors import DockerException, NotFound
+from docker.errors import NotFound
 from docker.types import Mount
 from fastapi import APIRouter, Depends, HTTPException, Request
-from requests.exceptions import RequestException
-from urllib3.exceptions import HTTPError as Urllib3Error
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -23,15 +21,16 @@ from ..audit.schemas import AuditAction, AuditSeverity
 from ..auth.models import User
 from ..auth.utils import require_admin, verify_token
 from ..config import get_settings
-from ..containers.docker import CAPPED_LOG, NO_ANSWER, RUNNING_STATES, get_client, no_answer_detail
+from ..containers.docker import CAPPED_LOG, RUNNING_STATES, get_client
 from ..database import get_db
 from ..files.router import TRASH
 from ..security.validators import open_dir_nofollow, pools_base, validate_pools_path
 from ..shares.constants import SMB_APP_UID, SMB_GROUP_GID, SMB_GROUP_NAME
 from ..shares.models import SmbShare
 from ..snapshots.router import SNAPSHOT_DIR_NAME
+from . import app_secrets, preflight, stacks
 from .catalog import APP_CATALOG, get_app_by_id, get_apps_by_category, search_apps
-from .hardware import container_hardware, for_host, read_host_hardware
+from .hardware import ContainerHardware, all_profiles, container_hardware, for_host, read_host_hardware
 from .schemas import (
     POOL_PLACEHOLDER,
     AppCategory,
@@ -41,39 +40,25 @@ from .schemas import (
     AppSource,
     AppTemplate,
     AppVolume,
+    CompanionContainer,
+    ContainerSpec,
     InstalledApp,
     VolumeMapping,
     is_app_data_path,
 )
+from .stacks import APP_POOL_LABEL, COMPANION_LABEL, UNOS_APP_LABEL
 
 router = APIRouter(prefix="/apps", tags=["apps"])
 logger = logging.getLogger(__name__)
 
-UNOS_APP_LABEL = "unos.app"
-APP_POOL_LABEL = "unos.app.pool"
-
-# docker-py raises DockerException subclasses, but connection problems can
-# surface as plain requests exceptions, and those of a stream (a pull) as urllib3's.
-_DOCKER_ERRORS = (DockerException, RequestException, Urllib3Error)
-
-
-def _docker_error(error: Exception) -> HTTPException:
-    """The answer to an error of the first request of a route to Docker (the listing, the lookup
-    of the app, the name check of an install): 503 with the reason when Docker did not answer
-    (NO_ANSWER), 500 otherwise (ADR-0323). An operation that fails after it keeps its own 500
-    "Failed to ..." (ADR-0254, ADR-0256)."""
-    if isinstance(error, NO_ANSWER):
-        return HTTPException(503, no_answer_detail(error))
-    return HTTPException(500, f"Docker failed: {error}")
+_DOCKER_ERRORS = stacks.DOCKER_ERRORS
+_docker_error = stacks.docker_error
 
 # Defaults that templates and tutorials commonly ship. A secret set to one of
 # these protects nothing, so installs that use them are refused.
 PLACEHOLDER_SECRETS = frozenset(
     {"changeme", "change-me", "change_me", "password", "admin", "secret"}
 )
-
-# Docker's own rule for container names.
-_CONTAINER_NAME_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_.-]+$")
 
 # Added to the environment of an app that runs in the group unos-smb (ADR-0274):
 # a user that no other app has, the group unos-smb, and the umask that gives
@@ -98,7 +83,7 @@ async def list_apps(
     query: str | None = None,
     _: dict = Depends(verify_token)
 ):
-    """List available apps from catalog, with the hardware they get on this host (ADR-0377)."""
+    """List available apps from catalog, with the hardware they get on this host (ADR-0382)."""
     if query:
         apps = search_apps(query)
     elif category:
@@ -110,7 +95,7 @@ async def list_apps(
 
 @router.get("/catalog/{app_id}", response_model=AppTemplate)
 async def get_app(app_id: str, _: dict = Depends(verify_token)):
-    """Get app template by ID, with the hardware it gets on this host (ADR-0377)."""
+    """Get app template by ID, with the hardware it gets on this host (ADR-0382)."""
     app = get_app_by_id(app_id)
     if not app:
         raise HTTPException(404, f"App {app_id} not found")
@@ -118,9 +103,10 @@ async def get_app(app_id: str, _: dict = Depends(verify_token)):
 
 
 async def _for_this_host(apps: list[AppTemplate]) -> list[AppTemplate]:
-    """The templates with only the hardware profiles that apply on this host; the host is read,
-    in a worker thread, only when one of them has a profile."""
-    profiles = [profile for app in apps for profile in app.hardware]
+    """The templates with only the hardware profiles that apply on this host, each container
+    with the image that its install pulls here; the host is read once, in a worker thread, and
+    only when a container of one of them has a profile."""
+    profiles = [profile for app in apps for profile in all_profiles(app)]
     if not profiles:
         return apps
     hardware = await asyncio.to_thread(read_host_hardware, profiles)
@@ -145,45 +131,75 @@ def _list_installed() -> list[InstalledApp]:
     pools = list_mounted_pools()
     bases = _pools_bases()
 
-    result = []
+    # One app per key (stacks.app_key): its main container and its companions (ADR-0381).
+    members: dict[str, list[Any]] = {}
     for c in containers:
-        template_id = c.labels.get(UNOS_APP_LABEL, "")
-
-        web_port = None
-        ports = c.attrs.get("NetworkSettings", {}).get("Ports") or {}
-        for port_str, bindings in ports.items():
-            if bindings and bindings[0].get("HostPort"):
-                web_port = int(bindings[0]["HostPort"])
-                break
-
-        binds = _bind_mounts(c)
-        result.append(InstalledApp(
-            id=c.short_id,
-            template_id=template_id,
-            name=c.name,
-            container_id=c.short_id,
-            status=c.status,
-            web_port=web_port,
-            created_at=c.attrs.get("Created", ""),
-            pool=c.labels.get(APP_POOL_LABEL) or None,
-            volumes=[
-                AppVolume(host=b.source, container=b.target, readonly=b.readonly)
-                for b in binds
-            ],
-            data_outside_pools=[
-                b.source
-                for b in binds
-                if _is_data(b, bases) and _pool_containing(b.source, pools) is None
-            ],
-            runs_in_unos_smb=_runs_in_unos_smb(c),
-            devices=_devices(c),
-        ))
-
+        members.setdefault(stacks.app_key(c), []).append(c)
+    result = []
+    for key, found in members.items():
+        app = stacks.group(key, found, get_app_by_id(found[0].labels.get(UNOS_APP_LABEL, "")))
+        result.append(_installed_app(app, pools, bases))
     return result
 
 
+def _installed_app(app: stacks.InstalledContainers, pools: list[AppPool], bases: list[str]) -> InstalledApp:
+    """The listing of one installed app: the fields of one container are its main container's."""
+    main = app.main
+    first = main if main is not None else app.companions[0]
+    template_id = first.labels.get(UNOS_APP_LABEL, "")
+
+    web_port = None
+    ports = ((main.attrs.get("NetworkSettings") or {}).get("Ports") or {}) if main is not None else {}
+    for port_str, bindings in ports.items():
+        if bindings and bindings[0].get("HostPort"):
+            web_port = int(bindings[0]["HostPort"])
+            break
+
+    # The main container's volumes first, then each companion's.
+    volumes: list[AppVolume] = []
+    outside: list[str] = []
+    for container in [*([main] if main is not None else []), *app.companions]:
+        companion = container.labels.get(COMPANION_LABEL)
+        for b in _bind_mounts(container):
+            volumes.append(AppVolume(host=b.source, container=b.target, readonly=b.readonly, companion=companion))
+            if _is_data(b, bases) and _pool_containing(b.source, pools) is None and b.source not in outside:
+                outside.append(b.source)
+    pool = next((c.labels[APP_POOL_LABEL] for c in app.containers if c.labels.get(APP_POOL_LABEL)), None)
+
+    return InstalledApp(
+        id=first.short_id,
+        template_id=template_id,
+        name=main.name if main is not None else app.key,
+        container_id=first.short_id,
+        status=main.status if main is not None else "missing",
+        web_port=web_port,
+        created_at=first.attrs.get("Created", ""),
+        pool=pool,
+        volumes=volumes,
+        data_outside_pools=outside,
+        runs_in_unos_smb=_runs_in_unos_smb(main) if main is not None else False,
+        devices=_devices(main) if main is not None else [],
+        health=stacks.health(main) if main is not None else None,
+        companions=[_companion(c) for c in app.companions],
+        missing=app.missing,
+    )
+
+
+def _companion(container: Any) -> CompanionContainer:
+    """A companion container of an installed app, as Docker reports it."""
+    return CompanionContainer(
+        name=container.labels.get(COMPANION_LABEL, ""),
+        container=container.name,
+        container_id=container.short_id,
+        status=container.status,
+        health=stacks.health(container),
+        image=str((container.attrs.get("Config") or {}).get("Image") or ""),
+        devices=_devices(container),
+    )
+
+
 def _devices(container: Any) -> list[str]:
-    """The host's device nodes passed into the container, as Docker keeps them (ADR-0377)."""
+    """The host's device nodes passed into the container, as Docker keeps them (ADR-0382)."""
     devices = (container.attrs.get("HostConfig") or {}).get("Devices") or []
     return [str(device.get("PathOnHost", "")) for device in devices]
 
@@ -325,9 +341,16 @@ def _bind_mounts(container: Any) -> list[_Bind]:
 
 
 def _template_volumes(container: Any) -> dict[str, VolumeMapping]:
-    """Catalog volumes of an installed app by container path ({} if unknown)."""
+    """Catalog volumes of an installed app's container by container path ({} if unknown): the
+    template's for its main container, a companion's own for a companion (ADR-0381)."""
     template = get_app_by_id(container.labels.get(UNOS_APP_LABEL, ""))
-    return {volume.container: volume for volume in template.volumes} if template else {}
+    if template is None:
+        return {}
+    companion = container.labels.get(COMPANION_LABEL)
+    spec: ContainerSpec | None = template if companion is None else next(
+        (c for c in template.companions if c.name == companion), None
+    )
+    return {volume.container: volume for volume in spec.volumes} if spec is not None else {}
 
 
 def _is_data(bind: _Bind, bases: list[str]) -> bool:
@@ -361,6 +384,25 @@ class _PlannedMount:
     # Owner for a source the supervisor creates (see VolumeMapping.uid).
     uid: int | None = None
     gid: int | None = None
+    # The container's Docker name, given in messages of an app of several containers (ADR-0381);
+    # None for an app of one container.
+    container: str | None = None
+    # The companion whose container gets the mount; None: the main container.
+    companion: str | None = None
+    # The template's host path is "{pool}" and the source is the pool's root, bound on purpose
+    # (see _check_no_nested_sources).
+    whole_pool: bool = False
+    # The template's host path holds the app's own data ({pool}/apps/...).
+    app_data: bool = False
+    # A password file that the install generates (VolumeMapping.generated_secret), and the data
+    # folder that it unlocks on the same pool (VolumeMapping.secret_for).
+    generated_secret: bool = False
+    secret_for: Path | None = None
+
+
+def _where(m: _PlannedMount) -> str:
+    """The mount's container path, with its container's name in an app of several containers."""
+    return m.target if m.container is None else f"{m.target} of {m.container}"
 
 
 def _normalise_in_pools(
@@ -407,9 +449,16 @@ def _plan_volumes(
     overrides: dict[str, str],
     pool: AppPool | None,
     pools: list[AppPool],
+    *,
+    spec: ContainerSpec | None = None,
+    container: str | None = None,
+    companion: str | None = None,
 ) -> list[_PlannedMount]:
-    """Turn the template volumes plus overrides into concrete bind mounts."""
-    targets = {volume.container for volume in template.volumes}
+    """Turn the volumes of one container of ``template`` (``spec``: the main container by
+    default, or a companion) plus overrides into concrete bind mounts. ``container``: its Docker
+    name in an app of several containers, for messages."""
+    spec = template if spec is None else spec
+    targets = {volume.container for volume in spec.volumes}
     unknown = sorted(set(overrides) - targets)
     if unknown:
         raise HTTPException(
@@ -419,10 +468,8 @@ def _plan_volumes(
         )
 
     planned: list[_PlannedMount] = []
-    # Pool mounts that bind a whole pool root on purpose (the template's host
-    # path is "{pool}"); see _check_no_nested_sources.
-    pool_root_binds: set[str] = set()
-    for volume in template.volumes:
+    for volume in spec.volumes:
+        mount = {"container": container, "companion": companion}
         if not volume.on_pool:
             if volume.container in overrides:
                 raise HTTPException(
@@ -438,9 +485,16 @@ def _plan_volumes(
                     is_file=volume.is_file,
                     pool=None,
                     creatable=False,
+                    **mount,
                 )
             )
             continue
+        if volume.generated_secret and volume.container in overrides:
+            raise HTTPException(
+                400,
+                f"{volume.container} is {template.name}'s password file, which UNOS keeps at {volume.host}: "
+                "it cannot be moved",
+            )
 
         if volume.container in overrides:
             raw = overrides[volume.container]
@@ -451,8 +505,11 @@ def _plan_volumes(
                 409, "No mounted storage pool — create or mount a pool first"
             )
         source, owner = _normalise_in_pools(raw, volume.container, pools, is_file=volume.is_file)
-        if volume.host == POOL_PLACEHOLDER and source == Path(owner.path).resolve():
-            pool_root_binds.add(volume.container)
+        secret_for = None
+        if volume.secret_for is not None:
+            secret_for, _ = _normalise_in_pools(
+                owner.path + volume.secret_for[len(POOL_PLACEHOLDER):], volume.container, pools
+            )
         planned.append(
             _PlannedMount(
                 source=source,
@@ -463,15 +520,17 @@ def _plan_volumes(
                 creatable=pool is not None and owner.name == pool.name,
                 uid=volume.uid,
                 gid=volume.gid,
+                whole_pool=volume.host == POOL_PLACEHOLDER and source == Path(owner.path).resolve(),
+                app_data=is_app_data_path(volume.host),
+                generated_secret=volume.generated_secret,
+                secret_for=secret_for,
+                **mount,
             )
         )
-    _check_no_nested_sources(template, planned, pool_root_binds)
     return planned
 
 
-def _check_no_nested_sources(
-    template: AppTemplate, planned: list[_PlannedMount], pool_root_binds: set[str]
-) -> None:
+def _check_no_nested_sources(template: AppTemplate, planned: list[_PlannedMount]) -> None:
     """Refuse a pool folder that lies inside another writable folder of the app.
 
     Docker resolves bind sources again on every start and follows symbolic
@@ -482,17 +541,18 @@ def _check_no_nested_sources(
     The pool root itself is allowed for templates built for it (a file
     manager that runs as a non-root user): the pool root and the folders the
     supervisor creates are owned by root, so such an app cannot rename them.
+    ``planned``: the mounts of all of the app's containers (ADR-0381).
     """
     pool_mounts = [m for m in planned if m.pool is not None]
     for outer in pool_mounts:
-        if outer.readonly or outer.target in pool_root_binds:
+        if outer.readonly or outer.whole_pool:
             continue
         for inner in pool_mounts:
             if inner.source != outer.source and inner.source.is_relative_to(outer.source):
                 raise HTTPException(
                     400,
-                    f"The folder for {inner.target} ({inner.source}) is inside the folder "
-                    f"for {outer.target} ({outer.source}), which {template.name} can write "
+                    f"The folder for {_where(inner)} ({inner.source}) is inside the folder "
+                    f"for {_where(outer)} ({outer.source}), which {template.name} can write "
                     "to. The app could replace it with a link to any host folder, which "
                     f"Docker would mount at the next start. Choose a folder outside "
                     f"{outer.source}.",
@@ -549,6 +609,8 @@ def _check_share_folders(
       {pool}/apps, which ADR-0145 keeps out of shares too);
     - a writable folder that holds a share's folder: the app could put
       another folder in the share's place.
+    ``planned``: the mounts of one container; ``run_in_unos_smb`` is False for a companion,
+    which never runs in the group (ADR-0381).
     """
     base = pools_base()
     folders = [
@@ -556,7 +618,6 @@ def _check_share_folders(
         for share in shares
         if share.path.is_relative_to(base) and len(share.path.relative_to(base).parts) >= 2
     ]
-    volumes = {volume.container: volume for volume in template.volumes}
     for m in planned:
         if m.pool is None:
             continue
@@ -565,14 +626,12 @@ def _check_share_folders(
             if name in parts:
                 raise HTTPException(
                     400,
-                    f"The folder for {m.target} ({m.source}) is in {what}, which keeps files of "
+                    f"The folder for {_where(m)} ({m.source}) is in {what}, which keeps files of "
                     "shares outside their folders: no app gets a snapshot or the trash. Choose a "
                     f"folder outside {name}.",
                 )
         for share in folders:
-            problem = _share_folder_problem(
-                template, m, volumes[m.target], share, run_in_unos_smb=run_in_unos_smb
-            )
+            problem = _share_folder_problem(template, m, share, run_in_unos_smb=run_in_unos_smb)
             if problem is not None:
                 raise HTTPException(400, problem)
 
@@ -580,13 +639,12 @@ def _check_share_folders(
 def _share_folder_problem(
     template: AppTemplate,
     m: _PlannedMount,
-    volume: VolumeMapping,
     share: _ShareFolder,
     *,
     run_in_unos_smb: bool,
 ) -> str | None:
     """Why the folder of ``m`` cannot be given to the app beside ``share``, or None."""
-    folder = f"The folder for {m.target} ({m.source})"
+    folder = f"The folder for {_where(m)} ({m.source})"
     the_share = f"the share {share.name} ({share.path})"
     if m.source != share.path and m.source.is_relative_to(share.path):
         return (
@@ -596,9 +654,9 @@ def _share_folder_problem(
             "that link at the next start."
         )
     if m.source == share.path:
-        if is_app_data_path(volume.host):
+        if m.app_data:
             return (
-                f"{m.target} holds {template.name}'s own data, which must not go into the folder "
+                f"{_where(m)} holds {template.name}'s own data, which must not go into the folder "
                 f"of {the_share}: SMB users would read and change the app's settings. Choose a "
                 "folder that is not shared."
             )
@@ -619,7 +677,9 @@ def _share_folder_problem(
 
 def _cannot_run_in_the_group(template: AppTemplate) -> str:
     """Why the install option is refused for a template without can_run_in_unos_smb."""
-    if template.source is not AppSource.LINUXSERVER or not {"PUID", "PGID"} <= {
+    if template.companions:
+        reason = "it runs in several containers, and the group would reach only one of them"
+    elif template.source is not AppSource.LINUXSERVER or not {"PUID", "PGID"} <= {
         var.name for var in template.environment
     }:
         reason = "only linuxserver.io images take the user and group of their processes from PUID and PGID"
@@ -768,6 +828,11 @@ def _prepare_sources(
 
     ``status`` is the HTTP status for a source that is missing or has the
     wrong type: 400 for an install request, 409 when an installed app starts.
+
+    A password file (``generated_secret``) is checked without being shown
+    (app_secrets.is_present) and never created here: an install creates a
+    missing one with app_secrets.create once the pool's folders are made, and
+    a start refuses one that is missing (ADR-0381).
     """
     pool_mounts = [m for m in planned if m.pool is not None]
     if create:
@@ -781,6 +846,10 @@ def _prepare_sources(
 
     for m in pool_mounts:
         path = m.source
+        if m.generated_secret:
+            if not app_secrets.is_present(_pool_root_of(m), path, m.target, m.secret_for) and not m.creatable:
+                raise HTTPException(status, _missing_secret(m))
+            continue
         mode = _existing_source_mode(m)
         if mode is not None:
             if m.is_file and stat.S_ISDIR(mode):
@@ -808,9 +877,22 @@ def _prepare_sources(
             raise HTTPException(500, f"Could not create {path}")
 
 
+def _missing_secret(m: _PlannedMount) -> str:
+    """Why an installed app does not start without its password file: the data it unlocks keeps
+    the password it was set up with, which no new file would have."""
+    data = f"the data in {m.secret_for}" if m.secret_for is not None else "the app's data"
+    move = f", move {m.secret_for} away" if m.secret_for is not None else ""
+    return (
+        f"{m.source} is missing; it holds the password that {data} was set up with. Restore it from "
+        f"a snapshot of the pool, or uninstall the app{move} and install it again."
+    )
+
+
 def _build_environment(
-    template: AppTemplate, overrides: dict[str, str], *, run_in_unos_smb: bool
+    template: AppTemplate | ContainerSpec, overrides: dict[str, str], *, run_in_unos_smb: bool
 ) -> dict[str, str]:
+    """The environment of one container: ``template`` is the main container's template, with the
+    request's ``overrides``, or a companion's spec, which takes none (ADR-0381)."""
     # PGID decides whether the app's processes are in the group unos-smb, and
     # PUID whose they are: root (0), an SMB account or the apps in the group.
     # Only the install option changes them (ADR-0274).
@@ -821,6 +903,12 @@ def _build_environment(
             f"{' and '.join(set_by_unos)} cannot be changed: an app runs with the PUID and PGID of "
             f"its template, or with PUID {SMB_APP_UID} and PGID {SMB_GROUP_GID} ({SMB_GROUP_NAME}) "
             f"when it is installed to run in the group {SMB_GROUP_NAME}",
+        )
+    # Wiring that UNOS sets: the names of companions, the paths of password files (ADR-0381).
+    wiring = [var.name for var in template.environment if not var.editable and var.name in overrides]
+    if wiring:
+        raise HTTPException(
+            400, f"{' and '.join(wiring)} {'is' if len(wiring) == 1 else 'are'} set by UNOS and cannot be changed"
         )
     environment: dict[str, str] = {}
     problems: list[str] = []
@@ -841,140 +929,443 @@ def _build_environment(
     return environment
 
 
-def _install_app(req: AppInstallRequest, shares: list[_ShareFolder]) -> AppInstallResponse:
-    """Validate the request, then pull the image and create the container.
+# ---------------------------------------------------------------------------
+# Installing an app
+# ---------------------------------------------------------------------------
 
-    Everything that can be rejected is checked before the (slow) image pull.
-    ``shares``: the folders of the shares when the request came in. Runs in
-    a worker thread: Docker and filesystem calls block.
+# An image pinned by tag and digest (ADR-0381, as ADR-0305 pins the Dockerfiles).
+_PINNED = re.compile(r"(?P<name>[^@\s]+):(?P<tag>[^@:/\s]+)@(?P<digest>sha256:[0-9a-f]{64})")
+
+
+def _pinned(ref: str) -> tuple[str, str, str] | None:
+    """The name, tag and digest of a pinned image reference; None for one with a floating tag."""
+    match = _PINNED.fullmatch(ref)
+    return (match["name"], match["tag"], match["digest"]) if match else None
+
+
+def _by_digest(ref: str) -> str:
+    """What a container is created from: ``name@digest`` for a pinned image, which Docker's
+    store resolves whatever tags it has; the reference itself for a floating one."""
+    pinned = _pinned(ref)
+    return f"{pinned[0]}@{pinned[2]}" if pinned else ref
+
+
+@dataclass
+class _NewContainer:
+    """A container that an install creates."""
+    spec: ContainerSpec
+    name: str  # Docker's name
+    companion: str | None  # None: the main container
+    environment: dict[str, str]
+    planned: list[_PlannedMount]
+    hardware: ContainerHardware | None = None
+    # The data folders that it binds and sets up with a generated password (secret_for) that were
+    # empty or absent before this install: one that fails while it is awaited may leave them
+    # half set up, and the next install would take them for its data (ADR-0381).
+    new_data: list[Path] = field(default_factory=list)
+
+    @property
+    def image(self) -> str:
+        """The image it runs: its spec's, or that of a hardware profile that applies here."""
+        return self.hardware.image if self.hardware is not None else self.spec.image
+
+
+@dataclass
+class _Installed:
+    """What an install made: its answer, the names of its containers in their start order and the
+    password files it generated."""
+    answer: AppInstallResponse
+    containers: list[str]
+    generated: list[str] = field(default_factory=list)
+
+
+class _InstallFailed(HTTPException):
+    """An install that failed after it made containers or a network and could not remove all of
+    them (HTTP 500): the audit log gets app_installed as failed, with what is left (ADR-0350)."""
+
+    def __init__(self, detail: str, done: str) -> None:
+        super().__init__(500, detail)
+        self.done = done
+
+
+def _install_app(req: AppInstallRequest, shares: list[_ShareFolder]) -> _Installed:
+    """Validate the request, then pull the images and create and start the containers.
+
+    Everything that can be rejected is checked before the (slow) image pulls, and nothing is
+    written to the pool before them. One change of the app at a time (stacks.app_lock).
+    ``shares``: the folders of the shares when the request came in. Runs in a worker thread:
+    Docker and filesystem calls block.
     """
     template = get_app_by_id(req.template_id)
     if not template:
         raise HTTPException(404, f"App {req.template_id} not found")
+    with stacks.app_lock(template.id, template.name):
+        return _install(template, req, shares)
 
-    name = req.name or template.id
-    if not _CONTAINER_NAME_RE.match(name):
-        raise HTTPException(
-            400, "Invalid app name: use letters, digits, '_', '.' or '-'"
-        )
 
+def _install(template: AppTemplate, req: AppInstallRequest, shares: list[_ShareFolder]) -> _Installed:
+    several = bool(template.companions)
     if req.run_in_unos_smb and not template.can_run_in_unos_smb:
         raise HTTPException(400, _cannot_run_in_the_group(template))
-    environment = _build_environment(
-        template, req.env_overrides, run_in_unos_smb=req.run_in_unos_smb
-    )
+    port_bindings = preflight.plan_ports(template, req.port_overrides)
+    environment = _build_environment(template, req.env_overrides, run_in_unos_smb=req.run_in_unos_smb)
 
     pools = list_mounted_pools()
-    needs_pool = any(volume.on_pool for volume in template.volumes)
+    needs_pool = any(volume.on_pool for spec in (template, *template.companions) for volume in spec.volumes)
     # A requested pool is validated even for apps without pool data, but only
     # reported (and labelled) when the app actually stores data on it.
     selected = _select_pool(req.pool, pools) if needs_pool or req.pool is not None else None
     pool = selected if needs_pool else None
-    planned = _plan_volumes(template, req.volume_overrides, pool, pools)
-    _check_share_folders(template, planned, shares, run_in_unos_smb=req.run_in_unos_smb)
+    main = _NewContainer(
+        spec=template,
+        name=template.id,
+        companion=None,
+        environment=environment,
+        planned=_plan_volumes(template, req.volume_overrides, pool, pools, container=template.id if several else None),
+    )
+    companions = []
+    for companion in template.companions:
+        name = stacks.container_name(template, companion.name)
+        companions.append(_NewContainer(
+            spec=companion,
+            name=name,
+            companion=companion.name,
+            environment=_build_environment(companion, {}, run_in_unos_smb=False),
+            planned=_plan_volumes(template, {}, pool, pools, spec=companion, container=name, companion=companion.name),
+        ))
+    # The order of the creates and the starts: the companions, then the main container.
+    containers = [*companions, main]
+    planned = [m for c in containers for m in c.planned]
+    _check_no_nested_sources(template, planned)
+    for c in containers:
+        _check_share_folders(template, c.planned, shares, run_in_unos_smb=req.run_in_unos_smb and c is main)
     _prepare_sources(planned, create=False)
+    secrets_to_make = _secrets_to_make(template, planned)
+    for c in containers:
+        sources = {m.source for m in c.planned}
+        c.new_data = sorted({
+            m.secret_for
+            for m in c.planned
+            if m.generated_secret and m.secret_for in sources
+            and not app_secrets.holds_data(_pool_root_of(m), m.secret_for)
+        })
 
+    # The first request to Docker: every container, stopped ones too, for the app's names and the
+    # host ports; then the app's network, if it has companions.
     try:
         client = get_client()
-        client.containers.get(name)
-    except NotFound:
-        pass
+        existing = client.containers.list(all=True, ignore_removed=True)
+        stacks.check_not_installed(template, existing)
+        network = stacks.reusable_network(client, template) if several else None
     except _DOCKER_ERRORS as e:
         raise _docker_error(e)
-    else:
-        raise HTTPException(409, f"A container named '{name}' already exists")
+    preflight.check_ports(template, port_bindings, existing)
 
-    port_bindings = {}
-    for p in template.ports:
-        host_port = req.port_overrides.get(p.container, p.host)
-        port_bindings[f"{p.container}/{p.protocol}"] = host_port
-    hardware = container_hardware(template)
+    # The host is read once for the profiles of all the app's containers (ADR-0382).
+    host_hardware = read_host_hardware(all_profiles(template))
+    for c in containers:
+        c.hardware = container_hardware(c.spec, host_hardware)
+    # Room on the system disk for the images that the hardware chose (ADR-0381).
+    preflight.check_space(client, template, [c.image for c in containers])
 
-    try:
-        client.images.pull(template.image)
-    except _DOCKER_ERRORS as e:
-        raise HTTPException(500, f"Failed to pull image: {e}")
+    images = _pull_images(client, template, containers)
+    _check_image_volumes(template, containers, images)
 
-    # The pull can take minutes: re-check the pools right before writing.
+    # The pulls can take minutes: re-check the pools right before writing.
     _prepare_sources(planned, create=True)
-
-    labels = {
-        UNOS_APP_LABEL: template.id,
-        "unos.app.name": template.name,
-        "unos.app.icon": template.icon,
-    }
-    if pool is not None:
-        labels[APP_POOL_LABEL] = pool.name
-    mounts = [
-        Mount(target=m.target, source=str(m.source), type="bind", read_only=m.readonly)
-        for m in planned
+    generated = [
+        str(m.source)
+        for m in secrets_to_make
+        if app_secrets.create(_pool_root_of(m), m.source, m.target, uid=m.uid, gid=m.gid)
     ]
 
-    try:
-        container = _create_container(
-            client,
-            template.image,
-            hardware.masked_paths,
-            name=name,
-            ports=port_bindings or None,
-            mounts=mounts or None,
-            environment=environment or None,
-            restart_policy={"Name": template.restart_policy},
-            privileged=template.privileged,
-            cap_add=template.capabilities or None,
-            network_mode=template.network_mode,
-            labels=labels,
-            log_config=CAPPED_LOG,
-            devices=[f"{node}:{node}:rwm" for node in hardware.devices] or None,
-            security_opt=hardware.security_opt or None,
-        )
-    except _DOCKER_ERRORS as e:
-        raise HTTPException(500, f"Failed to create container: {e}")
-    try:
-        container.start()
-        container.reload()
-    except _DOCKER_ERRORS as e:
-        # Do not leave a dead container behind: it would block a retry (for
-        # example after freeing a port) with "name already in use".
-        try:
-            container.remove(force=True)
-        except _DOCKER_ERRORS:
-            logger.warning("Could not remove container %s after a failed start", name, exc_info=True)
-        raise HTTPException(500, f"Failed to start container: {e}")
+    created = _create_and_start(client, template, containers, network, port_bindings, pool)
+    started = created[-1]
 
     web_url = None
     if template.ports:
-        first_port = req.port_overrides.get(template.ports[0].container, template.ports[0].host)
+        first_port = port_bindings[f"{template.ports[0].container}/{template.ports[0].protocol}"]
         web_url = f"http://localhost:{first_port}"
-
-    return AppInstallResponse(
-        id=container.short_id,
-        name=name,
-        container_id=container.short_id,
-        status=container.status,
+    answer = AppInstallResponse(
+        id=started.short_id,
+        name=template.id,
+        container_id=started.short_id,
+        status=started.status,
         web_url=web_url,
         pool=pool.name if pool is not None else None,
         volumes=[
-            AppVolume(host=str(m.source), container=m.target, readonly=m.readonly)
-            for m in planned
+            AppVolume(host=str(m.source), container=m.target, readonly=m.readonly, companion=c.companion)
+            for c in (main, *companions)
+            for m in c.planned
         ],
-        devices=hardware.devices,
+        devices=main.hardware.devices if main.hardware is not None else [],
+        health=stacks.health(started),
+        companions=[_companion(container) for container in created[:-1]],
+    )
+    return _Installed(answer=answer, containers=[c.name for c in containers], generated=generated)
+
+
+def _secrets_to_make(template: AppTemplate, planned: list[_PlannedMount]) -> list[_PlannedMount]:
+    """The password files that the install creates, each once: those that are missing. 409 for
+    one whose data folder holds data: that data keeps the password it was set up with."""
+    missing: dict[Path, _PlannedMount] = {}
+    for m in planned:
+        if not m.generated_secret:
+            continue
+        if m.source in missing:
+            if missing[m.source].uid is None and missing[m.source].gid is None:
+                missing[m.source] = m  # the mapping that names an owner, if one does
+        elif not app_secrets.is_present(_pool_root_of(m), m.source, m.target, m.secret_for):
+            missing[m.source] = m
+    for m in missing.values():
+        if m.secret_for is not None and app_secrets.holds_data(_pool_root_of(m), m.secret_for):
+            raise HTTPException(
+                409,
+                f"{m.secret_for} holds the data of {template.name}, but its password file {m.source} is "
+                "missing: restore the file from a snapshot of the pool, or move "
+                f"{m.secret_for} away to install {template.name} with empty data.",
+            )
+    return list(missing.values())
+
+
+def _pull_images(client: Any, template: AppTemplate, containers: list[_NewContainer]) -> dict[str, Any]:
+    """Pull the image of each container, each once, in the order of the containers: a floating
+    one always (as Docker's pull of a tag), a pinned one by its digest when Docker lacks it,
+    then tagged for the Images tab. The images of the pinned ones, by reference."""
+    images: dict[str, Any] = {}
+    for ref in dict.fromkeys(c.image for c in containers):
+        try:
+            images[ref] = _pull(client, ref)
+        except _DOCKER_ERRORS as e:
+            raise HTTPException(500, f"Failed to pull image {ref}: {e}" if template.companions else f"Failed to pull image: {e}")
+    return images
+
+
+def _pull(client: Any, ref: str) -> Any | None:
+    pinned = _pinned(ref)
+    if pinned is None:
+        client.images.pull(ref)
+        return None
+    name, tag, digest = pinned
+    try:
+        return client.images.get(f"{name}@{digest}")
+    except NotFound:
+        pass
+    # By digest: Docker pulls exactly that image, whatever the tag names now.
+    image = client.images.pull(name, tag=digest)
+    try:
+        client.api.tag(f"{name}@{digest}", name, tag)
+    except _DOCKER_ERRORS as e:
+        logger.warning("Could not tag %s@%s as %s:%s: %s", name, digest, name, tag, e)
+    return image
+
+
+def _check_image_volumes(template: AppTemplate, containers: list[_NewContainer], images: dict[str, Any]) -> None:
+    """500 for a VOLUME that a pinned image declares and that its container neither binds nor
+    keeps in RAM: Docker would make it an anonymous volume on the system disk (ADR-0381)."""
+    for c in containers:
+        image = images.get(c.image)
+        if image is None:
+            continue
+        declared = ((image.attrs or {}).get("Config") or {}).get("Volumes") or {}
+        targets = [m.target for m in c.planned] + list(c.spec.tmpfs)
+        for path in sorted(declared):
+            if not any(_is_within(path, target) for target in targets):
+                raise HTTPException(
+                    500,
+                    f"The image {c.image} declares the volume {path}, which the template of {template.name} "
+                    "places neither on the pool nor in RAM; nothing was installed",
+                )
+
+
+def _create_options(
+    template: AppTemplate, c: _NewContainer, port_bindings: dict[str, int], pool: AppPool | None
+) -> dict[str, Any]:
+    """The arguments of the create of one container but its image, masked paths and network."""
+    main = c.companion is None
+    labels = {UNOS_APP_LABEL: template.id}
+    if main:
+        labels.update({"unos.app.name": template.name, "unos.app.icon": template.icon})
+    else:
+        labels[COMPANION_LABEL] = c.companion
+    if pool is not None and any(m.pool is not None for m in c.planned):
+        labels[APP_POOL_LABEL] = pool.name
+    hardware = c.hardware or ContainerHardware(image=c.spec.image)
+    options: dict[str, Any] = {
+        "name": c.name,
+        "ports": (port_bindings or None) if main else None,
+        "mounts": [
+            Mount(target=m.target, source=str(m.source), type="bind", read_only=m.readonly) for m in c.planned
+        ] or None,
+        "environment": c.environment or None,
+        "restart_policy": {"Name": template.restart_policy},
+        "privileged": template.privileged if main else False,
+        "cap_add": (template.capabilities or None) if main else None,
+        "labels": labels,
+        "log_config": CAPPED_LOG,
+        "devices": [f"{node}:{node}:rwm" for node in hardware.devices] or None,
+        "security_opt": hardware.security_opt or None,
+    }
+    if not template.companions:
+        options["network_mode"] = template.network_mode
+    if c.spec.tmpfs:
+        options["tmpfs"] = dict(c.spec.tmpfs)
+    if c.spec.shm_size:
+        options["shm_size"] = c.spec.shm_size
+    if c.spec.stop_timeout is not None:
+        options["stop_timeout"] = c.spec.stop_timeout
+    return options
+
+
+def _create_and_start(
+    client: Any,
+    template: AppTemplate,
+    containers: list[_NewContainer],
+    network: Any | None,
+    port_bindings: dict[str, int],
+    pool: AppPool | None,
+) -> list[Any]:
+    """Make the app's network (unless ``network`` is its own, left from before), create its
+    containers in order and start them in the same order, each companion that the main container
+    depends on ready before the next container starts: the containers, in their order. So a
+    container that fails to start later meets those companions set up, such as a database that
+    has finished its first start. On a failure, everything this made is removed again
+    (_roll_back)."""
+    several = bool(template.companions)
+    net = stacks.network_name(template.id) if several else None
+    depends_on = set(template.depends_on)
+    made_network = None
+    created: list[Any] = []
+    asked: set[str] = set()  # the containers it asked Docker to start
+    awaited: _NewContainer | None = None  # the companion it is waiting for
+    failing = ""
+    try:
+        if several and network is None:
+            failing = f"Failed to create the network {net}"
+            made_network = client.networks.create(
+                net, driver="bridge", labels={UNOS_APP_LABEL: template.id}, check_duplicate=True
+            )
+        for c in containers:
+            failing = f"Failed to create container {c.name}" if several else "Failed to create container"
+            created.append(_create_container(
+                client,
+                _by_digest(c.image),
+                c.hardware.masked_paths if c.hardware is not None else None,
+                network=net,
+                alias=c.companion,
+                **_create_options(template, c, port_bindings, pool),
+            ))
+        for c, container in zip(containers, created):
+            failing = f"Failed to start container {c.name}" if several else "Failed to start container"
+            asked.add(c.name)
+            container.start()
+            if c.companion in depends_on:
+                awaited = c
+                stacks.wait_ready(container, started_now=True)
+                awaited = None
+        for container in created:
+            container.reload()
+    except stacks.NotReady as e:
+        _roll_back(template, containers, created, asked, made_network, str(e), awaited)
+    except _DOCKER_ERRORS as e:
+        _roll_back(template, containers, created, asked, made_network, f"{failing}: {e}", awaited)
+    return created
+
+
+def _roll_back(
+    template: AppTemplate,
+    containers: list[_NewContainer],
+    created: list[Any],
+    asked: set[str],
+    network: Any | None,
+    reason: str,
+    awaited: _NewContainer | None,
+) -> NoReturn:
+    """Remove, forced and in reverse order, the containers and the network that a failed install
+    made: they would block a retry ("name already in use"). Each container that it asked to
+    start is stopped first with its stop timeout, so that one still setting up its data can
+    finish or shut down (a forced removal alone kills it at once). Its folders, password files
+    and images stay. 500 with ``reason``, and, when it failed while it waited for ``awaited``, the
+    data folders that this may have left half set up; _InstallFailed when something could not be
+    removed."""
+    left: list[str] = []
+    problems: list[str] = []
+    for c, container in reversed(list(zip(containers, created))):
+        if c.name in asked:
+            try:
+                timeout = c.spec.stop_timeout if c.spec.stop_timeout is not None else stacks.DEFAULT_STOP_TIMEOUT
+                container.stop(timeout=timeout)
+            except _DOCKER_ERRORS as e:
+                logger.warning("Could not stop %s before removing it: %s", c.name, e)
+        try:
+            container.remove(force=True)
+        except _DOCKER_ERRORS as e:
+            left.append(container.name)
+            problems.append(f"then could not remove {container.name}: {e}")
+    if network is not None:
+        try:
+            network.remove()
+        except _DOCKER_ERRORS as e:
+            left.append(f"the network {network.name}")
+            problems.append(f"then could not remove the network {network.name}: {e}")
+    unfinished = ""
+    if awaited is not None and awaited.new_data:
+        folders = [str(folder) for folder in awaited.new_data]
+        was, it = ("was", "it") if len(folders) == 1 else ("were", "them")
+        unfinished = (
+            f". {stacks.joined(folders)} {was} empty before this install and may now hold data that "
+            f"{awaited.name} did not finish setting up: move {it} away before you install {template.name} again."
+        )
+    if not left:
+        if template.companions:
+            raise HTTPException(500, f"{reason}; its containers were removed and its data folders kept{unfinished}")
+        raise HTTPException(500, reason)
+    made = [container.name for container in created] + ([f"the network {network.name}"] if network else [])
+    raise _InstallFailed(
+        "; ".join([reason, *problems]) + unfinished,
+        f"Created {stacks.joined(made)}; then: {reason}; left behind: {stacks.joined(left)}",
     )
 
 
-def _create_container(client: Any, image: str, masked_paths: list[str] | None, **options: Any) -> Any:
-    """``client.containers.create(image, **options)``; with ``masked_paths``, the same container
-    with Docker's MaskedPaths set to them in place of Docker's defaults (ADR-0377). docker-py's
-    create has no argument for them, so that container is made through its low-level API: the
-    host config that its create would build, with MaskedPaths added."""
-    if masked_paths is None:
+# The arguments of docker-py's low-level create_container that its high-level create takes too;
+# the others go to the host config.
+_CREATE_KEYS = ("name", "environment", "labels", "stop_timeout")
+
+
+def _create_container(
+    client: Any,
+    image: str,
+    masked_paths: list[str] | None,
+    *,
+    network: str | None = None,
+    alias: str | None = None,
+    **options: Any,
+) -> Any:
+    """``client.containers.create(image, **options)`` for a container of an app of one container
+    without hardware masks. With ``masked_paths``, Docker's MaskedPaths are set to them in place
+    of Docker's defaults (ADR-0382); with ``network``, the container joins that network, where
+    it answers to ``alias``; a ``stop_timeout`` is Docker's StopTimeout. docker-py's high-level
+    create takes none of these, so such a container is made through its low-level API: the host
+    config that its create would build, with MaskedPaths added, and the network's endpoint."""
+    if masked_paths is None and network is None and options.get("stop_timeout") is None:
+        options.pop("stop_timeout", None)
         return client.containers.create(image, **options)
-    created = {key: options.pop(key) for key in ("name", "environment", "labels")}
-    port_bindings = options.pop("ports") or {}
+    created = {key: options.pop(key) for key in _CREATE_KEYS if key in options}
+    port_bindings = options.pop("ports", None) or {}
+    if network is not None:
+        options["network_mode"] = network
     host_config = client.api.create_host_config(port_bindings=port_bindings or None, **options)
-    host_config["MaskedPaths"] = list(masked_paths)
+    if masked_paths is not None:
+        host_config["MaskedPaths"] = list(masked_paths)
+    networking = None
+    if network is not None:
+        networking = client.api.create_networking_config(
+            {network: client.api.create_endpoint_config(aliases=[alias] if alias else None)}
+        )
     exposed = [tuple(spec.split("/", 1)) for spec in sorted(port_bindings)]
-    answer = client.api.create_container(image, ports=exposed or None, host_config=host_config, **created)
+    answer = client.api.create_container(
+        image, ports=exposed or None, host_config=host_config, networking_config=networking, **created
+    )
     try:
         return client.containers.get(answer["Id"])
     except _DOCKER_ERRORS:
@@ -982,6 +1373,23 @@ def _create_container(client: Any, image: str, masked_paths: list[str] | None, *
         with contextlib.suppress(*_DOCKER_ERRORS):
             client.api.remove_container(answer["Id"], force=True)
         raise
+
+
+def _installed_details(template: AppTemplate, installed: _Installed) -> str:
+    """The audit entry of an install: names and paths only, never a password (ADR-0381)."""
+    answer = installed.answer
+    pool = "" if answer.pool is None else f", with its data on the pool {answer.pool}"
+    if template.companions:
+        text = (
+            f"Installed {template.name} {template.version} from the catalog as {answer.name} with the containers "
+            f"{stacks.joined(installed.containers)}{pool}"
+        )
+    else:
+        text = f"Installed {template.name} from the catalog as {answer.name}{pool}"
+    if installed.generated:
+        files = "file" if len(installed.generated) == 1 else "files"
+        text += f"; generated its password {files} {stacks.joined(installed.generated)}"
+    return text
 
 
 @router.post("/install", response_model=AppInstallResponse)
@@ -993,66 +1401,320 @@ async def install_app(
 ) -> AppInstallResponse:
     """Install an app from the catalog with its data on a mounted pool.
 
-    The audit log gets app_installed (ADR-0350).
+    The audit log gets app_installed (ADR-0350); an install that failed and left a container or
+    its network behind writes it as failed (ADR-0381).
     """
     shares = await _share_folders(db)
     # Pulling an image can take minutes; keep the event loop responsive.
-    installed = await asyncio.to_thread(_install_app, req, shares)
+    try:
+        installed = await asyncio.to_thread(_install_app, req, shares)
+    except _InstallFailed as exc:
+        await audit_change(
+            AuditAction.APP_INSTALLED, request, user.username, resource_type="app", resource_id=req.template_id,
+            details=exc.done, success=False,
+        )
+        raise
     template = get_app_by_id(req.template_id)
-    pool = "" if installed.pool is None else f", with its data on the pool {installed.pool}"
     await audit_change(
-        AuditAction.APP_INSTALLED, request, user.username, resource_type="app", resource_id=installed.name,
-        details=f"Installed {template.name} from the catalog as {installed.name}{pool}",
+        AuditAction.APP_INSTALLED, request, user.username, resource_type="app", resource_id=installed.answer.name,
+        details=_installed_details(template, installed),
     )
-    return installed
+    return installed.answer
 
 
-class _StoppedNotRemoved(HTTPException):
-    """An uninstall stopped the app, which ran, and then could not remove it (HTTP 500, ADR-0350)."""
+# ---------------------------------------------------------------------------
+# Changing an installed app: start, stop, restart and uninstall (ADR-0381)
+# ---------------------------------------------------------------------------
 
-    def __init__(self, name: str, detail: str) -> None:
+
+@dataclass
+class _Done:
+    """What a change of an app did to its containers so far, in order."""
+    app: stacks.InstalledContainers
+    stopped: list[str] = field(default_factory=list)
+    removed: list[str] = field(default_factory=list)
+    started: list[str] = field(default_factory=list)
+
+    @property
+    def anything(self) -> bool:
+        return bool(self.stopped or self.removed or self.started)
+
+    def text(self) -> str:
+        """"Stopped a, b; removed a" for an app of several containers, "Stopped the app x" for
+        an app of one."""
+        steps = [(verb, names) for verb, names in
+                 (("stopped", self.stopped), ("removed", self.removed), ("started", self.started)) if names]
+        if self.app.several:
+            texts = [f"{verb} {', '.join(names)}" for verb, names in steps]
+        else:
+            texts = [f"{verb} the app {self.app.key}" for verb, _ in steps]
+        text = "; ".join(texts)
+        return text[:1].upper() + text[1:]
+
+
+class _PartlyChanged(HTTPException):
+    """A change of an app that changed some of its containers and then failed (HTTP 500): the
+    audit log gets what it did as failed (ADR-0350)."""
+
+    def __init__(self, detail: str, done: _Done) -> None:
         super().__init__(500, detail)
-        self.name = name
+        self.done = done
 
 
-def _uninstall_app(container_id: str) -> str:
-    """Stop and remove the app's container; its data folders stay where they are. Returns its name.
+def _failed(done: _Done, detail: str) -> HTTPException:
+    """The 500 of a change that failed: _PartlyChanged when it had changed something."""
+    return _PartlyChanged(detail, done) if done.anything else HTTPException(500, detail)
 
-    _StoppedNotRemoved when it stopped the running app and the removal failed.
-    """
-    container = _get_app(container_id)
-    ran = container.status in RUNNING_STATES
+
+def _failure(app: stacks.InstalledContainers, action: str, container: Any, error: Exception) -> str:
+    """"Failed to <action> <container>: <error>"; an app of one container is not named."""
+    return f"Failed to {action} {container.name}: {error}" if app.several else f"Failed to {action}: {error}"
+
+
+def _get_app(container_id: str) -> tuple[Any, stacks.InstalledContainers]:
+    """The Docker client and the installed app that the container ``container_id`` (its id or
+    name) belongs to: any container of an app names the whole app (ADR-0381). 404 if Docker does
+    not know it; 400 for a container that is no app of the catalog (no unos.app label), such as
+    UNOS's own unos-supervisor and unos-webui: the Apps API acts only on apps (ADR-0256); 503 when
+    Docker does not answer. Blocking: call it in a worker thread."""
     try:
-        container.stop()
+        client = get_client()
+        container = client.containers.get(container_id)
+    except NotFound:
+        raise HTTPException(404, f"App {container_id} not found")
     except _DOCKER_ERRORS as e:
-        raise HTTPException(500, f"Failed to remove: {e}")
-    try:
-        # Without v=True: Docker keeps the container's volumes, and bind
-        # folders on the pools are never touched.
-        container.remove()
-    except _DOCKER_ERRORS as e:
+        raise _docker_error(e)
+    if UNOS_APP_LABEL not in container.labels:
+        raise HTTPException(400, "Not a UNOS managed app")
+    key = stacks.app_key(container)
+    app_id = container.labels[UNOS_APP_LABEL]
+    template = get_app_by_id(app_id)
+    members = [container]
+    if COMPANION_LABEL in container.labels or (template is not None and template.id == key and template.companions):
+        try:
+            listed = client.containers.list(
+                all=True, filters={"label": f"{UNOS_APP_LABEL}={app_id}"}, ignore_removed=True
+            )
+        except _DOCKER_ERRORS as e:
+            raise _docker_error(e)
+        members = [c for c in listed if stacks.app_key(c) == key]
+    return client, stacks.group(key, members, template)
+
+
+def _status(app: stacks.InstalledContainers) -> str:
+    return app.main.status if app.main is not None else "missing"
+
+
+def _stop_all(app: stacks.InstalledContainers, done: _Done, *, action: str) -> None:
+    """Stop the app's containers in reverse order, each with its stop timeout given, so that
+    docker-py waits for it; those that ran go into ``done``."""
+    for container in reversed(app.containers):
+        ran = container.status in RUNNING_STATES
+        try:
+            container.stop(timeout=app.stop_timeout(container))
+        except _DOCKER_ERRORS as e:
+            raise _failed(done, _failure(app, action, container, e))
         if ran:
-            raise _StoppedNotRemoved(container.name, f"Failed to remove: {e}") from e
-        raise HTTPException(500, f"Failed to remove: {e}")
-    return container.name
+            done.stopped.append(container.name)
+
+
+def _start_all(app: stacks.InstalledContainers, done: _Done, *, every: bool, action: str) -> None:
+    """Start the app's containers in order (``every``: all of them; otherwise those that do not
+    run). When the main container is to start, each companion that it depends on is ready before
+    the next container starts, as at the install."""
+    main_starts = app.main is not None and (every or app.main.status not in RUNNING_STATES)
+    depends_on = set(app.template.depends_on) if app.template is not None and main_starts else set()
+    for container in app.containers:
+        if every or container.status not in RUNNING_STATES:
+            try:
+                container.start()
+            except _DOCKER_ERRORS as e:
+                raise _failed(done, _failure(app, action, container, e))
+            done.started.append(container.name)
+        if container.labels.get(COMPANION_LABEL) in depends_on:
+            try:
+                stacks.wait_ready(container, started_now=container.name in done.started)
+            except stacks.NotReady as e:
+                raise _failed(done, str(e))
+            except _DOCKER_ERRORS as e:
+                raise _failed(done, _failure(app, action, container, e))
+    if app.main is not None:
+        try:
+            app.main.reload()
+        except _DOCKER_ERRORS as e:
+            raise _failed(done, _failure(app, action, app.main, e))
+
+
+def _start_installed_app(container_id: str, *, restart: bool) -> tuple[stacks.InstalledContainers, _Done]:
+    """Start or restart an app: the app, and what this did. Every container's folders are checked
+    before any of them starts or stops (prepare_app_start); a start starts those that do not run,
+    a restart stops all and starts all."""
+    _, app = _get_app(container_id)
+    with stacks.app_lock(app.key, app.name):
+        if app.missing:
+            raise HTTPException(
+                409, f"{stacks.missing_detail(app)}: uninstall it (its data folders are kept) and install it again"
+            )
+        pools = list_mounted_pools()
+        for container in app.containers:
+            prepare_app_start(container, pools)
+        done = _Done(app)
+        if restart:
+            _stop_all(app, done, action="stop" if app.several else "restart")
+        _start_all(app, done, every=restart, action="start" if app.several or not restart else "restart")
+    return app, done
+
+
+def _changed_containers(app: stacks.InstalledContainers, names: list[str]) -> str:
+    """" (a, b, c)" after the app's name for an app of several containers; "" for one."""
+    return f" ({', '.join(names)})" if app.several else ""
+
+
+async def _audit_partly_changed(exc: _PartlyChanged, request: Request, user: User, *, uninstall: bool = False) -> None:
+    done = exc.done
+    if uninstall and done.removed:
+        action, resource, severity = AuditAction.APP_UNINSTALLED, "app", AuditSeverity.WARNING
+    else:
+        action = AuditAction.CONTAINER_STARTED if done.started else AuditAction.CONTAINER_STOPPED
+        resource, severity = "container", AuditSeverity.INFO
+    await audit_change(
+        action, request, user.username, resource_type=resource, resource_id=done.app.key,
+        details=f"{done.text()}; then: {exc.detail}", severity=severity, success=False,
+    )
+
+
+async def _start_app(container_id: str, request: Request, user: User, *, restart: bool) -> dict[str, str]:
+    try:
+        app, done = await asyncio.to_thread(_start_installed_app, container_id, restart=restart)
+    except _PartlyChanged as exc:
+        await _audit_partly_changed(exc, request, user)
+        raise
+    if done.started:
+        await audit_change(
+            AuditAction.CONTAINER_STARTED, request, user.username, resource_type="container",
+            resource_id=app.key,
+            details=f"{'Restarted' if restart else 'Started'} the app {app.key}"
+            f"{_changed_containers(app, done.started)}",
+        )
+    return {"status": _status(app), "id": container_id}
+
+
+@router.post("/installed/{container_id}/start")
+async def start_app(container_id: str, request: Request, user: User = Depends(verify_token)):
+    """Start an installed app, all of its containers in order (409 if its data folders are not
+    usable or a container is missing).
+
+    The audit log gets container_started when it started a container (ADR-0350).
+    """
+    return await _start_app(container_id, request, user, restart=False)
+
+
+def _stop_installed_app(container_id: str) -> tuple[stacks.InstalledContainers, _Done]:
+    """Stop an app's containers in reverse order: the app, and what this did."""
+    _, app = _get_app(container_id)
+    with stacks.app_lock(app.key, app.name):
+        done = _Done(app)
+        _stop_all(app, done, action="stop")
+        if app.main is not None:
+            try:
+                app.main.reload()
+            except _DOCKER_ERRORS as e:
+                raise _failed(done, _failure(app, "stop", app.main, e))
+    return app, done
+
+
+@router.post("/installed/{container_id}/stop")
+async def stop_app(container_id: str, request: Request, user: User = Depends(verify_token)):
+    """Stop an installed app; the audit log gets container_stopped when a container ran (ADR-0350)."""
+    # A stop waits up to the containers' stop timeouts for them to exit: keep it off the event loop.
+    try:
+        app, done = await asyncio.to_thread(_stop_installed_app, container_id)
+    except _PartlyChanged as exc:
+        await _audit_partly_changed(exc, request, user)
+        raise
+    if done.stopped:
+        await audit_change(
+            AuditAction.CONTAINER_STOPPED, request, user.username, resource_type="container",
+            resource_id=app.key, details=f"Stopped the app {app.key}{_changed_containers(app, done.stopped)}",
+        )
+    return {"status": _status(app), "id": container_id}
+
+
+@router.post("/installed/{container_id}/restart")
+async def restart_app(container_id: str, request: Request, user: User = Depends(verify_token)):
+    """Restart an installed app: stop all its containers, then start all of them in order (409 if
+    its data folders are not usable or a container is missing).
+
+    It starts the app again: the audit log gets container_started (ADR-0350).
+    """
+    return await _start_app(container_id, request, user, restart=True)
+
+
+def _uninstall(container_id: str) -> tuple[stacks.InstalledContainers, list[str], list[str]]:
+    """Stop the app's containers and remove them, in reverse order, then its networks: the app, the
+    networks removed and those left because other containers use them. The data folders, password
+    files and images stay (ADR-0256)."""
+    client, app = _get_app(container_id)
+    with stacks.app_lock(app.key, app.name):
+        done = _Done(app)
+        _stop_all(app, done, action="remove")
+        for container in reversed(app.containers):
+            try:
+                # Without v=True: Docker keeps the container's volumes, and bind
+                # folders on the pools are never touched.
+                container.remove()
+            except _DOCKER_ERRORS as e:
+                raise _failed(done, _failure(app, "remove", container, e))
+            done.removed.append(container.name)
+        if not app.several:
+            return app, [], []
+        try:
+            networks = client.networks.list(filters={"label": f"{UNOS_APP_LABEL}={app.key}"}, greedy=True)
+        except _DOCKER_ERRORS as e:
+            raise _failed(done, f"Failed to remove the network {stacks.network_name(app.key)}: {e}")
+        removed: list[str] = []
+        left: list[str] = []
+        for network in networks:
+            if (network.attrs or {}).get("Containers"):
+                left.append(network.name)
+                continue
+            try:
+                network.remove()
+            except NotFound:
+                continue
+            except _DOCKER_ERRORS as e:
+                raise _failed(done, f"Failed to remove the network {network.name}: {e}")
+            removed.append(network.name)
+        done.removed.extend(f"the network {name}" for name in removed)
+    return app, removed, left
+
+
+def _uninstalled_details(app: stacks.InstalledContainers, removed: list[str], left: list[str]) -> str:
+    if not app.several:
+        return f"Uninstalled the app {app.key}; its data folders were kept"
+    names = [c.name for c in reversed(app.containers)]
+    networks = f" and its network {stacks.joined(removed)}" if removed else ""
+    kept = f", the network {stacks.joined(left)} was left" if left else ""
+    return (
+        f"Uninstalled the app {app.key}: removed its containers {', '.join(names)}{networks}; "
+        f"its data folders were kept{kept}"
+    )
 
 
 @router.delete("/installed/{container_id}")
 async def uninstall_app(container_id: str, request: Request, user: User = Depends(verify_token)):
-    """Uninstall an app: remove its container and keep its data; the audit log gets app_uninstalled,
-    or container_stopped as failed when it stopped the app and could not remove it (ADR-0350)."""
-    # A stop waits up to 10 s for the app to exit: keep it off the event loop.
+    """Uninstall an app: remove its containers and its network and keep its data; the audit log
+    gets app_uninstalled, or what it did as failed when it changed the app and then failed: a
+    removal (app_uninstalled) or only a stop (container_stopped) (ADR-0350)."""
+    # A stop waits up to the containers' stop timeouts for them to exit: keep it off the event loop.
     try:
-        name = await asyncio.to_thread(_uninstall_app, container_id)
-    except _StoppedNotRemoved as exc:
-        await audit_change(
-            AuditAction.CONTAINER_STOPPED, request, user.username, resource_type="container",
-            resource_id=exc.name, details=f"Stopped the app {exc.name}; then: {exc.detail}", success=False,
-        )
+        app, removed, left = await asyncio.to_thread(_uninstall, container_id)
+    except _PartlyChanged as exc:
+        await _audit_partly_changed(exc, request, user, uninstall=True)
         raise
     await audit_change(
-        AuditAction.APP_UNINSTALLED, request, user.username, resource_type="app", resource_id=name,
-        details=f"Uninstalled the app {name}; its data folders were kept", severity=AuditSeverity.WARNING,
+        AuditAction.APP_UNINSTALLED, request, user.username, resource_type="app", resource_id=app.key,
+        details=_uninstalled_details(app, removed, left), severity=AuditSeverity.WARNING,
     )
     return {"status": "removed", "id": container_id}
 
@@ -1069,8 +1731,17 @@ def _is_regular_file(path: str) -> bool:
         return False
 
 
+def _on_same_pool(source: str, host: str, other: str) -> Path | None:
+    """The host path of the template path ``other`` on the pool of ``source``, the bind source of
+    the template path ``host``; None when the source does not end as the template path does."""
+    suffix = host[len(POOL_PLACEHOLDER):]
+    if not suffix or not source.endswith(suffix):
+        return None
+    return Path(source[: len(source) - len(suffix)] + other[len(POOL_PLACEHOLDER):])
+
+
 def _plan_installed_binds(container: Any, pools: list[AppPool]) -> list[_PlannedMount]:
-    """Plan the data binds of an installed app from what Docker has stored.
+    """Plan the data binds of an installed app's container from what Docker has stored.
 
     Raises 409 for data that is not on a mounted pool, naming the pool to mount.
     """
@@ -1091,6 +1762,7 @@ def _plan_installed_binds(container: Any, pools: list[AppPool]) -> list[_Planned
                 "holds the app's data) and start the app again.",
             )
         known = volume is not None and volume.on_pool
+        secret = known and volume.generated_secret
         planned.append(
             _PlannedMount(
                 source=Path(bind.source),
@@ -1098,10 +1770,16 @@ def _plan_installed_binds(container: Any, pools: list[AppPool]) -> list[_Planned
                 readonly=bind.readonly,
                 is_file=volume.is_file if known else _is_regular_file(bind.source),
                 pool=pool,
-                # Recreate a missing folder only where the install created it.
-                creatable=known and app_pool is not None and pool.name == app_pool,
+                # Recreate a missing folder only where the install created it, and never a
+                # password file: the data it unlocks keeps its first password (ADR-0381).
+                creatable=known and not secret and app_pool is not None and pool.name == app_pool,
                 uid=volume.uid if known else None,
                 gid=volume.gid if known else None,
+                generated_secret=secret,
+                secret_for=(
+                    _on_same_pool(bind.source, volume.host, volume.secret_for)
+                    if secret and volume.secret_for is not None else None
+                ),
             )
         )
     return planned
@@ -1128,95 +1806,3 @@ def prepare_app_start(container: Any, pools: list[AppPool] | None = None) -> Non
         pools = list_mounted_pools()
     planned = _plan_installed_binds(container, pools)
     _prepare_sources(planned, create=True, status=409)
-
-
-def _get_app(container_id: str) -> Any:
-    """The container of an installed app; 404 if Docker does not know it.
-
-    400 for a container that is no app of the catalog (no unos.app label), such
-    as UNOS's own unos-supervisor and unos-webui: the Apps API acts only on
-    apps (ADR-0256). Blocking: call it in a worker thread.
-    """
-    try:
-        container = get_client().containers.get(container_id)
-    except NotFound:
-        raise HTTPException(404, f"App {container_id} not found")
-    except _DOCKER_ERRORS as e:
-        raise _docker_error(e)
-    if UNOS_APP_LABEL not in container.labels:
-        raise HTTPException(400, "Not a UNOS managed app")
-    return container
-
-
-def _start_installed_app(container_id: str, *, restart: bool) -> tuple[Any, bool]:
-    """Start or restart an app's container: the container, and whether this started it (a restart
-    always does; a start not when it ran already, RUNNING_STATES)."""
-    action = "restart" if restart else "start"
-    container = _get_app(container_id)
-    prepare_app_start(container)
-    started = restart or container.status not in RUNNING_STATES
-    try:
-        if restart:
-            container.restart()
-        else:
-            container.start()
-        container.reload()
-    except _DOCKER_ERRORS as e:
-        raise HTTPException(500, f"Failed to {action}: {e}")
-    return container, started
-
-
-async def _start_app(container_id: str, request: Request, user: User, *, restart: bool) -> dict[str, str]:
-    container, started = await asyncio.to_thread(_start_installed_app, container_id, restart=restart)
-    if started:
-        await audit_change(
-            AuditAction.CONTAINER_STARTED, request, user.username, resource_type="container",
-            resource_id=container.name,
-            details=f"{'Restarted' if restart else 'Started'} the app {container.name}",
-        )
-    return {"status": container.status, "id": container_id}
-
-
-@router.post("/installed/{container_id}/start")
-async def start_app(container_id: str, request: Request, user: User = Depends(verify_token)):
-    """Start an installed app (409 if its data folders are not usable).
-
-    The audit log gets container_started when it did not run (ADR-0350).
-    """
-    return await _start_app(container_id, request, user, restart=False)
-
-
-def _stop_installed_app(container_id: str) -> tuple[Any, bool]:
-    """Stop an app's container: the container, and whether this stopped it (not when it did not
-    run, RUNNING_STATES)."""
-    container = _get_app(container_id)
-    stopped = container.status in RUNNING_STATES
-    try:
-        container.stop()
-        container.reload()
-    except _DOCKER_ERRORS as e:
-        raise HTTPException(500, f"Failed to stop: {e}")
-    return container, stopped
-
-
-@router.post("/installed/{container_id}/stop")
-async def stop_app(container_id: str, request: Request, user: User = Depends(verify_token)):
-    """Stop an installed app; the audit log gets container_stopped when it ran (ADR-0350)."""
-    # A stop waits up to 10 s for the app to exit: keep it off the event loop.
-    container, stopped = await asyncio.to_thread(_stop_installed_app, container_id)
-    if stopped:
-        await audit_change(
-            AuditAction.CONTAINER_STOPPED, request, user.username, resource_type="container",
-            resource_id=container.name,
-            details=f"Stopped the app {container.name}",
-        )
-    return {"status": container.status, "id": container_id}
-
-
-@router.post("/installed/{container_id}/restart")
-async def restart_app(container_id: str, request: Request, user: User = Depends(verify_token)):
-    """Restart an installed app (409 if its data folders are not usable).
-
-    It starts the app again: the audit log gets container_started (ADR-0350).
-    """
-    return await _start_app(container_id, request, user, restart=True)

@@ -12,6 +12,8 @@ import asyncio
 import fcntl
 import importlib
 import os
+import re
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -33,11 +35,16 @@ from sqlalchemy.pool import NullPool
 
 from src.apps.catalog import APP_CATALOG, get_app_by_id
 from src.apps.schemas import (
+    APPS_DATA_PATH,
+    COMPANION_NAME,
     POOL_PLACEHOLDER,
     AppCategory,
     AppPool,
     AppSource,
     AppTemplate,
+    Companion,
+    HardwareProfile,
+    PortMapping,
     VolumeMapping,
 )
 from src import host as host_module
@@ -51,6 +58,9 @@ from src.shares.models import SmbShare
 # The package re-exports its APIRouter as ``router``; import the module.
 apps_router = importlib.import_module("src.apps.router")
 hardware_module = importlib.import_module("src.apps.hardware")
+catalog_module = importlib.import_module("src.apps.catalog")
+preflight_module = importlib.import_module("src.apps.preflight")
+stacks_module = importlib.import_module("src.apps.stacks")
 audit_router = importlib.import_module("src.audit.router")
 
 INSTALL = "/api/v1/apps/install"
@@ -193,15 +203,19 @@ def pools(tmp_path, monkeypatch):
 
 @pytest.fixture
 def docker_client(monkeypatch):
+    """Docker without containers; ``containers.create`` makes a running container "c0ffee"."""
     client = MagicMock(name="docker")
     client.containers.get.side_effect = NotFound("No such container")
+    client.containers.list.return_value = []
+    client.info.return_value = {"DockerRootDir": DOCKER_ROOT}
     container = MagicMock(name="container", short_id="c0ffee", status="running")
+    container.attrs = {"State": {"Status": "running", "Running": True}}
     client.containers.create.return_value = container
     monkeypatch.setattr(apps_router, "get_client", lambda: client)
     return client
 
 
-# What the host of the hardware reads answers (src/apps/hardware.py, ADR-0377). The device tree
+# What the host of the hardware reads answers (src/apps/hardware.py, ADR-0382). The device tree
 # is read by a shell that exits 3 where the host has none (NO_DEVICE_TREE).
 DEVICE_TREE = "/proc/device-tree/compatible"
 NO_DEVICE_TREE = HostResult(3, "", "")
@@ -211,23 +225,88 @@ def _reads_device_tree(cmd: list[str]) -> bool:
     return cmd[:2] == ["/bin/sh", "-c"] and cmd[3:] == ["unos-device-tree", DEVICE_TREE]
 
 
+# The host's listening TCP and bound UDP sockets with their programs, which every install of an
+# app that publishes a port reads before the pull (src/apps/preflight.py, ADR-0381).
+SS = ["ss", "-H", "-l", "-n", "-t", "-u", "-p"]
+# Docker's root folder, as Docker's info names it, and the containerd image store's: every install
+# reads the free space of their file systems before the pull (ADR-0381).
+DOCKER_ROOT = "/var/lib/docker"
+CONTAINERD_ROOT = "/var/lib/containerd"
+GIB = 1024**3
+# The read of the free space exits with this status where the host has none of the folders.
+NO_FREE_SPACE_FOLDER = 3
+# src/host.py's own run_on_host, which the fixture ``soc`` replaces: tests of the scripts that
+# the host runs put it back and run them on this machine (UNOS_HOST_EXEC=local).
+REAL_RUN_ON_HOST = host_module.run_on_host
+
+
+def _reads_free_space(cmd: list[str]) -> bool:
+    return cmd[:2] == ["/bin/sh", "-c"] and cmd[3:4] == ["unos-free-space"]
+
+
+def _free_space_read(root: str = DOCKER_ROOT) -> list[str]:
+    """The read of the free space of the system disk, for Docker's root folder ``root``."""
+    return ["/bin/sh", "-c", preflight_module.FREE_SPACE_SCRIPT, "unos-free-space", root, CONTAINERD_ROOT]
+
+
+def _df(free: dict[str, int], paths: list[str]) -> str:
+    """What df -P -k prints for those of ``paths`` that are in ``free`` (their free bytes)."""
+    lines = []
+    for path in paths:
+        if path in free:
+            lines += [
+                "Filesystem     1024-blocks      Used Available Capacity Mounted on",
+                f"/dev/mmcblk1p2   {free[path] // 1024 + 2048} 2048 {free[path] // 1024} 50% /",
+            ]
+    return "".join(f"{line}\n" for line in lines)
+
+
+def _hardware_reads(soc) -> list[list[str]]:
+    """The host commands of ``soc`` but the reads of the ports in use and of the free space: the
+    reads of the hardware."""
+    return [cmd for cmd in soc.commands if cmd != SS and not _reads_free_space(cmd)]
+
+
 @pytest.fixture(autouse=True)
 def soc(monkeypatch):
     """The host for the reads of its SoC and device nodes: no device tree, as on a PC, until a
     test gives it a ``compatible`` (the bytes of /proc/device-tree/compatible) and ``devices``
     (the device nodes it has). ``commands`` records every host command; one that the fake does
-    not know fails the test. ``fail`` is raised by every command, ``answer`` (a HostResult) is
-    every command's answer, as when nsenter cannot enter the host. ``lookup`` (a HostResult, or an
-    exception to raise) answers only the look for the device nodes, after a device tree it read."""
-    fake = SimpleNamespace(compatible=None, devices=set(), commands=[], fail=None, answer=None, lookup=None)
+    not know fails the test. ``tree`` (a HostResult, or an exception to raise) answers only the
+    read of the device tree, as when nsenter cannot enter the host. ``lookup`` (a HostResult, or
+    an exception to raise) answers only the look for the device nodes, after a device tree it
+    read. ``sockets`` are the lines that ``ss`` prints for the host's listening sockets (none by
+    default), and ``ss`` (a HostResult, or an exception to raise) answers only that read.
+    ``free`` gives the free bytes of the file systems of the folders that exist (Docker's root
+    folder and the containerd image store, 64 GiB each by default); where none of them exists the
+    read exits NO_FREE_SPACE_FOLDER, as its script does. ``df`` (a HostResult, or an exception to
+    raise) answers only the read of the free space."""
+    fake = SimpleNamespace(
+        compatible=None, devices=set(), commands=[], tree=None, lookup=None, sockets=[], ss=None,
+        free={DOCKER_ROOT: 64 * GIB, CONTAINERD_ROOT: 64 * GIB}, df=None,
+    )
 
     def run(cmd, **kwargs):
         fake.commands.append(list(cmd))
-        if fake.fail is not None:
-            raise fake.fail
-        if fake.answer is not None:
-            return fake.answer
+        if _reads_free_space(cmd):
+            if isinstance(fake.df, BaseException):
+                raise fake.df
+            if fake.df is not None:
+                return fake.df
+            if not any(path in fake.free for path in cmd[4:]):
+                return HostResult(NO_FREE_SPACE_FOLDER, "", "")
+            return HostResult(0, _df(fake.free, cmd[4:]), "")
+        if cmd == SS:
+            if isinstance(fake.ss, BaseException):
+                raise fake.ss
+            if fake.ss is not None:
+                return fake.ss
+            return HostResult(0, "".join(f"{line}\n" for line in fake.sockets), "")
         if _reads_device_tree(cmd):
+            if isinstance(fake.tree, BaseException):
+                raise fake.tree
+            if fake.tree is not None:
+                return fake.tree
             return NO_DEVICE_TREE if fake.compatible is None else HostResult(0, fake.compatible, "")
         if cmd[:2] == ["/bin/sh", "-c"] and cmd[3:4] == ["unos-devices"]:
             if isinstance(fake.lookup, BaseException):
@@ -307,10 +386,13 @@ class TestPoolSelection:
         assert response.status_code == 200, response.text
         body = response.json()
         assert body["pool"] == "alpha"
+        # All of the main container's (ADR-0381).
         assert body["volumes"] == [
-            {"host": str(pools.alpha / "apps/jellyfin/config"), "container": "/config", "readonly": False},
-            {"host": str(pools.alpha / "apps/jellyfin/cache"), "container": "/cache", "readonly": False},
-            {"host": str(pools.alpha / "media"), "container": "/media", "readonly": True},
+            {"host": str(pools.alpha / "apps/jellyfin/config"), "container": "/config", "readonly": False,
+             "companion": None},
+            {"host": str(pools.alpha / "apps/jellyfin/cache"), "container": "/cache", "readonly": False,
+             "companion": None},
+            {"host": str(pools.alpha / "media"), "container": "/media", "readonly": True, "companion": None},
         ]
         assert _mounts(docker_client) == {
             "/config": {"Target": "/config", "Source": str(pools.alpha / "apps/jellyfin/config"), "Type": "bind", "ReadOnly": False},
@@ -441,6 +523,17 @@ EXPECTED_PATHS = {
         "/host/proc": FIXED,
         "/host/sys": FIXED,
     },
+    # An app of several containers (ADR-0381): a companion's folders are "<companion>:<path>".
+    # The password file is bound into the server and the database, beside the database's folder.
+    "immich": {
+        "/data": "apps/immich/library",
+        "/etc/localtime": FIXED,
+        "/run/secrets/db-password": "apps/immich/postgres/password",
+        "database:/var/lib/postgresql/data": "apps/immich/postgres/data",
+        "database:/run/secrets/db-password": "apps/immich/postgres/password",
+        "redis:/data": "apps/immich/redis",
+        "machine-learning:/cache": "apps/immich/model-cache",
+    },
 }
 
 
@@ -459,10 +552,17 @@ class TestCatalogPaths:
         template = get_app_by_id(app_id)
 
         planned = apps_router._plan_volumes(template, {}, pool, [pool])
-
-        sources = {m.target: m for m in planned}
-        assert set(sources) == set(EXPECTED_PATHS[app_id])
         volumes = {v.container: v for v in template.volumes}
+        for companion in template.companions:
+            planned += apps_router._plan_volumes(
+                template, {}, pool, [pool], spec=companion, container=f"{app_id}-{companion.name}",
+                companion=companion.name,
+            )
+            volumes |= {f"{companion.name}:{v.container}": v for v in companion.volumes}
+
+        sources = {m.target if m.companion is None else f"{m.companion}:{m.target}": m for m in planned}
+        assert len(sources) == len(planned)
+        assert set(sources) == set(EXPECTED_PATHS[app_id])
         for target, relative in EXPECTED_PATHS[app_id].items():
             if relative is FIXED:
                 assert sources[target].source == Path(volumes[target].host)
@@ -474,17 +574,23 @@ class TestCatalogPaths:
 
     def test_catalog_has_no_hard_coded_pool_paths(self):
         for template in APP_CATALOG:
-            targets = [v.container for v in template.volumes]
-            assert len(targets) == len(set(targets)), template.id
-            for volume in template.volumes:
-                assert "/mnt/pools" not in volume.host, template.id
-                assert volume.on_pool or volume.host.startswith("/"), template.id
-                assert ".." not in volume.host.split("/"), template.id
+            for spec in (template, *template.companions):
+                targets = [v.container for v in spec.volumes]
+                assert len(targets) == len(set(targets)), template.id
+                for volume in spec.volumes:
+                    assert "/mnt/pools" not in volume.host, template.id
+                    assert volume.on_pool or volume.host.startswith("/"), template.id
+                    assert ".." not in volume.host.split("/"), template.id
 
     def test_every_template_keeps_pool_data_inside_the_pool(self, pool_dir):
         pool = _pool(pool_dir)
         for template in APP_CATALOG:
-            for m in apps_router._plan_volumes(template, {}, pool, [pool]):
+            planned = [
+                m
+                for spec in (template, *template.companions)
+                for m in apps_router._plan_volumes(template, {}, pool, [pool], spec=spec)
+            ]
+            for m in planned:
                 if m.pool is not None:
                     assert m.source.is_relative_to(pool_dir), (template.id, m)
                 else:
@@ -492,7 +598,7 @@ class TestCatalogPaths:
 
     def test_catalog_ships_no_placeholder_secrets(self):
         for template in APP_CATALOG:
-            for var in template.environment:
+            for var in (var for spec in (template, *template.companions) for var in spec.environment):
                 if var.secret:
                     assert var.value.strip().lower() not in apps_router.PLACEHOLDER_SECRETS, (
                         template.id,
@@ -507,9 +613,11 @@ class TestCatalogPaths:
         assert response.status_code == 200
         assert response.json()["volumes"] == [
             {"host": f"{POOL_PLACEHOLDER}/apps/portainer/data", "container": "/data",
-             "readonly": False, "is_file": False, "uid": None, "gid": None, "on_pool": True},
+             "readonly": False, "is_file": False, "uid": None, "gid": None, "generated_secret": False,
+             "secret_for": None, "on_pool": True},
             {"host": "/var/run/docker.sock", "container": "/var/run/docker.sock",
-             "readonly": False, "is_file": False, "uid": None, "gid": None, "on_pool": False},
+             "readonly": False, "is_file": False, "uid": None, "gid": None, "generated_secret": False,
+             "secret_for": None, "on_pool": False},
         ]
 
 
@@ -756,7 +864,7 @@ class TestEnvironment:
         [
             ("photoprism", "PHOTOPRISM_ADMIN_PASSWORD", "changeme"),
             ("grafana", "GF_SECURITY_ADMIN_PASSWORD", "Admin"),
-            ("bookstack", "DB_PASSWORD", " password "),
+            ("code-server", "PASSWORD", " password "),
             ("aria2", "RPC_SECRET", "secret"),  # optional secrets are checked too
             ("transmission", "PASS", "changeme"),
         ],
@@ -937,16 +1045,29 @@ class TestFileVolumes:
 
 
 class TestDockerFlow:
-    def test_existing_container_is_a_conflict(self, api, pools, docker_client):
-        docker_client.containers.get.side_effect = None
-        docker_client.containers.get.return_value = MagicMock(name="existing")
+    def test_existing_container_is_a_conflict(self, api, pools, docker_client, installed):
+        installed(_container("jellyfin"))
 
         response = api.post(INSTALL, json={"template_id": "jellyfin"})
 
-        assert response.status_code == 409
-        assert "already exists" in response.json()["detail"]
+        assert (response.status_code, response.json()) == (
+            409, {"detail": "A container named 'jellyfin' already exists"}
+        )
+        # One listing of Docker's containers names them all (ADR-0381).
+        docker_client.containers.list.assert_called_once_with(all=True, ignore_removed=True)
+        docker_client.containers.get.assert_not_called()
         docker_client.images.pull.assert_not_called()
         assert not (pools.alpha / "apps").exists()
+
+    @pytest.mark.parametrize("name", ["jellyfin", "media"], ids=["its-name", "another-name"])
+    def test_an_installed_app_is_not_installed_again(self, api, pools, docker_client, installed, name):
+        # One instance per template: its data folders are named after the template (ADR-0381).
+        installed(_jellyfin(pools, name=name))
+
+        response = api.post(INSTALL, json={"template_id": "jellyfin"})
+
+        assert (response.status_code, response.json()) == (409, {"detail": "Jellyfin is already installed"})
+        docker_client.images.pull.assert_not_called()
 
     def test_failed_start_removes_the_container(self, api, pools, docker_client):
         container = docker_client.containers.create.return_value
@@ -958,12 +1079,304 @@ class TestDockerFlow:
         assert "port is already allocated" in response.json()["detail"]
         container.remove.assert_called_once_with(force=True)
 
-    @pytest.mark.parametrize("name", ["../etc", "a b", "-x", "x"])
-    def test_invalid_container_name_is_rejected(self, api, pools, docker_client, name):
+    @pytest.mark.parametrize("name", ["jellyfin2", "../etc"])
+    def test_a_name_in_the_request_is_refused(self, api, pools, docker_client, name):
+        # The containers of an app are named after its template (ADR-0381).
         response = api.post(INSTALL, json={"template_id": "jellyfin", "name": name})
 
-        assert response.status_code == 400
+        assert response.status_code == 422
+        docker_client.containers.list.assert_not_called()
+        docker_client.images.pull.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# The host ports of an install, checked before the pull (ADR-0381)
+# ---------------------------------------------------------------------------
+
+
+def _published(port: int, protocol: str = "tcp", host_ip: str = "") -> dict[str, list[dict]]:
+    """Docker's PortBindings of a container that publishes ``port`` under the same number."""
+    return {f"{port}/{protocol}": [{"HostIp": host_ip, "HostPort": str(port)}]}
+
+
+# Lines that `ss -H -l -n -t -u -p` prints: the type, the state, the queues, the local address
+# and port, the peer and the programs that hold the socket.
+EMBY_ANY = 'tcp   LISTEN 0      4096         0.0.0.0:8096       0.0.0.0:*    users:(("EmbyServer",pid=812,fd=7))'
+RESOLVED = [
+    'udp   UNCONN 0      0      127.0.0.53%lo:53          0.0.0.0:*    users:(("systemd-resolve",pid=520,fd=13))',
+    'tcp   LISTEN 0      4096   127.0.0.53%lo:53          0.0.0.0:*    users:(("systemd-resolve",pid=520,fd=14))',
+]
+PIHOLE_LOGIN = {"WEBPASSWORD": "k7-Unique-pass"}
+# The apps of the catalog that run in the host's network with a port: id, name and the port.
+HOST_NETWORK_APPS = [("homeassistant", "Home Assistant", 8123), ("scrypted", "Scrypted", 10443)]
+
+
+class TestPortCheck:
+    """An install checks the host ports its container would publish before it pulls anything: a
+    port that a container publishes, running or stopped, or that a program on the host listens
+    on, answers 409 instead of a start that fails after a pull of minutes (ADR-0381)."""
+
+    @pytest.mark.parametrize("status", ["running", "exited", "created"])
+    def test_a_port_that_a_container_publishes_answers_409(self, api, pools, docker_client, installed, soc, status):
+        installed(_container("emby", status=status, port_bindings=_published(8096)))
+        # A running container's port is also a listener of Docker's proxy on the host.
+        soc.sockets = ['tcp   LISTEN 0      4096   0.0.0.0:8096   0.0.0.0:*   users:(("docker-proxy",pid=9,fd=7))']
+
+        response = api.post(INSTALL, json={"template_id": "jellyfin"})
+
+        assert (response.status_code, response.json()) == (409, {
+            "detail": f"Port 8096/tcp is already used by the container emby ({status}): "
+            "choose another host port for 8096/tcp"
+        })
+        # Stopped containers too: Docker binds their ports when they start.
+        docker_client.containers.list.assert_called_once_with(all=True, ignore_removed=True)
+        docker_client.images.pull.assert_not_called()
+        docker_client.containers.create.assert_not_called()
+        assert not (pools.alpha / "apps").exists()
+
+    def test_a_container_that_publishes_the_port_on_one_address_holds_it(self, api, pools, docker_client, installed):
+        installed(_container("emby", status="running", port_bindings=_published(8096, host_ip="127.0.0.1")))
+
+        response = api.post(INSTALL, json={"template_id": "jellyfin"})
+
+        assert response.status_code == 409
+        assert response.json()["detail"].startswith("Port 8096/tcp is already used by the container emby (running)")
+
+    @pytest.mark.parametrize("port_bindings", [
+        None,
+        _published(8096, "udp"),
+        _published(18096),
+        # A port that Docker chooses when the container starts.
+        {"8096/tcp": [{"HostIp": "", "HostPort": ""}]},
+    ], ids=["none", "other-protocol", "other-port", "chosen-by-docker"])
+    def test_other_ports_of_containers_do_not_count(self, api, pools, docker_client, installed, port_bindings):
+        installed(_container("emby", status="running", port_bindings=port_bindings))
+
+        response = api.post(INSTALL, json={"template_id": "jellyfin"})
+
+        assert response.status_code == 200, response.text
+
+    @pytest.mark.parametrize(("line", "holder"), [
+        (EMBY_ANY, "EmbyServer"),
+        ('tcp   LISTEN 0      4096            [::]:8096          [::]:*    users:(("EmbyServer",pid=812,fd=8))',
+         "EmbyServer"),
+        ('tcp   LISTEN 0      4096       127.0.0.1:8096       0.0.0.0:*    users:(("EmbyServer",pid=812,fd=9))',
+         "EmbyServer"),
+        ('tcp   LISTEN 0      4096      192.0.2.10:8096       0.0.0.0:*    users:(("EmbyServer",pid=812,fd=9))',
+         "EmbyServer"),
+        ('tcp   LISTEN 0      4096               *:8096             *:*    users:(("EmbyServer",pid=812,fd=9))',
+         "EmbyServer"),
+        # Without the right to read a process's descriptors, ss names no program.
+        ("tcp   LISTEN 0      4096         0.0.0.0:8096       0.0.0.0:*", "a program"),
+    ], ids=["any-ipv4", "any-ipv6", "loopback", "one-address", "any", "no-program"])
+    def test_a_port_that_a_program_on_the_host_listens_on_answers_409(
+        self, api, pools, docker_client, soc, line, holder
+    ):
+        soc.sockets = [line]
+
+        response = api.post(INSTALL, json={"template_id": "jellyfin"})
+
+        assert (response.status_code, response.json()) == (409, {
+            "detail": f"Port 8096/tcp is already in use on the host by {holder}: choose another host port for 8096/tcp"
+        })
+        assert soc.commands[0] == SS
+        docker_client.images.pull.assert_not_called()
+        assert not (pools.alpha / "apps").exists()
+
+    def test_listeners_of_other_ports_and_protocols_do_not_count(self, api, pools, docker_client, soc):
+        soc.sockets = [
+            'udp   UNCONN 0      0            0.0.0.0:8096       0.0.0.0:*    users:(("EmbyServer",pid=8,fd=7))',
+            'tcp   LISTEN 0      4096         0.0.0.0:18096      0.0.0.0:*    users:(("EmbyServer",pid=8,fd=8))',
+            'tcp   LISTEN 0      4096            [::]:80960         [::]:*    users:(("EmbyServer",pid=8,fd=9))',
+            'tcp   LISTEN 0      4096         0.0.0.0:809        0.0.0.0:*    users:(("EmbyServer",pid=8,fd=9))',
+        ]
+
+        response = api.post(INSTALL, json={"template_id": "jellyfin"})
+
+        assert response.status_code == 200, response.text
+
+    def test_every_taken_port_is_named(self, api, pools, docker_client, soc):
+        # The resolver of systemd listens on port 53 of 127.0.0.53 by TCP and UDP.
+        soc.sockets = RESOLVED
+
+        response = api.post(INSTALL, json={"template_id": "pihole", "env_overrides": PIHOLE_LOGIN})
+
+        assert (response.status_code, response.json()) == (409, {
+            "detail": "Port 53/tcp is already in use on the host by systemd-resolve: "
+            "choose another host port for 53/tcp; "
+            "Port 53/udp is already in use on the host by systemd-resolve: "
+            "choose another host port for 53/udp"
+        })
+        docker_client.images.pull.assert_not_called()
+
+    def test_a_port_is_taken_only_for_its_protocol(self, api, pools, docker_client, soc):
+        # Transmission's peer port is a TCP and a UDP port of one number; one override moves both.
+        soc.sockets = ['udp   UNCONN 0      0      0.0.0.0:51413      0.0.0.0:*    users:(("qbittorrent-nox",pid=4,fd=9))']
+
+        taken = api.post(INSTALL, json=TRANSMISSION)
+        moved = api.post(INSTALL, json={**TRANSMISSION, "port_overrides": {51413: 51414}})
+
+        assert (taken.status_code, taken.json()) == (409, {
+            "detail": "Port 51413/udp is already in use on the host by qbittorrent-nox: "
+            "choose another host port for 51413/udp"
+        })
+        assert moved.status_code == 200, moved.text
+        assert docker_client.containers.create.call_args.kwargs["ports"] == {
+            "9091/tcp": 9091, "51413/tcp": 51414, "51413/udp": 51414,
+        }
+        docker_client.images.pull.assert_called_once()
+
+    def test_a_free_host_port_given_for_a_taken_one_installs(self, api, pools, docker_client, installed, soc):
+        installed(_container("emby", status="running", port_bindings=_published(8096)))
+        soc.sockets = ['tcp   LISTEN 0      4096   0.0.0.0:8096   0.0.0.0:*   users:(("docker-proxy",pid=9,fd=7))']
+
+        response = api.post(INSTALL, json={"template_id": "jellyfin", "port_overrides": {8096: 8097}})
+
+        assert response.status_code == 200, response.text
+        assert docker_client.containers.create.call_args.kwargs["ports"] == {"8096/tcp": 8097}
+        assert response.json()["web_url"] == "http://localhost:8097"
+
+    def test_the_catalogs_apps_in_the_hosts_network_name_the_ports_they_bind(self):
+        # Docker discards the port bindings of a container in the host's network: the app binds
+        # its container port on the host itself, which the catalog shows as its host port.
+        in_host_network = [t for t in APP_CATALOG if t.network_mode == "host"]
+
+        for template in in_host_network:
+            assert all(port.host == port.container for port in template.ports), template.id
+        assert sorted((t.id, t.name, [p.container for p in t.ports]) for t in in_host_network if t.ports) == [
+            (template_id, name, [port]) for template_id, name, port in HOST_NETWORK_APPS
+        ]
+
+    @pytest.mark.parametrize(("template_id", "name", "port"), HOST_NETWORK_APPS, ids=[a[0] for a in HOST_NETWORK_APPS])
+    def test_the_port_of_an_app_in_the_hosts_network_cannot_be_moved(
+        self, api, pools, docker_client, soc, template_id, name, port
+    ):
+        response = api.post(INSTALL, json={"template_id": template_id, "port_overrides": {port: port + 1}})
+
+        assert (response.status_code, response.json()) == (
+            400, {"detail": f"{name} runs in the host's network: its port {port}/tcp cannot be moved"}
+        )
         docker_client.containers.get.assert_not_called()
+        docker_client.images.pull.assert_not_called()
+        assert soc.commands == []
+        assert not (pools.alpha / "apps").exists()
+
+    @pytest.mark.parametrize(("template_id", "name", "port"), HOST_NETWORK_APPS, ids=[a[0] for a in HOST_NETWORK_APPS])
+    def test_an_app_in_the_hosts_network_may_name_the_port_it_binds(
+        self, api, pools, docker_client, soc, template_id, name, port
+    ):
+        response = api.post(INSTALL, json={"template_id": template_id, "port_overrides": {port: port}})
+
+        assert response.status_code == 200, response.text
+        assert docker_client.containers.create.call_args.kwargs["ports"] == {f"{port}/tcp": port}
+        assert response.json()["web_url"] == f"http://localhost:{port}"
+        assert soc.commands == [SS, _free_space_read()]
+
+    @pytest.mark.parametrize(("template_id", "name", "port"), HOST_NETWORK_APPS, ids=[a[0] for a in HOST_NETWORK_APPS])
+    def test_a_taken_port_of_an_app_in_the_hosts_network_asks_to_stop_the_program(
+        self, api, pools, docker_client, soc, template_id, name, port
+    ):
+        soc.sockets = [f'tcp   LISTEN 0      4096   0.0.0.0:{port}   0.0.0.0:*   users:(("python3",pid=7,fd=9))']
+
+        response = api.post(INSTALL, json={"template_id": template_id})
+
+        assert (response.status_code, response.json()) == (409, {
+            "detail": f"Port {port}/tcp is already in use on the host by python3: "
+            f"{name} runs in the host's network and cannot move its port; stop that program first"
+        })
+        docker_client.images.pull.assert_not_called()
+
+    @pytest.mark.parametrize(("template_id", "name", "port"), HOST_NETWORK_APPS, ids=[a[0] for a in HOST_NETWORK_APPS])
+    def test_a_port_of_an_app_in_the_hosts_network_that_a_container_publishes_asks_to_remove_it(
+        self, api, pools, docker_client, installed, soc, template_id, name, port
+    ):
+        installed(_container("other", status="exited", port_bindings=_published(port)))
+
+        response = api.post(INSTALL, json={"template_id": template_id})
+
+        assert (response.status_code, response.json()) == (409, {
+            "detail": f"Port {port}/tcp is already used by the container other (exited): "
+            f"{name} runs in the host's network and cannot move its port; remove that container first"
+        })
+        docker_client.images.pull.assert_not_called()
+
+    @pytest.mark.parametrize("port", [0, -1, 65536])
+    def test_a_host_port_outside_the_range_answers_400(self, api, pools, docker_client, soc, port):
+        response = api.post(INSTALL, json={"template_id": "jellyfin", "port_overrides": {8096: port}})
+
+        assert (response.status_code, response.json()) == (
+            400, {"detail": "Host port for 8096/tcp must be between 1 and 65535"}
+        )
+        docker_client.containers.get.assert_not_called()
+        assert soc.commands == []
+
+    def test_a_host_port_given_twice_answers_400(self, api, pools, docker_client, soc):
+        # Pi-hole's web page (80/tcp, on 8053) moved onto its DNS port (53/tcp).
+        response = api.post(
+            INSTALL, json={"template_id": "pihole", "env_overrides": PIHOLE_LOGIN, "port_overrides": {80: 53}}
+        )
+
+        assert (response.status_code, response.json()) == (400, {"detail": "Host port 53/tcp is given twice"})
+        docker_client.containers.get.assert_not_called()
+        assert soc.commands == []
+
+    @pytest.mark.parametrize(("answer", "message"), [
+        (
+            HostResult(1, "", "nsenter: reassociate to namespace 'ns/net' failed: Operation not permitted"),
+            "Could not read the ports in use on the host (exit status 1): "
+            "nsenter: reassociate to namespace 'ns/net' failed: Operation not permitted",
+        ),
+        (
+            subprocess.TimeoutExpired(SS, 15),
+            f"Could not read the ports in use on the host: Command '{SS}' timed out after 15 seconds",
+        ),
+        (
+            FileNotFoundError(2, "No such file or directory", "nsenter"),
+            "Could not read the ports in use on the host: [Errno 2] No such file or directory: 'nsenter'",
+        ),
+    ], ids=["exit-status", "timeout", "oserror"])
+    def test_a_read_of_the_host_that_fails_is_logged_and_the_install_goes_on(
+        self, api, pools, docker_client, soc, caplog, answer, message
+    ):
+        # Docker's own bind refuses a taken port when the container starts.
+        soc.ss = answer
+
+        with caplog.at_level("WARNING", logger="src.apps.preflight"):
+            response = api.post(INSTALL, json={"template_id": "jellyfin"})
+
+        assert response.status_code == 200, response.text
+        assert [r.getMessage() for r in caplog.records if r.name == "src.apps.preflight"] == [message]
+        docker_client.containers.create.return_value.start.assert_called_once()
+
+    def test_an_app_that_publishes_no_port_reads_no_port_of_the_host(self, api, pools, docker_client, soc):
+        # Tailscale runs in the host's network and publishes no port: only the free space is read.
+        response = api.post(INSTALL, json={"template_id": "tailscale"})
+
+        assert response.status_code == 200, response.text
+        assert soc.commands == [_free_space_read()]
+
+    def test_the_host_is_read_off_the_event_loop(self, api, pools, docker_client, soc, monkeypatch):
+        seen: list[bool] = []
+        real = host_module.run_on_host
+
+        def run(cmd, **kwargs):
+            seen.append(_on_event_loop())
+            return real(cmd, **kwargs)
+
+        monkeypatch.setattr(host_module, "run_on_host", run)
+
+        # Dozzle has no hardware profile: its install reads the host's ports and free space only.
+        assert api.post(INSTALL, json={"template_id": "dozzle"}).status_code == 200
+        assert seen == [False, False]
+
+    def test_a_listing_that_docker_does_not_answer_answers_503(self, api, pools, docker_client):
+        error = requests.exceptions.ConnectionError("('Connection aborted.', ConnectionResetError(104, 'reset'))")
+        docker_client.containers.list.side_effect = error
+
+        response = api.post(INSTALL, json={"template_id": "jellyfin"})
+
+        assert (response.status_code, response.json()) == (503, {"detail": f"Docker is not available: {error}"})
+        docker_client.images.pull.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -999,9 +1412,11 @@ def _container(
     policy: str = "unless-stopped",
     env: list[str] = (),
     devices: list[str] | None = None,
+    port_bindings: dict[str, list[dict]] | None = None,
 ) -> MagicMock:
     """``devices``: the host's device nodes passed in, as Docker keeps them (it answers null for
-    a container that has none)."""
+    a container that has none). ``port_bindings``: the host ports it publishes, as Docker keeps
+    them ("8096/tcp": [{"HostIp": "", "HostPort": "8096"}]; null for none)."""
     labels = {}
     if template is not None:
         labels["unos.app"] = template
@@ -1027,6 +1442,7 @@ def _container(
             "Devices": None if devices is None else [
                 {"PathOnHost": path, "PathInContainer": path, "CgroupPermissions": "rwm"} for path in devices
             ],
+            "PortBindings": port_bindings,
         },
         "NetworkSettings": {"Ports": {}},
         "Mounts": list(mounts),
@@ -1093,15 +1509,16 @@ NON_ROOT_IMAGES = {
 
 
 def _image_name(image: str) -> str:
+    image = image.partition("@")[0]  # a pinned image: name:tag@digest (ADR-0381)
     name, sep, tag = image.rpartition(":")
     return name if sep and "/" not in tag else image
 
 
 class TestDataFolderOwner:
     def test_catalog_gives_writable_folders_of_non_root_images_to_their_user(self):
-        for template in APP_CATALOG:
-            user = NON_ROOT_IMAGES.get(_image_name(template.image))
-            for volume in template.volumes:
+        for spec in _catalog_containers():
+            user = NON_ROOT_IMAGES.get(_image_name(spec.image))
+            for volume in spec.volumes:
                 # Never the pool root, and only folders the app writes to.
                 owned = (
                     user is not None
@@ -1110,7 +1527,7 @@ class TestDataFolderOwner:
                     and volume.host != POOL_PLACEHOLDER
                 )
                 expected = user if owned else (None, None)
-                assert (volume.uid, volume.gid) == expected, (template.id, volume.container)
+                assert (volume.uid, volume.gid) == expected, (spec.image, volume.container)
 
     def test_new_folders_belong_to_the_image_user(self, api, pools, docker_client, chown_calls):
         response = api.post(INSTALL, json={"template_id": "filebrowser"})
@@ -1357,7 +1774,8 @@ class TestNestedFolders:
         {pool}/downloads could replace "watch" with a link to "/", and the
         host's root directory would be mounted at /watch at the next start.
         """
-        volumes = [(t, v) for t in APP_CATALOG for v in t.volumes if v.on_pool]
+        # Every container's folders: a companion's are its app's (ADR-0381).
+        volumes = [(t, v) for t in APP_CATALOG for spec in (t, *t.companions) for v in spec.volumes if v.on_pool]
         for outer_template, outer in volumes:
             if outer.readonly:
                 continue
@@ -1440,7 +1858,7 @@ IN_UNOS_SMB = {**TRANSMISSION, "run_in_unos_smb": True}
 # linuxserver.io apps whose every pool folder is their own data under {pool}/apps,
 # which is never a share's folder: the group would give them nothing.
 ONLY_OWN_DATA = (
-    "prowlarr", "overseerr", "tautulli", "nextcloud", "bookstack", "wikijs", "heimdall", "wireguard", "code-server",
+    "prowlarr", "overseerr", "tautulli", "nextcloud", "wikijs", "heimdall", "wireguard", "code-server",
 )
 
 
@@ -1497,9 +1915,9 @@ class TestRunInUnosSmb:
         assert (environment["USER"], environment["PASS"]) == ("e2e", "k7-Unique-pass")
 
     def test_no_catalog_app_runs_as_the_user_of_the_group(self):
-        for template in APP_CATALOG:
-            assert all(volume.uid != 80000 for volume in template.volumes), template.id
-            assert all(var.value.strip() != "80000" for var in template.environment), template.id
+        for spec in _catalog_containers():
+            assert all(volume.uid != 80000 for volume in spec.volumes), spec.image
+            assert all(var.value.strip() != "80000" for var in spec.environment), spec.image
 
     def test_without_the_option_the_app_stays_outside_the_group(self, api, pools, docker_client):
         response = api.post(INSTALL, json=TRANSMISSION)
@@ -1630,7 +2048,9 @@ class TestShareFolders:
             "Target": "/downloads", "Source": str(family), "Type": "bind", "ReadOnly": False,
         }
         assert _environment(docker_client)["PGID"] == "70000"
-        assert {"host": str(family), "container": "/downloads", "readonly": False} in response.json()["volumes"]
+        assert {"host": str(family), "container": "/downloads", "readonly": False, "companion": None} in (
+            response.json()["volumes"]
+        )
 
     def test_a_shared_default_folder_needs_the_option(self, api, pools, docker_client, shares):
         # Folders that apps use can be shared; an app installed on one afterwards needs the group.
@@ -1863,7 +2283,12 @@ class TestStartChecks:
         response = api.post(RESTART.format("jellyfin"))
 
         assert response.status_code == 200, response.text
-        container.restart.assert_called_once_with()
+        # A restart is a stop, then a start, as for an app of several containers (ADR-0381).
+        assert [call[0] for call in container.method_calls if call[0] in ("stop", "start", "restart")] == [
+            "stop", "start",
+        ]
+        container.stop.assert_called_once_with(timeout=10)
+        container.start.assert_called_once_with()
 
     def test_missing_folders_on_the_apps_pool_are_created_again(self, api, pools, installed):
         # Docker's old -v binds recreated a deleted folder; Mount binds do not.
@@ -1945,7 +2370,9 @@ class TestStartChecks:
 
         assert response.status_code == 409
         assert "Mount the pool ('alpha' holds the app's data)" in response.json()["detail"]
-        container.restart.assert_not_called()
+        # Refused before the stop: the app keeps running.
+        container.stop.assert_not_called()
+        container.start.assert_not_called()
 
     def test_the_answer_names_the_pool_that_holds_the_folder(self, api, pools, installed):
         """A folder on another pool than the one the app was installed on, such as a share's folder
@@ -2134,10 +2561,14 @@ class TestInstalledApps:
         [app_info] = response.json()
         assert app_info["pool"] == "alpha"
         assert app_info["volumes"] == [
-            {"host": str(pools.alpha / "apps/portainer/data"), "container": "/data", "readonly": False},
-            {"host": "/var/run/docker.sock", "container": "/var/run/docker.sock", "readonly": False},
+            {"host": str(pools.alpha / "apps/portainer/data"), "container": "/data", "readonly": False,
+             "companion": None},
+            {"host": "/var/run/docker.sock", "container": "/var/run/docker.sock", "readonly": False,
+             "companion": None},
         ]
         assert app_info["data_outside_pools"] == []
+        # An app of one container (ADR-0381).
+        assert (app_info["companions"], app_info["missing"], app_info["health"]) == ([], [], None)
 
     def test_app_on_an_unmounted_pool_is_flagged(self, api, pools, installed):
         installed(_jellyfin(pools))
@@ -2288,7 +2719,8 @@ class TestStopAndUninstall:
         response = api.post(STOP.format("jellyfin"))
 
         assert (response.status_code, response.json()) == (200, {"status": "exited", "id": "jellyfin"})
-        container.stop.assert_called_once_with()
+        # The stop's timeout is given, so that docker-py waits for it (ADR-0381).
+        container.stop.assert_called_once_with(timeout=10)
         container.remove.assert_not_called()
 
     def test_uninstall_removes_the_container_and_keeps_the_apps_data(self, api, pools, installed):
@@ -2300,7 +2732,7 @@ class TestStopAndUninstall:
         response = api.delete(UNINSTALL.format("jellyfin"))
 
         assert (response.status_code, response.json()) == (200, {"status": "removed", "id": "jellyfin"})
-        container.stop.assert_called_once_with()
+        container.stop.assert_called_once_with(timeout=10)
         # Without v=True: Docker keeps the container's volumes too.
         container.remove.assert_called_once_with()
         assert _tree(pools.root) == before
@@ -2366,7 +2798,7 @@ class TestStopAndUninstall:
 
 
 # ---------------------------------------------------------------------------
-# The hardware of the host's SoC (apps.rk3588-hardware-acceleration, ADR-0377)
+# The hardware of the host's SoC (apps.rk3588-hardware-acceleration, ADR-0382)
 # ---------------------------------------------------------------------------
 
 # The device tree of the dev device, a Banana Pi BPI-W3 (ADR-0376), and of other boards.
@@ -2384,6 +2816,14 @@ DOCKER_MASKED_PATHS = [
     "/sys/devices/virtual/powercap", "/sys/firmware",
 ]
 CREATED_ID = "c0ffee0123456789"
+# An image pinned by tag and digest (ADR-0381).
+PINNED_IMAGE = re.compile(r"[^@\s]+:[^@\s]+@sha256:[0-9a-f]{64}")
+
+
+def _catalog_containers() -> list:
+    """The specs of every container of the catalog: each template's main container and its
+    companions."""
+    return [spec for template in APP_CATALOG for spec in (template, *template.companions)]
 
 
 @pytest.fixture
@@ -2467,7 +2907,7 @@ class TestHardwareOfTheSoc:
             "/dev/dri", "/dev/dma_heap", "/dev/mpp_service",
         ]
         # The host was asked about the profile's nodes, in one command.
-        assert soc.commands[1][3:] == ["unos-devices", *RK3588_VIDEO]
+        assert _hardware_reads(soc)[1][3:] == ["unos-devices", *RK3588_VIDEO]
 
     @pytest.mark.parametrize("compatible", [None, RK3568, SPACEMIT_K1], ids=["pc", "rk3568", "spacemit-k1"])
     def test_off_an_rk3588_jellyfin_is_installed_as_before(self, api, pools, docker_client, soc, compatible):
@@ -2483,7 +2923,8 @@ class TestHardwareOfTheSoc:
         assert kwargs["privileged"] is False and kwargs["cap_add"] is None
         assert response.json()["devices"] == []
         # Only the device tree was read; no node was looked for.
-        assert len(soc.commands) == 1 and _reads_device_tree(soc.commands[0])
+        reads = _hardware_reads(soc)
+        assert len(reads) == 1 and _reads_device_tree(reads[0])
 
     def test_an_rk3588_without_any_of_the_nodes_installs_jellyfin_as_elsewhere(self, api, pools, docker_client, soc):
         soc.compatible = RK3588
@@ -2522,7 +2963,7 @@ class TestHardwareOfTheSoc:
     def test_a_device_tree_that_cannot_be_read_installs_jellyfin_as_elsewhere(
         self, api, pools, docker_client, soc, error
     ):
-        soc.fail = error
+        soc.tree = error
 
         response = api.post(INSTALL, json={"template_id": "jellyfin"})
 
@@ -2534,7 +2975,7 @@ class TestHardwareOfTheSoc:
     def test_a_device_tree_read_that_fails_is_logged(self, api, pools, docker_client, soc, caplog):
         # nsenter exits non-zero when it cannot enter the host: the board counts as one without a
         # device tree, and the log says why.
-        soc.answer = HostResult(1, "", "nsenter: reassociate to namespace 'ns/mnt' failed: Operation not permitted")
+        soc.tree = HostResult(1, "", "nsenter: reassociate to namespace 'ns/mnt' failed: Operation not permitted")
 
         with caplog.at_level("WARNING", logger="src.apps.hardware"):
             response = api.post(INSTALL, json={"template_id": "jellyfin"})
@@ -2582,7 +3023,7 @@ class TestHardwareOfTheSoc:
         kwargs = docker_client.containers.create.call_args.kwargs
         assert kwargs.get("devices") is None and kwargs.get("security_opt") is None
         assert response.json()["devices"] == []
-        assert soc.commands[1][3:] == ["unos-devices", *RK3588_VIDEO]
+        assert _hardware_reads(soc)[1][3:] == ["unos-devices", *RK3588_VIDEO]
         assert [r.getMessage() for r in caplog.records if r.name == "src.apps.hardware"] == [message]
 
     def test_a_host_without_a_device_tree_is_not_logged(self, api, soc, caplog):
@@ -2602,14 +3043,15 @@ class TestHardwareOfTheSoc:
         assert (missing.returncode, missing.stdout, missing.stderr) == (3, b"", b"")
         assert (found.returncode, found.stdout) == (0, RK3588.encode())
 
-    def test_an_app_without_hardware_reads_nothing_of_the_host(self, api, pools, docker_client, soc):
+    def test_an_app_without_hardware_reads_no_hardware_of_the_host(self, api, pools, docker_client, soc):
         soc.compatible = RK3588
         soc.devices = set(RK3588_VIDEO)
 
         response = api.post(INSTALL, json={"template_id": "dozzle"})
 
         assert response.status_code == 200, response.text
-        assert soc.commands == []
+        # Only the host ports that the app would take and the free space were read (ADR-0381).
+        assert soc.commands == [SS, _free_space_read()]
         assert docker_client.containers.create.call_args.kwargs.get("devices") is None
 
     def test_a_failed_start_on_an_rk3588_removes_the_container(self, api, pools, docker_client, low_level, soc):
@@ -2653,7 +3095,11 @@ class TestHardwareOfTheSoc:
         one = api.get("/api/v1/apps/catalog/jellyfin").json()["hardware"]
         found = api.get("/api/v1/apps/catalog", params={"query": "jelly"}).json()
 
-        assert {app_id: ids for app_id, ids in listed.items() if ids} == {"jellyfin": ["rk3588-video"]}
+        # Immich's server too, for RKMPP (ADR-0382); its machine learning only with the NPU's node.
+        assert {app_id: ids for app_id, ids in listed.items() if ids} == {
+            "jellyfin": ["rk3588-video"],
+            "immich": ["rk3588-video"],
+        }
         assert one == [{
             "id": "rk3588-video",
             "soc": "rockchip,rk3588",
@@ -2661,6 +3107,7 @@ class TestHardwareOfTheSoc:
             "requires": ["/dev/mpp_service"],
             "unmasked_paths": ["/sys/firmware"],
             "apparmor_unconfined": True,
+            "image": None,
         }]
         assert [p["id"] for p in found[0]["hardware"]] == ["rk3588-video"]
 
@@ -2731,14 +3178,621 @@ class TestHardwareOfTheSoc:
         }
 
     def test_every_profile_names_device_nodes_and_masks_of_docker(self):
-        profiles = [p for t in APP_CATALOG for p in t.hardware]
+        profiles = [p for spec in _catalog_containers() for p in spec.hardware]
         assert profiles
         for profile in profiles:
             assert all(path.startswith("/dev/") for path in profile.devices), profile.id
-            # A profile applies only with the nodes it requires, which the container gets.
-            assert profile.requires and set(profile.requires) <= set(profile.devices), profile.id
+            # A profile applies only with the nodes it requires, which the container gets: each
+            # is one of its devices or lies in a folder of them (ADR-0382).
+            assert profile.requires, profile.id
+            for path in profile.requires:
+                assert any(path == device or path.startswith(f"{device}/") for device in profile.devices), path
             assert set(profile.unmasked_paths) <= set(DOCKER_MASKED_PATHS), profile.id
         for template in APP_CATALOG:
-            if template.hardware:
+            if hardware_module.all_profiles(template):
                 # The device cgroup and Docker's other limits stay as they are: no privileges.
                 assert not template.privileged and not template.capabilities, template.id
+
+    def test_a_container_has_at_most_one_profile_that_chooses_its_image_and_it_is_pinned(self):
+        for spec in _catalog_containers():
+            images = [p.image for p in spec.hardware if p.image]
+            assert len(images) <= 1, spec.image
+            assert all(PINNED_IMAGE.fullmatch(image) for image in images), images
+
+    def test_profiles_of_one_id_are_one_profile_but_for_its_image(self):
+        # The host is read once for each id (hardware.all_profiles); a template gives a shared
+        # profile its image with model_copy, and the shared profile names none.
+        seen: dict[str, dict] = {}
+        for spec in _catalog_containers():
+            for profile in spec.hardware:
+                rest = profile.model_dump(exclude={"image"})
+                assert seen.setdefault(profile.id, rest) == rest, profile.id
+        shared = [v for v in vars(catalog_module).values() if isinstance(v, HardwareProfile)]
+        assert shared and not [p.id for p in shared if p.image]
+
+
+# ---------------------------------------------------------------------------
+# Hardware per container, and an image of a profile's own (ADR-0382)
+# ---------------------------------------------------------------------------
+
+# The NPU of the RK3588 under Rockchip's kernel, as ADR-0382's RK3588_NPU: the folder of DRM
+# nodes, required by the stable name of the NPU's render node, a link inside it.
+NPU_LINK = "/dev/dri/by-path/platform-fdab0000.npu-render"
+NPU = HardwareProfile(
+    id="rk3588-npu",
+    soc="rockchip,rk3588",
+    devices=["/dev/dri"],
+    requires=[NPU_LINK],
+    unmasked_paths=["/sys/firmware"],
+    apparmor_unconfined=True,
+)
+VIDEO = get_app_by_id("jellyfin").hardware[0]
+PHOTOS_ML = "example/photos-ml:1"
+PHOTOS_ML_NPU = "example/photos-ml:1-rknn"
+
+
+def _photos(**changes) -> AppTemplate:
+    """An app of three containers in the manner of Immich: its server with the RK3588's video
+    hardware, a database without any, and a machine learning service that gets the NPU and an
+    image built for it where the NPU applies."""
+    template = AppTemplate(
+        id="photos",
+        name="Photos",
+        description="Photos of three containers",
+        icon="P",
+        category=AppCategory.MEDIA,
+        image="example/photos-server:1",
+        version="1",
+        ports=[PortMapping(host=2283, container=2283)],
+        hardware=[VIDEO],
+        companions=[
+            Companion(name="database", image="example/postgres:14"),
+            Companion(
+                name="machine-learning",
+                image=PHOTOS_ML,
+                hardware=[NPU.model_copy(update={"image": PHOTOS_ML_NPU})],
+            ),
+        ],
+    )
+    return template.model_copy(update=changes)
+
+
+@pytest.fixture
+def in_catalog(monkeypatch):
+    """``in_catalog(template)`` adds ``template`` to the catalog that the API answers and installs."""
+
+    def add(template: AppTemplate) -> AppTemplate:
+        catalog = [*APP_CATALOG, template]
+        monkeypatch.setattr(catalog_module, "APP_CATALOG", catalog)
+        monkeypatch.setattr(apps_router, "APP_CATALOG", catalog)
+        return template
+
+    return add
+
+
+def _rk3588(soc, *, npu: bool = True) -> None:
+    """The dev device: an RK3588 under Rockchip's kernel with its video nodes, and the NPU's."""
+    soc.compatible = RK3588
+    soc.devices = {*RK3588_VIDEO, *([NPU_LINK] if npu else [])}
+
+
+def _containers(template: dict) -> dict[str, dict]:
+    """The containers of a template as the catalog API answers it, by name ("" for the main one)."""
+    return {"": template, **{c["name"]: c for c in template["companions"]}}
+
+
+class TestHardwarePerContainer:
+    def test_a_profile_applies_to_its_own_container_and_may_choose_its_image(self, soc):
+        _rk3588(soc)
+        template = _photos()
+        host = hardware_module.read_host_hardware(hardware_module.all_profiles(template))
+        server, database, learning = template, *template.companions
+
+        got = {
+            "server": hardware_module.container_hardware(server, host),
+            "database": hardware_module.container_hardware(database, host),
+            "machine-learning": hardware_module.container_hardware(learning, host),
+        }
+
+        unmasked = [path for path in DOCKER_MASKED_PATHS if path != "/sys/firmware"]
+        assert got["server"] == hardware_module.ContainerHardware(
+            image="example/photos-server:1",
+            devices=RK3588_VIDEO,
+            masked_paths=unmasked,
+            security_opt=["apparmor=unconfined"],
+        )
+        assert got["database"] == hardware_module.ContainerHardware(image="example/postgres:14")
+        # The folder is passed in; the link that the profile requires is inside it.
+        assert got["machine-learning"] == hardware_module.ContainerHardware(
+            image=PHOTOS_ML_NPU,
+            devices=["/dev/dri"],
+            masked_paths=unmasked,
+            security_opt=["apparmor=unconfined"],
+        )
+
+    def test_the_host_is_read_once_for_the_profiles_of_every_container(self, soc):
+        _rk3588(soc)
+
+        hardware_module.read_host_hardware(hardware_module.all_profiles(_photos()))
+
+        # One read of the device tree, and one look for the nodes of all profiles, each once.
+        assert len(soc.commands) == 2 and _reads_device_tree(soc.commands[0])
+        assert soc.commands[1][3:] == ["unos-devices", *RK3588_VIDEO, NPU_LINK]
+
+    def test_a_profile_that_two_containers_share_is_read_once(self):
+        template = _photos(companions=[Companion(name="worker", image="example/worker:1", hardware=[VIDEO])])
+
+        assert hardware_module.all_profiles(template) == [VIDEO]
+
+    @pytest.mark.parametrize(
+        ("compatible", "nodes"),
+        [(None, set()), (RK3568, {*RK3588_VIDEO, NPU_LINK}), (RK3588, set(RK3588_VIDEO))],
+        ids=["pc", "rk3568", "rk3588-without-the-npu"],
+    )
+    def test_where_a_profile_does_not_apply_its_container_keeps_its_own_image(self, soc, compatible, nodes):
+        # Under the mainline kernel the NPU's driver (rocket, /dev/accel) makes no such link.
+        soc.compatible = compatible
+        soc.devices = nodes
+        learning = _photos().companions[1]
+        host = hardware_module.read_host_hardware(hardware_module.all_profiles(_photos()))
+
+        assert hardware_module.container_hardware(learning, host) == hardware_module.ContainerHardware(image=PHOTOS_ML)
+
+    def test_the_catalog_names_each_containers_hardware_and_the_image_it_installs(self, api, soc, in_catalog):
+        _rk3588(soc)
+        in_catalog(_photos())
+
+        one = api.get("/api/v1/apps/catalog/photos").json()
+        listed = next(t for t in api.get("/api/v1/apps/catalog").json() if t["id"] == "photos")
+
+        for answer in (one, listed):
+            containers = _containers(answer)
+            assert {name: [p["id"] for p in c["hardware"]] for name, c in containers.items()} == {
+                "": ["rk3588-video"],
+                "database": [],
+                "machine-learning": ["rk3588-npu"],
+            }
+            # The App Store shows the image that the install pulls.
+            assert {name: c["image"] for name, c in containers.items()} == {
+                "": "example/photos-server:1",
+                "database": "example/postgres:14",
+                "machine-learning": PHOTOS_ML_NPU,
+            }
+            assert containers["machine-learning"]["hardware"][0]["image"] == PHOTOS_ML_NPU
+        # The host was read once for each request, for every container's profiles.
+        assert [cmd[3] for cmd in soc.commands] == ["unos-device-tree", "unos-devices"] * 2
+
+    @pytest.mark.parametrize(
+        ("compatible", "nodes", "server"),
+        [(None, set(), []), (RK3588, set(RK3588_VIDEO), ["rk3588-video"])],
+        ids=["pc", "rk3588-without-the-npu"],
+    )
+    def test_where_the_npu_does_not_apply_the_catalog_names_the_image_without_it(
+        self, api, soc, in_catalog, compatible, nodes, server
+    ):
+        soc.compatible = compatible
+        soc.devices = nodes
+        in_catalog(_photos())
+
+        containers = _containers(api.get("/api/v1/apps/catalog/photos").json())
+
+        assert [p["id"] for p in containers[""]["hardware"]] == server
+        assert containers["machine-learning"]["hardware"] == []
+        assert containers["machine-learning"]["image"] == PHOTOS_ML
+
+    def test_a_template_whose_only_profiles_are_its_companions_reads_the_host(self, api, soc, in_catalog):
+        _rk3588(soc)
+        in_catalog(_photos(hardware=[]))
+
+        containers = _containers(api.get("/api/v1/apps/catalog/photos").json())
+
+        assert containers["machine-learning"]["image"] == PHOTOS_ML_NPU
+        assert len(soc.commands) == 2
+
+    @pytest.mark.parametrize(
+        ("compatible", "image"),
+        [(RK3588, "example/photos-server:1-rk3588"), (None, "example/photos-server:1")],
+        ids=["rk3588", "pc"],
+    )
+    def test_an_install_pulls_and_creates_the_image_of_the_profile_that_applies(
+        self, api, pools, docker_client, low_level, soc, in_catalog, compatible, image
+    ):
+        soc.compatible = compatible
+        soc.devices = set(RK3588_VIDEO)
+        in_catalog(_photos(hardware=[VIDEO.model_copy(update={"image": "example/photos-server:1-rk3588"})], companions=[]))
+
+        response = api.post(INSTALL, json={"template_id": "photos"})
+
+        assert response.status_code == 200, response.text
+        docker_client.images.pull.assert_called_once_with(image)
+        if compatible is None:
+            assert docker_client.containers.create.call_args.args == (image,)
+        else:
+            assert low_level.create_container.call_args.args == (image,)
+            assert response.json()["devices"] == RK3588_VIDEO
+
+
+# ---------------------------------------------------------------------------
+# The catalog's apps of several containers and its pinned images (ADR-0381, ADR-0382)
+# ---------------------------------------------------------------------------
+
+# The templates whose images floated on a tag when the catalog pinned its first app (ADR-0381):
+# catalog.UNPINNED_TEMPLATES may only lose ids, until apps.pinned-catalog-images empties it.
+UNPINNED_AT_MOST = frozenset({
+    "actual-budget", "adguard-home", "aria2", "audiobookshelf", "authelia", "bazarr", "calibre-web",
+    "changedetection", "code-server", "crowdsec", "deluge", "dozzle", "duplicati", "emby", "filebrowser",
+    "frigate", "gitea", "glances", "grafana", "heimdall", "homarr", "homeassistant", "homepage",
+    "jdownloader2", "jellyfin", "kavita", "lidarr", "localai", "mealie", "mosquitto", "n8n", "navidrome",
+    "netdata", "nextcloud", "nginx-proxy-manager", "node-red", "nzbget", "ollama", "open-webui", "overseerr",
+    "photoprism", "pihole", "plex", "portainer", "prometheus", "prowlarr", "qbittorrent", "radarr", "readarr",
+    "restic-rest-server", "sabnzbd", "scrypted", "sonarr", "stirling-pdf", "syncthing", "tailscale",
+    "tautulli", "traefik", "transmission", "trilium", "uptime-kuma", "vaultwarden", "vikunja", "wikijs",
+    "wireguard", "zigbee2mqtt",
+})
+# Templates of apps that need a database or a broker that a one-container template never gave
+# them: apps.catalog-companions brings them back with companions (ADR-0381).
+REMOVED_TEMPLATES = ("bookstack", "paperless-ngx", "linkwarden")
+# The variables of Immich's server that UNOS sets to reach its companions and its password.
+IMMICH_WIRING = {
+    "DB_HOSTNAME", "DB_USERNAME", "DB_DATABASE_NAME", "DB_PASSWORD_FILE", "REDIS_HOSTNAME",
+    "IMMICH_MACHINE_LEARNING_URL",
+}
+
+
+def _images(spec) -> list[str]:
+    """The images that a container runs: its own, and that of a hardware profile that names one."""
+    return [spec.image, *(profile.image for profile in spec.hardware if profile.image)]
+
+
+def _companion(template: AppTemplate, name: str) -> Companion:
+    return next(companion for companion in template.companions if companion.name == name)
+
+
+def _with_companions() -> list[AppTemplate]:
+    return [template for template in APP_CATALOG if template.companions]
+
+
+class TestStackCatalog:
+    def test_immich_is_the_catalogs_app_of_several_containers(self):
+        immich = get_app_by_id("immich")
+
+        assert [template.id for template in _with_companions()] == ["immich"]
+        assert [companion.name for companion in immich.companions] == ["database", "redis", "machine-learning"]
+        assert immich.depends_on == ["database", "redis"]
+        assert stacks_module.container_names(immich) == [
+            "immich-database", "immich-redis", "immich-machine-learning", "immich",
+        ]
+
+    def test_companions_are_named_for_the_network_and_publish_nothing(self):
+        # A companion has no ports, privileges, capabilities or network mode to set: it runs on its
+        # app's network, which the main container joins too.
+        assert not {"ports", "privileged", "capabilities", "network_mode"} & set(Companion.model_fields)
+        for template in _with_companions():
+            names = [companion.name for companion in template.companions]
+            assert len(set(names)) == len(names), template.id
+            assert all(re.fullmatch(COMPANION_NAME, name) for name in names), names
+            assert set(template.depends_on) <= set(names), template.id
+            assert template.network_mode is None, template.id
+        # Docker names: none is hidden as a container of UNOS's own (is_system_container).
+        names = [name for template in APP_CATALOG for name in stacks_module.container_names(template)]
+        assert not [name for name in names if name.startswith("unos-")]
+        assert len(set(names)) == len(names)
+
+    def test_a_companion_keeps_its_data_in_its_apps_folder(self):
+        for template in _with_companions():
+            for companion in template.companions:
+                for volume in companion.volumes:
+                    assert volume.on_pool, (template.id, companion.name, volume.host)
+                    assert volume.host.startswith(f"{APPS_DATA_PATH}/{template.id}/"), (companion.name, volume.host)
+
+    def test_a_generated_password_is_a_read_only_file_beside_the_data_it_unlocks(self):
+        secrets = 0
+        for template in APP_CATALOG:
+            containers = (template, *template.companions)
+            hosts = {volume.host for spec in containers for volume in spec.volumes}
+            unlocks: dict[str, str | None] = {}
+            for spec in containers:
+                for volume in spec.volumes:
+                    if not volume.generated_secret:
+                        assert volume.secret_for is None, (template.id, volume.host)
+                        continue
+                    secrets += 1
+                    assert volume.is_file and volume.readonly, (template.id, volume.host)
+                    assert volume.host.startswith(f"{APPS_DATA_PATH}/{template.id}/"), volume.host
+                    assert volume.secret_for in hosts and volume.secret_for != volume.host, volume.secret_for
+                    # Every mapping of one file names the same data, and every container that
+                    # binds it names its path in a *_FILE variable: the value is in no variable.
+                    assert unlocks.setdefault(volume.host, volume.secret_for) == volume.secret_for, volume.host
+                    assert volume.container in {
+                        var.value for var in spec.environment if var.name.endswith("_FILE")
+                    }, (template.id, volume.host)
+            # An app of several containers asks the administrator for no secret.
+            if template.companions:
+                assert not [var.name for spec in containers for var in spec.environment if var.secret], template.id
+        assert secrets == 2  # Immich's password file, bound into its server and its database
+
+    def test_pinned_images_are_named_by_tag_and_digest(self):
+        pins = catalog_module.PINNED_IMAGES
+        for ref, pin in pins.items():
+            assert ref == pin.ref == f"{pin.name}:{pin.tag}@{pin.digest}"
+            assert PINNED_IMAGE.fullmatch(ref), ref
+            # Its size on the system disk, for the check of the free space before a pull.
+            assert pin.disk_bytes > 0, ref
+        # Each pin is an image that a container of the catalog runs.
+        assert set(pins) <= {image for spec in _catalog_containers() for image in _images(spec)}
+
+    def test_every_image_of_a_pinned_template_is_pinned(self):
+        unpinned = catalog_module.UNPINNED_TEMPLATES
+        pins = catalog_module.PINNED_IMAGES
+        for template in APP_CATALOG:
+            images = [image for spec in (template, *template.companions) for image in _images(spec)]
+            if template.id in unpinned:
+                # Listed while an image of it floats: a template that is pinned leaves the list.
+                assert not template.companions, template.id
+                assert [image for image in images if image not in pins], template.id
+            else:
+                assert all(image in pins for image in images), (template.id, images)
+        # The image of a hardware profile is pinned, whatever its template (ADR-0382).
+        for spec in _catalog_containers():
+            assert all(profile.image in pins for profile in spec.hardware if profile.image), spec.image
+
+    def test_the_templates_with_floating_images_only_become_fewer(self):
+        unpinned = catalog_module.UNPINNED_TEMPLATES
+
+        assert isinstance(unpinned, frozenset)
+        assert unpinned <= UNPINNED_AT_MOST, sorted(unpinned - UNPINNED_AT_MOST)
+        assert unpinned <= {template.id for template in APP_CATALOG}, sorted(unpinned)
+
+    def test_immichs_server_and_machine_learning_are_one_version(self):
+        immich = get_app_by_id("immich")
+        learning = _companion(immich, "machine-learning")
+
+        assert catalog_module.IMMICH_SERVER.tag == catalog_module.IMMICH_ML.tag == catalog_module.IMMICH_VERSION
+        assert immich.version == catalog_module.IMMICH_VERSION
+        assert catalog_module.IMMICH_ML_RKNN.tag == f"{catalog_module.IMMICH_VERSION}-rknn"
+        assert catalog_module.IMMICH_ML_RKNN.name == catalog_module.IMMICH_ML.name
+        assert immich.image == catalog_module.IMMICH_SERVER.ref
+        assert _companion(immich, "database").image == catalog_module.IMMICH_POSTGRES.ref
+        assert _companion(immich, "redis").image == catalog_module.VALKEY.ref
+        assert learning.image == catalog_module.IMMICH_ML.ref
+        assert [profile.image for profile in learning.hardware] == [catalog_module.IMMICH_ML_RKNN.ref]
+
+    def test_immichs_server_logs_into_the_database_that_its_install_sets_up(self):
+        immich = get_app_by_id("immich")
+        server = {var.name: var for var in immich.environment}
+        database = {var.name: var.value for var in _companion(immich, "database").environment}
+
+        assert server["DB_USERNAME"].value == database["POSTGRES_USER"]
+        assert server["DB_DATABASE_NAME"].value == database["POSTGRES_DB"]
+        assert server["DB_PASSWORD_FILE"].value == database["POSTGRES_PASSWORD_FILE"]
+        # Its companions answer to their names on the app's network.
+        assert (server["DB_HOSTNAME"].value, server["REDIS_HOSTNAME"].value) == ("database", "redis")
+        assert server["IMMICH_MACHINE_LEARNING_URL"].value == "http://machine-learning:3003"
+        assert {name for name, var in server.items() if not var.editable} == IMMICH_WIRING
+        # The database's folder is on an HDD pool; the models' files at v2 include the RK3588's OCR.
+        assert database["DB_STORAGE_TYPE"] == "HDD"
+        learning = {var.name: var.value for var in _companion(immich, "machine-learning").environment}
+        assert learning == {"MACHINE_LEARNING_MODEL_REVISION": "v2"}
+
+    def test_immichs_machine_learning_gets_the_npu_and_its_server_the_video_hardware(self):
+        immich = get_app_by_id("immich")
+
+        assert catalog_module.RK3588_NPU == NPU
+        assert immich.hardware == [catalog_module.RK3588_VIDEO]
+        assert _companion(immich, "machine-learning").hardware == [
+            NPU.model_copy(update={"image": catalog_module.IMMICH_ML_RKNN.ref}),
+        ]
+        assert _companion(immich, "database").hardware == _companion(immich, "redis").hardware == []
+
+    @pytest.mark.parametrize(
+        ("compatible", "nodes", "server", "npu"),
+        [
+            (RK3588, {*RK3588_VIDEO, NPU_LINK}, ["rk3588-video"], True),
+            (RK3588, set(RK3588_VIDEO), ["rk3588-video"], False),
+            (None, set(), [], False),
+        ],
+        ids=["rk3588", "rk3588-without-the-npu", "pc"],
+    )
+    def test_the_catalog_offers_immich_the_hardware_of_this_host(self, api, soc, compatible, nodes, server, npu):
+        soc.compatible = compatible
+        soc.devices = nodes
+
+        containers = _containers(api.get("/api/v1/apps/catalog/immich").json())
+
+        assert [p["id"] for p in containers[""]["hardware"]] == server
+        assert [p["id"] for p in containers["machine-learning"]["hardware"]] == (["rk3588-npu"] if npu else [])
+        assert containers["machine-learning"]["image"] == (
+            catalog_module.IMMICH_ML_RKNN.ref if npu else catalog_module.IMMICH_ML.ref
+        )
+        assert containers["database"]["hardware"] == containers["redis"]["hardware"] == []
+        assert containers[""]["image"] == catalog_module.IMMICH_SERVER.ref
+
+    @pytest.mark.parametrize("app_id", REMOVED_TEMPLATES)
+    def test_the_apps_that_lack_their_companions_are_not_in_the_catalog(self, api, pools, docker_client, app_id):
+        assert get_app_by_id(app_id) is None
+        assert app_id not in UNPINNED_AT_MOST
+        assert app_id not in {template["id"] for template in api.get("/api/v1/apps/catalog").json()}
+        assert api.get(f"/api/v1/apps/catalog/{app_id}").status_code == 404
+
+        response = api.post(INSTALL, json={"template_id": app_id})
+
+        assert response.status_code == 404
+        docker_client.images.pull.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# The free space of the system disk before a pull (ADR-0381)
+# ---------------------------------------------------------------------------
+
+FREE_SPACE_FLOOR = 2 * GIB
+NO_SPACE_REMEDY = "Remove unused images on Containers > Images first."
+
+
+def _unread_free_space(reason: str) -> dict:
+    return {"detail": f"Could not read the free space of the system disk: {reason}; nothing was pulled"}
+
+
+class TestSystemDiskSpace:
+    def test_every_install_reads_the_free_space_where_docker_keeps_images(self, api, pools, docker_client, soc):
+        docker_client.info.return_value = {"DockerRootDir": "/srv/docker"}
+        soc.free = {"/srv/docker": 64 * GIB, CONTAINERD_ROOT: 64 * GIB}
+
+        response = api.post(INSTALL, json={"template_id": "tailscale"})
+
+        assert response.status_code == 200, response.text
+        # Docker's root folder as Docker names it, and the containerd image store's folder.
+        assert soc.commands == [_free_space_read("/srv/docker")]
+
+    @pytest.mark.parametrize("lower", [DOCKER_ROOT, CONTAINERD_ROOT])
+    def test_the_lower_free_space_of_the_two_counts(self, api, pools, docker_client, soc, lower):
+        soc.free = {DOCKER_ROOT: 64 * GIB, CONTAINERD_ROOT: 64 * GIB, lower: FREE_SPACE_FLOOR - GIB // 2}
+
+        response = api.post(INSTALL, json={"template_id": "jellyfin"})
+
+        assert (response.status_code, response.json()) == (409, {
+            "detail": "The system disk has 1.5 GiB free; at least 2 GiB must stay free when Jellyfin is installed. "
+            + NO_SPACE_REMEDY
+        })
+        docker_client.images.pull.assert_not_called()
+        docker_client.containers.create.assert_not_called()
+        assert not (pools.alpha / "apps").exists()
+
+    def test_an_image_of_a_floating_tag_counts_nothing_before_its_pull(self, api, pools, docker_client, soc):
+        # Its size is not known before its pull: the floor alone must be free.
+        soc.free = {DOCKER_ROOT: FREE_SPACE_FLOOR, CONTAINERD_ROOT: 64 * GIB}
+
+        response = api.post(INSTALL, json={"template_id": "jellyfin"})
+
+        assert response.status_code == 200, response.text
+        docker_client.images.get.assert_not_called()
+        docker_client.images.pull.assert_called_once_with("jellyfin/jellyfin:latest")
+
+    def test_a_folder_that_the_host_lacks_is_left_out(self, api, pools, docker_client, soc):
+        # Docker's own image store keeps everything in its root folder: no /var/lib/containerd.
+        soc.free = {DOCKER_ROOT: 64 * GIB}
+
+        response = api.post(INSTALL, json={"template_id": "jellyfin"})
+
+        assert response.status_code == 200, response.text
+
+    def test_a_host_without_either_folder_is_logged_and_the_install_goes_on(
+        self, api, pools, docker_client, soc, caplog
+    ):
+        # A supervisor that does not run on Docker's host, as in the compose test stack
+        # (UNOS_HOST_EXEC=local in a container that has Docker's socket but not its folders):
+        # there is no file system to read, and Docker's own pull is the last check.
+        pools.mounted.clear()
+        soc.free = {}
+
+        with caplog.at_level("WARNING", logger="src.apps.preflight"):
+            response = api.post(INSTALL, json={"template_id": "dozzle"})
+
+        assert response.status_code == 200, response.text
+        assert [cmd for cmd in soc.commands if _reads_free_space(cmd)] == [_free_space_read()]
+        assert [r.getMessage() for r in caplog.records if r.name == "src.apps.preflight"] == [
+            f"Could not read the free space of the system disk: the host has none of {DOCKER_ROOT}, "
+            f"{CONTAINERD_ROOT}; the install goes on"
+        ]
+        docker_client.images.pull.assert_called_once()
+        docker_client.containers.create.return_value.start.assert_called_once()
+
+    @pytest.mark.parametrize(("df", "reason"), [
+        (HostResult(1, "", "df: /var/lib/docker: Input/output error\n"), "df: /var/lib/docker: Input/output error"),
+        (HostResult(0, "", ""), "df printed no free space"),
+        (subprocess.TimeoutExpired(["nsenter"], 15), "Command '['nsenter']' timed out after 15 seconds"),
+        (FileNotFoundError(2, "No such file or directory", "nsenter"), "[Errno 2] No such file or directory: 'nsenter'"),
+    ], ids=["exit-status", "no-output", "timeout", "oserror"])
+    def test_a_free_space_that_cannot_be_read_answers_500_before_any_pull(
+        self, api, pools, docker_client, soc, df, reason
+    ):
+        soc.df = df
+
+        response = api.post(INSTALL, json={"template_id": "jellyfin"})
+
+        assert (response.status_code, response.json()) == (500, _unread_free_space(reason))
+        docker_client.images.pull.assert_not_called()
+        assert not (pools.alpha / "apps").exists()
+
+    @pytest.mark.parametrize("info", [{}, {"DockerRootDir": ""}, {"DockerRootDir": "var/lib/docker"}],
+                             ids=["none", "empty", "relative"])
+    def test_a_docker_that_names_no_root_folder_answers_500(self, api, pools, docker_client, soc, info):
+        docker_client.info.return_value = info
+
+        response = api.post(INSTALL, json={"template_id": "jellyfin"})
+
+        assert (response.status_code, response.json()) == (500, _unread_free_space("Docker names no root folder"))
+        assert not [cmd for cmd in soc.commands if _reads_free_space(cmd)]
+        docker_client.images.pull.assert_not_called()
+
+    def test_a_docker_whose_info_fails_answers_500(self, api, pools, docker_client, soc):
+        docker_client.info.side_effect = APIError("500 Server Error: Internal Server Error")
+
+        response = api.post(INSTALL, json={"template_id": "jellyfin"})
+
+        assert (response.status_code, response.json()) == (
+            500, _unread_free_space("500 Server Error: Internal Server Error")
+        )
+        docker_client.images.pull.assert_not_called()
+
+    def test_an_install_refused_before_reads_no_free_space(self, api, pools, docker_client, soc):
+        soc.sockets = ['tcp   LISTEN 0      4096   0.0.0.0:8096   0.0.0.0:*   users:(("EmbyServer",pid=8,fd=7))']
+
+        response = api.post(INSTALL, json={"template_id": "jellyfin"})
+
+        assert response.status_code == 409
+        assert soc.commands == [SS]
+        docker_client.info.assert_not_called()
+
+    def test_the_script_skips_a_folder_that_is_not_there(self, tmp_path):
+        # The script as the host runs it, on this machine's sh and df.
+        result = subprocess.run(
+            ["/bin/sh", "-c", preflight_module.FREE_SPACE_SCRIPT, "unos-free-space", str(tmp_path), str(tmp_path / "x")],
+            capture_output=True, text=True, check=False,
+        )
+
+        assert (result.returncode, result.stderr) == (0, "")
+        [free] = preflight_module._available(result.stdout)
+        assert abs(free - shutil.disk_usage(tmp_path).free) < GIB // 4
+
+    def test_the_script_reads_nothing_where_the_host_has_neither_folder(self, monkeypatch, tmp_path):
+        # The script as the host runs it, through src/host.py on this machine's sh.
+        monkeypatch.setattr(host_module, "run_on_host", REAL_RUN_ON_HOST)
+        monkeypatch.setenv("UNOS_HOST_EXEC", "local")
+
+        assert preflight_module._free_bytes([str(tmp_path / "docker"), str(tmp_path / "containerd")]) is None
+
+    def test_a_df_that_fails_for_one_folder_answers_500_though_another_is_read(self, monkeypatch, tmp_path):
+        # df fails for Docker's root folder (an I/O error on the system disk) and reads the
+        # containerd image store: the lower free space is not known, so none is used.
+        monkeypatch.setattr(host_module, "run_on_host", REAL_RUN_ON_HOST)
+        monkeypatch.setenv("UNOS_HOST_EXEC", "local")
+        bin_dir = tmp_path / "bin"
+        bin_dir.mkdir()
+        (bin_dir / "df").write_text(
+            "#!/bin/sh\n"
+            'case "$*" in */docker) echo "df: $4: Input/output error" >&2; exit 1;; esac\n'
+            "printf 'Filesystem 1024-blocks Used Available Capacity Mounted on\\n'\n"
+            "printf '/dev/sda1 67110912 2048 67108864 1%% /\\n'\n"
+        )
+        (bin_dir / "df").chmod(0o755)
+        monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
+        (tmp_path / "docker").mkdir()
+        (tmp_path / "containerd").mkdir()
+        # The stub reads the containerd store when it is the only folder.
+        assert preflight_module._free_bytes([str(tmp_path / "containerd")]) == 64 * GIB
+
+        with pytest.raises(HTTPException) as raised:
+            preflight_module._free_bytes([str(tmp_path / "docker"), str(tmp_path / "containerd")])
+
+        assert (raised.value.status_code, raised.value.detail) == (
+            500, _unread_free_space(f"df: {tmp_path / 'docker'}: Input/output error")["detail"]
+        )
+
+    def test_a_file_system_whose_name_or_folder_holds_spaces_is_read(self):
+        listing = (
+            "Filesystem   1024-blocks      Used Available Capacity  Mounted on\n"
+            "map auto_home          0         0         0   100%    /System/Volumes/Data/home\n"
+            "//nas/a share        100        50        50    50%    /mnt/a 75% b\n"
+        )
+
+        assert preflight_module._available(listing) == [0, 50 * 1024]

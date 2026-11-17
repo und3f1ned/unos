@@ -1,5 +1,6 @@
 import type { Page, Request, Route } from '@playwright/test';
 import { test, expect } from './fixtures';
+import { catalogCard, installAnswer, oneContainerApp } from './apps-fakes';
 
 test.describe('App Store', () => {
   test('should display App Store page', async ({ authenticatedPage: page }) => {
@@ -71,11 +72,15 @@ test.describe('App data outside the storage pools', () => {
     created_at: '2026-01-01T00:00:00Z',
     pool: 'e2e_data',
     volumes: [
-      { host: '/mnt/pools/e2e_data/apps/transmission/config', container: '/config', readonly: false },
-      { host: '/mnt/pools/e2e_data/downloads', container: '/downloads', readonly: false },
+      { host: '/mnt/pools/e2e_data/apps/transmission/config', container: '/config', readonly: false, companion: null },
+      { host: '/mnt/pools/e2e_data/downloads', container: '/downloads', readonly: false, companion: null },
     ],
     data_outside_pools: ['/mnt/pools/e2e_data/apps/transmission/config', '/mnt/pools/e2e_data/downloads'],
     runs_in_unos_smb: false,
+    devices: [],
+    health: null,
+    companions: [],
+    missing: [],
   };
 
   test.beforeEach(async ({ authenticatedPage: page }) => {
@@ -128,8 +133,13 @@ test.describe('Installed apps', () => {
     web_port: number | null;
     created_at: string;
     pool: string | null;
-    volumes: { host: string; container: string; readonly: boolean }[];
+    volumes: { host: string; container: string; readonly: boolean; companion: string | null }[];
     data_outside_pools: string[];
+    runs_in_unos_smb: boolean;
+    devices: string[];
+    health: string | null;
+    companions: never[];
+    missing: string[];
   }
 
   function installedApp(name: string, templateId: string, pool: string, status: string): FakeInstalledApp {
@@ -143,8 +153,13 @@ test.describe('Installed apps', () => {
       web_port: null,
       created_at: '2026-11-01T10:00:00Z',
       pool,
-      volumes: [{ host: config, container: '/config', readonly: false }],
+      volumes: [{ host: config, container: '/config', readonly: false, companion: null }],
       data_outside_pools: [],
+      runs_in_unos_smb: false,
+      devices: [],
+      health: null,
+      companions: [],
+      missing: [],
     };
   }
 
@@ -283,6 +298,9 @@ test.describe('Install in the group unos-smb', () => {
             web_url: 'http://localhost:9091',
             pool: POOL.name,
             volumes: [],
+            devices: [],
+            health: null,
+            companions: [],
           },
         });
       },
@@ -375,6 +393,86 @@ test.describe('Install in the group unos-smb', () => {
   });
 });
 
+// Install > Ports (ADR-0381). An app in the host's network (Home Assistant, Scrypted) binds its
+// container ports on the host itself, since Docker discards the port bindings of such a container,
+// and the server refuses an override that moves one with 400: its details show the port it binds
+// as fixed, and its install moves none. The pools and the install are answered here (the stand-in
+// has no Docker and no mounted pool); the catalog is the stand-in's own.
+test.describe('Ports of an app', () => {
+  const POOL = { name: 'e2e_data', path: '/mnt/pools/e2e_data', free_bytes: 2 ** 34, total_bytes: 2 ** 35 };
+  const PORTS_HINT = 'Configure port mappings. Modify host ports if they conflict with existing services.';
+  const hostNetwork = (name: string) =>
+    `${name} runs in the host's network: it listens on these ports of the host itself, so they cannot be changed.`;
+
+  /** Answers the pools and the install of `app`; returns the bodies of the installs. */
+  async function fakeInstall(page: Page, app: ReturnType<typeof oneContainerApp>): Promise<unknown[]> {
+    const installs: unknown[] = [];
+    await page.route(
+      (url: URL) => url.pathname === '/api/v1/apps/installed',
+      (route: Route) => route.fulfill({ json: [] }),
+    );
+    await page.route(
+      (url: URL) => url.pathname === '/api/v1/apps/pools',
+      (route: Route) => route.fulfill({ json: [POOL] }),
+    );
+    await page.route(
+      (url: URL) => url.pathname === '/api/v1/apps/install',
+      (route: Route) => {
+        installs.push(route.request().postDataJSON());
+        return route.fulfill({ json: installAnswer(app) });
+      },
+    );
+    return installs;
+  }
+
+  /** The Ports tab of the details of the catalog app `name`. */
+  async function portsOf(page: Page, name: string) {
+    await page.goto('/apps');
+    await catalogCard(page, name).click();
+    const dialog = page.getByRole('dialog');
+    await expect(dialog.getByRole('heading', { name, exact: true })).toBeVisible();
+    await dialog.getByRole('button', { name: 'Ports (1)', exact: true }).click();
+    return dialog;
+  }
+
+  for (const [name, id, port] of [
+    ['Home Assistant', 'homeassistant', 8123],
+    ['Scrypted', 'scrypted', 10443],
+  ] as const) {
+    test(`${name} runs in the host's network: its port cannot be moved, and the install moves none`, async ({
+      authenticatedPage: page,
+    }) => {
+      const installs = await fakeInstall(page, oneContainerApp(id, POOL.path, { port }));
+      const dialog = await portsOf(page, name);
+
+      const host = dialog.getByLabel('Host Port');
+      await expect(host).toHaveValue(String(port));
+      await expect(host).toBeDisabled();
+      await expect(dialog.getByText(hostNetwork(name))).toBeVisible();
+      await expect(dialog.getByText(PORTS_HINT)).toHaveCount(0);
+
+      await dialog.getByRole('button', { name: `Install ${name}` }).click();
+      await expect(page.getByText(`${name} was installed. Its data is stored on the "e2e_data" pool.`)).toBeVisible();
+      expect(installs).toEqual([{ template_id: id, pool: POOL.name }]);
+    });
+  }
+
+  test('an app in a network of its own may move its host port', async ({ authenticatedPage: page }) => {
+    const installs = await fakeInstall(page, oneContainerApp('jellyfin', POOL.path, { port: 8097 }));
+    const dialog = await portsOf(page, 'Jellyfin');
+
+    const host = dialog.getByLabel('Host Port');
+    await expect(host).toHaveValue('8096');
+    await expect(host).toBeEnabled();
+    await expect(dialog.getByText(PORTS_HINT)).toBeVisible();
+    await host.fill('8097');
+
+    await dialog.getByRole('button', { name: 'Install Jellyfin' }).click();
+    await expect(page.getByText('Jellyfin was installed. Its data is stored on the "e2e_data" pool.')).toBeVisible();
+    expect(installs).toEqual([{ template_id: 'jellyfin', pool: POOL.name, port_overrides: { '8096': 8097 } }]);
+  });
+});
+
 // Installed > the group unos-smb (ADR-0274): the server says from the container's
 // environment whether an app runs in the group, and the page shows it instead of
 // the template's PUID and PGID. The installed list is faked: the stand-in has no Docker.
@@ -389,9 +487,15 @@ test.describe('Installed apps in the group unos-smb', () => {
       web_port: null,
       created_at: '2026-11-08T10:00:00Z',
       pool: 'e2e_data',
-      volumes: [{ host: `/mnt/pools/e2e_data/apps/${templateId}/config`, container: '/config', readonly: false }],
+      volumes: [
+        { host: `/mnt/pools/e2e_data/apps/${templateId}/config`, container: '/config', readonly: false, companion: null },
+      ],
       data_outside_pools: [],
       runs_in_unos_smb: runsInUnosSmb,
+      devices: [],
+      health: null,
+      companions: [],
+      missing: [],
     };
   }
 
@@ -499,10 +603,14 @@ test.describe('The App Store in Russian', () => {
       web_port: null,
       created_at: '2026-11-08T10:00:00Z',
       pool,
-      volumes: [{ host: config, container: '/config', readonly: false }],
+      volumes: [{ host: config, container: '/config', readonly: false, companion: null }],
       // The folders of an app whose pool is not mounted.
       data_outside_pools: mounted ? [] : [config],
       runs_in_unos_smb: false,
+      devices: [],
+      health: null,
+      companions: [],
+      missing: [],
     };
   }
 
