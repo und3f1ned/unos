@@ -17,8 +17,13 @@ PYTEST_ARGS ?=
 # make test and make test-fast run the tests in TEST_WORKERS processes of pytest-xdist (auto: one
 # per CPU core; 0: in pytest's own process), each with temporary paths of its own
 # (supervisor/tests/conftest.py, ADR-0383). A Python without pytest-xdist runs them in one process,
-# with a line that says so: make setup installs it.
+# with a line that says so: make setup installs it. TEST_WORKERS goes into pytest's command line, so
+# make refuses any other value than auto or a number.
 TEST_WORKERS ?= auto
+without = $(if $(2),$(call without,$(subst $(firstword $(2)),,$(1)),$(wordlist 2,10,$(2))),$(1))
+workers_valid = $(and $(filter 1,$(words $(TEST_WORKERS))),$(or $(filter auto,$(TEST_WORKERS)),$(if \
+	$(call without,$(TEST_WORKERS),0 1 2 3 4 5 6 7 8 9),,yes)))
+$(if $(workers_valid),,$(error TEST_WORKERS is auto or a number of workers))
 # The repository-convention tests: make test-fast and the pre-commit hook. test_repo_tooling.py
 # also scans the repository's text files for secrets.
 TEST_FAST = tests/test_adrs.py tests/test_feature_list.py tests/test_agent_guard.py \
@@ -49,17 +54,19 @@ workers = $(or $(xdist),$(info make $@: pytest-xdist is not installed for $(PY) 
 
 # make check and make check-fast record the state of the working tree when they pass, and forget
 # the record when they fail, for the Stop hook and the pre-commit hook (scripts/green-run.py,
-# ADR-0383). A run that may have checked less records nothing: a dry run or one that ignores errors
-# (make -n, -t, -q, -i, -e, also through MAKEFLAGS), a variable on the command line other than the
-# tools and TEST_WORKERS, TESTS or PYTEST_ARGS from the environment, PYTEST_ADDOPTS, a TEST_WORKERS
-# that is not one word, or a MAKE from the environment. GNU make 3.81 writes the single-letter
+# ADR-0383). A run that may have checked less, or with other code than the tree's and make setup's,
+# records nothing: a dry run or one that ignores errors (make -n, -t, -q, -i, -e, also through
+# MAKEFLAGS), a variable on the command line other than TEST_WORKERS, a tool or TESTS or
+# PYTEST_ARGS from the environment, a makefile besides this one (-f, MAKEFILES, a GNUmakefile), a
+# MAKE from the environment, and the environment of Python and pytest that changes what runs
+# (PYTEST_ADDOPTS, PYTEST_PLUGINS, PYTHONPATH, PYTHONHOME). GNU make 3.81 writes the single-letter
 # options first in MAKEFLAGS ("n") or after its long ones ("--no-print-directory -n"), and the
 # variables of the command line after them.
 make_options = $(subst -,,$(foreach word,$(filter-out --%,$(MAKEFLAGS)),$(if $(findstring =,$(word)),,$(word))))
 command_line = $(foreach v,$(.VARIABLES),$(if $(filter command line,$(origin $(v))),$(v)))
-narrowed = $(filter-out PYTHON RUFF NPM PIP_AUDIT TEST_WORKERS E2E_ARGS,$(command_line)) \
-	$(filter environment,$(origin TESTS) $(origin PYTEST_ARGS)) $(PYTEST_ADDOPTS) \
-	$(filter-out 1,$(words $(TEST_WORKERS))) $(filter-out default,$(origin MAKE)) \
+narrowed = $(filter-out TEST_WORKERS,$(command_line)) $(filter-out Makefile,$(MAKEFILE_LIST)) $(MAKEFILES) \
+	$(filter environment,$(foreach v,PYTHON RUFF NPM TESTS PYTEST_ARGS,$(origin $(v)))) \
+	$(filter-out default,$(origin MAKE)) $(PYTEST_ADDOPTS) $(PYTEST_PLUGINS) $(PYTHONPATH) $(PYTHONHOME) \
 	$(foreach o,n t q i e,$(findstring $(o),$(make_options)))
 records_green = $(if $(strip $(narrowed)),,yes)
 green_begin = $(if $(records_green),state=$$($(PY) scripts/green-run.py state 2> /dev/null);)

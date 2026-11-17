@@ -2,19 +2,23 @@
 # Before every commit: the fast part of the quality gate, make check-fast (lint and the
 # convention tests; ADR-0216). The whole gate, make check, runs before a change is done (ADR-0230).
 # make setup installs this directory as git's hooks (git config core.hooksPath scripts/git-hooks).
-# The hook checks the working tree, not only what is staged. A working tree in the state in which
-# make check or make check-fast last passed (scripts/green-run.py) is not checked again: the
-# hook says so in one line (ADR-0383).
+# The hook checks the working tree, not only what is staged. A commit that holds all of the working
+# tree in which make check or make check-fast last passed (scripts/green-run.py check-commit) is not
+# checked again: the hook says in one line which it did (ADR-0383).
 set -eu
 here=$(cd "$(dirname "$0")" && pwd)
+# The index that git commits from: its own, or the one of git commit -a or of a commit of paths,
+# which git names in GIT_INDEX_FILE, as another one given to git commit.
+index=${GIT_INDEX_FILE:-}
+case $index in '' | /*) ;; *) index=$PWD/$index ;; esac
 cd "$(git rev-parse --show-toplevel)"
 # git exports these to its hooks (GIT_INDEX_FILE names .git/index.lock during git commit -a):
 # tests that run git in their own temporary repositories must not inherit them, and the state of
 # the tree is read from the index that make check saw.
 unset GIT_INDEX_FILE GIT_DIR GIT_WORK_TREE GIT_PREFIX
-if python3 "$here/../green-run.py" check 2> /dev/null; then
-    echo "pre-commit: make check-fast skipped: the working tree is the one in which make check or make check-fast last passed"
+if python3 "$here/../green-run.py" check-commit "$index" 2> /dev/null; then
+    echo "pre-commit: make check-fast skipped: the commit holds the working tree in which make check or make check-fast last passed"
     exit 0
 fi
-echo "pre-commit: make check-fast runs: the working tree is not the one in which make check or make check-fast last passed"
+echo "pre-commit: make check-fast runs: the commit does not hold a working tree in which make check or make check-fast last passed"
 exec "${MAKE:-make}" check-fast

@@ -64,8 +64,9 @@ def isolated_git_env(home: Path) -> dict:
 # The variables of an outer make (when the suite runs under make test) and of the Makefile
 # itself must not reach the make runs below, nor those of an outer git.
 MAKE_ENV = {key: value for key, value in without_git_variables(os.environ).items()
-            if key not in ("MAKE", "MAKEFLAGS", "MFLAGS", "MAKELEVEL", "MAKEOVERRIDES", "PYTHON", "RUFF", "PIP_AUDIT",
-                           "NPM", "TESTS", "PYTEST_ARGS", "PYTEST_ADDOPTS", "TEST_WORKERS", "E2E_ARGS")}
+            if key not in ("MAKE", "MAKEFLAGS", "MFLAGS", "MAKELEVEL", "MAKEOVERRIDES", "MAKEFILES", "PYTHON", "RUFF",
+                           "PIP_AUDIT", "NPM", "TESTS", "PYTEST_ARGS", "PYTEST_ADDOPTS", "PYTEST_PLUGINS", "PYTHONPATH",
+                           "PYTHONHOME", "TEST_WORKERS", "E2E_ARGS")}
 
 
 def make(*args, cwd=REPO_ROOT, check=True):
@@ -262,6 +263,8 @@ def test_settings_turn_auto_memory_off_deny_dev_env_and_desktop_commander_and_ru
     # Desktop Commander's shell and file tools would get around the guard and the Read rules.
     assert {"Read(./dev.env)", "Read(./**/dev.env)", "Read(//**/dev.env)", "Read(//**/tmp/dev/backup/**)",
             "mcp__plugin_desktop-commander_desktop-commander"} <= set(settings["permissions"]["deny"])
+    # The Write and Edit tools pass no guard: the record of the green run is out of their reach (ADR-0383).
+    assert {"Write(//**/tmp/stop-check/**)", "Edit(//**/tmp/stop-check/**)"} <= set(settings["permissions"]["deny"])
     assert set(settings["hooks"]) == {"PreToolUse", "Stop"}
     assert [entry["matcher"] for entry in guard] == ["Bash|mcp__terminal__run_in_terminal"]
     # The guard checks the commands of exactly the tools that the matcher sends it.
@@ -355,8 +358,15 @@ def stop_hook(tmp_path):
         (repo / "feature-list.json").write_text("{}\n")
         (repo / ".claude").mkdir()
         (repo / ".claude" / "settings.json").write_text("{}\n")
+        with open(repo / ".gitignore", "a") as ignore:
+            ignore.write("supervisor/.venv/\n.venv-lint/\n")
         git("add", ".")
         git("-c", "commit.gpgsign=false", "commit", "-q", "-m", "chore: the gate")
+        # A tool given to make, also from the environment, records no green run (ADR-0383).
+        for tool, stub in (("supervisor/.venv/bin/python", "python"), (".venv-lint/bin/ruff", "ruff")):
+            (repo / tool).parent.mkdir(parents=True)
+            shutil.copy(stubs / stub, repo / tool)
+        del env["PYTHON"], env["RUFF"]
         env["STUB_REAL_MAKE"] = real_make
 
     return SimpleNamespace(repo=repo, run=run, answer=answer, real_make=real_make, gate=gate)
@@ -543,8 +553,8 @@ def test_pre_commit_runs_make_check_fast_at_the_top_of_the_work_tree(work_tree):
     result = work_tree.run(REPO_ROOT / "scripts" / "git-hooks" / "pre-commit", cwd=work_tree.repo / "docs")
 
     assert work_tree.made() == [f"{work_tree.repo.resolve()} check-fast"]
-    assert result.stdout == ("pre-commit: make check-fast runs: the working tree is not the one in which make check "
-                             "or make check-fast last passed\n")
+    assert result.stdout == ("pre-commit: make check-fast runs: the commit does not hold a working tree in which "
+                             "make check or make check-fast last passed\n")
 
 
 def test_pre_commit_skips_check_fast_for_the_tree_of_the_last_green_run(work_tree):
@@ -559,12 +569,44 @@ def test_pre_commit_skips_check_fast_for_the_tree_of_the_last_green_run(work_tre
     result = work_tree.commit("-m", "docs: one")
 
     assert work_tree.made() == []
-    assert result.stdout + result.stderr == ("pre-commit: make check-fast skipped: the working tree is the one in "
-                                             "which make check or make check-fast last passed\n")
+    assert result.stdout + result.stderr == ("pre-commit: make check-fast skipped: the commit holds the working tree "
+                                             "in which make check or make check-fast last passed\n")
     (repo / "README").write_text("checked, then committed with -a\n")
     work_tree.green()
     work_tree.commit("-a", "-m", "docs: two")
     assert work_tree.made() == []
+
+
+@pytest.mark.parametrize("case", ["an unstaged change", "an untracked file", "a commit of paths", "another index"])
+def test_pre_commit_runs_check_fast_when_the_commit_holds_other_than_the_green_tree(work_tree, case):
+    """The green run is of the working tree, and a commit holds the index that git commits from:
+    the hook skips make check-fast only when they are the same, with no change outside that index
+    and no untracked file, which a test may read and the commit leaves out (ADR-0383)."""
+    repo, extra = work_tree.repo, {}
+    (repo / "README").write_text("staged\n")
+    work_tree.run("git", "add", "README")
+    commit = ["-m", "docs: x"]
+    if case == "an unstaged change":
+        (repo / "README").write_text("staged, then fixed in the working tree only\n")
+    elif case == "an untracked file":
+        (repo / "new.txt").write_text("read by the tests, left out of the commit\n")
+        commit = ["-a", "-m", "docs: x"]
+    elif case == "a commit of paths":
+        (repo / "docs" / "notes.md").write_text("changed, not in this commit\n")
+        commit = ["-m", "docs: x", "--", "README"]
+    else:
+        other = repo.parent / "other-index"
+        work_tree.run("git", "read-tree", "HEAD", GIT_INDEX_FILE=str(other))
+        (repo / "docs" / "notes.md").write_text("in both indexes\n")
+        work_tree.run("git", "add", "docs/notes.md", GIT_INDEX_FILE=str(other))
+        work_tree.run("git", "add", "docs/notes.md")
+        extra = {"GIT_INDEX_FILE": str(other)}  # holds notes.md, not README
+    work_tree.green()
+
+    result = work_tree.run("git", "-c", "commit.gpgsign=false", "commit", "-q", *commit, **extra)
+
+    assert work_tree.made() == [f"{repo.resolve()} check-fast"]
+    assert "pre-commit: make check-fast runs:" in result.stdout + result.stderr
 
 
 @pytest.mark.parametrize("change", ["a tracked file", "the index", "an untracked file", "nothing since the commit"])
@@ -625,26 +667,37 @@ def gate(work_tree, tmp_path):
     (repo / ".claude").mkdir()
     (repo / ".claude" / "settings.json").write_text("{}\n")
     (repo / "feature-list.json").write_text("{}\n")
+    with open(repo / ".gitignore", "a") as ignore:
+        ignore.write("supervisor/.venv/\n.venv-lint/\n")
     work_tree.run("git", "add", ".")
     work_tree.commit("-m", "chore: the gate")
     work_tree.made()
-    python = tmp_path / "python"
-    python.write_text('#!/bin/sh\nif [ "$1 $2" = "-m pytest" ]; then\n'
-                      '  [ -z "${PYTEST_STUB_SCRIPT:-}" ] || sh -c "$PYTEST_STUB_SCRIPT" || exit 1\n'
-                      '  echo "pytest stub: 3 passed"; exit 0\nfi\nexec "$REAL_PYTHON" "$@"\n')
-    python.chmod(0o755)
+    # The tools at the places where make setup installs them, which the Makefile takes by default:
+    # a tool given to make records no green run (ADR-0383). pytest's stub passes for --co, as pytest
+    # does when it only collects.
+    stubs = {"supervisor/.venv/bin/python": (
+        '#!/bin/sh\nif [ "$1 $2" = "-m pytest" ]; then\n'
+        '  case " $* " in *" --co "*) echo "pytest stub: 3 collected"; exit 0 ;; esac\n'
+        '  [ -z "${PYTEST_STUB_SCRIPT:-}" ] || sh -c "$PYTEST_STUB_SCRIPT" || exit 1\n'
+        '  echo "pytest stub: 3 passed"; exit 0\nfi\nexec "$REAL_PYTHON" "$@"\n'),
+        ".venv-lint/bin/ruff": "#!/bin/sh\nexit 0\n", "../bin/npm": '#!/bin/sh\necho "npm $*"\n'}
+    for path, body in stubs.items():
+        (repo / path).parent.mkdir(parents=True, exist_ok=True)
+        (repo / path).write_text(body)
+        (repo / path).chmod(0o755)
+    python = repo / "supervisor/.venv/bin/python"
 
     def make_run(*args, **extra):
         env = dict(MAKE_ENV, **{key: value for key, value in isolated_git_env(tmp_path / "home").items()
                                 if key.startswith(("GIT_", "HOME"))})
-        env.update(REAL_PYTHON=sys.executable, **extra)
-        return subprocess.run(["make", "--no-print-directory", *args, f"PYTHON={python}", "RUFF=true"], cwd=repo,
-                              env=env, capture_output=True, text=True, timeout=120)
+        env.update(REAL_PYTHON=sys.executable, PATH=f"{tmp_path / 'bin'}{os.pathsep}{os.environ['PATH']}", **extra)
+        return subprocess.run(["make", "--no-print-directory", *args], cwd=repo, env=env, capture_output=True,
+                              text=True, timeout=120)
 
     def green() -> bool:
         return work_tree.run(sys.executable, "scripts/green-run.py", "check", check=False).returncode == 0
 
-    return SimpleNamespace(repo=repo, make=make_run, green=green)
+    return SimpleNamespace(repo=repo, make=make_run, green=green, python=python)
 
 
 def test_make_check_fast_records_its_green_run(gate):
@@ -669,7 +722,6 @@ def test_make_check_fast_records_its_green_run(gate):
     (["check-fast", "PYTEST_ARGS=-k smb"], {}),  # a part of the tests
     (["check-fast", "TESTS=tests/test_adrs.py"], {}),
     (["check-fast", "TEST_FAST=tests/test_adrs.py"], {}),
-    (["check-fast", "TEST_WORKERS=0 -k adrs"], {}),
     (["check-fast", "PYTHON_DIRS=supervisor"], {}),  # a part of the lint
     (["check-fast", "SHELL_SCRIPT_DIRS=deploy"], {}),
     (["check-fast", "JSON_FILES=feature-list.json"], {}),
@@ -677,11 +729,57 @@ def test_make_check_fast_records_its_green_run(gate):
     (["check-fast"], {"PYTEST_ARGS": "-x"}),  # from the environment
     (["check-fast"], {"PYTEST_ADDOPTS": "-k adrs"}),
     (["check-fast"], {"MAKE": "true"}),
+    # What runs the checks: Python and pytest from the environment, and the tools given to make.
+    (["check-fast"], {"PYTHONPATH": "/nonexistent/fake-pytest"}),
+    (["check-fast"], {"PYTEST_PLUGINS": "a_plugin_that_drops_tests"}),
+    (["check-fast"], {"PYTHONHOME": sys.base_prefix}),
+    (["check-fast", "RUFF=true"], {}),
+    (["check-fast", "NPM=npm"], {}),
+    (["check-fast", "PYTHON=supervisor/.venv/bin/python"], {}),
+    (["check-fast"], {"PYTHON": "supervisor/.venv/bin/python"}),
+    (["check-fast"], {"RUFF": "true"}),
 ])
 def test_a_run_that_may_check_less_records_no_green_run(gate, args, extra):
     result = gate.make(*args, **extra)
 
     assert result.returncode == 0, result.stdout + result.stderr
+    assert not gate.green()
+
+
+@pytest.mark.parametrize("args, extra", [
+    (["check-fast", "TEST_WORKERS=0;true"], {}),
+    (["check-fast", "TEST_WORKERS=0||true"], {}),
+    (["check-fast", "TEST_WORKERS=0$$IFS--co"], {}),
+    (["check-fast", "TEST_WORKERS=--co"], {}),
+    (["check-fast", "TEST_WORKERS=0 -k adrs"], {}),
+    (["check-fast"], {"TEST_WORKERS": "0;true"}),
+])
+def test_a_test_workers_that_is_not_a_number_is_refused(gate, args, extra):
+    """TEST_WORKERS goes into pytest's command line: anything but auto or a number of workers is
+    refused before a part runs, so a failing tree is never recorded through it (ADR-0383)."""
+    result = gate.make(*args, PYTEST_STUB_SCRIPT="exit 1", **extra)  # the tree fails its tests
+
+    assert result.returncode != 0, result.stdout + result.stderr
+    assert "TEST_WORKERS" in result.stderr
+    assert not gate.green()
+
+
+@pytest.mark.parametrize("how", ["-f", "MAKEFILES", "GNUmakefile"])
+def test_another_makefile_records_no_green_run(gate, tmp_path, how):
+    """A makefile besides the repository's can change what the parts run (ADR-0383)."""
+    extra_mk = tmp_path / "extra.mk"
+    extra_mk.write_text("override run_all = true\n")
+    if how == "-f":
+        result = gate.make("-f", "Makefile", "-f", str(extra_mk), "check-fast", PYTEST_STUB_SCRIPT="exit 1")
+    elif how == "MAKEFILES":
+        result = gate.make("check-fast", PYTEST_STUB_SCRIPT="exit 1", MAKEFILES=str(extra_mk))
+    else:  # one that git ignores, which make reads before the Makefile
+        (gate.repo / "GNUmakefile").write_text("include Makefile\noverride run_all = true\n")
+        with open(gate.repo / ".git" / "info" / "exclude", "a") as exclude:
+            exclude.write("GNUmakefile\n")
+        result = gate.make("check-fast", PYTEST_STUB_SCRIPT="exit 1")
+
+    assert "pytest stub" not in result.stdout  # nothing ran
     assert not gate.green()
 
 
@@ -693,8 +791,10 @@ def test_a_question_forgets_the_green_run(gate):
     assert not gate.green()
 
 
-@pytest.mark.parametrize("args", [["TEST_WORKERS=4"], ["NPM=npm"], ["--no-print-directory", "-k", "-j2"]])
-def test_the_tools_the_workers_and_harmless_options_still_record(gate, args):
+@pytest.mark.parametrize("args", [["TEST_WORKERS=4"], ["TEST_WORKERS=auto"], ["--no-print-directory", "-k", "-j2"],
+                                  ["-s"], ["-o", "test-fast"], ["-W", "lint"]])
+def test_the_workers_and_harmless_options_still_record(gate, args):
+    """-o and -W do not reach the parts' makes, which run in full."""
     result = gate.make("check-fast", *args)
 
     assert result.returncode == 0, result.stdout + result.stderr
@@ -719,12 +819,9 @@ def test_a_failing_run_forgets_the_green_run(gate):
 
 
 def test_make_check_records_its_green_run(gate):
-    npm = gate.repo.parent / "npm"
-    npm.write_text("#!/bin/sh\necho \"npm $*\"\n")
-    npm.chmod(0o755)
     (gate.repo / "webui").mkdir()
 
-    result = gate.make("check", f"NPM={npm}")
+    result = gate.make("check")
 
     assert result.returncode == 0, result.stdout + result.stderr
     assert "make check passed: lint test frontend" in result.stdout

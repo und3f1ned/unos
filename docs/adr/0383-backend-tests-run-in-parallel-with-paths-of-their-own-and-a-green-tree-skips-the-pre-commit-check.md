@@ -33,7 +33,8 @@ for runs that go in parallel and for a commit that reuses a green run.
 - **Parallel runs.** `make test` and `make test-fast` run pytest with `-n $(TEST_WORKERS)` of
   pytest-xdist (pinned in `supervisor/requirements-dev.txt`), `auto` by default: one worker per
   CPU core, with xdist's default distribution of single tests to free workers. `TEST_WORKERS=0`
-  runs in pytest's own process. `make smoke` runs in one process: its tests take a few seconds,
+  runs in pytest's own process; make refuses any other value than `auto` or a number, since it
+  goes into pytest's command line. `make smoke` runs in one process: its tests take a few seconds,
   less than the workers take to start. A Python without pytest-xdist runs the tests in one process
   and make says so in one line, so a checkout whose venv predates this ADR still passes until
   `make setup` installs it. The device-checks skill runs `tests/test_smbconf_testparm.py` with
@@ -50,7 +51,8 @@ for runs that go in parallel and for a commit that reuses a green run.
   wait ended failed once when two whole runs went at once beside other worktrees' runs: its
   margins are now a second on each side. A test of `test_dev_scripts.py` whose holder of the
   device lock worked for 2 s, which a busy machine used up before the test looked, now lets the
-  holder end when it has looked. No test needed to run alone.
+  holder end when it has looked, and the holder says it holds the lock only once its work ignores
+  the signals, which a busy machine could send before. No test needed to run alone.
 - **No lock.** The test targets take no machine-wide lock, and `TEST_LOCK` is gone: nothing that
   the suite uses is shared between runs any more. This ends the serialization of backend runs of
   ADR-0210 and the wait for the lock of ADR-0216; their other rules stand.
@@ -59,22 +61,38 @@ for runs that go in parallel and for a commit that reuses a green run.
   without external drivers or textconv) and the names and contents of the untracked files,
   recorded in the git-ignored `tmp/stop-check/green`; a git command that fails gives no state.
   `make check` and `make check-fast` record the state they started in when they pass, if the tree
-  is still in it at their end and the run checked everything: not a dry run or a run that ignores
-  errors (`make -n`, `-t`, `-q`, `-i`, `-e`, also through `MAKEFLAGS`), no variable on the
-  command line but the tools (`PYTHON`, `RUFF`, `NPM`, `PIP_AUDIT`), `TEST_WORKERS` as one word
-  and `E2E_ARGS`, no `TESTS` or `PYTEST_ARGS` from the environment, no `PYTEST_ADDOPTS`, and no
-  `MAKE` from the environment. When they fail they remove the record. The Stop hook and
-  `scripts/git-hooks/pre-commit` skip `make check-fast` for a tree in the recorded state; the
-  pre-commit hook says in one line whether it ran it or skipped it, and reads the state with
-  git's own index, not the `index.lock` of `git commit -a`. A tool given on the command line is
-  trusted: a stub of it, like a record written by hand, is a deliberate act.
-- **Nothing else skips the checks.** The guard (ADR-0211) still refuses `--no-verify`, and its
-  rule skip-hooks also refuses a green run recorded by hand: `scripts/green-run.py record` and a
-  write to `tmp/stop-check/green` (a redirection, cp, mv, ln, install, rsync, tee, dd of=). Only
-  make records it; the Stop hook no longer writes it.
-- Tested in `supervisor/tests/test_repo_tooling.py` (real git commits through the hook, the real
-  Makefile with stub tools, every case above that records nothing, the Stop hook with the real
-  Makefile) and `supervisor/tests/test_agent_guard.py`.
+  is still in it at their end and the run checked everything with the tree's code and
+  `make setup`'s tools. A run records nothing when it is a dry run or ignores errors (`make -n`,
+  `-t`, `-q`, `-i`, `-e`, also through `MAKEFLAGS`), when the command line gives a variable other
+  than `TEST_WORKERS` (the tools `PYTHON`, `RUFF` and `NPM` included), when the environment gives
+  a tool, `TESTS`, `PYTEST_ARGS` or `MAKE`, when a makefile other than `Makefile` is read (`-f`,
+  `MAKEFILES`, an ignored `GNUmakefile` that includes it), and when the environment changes what
+  Python or pytest run (`PYTEST_ADDOPTS`, `PYTEST_PLUGINS`, `PYTHONPATH`, `PYTHONHOME`). When
+  they fail they remove the record. The Stop hook skips `make check-fast` for a tree in the
+  recorded state. `scripts/git-hooks/pre-commit` skips it only when the commit also holds all of
+  that tree (`green-run.py check-commit`): the state is read with git's own index, the one `make
+  check` saw, and the index that git commits from (its own, or the one that `git commit -a`, a
+  commit of paths or `GIT_INDEX_FILE` gives) has no change from the working tree, and no file is
+  untracked; otherwise it runs `make check-fast` as before. It says in one line which it did.
+- **Nothing else skips the checks, as far as the guard sees.** The guard (ADR-0211) still refuses
+  `--no-verify`, and its rule skip-hooks refuses a green run recorded by hand: green-run.py and
+  `record` in one command (also through env, xargs, uv, a program on standard input or code given
+  with `-c`), a copy of green-run.py, code that names stop-check, and any write into the folder
+  `tmp/stop-check`: a redirection, the target of cp, mv, ln, install, rsync or ditto (the folder
+  itself and `-t` included), dd's `of=`, `sed -i`, and a path in it given to any command that
+  does not only read, print or remove files (tar `-C`, unzip `-d`, curl `-o`, perl `-pi`,
+  find `-exec`, python). `.claude/settings.json` denies the Write and Edit tools, which no hook
+  sees, the folder `tmp/stop-check` (`Write(//**/tmp/stop-check/**)`,
+  `Edit(//**/tmp/stop-check/**)`): this only narrows what agents may do. The guard reads the
+  command line, so it is a best effort against a deliberate way around it, such as a path built
+  at run time; a person can write the record. Only make records it; the Stop hook no longer
+  writes it.
+- Tested in `supervisor/tests/test_repo_tooling.py` (real git commits through the hook, among them
+  commits that hold less than the green tree; the real Makefile with stub tools at `make setup`'s
+  places, every case above that records nothing, and a failing tree that a `TEST_WORKERS` of
+  `0;true`, `0||true` or `0$$IFS--co` or another makefile would have recorded; the Stop hook with
+  the real Makefile) and `supervisor/tests/test_agent_guard.py`. A second review in a fresh
+  context found those ways to record a failing tree; they are tests now.
 
 ## Consequences
 
@@ -90,7 +108,16 @@ for runs that go in parallel and for a commit that reuses a green run.
   case the same id in every process, and must pass in a worker with threads of its own; the
   workers report a difference in what they collected as an error.
 - The recorded state includes the index: `git add` after `make check` makes the next commit run
-  `make check-fast`. Staging before `make check`, or `git commit -a`, reuses the green run.
+  `make check-fast`. Staging everything before `make check`, or `git commit -a` with no untracked
+  file, reuses the green run.
+- A run with another Python, ruff or npm than `make setup`'s, given to make or in the environment,
+  records nothing: with `PYTHON` or `RUFF` in its environment, a session's Stop hook and every
+  commit run `make check-fast`.
+- The state leaves out, and so a green run does not cover a change of: the files that git
+  ignores and the checks read (the venvs, `webui/node_modules`, `.svelte-kit`), the modes of
+  untracked files, the targets of untracked symbolic links (their text counts), and the files of
+  an untracked nested repository (git lists only its folder). Accepted: none of them is code
+  that a commit holds.
 - A change made and undone while `make check` runs is not seen: the tree is in the same state at
   both ends of the run.
 - A pytest process that is killed (SIGKILL, or SIGTERM, which pytest does not handle) leaves its
