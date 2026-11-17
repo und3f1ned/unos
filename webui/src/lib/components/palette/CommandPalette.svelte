@@ -309,8 +309,12 @@
 	$: chooseFirst(query);
 	$: if (active >= matches.length) active = 0;
 	$: activeId = matches[active] ? optionId(matches[active]) : null;
-	// A page that may no longer have the palette, such as after a logout, closes it.
-	$: if (!enabled) open = false;
+	// A page that may no longer have the palette, such as after a logout or another account's sign-in
+	// in another tab, closes it and forgets a request that no page has taken.
+	$: if (!enabled) {
+		open = false;
+		paletteRequest.set(null);
+	}
 
 	function chooseFirst(_query: string) {
 		active = 0;
@@ -367,9 +371,9 @@
 	}
 
 	// Ctrl+K or Cmd+K, without Shift or Alt, whatever the keyboard layout: the key K where the
-	// layout has no Latin letters (Russian), else the letter K.
+	// layout has no Latin letters (Russian), else the letter K. Not a key of an input method.
 	function isShortcut(event: KeyboardEvent): boolean {
-		if (event.repeat || event.isComposing || event.altKey || event.shiftKey) return false;
+		if (event.isComposing || event.altKey || event.shiftKey) return false;
 		if (event.ctrlKey === event.metaKey) return false;
 		// A keydown of the browser's autofill has no key.
 		const key = typeof event.key === 'string' ? event.key.toLowerCase() : '';
@@ -399,6 +403,12 @@
 	function handleWindowKeydown(event: KeyboardEvent) {
 		if (open) keepTabInside(event);
 		if (!isShortcut(event) || keptByTheField(event)) return;
+		// A key held down repeats: it neither closes nor opens the palette again, and while the
+		// palette is open the browser does not get it either.
+		if (event.repeat) {
+			if (open) event.preventDefault();
+			return;
+		}
 		if (open) {
 			event.preventDefault();
 			close();
@@ -415,7 +425,8 @@
 	function keepTabInside(event: KeyboardEvent) {
 		if (event.key !== 'Tab' || event.ctrlKey || event.altKey || event.metaKey) return;
 		const dialog = body?.closest<HTMLElement>('[role="dialog"]');
-		if (!dialog) return;
+		// Only while the palette is the top dialog: one opened over it has the keys.
+		if (!dialog || dialog.inert) return;
 		const stops = [...dialog.querySelectorAll<HTMLElement>('button:not([disabled]), input:not([disabled])')];
 		if (stops.length === 0) return;
 		const first = stops[0];
@@ -441,7 +452,7 @@
 			autocomplete="off"
 			spellcheck={false}
 			selectOnMount
-			listbox={{ id: LIST_ID, activeId }}
+			listbox={{ id: LIST_ID, activeId, expanded: matches.length > 0 }}
 			on:keydown={handleFieldKeydown}
 		/>
 		<!-- How many choices are left, for screen readers; positioned, as the overlay scrolls. -->

@@ -18,8 +18,9 @@
 	// Take the keyboard focus with the whole text selected when the field appears: typing replaces it.
 	export let selectOnMount: boolean = false;
 	// A text field that narrows a list shown under it, as the command palette's (ADR-0388): a
-	// combobox whose list has the id `id` and whose chosen option has the id `activeId`.
-	export let listbox: { id: string; activeId: string | null } | null = null;
+	// combobox whose list has the id `id`, shown with options while `expanded`, and whose chosen
+	// option has the id `activeId`. Only a field of type text takes it.
+	export let listbox: { id: string; activeId: string | null; expanded: boolean } | null = null;
 
 	$: inputId = id || `input-${Math.random().toString(36).slice(2, 9)}`;
 	$: sizeClass = size === "sm" ? "px-2 py-1" : "";
@@ -57,7 +58,7 @@
 			aria-label={ariaLabel || undefined}
 			role={listbox ? "combobox" : undefined}
 			aria-autocomplete={listbox ? "list" : undefined}
-			aria-expanded={listbox ? true : undefined}
+			aria-expanded={listbox ? listbox.expanded : undefined}
 			aria-controls={listbox?.id}
 			aria-activedescendant={listbox?.activeId ?? undefined}
 			use:focusAndSelect={selectOnMount}

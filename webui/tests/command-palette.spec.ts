@@ -11,6 +11,8 @@ import { createAccount, deleteAccount, type Account } from './accounts';
 // through the API and deleted afterwards.
 
 const PHONE = { width: 375, height: 812 };
+/** The secret of a fake two-factor setup (base32), as tests/mobile-layout.spec.ts has it. */
+const TOTP_SECRET = 'JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP';
 
 const palette = (page: Page) => page.getByRole('dialog', { name: /^(Command palette|Палитра команд)$/ });
 const field = (page: Page) => palette(page).getByRole('combobox');
@@ -45,12 +47,15 @@ async function search(page: Page, query: string): Promise<void> {
 
 /**
  * Whether a keydown of the page had its default action prevented by the time it reached the
- * window: a listener added after the web UI's own, which run first, records it.
+ * window: a listener added after the web UI's own, which run first, records it. Called again in
+ * the same document (a goto that changes only the hash), it starts a new record.
  */
 async function watchKeydowns(page: Page): Promise<void> {
   await page.evaluate(() => {
-    const record = window as unknown as { keydowns: boolean[] };
+    const record = window as unknown as { keydowns: boolean[]; watching?: boolean };
     record.keydowns = [];
+    if (record.watching) return;
+    record.watching = true;
     window.addEventListener('keydown', (event) => {
       if (event.key.toLowerCase() === 'k') record.keydowns.push(event.defaultPrevented);
     });
@@ -165,12 +170,16 @@ test.describe('The command palette of an administrator', () => {
     await expect(options(page)).toHaveCount(0);
     await expect(palette(page).getByText('Nothing matches.')).toBeVisible();
     await expect(palette(page).getByRole('status')).toHaveText('0 choices');
+    // An empty list is a collapsed one, without a chosen option.
+    await expect(field(page)).toHaveAttribute('aria-expanded', 'false');
+    await expect(field(page)).not.toHaveAttribute('aria-activedescendant');
     await page.keyboard.press('Enter');
     await expect(palette(page)).toBeVisible();
     await expect(page).toHaveURL('/system');
     // The whole list again.
     await search(page, '');
     expect(await optionNames(page)).toEqual(all);
+    await expect(field(page)).toHaveAttribute('aria-expanded', 'true');
   });
 
   test('it asks the server for nothing while it opens, narrows and closes', async ({ authenticatedPage: page }) => {
@@ -453,6 +462,39 @@ test.describe('The command palette of an administrator', () => {
     await expect(palette(page)).toBeVisible();
   });
 
+  test('the key K opens it in any keyboard layout; an input method\'s key and a held key do not toggle it', async ({
+    authenticatedPage: page,
+  }) => {
+    await expect(page.locator('aside nav a').first()).toBeAttached();
+    type Keydown = { key: string; code: string; ctrlKey?: boolean; metaKey?: boolean; repeat?: boolean; isComposing?: boolean };
+    /** Send a keydown to the window as the browser would; true when its default was prevented. */
+    const keydown = (init: Keydown) =>
+      page.evaluate(
+        (init: Keydown) => !window.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, cancelable: true, ...init })),
+        init,
+      );
+
+    // A Russian layout: Ctrl and the key K type the letter л.
+    expect(await keydown({ key: 'л', code: 'KeyK', ctrlKey: true })).toBe(true);
+    await expect(palette(page)).toBeVisible();
+    // Held down, the key repeats: the palette stays open, and the browser does not get the key.
+    expect(await keydown({ key: 'л', code: 'KeyK', ctrlKey: true, repeat: true })).toBe(true);
+    expect(await keydown({ key: 'k', code: 'KeyK', metaKey: true, repeat: true })).toBe(true);
+    await expect(palette(page)).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(palette(page)).toHaveCount(0);
+    // A repeat with the palette closed opens nothing and is left to the browser.
+    expect(await keydown({ key: 'k', code: 'KeyK', ctrlKey: true, repeat: true })).toBe(false);
+    // A key that an input method is composing is the input method's.
+    expect(await keydown({ key: 'k', code: 'KeyK', ctrlKey: true, isComposing: true })).toBe(false);
+    expect(await keydown({ key: 'л', code: 'KeyK', ctrlKey: true, isComposing: true })).toBe(false);
+    // A Latin layout whose letter K is elsewhere (Dvorak): the letter counts, not the key.
+    expect(await keydown({ key: 't', code: 'KeyK', ctrlKey: true })).toBe(false);
+    await expect(palette(page)).toHaveCount(0);
+    expect(await keydown({ key: 'k', code: 'KeyV', ctrlKey: true })).toBe(true);
+    await expect(palette(page)).toBeVisible();
+  });
+
   test('on Windows and Linux Ctrl+K opens it from a text field', async ({ authenticatedPage: page }) => {
     await onPlatform(page, 'Win32');
     await page.goto('/audit');
@@ -461,6 +503,36 @@ test.describe('The command palette of an administrator', () => {
     await page.keyboard.press('Control+k');
     await expect(palette(page)).toBeVisible();
     await expect(field(page)).toBeFocused();
+  });
+
+  test('nor over a dialog written by hand: the Scheduler\'s and the Security tab\'s', async ({
+    authenticatedPage: page,
+  }) => {
+    // Cmd+K on macOS: the key of a text field there is not the question here.
+    await page.goto('/system#scheduler');
+    await page.getByRole('button', { name: 'New Task', exact: true }).click();
+    await expect(page.getByRole('heading', { name: 'Create Task' })).toBeVisible();
+    await watchKeydowns(page);
+    await page.keyboard.press('ControlOrMeta+k');
+    await expect(palette(page)).toHaveCount(0);
+    expect(await keydownsPrevented(page)).toEqual([false]);
+
+    // Turning on two-factor authentication, with a new secret that the stand-in does not make.
+    await page.route(
+      (url) => url.pathname === '/api/v1/auth/totp/setup',
+      (route) =>
+        route.request().method() === 'POST'
+          ? route.fulfill({ json: { secret: TOTP_SECRET, qr_uri: `otpauth://totp/UNOS:admin?secret=${TOTP_SECRET}&issuer=UNOS` } })
+          : route.abort(),
+    );
+    await page.goto('/system#security');
+    const card = page.locator('div:has(> h3:has-text("Two-Factor Authentication"))');
+    await card.getByRole('button', { name: 'Enable', exact: true }).click();
+    await expect(page.getByRole('heading', { name: 'Setup Two-Factor Authentication' })).toBeVisible();
+    await watchKeydowns(page);
+    await page.keyboard.press('ControlOrMeta+k');
+    await expect(palette(page)).toHaveCount(0);
+    expect(await keydownsPrevented(page)).toEqual([false]);
   });
 
   test('a Russian page shows the palette in Russian, and it finds English names too', async ({
@@ -542,14 +614,18 @@ test.describe('The command palette of a regular user', () => {
     await expect(page).toHaveURL('/');
     await expect(page.locator('main').getByText(USER.username)).toBeVisible();
 
+    // The pages of the user's sidebar, Dashboard and Account, then the language and Logout.
+    const sidebar = (await page.locator('aside nav a').allTextContents()).map((name) => name.trim());
+    expect(sidebar).toEqual(['Dashboard', 'Account']);
     await openPalette(page);
-    expect(await optionNames(page)).toEqual([
-      'Dashboard', 'Account', 'Switch the language to Russian (Русский)', 'Logout',
-    ]);
-    for (const query of ['storage', 'users', 'reboot', 'add user', 'security', 'trash']) {
+    expect(await optionNames(page)).toEqual([...sidebar, 'Switch the language to Russian (Русский)', 'Logout']);
+    for (const query of ['storage', 'users', 'reboot', 'add user', 'trash', 'firewall']) {
       await search(page, query);
       await expect(options(page), query).toHaveCount(0);
     }
+    // The Account page is System's Security tab.
+    await search(page, 'security');
+    expect(await optionNames(page)).toEqual(['Account']);
     await search(page, 'acc');
     await page.keyboard.press('Enter');
     await expect(page).toHaveURL('/system#security');
