@@ -125,8 +125,9 @@ print in the tables of the **Network** tab, such as a connection's state
 
 The dashboard provides an at-a-glance view of your NAS. Above it, as above
 every page, administrators see the health banner while UNOS knows of a
-problem: a pool not mounted, degraded or almost full, a failing disk, a task
-that failed or missed its run (see [Alerts](#alerts)).
+problem: a pool not mounted, degraded or almost full, a volume near its
+quota, a failing disk, a task that failed or missed its run (see
+[Alerts](#alerts)).
 
 ### System Stats
 - **CPU** - Current processor usage
@@ -477,6 +478,25 @@ For each pool, you can:
   that a running container mounts is on a network or FUSE mount that does
   not answer, the delete stops after 10 seconds and says so. A pool mounted
   read-only lists its volumes but cannot create or delete them.
+  Each volume shows its use: with a quota, a bar and "8.0 GB of 10.0 GB used
+  (80.0%)", yellow from 80% and red from 95%; without one, the use alone. The
+  use is what btrfs counts against the quota, the data the volume shares with
+  its snapshots included (a limit on exclusive data, `btrfs qgroup limit -e`,
+  is not shown as a quota). With quotas off on the pool nothing is counted,
+  and the dialog says how to enable them and what they cost: deleting
+  snapshots and balancing get slower, the more so the more snapshots the pool
+  has. When btrfs says its counts need a rescan, the dialog shows
+  `btrfs quota rescan /mnt/pools/<pool>` to run on the host; until the counts
+  are right again, UNOS keeps the alerts as they were and adds no point to
+  the graph. Deleting a volume also deletes its quota group, so that a later
+  subvolume does not take over its limit. The graph button
+  of a volume shows its use over time below it: one point per hour for the
+  last 30 days, with the quota as a dashed line. UNOS keeps the points in
+  memory and writes them to the system disk only when the supervisor stops,
+  so an update or a reboot keeps them, while a power cut loses the points
+  since the last stop. A renamed volume keeps its points; a deleted one loses
+  them. A volume that reaches 80, 90 or 95% of its quota is alerted (see
+  [Alerts](#alerts)); a restart keeps the level it reached.
 - **Balance** - Redistribute data across devices
 - **Remove pool** (the trash button) - After **Continue**, type the pool's
   name to enable **Remove Pool**. UNOS unmounts the pool, removes it from
@@ -2513,6 +2533,7 @@ enabled channel, when it finds it:
 | A managed pool is degraded: a disk is missing, or its disks count errors (also errors a scrub found) | error | every 5 minutes |
 | btrfs made a managed pool read-only after a serious error | error | every 5 minutes |
 | A mounted managed pool is 90% full: the banner shows it as an error from 95%, and keeps it until the pool is below 85% | warning | every 5 minutes |
+| A volume of a mounted pool has used 80%, then 90%, then 95% of its quota: one alert per level, the last an error; a level counts again once the use fell 5 points below it, and the banner drops the volume below 75% | warning, at 95% error | every 5 minutes |
 | A disk fails its SMART health self-assessment (health FAILED; for an NVMe disk not when it is only too hot) | error | every hour |
 | The latest SMART self-test of a disk failed | error | every hour |
 | The last run of an enabled scheduled task failed | warning | every 5 minutes |
@@ -2530,6 +2551,10 @@ counts, unless the problem that the rise causes is alerted at the same check,
 and once when it cannot read the state of a managed pool. For a pool that UNOS
 does not manage, it alerts the changes of its health instead: a status that is
 no longer healthy, a filesystem made read-only.
+
+The use of the volumes' quotas is read from the kernel's own counters, which
+reads no disk; the volumes are listed again only after something wrote to the
+pool. UNOS does not watch a volume of a pool with quotas off.
 
 A disk that sleeps is not woken for the check and keeps what UNOS knew of it,
 unless another disk is at its place. Runs are not made up after the supervisor

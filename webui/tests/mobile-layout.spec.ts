@@ -1,7 +1,7 @@
 import type { Locator, Page, WebSocketRoute } from '@playwright/test';
 import { test, expect } from './fixtures';
 import { createAccount, deleteAccount, type Account } from './accounts';
-import { FAKE_IMPORTABLE, fakeStorageApi, noBalance } from './storage-fakes';
+import { FAKE_IMPORTABLE, fakeStorageApi, fakeVolumesWithUse, noBalance } from './storage-fakes';
 import {
   NO_SNAPSHOTS,
   POOLS,
@@ -1031,6 +1031,51 @@ const VIEWS: View[] = [
     open: (page) =>
       page.getByRole('button', { name: /^(Idle timeout of|Тайм-аут простоя) \/dev\/e2e-hd1: / }).click(),
     shows: (page) => page.getByRole('dialog'),
+    start: dialogTitle,
+    end: dialogEnd,
+  },
+  {
+    // Each volume's use against its quota, and one volume's use over time.
+    name: "Dialog: a pool's volumes and their use",
+    path: '/storage',
+    fake: async (page) => {
+      const gib = 1024 ** 3;
+      await fakeStorageApi(page);
+      await fakeVolumesWithUse(
+        page,
+        {
+          e2e_media: [
+            { name: 'documents-of-the-whole-family-since-2009', used: 9.6 * gib, quota: 10 * gib, usage: 'counted' },
+            { name: 'photos', used: 3 * gib, quota: null, usage: 'counted' },
+          ],
+        },
+        {
+          'e2e_media/documents-of-the-whole-family-since-2009': {
+            used: 9.6 * gib,
+            quota: 10 * gib,
+            usage: 'counted',
+            points: [
+              { time: '2026-11-01T10:00:00+00:00', used: 2 * gib, quota: 10 * gib },
+              { time: '2026-11-17T11:15:00+00:00', used: 9.6 * gib, quota: 10 * gib },
+            ],
+          },
+        },
+      );
+    },
+    open: async (page) => {
+      await page
+        .locator('.card-nested')
+        .filter({ has: page.locator('h3', { hasText: /^e2e_media$/ }) })
+        .getByRole('button', { name: /^(Volumes|Тома)$/ })
+        .click();
+      await page
+        .getByRole('dialog')
+        .getByRole('button', {
+          name: /^(Use over time of documents-of-the-whole-family-since-2009|Заполнение тома documents-of-the-whole-family-since-2009 во времени)$/,
+        })
+        .click();
+    },
+    shows: (page) => page.getByRole('dialog').getByRole('figure'),
     start: dialogTitle,
     end: dialogEnd,
   },

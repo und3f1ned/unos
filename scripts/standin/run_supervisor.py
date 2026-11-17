@@ -90,6 +90,7 @@ DATA_GLOBALS: dict[str, tuple[str, ...]] = {
     "src.power.router": ("CONFIG_FILE", "UPS_CONFIG_FILE", "WOL_FILE"),
     "src.scheduler.router": ("TASKS_FILE", "RUNS_FILE", "SCHEDULED_BACKUP_DIR", "DB_FILE", "BACKUP_KEYS_FILE"),
     "src.security.router": ("FIREWALL_RULES_FILE", "CERTS_DIR"),
+    "src.storage.volume_usage": ("HISTORY_FILE",),
     "src.updates.updater": ("DATA_DIR", "UPDATE_STATE_FILE", "UPDATE_HISTORY_FILE", "UPDATE_CONFIG_FILE"),
 }
 

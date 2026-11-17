@@ -987,8 +987,23 @@ class FakeNas:
                 return {"device": f"/dev/{DISK}", "healthy": None, "power_state": "standby"}
             return {"device": f"/dev/{DISK}", "healthy": True, "power_state": "active", "temperature": 33}
         if parts[:2] == ["pools", "data"] and parts[2] == "volumes":
+            def use(path: str) -> dict:
+                # As the kernel counts it (storage.volume-quota-usage): nothing while quotas are off.
+                if "quota-use-missing" in self.bugs:
+                    return {"quota": None}
+                if not self.quotas:
+                    return {"used": None, "quota": None, "usage": "quotas_off"}
+                return {"used": 16384, "quota": self.quota_of.get(path), "usage": "counted"}
+
+            if method == "GET" and parts[4:] == ["usage"]:
+                path = f"{ROOT}/{parts[3]}"
+                if path not in self.fs:
+                    raise Refused(404, "Volume not found")
+                now = use(path)
+                point = {"time": "2027-01-15T08:00:00+00:00", "used": now.get("used"), "quota": now.get("quota")}
+                return {"name": parts[3], "pool": "data", **now, "points": [point] if self.quotas else []}
             if method == "GET":
-                return [{"name": p.rsplit("/", 1)[1], "pool": "data", "path": p, "quota": None}
+                return [{"name": p.rsplit("/", 1)[1], "pool": "data", "path": p, **use(p)}
                         for p in self.children(ROOT) if self.fs[p].kind == "subvolume"]
             if method == "POST":
                 path = f"{ROOT}/{body['name']}"
@@ -3569,6 +3584,7 @@ def test_the_pool_folder_helper_removes_only_an_empty_folder_that_is_no_mount_po
     ("files", "volume-deletable", "refused with 409"),
     ("files", "upload-mode", "644 root:root"),
     ("volumes", "volume-delete-ignores-shares", "names the share"),
+    ("volumes", "quota-use-missing", "the list does not say that quotas are off"),
     ("volumes", "copies-not-listed", "listed with the volume's restored copies"),
     ("volumes", "copy-delete-ignores-shares", "the copy's Delete is refused while the share"),
     ("smbconf", "status-misses-replaced-file", "names smb.conf as not UNOS's"),
@@ -3854,7 +3870,13 @@ def test_the_volumes_check_takes_either_answer_to_a_quota(nas):
     nas = FakeNas()
     nas.quotas = True
     status, output = run_check("volumes", nas)
-    assert status == 0 and "made with a limit of 1 GiB" in output, output
+    assert status == 0 and "made with a limit of 1 GiB on its quota group, listed with its use against it" in output, output
+    # storage.volume-quota-usage: a list without the use against the quota fails the step.
+    nas = FakeNas()
+    nas.quotas = True
+    nas.bugs.add("quota-use-missing")
+    status, output = run_check("volumes", nas)
+    assert status == 1 and "the list does not show its use against the quota" in output, output
 
 
 def test_the_volumes_check_restores_a_snapshot_and_deletes_the_copy_and_then_the_volume(nas):

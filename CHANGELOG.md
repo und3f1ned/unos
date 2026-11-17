@@ -362,6 +362,23 @@ manager, encrypted backup uploads, health checks, CI checks).
   `PATCH`, `DELETE /api/v1/groups/{id}`, which take the group's name as the
   page saw it (409 after a rename), and `group_access` in the share API; the
   audit log records `group_created`, `group_updated` and `group_deleted`.
+- The use of each volume's quota (ADR-0387): the Volumes dialog shows how much
+  of its quota each volume uses, with a bar, or its use alone without a quota,
+  says when quotas are off on the pool or btrfs's counts need a rescan, and
+  draws a volume's use over time (one point per hour for 30 days, the quota as
+  a dashed line). `GET /api/v1/storage/pools/{pool}/volumes` adds `used`,
+  `quota` and `usage` to each volume, and
+  `GET /api/v1/storage/pools/{pool}/volumes/{name}/usage` answers the points.
+  The use is read from the kernel's counters in sysfs, with no command and no
+  disk read. At each pass of the RAID monitor (every 5 minutes), a volume that
+  reaches 80, 90 or 95% of its quota is alerted once per level to every
+  enabled channel and shown in the health banner (an error at 95%); a level
+  counts again once the use fell 5 points below it, and a restart keeps the
+  level reached. While btrfs's counts need a rescan they change no alert and
+  no point. The points stay in memory and are written to the system disk only
+  when the supervisor stops. Deleting a volume or a restored copy now also
+  destroys its quota group, which btrfs kept with its limit for a later
+  subvolume of the same id.
 - Apps of several containers (ADR-0381): an app of the catalog may have
   companion containers beside its main one, on a Docker network of its own
   (`unos-app-<app>`, where each answers to its name), which UNOS installs,

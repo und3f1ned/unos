@@ -37,6 +37,7 @@ from src.updates.schemas import UpdateConfig
 health = importlib.import_module("src.health.router")
 notifications = importlib.import_module("src.notifications.router")
 offsite = importlib.import_module("src.offsite.service")
+volume_usage = importlib.import_module("src.storage.volume_usage")
 power = importlib.import_module("src.power.router")
 scheduler = importlib.import_module("src.scheduler.router")
 security = importlib.import_module("src.security.router")
@@ -226,6 +227,16 @@ _LOG = NotificationLog(
     success=True,
 )
 
+def _save_volume_usage() -> None:
+    """A history of the volumes' use with one point, written as at shutdown (storage.volume_usage)."""
+    state = volume_usage._State()
+    state.loaded = state.unsaved = True
+    state.series[("3a1c9f6e-1234-4c3b-9b0a-8f3c2a1b4c5d", 256)] = volume_usage._Series(
+        "data", "documents", [(int(_NOW.timestamp()), 1, 2)])
+    volume_usage._state = state
+    volume_usage.save_unsaved()
+
+
 STATE_FILES = [
     StateFile("notifications.json", notifications, "CONFIG_FILE",
               lambda: notifications.save_configs([NotificationConfig(id="c1", name="Mail", channel="email")]),
@@ -269,6 +280,9 @@ STATE_FILES = [
     StateFile("offsite_secrets.json", offsite, "SECRETS_FILE",
               lambda: offsite.write_secrets(offsite.Secrets(password="a password of the copies")),
               offsite.load_secrets, offsite.Secrets()),
+    # The history of the volumes' use, written only at shutdown (storage.volume_usage).
+    StateFile("volume_usage.json", volume_usage, "HISTORY_FILE", _save_volume_usage,
+              lambda: volume_usage.history_of("3a1c9f6e-1234-4c3b-9b0a-8f3c2a1b4c5d", 256), []),
     StateFile("offsite_status.json", offsite, "STATUS_FILE",
               lambda: offsite.write_status(offsite.Status(last_copy=offsite.CopyResult(
                   started=_NOW.isoformat(), trigger="task"))),

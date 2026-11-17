@@ -168,14 +168,46 @@ export function isChangedDiskError(message: string): boolean {
   return message.includes('is no longer the disk that was selected');
 }
 
+/**
+ * How the kernel counts a volume's use (supervisor/src/storage/qgroups.py): counted;
+ * inconsistent (counted, but btrfs says a rescan is needed); quotas_off (quotas are off on the
+ * pool, and nothing is counted); unknown (its quota group cannot be read).
+ */
+export type VolumeUsageState = 'counted' | 'inconsistent' | 'quotas_off' | 'unknown';
+
 /** A btrfs subvolume in the top directory of a mounted pool. */
 export interface Volume {
   name: string;
   pool: string;
   /** Host path: the pool's mountpoint and the volume name. */
   path: string;
+  /** The bytes it references, which its quota limits; null unless counted. */
+  used: number | null;
+  /** The limit on them in bytes; null without a quota. */
+  quota: number | null;
+  /** How the list read them; null in the answer to a create. */
+  usage: VolumeUsageState | null;
+}
+
+/** A volume's use at one time. */
+export interface VolumeUsagePoint {
+  /** ISO 8601 with the UTC offset. */
+  time: string;
+  used: number;
+  quota: number | null;
+}
+
+/**
+ * GET /storage/pools/{pool}/volumes/{name}/usage: one point per hour of the last 30 days that the
+ * supervisor kept, oldest first, and the current reading last.
+ */
+export interface VolumeUsageHistory {
+  name: string;
+  pool: string;
   used: number | null;
   quota: number | null;
+  usage: VolumeUsageState;
+  points: VolumeUsagePoint[];
 }
 
 /** Body of POST /storage/pools/{pool}/volumes; the pool is the one in the URL. */
@@ -344,6 +376,16 @@ export async function importFilesystem(uuid: string, name: string): Promise<Pool
  */
 export async function getVolumes(poolName: string): Promise<Volume[]> {
   return api.get<Volume[]>(`/storage/pools/${encodeURIComponent(poolName)}/volumes`);
+}
+
+/**
+ * A volume's use over time (HTTP 404 for an unknown volume, 409 when the pool is not mounted or is
+ * mounted at a subvolume other than the top level).
+ */
+export async function getVolumeUsage(poolName: string, volumeName: string): Promise<VolumeUsageHistory> {
+  return api.get<VolumeUsageHistory>(
+    `/storage/pools/${encodeURIComponent(poolName)}/volumes/${encodeURIComponent(volumeName)}/usage`
+  );
 }
 
 /**

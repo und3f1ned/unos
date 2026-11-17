@@ -71,10 +71,11 @@ health of a pool that UNOS does not manage, and for a disk's rising SMART counte
 Avoid: alarm.
 
 **Problem**: A condition of the NAS that needs an administrator while it lasts: a managed pool
-that is not mounted, degraded, read-only after an error or almost full, a failing disk, a
-scheduled task whose last run failed or that missed a run. It is alerted once when it is found and
-shown in the health banner until it is gone; UNOS keeps it in RAM only (ADR-0332). Avoid: issue,
-incident, event.
+that is not mounted, degraded, read-only after an error or almost full, a volume at 80, 90 or 95
+percent of its quota, a failing disk, a scheduled task whose last run failed or that missed a run.
+It is alerted once when it is found (a volume's again at each further level) and shown in
+the health banner until it is gone; UNOS keeps it in RAM only (ADR-0332). Avoid: issue, incident,
+event.
 
 **Health banner**: The list of the current problems above every page of an administrator, in the
 language of the page (ADR-0332). Avoid: alert bar, notification banner.
@@ -110,6 +111,11 @@ pool is mounted too).
 
 **Volume**: A btrfs subvolume at the top of a pool, with an optional quota (ADR-0069).
 Avoid: subvolume (snapshots are subvolumes too), dataset.
+
+**Quota use**: The bytes that a volume's quota group references, which its quota limits, data
+shared with its snapshots included; UNOS reads it from the kernel's counters in sysfs, alerts at
+80, 90 and 95 percent of the quota and keeps one point per hour for 30 days (ADR-0387). Avoid:
+volume size, disk usage.
 
 **Snapshot**: A read-only btrfs snapshot of a pool or a volume. Restoring one makes a writable copy
 and overwrites nothing (ADR-0011). Avoid: backup.

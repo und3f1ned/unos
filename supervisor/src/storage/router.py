@@ -17,7 +17,7 @@ from ..security.validators import (
     validate_volume_name,
 )
 from ..shares import service as shares_service
-from . import balances, disks, pools, scrubs, spindown
+from . import balances, disks, pools, scrubs, spindown, volume_usage
 from .schemas import (
     BalanceStart,
     BalanceStatus,
@@ -32,6 +32,7 @@ from .schemas import (
     SpindownSet,
     VolumeCreate,
     VolumeInfo,
+    VolumeUsageHistory,
 )
 
 T = TypeVar("T")
@@ -313,14 +314,29 @@ async def unmount_pool_endpoint(request: Request, name: str, _=Depends(verify_to
 
 @router.get("/pools/{pool_name}/volumes", response_model=list[VolumeInfo])
 async def list_volumes_endpoint(pool_name: str, _=Depends(verify_token)):
-    """List the volumes (subvolumes in the top directory) of a pool.
+    """List the volumes (subvolumes in the top directory) of a pool, each with its quota use.
 
-    404 for an unknown pool, 409 when it is not mounted or is mounted at a
-    subvolume other than the top level. Read-only pools are listed.
+    ``used``, ``quota`` and ``usage`` come from the kernel's counters of the volume's quota group
+    (storage.qgroups). 404 for an unknown pool, 409 when it is not mounted or is mounted at a subvolume
+    other than the top level. Read-only pools are listed.
     """
     validated_pool = validate_pool_name(pool_name)
 
     return await _call(pools.list_volumes, validated_pool)
+
+
+@router.get("/pools/{pool_name}/volumes/{volume_name}/usage", response_model=VolumeUsageHistory)
+async def volume_usage_endpoint(pool_name: str, volume_name: str, _=Depends(verify_token)):
+    """A volume's use of its quota over time: one point per hour of the last 30 days that the
+    supervisor kept, oldest first, and the current reading last (storage.volume_usage).
+
+    404 for an unknown pool or volume, 409 when the pool is not mounted or is mounted at a
+    subvolume other than the top level.
+    """
+    validated_pool = validate_pool_name(pool_name)
+    validated_name = validate_volume_name(volume_name)
+
+    return await _call(volume_usage.usage_history, validated_pool, validated_name)
 
 
 @router.post("/pools/{pool_name}/volumes", response_model=VolumeInfo)
