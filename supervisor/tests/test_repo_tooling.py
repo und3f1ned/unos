@@ -1,8 +1,8 @@
-"""The repository's own tooling: the Makefile (ADR-0216), scripts/setup.sh (ADR-0217), the git
-hooks and scripts/check-commit-msg.py (ADR-0209), .claude/settings.json with its Stop hook
-(ADR-0211, ADR-0216), the project skills (ADR-0205), the CI workflows, Dependabot and the triage
-templates (ADR-0206, ADR-0218), .gitignore, and the scan of the repository's files for secrets
-(ADR-0212).
+"""The repository's own tooling: the Makefile (ADR-0216, ADR-0383), scripts/setup.sh (ADR-0217), the
+git hooks and scripts/check-commit-msg.py (ADR-0209), scripts/green-run.py and the hooks that use it
+(ADR-0383), .claude/settings.json with its Stop hook (ADR-0211, ADR-0216), the project skills
+(ADR-0205), the CI workflows, Dependabot and the triage templates (ADR-0206, ADR-0218), .gitignore,
+and the scan of the repository's files for secrets (ADR-0212).
 
 Nothing here touches the real checkout beyond reading it: the setup script, the Stop hook and the
 commit checker run in temporary repositories, with stub tools where they would use the network,
@@ -64,8 +64,8 @@ def isolated_git_env(home: Path) -> dict:
 # The variables of an outer make (when the suite runs under make test) and of the Makefile
 # itself must not reach the make runs below, nor those of an outer git.
 MAKE_ENV = {key: value for key, value in without_git_variables(os.environ).items()
-            if key not in ("MAKEFLAGS", "MFLAGS", "MAKELEVEL", "MAKEOVERRIDES", "PYTHON", "RUFF", "PIP_AUDIT",
-                           "NPM", "TESTS", "PYTEST_ARGS", "E2E_ARGS", "TEST_LOCK")}
+            if key not in ("MAKE", "MAKEFLAGS", "MFLAGS", "MAKELEVEL", "MAKEOVERRIDES", "PYTHON", "RUFF", "PIP_AUDIT",
+                           "NPM", "TESTS", "PYTEST_ARGS", "PYTEST_ADDOPTS", "TEST_WORKERS", "E2E_ARGS")}
 
 
 def make(*args, cwd=REPO_ROOT, check=True):
@@ -147,13 +147,39 @@ def test_a_tool_given_as_a_relative_path_still_works_in_supervisor():
     assert f"{REPO_ROOT}/supervisor/.venv/bin/python -m pytest" in dry_run
 
 
-def test_the_test_targets_wait_for_the_machine_wide_lock():
-    locked = make("-n", "test", *TOOLS).stdout
-    unlocked = make("-n", "test", *TOOLS, "TEST_LOCK=").stdout
+def test_the_test_targets_run_in_parallel_without_a_machine_wide_lock():
+    """Each run has temporary paths of its own (conftest.py), so no run waits for another (ADR-0383).
+    A Python that imports xdist (true) gets the workers."""
+    dry_runs = {target: make("-n", target, "PYTHON=true").stdout for target in ("test", "test-fast", "smoke")}
 
-    assert re.search(r"(flock -w 1800|/usr/bin/lockf -k -t 1800) /tmp/unos-backend-tests\.lock "
-                     r"/opt/py/bin/python -m pytest", locked)
-    assert "unos-backend-tests.lock" not in unlocked
+    assert "true -m pytest tests/ -q --tb=short --ignore=tests/fixtures -n auto" in dry_runs["test"]
+    assert "-q --tb=short -n auto" in dry_runs["test-fast"]
+    assert "-n 4" in make("-n", "test", "PYTHON=true", "TEST_WORKERS=4").stdout
+    assert " -n " not in dry_runs["smoke"]  # seconds: the workers would take longer to start
+    assert [target for target, commands in dry_runs.items() if re.search(r"\block|unos-backend-tests", commands)] == []
+
+
+@pytest.fixture
+def stub_python(tmp_path):
+    """A Python that prints how pytest was called, with or without pytest-xdist (XDIST=0)."""
+    stub = tmp_path / "python"
+    stub.write_text('#!/bin/sh\nif [ "$1 $2" = "-c import xdist" ]; then exit "${XDIST:-0}"; fi\necho "python $*"\n')
+    stub.chmod(0o755)
+    shutil.copy(MAKEFILE, tmp_path / "Makefile")
+    (tmp_path / "supervisor").mkdir()
+    return stub
+
+
+@pytest.mark.parametrize("xdist, options", [("0", "-n 3"), ("1", "")])
+def test_the_tests_run_in_workers_with_pytest_xdist_and_in_one_process_without(tmp_path, stub_python, xdist,
+                                                                               options):
+    result = subprocess.run(["make", "--no-print-directory", "test", f"PYTHON={stub_python}", "TEST_WORKERS=3"],
+                            cwd=tmp_path, capture_output=True, text=True, timeout=120, env=dict(MAKE_ENV, XDIST=xdist))
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.splitlines()[-1].split() == (
+        f"python -m pytest tests/ -q --tb=short --ignore=tests/fixtures {options}".split())
+    assert ("make test: pytest-xdist is not installed" in result.stdout) == (xdist == "1")
 
 
 def test_the_defaults_are_the_environments_of_make_setup(tmp_path):
@@ -174,7 +200,7 @@ def test_check_runs_every_part_even_when_one_fails(tmp_path):
     for directory in ("supervisor", "webui"):
         (tmp_path / directory).mkdir()
     # lint fails at once (ruff is `false`); the stand-ins for python and npm print their arguments.
-    result = make("check", "RUFF=false", "PYTHON=echo", "NPM=echo", "TEST_LOCK=", cwd=tmp_path, check=False)
+    result = make("check", "RUFF=false", "PYTHON=echo", "NPM=echo", cwd=tmp_path, check=False)
 
     assert result.returncode != 0
     assert "make check failed: lint" in result.stderr
@@ -305,7 +331,7 @@ def stop_hook(tmp_path):
     real_make = shutil.which("make")
     env.update(PATH=f"{stubs}:{os.environ['PATH']}", STUB_DIR=str(stubs), STUB_LOG=str(tmp_path / "log"),
                PYTHON=str(stubs / "python"), RUFF=str(stubs / "ruff"), REAL_PYTHON=sys.executable,
-               CLAUDE_PROJECT_DIR=str(repo), TEST_LOCK="")
+               CLAUDE_PROJECT_DIR=str(repo))
 
     def run(payload=None, **extra):
         (tmp_path / "log").write_text("")
@@ -318,11 +344,29 @@ def stop_hook(tmp_path):
         (stubs / "make-output").write_text(output)
         (stubs / "make-status").write_text(f"{status}\n")
 
-    return SimpleNamespace(repo=repo, run=run, answer=answer, real_make=real_make)
+    def gate():
+        """The repository's Makefile and scripts/green-run.py, committed: the make stub runs the real
+        make, whose check-fast passes with the stub tools and records its green run."""
+        shutil.copy(MAKEFILE, repo / "Makefile")
+        (repo / "scripts").mkdir()
+        shutil.copy(GREEN_RUN, repo / "scripts" / "green-run.py")
+        (repo / "supervisor").mkdir()
+        (repo / "supervisor" / "README").write_text("tests\n")
+        (repo / "feature-list.json").write_text("{}\n")
+        (repo / ".claude").mkdir()
+        (repo / ".claude" / "settings.json").write_text("{}\n")
+        git("add", ".")
+        git("-c", "commit.gpgsign=false", "commit", "-q", "-m", "chore: the gate")
+        env["STUB_REAL_MAKE"] = real_make
+
+    return SimpleNamespace(repo=repo, run=run, answer=answer, real_make=real_make, gate=gate)
 
 
 def test_the_stop_hook_runs_check_fast_once_for_each_state_of_the_tree(stop_hook):
+    """make check-fast records its green run, and the hook runs it again only for another state of
+    the tree (ADR-0383)."""
     repo = stop_hook.repo
+    stop_hook.gate()
 
     first, calls = stop_hook.run()
     assert (first.returncode, calls) == (0, [CHECK_FAST]), first.stdout + first.stderr
@@ -339,6 +383,17 @@ def test_the_stop_hook_runs_check_fast_once_for_each_state_of_the_tree(stop_hook
     assert stop_hook.run()[1] == []
 
 
+def test_the_stop_hook_skips_a_tree_that_make_check_recorded_as_green(stop_hook):
+    (stop_hook.repo / "README").write_text("changed\n")
+    state = subprocess.run([sys.executable, str(GREEN_RUN), "state"], cwd=stop_hook.repo, capture_output=True,
+                           text=True, check=True, timeout=60).stdout.strip()
+    subprocess.run([sys.executable, str(GREEN_RUN), "record", state], cwd=stop_hook.repo, check=True, timeout=60)
+
+    result, calls = stop_hook.run()
+
+    assert (result.returncode, calls, result.stdout, result.stderr) == (0, [], "", "")
+
+
 def test_a_failing_check_sends_the_agent_back_with_the_failing_part(stop_hook):
     stop_hook.answer("== make check-fast: lint\n== make lint: lint-ruff\nF401 [*] os imported but unused\n"
                      "make lint failed: lint-ruff\n== make check-fast: test-fast\npytest: 5 passed\n"
@@ -352,10 +407,12 @@ def test_a_failing_check_sends_the_agent_back_with_the_failing_part(stop_hook):
     assert "--- the last lines of make lint:\n== make lint: lint-ruff\nF401 [*] os imported but unused" in result.stderr
     assert "5 passed" not in result.stderr and "5 passed" in log
     assert "tmp/stop-check/check-fast.log" in result.stderr
-    # No green run yet: the next stop checks again, and after a pass the hook is quiet.
+    # No green run: the next stop checks again. The hook records none itself: make check-fast does
+    # when it passes (test_the_stop_hook_runs_check_fast_once_for_each_state_of_the_tree).
     stop_hook.answer("make check-fast passed: lint test-fast\n", 0)
     assert stop_hook.run()[0].returncode == 0
-    assert stop_hook.run()[1] == []
+    assert not (stop_hook.repo / "tmp" / "stop-check" / "green").exists()
+    assert stop_hook.run()[1] == [CHECK_FAST]
 
 
 def test_a_failure_without_parts_shows_the_end_of_the_output(stop_hook):
@@ -433,16 +490,102 @@ def test_hooks_are_executable_shell_scripts(hook):
     subprocess.run(["sh", "-n", str(path)], check=True, timeout=30)
 
 
-def test_pre_commit_runs_make_check_fast_at_the_top_of_the_work_tree(tmp_path):
+GREEN_RUN = REPO_ROOT / "scripts" / "green-run.py"
+
+
+@pytest.fixture
+def work_tree(tmp_path):
+    """A repository with one commit that holds the pre-commit hook and scripts/green-run.py at their
+    places, installed as make setup installs it (core.hooksPath), and a make stub (MAKE) that logs
+    its directory and arguments."""
+    repo = tmp_path / "repo"
+    (repo / "scripts" / "git-hooks").mkdir(parents=True)
+    (repo / "docs").mkdir()
+    shutil.copy(GREEN_RUN, repo / "scripts" / "green-run.py")
+    shutil.copy(REPO_ROOT / "scripts" / "git-hooks" / "pre-commit", repo / "scripts" / "git-hooks" / "pre-commit")
+    (repo / ".gitignore").write_text("tmp/\n")
+    (repo / "README").write_text("x\n")
+    (repo / "docs" / "notes.md").write_text("notes\n")
     stub = tmp_path / "make"
-    stub.write_text('#!/bin/sh\necho "$(pwd) $*" > "$STUB_LOG"\n')
+    stub.write_text('#!/bin/sh\necho "$(pwd) $*" >> "$STUB_LOG"\n')
     stub.chmod(0o755)
+    env = dict(isolated_git_env(tmp_path / "home"), MAKE=str(stub), STUB_LOG=str(tmp_path / "log"))
 
-    subprocess.run([str(REPO_ROOT / "scripts" / "git-hooks" / "pre-commit")], cwd=REPO_ROOT / "docs",
-                   env=dict(without_git_variables(os.environ), MAKE=str(stub), STUB_LOG=str(tmp_path / "log")),
-                   check=True, timeout=60)
+    def run(*args, cwd=repo, check=True, **extra):
+        return subprocess.run([str(arg) for arg in args], cwd=cwd, env=dict(env, **extra), capture_output=True,
+                              text=True, check=check, timeout=120)
 
-    assert (tmp_path / "log").read_text() == f"{REPO_ROOT} check-fast\n"
+    run("git", "init", "-q")
+    run("git", "add", ".")
+    run("git", "-c", "commit.gpgsign=false", "commit", "-q", "-m", "chore: start")
+    run("git", "config", "core.hooksPath", "scripts/git-hooks")
+
+    def state():
+        return run(sys.executable, "scripts/green-run.py", "state").stdout.strip()
+
+    def green():
+        """Records the tree as green, as a make check that passed does."""
+        run(sys.executable, "scripts/green-run.py", "record", state())
+
+    def commit(*args):
+        return run("git", "-c", "commit.gpgsign=false", "commit", "-q", *args)
+
+    def made():
+        log = tmp_path / "log"
+        calls = log.read_text().splitlines() if log.exists() else []
+        log.unlink(missing_ok=True)
+        return calls
+
+    return SimpleNamespace(repo=repo, run=run, state=state, green=green, commit=commit, made=made)
+
+
+def test_pre_commit_runs_make_check_fast_at_the_top_of_the_work_tree(work_tree):
+    result = work_tree.run(REPO_ROOT / "scripts" / "git-hooks" / "pre-commit", cwd=work_tree.repo / "docs")
+
+    assert work_tree.made() == [f"{work_tree.repo.resolve()} check-fast"]
+    assert result.stdout == ("pre-commit: make check-fast runs: the working tree is not the one in which make check "
+                             "or make check-fast last passed\n")
+
+
+def test_pre_commit_skips_check_fast_for_the_tree_of_the_last_green_run(work_tree):
+    """make check and make check-fast record the state of the tree when they pass; a commit of a
+    tree in that state skips make check-fast, with one line, also with git commit -a, whose index
+    git keeps in index.lock while the hook runs (ADR-0383)."""
+    repo = work_tree.repo
+    (repo / "README").write_text("staged, then checked\n")
+    work_tree.run("git", "add", "README")
+    work_tree.green()
+
+    result = work_tree.commit("-m", "docs: one")
+
+    assert work_tree.made() == []
+    assert result.stdout + result.stderr == ("pre-commit: make check-fast skipped: the working tree is the one in "
+                                             "which make check or make check-fast last passed\n")
+    (repo / "README").write_text("checked, then committed with -a\n")
+    work_tree.green()
+    work_tree.commit("-a", "-m", "docs: two")
+    assert work_tree.made() == []
+
+
+@pytest.mark.parametrize("change", ["a tracked file", "the index", "an untracked file", "nothing since the commit"])
+def test_pre_commit_runs_check_fast_for_a_tree_that_changed_since_the_green_run(work_tree, change):
+    repo = work_tree.repo
+    (repo / "README").write_text("checked\n")
+    work_tree.green()
+    if change == "a tracked file":
+        (repo / "README").write_text("changed after the check\n")
+    elif change == "the index":
+        work_tree.run("git", "add", "README")  # the state includes the index: stage before the check
+    elif change == "an untracked file":
+        (repo / "new.txt").write_text("new\n")
+    else:
+        work_tree.commit("-a", "-m", "docs: checked")  # skips: the tree is the green one
+        assert work_tree.made() == []
+
+    result = work_tree.commit("-a", "--allow-empty", "-m", "docs: changed")  # a new HEAD
+
+    assert work_tree.made() == [f"{repo.resolve()} check-fast"]
+    assert "pre-commit: make check-fast runs:" in result.stdout + result.stderr
 
 
 def test_pre_commit_keeps_gits_variables_from_make_check_fast(tmp_path):
@@ -470,6 +613,144 @@ def test_pre_commit_keeps_gits_variables_from_make_check_fast(tmp_path):
     assert (Path(top).resolve(), made) == (linked.resolve(), "make check-fast")
     assert "GIT_CONFIG_GLOBAL" in variables  # the stub saw the environment
     assert {"GIT_DIR", "GIT_INDEX_FILE", "GIT_WORK_TREE", "GIT_PREFIX"} & set(variables) == set()
+
+
+@pytest.fixture
+def gate(work_tree, tmp_path):
+    """work_tree with the repository's Makefile, run by the real make with stub tools: ruff passes, and
+    pytest prints that it passed, after running PYTEST_STUB_SCRIPT with sh when it is set."""
+    repo = work_tree.repo
+    shutil.copy(MAKEFILE, repo / "Makefile")
+    (repo / "supervisor").mkdir()
+    (repo / ".claude").mkdir()
+    (repo / ".claude" / "settings.json").write_text("{}\n")
+    (repo / "feature-list.json").write_text("{}\n")
+    work_tree.run("git", "add", ".")
+    work_tree.commit("-m", "chore: the gate")
+    work_tree.made()
+    python = tmp_path / "python"
+    python.write_text('#!/bin/sh\nif [ "$1 $2" = "-m pytest" ]; then\n'
+                      '  [ -z "${PYTEST_STUB_SCRIPT:-}" ] || sh -c "$PYTEST_STUB_SCRIPT" || exit 1\n'
+                      '  echo "pytest stub: 3 passed"; exit 0\nfi\nexec "$REAL_PYTHON" "$@"\n')
+    python.chmod(0o755)
+
+    def make_run(*args, **extra):
+        env = dict(MAKE_ENV, **{key: value for key, value in isolated_git_env(tmp_path / "home").items()
+                                if key.startswith(("GIT_", "HOME"))})
+        env.update(REAL_PYTHON=sys.executable, **extra)
+        return subprocess.run(["make", "--no-print-directory", *args, f"PYTHON={python}", "RUFF=true"], cwd=repo,
+                              env=env, capture_output=True, text=True, timeout=120)
+
+    def green() -> bool:
+        return work_tree.run(sys.executable, "scripts/green-run.py", "check", check=False).returncode == 0
+
+    return SimpleNamespace(repo=repo, make=make_run, green=green)
+
+
+def test_make_check_fast_records_its_green_run(gate):
+    assert not gate.green()
+
+    result = gate.make("check-fast")
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "make check-fast passed: lint test-fast" in result.stdout
+    assert gate.green()
+    (gate.repo / "README").write_text("changed\n")
+    assert not gate.green()
+
+
+@pytest.mark.parametrize("args, extra", [
+    (["-n", "check-fast"], {}),  # a dry run checks nothing
+    (["--no-print-directory", "-kn", "check-fast"], {}),  # the options after a long one (GNU make 3.81)
+    (["-t", "check-fast"], {}),
+    (["-i", "check-fast"], {}),  # a part that fails would pass
+    (["-e", "check-fast"], {}),  # the environment's variables win over the Makefile's
+    (["check-fast"], {"MAKEFLAGS": "i"}),
+    (["check-fast", "PYTEST_ARGS=-k smb"], {}),  # a part of the tests
+    (["check-fast", "TESTS=tests/test_adrs.py"], {}),
+    (["check-fast", "TEST_FAST=tests/test_adrs.py"], {}),
+    (["check-fast", "TEST_WORKERS=0 -k adrs"], {}),
+    (["check-fast", "PYTHON_DIRS=supervisor"], {}),  # a part of the lint
+    (["check-fast", "SHELL_SCRIPT_DIRS=deploy"], {}),
+    (["check-fast", "JSON_FILES=feature-list.json"], {}),
+    (["check-fast", "run_all=true"], {}),  # any other variable of the command line
+    (["check-fast"], {"PYTEST_ARGS": "-x"}),  # from the environment
+    (["check-fast"], {"PYTEST_ADDOPTS": "-k adrs"}),
+    (["check-fast"], {"MAKE": "true"}),
+])
+def test_a_run_that_may_check_less_records_no_green_run(gate, args, extra):
+    result = gate.make(*args, **extra)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert not gate.green()
+
+
+def test_a_question_forgets_the_green_run(gate):
+    """make -q runs no recipe but check-fast's, whose parts then answer that they are not up to date."""
+    assert gate.make("check-fast").returncode == 0 and gate.green()
+
+    assert gate.make("-q", "check-fast").returncode != 0
+    assert not gate.green()
+
+
+@pytest.mark.parametrize("args", [["TEST_WORKERS=4"], ["NPM=npm"], ["--no-print-directory", "-k", "-j2"]])
+def test_the_tools_the_workers_and_harmless_options_still_record(gate, args):
+    result = gate.make("check-fast", *args)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert gate.green()
+
+
+def test_a_run_during_which_the_tree_changed_records_no_green_run(gate):
+    result = gate.make("check-fast", PYTEST_STUB_SCRIPT=f"echo edited > {gate.repo / 'README'}")
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "the working tree changed during the run: no green run recorded" in result.stderr
+    assert not gate.green()
+
+
+def test_a_failing_run_forgets_the_green_run(gate):
+    assert gate.make("check-fast").returncode == 0 and gate.green()
+
+    result = gate.make("check-fast", PYTEST_STUB_SCRIPT="exit 1")  # in the same state: a flaky test
+
+    assert result.returncode != 0
+    assert not gate.green()
+
+
+def test_make_check_records_its_green_run(gate):
+    npm = gate.repo.parent / "npm"
+    npm.write_text("#!/bin/sh\necho \"npm $*\"\n")
+    npm.chmod(0o755)
+    (gate.repo / "webui").mkdir()
+
+    result = gate.make("check", f"NPM={npm}")
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "make check passed: lint test frontend" in result.stdout
+    assert gate.green()
+
+
+def test_green_run_state_follows_the_tree_and_ignores_what_git_ignores(work_tree):
+    repo = work_tree.repo
+    states = [work_tree.state()]
+    (repo / "tmp" / "stop-check").mkdir(parents=True)
+    (repo / "tmp" / "stop-check" / "x.log").write_text("ignored\n")
+    assert work_tree.state() == states[0]
+    for change in (lambda: (repo / "README").write_text("y\n"), lambda: work_tree.run("git", "add", "README"),
+                   lambda: (repo / "new.txt").write_text("a\n"), lambda: (repo / "new.txt").write_text("b\n"),
+                   lambda: work_tree.commit("-a", "-m", "docs: y")):
+        change()
+        states.append(work_tree.state())
+    assert len(set(states)) == len(states)
+    work_tree.green()
+    (repo / "README").write_text("y, changed\n")
+    hidden = {"GIT_EXTERNAL_DIFF": "true"}  # a driver that prints nothing
+    assert work_tree.run(sys.executable, "scripts/green-run.py", "check", check=False, **hidden).returncode == 1
+    usage = work_tree.run(sys.executable, "scripts/green-run.py", "record", "not-a-state", check=False)
+    outside = work_tree.run(sys.executable, GREEN_RUN, "state", cwd=repo.parent, check=False,
+                            GIT_CEILING_DIRECTORIES=str(repo.parent))
+    assert usage.returncode == 2 and outside.returncode == 2
 
 
 # The git steps of the suite's fixtures: the places of the guard's cases, the Stop hook's

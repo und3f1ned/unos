@@ -459,6 +459,7 @@ and this index, and `make check-fast` runs it.
 | [0215](0215-e2e-only-against-a-local-stand-in.md) | E2E tests run only against local targets, never against the device | accepted | 2026-11-07 |
 | [0261](0261-the-stand-ins-test-administrator-is-created-through-the-setup-page.md) | The stand-in's test administrator is created through the setup page, by a first Playwright run | accepted | 2026-11-07 |
 | [0317](0317-the-e2e-specs-skip-only-on-listed-conditions-of-the-local-target-and-expect-no-failure.md) | The E2E specs skip only on listed conditions of the local target, and expect no failure | accepted | 2026-11-10 |
+| [0383](0383-backend-tests-run-in-parallel-with-paths-of-their-own-and-a-green-tree-skips-the-pre-commit-check.md) | Backend tests run in parallel with paths of their own, and a green tree skips the pre-commit check | accepted | 2026-11-17 |
 
 ## CI
 

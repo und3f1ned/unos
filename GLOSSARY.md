@@ -338,6 +338,11 @@ it moves the base (ADR-0305). Avoid: parent image.
 **Quality gate**: `make check`: the same steps as CI's test, lint and frontend jobs (ADR-0216).
 Avoid: CI (which also runs the audits and the Linux-only tests).
 
+**Green run**: The state of a working tree (HEAD, the index, the changes and the untracked files)
+in which `make check` or `make check-fast` last passed, recorded by `scripts/green-run.py`; the
+pre-commit hook and the Stop hook do not run `make check-fast` again for it (ADR-0383).
+Avoid: cache, stamp.
+
 **Independent review**: The review of a change by an agent with a fresh context, which gets the
 diff, the ledger entry and its ADRs and tries to refute the change (ADR-0017).
 Avoid: self-review.

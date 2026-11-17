@@ -681,20 +681,23 @@ def test_a_signal_to_the_holders_process_group_keeps_the_lock_until_the_holder_e
     the lock while the holder still works: scenario.sh waits for its check to clean up. The
     session that holds the lock ignores both, and the holder's exit releases it. (On the device
     the lock's own commands never get the workstation's signal; here they run in the same group,
-    so timeout is the plain stand-in.)"""
+    so timeout is the plain stand-in.) The holder works until the test creates the file GO, not
+    for a fixed time, which a busy machine (parallel runs) could use up before the test looks."""
     device = local_device
     device.stub("timeout", "#!/usr/bin/env bash\nshift\nexec \"$@\"\n")
+    go = local_device.lock.parent / "go"
     holder = subprocess.Popen(
         ["bash", "-c", ('. ./env.sh || exit 9; dev_lock "holder"; trap "stop=1" HUP TERM; echo held; '
-                        'bash -c "trap \\"\\" HUP TERM; sleep 2"; echo done')],
-        cwd=DEV, env=local_device.env(FAKE_SSH_MODE="local"), stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-        stdin=subprocess.DEVNULL, text=True, start_new_session=True,
+                        'bash -c "trap \\"\\" HUP TERM; until [ -e \\"\\$GO\\" ]; do sleep 0.05; done"; echo done')],
+        cwd=DEV, env=local_device.env(FAKE_SSH_MODE="local", GO=str(go)), stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE, stdin=subprocess.DEVNULL, text=True, start_new_session=True,
     )
     try:
         assert holder.stdout.readline() == "held\n"
         os.killpg(holder.pid, getattr(__import__("signal"), "SIG" + sig))
         time.sleep(0.5)
         assert not lock_is_free(local_device.lock), "the lock went with the signal"
+        go.touch()
         out, err = holder.communicate(timeout=30)
         assert out == "done\n", err
     finally:
@@ -1932,17 +1935,17 @@ def test_the_device_checks_skill_says_which_scripts_lock_and_report_sd_writes():
     assert scripts_named(text, "print `SD writes") == reporting
 
 
-def test_the_device_skills_measure_every_other_command_and_lock_the_backend_tests():
+def test_the_device_skills_measure_every_other_command_and_run_testparm_in_one_process():
     """ssh.sh, api.py and the testparm shim print no SD writes of their own: every step that runs
     them does so under sd.sh measure, so that the report has a number for each check. pytest runs
-    through make test, which holds the lock of the backend tests (their fixed paths in /tmp)."""
+    through make test, in one process (TEST_WORKERS=0): one testparm at a time on the device."""
     text = (SKILLS / "device-checks" / "SKILL.md").read_text()
     steps = text.split("## Steps", 1)[1].split("## Gotchas", 1)[0]
     # The command lines of the steps (code spans with arguments), not the names in the prose.
     commands = [span for span in re.findall(r"`([^`]+)`", steps) if " " in span and span.startswith(("scripts/dev/", "PATH="))]
     unmeasured = [c for c in commands if re.search(r"scripts/dev/(ssh\.sh|api\.py|bin)\b", c) and "scripts/dev/sd.sh measure " not in c]
     assert len(commands) >= 4 and not unmeasured, commands
-    assert any("make test TESTS=tests/test_smbconf_testparm.py" in c for c in commands), commands
+    assert any("make test TESTS=tests/test_smbconf_testparm.py TEST_WORKERS=0" in c for c in commands), commands
     for name in ("device-checks", "deploy-device"):
         skill = (SKILLS / name / "SKILL.md").read_text()
         assert not re.search(r"-m pytest|\bpytest tests/", skill), name

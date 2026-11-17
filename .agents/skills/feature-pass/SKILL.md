@@ -45,8 +45,8 @@ A pass takes one entry of `feature-list.json` from `passes: false` to `passes: t
    approved a plan in which every step has its test or check.
 
 4. **Write the failing tests first** (ADR-0186). Run a backend file with
-   `make test TESTS=tests/<file>` (`PYTHON=<interpreter>` picks another Python), which waits for
-   the machine's test lock; never run pytest directly. Run a spec with
+   `make test TESTS=tests/<file>` (`PYTHON=<interpreter>` picks another Python, `TEST_WORKERS=0`
+   runs in one process); never run pytest directly. Run a spec with
    `scripts/standin/e2e.sh tests/<name>.spec.ts`. Result: the new tests fail on the current code,
    for the reason the entry describes (quote the failing assertion). From now on they stand:
    weakening one to get green needs the owner's yes.
@@ -136,6 +136,6 @@ part is checked by hand, with the steps of the entry's notes.
   with `E2E_STAND_IN=1` and needs the device check instead.
 - A test that is an expected failure or a skip on macOS, such as the Linux-only paths of uploads
   and host tools, proves its step only on Linux: run it with `scripts/dev/linux-tests.sh`.
-- One backend test run per machine at a time: the tests use fixed paths under /tmp until
-  `testing.per-test-temp-paths` passes. The test targets of make wait for the lock
-  `/tmp/unos-backend-tests.lock`; a bare pytest does not.
+- Backend test runs in several worktrees go at once: each pytest process has temporary paths of
+  its own (ADR-0383). A new test writes only below its `tmp_path`, never to a fixed path, and
+  passes in parallel workers (`make test`) as well as alone (`TEST_WORKERS=0`).

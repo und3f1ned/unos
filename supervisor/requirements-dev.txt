@@ -4,6 +4,8 @@
 pytest==9.2.0
 pytest-asyncio==1.4.1.post1
 pytest-cov==7.1.0
+# make test runs the tests in parallel worker processes (ADR-0383).
+pytest-xdist==3.8.0
 # tests/test_authz.py reads the compose files (also pulled in by uvicorn[standard]).
 PyYAML==6.0.3
 # Transport for starlette.testclient; Starlette 1.x deprecates using httpx

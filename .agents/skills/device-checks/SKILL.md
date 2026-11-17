@@ -44,10 +44,10 @@ use the main checkout's. Output shows secrets as `<redacted>`.
    a check the owner asked for, and undo what you create.
 
 4. **Use Samba's own parser.** From the repository root:
-   `PATH="$PWD/scripts/dev/bin:$PATH" scripts/dev/sd.sh measure testparm -- make test TESTS=tests/test_smbconf_testparm.py`
-   (add `PYTHON=...` for another interpreter than `make setup`'s venv). `make test` holds the
-   lock of the backend tests, so it waits for another run on this machine (also in another
-   worktree), and runs pytest in `supervisor/`; `scripts/dev/bin/testparm` runs the device's
+   `PATH="$PWD/scripts/dev/bin:$PATH" scripts/dev/sd.sh measure testparm -- make test TESTS=tests/test_smbconf_testparm.py TEST_WORKERS=0`
+   (add `PYTHON=...` for another interpreter than `make setup`'s venv). `make test` runs pytest
+   in `supervisor/`, here in one process (`TEST_WORKERS=0`), so that one testparm at a time runs
+   on the device; `scripts/dev/bin/testparm` runs the device's
    testparm on each rendered file. Result: the tests pass, none is skipped (a skip means
    `scripts/dev/bin` is not first on PATH as an absolute path), and `SD writes testparm:` at
    or near 0 MiB.

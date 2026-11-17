@@ -236,9 +236,11 @@ class TestCheck:
         assert auth_utils.check_totp_code(7, SECRET, code) is auth_utils.TotpCheck.REUSED
         assert auth_utils.check_totp_code(8, SECRET, code) is auth_utils.TotpCheck.OK
 
+    # Ids of their own: SECRET is random in each process, and the workers of a parallel run must
+    # collect the same tests.
     @pytest.mark.parametrize("secret, code", [
         (None, "123456"), ("", "123456"), ("not base32!", "123456"), (SECRET, ""), (SECRET, None), (SECRET, 123456),
-    ])
+    ], ids=["no-secret", "empty-secret", "not-base32", "empty-code", "no-code", "code-as-a-number"])
     def test_no_usable_secret_or_code(self, clock, monkeypatch, secret, code):
         monkeypatch.setattr(auth_utils, "_last_totp_steps", {})
 

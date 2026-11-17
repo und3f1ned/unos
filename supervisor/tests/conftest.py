@@ -1,6 +1,8 @@
 import pytest
+import atexit
 import os
 import secrets
+import shutil
 import sys
 import tempfile
 from unittest.mock import patch, MagicMock
@@ -17,9 +19,19 @@ os.environ["UNOS_DB_PATH"] = ":memory:"
 # Random per run: secrets this repo published (such as the "test-secret-key"
 # used here before) are refused at startup (config.INSECURE_JWT_SECRETS).
 os.environ["UNOS_JWT_SECRET"] = secrets.token_hex(32)
-os.environ["UNOS_SMB_CONF_PATH"] = "/tmp/test_smb.conf"
-os.environ["UNOS_NFS_EXPORTS_PATH"] = "/tmp/test_exports"
-os.environ["UNOS_POOLS_BASE_PATH"] = "/tmp/test_pools"
+# smb.conf, the NFS export file and the pools' folder are in a temporary folder of this process
+# alone, removed when the run ends: two runs at once, in two worktrees, and the workers of one
+# parallel run (pytest-xdist) never share them (ADR-0383). pytest_unconfigure removes it at the end
+# of a run or a worker, atexit when pytest stops before (a usage error).
+_RUN_DIR = tempfile.mkdtemp(prefix="unos-tests-")
+os.environ["UNOS_SMB_CONF_PATH"] = os.path.join(_RUN_DIR, "smb.conf")
+os.environ["UNOS_NFS_EXPORTS_PATH"] = os.path.join(_RUN_DIR, "exports")
+os.environ["UNOS_POOLS_BASE_PATH"] = os.path.join(_RUN_DIR, "pools")
+atexit.register(shutil.rmtree, _RUN_DIR, ignore_errors=True)
+
+
+def pytest_unconfigure(config):
+    shutil.rmtree(_RUN_DIR, ignore_errors=True)
 
 
 @pytest.fixture(autouse=True)

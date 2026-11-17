@@ -17,7 +17,9 @@ line on stderr that names the rule and what to do instead:
   device-push      git push on the dev device
   force-push       --force, --force-with-lease, +refspec, --mirror
   delete-branch    --delete, :branch, --prune
-  skip-hooks       --no-verify, git commit -n, another core.hooksPath
+  skip-hooks       --no-verify, git commit -n, another core.hooksPath, a green run recorded by
+                   hand (scripts/green-run.py record, a write to tmp/stop-check/green), which the
+                   pre-commit hook and the Stop hook would take for a passed make check
   e2e-target       Playwright runs whose BASE_URL or HTTP_URL is not local, Playwright on the device
   disk-wipe        mkfs, wipefs -a, dd or a redirection to a disk, blkdiscard, sgdisk, sfdisk,
                    fdisk, parted, shred on a disk, cryptsetup luksFormat, btrfs device remove,
@@ -88,6 +90,11 @@ DEV_ENV, BACKUP = "dev.env", "tmp/dev/backup"
 BACKUP_RULE = ("the device backups in tmp/dev/backup hold the device's JWT secret, password hashes and "
                "database, which are never shown, copied or extracted (ADR-0212, ADR-0223). Only "
                "scripts/dev/deploy.sh rollback reads them; ask the owner")
+# The record of the green run (rule skip-hooks): make check and make check-fast write it when they
+# pass, and the hooks skip make check-fast for a tree in its state (scripts/green-run.py, ADR-0383).
+GREEN_RECORD = "tmp/stop-check/green"
+GREEN_RULE = ("make check and make check-fast record a green run when they pass, and the pre-commit hook "
+              "and the Stop hook then skip make check-fast (ADR-0383). Run make check-fast instead")
 SUBST = "__guard_subst__"  # stands for the output of a command substitution
 MAX_DEPTH = 16  # nested scripts (substitutions, bash -c, remote commands)
 MAX_STDIN_FILE = 1 << 20  # a local file sent to a remote shell is read up to this size
@@ -853,6 +860,8 @@ class Guard:
             if op in _OUTPUT_REDIRECTS and target == SYSRQ:
                 raise Blocked("power", f"writing to {SYSRQ} reboots or powers off the machine at once: an "
                               "owner action (ADR-0211). Ask the owner")
+            if op in _OUTPUT_REDIRECTS and self.names_green_record(target, state):
+                raise Blocked("skip-hooks", f"writing to {GREEN_RECORD}: {GREEN_RULE}")
             if op in _OUTPUT_REDIRECTS and _is_device_path(target):
                 raise Blocked("disk-wipe", f"writing to {target} overwrites a disk: an owner action "
                               "(ADR-0214). Ask the owner; storage code is tested against the fake host "
@@ -1151,6 +1160,8 @@ class Guard:
             self.check_packages(name, args)
         if name == "git":
             self.check_git(args, env, state)
+        if state.ctx == LOCAL:
+            self.check_green_record(name, args, state)
         if name == "gh":
             positionals = [arg for arg in args if not arg.startswith("-")]
             if positionals[:2] == ["pr", "merge"]:
@@ -1451,6 +1462,37 @@ class Guard:
             self.check_git_config(rest, cwd)
         elif any(arg == "--no-verify" or (len(arg) >= 7 and "--no-verify".startswith(arg)) for arg in rest):
             self.block_no_verify(f"git {sub} --no-verify")
+
+    @staticmethod
+    def names_green_record(path: str, state: State) -> bool:
+        """Whether `path` is the record of the green run, here or in another checkout."""
+        full = (_joined(state.cwd, path) if state.ctx == LOCAL else None) or path
+        return any(candidate.rstrip("/") == GREEN_RECORD or candidate.rstrip("/").endswith("/" + GREEN_RECORD)
+                   for candidate in (path, full))
+
+    def check_green_record(self, name: str, args: list, state: State) -> None:
+        """scripts/green-run.py record, and the commands that write a file given as an argument
+        (the target of cp, mv, ln, install and rsync, a file of tee, dd's of=), into the record."""
+        if name == "green-run.py":
+            rest = args
+        elif _INTERPRETERS.match(name):
+            scripts = [i for i, arg in enumerate(args) if os.path.basename(arg) == "green-run.py"]
+            rest = args[scripts[0] + 1:] if scripts else []
+        else:
+            rest = []
+        if rest[:1] == ["record"]:
+            raise Blocked("skip-hooks", f"green-run.py record by hand: {GREEN_RULE}")
+        operands = [arg for arg in args if not arg.startswith("-")]
+        if name in ("cp", "mv", "ln", "install", "rsync", "gcp", "gmv"):
+            written = operands[-1:]
+        elif name == "tee":
+            written = operands
+        elif name == "dd":
+            written = [arg[3:] for arg in args if arg.startswith("of=")]
+        else:
+            written = []
+        if any(self.names_green_record(path, state) for path in written):
+            raise Blocked("skip-hooks", f"{name} into {GREEN_RECORD}: {GREEN_RULE}")
 
     @staticmethod
     def block_no_verify(what: str) -> None:

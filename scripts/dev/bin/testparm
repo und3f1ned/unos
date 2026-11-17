@@ -4,9 +4,10 @@
 # RAM, with the device's root filesystem read-only (dev_remote_ro of env.sh, ADR-0221), and
 # deletes the copy. It takes no device lock and prints no SD writes. Put this directory first
 # on PATH, as an absolute path (pytest runs in supervisor/), from the repository root; make test
-# holds the lock of the backend tests, and sd.sh measures the SD writes of the run:
+# runs in one process with TEST_WORKERS=0, one testparm at a time, and sd.sh measures the SD
+# writes of the run:
 #
-#   PATH="$PWD/scripts/dev/bin:$PATH" scripts/dev/sd.sh measure testparm -- make test TESTS=tests/test_smbconf_testparm.py
+#   PATH="$PWD/scripts/dev/bin:$PATH" scripts/dev/sd.sh measure testparm -- make test TESTS=tests/test_smbconf_testparm.py TEST_WORKERS=0
 #
 # Accepts only the call that test makes: testparm -s --suppress-prompt FILE.
 set -euo pipefail
