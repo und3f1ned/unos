@@ -21,7 +21,8 @@ the choices, asking above all that they be safe (ADR-0013); the agent made them.
 
 - **A group is a row of UNOS's database, never a host group.** The tables of
   `supervisor/src/shares/models.py`, made by `create_all` (ADR-0319): `user_groups` (an id that
-  AUTOINCREMENT never hands out twice, a name unique ignoring case, and a version),
+  AUTOINCREMENT does not hand out again in a database that UNOS made, a name unique ignoring case,
+  and a version),
   `user_group_members` (group, user id and the username it was written for, one row per group and
   user) and `smb_share_group_access` (share, group, `read` or `write`, one row per share and group).
   No `groupadd`, no gid, no `@group` or `+group` in smb.conf.
@@ -34,14 +35,19 @@ the choices, asking above all that they be safe (ADR-0013); the agent made them.
   access when the group is saved, and a member removed loses it: smb.conf is staged, checked by
   testparm and installed (ADR-0089), and the shares whose access shrank close their open
   connections (ADR-0103); a rendering that does not change writes nothing (ADR-0082), and a
-  group's rename alone, which cannot change it, is only committed.
+  group's rename alone, which cannot change it, is only committed. The account page of a user
+  (`GET /auth/me/smb`) shows the level that smb.conf gives: the lower one of two rows of a grant,
+  the higher one across grants.
 - **The API**, administrators only (`_ADMIN_ONLY` of `supervisor/src/main.py`, ADR-0030):
   `supervisor/src/shares/groups.py` serves `GET /api/v1/groups`, `POST /groups` (`name`,
   `members`) and `GET`, `PATCH` (`name`, `expected_version`, `new_name`, `members`, which replaces
   the list; 409 "The group was changed meanwhile; reload") and `DELETE /groups/{id}?name=`. As
   users are (ADR-0133), a request names a group by its id with the name it saw, and an id whose
   group now has another name is refused (409 "Group <id> is now '<name>'; reload the page"), so a
-  page loaded before a rename never reaches another group of the old name. Members are named by id
+  page loaded before a rename never reaches another group of the old name, also where a restored
+  table hands an id out again. A rename raises the versions of the group's shares, as a user's
+  does (ADR-0368): a share dialog loaded before it, which no longer finds the group under its old
+  name and would send the access list without it, is refused (409). Members are named by id
   with their username; administrators and usernames that SMB cannot use are refused, as in a
   share's access list, and users whose SMB is off or needs a password are accepted. `POST` and
   `PATCH /shares/smb` take `group_access` (`group_id`, `group`, `level`; 400 "Group <id> does not
@@ -64,12 +70,17 @@ the choices, asking above all that they be safe (ADR-0013); the agent made them.
   or group is gone (`purge_orphans`, ADR-0137).
 - **Backups and restores.** Groups are part of the database, so every backup holds them and a
   restore brings them back with it. `check_smb_tables` checks the three tables when a backup has
-  them (an older backup restores with no group) and refuses one that gives a name to two groups; `prepare_restored_shares` deletes the group
+  them (an older backup restores with no group) and refuses one that gives a name to two groups or
+  has a group whose name breaks the rule, which no request could name: its access could be neither
+  changed nor deleted; `prepare_restored_shares` deletes the group
   access of a database that is not authoritative for SMB (the groups and members stay) and, in one
   that is, the group access of missing shares and of shares that are not served, as it does for
-  users (ADR-0319). A restored member counts only while the user's account is active, which after a
-  restore needs proof (ADR-0141); the uid guards (ADR-0349, ADR-0353) are unchanged, since groups
-  have no ids on the host.
+  users (ADR-0319). After a restore of a database that is not authoritative, the import of the
+  live smb.conf finds users, not groups, in its lists: every user who has access in it, also through
+  a group, gets that access as their own, which stays when they leave the group
+  (`docs/USER_GUIDE.md`, System Backup). A restored member counts only while the user's account is
+  active, which after a restore needs proof (ADR-0141); the uid guards (ADR-0349, ADR-0353) are
+  unchanged, since groups have no ids on the host.
 - **Uninstall and import.** `deploy/uninstall.sh` has nothing of groups to remove (ADR-0322). The
   import still keeps no `@group` entry of an existing smb.conf (ADR-0086, ADR-0380): it names a host
   group, not a group of UNOS.

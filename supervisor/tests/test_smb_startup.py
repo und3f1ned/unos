@@ -431,7 +431,7 @@ class TestSteps:
         await start()
         with closing(sqlite3.connect(env.db_path)) as conn:
             assert conn.execute("SELECT username FROM smb_share_access").fetchall() == [("alice",)]
-        assert "Removed 1 stale share access row(s)" in audit_entries(env.audit)[0]["details"]
+        assert "Removed 1 stale row(s) of share access and of groups" in audit_entries(env.audit)[0]["details"]
 
 
 class TestProblemsOnly:

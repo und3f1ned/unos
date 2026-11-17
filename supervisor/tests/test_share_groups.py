@@ -362,6 +362,23 @@ class TestGroupAccess:
         assert (entry["action"], entry["severity"], entry["resource_id"], entry["details"]) == (
             "group_deleted", "warning", "family", "Deleted group family; its access was removed from: docs (write)")
 
+    def test_a_rename_makes_a_share_dialog_loaded_before_it_stale(self, api, family):
+        """A share dialog keys a group's level by its id and name: one loaded before a rename would show
+        the renamed group at No access and send the list without it. The rename raises the versions of
+        the group's shares, as a user's rename does (ADR-0368), so such a save is refused."""
+        assert make_group(api, "kids", BOB).status_code == 200
+        created = api.create(group_access=grant(api, ("family", "write")))
+        assert created.status_code == 200, created.text
+        version = created.json()["version"]
+
+        assert patch_group(api, "family", new_name="parents").status_code == 200
+
+        assert api.get("docs").json()["version"] == version + 1
+        stale = api.patch("docs", expected_version=version, group_access=grant(api, ("kids", "read")))
+        assert (stale.status_code, stale.json()["detail"]) == (409, service.VERSION_CONFLICT)
+        assert lists(api) == ("alice", "alice")
+        assert [g["group"] for g in api.get("docs").json()["group_access"]] == ["parents"]
+
     def test_deleting_a_share_deletes_its_group_access(self, api, family):
         assert api.create(group_access=grant(api, ("family", "write"))).status_code == 200
         assert api.client.delete(f"{API}/smb/docs").status_code == 200
@@ -448,6 +465,42 @@ class TestUsersInGroups:
         assert response.status_code == 200, response.text
         assert response.json()["id"] == 8
         assert api.rows("SELECT user_id FROM user_group_members ORDER BY user_id") == [(ALICE,), (DAVE,)]
+
+    def test_the_account_page_shows_the_level_that_smb_conf_gives(self, api):
+        """Two rows of one grant (a restored table without its UNIQUE constraint) give the lower level,
+        as smb.conf does (ADR-0144); the higher level counts across grants."""
+        from src.auth.models import User
+        from src.auth.utils import verify_token
+        from src.main import app
+
+        assert make_group(api, "family", ALICE).status_code == 200
+        for name in ("both", "docs", "media"):
+            assert api.create(name, name).status_code == 200
+        api.sql("DROP TABLE smb_share_group_access",
+                "CREATE TABLE smb_share_group_access (id INTEGER PRIMARY KEY, share_id INTEGER NOT NULL, "
+                "group_id INTEGER NOT NULL, level VARCHAR(8) NOT NULL)",
+                "DROP TABLE smb_share_access",
+                "CREATE TABLE smb_share_access (id INTEGER PRIMARY KEY, share_id INTEGER NOT NULL, user_id INTEGER "
+                "NOT NULL, username VARCHAR(64) NOT NULL, level VARCHAR(8) NOT NULL, created_at DATETIME NOT NULL "
+                "DEFAULT CURRENT_TIMESTAMP)",
+                # both: alice reads by her own level and writes through family.
+                f"INSERT INTO smb_share_access (share_id, user_id, username, level) VALUES (1, {ALICE}, 'alice', 'read')",
+                "INSERT INTO smb_share_group_access (share_id, group_id, level) VALUES (1, 1, 'write')",
+                # docs: two rows of family's grant.
+                "INSERT INTO smb_share_group_access (share_id, group_id, level) VALUES (2, 1, 'write')",
+                "INSERT INTO smb_share_group_access (share_id, group_id, level) VALUES (2, 1, 'read')",
+                # media: two rows of alice's own grant.
+                f"INSERT INTO smb_share_access (share_id, user_id, username, level) VALUES (3, {ALICE}, 'alice', 'write')",
+                f"INSERT INTO smb_share_access (share_id, user_id, username, level) VALUES (3, {ALICE}, 'alice', 'read')")
+        assert api.patch("both", comment="rendered again").status_code == 200
+        assert [lists(api, name) for name in ("both", "docs", "media")] == [
+            ("alice", "alice"), ("alice", ""), ("alice", "")]
+        alice = User(id=ALICE, username="alice", hashed_password="x", is_admin=False, totp_enabled=False)
+        app.dependency_overrides[verify_token] = lambda: alice  # the fixture removes it
+
+        shares = api.client.get("/api/v1/auth/me/smb").json()["shares"]
+
+        assert [(s["name"], s["level"]) for s in shares] == [("both", "write"), ("docs", "read"), ("media", "read")]
 
     def test_the_account_page_lists_the_shares_of_the_user_s_groups(self, api, shared):
         from src.auth.models import User
@@ -563,6 +616,27 @@ class TestReconcileAndRestore:
         conn.execute("CREATE TABLE user_group_members (id INTEGER PRIMARY KEY, group_id INTEGER)")
         conn.commit()
         with pytest.raises(BackupValidationError, match="user_group_members.user_id"):
+            service.check_smb_tables(db)
+
+    @pytest.mark.parametrize("name", ["f" * 70, "Family Room", sqlite3.Binary(b"\xff")])
+    def test_a_backup_with_a_group_name_that_unos_refuses_is_refused(self, tmp_path, name):
+        """Such a group could not be named in a request (the API takes the rule's names), so its access
+        could be neither changed nor deleted: the restore refuses the backup (ADR-0144)."""
+        from sqlalchemy import create_engine
+
+        from src.backup.router import BackupValidationError
+        from src.database import Base
+
+        db = tmp_path / "restored.db"
+        engine = create_engine(f"sqlite:///{db}")
+        Base.metadata.create_all(engine)
+        engine.dispose()
+        conn = sqlite3.connect(db)
+        conn.execute("INSERT INTO user_groups (id, name, version) VALUES (1, 'family', 1)")
+        conn.execute("INSERT INTO user_groups (id, name, version) VALUES (2, ?, 1)", (name,))
+        conn.commit()
+        conn.close()
+        with pytest.raises(BackupValidationError, match="has a group whose name UNOS does not accept"):
             service.check_smb_tables(db)
 
     def test_a_backup_that_gives_one_name_to_two_groups_is_refused(self, tmp_path):

@@ -122,7 +122,8 @@ class MySmbShare(BaseModel):
 class MySmbStatus(BaseModel):
     account: SmbAccountStatus
     totp_required: bool        # the user has 2FA: POST /auth/me/smb/enable needs totp_code
-    shares: list[MySmbShare]   # shares with an access row for this user or a group of theirs, plus guest shares; sorted by name; no paths
+    # Shares with an access row for this user or a group of theirs, plus guest shares; by name; no paths.
+    shares: list[MySmbShare]
 
 
 class MySmbChange(MySmbStatus):

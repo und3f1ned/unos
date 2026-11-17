@@ -137,13 +137,17 @@ async def _my_smb_status(db: AsyncSession, user: User, row: SmbAccount | None) -
     for share in (await db.execute(select(SmbShare))).scalars():
         if not isinstance(share.name, str):
             continue
-        levels = {
-            entry.level for entry in share.access
-            if entry.user_id == user.id and entry.username == user.username and entry.level in ("read", "write")
-        } | {
-            entry.level for entry in share.group_access
-            if entry.group_id in groups and entry.level in ("read", "write")
-        }
+        # The level that smb.conf gives: two rows of one grant (a restored table without its UNIQUE
+        # constraint) give the lower level, as the render takes them (ADR-0144); across grants, the
+        # user's own and each group's, the higher level counts.
+        grants: dict[object, set[str]] = {}
+        for entry in share.access:
+            if entry.user_id == user.id and entry.username == user.username and entry.level in ("read", "write"):
+                grants.setdefault("own", set()).add(entry.level)
+        for entry in share.group_access:
+            if entry.group_id in groups and entry.level in ("read", "write"):
+                grants.setdefault(entry.group_id, set()).add(entry.level)
+        levels = {"read" if "read" in rows else "write" for rows in grants.values()}
         guest = bool(share.guest_ok)
         if not levels and not guest:
             continue

@@ -165,6 +165,26 @@ async def _replace_members(db: AsyncSession, group_id: object, wanted: Mapping[i
     return added + removed
 
 
+async def _bump_shares_of(db: AsyncSession, group_id: int) -> None:
+    """Increment the version of every share the group has access to (flushed), as a user's rename
+    does for the user's shares (ADR-0368): a share dialog keys a group by its id and name, so one
+    loaded before a rename would send the access list without the group, and must be refused."""
+    shares = (
+        await db.execute(
+            select(models.SmbShare)
+            .where(
+                models.SmbShare.id.in_(
+                    select(models.SmbShareGroupAccess.share_id).where(models.SmbShareGroupAccess.group_id == group_id)
+                )
+            )
+            .execution_options(**_FRESH)
+        )
+    ).scalars().all()
+    for share in shares:
+        share.version = service._next_version(share.version)
+    await db.flush()
+
+
 async def _infos(db: AsyncSession, only: object = None) -> list[schemas.GroupInfo]:
     """GroupInfo of every group (or of the group with id ``only``), sorted by name."""
     rows = [row for row in await _group_rows(db) if only is None or row.id == only]
@@ -274,6 +294,7 @@ async def update_group(db: AsyncSession, group_id: int, data: schemas.GroupUpdat
                     raise HTTPException(status_code=409, detail=f"Group {data.new_name} already exists")
                 changes.append(f"name {old_name}→{data.new_name}")
                 group.name = data.new_name
+                await _bump_shares_of(db, group_id)
             members_changed = False
             if "members" in sent:
                 diff = await _replace_members(db, group_id, await _check_members(db, data.members))

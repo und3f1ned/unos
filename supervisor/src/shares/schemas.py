@@ -67,7 +67,7 @@ class SmbShareCreate(BaseModel):
     browseable: bool = True
     guest_ok: bool = False                          # guests can only ever read
     access: AccessList = []
-    group_access: GroupAccessList = []            
+    group_access: GroupAccessList = []
     # The protocol options (ADR-0380), each off by default.
     encryption_required: bool = False               # clients that cannot encrypt (SMB3) are refused
     time_machine: bool = False                      # a Mac can back up to the share with Time Machine

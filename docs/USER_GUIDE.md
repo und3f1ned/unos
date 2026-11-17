@@ -2256,10 +2256,14 @@ backup in the list has **Restore**, **Download** and **Delete** buttons.
 SMB after a restore:
 - The shares and their access lists, and the groups with their members, come
   back with the database, and UNOS writes smb.conf from them; a backup holds
-  no smb.conf. A backup made before UNOS had groups restores without groups. A backup whose
-  database never imported its shares gets the shares of the current smb.conf,
-  without guest access, and a backup of a UNOS from before shares were stored
-  in the database is refused.
+  no smb.conf. A backup made before UNOS had groups restores without groups,
+  and one whose groups break the name rule or share a name is refused. A
+  backup whose database never imported its shares gets the shares of the
+  current smb.conf, without guest access: smb.conf names users, not groups,
+  so every user who has access in it, also through a group, gets that access
+  of their own, which stays when they leave the group, and the groups come
+  back without access to shares. A backup of a UNOS from before shares were
+  stored in the database is refused.
 - SMB keeps working for users whose password did not change since the backup
   was made. Everyone else shows **Password needed** and must turn SMB on
   again (see [SMB Access](#smb-access)), and so must a user whose SMB user id

@@ -704,10 +704,10 @@ async def build_render_input(db: AsyncSession, pool_names: Collection[str]) -> R
     share with an invalid or duplicate name or a path that breaks ADR-0145 is not
     served, a comment that fails validation is left out, a principal is rendered
     only for an access row of an existing user with that user's current name and
-    an active account, or for a member row of the same kind of a group with access
-   , with the higher of the levels, Time Machine and Previous Versions only as _rendered_options
-    allows (ADR-0380), and guest access not where encryption is required, each
-    with a problem for the status when it does not.
+    an active account, or for a member row of the same kind of a group with
+    access, with the higher of the levels, Time Machine and Previous Versions
+    only as _rendered_options allows (ADR-0380), and guest access not where
+    encryption is required, each with a problem for the status when it does not.
     """
     render, _ = await _read_render_input(db, pool_names)
     return render
@@ -1762,10 +1762,10 @@ async def delete_access_of_user(db: AsyncSession, user_id: int) -> int:
 
 
 async def rename_access_of_user(db: AsyncSession, user_id: int, old: str, new: str) -> None:
-    """A user's rename (ADR-0368): their access rows and memberships of groups, written
-    for ``old``, name ``new`` (ADR-0133); a row of the id written for another name is stale
-    (ADR-0137) and is deleted, so that it never becomes access of the new name. The shares of these rows get version + 1 (flushed, not
-    committed). The caller holds smb_lock()."""
+    """A user's rename (ADR-0368): their access rows and memberships of groups, written for
+    ``old``, name ``new`` (ADR-0133); a row of the id written for another name is stale (ADR-0137)
+    and is deleted, so that it never becomes access of the new name. The shares of these access
+    rows get version + 1 (flushed, not committed). The caller holds smb_lock()."""
     members = (
         await db.execute(
             select(models.UserGroupMember)
@@ -2463,9 +2463,8 @@ async def _check_group_access(
         if entry.group_id not in groups:
             raise HTTPException(status_code=400, detail=f"Group {entry.group_id} does not exist")
         if groups[entry.group_id] != entry.group:
-            raise HTTPException(
-                status_code=409, detail=f"Group {entry.group_id} is now '{_text(groups[entry.group_id])}'; reload the page"
-            )
+            now = _text(groups[entry.group_id])
+            raise HTTPException(status_code=409, detail=f"Group {entry.group_id} is now '{now}'; reload the page")
         access[entry.group_id] = (entry.group, entry.level.value)
     return access
 
@@ -3521,7 +3520,7 @@ async def _reconcile(db: AsyncSession, run: _Run, *, after_restore: bool) -> Non
         if purged or orphan_options or cleaned:
             await db.commit()
         if purged:
-            run.changes.append(f"Removed {purged} stale share access row(s)")
+            run.changes.append(f"Removed {purged} stale row(s) of share access and of groups")
         if orphan_options:
             run.changes.append(f"Removed the options of {orphan_options} deleted share(s)")
         if cleaned:
@@ -3694,7 +3693,9 @@ def check_smb_tables(db_file: os.PathLike | str) -> None:
     rows is refused too (ADR-0349): a uid owns its files on the pools, and
     belongs to one account (ADR-0109, ADR-0112); UNOS's table keeps it unique,
     a backup's need not; and so is a user_groups table that gives one name, in any letter case, to
-    two or more groups, which UNOS's table keeps unique. Raises BackupValidationError.
+    two or more groups, which UNOS's table keeps unique, or that has a group whose name breaks the
+    rule of group names: no request could name it, so its access could be neither changed nor
+    deleted. Raises BackupValidationError.
     """
     from ..backup.router import BackupValidationError  # backup.router imports this module
 
@@ -3703,6 +3704,7 @@ def check_smb_tables(db_file: os.PathLike | str) -> None:
     missing: list[str] = []
     extra: list[str] = []
     shared_uid = shared_name = None
+    bad_names: list[object] = []
     try:
         for table in (*_SMB_TABLES, *_OPTIONAL_SMB_TABLES):
             info = conn.execute(f'PRAGMA table_info("{table.name}")').fetchall()
@@ -3727,6 +3729,10 @@ def check_smb_tables(db_file: os.PathLike | str) -> None:
                 shared_name = conn.execute(
                     "SELECT MIN(name), COUNT(*) FROM user_groups GROUP BY lower(name) HAVING COUNT(*) > 1 LIMIT 1"
                 ).fetchone()
+                bad_names = [
+                    name for (name,) in conn.execute("SELECT name FROM user_groups ORDER BY id")
+                    if not isinstance(name, str) or not constants.LINUX_NAME_PATTERN.fullmatch(name)
+                ]
     finally:
         conn.close()
     if absent:
@@ -3748,6 +3754,10 @@ def check_smb_tables(db_file: os.PathLike | str) -> None:
     if shared_name is not None:
         name, count = shared_name
         raise BackupValidationError(f"unos.db in the backup gives the name {_label(name)} to {count} groups")
+    if bad_names:
+        raise BackupValidationError(
+            f"unos.db in the backup has a group whose name UNOS does not accept: {_label(bad_names[0])[:64]}"
+        )
 
 
 _SQLITE = sqlite_dialect.dialect()
