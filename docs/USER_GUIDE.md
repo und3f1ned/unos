@@ -476,18 +476,24 @@ For each pool, you can:
   not answer, the delete stops after 10 seconds and says so. A pool mounted
   read-only lists its volumes but cannot create or delete them.
   Each volume shows its use: with a quota, a bar and "8.0 GB of 10.0 GB used
-  (80.0%)"; without one, the use alone. The use is what btrfs counts against
-  the quota, the data the volume shares with its snapshots included. With
-  quotas off on the pool nothing is counted, and the dialog says how to
-  enable them; when btrfs says its counts need a rescan, the dialog shows
-  `btrfs quota rescan /mnt/pools/<pool>` to run on the host. The graph button
+  (80.0%)", yellow from 80% and red from 95%; without one, the use alone. The
+  use is what btrfs counts against the quota, the data the volume shares with
+  its snapshots included (a limit on exclusive data, `btrfs qgroup limit -e`,
+  is not shown as a quota). With quotas off on the pool nothing is counted,
+  and the dialog says how to enable them and what they cost: deleting
+  snapshots and balancing get slower, the more so the more snapshots the pool
+  has. When btrfs says its counts need a rescan, the dialog shows
+  `btrfs quota rescan /mnt/pools/<pool>` to run on the host; until the counts
+  are right again, UNOS keeps the alerts as they were and adds no point to
+  the graph. Deleting a volume also deletes its quota group, so that a later
+  subvolume does not take over its limit. The graph button
   of a volume shows its use over time below it: one point per hour for the
   last 30 days, with the quota as a dashed line. UNOS keeps the points in
   memory and writes them to the system disk only when the supervisor stops,
   so an update or a reboot keeps them, while a power cut loses the points
   since the last stop. A renamed volume keeps its points; a deleted one loses
   them. A volume that reaches 80, 90 or 95% of its quota is alerted (see
-  [Alerts](#alerts)).
+  [Alerts](#alerts)); a restart keeps the level it reached.
 - **Balance** - Redistribute data across devices
 - **Remove pool** (the trash button) - After **Continue**, type the pool's
   name to enable **Remove Pool**. UNOS unmounts the pool, removes it from

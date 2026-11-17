@@ -334,8 +334,12 @@ manager, encrypted backup uploads, health checks, CI checks).
   disk read. At each pass of the RAID monitor (every 5 minutes), a volume that
   reaches 80, 90 or 95% of its quota is alerted once per level to every
   enabled channel and shown in the health banner (an error at 95%); a level
-  counts again once the use fell 5 points below it. The points stay in memory
-  and are written to the system disk only when the supervisor stops.
+  counts again once the use fell 5 points below it, and a restart keeps the
+  level reached. While btrfs's counts need a rescan they change no alert and
+  no point. The points stay in memory and are written to the system disk only
+  when the supervisor stops. Deleting a volume or a restored copy now also
+  destroys its quota group, which btrfs kept with its limit for a later
+  subvolume of the same id.
 - Apps of several containers (ADR-0381): an app of the catalog may have
   companion containers beside its main one, on a Docker network of its own
   (`unos-app-<app>`, where each answers to its name), which UNOS installs,

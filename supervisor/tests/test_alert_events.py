@@ -162,6 +162,7 @@ class TestTheRegistry:
         assert all(event.timestamp > current.since for event in alerts[1:])
 
     def test_the_stage_stays_out_of_what_the_web_ui_gets(self):
+        assert _problem(stage=90).stage == 90
         assert "stage" not in _problem(stage=90).model_dump()
 
     async def test_the_sources_are_kept_apart(self, alerts):

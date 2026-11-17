@@ -2701,7 +2701,8 @@ def _delete_subvolume(what: str, target: str, subvol_id: int, path: str, *, refu
     Unless ``refuse_if_used`` is False, its users are checked right before
     (_refuse_used_subvolume). PoolConflictError (HTTP 409) when it holds
     snapshots or other subvolumes or is busy; RuntimeError (HTTP 500) when
-    btrfs fails otherwise.
+    btrfs fails otherwise. Once it is deleted, so is its quota group
+    (_destroy_quota_group).
     """
     from ..offsite import service as offsite  # it imports this module
 
@@ -2725,6 +2726,32 @@ def _delete_subvolume(what: str, target: str, subvol_id: int, path: str, *, refu
         if "busy" in message.lower():
             raise PoolConflictError(f"{what} is in use ({message}).")
         raise RuntimeError(f"Deleting {what[:1].lower()}{what[1:]} failed: {message}")
+    _destroy_quota_group(what, target, subvol_id)
+
+
+def _destroy_quota_group(what: str, target: str, subvol_id: int) -> None:
+    """Destroy the quota group 0/<id> of the subvolume ``subvol_id`` just deleted from the pool
+    mounted at ``target`` (storage.volume_usage).
+
+    btrfs keeps the group, with its limit, after the subvolume is gone (Linux 6.1), and a subvolume
+    that btrfs later gives the same id (the highest one, after a remount) would take the limit over.
+    Nothing to do while quotas are off, or when there is no such group. Any other failure is logged
+    and the delete stands: a kernel that removes the group itself once the subvolume is dropped
+    refuses to destroy it before (busy).
+    """
+    try:
+        result = host.run_on_host(
+            ["btrfs", "qgroup", "destroy", f"0/{subvol_id}", target], timeout=VOLUME_TIMEOUT
+        )
+    except subprocess.TimeoutExpired:
+        logger.warning("%s was deleted, but btrfs did not destroy its quota group 0/%s in time", what, subvol_id)
+        return
+    if result.ok:
+        return
+    reason = result.stderr.strip() or f"exit status {result.returncode}"
+    if _quotas_not_enabled(reason) or "no such file" in reason.lower():
+        return
+    logger.warning("%s was deleted, but not its quota group 0/%s: %s", what, subvol_id, reason)
 
 
 def _quotas_not_enabled(reason: str) -> bool:

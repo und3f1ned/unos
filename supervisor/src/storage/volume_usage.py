@@ -14,9 +14,13 @@ wrote to costs sysfs reads alone, and no disk of it is read (ADR-0378).
 
 The history holds one point per volume per clock hour (the time, the bytes used, the quota) for
 HISTORY_DAYS, by the pool's filesystem UUID and the volume's subvolume id, so that it follows a
-rename. It lives in RAM and is written to HISTORY_FILE only at shutdown, when RAM holds something
-that the file does not (ADR-0214, as the SMART history: ADR-0269), with the lists and their
-generations, so that a start lists no pool again whose generation stayed the same.
+rename, and each volume's stage, so that a start keeps the levels it had reached. It lives in RAM
+and is written to HISTORY_FILE only at shutdown, when RAM holds something that the file does not
+(ADR-0214, as the SMART history: ADR-0269), with the lists and their generations, so that a start
+lists no pool again whose generation stayed the same.
+
+Counts that btrfs marks inconsistent (a rescan is needed) feed neither the problems nor the history:
+a volume keeps its problem and stage, and gets no point, until they are consistent again.
 """
 
 from __future__ import annotations
@@ -25,11 +29,14 @@ import asyncio
 import logging
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Annotated
 
-from pydantic import BaseModel
+from fastapi import HTTPException
+from pydantic import BaseModel, Field, field_validator
 
 from .. import state_files
 from ..health import problems
@@ -53,6 +60,8 @@ HISTORY_FILE = "/data/volume_usage.json"
 HISTORY_STEP = 3600
 HISTORY_DAYS = 30
 _HISTORY_SECONDS = HISTORY_DAYS * 86400
+# The last second that a time of the history may be: 9999-12-31T23:59:59Z, the last that datetime shows.
+_LAST_TIME = 253402300799
 
 _GIB = 1 << 30
 
@@ -86,6 +95,8 @@ class _Series:
     pool: str
     volume: str
     points: list[Point] = field(default_factory=list)
+    # The stage (0 or a level of QUOTA_LEVELS) that the last pass found of a consistent reading.
+    stage: int = 0
 
 
 class _State:
@@ -98,39 +109,102 @@ class _State:
         self.unsaved = False
         self.listed: dict[str, _Listed] = {}  # by the pool's filesystem UUID
         self.series: dict[tuple[str, int], _Series] = {}  # by (filesystem UUID, subvolume id)
-        self.readings: dict[tuple[str, int], qgroups.Usage] = {}  # the latest of each volume
 
 
 _state = _State()
 
 
+# What the file holds is checked as the API checks it: its names reach the alerts and the web UI.
+_Id = Annotated[int, Field(ge=1)]
+_Bytes = Annotated[int, Field(ge=0)]
+_Time = Annotated[int, Field(ge=0, le=_LAST_TIME)]
+
+
+def _checked(validate: Callable[[str], str], value: str) -> str:
+    """``value`` through a validator of security.validators, its HTTPException as a ValueError."""
+    try:
+        return validate(value)
+    except HTTPException as exc:
+        raise ValueError(str(exc.detail)) from None
+
+
+def _fsid(value: str) -> str:
+    if not qgroups.is_fsid(value):
+        raise ValueError(f"Not a filesystem UUID: {value!r}")
+    return value
+
+
 class _SavedListed(BaseModel):
     pool: str
-    generation: int | None
-    volumes: dict[str, int] | None
+    generation: Annotated[int, Field(ge=0)] | None
+    volumes: dict[str, _Id] | None
     settled: bool
     failure: str | None
+
+    @field_validator("pool")
+    @classmethod
+    def _pool_name(cls, value: str) -> str:
+        return _checked(validate_pool_name, value)
+
+    @field_validator("volumes")
+    @classmethod
+    def _volume_names(cls, value: dict[str, int] | None) -> dict[str, int] | None:
+        for name in value or {}:
+            _checked(validate_volume_name, name)
+        return value
 
 
 class _SavedSeries(BaseModel):
     uuid: str
-    id: int
+    id: _Id
     pool: str
     volume: str
-    points: list[tuple[int, int, int | None]]
+    points: list[tuple[_Time, _Bytes, _Bytes | None]]
+    stage: int
+
+    @field_validator("uuid")
+    @classmethod
+    def _uuid(cls, value: str) -> str:
+        return _fsid(value)
+
+    @field_validator("pool")
+    @classmethod
+    def _pool_name(cls, value: str) -> str:
+        return _checked(validate_pool_name, value)
+
+    @field_validator("volume")
+    @classmethod
+    def _volume_name(cls, value: str) -> str:
+        return _checked(validate_volume_name, value)
+
+    @field_validator("stage")
+    @classmethod
+    def _level(cls, value: int) -> int:
+        if value != 0 and value not in QUOTA_LEVELS:
+            raise ValueError(f"Not a level of a quota: {value}")
+        return value
 
 
 class _Saved(BaseModel):
     listed: dict[str, _SavedListed]
     series: list[_SavedSeries]
 
+    @field_validator("listed")
+    @classmethod
+    def _uuids(cls, value: dict[str, _SavedListed]) -> dict[str, _SavedListed]:
+        for uuid in value:
+            _fsid(uuid)
+        return value
+
 
 def _load(state: _State) -> None:
     """Read HISTORY_FILE into ``state`` at its first use after a start (``state.lock`` held).
 
-    A file that cannot be read as the history is set aside as <name>.bad (state_files.load_json),
-    and the history starts anew. One that cannot be opened (an I/O error) is tried again at the next
-    use, and nothing is written over it meanwhile (save_unsaved); the failure is logged once.
+    A file that cannot be read as the history (also one with a name the API would refuse, or a time
+    that cannot be shown) is set aside as <name>.bad (state_files.load_json), and the history starts
+    anew. One that cannot be opened (an I/O error) is tried again at the next use, and nothing is
+    written over it meanwhile (save_unsaved); the failure is logged once. Points of a time ahead of
+    the clock are dropped, as each pass drops them (_forget_points).
     """
     if state.loaded:
         return
@@ -152,9 +226,11 @@ def _load(state: _State) -> None:
         for uuid, entry in saved.listed.items()
     }
     state.series = {
-        (entry.uuid, entry.id): _Series(entry.pool, entry.volume, [tuple(point) for point in entry.points])
+        (entry.uuid, entry.id): _Series(entry.pool, entry.volume, [tuple(point) for point in entry.points],
+                                        entry.stage)
         for entry in saved.series
     }
+    _forget_points(state, int(_now()))
 
 
 def save_unsaved() -> None:
@@ -172,7 +248,7 @@ def save_unsaved() -> None:
             },
             "series": [
                 {"uuid": uuid, "id": subvol_id, "pool": series.pool, "volume": series.volume,
-                 "points": [list(point) for point in series.points]}
+                 "points": [list(point) for point in series.points], "stage": series.stage}
                 for (uuid, subvol_id), series in sorted(state.series.items())
             ],
         }
@@ -191,12 +267,6 @@ def history_of(uuid: str, subvol_id: int) -> list[Point]:
         _load(state)
         series = state.series.get((uuid, subvol_id))
         return list(series.points) if series else []
-
-
-def usage_of(uuid: str, subvol_id: int) -> qgroups.Usage | None:
-    """What the last pass read of the volume ``subvol_id`` of the filesystem ``uuid``."""
-    with _state.lock:
-        return _state.readings.get((uuid, subvol_id))
 
 
 def _iso(seconds: float) -> str:
@@ -224,7 +294,8 @@ def usage_history(pool_name: str, volume_name: str) -> VolumeUsageHistory:
 
 def _stage(used: int, quota: int, earlier: int) -> int:
     """The highest level of QUOTA_LEVELS that ``used`` bytes of ``quota`` reach, 0 for none; a level
-    reached before (``earlier``, the stage found then) holds down to LEVEL_MARGIN below it."""
+    reached before (``earlier``, the stage found then) holds down to LEVEL_MARGIN below it. A quota
+    of 0 bytes (``btrfs qgroup limit 0`` by hand) is full: every level."""
     stage = 0
     for level in QUOTA_LEVELS:
         threshold = level - LEVEL_MARGIN if earlier >= level else level
@@ -237,22 +308,16 @@ def _key(pool: str, subvol_id: int) -> str:
     return f"volume_quota:{pool}/{subvol_id}"
 
 
-def _quota_problem(pool: str, volume: str, subvol_id: int, reading: qgroups.Usage,
-                   earlier: problems.Problem | None) -> problems.Problem | None:
-    """The problem of a volume that has reached a level of its quota; None below every level."""
-    used, quota = reading.used, reading.quota
-    if used is None or not quota:
-        return None
-    stage = _stage(used, quota, earlier.stage if earlier else 0)
-    if not stage:
-        return None
+def _quota_problem(pool: str, volume: str, subvol_id: int, used: int, quota: int, stage: int) -> problems.Problem:
+    """The problem of a volume that has reached the level ``stage`` of its quota."""
     path = f"{pools.pool_mountpoint(pool)}/{volume}"
+    percent = used * 100 // quota if quota else 100
     return problems.Problem(
         key=_key(pool, subvol_id),
         severity="error" if stage >= ERROR_LEVEL else "warning",
         kind=f"volume_quota_{stage}",
         subject=f"{pool}/{volume}",
-        title=f"Volume '{volume}' of pool '{pool}' has used {used * 100 // quota}% of its quota",
+        title=f"Volume '{volume}' of pool '{pool}' has used {percent}% of its quota",
         detail=(
             f"{used / _GIB:.2f} GiB of the {quota / _GIB:.2f} GiB quota of volume {volume} in pool {pool} "
             "are used. When it is full, writes to the volume fail: delete files in it, or raise its "
@@ -301,10 +366,8 @@ def _volumes_of(state: _State, info: PoolInfo, uuid: str) -> dict[str, int] | No
     return None if failure else volumes
 
 
-def _add_point(state: _State, key: tuple[str, int], pool: str, volume: str, reading: qgroups.Usage,
-               now: int) -> None:
-    """The volume's point of the hour of ``now``, unless it has one, or a later one after the clock
-    went back (``state.lock`` held)."""
+def _series(state: _State, key: tuple[str, int], pool: str, volume: str) -> _Series:
+    """The history of a volume, under its name of now (``state.lock`` held)."""
     series = state.series.get(key)
     if series is None:
         series = state.series[key] = _Series(pool, volume)
@@ -312,15 +375,21 @@ def _add_point(state: _State, key: tuple[str, int], pool: str, volume: str, read
     if (series.pool, series.volume) != (pool, volume):
         series.pool, series.volume = pool, volume
         state.unsaved = True
+    return series
+
+
+def _add_point(state: _State, series: _Series, used: int, quota: int | None, now: int) -> None:
+    """The volume's point of the hour of ``now``, unless it has one (``state.lock`` held)."""
     if not series.points or now // HISTORY_STEP > series.points[-1][0] // HISTORY_STEP:
-        series.points.append((now, reading.used, reading.quota))
+        series.points.append((now, used, quota))
         state.unsaved = True
 
 
-def _forget_old_points(state: _State, now: int) -> None:
-    """Drop the points older than HISTORY_DAYS, and the volumes left without any (``state.lock`` held)."""
+def _forget_points(state: _State, now: int) -> None:
+    """Drop the points older than HISTORY_DAYS and those ahead of the clock (after a pass with a clock
+    set ahead, or from a file), and the volumes left without any (``state.lock`` held)."""
     for key, series in list(state.series.items()):
-        kept = [point for point in series.points if now - point[0] < _HISTORY_SECONDS]
+        kept = [point for point in series.points if -HISTORY_STEP <= now - point[0] < _HISTORY_SECONDS]
         if len(kept) != len(series.points):
             state.unsaved = True
             if kept:
@@ -333,14 +402,21 @@ def _sample(infos: list[PoolInfo], earlier: dict[str, problems.Problem]) -> dict
     """One pass over the pools that the RAID monitor read: the history's points of this hour, and the
     problems of the volumes by key. Blocking (sysfs, and the host commands of a list): a worker thread.
 
-    A volume whose use cannot be read, and the volumes of a pool whose list fails or whose mount
-    could not be read (health unknown), keep the problems found before (``earlier``); those of a
-    pool that is not mounted or has quotas off go.
+    A volume whose use cannot be read or is counted inconsistently, and the volumes of a pool whose
+    list fails or whose mount could not be read (health unknown), keep the problems found before
+    (``earlier``); those of a pool that is not mounted or has quotas off go. The lists of the pools
+    that the RAID monitor no longer finds at all go too.
     """
     state = _state
     now = int(_now())
     with state.lock:
         _load(state)
+        # First, so that a point of a clock that was set ahead does not hold back this hour's.
+        _forget_points(state, now)
+        pools_found = {info.uuid for info in infos if info.uuid}
+        for uuid in [uuid for uuid in state.listed if uuid not in pools_found]:
+            del state.listed[uuid]
+            state.unsaved = True
     found: dict[str, problems.Problem] = {}
 
     def keep(pool: str) -> None:
@@ -353,10 +429,7 @@ def _sample(infos: list[PoolInfo], earlier: dict[str, problems.Problem]) -> dict
             if info.health == "unknown":  # the host's mount table could not be read
                 keep(info.name)
             continue
-        try:
-            if not qgroups.quotas_on(uuid):
-                continue
-        except ValueError:  # not a UUID: no folder of the kernel's
+        if not qgroups.quotas_on(uuid):
             continue
         volumes = _volumes_of(state, info, uuid)
         if volumes is None:
@@ -365,18 +438,22 @@ def _sample(infos: list[PoolInfo], earlier: dict[str, problems.Problem]) -> dict
         for volume, subvol_id in sorted(volumes.items()):
             reading = qgroups.usage(uuid, subvol_id)
             key = _key(info.name, subvol_id)
-            if reading.used is None:
+            if reading.used is None or reading.state != "counted":
                 if key in earlier:
                     found[key] = earlier[key]
                 continue
             with state.lock:
-                state.readings[(uuid, subvol_id)] = reading
-                _add_point(state, (uuid, subvol_id), info.name, volume, reading, now)
-            problem = _quota_problem(info.name, volume, subvol_id, reading, earlier.get(key))
-            if problem is not None:
-                found[key] = problem
-    with state.lock:
-        _forget_old_points(state, now)
+                series = _series(state, (uuid, subvol_id), info.name, volume)
+                _add_point(state, series, reading.used, reading.quota, now)
+                # The stage found before: the problem's, else the history's, which a start keeps.
+                stage = 0
+                if reading.quota is not None:
+                    stage = _stage(reading.used, reading.quota, earlier[key].stage if key in earlier else series.stage)
+                if series.stage != stage:
+                    series.stage = stage
+                    state.unsaved = True
+            if stage:
+                found[key] = _quota_problem(info.name, volume, subvol_id, reading.used, reading.quota, stage)
     return found
 
 

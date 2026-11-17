@@ -203,6 +203,20 @@ class TestTheList:
         assert documents["usage"] == "counted"
         assert (photos["used"], photos["quota"], photos["usage"]) == (None, None, "unknown")
 
+    def test_a_filesystem_whose_uuid_is_no_uuid_has_volumes_of_unknown_use(self, host):
+        # The kernel names its sysfs folder by the UUID: anything else is no folder of it.
+        host.add_disk("sdb", serial="WD-2")
+        host.add_btrfs("odd", "not-a-uuid", ["/dev/sdb"])
+        host.mount_pool("odd")
+        host.subvols.add("not-a-uuid", "docs")
+
+        with admin_client() as api:
+            response = api.get(f"{API}/odd/volumes")
+
+        assert response.status_code == 200, response.text
+        assert [(v["name"], v["used"], v["usage"]) for v in response.json()] == [("docs", None, "unknown")]
+        assert qgroups.quotas_on("not-a-uuid") is False and qgroups.generation("not-a-uuid") is None
+
     def test_a_limit_that_was_removed_is_no_quota(self, host):
         # btrfs qgroup limit none clears the flag; the number that sysfs prints is not the limit then.
         host.sysfs.group(host.documents, 5 * GIB)
@@ -287,6 +301,36 @@ class TestTheAlerts:
         check()
 
         assert volume_problems() == [] and alerts == []
+
+    def test_counts_that_need_a_rescan_keep_the_problem_and_add_no_point(self, host, clock, alerts):
+        use(host, 92)
+        check()
+        # btrfs quota rescan: the kernel counts again from 0, with inconsistent 1 until it ends.
+        clock[0] = T0 + HOUR
+        host.sysfs.quotas(inconsistent=True)
+        host.sysfs.group(host.documents, GIB, 10 * GIB)
+        write(host)
+        check()
+        assert [p.kind for p in volume_problems()] == ["volume_quota_90"]
+
+        # The rescan ended: the same use as before.
+        clock[0] = T0 + HOUR + 300
+        host.sysfs.quotas(inconsistent=False)
+        use(host, 92)
+        check()
+
+        assert len(alerts) == 1
+        used = math.ceil(10 * GIB * 92 / 100)
+        assert points(host.documents) == [(T0, used, 10 * GIB), (T0 + HOUR + 300, used, 10 * GIB)]
+
+    def test_a_quota_of_0_bytes_is_full(self, host, clock, alerts):
+        # btrfs qgroup limit 0 by hand: no write fits.
+        host.sysfs.group(host.documents, 16384, 0)
+        check()
+
+        [problem] = volume_problems()
+        assert (problem.kind, problem.severity) == ("volume_quota_95", "error")
+        assert problem.title == "Volume 'documents' of pool 'data' has used 100% of its quota"
 
     def test_a_volume_whose_use_cannot_be_read_keeps_its_problem(self, host, clock, alerts):
         use(host, 85)
@@ -379,6 +423,23 @@ class TestTheAlerts:
         assert ("warning", "Volume 'documents' of pool 'data' has used 91% of its quota") in alerts
         assert health_router.RAID_CHECK_INTERVAL == 300
 
+    def test_the_volumes_are_checked_also_when_the_raid_alerts_fail(self, host, clock, alerts, monkeypatch):
+        async def stop_after_one_round(_seconds):
+            health_router._raid_monitor_running = False
+
+        def status_not_written(status):
+            raise OSError("No space left on device")
+
+        monkeypatch.setattr(health_router, "load_previous_raid_status", lambda: {})
+        monkeypatch.setattr(health_router, "save_raid_status", status_not_written)
+        monkeypatch.setattr(health_router.asyncio, "sleep", stop_after_one_round)
+        monkeypatch.setattr(health_router, "_raid_monitor_running", True)
+        use(host, 91)
+
+        asyncio.run(health_router.raid_monitor_loop())
+
+        assert ("warning", "Volume 'documents' of pool 'data' has used 91% of its quota") in alerts
+
 
 class TestNoDiskIsWoken:
     """A pass reads sysfs alone while nothing wrote to the pool (ADR-0378)."""
@@ -395,11 +456,12 @@ class TestNoDiskIsWoken:
         assert ["btrfs", "subvolume", "list", "/mnt/pools/data"] in host_commands(host)
 
         host.calls.clear()
-        host.sysfs.group(host.documents, 6 * GIB, 10 * GIB)  # no transaction: the generation stays
+        host.sysfs.group(host.documents, math.ceil(9.1 * GIB), 10 * GIB)  # no transaction: the generation stays
         check()
         check()
         assert host.calls == []
-        assert volume_usage.usage_of(DATA_UUID, host.documents).used == 6 * GIB
+        # Read all the same, from sysfs.
+        assert [p.kind for p in volume_problems()] == ["volume_quota_90"]
 
         write(host)
         check()
@@ -488,6 +550,18 @@ class TestTheHistory:
         assert len(kept) == 30 * 24
         assert kept[0][0] == T0 + 5 * HOUR
         assert clock[0] - kept[0][0] < 30 * 24 * HOUR
+
+    def test_a_pass_with_the_clock_far_ahead_does_not_stop_the_history(self, host, clock):
+        check()
+        clock[0] = T0 + 365 * 86400  # a wrong clock for one pass (NTP, an RTC)
+        check()
+        for hours in range(1, 6):  # the clock is right again
+            clock[0] = T0 + hours * HOUR
+            check()
+
+        # The points older than 30 days before the wrong time went with that pass; the wrong point
+        # goes as soon as the clock is right, and the hours go on.
+        assert [t for t, _, _ in points(host.documents)] == [T0 + hours * HOUR for hours in range(1, 6)]
 
     def test_the_history_of_a_pool_no_longer_mounted_stays_until_it_is_30_days_old(self, host, clock):
         check()
@@ -620,11 +694,83 @@ class TestTheHistoryFile:
 
         file = folder.parent / "readable.json"
         file.write_text(json.dumps({"listed": {}, "series": [
-            {"uuid": DATA_UUID, "id": host.photos, "pool": "data", "volume": "photos", "points": [[T0 - HOUR, GIB, None]]}]}))
+            {"uuid": DATA_UUID, "id": host.photos, "pool": "data", "volume": "photos", "points": [[T0 - HOUR, GIB, None]],
+             "stage": 0}]}))
         monkeypatch.setattr(volume_usage, "HISTORY_FILE", str(file))
         clock[0] = T0 + 2 * HOUR
         check()
         assert points(host.photos) == [(T0 - HOUR, GIB, None), (T0 + 2 * HOUR, 3 * GIB, None)]
+
+    def test_a_start_keeps_the_level_a_volume_reached(self, host, clock, alerts, monkeypatch):
+        use(host, 92)
+        check()
+        check()
+        host.sysfs.group(host.documents, math.ceil(8.7 * GIB), 10 * GIB)  # still at 90: it is left below 85
+        check()
+        assert [p.kind for p in volume_problems()] == ["volume_quota_90"]
+        volume_usage.save_unsaved()
+        # A restart: RAM is empty, the problems too (ADR-0332), and the file is read again.
+        monkeypatch.setattr(volume_usage, "_state", volume_usage._State())
+        monkeypatch.setattr(problems, "_by_source", {})
+
+        check()
+
+        assert [p.kind for p in volume_problems()] == ["volume_quota_90"]
+        # Alerted once more after the restart, as every problem is, at the level it had reached.
+        assert [title for _, title in alerts] == [
+            "Volume 'documents' of pool 'data' has used 92% of its quota",
+            "Volume 'documents' of pool 'data' has used 87% of its quota",
+        ]
+
+    def test_the_list_of_a_pool_that_is_gone_is_forgotten(self, host, clock):
+        check()
+        check()
+        check(data_pool(name="spare", uuid="4b2d0a7f-2345-4d4c-8c1b-9a4d3b2c5d6e", mounted=False,
+                        mountpoint=None, health="unmounted"))
+        assert DATA_UUID not in volume_usage._state.listed
+        host.calls.clear()
+
+        check()  # the pool is back: its volumes are listed again
+
+        assert ["btrfs", "subvolume", "list", "/mnt/pools/data"] in host_commands(host)
+
+    def test_points_of_the_file_ahead_of_the_clock_are_dropped(self, host, clock):
+        Path(volume_usage.HISTORY_FILE).write_text(json.dumps({"listed": {}, "series": [
+            {"uuid": DATA_UUID, "id": host.photos, "pool": "data", "volume": "photos", "stage": 0,
+             "points": [[T0 - HOUR, GIB, None], [T0 + 30 * 86400, GIB, None]]}]}))
+
+        assert points(host.photos) == [(T0 - HOUR, GIB, None)]
+
+    @pytest.mark.parametrize("change", [
+        {"points": [[10**15, GIB, None]]},  # a time that cannot be shown
+        {"points": [[T0, -1, None]]},
+        {"volume": "doc'uments"},
+        {"pool": "../data"},
+        {"uuid": "not-a-uuid"},
+        {"id": 0},
+        {"stage": 85},
+    ])
+    def test_a_file_with_what_the_api_would_refuse_is_set_aside(self, host, clock, change):
+        series = {"uuid": DATA_UUID, "id": host.photos, "pool": "data", "volume": "photos", "stage": 0,
+                  "points": [[T0, GIB, None]], **change}
+        Path(volume_usage.HISTORY_FILE).write_text(json.dumps({"listed": {}, "series": [series]}))
+
+        with admin_client() as api:
+            response = api.get(f"{API}/data/volumes/photos/usage")
+
+        assert response.status_code == 200, response.text
+        assert response.json()["points"] == [{"time": "2026-11-17T10:00:00+00:00", "used": 3 * GIB, "quota": None}]
+        assert Path(volume_usage.HISTORY_FILE + ".bad").exists()
+
+    def test_a_file_whose_lists_hold_a_name_the_api_would_refuse_is_set_aside(self, host, clock):
+        Path(volume_usage.HISTORY_FILE).write_text(json.dumps({"series": [], "listed": {DATA_UUID: {
+            "pool": "data", "generation": 100, "volumes": {"doc uments": host.documents}, "settled": True,
+            "failure": None}}}))
+
+        check()
+
+        assert Path(volume_usage.HISTORY_FILE + ".bad").exists()
+        assert ["btrfs", "subvolume", "list", "/mnt/pools/data"] in host_commands(host)
 
     def test_a_file_that_cannot_be_read_is_set_aside_and_the_history_starts_anew(self, host, clock, caplog):
         Path(volume_usage.HISTORY_FILE).write_text("{not json")

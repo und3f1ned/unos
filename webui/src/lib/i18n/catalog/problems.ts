@@ -43,8 +43,8 @@ export const ru: Translation<typeof en> = {
 	'problems.kind.disk_test_failed': 'Последний самотест SMART диска {subject} завершился ошибкой',
 	'problems.kind.task_failed': 'Последний запуск задачи {subject} завершился ошибкой',
 	'problems.kind.task_missed': 'Задача {subject} пропустила запуск по расписанию',
-	'problems.kind.volume_quota_80': 'Том {subject} заполнил 80% своей квоты',
-	'problems.kind.volume_quota_90': 'Том {subject} заполнил 90% своей квоты',
-	'problems.kind.volume_quota_95': 'Том {subject} заполнил 95% своей квоты',
+	'problems.kind.volume_quota_80': 'Том {subject} заполнен на 80% квоты',
+	'problems.kind.volume_quota_90': 'Том {subject} заполнен на 90% квоты',
+	'problems.kind.volume_quota_95': 'Том {subject} заполнен на 95% квоты',
 	'problems.kind.other': 'Проблема: {subject}'
 };

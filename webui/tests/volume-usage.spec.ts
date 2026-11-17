@@ -53,6 +53,8 @@ test.describe('The use of the volumes\' quotas', () => {
     const bar = row(dialog, 'documents').getByRole('progressbar', { name: 'Use of documents' });
     await expect(bar).toHaveAttribute('aria-valuenow', String(8 * GIB));
     await expect(bar).toHaveAttribute('aria-valuemax', String(10 * GIB));
+    // Its colour follows the alerts' levels: a warning from 80%, an error from 95%.
+    await expect(bar).toHaveClass(/progress-fill-warning/);
     await expect(row(dialog, 'documents')).toContainText('8.0 GB of 10.0 GB used (80.0%)');
     // Without a quota: its use alone, and no bar.
     await expect(row(dialog, 'photos')).toContainText('3.0 GB used, no quota');
@@ -76,6 +78,8 @@ test.describe('The use of the volumes\' quotas', () => {
     let dialog = await openVolumes(page, 'e2e_media');
     const off = dialog.locator('.alert').filter({ hasText: 'Quotas are off on this pool' });
     await expect(off).toContainText("The volumes' use is not counted.");
+    // What quotas cost, before anyone enables them.
+    await expect(off).toContainText('they slow down deleting snapshots and balancing the pool');
     await expect(off).toContainText('btrfs quota enable /mnt/pools/e2e_media');
     await expect(dialog.getByRole('progressbar')).toHaveCount(0);
     await expect(dialog.getByRole('button', { name: 'Use over time of documents' })).toHaveCount(0);
@@ -86,6 +90,7 @@ test.describe('The use of the volumes\' quotas', () => {
     await expect(rescan).toContainText('btrfs quota rescan /mnt/pools/e2e_archive');
     // The use is still shown, as btrfs counted it.
     await expect(dialog.getByRole('listitem')).toContainText('9.5 GB of 10.0 GB used (95.0%)');
+    await expect(dialog.getByRole('progressbar')).toHaveClass(/progress-fill-error/);
   });
 
   test('a graph shows the use over time', async ({ authenticatedPage: page }) => {
@@ -101,7 +106,7 @@ test.describe('The use of the volumes\' quotas', () => {
     await expect(graph).toBeVisible();
     // The first and last time and use, and the quota, written out for every reader.
     await expect(graph).toHaveText(
-      /^\s*From Nov 1, 10:00\sAM to Nov 17, 11:15\sAM: 2\.0 GB to 8\.0 GB used\.\s+Quota: 10\.0 GB\.\s*$/,
+      /^\s*2\.0 GB used on Nov 1, 10:00\sAM, 8\.0 GB on Nov 17, 11:15\sAM\.\s+Quota: 10\.0 GB\.\s*$/,
     );
     // The line of the use through its three points, and the quota's dashed line at the top.
     const lines = graph.locator('svg path');
@@ -211,7 +216,7 @@ test.describe('Alerts at the levels of a volume\'s quota', () => {
     await page.goto('/');
 
     await expect(page.getByRole('region', { name: '1 проблема требует внимания' }).getByRole('listitem')).toHaveText(
-      'Том e2e_media/photos заполнил 90% своей квоты',
+      'Том e2e_media/photos заполнен на 90% квоты',
     );
   });
 });
@@ -238,7 +243,7 @@ test.describe('The use of the volumes\' quotas in Russian', () => {
     await row(dialog, 'documents').getByRole('button', { name: 'Заполнение тома documents во времени' }).click();
     await expect(row(dialog, 'documents').getByText('Заполнение во времени', { exact: true })).toBeVisible();
     await expect(row(dialog, 'documents').getByRole('figure')).toHaveText(
-      /^\s*С 1 нояб\., 10:00 по 17 нояб\., 11:15: занято от 2,0 ГБ до 8,0 ГБ\.\s+Квота: 10,0 ГБ\.\s*$/,
+      /^\s*Занято 2,0 ГБ на 1 нояб\., 10:00 и 8,0 ГБ на 17 нояб\., 11:15\.\s+Квота: 10,0 ГБ\.\s*$/,
     );
     await dialog.getByRole('button', { name: 'Закрыть', exact: true }).click();
 

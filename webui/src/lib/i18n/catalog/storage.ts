@@ -370,7 +370,8 @@ export const en = {
 	'storage.volumes.useUnknown': 'Use unknown: its quota group cannot be read',
 	// Followed by the command that turns quotas on, or counts them again, on the host.
 	'storage.volumes.quotasOffTitle': 'Quotas are off on this pool',
-	'storage.volumes.quotasOff': "The volumes' use is not counted. To count it and set quotas, enable them on the host:",
+	'storage.volumes.quotasOff':
+		"The volumes' use is not counted. Quotas count it and limit volumes, but they slow down deleting snapshots and balancing the pool, the more so the more snapshots it has. To enable them, run on the host:",
 	'storage.volumes.rescanTitle': 'The counts need a rescan',
 	'storage.volumes.rescan': 'btrfs says that the use counted on this pool may be wrong until it is counted again. Run on the host:',
 	// The use over time: one point per hour of the last 30 days, the current reading last.
@@ -380,7 +381,7 @@ export const en = {
 	'storage.volumes.chartError': 'Could not load the use over time',
 	'storage.volumes.chartTooFew': 'Not enough points yet: UNOS keeps one per hour, for 30 days.',
 	// {from} and {to} are dates and times; {start} and {end} the sizes used then.
-	'storage.volumes.chartSummary': 'From {from} to {to}: {start} to {end} used.',
+	'storage.volumes.chartSummary': '{start} used on {from}, {end} on {to}.',
 	'storage.volumes.chartQuota': 'Quota: {quota}.'
 };
 
@@ -714,7 +715,8 @@ export const ru: Translation<typeof en> = {
 	'storage.volumes.usedNoQuota': 'Занято {used}, квоты нет',
 	'storage.volumes.useUnknown': 'Заполнение неизвестно: группу квоты тома не удаётся прочитать',
 	'storage.volumes.quotasOffTitle': 'В этом пуле квоты выключены',
-	'storage.volumes.quotasOff': 'Заполнение томов не считается. Чтобы считать его и задавать квоты, включите их на хосте:',
+	'storage.volumes.quotasOff':
+		'Заполнение томов не считается. Квоты считают его и ограничивают тома, но замедляют удаление снимков и балансировку пула, тем сильнее, чем больше в нём снимков. Чтобы включить их, выполните на хосте:',
 	'storage.volumes.rescanTitle': 'Счётчики нужно пересчитать',
 	'storage.volumes.rescan': 'btrfs сообщает, что заполнение в этом пуле может быть посчитано неверно, пока его не пересчитают. Выполните на хосте:',
 	'storage.volumes.chartShow': 'Заполнение тома {name} во времени',
@@ -722,6 +724,6 @@ export const ru: Translation<typeof en> = {
 	'storage.volumes.chartLoading': 'Загрузка заполнения во времени...',
 	'storage.volumes.chartError': 'Не удалось загрузить заполнение во времени',
 	'storage.volumes.chartTooFew': 'Пока мало точек: UNOS хранит по одной в час за 30 дней.',
-	'storage.volumes.chartSummary': 'С {from} по {to}: занято от {start} до {end}.',
+	'storage.volumes.chartSummary': 'Занято {start} на {from} и {end} на {to}.',
 	'storage.volumes.chartQuota': 'Квота: {quota}.'
 };

@@ -137,6 +137,7 @@ class FakeSubvolumes:
         ("subvolume", "create"): "ERROR: cannot create subvolume",
         ("subvolume", "delete"): "ERROR: Could not destroy subvolume/snapshot",
         ("qgroup", "limit"): "ERROR: unable to limit requested quota group",
+        ("qgroup", "destroy"): "ERROR: unable to destroy quota group",
     }
 
     def _volume_paths(self, cmd: list[str]) -> HostResult:
@@ -206,7 +207,8 @@ class FakeSubvolumes:
         if failure is not None:
             # The mountpoint: the last argument of delete and of a limit by
             # quota group id, the parent of the others'.
-            by_id = action == ["subvolume", "delete"] or (action == ["qgroup", "limit"] and len(cmd) == 6)
+            by_id = action in (["subvolume", "delete"], ["qgroup", "destroy"]) or (
+                action == ["qgroup", "limit"] and len(cmd) == 6)
             written = cmd[-1] if by_id else os.path.dirname(cmd[-1])
             if self._read_only(written):
                 return HostResult(1, "", f"{failure}: Read-only file system")
@@ -307,6 +309,18 @@ class FakeSubvolumes:
             return HostResult(0, "".join(lines), "")
         if action == ["qgroup", "limit"]:
             return self._qgroup_limit(cmd)
+        if action == ["qgroup", "destroy"]:
+            # ``btrfs qgroup destroy 0/<id> <path>``: a quota group of the filesystem at <path>, which
+            # Linux 6.1 keeps after its subvolume is deleted, with its limit.
+            assert len(cmd) == 5 and cmd[3].startswith("0/") and cmd[3][2:].isdigit(), cmd
+            uuid = self._mounted_at(cmd[4])
+            if uuid is None:
+                return HostResult(1, "", f"ERROR: not a btrfs filesystem: {cmd[4]}")
+            if uuid not in self.quotas:
+                return HostResult(1, "", "ERROR: unable to destroy quota group: Transport endpoint is not connected")
+            self.fake.changes.append(cmd)
+            self.limits.pop(int(cmd[3][2:]), None)
+            return HostResult(0, "", "")
         if action == ["inspect-internal", "subvolid-resolve"]:
             # The path from the top level, as it is named now.
             assert len(cmd) == 5, cmd
@@ -618,9 +632,11 @@ class TestCreate:
         assert "Quotas are not enabled on pool 'data'" in detail
         assert "'btrfs quota enable /mnt/pools/data'" in detail
         assert detail.endswith("The volume was removed again.")
-        (create, delete) = host.changes
+        (create, delete, destroy) = host.changes
         assert create == ["btrfs", "subvolume", "create", "/mnt/pools/data/documents"]
         assert delete[:4] == ["btrfs", "subvolume", "delete", "--subvolid"]
+        # The fake still has quotas on: the new subvolume's quota group goes with it.
+        assert destroy == ["btrfs", "qgroup", "destroy", f"0/{delete[4]}", "/mnt/pools/data"]
         assert host.subvols.paths(DATA_UUID) == []
         assert api.get(f"{API}/data/volumes").json() == []
 
@@ -1222,6 +1238,45 @@ class TestDelete:
         assert response.json() == {"status": "deleted"}
         assert host.changes == [["btrfs", "subvolume", "delete", "--subvolid", str(documents), "/mnt/pools/data"]]
         assert api.get(f"{API}/data/volumes").json() == [_listed("photos")]
+
+    def test_with_quotas_on_the_volume_s_quota_group_goes_with_it(self, api, host):
+        # Linux 6.1 keeps a deleted subvolume's quota group with its limit, which a later subvolume
+        # given the same id would take over (storage.volume_usage).
+        host.subvols.quotas.add(DATA_UUID)
+        documents = host.subvols.add(DATA_UUID, "documents")
+        host.subvols.limits[documents] = GIB
+        host.dirs.add("/mnt/pools/data/documents")
+
+        response = api.delete(f"{API}/data/volumes/documents")
+
+        assert response.status_code == 200, response.text
+        assert host.changes == [
+            ["btrfs", "subvolume", "delete", "--subvolid", str(documents), "/mnt/pools/data"],
+            ["btrfs", "qgroup", "destroy", f"0/{documents}", "/mnt/pools/data"],
+        ]
+        assert documents not in host.subvols.limits
+
+    def test_a_quota_group_that_cannot_be_destroyed_leaves_the_delete_done(self, api, host, caplog):
+        host.subvols.quotas.add(DATA_UUID)
+        documents = host.subvols.add(DATA_UUID, "documents")
+        host.dirs.add("/mnt/pools/data/documents")
+        host.fail[("btrfs", "qgroup", "destroy")] = (1, "ERROR: unable to destroy quota group: Device or resource busy")
+
+        response = api.delete(f"{API}/data/volumes/documents")
+
+        assert response.status_code == 200, response.text
+        assert host.subvols.paths(DATA_UUID) == []
+        assert f"Volume 'documents' was deleted, but not its quota group 0/{documents}" in caplog.text
+
+    def test_with_quotas_off_there_is_no_quota_group_to_destroy(self, api, host, caplog):
+        documents = host.subvols.add(DATA_UUID, "documents")
+        host.dirs.add("/mnt/pools/data/documents")
+
+        response = api.delete(f"{API}/data/volumes/documents")
+
+        assert response.status_code == 200, response.text
+        assert ["btrfs", "qgroup", "destroy", f"0/{documents}", "/mnt/pools/data"] in host.calls
+        assert "quota group" not in caplog.text
 
     def test_link_planted_under_a_volume_name_is_not_followed(self, api, host):
         # Pool contents are writable by SMB users and apps. btrfs-progs would

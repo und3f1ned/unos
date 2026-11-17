@@ -1045,6 +1045,15 @@
 	$: quotaRescanCommand = 'btrfs quota rescan ' + volumesMountpoint;
 	$: quotasOff = volumes.some((volume) => volume.usage === 'quotas_off');
 	$: needsRescan = volumes.some((volume) => volume.usage === 'inconsistent');
+	// The bar's colour follows the alerts' levels (supervisor/src/storage/volume_usage.py): a warning from 80% of
+	// the quota, an error from 95%. A quota of 0 bytes is full.
+	function quotaVariant(volume: Volume): 'success' | 'warning' | 'error' {
+		const used = volume.used ?? 0;
+		const quota = volume.quota ?? 0;
+		if (used * 100 >= 95 * quota) return 'error';
+		return used * 100 >= 80 * quota ? 'warning' : 'success';
+	}
+
 	$: usedOfQuota = (volume: Volume): string =>
 		volume.used === null || volume.quota === null
 			? ''
@@ -2200,9 +2209,10 @@
 							</div>
 							{#if volume.used !== null && volume.quota !== null}
 								<ProgressBar
-									value={volume.used}
-									max={volume.quota}
+									value={volume.quota === 0 ? 1 : volume.used}
+									max={volume.quota === 0 ? 1 : volume.quota}
 									size="sm"
+									variant={quotaVariant(volume)}
 									label={$t('storage.volumes.useOf', { name: volume.name })}
 								/>
 								<p class="text-xs text-secondary">{usedOfQuota(volume)}</p>

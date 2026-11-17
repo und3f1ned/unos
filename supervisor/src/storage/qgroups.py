@@ -10,7 +10,8 @@ reads it: a read starts no process, sends no ioctl and never reads a disk, so it
 (ADR-0378), however many snapshots, and so quota groups, the pool has.
 
 A volume's quota is the limit of its quota group 0/<id> on the bytes it references (ADR-0069,
-ADR-0243), and its use is those bytes, data shared with its snapshots included.
+ADR-0243), and its use is those bytes, data shared with its snapshots included. A limit on the
+exclusive bytes (``btrfs qgroup limit -e``), which UNOS never sets, is no quota here.
 """
 
 from __future__ import annotations
@@ -40,11 +41,14 @@ class Usage:
     state: UsageState
 
 
-def _folder(fsid: str) -> str:
-    """The sysfs folder of the filesystem ``fsid``; ValueError for anything but a UUID."""
-    if not _FSID.fullmatch(fsid):
-        raise ValueError(f"Not a filesystem UUID: {fsid!r}")
-    return os.path.join(SYS_FS_BTRFS, fsid)
+def is_fsid(text: str) -> bool:
+    """Whether ``text`` is a filesystem UUID as the kernel names its sysfs folder (lower case)."""
+    return _FSID.fullmatch(text) is not None
+
+
+def _folder(fsid: str) -> str | None:
+    """The sysfs folder of the filesystem ``fsid``; None for anything but a UUID."""
+    return os.path.join(SYS_FS_BTRFS, fsid) if is_fsid(fsid) else None
 
 
 def _number(path: str) -> int | None:
@@ -59,17 +63,24 @@ def _number(path: str) -> int | None:
 
 def quotas_on(fsid: str) -> bool:
     """Whether quotas are on in the mounted filesystem ``fsid``: the kernel then has its qgroups folder."""
-    return os.path.isdir(os.path.join(_folder(fsid), "qgroups"))
+    folder = _folder(fsid)
+    return folder is not None and os.path.isdir(os.path.join(folder, "qgroups"))
 
 
 def generation(fsid: str) -> int | None:
-    """The transaction number of the mounted filesystem ``fsid``; None when it cannot be read."""
-    return _number(os.path.join(_folder(fsid), "generation"))
+    """The number of the running transaction of the mounted filesystem ``fsid``; None when it cannot
+    be read."""
+    folder = _folder(fsid)
+    return None if folder is None else _number(os.path.join(folder, "generation"))
 
 
 def usage(fsid: str, subvol_id: int) -> Usage:
-    """The use and quota of the subvolume ``subvol_id`` of the mounted filesystem ``fsid``."""
-    folder = os.path.join(_folder(fsid), "qgroups")
+    """The use and quota of the subvolume ``subvol_id`` of the mounted filesystem ``fsid``: unknown
+    for an ``fsid`` that is no UUID, whose folder the kernel cannot have."""
+    filesystem = _folder(fsid)
+    if filesystem is None:
+        return Usage(None, None, "unknown")
+    folder = os.path.join(filesystem, "qgroups")
     if not os.path.isdir(folder):
         return Usage(None, None, "quotas_off")
     group = os.path.join(folder, f"0_{int(subvol_id)}")

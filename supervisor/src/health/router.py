@@ -1071,6 +1071,7 @@ async def raid_monitor_loop():
     global _raid_monitor_running
 
     while _raid_monitor_running:
+        read = None
         try:
             health_info = await check_raid_health()
             # The same read of the pools for the quotas of their volumes, after the RAID alerts.
@@ -1147,11 +1148,13 @@ async def raid_monitor_loop():
                     )
 
             save_raid_status(current_status)
-            if read is not None:
-                await _update_volume_usage(read.pools)
 
         except Exception as e:
             logger.error("RAID monitor error: %s", e)
+
+        # A step of its own: a failure of the RAID alerts or of their status file does not skip it.
+        if read is not None:
+            await _update_volume_usage(read.pools)
 
         await asyncio.sleep(RAID_CHECK_INTERVAL)
 
