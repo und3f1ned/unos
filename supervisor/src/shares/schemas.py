@@ -207,6 +207,44 @@ class SmbServiceStatus(BaseModel):
     active_smb_users: int
 
 
+class SmbInterfaceInfo(BaseModel):
+    """One network interface of the host, or a chosen name that is not on the host (ADR-0391)."""
+
+    name: str
+    addresses: list[str]                            # as ip lists them, with their prefix lengths
+    state: str                                      # the operational state ip reports; "" when not on the host
+    present: bool                                   # on the host now
+    enabled: bool                                   # administratively up: Samba binds only such interfaces
+    lan: bool                                       # has an address that hosts allow admits (not loopback or IPv6 link-local)
+    offered: bool                                   # broadcast-capable: Samba skips the others (point-to-point)
+    chosen: bool
+    listening: list[str]                            # its addresses that smbd answers on now
+    missing: list[str]                              # LAN addresses of a chosen interface that smbd does not listen on
+
+
+class SmbInterfaces(BaseModel):
+    """GET /shares/smb-interfaces: where SMB listens (ADR-0391)."""
+
+    chosen: list[str]                               # the valid stored names, sorted
+    bound: bool                                     # smb.conf binds smbd (a choice exists); false: every interface
+    interfaces: list[SmbInterfaceInfo]              # without the loopback and Docker's
+    host_error: str | None                          # why the host's interfaces could not be read
+    listening: list[str] | None                     # smbd's TCP 445 addresses ("0.0.0.0", "::": every one); None: unknown
+    problems: list[str]                             # where smbd's listeners and the choice differ
+    restart_needed: bool                            # a restart of smbd would make them agree
+    sessions: int | None                            # open SMB sessions, which a restart ends; None: unknown
+    restarted: bool = False                         # only in answers to changes: smbd was restarted
+    warnings: list[str] = []                        # only in answers to changes
+
+
+class SmbInterfacesUpdate(BaseModel):
+    """PUT /shares/smb-interfaces: the interfaces to bind besides the loopback; [] for every interface."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    interfaces: list[Annotated[str, Field(max_length=64)]] = Field(max_length=16)
+
+
 class NfsExportCreate(BaseModel):
     """An export that UNOS writes (ADR-0293): an existing folder for one client, read or write."""
 

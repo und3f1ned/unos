@@ -287,6 +287,7 @@ and this index, and `make check-fast` runs it.
 | [0368](0368-a-rename-moves-the-users-smb-account-to-the-new-name-keeping-its-uid.md) | An administrator renames a user, and the user's SMB account moves to the new name with its uid | accepted | 2026-11-12 |
 | [0380](0380-a-share-can-require-encryption-serve-time-machine-and-list-snapshots-as-previous-versions.md) | A share can require encryption, serve Time Machine and list snapshots as Previous Versions | accepted | 2026-11-15 |
 | [0385](0385-groups-of-users-get-share-access-and-smb-conf-names-their-active-members.md) | Groups of users get share access in UNOS's database, and smb.conf names their active members | accepted | 2026-11-17 |
+| [0391](0391-an-administrator-binds-smb-to-chosen-interfaces-by-name-with-the-loopback-and-a-restart-of-smbd.md) | An administrator binds SMB to chosen network interfaces by name, the loopback stays bound, and a change restarts smbd | accepted | 2026-11-17 |
 
 ## Apps
 

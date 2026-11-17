@@ -27,7 +27,8 @@
 		NfsExportFormModal,
 		RepairPermissionsModal,
 		ShareCard,
-		ShareFormModal
+		ShareFormModal,
+		SmbInterfacesCard
 	} from '$lib/components/shares';
 	import { t } from '$lib/i18n';
 	import { isRepairOf, repairJob } from '$lib/stores/repair';
@@ -632,6 +633,8 @@
 
 				<p class="form-hint mt-4">{$t('shares.smb.networkNote')}</p>
 			</Card>
+
+			<SmbInterfacesCard />
 		{:else}
 			{#if nfsStatus}
 				{#if nfsStatus.server_missing}

@@ -3,7 +3,8 @@
 SMB shares are rows of the UNOS database; shares/service.py changes them
 under smb_lock() and renders smb.conf from them. NFS exports are the lines
 of the host's export files; shares/nfs.py changes only the lines that UNOS
-wrote into its own file (ADR-0292). Every mutation is audited (ADR-0320).
+wrote into its own file (ADR-0292). The network interfaces that SMB listens
+on are shares/listen.py's (ADR-0391). Every mutation is audited (ADR-0320).
 PUT /shares/smb/{name} is gone (405): PATCH changes only the fields it sends.
 """
 
@@ -22,13 +23,15 @@ from ..auth.utils import verify_token
 from ..database import get_db
 from ..security.validators import sanitize_error_message
 from ..storage import pools
-from . import nfs, service, smb
+from . import listen, nfs, service, smb
 from .schemas import (
     NfsExportCreate,
     NfsExportDeleted,
     NfsExportInfo,
     NfsServiceStatus,
     ShareAccessLevel,
+    SmbInterfaces,
+    SmbInterfacesUpdate,
     SmbServiceStatus,
     SmbShareCreate,
     SmbShareDeleted,
@@ -172,6 +175,55 @@ async def clear_smb_import_report(_=Depends(verify_token), db: AsyncSession = De
     """Dismiss the report of the one-time smb.conf import."""
     await _call(service.clear_import_report, db)
     return {"status": "ok"}
+
+
+@router.get("/smb-interfaces", response_model=SmbInterfaces)
+async def get_smb_interfaces(_=Depends(verify_token), db: AsyncSession = Depends(get_db)):
+    """The interfaces that SMB listens on ([]: every one), the host's interfaces, and smbd's listeners
+    compared with the choice (ADR-0391)."""
+    return await _call(listen.state, db)
+
+
+@router.put("/smb-interfaces", response_model=SmbInterfaces)
+async def put_smb_interfaces(
+    request: Request,
+    choice: SmbInterfacesUpdate,
+    user=Depends(verify_token),
+    db: AsyncSession = Depends(get_db),
+):
+    """Choose the interfaces that SMB listens on besides the loopback; [] for every interface. A
+    change restarts smbd, which ends every open SMB connection (ADR-0391)."""
+    change = await _call(listen.choose, db, choice.interfaces)
+    if change.details is not None:
+        await log_action(
+            AuditAction.SMB_INTERFACES_CHANGED,
+            request=request,
+            username=user.username,
+            resource_type="smb",
+            details=change.details,
+            success=change.failed is None,
+            severity=listen.SEVERITY,
+        )
+    return change.info
+
+
+@router.post("/smb-interfaces/restart", response_model=SmbInterfaces)
+async def restart_smb(request: Request, user=Depends(verify_token), db: AsyncSession = Depends(get_db)):
+    """Restart smbd, so that it listens on what the chosen interfaces have now; every open SMB
+    connection ends (ADR-0391). 500 when it fails."""
+    change = await _call(listen.restart, db)
+    await log_action(
+        AuditAction.SMB_RESTARTED,
+        request=request,
+        username=user.username,
+        resource_type="smb",
+        details=change.details,
+        success=change.failed is None,
+        severity=listen.SEVERITY,
+    )
+    if change.failed is not None:
+        raise HTTPException(status_code=500, detail=f"smbd could not be restarted: {change.failed}")
+    return change.info
 
 
 @router.get("/smb/{name}", response_model=SmbShareInfo)

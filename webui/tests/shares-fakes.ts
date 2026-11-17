@@ -94,6 +94,30 @@ export const nfsUnsafeExport = (path: string, folder: string, detail: string, co
 /** The export file of UNOS, which it alone changes; its first two lines are a comment. */
 export const NFS_UNOS_FILE = '/etc/exports.d/unos.exports';
 
+// The answers of the network interfaces of SMB (supervisor/src/shares/listen.py and router.py,
+// ADR-0391), word for word; supervisor/tests/test_smb_interfaces.py checks them against the server.
+export const INTERFACE_NAME_RULE =
+  "is not an interface name: use up to 15 letters, digits, '.', '_' and '-', starting with a letter";
+export const LOOPBACK_ALWAYS = 'The loopback (lo) is always bound, for the NAS itself: choose interfaces of the network';
+export const dockersInterface = (name: string) => `${name} is one of Docker's interfaces: choose interfaces of the network`;
+export const dummyInterface = (name: string) =>
+  `${name} is a dummy interface, which no computer reaches: choose interfaces of the network`;
+export const pointToPoint = (name: string) => `${name} is a point-to-point interface, which Samba does not listen on`;
+export const NO_LAN_INTERFACE =
+  'None of the chosen interfaces is on the host, enabled and with an address of the local network: SMB would answer no computer of the network';
+export const interfaceNotOnHost = (name: string) =>
+  `${name} is not on the host: smbd listens on it only once it is back and SMB has restarted`;
+export const notListening = (address: string, name: string) =>
+  `smbd does not listen on ${address} of ${name}: the address came after smbd started; Restart SMB makes it listen there`;
+export const SMBD_NOWHERE = 'smbd listens on no address: SMB is not running; Restart SMB starts it';
+export const SMBD_EVERY_ADDRESS =
+  'smbd listens on every address, not only on the chosen interfaces: Restart SMB applies the choice';
+export const smbdOutside = (address: string) =>
+  `smbd listens on ${address}, which is not an address of the chosen interfaces: Restart SMB applies the choice`;
+export const smbdOnlySome = (addresses: string) =>
+  `smbd listens only on ${addresses}, not on every address: Restart SMB applies the choice`;
+export const restartFailed = (detail: string) => `smbd could not be restarted: ${detail}`;
+
 export type SmbState = 'active' | 'password_needed' | 'off' | 'unavailable';
 export type Level = 'read' | 'write';
 
@@ -212,6 +236,55 @@ export interface FakeNfsStatus {
 }
 
 /** A line of an export file that exportfs cannot read. */
+/** A network interface of the host, as GET /shares/smb-interfaces lists it. */
+export interface FakeHostInterface {
+  name: string;
+  /** With their prefix lengths, IPv4 first, then IPv6 in the order of their numbers. */
+  addresses: string[];
+  state: string;
+  enabled: boolean;
+  lan: boolean;
+  offered: boolean;
+}
+
+/** The network interfaces of SMB (supervisor/src/shares/listen.py), as the fake keeps them. */
+export interface FakeSmbInterfaces {
+  /** [] : every interface. */
+  chosen: string[];
+  host: FakeHostInterface[];
+  /** The whole text of host_error, or null. */
+  hostError: string | null;
+  /** Addresses of chosen interfaces that came after smbd started: no listener until a restart. */
+  late: string[];
+  sessions: number | null;
+  /** smbd runs: otherwise it listens nowhere until a restart. */
+  running: boolean;
+  /** Answer of POST .../restart (default: smbd restarts). */
+  restartAnswer: FakeResponse | null;
+  /** Warnings of the answer to a change: the change is saved and smbd not restarted. */
+  warnings: string[];
+}
+
+/** The host of the fake: a NIC with a long name and long addresses, Wi-Fi, a disabled NIC and a tunnel. */
+export const FAKE_HOST_INTERFACES: FakeHostInterface[] = [
+  {
+    name: 'enP4p65s0',
+    addresses: [
+      '192.168.10.5/24',
+      '2001:db8:1234:5678:9abc:def0:1234:5678/64',
+      'fd00:1234:5678:9abc::5/64',
+      'fe80::1234:5678:9abc:def0/64',
+    ],
+    state: 'UP',
+    enabled: true,
+    lan: true,
+    offered: true,
+  },
+  { name: 'wlan0', addresses: ['192.168.7.20/24'], state: 'UP', enabled: true, lan: true, offered: true },
+  { name: 'end1', addresses: [], state: 'DOWN', enabled: false, lan: false, offered: true },
+  { name: 'wg0', addresses: ['10.8.0.2/24'], state: 'UNKNOWN', enabled: true, lan: true, offered: false },
+];
+
 export interface FakeNfsUnreadable {
   file: string;
   line: number;
@@ -281,6 +354,8 @@ export interface FakeSmbApi {
   /** The current password and the 2FA code POST /auth/me/smb/enable accepts. */
   myPassword: string;
   myTotpCode: string;
+  /** The network interfaces of SMB. */
+  interfaces: FakeSmbInterfaces;
   /** Write requests, in order. */
   writes: RecordedWrite[];
   /** GET requests, in order (paths below /api/v1). */
@@ -500,6 +575,7 @@ export interface FakeSmbOptions {
   nfsExports?: FakeNfsExport[];
   nfsStatus?: Partial<FakeNfsStatus>;
   nfsUnreadable?: FakeNfsUnreadable[];
+  interfaces?: Partial<FakeSmbInterfaces>;
 }
 
 const OK_STATUS: FakeServiceStatus = {
@@ -598,6 +674,17 @@ export async function fakeSmbApi(page: Page, options: FakeSmbOptions = {}): Prom
     nfsStatus: { server_missing: false, problems: [], ...options.nfsStatus },
     nfsUnreadable: options.nfsUnreadable ?? [],
     nfsWarnings: [],
+    interfaces: {
+      chosen: [],
+      host: FAKE_HOST_INTERFACES,
+      hostError: null,
+      late: [],
+      sessions: 2,
+      running: true,
+      restartAnswer: null,
+      warnings: [],
+      ...options.interfaces,
+    },
     myPassword: 'e2e-Current-Password-1',
     myTotpCode: '123456',
     writes: [],
@@ -749,8 +836,140 @@ export async function fakeSmbApi(page: Page, options: FakeSmbOptions = {}): Prom
     return null;
   }
 
+  // The choice smbd started with: it binds its addresses only when it starts. A failed restart offers
+  // Restart SMB until one works.
+  let startedWith = [...fake.interfaces.chosen];
+  let restartPending = false;
+
+  /** GET /shares/smb-interfaces: smbd binds as Samba does (supervisor/src/shares/listen.py). */
+  function interfacesState(): Record<string, unknown> {
+    const f = fake.interfaces;
+    const chosen = [...f.chosen].sort();
+    const bare = (address: string) => address.split('/')[0];
+    const bound = (entry: FakeHostInterface) =>
+      entry.enabled && entry.offered
+        ? entry.addresses.map(bare).filter((address) => !address.toLowerCase().startsWith('fe80:'))
+        : [];
+    const picked = f.host.filter((entry) => chosen.includes(entry.name));
+    let listening: string[] = [];
+    if (f.running && startedWith.length === 0) listening = ['0.0.0.0', '::'];
+    else if (f.running) {
+      const addresses = f.host
+        .filter((entry) => startedWith.includes(entry.name))
+        .flatMap(bound)
+        .filter((address) => !f.late.includes(address));
+      listening = [
+        ...addresses.filter((a) => !a.includes(':')),
+        '127.0.0.1',
+        '::1',
+        ...addresses.filter((a) => a.includes(':')),
+      ].sort((a, b) => Number(a.includes(':')) - Number(b.includes(':')) || (a.includes(':') ? 0 : a.localeCompare(b)));
+    }
+    const answers = (address: string) =>
+      listening.includes(address) || listening.includes(address.includes(':') ? '::' : '0.0.0.0');
+    const absent = chosen.filter((name) => !f.host.some((entry) => entry.name === name));
+    const late = picked.flatMap((entry) =>
+      bound(entry).filter((address) => f.late.includes(address)).map((address) => ({ address, name: entry.name })),
+    );
+    // smbd started with another choice than the one stored: a restart failed (ADR-0391).
+    const everyAddress = f.running && chosen.length > 0 && startedWith.length === 0;
+    const onlySome = f.running && chosen.length === 0 && startedWith.length > 0;
+    const allowed = ['127.0.0.1', '::1', ...picked.flatMap(bound)];
+    const outside = f.running && chosen.length > 0 && startedWith.length > 0
+      ? listening.filter((address) => !allowed.includes(address))
+      : [];
+    const problems = [
+      ...absent.map(interfaceNotOnHost),
+      ...late.map((gap) => notListening(gap.address, gap.name)),
+      ...(f.running ? [] : [SMBD_NOWHERE]),
+      ...(onlySome ? [smbdOnlySome(listening.join(', '))] : []),
+      ...(everyAddress ? [SMBD_EVERY_ADDRESS] : []),
+      ...outside.map(smbdOutside),
+    ];
+    const interfaces = [
+      ...f.host.map((entry) => ({
+        ...entry,
+        present: true,
+        chosen: chosen.includes(entry.name),
+        listening: entry.addresses.map(bare).filter(answers),
+        missing: late.filter((gap) => gap.name === entry.name).map((gap) => gap.address),
+      })),
+      ...absent.map((name) => ({
+        name, addresses: [], state: '', enabled: false, lan: false, offered: false,
+        present: false, chosen: true, listening: [], missing: [],
+      })),
+    ];
+    return {
+      chosen,
+      bound: chosen.length > 0,
+      interfaces: f.hostError ? [] : interfaces,
+      host_error: f.hostError,
+      listening,
+      problems: f.hostError ? problems.filter((p) => !absent.some((name) => p === interfaceNotOnHost(name))) : problems,
+      restart_needed: late.length > 0 || !f.running || everyAddress || onlySome || outside.length > 0 || restartPending,
+      sessions: f.sessions,
+      restarted: false,
+      warnings: [],
+    };
+  }
+
+  /** The answers of /shares/smb-interfaces, with the server's checks of listen.choose. */
+  function interfacesAnswer(method: string, path: string, data: Record<string, unknown>): FakeResponse | null {
+    const f = fake.interfaces;
+    if (path === '/shares/smb-interfaces' && method === 'GET') return ok(interfacesState());
+    if (path === '/shares/smb-interfaces/restart' && method === 'POST') {
+      if (f.restartAnswer) return f.restartAnswer;
+      f.late = [];
+      f.running = true;
+      f.sessions = 0;
+      startedWith = [...f.chosen];
+      restartPending = false;
+      return ok({ ...interfacesState(), restarted: true });
+    }
+    if (path !== '/shares/smb-interfaces' || method !== 'PUT') return null;
+    if (!Array.isArray(data.interfaces)) return missing('body', 'interfaces');
+    const names = data.interfaces as string[];
+    // As schemas.SmbInterfacesUpdate: at most 16 names.
+    if (names.length > 16) {
+      return { status: 422, json: { detail: [{ type: 'too_long', loc: ['body', 'interfaces'], msg: 'List should have at most 16 items after validation, not ' + names.length }] } };
+    }
+    for (const name of names) {
+      if (!/^[a-zA-Z][a-zA-Z0-9_.-]{0,14}$/.test(name)) return detail(400, `${name} ${INTERFACE_NAME_RULE}`);
+      if (name === 'lo') return detail(400, LOOPBACK_ALWAYS);
+      if (name === 'dummy0') return detail(400, dummyInterface(name));
+      if (name === 'docker0' || name.startsWith('br-') || name.startsWith('veth')) {
+        return detail(400, dockersInterface(name));
+      }
+    }
+    const wanted = [...new Set(names)].sort();
+    if (wanted.length > 0) {
+      if (f.hostError) return detail(503, f.hostError);
+      const host = (name: string) => f.host.find((entry) => entry.name === name);
+      const tunnel = wanted.find((name) => host(name) && !host(name)!.offered);
+      if (tunnel) return detail(400, pointToPoint(tunnel));
+      if (!wanted.some((name) => host(name)?.enabled && host(name)?.offered && host(name)?.lan)) {
+        return detail(400, NO_LAN_INTERFACE);
+      }
+    }
+    const changed = wanted.join(' ') !== [...f.chosen].sort().join(' ');
+    if (!changed) return ok(interfacesState());
+    f.chosen = wanted;
+    const restarted = f.warnings.length === 0;
+    restartPending = !restarted;
+    if (restarted) {
+      f.late = [];
+      f.running = true;
+      f.sessions = 0;
+      startedWith = [...f.chosen];
+    }
+    return ok({ ...interfacesState(), restarted, warnings: [...f.warnings] });
+  }
+
   function answer(method: string, path: string, search: string, body: unknown): FakeResponse | null {
     const data = (body ?? {}) as Record<string, unknown>;
+
+    // ---- The network interfaces of SMB ----
+    if (path.startsWith('/shares/smb-interfaces')) return interfacesAnswer(method, path, data);
 
     // ---- Groups ----
     // The shares name each group as it is now, with its members as they are now.

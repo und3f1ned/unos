@@ -13,6 +13,8 @@ class ApplyResult:
     """Outcome of service.apply_smb_config()."""
     changed: bool = False            # a new smb.conf was installed
     reloaded: bool | None = None     # None: no reload was needed
+    restarted: bool = False          # smbd was restarted: its interfaces changed (ADR-0391)
+    restart_failed: str | None = None  # why the restart that the change needed failed
     closed_shares: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
 

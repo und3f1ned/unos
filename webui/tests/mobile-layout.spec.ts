@@ -839,9 +839,12 @@ const VIEWS: View[] = [
     shows: (page) => page.getByText(`${DATA}/restore_20261106_090000`).first(),
   },
   {
+    // With the card of the network interfaces: smbd's long IPv6 addresses, and a chosen USB adapter
+    // that is not on the host (ADR-0391).
     name: 'Shares (SMB)',
     path: '/shares',
-    fake: (page) => fakeSmbApi(page, { users: USERS, shares: SHARES }),
+    fake: (page) =>
+      fakeSmbApi(page, { users: USERS, shares: SHARES, interfaces: { chosen: ['enP4p65s0', 'enx00e04c680001'] } }),
     shows: (page) => page.getByText('family_photos_and_videos').first(),
   },
   {
@@ -1246,6 +1249,27 @@ const VIEWS: View[] = [
       await page.getByRole('button', { name: /^(Delete selected|Удалить выбранные)$/ }).click();
     },
     shows: (page) => page.getByRole('dialog').getByText(`${POOLS}/tank/family_photos_and_videos`),
+    start: dialogTitle,
+    end: dialogEnd,
+  },
+  {
+    // The host's interfaces with their addresses, one chosen that the host lacks (ADR-0391).
+    name: 'Dialog: the network interfaces of SMB',
+    path: '/shares',
+    fake: (page) =>
+      fakeSmbApi(page, { users: USERS, shares: SHARES, interfaces: { chosen: ['enP4p65s0', 'enx00e04c680001'] } }),
+    open: (page) => page.getByRole('button', { name: /^(Choose interfaces…|Выбрать интерфейсы…)$/ }).click(),
+    shows: (page) => page.getByRole('dialog').getByText('2001:db8:1234:5678:9abc:def0:1234:5678/64'),
+    start: dialogTitle,
+    end: dialogEnd,
+  },
+  {
+    name: 'Dialog: restart SMB',
+    path: '/shares',
+    fake: (page) =>
+      fakeSmbApi(page, { users: USERS, shares: SHARES, interfaces: { chosen: ['enP4p65s0'], running: false } }),
+    open: (page) => page.getByRole('button', { name: /^(Restart SMB…|Перезапустить SMB…)$/ }).click(),
+    shows: (page) => page.getByRole('dialog'),
     start: dialogTitle,
     end: dialogEnd,
   },
