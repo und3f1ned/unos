@@ -24,6 +24,7 @@ import json
 import subprocess
 import time
 import weakref
+from typing import NamedTuple
 
 from fastapi import HTTPException
 
@@ -161,6 +162,37 @@ def _lock() -> asyncio.Lock:
 def is_hidden(name: str) -> bool:
     """The loopback and Docker's interfaces: System > Network neither lists nor changes them."""
     return name in ("lo", "docker0", "dummy0") or name.startswith(("veth", "br-"))
+
+
+class NetDevCounters(NamedTuple):
+    """An interface's counters in /proc/net/dev."""
+
+    rx_bytes: int
+    rx_packets: int
+    rx_errors: int
+    tx_bytes: int
+    tx_packets: int
+    tx_errors: int
+
+
+def parse_net_dev(text: str) -> dict[str, NetDevCounters]:
+    """Each interface of /proc/net/dev with its counters, in the file's order; a line that is not
+    an interface's is left out. GET /network/stats reads the host's file through the host, and the
+    stats message of /ws/v1/events reads PID 1's (ADR-0388)."""
+    counters: dict[str, NetDevCounters] = {}
+    for line in text.splitlines()[2:]:  # two header lines
+        name, _sep, fields = line.partition(":")
+        parts = fields.split()
+        if len(parts) < 16:
+            continue
+        try:
+            counters[name.strip()] = NetDevCounters(
+                rx_bytes=int(parts[0]), rx_packets=int(parts[1]), rx_errors=int(parts[2]),
+                tx_bytes=int(parts[8]), tx_packets=int(parts[9]), tx_errors=int(parts[10]),
+            )
+        except ValueError:
+            continue
+    return counters
 
 
 def is_enabled(link: dict) -> bool:

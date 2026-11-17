@@ -186,6 +186,8 @@
         memoryTotal={currentStats.memory?.total || 0}
         networkUp={currentStats.network?.bytes_sent_rate || 0}
         networkDown={currentStats.network?.bytes_recv_rate || 0}
+        diskRead={currentStats.disk_io?.read_rate || 0}
+        diskWrite={currentStats.disk_io?.write_rate || 0}
         temperature={wholeDegrees(currentStats.cpu?.temperature)}
       />
     {/if}

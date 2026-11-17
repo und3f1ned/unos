@@ -210,7 +210,8 @@ export interface FakeTraffic {
  * traffic of the fake interfaces: the stand-in's own stream reports the interfaces of this
  * machine, which the fake host does not have. The page's first message authenticates the
  * socket; the fake answers auth_ok and one stats message whose network.interfaces carry
- * ``traffic`` by the name of the interface.
+ * ``traffic`` by the name of the interface: its name, counters and rates, as the server sends
+ * them (ADR-0388).
  */
 export async function fakeLiveTraffic(page: Page, traffic: Record<string, FakeTraffic>): Promise<void> {
   await page.routeWebSocket('**/ws/v1/events', (ws) => {
@@ -220,10 +221,8 @@ export async function fakeLiveTraffic(page: Page, traffic: Record<string, FakeTr
       authenticated = true;
       ws.send(JSON.stringify({ type: 'auth_ok' }));
       const interfaces = Object.entries(traffic).map(([name, counts]) => {
-        const iface = FAKE_INTERFACES.find((i) => i.name === name);
-        if (!iface) throw new Error(`the fake host has no ${name}`);
-        const ipv4 = iface.ip_addresses.find((address) => address.includes('.'))?.split('/')[0] ?? null;
-        return { name, ipv4, speed: iface.speed ?? 0, is_up: iface.enabled, ...counts };
+        if (!FAKE_INTERFACES.some((i) => i.name === name)) throw new Error(`the fake host has no ${name}`);
+        return { name, ...counts };
       });
       ws.send(JSON.stringify({ type: 'stats', data: { network: { interfaces } } }));
     });

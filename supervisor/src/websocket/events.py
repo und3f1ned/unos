@@ -67,6 +67,7 @@ import asyncio
 import functools
 import json
 import logging
+import os
 import threading
 import time
 from collections.abc import Callable
@@ -77,6 +78,7 @@ from typing import Any
 import psutil
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
 
+from .. import host
 from ..auth.models import User
 from ..auth.utils import authenticate_token
 from ..config import get_settings
@@ -84,6 +86,7 @@ from ..apps import install_jobs
 from ..database import async_session
 from ..health import problems
 from ..logs import router as logs
+from ..network import links
 from ..storage import balances, scrubs
 from ..shares import repair_router
 from ..system.sensors import cpu_temperature
@@ -116,11 +119,31 @@ _sockets_before_auth = 0
 # Generous bound for {"type": "auth", "token": ...}; anything larger is not a token.
 _MAX_AUTH_MESSAGE_CHARS = 16 * 1024
 
-# Track previous values for rate calculation
-_prev_net_io = None
-_prev_disk_io = None
-_prev_time = None
-_prev_net_per_iface = {}
+# The counters of the last sample, for the rates of the next: each interface's (received bytes,
+# sent bytes), each physical disk's (read bytes, written bytes), and the time of _clock.
+_prev_net: dict[str, tuple[int, int]] = {}
+_prev_disks: dict[str, tuple[int, int]] = {}
+_prev_time: float | None = None
+
+# The host's traffic counters (ADR-0388). /proc/net/dev lists the interfaces of the network
+# namespace of the process that reads it, and the supervisor's container has one of its own
+# (unos-net): psutil showed the container's traffic, mostly this socket's, as the host's. With
+# pid: host, PID 1 is the host's init, and its /proc/1/net/dev lists the host's interfaces; reading
+# it starts no process. With UNOS_HOST_EXEC=local (the stand-in, the test stack) the host is the
+# machine the supervisor runs on, and psutil reads it.
+HOST_NET_DEV = "/proc/1/net/dev"
+_net_unreadable_logged = False
+
+# The host's block devices: a physical disk has a `device` link in its folder, a zram, loop, device
+# mapper or md device none, and a partition no folder (ADR-0388). Where there is no such folder
+# (the stand-in on macOS), psutil lists whole disks only, and every one counts.
+SYS_BLOCK = "/sys/block"
+
+# Samples are taken only while a socket asks for them. The first after a longer gap would give the
+# average since the last one as the current rate (a dashboard opened in the morning showed the
+# night's backup for a moment): its rates are 0, like those of the first sample after a start, and
+# its counters are the base of the next (ADR-0388).
+RATE_MAX_GAP_SECONDS = 5 * STATS_INTERVAL_SECONDS
 
 # The list of the host's processes is most of a sample's cost: on a SpacemiT K1 one listing of
 # 315 processes took 0.4 s of CPU. A sample reuses the last list until it is this old (ADR-0374).
@@ -185,12 +208,51 @@ def _top_processes() -> list[dict]:
     return _processes
 
 
+def _interface_counters() -> dict[str, tuple[int, int]]:
+    """The host's interfaces that System > Network lists (not the loopback, dummy0 or Docker's
+    bridges and veths, links.is_hidden), each with its received and sent bytes. No interface when
+    the host's counters cannot be read, which the log says once: no traffic rather than the
+    container's (ADR-0388)."""
+    global _net_unreadable_logged
+    if host.runs_locally():
+        counters = {
+            name: (c.bytes_recv, c.bytes_sent) for name, c in psutil.net_io_counters(pernic=True).items()
+        }
+    else:
+        try:
+            with open(HOST_NET_DEV, encoding="utf-8", errors="replace") as file:
+                parsed = links.parse_net_dev(file.read())
+        except OSError as exc:
+            if not _net_unreadable_logged:
+                _net_unreadable_logged = True
+                logger.warning("The host's network counters cannot be read from %s: %s", HOST_NET_DEV, exc)
+            return {}
+        counters = {name: (c.rx_bytes, c.tx_bytes) for name, c in parsed.items()}
+    return {name: values for name, values in counters.items() if not links.is_hidden(name)}
+
+
+def _is_physical_disk(name: str, sysfs: bool) -> bool:
+    """Whether a device of /proc/diskstats is a physical disk: one with a ``device`` in its folder
+    of /sys/block (ADR-0388). ``sysfs`` says whether there is a /sys/block to ask."""
+    if not sysfs:
+        return True
+    return os.path.exists(os.path.join(SYS_BLOCK, name.replace("/", "!"), "device"))
+
+
 def get_system_stats() -> dict:
     """Get comprehensive system statistics for WebSocket broadcast."""
-    global _prev_net_io, _prev_disk_io, _prev_time, _prev_net_per_iface
+    global _prev_net, _prev_disks, _prev_time
 
-    current_time = time.time()
-    time_delta = current_time - _prev_time if _prev_time else 2.0
+    now = _clock()
+    elapsed = now - _prev_time if _prev_time is not None else 0.0
+    if elapsed > RATE_MAX_GAP_SECONDS:
+        elapsed = 0.0
+
+    def rate(new: int, old: int) -> float:
+        """Bytes per second since the last sample, over the monotonic clock: the wall clock of a
+        board without a battery-backed clock jumps when it is set at boot. A counter that went
+        back (an interface's driver loaded again) counts nothing (ADR-0388)."""
+        return max(0, new - old) / elapsed if elapsed > 0 else 0.0
 
     # CPU stats
     cpu_percent = psutil.cpu_percent(interval=None)
@@ -203,76 +265,42 @@ def get_system_stats() -> dict:
     memory = psutil.virtual_memory()
     swap = psutil.swap_memory()
 
-    # Network stats with rate calculation
-    net_io = psutil.net_io_counters()
-    bytes_sent_rate = 0.0
-    bytes_recv_rate = 0.0
-    if _prev_net_io and time_delta > 0:
-        bytes_sent_rate = (net_io.bytes_sent - _prev_net_io.bytes_sent) / time_delta
-        bytes_recv_rate = (net_io.bytes_recv - _prev_net_io.bytes_recv) / time_delta
-
-    # Per-interface network stats with rates
+    # The host's network (ADR-0388): each rate is the sum of the rates of the interfaces that both
+    # this sample and the last have, so that an interface that comes or goes (a USB adapter, a VPN)
+    # never makes it negative or adds all its counters at once.
+    net = _interface_counters()
     interfaces = []
-    net_if_stats = psutil.net_if_stats()
-    net_if_addrs = psutil.net_if_addrs()
-    net_if_counters = psutil.net_io_counters(pernic=True)
-
-    for name, stats in net_if_stats.items():
-        if name == "lo" or not stats.isup:
-            continue
-
-        addrs = net_if_addrs.get(name, [])
-        ipv4 = next((a.address for a in addrs if a.family.name == "AF_INET"), None)
-        counters = net_if_counters.get(name)
-
-        # Calculate per-interface rates
-        iface_sent_rate = 0.0
-        iface_recv_rate = 0.0
-        if name in _prev_net_per_iface and counters and time_delta > 0:
-            prev = _prev_net_per_iface[name]
-            iface_sent_rate = (counters.bytes_sent - prev["bytes_sent"]) / time_delta
-            iface_recv_rate = (counters.bytes_recv - prev["bytes_recv"]) / time_delta
-
-        if counters:
-            _prev_net_per_iface[name] = {
-                "bytes_sent": counters.bytes_sent,
-                "bytes_recv": counters.bytes_recv
-            }
-
+    for name, (bytes_recv, bytes_sent) in net.items():
+        before = _prev_net.get(name)
         interfaces.append({
             "name": name,
-            "ipv4": ipv4,
-            "speed": stats.speed,
-            "is_up": stats.isup,
-            "bytes_sent": counters.bytes_sent if counters else 0,
-            "bytes_recv": counters.bytes_recv if counters else 0,
-            "bytes_sent_rate": iface_sent_rate,
-            "bytes_recv_rate": iface_recv_rate,
+            "bytes_sent": bytes_sent,
+            "bytes_recv": bytes_recv,
+            "bytes_sent_rate": rate(bytes_sent, before[1]) if before else 0.0,
+            "bytes_recv_rate": rate(bytes_recv, before[0]) if before else 0.0,
         })
 
-    # Disk I/O stats with rate calculation
-    disk_io = psutil.disk_io_counters()
+    # One read of the host's /proc/diskstats (not namespaced). The block devices: every one, disks
+    # and partitions, which the kernel lists as soon as it has one, also one attached after the
+    # supervisor started; the Storage page loads its lists again when these names change
+    # (ADR-0360). The rates: the physical disks only, without zram, loop, device mapper and md
+    # devices, which psutil's totals count (a write to LUKS or LVM twice), summed over the disks
+    # that both samples have, as for the interfaces (ADR-0388).
+    per_device = psutil.disk_io_counters(perdisk=True)
+    disks = [{"name": name} for name in per_device if not name.startswith(("loop", "ram"))]
+    sysfs = os.path.isdir(SYS_BLOCK)
+    physical = {
+        name: (counters.read_bytes, counters.write_bytes)
+        for name, counters in per_device.items()
+        if _is_physical_disk(name, sysfs)
+    }
     read_rate = 0.0
     write_rate = 0.0
-    if _prev_disk_io and time_delta > 0:
-        read_rate = (disk_io.read_bytes - _prev_disk_io.read_bytes) / time_delta
-        write_rate = (disk_io.write_bytes - _prev_disk_io.write_bytes) / time_delta
-
-    # Per-disk stats: every block device of /proc/diskstats, disks and partitions, which the
-    # kernel lists as soon as it has one, also one attached after the supervisor started. The
-    # Storage page loads its lists again when these names change (ADR-0360).
-    disks = []
-    disk_io_per = psutil.disk_io_counters(perdisk=True)
-    for name, counters in disk_io_per.items():
-        if name.startswith("loop") or name.startswith("ram"):
-            continue
-        disks.append({
-            "name": name,
-            "read_bytes": counters.read_bytes,
-            "write_bytes": counters.write_bytes,
-            "read_count": counters.read_count,
-            "write_count": counters.write_count
-        })
+    for name, (read_bytes, write_bytes) in physical.items():
+        before = _prev_disks.get(name)
+        if before:
+            read_rate += rate(read_bytes, before[0])
+            write_rate += rate(write_bytes, before[1])
 
     # Top processes, listed at most every PROCESS_LIST_INTERVAL_SECONDS
     top_processes = _top_processes()
@@ -280,9 +308,9 @@ def get_system_stats() -> dict:
     timestamp = datetime.now().isoformat()
 
     # Store previous values for next calculation
-    _prev_net_io = net_io
-    _prev_disk_io = disk_io
-    _prev_time = current_time
+    _prev_net = net
+    _prev_disks = physical
+    _prev_time = now
 
     return {
         "type": "stats",
@@ -312,25 +340,18 @@ def get_system_stats() -> dict:
                 "swap_percent": swap.percent,
             },
 
-            # Network stats
+            # The host's network: the rates of its interfaces and their sums (ADR-0388); regular
+            # users get no interfaces (_for_role).
             "network": {
-                "bytes_sent": net_io.bytes_sent,
-                "bytes_recv": net_io.bytes_recv,
-                "bytes_sent_rate": bytes_sent_rate,
-                "bytes_recv_rate": bytes_recv_rate,
-                "packets_sent": net_io.packets_sent,
-                "packets_recv": net_io.packets_recv,
+                "bytes_sent_rate": sum(interface["bytes_sent_rate"] for interface in interfaces),
+                "bytes_recv_rate": sum(interface["bytes_recv_rate"] for interface in interfaces),
                 "interfaces": interfaces,
             },
 
             # Disk I/O stats
             "disk_io": {
-                "read_bytes": disk_io.read_bytes,
-                "write_bytes": disk_io.write_bytes,
                 "read_rate": read_rate,
                 "write_rate": write_rate,
-                "read_count": disk_io.read_count,
-                "write_count": disk_io.write_count,
                 "disks": disks,
             },
 
@@ -563,6 +584,16 @@ async def _send_installs(websocket: WebSocket, is_admin: bool, sent: int | None)
     return version
 
 
+def _for_role(message: dict, is_admin: bool) -> dict:
+    """The stats message for a socket of this role. The host's interfaces with their traffic are
+    System > Network's, an administrator's page (ADR-0030): a regular user's dashboard gets the
+    network's rates without them (ADR-0388). The sample that every socket shares stays as it is."""
+    network = message.get("data", {}).get("network")
+    if is_admin or not isinstance(network, dict):
+        return message
+    return {**message, "data": {**message["data"], "network": {**network, "interfaces": []}}}
+
+
 @router.websocket("/ws/v1/events")
 async def websocket_endpoint(websocket: WebSocket):
     signed_in = await authenticate_websocket(websocket)
@@ -593,7 +624,7 @@ async def websocket_endpoint(websocket: WebSocket):
             sent_repair = await _send_repair(websocket, role["admin"], sent_repair)
             sent_installs = await _send_installs(websocket, role["admin"], sent_installs)
             stats = await asyncio.to_thread(shared_system_stats)
-            await websocket.send_json(stats)
+            await websocket.send_json(_for_role(stats, role["admin"]))
             await asyncio.wait(
                 {disconnected, revoked},
                 timeout=STATS_INTERVAL_SECONDS,

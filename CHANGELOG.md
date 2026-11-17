@@ -345,6 +345,9 @@ manager, encrypted backup uploads, health checks, CI checks).
   `ups_name`, `host` and `port` are checked before they reach `upsc`.
 
 ### Added
+- The dashboard has a **Disk I/O** card: the bytes per second read from and
+  written to the host's physical disks, from the live statistics; zram, loop,
+  device-mapper (LUKS, LVM) and md devices do not count (ADR-0388).
 - Groups of users (ADR-0385). The **Users** page has a **Groups** card: make
   a group, choose its members (users who are not administrators), rename it
   or delete it. On the **Shares** page a share's access list gives each group
@@ -1163,6 +1166,12 @@ manager, encrypted backup uploads, health checks, CI checks).
   smb.conf as UNOS wrote it.
 
 ### Removed
+- From the live statistics of `/ws/v1/events`: each interface's `ipv4`,
+  `speed` and `is_up`, which were the container's; the network's
+  `bytes_sent`, `bytes_recv`, `packets_sent` and `packets_recv`, the disks'
+  `read_bytes`, `write_bytes`, `read_count` and `write_count`, and those of
+  each block device in `disk_io.disks`, which no page read. Regular users get
+  the network's rates without the host's interfaces (ADR-0388).
 - BookStack, Paperless-ngx and Linkwarden from the App Store's catalog: each
   needs a database or a broker beside it, which they will get as apps of
   several containers (ADR-0381).
@@ -1174,6 +1183,17 @@ manager, encrypted backup uploads, health checks, CI checks).
   holds a long name with no place to break, such as an API token's name of 64
   characters, a long name tried at sign-in or a full IPv6 address: the name
   breaks within its entry.
+- The dashboard's **Network** card and the Resource Monitor showed the traffic
+  of the supervisor's container, which has a network of its own, instead of
+  the host's; **System** → **Network** showed that container's live rates on
+  a host port named like the container's `eth0`, and none on a host whose
+  port has another name. They now show the host's interfaces that **System**
+  → **Network** lists, without the loopback, `dummy0` and Docker's. The disk
+  rates no longer count zram, loop, device-mapper and md devices, and a disk
+  or interface that comes or goes no longer makes a rate negative or adds all
+  its counters at once. Rates no longer jump when the board sets its clock at
+  boot, and the first rates after the dashboard is opened are no longer the
+  average since it was last open (ADR-0388).
 - The dashboard's live stats cost a slow board a large share of a core: every
   open tab took its own sample every two seconds, in the supervisor's event loop,
   and listed every process of the host each time (0.4 s of CPU on a SpacemiT

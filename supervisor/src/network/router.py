@@ -195,20 +195,11 @@ async def get_network_stats(_=Depends(verify_token)):
     result = await links.run(["cat", "/proc/net/dev"])
     if not result.ok:
         raise HTTPException(500, f"Failed to get network stats: {links.reason(result)}")
-    stats = []
-    for line in result.stdout.splitlines()[2:]:  # two header lines
-        name, _sep, counters = line.partition(":")
-        name, parts = name.strip(), counters.split()
-        if len(parts) < 16 or links.is_hidden(name):
-            continue
-        try:
-            stats.append(NetworkStats(
-                interface=name,
-                rx_bytes=int(parts[0]), rx_packets=int(parts[1]), rx_errors=int(parts[2]),
-                tx_bytes=int(parts[8]), tx_packets=int(parts[9]), tx_errors=int(parts[10]),
-            ))
-        except ValueError:
-            continue
+    stats = [
+        NetworkStats(interface=name, **counters._asdict())
+        for name, counters in links.parse_net_dev(result.stdout).items()
+        if not links.is_hidden(name)
+    ]
     return {"stats": stats}
 
 
