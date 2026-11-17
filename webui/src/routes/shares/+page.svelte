@@ -68,8 +68,11 @@
 
 	// Several shares at once (ADR-0388): the selected shares, each by its name and its folder
 	// (keyOf). A share the list no longer has with both leaves the selection whenever the list is
-	// loaded again: a selection never moves to another share under the same name.
+	// loaded again: a selection never moves to a share made again under the same name in another
+	// folder.
 	let selected = new Set<string>();
+	// The most shares one deletion takes (BULK_DELETE_MAX of supervisor/src/shares/schemas.py).
+	const BULK_DELETE_MAX = 200;
 	// The one question of a deletion of several: the shares as the page had them when it was asked,
 	// each with the version and the folder that the request sends (a share changed since is not
 	// deleted).
@@ -287,7 +290,7 @@
 
 	function openBulkDelete() {
 		const chosen = shares.filter((share) => selected.has(keyOf(share)));
-		if (chosen.length === 0) return;
+		if (chosen.length === 0 || chosen.length > BULK_DELETE_MAX) return;
 		bulkToDelete = chosen;
 		bulkError = '';
 		bulkNotDeleted = [];
@@ -350,10 +353,10 @@
 			const reason = messageOf(e);
 			await reloadSmb();
 			const listed = new Set(shares.map(keyOf));
-			bulkErrorTitle =
-				!sharesError && asked.every((share) => listed.has(keyOf(share)))
-					? $t('shares.bulk.noneDeleted')
-					: $t('shares.bulk.someGone');
+			if (sharesError) bulkErrorTitle = $t('shares.bulk.notKnown');
+			else if (asked.every((share) => listed.has(keyOf(share))))
+				bulkErrorTitle = $t('shares.bulk.noneDeleted');
+			else bulkErrorTitle = $t('shares.bulk.someGone');
 			bulkError = reason;
 		} finally {
 			bulkDeleting = false;
@@ -597,11 +600,16 @@
 							variant="danger"
 							size="sm"
 							icon={Trash2}
-							disabled={selected.size === 0 || bulkDeleting}
+							disabled={selected.size === 0 || selected.size > BULK_DELETE_MAX || bulkDeleting}
 							on:click={openBulkDelete}
 						>
 							{$t('shares.bulk.delete')}
 						</Button>
+						{#if selected.size > BULK_DELETE_MAX}
+							<p class="w-full text-sm text-warning">
+								{$t('shares.bulk.tooMany', { max: BULK_DELETE_MAX })}
+							</p>
+						{/if}
 					</div>
 					<div class="space-y-4">
 						{#each shares as share (share.name)}

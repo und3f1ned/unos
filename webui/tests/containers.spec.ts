@@ -639,9 +639,17 @@ test.describe('Several containers at once', () => {
     await expect(page.getByText('Stopping e2e-web (1 of 2)')).toBeVisible();
     await expect.poll(() => gates.length).toBe(1);
     expect(posts(requests)).toEqual([`POST /api/v1/containers/${WEB.id}/stop`]);
-    // Nothing else is started while it runs.
+    // Nothing else is started while it runs: not from the bar, a row or the drawer.
     await expect(button(page, 'Start selected')).toBeDisabled();
     await expect(checkbox(page, 'e2e-db')).toBeDisabled();
+    await expect(rowOf(page, 'e2e-db').getByRole('button', { name: 'Start', exact: true })).toBeDisabled();
+    await expect(rowOf(page, 'e2e-db').getByRole('button', { name: 'Remove', exact: true })).toBeDisabled();
+    await rowOf(page, 'e2e-db').getByText('e2e-db').click();
+    const drawer = page.getByRole('dialog', { name: 'e2e-db' });
+    await expect(drawer.getByRole('button', { name: 'Start', exact: true })).toBeDisabled();
+    await expect(drawer.getByRole('button', { name: 'Remove', exact: true })).toBeDisabled();
+    await page.keyboard.press('Escape');
+    await expect(drawer).toBeHidden();
     gates.shift()!();
     await expect(page.getByText('Stopping e2e-cache (2 of 2)')).toBeVisible();
     await expect.poll(() => gates.length).toBe(1);
@@ -656,6 +664,8 @@ test.describe('Several containers at once', () => {
     await expect(rowOf(page, 'e2e-web').getByText('exited', { exact: true })).toBeVisible();
     await expect(rowOf(page, 'e2e-cache').getByText('exited', { exact: true })).toBeVisible();
     await expect(rowOf(page, 'e2e-db').getByText('exited', { exact: true })).toBeVisible();
+    // Once it ended, a row's own actions are back.
+    await expect(rowOf(page, 'e2e-db').getByRole('button', { name: 'Start', exact: true })).toBeEnabled();
     // What was done leaves the selection.
     await expect(toolbar(page)).toContainText('0 containers selected');
     await expect(checkbox(page, 'e2e-web')).not.toBeChecked();
@@ -689,17 +699,18 @@ test.describe('Several containers at once', () => {
     await expect(checkbox(page, 'e2e-media')).toBeChecked();
     await expect(checkbox(page, 'e2e-web')).not.toBeChecked();
 
+    // Restart, as on a container's own row, is for the running ones: e2e-media, stopped, is listed
+    // as not restarted, and no request is sent for it.
     await checkbox(page, 'e2e-db').check();
     await button(page, 'Restart selected').click();
     const restarted = page.getByRole('list', { name: 'Restarted 1 of 2 containers' });
     await expect(restarted.getByRole('listitem')).toHaveText([
       'e2e-db: running',
-      `e2e-media: failed: ${MEDIA_REFUSED}`,
+      'e2e-media: not restarted: it is not running',
     ]);
-    expect(posts(requests).slice(4)).toEqual([
-      `POST /api/v1/containers/${DB.id}/restart`,
-      `POST /api/v1/containers/${MEDIA.id}/restart`,
-    ]);
+    expect(posts(requests).slice(4)).toEqual([`POST /api/v1/containers/${DB.id}/restart`]);
+    await expect(checkbox(page, 'e2e-media')).toBeChecked();
+    await expect(checkbox(page, 'e2e-db')).not.toBeChecked();
     // Only the last action's results are shown.
     await expect(started).toHaveCount(0);
   });
@@ -755,6 +766,28 @@ test.describe('Several containers at once', () => {
     await expect(toolbar(page)).toContainText('0 containers selected');
   });
 
+  test('leaving the page ends a run after the container it is at', async ({ authenticatedPage: page }) => {
+    const gates: (() => void)[] = [];
+    const requests = await fakeContainersApi(page, {
+      actionGate: () => new Promise<void>((resolve) => gates.push(resolve)),
+    });
+    await page.goto('/containers');
+    await selectAll(page).check();
+    await button(page, 'Stop selected').click();
+    await expect.poll(() => gates.length).toBe(1);
+
+    // Another page of the web UI, without a reload, while the first stop waits for its answer.
+    await page.locator('aside nav a[href="/shares"]').click();
+    await expect(page).toHaveURL('/shares');
+    const answered = page.waitForResponse((r) => r.url().endsWith(`/api/v1/containers/${WEB.id}/stop`));
+    gates.shift()!();
+    await answered;
+    // Time for the next request, which does not come.
+    await page.waitForTimeout(1000);
+    expect(posts(requests)).toEqual([`POST /api/v1/containers/${WEB.id}/stop`]);
+    expect(gates).toHaveLength(0);
+  });
+
   test('a 401 ends the session and the run', async ({ authenticatedPage: page }) => {
     const requests = await fakeContainersApi(page);
     // The session expired while the run went on: the answer for e2e-db is 401.
@@ -789,5 +822,11 @@ test.describe('Several containers at once', () => {
     await expect(result.getByRole('listitem')).toHaveText(['e2e-web: остановлен', 'e2e-db: остановлен']);
     await expect(bar.getByRole('button', { name: 'Запустить выбранные', exact: true })).toBeDisabled();
     await expect(bar.getByRole('button', { name: 'Перезапустить выбранные', exact: true })).toBeDisabled();
+
+    await page.getByRole('checkbox', { name: 'Выбрать e2e-web', exact: true }).check();
+    await bar.getByRole('button', { name: 'Перезапустить выбранные', exact: true }).click();
+    await expect(
+      page.getByRole('list', { name: 'Перезапущено 0 из 1 контейнера' }).getByRole('listitem'),
+    ).toHaveText(['e2e-web: не перезапущен: контейнер не работает']);
   });
 });

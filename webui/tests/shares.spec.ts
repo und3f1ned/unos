@@ -2056,6 +2056,53 @@ test.describe('Deleting several shares (fake data)', () => {
     await expect(shareCard(page, 'docs')).toHaveCount(0);
   });
 
+  test('an error after which the list cannot be read again says that what is left is not known', async ({
+    authenticatedPage: page,
+  }) => {
+    const fake = await fakeSmbApi(page, { users: fakeUsers(), shares: shares() });
+    let sent = false;
+    fake.intercept = (request) => {
+      if (request.path === '/shares/smb/bulk-delete') {
+        sent = true;
+        return { status: 500, json: { detail: 'Internal Server Error' } };
+      }
+      if (sent && request.method === 'GET' && request.path === '/shares/smb') {
+        return { status: 503, json: { detail: 'Nothing was changed: the database was busy; try again' } };
+      }
+      return undefined;
+    };
+    await page.goto('/shares');
+    await checkbox(page, 'docs').check();
+    await toolbar(page).getByRole('button', { name: 'Delete selected' }).click();
+    const dialog = page.getByRole('dialog', { name: 'Delete 1 share' });
+    await dialog.getByRole('button', { name: 'Delete 1 share' }).click();
+
+    await expect(
+      dialog.getByText('The deletion failed, and the list could not be read again: which shares are left is not known'),
+    ).toBeVisible();
+    await expect(dialog.getByText('No share was deleted')).toHaveCount(0);
+    await expect(dialog.getByText('some of these shares are no longer listed')).toHaveCount(0);
+  });
+
+  test('one deletion takes at most 200 shares, and the page says so before asking', async ({
+    authenticatedPage: page,
+  }) => {
+    const many = Array.from({ length: 201 }, (_, i) => fakeShare(`share${String(i + 1).padStart(3, '0')}`));
+    const fake = await fakeSmbApi(page, { users: fakeUsers(), shares: many });
+    await page.goto('/shares');
+    await page.getByRole('checkbox', { name: 'Select all', exact: true }).check();
+    await expect(toolbar(page)).toContainText('201 shares selected');
+    await expect(toolbar(page).getByText('One deletion takes at most 200 shares: select fewer')).toBeVisible();
+    await expect(toolbar(page).getByRole('button', { name: 'Delete selected' })).toBeDisabled();
+
+    await checkbox(page, 'share201').uncheck();
+    await expect(toolbar(page)).toContainText('200 shares selected');
+    await expect(toolbar(page).getByText('One deletion takes at most 200 shares: select fewer')).toHaveCount(0);
+    await toolbar(page).getByRole('button', { name: 'Delete selected' }).click();
+    await expect(page.getByRole('dialog', { name: 'Delete 200 shares' })).toBeVisible();
+    expect(fake.writes).toEqual([]);
+  });
+
   test('the question in Russian takes the form of one for 21 shares', async ({ authenticatedPage: page }) => {
     const many = Array.from({ length: 21 }, (_, i) => fakeShare(`share${String(i + 1).padStart(2, '0')}`));
     await fakeSmbApi(page, { users: fakeUsers(), shares: many });

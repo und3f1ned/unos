@@ -84,7 +84,9 @@
 	// has, leaves the selection. An action calls the endpoint of each container, one after another,
 	// and lists each one's result.
 	type BulkAction = 'start' | 'stop' | 'restart';
-	type BulkItem = { id: string; name: string; state?: string; reason?: string };
+	// A container gets a state (done), a reason (failed) or `skipped` (not running, so not
+	// restarted: as on its own row, Restart is for a running container).
+	type BulkItem = { id: string; name: string; state?: string; reason?: string; skipped?: boolean };
 	let selected = new Set<string>();
 	let bulkRunning = false;
 	let bulkProgress: { action: BulkAction; name: string; i: number; n: number } | null = null;
@@ -128,7 +130,7 @@
 	$: keepShown(filteredContainers);
 	$: allShownSelected =
 		filteredContainers.length > 0 && filteredContainers.every((c) => selected.has(c.id));
-	$: bulkOk = bulkResult ? bulkResult.items.filter((item) => item.reason === undefined).length : 0;
+	$: bulkOk = bulkResult ? bulkResult.items.filter((item) => item.state !== undefined).length : 0;
 
 	function keepShown(shown: Container[]) {
 		const ids = new Set(shown.map((c) => c.id));
@@ -150,21 +152,26 @@
 	/**
 	 * Start, stop or restart every selected container through its own endpoint, in the order of the
 	 * list, one after another: the server's checks and audit entries apply to each, and a failure
-	 * does not stop the others (ADR-0388). The ones that failed stay selected. A 401, which ends the
+	 * does not stop the others (ADR-0388). Restart, as on a container's row, is for the running ones:
+	 * the others are listed as not restarted. What was not done stays selected. A 401, which ends the
 	 * session, and leaving the page end the run after the container it is at.
 	 */
 	async function runBulk(action: BulkAction) {
 		const targets = filteredContainers
 			.filter((c) => selected.has(c.id))
-			.map((c) => ({ id: c.id, name: c.name }));
+			.map((c) => ({ id: c.id, name: c.name, running: c.state === 'running' }));
 		if (targets.length === 0 || bulkRunning) return;
 		bulkRunning = true;
 		bulkResult = null;
 		error = '';
 		const items: BulkItem[] = [];
 		try {
-			for (const [index, target] of targets.entries()) {
+			for (const [index, { running, ...target }] of targets.entries()) {
 				if (left) return;
+				if (action === 'restart' && !running) {
+					items.push({ ...target, skipped: true });
+					continue;
+				}
 				bulkProgress = { action, name: target.name, i: index + 1, n: targets.length };
 				try {
 					const info = await BULK_CALLS[action](target.id);
@@ -180,7 +187,8 @@
 			bulkRunning = false;
 		}
 		bulkResult = { action, items };
-		selected = new Set(items.filter((item) => item.reason !== undefined).map((item) => item.id));
+		// What was not done stays selected.
+		selected = new Set(items.filter((item) => item.state === undefined).map((item) => item.id));
 		await loadData();
 	}
 
@@ -306,6 +314,7 @@
 		action: 'start' | 'stop' | 'restart' | 'remove'
 	) {
 		e.stopPropagation();
+		if (bulkRunning) return;
 
 		if (action === 'remove') {
 			const container = containers.find((c) => c.id === containerId);
@@ -549,9 +558,13 @@
 				<ul class="space-y-1 text-sm" aria-label={title}>
 					{#each bulkResult.items as item (item.id)}
 						<li class="break-words">
-							{item.reason === undefined
-								? $t('containers.bulk.itemDone', { name: item.name, state: stateLabel(item.state ?? '') })
-								: $t('containers.bulk.itemFailed', { name: item.name, reason: item.reason })}
+							{#if item.state !== undefined}
+								{$t('containers.bulk.itemDone', { name: item.name, state: stateLabel(item.state) })}
+							{:else if item.skipped}
+								{$t('containers.bulk.itemNotRunning', { name: item.name })}
+							{:else}
+								{$t('containers.bulk.itemFailed', { name: item.name, reason: item.reason ?? '' })}
+							{/if}
 						</li>
 					{/each}
 				</ul>
@@ -737,6 +750,7 @@
 										<div class="flex items-center justify-end gap-1">
 											{#if container.state === 'running'}
 												<button
+													disabled={bulkRunning}
 													on:click={(e) => handleQuickAction(e, container.id, 'stop')}
 													class="p-1.5 rounded hover:bg-surface-muted text-secondary hover:text-warning transition-colors"
 													title={$t('containers.action.stop')}
@@ -744,6 +758,7 @@
 													<Square class="w-4 h-4" />
 												</button>
 												<button
+													disabled={bulkRunning}
 													on:click={(e) => handleQuickAction(e, container.id, 'restart')}
 													class="p-1.5 rounded hover:bg-surface-muted text-secondary hover:text-info transition-colors"
 													title={$t('containers.action.restart')}
@@ -752,6 +767,7 @@
 												</button>
 											{:else}
 												<button
+													disabled={bulkRunning}
 													on:click={(e) => handleQuickAction(e, container.id, 'start')}
 													class="p-1.5 rounded hover:bg-surface-muted text-secondary hover:text-success transition-colors"
 													title={$t('containers.action.start')}
@@ -760,6 +776,7 @@
 												</button>
 											{/if}
 											<button
+												disabled={bulkRunning}
 												on:click={(e) => handleQuickAction(e, container.id, 'remove')}
 												class="p-1.5 rounded hover:bg-surface-muted text-secondary hover:text-error transition-colors"
 												title={$t('containers.action.remove')}
@@ -840,6 +857,7 @@
 								{/if}
 								{#if container.state === 'running'}
 									<button
+										disabled={bulkRunning}
 										on:click={(e) => handleQuickAction(e, container.id, 'stop')}
 										class="p-1.5 rounded hover:bg-surface-muted text-secondary hover:text-warning transition-colors"
 										title={$t('containers.action.stop')}
@@ -848,6 +866,7 @@
 									</button>
 								{:else}
 									<button
+										disabled={bulkRunning}
 										on:click={(e) => handleQuickAction(e, container.id, 'start')}
 										class="p-1.5 rounded hover:bg-surface-muted text-secondary hover:text-success transition-colors"
 										title={$t('containers.action.start')}
@@ -856,6 +875,7 @@
 									</button>
 								{/if}
 								<button
+									disabled={bulkRunning}
 									on:click={(e) => handleQuickAction(e, container.id, 'remove')}
 									class="p-1.5 rounded hover:bg-surface-muted text-secondary hover:text-error transition-colors"
 									title={$t('containers.action.remove')}
@@ -1029,6 +1049,7 @@
 <ContainerDetailDrawer
 	bind:open={showDrawer}
 	container={selectedContainer}
+	busy={bulkRunning}
 	on:close={closeDrawer}
 	on:action={handleDrawerAction}
 />

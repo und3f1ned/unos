@@ -350,15 +350,19 @@ manager, encrypted backup uploads, health checks, CI checks).
   selects what the search and the state filter show; **Start selected**,
   **Stop selected** and **Restart selected** then act on each of them, one
   after another, through its own endpoint, with the checks and audit entries
-  of a single action, and list each container's result: its new state, or
-  why it failed (the others go on; the failed ones stay selected). UNOS's own
+  of a single action (Restart, as on a container's own row, for the running
+  ones only; the containers' own buttons wait meanwhile), and list each
+  container's result: its new state, or why it was not done (the others go
+  on; what was not done stays selected). UNOS's own
   containers are not listed, so they cannot be selected. On the **Shares**
   page the SMB shares are selected the same way, and **Delete selected** asks
-  once, naming each share and its folder, then deletes all of them with one
-  request, `POST /api/v1/shares/smb/bulk-delete` with each share's name and
+  once, naming each share and its folder, then deletes all of them (up to
+  200) with one request, `POST /api/v1/shares/smb/bulk-delete` with each share's name and
   the version and folder the page loaded: one change of smb.conf and one
   reload of Samba under `smb_lock`, the folders kept, one `share_deleted`
-  audit entry per share. A share changed, made again in another folder or
+  audit entry per share (one that cannot be written is a warning of the
+  answer, and the others are still written). A share changed, made again in
+  another folder or
   deleted elsewhere in the meantime is not deleted and is named with the
   reason; when testparm rejects the new smb.conf or the database is busy,
   none is deleted.

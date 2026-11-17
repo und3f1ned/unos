@@ -17,6 +17,7 @@ from src.shares import service
 
 from .test_share_api import ALICE, API, BOB, access, section
 from .test_share_api import api as share_api  # noqa: F401  (a fixture: the share API on the real app)
+from .test_sign_in_full_disk import ENTRY_LOST, the_audit_log_is_full
 
 BULK = f"{API}/smb/bulk-delete"
 
@@ -182,6 +183,42 @@ class TestBulkDelete:
         assert api.conf.read_bytes() == before and api.temp_files() == []
         assert len(api.audit_entries()) == entries_before
 
+    def test_the_group_access_and_the_options_of_the_deleted_shares_go_with_them(self, api):
+        make_shares(api, "docs", "media", "photos")
+        ids = dict(api.rows("SELECT name, id FROM smb_shares"))
+        api.sql("INSERT INTO user_groups (id, name, version) VALUES (1, 'family', 1)",
+                *(f"INSERT INTO smb_share_group_access (share_id, group_id, level) VALUES ({ids[n]}, 1, 'read')"
+                  for n in ids),
+                *(f"INSERT INTO smb_share_options (share_id, encryption_required, time_machine, previous_versions) "
+                  f"VALUES ({ids[n]}, 1, 0, 0)" for n in ids))
+
+        assert api.client.post(BULK, json=items(api, ("docs", 1), ("media", 1))).status_code == 200
+
+        assert api.rows("SELECT share_id FROM smb_share_group_access") == [(ids["photos"],)]
+        assert api.rows("SELECT share_id FROM smb_share_options") == [(ids["photos"],)]
+        assert api.rows("SELECT share_id FROM smb_share_access") == [(ids["photos"],)]
+
+    def test_an_audit_log_that_cannot_be_written_loses_no_entry_and_the_answer_says_so(
+        self, api, monkeypatch, caplog
+    ):
+        # A full /data: every deleted share's entry goes to the supervisor's log, and the answer
+        # still names each share's result (ADR-0388), with a warning that names the entries.
+        make_shares(api, "docs", "media", "photos")
+        the_audit_log_is_full(monkeypatch)
+
+        response = api.client.post(BULK, json=items(api, ("docs", 1), ("media", 1)))
+
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert [r["status"] for r in body["results"]] == ["deleted", "deleted"]
+        assert body["warnings"] == [
+            "The audit log could not record the deletion of docs, media (No space left on device); "
+            "the supervisor's log has the entries"
+        ]
+        lost = [r.getMessage() for r in caplog.records if r.getMessage().startswith(ENTRY_LOST)]
+        assert len(lost) == 2 and '"resource_id":"docs"' in lost[0] and '"resource_id":"media"' in lost[1]
+        assert api.rows("SELECT name FROM smb_shares") == [("photos",)]
+
     def test_a_running_repair_of_each_deleted_share_stops(self, api, monkeypatch):
         make_shares(api, "docs", "media", "photos")
         ids = dict(api.rows("SELECT name, id FROM smb_shares"))
@@ -193,6 +230,16 @@ class TestBulkDelete:
 
         assert stopped == [(ids["docs"], "the deletion of the share", True),
                            (ids["photos"], "the deletion of the share", True)]
+
+    def test_a_rejected_apply_stops_no_repair(self, api, monkeypatch):
+        make_shares(api, "docs")
+        stopped = []
+        monkeypatch.setattr(service, "_stop_repair", lambda *args, **kwargs: stopped.append(args))
+        api.host.fail[("testparm",)] = HostResult(1, "", "Error loading services.")
+
+        assert api.client.post(BULK, json=items(api, ("docs", 1))).status_code == 500
+
+        assert stopped == []
 
     def test_more_shares_than_the_rate_limit_of_single_deletes_go_in_one_request(self, api):
         # DELETE /shares/smb/{name} allows 10 a minute: an 11th share would be refused with 429.
@@ -216,6 +263,7 @@ class TestBulkDelete:
             {"shares": []},
             items(api, ("docs", 1), ("DOCS", 1)),  # the same share twice
             items(api, *((f"s{i}", 1) for i in range(201))),
+            items(api, ("x" * 65, 1)),  # longer than any share name
             {"shares": [{"name": "docs", "expected_path": f"{api.pool}/docs"}]},  # without its version
             {"shares": [{"name": "docs", "expected_version": 1}]},  # without its folder
             {"shares": [{"name": "docs", "expected_version": 1, "expected_path": f"{api.pool}/docs", "force": True}]},

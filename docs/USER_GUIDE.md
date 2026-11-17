@@ -808,7 +808,7 @@ encryption required loses guest access at the restore, with a note.
 - **Delete** removes the share; the folder and its files are kept. Open
   connections to the share are closed.
 - To delete several shares at once, tick their checkboxes (or **Select all**)
-  and click **Delete selected**. The dialog asks once and names each share
+  and click **Delete selected**, for up to 200 shares at a time. The dialog asks once and names each share
   with its folder; **Delete N shares** then deletes all of them in one change
   of smb.conf. Their folders and files are kept, and the open connections to
   them are closed. A share that someone changed or deleted in the meantime is
@@ -1202,10 +1202,13 @@ state, and the search box finds containers by name or image.
   cards), or **Select all shown** for every container the search and the state
   filter show; a container they hide is unselected. **Start selected**, **Stop
   selected** and **Restart selected** act on each of them in turn, and the page
-  shows which one it is at. Then it lists each container with its new state,
-  or why it failed: one container's failure does not stop the others, and the
-  ones that failed stay selected for another try. Leaving the page stops the
-  run after the container it is at. Removal is one container at a time.
+  shows which one it is at; meanwhile the containers' own buttons wait.
+  **Restart selected** restarts the running ones only, as a container's own
+  **Restart** does: one that does not run is listed as not restarted. Then the
+  page lists each container with its new state, or why it failed: one
+  container's failure does not stop the others, and what was not done stays
+  selected for another try. Leaving the page stops the run after the container
+  it is at. Removal is one container at a time.
 - Click a container for its details: **Overview**, **Logs** and **Network**.
   **Logs** shows the last 200 lines of its log and then each new line as the
   container writes it, each line with the time Docker received it. When the log

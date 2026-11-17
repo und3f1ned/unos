@@ -308,6 +308,8 @@ export const en = {
 	'shares.bulk.confirm': { one: 'Delete {n} share', other: 'Delete {n} shares' },
 	'shares.bulk.noneDeleted': 'No share was deleted',
 	'shares.bulk.someGone': 'The deletion failed, and some of these shares are no longer listed',
+	'shares.bulk.notKnown': 'The deletion failed, and the list could not be read again: which shares are left is not known',
+	'shares.bulk.tooMany': 'One deletion takes at most {max} shares: select fewer',
 	'shares.bulk.deleted': { one: 'Deleted {n} share: {names}', other: 'Deleted {n} shares: {names}' },
 	'shares.bulk.notDeleted': { one: '{n} share was not deleted', other: '{n} shares were not deleted' },
 	'shares.bulk.notDeletedItem': '{name}: {reason}',
@@ -594,6 +596,8 @@ export const ru: Translation<typeof en> = {
 	},
 	'shares.bulk.noneDeleted': 'Ни одна общая папка не удалена',
 	'shares.bulk.someGone': 'Удаление не удалось, и некоторых из этих общих папок больше нет в списке',
+	'shares.bulk.notKnown': 'Удаление не удалось, и список не удалось прочитать снова: неизвестно, какие общие папки остались',
+	'shares.bulk.tooMany': 'За один раз можно удалить не больше {max} общих папок: выберите меньше',
 	'shares.bulk.deleted': {
 		one: 'Удалена {n} общая папка: {names}',
 		few: 'Удалены {n} общие папки: {names}',

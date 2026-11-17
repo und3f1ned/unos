@@ -154,7 +154,9 @@ export const en = {
 		other: 'Restarted {ok} of {n} containers'
 	},
 	'containers.bulk.itemDone': '{name}: {state}',
-	'containers.bulk.itemFailed': '{name}: failed: {reason}'
+	'containers.bulk.itemFailed': '{name}: failed: {reason}',
+	// Restart selected restarts the running ones, as a container's own Restart.
+	'containers.bulk.itemNotRunning': '{name}: not restarted: it is not running'
 };
 
 export const ru: Translation<typeof en> = {
@@ -313,5 +315,6 @@ export const ru: Translation<typeof en> = {
 		many: 'Перезапущено {ok} из {n} контейнеров'
 	},
 	'containers.bulk.itemDone': '{name}: {state}',
-	'containers.bulk.itemFailed': '{name}: не выполнено: {reason}'
+	'containers.bulk.itemFailed': '{name}: не выполнено: {reason}',
+	'containers.bulk.itemNotRunning': '{name}: не перезапущен: контейнер не работает'
 };
