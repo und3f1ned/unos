@@ -537,6 +537,32 @@ Open owner actions:
 
 ## Log
 
+### 2026-11-17: The balance dialog's check on a phone held sideways no longer depends on timing
+
+- `webui.balance-dialog-sideways`, seen while `webui.audit-log-long-token-name` was built: "On a
+  phone held sideways › Dialog: balance a pool fits the screen" of `mobile-layout.spec.ts`
+  (`storage.pool-balance`) failed alone, 10 times of 10, and with `audit.spec.ts`, but passed in
+  two full runs. The cause was the test's, not the page's: the view clicked the option "Every
+  chunk (full balance)" while Select's list still flew in (150 ms). Playwright's click tried
+  again, and the try that found the option at rest, the fourth, forced `scrollIntoView` with
+  `block: 'start'`, which scrolled the dialog's overlay to its end (109 px at 667 x 375); the
+  overlay kept that when the dialog grew, and the title was out of view. A finger scrolls
+  nothing there. How many tries the list takes depends on timing, the likely reason for the
+  passes in the full runs: on main 5623bc1 a full run failed the test the same way. Now
+  `settled()` waits until the list has no animation left, and the first try taps the option
+  without scrolling. Not host-level: no device check.
+- Test first (ADR-0186): on main the test failed 3 of 3 alone and in a full run with
+  Playwright's log. With the change it passed 10 of 10 alone, `mobile-layout.spec.ts` with
+  `audit.spec.ts` passed (174), `make check` passed and `make e2e-local` passed (842, 14 skips on
+  listed conditions); after the review's wording changes the three views of the balance dialog
+  passed 10 times each. The review in a fresh context found no defect; fixed: the comment and
+  the ledger's notes said that every later try scrolls (only the one that finds the element at
+  rest does) and counted the tries one short, and the wait had no message. Kept as it is: the
+  entry's category is `webui`, not `testing` as for the keyboard upload's flaky test, after the
+  branch's name and the check of the web UI it fixes. Outside this change: in the full run on
+  main, `security.spec.ts`'s "a failed reload of the certificates shows no stale list, and a
+  reload clears its error" failed once (its row not found); it passed in the run with the change.
+
 ### 2026-11-17: The smart check skips the disk's sleep while apps use the pool
 
 - `scripts/dev/scenario.sh smart` no longer fails its wait for the pool's disk to sleep when apps
