@@ -514,6 +514,43 @@ const SECURITY = {
   },
 };
 
+// The Account page's API tokens as GET /auth/tokens answers them (APITokenResponse of
+// supervisor/src/auth/schemas.py, ADR-0388): a long name with many areas, a read-only token of
+// every area that is disabled and expired, and a scope that cannot be read. Times in UTC without a zone.
+const EVERY_AREA = [
+  'apps', 'audit', 'auth', 'backup', 'containers', 'files', 'groups', 'health', 'logs', 'monitor', 'network',
+  'notifications', 'offsite', 'power', 'scheduler', 'security', 'shares', 'snapshots', 'storage', 'system', 'updates',
+];
+const API_TOKENS = {
+  ...SECURITY,
+  '/api/v1/auth/tokens': [
+    { id: 1, name: 'nightly_backup_of_the_family_photos_to_the_garage_nas', token_prefix: 'unos_AbCdEfG',
+      is_active: true, read_only: false, areas: EVERY_AREA.slice(0, 20), scope_known: true,
+      created_at: '2026-11-01T09:00:00', last_used_at: '2026-11-16T03:00:00', expires_at: '2027-11-01T09:00:00' },
+    { id: 2, name: 'home-assistant', token_prefix: 'unos_IjKlMnO', is_active: false, read_only: true, areas: null,
+      scope_known: true, created_at: '2026-01-01T09:00:00', last_used_at: null, expires_at: '2026-02-01T09:00:00' },
+    { id: 3, name: 'restored_from_another_installation', token_prefix: 'unos_QrStUvW', is_active: true,
+      read_only: true, areas: [], scope_known: false, created_at: '2026-10-01T09:00:00', last_used_at: null,
+      expires_at: null },
+  ],
+};
+// POST /auth/tokens answers the new token once: 48 characters without a place to break.
+const NEW_API_TOKEN = {
+  id: 4, name: 'nightly_backup_of_the_family_photos_to_the_garage_nas', token: `unos_${'x'.repeat(43)}`,
+  token_prefix: 'unos_xxxxxxx', read_only: false, areas: EVERY_AREA.slice(0, 20), expires_at: null,
+};
+const tokensRegion = (page: Page) => page.getByRole('region', { name: /^(API Tokens|API-токены)$/ });
+/** The dialog of a new token, with every area listed and the warning of the areas whose changes reach beyond them. */
+async function openNewTokenDialog(page: Page): Promise<void> {
+  await tokensRegion(page).getByRole('button', { name: /^(New Token|Новый токен)$/ }).click();
+  const dialog = page.getByRole('dialog');
+  await dialog.getByRole('radio', { name: /^(Read and change|Чтение и изменение)/ }).check();
+  await dialog.getByRole('radio', { name: /^(Only these areas|Только эти области)/ }).check();
+  await dialog.getByRole('checkbox', { name: /^(Containers|Контейнеры)/ }).check();
+  // Back up to the title, which the ticks scrolled away on a phone held sideways.
+  await dialog.getByRole('heading').first().scrollIntoViewIfNeeded();
+}
+
 // A new secret of two-factor authentication as POST /auth/totp/setup answers it: pyotp's
 // random_base32() has 32 characters.
 const TOTP_SECRET = 'JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP';
@@ -913,6 +950,13 @@ const VIEWS: View[] = [
     end: (page) => page.getByRole('button', { name: /^(Sign out|Выйти)$/ }),
   },
   {
+    name: 'System: Security, API tokens',
+    path: '/system#security',
+    fake: (page) => serve(page, API_TOKENS),
+    shows: (page) => page.getByText('nightly_backup_of_the_family_photos_to_the_garage_nas'),
+    end: (page) => tokensRegion(page).getByRole('button', { name: /^(Delete Token|Удалить токен)$/ }).last(),
+  },
+  {
     name: 'System: Security, the sign-in history',
     path: '/system#security',
     fake: (page) => serve(page, { ...SECURITY, '/api/v1/security/login-history': LOGIN_HISTORY }),
@@ -1289,6 +1333,35 @@ const VIEWS: View[] = [
     start: (page) =>
       page.getByRole('heading', { name: /^(Generate Self-Signed Certificate|Создание самоподписанного сертификата)$/ }),
     end: (page) => page.getByRole('button', { name: /^(Generate|Создать)$/ }).last(),
+  },
+  {
+    name: 'Dialog: a new API token',
+    path: '/system#security',
+    fake: (page) => serve(page, API_TOKENS),
+    open: openNewTokenDialog,
+    shows: (page) => page.getByRole('dialog').getByRole('checkbox', { name: /^(Updates|Обновления)/ }),
+    start: dialogTitle,
+    end: dialogEnd,
+  },
+  {
+    name: 'Dialog: the new API token, shown once',
+    path: '/system#security',
+    fake: async (page) => {
+      await serve(page, API_TOKENS);
+      await page.route(
+        (url) => url.pathname === '/api/v1/auth/tokens',
+        (route) => (route.request().method() === 'POST' ? route.fulfill({ json: NEW_API_TOKEN }) : route.fallback()),
+      );
+    },
+    open: async (page) => {
+      await openNewTokenDialog(page);
+      const dialog = page.getByRole('dialog');
+      await dialog.getByLabel(/^(Name|Название)/).fill(NEW_API_TOKEN.name);
+      await dialog.getByRole('button', { name: /^(Create Token|Создать токен)$/ }).click();
+    },
+    shows: (page) => page.getByRole('dialog').getByLabel(/^(The new token|Новый токен)$/),
+    start: dialogTitle,
+    end: dialogEnd,
   },
   {
     name: 'Dialog: turn on two-factor authentication',

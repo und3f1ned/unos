@@ -1,9 +1,10 @@
 from datetime import datetime
 from typing import Annotated, Literal
 
-from pydantic import AfterValidator, BaseModel, ConfigDict, Field, StringConstraints, model_validator
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, StrictBool, StringConstraints, model_validator
 
 from ..security.schemas import UtcDatetime
+from . import scopes
 from ..shares.account_state import SmbAccountStatus
 
 # bcrypt takes at most 72 bytes of a password: new passwords longer than that
@@ -162,25 +163,46 @@ class TOTPEnableRequest(BaseModel):
 API_TOKEN_NAME_CHARS = 64
 
 
+def _each_area_once(areas: list[str] | None) -> list[str] | None:
+    if areas is not None and len(set(areas)) != len(areas):
+        raise ValueError("Name each area once")
+    return areas
+
+
 class APITokenCreate(BaseModel):
+    # A field the request does not know is a 422: a client that still sends `permissions`, which
+    # left the API, gets no token with more rights than it asked for (ADR-0388).
+    model_config = ConfigDict(extra="forbid")
+
     # Shown in the token list and the audit log; white space around it is dropped.
     name: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=API_TOKEN_NAME_CHARS)]
-    # Stored for the scopes of auth.api-token-scopes. Until they are checked, a token acts with
-    # all of its owner's rights, and "*" is the one value that says so (ADR-0253).
-    permissions: Literal["*"] = "*"
+    # The token's scope (ADR-0388): read only, or read and change; and its areas of the API, each
+    # once, or None for every area. Without either, the token is full, as tokens were before.
+    read_only: StrictBool = False
+    areas: Annotated[
+        list[scopes.Area] | None,
+        Field(default=None, min_length=1, max_length=len(scopes.AREAS)),
+        AfterValidator(_each_area_once),
+    ] = None
     # Optional expiration: 1 day to 10 years. Anything else is a 422 (huge
     # values used to overflow the expiry date into a 500).
     expires_in_days: int | None = Field(default=None, ge=1, le=3650)
 
+    def scope(self) -> scopes.Scope:
+        return scopes.Scope(read_only=self.read_only, areas=None if self.areas is None else frozenset(self.areas))
+
 
 class APITokenResponse(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
     id: int
     name: str
     token_prefix: str
     is_active: bool
-    permissions: str
+    # The scope as stored (ADR-0388): areas None is every area, else sorted. scope_known is false
+    # for a stored value that cannot be read, from a restored or damaged database: the token is
+    # refused everywhere, and read_only true with no areas says so.
+    read_only: bool
+    areas: list[str] | None = None
+    scope_known: bool = True
     created_at: datetime | None = None
     last_used_at: datetime | None = None
     expires_at: datetime | None = None
@@ -192,7 +214,8 @@ class APITokenCreated(BaseModel):
     name: str
     token: str  # Full token - only shown once!
     token_prefix: str
-    permissions: str
+    read_only: bool
+    areas: list[str] | None = None
     expires_at: datetime | None = None
 
 

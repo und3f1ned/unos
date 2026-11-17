@@ -1,0 +1,181 @@
+import type { Translation } from '../translate';
+
+// API tokens on the Account page (src/lib/components/account/ApiTokensCard.svelte): the list, the
+// dialog that makes one, full or limited to reading and to areas of the API (ADR-0388), and the
+// token shown once.
+
+export const en = {
+	'tokens.title': 'API Tokens',
+	'tokens.description':
+		'A token lets a script use the UNOS API with the rights of your account. Limit it to reading, or to the areas of the API that the script needs.',
+	'tokens.loadError': 'Could not load your API tokens',
+	'tokens.none': 'No API tokens yet',
+	'tokens.list': 'Your API tokens',
+	'tokens.new': 'New Token',
+
+	'tokens.access.full': 'Full access',
+	'tokens.access.read': 'Read only',
+	'tokens.access.change': 'Read and change',
+	'tokens.areas.every': 'Every area',
+	'tokens.areas.some': 'Areas: {areas}',
+	'tokens.unknownScope': 'Scope unreadable',
+	'tokens.unknownScopeHint':
+		'This token’s scope cannot be read, as after a restore of a damaged or foreign database: every request with it is refused. Delete it and create a new one.',
+	'tokens.disabled': 'Disabled',
+	'tokens.expired': 'Expired',
+	'tokens.createdOn': 'Created {date}',
+	'tokens.expiresOn': 'Expires {date}',
+	'tokens.neverExpires': 'Never expires',
+	'tokens.lastUsed': 'Last used {date} (stored at most once an hour)',
+	'tokens.neverUsed': 'Never used',
+	'tokens.disable': 'Disable Token',
+	'tokens.enable': 'Enable Token',
+	'tokens.delete': 'Delete Token',
+	'tokens.actionsOf': 'Actions of the token {name}',
+	'tokens.toggleFailed': 'The token was not changed',
+	'tokens.deleted': 'The token {name} was deleted',
+
+	'tokens.form.title': 'New API Token',
+	'tokens.form.name': 'Name',
+	'tokens.form.nameHint': 'What the token is for, such as the script that uses it: 1 to 64 characters.',
+	'tokens.form.expiry': 'Expires',
+	'tokens.form.never': 'Never',
+	'tokens.form.afterDays': { one: 'After {n} day', other: 'After {n} days' },
+	'tokens.form.access': 'Access',
+	'tokens.form.readHint':
+		'Reads only. Every change is refused, and so are the reads of secrets: backups and the credentials of notification channels.',
+	'tokens.form.changeHint': 'Reads and changes, with the rights of your account.',
+	'tokens.form.areas': 'Areas of the API',
+	'tokens.form.everyHint': 'Everything that your account may use.',
+	'tokens.form.someAreas': 'Only these areas',
+	'tokens.form.chooseArea': 'Choose at least one area.',
+	'tokens.form.limitedNote':
+		'Through the API, a token that is read only or limited to areas never changes accounts, users, API tokens or two-factor authentication, and never restores a backup.',
+	'tokens.form.warnedAreas':
+		'Change access to Apps, Containers, Scheduler or Updates can run programs as root on the NAS, and to Backups or Off-device copy can take the database with the password hashes and two-factor secrets of every account: such a token can gain more rights than its areas give. Give it only to a script that you trust as much as your password.',
+	'tokens.form.create': 'Create Token',
+	'tokens.form.failed': 'The token was not created',
+
+	'tokens.shown.title': 'Your New API Token',
+	'tokens.shown.save': 'Copy the token now: UNOS keeps only its hash and cannot show it again.',
+	'tokens.shown.summary': '{name}: {access}, {areas}',
+	'tokens.shown.token': 'The new token',
+	'tokens.shown.copy': 'Copy',
+	'tokens.shown.copied': 'Copied',
+	'tokens.shown.copyFailed': 'The browser did not copy it: select the token and copy it yourself.',
+
+	'tokens.deleteDialog.title': 'Delete API Token',
+	'tokens.deleteDialog.text':
+		'Scripts that use the token {name} can no longer use it. A deleted token cannot be brought back.',
+	'tokens.deleteDialog.failed': 'The token was not deleted',
+
+	'tokens.area.apps': 'Apps',
+	'tokens.area.audit': 'Audit log',
+	'tokens.area.auth': 'Account and users',
+	'tokens.area.backup': 'Backups',
+	'tokens.area.containers': 'Containers',
+	'tokens.area.files': 'Files',
+	'tokens.area.groups': 'Groups',
+	'tokens.area.health': 'Disk health',
+	'tokens.area.logs': 'Logs',
+	'tokens.area.monitor': 'Resource monitor',
+	'tokens.area.network': 'Network',
+	'tokens.area.notifications': 'Notifications',
+	'tokens.area.offsite': 'Off-device copy',
+	'tokens.area.power': 'Power',
+	'tokens.area.scheduler': 'Scheduler',
+	'tokens.area.security': 'Security',
+	'tokens.area.shares': 'Shares',
+	'tokens.area.snapshots': 'Snapshots',
+	'tokens.area.storage': 'Storage',
+	'tokens.area.system': 'System',
+	'tokens.area.updates': 'Updates'
+};
+
+export const ru: Translation<typeof en> = {
+	'tokens.title': 'API-токены',
+	'tokens.description':
+		'Токен позволяет скрипту работать с API UNOS с правами вашей учётной записи. Ограничьте его чтением или теми областями API, которые нужны скрипту.',
+	'tokens.loadError': 'Не удалось загрузить ваши API-токены',
+	'tokens.none': 'API-токенов пока нет',
+	'tokens.list': 'Ваши API-токены',
+	'tokens.new': 'Новый токен',
+
+	'tokens.access.full': 'Полный доступ',
+	'tokens.access.read': 'Только чтение',
+	'tokens.access.change': 'Чтение и изменение',
+	'tokens.areas.every': 'Все области',
+	'tokens.areas.some': 'Области: {areas}',
+	'tokens.unknownScope': 'Права не читаются',
+	'tokens.unknownScopeHint':
+		'Права этого токена не удаётся прочитать, как бывает после восстановления повреждённой или чужой базы данных: любой запрос с ним отклоняется. Удалите его и создайте новый.',
+	'tokens.disabled': 'Отключён',
+	'tokens.expired': 'Истёк',
+	'tokens.createdOn': 'Создан {date}',
+	'tokens.expiresOn': 'Действует до {date}',
+	'tokens.neverExpires': 'Бессрочный',
+	'tokens.lastUsed': 'Последнее использование {date} (сохраняется не чаще раза в час)',
+	'tokens.neverUsed': 'Ещё не использовался',
+	'tokens.disable': 'Отключить токен',
+	'tokens.enable': 'Включить токен',
+	'tokens.delete': 'Удалить токен',
+	'tokens.actionsOf': 'Действия с токеном {name}',
+	'tokens.toggleFailed': 'Токен не изменён',
+	'tokens.deleted': 'Токен {name} удалён',
+
+	'tokens.form.title': 'Новый API-токен',
+	'tokens.form.name': 'Название',
+	'tokens.form.nameHint': 'Для чего токен, например какой скрипт им пользуется: от 1 до 64 символов.',
+	'tokens.form.expiry': 'Срок действия',
+	'tokens.form.never': 'Бессрочно',
+	'tokens.form.afterDays': { one: '{n} день', few: '{n} дня', many: '{n} дней' },
+	'tokens.form.access': 'Доступ',
+	'tokens.form.readHint':
+		'Только чтение. Любое изменение отклоняется, как и чтение секретов: резервных копий и учётных данных каналов уведомлений.',
+	'tokens.form.changeHint': 'Чтение и изменение с правами вашей учётной записи.',
+	'tokens.form.areas': 'Области API',
+	'tokens.form.everyHint': 'Всё, чем может пользоваться ваша учётная запись.',
+	'tokens.form.someAreas': 'Только эти области',
+	'tokens.form.chooseArea': 'Выберите хотя бы одну область.',
+	'tokens.form.limitedNote':
+		'Через API токен только для чтения или для отдельных областей никогда не меняет учётные записи, пользователей, API-токены и двухфакторную аутентификацию и никогда не восстанавливает резервную копию.',
+	'tokens.form.warnedAreas':
+		'Право изменения в областях «Приложения», «Контейнеры», «Планировщик» или «Обновления» позволяет запускать программы от root на NAS, а в областях «Резервные копии» или «Копия вне устройства» — получить базу данных с хешами паролей и секретами двухфакторной аутентификации всех учётных записей: такой токен может получить больше прав, чем дают его области. Выдавайте его только скрипту, которому доверяете так же, как своему паролю.',
+	'tokens.form.create': 'Создать токен',
+	'tokens.form.failed': 'Токен не создан',
+
+	'tokens.shown.title': 'Ваш новый API-токен',
+	'tokens.shown.save': 'Скопируйте токен сейчас: UNOS хранит только его хеш и не сможет показать его снова.',
+	'tokens.shown.summary': '{name}: {access}, {areas}',
+	'tokens.shown.token': 'Новый токен',
+	'tokens.shown.copy': 'Копировать',
+	'tokens.shown.copied': 'Скопировано',
+	'tokens.shown.copyFailed': 'Браузер не скопировал его: выделите токен и скопируйте вручную.',
+
+	'tokens.deleteDialog.title': 'Удаление API-токена',
+	'tokens.deleteDialog.text':
+		'Скрипты, которые пользуются токеном {name}, больше не смогут им пользоваться. Удалённый токен вернуть нельзя.',
+	'tokens.deleteDialog.failed': 'Токен не удалён',
+
+	'tokens.area.apps': 'Приложения',
+	'tokens.area.audit': 'Журнал аудита',
+	'tokens.area.auth': 'Учётная запись и пользователи',
+	'tokens.area.backup': 'Резервные копии',
+	'tokens.area.containers': 'Контейнеры',
+	'tokens.area.files': 'Файлы',
+	'tokens.area.groups': 'Группы',
+	'tokens.area.health': 'Состояние дисков',
+	'tokens.area.logs': 'Журналы',
+	'tokens.area.monitor': 'Монитор ресурсов',
+	'tokens.area.network': 'Сеть',
+	'tokens.area.notifications': 'Уведомления',
+	'tokens.area.offsite': 'Копия вне устройства',
+	'tokens.area.power': 'Питание',
+	'tokens.area.scheduler': 'Планировщик',
+	'tokens.area.security': 'Безопасность',
+	'tokens.area.shares': 'Общие папки',
+	'tokens.area.snapshots': 'Снимки',
+	'tokens.area.storage': 'Хранилище',
+	'tokens.area.system': 'Система',
+	'tokens.area.updates': 'Обновления'
+};

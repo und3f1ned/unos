@@ -304,3 +304,93 @@ export async function generateRecoveryCodes(): Promise<string[]> {
 export async function getRecoveryCodesStatus(): Promise<RecoveryCodesStatus> {
   return api.get<RecoveryCodesStatus>("/auth/recovery-codes/status");
 }
+
+// API tokens (ADR-0239): only a session makes, disables and deletes them (ADR-0253). A token is
+// full, or limited to reading and to areas of the API (ADR-0388).
+
+/** The areas of the API, the first segment of a path after /api/v1/ (AREAS of supervisor/src/auth/scopes.py). */
+export const TOKEN_AREAS = [
+  "apps",
+  "audit",
+  "auth",
+  "backup",
+  "containers",
+  "files",
+  "groups",
+  "health",
+  "logs",
+  "monitor",
+  "network",
+  "notifications",
+  "offsite",
+  "power",
+  "scheduler",
+  "security",
+  "shares",
+  "snapshots",
+  "storage",
+  "system",
+  "updates",
+] as const;
+export type TokenArea = (typeof TOKEN_AREAS)[number];
+
+/**
+ * The areas whose change access reaches beyond them (WARNED_AREAS of scopes.py): programs that run
+ * as root on the NAS, or the database with every account's password hash and two-factor secret.
+ */
+export const WARNED_AREAS: readonly TokenArea[] = ["apps", "backup", "containers", "offsite", "scheduler", "updates"];
+
+/** GET /auth/tokens: a token of the signed-in account, never the token itself. */
+export interface ApiToken {
+  id: number;
+  name: string;
+  /** Its first 12 characters. */
+  token_prefix: string;
+  is_active: boolean;
+  read_only: boolean;
+  /** null: every area; else sorted. */
+  areas: TokenArea[] | null;
+  /** false: the stored scope cannot be read, and the token is refused everywhere. */
+  scope_known: boolean;
+  /** UTC without a zone, as the database keeps them. */
+  created_at: string | null;
+  last_used_at: string | null;
+  expires_at: string | null;
+}
+
+export interface NewApiToken {
+  name: string;
+  read_only: boolean;
+  /** null: every area. */
+  areas: TokenArea[] | null;
+  /** null: it never expires. */
+  expires_in_days: number | null;
+}
+
+/** POST /auth/tokens: the token, answered only this once. */
+export interface CreatedApiToken {
+  id: number;
+  name: string;
+  token: string;
+  token_prefix: string;
+  read_only: boolean;
+  areas: TokenArea[] | null;
+  expires_at: string | null;
+}
+
+export async function listApiTokens(): Promise<ApiToken[]> {
+  return api.get<ApiToken[]>("/auth/tokens");
+}
+
+export async function createApiToken(data: NewApiToken): Promise<CreatedApiToken> {
+  return api.post<CreatedApiToken>("/auth/tokens", data);
+}
+
+/** Disable an active token, enable a disabled one. */
+export async function toggleApiToken(id: number): Promise<{ is_active: boolean }> {
+  return api.post<{ is_active: boolean }>(`/auth/tokens/${id}/toggle`);
+}
+
+export async function deleteApiToken(id: number): Promise<void> {
+  await api.delete(`/auth/tokens/${id}`);
+}

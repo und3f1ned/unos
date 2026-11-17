@@ -747,8 +747,17 @@
       "passes": false,
       "adr": [
         "ADR-0033",
-        "ADR-0015"
-      ]
+        "ADR-0015",
+        "ADR-0388"
+      ],
+      "verified_by": [
+        "supervisor/tests/test_token_scopes.py",
+        "supervisor/tests/test_authz.py",
+        "supervisor/tests/test_ws_auth.py",
+        "webui/tests/api-tokens.spec.ts",
+        "webui/tests/mobile-layout.spec.ts"
+      ],
+      "notes": "Database only, not host-level (GLOSSARY.md): the scope is the existing column api_tokens.permissions (\"*\" full, else \"read\" and the areas), checked in authenticate_token for every HTTP request and WebSocket (ADR-0388). Step 1: test_token_scopes.py TestTheSteps (an administrator's read-only token reads GET /auth/me, /auth/users, /auth/tokens, /audit/logs, /security/login-history and more; PUT /system/timezone, DELETE /audit/logs, POST /storage/pools and POST /notifications/test answer 403 \"This API token can only read\"; every change of the area auth and the restore of a backup 403 for every limited token; the backup download and the notification channels 403 as secrets) and TestEveryRoute (every route for 25 scopes, with a regular user's tokens that show the scope's own 403 or the role's, and with an administrator's tokens where the scope refuses, so that no handler runs; a full token is refused nowhere by a scope); api-tokens.spec.ts on the stand-in: the same through the API, and the Account page's dialog, which starts at read only in every area, makes a token whose GET works and whose change answers 403. Step 2: TestTheSteps (a token of audit reads and changes the audit log and answers 403 \"This API token is limited to other areas of the API\" for /auth/me, /storage/pools, /system/info and /security/login-history), TestEveryRoute (each of the 21 areas alone, read only in one area, two areas), TestWebSockets (the events socket only for every area, the container log socket for containers, the journal for logs, 4403 otherwise, also at the re-check after the stored scope changed); the spec: a token of Audit log and Storage made on the page reads the audit log and answers 403 for /auth/me, with the warning of the areas that run programs as root. Also: TestTheTable (the areas are the routes' prefixes, the kinds of the operations equal the test's own table, each concrete path takes its own template's kind, authenticate_token takes the operation as a required keyword), TestStoredValues and TestValuesThatCannotBeRead (restored values that are not a scope refuse the token everywhere and list it with scope_known false), TestARestore (the restore's warning counts them), TestTheApi (422 for permissions, unknown or repeated areas, a read_only that is not a JSON boolean; the audit entry names the scope). Open: the device check, through the API on the dev device: a read-only token and a token of one area made with a session, a few GETs and changes with each, and the SD MiB of the commits (scripts/dev/sd.sh measure). passes stays false until the lead's review."
     },
     {
       "id": "auth.api-token-last-used-throttle",

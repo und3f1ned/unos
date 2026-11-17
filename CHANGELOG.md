@@ -12,6 +12,27 @@ features (SMB access per user and per share, volumes, copy and move in the file
 manager, encrypted backup uploads, health checks, CI checks).
 
 ### Security
+- An API token can be limited to reading, or to areas of the API (ADR-0388).
+  The areas are the prefixes of the API's paths after `/api/v1/` (`storage`,
+  `backup`, `monitor` and 18 more); `POST /api/v1/auth/tokens` takes
+  `read_only` and `areas`, and its answers and `GET /api/v1/auth/tokens` carry
+  them. A read-only token is refused every request but `GET` (and two `POST`s
+  that only read) with 403 "This API token can only read", and the download of
+  a backup and the notification channels' settings with 403 "A read-only API
+  token cannot read this: the answer holds secrets"; a token of areas is
+  refused outside them with 403 "This API token is limited to other areas of
+  the API", its WebSockets with 4403. Through the API a limited token never
+  changes accounts, users, API tokens or two-factor authentication and never
+  restores a backup; change access to apps, containers, the scheduler or
+  updates runs programs as root, and to backups or the off-device copy takes
+  the database, which the dialog warns of. Without a limit a token is full, as
+  before, and the tokens that exist, which hold `*`, stay full. `permissions` is gone from the API: a request that sends it answers
+  422. The Account page (**System** → **Security**) gets **API Tokens**: the
+  list with each token's access and areas, **Disable Token**, **Enable Token**
+  and **Delete Token**, and **New Token**, which starts at read only. A
+  restored token whose scope cannot be read is refused everywhere, and the
+  restore counts them among its warnings. The audit log names the scope of
+  each new token.
 - An administrator can require two-factor authentication for every account
   (**System** → **Security**, **Two-factor authentication for every
   account**), with a grace period of none, 1, 3, 7 (the default), 14 or 30

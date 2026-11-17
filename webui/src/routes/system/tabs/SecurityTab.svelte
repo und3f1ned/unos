@@ -6,6 +6,7 @@
   import TwoFactorRequirementCard from "$lib/components/account/TwoFactorRequirementCard.svelte";
   import RecoveryCodes from "$lib/components/account/RecoveryCodes.svelte";
   import LanguageCard from "$lib/components/account/LanguageCard.svelte";
+  import ApiTokensCard from "$lib/components/account/ApiTokensCard.svelte";
   import { intlLocale, t } from "$lib/i18n";
   import { Alert, Badge, Button } from "$lib/components/ui";
   import { changePassword, setupTOTP, enableTOTP, disableTOTP, getTOTPStatus, type TOTPSetupResponse } from "$lib/api/auth";
@@ -724,6 +725,8 @@
   </div>
 
   <SmbAccessCard bind:this={smbCard} />
+
+  <ApiTokensCard />
 
   {#if isAdmin}
   {#if totpStatusLoaded}
