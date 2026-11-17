@@ -1460,6 +1460,39 @@ container's log on the **Containers** page if it stops again.
 These actions work only on apps installed from the App Store; other containers
 are started and stopped on the **Containers** page.
 
+### Memory and CPU Limits
+
+Each card on the **Installed** tab has **Resources**: every container of the
+app with the memory and the CPUs it uses, as UNOS last read them from the
+kernel (about every 30 seconds; open the tab again for newer values), and its
+limits, with a bar of the use against each limit. A container without limits
+shows its use alone; a stopped one shows only its limits.
+
+**Limits** on a container's line sets its own limits; an app of several
+containers has one per container (Immich's server, database, Valkey and machine
+learning). Leave a field empty for no limit:
+
+- **Memory limit (MB)**: from 64 MB to below the memory of the NAS. A new or
+  lower limit of a running container must leave a margin above what it uses now
+  (10%, at least 32 MB); while UNOS cannot read its use, stop the app first. At
+  its limit the kernel takes memory from the container, and then ends its
+  processes; the container gets no swap beyond the limit.
+- **CPU limit (CPUs)**: from 0.1 to the number of the NAS's CPUs, in hundredths
+  (1.5 is one and a half CPUs). At its limit the container runs slower.
+
+Docker applies the limits at once, without a restart, and keeps them across
+stops, restarts and reboots: `docker inspect` shows them as `Memory`,
+`MemorySwap`, `CpuQuota` and `CpuPeriod`. UNOS also keeps them for the next
+install of the app, also after an uninstall, and the install gives each
+container its own again. A memory limit that you remove shows in `docker
+inspect` as twice the memory of the NAS, which works as no limit. A CPU limit
+set outside UNOS with `docker update --cpus` is shown, but UNOS cannot change
+it. Each change is in the audit log as **App limits changed**.
+
+Crossing a limit sends an alert (see [Alerts](#alerts)): a container that uses
+90% of its memory limit, one held at 90% of its CPU limit for 5 minutes, and
+one whose process the kernel ended for lack of memory.
+
 ---
 
 ## User Management
@@ -2333,8 +2366,9 @@ A run on a pool that is not mounted fails with `Pool <name> is not mounted at
 
 Go to **System** → **Backup & Restore**. A backup holds the UNOS database:
 user accounts with their passwords, two-factor authentication, API tokens,
-the login history, the groups of users with their members, and the SMB
-shares with their access lists, those of groups included. It does not
+the login history, the groups of users with their members, the SMB
+shares with their access lists, those of groups included, and the memory and
+CPU limits kept for the apps' next installs. It does not
 hold the files in your pools, Samba's own password database, nor settings
 kept elsewhere, such as notification channels, scheduled tasks, firewall
 rules, UPS settings, the network settings and the host's `/etc/fstab`. Each
@@ -2354,7 +2388,9 @@ backup in the list has **Restore**, **Download** and **Delete** buttons.
   authentication, API tokens and the login history are then those of the
   backup, so an API token revoked after the backup was made works again.
   Nothing else is restored: the scheduled tasks that the backups of backup
-  tasks also hold are named in the result as not restored.
+  tasks also hold are named in the result as not restored. The limits kept
+  for the apps' next installs become the backup's, while the installed apps'
+  containers keep the limits that Docker has until you set them again.
 
 SMB after a restore:
 - The shares and their access lists, and the groups with their members, come
@@ -2541,6 +2577,9 @@ enabled channel, when it finds it:
 | The latest SMART self-test of a disk failed | error | every hour |
 | The last run of an enabled scheduled task failed | warning | every 5 minutes |
 | An enabled task missed a run: its time passed 10 minutes ago, and it did not run | warning | every 5 minutes |
+| A container of an app uses 90% of its memory limit; the banner keeps it until it is below 80% | warning | every 30 seconds |
+| A container of an app used 90% of its CPU limit on average for 5 minutes; kept until that average is below 70% | warning | every 30 seconds |
+| The kernel ended a process of a container of an app for lack of memory, at its memory limit or because the NAS ran out of memory; kept an hour after the last such end, so that one alert covers a container that is ended again and again | error | every 30 seconds |
 
 A problem is alerted once, not at every check, and stays known while it
 lasts: administrators see it in the health banner above every page, in the
@@ -2557,7 +2596,9 @@ no longer healthy, a filesystem made read-only.
 
 The use of the volumes' quotas is read from the kernel's own counters, which
 reads no disk; the volumes are listed again only after something wrote to the
-pool. UNOS does not watch a volume of a pool with quotas off.
+pool. UNOS does not watch a volume of a pool with quotas off. The use of the
+apps' containers is read from the kernel's counters of each container too, on
+a host with cgroup v2, and only while the container runs.
 
 A disk that sleeps is not woken for the check and keeps what UNOS knew of it,
 unless another disk is at its place. Runs are not made up after the supervisor

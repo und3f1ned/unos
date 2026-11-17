@@ -250,11 +250,21 @@ const INSTALLED_JELLYFIN = {
   health: null,
   companions: [],
   missing: [],
+  // Its limits and its use against them, with bars (ADR-0388).
+  resources: {
+    memory_limit: 2 ** 30,
+    cpu_limit: 2,
+    memory_used: 700 * 2 ** 20,
+    cpu_used: 0.4,
+    sampled_at: '2026-11-17T10:00:00+00:00',
+  },
 };
 // An app of several containers whose machine learning stopped: its card names its containers and
 // warns about the one that does not run (ADR-0381).
 const INSTALLED_IMMICH = installedImmich(DATA, { companions: { 'machine-learning': { status: 'exited' } } });
 const INSTALLED_APPS = [INSTALLED_JELLYFIN, INSTALLED_IMMICH];
+// What the limits of a container may be on a NAS of 8 GiB and 8 CPUs (GET /apps/limits, ADR-0388).
+const LIMIT_BOUNDS = { memory_min: 64 * 2 ** 20, memory_max: 8 * 2 ** 30, cpu_min: 0.1, cpu_max: 8 };
 
 // The Files page: the pools folder holds e2e_data, which holds a folder and files with long names.
 const FAMILY = `${DATA}/Family photos and videos 2019-2026`;
@@ -1188,6 +1198,19 @@ const VIEWS: View[] = [
     },
     shows: (page) => page.getByRole('dialog').getByRole('group', { name: 'immich-machine-learning' }),
     // Opened on a tab that the click may scroll to, as the view of the variables.
+    end: dialogEnd,
+  },
+  {
+    // The limits of one container of an app, with the bounds of the NAS in its hints (ADR-0388).
+    name: 'Dialog: the limits of a container',
+    path: '/apps',
+    fake: (page) => serve(page, { '/api/v1/apps/installed': INSTALLED_APPS, '/api/v1/apps/limits': LIMIT_BOUNDS }),
+    open: async (page) => {
+      await page.getByRole('button', { name: /^(Installed|Установленные) \(2\)$/ }).click();
+      await page.getByRole('listitem', { name: 'immich-machine-learning', exact: true }).getByRole('button').click();
+    },
+    shows: (page) => page.getByRole('dialog').getByRole('textbox').last(),
+    start: dialogTitle,
     end: dialogEnd,
   },
   {

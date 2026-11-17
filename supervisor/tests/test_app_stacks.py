@@ -395,6 +395,10 @@ class TestInstall:
                 "health": health,
                 "image": image,
                 "devices": [],
+                # No limits: none were kept for the app (ADR-0388); no use read yet.
+                "resources": {
+                    "memory_limit": None, "cpu_limit": None, "memory_used": None, "cpu_used": None, "sampled_at": None,
+                },
             }
             for name, health, image in [
                 ("photos-database", "healthy", f"example/photos-db@{_digest(2)}"),
@@ -1582,6 +1586,7 @@ def test_the_e2e_fakes_list_an_installed_app_as_the_server_does():
     assert _interface_fields(fakes, "FakeInstalledApp") == list(schemas.InstalledApp.model_fields)
     assert _interface_fields(fakes, "FakeCompanion") == list(schemas.CompanionContainer.model_fields)
     assert _interface_fields(fakes, "FakeVolume") == list(schemas.AppVolume.model_fields)
+    assert _interface_fields(fakes, "FakeResources") == list(schemas.ContainerResources.model_fields)
 
 
 def test_the_e2e_fakes_refuse_a_taken_port_with_the_servers_text(api, pools, docker, immich_images, soc):

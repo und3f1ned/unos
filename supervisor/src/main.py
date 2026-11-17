@@ -50,6 +50,7 @@ from .shares import repair_router
 from .shares.repair_router import router as shares_repair_router
 from .containers.router import router as containers_router
 from .apps import install_jobs
+from .apps.usage import start_app_resources, stop_app_resources
 from .apps.router import router as apps_router
 from .files.router import router as files_router
 from .files.router import (
@@ -166,10 +167,13 @@ async def lifespan(app: FastAPI):
         await start_trash_expiry()
         # Looks once for the hidden files that uploads left when the supervisor stopped (ADR-0354).
         await start_upload_leftover_check()
+        # Reads the use of the apps' containers against their limits every 30 s (ADR-0388).
+        await start_app_resources()
     try:
         yield
     finally:
         if run_background:
+            await stop_app_resources()
             await stop_upload_leftover_check()
             await stop_trash_expiry()
             await stop_ups_monitor()

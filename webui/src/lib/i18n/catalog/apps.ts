@@ -91,6 +91,36 @@ export const en = {
 	'apps.installed.stopFailed': 'Stop failed',
 	'apps.installed.restartFailed': 'Restart failed',
 	'apps.installed.uninstallFailed': 'Uninstall failed',
+	// The use of an installed app's containers against their limits (ADR-0388): {used} and {limit}
+	// are a size with its unit, or a number of CPUs.
+	'apps.resources.title': 'Resources',
+	'apps.resources.hint':
+		'The memory and CPUs that each container uses, as UNOS last read them (about every 30 seconds). Crossing a limit sends an alert.',
+	'apps.resources.memoryUse': 'Memory: {used} of {limit}',
+	'apps.resources.memoryUseNoLimit': 'Memory: {used}, no limit',
+	'apps.resources.memoryLimit': 'Memory limit: {limit}',
+	'apps.resources.memoryNoLimit': 'No memory limit',
+	'apps.resources.cpuUse': 'CPU: {used} of {limit} CPUs',
+	'apps.resources.cpuUseNoLimit': 'CPU: {used} CPUs, no limit',
+	'apps.resources.cpuLimit': 'CPU limit: {limit} CPUs',
+	'apps.resources.cpuNoLimit': 'No CPU limit',
+	'apps.resources.memoryBar': 'Memory of {name} against its limit',
+	'apps.resources.cpuBar': 'CPU of {name} against its limit',
+	'apps.resources.notRead': 'Its use has not been read yet.',
+	'apps.resources.limits': 'Limits',
+	// The dialog of a container's limits: {name} is the container's name; {min} and {max} numbers.
+	'apps.limits.title': 'Limits of {name}',
+	'apps.limits.intro':
+		'Docker applies the limits at once, without a restart. UNOS keeps them for the next install of this app, also after an uninstall. Leave a field empty for no limit.',
+	'apps.limits.memory': 'Memory limit (MB)',
+	'apps.limits.memoryHint':
+		'From {min} MB to below {max} MB, the memory of this NAS. At the limit the kernel takes memory from the container, and then ends its processes.',
+	'apps.limits.memoryNow': 'It uses {used} MB now: while it runs, a new limit must leave a margin above that of 10%, at least 32 MB.',
+	'apps.limits.cpu': 'CPU limit (CPUs)',
+	'apps.limits.cpuHint': 'From {min} to {max} CPUs, the CPUs of this NAS, in hundredths. At its limit the container runs slower.',
+	'apps.limits.none': 'No limit',
+	'apps.limits.notANumber': 'Enter a number, or leave the field empty for no limit.',
+	'apps.limits.save': 'Save limits',
 
 	// The data folders of an installed app that are not on a mounted pool.
 	'apps.storage.unavailableTitle': 'Data folders are not available',
@@ -332,6 +362,33 @@ export const ru: Translation<typeof en> = {
 	'apps.installed.stopFailed': 'Не удалось остановить приложение',
 	'apps.installed.restartFailed': 'Не удалось перезапустить приложение',
 	'apps.installed.uninstallFailed': 'Не удалось удалить приложение',
+	'apps.resources.title': 'Ресурсы',
+	'apps.resources.hint':
+		'Память и процессоры, которые использует каждый контейнер, по последнему замеру UNOS (примерно раз в 30 секунд). При превышении ограничения приходит оповещение.',
+	'apps.resources.memoryUse': 'Память: {used} из {limit}',
+	'apps.resources.memoryUseNoLimit': 'Память: {used}, без ограничения',
+	'apps.resources.memoryLimit': 'Ограничение памяти: {limit}',
+	'apps.resources.memoryNoLimit': 'Без ограничения памяти',
+	'apps.resources.cpuUse': 'ЦП: {used} из {limit} ЦП',
+	'apps.resources.cpuUseNoLimit': 'ЦП: {used} ЦП, без ограничения',
+	'apps.resources.cpuLimit': 'Ограничение ЦП: {limit} ЦП',
+	'apps.resources.cpuNoLimit': 'Без ограничения ЦП',
+	'apps.resources.memoryBar': 'Память {name} относительно ограничения',
+	'apps.resources.cpuBar': 'ЦП {name} относительно ограничения',
+	'apps.resources.notRead': 'Использование ещё не замерено.',
+	'apps.resources.limits': 'Ограничения',
+	'apps.limits.title': 'Ограничения {name}',
+	'apps.limits.intro':
+		'Docker применяет ограничения сразу, без перезапуска. UNOS сохраняет их и для следующей установки этого приложения, в том числе после удаления. Оставьте поле пустым, чтобы не ограничивать.',
+	'apps.limits.memory': 'Ограничение памяти (МБ)',
+	'apps.limits.memoryHint':
+		'От {min} МБ до значения меньше {max} МБ — памяти этого NAS. На пределе ядро отбирает у контейнера память, а затем завершает его процессы.',
+	'apps.limits.memoryNow': 'Сейчас он использует {used} МБ: пока он работает, новое ограничение должно оставлять запас сверх этого — 10%, не меньше 32 МБ.',
+	'apps.limits.cpu': 'Ограничение ЦП (процессоров)',
+	'apps.limits.cpuHint': 'От {min} до {max} ЦП — процессоров этого NAS, с точностью до сотых. На пределе контейнер работает медленнее.',
+	'apps.limits.none': 'Без ограничения',
+	'apps.limits.notANumber': 'Введите число или оставьте поле пустым, чтобы не ограничивать.',
+	'apps.limits.save': 'Сохранить ограничения',
 
 	'apps.storage.unavailableTitle': 'Папки с данными недоступны',
 	'apps.storage.unavailable':

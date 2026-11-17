@@ -229,6 +229,49 @@ class AppVolume(BaseModel):
     companion: str | None = None
 
 
+class ContainerResources(BaseModel):
+    """A container's limits as Docker keeps them and its use as UNOS last read it (ADR-0388)."""
+    # The memory limit in bytes and the CPU limit in CPUs, as docker inspect shows them
+    # (HostConfig.Memory, CpuQuota / CpuPeriod); None: no limit.
+    memory_limit: int | None = None
+    cpu_limit: float | None = None
+    # The memory that the container uses (its cgroup's memory.current without the page cache that
+    # the kernel can drop, inactive_file), in bytes, and the CPUs it used on average between the
+    # last two reads; None until read, and for a container that does not run.
+    memory_used: int | None = None
+    cpu_used: float | None = None
+    # When the use was read, in ISO 8601 with the UTC offset.
+    sampled_at: str | None = None
+
+
+class ContainerLimitsRequest(BaseModel):
+    """The limits of one container of an app (ADR-0388): null removes one. Both are required, so
+    that a field left out never removes a limit."""
+    model_config = ConfigDict(extra="forbid")
+
+    # Bytes; from limits.MEMORY_FLOOR to below the host's memory.
+    memory_limit: int | None
+    # CPUs, in hundredths; from limits.CPU_FLOOR to the host's CPUs.
+    cpu_limit: float | None
+
+
+class ContainerLimits(BaseModel):
+    """The limits of one container, as Docker keeps them after a change (ADR-0388)."""
+    container: str
+    memory_limit: int | None = None
+    cpu_limit: float | None = None
+
+
+class LimitBounds(BaseModel):
+    """What a container's limits may be on this host (ADR-0388)."""
+    memory_min: int
+    # The host's memory: a memory limit must be below it.
+    memory_max: int
+    cpu_min: float
+    # The host's CPUs.
+    cpu_max: float
+
+
 class CompanionContainer(BaseModel):
     """A companion container of an installed app, as Docker reports it (ADR-0381)."""
     # The companion's name in the app (its DNS alias), and the container's name and short id.
@@ -242,6 +285,8 @@ class CompanionContainer(BaseModel):
     image: str
     # The host's device nodes passed into the container (ADR-0382).
     devices: list[str] = []
+    # Its limits and its use (ADR-0388).
+    resources: ContainerResources = ContainerResources()
 
 
 class InstalledApp(BaseModel):
@@ -274,6 +319,8 @@ class InstalledApp(BaseModel):
     # The names of the app's containers that the catalog has and Docker lacks: such an app does
     # not start, and an uninstall removes the rest.
     missing: list[str] = []
+    # The main container's limits and use (ADR-0388); empty while it is missing.
+    resources: ContainerResources = ContainerResources()
 
 
 class AppPool(BaseModel):

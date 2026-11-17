@@ -18,7 +18,10 @@
 		task_missed: 'problems.kind.task_missed',
 		volume_quota_80: 'problems.kind.volume_quota_80',
 		volume_quota_90: 'problems.kind.volume_quota_90',
-		volume_quota_95: 'problems.kind.volume_quota_95'
+		volume_quota_95: 'problems.kind.volume_quota_95',
+		app_memory: 'problems.kind.app_memory',
+		app_cpu: 'problems.kind.app_cpu',
+		app_oom: 'problems.kind.app_oom'
 	};
 
 	$: text = (problem: Problem): string =>

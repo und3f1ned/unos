@@ -105,6 +105,7 @@
 		container_removed: 'audit.action.containerRemoved',
 		app_installed: 'audit.action.appInstalled',
 		app_uninstalled: 'audit.action.appUninstalled',
+		app_limits_changed: 'audit.action.appLimitsChanged',
 		backup_created: 'audit.action.backupCreated',
 		backup_restored: 'audit.action.backupRestored',
 		backup_deleted: 'audit.action.backupDeleted',

@@ -10,12 +10,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, NoReturn
 
-from docker.errors import DockerException, NotFound
+from docker.errors import APIError, DockerException, NotFound
 from docker.types import Mount
 from docker.utils import parse_repository_tag
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from fastapi.responses import JSONResponse
 from sqlalchemy import select
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..audit.changes import audit_change
@@ -23,14 +24,14 @@ from ..audit.schemas import AuditAction, AuditSeverity
 from ..auth.models import User
 from ..auth.utils import require_admin, verify_token
 from ..config import get_settings
-from ..containers.docker import CAPPED_LOG, RUNNING_STATES, get_client
+from ..containers.docker import CAPPED_LOG, NO_ANSWER, RUNNING_STATES, get_client, no_answer_detail
 from ..database import get_db
 from ..files.router import TRASH
 from ..security.validators import open_dir_nofollow, pools_base, validate_pools_path
 from ..shares.constants import SMB_APP_UID, SMB_GROUP_GID, SMB_GROUP_NAME
 from ..shares.models import SmbShare
 from ..snapshots.router import SNAPSHOT_DIR_NAME
-from . import app_secrets, install_jobs, preflight, pulls, stacks
+from . import app_secrets, install_jobs, limits, preflight, pulls, stacks, usage
 from .catalog import APP_CATALOG, get_app_by_id, get_apps_by_category, search_apps
 from .hardware import ContainerHardware, all_profiles, container_hardware, for_host, read_host_hardware
 from .schemas import (
@@ -44,8 +45,12 @@ from .schemas import (
     AppTemplate,
     AppVolume,
     CompanionContainer,
+    ContainerLimits,
+    ContainerLimitsRequest,
+    ContainerResources,
     ContainerSpec,
     InstalledApp,
+    LimitBounds,
     VolumeMapping,
     is_app_data_path,
 )
@@ -185,6 +190,7 @@ def _installed_app(app: stacks.InstalledContainers, pools: list[AppPool], bases:
         health=stacks.health(main) if main is not None else None,
         companions=[_companion(c) for c in app.companions],
         missing=app.missing,
+        resources=_resources(main) if main is not None else ContainerResources(),
     )
 
 
@@ -198,6 +204,21 @@ def _companion(container: Any) -> CompanionContainer:
         health=stacks.health(container),
         image=str((container.attrs.get("Config") or {}).get("Image") or ""),
         devices=_devices(container),
+        resources=_resources(container),
+    )
+
+
+def _resources(container: Any) -> ContainerResources:
+    """A container's limits as Docker keeps them, and its use at the last pass of the sampler while
+    it runs (ADR-0388)."""
+    in_force = limits.in_force(container.attrs)
+    use = usage.latest(container.id) if container.status == "running" else None
+    return ContainerResources(
+        memory_limit=in_force.memory,
+        cpu_limit=in_force.cpus,
+        memory_used=use.memory_used if use is not None else None,
+        cpu_used=use.cpu_used if use is not None else None,
+        sampled_at=use.sampled_at if use is not None else None,
     )
 
 
@@ -962,6 +983,8 @@ class _NewContainer:
     environment: dict[str, str]
     planned: list[_PlannedMount]
     hardware: ContainerHardware | None = None
+    # The limits kept for it from before (an uninstall keeps them, ADR-0388); None: none.
+    kept_limits: limits.Limits | None = None
     # The data folders that it binds and sets up with a generated password (secret_for) that were
     # empty or absent before this install: one that fails while it is awaited may leave them
     # half set up, and the next install would take them for its data (ADR-0381).
@@ -980,6 +1003,8 @@ class _Installed:
     answer: AppInstallResponse
     containers: list[str]
     generated: list[str] = field(default_factory=list)
+    # The limits it gave the containers, kept from before, by Docker name (ADR-0388).
+    kept_limits: dict[str, limits.Limits] = field(default_factory=dict)
 
 
 class _InstallFailed(HTTPException):
@@ -1006,7 +1031,11 @@ def _check_request(template: AppTemplate, req: AppInstallRequest) -> tuple[dict[
 
 
 def _install(
-    template: AppTemplate, req: AppInstallRequest, shares: list[_ShareFolder], progress: install_jobs.Progress
+    template: AppTemplate,
+    req: AppInstallRequest,
+    shares: list[_ShareFolder],
+    progress: install_jobs.Progress,
+    kept_limits: dict[str, limits.Limits] | None = None,
 ) -> _Installed:
     """Check what Docker, the host and the pools hold, then pull the images and create and start
     the containers, reporting each step to ``progress`` (ADR-0384).
@@ -1014,8 +1043,10 @@ def _install(
     Everything that can be rejected is checked before the (slow) image pulls, and nothing is
     written to the pool before them. Runs in the install job's thread, which holds the app's lock
     (stacks.app_lock): Docker and filesystem calls block. ``shares``: the folders of the shares
-    when the request came in.
+    when the request came in; ``kept_limits``: the limits kept for the app's containers from
+    before, by Docker name, which each is created with (ADR-0388).
     """
+    kept_limits = kept_limits or {}
     several = bool(template.companions)
     port_bindings, environment = _check_request(template, req)
 
@@ -1044,6 +1075,8 @@ def _install(
         ))
     # The order of the creates and the starts: the companions, then the main container.
     containers = [*companions, main]
+    for c in containers:
+        c.kept_limits = kept_limits.get(c.name)
     planned = [m for c in containers for m in c.planned]
     _check_no_nested_sources(template, planned)
     for c in containers:
@@ -1115,7 +1148,8 @@ def _install(
         health=stacks.health(started),
         companions=[_companion(container) for container in created[:-1]],
     )
-    return _Installed(answer=answer, containers=[c.name for c in containers], generated=generated)
+    given = {c.name: c.kept_limits for c in containers if c.kept_limits is not None}
+    return _Installed(answer=answer, containers=[c.name for c in containers], generated=generated, kept_limits=given)
 
 
 def _secrets_to_make(template: AppTemplate, planned: list[_PlannedMount]) -> list[_PlannedMount]:
@@ -1266,6 +1300,8 @@ def _create_options(
         options["shm_size"] = c.spec.shm_size
     if c.spec.stop_timeout is not None:
         options["stop_timeout"] = c.spec.stop_timeout
+    # The limits kept for it from before: Memory and MemorySwap, CpuPeriod and CpuQuota (ADR-0388).
+    options.update(limits.create_args(c.kept_limits))
     return options
 
 
@@ -1507,7 +1543,7 @@ def _installed_details(template: AppTemplate, installed: _Installed) -> str:
     if installed.generated:
         files = "file" if len(installed.generated) == 1 else "files"
         text += f"; generated its password {files} {stacks.joined(installed.generated)}"
-    return text
+    return text + limits.install_text(installed.kept_limits)
 
 
 @router.post("/install", response_model=AppInstallJob, status_code=202)
@@ -1532,10 +1568,12 @@ async def install_app(
         raise HTTPException(404, f"App {req.template_id} not found")
     _check_request(template, req)
     shares = await _share_folders(db)
+    # The limits kept from before for the app's containers, which the install gives them (ADR-0388).
+    kept_limits = await limits.stored(db, template.id)
     username = user.username
 
     def work(progress: install_jobs.Progress) -> AppInstallResponse:
-        return _install_and_audit(template, req, shares, request, username, progress)
+        return _install_and_audit(template, req, shares, request, username, progress, kept_limits)
 
     return install_jobs.start(template, work)
 
@@ -1547,11 +1585,12 @@ def _install_and_audit(
     request: Request,
     username: str,
     progress: install_jobs.Progress,
+    kept_limits: dict[str, limits.Limits] | None = None,
 ) -> AppInstallResponse:
     """The install job's work, in its thread: the install, then its audit entry, written before
     the job's end is published."""
     try:
-        installed = _install(template, req, shares, progress)
+        installed = _install(template, req, shares, progress, kept_limits)
     except _InstallFailed as exc:
         _audit_from_the_job(request, username, template.id, exc.done, success=False)
         raise
@@ -1655,6 +1694,12 @@ def _get_app(container_id: str) -> tuple[Any, stacks.InstalledContainers]:
     not know it; 400 for a container that is no app of the catalog (no unos.app label), such as
     UNOS's own unos-supervisor and unos-webui: the Apps API acts only on apps (ADR-0256); 503 when
     Docker does not answer. Blocking: call it in a worker thread."""
+    client, app, _ = _get_app_and_container(container_id)
+    return client, app
+
+
+def _get_app_and_container(container_id: str) -> tuple[Any, stacks.InstalledContainers, Any]:
+    """_get_app, and the container that ``container_id`` names, as Docker resolved it."""
     try:
         client = get_client()
         container = client.containers.get(container_id)
@@ -1676,7 +1721,7 @@ def _get_app(container_id: str) -> tuple[Any, stacks.InstalledContainers]:
         except _DOCKER_ERRORS as e:
             raise _docker_error(e)
         members = [c for c in listed if stacks.app_key(c) == key]
-    return client, stacks.group(key, members, template)
+    return client, stacks.group(key, members, template), container
 
 
 def _status(app: stacks.InstalledContainers) -> str:
@@ -1895,6 +1940,148 @@ async def uninstall_app(container_id: str, request: Request, user: User = Depend
         details=_uninstalled_details(app, removed, left), severity=AuditSeverity.WARNING,
     )
     return {"status": "removed", "id": container_id}
+
+
+# ---------------------------------------------------------------------------
+# The limits of an app's containers (ADR-0388)
+# ---------------------------------------------------------------------------
+
+
+@router.get("/limits", response_model=LimitBounds)
+async def limit_bounds(_: User = Depends(require_admin)) -> LimitBounds:
+    """What the limits of a container may be on this host."""
+    return limits.bounds()
+
+
+def _container_of_app(container_id: str) -> tuple[stacks.InstalledContainers, Any]:
+    """The installed app that the container ``container_id`` (its id or name) belongs to, and that
+    container; the answers of _get_app."""
+    _, app, named = _get_app_and_container(container_id)
+    for container in app.containers:
+        if container.id == named.id:
+            return app, container
+    raise HTTPException(404, f"App {container_id} not found")
+
+
+@dataclass(frozen=True)
+class _Applied:
+    """What Docker's update did: the limits before and after it (as Docker keeps them), and its
+    warnings, which name a limit that it discarded."""
+    before: limits.Limits
+    after: limits.Limits
+    warnings: list[str] = field(default_factory=list)
+
+
+def _apply_limits(app: stacks.InstalledContainers, container: Any, wanted: limits.Limits) -> _Applied:
+    """Give ``container`` the limits ``wanted`` through Docker's update, which changes a running
+    container's cgroup at once and its HostConfig for every later start. Blocking; the caller holds
+    the app's lock.
+
+    A running container whose memory limit is set or lowered must keep a margin above what it uses
+    now (usage.memory_floor), or the kernel would take its memory and end its processes at once:
+    409 below it, and 409 when its cgroup cannot be read, as the floor is then unknown. 409 for a
+    CPU limit set outside UNOS with NanoCpus, which Docker lets no quota replace, and for Docker's
+    refusal. What Docker keeps afterwards is read again: a limit that it discarded (its warning)
+    stays out of ``after``."""
+    try:
+        container.reload()
+    except NotFound:
+        raise HTTPException(404, f"App {container.name} not found")
+    except _DOCKER_ERRORS as e:
+        raise _docker_error(e)
+    before = limits.in_force(container.attrs)
+    if wanted == before:
+        return _Applied(before, before)
+    if wanted.cpu_quota != before.cpu_quota and ((container.attrs.get("HostConfig") or {}).get("NanoCpus") or 0) > 0:
+        raise HTTPException(
+            409,
+            f"The CPU limit of {container.name} was set outside UNOS (docker update --cpus), and Docker lets no "
+            f"other CPU limit replace it: change it with docker update --cpus, or uninstall {app.name} and install "
+            "it again",
+        )
+    lowered = wanted.memory is not None and (before.memory is None or wanted.memory < before.memory)
+    if lowered and container.status in RUNNING_STATES:
+        floor = usage.memory_floor(container.id)
+        if floor is None:
+            raise HTTPException(
+                409,
+                f"UNOS could not read what {container.name} uses now, so a memory limit might make the kernel end "
+                f"its processes at once: stop {app.name} first, then set it.",
+            )
+        used, least = floor
+        if wanted.memory < least:
+            used_text = limits.size(-(-used // limits.MIB) * limits.MIB)
+            least_text = limits.size(-(-least // limits.MIB) * limits.MIB)
+            raise HTTPException(
+                409,
+                f"{container.name} uses {used_text} now: a memory limit below {least_text} would make the kernel "
+                f"take memory from it or end its processes at once. Set at least {least_text}, or stop {app.name} "
+                "first.",
+            )
+    try:
+        answer = container.update(**limits.update_args(before, wanted)) or {}
+        container.reload()
+    except APIError as e:
+        if e.status_code in (400, 409):
+            raise HTTPException(409, f"Docker refused the limits of {container.name}: {e.explanation or e}")
+        raise HTTPException(500, f"Failed to set the limits of {container.name}: {e}")
+    except NO_ANSWER as e:
+        raise HTTPException(503, no_answer_detail(e))
+    except _DOCKER_ERRORS as e:
+        raise HTTPException(500, f"Failed to set the limits of {container.name}: {e}")
+    warnings = [str(w) for w in (answer.get("Warnings") or []) if w]
+    return _Applied(before, limits.in_force(container.attrs), warnings)
+
+
+@router.put("/installed/{container_id}/limits", response_model=ContainerLimits)
+async def set_container_limits(
+    container_id: str,
+    req: ContainerLimitsRequest,
+    request: Request,
+    user: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+) -> ContainerLimits:
+    """Set the memory and CPU limits of one container of an app (``container_id``: its id or name;
+    null removes a limit, and both fields are required): Docker gets them at once, running or not,
+    and the database keeps them for the app's next install (ADR-0388). 400 for a value out of
+    bounds; 409 for a memory limit that a running container needs more than (or whose use cannot
+    be read), for a CPU limit set with NanoCpus, for Docker's refusal, for a limit that Docker
+    discarded (what it applied is kept and audited) and while another change of the app is under
+    way. A change is audited as app_limits_changed."""
+    wanted = limits.requested(req)
+    app, container = await asyncio.to_thread(_container_of_app, container_id)
+    lock = stacks.acquire(app.key, app.name)
+    try:
+        applied = await asyncio.to_thread(_apply_limits, app, container, wanted)
+        before, after = applied.before, applied.after
+        changed = before != after
+        try:
+            if await limits.kept(db, container.name) != after:
+                await limits.keep(db, app.key, container.name, after)
+        except SQLAlchemyError as e:
+            await db.rollback()
+            detail = (
+                f"The limits of {container.name} are in force, but UNOS could not keep them for its next install: {e}"
+            )
+            if changed:
+                await audit_change(
+                    AuditAction.APP_LIMITS_CHANGED, request, user.username, resource_type="container",
+                    resource_id=container.name,
+                    details=f"{limits.change_text(container.name, app.key, before, after)}; then: {detail}",
+                    success=False,
+                )
+            raise HTTPException(500, detail)
+    finally:
+        lock.release()
+    if changed:
+        await audit_change(
+            AuditAction.APP_LIMITS_CHANGED, request, user.username, resource_type="container",
+            resource_id=container.name, details=limits.change_text(container.name, app.key, before, after),
+        )
+    if after != wanted:
+        reason = "; ".join(applied.warnings) or "its configuration shows other limits"
+        raise HTTPException(409, f"Docker did not apply all the limits of {container.name}: {reason}")
+    return ContainerLimits(container=container.name, memory_limit=after.memory, cpu_limit=after.cpus)
 
 
 # ---------------------------------------------------------------------------

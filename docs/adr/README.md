@@ -305,6 +305,7 @@ and this index, and `make check-fast` runs it.
 | [0381](0381-an-app-of-several-containers-installs-through-the-docker-api-with-pinned-images-and-a-password-on-its-pool.md) | An app of several containers installs through the Docker API with pinned images and a password on its pool | superseded by [0384](0384-an-apps-install-runs-as-a-background-job-whose-progress-the-app-store-shows.md) | 2026-11-16 |
 | [0382](0382-hardware-profiles-apply-per-container-may-choose-its-image-and-give-immichs-machine-learning-the-rk3588-npu.md) | Hardware profiles apply per container, may choose the container's image and give Immich's machine learning the RK3588's NPU | accepted | 2026-11-16 |
 | [0384](0384-an-apps-install-runs-as-a-background-job-whose-progress-the-app-store-shows.md) | An app's install runs as a background job whose progress the App Store shows | accepted | 2026-11-17 |
+| [0388](0388-each-container-of-an-app-gets-its-own-memory-and-cpu-limits-whose-use-is-read-from-its-cgroup.md) | Each container of an app gets its own memory and CPU limits, kept by Docker and for the next install, and its use is read from its cgroup and alerted | accepted | 2026-11-17 |
 
 ## Backup
 

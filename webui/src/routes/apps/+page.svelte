@@ -13,6 +13,7 @@
 		missingHardware,
 		type AppTemplate,
 		type AppInstallJob,
+		type ContainerResources,
 		type InstalledApp
 	} from '$lib/api/apps';
 	import {
@@ -41,7 +42,14 @@
 		Cpu
 	} from 'lucide-svelte';
 	import { Button, Card, Badge, Alert, EmptyState } from '$lib/components/ui';
-	import { AppCategory, AppDetailModal, AppInstallJobs, AppStorageWarning } from '$lib/components/apps';
+	import {
+		AppCategory,
+		AppDetailModal,
+		AppInstallJobs,
+		AppLimitsDialog,
+		AppResources,
+		AppStorageWarning
+	} from '$lib/components/apps';
 	import { t } from '$lib/i18n';
 	import { ApiError } from '$lib/api/client';
 	import { appInstalls } from '$lib/stores/appInstalls';
@@ -66,6 +74,18 @@
 	// Detail modal state
 	let selectedApp: AppTemplate | null = null;
 	let showDetailModal = false;
+
+	// The container whose limits the dialog changes (ADR-0388), with what the list said of it.
+	let limitsOf: { container: string; resources: ContainerResources } | null = null;
+
+	function openLimits(event: CustomEvent<{ container: string; resources: ContainerResources }>) {
+		limitsOf = event.detail;
+	}
+
+	async function limitsSaved() {
+		limitsOf = null;
+		await loadInstalled();
+	}
 
 	// The category list; AppCategory names each category.
 	const categories = [
@@ -709,12 +729,22 @@
 							</Alert>
 						{/if}
 						<AppStorageWarning {app} class="mt-4" />
+						<AppResources {app} on:limits={openLimits} />
 					</Card>
 				{/each}
 			</div>
 		{/if}
 	{/if}
 </div>
+
+<!-- The limits of one container of an installed app (ADR-0388) -->
+<AppLimitsDialog
+	open={limitsOf !== null}
+	container={limitsOf?.container ?? ''}
+	resources={limitsOf?.resources ?? null}
+	on:close={() => (limitsOf = null)}
+	on:saved={limitsSaved}
+/>
 
 <!-- App Detail Modal -->
 <AppDetailModal

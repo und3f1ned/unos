@@ -112,6 +112,17 @@ def _no_volume_use_read_yet(monkeypatch, tmp_path_factory):
 
 
 @pytest.fixture(autouse=True)
+def _no_app_use_read_yet(monkeypatch):
+    """The use of the apps' containers and its problems are kept in RAM (ADR-0388): every test
+    starts without them, and the cgroups of this machine are never read (a test that reads cgroups
+    gives usage.CGROUP_ROOT a folder of its own)."""
+    usage = sys.modules.get("src.apps.usage")
+    if usage is not None:
+        monkeypatch.setattr(usage, "_state", usage._State())
+        monkeypatch.setattr(usage, "CGROUP_ROOT", usage.Path("/nonexistent/unos-tests/sys/fs/cgroup"))
+
+
+@pytest.fixture(autouse=True)
 def _no_power_reads_yet(monkeypatch):
     """The hdparm -C reads of the disks' power that run, and those that timed out, are kept in RAM
     (storage.disks.power_state, ADR-0378): every test starts without them, as the supervisor does."""
