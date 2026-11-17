@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { E2E_ADMIN } from './fixtures';
+import { browserSession, sessionToken } from './session';
 
 test.describe('Authentication', () => {
   test('should show login page when not authenticated', async ({ page }) => {
@@ -30,7 +31,7 @@ test.describe('Authentication', () => {
   test('errors in the 2FA step keep the code form unless the password was rejected', async ({ page }) => {
     // Canned /auth/login answers, in order; nothing reaches the supervisor.
     const answers = [
-      { status: 200, json: { access_token: '', token_type: 'bearer', requires_totp: true } },
+      { status: 200, json: { access_token: '', token_type: 'bearer', requires_totp: true, session_key: '' } },
       // slowapi's answer once the 5 attempts per minute are used up.
       { status: 429, json: { error: 'Rate limit exceeded: 5 per 1 minute' } },
       { status: 401, json: { detail: 'Invalid 2FA code' } },
@@ -81,7 +82,7 @@ test.describe('Authentication', () => {
     // Codes are single-use: the server refuses a code of a time step it accepted already.
     const reused = 'This two-factor code was already used; wait for the next one';
     const answers = [
-      { status: 200, json: { access_token: '', token_type: 'bearer', requires_totp: true } },
+      { status: 200, json: { access_token: '', token_type: 'bearer', requires_totp: true, session_key: '' } },
       { status: 401, json: { detail: reused } },
     ];
     const sent: unknown[] = [];
@@ -101,36 +102,37 @@ test.describe('Authentication', () => {
     await expect(page.locator('#totp')).toBeVisible();
     await expect(page.locator('#password')).toHaveCount(0);
     expect(answers).toEqual([]);
+    // The web UI asks for the session cookie at each step (ADR-0395).
     expect(sent).toEqual([
-      { username: 'e2e_totp_user', password: 'e2e-password' },
-      { username: 'e2e_totp_user', password: 'e2e-password', totp_code: '123456' },
+      { username: 'e2e_totp_user', password: 'e2e-password', cookie: true },
+      { username: 'e2e_totp_user', password: 'e2e-password', totp_code: '123456', cookie: true },
     ]);
   });
 
-  test('Logout ends the session: the sign-in page is shown and the token is gone', async ({ page }) => {
+  test('Logout ends the session: the sign-in page is shown and the cookie is gone', async ({ page, request }) => {
     await page.goto('/login');
     await page.fill('input[type="text"]', E2E_ADMIN.username);
     await page.fill('input[type="password"]', E2E_ADMIN.password);
     await page.click('button[type="submit"]');
     await expect(page).toHaveURL('/');
-    const token = await page.evaluate(() => localStorage.getItem('token'));
-    expect(token).toBeTruthy();
+    const inSession = await browserSession(page);
 
     const signedOut = page.waitForResponse((response) => response.url().endsWith('/api/v1/auth/logout'));
     await page.getByRole('button', { name: 'Logout' }).click();
     expect((await signedOut).status()).toBe(200);
     await expect(page).toHaveURL('/login');
     await expect(page.locator('#username')).toBeVisible();
-    expect(await page.evaluate(() => localStorage.getItem('token'))).toBeNull();
-    // The server ended the session (ADR-0329): a copy of the token is refused too.
-    const me = await page.request.get('/api/v1/auth/me', { headers: { Authorization: `Bearer ${token}` } });
-    expect(me.status()).toBe(401);
-    // Without the token, a page that needs a session sends to the sign-in page.
+    // The server deleted the cookie (ADR-0395) and ended the session (ADR-0329): a copy of the
+    // cookie, with its session key, is refused too.
+    expect(await sessionToken(page)).toBeNull();
+    const me = await request.get('/api/v1/auth/me', { headers: inSession });
+    expect([me.status(), (await me.json()).detail]).toEqual([401, 'Session ended']);
+    // Without a session, a page that needs one sends to the sign-in page.
     await page.goto('/storage');
     await expect(page).toHaveURL(/\/login/);
   });
 
-  test('should logout by clearing session', async ({ page }) => {
+  test('without the session cookie a page that needs a session sends to the sign-in page', async ({ page }) => {
     // Login first
     await page.goto('/login');
     await page.fill('input[type="text"]', E2E_ADMIN.username);
@@ -139,10 +141,8 @@ test.describe('Authentication', () => {
     await expect(page).toHaveURL('/');
     await page.waitForTimeout(1000);
 
-    // Clear the auth token from localStorage to simulate logout
-    await page.evaluate(() => {
-      localStorage.removeItem('token');
-    });
+    // The browser forgets its cookies, as when it is closed (the session cookie has no expiry).
+    await page.context().clearCookies();
 
     // Navigate - should redirect to login
     await page.goto('/storage');

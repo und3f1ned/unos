@@ -1,4 +1,4 @@
-import { api, getToken, handleUnauthorized } from "./client";
+import { api, currentSession, currentSessionKey, handleUnauthorized } from "./client";
 import { WS_CLOSE_FORBIDDEN, WS_CLOSE_UNAUTHORIZED } from "$lib/stores/stats";
 
 export interface LogEntry {
@@ -100,17 +100,18 @@ export interface JournalStream {
 /**
  * Follow the host's journal over /ws/v1/journal (supervisor/src/websocket/events.py, ADR-0366):
  * the newest entries of the query, then each new one. The query goes in the URL as that of
- * GET /logs/entries; the token goes in the first message, never in the URL (ADR-0031), and a close
+ * GET /logs/entries; the first message authenticates it with the session cookie (ADR-0031, ADR-0395), and a close
  * with 4401 ends the session like an HTTP 401 does.
  */
 export function streamLogEntries(params: LogQueryParams, handlers: JournalStreamHandlers): JournalStream {
-  const token = getToken();
+  const session = currentSession();
   const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
   const socket = new WebSocket(`${protocol}//${window.location.host}/ws/v1/journal?${entriesQuery(params)}`);
   let done = false;
 
   socket.onopen = () => {
-    socket.send(JSON.stringify({ type: "auth", token }));
+    // No token: the server takes the session cookie of the handshake, with the session key (ADR-0395).
+    socket.send(JSON.stringify({ type: "auth", key: currentSessionKey() }));
   };
 
   socket.onmessage = (event) => {
@@ -130,8 +131,8 @@ export function streamLogEntries(params: LogQueryParams, handlers: JournalStream
     if (done) return;
     done = true;
     if (event.code === WS_CLOSE_UNAUTHORIZED) {
-      // Token expired or the account is gone: same as an HTTP 401.
-      handleUnauthorized(token);
+      // The session ended or the account is gone: same as an HTTP 401.
+      handleUnauthorized(session);
     }
     handlers.onEnd(event.code === WS_CLOSE_FORBIDDEN ? "forbidden" : "ended");
   };

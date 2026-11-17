@@ -1,5 +1,7 @@
+import base64
 import enum
 import hashlib
+import hmac
 import json
 import logging
 import re
@@ -11,7 +13,8 @@ import bcrypt
 import jwt
 import pyotp
 from fastapi import Depends, HTTPException, Request, status
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from starlette.requests import HTTPConnection
+from starlette.responses import Response
 from sqlalchemy import delete, select
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -23,7 +26,6 @@ from .models import APIToken, User, UserSession
 from .schemas import MAX_PASSWORD_BYTES
 
 logger = logging.getLogger(__name__)
-security = HTTPBearer()
 
 # API Token prefix for identification
 API_TOKEN_PREFIX = "unos_"
@@ -62,18 +64,36 @@ def create_access_token(data: dict) -> str:
     return jwt.encode(to_encode, settings.jwt_secret, algorithm=settings.jwt_algorithm)
 
 
-def start_session(db: AsyncSession, user: User) -> str:
+# The claim that marks the session of the web UI's session cookie (ADR-0395): its token counts only
+# in the cookie, with its session key, never as a Bearer token nor in a WebSocket's first message.
+COOKIE_SESSION_CLAIM = "cookie"
+
+
+def start_session(db: AsyncSession, user: User, *, cookie: bool = False) -> str:
     """A new session token of ``user``: a JWT with a jti, and the session's row added to ``db``,
-    which the sign-in's commit stores (ADR-0329). Rows of expired sessions go in the same commit."""
+    which the sign-in's commit stores (ADR-0329). Rows of expired sessions go in the same commit.
+    ``cookie``: the session of the session cookie, which the token says (COOKIE_SESSION_CLAIM)."""
     settings = get_settings()
     session_id = secrets.token_urlsafe(24)
     expires = datetime.now(timezone.utc) + timedelta(minutes=settings.jwt_expire_minutes)
     db.add(UserSession(id=session_id, user_id=user.id, expires_at=expires.replace(tzinfo=None)))
-    return jwt.encode(
-        {"sub": user.username, "jti": session_id, "exp": expires},
-        settings.jwt_secret,
-        algorithm=settings.jwt_algorithm,
-    )
+    claims = {"sub": user.username, "jti": session_id, "exp": expires}
+    if cookie:
+        claims[COOKIE_SESSION_CLAIM] = True
+    return jwt.encode(claims, settings.jwt_secret, algorithm=settings.jwt_algorithm)
+
+
+def is_cookie_session(token: str) -> bool:
+    """Whether ``token`` is a valid token of a session of the session cookie (ADR-0395). False for
+    anything else, an API token or a token that is not valid included: their own checks refuse them."""
+    if token.startswith(API_TOKEN_PREFIX):
+        return False
+    settings = get_settings()
+    try:
+        claims = jwt.decode(token, settings.jwt_secret, algorithms=[settings.jwt_algorithm])
+    except jwt.PyJWTError:
+        return False
+    return claims.get(COOKIE_SESSION_CLAIM) is True
 
 
 # Sessions whose row the sign-in's commit could not store, as on a full /data (ADR-0251): the
@@ -171,9 +191,10 @@ class CallerSession(NamedTuple):
 
 def caller_session(request: Request, user: User) -> Optional[CallerSession]:
     """The session of the request that ``authenticate_token`` accepted for ``user``; None for an
-    API token or a request without a Bearer token."""
-    scheme, _, token = (request.headers.get("Authorization") or "").partition(" ")
-    if scheme.lower() != "bearer" or not token or token.startswith(API_TOKEN_PREFIX):
+    API token or a request without a credential."""
+    found = request_credential(request)
+    token = found.token if found is not None else ""
+    if not token or token.startswith(API_TOKEN_PREFIX):
         return None
     settings = get_settings()
     claims = jwt.decode(token, settings.jwt_secret, algorithms=[settings.jwt_algorithm],
@@ -327,6 +348,116 @@ def _unauthorized(detail: str) -> HTTPException:
     )
 
 
+# ==================== The web UI's session cookie (ADR-0395) ====================
+
+# The web UI's session token. HttpOnly: no script of the page reads it. The __Host- prefix makes the
+# browser take it only with Secure, Path=/ and no Domain, so that neither a page without TLS nor
+# another host of the domain can set or shadow it. SameSite=Strict: no other site's page sends it.
+# No Max-Age: it ends with the browser, at the latest when its session ends on the server.
+SESSION_COOKIE = "__Host-unos-session"
+
+CROSS_ORIGIN = "The session cookie is accepted only from the web UI's own page"
+
+# The web UI's page sends its session key with the cookie, in this header and in a WebSocket's first
+# message. Only the sign-in's answer carries the key: a server on another port of the NAS, to which
+# the browser sends the cookie too (cookies are not bound to a port), never sees it, and a script of
+# the page, which reads the key, never sees the cookie. Neither alone is a session.
+SESSION_KEY_HEADER = "X-UNOS-Session-Key"
+SESSION_KEY_MISMATCH = "The session key does not match the session cookie"
+# The token of a session of the cookie, sent otherwise: the cookie's value, which a server elsewhere
+# may have received, is no session on its own.
+COOKIE_SESSION_ONLY = "This session is the web UI's: it is valid only in its cookie, with its session key"
+
+# A browser sends no Origin with a same-origin GET or HEAD; with every other method it does.
+_READING_METHODS = frozenset({"GET", "HEAD"})
+
+
+class Credential(NamedTuple):
+    """The token of a request, and whether the session cookie carried it (not an Authorization header)."""
+
+    token: str
+    cookie: bool
+
+
+def request_credential(conn: HTTPConnection) -> Optional[Credential]:
+    """The token of a request: its Authorization header's, which a program sends itself, before the
+    session cookie's, which a browser sends by itself. None without either. Checks nothing."""
+    scheme, _, token = (conn.headers.get("authorization") or "").partition(" ")
+    token = token.strip()
+    if scheme.lower() == "bearer" and token:
+        return Credential(token, cookie=False)
+    token = conn.cookies.get(SESSION_COOKIE) or ""
+    return Credential(token, cookie=True) if token else None
+
+
+def session_key(session_id: str) -> str:
+    """The session key of the session ``session_id``: an HMAC of its id under the JWT secret, so that
+    the server stores nothing for it (ADR-0319) and no one without the secret makes it."""
+    digest = hmac.new(
+        get_settings().jwt_secret.encode(), b"unos-session-key:" + session_id.encode(), hashlib.sha256
+    ).digest()
+    return base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
+
+
+def check_session_key(token: str, key: object) -> None:
+    """401 unless ``key`` is the session key of the session token ``token`` of a session cookie."""
+    try:
+        session_id = decode_access_token(token)[1]
+    except jwt.PyJWTError:
+        raise _unauthorized("Invalid token") from None
+    if not isinstance(key, str) or not hmac.compare_digest(session_key(session_id).encode(), key.encode()):
+        raise _unauthorized(SESSION_KEY_MISMATCH)
+
+
+def from_own_origin(conn: HTTPConnection, *, origin_required: bool) -> bool:
+    """Whether a browser sent ``conn`` from the web UI's own page, https://<the Host it was sent to>.
+
+    Its Sec-Fetch-Site, when the browser sends one, is same-origin; its Origin, when present, is the
+    request's own: the same host and port over HTTPS, the only way the web UI is served (Caddy passes
+    the Host on). ``origin_required`` refuses a request without an Origin, as every browser sends one
+    with a change and with a WebSocket. Cookies are not bound to a port: a page of an app on another
+    port of the NAS is the same site, so SameSite alone would let it send the cookie; its Origin
+    differs.
+    """
+    site = conn.headers.get("sec-fetch-site")
+    if site is not None and site != "same-origin":
+        return False
+    origin = conn.headers.get("origin")
+    if origin is None:
+        return not origin_required
+    host = conn.headers.get("host")
+    return bool(host) and origin.lower() == f"https://{host}".lower()
+
+
+async def credential(request: Request) -> Credential:
+    """The credential of a request, for every route that is not public: 401 without one. The session
+    cookie counts only from the web UI's own page (``from_own_origin``, with an Origin required for
+    every method but GET and HEAD): else 403 CROSS_ORIGIN, before anything reads the token, which
+    must be a session's, never an API token, and come with its session key (SESSION_KEY_HEADER):
+    else 401. The token of a session of the cookie counts nowhere else: 401 as a Bearer token."""
+    found = request_credential(request)
+    if found is None:
+        raise _unauthorized("Not authenticated")
+    if not found.cookie and is_cookie_session(found.token):
+        raise _unauthorized(COOKIE_SESSION_ONLY)
+    if found.cookie:
+        if not from_own_origin(request, origin_required=request.method not in _READING_METHODS):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=CROSS_ORIGIN)
+        if found.token.startswith(API_TOKEN_PREFIX):
+            raise _unauthorized("Invalid token")
+        check_session_key(found.token, request.headers.get(SESSION_KEY_HEADER))
+    return found
+
+
+def set_session_cookie(response: Response, token: str) -> None:
+    response.set_cookie(SESSION_COOKIE, token, path="/", secure=True, httponly=True, samesite="strict")
+
+
+def delete_session_cookie(response: Response) -> None:
+    """The attributes as set: a browser takes a __Host- cookie's deletion only with Secure and Path=/."""
+    response.delete_cookie(SESSION_COOKIE, path="/", secure=True, httponly=True, samesite="strict")
+
+
 async def authenticate_token(
     token: str, db: AsyncSession, *, operation: scopes.Operation, allow_setup_only: bool = False
 ) -> User:
@@ -386,24 +517,25 @@ def request_operation(request: Request) -> scopes.Operation:
 
 async def verify_token(
     request: Request,
-    credentials: HTTPAuthorizationCredentials = Depends(security),
+    found: Credential = Depends(credential),
     db: AsyncSession = Depends(get_db),
 ) -> User:
-    """Verify JWT token or API token. A setup-only account gets 403, and so does an API token whose
-    scope does not reach the request (ADR-0392)."""
-    return await authenticate_token(credentials.credentials, db, operation=request_operation(request))
+    """Verify JWT token or API token, from the Authorization header or the session cookie. A
+    setup-only account gets 403, and so does an API token whose scope does not reach the request
+    (ADR-0392)."""
+    return await authenticate_token(found.token, db, operation=request_operation(request))
 
 
 async def verify_token_allowing_setup(
     request: Request,
-    credentials: HTTPAuthorizationCredentials = Depends(security),
+    found: Credential = Depends(credential),
     db: AsyncSession = Depends(get_db),
 ) -> User:
     """``verify_token`` for the routes that a setup-only account reaches with a session token: its
     own account, the setup of two-factor authentication, its status and the sign-out
     (SETUP_ONLY_ALLOWED of tests/test_authz.py). Its API tokens still get 403."""
     return await authenticate_token(
-        credentials.credentials, db, operation=request_operation(request), allow_setup_only=True
+        found.token, db, operation=request_operation(request), allow_setup_only=True
     )
 
 
@@ -425,7 +557,7 @@ SESSION_NEEDED = "An API token cannot create, enable, disable or delete API toke
 
 
 async def require_session(
-    credentials: HTTPAuthorizationCredentials = Depends(security),
+    found: Credential = Depends(credential),
     user: User = Depends(verify_token),
 ) -> User:
     """Allow the request only with a session token, not with an API token (ADR-0253).
@@ -435,7 +567,7 @@ async def require_session(
     the password and the second factor (ADR-0239). An API token that is not valid keeps the 401
     of ``verify_token``; a valid one gets 403.
     """
-    if credentials.credentials.startswith(API_TOKEN_PREFIX):
+    if found.token.startswith(API_TOKEN_PREFIX):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=SESSION_NEEDED)
     return user
 

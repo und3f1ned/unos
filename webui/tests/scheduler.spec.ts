@@ -1,6 +1,7 @@
 import type { Page } from '@playwright/test';
 import { test, expect } from './fixtures';
 import { FAKE_DISKS, FAKE_POOLS, fakeStorageApi } from './storage-fakes';
+import { browserSession } from './session';
 
 test.describe('Scheduler', () => {
   test('should display scheduler tab', async ({ authenticatedPage: page }) => {
@@ -404,11 +405,11 @@ test.describe('Scheduler: the task form', () => {
 // (Run now) and writes a backup into the stand-in's data. The task and its
 // backups are deleted afterwards.
 test.describe('Scheduler: a task that ran', () => {
-  let token = '';
+  let session: Record<string, string> = {};
   let taskId = '';
   let backupsBefore: string[] = [];
 
-  const auth = () => ({ Authorization: `Bearer ${token}` });
+  const auth = () => session;
 
   async function backupNames(page: Page): Promise<string[]> {
     const response = await page.request.get('/api/v1/backup/list', { headers: auth() });
@@ -439,8 +440,7 @@ test.describe('Scheduler: a task that ran', () => {
   });
 
   test('editing a task that ran keeps its last run and last status', async ({ authenticatedPage: page }) => {
-    token = (await page.evaluate(() => localStorage.getItem('token'))) ?? '';
-    expect(token, 'signed in').not.toBe('');
+    session = await browserSession(page);
     backupsBefore = await backupNames(page);
     const name = `E2E kept run ${Date.now().toString(36)}`;
 
@@ -612,14 +612,13 @@ test.describe('Scheduler: the time zone of the schedules', () => {
 // Against the stand-in's supervisor: custom tasks made in the form run there (Run now), as the
 // user who runs the stand-in, with harmless commands. The tasks are deleted afterwards.
 test.describe('Scheduler: custom tasks', () => {
-  let token = '';
+  let session: Record<string, string> = {};
   let taskId = '';
 
-  const auth = () => ({ Authorization: `Bearer ${token}` });
+  const auth = () => session;
 
   async function signIn(page: Page) {
-    token = (await page.evaluate(() => localStorage.getItem('token'))) ?? '';
-    expect(token, 'signed in').not.toBe('');
+    session = await browserSession(page);
   }
 
   /** Make a custom task in the form; returns the task as the server answered. */
@@ -714,11 +713,11 @@ test.describe('Scheduler: custom tasks', () => {
 // there four times (Run now) and writes its backups into the stand-in's data. The task and the
 // backups made here are deleted afterwards.
 test.describe('Scheduler: a backup task with a Keep Count', () => {
-  let token = '';
+  let session: Record<string, string> = {};
   let taskId = '';
   let backupsBefore: string[] = [];
 
-  const auth = () => ({ Authorization: `Bearer ${token}` });
+  const auth = () => session;
   const isScheduled = (name: string) => /^auto_backup_\d{8}_\d{6}(_\d+)?\.tar\.gz\.enc$/.test(name);
 
   async function backupNames(page: Page): Promise<string[]> {
@@ -752,8 +751,7 @@ test.describe('Scheduler: a backup task with a Keep Count', () => {
   test('with Keep Count 3 the fourth run deletes the oldest scheduled backup and never a manual one', async ({
     authenticatedPage: page,
   }) => {
-    token = (await page.evaluate(() => localStorage.getItem('token'))) ?? '';
-    expect(token, 'signed in').not.toBe('');
+    session = await browserSession(page);
     backupsBefore = await backupNames(page);
     // Keep Count counts the scheduled backups of all tasks: none may be there from elsewhere.
     expect(backupsBefore.filter(isScheduled)).toEqual([]);

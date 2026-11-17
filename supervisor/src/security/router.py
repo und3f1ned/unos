@@ -9,7 +9,6 @@ import threading
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from fastapi.security import HTTPAuthorizationCredentials
 from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession
 from pydantic import TypeAdapter
@@ -21,8 +20,8 @@ from ..audit.schemas import AuditAction, AuditSeverity
 from ..database import get_db
 from ..auth import requirement
 from ..auth.utils import (
-    API_TOKEN_PREFIX, TOTP_CODE_REUSED, TotpCheck, check_totp_code, client_ip, require_admin, security,
-    verify_token,
+    API_TOKEN_PREFIX, TOTP_CODE_REUSED, Credential, TotpCheck, check_totp_code, client_ip, credential,
+    require_admin, verify_token,
 )
 from ..auth.models import TwoFactorRequirement, User, UsernameTaken
 from .models import LoginAttempt
@@ -819,10 +818,10 @@ def _requirement_status(current: requirement.Requirement | None) -> TwoFactorReq
     )
 
 
-def _require_own_second_factor(credentials: HTTPAuthorizationCredentials, user: User) -> None:
+def _require_own_second_factor(found: Credential, user: User) -> None:
     """What turning the requirement on or off takes of the administrator before anything else: a
     session, not an API token, and two-factor authentication of their own."""
-    if credentials.credentials.startswith(API_TOKEN_PREFIX):
+    if found.token.startswith(API_TOKEN_PREFIX):
         raise HTTPException(status_code=403, detail=REQUIREMENT_SESSION_NEEDED)
     if not user.totp_enabled:
         raise HTTPException(status_code=409, detail=OWN_TWO_FACTOR_NEEDED)
@@ -848,13 +847,13 @@ async def get_two_factor_requirement(_: User = Depends(require_admin), db: Async
 async def enable_two_factor_requirement(
     request: Request,
     data: TwoFactorRequirementEnable,
-    credentials: HTTPAuthorizationCredentials = Depends(security),
+    found: Credential = Depends(credential),
     current_user: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ):
     """Require two-factor authentication for every account, after ``grace_days``. Only an
     administrator who has it turns it on, with a current code: the one who imposes it meets it."""
-    _require_own_second_factor(credentials, current_user)
+    _require_own_second_factor(found, current_user)
     if await requirement.current(db) is not None:
         raise HTTPException(status_code=409, detail=ALREADY_REQUIRED)
     if not await requirement.storable(db):  # a restored table of another layout; no code is used
@@ -890,13 +889,13 @@ async def enable_two_factor_requirement(
 async def disable_two_factor_requirement(
     request: Request,
     data: TwoFactorRequirementDisable,
-    credentials: HTTPAuthorizationCredentials = Depends(security),
+    found: Credential = Depends(credential),
     current_user: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ):
     """Stop requiring two-factor authentication: accounts without it have their rights again at
     their next request. It weakens every sign-in, so it takes what turning it on takes."""
-    _require_own_second_factor(credentials, current_user)
+    _require_own_second_factor(found, current_user)
     if await requirement.current(db) is None:
         raise HTTPException(status_code=409, detail=NOT_REQUIRED)
     _use_own_code(current_user, data.code)

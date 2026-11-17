@@ -1,8 +1,8 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import { toDataURL } from 'qrcode';
-	import { enableTOTP, logout, setupTOTP, type TOTPSetupResponse } from '$lib/api/auth';
-	import { clearCurrentUser, isSetupOnly, loadCurrentUser, user } from '$lib/stores/auth';
+	import { enableTOTP, setupTOTP, type TOTPSetupResponse } from '$lib/api/auth';
+	import { isSetupOnly, loadCurrentUser, signOut as endSession, user } from '$lib/stores/auth';
 	import { connectWebSocket, disconnectWebSocket } from '$lib/stores/stats';
 	import { Alert, Button, Card, Input } from '$lib/components/ui';
 	import { intlLocale, t } from '$lib/i18n';
@@ -78,9 +78,8 @@
 	}
 
 	function signOut() {
-		void logout();
 		disconnectWebSocket();
-		clearCurrentUser();
+		void endSession();
 		goto('/login');
 	}
 </script>

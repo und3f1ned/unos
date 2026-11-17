@@ -100,7 +100,7 @@ and this index, and `make check-fast` runs it.
 
 | ADR | Title | Status | Date |
 | --- | --- | --- | --- |
-| [0009](0009-bearer-tokens-and-a-same-origin-api.md) | The API takes Bearer tokens, not cookies, and refuses cross-origin requests by default | accepted | 2026-02-05 |
+| [0009](0009-bearer-tokens-and-a-same-origin-api.md) | The API takes Bearer tokens, not cookies, and refuses cross-origin requests by default | superseded by [0395](0395-the-web-ui-s-session-is-an-httponly-cookie-accepted-only-from-its-own-origin.md) | 2026-02-05 |
 | [0010](0010-login-rate-limit-per-client.md) | Login is limited to 5 attempts per minute per client IP | accepted | 2026-01-24 |
 | [0028](0028-jwt-secret-generated-per-install.md) | Each install generates its own JWT secret, and published placeholders are refused | accepted | 2026-11-05 |
 | [0029](0029-first-run-setup-creates-one-administrator.md) | There are no default credentials: the first visit creates exactly one administrator | accepted | 2026-11-05 |
@@ -123,6 +123,7 @@ and this index, and `make check-fast` runs it.
 | [0329](0329-a-session-is-a-row-and-ending-it-deletes-the-row.md) | A session is a row of user_sessions, and ending a session deletes its row | accepted | 2026-11-10 |
 | [0386](0386-two-factor-authentication-required-for-every-account-after-a-grace-period.md) | An administrator with two-factor authentication requires it for every account, and after a grace period an account without it reaches only its setup | accepted | 2026-11-17 |
 | [0392](0392-an-api-token-can-be-limited-to-reading-and-to-areas-of-the-api.md) | An API token can be limited to reading and to areas of the API, checked where every credential is checked | accepted | 2026-11-17 |
+| [0395](0395-the-web-ui-s-session-is-an-httponly-cookie-accepted-only-from-its-own-origin.md) | The web UI's session is an HttpOnly cookie accepted only from its own origin, and programs keep Bearer tokens | accepted | 2026-11-17 |
 
 ## Storage
 

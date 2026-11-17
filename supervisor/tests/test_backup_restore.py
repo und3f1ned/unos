@@ -269,9 +269,11 @@ def test_a_restore_ends_every_session(env, tmp_path, monkeypatch):
     assert auth_utils._unstored_sessions == {}
 
 
-def test_the_administrator_who_restores_keeps_their_session(env, tmp_path, monkeypatch):
+@pytest.mark.parametrize("carried_by", ["bearer", "cookie"])
+def test_the_administrator_who_restores_keeps_their_session(env, tmp_path, monkeypatch, carried_by):
     """When the restored database has them as an administrator under the same id and name
-    (ADR-0329): they see the result of the restore and go on."""
+    (ADR-0329): they see the result of the restore and go on. The web UI's session is in the
+    session cookie (ADR-0395)."""
     path = tmp_path / "with-sessions.db"
     _make_db(path, users=[("admin2", 1)])
     engine = create_engine(f"sqlite:///{path}")
@@ -281,9 +283,12 @@ def test_the_administrator_who_restores_keeps_their_session(env, tmp_path, monke
     monkeypatch.setitem(app.dependency_overrides, verify_token,
                         lambda: SimpleNamespace(id=1, username="admin2", is_admin=True))
     token = auth_utils.create_access_token({"sub": "admin2", "jti": "the-callers"})
+    if carried_by == "bearer":
+        headers = {"Authorization": f"Bearer {token}"}
+    else:
+        headers = {"Cookie": f"{auth_utils.SESSION_COOKIE}={token}", "Origin": "https://testserver"}
 
-    response = env.client.post(f"/api/v1/backup/restore/{name}", json={},
-                               headers={"Authorization": f"Bearer {token}"})
+    response = env.client.post(f"/api/v1/backup/restore/{name}", json={}, headers=headers)
 
     assert response.status_code == 200, response.text
     with closing(sqlite3.connect(env.db_path)) as conn:

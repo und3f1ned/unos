@@ -1,13 +1,15 @@
 import type { WebSocketRoute } from '@playwright/test';
 import { test, expect, E2E_ADMIN } from './fixtures';
+import { pageSessionKey, sessionToken } from './session';
 
-// The stats socket authenticates with its first message. A token in the URL
-// would end up in proxy and server access logs (and the server refuses it).
+// The stats socket authenticates with its first message, which takes the session cookie of the
+// handshake (ADR-0395). A token in the URL would end up in proxy and server access logs (and the
+// server refuses it).
 test.describe('Live stats WebSocket', () => {
   test('a socket closed with 4401 leads to the sign-in page once', async ({ page }) => {
-    // The server closes the socket with 4401 when its token stops being valid: it checks the
-    // token again every 60 seconds (ADR-0031). Here a fake server stands in for the socket
-    // only, so that the HTTP requests, whose token stays valid, cannot end the session first.
+    // The server closes the socket with 4401 when its session stops being valid: it checks the
+    // session again every 60 seconds (ADR-0031). Here a fake server stands in for the socket
+    // only, so that the HTTP requests, whose session stays valid, cannot end the session first.
     const sockets: WebSocketRoute[] = [];
     const received: string[] = [];
     await page.routeWebSocket('**/ws/v1/events', (ws) => {
@@ -24,9 +26,9 @@ test.describe('Live stats WebSocket', () => {
     await page.click('button[type="submit"]');
     await expect(page).toHaveURL('/');
     await expect(page.locator('aside').getByText('Administrator', { exact: true })).toBeVisible();
-    const token = await page.evaluate(() => localStorage.getItem('token'));
     await expect.poll(() => received.length).toBeGreaterThan(0);
-    expect(JSON.parse(received[0])).toEqual({ type: 'auth', token });
+    // No token: the server takes the session cookie of the handshake, with the session key (ADR-0395).
+    expect(JSON.parse(received[0])).toEqual({ type: 'auth', key: await pageSessionKey(page) });
     expect(sockets).toHaveLength(1);
 
     const pages: string[] = [];
@@ -37,7 +39,8 @@ test.describe('Live stats WebSocket', () => {
 
     await expect(page).toHaveURL('/login');
     await expect(page.locator('#username')).toBeVisible();
-    expect(await page.evaluate(() => localStorage.getItem('token'))).toBeNull();
+    // The tab no longer counts the session as its own.
+    expect(await pageSessionKey(page)).toBeNull();
     // Once: no second redirect, and no new socket, also after the first reconnect delay (1 to 1.2 s).
     await page.waitForTimeout(2500);
     expect(pages).toEqual(['/login']);
@@ -45,7 +48,9 @@ test.describe('Live stats WebSocket', () => {
     await expect(page).toHaveURL('/login');
   });
 
-  test('sends the token in the first message, not in the URL', async ({ authenticatedPage: page }) => {
+  test('authenticates with its first message and the session cookie, not with the URL', async ({
+    authenticatedPage: page,
+  }) => {
     const sockets: { url: string; sent: string[]; received: string[]; closed: boolean }[] = [];
     page.on('websocket', (ws) => {
       const socket = { url: ws.url(), sent: [] as string[], received: [] as string[], closed: false };
@@ -66,8 +71,10 @@ test.describe('Live stats WebSocket', () => {
     expect(url.search).toBe('');
 
     await expect.poll(() => socket.sent.length).toBeGreaterThan(0);
-    const token = await page.evaluate(() => localStorage.getItem('token'));
-    expect(JSON.parse(socket.sent[0])).toEqual({ type: 'auth', token });
+    const key = await pageSessionKey(page);
+    expect(key).toBeTruthy();
+    expect(JSON.parse(socket.sent[0])).toEqual({ type: 'auth', key });
+    expect(socket.sent[0]).not.toContain((await sessionToken(page))!);
 
     // auth_ok, then the problems and the repair of a share's permissions, which an administrator
     // gets (none: the stand-in runs no monitors, ADR-0332, and no repair ran, ADR-0363), then the

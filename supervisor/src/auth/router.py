@@ -3,8 +3,7 @@ import json
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from fastapi import APIRouter, Depends, HTTPException, Query, status, Request
-from fastapi.security import HTTPAuthorizationCredentials
+from fastapi import APIRouter, Depends, HTTPException, Query, status, Request, Response
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import delete, select, func, update
@@ -33,8 +32,9 @@ from .schemas import (
 )
 from .utils import (
     hash_password, verify_password, start_session, purge_expired_sessions, end_sessions, end_session,
-    keep_unstored_session, session_id_of,
-    verify_token, verify_token_allowing_setup, security,
+    keep_unstored_session, session_id_of, decode_access_token,
+    verify_token, verify_token_allowing_setup, Credential, credential,
+    CROSS_ORIGIN, from_own_origin, session_key, set_session_cookie, delete_session_cookie,
     require_admin, require_session, generate_api_token, generate_recovery_codes,
     TOTP_CODE_REUSED, TotpCheck, check_totp_code, forget_totp_steps,
     RECOVERY_CODE_INVALID, recovery_code_hash, recovery_code_hashes, recovery_codes_left,
@@ -204,9 +204,16 @@ async def _audit_sign_in(**entry) -> None:
 @limiter.limit("5/minute")  # 5 login attempts per minute per IP
 async def login(
     request: Request,
+    response: Response,
     login_request: LoginRequest,
     db: AsyncSession = Depends(get_db)
 ):
+    """Sign in. With ``cookie`` (the web UI) the session goes into the session cookie and the
+    answer holds no token, only the session key that the page sends with the cookie; only the web
+    UI's own page may ask for it, which is checked before the password (ADR-0395). Without it
+    (programs) the answer carries the token, for a Bearer header."""
+    if login_request.cookie and not from_own_origin(request, origin_required=True):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=CROSS_ORIGIN)
     result = await db.execute(select(User).where(User.username == login_request.username))
     user = result.scalar_one_or_none()
 
@@ -270,7 +277,7 @@ async def login(
     # The session's row, and the purge of expired ones, go into the commit of the login history
     # (ADR-0329): a sign-in writes no more than before (ADR-0308).
     await purge_expired_sessions(db)
-    access_token = start_session(db, user)
+    access_token = start_session(db, user, cookie=login_request.cookie)
 
     # Record successful login
     await record_login_attempt(db, login_request.username, True, request)
@@ -292,7 +299,11 @@ async def login(
         severity=AuditSeverity.WARNING if details else AuditSeverity.INFO,
     )
 
-    return Token(access_token=access_token, requires_totp=False)
+    key = session_key(decode_access_token(access_token)[1])
+    if login_request.cookie:
+        set_session_cookie(response, access_token)
+        return Token(access_token="", token_type="cookie", requires_totp=False, session_key=key)
+    return Token(access_token=access_token, requires_totp=False, session_key=key)
 
 
 async def _own_account_audit(
@@ -324,18 +335,22 @@ async def _own_account_audit(
 @router.post("/logout")
 async def logout(
     request: Request,
-    credentials: HTTPAuthorizationCredentials = Depends(security),
+    response: Response,
+    found: Credential = Depends(credential),
     current_user: User = Depends(verify_token_allowing_setup),
     db: AsyncSession = Depends(get_db),
 ):
     """End the session of this token on the server (ADR-0329); an API token is not a session.
-    Only the sign-out that ended the session writes the audit entry (ADR-0343)."""
-    session_id = session_id_of(credentials.credentials)
+    Only the sign-out that ended the session writes the audit entry (ADR-0343). A session of the
+    cookie also deletes the cookie (ADR-0395)."""
+    session_id = session_id_of(found.token)
     if session_id is None:
         raise HTTPException(status_code=400, detail="An API token is no session: delete it to end it")
     username = current_user.username
     ended = await end_session(db, session_id)
     await db.commit()
+    if found.cookie:
+        delete_session_cookie(response)
     if ended:
         await _own_account_audit(request, AuditAction.LOGOUT, username)
     return {"status": "ok"}
@@ -364,7 +379,7 @@ async def get_auth_status(db: AsyncSession = Depends(get_db)):
 async def change_password(
     request: Request,
     data: PasswordChange,
-    credentials: HTTPAuthorizationCredentials = Depends(security),
+    found: Credential = Depends(credential),
     current_user: User = Depends(verify_token),
     db: AsyncSession = Depends(get_db)
 ):
@@ -376,7 +391,7 @@ async def change_password(
     password_change entry, and a change of Samba's copy also an smb_account_updated one
     (ADR-0343, ADR-0320).
     """
-    keep = session_id_of(credentials.credentials)  # read before anything changes
+    keep = session_id_of(found.token)  # read before anything changes
     verified_hash = current_user.hashed_password
     if not await asyncio.to_thread(verify_password, data.current_password, verified_hash):
         raise HTTPException(status_code=400, detail="Current password is incorrect")
@@ -632,7 +647,7 @@ async def update_user(
     request: Request,
     user_id: int,
     data: UserUpdate,
-    credentials: HTTPAuthorizationCredentials = Depends(security),
+    found: Credential = Depends(credential),
     current_user: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db)
 ):
@@ -647,7 +662,7 @@ async def update_user(
     new_name = validate_new_username(data.new_username) if data.new_username is not None else None
     new_hash = await asyncio.to_thread(hash_password, data.password) if data.password else None
     admin_name = current_user.username
-    own_session = session_id_of(credentials.credentials) if current_user.id == user_id else None
+    own_session = session_id_of(found.token) if current_user.id == user_id else None
     warnings: list[str] = []
     renamed: _Renamed | None = None
 

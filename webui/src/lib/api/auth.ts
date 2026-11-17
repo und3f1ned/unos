@@ -1,4 +1,4 @@
-import { api, clearToken, getToken, setToken } from "./client";
+import { api, SESSION_KEY_HEADER, sessionStarted } from "./client";
 import type { ShareAccessLevel, SmbAccountState } from "./shares";
 
 /**
@@ -45,10 +45,15 @@ export interface User {
   two_factor_required?: TwoFactorRequired | null;
 }
 
-export interface Token {
-  access_token: string;
-  token_type: string;
+/**
+ * The answer of the web UI's sign-in (POST /auth/login with `cookie`, ADR-0395): the session is in
+ * the HttpOnly session cookie, and `access_token` stays empty.
+ */
+export interface SignIn {
+  /** The account has two-factor authentication: sign in again with a code. */
   requires_totp: boolean;
+  /** What the page sends with the session cookie; empty at the code step. */
+  session_key: string;
 }
 
 export interface AuthStatus {
@@ -123,24 +128,27 @@ export interface RecoveryCodesStatus {
 
 /**
  * Sign in. At the code step of an account with 2FA, send either the code of
- * the authenticator app or a recovery code, never both.
+ * the authenticator app or a recovery code, never both. The session goes into
+ * the session cookie, which no script reads, and its key into this tab (ADR-0395);
+ * the other tabs learn of it.
  */
 export async function login(
   username: string,
   password: string,
   totp_code?: string,
   recovery_code?: string
-): Promise<Token> {
-  const token = await api.post<Token>("/auth/login", {
+): Promise<SignIn> {
+  const answer = await api.post<SignIn>("/auth/login", {
     username,
     password,
     totp_code,
     recovery_code,
+    cookie: true,
   });
-  if (token.access_token) {
-    setToken(token.access_token);
+  if (!answer.requires_totp) {
+    sessionStarted(answer.session_key);
   }
-  return token;
+  return answer;
 }
 
 export async function setup(username: string, password: string): Promise<User> {
@@ -156,23 +164,23 @@ export async function getAuthStatus(): Promise<AuthStatus> {
 }
 
 /**
- * Sign out: forget the token, then end its session on the server (ADR-0329). The request carries
- * the token it ends and skips the API client's handling of 401, so a session that has already
- * ended signs out all the same; when the server cannot be reached, the session ends at its expiry.
+ * End the session of the session cookie and of its session key `key` on the server, which also
+ * deletes the cookie (ADR-0329, ADR-0395). The request skips the API client's handling of 401: a
+ * 401 says that the cookie is no session that `key` goes with (ended, gone, or replaced), so that
+ * nothing this browser holds is that session any more. True then; false when the server could not
+ * be reached or failed, and the cookie may still be a session.
  */
-export async function logout(): Promise<void> {
-  const token = getToken();
-  clearToken();
-  if (!token) return;
+export async function logout(key: string | null): Promise<boolean> {
   try {
-    await fetch("/api/v1/auth/logout", { method: "POST", headers: { Authorization: `Bearer ${token}` } });
+    const response = await fetch("/api/v1/auth/logout", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: key ? { [SESSION_KEY_HEADER]: key } : {},
+    });
+    return response.ok || response.status === 401;
   } catch {
-    // Unreachable: nothing more to do here.
+    return false;
   }
-}
-
-export function isAuthenticated(): boolean {
-  return !!getToken();
 }
 
 // User management functions (admin only)

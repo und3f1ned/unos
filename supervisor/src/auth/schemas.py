@@ -61,9 +61,14 @@ class UserResponse(BaseModel):
 
 
 class Token(BaseModel):
+    # Empty when the sign-in asked for the session cookie (token_type "cookie", ADR-0395) and at the
+    # step that asks for the second factor (requires_totp).
     access_token: str
     token_type: str = "bearer"
     requires_totp: bool = False
+    # The session key, which the web UI's page sends with the session cookie (ADR-0395); empty at the
+    # step that asks for the second factor. A program with the token needs none.
+    session_key: str = ""
 
 
 class LoginRequest(BaseModel):
@@ -75,6 +80,9 @@ class LoginRequest(BaseModel):
     totp_code: str | None = Field(default=None, max_length=16)
     # In place of totp_code: XXXX-XXXX-XXXX, in any case, with or without dashes and spaces (ADR-0238).
     recovery_code: str | None = Field(default=None, max_length=32)
+    # The web UI's sign-in: the session goes into the HttpOnly session cookie, not into the answer
+    # (ADR-0395). Programs leave it out and get the token for a Bearer header.
+    cookie: StrictBool = False
 
     @model_validator(mode="after")
     def _one_second_factor(self) -> "LoginRequest":

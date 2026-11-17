@@ -4,6 +4,7 @@ import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { Locator, Page, Request } from '@playwright/test';
 import { test, expect } from './fixtures';
+import { browserSession } from './session';
 
 /** Show the web UI in Russian from the next page load on: the choice that the Account page keeps (ADR-0287). */
 async function chooseRussian(page: Page) {
@@ -105,10 +106,11 @@ test.describe('File Browser', () => {
 type Entry = { name: string; path: string; type: string; size: number };
 type Scratch = { pool: Entry; name: string; path: string };
 
-let token = '';
+// The browser's session, for the API calls of the spec (ADR-0395).
+let session: Record<string, string> = {};
 let scratch: Scratch | null = null;
 
-const auth = () => ({ Authorization: `Bearer ${token}` });
+const auth = () => session;
 
 async function listNames(page: Page, dir: string): Promise<string[]> {
   const response = await page.request.get(`/api/v1/files/list?path=${encodeURIComponent(dir)}`, {
@@ -279,8 +281,7 @@ const trashToolbar = (page: Page) => page.getByRole('toolbar', { name: 'Selected
 
 test.describe('File Browser operations', () => {
   test.beforeEach(async ({ authenticatedPage: page }) => {
-    token = (await page.evaluate(() => localStorage.getItem('token'))) ?? '';
-    expect(token, 'signed in').not.toBe('');
+    session = await browserSession(page);
     const response = await page.request.get('/api/v1/files/list', { headers: auth() });
     expect(response.ok(), `list pools: HTTP ${response.status()}`).toBeTruthy();
     const name = `e2e-files-${Date.now().toString(36)}`;
@@ -338,7 +339,7 @@ test.describe('File Browser operations', () => {
     await expect(row(page, pool.name)).toBeVisible();
   });
 
-  test('downloads a file with the session token', async ({ authenticatedPage: page }) => {
+  test('downloads a file with the session', async ({ authenticatedPage: page }) => {
     // Larger than the server's 1 MiB read size, with every byte value.
     const content = randomBytes(3 * 1024 * 1024 + 123);
     await putFile(page, scratch!.path, 'data.bin', content);
@@ -350,7 +351,9 @@ test.describe('File Browser operations', () => {
     await selectionBar(page).getByRole('button', { name: 'Download' }).click();
 
     const request = await requestSent;
-    expect(request.headers()['authorization']).toBe(`Bearer ${token}`);
+    // The session cookie with the page's session key, no Authorization header (ADR-0395).
+    expect(request.headers()['authorization']).toBeUndefined();
+    expect(request.headers()['x-unos-session-key']).toBe(session['X-UNOS-Session-Key']);
     expect(new URL(request.url()).searchParams.get('path')).toBe(`${scratch!.path}/data.bin`);
     const download = await downloadStarted;
     expect(download.suggestedFilename()).toBe('data.bin');
@@ -1524,8 +1527,9 @@ test.describe('File Browser operations', () => {
       const url = new URL(request.url());
       if (url.pathname.startsWith('/api/v1/files/')) sent.push(`${request.method()} ${url.pathname}`);
     });
-    // As if the token had expired: same tab, so no storage event.
-    await page.evaluate(() => localStorage.setItem('token', 'expired-session-token'));
+    // As if the session had ended: the browser's next request carries no session cookie, and the
+    // page learns of it only from the answer.
+    await page.context().clearCookies();
     await page.locator('input[type="file"]').setInputFiles({
       name: 'late.txt',
       mimeType: 'text/plain',
@@ -1548,8 +1552,9 @@ test.describe('File Browser operations', () => {
     });
     const saved: string[] = [];
     page.on('download', (download) => saved.push(download.suggestedFilename()));
-    // As if the token had expired: same tab, so no storage event.
-    await page.evaluate(() => localStorage.setItem('token', 'expired-session-token'));
+    // As if the session had ended: the browser's next request carries no session cookie, and the
+    // page learns of it only from the answer.
+    await page.context().clearCookies();
     await row(page, 'late.txt').dblclick();
     await expect(page).toHaveURL('/login');
     await expect(page.locator('#username')).toBeVisible();

@@ -266,9 +266,19 @@ get SMB access (ADR-0030). Avoid: normal user, guest (guests have no account).
 **Host account**: An account of the host's operating system. The marked ones belong to SMB
 accounts; UNOS leaves every other one alone (ADR-0108). Avoid: user.
 
-**Session token**: The token that signing in returns; the web UI sends it with every request until
-it expires or its session ends: Logout, a password change, an administrator (ADR-0009, ADR-0028,
-ADR-0329). Avoid: cookie, API token.
+**Session token**: The token of a sign-in, valid until it expires or its session ends: Logout, a
+password change, an administrator (ADR-0028, ADR-0329). The web UI keeps it in the session cookie;
+a program gets it in the sign-in's answer and sends it as a Bearer token (ADR-0395). Avoid: API
+token.
+
+**Session cookie**: The HttpOnly cookie `__Host-unos-session` that holds the web UI's session token:
+no script of the page reads it, and the server takes it only from the web UI's own page and with
+its session key; it ends with the browser or at Logout (ADR-0395). Avoid: token storage, auth
+cookie.
+
+**Session key**: The value that the sign-in answers with a session and that the web UI's page
+sends with the session cookie; it lives in the tab, and the other tabs ask for it. Neither the key
+nor the cookie alone is a session (ADR-0395). Avoid: CSRF token, session token.
 
 **API token**: A long-lived token that a user creates for scripts, with that user's rights, shown
 once (ADR-0239); only a session token creates, disables and deletes API tokens (ADR-0253). It is

@@ -49,12 +49,18 @@ and proxies `/api/*` and `/ws/*` to the supervisor (`webui/Caddyfile`).
   `setInterval` whose callback reaches the API, also through an exported function of another
   module under `src/`, or changes a store or a variable that an API-reaching `$:` statement reads; `// polling-ignore: <reason>` above it exempts a
   countdown that asks once when its time has run out (ADR-0365).
-- A WebSocket authenticates with its first message, `{"type": "auth", "token": ...}`; tokens stay
-  out of URLs (ADR-0031). Close code 4401 ends the session, 4403 means forbidden.
+- The session is in the HttpOnly session cookie, which no script reads (ADR-0395): the page never
+  holds a token, only the session key, which `$lib/api/client.ts` keeps in the tab and sends with
+  every request; the server takes the cookie only from the web UI's own origin and with the key.
+  Sign-ins and sign-outs go through `login` of `$lib/api/auth` and `signOut` of
+  `$lib/stores/auth`, which tell the other tabs (`BroadcastChannel` `unos-session`).
+- A WebSocket authenticates with its first message, `{"type": "auth", "key": currentSessionKey()}`,
+  with the cookie of the handshake; no credential in URLs (ADR-0031). Close code 4401 ends the
+  session, 4403 means forbidden.
 - HTTP goes through `$lib/api/client.ts`, one module per API area in `$lib/api/`: `api.get`,
-  `post`, `put`, `patch`, `delete` for JSON, `apiFetch` for other answers, `downloadAs` for files
-  (a plain link cannot carry the token). It sends the Bearer token (ADR-0009), ends the session
-  once on a 401 and throws `ApiError` with the server's message.
+  `post`, `put`, `patch`, `delete` for JSON, `apiFetch` for other answers, `downloadAs` for files.
+  It ends the session once on a 401 of a request sent in the current session and throws
+  `ApiError` with the server's message.
 - Regular users see Dashboard and Account only (ADR-0030): every other page is for administrators.
 
 ## Texts (ADR-0287)
@@ -112,7 +118,11 @@ and proxies `/api/*` and `/ws/*` to the supervisor (`webui/Caddyfile`).
   (`fakeSmbApi`) and `tests/health-fakes.ts` (`fakeHealthApi`: SMART data and failure
   predictions), which abort unknown requests. Their texts are the server's, word for word:
   change the fake with the server (ADR-0189).
-- Signed-in specs use the `authenticatedPage` fixture of `tests/fixtures.ts`. `E2E_POOLS_BASE` is
+- Signed-in specs use the `authenticatedPage` fixture of `tests/fixtures.ts`. No spec reads a
+  token from the page's storage: `tests/session.ts` reads the session cookie from the browser
+  context, signs a page in (`signInPage`), puts a session of the API into the cookie
+  (`useSessionCookie`) or acts in the browser's session (`browserSession`); other API calls send
+  a Bearer token (`apiLogin` of `tests/accounts.ts`). `E2E_POOLS_BASE` is
   the stand-in's pools folder; `E2E_STANDIN_STATE` and `E2E_STANDIN_PYTHON` are its state directory
   and Python, with which `scripts/standin/emergency.py` runs the supervisor's emergency command
   line against the stand-in's data (`tests/emergency-reset.spec.ts`). Restore specs run only on a

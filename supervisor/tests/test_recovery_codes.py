@@ -187,7 +187,7 @@ class TestSignIn:
         response = login(world, "alice", ALICE_PW)
 
         assert response.status_code == 200
-        assert response.json() == {"access_token": "", "token_type": "bearer", "requires_totp": True}
+        assert response.json() == {"access_token": "", "token_type": "bearer", "requires_totp": True, "session_key": ""}
         assert status(world)["remaining"] == 10
 
     def test_a_code_signs_in_once(self, world):

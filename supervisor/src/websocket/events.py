@@ -5,7 +5,11 @@ URL, because request URLs end up in the uvicorn and proxy access logs:
 
 1. The client connects without query parameters.
 2. Within 10 seconds it sends one text message:
-   ``{"type": "auth", "token": "<JWT or unos_ API token>"}``.
+   ``{"type": "auth", "token": "<JWT or unos_ API token>"}``. The web UI sends
+   ``{"type": "auth", "key": "<session key>"}`` without a token: the server takes
+   the session cookie of the handshake, which counts only from the web UI's own
+   page, an Origin of https://<the handshake's Host>, and with its session key
+   (ADR-0395); no CORS protects a WebSocket.
 3. The token is checked exactly like an HTTP bearer token (signature, expiry,
    API token state, user still exists). The server answers
    ``{"type": "auth_ok"}`` and the regular message stream follows.
@@ -83,7 +87,9 @@ from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
 from .. import host
 from ..auth import scopes
 from ..auth.models import User
-from ..auth.utils import authenticate_token
+from ..auth.utils import (
+    API_TOKEN_PREFIX, SESSION_COOKIE, authenticate_token, check_session_key, from_own_origin, is_cookie_session,
+)
 from ..config import get_settings
 from ..apps import install_jobs
 from ..database import async_session
@@ -374,7 +380,10 @@ async def _close(websocket: WebSocket, code: int, reason: str) -> None:
         pass  # the client is already gone
 
 
-def _token_from_auth_message(message: dict[str, Any]) -> str | None:
+def _token_from_auth_message(websocket: WebSocket, message: dict[str, Any]) -> str | None:
+    """The token that the first message ``message`` authenticates with: its own, or, without one, the
+    session cookie of the handshake, from the web UI's own page only (ADR-0395). None when there is
+    none or the message is no auth message."""
     text = message.get("text")
     if not isinstance(text, str) or len(text) > _MAX_AUTH_MESSAGE_CHARS:
         return None
@@ -385,7 +394,17 @@ def _token_from_auth_message(message: dict[str, Any]) -> str | None:
     if not isinstance(payload, dict) or payload.get("type") != "auth":
         return None
     token = payload.get("token")
-    if not isinstance(token, str) or not token:
+    if token is None:
+        cookie = websocket.cookies.get(SESSION_COOKIE)
+        if not cookie or cookie.startswith(API_TOKEN_PREFIX) or not from_own_origin(websocket, origin_required=True):
+            return None
+        try:
+            check_session_key(cookie, payload.get("key"))
+        except HTTPException:
+            return None
+        return cookie
+    # The token of a session of the cookie counts only in the cookie (ADR-0395).
+    if not isinstance(token, str) or not token or is_cookie_session(token):
         return None
     return token
 
@@ -461,7 +480,7 @@ async def _handshake(websocket: WebSocket, admin_only: bool) -> tuple[str, User]
     if message["type"] == "websocket.disconnect":
         return None
 
-    token = _token_from_auth_message(message)
+    token = _token_from_auth_message(websocket, message)
     try:
         user = await _user_for_token(token, scopes.routed_path(websocket.scope)) if token else None
     except _SetupOnly:

@@ -1,5 +1,5 @@
 import { writable } from 'svelte/store';
-import { getToken, handleSetupRequired, handleUnauthorized } from '$lib/api/client';
+import { currentSession, currentSessionKey, handleSetupRequired, handleUnauthorized } from '$lib/api/client';
 import { problems, type Problem } from '$lib/stores/problems';
 import { scrubs, type ScrubUpdate } from '$lib/stores/scrubs';
 import { balances, type BalanceUpdate } from '$lib/stores/balances';
@@ -101,7 +101,8 @@ const STABLE_CONNECTION_MS = 10000;
 export const wsForbidden = writable(false);
 
 let ws: WebSocket | null = null;
-let wsToken: string | null = null;
+// The session (currentSession()) that the socket was opened in.
+let wsSession: number | null = null;
 let reconnectTimeout: ReturnType<typeof setTimeout> | null = null;
 let reconnectAttempts = 0;
 
@@ -116,7 +117,7 @@ function clearReconnect() {
 function closeSocket() {
   const socket = ws;
   ws = null;
-  wsToken = null;
+  wsSession = null;
   if (!socket) return;
   socket.onopen = null;
   socket.onmessage = null;
@@ -140,17 +141,17 @@ function scheduleReconnect() {
 }
 
 /**
- * Open the stats stream. Keeps a single connection: a call while a socket for
- * the same token is open or connecting does nothing; a different token (new
- * login) replaces the old socket.
+ * Open the stats stream of the signed-in account. Keeps a single connection: a
+ * call while a socket of the same session is open or connecting does nothing;
+ * after a sign-in or a sign-out (currentSession()) it replaces the old socket.
  */
 export function connectWebSocket() {
-  const token = getToken();
-  if (!token || typeof window === 'undefined') return;
+  if (typeof window === 'undefined') return;
+  const session = currentSession();
 
   if (
     ws &&
-    wsToken === token &&
+    wsSession === session &&
     (ws.readyState === WebSocket.CONNECTING || ws.readyState === WebSocket.OPEN)
   ) {
     return;
@@ -161,14 +162,16 @@ export function connectWebSocket() {
   wsForbidden.set(false);
 
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-  // No token in the URL: URLs end up in proxy and server logs.
+  // No credential in the URL: URLs end up in proxy and server logs.
   const socket = new WebSocket(`${protocol}//${window.location.host}/ws/v1/events`);
   ws = socket;
-  wsToken = token;
+  wsSession = session;
   let authenticatedAt = 0;
 
   socket.onopen = () => {
-    socket.send(JSON.stringify({ type: 'auth', token }));
+    // No token: the server takes the session cookie of the handshake, from this origin only and with
+    // the session key (ADR-0395).
+    socket.send(JSON.stringify({ type: 'auth', key: currentSessionKey() }));
   };
 
   socket.onmessage = (event) => {
@@ -214,12 +217,12 @@ export function connectWebSocket() {
   socket.onclose = (event) => {
     if (ws !== socket) return;
     ws = null;
-    wsToken = null;
+    wsSession = null;
     wsConnected.set(false);
 
     if (event.code === WS_CLOSE_UNAUTHORIZED) {
-      // Token expired or the account is gone: same as an HTTP 401.
-      handleUnauthorized(token);
+      // The session ended or the account is gone: same as an HTTP 401.
+      handleUnauthorized(session);
       return;
     }
     if (event.code === WS_CLOSE_FORBIDDEN) {

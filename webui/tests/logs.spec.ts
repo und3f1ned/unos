@@ -148,7 +148,9 @@ async function fakeJournalSocket(page: Page): Promise<JournalSocket[]> {
       sockets.push(socket);
       ws.onMessage((message) => {
         const first = JSON.parse(String(message));
-        if (first.type !== 'auth' || typeof first.token !== 'string' || !first.token) {
+        // The web UI's auth message: the server takes the session cookie of the handshake, with the
+        // session key (ADR-0395).
+        if (first.type !== 'auth' || 'token' in first || typeof first.key !== 'string' || !first.key) {
           ws.close({ code: 4401, reason: 'unauthorized' });
           return;
         }
@@ -328,7 +330,7 @@ test.describe('System Logs with a fake journal', () => {
     await auto.click();
     await expect(page.getByText('Following new entries')).toBeVisible();
     await expect.poll(() => sockets.length).toBe(1);
-    // The query of GET /entries, in the URL: the token goes in the first message (ADR-0031).
+    // The query of GET /entries, in the URL; no credential in it (ADR-0031).
     expect(Object.fromEntries(sockets[0].query)).toEqual({ source: 'journal', limit: '200' });
 
     // Each new entry comes first, as the list is newest first.

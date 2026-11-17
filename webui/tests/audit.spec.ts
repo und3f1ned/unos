@@ -1,5 +1,6 @@
 import type { APIRequestContext, Download, Page } from '@playwright/test';
 import { test, expect, E2E_ADMIN } from './fixtures';
+import { SESSION_COOKIE, pageSessionKey, sessionToken } from './session';
 
 // The Audit Log page (feature-list.json: webui.audit-log-page and security.audit-log; ADR-0237),
 // against the real audit log of the target. beforeAll writes the entries the tests look for,
@@ -215,7 +216,7 @@ test.describe('Audit log', () => {
     await applyFilters(page, { search: RUN }, () => filter(page, 'Search').fill(RUN));
     await applyFilters(page, { search: RUN, action: 'user_created' }, () => chooseAction(page, 'User created'));
     await expectTimeline(page, [/User created/]);
-    const signedIn = await page.evaluate(() => localStorage.getItem('token'));
+    const signedIn = await sessionToken(page);
 
     const requestSent = page.waitForRequest(
       (request) => new URL(request.url()).pathname === '/api/v1/audit/logs/export',
@@ -223,7 +224,10 @@ test.describe('Audit log', () => {
     const csvStarted = page.waitForEvent('download');
     await page.getByRole('button', { name: 'Export CSV' }).click();
     const request = await requestSent;
-    expect(request.headers()['authorization']).toBe(`Bearer ${signedIn}`);
+    // With the session cookie, which no script of the page reads (ADR-0395).
+    expect(request.headers()['authorization']).toBeUndefined();
+    expect((await request.allHeaders())['cookie']).toContain(`${SESSION_COOKIE}=${signedIn}`);
+    expect(request.headers()['x-unos-session-key']).toBe(await pageSessionKey(page));
     expect(Object.fromEntries(new URL(request.url()).searchParams)).toEqual({
       search: RUN,
       action: 'user_created',

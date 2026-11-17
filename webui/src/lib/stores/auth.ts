@@ -1,6 +1,12 @@
 import { derived, writable } from 'svelte/store';
-import { getMe, type User } from '$lib/api/auth';
-import { getToken } from '$lib/api/client';
+import { getMe, logout, type User } from '$lib/api/auth';
+import {
+  announceSignedOut,
+  currentSession,
+  currentSessionKey,
+  onSessionChangedElsewhere,
+  sessionStopped
+} from '$lib/api/client';
 
 export const user = writable<User | null>(null);
 export const isLoggedIn = writable(false);
@@ -42,20 +48,21 @@ export function isSetupOnly(currentUser: User | null): boolean {
   return currentUser?.two_factor_required?.setup_only === true;
 }
 
-let pending: { token: string | null; request: Promise<User> } | null = null;
+let pending: { session: number; request: Promise<User> } | null = null;
 
 /**
  * Load the signed-in user from /auth/me and publish it in the stores.
  * Concurrent callers share one request. Rejects with the ApiError on failure.
  */
 export function loadCurrentUser(): Promise<User> {
-  const token = getToken();
-  if (pending && pending.token === token) return pending.request;
+  const session = currentSession();
+  if (pending && pending.session === session) return pending.request;
 
   const request = getMe()
     .then((me) => {
-      // A logout or another login may have happened while this was in flight.
-      if (getToken() === token) {
+      // A sign-out or another sign-in, here or in another tab, may have happened while this was in
+      // flight.
+      if (currentSession() === session) {
         user.set(me);
         isLoggedIn.set(true);
       }
@@ -64,7 +71,7 @@ export function loadCurrentUser(): Promise<User> {
     .finally(() => {
       if (pending?.request === request) pending = null;
     });
-  pending = { token, request };
+  pending = { session, request };
   return request;
 }
 
@@ -72,4 +79,56 @@ export function clearCurrentUser(): void {
   pending = null;
   user.set(null);
   isLoggedIn.set(false);
+}
+
+/**
+ * The last sign-out of this tab did not reach the server, or the server failed it: the session and
+ * its cookie may still be a session of this browser. The sign-in page says so and offers to try
+ * again, until a sign-in here or in another tab.
+ */
+export const signOutFailed = writable(false);
+
+// The session key of a sign-out that the server did not confirm, for Sign Out Again (in this page
+// only: the tab no longer counts it as its own).
+let unconfirmedKey: string | null = null;
+
+/** A sign-in, here or in another tab: an earlier sign-out that failed is no longer this tab's to retry. */
+export function forgetFailedSignOut(): void {
+  unconfirmedKey = null;
+  signOutFailed.set(false);
+}
+
+if (typeof window !== 'undefined') onSessionChangedElsewhere(forgetFailedSignOut);
+
+async function endOnServer(key: string | null): Promise<void> {
+  const session = currentSession();
+  const ended = await logout(key);
+  // A sign-in here or in another tab since then is a session of its own.
+  if (currentSession() !== session) return;
+  unconfirmedKey = ended ? null : key;
+  if (ended) announceSignedOut();
+  signOutFailed.set(!ended);
+}
+
+/**
+ * Sign out: the page forgets the account and the session key at once; the session ends on the
+ * server, which deletes the session cookie, and then the other tabs sign out too (ADR-0395). The
+ * cookie cannot be deleted by the page, so a sign-out that fails leaves the session as it was:
+ * signOutFailed.
+ */
+export async function signOut(): Promise<void> {
+  const key = currentSessionKey();
+  // This tab has no session from now on; the other tabs learn of it once the server ended it.
+  sessionStopped();
+  clearCurrentUser();
+  await endOnServer(key);
+}
+
+/** Sign Out Again: end the session of the sign-out that the server did not confirm. */
+export async function signOutAgain(): Promise<void> {
+  if (unconfirmedKey === null) {
+    signOutFailed.set(false);
+    return;
+  }
+  await endOnServer(unconfirmedKey);
 }

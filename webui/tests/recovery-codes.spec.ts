@@ -1,6 +1,8 @@
 import { test, expect, E2E_ADMIN } from './fixtures';
 import { currentTotpCode } from './totp';
 import type { APIRequestContext, Page } from '@playwright/test';
+import { sessionToken, useSessionCookie } from './session';
+import { apiLogin } from './accounts';
 
 // Two-factor recovery codes (feature auth.recovery-codes, ADR-0238) against the
 // real supervisor: no route fakes. A regular account with two-factor
@@ -22,13 +24,6 @@ let adminToken = '';
 let userToken = '';
 let userId: number | undefined;
 
-async function apiLogin(request: APIRequestContext, credentials: { username: string; password: string }) {
-  const response = await request.post('/api/v1/auth/login', { data: credentials });
-  expect(response.ok(), `login as ${credentials.username}: HTTP ${response.status()}`).toBeTruthy();
-  const body = await response.json();
-  expect(body.requires_totp).toBe(false);
-  return body.access_token as string;
-}
 
 function bearer(token: string) {
   return { Authorization: `Bearer ${token}` };
@@ -55,10 +50,9 @@ async function expectRefused(request: APIRequestContext, code: string) {
   expect((await refused.json()).detail).toBe(INVALID);
 }
 
-/** Store the token the way the sign-in form does, then open the Account page. */
+/** Go on in USER's session in the browser's session cookie (ADR-0395), then open the Account page. */
 async function openAccount(page: Page) {
-  await page.goto('/login');
-  await page.evaluate((value) => localStorage.setItem('token', value), userToken);
+  await useSessionCookie(page, userToken);
   await page.goto('/system#security');
 }
 
@@ -263,7 +257,9 @@ test.describe('Recovery codes', () => {
     await expect(part.getByText('9 recovery codes left')).toBeVisible();
 
     // The same code again: refused, and the code step stays for another code.
+    const signedOut = page.waitForResponse('**/api/v1/auth/logout');
     await page.getByRole('button', { name: 'Logout' }).click();
+    expect((await signedOut).status()).toBe(200);
     await expect(page).toHaveURL('/login');
     await passwordStep(page);
     await page.getByRole('button', { name: 'Use a recovery code' }).click();
@@ -272,7 +268,7 @@ test.describe('Recovery codes', () => {
     await expect(page.getByText(INVALID)).toBeVisible();
     await expect(page.getByLabel('Recovery code')).toBeVisible();
     await expect(page.locator('#password')).toHaveCount(0);
-    expect(await page.evaluate(() => localStorage.getItem('token'))).toBeNull();
+    expect(await sessionToken(page)).toBeNull();
 
     // Typed in lower case, another code opens the session; the authenticator code is one click away.
     await page.getByRole('button', { name: 'Use a code from your authenticator app' }).click();
