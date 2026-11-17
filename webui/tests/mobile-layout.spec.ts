@@ -1236,6 +1236,9 @@ const VIEWS: View[] = [
       await page.getByRole('button', { name: /^(Balance|Балансировка)$/ }).first().click();
       await page.getByRole('dialog').getByRole('combobox').click();
       await page.getByRole('option', { name: /^(Every chunk \(full balance\)|Все блоки \(полная балансировка\))$/ }).click();
+      // The option's list reaches past the dialog on a short screen, and clicking it scrolls the
+      // overlay to it: the user scrolls back, so the view does too before the title is checked.
+      await dialogTitle(page).evaluate((title) => title.scrollIntoView({ block: 'nearest' }));
     },
     shows: (page) => page.getByRole('dialog').getByRole('checkbox'),
     start: dialogTitle,
