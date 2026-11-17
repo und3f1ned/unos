@@ -91,7 +91,6 @@ USER_ALLOWED = {
     ("POST", f"{API}/auth/me/smb/disable"),
     # Read-only system information, which every signed-in user may read
     ("GET", f"{API}/system/info"),
-    ("GET", f"{API}/system/stats"),
     ("GET", f"{API}/system/network"),
     ("GET", f"{API}/system/timezone"),
     ("GET", f"{API}/system/timezones"),
@@ -416,6 +415,21 @@ class TestRouteMatrix:
     )
     def test_admin_passes_the_admin_check(self, client, admin_headers, method, path):
         assert _call(client, method, path, admin_headers).status_code == 200
+
+    @pytest.mark.parametrize("path", [
+        "/system/stats", "/monitor/network", "/monitor/disk-io", "/monitor/history/network",
+        "/monitor/history/disk-io",
+    ])
+    def test_the_container_stats_routes_are_gone(self, client, admin_headers, path):
+        """system.no-container-stats-endpoints (ADR-0388, ADR-0207): they reported the supervisor
+        container's network and every block device; the stats message of /ws/v1/events is the
+        one source of live stats."""
+        assert client.get(f"{API}{path}", headers=admin_headers).status_code == 404
+
+    def test_monitor_all_has_no_network_or_disk_io(self, client, admin_headers):
+        answer = client.get(f"{API}/monitor/all", headers=admin_headers)
+        assert answer.status_code == 200
+        assert sorted(answer.json()) == ["cpu", "memory", "timestamp"]
 
     def test_api_token_of_a_regular_user_is_not_admin(self, client, alice_headers):
         created = client.post(f"{API}/auth/tokens", json={"name": "cli"}, headers=alice_headers)

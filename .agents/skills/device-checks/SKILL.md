@@ -38,7 +38,7 @@ use the main checkout's. Output shows secrets as `<redacted>`.
    inactive and disabled (ADR-0275), the inbound IPv6 filter active and loaded (ADR-0301), and its
    own `SD writes check.sh` line.
 
-3. **Ask the API.** `scripts/dev/sd.sh measure api -- scripts/dev/api.py GET /system/stats` (any
+3. **Ask the API.** `scripts/dev/sd.sh measure api -- scripts/dev/api.py GET /system/info` (any
    path under `/api/v1`, query parameters with `--param key=value`). Result: `HTTP 200`, the
    JSON body and `SD writes api: ...`. POST, PUT, PATCH and DELETE change the device: only for
    a check the owner asked for, and undo what you create.

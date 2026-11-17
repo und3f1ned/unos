@@ -1,4 +1,3 @@
-import asyncio
 from types import SimpleNamespace
 
 import pytest
@@ -40,61 +39,6 @@ class TestSystemInfo:
             app.dependency_overrides.pop(verify_token, None)
         assert "uptime" not in data
         assert data["boot_time"] == pytest.approx(psutil.boot_time(), abs=1)
-
-
-class TestSystemStats:
-    """Tests for system statistics."""
-
-    def test_get_system_stats_returns_valid_data(self):
-        """Test that system stats returns valid data structure."""
-        from src.system.router import get_system_stats
-        import asyncio
-        
-        with patch("src.system.router.verify_token"):
-            result = asyncio.run(get_system_stats())
-        
-        assert hasattr(result, "cpu_percent")
-        assert hasattr(result, "cpu_count")
-        assert hasattr(result, "memory_total")
-        assert hasattr(result, "memory_used")
-        assert hasattr(result, "memory_percent")
-        assert hasattr(result, "disk_total")
-        assert hasattr(result, "disk_used")
-        assert hasattr(result, "disk_percent")
-        assert hasattr(result, "network_sent")
-        assert hasattr(result, "network_recv")
-        assert hasattr(result, "cpu_temperature")
-        assert not hasattr(result, "temperatures")
-
-    def test_cpu_percent_in_valid_range(self):
-        """Test that CPU percent is between 0 and 100."""
-        from src.system.router import get_system_stats
-        import asyncio
-        
-        with patch("src.system.router.verify_token"):
-            result = asyncio.run(get_system_stats())
-        
-        assert 0 <= result.cpu_percent <= 100
-
-    def test_memory_percent_in_valid_range(self):
-        """Test that memory percent is between 0 and 100."""
-        from src.system.router import get_system_stats
-        import asyncio
-        
-        with patch("src.system.router.verify_token"):
-            result = asyncio.run(get_system_stats())
-        
-        assert 0 <= result.memory_percent <= 100
-
-    def test_disk_percent_in_valid_range(self):
-        """Test that disk percent is between 0 and 100."""
-        from src.system.router import get_system_stats
-        import asyncio
-        
-        with patch("src.system.router.verify_token"):
-            result = asyncio.run(get_system_stats())
-        
-        assert 0 <= result.disk_percent <= 100
 
 
 class TestPCIeDevices:
@@ -249,23 +193,18 @@ _NVME = [_reading("Composite", 41.9), _reading("Sensor 1", 41.9), _reading("Sens
 
 class TestDashboardTemperature:
     """system.temperatures (ADR-0346): the dashboard's Temperature card shows the temperature that
-    /system/stats and the stats message of /ws/v1/events give, chosen in one place: the CPU's or
+    the stats message of /ws/v1/events gives, chosen in one place: the CPU's or
     SoC's sensor by the name of its group, and on a host without one the first reading of the
     first group that psutil lists. Before, the web UI showed the first group, which on many hosts
     is an ACPI zone or a disk."""
 
     @staticmethod
     def chosen(groups):
-        """The temperature that /system/stats and the stats message give for these sensor groups,
-        which must be the same."""
-        from src.system.router import get_system_stats
+        """The temperature that the stats message gives for these sensor groups."""
         from src.websocket import events
 
         with patch("psutil.sensors_temperatures", create=True, return_value=groups):
-            message = events.get_system_stats()
-            stats = asyncio.run(get_system_stats())
-        assert message["data"]["cpu"]["temperature"] == stats.cpu_temperature
-        return stats.cpu_temperature
+            return events.get_system_stats()["data"]["cpu"]["temperature"]
 
     @pytest.mark.parametrize(
         ("groups", "expected"),
@@ -344,14 +283,11 @@ class TestDashboardTemperature:
 
     def test_a_failing_sensor_read_gives_none(self):
         """macOS has no psutil.sensors_temperatures, and hwmon can fail on Linux."""
-        from src.system.router import get_system_stats
         from src.websocket import events
 
         with patch("psutil.sensors_temperatures", create=True, side_effect=OSError("No sensors")):
             message = events.get_system_stats()
-            stats = asyncio.run(get_system_stats())
         assert message["data"]["cpu"]["temperature"] is None
-        assert stats.cpu_temperature is None
 
 
 class TestNetworkInterfaces:

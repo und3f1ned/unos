@@ -105,8 +105,8 @@ class TestPolling:
         assert "setInterval reaches the API: getStatus (from $lib/api/demo) through tick" in result.stderr
 
     @pytest.mark.parametrize("body, found", [
-        ("api.get('/system/stats')", "api (from $lib/api/demo)"),
-        ("fetch('/api/v1/system/stats')", "fetch (from the browser)"),
+        ("api.get('/system/info')", "api (from $lib/api/demo)"),
+        ("fetch('/api/v1/system/info')", "fetch (from the browser)"),
         ("['a', 'b'].forEach((pool) => getStatus())", "getStatus (from $lib/api/demo)"),
         ("window.setTimeout(getStatus, 0)", "getStatus (from $lib/api/demo)"),
     ])
