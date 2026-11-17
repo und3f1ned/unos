@@ -30,6 +30,10 @@ LIMIT_MAX_REFERENCED = 1
 UsageState = Literal["counted", "inconsistent", "quotas_off", "unknown"]
 
 _FSID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
+# The folder of a quota group of level 0, a subvolume's: 0_<id>.
+_SUBVOLUME_GROUP = re.compile(r"0_([1-9][0-9]{0,19})")
+# BTRFS_FIRST_FREE_OBJECTID: the lowest id of a subvolume. The top level is 5, and its group 0/5 stays.
+FIRST_SUBVOLUME_ID = 256
 
 
 @dataclass(frozen=True)
@@ -72,6 +76,25 @@ def generation(fsid: str) -> int | None:
     be read."""
     folder = _folder(fsid)
     return None if folder is None else _number(os.path.join(folder, "generation"))
+
+
+def subvolume_group_ids(fsid: str) -> set[int] | None:
+    """The subvolume ids of the quota groups 0/<id> of the mounted filesystem ``fsid``, the top
+    level's 0/5 left out; None when quotas are off or the folder cannot be read. A list of the
+    kernel's folders: no disk is read."""
+    filesystem = _folder(fsid)
+    if filesystem is None:
+        return None
+    try:
+        names = os.listdir(os.path.join(filesystem, "qgroups"))
+    except OSError:
+        return None
+    ids = set()
+    for name in names:
+        match = _SUBVOLUME_GROUP.fullmatch(name)
+        if match is not None and int(match.group(1)) >= FIRST_SUBVOLUME_ID:
+            ids.add(int(match.group(1)))
+    return ids
 
 
 def usage(fsid: str, subvol_id: int) -> Usage:

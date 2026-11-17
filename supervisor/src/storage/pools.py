@@ -2307,8 +2307,11 @@ def _list_subvolumes(target: str, *, newest_first: bool = False) -> list[tuple[i
     return subvolumes
 
 
-def _volume_candidates(target: str) -> dict[str, list[int]]:
-    """What the subvolume list of the pool mounted at ``target`` gives each volume name: ids.
+def _volume_candidates(
+    target: str, subvolumes: list[tuple[int, int, str]] | None = None
+) -> dict[str, list[int]]:
+    """What the subvolume list of the pool mounted at ``target`` (``subvolumes`` when given, from
+    _list_subvolumes) gives each volume name: ids.
 
     A volume is a subvolume in the pool's top directory whose name is a
     valid volume name (ADR-0069). Only pools whose top level is mounted get
@@ -2319,7 +2322,7 @@ def _volume_candidates(target: str) -> dict[str, list[int]]:
     name of its own (_list_subvolumes): _volume_ids checks them.
     """
     candidates: dict[str, list[int]] = {}
-    for subvol_id, parent, path in _list_subvolumes(target):
+    for subvol_id, parent, path in _list_subvolumes(target) if subvolumes is None else subvolumes:
         if parent == _TOP_LEVEL_SUBVOLUME and VOLUME_NAME_PATTERN.fullmatch(path):
             ids = candidates.setdefault(path, [])
             if subvol_id not in ids:
@@ -2701,8 +2704,9 @@ def _delete_subvolume(what: str, target: str, subvol_id: int, path: str, *, refu
     Unless ``refuse_if_used`` is False, its users are checked right before
     (_refuse_used_subvolume). PoolConflictError (HTTP 409) when it holds
     snapshots or other subvolumes or is busy; RuntimeError (HTTP 500) when
-    btrfs fails otherwise. Once it is deleted, so is its quota group
-    (_destroy_quota_group).
+    btrfs fails otherwise. With quotas on, its quota group stays until btrfs
+    has dropped its data: the volume usage monitor destroys it then
+    (destroy_quota_group, storage.volume_usage).
     """
     from ..offsite import service as offsite  # it imports this module
 
@@ -2726,32 +2730,28 @@ def _delete_subvolume(what: str, target: str, subvol_id: int, path: str, *, refu
         if "busy" in message.lower():
             raise PoolConflictError(f"{what} is in use ({message}).")
         raise RuntimeError(f"Deleting {what[:1].lower()}{what[1:]} failed: {message}")
-    _destroy_quota_group(what, target, subvol_id)
 
 
-def _destroy_quota_group(what: str, target: str, subvol_id: int) -> None:
-    """Destroy the quota group 0/<id> of the subvolume ``subvol_id`` just deleted from the pool
-    mounted at ``target`` (storage.volume_usage).
+def destroy_quota_group(target: str, subvol_id: int) -> str | None:
+    """``btrfs qgroup destroy 0/<id>``: the quota group of the subvolume ``subvol_id``, gone from the
+    pool mounted at ``target`` (storage.volume_usage). None once the group is destroyed, or when
+    there is none or quotas are off; otherwise why not, as btrfs gave it.
 
-    btrfs keeps the group, with its limit, after the subvolume is gone (Linux 6.1), and a subvolume
-    that btrfs later gives the same id (the highest one, after a remount) would take the limit over.
-    Nothing to do while quotas are off, or when there is no such group. Any other failure is logged
-    and the delete stands: a kernel that removes the group itself once the subvolume is dropped
-    refuses to destroy it before (busy).
+    Linux 6.1 keeps the group of a deleted subvolume, with its limit, and refuses to destroy it as
+    busy until btrfs has dropped the subvolume's data and committed its counts.
     """
     try:
         result = host.run_on_host(
-            ["btrfs", "qgroup", "destroy", f"0/{subvol_id}", target], timeout=VOLUME_TIMEOUT
+            ["btrfs", "qgroup", "destroy", f"0/{int(subvol_id)}", target], timeout=VOLUME_TIMEOUT
         )
     except subprocess.TimeoutExpired:
-        logger.warning("%s was deleted, but btrfs did not destroy its quota group 0/%s in time", what, subvol_id)
-        return
+        return "btrfs did not answer in time"
     if result.ok:
-        return
+        return None
     reason = result.stderr.strip() or f"exit status {result.returncode}"
     if _quotas_not_enabled(reason) or "no such file" in reason.lower():
-        return
-    logger.warning("%s was deleted, but not its quota group 0/%s: %s", what, subvol_id, reason)
+        return None
+    return reason
 
 
 def _quotas_not_enabled(reason: str) -> bool:
@@ -2986,20 +2986,24 @@ def volume_quota_group(pool_name: str, volume_name: str) -> tuple[str, int]:
     return fsid, subvol_id
 
 
-def mounted_pool_volumes(name: str, target: str) -> tuple[dict[str, int], set[int]]:
+def mounted_pool_volumes(name: str, target: str) -> tuple[dict[str, int], set[int], set[int]]:
     """The volumes of the pool ``name`` whose filesystem the RAID monitor found mounted at its
-    mountpoint ``target`` (name -> subvolume id), and the ids that btrfs could not resolve
-    (storage.volume_usage).
+    mountpoint ``target`` (name -> subvolume id), the ids that btrfs could not resolve, and the id
+    of every line of the pool's subvolume list, snapshots' included (storage.volume_usage).
 
     Without a scan of the disks, which _mounted_pool's list of the filesystems would make (ADR-0378):
     ``btrfs inspect-internal rootid`` and the pool's own subvolume list, checked against the
     filesystem (_volume_ids): a volume whose id btrfs could not resolve is not among them, and its
-    id is in the second set. PoolConflictError when the pool shows another subvolume than its top
-    level; RuntimeError, or subprocess.TimeoutExpired, when btrfs fails or does not answer.
+    id is in the second set. A line that a name with a line break forged can add an id to the third
+    set, but cannot take the id of a subvolume out of it (_list_subvolumes). PoolConflictError when
+    the pool shows another subvolume than its top level; RuntimeError, or
+    subprocess.TimeoutExpired, when btrfs fails or does not answer.
     """
     _top_level_mounted(name, target)
-    found, verdicts, _ = _volume_ids(target, _volume_candidates(target))
-    return found, {subvol_id for (subvol_id, _), verdict in verdicts.items() if verdict == "failed"}
+    subvolumes = _list_subvolumes(target)
+    found, verdicts, _ = _volume_ids(target, _volume_candidates(target, subvolumes))
+    unresolved = {subvol_id for (subvol_id, _), verdict in verdicts.items() if verdict == "failed"}
+    return found, unresolved, {subvol_id for subvol_id, _, _ in subvolumes}
 
 
 def delete_volume(pool_name: str, volume_name: str) -> None:

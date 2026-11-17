@@ -21,6 +21,7 @@ from __future__ import annotations
 import asyncio
 import importlib
 import json
+import logging
 import math
 import os
 from pathlib import Path
@@ -28,7 +29,7 @@ from pathlib import Path
 import pytest
 
 from src.health import problems
-from src.storage import qgroups, volume_usage
+from src.storage import pools, qgroups, volume_usage
 from src.storage.schemas import PoolInfo
 
 from .test_pool_persistence import DATA_UUID, admin_client, install_fake_host, wait_for_app_starts
@@ -73,6 +74,12 @@ class FakeSysfs:
         # BTRFS_QGROUP_LIMIT_MAX_RFER is bit 0.
         self._write(f"{uuid}/qgroups/0_{subvol_id}/limit_flags", 1 if limit is not None else 0)
 
+    def remove_group(self, subvol_id: int, uuid: str = DATA_UUID) -> None:
+        folder = self.root / uuid / "qgroups" / f"0_{subvol_id}"
+        for path in folder.iterdir():
+            path.unlink()
+        folder.rmdir()
+
     def generation(self, value: int, uuid: str = DATA_UUID) -> None:
         self._write(f"{uuid}/generation", value)
 
@@ -97,6 +104,16 @@ def host(monkeypatch, tmp_path):
     sysfs.group(fake.photos, 3 * GIB)
     sysfs.generation(100)
     fake.sysfs = sysfs
+    run_btrfs = fake.subvols._run
+
+    def btrfs(cmd):
+        # A quota group that btrfs destroyed leaves sysfs.
+        result = run_btrfs(cmd)
+        if cmd[1:3] == ["qgroup", "destroy"] and result.ok:
+            sysfs.remove_group(int(cmd[3][2:]))
+        return result
+
+    fake.subvols._run = btrfs
     yield fake
     wait_for_app_starts()
 
@@ -520,6 +537,106 @@ class TestNoDiskIsWoken:
         check()
 
         assert volume_problems() == [] and alerts == []
+
+
+BUSY = "ERROR: unable to destroy quota group: Device or resource busy"
+
+
+def destroys(host) -> list[list[str]]:
+    return [cmd for cmd in host_commands(host) if cmd[:3] == ["btrfs", "qgroup", "destroy"]]
+
+
+def delete_subvolume(host, subvol_id: int) -> None:
+    """``btrfs subvolume delete``: gone from the list, its quota group left in sysfs (Linux 6.1)."""
+    del host.subvols.subvolumes[DATA_UUID][subvol_id]
+    write(host)
+
+
+class TestStaleQuotaGroups:
+    """Linux 6.1 keeps the quota group 0/<id> of a deleted subvolume, with its limit, and refuses to
+    destroy it as busy until btrfs has dropped the subvolume's data and committed. A pass that lists
+    the pool destroys the groups whose subvolume the list no longer has (ADR-0387)."""
+
+    def test_the_group_of_a_deleted_volume_is_destroyed_at_the_next_list(self, host, clock, caplog):
+        caplog.set_level(logging.INFO, logger=volume_usage.__name__)
+        check()
+        delete_subvolume(host, host.documents)
+        check()
+
+        assert destroys(host) == [["btrfs", "qgroup", "destroy", f"0/{host.documents}", "/mnt/pools/data"]]
+        assert f"Destroyed the quota group 0/{host.documents} of pool data" in caplog.text
+        assert qgroups.subvolume_group_ids(DATA_UUID) == {host.photos}
+
+    def test_a_group_btrfs_refuses_as_busy_is_tried_again_after_the_drop_without_a_warning(
+        self, host, clock, caplog
+    ):
+        check()
+        host.fail[("btrfs", "qgroup", "destroy")] = (1, BUSY)
+        delete_subvolume(host, host.documents)
+        check()
+        check()  # the same generation: listed once more
+        check()  # settled: no list
+        assert len(destroys(host)) == 2
+
+        del host.fail[("btrfs", "qgroup", "destroy")]
+        write(host)  # the commit of the drop
+        check()
+
+        assert len(destroys(host)) == 3
+        assert qgroups.subvolume_group_ids(DATA_UUID) == {host.photos}
+        assert not [r for r in caplog.records if r.levelno >= logging.WARNING and "quota group" in r.getMessage()]
+
+    def test_the_groups_of_listed_subvolumes_snapshots_included_of_the_top_level_and_of_level_1_stay(
+        self, host, clock
+    ):
+        snapshots = host.subvols.add(DATA_UUID, ".snapshots")
+        snapshot = host.subvols.add(DATA_UUID, ".snapshots/documents_1", parent=snapshots,
+                                    snapshot_of=host.documents, read_only=True)
+        host.sysfs.group(snapshots, 16384)
+        host.sysfs.group(snapshot, 5 * GIB)
+        host.sysfs.group(5, 8 * GIB)
+        host.sysfs._write(f"{DATA_UUID}/qgroups/1_1/referenced", 0)
+        write(host)
+        check()
+        check()
+
+        assert destroys(host) == []
+
+    def test_a_subvolume_made_during_the_list_keeps_its_group(self, host, clock, monkeypatch):
+        # sysfs is read before the list: a group read after it could be of a subvolume that the
+        # list missed.
+        made = []
+        listed = pools.mounted_pool_volumes
+
+        def list_then_make(name, target):
+            found = listed(name, target)
+            if not made:
+                made.append(host.subvols.add(DATA_UUID, "music"))
+                host.sysfs.group(made[0], 16384)
+            return found
+
+        monkeypatch.setattr(pools, "mounted_pool_volumes", list_then_make)
+        check()
+
+        assert destroys(host) == []
+
+    def test_another_failure_is_logged_once(self, host, clock, caplog):
+        check()
+        host.fail[("btrfs", "qgroup", "destroy")] = (1, "ERROR: unable to destroy quota group: Invalid argument")
+        delete_subvolume(host, host.documents)
+        for _ in range(3):
+            check()
+            write(host)
+
+        assert len(destroys(host)) == 3
+        assert caplog.text.count(f"Could not destroy the quota group 0/{host.documents} of pool data") == 1
+
+    def test_a_list_that_fails_destroys_nothing(self, host, clock):
+        delete_subvolume(host, host.documents)
+        host.fail[("btrfs", "subvolume", "list")] = (1, "ERROR: can't perform the search")
+        check()
+
+        assert destroys(host) == []
 
 
 # --- step 3: a graph shows the use over time ------------------------------------------------------
