@@ -1657,6 +1657,38 @@ class TestFileManagerInAShareFolder:
         lines = section(api, "docs").splitlines()
         assert "   force directory mode = 2770" in lines and "   force create mode = 0660" in lines
 
+    def test_copies_and_moves_from_another_volume_get_the_modes_that_repair_permissions_gives(self, api, monkeypatch):
+        """Copy, and Move from another pool or volume, put items of the share's modes into its folder (ADR-0395)."""
+        monkeypatch.setattr(files_router, "BASE_PATH", str(api.base))
+        assert api.create(access=access((ALICE, "write"))).status_code == 200
+        docs = api.pool / "docs"
+        incoming = api.pool / "incoming"
+        (incoming / "photos").mkdir(parents=True)
+        os.chmod(incoming / "photos", 0o755)
+        for path, mode in ((incoming / "photos" / "a.jpg", 0o644), (incoming / "run.sh", 0o755),
+                           (incoming / "notes.txt", 0o644)):
+            path.write_bytes(b"data")
+            os.chmod(path, mode)
+        rename = files_router.os.rename
+
+        def across_volumes(src, dst, *, src_dir_fd=None, dst_dir_fd=None):
+            if src == "notes.txt":
+                raise OSError(errno.EXDEV, os.strerror(errno.EXDEV))
+            return rename(src, dst, src_dir_fd=src_dir_fd, dst_dir_fd=dst_dir_fd)
+
+        monkeypatch.setattr(files_router.os, "rename", across_volumes)
+        copied = api.client.post("/api/v1/files/copy", params={"destination": str(docs)},
+                                 json=[str(incoming / "photos"), str(incoming / "run.sh")])
+        moved = api.client.post("/api/v1/files/move", params={"destination": str(docs)},
+                                json=[str(incoming / "notes.txt")])
+
+        assert (copied.status_code, moved.status_code) == (200, 200), (copied.text, moved.text)
+        for path, mode in ((docs / "photos", constants.SHARE_DIR_MODE), (docs / "photos" / "a.jpg", 0o660),
+                           (docs / "run.sh", 0o770), (docs / "notes.txt", 0o660)):
+            st = os.stat(path)
+            assert (stat.S_IMODE(st.st_mode), st.st_gid) == (mode, os.getgid()), path
+        assert not (incoming / "notes.txt").exists()
+
 
 class TestPoolRootMountCheck:
     """service._pool_root_mount_problem, the check that tests/conftest.py replaces on Linux."""

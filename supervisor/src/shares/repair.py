@@ -86,7 +86,7 @@ INCOMPLETE_MESSAGE = f"Stopped after 24 hours; {_AGAIN}"
 STOPPED_MESSAGE = f"Stopped by an administrator; {_AGAIN}"
 
 # A file its owner may execute keeps that as group execute: 0o770.
-EXECUTABLE_FILE_MODE = constants.SHARE_FILE_MODE | 0o110
+EXECUTABLE_FILE_MODE = constants.SHARE_EXECUTABLE_FILE_MODE
 
 # O_NONBLOCK: opening a folder never blocks. O_DIRECTORY and O_NOFOLLOW: a
 # folder swapped for anything else since its lstat fails with ENOTDIR (Linux,
@@ -443,8 +443,10 @@ class _Walk:
             elif _private(current.st_mode):  # made private since its lstat
                 self.tally.skip("private")
             else:
-                mode = EXECUTABLE_FILE_MODE if current.st_mode & stat.S_IXUSR else constants.SHARE_FILE_MODE
-                self._fix(path, current, mode, fd, through_proc=True)
+                # A regular file that is not private: 0660, or 0770 (ADR-0395 gives copies the same).
+                mode = constants.share_entry_mode(current.st_mode)
+                if mode is not None:
+                    self._fix(path, current, mode, fd, through_proc=True)
         except OSError as exc:
             self.tally.error(path, exc)
         finally:

@@ -1027,6 +1027,16 @@ manager, encrypted backup uploads, health checks, CI checks).
 - New folders and uploads of the file manager in a share folder get 2770 and
   0660 with the group unos-smb, so the share's SMB users can change them at
   once.
+- Copy, and Move from another pool or volume, give what they put into a share
+  folder the modes of Repair permissions in the group unos-smb: folders 2770,
+  files 0660, or 0770 for files their owner may run, through a whole copied
+  tree; private entries keep theirs, and each entry gets its mode only once it
+  is copied in full (ADR-0395). The share's SMB users change such items at once,
+  without a Repair. A Move within a pool or volume stays a rename that keeps
+  the modes, and outside share folders copies keep the modes of their source.
+  In a share folder a copy goes on only in the folder that it made: another
+  folder put at that name meanwhile is refused with 409 and left as it was; a
+  copy's mode comes from the source that was opened.
 - Samba keeps its own log file in RAM (`/run/samba`), logs failed sign-ins
   through auth_audit to the journal, which System → Logs shows, and SMB
   passwords on a list of common passwords are refused.
