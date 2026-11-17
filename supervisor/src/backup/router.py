@@ -70,6 +70,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from .. import database
 from ..audit.changes import audit_change
 from ..audit.schemas import AuditAction, AuditSeverity
+from ..auth import requirement
 from ..auth.utils import CallerSession, caller_session, forget_unstored_sessions, verify_token
 from ..config import get_settings
 from ..database import init_db
@@ -882,14 +883,18 @@ def _restore_locked(backup_path: Path, passphrase: str | None) -> dict:
                 _verify_database(db_file)
                 _verify_page_size(db_file, db_path)
 
+        two_factor_change = None
         if db_file is not None:
             warnings.extend(_prepare_smb(db_file, db_path))
+            two_factor_change = _two_factor_requirement_change(db_path, db_file)
 
         if db_file is not None:
             previous_db = _keep_copy_of_database(db_path)
             _replace_database(db_file, db_path)
             forget_unstored_sessions()
             restored.append("database")
+            if two_factor_change is not None:
+                warnings.append(TWO_FACTOR_REQUIRED_BY_RESTORE if two_factor_change else TWO_FACTOR_NOT_REQUIRED_BY_RESTORE)
 
         for name in _NOT_RESTORED:
             if name in members:
@@ -902,7 +907,29 @@ def _restore_locked(backup_path: Path, passphrase: str | None) -> dict:
         "message": _restore_message(restored, warnings),
         "warnings": warnings,
         "previous_database": str(previous_db) if previous_db else None,
+        _TWO_FACTOR_CHANGE: two_factor_change,
     }
+
+
+# A restore that turns the requirement of two-factor authentication for every account on or off
+# (ADR-0386): its warning, and the details of its audit entry.
+TWO_FACTOR_REQUIRED_BY_RESTORE = (
+    "The restored database requires two-factor authentication for every account: accounts without it "
+    "are asked to set it up, and after their grace period can only do that."
+)
+TWO_FACTOR_NOT_REQUIRED_BY_RESTORE = (
+    "The restored database does not require two-factor authentication for every account."
+)
+_TWO_FACTOR_CHANGE = "_two_factor_requirement"  # the result's key of the change, which the answer leaves out
+
+
+def _two_factor_requirement_change(db_path: Path, db_file: Path) -> Optional[bool]:
+    """Whether the restore turns the requirement on (True) or off (False); None when it keeps it or
+    either database cannot be read."""
+    live, restored = requirement.required_in(db_path), requirement.required_in(db_file)
+    if live is None or restored is None or live == restored:
+        return None
+    return restored
 
 
 def _restore_message(restored: list[str], warnings: list[str]) -> str:
@@ -964,6 +991,7 @@ async def _restore_and_reconcile(backup_path: Path, passphrase: str | None, requ
     try:
         async with service.smb_lock():
             result = await asyncio.to_thread(_restore, backup_path, passphrase)
+            two_factor_change = result.pop(_TWO_FACTOR_CHANGE, None)
             if "database" in result["restored"]:
                 await _after_database_restore(result)
                 if caller is not None:
@@ -973,6 +1001,14 @@ async def _restore_and_reconcile(backup_path: Path, passphrase: str | None, requ
                 AuditAction.BACKUP_RESTORED, request, username,
                 resource_type="backup", resource_id=backup_path.name,
                 details=f"Restored {', '.join(result['restored'])}", severity=AuditSeverity.WARNING,
+            )
+        if two_factor_change is not None:
+            await audit_change(
+                AuditAction.SETTINGS_CHANGED, request, username, resource_type="two_factor_requirement",
+                details="Two-factor authentication required for every account by the restored database"
+                if two_factor_change else
+                "Two-factor authentication no longer required for every account: the restored database does not require it",
+                severity=AuditSeverity.WARNING,
             )
         return result
     finally:

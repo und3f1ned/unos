@@ -13,8 +13,9 @@ test.describe('Security Settings', () => {
   test('should display Two-Factor Authentication section', async ({ authenticatedPage: page }) => {
     await page.goto('/system#security');
     await page.waitForTimeout(1000);
-    // The section heading; the SMB card below it mentions two-factor authentication too.
-    await expect(page.locator('h3:has-text("Two-Factor Authentication")')).toBeVisible();
+    // The section heading, by its whole name: the SMB card below it mentions two-factor
+    // authentication too, and an administrator's card "Two-factor authentication for every account".
+    await expect(page.getByRole('heading', { name: 'Two-Factor Authentication', exact: true })).toBeVisible();
   });
 
   test('should display Change Password section', async ({ authenticatedPage: page }) => {

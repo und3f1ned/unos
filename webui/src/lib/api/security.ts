@@ -170,3 +170,31 @@ export async function deleteCertificate(
 ): Promise<{ status: string; message: string }> {
   return api.delete(`/security/certificates/${certId}`);
 }
+
+// Two-factor authentication for every account, administrators only.
+
+/** The grace periods an administrator can choose, in days (GraceDays of the server's schemas). */
+export const GRACE_DAYS_CHOICES = [0, 1, 3, 7, 14, 30] as const;
+export type GraceDays = (typeof GRACE_DAYS_CHOICES)[number];
+export const DEFAULT_GRACE_DAYS: GraceDays = 7;
+
+export interface TwoFactorRequirement {
+  enabled: boolean;
+  grace_days: number | null;
+  /** When it was turned on (UTC, with its offset). */
+  enabled_at: string | null;
+  enabled_by: string | null;
+}
+
+export async function getTwoFactorRequirement(): Promise<TwoFactorRequirement> {
+  return api.get<TwoFactorRequirement>("/security/two-factor-requirement");
+}
+
+/** Turn it on; `code` is a current code of the administrator's own authenticator app. */
+export async function enableTwoFactorRequirement(grace_days: GraceDays, code: string): Promise<TwoFactorRequirement> {
+  return api.post<TwoFactorRequirement>("/security/two-factor-requirement/enable", { grace_days, code });
+}
+
+export async function disableTwoFactorRequirement(code: string): Promise<TwoFactorRequirement> {
+  return api.post<TwoFactorRequirement>("/security/two-factor-requirement/disable", { code });
+}

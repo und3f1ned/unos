@@ -260,6 +260,15 @@ Account page and keeps; each one signs in once in place of a code of the authent
 two-factor authentication off, with `deploy/reset-admin.sh`, when no administrator can sign in;
 the audit log records it by the user root (ADR-0284). Avoid: password recovery, factory reset.
 
+**Two-factor requirement**: An administrator's setting that every account must have two-factor
+authentication, after a grace period that starts when it is turned on or when the account is
+created, whichever is later (ADR-0386). Avoid: mandatory 2FA policy, enforcement.
+
+**Setup-only account**: An account without two-factor authentication whose grace period under the
+two-factor requirement has ended: its sessions reach only the setup of two-factor authentication,
+its status and the sign-out, and its API tokens and WebSockets nothing (ADR-0386). Avoid: locked
+account, restricted user.
+
 ## Apps and backups
 
 **App**: An application installed from the App Store catalog, with its data on a pool (ADR-0039):

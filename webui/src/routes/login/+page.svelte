@@ -3,7 +3,7 @@
   import { goto } from "$app/navigation";
   import { login, getAuthStatus, getMe } from "$lib/api/auth";
   import { ApiError } from "$lib/api/client";
-  import { user, isLoggedIn } from "$lib/stores/auth";
+  import { user, isLoggedIn, isSetupOnly, TWO_FACTOR_SETUP_PATH } from "$lib/stores/auth";
   import { connectWebSocket } from "$lib/stores/stats";
   import { Button, Input } from "$lib/components/ui";
   import { t } from "$lib/i18n";
@@ -53,8 +53,11 @@
       const me = await getMe();
       user.set(me);
       isLoggedIn.set(true);
-      connectWebSocket();
-      goto("/");
+      // No socket serves an account that can only set up two-factor authentication.
+      if (!isSetupOnly(me)) connectWebSocket();
+      // While every account must have two-factor authentication, one without it is asked to set
+      // it up at each sign-in, and after its grace period can only do that.
+      goto(me.two_factor_required ? TWO_FACTOR_SETUP_PATH : "/");
     } catch (e: any) {
       error = e.message || $t("login.failed");
       // Only a rejected password leads back to the password form. An invalid

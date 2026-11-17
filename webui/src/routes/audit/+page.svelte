@@ -142,7 +142,8 @@
 		backup: 'audit.resource.backup',
 		host: 'audit.resource.host',
 		network_interface: 'audit.resource.networkInterface',
-		task: 'audit.resource.task'
+		task: 'audit.resource.task',
+		two_factor_requirement: 'audit.resource.twoFactorRequirement'
 	};
 
 	/** The text of `value` by its key in `keys`, in the language of the page; else `value`. */

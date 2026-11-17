@@ -519,6 +519,34 @@ const SECURITY = {
 const TOTP_SECRET = 'JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP';
 const TOTP_SETUP = { secret: TOTP_SECRET, qr_uri: `otpauth://totp/UNOS:admin?secret=${TOTP_SECRET}&issuer=UNOS` };
 
+// Two-factor authentication for every account: the administrator's card with the
+// requirement on, and the signed-in account as GET /auth/me answers it while it must set it up.
+const TWO_FACTOR_REQUIRED = {
+  ...SECURITY,
+  '/api/v1/auth/totp/status': { enabled: true, required: true },
+  '/api/v1/auth/recovery-codes/status': { remaining: 10, generated: true },
+  '/api/v1/security/two-factor-requirement': {
+    enabled: true, grace_days: 14, enabled_at: '2026-11-10T09:00:00Z', enabled_by: 'administrator_of_the_household',
+  },
+};
+function meToSetUp(setupOnly: boolean) {
+  return {
+    '/api/v1/auth/me': {
+      id: 1, username: 'admin', is_admin: true, totp_enabled: false, created_at: '2026-11-01T09:00:00Z',
+      two_factor_required: { by: '2026-11-24T09:00:00Z', setup_only: setupOnly },
+    },
+  };
+}
+
+/** The setup page of an account that must set up two-factor authentication, with a new secret. */
+async function fakeTwoFactorSetup(page: Page, setupOnly: boolean): Promise<void> {
+  await serve(page, meToSetUp(setupOnly));
+  await page.route(
+    (url) => url.pathname === '/api/v1/auth/totp/setup',
+    (route) => (route.request().method() === 'POST' ? route.fulfill({ json: TOTP_SETUP }) : route.abort()),
+  );
+}
+
 // GET /security/login-history (LoginHistoryResponse of supervisor/src/security/schemas.py), with an
 // IPv6 address and a long user name.
 const LOGIN_HISTORY = {
@@ -862,6 +890,27 @@ const VIEWS: View[] = [
         await page.locator('main').getByRole('button', { name }).click();
       }
     },
+  },
+  {
+    name: 'System: Security, two-factor authentication for every account',
+    path: '/system#security',
+    fake: (page) => serve(page, TWO_FACTOR_REQUIRED),
+    shows: (page) => page.getByText(/administrator_of_the_household/),
+    end: (page) => page.getByRole('button', { name: /^(Stop requiring|Не требовать)$/ }),
+  },
+  {
+    name: 'Two-factor setup, asked during the grace period',
+    path: '/two-factor-setup',
+    fake: (page) => fakeTwoFactorSetup(page, false),
+    shows: (page) => page.getByRole('link', { name: /^(Later|Позже)$/ }),
+  },
+  {
+    name: 'Two-factor setup, the one page after the grace period',
+    path: '/two-factor-setup',
+    fake: (page) => fakeTwoFactorSetup(page, true),
+    open: (page) => page.getByRole('button', { name: /^(Set up now|Настроить сейчас)$/ }).click(),
+    shows: (page) => page.getByText(TOTP_SECRET),
+    end: (page) => page.getByRole('button', { name: /^(Sign out|Выйти)$/ }),
   },
   {
     name: 'System: Security, the sign-in history',

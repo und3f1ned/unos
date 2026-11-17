@@ -1,5 +1,5 @@
 import { writable } from 'svelte/store';
-import { getToken, handleUnauthorized } from '$lib/api/client';
+import { getToken, handleSetupRequired, handleUnauthorized } from '$lib/api/client';
 import { problems, type Problem } from '$lib/stores/problems';
 import { scrubs, type ScrubUpdate } from '$lib/stores/scrubs';
 import { balances, type BalanceUpdate } from '$lib/stores/balances';
@@ -233,6 +233,9 @@ export function connectWebSocket() {
     }
     if (event.code === WS_CLOSE_FORBIDDEN) {
       wsForbidden.set(true);
+      // The events socket is forbidden to an account only once its grace period to set up
+      // two-factor authentication has ended: the layout loads the account again and leads to the setup.
+      handleSetupRequired();
       return;
     }
     if (authenticatedAt && Date.now() - authenticatedAt >= STABLE_CONNECTION_MS) {
