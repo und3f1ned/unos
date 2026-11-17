@@ -537,6 +537,57 @@ Open owner actions:
 
 ## Log
 
+### 2026-11-17: The smart check skips the disk's sleep while apps use the pool
+
+- `scripts/dev/scenario.sh smart` no longer fails its wait for the pool's disk to sleep when apps
+  keep it awake (ADR-0388): after the seventh batch's reboot `scenario.sh all` failed only that
+  step (sda active after 1980 s, 13 reads and 649 writes), caused by Immich, transmission and
+  others with their data on the pool (ADR-0381's cost), which hid any real fault of
+  `storage.disk-spindown`. Before the wait, after each of its rounds and once more after the last
+  power read, the check now reads the disk's reads and writes and each running container's on it
+  from its cgroup's io.stat (cgroup v2: the device runs Docker with the systemd driver on it),
+  through `docker ps` and `docker inspect` under `timeout` alone. A disk that the Storage page
+  shows active after the wait is a SKIP that names the containers when, in the wait's last 660 s
+  (two rounds: longer than sda needs unused to sleep), the kernel counted reads or writes on it
+  and containers other than UNOS's own (`unos-*`) did too, and UNOS's own did not; so is the next
+  step, the SMART reads of the sleeping disk, and those reads are a SKIP when they find the disk
+  awake after such a container used it. Every other case fails as before. Tests first in
+  `supervisor/tests/test_dev_scenarios.py` (they failed on main with the device's FAIL).
+- The review in a fresh context (three rounds) found these faults, all fixed with tests: an app's
+  read or write anywhere in the 1980 s made the SKIP, so an app that wrote once early hid a fault
+  that kept the disk awake for the 1650 s after it (now only the last 660 s count, and the power
+  read that restarts the timer, or the scans turned on again, still fail after an early write); a
+  state of `unknown` was skipped too (now only `active`); the SMART-read step turned any failure
+  into a SKIP, an HTTP 500 among them (now only the disk found awake, or reads and writes
+  counted); a failed `docker inspect` read like a host without that container, whose lifetime
+  counts then looked like a use during the wait, at first for all of them and then, keyed by ID
+  in one reading and by name in the next, for one (now every container is known by its name from
+  `docker ps`, and one without a PID has no count); UNOS's own writes beside an app's made a SKIP
+  (now a FAIL that names both); an app that wrote until shortly before a pass of the SMART monitor,
+  which reads a disk used since its last read and so restarts its timer (ADR-0378), made a FAIL
+  that blamed UNOS (a window of 1320 s, tried for it, hid that fault again in a run whose apps
+  went quiet 990 s before the end; now the FAIL names the apps' use in the 660 s before and the
+  monitor's pass, which a second run clears, since the check cannot see the monitor's passes); an
+  app's write between the last reading and the last power read
+  went unseen (now a reading follows it); and the inspects could outlast the device call's 300 s
+  (now 120 s at most). Fixed too: UNOS's own containers are every `unos-*`, as the supervisor's
+  `is_system_container` says, and the texts of ADR-0388, the CHANGELOG, the ledger's notes and the
+  feature-pass row say what the code does. Left as is: ADR-0388 changes ADR-0378's device check
+  without superseding the whole ADR, in the way of ADR-0291 and ADR-0298, since every other rule
+  of ADR-0378 stays; a container started again whose new counts are above its old ones is counted
+  short, and one that ran only between two readings is not seen (ADR-0388 says so).
+- On the device, read only: the helper listed every container with its counts, and in two minutes
+  Immich's database sent sda 22 writes while sda completed 42 (0.016 MiB); its final form, names
+  from `docker ps`, again listed all seven containers (0.000 MiB). `scripts/dev/scenario.sh smart`
+  with the first version: OK, 12 steps passed and 2 skipped, step 10 a SKIP after 1980 s with 0
+  reads and 623 writes on sda, naming immich-database (335 writes) and immich-redis (68), the
+  device as found (SD MiB 0.758 in all, 0.508 for the wait). With the final code: OK, 12 passed
+  and 2 skipped, step 10 a SKIP after 1980 s with 0 reads and 688 writes on sda, naming
+  immich-database (96 writes) and immich-redis (10) in the last 660 s; the timeout Off again and
+  the offline data collection on, as found, and the device as the check found it (SD MiB 0.000 to
+  0.113 for the other steps, 0.746 for the wait with its 16 readings, 0.309 for the restore,
+  1.207 in all). The device's runtime is unchanged: the check runs on the workstation.
+
 ### 2026-11-17: A seventh batch: install progress, groups, required 2FA, quota use; faster gates
 
 - Immich's smart search, at the owner's word: its CLIP model is nllb-clip-base-siglip__v1, which
