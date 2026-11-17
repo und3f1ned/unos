@@ -98,6 +98,8 @@
 		smb_shares_imported: 'audit.action.smbSharesImported',
 		smb_reconciled: 'audit.action.smbReconciled',
 		smb_restored: 'audit.action.smbRestored',
+		smb_interfaces_changed: 'audit.action.smbInterfacesChanged',
+		smb_restarted: 'audit.action.smbRestarted',
 		nfs_export_created: 'audit.action.nfsExportCreated',
 		nfs_export_deleted: 'audit.action.nfsExportDeleted',
 		container_started: 'audit.action.containerStarted',

@@ -6,12 +6,14 @@
   section's value, else the ``[global]`` value written before the section
   (Samba reads the file in order), else Samba's default.
 * The renderer (``render_config``) writes the whole file from the database:
-  ``HEADER``, a hardened ``[global]`` and one fail-safe section per served
-  share. The output is deterministic, so an unchanged state renders
+  ``HEADER``, a hardened ``[global]``, with the network interfaces that smbd
+  binds when an administrator chose them (ADR-0388), and one fail-safe section
+  per served share. The output is deterministic, so an unchanged state renders
   byte-identical text and nothing is written.
 * ``config_grants`` and ``shrunk_shares`` tell which shares lost access between
   two files, so that their open tree connects can be closed after the reload;
-  ``time_machine_shares`` which shares a file offers to Time Machine.
+  ``time_machine_shares`` which shares a file offers to Time Machine, and
+  ``listen_lines`` whether smbd must restart to bind other addresses.
 
 smb.conf has no quoting: a newline in any value starts a new directive and a
 trailing backslash continues the line. Every value is checked once more by
@@ -24,7 +26,9 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from ..security.validators import RESERVED_SMB_NAMES, SHARE_NAME_PATTERN, SMB_PATH_UNSAFE_PATTERN
+from ..security.validators import (
+    INTERFACE_NAME_PATTERN, RESERVED_SMB_NAMES, SHARE_NAME_PATTERN, SMB_PATH_UNSAFE_PATTERN,
+)
 from . import constants, smb
 
 if TYPE_CHECKING:
@@ -40,6 +44,11 @@ HOSTS_ALLOW = (
     "127.0.0.0/8 ::1 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 100.64.0.0/10 "
     "169.254.0.0/16 fc00::/7 fe80::/10"
 )
+
+# The interface that a choice of interfaces always binds besides the chosen ones (ADR-0388): smbpasswd's
+# default mode and local tools reach smbd on 127.0.0.1, and with a socket there smbd starts also when
+# no chosen interface is on the host.
+LOOPBACK = "lo"
 
 # The six fixed lines that end every share section (ADR-0147, ADR-0150); is_unos_section
 # looks for them. SMB clients neither see nor open the snapshots and the trash of a
@@ -115,6 +124,28 @@ def _safe_name(name: object) -> str:
     return name
 
 
+def is_bindable_name(name: object) -> bool:
+    """A name that a choice of interfaces may hold (ADR-0388): a Linux interface name (no Samba
+    wildcard, list separator, quote, '/' or address literal), neither the loopback nor one that System >
+    Network hides: Docker's (docker0, br-*, veth*) and dummy0 (network.links.is_hidden)."""
+    from ..network import links  # network's router imports much of the app
+
+    return (
+        isinstance(name, str)
+        and INTERFACE_NAME_PATTERN.fullmatch(name) is not None
+        and name != LOOPBACK
+        and not links.is_hidden(name)
+    )
+
+
+def _safe_interface(name: object) -> str:
+    """An interface name of the ``interfaces`` line: anything else could name another interface, an
+    address or a pattern, or start another directive."""
+    if not is_bindable_name(name):
+        raise smb.SambaConfigError(f"Refusing to write an invalid interface name into smb.conf: {str(name)[:64]!r}")
+    return name  # type: ignore[return-value]
+
+
 def _safe_user(name: object) -> str:
     """Principals are SMB account names (constants.LINUX_NAME_PATTERN, not reserved)."""
     if not constants.is_valid_linux_name(name):
@@ -134,8 +165,20 @@ def _yes_no(value: bool) -> str:
     return "yes" if value else "no"
 
 
-def global_settings(guest_enabled: bool, time_machine: bool = False) -> list[tuple[str, str]]:
-    """The (key, value) lines of render_global, in order; Apple's lines end it while a Time Machine
+def _listen_settings(interfaces: Sequence[object] | None) -> list[tuple[str, str]]:
+    """The lines that bind smbd to the loopback and the chosen interfaces, sorted (ADR-0388); none for
+    None, every interface."""
+    if interfaces is None:
+        return []
+    names = sorted({_safe_interface(name) for name in interfaces})
+    return [("interfaces", " ".join((LOOPBACK, *names))), ("bind interfaces only", "yes")]
+
+
+def global_settings(
+    guest_enabled: bool, time_machine: bool = False, interfaces: Sequence[object] | None = None
+) -> list[tuple[str, str]]:
+    """The (key, value) lines of render_global, in order; the lines of the interfaces follow hosts allow
+    while an administrator chose interfaces (ADR-0388), and Apple's lines end it while a Time Machine
     share exists (ADR-0380)."""
     return [
         ("workgroup", "WORKGROUP"),
@@ -148,6 +191,8 @@ def global_settings(guest_enabled: bool, time_machine: bool = False) -> list[tup
         ("guest account", "nobody"),
         ("invalid users", "root"),
         ("hosts allow", HOSTS_ALLOW),
+        # smbd binds the addresses of these interfaces when it starts, and only then (ADR-0388).
+        *_listen_settings(interfaces),
         ("server min protocol", "SMB2_02"),
         ("ntlm auth", "ntlmv2-only"),
         ("server signing", "default" if guest_enabled else "mandatory"),
@@ -188,10 +233,13 @@ def global_settings(guest_enabled: bool, time_machine: bool = False) -> list[tup
     ]
 
 
-def render_global(guest_enabled: bool, time_machine: bool = False) -> str:
+def render_global(
+    guest_enabled: bool, time_machine: bool = False, interfaces: Sequence[object] | None = None
+) -> str:
     """The ``[global]`` section (ADR-0281); three lines depend on whether a guest share exists (ADR-0339),
-    and two on whether a Time Machine share does (ADR-0380)."""
-    return "[global]\n" + "".join(_line(key, value) for key, value in global_settings(guest_enabled, time_machine))
+    two on whether a Time Machine share does (ADR-0380), and two on the chosen interfaces (ADR-0388)."""
+    settings = global_settings(guest_enabled, time_machine, interfaces)
+    return "[global]\n" + "".join(_line(key, value) for key, value in settings)
 
 
 def _option_lines(s: service.ShareRender, fruit: bool) -> list[str]:
@@ -236,11 +284,12 @@ def render_share(s: service.ShareRender, fruit: bool = False) -> str:
     return "".join(lines)
 
 
-def render_config(shares: Sequence[service.ShareRender]) -> str:
+def render_config(shares: Sequence[service.ShareRender], interfaces: Sequence[object] | None = None) -> str:
     """The whole smb.conf: HEADER, an empty line, [global], then each share
-    (sorted by name, case-insensitively) after an empty line."""
+    (sorted by name, case-insensitively) after an empty line. ``interfaces``: the
+    chosen interfaces that smbd binds besides the loopback; None: every interface."""
     time_machine = any(s.time_machine for s in shares)
-    parts = [HEADER, "\n", render_global(any(s.guest_ok for s in shares), time_machine)]
+    parts = [HEADER, "\n", render_global(any(s.guest_ok for s in shares), time_machine, interfaces)]
     for share in sorted(shares, key=lambda s: s.name.lower()):
         parts.append("\n")
         parts.append(render_share(share, time_machine))
@@ -701,18 +750,42 @@ def global_script_restrictions(parsed: ParsedSmbConf) -> list[ScriptRestriction]
 def _unos_global_lines() -> frozenset[tuple[str, str]]:
     lines: set[tuple[str, str]] = set()
     for guest_enabled in (False, True):
-        for key, value in global_settings(guest_enabled, time_machine=True):
+        for key, value in global_settings(guest_enabled, time_machine=True, interfaces=()):
             lines.add((normalize_key(key), value))
     return frozenset(lines)
 
 
 _UNOS_GLOBAL_LINES = _unos_global_lines()
+_INTERFACES_KEY = normalize_key("interfaces")
+_LISTEN_KEYS = (_INTERFACES_KEY, normalize_key("bind interfaces only"))
+
+
+def _is_unos_interfaces(value: str) -> bool:
+    """An ``interfaces`` value as _listen_settings writes it: lo, then valid names, sorted, once each."""
+    first, *names = value.split(" ")
+    return first == LOOPBACK and all(is_bindable_name(name) for name in names) and names == sorted(set(names))
+
+
 _UNOS_SHARE_LINES = frozenset((normalize_key(key), value) for key, value in _FIXED_SHARE_LINES)
 
 
 def is_unos_global_line(option: ParsedOption) -> bool:
-    """A [global] line equal to a line of a render_global variant."""
+    """A [global] line equal to a line of a render_global variant (an ``interfaces`` line with any
+    choice of interfaces, ADR-0388)."""
+    if option.key == _INTERFACES_KEY:
+        return _is_unos_interfaces(option.value)
     return (option.key, option.value) in _UNOS_GLOBAL_LINES
+
+
+def listen_lines(text: str) -> tuple[str | None, str | None]:
+    """The last values of ``interfaces`` and ``bind interfaces only`` in the [global] of ``text``
+    (None for a line it lacks). smbd binds its addresses only when it starts, so a file whose values
+    differ from the installed one's needs a restart of smbd, not a reload (ADR-0388)."""
+    values: dict[str, str] = {}
+    for option in parse_smb_conf(text).global_options:
+        if option.key in _LISTEN_KEYS:
+            values[option.key] = option.value
+    return values.get(_LISTEN_KEYS[0]), values.get(_LISTEN_KEYS[1])
 
 
 def is_unos_share_line(option: ParsedOption) -> bool:

@@ -228,6 +228,11 @@ WS-Discovery (wsdd2), macOS through Bonjour (the `_smb._tcp` service that smbd r
 avahi-daemon), both over IPv4 only; NetBIOS is off (ADR-0275). Avoid: network browsing (a share's
 "Show in network browsing" lists the share among the NAS's shares), NetBIOS browsing.
 
+**SMB interfaces**: The network interfaces of the host that SMB listens on: every one by default, or
+those that an administrator chose, by name, together with the loopback. smbd binds their addresses
+when it starts, so a change of them, and Restart SMB, restart smbd and end the open SMB connections
+(ADR-0388). Avoid: bind addresses, listen addresses (addresses, not interfaces), SMB network.
+
 **NFS export**: A folder that the host's NFS server offers to the computers of a network: one entry
 of an export file, read as exportfs reads it. UNOS adds lines to its own export file,
 `/etc/exports.d/unos.exports`, deletes only the lines it wrote there, exactly as it writes them,

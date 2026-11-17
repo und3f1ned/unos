@@ -915,6 +915,44 @@ the saved sign-in first, or it keeps using it: on macOS in **Keychain
 Access** (the entry with the NAS's address), on Windows in **Credential
 Manager** → **Windows Credentials**.
 
+#### Network Interfaces
+
+By default SMB listens on every network interface of the NAS. The card
+**Network interfaces** of the SMB tab shows where it listens, and the
+addresses that smbd answers on. **Choose interfaces…** limits SMB to the
+interfaces you tick, for example the wired network card when the NAS also
+has Wi-Fi, a second network card or a VPN: SMB then stops answering on the
+addresses of the others. The NAS itself (the loopback) always stays bound.
+
+- The list shows the NAS's interfaces with their addresses, as the host
+  reports them. Docker's interfaces are not listed: apps reach SMB at the
+  NAS's address. Point-to-point interfaces (tunnels, WireGuard, PPP) cannot
+  be ticked: Samba does not listen there.
+- At least one interface you choose must be on the NAS, enabled and with an
+  address of your local network; otherwise the choice is refused, since no
+  computer could reach SMB. An interface that is not on the NAS now, such as
+  an unplugged USB adapter, can stay chosen: it shows as **Not on the NAS
+  now**, and SMB listens there once it is back and SMB has restarted.
+- **Saving restarts SMB**: every open SMB connection is closed, and the
+  dialog says how many are open. Computers connect again by themselves, but
+  a copy in progress fails.
+- smbd listens on the addresses that the chosen interfaces have when it
+  starts. When an address changes later (a new address from your router, an
+  adapter plugged in), the card names the address that smbd does not listen
+  on and offers **Restart SMB…**, which also closes the open connections.
+  Give the NAS a fixed address in your router (a DHCP reservation). When
+  smbd cannot be restarted after a change, the page says so and offers
+  **Restart SMB…** too.
+- Computers on the network of an interface that is not chosen can still
+  see the NAS in Windows' **Network** and in Finder (see
+  [Finding the NAS](#finding-the-nas)), but cannot connect.
+- **Every network interface (default)** in the same dialog goes back to
+  listening everywhere.
+
+The choice is part of the UNOS database, so a backup holds it. Each change,
+and each Restart SMB, is in the audit log (`smb_interfaces_changed`,
+`smb_restarted`).
+
 ### NFS Exports (Linux and macOS)
 
 An NFS export gives the computers of one network of yours a folder of a pool,
@@ -2333,8 +2371,9 @@ A run on a pool that is not mounted fails with `Pool <name> is not mounted at
 
 Go to **System** → **Backup & Restore**. A backup holds the UNOS database:
 user accounts with their passwords, two-factor authentication, API tokens,
-the login history, the groups of users with their members, and the SMB
-shares with their access lists, those of groups included. It does not
+the login history, the groups of users with their members, the SMB
+shares with their access lists, those of groups included, and the network
+interfaces that SMB listens on. It does not
 hold the files in your pools, Samba's own password database, nor settings
 kept elsewhere, such as notification channels, scheduled tasks, firewall
 rules, UPS settings, the network settings and the host's `/etc/fstab`. Each
@@ -2357,6 +2396,12 @@ backup in the list has **Restore**, **Download** and **Delete** buttons.
   tasks also hold are named in the result as not restored.
 
 SMB after a restore:
+- The network interfaces that SMB listens on come back too, and smbd restarts
+  when they differ from the NAS's: open SMB connections close. A backup made
+  before UNOS had this choice listens on every interface. When none of the
+  restored interfaces is on this NAS (a backup of other hardware), SMB answers
+  only the NAS itself and the Shares page says so: choose the interfaces
+  again.
 - The shares and their access lists, and the groups with their members, come
   back with the database, and UNOS writes smb.conf from them; a backup holds
   no smb.conf. A backup made before UNOS had groups restores without groups,

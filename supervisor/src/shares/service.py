@@ -277,6 +277,14 @@ def advertise_warning(detail: str) -> str:
     )
 
 
+def restart_warning(detail: str) -> str:
+    """The warning and status problem of a restart of smbd that failed (ADR-0388)."""
+    return (
+        f"smbd could not be restarted, so it may still listen as before the last change of its network "
+        f"interfaces, or not at all: {detail}; Restart SMB on the Shares page tries it again"
+    )
+
+
 def _crosses(parent: os.stat_result, child: os.stat_result) -> str | None:
     """Whether the folder ``child`` starts another file tree than its parent: None, "subvolume" (a
     btrfs subvolume, which has a device of its own) or "mount" (another file system)."""
@@ -448,6 +456,9 @@ class RenderInput:
     # Served share id -> its stored settings that are not rendered (guest_ok, time_machine,
     # previous_versions) -> why (SmbShareInfo.not_rendered, ADR-0380).
     not_rendered: dict[int, dict[str, str]] = field(default_factory=dict)
+    # The chosen interfaces that smbd binds besides the loopback, valid names only (ADR-0388);
+    # None: no choice, every interface.
+    interfaces: tuple[str, ...] | None = None
 
 
 def _name_problem(name: object) -> str | None:
@@ -563,6 +574,10 @@ async def _read_render_input(db: AsyncSession, pool_names: Collection[str]) -> t
             )
         ).all()
     }
+
+    interface_rows = (
+        await db.execute(select(models.SmbBindInterface.name).execution_options(**_FRESH))
+    ).all()
 
     all_names = {row.name.lower() for row in share_rows if isinstance(row.name, str)}
     problems: dict[int, list[str]] = {}
@@ -688,7 +703,15 @@ async def _read_render_input(db: AsyncSession, pool_names: Collection[str]) -> t
         )
 
     ordered = [problem for row_id in sorted(problems, key=_sort_key) for problem in problems[row_id]]
-    return RenderInput(shares=shares, problems=ordered, unserved=unserved, not_rendered=not_rendered), all_names
+    # The chosen interfaces, checked again (ADR-0388, ADR-0144).
+    from . import listen  # listen applies smb.conf through this module
+
+    interfaces, interface_problems = listen.rendered_interfaces([row.name for row in interface_rows])
+    ordered.extend(interface_problems)
+    render = RenderInput(
+        shares=shares, problems=ordered, unserved=unserved, not_rendered=not_rendered, interfaces=interfaces
+    )
+    return render, all_names
 
 
 def _sort_key(value: object) -> tuple[int, int, str]:
@@ -700,7 +723,8 @@ async def build_render_input(db: AsyncSession, pool_names: Collection[str]) -> R
     """The served shares and their active principals, from rows read now (ADR-0081).
 
     Shares, access rows, users, SMB accounts, the shares' options and the groups
-    are read with one query each. Every value is validated again (ADR-0144): a
+    are read with one query each, and so are the chosen network interfaces
+    (ADR-0388). Every value is validated again (ADR-0144): a
     share with an invalid or duplicate name or a path that breaks ADR-0145 is not
     served, a comment that fails validation is left out, a principal is rendered
     only for an access row of an existing user with that user's current name and
@@ -1391,6 +1415,10 @@ class LastApply:
     # The Time Machine shares changed and avahi-daemon was not restarted after a reload (ADR-0380).
     advertise_pending: bool = False
     advertise_failed: str | None = None    # why the last restart of avahi-daemon failed, until one works
+    # The interfaces that smbd binds changed and its restart failed; Restart SMB or the next change of
+    # the interfaces tries again, no other apply (ADR-0388).
+    restart_pending: bool = False
+    restart_failed: str | None = None      # why the last restart of smbd failed, until one works
 
 
 _last_apply = LastApply()
@@ -1523,7 +1551,7 @@ async def _stage_config(db: AsyncSession, *, install: bool) -> StagedConfig:
     """Render from the rows ``db`` sees now, then stage and testparm (and install with ``install``)."""
     pool_names = await _pool_names()
     render, row_names = await _read_render_input(db, pool_names)
-    new_text = smbconf.render_config(render.shares)
+    new_text = smbconf.render_config(render.shares, render.interfaces)
     staged = await asyncio.to_thread(_prepare_file, new_text, row_names, install)
     staged.render = render
     return staged
@@ -1572,9 +1600,14 @@ async def install_smb_config(staged: StagedConfig) -> interfaces.ApplyResult:
     Also retries a pending reload and pending closes of earlier applies, even
     when the text is unchanged. The shares closed while the full reload was
     pending (after a reload with systemctl only) are closed again after it.
-    After a reload, a change of the Time Machine shares restarts avahi-daemon,
-    so that smbd announces them (ADR-0380). Problems become warnings of the
-    result and stay pending in last_apply(); this never raises for them.
+    A change of the interfaces that smbd binds restarts smbd instead of the
+    reload (ADR-0388): no connection outlives it, so nothing is closed then. A
+    restart that fails is not tried again by later applies, which would end
+    every session at a user's password change: it stays a problem until Restart
+    SMB or the next change of the interfaces. After a reload, a change of the
+    Time Machine shares restarts avahi-daemon, so that smbd announces them
+    (ADR-0380). Problems become warnings of the result and stay pending in
+    last_apply(); this never raises for them.
     """
     result = interfaces.ApplyResult()
     message = staged.install_error
@@ -1599,9 +1632,24 @@ async def install_smb_config(staged: StagedConfig) -> interfaces.ApplyResult:
     pending = set(_last_apply.pending_close)
     if result.changed:
         pending.update(smbconf.shrunk_shares(staged.old_text, staged.new_text))
+    # smbd binds its addresses only when it starts (ADR-0388).
+    restarted = False
+    if result.changed and smbconf.listen_lines(staged.old_text) != smbconf.listen_lines(staged.new_text):
+        failed = await asyncio.to_thread(smb._restart_smbd)
+        restarted = failed is None
+        _last_apply.restart_pending = not restarted
+        _last_apply.restart_failed = result.restart_failed = failed
+        if failed is not None:
+            result.warnings.append(restart_warning(failed))
     reloaded = True
     partial_note: str | None = None
-    if result.changed or _last_apply.reload_pending:
+    if restarted:
+        # Every smbd process reads the installed file, and no connection outlives the restart.
+        result.restarted = result.reloaded = True
+        _last_apply.reload_partial = False
+        _last_apply.close_after_full_reload = set()
+        pending = set()
+    elif result.changed or _last_apply.reload_pending:
         reloaded, why = await asyncio.to_thread(smb._reload_samba)
         result.reloaded = reloaded
         if not reloaded:
@@ -3273,6 +3321,11 @@ async def service_status(db: AsyncSession) -> schemas.SmbServiceStatus:
         problems.append(_last_apply.replaced_problem)
     if _last_apply.advertise_pending and _last_apply.advertise_failed:
         problems.append(advertise_warning(_last_apply.advertise_failed))
+    if _last_apply.restart_pending and _last_apply.restart_failed:
+        problems.append(restart_warning(_last_apply.restart_failed))
+    from . import listen  # listen applies smb.conf through this module
+
+    problems.extend(await listen.status_problems(db))
     problems.extend(_last_reconcile.problems)
 
     state = (
@@ -3668,14 +3721,15 @@ _SMB_TABLES = (
     models.SmbAccount.__table__,
     models.SmbState.__table__,
 )
-# Checked like them when the backup has them: one made before the shares had options (ADR-0380)
-# or before groups lacks them, and init_db makes them empty after the restore (every
-# option off, no group).
+# Checked like them when the backup has them: one made before the shares had options (ADR-0380),
+# before groups or before the choice of interfaces (ADR-0388) lacks them, and init_db makes them
+# empty after the restore (every option off, no group, every interface).
 _OPTIONAL_SMB_TABLES = (
     models.SmbShareOptions.__table__,
     models.UserGroup.__table__,
     models.UserGroupMember.__table__,
     models.SmbShareGroupAccess.__table__,
+    models.SmbBindInterface.__table__,
 )
 
 

@@ -97,6 +97,12 @@ VFS_PACKAGE = "samba-vfs-modules"
 AVAHI_RESTART_SECONDS = 60
 AVAHI_RESET = ["systemctl", "reset-failed", "avahi-daemon"]
 AVAHI_RESTART = ["timeout", str(AVAHI_RESTART_SECONDS), "systemctl", "restart", "avahi-daemon"]
+# smbd opens its listening sockets only when it starts; a reload reads the interfaces again but opens
+# and closes no socket. A change of the interfaces it binds restarts it the same way (ADR-0388), which
+# ends every open SMB connection.
+SMBD_RESTART_SECONDS = 60
+SMBD_RESET = ["systemctl", "reset-failed", "smbd"]
+SMBD_RESTART = ["timeout", str(SMBD_RESTART_SECONDS), "systemctl", "restart", "smbd"]
 
 # Serializes the renames of smb.conf.
 _lock = threading.Lock()
@@ -472,25 +478,38 @@ def missing_vfs_modules(names: list[str] | tuple[str, ...]) -> list[str]:
     return [name for name in names if name in missing]
 
 
-def _restart_avahi() -> str | None:
-    """Restart avahi-daemon and wait until it runs again, so that smbd registers its Time Machine
-    shares (ADR-0380). None, or why it failed. Never raises."""
+def _restart_unit(unit: str, reset_cmd: list[str], restart_cmd: list[str], seconds: int) -> str | None:
+    """Reset a unit's failed state and start limit, then restart it and wait for the job under the
+    host's timeout (ADR-0258). None, or why it failed. Never raises."""
     try:
-        reset = host.run_on_host(AVAHI_RESET, timeout=30)
+        reset = host.run_on_host(reset_cmd, timeout=30)
         if not reset.ok:  # a unit that is not loaded: the restart says so
-            logger.info("systemctl reset-failed avahi-daemon: %s", (reset.stderr or reset.stdout).strip())
-        result = host.run_on_host(AVAHI_RESTART, timeout=AVAHI_RESTART_SECONDS + 15)
+            logger.info("systemctl reset-failed %s: %s", unit, (reset.stderr or reset.stdout).strip())
+        result = host.run_on_host(restart_cmd, timeout=seconds + 15)
     except Exception as exc:
-        logger.warning("Restarting avahi-daemon failed: %s", exc)
+        logger.warning("Restarting %s failed: %s", unit, exc)
         return str(exc)
     if result.returncode == 124:  # timeout(1): systemd still runs the job
-        detail = f"systemctl did not end within {AVAHI_RESTART_SECONDS} s"
+        detail = f"systemctl did not end within {seconds} s"
     elif not result.ok:
         detail = (result.stderr or result.stdout).strip() or f"exit status {result.returncode}"
     else:
         return None
-    logger.warning("Restarting avahi-daemon failed: %s", detail)
+    logger.warning("Restarting %s failed: %s", unit, detail)
     return detail
+
+
+def _restart_avahi() -> str | None:
+    """Restart avahi-daemon and wait until it runs again, so that smbd registers its Time Machine
+    shares (ADR-0380). None, or why it failed. Never raises."""
+    return _restart_unit("avahi-daemon", AVAHI_RESET, AVAHI_RESTART, AVAHI_RESTART_SECONDS)
+
+
+def _restart_smbd() -> str | None:
+    """Restart smbd and wait until it runs again, so that it binds the addresses of the interfaces of
+    the installed smb.conf (ADR-0388); every open SMB connection ends. None, or why it failed. Never
+    raises."""
+    return _restart_unit("smbd", SMBD_RESET, SMBD_RESTART, SMBD_RESTART_SECONDS)
 
 
 def _close_share(name: object) -> str | None:

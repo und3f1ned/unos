@@ -47,6 +47,62 @@ export const en = {
 	'shares.smb.notDeleted': 'Share was not deleted',
 	'shares.smb.delete': 'Delete share',
 
+	// The network interfaces that SMB listens on (GET /shares/smb-interfaces, ADR-0388): the card of
+	// the SMB tab, its dialog and Restart SMB. The server's problems are shown as they come.
+	'shares.interfaces.title': 'Network interfaces',
+	'shares.interfaces.loadError': 'The network interfaces of SMB could not be read',
+	'shares.interfaces.every': 'SMB listens on every network interface of the NAS.',
+	'shares.interfaces.only': 'SMB listens only on {names}, and on the NAS itself (the loopback).',
+	'shares.interfaces.onlyLoopback': 'SMB listens only on the NAS itself (the loopback).',
+	'shares.interfaces.listening': 'smbd answers on:',
+	'shares.interfaces.listeningUnknown': 'unknown',
+	'shares.interfaces.listeningNone': 'no address',
+	'shares.interfaces.everyIpv4': 'every IPv4 address',
+	'shares.interfaces.everyIpv6': 'every IPv6 address',
+	'shares.interfaces.choose': 'Choose interfaces…',
+	'shares.interfaces.restart': 'Restart SMB…',
+	'shares.interfaces.savedEvery': 'SMB listens on every network interface again.',
+	'shares.interfaces.savedSome': 'SMB listens only on {names} now.',
+	'shares.interfaces.restarted': 'SMB was restarted.',
+	'shares.interfaces.dialogTitle': 'Network interfaces of SMB',
+	'shares.interfaces.listenOn': 'SMB listens on',
+	'shares.interfaces.modeEvery': 'Every network interface (default)',
+	'shares.interfaces.modeChosen': 'Only the interfaces chosen below',
+	'shares.interfaces.list': 'Interfaces of the NAS',
+	'shares.interfaces.none': 'No network interface of the NAS could be listed.',
+	'shares.interfaces.noAddress': 'No address',
+	'shares.interfaces.notOnHost': 'Not on the NAS now',
+	'shares.interfaces.disabled': 'Disabled',
+	'shares.interfaces.noLan': 'No address of the local network',
+	'shares.interfaces.pointToPoint': 'Point-to-point: Samba does not listen here',
+	'shares.interfaces.loopbackNote':
+		"The NAS itself (the loopback) stays bound. Docker's interfaces are not listed: apps reach SMB at the NAS's address.",
+	'shares.interfaces.addressNote':
+		'smbd listens on the addresses that the chosen interfaces have when it starts. Give the NAS a fixed address in your router; when an address changes, restart SMB here.',
+	'shares.interfaces.discoveryNote':
+		'Computers on the networks of other interfaces may still list the NAS, but cannot connect.',
+	'shares.interfaces.pickOne': 'Choose at least one interface, or every interface.',
+	'shares.interfaces.restartWarning': {
+		one: 'Saving restarts SMB: the {n} open SMB connection is closed, and its computer connects again.',
+		other: 'Saving restarts SMB: the {n} open SMB connections are closed, and their computers connect again.'
+	},
+	'shares.interfaces.restartWarningNone': 'Saving restarts SMB; no SMB connection is open now.',
+	'shares.interfaces.restartWarningAny':
+		'Saving restarts SMB: every open SMB connection is closed, and the computers connect again.',
+	'shares.interfaces.notSaved': 'The interfaces were not saved',
+	'shares.interfaces.save': 'Save and restart SMB',
+	'shares.interfaces.restartTitle': 'Restart SMB',
+	'shares.interfaces.restartText':
+		'smbd restarts and then listens on the addresses that the chosen interfaces have now.',
+	'shares.interfaces.restartSessions': {
+		one: 'The {n} open SMB connection is closed.',
+		other: 'The {n} open SMB connections are closed.'
+	},
+	'shares.interfaces.restartSessionsNone': 'No SMB connection is open now.',
+	'shares.interfaces.restartSessionsAny': 'Every open SMB connection is closed.',
+	'shares.interfaces.notRestarted': 'SMB was not restarted',
+	'shares.interfaces.restartNow': 'Restart SMB',
+
 	// GET /shares/smb-status.
 	'shares.status.error': 'The SMB status could not be read',
 	'shares.status.sambaMissing': 'Samba is not installed on the host: shares and SMB accounts cannot be used',
@@ -324,6 +380,62 @@ export const ru: Translation<typeof en> = {
 	'shares.smb.deleteAfter': '? Папка и её файлы сохранятся. Открытые подключения к общей папке будут закрыты.',
 	'shares.smb.notDeleted': 'Общая папка не удалена',
 	'shares.smb.delete': 'Удалить общую папку',
+
+	'shares.interfaces.title': 'Сетевые интерфейсы',
+	'shares.interfaces.loadError': 'Не удалось прочитать сетевые интерфейсы SMB',
+	'shares.interfaces.every': 'SMB принимает подключения на всех сетевых интерфейсах NAS.',
+	'shares.interfaces.only': 'SMB принимает подключения только на {names} и на самом NAS (loopback).',
+	'shares.interfaces.onlyLoopback': 'SMB принимает подключения только на самом NAS (loopback).',
+	'shares.interfaces.listening': 'smbd отвечает на:',
+	'shares.interfaces.listeningUnknown': 'неизвестно',
+	'shares.interfaces.listeningNone': 'ни одном адресе',
+	'shares.interfaces.everyIpv4': 'всех адресах IPv4',
+	'shares.interfaces.everyIpv6': 'всех адресах IPv6',
+	'shares.interfaces.choose': 'Выбрать интерфейсы…',
+	'shares.interfaces.restart': 'Перезапустить SMB…',
+	'shares.interfaces.savedEvery': 'SMB снова принимает подключения на всех сетевых интерфейсах.',
+	'shares.interfaces.savedSome': 'Теперь SMB принимает подключения только на {names}.',
+	'shares.interfaces.restarted': 'SMB перезапущен.',
+	'shares.interfaces.dialogTitle': 'Сетевые интерфейсы SMB',
+	'shares.interfaces.listenOn': 'SMB принимает подключения',
+	'shares.interfaces.modeEvery': 'На всех сетевых интерфейсах (по умолчанию)',
+	'shares.interfaces.modeChosen': 'Только на интерфейсах, выбранных ниже',
+	'shares.interfaces.list': 'Интерфейсы NAS',
+	'shares.interfaces.none': 'Не удалось получить список сетевых интерфейсов NAS.',
+	'shares.interfaces.noAddress': 'Нет адреса',
+	'shares.interfaces.notOnHost': 'Сейчас отсутствует на NAS',
+	'shares.interfaces.disabled': 'Выключен',
+	'shares.interfaces.noLan': 'Нет адреса локальной сети',
+	'shares.interfaces.pointToPoint': 'Точка-точка: Samba здесь не принимает подключения',
+	'shares.interfaces.loopbackNote':
+		'Сам NAS (loopback) остаётся привязанным. Интерфейсы Docker не показаны: приложения подключаются к SMB по адресу NAS.',
+	'shares.interfaces.addressNote':
+		'smbd принимает подключения на адресах, которые есть у выбранных интерфейсов при его запуске. Закрепите за NAS постоянный адрес в роутере; если адрес изменится, перезапустите SMB здесь.',
+	'shares.interfaces.discoveryNote':
+		'Компьютеры в сетях других интерфейсов могут по-прежнему видеть NAS, но не смогут подключиться.',
+	'shares.interfaces.pickOne': 'Выберите хотя бы один интерфейс или все интерфейсы.',
+	'shares.interfaces.restartWarning': {
+		one: 'Сохранение перезапустит SMB: {n} открытое подключение SMB будет закрыто, и компьютер подключится заново.',
+		few: 'Сохранение перезапустит SMB: {n} открытых подключения SMB будут закрыты, и компьютеры подключатся заново.',
+		many: 'Сохранение перезапустит SMB: {n} открытых подключений SMB будут закрыты, и компьютеры подключатся заново.'
+	},
+	'shares.interfaces.restartWarningNone': 'Сохранение перезапустит SMB; открытых подключений SMB сейчас нет.',
+	'shares.interfaces.restartWarningAny':
+		'Сохранение перезапустит SMB: все открытые подключения SMB будут закрыты, и компьютеры подключатся заново.',
+	'shares.interfaces.notSaved': 'Интерфейсы не сохранены',
+	'shares.interfaces.save': 'Сохранить и перезапустить SMB',
+	'shares.interfaces.restartTitle': 'Перезапуск SMB',
+	'shares.interfaces.restartText':
+		'smbd перезапустится и будет принимать подключения на адресах, которые есть у выбранных интерфейсов сейчас.',
+	'shares.interfaces.restartSessions': {
+		one: '{n} открытое подключение SMB будет закрыто.',
+		few: '{n} открытых подключения SMB будут закрыты.',
+		many: '{n} открытых подключений SMB будут закрыты.'
+	},
+	'shares.interfaces.restartSessionsNone': 'Открытых подключений SMB сейчас нет.',
+	'shares.interfaces.restartSessionsAny': 'Все открытые подключения SMB будут закрыты.',
+	'shares.interfaces.notRestarted': 'SMB не перезапущен',
+	'shares.interfaces.restartNow': 'Перезапустить SMB',
 
 	'shares.status.error': 'Не удалось прочитать состояние SMB',
 	'shares.status.sambaMissing': 'Samba не установлена на хосте: общие папки и учётные записи SMB не работают',

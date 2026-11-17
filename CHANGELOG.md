@@ -345,6 +345,24 @@ manager, encrypted backup uploads, health checks, CI checks).
   `ups_name`, `host` and `port` are checked before they reach `upsc`.
 
 ### Added
+- An administrator chooses the network interfaces that SMB listens on
+  (ADR-0388): **Shares** → SMB → **Network interfaces** → **Choose
+  interfaces…**. By default SMB listens on every interface, as before; with a
+  choice, smb.conf gets `interfaces = lo <the chosen names>` and
+  `bind interfaces only = yes`, and smbd binds only the addresses of those
+  interfaces and the loopback. The dialog lists the host's interfaces with
+  their addresses (without the loopback and Docker's; point-to-point ones
+  cannot be ticked), refuses a choice without an enabled interface that has
+  an address of the local network, keeps a chosen interface that is not on
+  the host (an unplugged adapter), and says that saving restarts smbd, with
+  the number of open SMB connections that it closes. The card shows the
+  addresses smbd listens on and names an address of a chosen interface that
+  came after smbd started, with **Restart SMB…**. The choice is in the
+  database (the new table `smb_bind_interfaces`), so a backup holds it.
+  wsdd2 and avahi-daemon keep announcing the NAS on every interface. The API:
+  `GET` and `PUT /api/v1/shares/smb-interfaces` and
+  `POST /api/v1/shares/smb-interfaces/restart`; the audit log records
+  `smb_interfaces_changed` and `smb_restarted`.
 - Groups of users (ADR-0385). The **Users** page has a **Groups** card: make
   a group, choose its members (users who are not administrators), rename it
   or delete it. On the **Shares** page a share's access list gives each group
