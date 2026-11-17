@@ -16,7 +16,15 @@ reload after it changed it shows the state from before, as with the real client.
 Every call is logged in order (``calls``: the call, its subject and its arguments). ``fail(call,
 subject, error)`` makes that call raise ``error`` for that subject (a container's or network's
 name, an image reference; None: any) until ``clear``. ``publish(ref, ...)`` puts an image in the
-registry that a pull reads; ``script(name, *states)`` gives the states that a container reaches,
+registry that a pull reads, with the sizes of its layers and, for a pull that fails halfway, the
+error line that Docker's pull stream then sends; a pull is Docker's ``POST /images/create``, which
+the install sends through the client's requests session (``api.post`` to
+``{api.base_url}/v{api.api_version}/images/create``, logged as ``api.pull`` with the image's
+reference) and reads as a stream of JSON lines (``PullResponse``): the image is in Docker's store
+once the stream was read to its end. ``pull_hook(ref, line)``, when set, is called before each line
+is handed out; ``stall(ref, after)`` makes the pull of ``ref`` stop sending after ``after`` lines,
+as a stalled pull does: the read then ends as requests' read timeout ends it, or blocks until the
+response is shut down (``after`` with ``block=True``); ``script(name, *states)`` gives the states that a container reaches,
 one at each reload after its start, the last one staying (an image with a health check is
 otherwise "starting" at its first reload and healthy from its second). ``info`` names
 ``root_dir`` as Docker's root folder.
@@ -27,6 +35,9 @@ from __future__ import annotations
 import copy
 import hashlib
 import itertools
+import json
+import threading
+from types import SimpleNamespace
 from dataclasses import dataclass, field
 from typing import Any, NamedTuple
 
@@ -34,7 +45,8 @@ from docker.errors import APIError, ImageNotFound, NotFound
 from docker.models.containers import _create_container_args
 from docker.types import HostConfig
 from docker.types.networks import EndpointConfig, NetworkingConfig
-from docker.utils import parse_repository_tag
+import requests
+from urllib3.exceptions import ReadTimeoutError
 
 API_VERSION = "1.47"
 CREATED = "2026-11-16T09:00:00.000000000Z"
@@ -59,6 +71,10 @@ class Image:
     volumes: tuple[str, ...] = ()
     healthcheck: bool = False
     names: set[str] = field(default_factory=set)  # the references Docker knows it by
+    # The download sizes of its layers, which a pull reports; the error line that a pull sends
+    # after its first layer instead of finishing (None: it finishes).
+    layers: tuple[int, ...] = (3000, 1000)
+    pull_error: str | None = None
 
     @property
     def id(self) -> str:
@@ -75,6 +91,49 @@ class Image:
                 "Healthcheck": {"Test": ["CMD", "true"]} if self.healthcheck else None,
             },
         }
+
+
+class PullResponse:
+    """requests' Response of Docker's ``POST /images/create``, streamed: its JSON lines, a status,
+    ``close`` and ``raw.shutdown`` (urllib3's, which ends a read that blocks in another thread)."""
+
+    def __init__(self, docker: StackDocker, ref: str, lines: list[dict], image: Image | None, *,
+                 status_code: int = 200, stall_after: int | None = None, block: bool = False) -> None:
+        self._docker = docker
+        self.ref = ref
+        self._lines = lines
+        self._image = image
+        self.status_code = status_code
+        self.reason = "OK" if status_code < 400 else "Not Found"
+        self._stall_after = stall_after
+        self._block = block
+        self.closed = False
+        self.shut_down = threading.Event()
+        self.raw = SimpleNamespace(shutdown=self.shut_down.set)
+
+    def json(self) -> dict:
+        return self._lines[0] if self._lines else {}
+
+    def close(self) -> None:
+        self.closed = True
+
+    def iter_lines(self) -> Any:
+        for n, line in enumerate(self._lines):
+            if self._stall_after is not None and n == self._stall_after:
+                if self._block:
+                    self.shut_down.wait(10)
+                    raise requests.exceptions.ConnectionError("Connection broken: the socket was shut down")
+                raise requests.exceptions.ConnectionError(
+                    ReadTimeoutError(None, f"/images/create?fromImage={self.ref}", "Read timed out.")
+                )
+            if self.shut_down.is_set():
+                raise requests.exceptions.ConnectionError("Connection broken: the socket was shut down")
+            if self._docker.pull_hook is not None:
+                self._docker.pull_hook(self.ref, line)
+            yield json.dumps(line).encode()
+        if self._image is not None and self._image.pull_error is None:
+            self._image.names.add(self.ref)
+            self._docker.images_[self._image.ref] = self._image
 
 
 class _Live:
@@ -289,18 +348,6 @@ class _Images:
     def __init__(self, docker: StackDocker) -> None:
         self._docker = docker
 
-    def pull(self, repository: str, tag: str | None = None, all_tags: bool = False, **kwargs: Any) -> Image:
-        repository, image_tag = parse_repository_tag(repository)
-        tag = tag or image_tag or "latest"
-        ref = f"{repository}{'@' if tag.startswith('sha256:') else ':'}{tag}"
-        self._docker._call("images.pull", ref, repository, tag=tag)
-        image = self._docker.registry.get(ref)
-        if image is None:
-            raise APIError("404 Client Error: Not Found", explanation=f"manifest for {ref} not found: manifest unknown")
-        image.names.add(ref)
-        self._docker.images_[image.ref] = image
-        return self.get(ref)
-
     def get(self, name: str) -> Image:
         self._docker._call("images.get", name)
         image = self._docker._local_image(name)
@@ -341,9 +388,31 @@ class _Networks:
 class _Api:
     """docker-py's low-level APIClient, the calls of a container with a network or MaskedPaths."""
 
+    base_url = "http+docker://localhost"
+    api_version = API_VERSION
+
     def __init__(self, docker: StackDocker) -> None:
         self._docker = docker
         self._version = API_VERSION
+
+    def post(self, url: str, params: dict | None = None, headers: dict | None = None, stream: bool = False,
+             timeout: Any = None) -> PullResponse:
+        """requests' post of the client's session: only Docker's pull, ``POST /images/create``, streamed.
+        A reference that the registry lacks answers 404 before any line, as Docker does."""
+        if url != f"{self.base_url}/v{self.api_version}/images/create":
+            raise TypeError(f"the fake posts only a pull, not {url}")
+        if not stream or set(params or {}) != {"fromImage", "tag"}:
+            raise TypeError(f"the fake streams a pull of fromImage and tag, not {params}")
+        repository, tag = params["fromImage"], params["tag"]
+        ref = f"{repository}{'@' if tag.startswith('sha256:') else ':'}{tag}"
+        self._docker._call("api.pull", ref, repository, tag=tag, timeout=timeout)
+        image = self._docker.registry.get(ref)
+        if image is None:
+            return PullResponse(self._docker, ref, [{"message": f"manifest for {ref} not found: manifest unknown"}],
+                                None, status_code=404)
+        stall = self._docker.stalls.get(ref)
+        return PullResponse(self._docker, ref, self._docker._pull_lines(repository, tag, image), image,
+                            stall_after=stall[0] if stall else None, block=stall[1] if stall else False)
 
     def create_host_config(self, **kwargs: Any) -> HostConfig:
         self._docker._call("api.create_host_config", None, **kwargs)
@@ -441,6 +510,11 @@ class StackDocker:
         self.images_: dict[str, Image] = {}
         self.registry: dict[str, Image] = {}
         self.scripts: dict[str, list[dict]] = {}
+        # Called with the reference and each line of a pull before the line is handed out.
+        self.pull_hook: Any = None
+        # The pulls that stop sending: by reference, after how many lines, and whether the read
+        # then blocks until the response is shut down (else it times out).
+        self.stalls: dict[str, tuple[int, bool]] = {}
         self.ids = itertools.count(1)
         self.containers = _Containers(self)
         self.images = _Images(self)
@@ -454,9 +528,10 @@ class StackDocker:
 
     # -- set up -----------------------------------------------------------
 
-    def publish(self, ref: str, *, volumes: tuple[str, ...] = (), healthcheck: bool = False) -> Image:
+    def publish(self, ref: str, *, volumes: tuple[str, ...] = (), healthcheck: bool = False,
+                layers: tuple[int, ...] = (3000, 1000), pull_error: str | None = None) -> Image:
         """An image a pull can get: by tag and, for a pinned ``ref`` (name:tag@digest), by digest."""
-        image = Image(ref, volumes=volumes, healthcheck=healthcheck)
+        image = Image(ref, volumes=volumes, healthcheck=healthcheck, layers=layers, pull_error=pull_error)
         name_tag, _, digest = ref.partition("@")
         self.registry[name_tag] = image
         if digest:
@@ -473,6 +548,11 @@ class StackDocker:
             image.names.add(f"{name_tag.rpartition(':')[0]}@{digest}")
         self.images_[image.ref] = image
         return image
+
+    def stall(self, ref: str, after: int, *, block: bool = False) -> None:
+        """The pull of ``ref`` (as the install asks for it: name:tag or name@digest) sends ``after``
+        lines, then nothing more."""
+        self.stalls[ref] = (after, block)
 
     def script(self, name: str, *states: dict) -> None:
         self.scripts[name] = list(states)
@@ -506,6 +586,31 @@ class StackDocker:
         error = self.failures.get((call, subject)) or self.failures.get((call, None))
         if error is not None:
             raise error
+
+    def _pull_lines(self, repository: str, tag: str, image: Image) -> list[dict]:
+        """What Docker's pull stream sends, line by line: each layer is named, downloaded in two
+        steps of its size, extracted and complete; then the digest and the status."""
+        ref = f"{repository}{'@' if tag.startswith('sha256:') else ':'}{tag}"
+        lines: list[dict] = [{"status": f"Pulling from {repository}", "id": tag}]
+        ids = [hashlib.sha256(f"{image.ref}/{n}".encode()).hexdigest()[:12] for n in range(len(image.layers))]
+        lines += [{"status": "Pulling fs layer", "progressDetail": {}, "id": layer} for layer in ids]
+        for n, (layer, size) in enumerate(zip(ids, image.layers)):
+            lines += [
+                {"status": "Downloading", "progressDetail": {"current": size // 2, "total": size}, "id": layer},
+                {"status": "Downloading", "progressDetail": {"current": size, "total": size}, "id": layer},
+                {"status": "Download complete", "progressDetail": {}, "id": layer},
+            ]
+            if n == 0 and image.pull_error is not None:
+                lines.append({"errorDetail": {"message": image.pull_error}, "error": image.pull_error})
+                break
+            lines += [
+                {"status": "Extracting", "progressDetail": {"current": size, "total": size}, "id": layer},
+                {"status": "Pull complete", "progressDetail": {}, "id": layer},
+            ]
+        else:
+            lines += [{"status": f"Digest: {image.ref.partition('@')[2] or 'sha256:' + '0' * 64}"},
+                      {"status": f"Status: Downloaded newer image for {ref}"}]
+        return lines
 
     def _find(self, key: str) -> _Live:
         for container in self.containers_.values():

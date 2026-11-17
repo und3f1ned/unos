@@ -1354,8 +1354,8 @@ def test_api_cli_reads_a_json_body_and_reports_http_errors(device):
 
 
 def test_api_cli_timeout_reaches_the_request(device):
-    """An install that pulls large images answers after the default 150 s: --timeout gives the
-    relay's request longer."""
+    """A GET that waits for the end of an app's install job (ADR-0384) answers after the default
+    150 s: --timeout gives the relay's request longer."""
     relay_reply(device, 200, {})
     result = device.run(DEV / "api.py", "--timeout", "3600", "GET", "/apps/installed")
     assert result.returncode == 0, result.stderr

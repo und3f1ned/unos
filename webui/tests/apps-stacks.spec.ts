@@ -1,8 +1,9 @@
 import type { Locator, Page, Route } from '@playwright/test';
 import { test, expect } from './fixtures';
 import {
+  answerInstall,
   catalogCard,
-  installAnswer,
+  fakeInstallEvents,
   installedCard,
   installedImmich,
   onAnRk3588,
@@ -67,9 +68,10 @@ type FakeTemplate = FakeSpec & { id: string; companions: (FakeSpec & { name: str
 
 /**
  * The page's requests that the stand-in cannot answer: the pools, the installed apps (`installed`,
- * changed by an install and an uninstall), the install (`install` answers it: an AppInstallResponse,
- * or a status and the server's detail) and the actions on an installed app. Returns the requests
- * that change something ("METHOD path") and the bodies of the installs.
+ * changed by an install and an uninstall), the install (its job, which the fake events socket ends
+ * as `install` says: the installed app, or the status and the server's detail of a refusal of its
+ * checks, ADR-0384) and the actions on an installed app. Returns the requests that change something
+ * ("METHOD path") and the bodies of the installs.
  */
 async function fakeApps(
   page: Page,
@@ -78,19 +80,17 @@ async function fakeApps(
 ) {
   const requests: string[] = [];
   const bodies: unknown[] = [];
+  const events = await fakeInstallEvents(page);
   await page.route(
     (url: URL) => url.pathname === '/api/v1/apps/pools',
     (route: Route) => route.fulfill({ json: [POOL] }),
   );
   await page.route(
     (url: URL) => url.pathname === '/api/v1/apps/install',
-    (route: Route) => {
+    async (route: Route) => {
       requests.push('POST /api/v1/apps/install');
       bodies.push(route.request().postDataJSON());
-      const result = install();
-      if ('detail' in result) return route.fulfill({ status: result.status, json: { detail: result.detail } });
-      installed.push(result);
-      return route.fulfill({ json: installAnswer(result) });
+      await answerInstall(route, events, 'Immich', install(), installed);
     },
   );
   await page.route(

@@ -57,6 +57,30 @@ def _smart_history_not_read_yet(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _no_install_jobs_yet(monkeypatch):
+    """The install jobs of apps are kept in RAM (ADR-0384): every test starts without them, as the
+    supervisor does, and a job that a test left running is stopped and waited for at its end. It
+    takes monkeypatch so that it ends before monkeypatch puts back what the test replaced: a job
+    left running must never meet the real Docker or host."""
+    install_jobs = sys.modules.get("src.apps.install_jobs")
+    if install_jobs is not None:
+        install_jobs._jobs.clear()
+        install_jobs._version = 0
+        # A GET that waits for a job's end looks at it often: the install tests wait for each end.
+        monkeypatch.setattr(install_jobs, "WAIT_STEP_SECONDS", 0.01)
+    yield
+    install_jobs = sys.modules.get("src.apps.install_jobs")
+    if install_jobs is not None:
+        install_jobs.stop_for_shutdown(timeout=10)
+        running = install_jobs._running
+        assert running is None or running.thread is None or not running.thread.is_alive(), (
+            "an install job of the test still runs"
+        )
+        install_jobs._jobs.clear()
+        install_jobs._version = 0
+
+
+@pytest.fixture(autouse=True)
 def _no_problems_yet(monkeypatch):
     """The problems of the NAS, the SMART monitor's verdicts of the disks (and the disks' I/O counts at
     its reads, ADR-0378) and the pools that the RAID monitor read last are kept in RAM (ADR-0332): every

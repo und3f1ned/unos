@@ -263,6 +263,35 @@ test.describe('API Tests', () => {
     expect(response.status(), await response.text()).toBe(422);
   });
 
+  test('POST /api/v1/apps/install answers 202 with a job, whose end a GET waits for', async ({ request }) => {
+    // The install runs as a job (ADR-0384). On the stand-in, which has no mounted pool, its checks
+    // refuse it before Docker is asked; the test stack has a pool and reaches the host's Docker.
+    test.skip(!process.env.E2E_STANDIN_STATE, ONLY_THE_STAND_IN);
+    const headers = { Authorization: `Bearer ${token}` };
+    const started = await request.post(`${BASE_URL}/api/v1/apps/install`, {
+      headers,
+      data: { template_id: 'transmission', env_overrides: { USER: 'e2e', PASS: 'k7-Unique-pass' } },
+    });
+    expect(started.status(), await started.text()).toBe(202);
+    const job = await started.json();
+    expect(job).toMatchObject({ template_id: 'transmission', name: 'Transmission', state: 'running', step: 'checking' });
+
+    const ended = await request.get(`${BASE_URL}/api/v1/apps/install/jobs/${job.id}?wait=30`, { headers });
+    expect(ended.status(), await ended.text()).toBe(200);
+    expect(await ended.json()).toMatchObject({
+      id: job.id,
+      state: 'failed',
+      error_status: 409,
+      error: 'No mounted storage pool — create or mount a pool first',
+      images: [],
+    });
+
+    const dismissed = await request.delete(`${BASE_URL}/api/v1/apps/install/jobs/${job.id}`, { headers });
+    expect(dismissed.status()).toBe(204);
+    const gone = await request.get(`${BASE_URL}/api/v1/apps/install/jobs/${job.id}`, { headers });
+    expect(gone.status()).toBe(404);
+  });
+
   test('GET /api/v1/apps/installed answers 503 without Docker', async ({ request }) => {
     test.skip(!process.env.E2E_STANDIN_STATE, ONLY_THE_STAND_IN);
     const response = await request.get(`${BASE_URL}/api/v1/apps/installed`, {
