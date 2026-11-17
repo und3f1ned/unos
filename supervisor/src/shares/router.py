@@ -33,6 +33,8 @@ from .schemas import (
     SmbShareCreate,
     SmbShareDeleted,
     SmbShareInfo,
+    SmbSharesDelete,
+    SmbSharesDeleted,
     SmbShareUpdate,
 )
 
@@ -195,6 +197,28 @@ async def update_smb_share(
     change = await _call(service.update_share, db, name, changes)
     await _audit(request, actor, AuditAction.SHARE_UPDATED, change)
     return change.info
+
+
+@router.post("/smb/bulk-delete", response_model=SmbSharesDeleted)
+@limiter.limit("10/minute")  # as a single deletion: one request for all the shares it names
+async def delete_smb_shares(
+    request: Request,
+    body: SmbSharesDelete,
+    user=Depends(verify_token),
+    db: AsyncSession = Depends(get_db),
+):
+    """Delete several SMB shares with one apply (ADR-0388); their folders and files are kept.
+
+    Each share is sent with the version and the folder the client loaded: one changed since, and a
+    name that no share has, are reported in its result and not deleted, while the others are. A failed apply
+    deletes none of them and answers as a single deletion does. Each deleted share gets its own
+    audit entry.
+    """
+    actor = user.username
+    deletion = await _call(service.delete_shares, db, body.shares)
+    for change in deletion.changes:
+        await _audit(request, actor, AuditAction.SHARE_DELETED, change)
+    return SmbSharesDeleted(results=deletion.results, warnings=deletion.warnings)
 
 
 @router.delete("/smb/{name}", response_model=SmbShareDeleted)

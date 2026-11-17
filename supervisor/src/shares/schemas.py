@@ -156,6 +156,47 @@ class SmbShareDeleted(BaseModel):
     warnings: list[str] = []
 
 
+# Deleting several shares at once (POST /shares/smb/bulk-delete, ADR-0388): one hold of smb_lock and
+# one apply for all of them.
+BULK_DELETE_MAX = 200
+
+
+class SmbShareToDelete(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(max_length=64)
+    # The share as the question named it: one whose version or folder differs now is not deleted.
+    expected_version: int
+    expected_path: str = Field(max_length=4096)
+
+
+def _unique_shares(entries: list[SmbShareToDelete]) -> list[SmbShareToDelete]:
+    if len({e.name.lower() for e in entries}) != len(entries):
+        raise ValueError("Each share can appear only once")
+    return entries
+
+
+class SmbSharesDelete(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    shares: Annotated[
+        list[SmbShareToDelete], Field(min_length=1, max_length=BULK_DELETE_MAX), AfterValidator(_unique_shares)
+    ]
+
+
+class SmbShareDeleteResult(BaseModel):
+    name: str                                       # as sent
+    # deleted; not_found: no share has the name (deleted or renamed meanwhile); changed: its version
+    # or its folder is no longer the one sent, and it was not deleted
+    status: Literal["deleted", "not_found", "changed"]
+    detail: str | None = None                       # why it was not deleted, as a single request answers it
+
+
+class SmbSharesDeleted(BaseModel):
+    results: list[SmbShareDeleteResult]             # one per share sent, in the order sent
+    warnings: list[str] = []                        # of the one apply
+
+
 class SmbServiceStatus(BaseModel):
     samba_tools_missing: list[str] | None           # from accounts.host_status(); None: check failed
     group_ok: bool | None

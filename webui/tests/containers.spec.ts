@@ -68,13 +68,21 @@ interface FakeDockerOptions {
   images?: FakeImage[];
   /** A pull is answered only once this settles. */
   pullHeld?: Promise<void>;
+  /** A start, stop or restart is answered only once the promise this returns for it settles. */
+  actionGate?: (request: string) => Promise<void>;
 }
 
-/** Serve the containers API from memory; returns every request of the page to it ("METHOD path?query"). */
-async function fakeContainersApi(page: Page, options: FakeDockerOptions = {}): Promise<string[]> {
+/**
+ * Serve the containers API from memory; returns every request of the page to it ("METHOD
+ * path?query"), with the fake's list of containers, which a test may change, as `containers`.
+ */
+async function fakeContainersApi(
+  page: Page,
+  options: FakeDockerOptions = {},
+): Promise<string[] & { containers: FakeContainer[] }> {
   const containers = (options.containers ?? [WEB, DB, CACHE]).map((c) => ({ ...c }));
   const images = (options.images ?? [NGINX, POSTGRES, ALPINE_OLD]).map((i) => ({ ...i, tags: [...i.tags] }));
-  const requests: string[] = [];
+  const requests = Object.assign([] as string[], { containers });
   await page.route(
     (url) => url.pathname === '/api/v1/containers' || url.pathname.startsWith('/api/v1/containers/'),
     async (route: Route) => {
@@ -109,7 +117,12 @@ async function fakeContainersApi(page: Page, options: FakeDockerOptions = {}): P
         return route.fulfill({ json: { status: 'removed' } });
       }
       const action = path.match(/^\/([^/]+)\/(start|stop|restart)$/);
+      if (method === 'POST' && action) await options.actionGate?.(`${method} ${url.pathname}`);
       const target = action ? containers.find((c) => c.id === action[1]) : undefined;
+      // A container that Docker no longer knows (docker.py's ValueError, answered with 404).
+      if (method === 'POST' && action && !target) {
+        return route.fulfill({ status: 404, json: { detail: `Container ${action[1]} not found` } });
+      }
       if (method === 'POST' && action && target) {
         if (action[2] !== 'stop' && target.labels['unos.app.pool'] === 'e2e_media') {
           return route.fulfill({ status: 409, json: { detail: MEDIA_REFUSED } });
@@ -589,5 +602,192 @@ test.describe('In Russian', () => {
     );
     await dialog.getByRole('button', { name: 'Отмена' }).click();
     await expect(dialog).toBeHidden();
+  });
+});
+
+// Several containers at once (webui.bulk-actions, ADR-0388): the page calls the endpoint of each
+// selected container, one after another, and lists each one's result.
+test.describe('Several containers at once', () => {
+  const posts = (requests: string[]) => requests.filter((r) => r.startsWith('POST'));
+  const toolbar = (page: Page) => page.getByRole('toolbar', { name: 'Selected containers' });
+  const button = (page: Page, name: string) => toolbar(page).getByRole('button', { name, exact: true });
+  const checkbox = (page: Page, name: string) => page.getByRole('checkbox', { name: `Select ${name}`, exact: true });
+  const selectAll = (page: Page) => page.getByRole('checkbox', { name: 'Select all shown', exact: true });
+
+  test('Stop acts on every selected container, one after another, and shows its progress', async ({
+    authenticatedPage: page,
+  }) => {
+    const gates: (() => void)[] = [];
+    const requests = await fakeContainersApi(page, {
+      actionGate: () => new Promise<void>((resolve) => gates.push(resolve)),
+    });
+    await page.goto('/containers');
+    await expect(rows(page)).toHaveCount(3);
+    await expect(toolbar(page)).toContainText('0 containers selected');
+    for (const name of ['Start selected', 'Stop selected', 'Restart selected']) {
+      await expect(button(page, name)).toBeDisabled();
+    }
+
+    await checkbox(page, 'e2e-web').check();
+    await checkbox(page, 'e2e-cache').check();
+    // A checkbox selects; it does not open the container's drawer.
+    await expect(page.getByRole('dialog')).toHaveCount(0);
+    await expect(toolbar(page)).toContainText('2 containers selected');
+
+    await button(page, 'Stop selected').click();
+    // In the order of the list, and the next only after the answer for the one before.
+    await expect(page.getByText('Stopping e2e-web (1 of 2)')).toBeVisible();
+    await expect.poll(() => gates.length).toBe(1);
+    expect(posts(requests)).toEqual([`POST /api/v1/containers/${WEB.id}/stop`]);
+    // Nothing else is started while it runs.
+    await expect(button(page, 'Start selected')).toBeDisabled();
+    await expect(checkbox(page, 'e2e-db')).toBeDisabled();
+    gates.shift()!();
+    await expect(page.getByText('Stopping e2e-cache (2 of 2)')).toBeVisible();
+    await expect.poll(() => gates.length).toBe(1);
+    gates.shift()!();
+
+    const result = page.getByRole('list', { name: 'Stopped 2 of 2 containers' });
+    await expect(result.getByRole('listitem')).toHaveText(['e2e-web: exited', 'e2e-cache: exited']);
+    expect(posts(requests)).toEqual([
+      `POST /api/v1/containers/${WEB.id}/stop`,
+      `POST /api/v1/containers/${CACHE.id}/stop`,
+    ]);
+    await expect(rowOf(page, 'e2e-web').getByText('exited', { exact: true })).toBeVisible();
+    await expect(rowOf(page, 'e2e-cache').getByText('exited', { exact: true })).toBeVisible();
+    await expect(rowOf(page, 'e2e-db').getByText('exited', { exact: true })).toBeVisible();
+    // What was done leaves the selection.
+    await expect(toolbar(page)).toContainText('0 containers selected');
+    await expect(checkbox(page, 'e2e-web')).not.toBeChecked();
+  });
+
+  test('Start and Restart act on all of them; a refusal is listed with its reason and the others go on', async ({
+    authenticatedPage: page,
+  }) => {
+    const requests = await fakeContainersApi(page, { containers: [WEB, DB, MEDIA, CACHE] });
+    await page.goto('/containers');
+    await expect(rows(page)).toHaveCount(4);
+
+    await selectAll(page).check();
+    await expect(toolbar(page)).toContainText('4 containers selected');
+    await button(page, 'Start selected').click();
+
+    const started = page.getByRole('list', { name: 'Started 3 of 4 containers' });
+    await expect(started.getByRole('listitem')).toHaveText([
+      'e2e-web: running',
+      'e2e-db: running',
+      `e2e-media: failed: ${MEDIA_REFUSED}`,
+      'e2e-cache: running',
+    ]);
+    expect(posts(requests)).toEqual(
+      [WEB, DB, MEDIA, CACHE].map((c) => `POST /api/v1/containers/${c.id}/start`),
+    );
+    await expect(rowOf(page, 'e2e-db').getByText('running', { exact: true })).toBeVisible();
+    await expect(rowOf(page, 'e2e-media').getByText('exited', { exact: true })).toBeVisible();
+    // The one that failed stays selected, for another try; the others leave the selection.
+    await expect(toolbar(page)).toContainText('1 container selected');
+    await expect(checkbox(page, 'e2e-media')).toBeChecked();
+    await expect(checkbox(page, 'e2e-web')).not.toBeChecked();
+
+    await checkbox(page, 'e2e-db').check();
+    await button(page, 'Restart selected').click();
+    const restarted = page.getByRole('list', { name: 'Restarted 1 of 2 containers' });
+    await expect(restarted.getByRole('listitem')).toHaveText([
+      'e2e-db: running',
+      `e2e-media: failed: ${MEDIA_REFUSED}`,
+    ]);
+    expect(posts(requests).slice(4)).toEqual([
+      `POST /api/v1/containers/${DB.id}/restart`,
+      `POST /api/v1/containers/${MEDIA.id}/restart`,
+    ]);
+    // Only the last action's results are shown.
+    await expect(started).toHaveCount(0);
+  });
+
+  test('the selection holds only what the list shows, also after a container is gone elsewhere', async ({
+    authenticatedPage: page,
+  }) => {
+    const requests = await fakeContainersApi(page);
+    await page.goto('/containers');
+
+    // Select all shown selects what the search shows; what it hides leaves the selection.
+    await page.getByPlaceholder('Search containers...').fill('e2e-d');
+    await expect(rows(page)).toHaveCount(1);
+    await selectAll(page).check();
+    await expect(toolbar(page)).toContainText('1 container selected');
+    await page.getByPlaceholder('Search containers...').fill('');
+    await expect(rows(page)).toHaveCount(3);
+    await expect(checkbox(page, 'e2e-db')).toBeChecked();
+    await expect(selectAll(page)).not.toBeChecked();
+
+    // All three selected, then the state filter shows only e2e-web: an action reaches it alone.
+    await selectAll(page).check();
+    await expect(toolbar(page)).toContainText('3 containers selected');
+    await page.locator('#docker-panel-containers select').selectOption('running');
+    await expect(rows(page)).toHaveCount(1);
+    await expect(toolbar(page)).toContainText('1 container selected');
+    await button(page, 'Stop selected').click();
+    await expect(page.getByRole('list', { name: 'Stopped 1 of 1 container' }).getByRole('listitem')).toHaveText([
+      'e2e-web: exited',
+    ]);
+    expect(posts(requests)).toEqual([`POST /api/v1/containers/${WEB.id}/stop`]);
+    await page.locator('#docker-panel-containers select').selectOption('');
+    await expect(rows(page)).toHaveCount(3);
+    await expect(toolbar(page)).toContainText('0 containers selected');
+
+    // The cards have the same checkboxes, which do not open the drawer either.
+    await page.getByRole('button', { name: 'Card view' }).click();
+    await checkbox(page, 'e2e-web').check();
+    await checkbox(page, 'e2e-db').check();
+    await expect(page.getByRole('dialog')).toHaveCount(0);
+    await expect(toolbar(page)).toContainText('2 containers selected');
+
+    // e2e-db is removed elsewhere after the page listed it: its start is refused with the server's
+    // 404, e2e-web is started all the same, and e2e-db leaves the list and the selection.
+    requests.containers.splice(requests.containers.findIndex((c) => c.id === DB.id), 1);
+    await button(page, 'Start selected').click();
+    const result = page.getByRole('list', { name: 'Started 1 of 2 containers' });
+    await expect(result.getByRole('listitem')).toHaveText([
+      'e2e-web: running',
+      `e2e-db: failed: Container ${DB.id} not found`,
+    ]);
+    await expect(page.locator('#docker-panel-containers').getByText('e2e-db', { exact: true })).toHaveCount(0);
+    await expect(toolbar(page)).toContainText('0 containers selected');
+  });
+
+  test('a 401 ends the session and the run', async ({ authenticatedPage: page }) => {
+    const requests = await fakeContainersApi(page);
+    // The session expired while the run went on: the answer for e2e-db is 401.
+    const refused: string[] = [];
+    await page.route(`**/api/v1/containers/${DB.id}/stop`, (route) => {
+      refused.push(route.request().url());
+      return route.fulfill({ status: 401, json: { detail: 'Could not validate credentials' } });
+    });
+    await page.goto('/containers');
+    await selectAll(page).check();
+    await button(page, 'Stop selected').click();
+
+    await expect(page).toHaveURL('/login');
+    expect(posts(requests)).toEqual([`POST /api/v1/containers/${WEB.id}/stop`]);
+    expect(refused).toHaveLength(1);
+  });
+
+  test('the selection and the results come from the catalog in Russian', async ({ authenticatedPage: page }) => {
+    await fakeContainersApi(page);
+    await page.evaluate(() => localStorage.setItem('unos-locale', 'ru'));
+    await page.goto('/containers');
+
+    const bar = page.getByRole('toolbar', { name: 'Выбранные контейнеры' });
+    await expect(bar).toContainText('Выбрано 0 контейнеров');
+    await page.getByRole('checkbox', { name: 'Выбрать e2e-web', exact: true }).check();
+    await expect(bar).toContainText('Выбран 1 контейнер');
+    await page.getByRole('checkbox', { name: 'Выбрать все показанные', exact: true }).check();
+    await expect(bar).toContainText('Выбрано 3 контейнера');
+    await page.getByRole('checkbox', { name: 'Выбрать e2e-cache', exact: true }).uncheck();
+    await bar.getByRole('button', { name: 'Остановить выбранные', exact: true }).click();
+    const result = page.getByRole('list', { name: 'Остановлено 2 из 2 контейнеров' });
+    await expect(result.getByRole('listitem')).toHaveText(['e2e-web: остановлен', 'e2e-db: остановлен']);
+    await expect(bar.getByRole('button', { name: 'Запустить выбранные', exact: true })).toBeDisabled();
+    await expect(bar.getByRole('button', { name: 'Перезапустить выбранные', exact: true })).toBeDisabled();
   });
 });

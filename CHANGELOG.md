@@ -345,6 +345,23 @@ manager, encrypted backup uploads, health checks, CI checks).
   `ups_name`, `host` and `port` are checked before they reach `upsc`.
 
 ### Added
+- Actions on several containers or shares at once (ADR-0388). On the
+  **Containers** page a checkbox selects a container, and **Select all shown**
+  selects what the search and the state filter show; **Start selected**,
+  **Stop selected** and **Restart selected** then act on each of them, one
+  after another, through its own endpoint, with the checks and audit entries
+  of a single action, and list each container's result: its new state, or
+  why it failed (the others go on; the failed ones stay selected). UNOS's own
+  containers are not listed, so they cannot be selected. On the **Shares**
+  page the SMB shares are selected the same way, and **Delete selected** asks
+  once, naming each share and its folder, then deletes all of them with one
+  request, `POST /api/v1/shares/smb/bulk-delete` with each share's name and
+  the version and folder the page loaded: one change of smb.conf and one
+  reload of Samba under `smb_lock`, the folders kept, one `share_deleted`
+  audit entry per share. A share changed, made again in another folder or
+  deleted elsewhere in the meantime is not deleted and is named with the
+  reason; when testparm rejects the new smb.conf or the database is busy,
+  none is deleted.
 - Groups of users (ADR-0385). The **Users** page has a **Groups** card: make
   a group, choose its members (users who are not administrators), rename it
   or delete it. On the **Shares** page a share's access list gives each group

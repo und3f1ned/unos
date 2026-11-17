@@ -202,6 +202,9 @@ const IMAGES = [
   },
 ];
 const DOCKER = { '/api/v1/containers': CONTAINERS, '/api/v1/containers/images': IMAGES };
+// Docker's reason for a container that it cannot stop, as the containers API passes it on (409).
+const CONTAINER_CONFLICT =
+  'Cannot stop container 2b3c4d5e6f70: cannot kill container: 2b3c4d5e6f70a1b2c3d4e5f6: tried to kill container, but did not receive an exit event';
 
 const DATA = `${POOLS}/e2e_data`;
 const SUBVOLUMES = [
@@ -843,6 +846,30 @@ const VIEWS: View[] = [
     shows: (page) => page.getByText('sha256:7a8b9c0d1e2f'),
   },
   {
+    // Several containers selected, and the results of an action on them, one line each with a long
+    // name or a long reason (ADR-0388): the selection's bar and the lines wrap.
+    name: 'Containers: an action on several',
+    path: '/containers',
+    fake: async (page) => {
+      await serve(page, DOCKER);
+      await page.route(
+        (url) => /^\/api\/v1\/containers\/[^/]+\/stop$/.test(url.pathname),
+        (route) => {
+          const id = new URL(route.request().url()).pathname.split('/')[4];
+          const found = CONTAINERS.find((c) => c.id === id)!;
+          return found.name === 'e2e-cache'
+            ? route.fulfill({ status: 409, json: { detail: CONTAINER_CONFLICT } })
+            : route.fulfill({ json: { ...found, state: 'exited', status: 'exited' } });
+        },
+      );
+    },
+    open: async (page) => {
+      await page.getByRole('checkbox', { name: /^(Select all shown|Выбрать все показанные)$/ }).check();
+      await page.getByRole('button', { name: /^(Stop selected|Остановить выбранные)$/ }).click();
+    },
+    shows: (page) => page.getByRole('listitem').filter({ hasText: CONTAINER_CONFLICT }),
+  },
+  {
     name: 'App Store',
     path: '/apps',
     fake: (page) => serve(page, { '/api/v1/apps/installed': INSTALLED_APPS }),
@@ -1132,6 +1159,19 @@ const VIEWS: View[] = [
     open: (page) => page.getByRole('button', { name: /^(Add SMB share|Добавить общую папку SMB)$/ }).click(),
     // Its list of users, each with the SMB state's badge.
     shows: (page) => page.getByRole('dialog').getByText('bob_the_family_photographer'),
+    start: dialogTitle,
+    end: dialogEnd,
+  },
+  {
+    // One question for several shares names each of them and its folder (ADR-0388).
+    name: 'Dialog: delete several shares',
+    path: '/shares',
+    fake: (page) => fakeSmbApi(page, { users: USERS, shares: SHARES }),
+    open: async (page) => {
+      await page.getByRole('checkbox', { name: /^(Select all|Выбрать все)$/ }).check();
+      await page.getByRole('button', { name: /^(Delete selected|Удалить выбранные)$/ }).click();
+    },
+    shows: (page) => page.getByRole('dialog').getByText(`${POOLS}/tank/family_photos_and_videos`),
     start: dialogTitle,
     end: dialogEnd,
   },

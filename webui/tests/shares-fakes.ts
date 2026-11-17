@@ -853,6 +853,23 @@ export async function fakeSmbApi(page: Page, options: FakeSmbOptions = {}): Prom
         return running ? { status: 202, json: repairStarted(fake.repairing!) } : detail(409, REPAIR_NOT_RUNNING);
       }
     }
+    // Several shares with one apply (ADR-0388): each share sent gets its result, in the order sent.
+    if (path === '/shares/smb/bulk-delete' && method === 'POST') {
+      type Wanted = { name: string; expected_version: number; expected_path: string };
+      const wanted = (data.shares as Wanted[] | undefined) ?? [];
+      const results = wanted.map(({ name, expected_version, expected_path }) => {
+        const share = findShare(name);
+        if (!share) return { name, status: 'not_found', detail: 'Share not found' };
+        if (share.version !== expected_version || share.path !== expected_path) {
+          return { name, status: 'changed', detail: VERSION_CONFLICT };
+        }
+        fake.shares = fake.shares.filter((s) => s !== share);
+        return { name, status: 'deleted', detail: null };
+      });
+      // Nothing to delete: no apply, so no warnings of one.
+      const applied = results.some((result) => result.status === 'deleted');
+      return ok({ results, warnings: applied ? [...fake.changeWarnings] : [] });
+    }
     const one = path.match(/^\/shares\/smb\/([^/]+)$/);
     if (one) {
       const share = findShare(decodeURIComponent(one[1]));

@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
+	import { onDestroy, onMount } from 'svelte';
 	import {
 		getContainers,
 		startContainer,
@@ -29,6 +29,7 @@
 		Clock,
 		Box
 	} from 'lucide-svelte';
+	import { ApiError } from '$lib/api/client';
 	import { Button, Card, Badge, Input, Select, Modal, Alert, EmptyState } from '$lib/components/ui';
 	import { ContainerDetailDrawer, ImageList } from '$lib/components/containers';
 	import { t } from '$lib/i18n';
@@ -78,6 +79,36 @@
 	let portsList: Array<{ host: string; container: string; protocol: string }> = [];
 	let envList: Array<{ key: string; value: string }> = [];
 
+	// Several containers at once (ADR-0388): the ids of the selected containers. Only what the list
+	// shows can be selected: a container that a search or a filter hides, or that the list no longer
+	// has, leaves the selection. An action calls the endpoint of each container, one after another,
+	// and lists each one's result.
+	type BulkAction = 'start' | 'stop' | 'restart';
+	type BulkItem = { id: string; name: string; state?: string; reason?: string };
+	let selected = new Set<string>();
+	let bulkRunning = false;
+	let bulkProgress: { action: BulkAction; name: string; i: number; n: number } | null = null;
+	let bulkResult: { action: BulkAction; items: BulkItem[] } | null = null;
+	// The page was left: a run ends after the container it is at.
+	let left = false;
+	onDestroy(() => (left = true));
+
+	const BULK_CALLS: Record<BulkAction, (id: string) => Promise<Container>> = {
+		start: startContainer,
+		stop: stopContainer,
+		restart: restartContainer
+	};
+	const BULK_PROGRESS: Record<BulkAction, string> = {
+		start: 'containers.bulk.progress.start',
+		stop: 'containers.bulk.progress.stop',
+		restart: 'containers.bulk.progress.restart'
+	};
+	const BULK_DONE: Record<BulkAction, string> = {
+		start: 'containers.bulk.done.start',
+		stop: 'containers.bulk.done.stop',
+		restart: 'containers.bulk.done.restart'
+	};
+
 	// Computed stats
 	$: runningCount = containers.filter((c) => c.state === 'running').length;
 	$: stoppedCount = containers.filter((c) => c.state === 'exited').length;
@@ -93,6 +124,66 @@
 		return matchesSearch && matchesState;
 	});
 
+	// What the list does not show leaves the selection.
+	$: keepShown(filteredContainers);
+	$: allShownSelected =
+		filteredContainers.length > 0 && filteredContainers.every((c) => selected.has(c.id));
+	$: bulkOk = bulkResult ? bulkResult.items.filter((item) => item.reason === undefined).length : 0;
+
+	function keepShown(shown: Container[]) {
+		const ids = new Set(shown.map((c) => c.id));
+		const kept = [...selected].filter((id) => ids.has(id));
+		if (kept.length !== selected.size) selected = new Set(kept);
+	}
+
+	function toggleSelected(id: string, on: boolean) {
+		if (on) selected.add(id);
+		else selected.delete(id);
+		selected = selected;
+	}
+
+	function toggleAllShown(event: Event) {
+		const on = (event.currentTarget as HTMLInputElement).checked;
+		selected = on ? new Set(filteredContainers.map((c) => c.id)) : new Set();
+	}
+
+	/**
+	 * Start, stop or restart every selected container through its own endpoint, in the order of the
+	 * list, one after another: the server's checks and audit entries apply to each, and a failure
+	 * does not stop the others (ADR-0388). The ones that failed stay selected. A 401, which ends the
+	 * session, and leaving the page end the run after the container it is at.
+	 */
+	async function runBulk(action: BulkAction) {
+		const targets = filteredContainers
+			.filter((c) => selected.has(c.id))
+			.map((c) => ({ id: c.id, name: c.name }));
+		if (targets.length === 0 || bulkRunning) return;
+		bulkRunning = true;
+		bulkResult = null;
+		error = '';
+		const items: BulkItem[] = [];
+		try {
+			for (const [index, target] of targets.entries()) {
+				if (left) return;
+				bulkProgress = { action, name: target.name, i: index + 1, n: targets.length };
+				try {
+					const info = await BULK_CALLS[action](target.id);
+					items.push({ ...target, state: info.state });
+				} catch (e) {
+					// The session ended: the sign-in page is on its way.
+					if (e instanceof ApiError && e.status === 401) return;
+					items.push({ ...target, reason: e instanceof Error ? e.message : String(e) });
+				}
+			}
+		} finally {
+			bulkProgress = null;
+			bulkRunning = false;
+		}
+		bulkResult = { action, items };
+		selected = new Set(items.filter((item) => item.reason !== undefined).map((item) => item.id));
+		await loadData();
+	}
+
 	onMount(async () => {
 		await loadData();
 	});
@@ -103,6 +194,8 @@
 		loadError = '';
 		try {
 			containers = await getContainers();
+			const listed = new Set(containers.map((c) => c.id));
+			selected = new Set([...selected].filter((id) => listed.has(id)));
 		} catch (e: any) {
 			loadError = e.message;
 		} finally {
@@ -436,6 +529,35 @@
 			<Alert variant="error">{error}</Alert>
 		{/if}
 
+		{#if bulkProgress}
+			<p class="text-sm text-secondary" role="status">
+				{$t(BULK_PROGRESS[bulkProgress.action], {
+					name: bulkProgress.name,
+					i: bulkProgress.i,
+					n: bulkProgress.n
+				})}
+			</p>
+		{/if}
+		{#if bulkResult}
+			{@const title = $t(BULK_DONE[bulkResult.action], { ok: bulkOk, n: bulkResult.items.length })}
+			<Alert
+				variant={bulkOk === bulkResult.items.length ? 'success' : bulkOk === 0 ? 'error' : 'warning'}
+				{title}
+				dismissible
+				on:dismiss={() => (bulkResult = null)}
+			>
+				<ul class="space-y-1 text-sm" aria-label={title}>
+					{#each bulkResult.items as item (item.id)}
+						<li class="break-words">
+							{item.reason === undefined
+								? $t('containers.bulk.itemDone', { name: item.name, state: stateLabel(item.state ?? '') })
+								: $t('containers.bulk.itemFailed', { name: item.name, reason: item.reason })}
+						</li>
+					{/each}
+				</ul>
+			</Alert>
+		{/if}
+
 		<!-- Search and View Toggle -->
 		<Card>
 			<div class="flex flex-col sm:flex-row items-stretch sm:items-center gap-4">
@@ -477,6 +599,52 @@
 				</div>
 			</div>
 		</Card>
+
+		{#if containers.length > 0}
+			<!-- The selection for an action on several containers (ADR-0388); it wraps on a phone. -->
+			<div
+				class="flex flex-wrap items-center gap-x-4 gap-y-2"
+				role="toolbar"
+				aria-label={$t('containers.bulk.toolbar')}
+			>
+				<label class="flex items-center gap-2 text-sm">
+					<input
+						type="checkbox"
+						class="form-checkbox"
+						checked={allShownSelected}
+						disabled={bulkRunning || filteredContainers.length === 0}
+						on:change={toggleAllShown}
+					/>
+					{$t('containers.bulk.selectAll')}
+				</label>
+				<span class="text-sm text-content-secondary">
+					{$t('containers.bulk.selected', { n: selected.size })}
+				</span>
+				<div class="flex flex-wrap items-center gap-2">
+					<Button
+						variant="secondary"
+						size="sm"
+						icon={Play}
+						disabled={bulkRunning || selected.size === 0}
+						on:click={() => runBulk('start')}>{$t('containers.bulk.start')}</Button
+					>
+					<Button
+						variant="secondary"
+						size="sm"
+						icon={Square}
+						disabled={bulkRunning || selected.size === 0}
+						on:click={() => runBulk('stop')}>{$t('containers.bulk.stop')}</Button
+					>
+					<Button
+						variant="secondary"
+						size="sm"
+						icon={RotateCw}
+						disabled={bulkRunning || selected.size === 0}
+						on:click={() => runBulk('restart')}>{$t('containers.bulk.restart')}</Button
+					>
+				</div>
+			</div>
+		{/if}
 
 		<!-- Container List -->
 		{#if loading}
@@ -525,11 +693,16 @@
 									on:click={() => openDrawer(container)}
 								>
 									<td>
-										<div
-											class="w-8 h-8 rounded bg-surface-muted flex items-center justify-center"
-										>
-											<ContainerIcon class="w-4 h-4 icon-container" />
-										</div>
+										<!-- Selecting does not open the drawer. -->
+										<input
+											type="checkbox"
+											class="form-checkbox"
+											checked={selected.has(container.id)}
+											disabled={bulkRunning}
+											aria-label={$t('containers.bulk.selectOne', { name: container.name })}
+											on:click|stopPropagation
+											on:change={(event) => toggleSelected(container.id, event.currentTarget.checked)}
+										/>
 									</td>
 									<td>
 										<div class="font-medium">{container.name}</div>
@@ -614,6 +787,16 @@
 					>
 						<div class="flex items-start justify-between mb-3">
 							<div class="flex items-center gap-3 min-w-0">
+								<input
+									type="checkbox"
+									class="form-checkbox flex-shrink-0"
+									checked={selected.has(container.id)}
+									disabled={bulkRunning}
+									aria-label={$t('containers.bulk.selectOne', { name: container.name })}
+									on:click|stopPropagation
+									on:keypress|stopPropagation
+									on:change={(event) => toggleSelected(container.id, event.currentTarget.checked)}
+								/>
 								<div
 									class="w-10 h-10 rounded-lg bg-surface-muted flex items-center justify-center flex-shrink-0"
 								>
