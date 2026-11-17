@@ -26,6 +26,8 @@ export const en = {
 	'twofactor.requirement.off': 'Not required',
 	'twofactor.requirement.offText': 'Each user decides whether to use two-factor authentication.',
 	'twofactor.requirement.since': 'Required since {date}, turned on by {name}.',
+	'twofactor.requirement.sinceUnknown':
+		'Required. When it was turned on cannot be read from the database: accounts without two-factor authentication get no grace period.',
 	'twofactor.requirement.grace': {
 		one: 'Grace period: {n} day from that time or from the account’s creation, whichever is later.',
 		other: 'Grace period: {n} days from that time or from the account’s creation, whichever is later.'
@@ -36,7 +38,7 @@ export const en = {
 	'twofactor.requirement.ownFirst':
 		'Turn on two-factor authentication for your own account first: turning the requirement on or off takes a code from your authenticator app.',
 	'twofactor.requirement.graceLabel': 'Grace period',
-	'twofactor.requirement.graceNone': 'None: at the next sign-in',
+	'twofactor.requirement.graceNone': 'None: at once',
 	'twofactor.requirement.graceDays': { one: '{n} day', other: '{n} days' },
 	'twofactor.requirement.codeLabel': 'Code from your authenticator app',
 	'twofactor.requirement.turnOn': 'Require for every account',
@@ -71,6 +73,8 @@ export const ru: Translation<typeof en> = {
 	'twofactor.requirement.off': 'Не обязательна',
 	'twofactor.requirement.offText': 'Каждый пользователь сам решает, включать ли двухфакторную аутентификацию.',
 	'twofactor.requirement.since': 'Обязательна с {date}, включил(а) {name}.',
+	'twofactor.requirement.sinceUnknown':
+		'Обязательна. Когда её включили, прочитать из базы данных не удалось: учётным записям без двухфакторной аутентификации срок на настройку не даётся.',
 	'twofactor.requirement.grace': {
 		one: 'Срок на настройку: {n} день с этого момента или с создания учётной записи, если она создана позже.',
 		few: 'Срок на настройку: {n} дня с этого момента или с создания учётной записи, если она создана позже.',
@@ -82,7 +86,7 @@ export const ru: Translation<typeof en> = {
 	'twofactor.requirement.ownFirst':
 		'Сначала включите двухфакторную аутентификацию для своей учётной записи: чтобы включить или выключить требование, нужен код из приложения-аутентификатора.',
 	'twofactor.requirement.graceLabel': 'Срок на настройку',
-	'twofactor.requirement.graceNone': 'Без срока: со следующего входа',
+	'twofactor.requirement.graceNone': 'Без срока: сразу',
 	'twofactor.requirement.graceDays': { one: '{n} день', few: '{n} дня', many: '{n} дней' },
 	'twofactor.requirement.codeLabel': 'Код из приложения-аутентификатора',
 	'twofactor.requirement.turnOn': 'Требовать для всех',

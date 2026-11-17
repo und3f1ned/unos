@@ -67,7 +67,9 @@ backups created, uploaded, restored and deleted, reboots and shutdowns
 scheduled or cancelled, changes of scheduled tasks and runs started by hand,
 and changes of network interfaces, Wake-on-LAN, the host name, the time
 zone and the requirement of two-factor authentication for every account; the
-supervisor's log reports that entry.
+supervisor's log reports that entry. An account that can only set up two-factor
+authentication cannot set it up while the disk is full: the setup answers an
+error until there is room again.
 A recovery code does not sign you in while the disk is full, because UNOS
 cannot mark it as used; a code of your authenticator app does.
 
@@ -1657,7 +1659,8 @@ with a code as well. The audit log records both (`settings_changed`, resource
 What it means for an account without 2FA:
 
 - The grace period starts when the requirement is turned on, or when the
-  account is created, if that is later.
+  account is created, if that is later. The card shows the name the
+  administrator had when turning it on.
 - During it, everything works as before, and after each sign-in a page asks
   to set up 2FA by the end of the grace period: **Set up now** shows the QR
   code and asks for a code, **Later** goes on to the dashboard.
@@ -1673,6 +1676,13 @@ What it means for an account without 2FA:
 - SMB has no second factor: an account with SMB on still signs in to SMB with
   its password alone. Turn SMB off for a user on the **Users** page where that
   matters.
+
+A restore whose database requires it, or no longer requires it, says so among
+its warnings, and the audit log records the change. A start of the requirement
+that lies ahead of the NAS's clock, as on a board without a real-time clock
+before it has set its time from the network, counts as now: the grace period is
+never skipped. When the database holds a requirement whose start cannot be read,
+the card says so, and accounts without 2FA get no grace period.
 
 Turning the requirement off gives every account its rights back at its next
 request. Scripts read it with `GET /api/v1/security/two-factor-requirement`

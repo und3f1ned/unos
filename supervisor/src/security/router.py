@@ -13,7 +13,7 @@ from fastapi.security import HTTPAuthorizationCredentials
 from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession
 from pydantic import TypeAdapter
-from sqlalchemy import delete, select, func, desc
+from sqlalchemy import select, func, desc, text
 
 from .. import state_files
 from ..audit.changes import audit_change
@@ -808,6 +808,7 @@ REQUIREMENT_SESSION_NEEDED = "An API token cannot change the two-factor requirem
 OWN_TWO_FACTOR_NEEDED = "Turn on two-factor authentication for your own account first"
 ALREADY_REQUIRED = "Two-factor authentication is already required for every account"
 NOT_REQUIRED = "Two-factor authentication is not required"
+CANNOT_STORE = "The two-factor requirement cannot be stored: its table in the database has another layout"
 
 
 def _requirement_status(current: requirement.Requirement | None) -> TwoFactorRequirementStatus:
@@ -856,13 +857,22 @@ async def enable_two_factor_requirement(
     _require_own_second_factor(credentials, current_user)
     if await requirement.current(db) is not None:
         raise HTTPException(status_code=409, detail=ALREADY_REQUIRED)
+    if not await requirement.storable(db):  # a restored table of another layout; no code is used
+        raise HTTPException(status_code=500, detail=CANNOT_STORE)
     _use_own_code(current_user, data.code)
-    username = current_user.username
+    user_id, username = current_user.id, current_user.username
     enabled_at = requirement._now()
     db.add(TwoFactorRequirement(
         id=requirement.REQUIREMENT_ID, grace_days=data.grace_days, enabled_at=enabled_at, enabled_by=username
     ))
     try:
+        # The flush takes SQLite's write lock; the administrator's own two-factor authentication is
+        # then read again, in this transaction: their own turning it off, committed meanwhile, leaves
+        # the requirement off.
+        await db.flush()
+        if not await db.scalar(select(User.totp_enabled).where(User.id == user_id)):
+            await db.rollback()
+            raise HTTPException(status_code=409, detail=OWN_TWO_FACTOR_NEEDED)
         await db.commit()
     except IntegrityError:  # another administrator turned it on meanwhile
         await db.rollback()
@@ -891,13 +901,10 @@ async def disable_two_factor_requirement(
         raise HTTPException(status_code=409, detail=NOT_REQUIRED)
     _use_own_code(current_user, data.code)
     username = current_user.username
-    result = await db.execute(
-        delete(TwoFactorRequirement)
-        .where(TwoFactorRequirement.id == requirement.REQUIREMENT_ID)
-        .execution_options(synchronize_session=False)
-    )
+    # Every row, whatever the table's layout (src/auth/requirement.py).
+    result = await db.execute(text(requirement.DELETE_ALL))
     await db.commit()
-    if result.rowcount != 1:  # another administrator turned it off meanwhile
+    if result.rowcount < 1:  # another administrator turned it off meanwhile
         raise HTTPException(status_code=409, detail=NOT_REQUIRED)
     await audit_change(
         AuditAction.SETTINGS_CHANGED, request, username, resource_type="two_factor_requirement",

@@ -104,7 +104,12 @@
 
 	{#if requirement}
 		<div class="space-y-2 text-sm min-w-0 break-words">
-			{#if requirement.enabled}
+			{#if requirement.enabled && !requirement.enabled_at}
+				<!-- A restored database whose start cannot be read: the requirement holds without a
+				     grace period (src/auth/requirement.py). -->
+				<p>{$t('twofactor.requirement.sinceUnknown')}</p>
+			{:else if requirement.enabled}
+				<!-- The name the administrator had then, as the audit log keeps it. -->
 				<p>{$t('twofactor.requirement.since', { date: since, name: requirement.enabled_by ?? '' })}</p>
 				<p>
 					{requirement.grace_days

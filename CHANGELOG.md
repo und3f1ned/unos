@@ -30,7 +30,10 @@ manager, encrypted backup uploads, health checks, CI checks).
   tokens, and closes its WebSockets with 4403; open sessions follow at their
   next request. `GET /api/v1/auth/me` answers `two_factor_required` and
   `GET /api/v1/auth/totp/status` `required`. SMB still signs in with the
-  password alone. Off by default.
+  password alone. Off by default. A restore that turns the requirement on or
+  off says so among its warnings and in the audit log; a start ahead of the
+  clock counts as now, and a stored requirement that cannot be read holds
+  without a grace period, without errors, and can be turned off.
 - **System** → **Security** no longer names a stored certificate as the one
   in use: its **SSL/TLS Certificates** card and
   `GET /api/v1/security/certificates/status` (now

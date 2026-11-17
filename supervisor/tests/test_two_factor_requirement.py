@@ -12,7 +12,9 @@ included, is refused with 403 (4403). The time the requirement is judged at is t
 """
 from __future__ import annotations
 
+import io
 import sqlite3
+import sys
 from contextlib import closing
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -20,20 +22,26 @@ from unittest.mock import patch
 
 import pyotp
 import pytest
-from sqlalchemy import select
+from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 from starlette.websockets import WebSocketDisconnect
 
+from src import emergency
+from src.audit.schemas import AuditAction
 from src.auth import requirement
 from src.auth import utils as auth_utils
 from src.auth.models import APIToken, TwoFactorRequirement, User
+from src.database import Base
 from src.auth.requirement import TWO_FACTOR_SETUP_REQUIRED
 from src.auth.utils import TotpCheck, generate_api_token
+from src.config import get_settings
 from src.security import router as security_router
 from src.websocket import events
 
+from .audit_helpers import audit_entries
+from .test_backup_restore import MANIFEST, _file, _make_db, _restore, _store, make_env
 from .test_sign_in_full_disk import ENTRY_LOST, reported, the_audit_log_is_full
-from .test_smb_accounts import ADMIN_PW, ALICE_PW, API, World
+from .test_smb_accounts import ADMIN_PW, ALICE_PW, API, World, _hash
 from .test_totp_once import REUSED, Clock
 
 REPO = Path(__file__).resolve().parents[2]
@@ -43,6 +51,7 @@ ALICE_SECRET = pyotp.random_base32()
 # The requirement's start in the tests, in UTC without a zone, as the database keeps times.
 START = datetime(2026, 11, 10, 9, 0, 0)
 OFF = {"enabled": False, "grace_days": None, "enabled_at": None, "enabled_by": None}
+RESET_PW = "Admin-reset-pass-2026"
 
 
 class Now:
@@ -244,6 +253,28 @@ class TestTurningItOn:
         assert (answer.status_code, answer.json()["detail"]) == (
             409, "Two-factor authentication is already required for every account")
         assert stored(world) == (30, START, "other")
+        assert changes(world) == []
+
+    def test_an_administrator_whose_own_two_factor_authentication_went_off_meanwhile_cannot(
+        self, world, clock, monkeypatch
+    ):
+        """The administrator's own /totp/disable that commits while the code is checked: their
+        two-factor authentication is read again in the transaction of the insert."""
+        world.set_totp("admin", ADMIN_SECRET)
+
+        def turned_off_meanwhile(user_id, secret, code):
+            with Session(world.engine) as session:
+                session.get(User, world.ids["admin"]).totp_enabled = False
+                session.commit()
+            return TotpCheck.OK
+
+        monkeypatch.setattr(security_router, "check_totp_code", turned_off_meanwhile)
+
+        answer = turn_on(world, clock)
+
+        assert (answer.status_code, answer.json()["detail"]) == (
+            409, "Turn on two-factor authentication for your own account first")
+        assert stored(world) is None
         assert changes(world) == []
 
     def test_a_regular_user_cannot(self, world, clock):
@@ -492,16 +523,19 @@ class TestSetupOnly:
         assert world.client.get(f"{API}/auth/me/smb", headers=auth).status_code == 200
         assert [e["details"] for e in world.audit() if e["action"] == "login_success"] == [None]
 
-    def test_an_emergency_reset_leads_the_administrator_to_the_setup(self, world, clock):
-        """reset-admin turns two-factor authentication off (ADR-0284): with the requirement on and
-        the grace period over, the administrator's next sign-in can only set it up again."""
+    def test_an_emergency_reset_leads_the_administrator_to_the_setup(self, world, clock, monkeypatch, capsys):
+        """reset-admin (src/emergency.py, ADR-0284) turns two-factor authentication off and leaves
+        the requirement as it is: with the grace period over, the administrator's next sign-in can
+        only set it up again."""
         world.set_totp("admin", ADMIN_SECRET)
-        with Session(world.engine) as session:  # what reset-admin's UPDATE does
-            user = session.get(User, world.ids["admin"])
-            user.totp_enabled, user.totp_secret, user.recovery_codes = False, None, None
-            session.commit()
+        monkeypatch.setattr(get_settings(), "db_path", str(world.path))
+        monkeypatch.setattr(emergency, "hash_password", _hash)
+        monkeypatch.setattr(sys, "stdin", io.StringIO(f"{RESET_PW}\n"))
 
-        token = sign_in(world, "admin", ADMIN_PW).json()["access_token"]
+        assert emergency.main(["reset-admin", "admin"]) == 0, capsys.readouterr()
+
+        assert stored(world) == (7, START, "admin")
+        token = sign_in(world, "admin", RESET_PW).json()["access_token"]
 
         auth = {"Authorization": f"Bearer {token}"}
         assert me(world, auth)["two_factor_required"]["setup_only"] is True
@@ -560,28 +594,150 @@ class TestARestoredRow:
         assert turn_off(world, clock).status_code == 200
         assert world.client.get(f"{API}/auth/me/smb", headers=alice).status_code == 200
 
-    @pytest.mark.parametrize("enabled_at", ["'x'", "42", "'9999-12-31 23:59:59'"])
-    def test_a_start_that_cannot_be_read_or_lies_ahead(self, world, clock, enabled_at):
+    # A time that cannot be read, and aware times at either end of the calendar, which have no
+    # UTC (astimezone raises OverflowError).
+    @pytest.mark.parametrize("enabled_at", [
+        "'x'", "42", "'0001-01-01 00:00:00+01:00'", "'9999-12-31 23:59:59-01:00'",
+    ])
+    def test_a_start_that_cannot_be_read(self, world, clock, enabled_at):
         require(world, 30)
         self.sql(world, f"UPDATE two_factor_requirement SET enabled_at = {enabled_at}")
 
         self.expect_setup_only_and_no_failure(world, clock)
 
-    def test_a_table_of_another_layout(self, world, clock):
-        self.sql(world, "DROP TABLE two_factor_requirement",
-                 "CREATE TABLE two_factor_requirement (id INTEGER PRIMARY KEY, other TEXT)",
-                 "INSERT INTO two_factor_requirement VALUES (1, 'y')")
+    @pytest.mark.parametrize("layout", [
+        "id INTEGER PRIMARY KEY, other TEXT",
+        "other TEXT",  # without even an id
+    ])
+    def test_a_table_of_another_layout_with_a_row(self, world, clock, monkeypatch, layout):
+        monkeypatch.setattr(requirement, "_warned", False)
+        self.sql(world, "DROP TABLE two_factor_requirement", f"CREATE TABLE two_factor_requirement ({layout})",
+                 "INSERT INTO two_factor_requirement (other) VALUES ('y')")
 
         self.expect_setup_only_and_no_failure(world, clock)
-        assert "The two-factor requirement cannot be read" in world.caplog.text
+        # Said once, not at every request.
+        assert world.caplog.text.count("The two-factor requirement cannot be read") == 1
 
-    def test_an_account_made_in_the_future_has_the_requirements_grace_period(self, world, now):
+    def test_a_table_of_another_layout_without_a_row_is_off_and_takes_no_code(self, world, clock):
+        self.sql(world, "DROP TABLE two_factor_requirement",
+                 "CREATE TABLE two_factor_requirement (id INTEGER PRIMARY KEY, other TEXT)")
+        world.set_totp("admin", ADMIN_SECRET)
+        alice = world.headers("alice")
+
+        assert me(world, alice)["two_factor_required"] is None
+        assert world.client.get(f"{API}/auth/me/smb", headers=alice).status_code == 200
+        answer = turn_on(world, clock)
+
+        assert (answer.status_code, answer.json()["detail"]) == (
+            500, "The two-factor requirement cannot be stored: its table in the database has another layout")
+        assert world.ids["admin"] not in auth_utils._last_totp_steps  # the code was not used up
+
+    def test_a_missing_table_is_off(self, world, clock):
+        """As between the swap of a restore of an older backup and init_db, which makes the table."""
+        self.sql(world, "DROP TABLE two_factor_requirement")
+        world.set_totp("admin", ADMIN_SECRET)
+        alice = world.headers("alice")
+        admin = world.headers("admin")
+
+        assert me(world, alice)["two_factor_required"] is None
+        assert world.client.get(f"{API}/auth/me/smb", headers=alice).status_code == 200
+        assert world.client.get(REQUIREMENT, headers=admin).json() == OFF
+        assert turn_off(world, clock).status_code == 409
+        assert turn_on(world, clock).status_code == 500
+        assert world.ids["admin"] not in auth_utils._last_totp_steps
+        assert "cannot be read" not in world.caplog.text
+
+    def test_a_start_ahead_of_the_clock_starts_the_grace_period_now(self, world, now):
+        """A clock that is behind, as on a board without a real-time clock before NTP sets it,
+        never skips the grace period."""
+        require(world, 7, at=START + timedelta(days=10))
+
+        assert me(world, world.headers("alice"))["two_factor_required"] == {
+            "by": utc(START + timedelta(days=7)), "setup_only": False}
+        status = world.client.get(REQUIREMENT, headers=world.headers("admin")).json()
+        assert status["enabled_at"] == utc(START + timedelta(days=10))
+
+    def test_without_a_grace_period_a_start_ahead_of_the_clock_holds_at_once(self, world, now):
+        require(world, 0, at=START + timedelta(days=10))
+
+        assert me(world, world.headers("alice"))["two_factor_required"]["setup_only"] is True
+
+    def test_an_account_made_after_now_counts_as_made_now(self, world, now):
         require(world, 3)
         created(world, "alice", datetime(9999, 12, 31))
         now.value = START + timedelta(days=3)
 
         assert me(world, world.headers("alice"))["two_factor_required"] == {
-            "by": utc(START + timedelta(days=3)), "setup_only": True}
+            "by": utc(START + timedelta(days=6)), "setup_only": False}
+
+
+class TestARestore:
+    """A restore can turn the requirement on or off with the database it brings back: its result
+    says so, and the audit log records it (settings_changed of two_factor_requirement)."""
+
+    ON = ("The restored database requires two-factor authentication for every account: accounts "
+          "without it are asked to set it up, and after their grace period can only do that.")
+    OFF = "The restored database does not require two-factor authentication for every account."
+
+    @pytest.fixture
+    def env(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("src.audit.router.AUDIT_FILE", str(tmp_path / "audit.jsonl"))
+        yield from make_env(tmp_path, monkeypatch, smb_applied=True)
+
+    @staticmethod
+    def with_requirement(path: Path, on: bool) -> Path:
+        engine = create_engine(f"sqlite:///{path}")
+        Base.metadata.create_all(engine, tables=[TwoFactorRequirement.__table__])
+        if on:
+            with engine.begin() as conn:
+                conn.execute(TwoFactorRequirement.__table__.insert().values(
+                    id=1, grace_days=7, enabled_at=START, enabled_by="admin2"))
+        engine.dispose()
+        return path
+
+    def restore(self, env, backup: Path):
+        name = _store(env, [_file("manifest.json", MANIFEST), _file("unos.db", backup.read_bytes())])
+        answer = _restore(env, name)
+        assert answer.status_code == 200, answer.text
+        return answer.json()
+
+    def entries(self, env):
+        return [(e["action"], e["resource_type"], e["details"], e["severity"])
+                for e in audit_entries(env.tmp / "audit.jsonl") if e["resource_type"] == "two_factor_requirement"]
+
+    def backup(self, env, *, table: bool, on: bool = False) -> Path:
+        path = env.tmp / "restored.db"
+        _make_db(path, users=[("admin2", 1)])
+        return self.with_requirement(path, on) if table else path
+
+    def test_a_restore_that_turns_it_on(self, env):
+        body = self.restore(env, self.backup(env, table=True, on=True))
+
+        assert self.ON in body["warnings"] and self.ON in body["message"]
+        assert self.entries(env) == [(AuditAction.SETTINGS_CHANGED.value, "two_factor_requirement",
+                                      "Two-factor authentication required for every account by the restored database",
+                                      "warning")]
+        assert "_two_factor_requirement" not in body
+
+    @pytest.mark.parametrize("table", [True, False], ids=["an empty table", "an older backup without the table"])
+    def test_a_restore_that_turns_it_off(self, env, table):
+        self.with_requirement(env.db_path, on=True)
+
+        body = self.restore(env, self.backup(env, table=table))
+
+        assert self.OFF in body["warnings"]
+        assert self.entries(env) == [(AuditAction.SETTINGS_CHANGED.value, "two_factor_requirement",
+                                      "Two-factor authentication no longer required for every account: the restored "
+                                      "database does not require it", "warning")]
+
+    @pytest.mark.parametrize("on", [True, False])
+    def test_a_restore_that_keeps_it_says_nothing_of_it(self, env, on):
+        self.with_requirement(env.db_path, on=on)
+
+        body = self.restore(env, self.backup(env, table=True, on=on))
+
+        assert body["warnings"] == []
+        assert self.entries(env) == []
 
 
 class TestWebSocket:
