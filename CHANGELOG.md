@@ -602,7 +602,15 @@ manager, encrypted backup uploads, health checks, CI checks).
   back, and fails an Off that answers a warning; it names them when they keep
   the disk awake; it skips these steps when the disk has no timeout of
   UNOS's and `/etc/hdparm.conf` sets one, and when it has one with its scans
-  on unrecorded.
+  on unrecorded. A disk that the Storage page shows active after the wait is
+  a SKIP, not a failure, when the containers of apps (all but UNOS's `unos-*`)
+  read or wrote it in the wait's last 660 s, as their cgroups count it, and
+  UNOS's own did not, and so are the SMART reads of the sleeping disk then,
+  and when the disk was found awake in them after such a container used it:
+  the step names them with their counts (ADR-0394). An app that used the disk
+  only earlier, UNOS's own use and any other failure still fail; when the
+  apps used it just before the last 660 s, the failure says that a pass of the
+  SMART monitor after them may have kept the disk awake.
 - **Balance** on the Storage page (ADR-0379): a mounted, writable pool's
   balance rewrites the data and metadata chunks less full than a usage limit
   (20% by default, 1 to 99) or, after a confirmation, every chunk (a full

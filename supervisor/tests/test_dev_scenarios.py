@@ -16,6 +16,14 @@ Covered (the steps of the ledger entry device.scenario-checks-in-repo):
 * every area (files, volumes, smart, backups, smb, smbconf, shares, scrub, balance, offsite, restore, hardware) passes against
   the fake, prints a PASS line with its SD MiB for each step and a summary, and leaves the device as it
   found it;
+* the smart check's wait for the pool's disk to sleep (ADR-0394) is a SKIP that names the containers
+  of apps whose cgroups counted reads or writes on the disk in the wait's last two rounds while
+  it stayed active, and so is its step of the SMART reads of the sleeping disk, also when such a
+  container woke the disk before them; it fails as before when no app's container did then (the
+  disk used by something else, or the containers' counts unreadable), when UNOS's own did,
+  when the apps used it only earlier while a fault kept it awake, when its state is unknown, and
+  for any other failure of the SMART reads; its helper on the device reads each container's
+  io.stat through docker ps and inspect alone, under timeout;
 * the volumes check makes a snapshot of its volume and restores it: the copy restore_<time> is
   listed with the volume's restored copies, its Delete is refused while a share uses it and
   removes it from the host afterwards, and the volume can be deleted then (ADR-0358); its fake
@@ -649,6 +657,20 @@ class FakeNas:
         # again once the wait for standby begins, as smartd with -o on would).
         self.offline = "on"
         self.scans_recorded = False
+        # The running containers (scenario.Device.container_io): the reads and writes that each one's
+        # cgroup counted on the disk, by its name (None: its io.stat cannot be read), UNOS's own two by
+        # default; app_io: the reads and writes that containers send the disk at the end of each wait
+        # (for app_io_waits of them; None: each), which wake it, as Immich's database and transmission on
+        # the pool kept the dev device's sda awake (ADR-0381); app_io_at_smart_read: one container's
+        # reads and writes at the next SMART read while the disk sleeps, which wake it first.
+        self.containers: dict[str, list[int] | None] = {"unos-supervisor": [0, 0], "unos-webui": [0, 0]}
+        self.app_io: dict[str, tuple[int, int]] = {}
+        self.app_io_waits: int | None = None
+        self.app_io_at_smart_read: tuple[str, tuple[int, int]] | None = None
+        # The containers that docker inspect does not answer at a reading (by the reading's index from 0),
+        # which then has no count for them.
+        self.container_readings = 0
+        self.inspect_fails: dict[int, set[str]] = {}
 
     # --- what the tests compare
 
@@ -1346,10 +1368,12 @@ class FakeNas:
     def power(self) -> dict:
         """What GET /storage/disks says of the disk's power: hdparm -C, which leaves it asleep and did
         not restart the dev device's disk's standby timer; with the defect power-read-restarts-timer, a
-        read that does, as smartctl -n standby -i's IDENTIFY did on the dev device's disk."""
+        read that does, as smartctl -n standby -i's IDENTIFY did on the dev device's disk, and with
+        power-unknown one that never answers (a stuck hdparm -C, ADR-0378)."""
         if "power-read-restarts-timer" in self.bugs and not self.asleep:
             self.idle = 0
-        return {"power_state": "standby" if self.asleep else "active", "spindown": self.spindown,
+        state = "unknown" if "power-unknown" in self.bugs else "standby" if self.asleep else "active"
+        return {"power_state": state, "spindown": self.spindown,
                 "spindown_problem": None if self.hdparm else scenario.NO_HDPARM}
 
     def wake(self) -> None:
@@ -1359,9 +1383,25 @@ class FakeNas:
 
     def read_smart(self) -> None:
         """A SMART read: smartctl -n standby leaves a sleeping disk alone; with the defect
-        smart-wakes-disk, it reads the disk as smartctl without -n standby does."""
+        smart-wakes-disk, it reads the disk as smartctl without -n standby does. A container of
+        app_io_at_smart_read uses the sleeping disk just before."""
+        if self.app_io_at_smart_read and self.asleep:
+            container, (reads, writes) = self.app_io_at_smart_read
+            self.app_io_at_smart_read = None
+            self.container_uses_disk(container, reads, writes)
         if "smart-wakes-disk" in self.bugs:
             self.wake()
+
+    def container_uses_disk(self, container: str, reads: int, writes: int) -> None:
+        """The container's processes read and write the disk: its cgroup and the kernel count them, and
+        the disk wakes or its idle time starts again."""
+        counts = self.containers.setdefault(container, [0, 0])
+        if counts is not None:
+            counts[0] += reads
+            counts[1] += writes
+        self.disk_reads += reads
+        self.disk_writes += writes
+        self.asleep, self.idle = False, 0
 
     def set_spindown(self, name, body):
         if name == self.system_disk():
@@ -1434,10 +1474,25 @@ class FakeNas:
             self.asleep = True
         elif "never-sleeps" in self.bugs:
             self.disk_writes += 3
+        if self.app_io and self.app_io_waits != 0:
+            for container, (reads, writes) in self.app_io.items():
+                self.container_uses_disk(container, reads, writes)
+            if self.app_io_waits is not None:
+                self.app_io_waits -= 1
 
     def disk_io(self, name):
         self.device_call("disk_io")
         return (self.disk_reads, self.disk_writes) if name == DISK else None
+
+    def container_io(self, name):
+        """REMOTE_CONTAINER_IO: each running container's reads and writes on the disk, as its cgroup counts
+        them."""
+        self.device_call("container_io")
+        assert name == DISK, name
+        unanswered = self.inspect_fails.get(self.container_readings, set())
+        self.container_readings += 1
+        return {container: None if counts is None or container in unanswered else tuple(counts)
+                for container, counts in self.containers.items()}
 
     def api_files(self, method, parts, body, params, upload):
         what = parts[0] if parts else ""
@@ -4113,6 +4168,328 @@ def test_the_smart_check_waits_for_a_disk_whose_timer_a_smart_monitor_read_resta
     assert (f"sda sleeps once the timeout ran out: the Storage page says standby after {after} s (the timeout: 300 s)"
             in output), output
     assert nas.smart_monitor_read is None  # it did read the disk
+
+
+# --- the pool's disk while apps use it (ADR-0394) ---------------------------------------------------
+# On 2026-11-17 the dev device's sda stayed active for the whole wait, with 13 reads and 649 writes
+# counted, while Immich, transmission and others ran with their data on the pool (ADR-0381's cost): the
+# check cannot see the disk sleep then, and says which containers kept it awake instead of failing.
+
+
+def test_the_smart_check_skips_the_sleep_of_a_disk_that_apps_keep_busy(nas):
+    nas.containers.update({"immich-database": [841, 970], "transmission": [1, 6], "immich-server": [0, 0]})
+    nas.app_io = {"immich-database": (2, 40), "transmission": (0, 3)}
+    before = nas.snapshot()
+    status, output = run_check("smart", nas)
+    assert status == 0, output
+    # What counts is their use in the last two rounds, 660 s, longer than the disk needs unused to sleep.
+    assert re.search(r"^SKIP  \d+\. sda sleeps once the timeout ran out: it is active after 1980 s; meanwhile the "
+                     r"kernel counted 12 reads and 258 writes on it, and in its last 660 s the containers of apps read "
+                     r"or wrote it: immich-database 4 reads and 80 writes, transmission 0 reads and 6 writes: apps with "
+                     r"data on the pool keep its disk awake \(ADR-0381\), so the check cannot see whether UNOS lets it "
+                     r"sleep; stop them for this step \(ADR-0394\)  \[SD \d+\.\d{3} MiB\]$", output, re.M), output
+    # Only a disk that slept can show that its SMART reads leave it asleep.
+    assert re.search(r"^SKIP  \d+\. its SMART data on Storage and on Disk Health leaves sda asleep: sda did not sleep "
+                     r"while the containers of apps used it  \[SD ", output, re.M), output
+    assert re.search(r"^PASS  \d+\. sda has no idle timeout again", output, re.M), output
+    assert re.search(r"^PASS  \d+\. a short self-test starts on sda", output, re.M), output
+    assert re.search(r"^scenario smart: OK, \d+ steps passed, 2 skipped$", output, re.M), output
+    assert nas.snapshot() == before
+
+
+@pytest.mark.parametrize("bug, app_io, why", [
+    # The apps ran and left the disk alone; something else wrote it.
+    ("never-sleeps", {}, ""),
+    # UNOS's own containers are no app: their writes during the wait are a fault of UNOS.
+    (None, {"unos-supervisor": (0, 4)},
+     "; in its last 660 s UNOS's own containers read or wrote it: unos-supervisor 0 reads and 8 writes"),
+    # Nor when they write beside the apps: then the apps do not explain it.
+    (None, {"immich-database": (2, 40), "unos-supervisor": (0, 4)},
+     "; in its last 660 s UNOS's own containers read or wrote it: unos-supervisor 0 reads and 8 writes, besides the "
+     "containers of apps: immich-database 4 reads and 80 writes"),
+])
+def test_the_smart_check_fails_a_disk_kept_awake_without_the_apps(nas, bug, app_io, why):
+    nas.containers.update({"immich-database": [841, 970], "transmission": [1, 6]})
+    nas.app_io = app_io
+    if bug:
+        nas.bugs.add(bug)
+    status, output = run_check("smart", nas)
+    assert status == 1, output
+    moved = ("0 reads and 18 writes" if bug else
+             "12 reads and 264 writes" if "immich-database" in app_io else "0 reads and 24 writes")
+    assert re.search(rf"^FAIL  \d+\. sda sleeps once the timeout ran out: it is active after 1980 s; meanwhile the "
+                     rf"kernel counted {moved} on it: something reads or writes it \(an app or a share on the "
+                     rf"pool\?\){re.escape(why)}  \[SD ", output, re.M), output
+    assert (nas.spindown, nas.rules) == (0, None)
+
+
+def test_the_smart_check_fails_when_it_cannot_read_what_the_containers_did(nas):
+    # Without the containers' counts the check cannot tell the apps' use from UNOS's: the step fails, as
+    # before, and says what it could not read.
+    nas.containers.update({"immich-database": [841, 970]})
+    nas.app_io = {"immich-database": (2, 40)}
+    nas.refuse_device = "container_io"
+    status, output = run_check("smart", nas)
+    assert status == 1, output
+    assert re.search(r"^FAIL  \d+\. sda sleeps once the timeout ran out: it is active after 1980 s; meanwhile the "
+                     r"kernel counted 12 reads and 240 writes on it: something reads or writes it \(an app or a share "
+                     r"on the pool\?\); the containers' reads and writes on it could not be read: the device answered "
+                     r"status 1 for container_io  \[SD ", output, re.M), output
+    assert (nas.spindown, nas.rules) == (0, None)
+
+
+def test_the_smart_check_fails_when_no_container_s_count_can_be_read(nas):
+    # cgroup v1, say: no io.stat for any container.
+    nas.containers = {"unos-supervisor": None, "unos-webui": None, "immich-database": None}
+    nas.app_io = {"immich-database": (2, 40)}
+    status, output = run_check("smart", nas)
+    assert status == 1, output
+    assert re.search(r"something reads or writes it \(an app or a share on the pool\?\); the reads and writes on it of "
+                     r"the containers immich-database, unos-supervisor, unos-webui could not be read \(no answer, no process, "
+                     r"or no io\.stat of cgroup v2\)  \[SD ", output), output
+
+
+def test_the_smart_check_passes_a_disk_that_sleeps_once_the_apps_left_it_alone(nas):
+    # Immich wrote during the first wait and then stayed quiet: sda slept 600 s later, found at 990 s.
+    nas.containers.update({"immich-database": [841, 970]})
+    nas.app_io, nas.app_io_waits = {"immich-database": (2, 40)}, 1
+    status, output = run_check("smart", nas)
+    assert status == 0, output
+    assert "sda sleeps once the timeout ran out: the Storage page says standby after 990 s (the timeout: 300 s)" in output
+    assert re.search(r"^PASS  \d+\. its SMART data on Storage and on Disk Health leaves sda asleep", output, re.M), output
+
+
+@pytest.mark.parametrize("bug, why", [
+    # The fault of 2026-11-16: a power read that restarts the disk's timer.
+    ("power-read-restarts-timer", r"no read or write kept it awake in its last 660 s, so a command did that restarts its "
+                                  r"standby timer \(smartd, a SMART read or a power read that sends IDENTIFY\), or it has "
+                                  r"a minimum timeout of its own above 660 s  \[SD "),
+    ("scans-on-again", r"its own automatic offline data collection is on: the drive's surface scan"),
+])
+def test_the_smart_check_fails_a_disk_that_the_apps_left_alone_long_enough(nas, bug, why):
+    # Immich wrote during the first wait only: the disk had 1650 s without a read or write, longer than it
+    # needs to sleep, so the apps do not explain that it stayed awake.
+    nas.containers.update({"immich-database": [841, 970]})
+    nas.app_io, nas.app_io_waits = {"immich-database": (2, 40)}, 1
+    nas.bugs.add(bug)
+    status, output = run_check("smart", nas)
+    assert status == 1, output
+    assert re.search(r"^FAIL  \d+\. sda sleeps once the timeout ran out: it is active after 1980 s; meanwhile the kernel "
+                     rf"counted 2 reads and 40 writes on it: {why}", output, re.M), output
+    assert (nas.spindown, nas.rules) == (0, None)
+
+
+def test_the_smart_check_fails_a_power_read_that_never_answers_while_apps_write(nas):
+    # Only a disk that the Storage page shows awake can be one that the apps keep awake.
+    nas.containers.update({"immich-database": [841, 970]})
+    nas.app_io = {"immich-database": (2, 40)}
+    nas.bugs.add("power-unknown")
+    status, output = run_check("smart", nas)
+    assert status == 1, output
+    assert re.search(r"^FAIL  \d+\. sda sleeps once the timeout ran out: it is unknown after 1980 s; meanwhile the kernel "
+                     r"counted 12 reads and 240 writes on it: something reads or writes it \(an app or a share on the "
+                     r"pool\?\)  \[SD ", output, re.M), output
+
+
+def test_the_smart_check_fails_a_smart_read_that_fails_while_an_app_wakes_the_disk(nas):
+    # An answer of the API that fails is a FAIL, whatever the apps did meanwhile (ADR-0304).
+    nas.containers.update({"immich-database": [841, 970]})
+    original, reads = nas.request, []
+
+    def request(method, path, json_body=None, params=None, auth=True, upload=None):
+        if (method, path) == ("GET", f"/health/disk/{DISK}"):
+            reads.append(path)
+            if len(reads) == 2:  # the SMART reads of the sleeping disk, after Storage's
+                nas.container_uses_disk("immich-database", 0, 1)
+                nas.fail_at = len(nas.calls)
+        return original(method, path, json_body=json_body, params=params, auth=auth, upload=upload)
+
+    nas.request = request
+    status, output = run_check("smart", nas)
+    assert status == 1, output
+    assert re.search(r"^FAIL  \d+\. its SMART data on Storage and on Disk Health leaves sda asleep: GET /health/disk/sda "
+                     r"answered HTTP 500: injected failure \(expected 200\)  \[SD ", output, re.M), output
+    assert (nas.spindown, nas.rules) == (0, None)
+
+
+def test_the_smart_check_counts_no_container_whose_reading_at_the_window_s_start_failed(nas):
+    # docker inspect did not answer for Immich's database at the reading that starts the last 660 s: its
+    # count since its start is no use of the wait, and UNOS's own writes fail the step.
+    nas.containers.update({"immich-database": [841, 970]})
+    nas.app_io = {"unos-supervisor": (0, 4)}
+    nas.inspect_fails = {scenario.SPINDOWN_ROUNDS - scenario.SPINDOWN_QUIET_ROUNDS: {"immich-database"}}
+    status, output = run_check("smart", nas)
+    assert status == 1, output
+    assert re.search(r"^FAIL  \d+\. sda sleeps once the timeout ran out: it is active after 1980 s; meanwhile the kernel "
+                     r"counted 0 reads and 24 writes on it: something reads or writes it \(an app or a share on the "
+                     r"pool\?\); in its last 660 s UNOS's own containers read or wrote it: unos-supervisor 0 reads and "
+                     r"8 writes; the reads and writes on it of the containers immich-database could not be read \(no "
+                     r"answer, no process, or no io\.stat of cgroup v2\)  \[SD ", output, re.M), output
+
+
+def test_the_smart_check_names_a_pass_of_the_smart_monitor_after_the_apps_went_quiet(nas):
+    # The apps wrote until 990 s; the hourly SMART monitor then read the awake disk, used since its last
+    # read, 500 s later, which restarts its timer (ADR-0378): it would sleep 600 s after that, past the wait.
+    # The check cannot tell that from a fault that restarts the timer, which a SKIP would hide: it fails,
+    # and says that the monitor may have done it.
+    nas.containers.update({"immich-database": [841, 970]})
+    nas.app_io, nas.app_io_waits = {"immich-database": (2, 40)}, 3
+    nas.smart_monitor_read = 500
+    status, output = run_check("smart", nas)
+    assert status == 1, output
+    assert re.search(r"^FAIL  \d+\. sda sleeps once the timeout ran out: it is active after 1980 s; meanwhile the kernel "
+                     r"counted 6 reads and 120 writes on it: no read or write kept it awake in its last 660 s, so a "
+                     r"command did that restarts its standby timer \(smartd, a SMART read or a power read that sends "
+                     r"IDENTIFY\), or it has a minimum timeout of its own above 660 s; the containers of apps read or "
+                     r"wrote it in the 660 s before \(immich-database 2 reads and 40 writes\), and a pass of the hourly "
+                     r"SMART monitor that read it after them restarts its timer once \(ADR-0378\): if the check passes "
+                     r"when run again, that was it  \[SD ", output, re.M), output
+    assert nas.smart_monitor_read is None  # it did read the disk
+
+
+def test_the_smart_check_counts_an_app_that_woke_the_disk_before_the_last_power_read(nas):
+    # The disk, with a minimum of 1900 s, would be asleep at the last power read, but Immich's database
+    # wrote to it just before, after the round's reading: a reading after that power read shows it.
+    nas.minimum = 1900
+    nas.containers.update({"immich-database": [841, 970]})
+    original, woke = nas.power, []
+
+    def power():
+        if nas.seconds == scenario.SPINDOWN_ROUNDS * (scenario.SPINDOWN_SHORTEST * 60 + scenario.SPINDOWN_SETTLE) and not woke:
+            woke.append(True)
+            nas.container_uses_disk("immich-database", 0, 1)
+        return original()
+
+    nas.power = power
+    status, output = run_check("smart", nas)
+    assert status == 0, output
+    assert re.search(r"^SKIP  \d+\. sda sleeps once the timeout ran out: it is active after 1980 s; meanwhile the kernel "
+                     r"counted 0 reads and 1 writes on it, and in its last 660 s the containers of apps read or wrote "
+                     r"it: immich-database 0 reads and 1 writes: ", output, re.M), output
+
+
+@pytest.mark.parametrize("container, outcome", [
+    ("immich-database", "SKIP"),
+    # UNOS's own container woke it: no app explains that.
+    ("unos-supervisor", "FAIL"),
+])
+def test_the_smart_check_skips_the_reads_of_a_sleeping_disk_that_an_app_woke(nas, container, outcome):
+    nas.containers.update({"immich-database": [841, 970]})
+    nas.app_io_at_smart_read = (container, (0, 1))
+    status, output = run_check("smart", nas)
+    assert status == (0 if outcome == "SKIP" else 1), output
+    assert re.search(r"^PASS  \d+\. sda sleeps once the timeout ran out", output, re.M), output
+    failed = (r"its SMART data on Storage and on Disk Health leaves sda asleep: Storage's SMART data: power active, "
+              r"healthy True")
+    if outcome == "SKIP":
+        assert re.search(rf"^SKIP  \d+\. {failed}; since the wait's last power read the kernel counted reads or writes "
+                         r"on it, and the containers of apps read or wrote it: immich-database 0 reads and 1 writes: one "
+                         r"may have woken it; apps with data on the pool keep its disk awake \(ADR-0381\), so the check "
+                         r"cannot see whether UNOS lets it sleep; stop them for this step \(ADR-0394\)  \[SD ", output,
+                         re.M), output
+        assert re.search(r"^PASS  \d+\. sda has no idle timeout again", output, re.M), output
+    else:
+        assert re.search(rf"^FAIL  \d+\. {failed}; since the wait's last power read UNOS's own containers read or wrote "
+                         r"it: unos-supervisor 0 reads and 1 writes  \[SD ", output, re.M), output
+    assert (nas.spindown, nas.rules) == (0, None)
+
+
+def test_the_smart_check_counts_a_container_started_again_from_its_new_cgroup(nas):
+    # A container started again during the wait has a new cgroup, whose counts start at 0: what it counts
+    # then is its use since, not a negative difference.
+    nas.containers.update({"immich-database": [841, 970]})
+    nas.app_io = {"immich-database": (2, 40)}
+    original, waits = nas.wait, []
+
+    def restarted(seconds):
+        waits.append(seconds)
+        if len(waits) == scenario.SPINDOWN_ROUNDS:
+            nas.containers["immich-database"] = [0, 0]
+        original(seconds)
+
+    nas.wait = restarted
+    status, output = run_check("smart", nas)
+    assert status == 0, output
+    assert "in its last 660 s the containers of apps read or wrote it: immich-database 2 reads and 40 writes:" in output
+
+
+def test_the_container_io_helper_reads_each_container_s_cgroup(tmp_path):
+    """REMOTE_CONTAINER_IO, run here on stand-ins of sysfs, procfs and docker: each running container's
+    line of the disk in its cgroup's io.stat (cgroup v2), found through its first process, an empty
+    one when it sent the disk nothing, and - when its io.stat cannot be read; only a whole disk's name
+    of sysfs is taken, and docker only lists and inspects (no new container, ADR-0183)."""
+    sys_root, proc = tmp_path / "sys", tmp_path / "proc"
+    (sys_root / "block/sda").mkdir(parents=True)
+    (sys_root / "block/sda/dev").write_text("8:0\n")
+    groups = {101: "/system.slice/docker-aaa.scope", 102: "/system.slice/docker-bbb.scope"}
+    for pid, group in groups.items():
+        (proc / str(pid)).mkdir(parents=True)
+        (proc / str(pid) / "cgroup").write_text(f"0::{group}\n")
+        (sys_root / f"fs/cgroup{group}").mkdir(parents=True)
+    (sys_root / f"fs/cgroup{groups[101]}/io.stat").write_text(
+        "179:0 rbytes=4096 wbytes=0 rios=1 wios=0 dbytes=0 dios=0\n"
+        "8:0 rbytes=57344 wbytes=2244608 rios=4 wios=111 dbytes=0 dios=0\n"
+        "8:16 rbytes=1 wbytes=1 rios=9 wios=9 dbytes=0 dios=0\n")
+    (sys_root / f"fs/cgroup{groups[102]}/io.stat").write_text("179:0 rbytes=4096 wbytes=0 rios=1 wios=0 dbytes=0 dios=0\n")
+    stubs = tmp_path / "bin"
+    stubs.mkdir()
+    (stubs / "docker").write_text(
+        "#!/usr/bin/env bash\n"
+        f'echo "$*" >> "{tmp_path}/docker.log"\n'
+        'case $1:${4:-} in\n'
+        '    ps:*) printf "aaa immich-redis\\nbbb unos-webui\\nccc restarting\\nddd gone\\n" ;;\n'
+        '    inspect:aaa) echo 101 ;;\n'
+        '    inspect:bbb) echo 102 ;;\n'
+        '    inspect:ccc) echo 0 ;;\n'
+        '    *) echo "Error: No such object: $4" >&2; exit 1 ;;\n'
+        'esac\n')
+    (stubs / "docker").chmod(0o755)
+    (stubs / "timeout").write_text(f'#!/usr/bin/env bash\necho "$1" >> "{tmp_path}/timeout.log"\nshift\nexec "$@"\n')
+    (stubs / "timeout").chmod(0o755)
+    env = {"PATH": f"{stubs}:/usr/bin:/bin"}
+
+    def run(*args: str) -> subprocess.CompletedProcess:
+        payload = scenario.Device.payload(scenario.REMOTE_CONTAINER_IO, read_only=False)
+        return subprocess.run(["bash", "-s", "--", *args, str(sys_root), str(proc)], input=payload, env=env,
+                              capture_output=True, text=True)
+
+    found = run("sda")
+    assert found.returncode == 0, found.stderr
+    # restarting runs no process; gone ended between ps and inspect: neither has a count, under its name.
+    assert scenario.container_io_counts(found.stdout) == {"immich-redis": (4, 111), "unos-webui": (0, 0),
+                                                          "restarting": None, "gone": None}
+    assert (tmp_path / "docker.log").read_text().splitlines() == [
+        "ps --no-trunc --format {{.ID}} {{.Names}}",
+        *(f"inspect -f {{{{.State.Pid}}}} {i}" for i in ("aaa", "bbb", "ccc", "ddd"))]
+    assert (tmp_path / "timeout.log").read_text().split() == ["30", "10", "10", "10", "10"]
+    for name in ("sda; true", "../sda", "sdb"):
+        assert run(name).returncode == 2, name
+
+
+def test_the_container_io_helper_lists_nothing_without_containers(tmp_path):
+    (tmp_path / "sys/block/sda").mkdir(parents=True)
+    (tmp_path / "sys/block/sda/dev").write_text("8:0\n")
+    stubs = tmp_path / "bin"
+    stubs.mkdir()
+    (stubs / "docker").write_text("#!/usr/bin/env bash\n[ \"$1\" = ps ] || exit 9\n")
+    (stubs / "docker").chmod(0o755)
+    (stubs / "timeout").write_text('#!/usr/bin/env bash\nshift\nexec "$@"\n')
+    (stubs / "timeout").chmod(0o755)
+    payload = scenario.Device.payload(scenario.REMOTE_CONTAINER_IO, read_only=False)
+    found = subprocess.run(["bash", "-s", "--", "sda", str(tmp_path / "sys"), str(tmp_path / "proc")], input=payload,
+                           env={"PATH": f"{stubs}:/usr/bin:/bin"}, capture_output=True, text=True)
+    assert (found.returncode, found.stdout) == (0, ""), found.stderr
+
+
+def test_the_smart_check_takes_unos_s_own_containers_as_the_supervisor_does():
+    from src.containers import docker
+
+    names = re.findall(r"^\s*container_name:\s*(\S+)\s*$", (REPO_ROOT / "deploy/docker-compose.yml").read_text(), re.M)
+    assert sorted(names) == ["unos-supervisor", "unos-webui"]
+    test_names = re.findall(r"^\s*container_name:\s*(\S+)\s*$", (REPO_ROOT / "deploy/docker-compose.test.yml").read_text(),
+                            re.M)
+    for name in [*names, *test_names, "immich", "immich-database", "transmission", "unos", "my-unos-app"]:
+        assert scenario.is_unos_container(name) == docker.is_system_container(name), name
 
 
 def test_the_smart_check_shows_that_the_system_disk_gets_no_idle_timeout(nas):
