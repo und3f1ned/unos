@@ -16,6 +16,7 @@
   } from "$lib/api/power";
   import { Alert, Badge, Button, Card, EmptyState, Modal } from "$lib/components/ui";
   import { intlLocale, t } from "$lib/i18n";
+  import { paletteRequest, type PaletteDialog, type PaletteRequest } from "$lib/stores/palette";
 
   // Reboot, shutdown, suspend and Wake-on-LAN act on the host (ADR-0233):
   // reboot and shutdown one minute after the confirmation, so that they can
@@ -100,6 +101,18 @@
   function ask(action: Action) {
     asking = action;
     confirmError = "";
+  }
+
+  // The command palette's Reboot, Shut down and Suspend open their confirmation here, which acts
+  // only once confirmed (ADR-0393). A function, so that the statement depends on the request alone.
+  const REQUESTED: Partial<Record<PaletteDialog, Action>> = { reboot: "reboot", shutdown: "shutdown", suspend: "suspend" };
+  $: openRequested($paletteRequest);
+
+  function openRequested(request: PaletteRequest | null) {
+    const action = request ? REQUESTED[request.dialog] : undefined;
+    if (!action) return;
+    paletteRequest.set(null);
+    if (!busy) ask(action);
   }
 
   function closeConfirm() {

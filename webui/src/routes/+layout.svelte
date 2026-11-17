@@ -16,6 +16,7 @@
 	} from '$lib/stores/auth';
 	import { connectWebSocket, disconnectWebSocket } from '$lib/stores/stats';
 	import ProblemsBanner from '$lib/components/ProblemsBanner.svelte';
+	import CommandPalette from '$lib/components/palette/CommandPalette.svelte';
 	import {
 		ApiError,
 		getToken,
@@ -42,6 +43,7 @@
 		UserCog,
 		ScrollText,
 		Menu,
+		Search,
 		X
 	} from 'lucide-svelte';
 
@@ -87,6 +89,10 @@
 		$navigating && !$navigating.willUnload ? ($navigating.to?.url.pathname ?? null) : null;
 	$: showSlot = nextPath === null || gateFor(nextPath, $user) === gate;
 	$: if (mounted) guardRoute(pathname, $user);
+	// The command palette (ADR-0393) is a signed-in page's, as the navigation is: not the sign-in
+	// and first-run pages', nor that of an account that can only set up two-factor authentication.
+	let commandPalette: CommandPalette;
+	$: paletteEnabled = gate === 'allowed' && $user !== null && !setupOnly;
 
 	function gateFor(path: string, currentUser: User | null): Gate {
 		if (isPublicRoute(path)) return 'public';
@@ -215,8 +221,10 @@
 	}
 
 	function handleMenuKeydown(event: KeyboardEvent) {
-		// A key that an open dialog has used (Modal marks its Escape) is not the menu's.
-		if (!menuOpen || event.key !== 'Escape' || event.defaultPrevented) return;
+		// A key that an open dialog has used (Modal marks its Escape) is not the menu's, nor is one
+		// while a dialog is open over the drawer, such as the command palette (ADR-0393), whose
+		// listener can come after this one.
+		if (!menuOpen || event.key !== 'Escape' || event.defaultPrevented || overDialog()) return;
 		event.preventDefault();
 		closeMenu(true);
 	}
@@ -231,15 +239,23 @@
 		// replaced by the time the click reaches the window.
 		const path = event.composedPath();
 		if (path.includes(sidebar) || (menuButton && path.includes(menuButton))) return;
+		// A click in a dialog over the drawer, the command palette's (ADR-0393), is the dialog's.
+		if (path.some((target) => target instanceof Element && target.getAttribute('aria-modal') === 'true')) return;
 		closeMenu(true);
 	}
 
-	// Tabbing out of the drawer closes it, so that it never covers the element with the focus.
+	// Tabbing out of the drawer closes it, so that it never covers the element with the focus. A
+	// dialog that opens over it, the command palette's (ADR-0393), covers the drawer instead: the
+	// drawer stays, and the focus comes back to it when the dialog closes.
 	function handleSidebarFocusOut(event: FocusEvent) {
 		const next = event.relatedTarget;
-		if (!menuOpen || !(next instanceof Node)) return;
-		if (sidebar.contains(next) || menuButton?.contains(next)) return;
+		if (!menuOpen || !(next instanceof Element)) return;
+		if (sidebar.contains(next) || menuButton?.contains(next) || next.closest('[aria-modal="true"]')) return;
 		closeMenu(false);
+	}
+
+	function overDialog(): boolean {
+		return document.querySelector('[aria-modal="true"]') !== null;
 	}
 
 	// Also after Back and Forward, which change the page without a link of the menu.
@@ -265,7 +281,7 @@
 	<div class="flex flex-col md:flex-row h-dvh bg-surface">
 		<!-- Sidebar. Below md its logo row is the header bar, with the menu button, and the rest of
 		     it is the drawer that the button opens over the page (ADR-0302). -->
-		<aside class="shrink-0 md:w-56 bg-surface-elevated flex flex-col md:border-r border-border">
+		<aside class="relative shrink-0 md:w-56 bg-surface-elevated flex flex-col md:border-r border-border">
 			<!-- Logo -->
 			<div class="flex items-center gap-2 h-14 px-2 md:h-auto md:p-4 border-b border-border">
 				{#if $narrow}
@@ -353,6 +369,26 @@
 					{/if}
 				</div>
 			</div>
+
+			<!-- A phone has no Ctrl+K: this button of the header bar opens the command palette there
+			     (ADR-0393). It comes after the drawer, so that the links follow the menu button in the
+			     tab order, and sits at the right end of the bar. -->
+			{#if $narrow && paletteEnabled}
+				<div class="absolute top-0 right-0 h-14 flex items-center px-2">
+					<button
+						type="button"
+						class="btn btn-ghost btn-icon"
+						aria-label={$t('palette.open')}
+						on:click={() => {
+							// The drawer closes first: else its click outside would take the focus back.
+							menuOpen = false;
+							commandPalette.show();
+						}}
+					>
+						<Search class="w-5 h-5" />
+					</button>
+				</div>
+			{/if}
 		</aside>
 
 		<!-- Main content -->
@@ -373,4 +409,10 @@
 			{/if}
 		</main>
 	</div>
+	<CommandPalette
+		bind:this={commandPalette}
+		enabled={paletteEnabled}
+		admin={$user?.is_admin === true}
+		on:logout={handleLogout}
+	/>
 {/if}

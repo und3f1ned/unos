@@ -398,6 +398,7 @@ and this index, and `make check-fast` runs it.
 | [0361](0361-open-dialogs-form-a-stack-whose-top-one-alone-answers-escape.md) | Open dialogs form a stack whose top one alone answers Escape, and the focus moves into a dialog and back to its opener | accepted | 2026-11-12 |
 | [0365](0365-a-check-of-webui-src-fails-for-a-setinterval-that-reaches-the-api.md) | A check of webui/src fails for a setInterval whose callback reaches the API | accepted | 2026-11-12 |
 | [0389](0389-several-containers-act-one-after-another-through-their-own-endpoints-and-several-shares-are-deleted-with-one-apply.md) | Several containers act one after another through their own endpoints, and several shares are deleted with one request and one apply | accepted | 2026-11-17 |
+| [0393](0393-ctrl-k-opens-a-command-palette-that-runs-only-actions-that-change-nothing-on-the-nas.md) | Ctrl+K opens a command palette of the pages and actions of the user's role, which runs only actions that change nothing on the NAS | accepted | 2026-11-17 |
 
 ## Deploy
 

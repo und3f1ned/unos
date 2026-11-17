@@ -1547,6 +1547,22 @@ const VIEWS: View[] = [
       page.getByRole('heading', { name: /^(Disable Two-Factor Authentication|Выключение двухфакторной аутентификации)$/ }),
     end: (page) => page.getByRole('button', { name: /^(Disable 2FA|Выключить 2FA)$/ }),
   },
+  {
+    // The command palette, which the button of the header bar opens on a phone (ADR-0393), with
+    // every page and action of an administrator: its list scrolls on its own to its last option.
+    name: 'Dialog: the command palette',
+    path: '/',
+    fake: async (page) => {
+      await fakeStorageApi(page);
+      await fakeHealthApi(page, { predictions: () => predictionsAnswer(REPLACE_SOON, HEALTHY_HDD_2) });
+      await serve(page, { ...DOCKER, '/api/v1/system/info': SYSTEM_INFO });
+    },
+    open: (page) =>
+      page.getByRole('button', { name: /^(Open the command palette|Открыть палитру команд)$/ }).click(),
+    shows: (page) => page.getByRole('dialog').getByRole('option').first(),
+    start: dialogTitle,
+    end: (page) => page.getByRole('dialog').getByRole('option').last(),
+  },
 ];
 
 /**
@@ -1783,8 +1799,10 @@ test.describe('From the md breakpoint up', () => {
   test.use({ viewport: { width: 768, height: 1024 } });
 
   test('the sidebar stays beside the page, without the header bar', async ({ authenticatedPage: page }) => {
-    // Not even hidden: the page's first button is Logout, as before.
+    // Not even hidden: the page's first button is Logout, as before, and the button of the command
+    // palette is the phone's alone (ADR-0393).
     await expect(menuButton(page)).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Open the command palette' })).toHaveCount(0);
     await expect(page.locator('button').first()).toBeVisible();
     await expect(navLink(page, '/storage')).toBeVisible();
     await expect(page.locator('aside').getByText('Administrator', { exact: true })).toBeVisible();

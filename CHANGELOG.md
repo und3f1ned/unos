@@ -425,6 +425,17 @@ manager, encrypted backup uploads, health checks, CI checks).
   `GET` and `PUT /api/v1/shares/smb-interfaces` and
   `POST /api/v1/shares/smb-interfaces/restart`; the audit log records
   `smb_interfaces_changed` and `smb_restarted`.
+- A command palette (ADR-0393): Ctrl+K, or Cmd+K on macOS, opens it over a
+  signed-in page, and on a phone the search button of the bar at the top.
+  Typing narrows its pages and actions by their English or Russian names,
+  ↓ and ↑ choose, and Enter or a click opens the chosen one. It offers what
+  the account's role may open: an administrator every page, the **Trash** and
+  every tab of **System**; a regular user **Dashboard** and **Account**. It
+  switches the language and logs out itself; **Add a user…**, **Reboot the
+  host…**, **Shut down the host…** and **Suspend the host…** open the
+  **Users** page's dialog and **Power Management**'s confirmations, which act
+  only once confirmed. It does not open over a dialog, Escape closes only it,
+  and it asks the server for nothing.
 - Groups of users (ADR-0385). The **Users** page has a **Groups** card: make
   a group, choose its members (users who are not administrators), rename it
   or delete it. On the **Shares** page a share's access list gives each group

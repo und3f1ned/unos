@@ -17,6 +17,7 @@
 	import { getGroups } from '$lib/api/groups';
 	import { getSmbShares } from '$lib/api/shares';
 	import { user as currentUser } from '$lib/stores/auth';
+	import { paletteRequest, type PaletteRequest } from '$lib/stores/palette';
 	import { Edit, LogOut, Shield, ShieldOff, Trash2, UserPlus, Users } from 'lucide-svelte';
 	import { Alert, Badge, Button, Card, Input, Modal } from '$lib/components/ui';
 	import { SmbStateBadge } from '$lib/components/shares';
@@ -128,6 +129,16 @@
 		newSmb = false;
 		createError = '';
 		createOpen = true;
+	}
+
+	// The command palette's Add a user opens this dialog, which adds the user only once it is
+	// submitted (ADR-0393). A function, so that the statement depends on the request alone.
+	$: openRequested($paletteRequest);
+
+	function openRequested(request: PaletteRequest | null) {
+		if (request?.dialog !== 'add-user') return;
+		paletteRequest.set(null);
+		if (!createOpen) openCreate();
 	}
 
 	function closeCreate() {

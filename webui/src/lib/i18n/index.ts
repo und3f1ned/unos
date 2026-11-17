@@ -89,3 +89,11 @@ if (typeof document !== 'undefined') {
 		document.documentElement.lang = $locale;
 	});
 }
+
+/**
+ * The text of key in `language`, whatever the language of the page: the command palette finds a
+ * page or an action by its name in either language (ADR-0393).
+ */
+export function translateIn(language: Locale, key: string, params?: Params): string {
+	return translate(catalogs, language, key, params);
+}
