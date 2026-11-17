@@ -11,8 +11,9 @@ and Docker lacks makes the app incomplete (``missing``): it does not start, and 
 removes the rest.
 
 One change of an app runs at a time: an install, a start, a stop, a restart or an uninstall of
-an app that another one is changing answers 409. The supervisor runs one process (no uvicorn
-workers), so a lock of the process is enough.
+an app that another one is changing answers 409; an install job holds the lock from its request
+to its end (ADR-0383). The supervisor runs one process (no uvicorn workers), so a lock of the
+process is enough.
 """
 
 from __future__ import annotations
@@ -20,7 +21,7 @@ from __future__ import annotations
 import contextlib
 import threading
 import time
-from collections.abc import Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -92,14 +93,21 @@ _locks: dict[str, threading.Lock] = {}
 _locks_guard = threading.Lock()
 
 
-@contextlib.contextmanager
-def app_lock(key: str, name: str) -> Iterator[None]:
-    """Hold the lock of the app ``key`` (its template id, or the name of an app's container
-    that no template names) for one change; 409 naming the app ``name`` while another holds it."""
+def acquire(key: str, name: str) -> threading.Lock:
+    """Take the lock of the app ``key`` (its template id, or the name of an app's container that
+    no template names) and return it, for its holder to release, also from another thread (an
+    install job, ADR-0383); 409 naming the app ``name`` while another holds it."""
     with _locks_guard:
         lock = _locks.setdefault(key, threading.Lock())
     if not lock.acquire(blocking=False):
         raise HTTPException(409, f"Another change of {name} is under way; try again when it has finished")
+    return lock
+
+
+@contextlib.contextmanager
+def app_lock(key: str, name: str) -> Iterator[None]:
+    """Hold the lock of the app ``key`` for one change (``acquire``)."""
+    lock = acquire(key, name)
     try:
         yield
     finally:
@@ -254,13 +262,16 @@ def _last_health_output(container: Any) -> str:
     return text[:HEALTH_OUTPUT_CHARS]
 
 
-def wait_ready(container: Any, *, started_now: bool) -> None:
+def wait_ready(container: Any, *, started_now: bool, check: Callable[[], None] | None = None) -> None:
     """Wait until ``container`` is ready for the containers that depend on it: healthy when it has
     a health check, otherwise running and not restarting (for POLL_SECONDS after a start that this
     change made). NotReady at once for one that exited, died or is unhealthy, and when it is not
-    ready within DEPENDENCY_READY_SECONDS. Its errors are Docker's (DOCKER_ERRORS)."""
+    ready within DEPENDENCY_READY_SECONDS. Its errors are Docker's (DOCKER_ERRORS). ``check`` is
+    called before each look at the container: an install job's stop (ADR-0383)."""
     began = time.monotonic()
     while True:
+        if check is not None:
+            check()
         container.reload()
         state = _state(container)
         status = health(container)

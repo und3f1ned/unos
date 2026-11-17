@@ -1,8 +1,9 @@
 import type { Page, Route } from '@playwright/test';
 import { test, expect } from './fixtures';
 import {
+  answerInstall,
   catalogCard as card,
-  installAnswer,
+  fakeInstallEvents,
   installedImmich,
   NPU_LINK,
   onAnRk3588,
@@ -68,15 +69,17 @@ async function installedJellyfin(page: Page, devices: string[], answered: Promis
 
 /** An install of Jellyfin whose container gets ``devices``. */
 async function installsJellyfin(page: Page, devices: string[]) {
-  await installs(page, jellyfinApp(devices));
+  await installs(page, 'Jellyfin', jellyfinApp(devices));
 }
 
 /**
- * An install on the pool data that makes ``app``, as POST /api/v1/apps/install answers it, with
- * the installed list before and after it.
+ * An install on the pool data that makes ``app``, named ``name``: POST /api/v1/apps/install answers
+ * its job, which the fake events socket ends with the app installed (ADR-0383), with the installed
+ * list before and after it.
  */
-async function installs(page: Page, app: FakeInstalledApp) {
+async function installs(page: Page, name: string, app: FakeInstalledApp) {
   const installed: FakeInstalledApp[] = [];
+  const events = await fakeInstallEvents(page);
   await page.route(
     (url: URL) => url.pathname === '/api/v1/apps/pools',
     (route: Route) => route.fulfill({ json: [POOL] }),
@@ -87,10 +90,7 @@ async function installs(page: Page, app: FakeInstalledApp) {
   );
   await page.route(
     (url: URL) => url.pathname === '/api/v1/apps/install',
-    (route: Route) => {
-      installed.push(app);
-      return route.fulfill({ json: installAnswer(app) });
-    },
+    (route: Route) => answerInstall(route, events, name, app, installed),
   );
 }
 
@@ -249,7 +249,7 @@ test.describe('Hardware acceleration of the host SoC', () => {
     authenticatedPage: page,
   }) => {
     await onAnRk3588(page);
-    await installs(page, immichApp(['/dev/dri']));
+    await installs(page, 'Immich', immichApp(['/dev/dri']));
     await page.goto('/apps');
 
     const dialog = await details(page, 'Immich');

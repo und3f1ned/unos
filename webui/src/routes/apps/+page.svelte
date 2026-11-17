@@ -7,10 +7,11 @@
 		startApp,
 		stopApp,
 		restartApp,
+		dismissInstallJob,
 		allProfiles,
 		missingHardware,
 		type AppTemplate,
-		type AppInstallResponse,
+		type AppInstallJob,
 		type InstalledApp
 	} from '$lib/api/apps';
 	import {
@@ -39,8 +40,9 @@
 		Cpu
 	} from 'lucide-svelte';
 	import { Button, Card, Badge, Alert, EmptyState } from '$lib/components/ui';
-	import { AppCategory, AppDetailModal, AppStorageWarning } from '$lib/components/apps';
+	import { AppCategory, AppDetailModal, AppInstallJobs, AppStorageWarning } from '$lib/components/apps';
 	import { t } from '$lib/i18n';
+	import { appInstalls } from '$lib/stores/appInstalls';
 
 	let catalog: AppTemplate[] = [];
 	let installed: InstalledApp[] = [];
@@ -54,12 +56,6 @@
 	let catalogError = '';
 	let installedError = '';
 	let error = '';
-	let notice = '';
-	// What an install's notice adds when a container of the app did not get the hardware of this
-	// host's SoC that the details named (ADR-0382): the notice is then a warning.
-	let noticeWarning = '';
-	// What it adds for an app whose first account to register becomes its administrator.
-	let noticeAdmin = '';
 	$: loading = catalogState === 'loading' || installedState === 'loading';
 	let searchQuery = '';
 	let selectedCategory = '';
@@ -88,9 +84,33 @@
 	// The group of the apps that are given share folders (ADR-0274): a name, the same in every language.
 	const UNOS_SMB = 'unos-smb';
 
-	// The apps whose first account to register becomes their administrator: the notice of their
-	// install asks to create it at once, before anyone else on the network can.
-	const FIRST_ADMIN: ReadonlySet<string> = new Set(['immich']);
+	// The installs that ended, as the events socket said them (ADR-0383): when another one ends,
+	// the installed apps are read again. Those already in the store when the page is made count as
+	// seen, since the page's first load reads the apps they made; after a reload the store is
+	// empty, and the socket's first message reads them once more.
+	const ended = new Set($appInstalls.filter((job) => job.state !== 'running').map((job) => job.id));
+	$: noteEnds($appInstalls);
+	// The app whose install runs: its card offers no Install.
+	$: installing = new Set($appInstalls.filter((job) => job.state === 'running').map((job) => job.template_id));
+
+	function noteEnds(jobs: AppInstallJob[]) {
+		let another = false;
+		for (const job of jobs) {
+			if (job.state !== 'running' && !ended.has(job.id)) {
+				ended.add(job.id);
+				another = true;
+			}
+		}
+		if (another) void loadInstalled();
+	}
+
+	async function dismiss(event: CustomEvent<AppInstallJob>) {
+		try {
+			await dismissInstallJob(event.detail.id);
+		} catch (e) {
+			error = reasonOf(e);
+		}
+	}
 
 	// Docker's health of a running app's main container: its word, and its badge.
 	const HEALTH: Record<string, { key: string; variant: 'info' | 'success' | 'error' }> = {
@@ -169,19 +189,6 @@
 	function closeDetail() {
 		showDetailModal = false;
 		selectedApp = null;
-	}
-
-	async function handleInstalled(
-		event: CustomEvent<{ app: AppTemplate; result: AppInstallResponse }>
-	) {
-		const { app, result } = event.detail;
-		notice = result.pool
-			? $t('apps.installedNoticePool', { name: app.name, pool: result.pool })
-			: $t('apps.installedNotice', { name: app.name });
-		noticeWarning =
-			missingHardware(app, result).length > 0 ? $t('apps.hardware.missing', { name: app.name }) : '';
-		noticeAdmin = FIRST_ADMIN.has(app.id) ? $t('apps.install.firstAdmin', { name: app.name }) : '';
-		await refresh();
 	}
 
 	async function handleUninstall(app: InstalledApp) {
@@ -306,25 +313,8 @@
 		<Alert variant="error">{$t('apps.installed.loadError', { error: installedError })}</Alert>
 	{/if}
 
-	{#if notice}
-		<Alert
-			variant={noticeWarning ? 'warning' : 'success'}
-			dismissible
-			on:dismiss={() => {
-				notice = '';
-				noticeWarning = '';
-				noticeAdmin = '';
-			}}
-		>
-			<p>{notice}</p>
-			{#if noticeAdmin}
-				<p class="mt-1">{noticeAdmin}</p>
-			{/if}
-			{#if noticeWarning}
-				<p class="mt-1">{noticeWarning}</p>
-			{/if}
-		</Alert>
-	{/if}
+	<!-- The installs that run in the background and the last of each app, with their ends (ADR-0383). -->
+	<AppInstallJobs jobs={$appInstalls} {catalog} on:dismiss={dismiss} />
 
 	<!-- Tabs -->
 	<div class="flex gap-1 p-1 bg-surface-elevated rounded-lg w-fit">
@@ -533,6 +523,9 @@
 												</a>
 											{/if}
 										</div>
+									{:else if installing.has(app.id)}
+										<span class="text-xs text-muted mono">{app.version || ''}</span>
+										<Badge variant="info">{$t('apps.job.state.running')}</Badge>
 									{:else}
 										<span class="text-xs text-muted mono">{app.version || ''}</span>
 										<Button variant="primary" size="sm" icon={Download}>{$t('apps.install')}</Button>
@@ -696,5 +689,4 @@
 	isInstalled={selectedApp ? isInstalled(selectedApp.id) : false}
 	installedApp={selectedApp ? (getInstalledInfo(selectedApp.id) ?? null) : null}
 	on:close={closeDetail}
-	on:installed={handleInstalled}
 />

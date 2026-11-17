@@ -6,7 +6,8 @@
   echo '{"name": "x", "path": "/mnt/pools/data/x"}' | scripts/dev/api.py POST /shares/smb -
   scripts/dev/api.py --forget-token
   some-command | scripts/dev/api.py --redact     (a filter: text with the same redaction)
-  echo '{"template_id": "x"}' | scripts/dev/api.py --timeout 3600 POST /apps/install -
+  echo '{"template_id": "x"}' | scripts/dev/api.py POST /apps/install -     (202: the install's job)
+  scripts/dev/api.py --timeout 3660 GET /apps/install/jobs/<job id> --param wait=3600
 
 PATH is relative to /api/v1. The request runs on the device itself, against
 https://127.0.0.1/api/v1 (through Caddy, like a browser's): the device's web ports do not
@@ -25,8 +26,10 @@ and signs in again only when the API refuses it. A cache that is not a regular f
 with mode 600 (a symlink, a FIFO, a file another user put in the shared /dev/shm) is never
 read: the relay signs in and replaces it, through a new file renamed over it. --forget-token
 deletes it. --no-login sends the request without a token. --timeout SECONDS is how long the
-relay waits for the API's answer (150 s by default; ssh gets 60 s more): an app's install pulls
-its images before it answers.
+relay waits for the API's answer (150 s by default; ssh gets 60 s more): an app's install
+answers at once with its job (ADR-0383), and GET /apps/install/jobs/<id> with the parameter wait
+answers once the job has ended (succeeded with its result, or failed with its error) or the
+seconds have passed, so its --timeout must exceed the wait.
 
 Output: "HTTP <status>", then the body (JSON pretty-printed) with secrets redacted: values of
 keys that name a password, token, secret, key, webhook URL or recovery codes; KEY=value text

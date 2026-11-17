@@ -209,7 +209,40 @@ export const en = {
 	'apps.size.kb': '{size} KB',
 	'apps.size.mb': '{size} MB',
 	'apps.size.gb': '{size} GB',
-	'apps.size.tb': '{size} TB'
+	'apps.size.tb': '{size} TB',
+
+	// An install that runs in the background (ADR-0383): what the details dialog says while the
+	// job checks, and why it offers no install while another runs; then the card of each job on
+	// the App Store: its name for screen readers, its title, its state, the step it reached, each
+	// image's pull (by its state, its download for screen readers, its bytes and layers) and each
+	// container (by its state), and Dismiss of a job that ended.
+	'apps.detail.checking': 'Checking the pool, the ports and the free space...',
+	'apps.detail.installRunning': 'An install of {name} is under way: install this app once it has ended.',
+	'apps.job.label': 'Install of {name}',
+	'apps.job.state.running': 'Installing',
+	'apps.job.state.succeeded': 'Installed',
+	'apps.job.state.failed': 'Failed',
+	'apps.job.step.checking': 'Checking the pool, the ports and the free space',
+	'apps.job.step.pulling': 'Downloading the images',
+	'apps.job.step.creating': 'Creating the folders and containers',
+	'apps.job.step.starting': 'Starting the containers',
+	'apps.job.images': 'Images',
+	'apps.job.containers': 'Containers',
+	'apps.job.image.waiting': 'Waiting',
+	'apps.job.image.present': 'Already on the NAS',
+	'apps.job.image.pulling': 'Downloading',
+	'apps.job.image.pulled': 'Downloaded',
+	'apps.job.image.failed': 'Failed',
+	'apps.job.download': 'Download of {image}',
+	'apps.job.bytes': '{done} of {total}',
+	'apps.job.layers': { one: '{done} of {n} layer', other: '{done} of {n} layers' },
+	'apps.job.container.waiting': 'Waiting',
+	'apps.job.container.created': 'Created',
+	'apps.job.container.starting': 'Starting',
+	'apps.job.container.running': 'Running',
+	'apps.job.container.failed': 'Failed',
+	'apps.job.container.removed': 'Removed',
+	'apps.job.dismiss': 'Dismiss'
 };
 
 export const ru: Translation<typeof en> = {
@@ -393,5 +426,33 @@ export const ru: Translation<typeof en> = {
 	'apps.size.kb': '{size} КБ',
 	'apps.size.mb': '{size} МБ',
 	'apps.size.gb': '{size} ГБ',
-	'apps.size.tb': '{size} ТБ'
+	'apps.size.tb': '{size} ТБ',
+
+	'apps.detail.checking': 'Проверка пула, портов и свободного места...',
+	'apps.detail.installRunning': 'Идёт установка приложения {name}: установите это приложение, когда она закончится.',
+	'apps.job.label': 'Установка приложения {name}',
+	'apps.job.state.running': 'Устанавливается',
+	'apps.job.state.succeeded': 'Установлено',
+	'apps.job.state.failed': 'Ошибка',
+	'apps.job.step.checking': 'Проверка пула, портов и свободного места',
+	'apps.job.step.pulling': 'Загрузка образов',
+	'apps.job.step.creating': 'Создание папок и контейнеров',
+	'apps.job.step.starting': 'Запуск контейнеров',
+	'apps.job.images': 'Образы',
+	'apps.job.containers': 'Контейнеры',
+	'apps.job.image.waiting': 'Ожидает',
+	'apps.job.image.present': 'Уже есть на NAS',
+	'apps.job.image.pulling': 'Загружается',
+	'apps.job.image.pulled': 'Загружен',
+	'apps.job.image.failed': 'Ошибка',
+	'apps.job.download': 'Загрузка образа {image}',
+	'apps.job.bytes': '{done} из {total}',
+	'apps.job.layers': { one: '{done} из {n} слоя', few: '{done} из {n} слоёв', many: '{done} из {n} слоёв' },
+	'apps.job.container.waiting': 'Ожидает',
+	'apps.job.container.created': 'Создан',
+	'apps.job.container.starting': 'Запускается',
+	'apps.job.container.running': 'Работает',
+	'apps.job.container.failed': 'Ошибка',
+	'apps.job.container.removed': 'Удалён',
+	'apps.job.dismiss': 'Скрыть'
 };

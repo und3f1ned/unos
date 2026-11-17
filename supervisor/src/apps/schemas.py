@@ -1,4 +1,6 @@
+from datetime import datetime
 from enum import Enum
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, computed_field, model_validator
 
@@ -321,3 +323,58 @@ class AppInstallResponse(BaseModel):
     health: str | None = None
     # The app's companion containers, in the order they were started.
     companions: list[CompanionContainer] = []
+
+
+class ImagePull(BaseModel):
+    """The pull of one image of an install job, as Docker's pull stream reports it (ADR-0383)."""
+    # The reference as the install pulls it: name:tag@sha256:... for a pinned image.
+    image: str
+    # waiting: not pulled yet; present: a pinned image that Docker has, not pulled; pulling;
+    # pulled; failed.
+    state: Literal["waiting", "present", "pulling", "pulled", "failed"] = "waiting"
+    # The layers that Docker named so far, and those that it has (downloaded and extracted, or
+    # already there).
+    layers: int = 0
+    layers_done: int = 0
+    # The bytes of the layers whose download size Docker reported so far, and the bytes of them
+    # downloaded.
+    bytes_total: int = 0
+    bytes_done: int = 0
+
+
+class ContainerStart(BaseModel):
+    """One container of an install job (ADR-0383)."""
+    # Docker's name, and the companion's name in the app (None: the main container).
+    name: str
+    companion: str | None = None
+    # waiting: not created yet; created; starting: asked to start, and for a companion that the
+    # main container depends on, until it is ready; running; failed: the one whose create, start
+    # or readiness failed; removed: by the clean-up of a failed install.
+    state: Literal["waiting", "created", "starting", "running", "failed", "removed"] = "waiting"
+
+
+class AppInstallJob(BaseModel):
+    """An install of an app that runs in the background (ADR-0383): its progress, then its end.
+
+    Kept in memory only: the running job and the last one of each app since the supervisor
+    started. ``step`` is the step reached: checking (the checks before any pull), pulling,
+    creating (the pool's folders, the network and the containers) and starting.
+    """
+    id: str
+    template_id: str
+    # The app's name in the catalog.
+    name: str
+    state: Literal["running", "succeeded", "failed"] = "running"
+    step: Literal["checking", "pulling", "creating", "starting"] = "checking"
+    started_at: datetime
+    finished_at: datetime | None = None
+    # Each image once, in the order of the containers that run it; listed once the checks passed.
+    images: list[ImagePull] = []
+    # In their start order: the companions, then the main container.
+    containers: list[ContainerStart] = []
+    # What the install made, once it succeeded.
+    result: AppInstallResponse | None = None
+    # Why it failed, and the HTTP status that its request would have answered (400, 404, 409,
+    # 500, 503).
+    error: str | None = None
+    error_status: int | None = None

@@ -16,6 +16,7 @@
 	} from 'lucide-svelte';
 	import { Button, Badge, Modal, Alert, Input, Select } from '$lib/components/ui';
 	import { intlLocale, t } from '$lib/i18n';
+	import { appInstalls } from '$lib/stores/appInstalls';
 	import AppCategory from './AppCategory.svelte';
 	import AppStorageWarning from './AppStorageWarning.svelte';
 	import AppHardwareHint from './AppHardwareHint.svelte';
@@ -23,8 +24,8 @@
 		type AppContainer,
 		type AppTemplate,
 		type AppPool,
+		type AppInstallJob,
 		type AppInstallRequest,
-		type AppInstallResponse,
 		type AppVolume,
 		type InstalledApp,
 		type PortMapping,
@@ -49,11 +50,22 @@
 
 	const dispatch = createEventDispatcher<{
 		close: null;
-		installed: { app: AppTemplate; result: AppInstallResponse };
+		started: { app: AppTemplate; job: AppInstallJob };
 	}>();
 
 	let installing = false;
 	let error = '';
+	// The install that this dialog started, while its job checks (ADR-0383): the dialog stays open
+	// until the checks have passed, so that a refusal (a port in use, too little space, a share's
+	// folder) shows here, where the settings can be changed; then the App Store's card follows it.
+	let pending: AppInstallJob | null = null;
+	// Counts the installs asked and the closes: an answer that comes after the dialog was closed
+	// belongs to no dialog any more.
+	let installRequest = 0;
+	$: watched = pending ? ($appInstalls.find((job) => job.id === pending?.id) ?? pending) : null;
+	$: if (watched) follow(watched);
+	// Another install that runs: one install at a time (ADR-0383).
+	$: otherInstall = $appInstalls.find((job) => job.state === 'running' && job.id !== pending?.id) ?? null;
 	let activeTab: 'overview' | 'ports' | 'volumes' | 'environment' = 'overview';
 
 	// Form state, reset whenever an app is shown
@@ -128,7 +140,8 @@
 		...(invalidPorts.length > 0 ? [$t('apps.detail.invalidPorts')] : []),
 		...(invalidVolumes.length > 0
 			? [$t('apps.detail.invalidVolumes', { paths: invalidVolumes.join(', ') })]
-			: [])
+			: []),
+		...(otherInstall ? [$t('apps.detail.installRunning', { name: otherInstall.name })] : [])
 	];
 	$: canInstall =
 		!!app &&
@@ -175,6 +188,12 @@
 	}
 
 	function handleOpenChange(isOpen: boolean) {
+		if (!isOpen && wasOpen) {
+			// Closed while its install checked: the job goes on, and the App Store's card shows it.
+			installRequest++;
+			pending = null;
+			installing = false;
+		}
 		if (isOpen && !wasOpen) {
 			selectedPoolName = '';
 			// An installed app already has its folders; no pool is chosen for it.
@@ -352,6 +371,7 @@
 
 		installing = true;
 		error = '';
+		const request = ++installRequest;
 
 		try {
 			const req: AppInstallRequest = { template_id: template.id };
@@ -366,13 +386,28 @@
 			if (Object.keys(env).length > 0) req.env_overrides = env;
 			if (template.can_run_in_unos_smb && runInUnosSmb) req.run_in_unos_smb = true;
 
-			const result = await installApp(req);
-			dispatch('installed', { app: template, result });
-			close();
+			const job = await installApp(req);
+			if (request === installRequest) pending = job;
 		} catch (e) {
+			if (request !== installRequest) return;
 			error = describeApiError(e, $t('apps.detail.installFailed'));
-		} finally {
 			installing = false;
+		}
+	}
+
+	/** The job of this dialog's install as it goes: a refusal of its checks shows here; once they
+	 * have passed, or it ended, the dialog hands it to the App Store and closes. */
+	function follow(job: AppInstallJob) {
+		if (job.state === 'failed') {
+			error = job.error || $t('apps.detail.installFailed');
+			pending = null;
+			installing = false;
+		} else if (job.state === 'succeeded' || job.step !== 'checking') {
+			const template = app;
+			pending = null;
+			installing = false;
+			if (template) dispatch('started', { app: template, job });
+			close();
 		}
 	}
 
@@ -922,6 +957,10 @@
 					<p>{blocker}</p>
 				{/each}
 			</Alert>
+		{/if}
+
+		{#if pending}
+			<Alert variant="info" class="mt-4">{$t('apps.detail.checking')}</Alert>
 		{/if}
 
 		{#if error}

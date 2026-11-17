@@ -299,8 +299,9 @@ and this index, and `make check-fast` runs it.
 | [0323](0323-the-container-and-app-routes-answer-503-with-the-reason-when-docker-does-not-answer.md) | The container and app routes answer 503 with the reason when Docker does not answer | accepted | 2026-11-10 |
 | [0327](0327-the-app-store-lists-its-catalog-when-the-installed-apps-cannot-be-loaded.md) | The App Store lists its catalog when the installed apps cannot be loaded | accepted | 2026-11-10 |
 | [0377](0377-on-an-rk3588-jellyfin-gets-the-video-hardware-without-privileges-through-hardware-profiles.md) | On an RK3588 Jellyfin gets the video hardware without privileges, through the hardware profiles of the catalog | superseded by [0382](0382-hardware-profiles-apply-per-container-may-choose-its-image-and-give-immichs-machine-learning-the-rk3588-npu.md) | 2026-11-15 |
-| [0381](0381-an-app-of-several-containers-installs-through-the-docker-api-with-pinned-images-and-a-password-on-its-pool.md) | An app of several containers installs through the Docker API with pinned images and a password on its pool | accepted | 2026-11-16 |
+| [0381](0381-an-app-of-several-containers-installs-through-the-docker-api-with-pinned-images-and-a-password-on-its-pool.md) | An app of several containers installs through the Docker API with pinned images and a password on its pool | superseded by [0383](0383-an-apps-install-runs-as-a-background-job-whose-progress-the-app-store-shows.md) | 2026-11-16 |
 | [0382](0382-hardware-profiles-apply-per-container-may-choose-its-image-and-give-immichs-machine-learning-the-rk3588-npu.md) | Hardware profiles apply per container, may choose the container's image and give Immich's machine learning the RK3588's NPU | accepted | 2026-11-16 |
+| [0383](0383-an-apps-install-runs-as-a-background-job-whose-progress-the-app-store-shows.md) | An app's install runs as a background job whose progress the App Store shows | accepted | 2026-11-17 |
 
 ## Backup
 

@@ -768,6 +768,28 @@ manager, encrypted backup uploads, health checks, CI checks).
 - A status panel on the Shares page.
 
 ### Changed
+- An app's install runs in the background (ADR-0383, which supersedes the
+  one-request install of ADR-0381): `POST /api/v1/apps/install` answers 202 at
+  once with the install's job, and the checks of the pool, the folders, the
+  ports and the free space, the pulls, the creates and the starts run in the
+  job; the request itself answers only 404, 400 for a request that the
+  template refuses, and 409 while another install runs (one at a time on the
+  NAS) or the app is being changed. The job reports each image's pull as
+  Docker's pull stream says it (its layers and the bytes downloaded), each
+  container's state and the end: the install's answer, or the error with the
+  status the request would have answered. `/ws/v1/events` sends administrators
+  an `app_installs` message with the running install and the last of each app,
+  `GET /api/v1/apps/install/jobs` lists them, `GET
+  /api/v1/apps/install/jobs/{id}?wait=SECONDS` (up to 3600) answers once the
+  job has ended, and `DELETE /api/v1/apps/install/jobs/{id}` forgets an ended
+  one. The jobs are kept in memory only; a stop of UNOS stops an install at its
+  next step, leaving the containers it made (audited as a failed
+  `app_installed`). The App Store's details wait while the install checks and
+  show a refusal there; then a card above the tabs shows each image's
+  download, each container's start and the result, also after the page is
+  loaded again, until **Dismiss**. `scripts/dev/api.py` waits for an install
+  with `GET /apps/install/jobs/<id> --param wait=3600` instead of a
+  `--timeout 3600 POST`.
 - `GET /api/v1/apps/installed` lists an app once, with `health`, `missing`
   and its `companions` (name, container, status, health, image, devices), and
   each of its `volumes` names its `companion`; the install answers `health`

@@ -275,6 +275,13 @@ its name, as Immich's `database`, `redis` and `machine-learning`. It publishes n
 override; the main container starts once those it depends on are ready (ADR-0381). Avoid:
 sidecar, service.
 
+**Install job**: An app's install as it runs in the background: `POST /api/v1/apps/install`
+answers it at once, and it checks, pulls the images, creates and starts the containers and
+reports each step, each image's download and each container's state, then its result or its
+error, to the App Store over the events socket. Kept in memory only, the running one and the last
+of each app; one runs at a time (ADR-0383). Avoid: install task (a task is the Scheduler's), pull
+(one step of it).
+
 **Generated secret**: A password file that UNOS writes once, at an app's install, beside the data
 it opens on the pool (64 hexadecimal digits, root, mode 0600), binds read-only into the
 containers that read it and never shows, replaces or makes at a start; an install that finds

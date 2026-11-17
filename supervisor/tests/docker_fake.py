@@ -16,7 +16,11 @@ reload after it changed it shows the state from before, as with the real client.
 Every call is logged in order (``calls``: the call, its subject and its arguments). ``fail(call,
 subject, error)`` makes that call raise ``error`` for that subject (a container's or network's
 name, an image reference; None: any) until ``clear``. ``publish(ref, ...)`` puts an image in the
-registry that a pull reads; ``script(name, *states)`` gives the states that a container reaches,
+registry that a pull reads, with the sizes of its layers and, for a pull that fails halfway, the
+error line that Docker's pull stream then sends; ``api.pull`` streams the progress lines of
+Docker's ``POST /images/create`` (docker-py's ``stream=True, decode=True``), and the image is in
+Docker's store once the stream was read to its end; ``pull_hook(ref, line)``, when set, is called
+before each line is handed out; ``script(name, *states)`` gives the states that a container reaches,
 one at each reload after its start, the last one staying (an image with a health check is
 otherwise "starting" at its first reload and healthy from its second). ``info`` names
 ``root_dir`` as Docker's root folder.
@@ -59,6 +63,10 @@ class Image:
     volumes: tuple[str, ...] = ()
     healthcheck: bool = False
     names: set[str] = field(default_factory=set)  # the references Docker knows it by
+    # The download sizes of its layers, which a pull reports; the error line that a pull sends
+    # after its first layer instead of finishing (None: it finishes).
+    layers: tuple[int, ...] = (3000, 1000)
+    pull_error: str | None = None
 
     @property
     def id(self) -> str:
@@ -289,18 +297,6 @@ class _Images:
     def __init__(self, docker: StackDocker) -> None:
         self._docker = docker
 
-    def pull(self, repository: str, tag: str | None = None, all_tags: bool = False, **kwargs: Any) -> Image:
-        repository, image_tag = parse_repository_tag(repository)
-        tag = tag or image_tag or "latest"
-        ref = f"{repository}{'@' if tag.startswith('sha256:') else ':'}{tag}"
-        self._docker._call("images.pull", ref, repository, tag=tag)
-        image = self._docker.registry.get(ref)
-        if image is None:
-            raise APIError("404 Client Error: Not Found", explanation=f"manifest for {ref} not found: manifest unknown")
-        image.names.add(ref)
-        self._docker.images_[image.ref] = image
-        return self.get(ref)
-
     def get(self, name: str) -> Image:
         self._docker._call("images.get", name)
         image = self._docker._local_image(name)
@@ -344,6 +340,21 @@ class _Api:
     def __init__(self, docker: StackDocker) -> None:
         self._docker = docker
         self._version = API_VERSION
+
+    def pull(self, repository: str, tag: str | None = None, stream: bool = False, auth_config: dict | None = None,
+             decode: bool = False, platform: str | None = None, all_tags: bool = False) -> Any:
+        """docker-py's low-level pull: with ``stream`` and ``decode``, the progress lines of Docker's
+        pull as dicts. A reference that the registry lacks fails before the stream, as Docker's 404."""
+        repository, image_tag = parse_repository_tag(repository)
+        tag = tag or image_tag or "latest"
+        ref = f"{repository}{'@' if tag.startswith('sha256:') else ':'}{tag}"
+        self._docker._call("api.pull", ref, repository, tag=tag, stream=stream, decode=decode)
+        if not (stream and decode):
+            raise TypeError("the fake streams decoded lines only")
+        image = self._docker.registry.get(ref)
+        if image is None:
+            raise APIError("404 Client Error: Not Found", explanation=f"manifest for {ref} not found: manifest unknown")
+        return self._docker._pull_lines(ref, repository, tag, image)
 
     def create_host_config(self, **kwargs: Any) -> HostConfig:
         self._docker._call("api.create_host_config", None, **kwargs)
@@ -441,6 +452,8 @@ class StackDocker:
         self.images_: dict[str, Image] = {}
         self.registry: dict[str, Image] = {}
         self.scripts: dict[str, list[dict]] = {}
+        # Called with the reference and each line of a pull before the line is handed out.
+        self.pull_hook: Any = None
         self.ids = itertools.count(1)
         self.containers = _Containers(self)
         self.images = _Images(self)
@@ -454,9 +467,10 @@ class StackDocker:
 
     # -- set up -----------------------------------------------------------
 
-    def publish(self, ref: str, *, volumes: tuple[str, ...] = (), healthcheck: bool = False) -> Image:
+    def publish(self, ref: str, *, volumes: tuple[str, ...] = (), healthcheck: bool = False,
+                layers: tuple[int, ...] = (3000, 1000), pull_error: str | None = None) -> Image:
         """An image a pull can get: by tag and, for a pinned ``ref`` (name:tag@digest), by digest."""
-        image = Image(ref, volumes=volumes, healthcheck=healthcheck)
+        image = Image(ref, volumes=volumes, healthcheck=healthcheck, layers=layers, pull_error=pull_error)
         name_tag, _, digest = ref.partition("@")
         self.registry[name_tag] = image
         if digest:
@@ -506,6 +520,37 @@ class StackDocker:
         error = self.failures.get((call, subject)) or self.failures.get((call, None))
         if error is not None:
             raise error
+
+    def _pull_lines(self, ref: str, repository: str, tag: str, image: Image) -> Any:
+        """What Docker's pull stream sends, line by line: each layer is named, downloaded in two
+        steps of its size, extracted and complete; then the digest and the status. The image is in
+        Docker's store once the last line was read."""
+        lines: list[dict] = [{"status": f"Pulling from {repository}", "id": tag}]
+        ids = [hashlib.sha256(f"{image.ref}/{n}".encode()).hexdigest()[:12] for n in range(len(image.layers))]
+        lines += [{"status": "Pulling fs layer", "progressDetail": {}, "id": layer} for layer in ids]
+        for n, (layer, size) in enumerate(zip(ids, image.layers)):
+            lines += [
+                {"status": "Downloading", "progressDetail": {"current": size // 2, "total": size}, "id": layer},
+                {"status": "Downloading", "progressDetail": {"current": size, "total": size}, "id": layer},
+                {"status": "Download complete", "progressDetail": {}, "id": layer},
+            ]
+            if n == 0 and image.pull_error is not None:
+                lines.append({"errorDetail": {"message": image.pull_error}, "error": image.pull_error})
+                break
+            lines += [
+                {"status": "Extracting", "progressDetail": {"current": size, "total": size}, "id": layer},
+                {"status": "Pull complete", "progressDetail": {}, "id": layer},
+            ]
+        else:
+            lines += [{"status": f"Digest: {image.ref.partition('@')[2] or 'sha256:' + '0' * 64}"},
+                      {"status": f"Status: Downloaded newer image for {ref}"}]
+        for line in lines:
+            if self.pull_hook is not None:
+                self.pull_hook(ref, line)
+            yield line
+        if image.pull_error is None:
+            image.names.add(ref)
+            self.images_[image.ref] = image
 
     def _find(self, key: str) -> _Live:
         for container in self.containers_.values():

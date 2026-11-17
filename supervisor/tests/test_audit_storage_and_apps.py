@@ -42,6 +42,7 @@ from src.storage import pools
 from src.storage import router as storage_router
 
 from .audit_helpers import audit_entries
+from .test_apps import install
 from .test_containers import _container
 from .test_pool_persistence import DATA_UUID
 from .test_sign_in_full_disk import ENTRY_LOST, the_audit_log_is_full
@@ -543,17 +544,18 @@ def database(tmp_path_factory) -> Iterator[None]:
 
 class TestApps:
     def test_installing_an_app_writes_app_installed(self, admin, audit_file, docker, database, host_ports):
-        response = admin.post(f"{APPS}/install", json={"template_id": "dozzle"})
+        # The install runs as a job, which writes the entry before its end (ADR-0383).
+        response = install(admin, {"template_id": "dozzle"})
 
         assert response.status_code == 200, response.text
         assert entries(audit_file) == [entry("app_installed", "app", "dozzle", "Installed Dozzle from the catalog as dozzle")]
 
     def test_a_refused_or_failed_install_writes_nothing(self, admin, audit_file, docker, database, host_ports):
         docker.add(_container("dozzle", {}, []))
-        taken = admin.post(f"{APPS}/install", json={"template_id": "dozzle"})
-        named = admin.post(f"{APPS}/install", json={"template_id": "dozzle", "name": "logs"})
-        docker.images.pull.side_effect = APIError("pull access denied")
-        failed = admin.post(f"{APPS}/install", json={"template_id": "glances"})
+        taken = install(admin, {"template_id": "dozzle"})
+        named = install(admin, {"template_id": "dozzle", "name": "logs"})
+        docker.api.pull.side_effect = APIError("pull access denied")
+        failed = install(admin, {"template_id": "glances"})
 
         assert [r.status_code for r in (taken, named, failed)] == [409, 422, 500]
         assert entries(audit_file) == []
