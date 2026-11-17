@@ -26,7 +26,11 @@ SD writes of each check (ADR-0214). The areas:
            its line in UNOS's udev rule, its own automatic offline data collection (smartctl -c)
            off while it has the timeout, asleep once it ran out (waited for at most six times),
            its SMART data on Storage and Disk Health read while it sleeps, which leaves it asleep
-           with its I/O counters unchanged, and the timeout of UNOS's rule set again, or Off: no
+           with its I/O counters unchanged (both SKIPs, which name them, when it stays active
+           while the containers of apps, not UNOS's own, read or wrote it in the wait's last 660 s,
+           the SMART reads also when it was found awake after such a container used it:
+           ADR-0388), and
+           the timeout of UNOS's rule set again, or Off: no
            standby timer until the disk's next power cycle, with its offline data collection as
            the check found it (ADR-0378; these steps are skipped with the reason without hdparm
            on the device, when the disk has no timeout of UNOS's and /etc/hdparm.conf sets one,
@@ -336,6 +340,12 @@ SPINDOWN_SHORTEST_VALUE = 60
 NO_HDPARM = "The host has no hdparm: install the package hdparm on the host to set idle timeouts"
 SPINDOWN_SETTLE = 30
 SPINDOWN_ROUNDS = 6
+# The rounds at the end of the wait in which the apps' use of a disk still awake counts (ADR-0388): two,
+# 660 s, longer than the disk needs unused to sleep (its timeout, 300 s, or the dev device's disk's own
+# minimum of about 600 s). A read or write before them did not keep it awake to the end, but for a pass of
+# the hourly SMART monitor that read the disk after it, which restarts its timer once (ADR-0378): a FAIL
+# says so when the apps used the disk in the two rounds before.
+SPINDOWN_QUIET_ROUNDS = 2
 # The line of UNOS's udev rule that records that UNOS turned off a disk's own automatic offline data
 # collection for its timeout (src/storage/spindown.py's RECORD), and the bits of smartctl -c's JSON
 # that show it (ataprint.cpp): ata_smart_data.offline_data_collection.status.value has bit 7 while
@@ -349,6 +359,15 @@ AUTO_OFFLINE_SWITCH = 0x02
 # force_spindown_time is spindown_time also for a disk without APM, which spindown_time skips.
 HDPARM_CONF = "/etc/hdparm.conf"
 _HDPARM_CONF_TIMER = re.compile(r"(?:force_)?spindown_time\s*=|command_line\s*=.*\s-S\s*\d")
+_CGROUP_IOS = re.compile(r"\b([rw])ios=(\d+)")
+
+
+def is_unos_container(name: str) -> bool:
+    """A container of UNOS's own, by the rule of src/containers/docker.py's is_system_container
+    (unos-supervisor and unos-webui of deploy/docker-compose.yml, and every other unos-*): every other
+    running container is an app's, whose reads and writes on the pool's disk keep it awake (ADR-0381),
+    so that the smart check cannot see the disk sleep while they use it (ADR-0388)."""
+    return name.startswith("unos-")
 # The token cache in the device's RAM of the shares check's user (api.py's relay, ADR-0222).
 USER_TOKEN = "/dev/shm/unos-scenario-{}.token"
 # What REMOTE_ENTRIES repair makes in the shares check's share folder, and how Repair permissions
@@ -459,6 +478,41 @@ case $2 in never | standby) ;; *) echo "not a power mode of smartctl -n: $2" >&2
 out=$(docker exec unos-supervisor smartctl -n "$2" -i -c -j "$1")
 echo "status $?"
 printf "%s\n" "$out"'''
+
+# $1: a whole disk's name; $2, $3: the roots of sysfs and procfs (/sys and /proc; others only in the
+# tests). For each running container, by the name that docker ps gives it, "container <name> io <the
+# disk's line of its cgroup's io.stat>", which cgroup v2 keeps per device by its major:minor: rios= and
+# wios= count the reads and writes that the container's processes sent the disk since the cgroup was
+# made, at the container's start, and the line is empty when they sent it none; or "container <name> -"
+# when its count cannot be read: docker inspect gave no PID (the container ended since ps, or dockerd
+# failed or did not answer in time), it runs no process, or it has no io.stat (no cgroup v2). docker ps
+# and inspect (no new container, ADR-0183) run under the host's timeout, inspect only within 120 s of
+# the start, so that the script ends well within scenario.Device's 300 s. Reads sysfs, procfs and
+# dockerd's state, never a disk.
+REMOTE_CONTAINER_IO = r'''
+set -uo pipefail
+sys=${2:-/sys} proc=${3:-/proc}
+if ! [[ $1 =~ ^[a-z][a-z0-9]*$ ]] || ! dev=$(cat "$sys/block/$1/dev" 2> /dev/null); then
+    echo "not a whole disk: $1" >&2
+    exit 2
+fi
+listed=$(timeout 30 docker ps --no-trunc --format '{{.ID}} {{.Names}}') || exit 1
+printf "%s\n" "$listed" | while read -r id name; do
+    [ -n "$id" ] || continue
+    pid=
+    if [ "$SECONDS" -lt 120 ]; then
+        pid=$(timeout 10 docker inspect -f '{{.State.Pid}}' "$id" 2> /dev/null) || pid=
+    fi
+    group=
+    if [[ $pid =~ ^[1-9][0-9]*$ ]]; then
+        group=$(sed -n 's/^0:://p' "$proc/$pid/cgroup" 2> /dev/null)
+    fi
+    if [ -n "$group" ] && stat=$(cat "$sys/fs/cgroup$group/io.stat" 2> /dev/null); then
+        echo "container $name io $(printf "%s\n" "$stat" | grep -m 1 "^$dev " || true)"
+    else
+        echo "container $name -"
+    fi
+done'''
 
 # The disk that holds the root filesystem.
 REMOTE_SYSTEM_DISK = r'''
@@ -964,6 +1018,11 @@ class Stop(Exception):
     """Ends the steps of a check after a FAIL."""
 
 
+class Skipped(Exception):
+    """A step that what it found showed it cannot judge on the device as it is, with the reason: a SKIP
+    line, and the steps go on."""
+
+
 def b64text(text: str) -> str:
     return base64.b64encode(text.encode()).decode()
 
@@ -1288,6 +1347,11 @@ class Device:
         fields = (self.read(f"/sys/block/{name}/stat") or "").split()
         return (int(fields[0]), int(fields[4])) if len(fields) > 4 and fields[0].isdigit() and fields[4].isdigit() else None
 
+    def container_io(self, name: str) -> dict[str, tuple[int, int] | None]:
+        """The reads and writes that each running container's processes sent the whole disk NAME, as its
+        cgroup counts them (REMOTE_CONTAINER_IO, container_io_counts), by the container's name."""
+        return container_io_counts(self.run(REMOTE_CONTAINER_IO, name))
+
     def offline_collection(self, path: str, wake: bool = False) -> str:
         """The automatic offline data collection of the whole disk PATH (REMOTE_OFFLINE,
         offline_collection_state): "on", "off", "none", or "standby" for a sleeping disk, which
@@ -1584,8 +1648,13 @@ class Check:
         self.number += 1
         step = Step(text)
         self.inside += 1
+        skipped = False
         try:
             yield step
+        except Skipped as e:
+            skipped = True
+            self.skipped += 1
+            self.say(f"SKIP  {self.number}. {step.text}: {e}  [{self.sd()}]")
         except Failed as e:
             self.failed += 1
             self.say(f"FAIL  {self.number}. {step.text}: {e}  [{self.sd()}]")
@@ -1609,8 +1678,9 @@ class Check:
             raise Stop() from None
         finally:
             self.inside -= 1
-        self.passed += 1
-        self.say(f"PASS  {self.number}. {step.text}  [{self.sd()}]")
+        if not skipped:
+            self.passed += 1
+            self.say(f"PASS  {self.number}. {step.text}  [{self.sd()}]")
         if self.output_lost:  # nobody reads the results any more: clean up instead
             self.failed += 1
             raise Stop()
@@ -2101,6 +2171,45 @@ def offline_collection_state(out: str) -> str:
     raise Failed(f"smartctl -c read no offline data collection (exit status {status}): {'; '.join(said) or '-'}")
 
 
+def container_io_counts(out: str) -> dict[str, tuple[int, int] | None]:
+    """REMOTE_CONTAINER_IO's output OUT: each container's reads and writes on the disk (rios and wios of
+    its io.stat line, 0 for a line without them), by its name; None where its io.stat could not be read."""
+    found: dict[str, tuple[int, int] | None] = {}
+    for line in out.splitlines():
+        key, _, rest = line.partition(" ")
+        name, _, stat = rest.partition(" ")
+        if key != "container" or not name:
+            continue
+        if stat == "-":
+            found[name] = None
+            continue
+        counts = dict(_CGROUP_IOS.findall(stat))
+        found[name] = (int(counts.get("r", 0)), int(counts.get("w", 0)))
+    return found
+
+
+def container_io_moved(before: dict[str, tuple[int, int] | None],
+                       after: dict[str, tuple[int, int] | None]) -> dict[str, tuple[int, int]]:
+    """The reads and writes that each container sent the disk between two reads of Device.container_io,
+    BEFORE and AFTER, for those that sent any: one started meanwhile, or started again (its new cgroup
+    counts from 0, below what the old one had counted), counts from 0; one without a count in either
+    read is left out."""
+    moved = {}
+    for name, now in after.items():
+        then = before.get(name, (0, 0))
+        if now is None or then is None:
+            continue
+        if now[0] < then[0] or now[1] < then[1]:
+            then = (0, 0)
+        if now != then:
+            moved[name] = (now[0] - then[0], now[1] - then[1])
+    return moved
+
+
+def io_words(moved: dict[str, tuple[int, int]]) -> str:
+    return ", ".join(f"{name} {reads} reads and {writes} writes" for name, (reads, writes) in sorted(moved.items()))
+
+
 def hdparm_conf_timer(text: str | None) -> str | None:
     """The first line of /etc/hdparm.conf (TEXT) that sets a standby timer, for any disk, or None."""
     for line in (text or "").splitlines():
@@ -2154,6 +2263,53 @@ def spindown_steps(c: Check, disk: dict, hdparm_conf: str | None) -> None:
 
     def scans_words(state: str, rec: bool) -> str:
         return state + (", recorded in UNOS's udev rule" if rec else "")
+
+    def containers_io() -> dict[str, tuple[int, int] | None] | str:
+        """Each running container's reads and writes on the disk (Device.container_io), or why they could
+        not be read."""
+        try:
+            return c.device.container_io(name)
+        except Failed as e:
+            return str(e)
+
+    def containers_moved(then: dict | str, now: dict | str, span: str = "") -> tuple[dict, str]:
+        """What the containers of apps sent the disk between two reads of containers_io, THEN and NOW,
+        when only they did; and, for a FAIL, what else the reads showed: UNOS's own containers that used
+        the disk too (SPAN says when; then the apps do not explain it), and the counts that could not be
+        read."""
+        if isinstance(then, str) or isinstance(now, str):
+            return {}, f"; the containers' reads and writes on it could not be read: {then if isinstance(then, str) else now}"
+        moved = container_io_moved(then, now)
+        apps = {k: v for k, v in moved.items() if not is_unos_container(k)}
+        own = {k: v for k, v in moved.items() if is_unos_container(k)}
+        unread = sorted(k for k in {**then, **now} if then.get(k, (0, 0)) is None or now.get(k, (0, 0)) is None)
+        notes = (f";{span} UNOS's own containers read or wrote it: {io_words(own)}"
+                 + (f", besides the containers of apps: {io_words(apps)}" if apps else "") if own else "") + (
+            f"; the reads and writes on it of the containers {', '.join(unread)} could not be read (no answer, no "
+            "process, or no io.stat of cgroup v2)" if unread else "")
+        return ({} if own else apps), notes
+
+    # An app's container that uses the pool keeps its disk awake (ADR-0381); then the steps that need it
+    # asleep cannot judge UNOS (ADR-0388).
+    kept_awake = ("apps with data on the pool keep its disk awake (ADR-0381), so the check cannot see whether UNOS "
+                  "lets it sleep; stop them for this step (ADR-0388)")
+
+    def asleep_or_apps(asleep: object, awake: bool, why: str) -> None:
+        """For the SMART reads of the sleeping disk: ASLEEP false fails the step with WHY, unless AWAKE (the
+        answer found the disk awake, or the kernel counted a read or write on it) and, since the readings
+        taken before the wait's last power read, the kernel counted reads or writes on the disk and the
+        containers of apps did too: then an app may have woken it, and the step is a SKIP."""
+        if asleep:
+            return
+        notes = ""
+        if awake:
+            now = c.device.disk_io(name)
+            apps, notes = containers_moved(apps_end, containers_io(), " since the wait's last power read")
+            if apps and end and now and now != end:
+                raise Skipped(f"{why}; since the wait's last power read the kernel counted reads or writes on it, and "
+                              f"the containers of apps read or wrote it: {io_words(apps)}: one may have woken it; "
+                              f"{kept_awake}")
+        raise Failed(why + notes)
 
     def scans_as_found() -> None:
         """After the restore (cleanups run last first): the disk's automatic offline data collection
@@ -2235,21 +2391,37 @@ def spindown_steps(c: Check, disk: dict, hdparm_conf: str | None) -> None:
                        ": as found, turned off by UNOS, which its udev rule records" if found_recorded else
                        ": it was off already, and UNOS's udev rule records nothing")
 
+    slept = False
     with c.step(texts[3]) as s:
-        start, waited, state = c.device.disk_io(name), 0, None
+        rounds = SPINDOWN_SHORTEST * 60 + SPINDOWN_SETTLE
+        # The disk's reads and writes and the containers' on it, before the wait and after each round, read
+        # before the round's power read: what an app sends the disk after them counts for the next step.
+        readings = [(c.device.disk_io(name), containers_io())]
+        waited, state = 0, None
         for _ in range(SPINDOWN_ROUNDS):
-            c.device.wait(SPINDOWN_SHORTEST * 60 + SPINDOWN_SETTLE)
-            waited += SPINDOWN_SHORTEST * 60 + SPINDOWN_SETTLE
+            c.device.wait(rounds)
+            waited += rounds
+            readings.append((c.device.disk_io(name), containers_io()))
             state = listed().get("power_state")
             if state == "standby":
                 break
-        end = c.device.disk_io(name)
+        # The last rounds, which are longer than the disk needs unused to sleep (SPINDOWN_QUIET_ROUNDS): a
+        # read or write before them did not keep it awake to the end.
+        first = max(0, len(readings) - 1 - SPINDOWN_QUIET_ROUNDS)
+        quiet_start, apps_quiet_start = readings[first]
+        span = (len(readings) - 1 - first) * rounds
+        earlier = readings[max(0, first - SPINDOWN_QUIET_ROUNDS)]
+        if state != "standby":
+            # Also what an app sent the disk between the last reading and the last power read.
+            readings.append((c.device.disk_io(name), containers_io()))
+        start, end, apps_end = readings[0][0], readings[-1][0], readings[-1][1]
         moved = (f"{end[0] - start[0]} reads and {end[1] - start[1]} writes" if start and end
                  else "its I/O counters could not be read")
+        quiet = bool(quiet_start and end and quiet_start == end)
         # The kernel counts reads and writes, not the commands that are none (SMART, IDENTIFY), nor the
         # drive's own automatic offline data collection, which it reads awake (smartctl -n standby).
         scans = None
-        if state != "standby" and start and end and start == end:
+        if state != "standby" and quiet:
             try:
                 scans = c.device.offline_collection(path)
             except Failed:
@@ -2261,26 +2433,49 @@ def spindown_steps(c: Check, disk: dict, hdparm_conf: str | None) -> None:
         elif start and end and start == end:
             why = ("no read or write kept it awake, so a command did that restarts its standby timer (smartd, a SMART "
                    f"read or a power read that sends IDENTIFY), or it has a minimum timeout of its own above {waited} s")
+        elif quiet:
+            why = (f"no read or write kept it awake in its last {span} s, so a command did that restarts its standby timer "
+                   "(smartd, a SMART read or a power read that sends IDENTIFY), or it has a minimum timeout of its own "
+                   f"above {span} s")
+            before_quiet = containers_moved(earlier[1], apps_quiet_start)[0]
+            if before_quiet and earlier[0] and earlier[0] != quiet_start:
+                why += (f"; the containers of apps read or wrote it in the {(first - max(0, first - SPINDOWN_QUIET_ROUNDS)) * rounds} "
+                        f"s before ({io_words(before_quiet)}), and a pass of the hourly SMART monitor that read it after "
+                        "them restarts its timer once (ADR-0378): if the check passes when run again, that was it")
         else:
             why = "something reads or writes it (an app or a share on the pool?)"
+            if state != "standby":
+                # Reads and writes in the last rounds, or counters that could not be read: the containers say
+                # whose (ADR-0388).
+                apps, notes = containers_moved(apps_quiet_start, apps_end, f" in its last {span} s")
+                if apps and state == "active" and quiet_start and end:
+                    raise Skipped(f"it is active after {waited} s; meanwhile the kernel counted {moved} on it, and in its "
+                                  f"last {span} s the containers of apps read or wrote it: {io_words(apps)}: {kept_awake}")
+                why += notes
         c.expect(state == "standby", f"it is {state} after {waited} s; meanwhile the kernel counted {moved} on it: {why}")
+        slept = True
         s.text += f": the Storage page says standby after {waited} s (the timeout: {SPINDOWN_SHORTEST * 60} s)"
 
-    with c.step(texts[4]) as s:
-        before = c.device.disk_io(name)
-        storage = c.get(f"/storage/disks/{name}/smart")
-        c.expect(storage.get("power_state") == "standby" and storage.get("healthy") is None,
-                 f"Storage's SMART data: power {storage.get('power_state')}, healthy {storage.get('healthy')}")
-        one = c.get(f"/health/disk/{name}")
-        c.expect(one.get("health_status") == "STANDBY", f"Disk Health's dialog says {one.get('health_status')}")
-        health = [d for d in c.get("/health/disks")["disks"] if d.get("device") == path]
-        c.expect(health and health[0].get("health_status") == "STANDBY",
-                 f"Disk Health lists it as {[d.get('health_status') for d in health]}")
-        state = listed().get("power_state")
-        c.expect(state == "standby", f"it is {state} after the reads")
-        after = c.device.disk_io(name)
-        c.expect(before == after, f"the kernel counted reads or writes on it: {before} before, {after} after")
-        s.text += f": STANDBY, and its reads and writes stay at {after}"
+    if not slept:
+        c.skip(texts[4], f"{name} did not sleep while the containers of apps used it")
+    else:
+        with c.step(texts[4]) as s:
+            before = c.device.disk_io(name)
+            storage = c.get(f"/storage/disks/{name}/smart")
+            power, healthy = storage.get("power_state"), storage.get("healthy")
+            asleep_or_apps(power == "standby", power == "active", f"Storage's SMART data: power {power}, healthy {healthy}")
+            c.expect(healthy is None, f"Storage's SMART data: power {power}, healthy {healthy}")
+            one = c.get(f"/health/disk/{name}").get("health_status")
+            # PASSED or FAILED: smartctl -n standby read the SMART data of a disk that was awake.
+            asleep_or_apps(one == "STANDBY", one in ("PASSED", "FAILED"), f"Disk Health's dialog says {one}")
+            health = [d.get("health_status") for d in c.get("/health/disks")["disks"] if d.get("device") == path]
+            c.expect(health, f"Disk Health lists it as {health}")
+            asleep_or_apps(health[0] == "STANDBY", health[0] in ("PASSED", "FAILED"), f"Disk Health lists it as {health}")
+            state = listed().get("power_state")
+            asleep_or_apps(state == "standby", state == "active", f"it is {state} after the reads")
+            after = c.device.disk_io(name)
+            asleep_or_apps(before == after, True, f"the kernel counted reads or writes on it: {before} before, {after} after")
+            s.text += f": STANDBY, and its reads and writes stay at {after}"
 
     with c.step(texts[5]) as s:
         restore()
