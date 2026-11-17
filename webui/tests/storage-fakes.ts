@@ -375,7 +375,7 @@ export async function fakeBlockDevices(page: Page): Promise<(devices: string[]) 
   });
   return async (devices) => {
     await expect.poll(() => socket !== null, { message: 'the page signed in to the stats stream' }).toBe(true);
-    const disks = devices.map((name) => ({ name, read_bytes: 0, write_bytes: 0, read_count: 0, write_count: 0 }));
+    const disks = devices.map((name) => ({ name }));
     socket!.send(JSON.stringify({ type: 'stats', data: { disk_io: { disks } } }));
   };
 }

@@ -51,9 +51,10 @@ interface Shown {
 }
 
 /**
- * A stats message as the server sends it over /ws/v1/events (supervisor/src/websocket/events.py):
- * the rates are computed on the server (ADR-0006), the network's over the host's interfaces and the
- * disks' over the host's disks (ADR-0388), and the CPU's sensor is chosen among the host's (ADR-0346).
+ * A stats message as the server sends it to an administrator over /ws/v1/events
+ * (supervisor/src/websocket/events.py): the rates are computed on the server (ADR-0006), the
+ * network's over the host's interfaces and the disks' over its physical disks (ADR-0388), and the
+ * CPU's sensor is chosen among the host's (ADR-0346).
  */
 function statsMessage(shown: Shown) {
   return {
@@ -65,14 +66,15 @@ function statsMessage(shown: Shown) {
       total: 2 * GIB, used: shown.memoryUsed, free: 2 * GIB - shown.memoryUsed, available: 2 * GIB - shown.memoryUsed,
       percent: shown.memoryPercent, swap_total: 0, swap_used: 0, swap_percent: 0,
     },
+    // One interface, so the sums are its rates; an administrator gets it (ADR-0388).
     network: {
-      bytes_sent: 0, bytes_recv: 0, bytes_sent_rate: shown.sent, bytes_recv_rate: shown.received,
-      packets_sent: 0, packets_recv: 0, interfaces: [],
+      bytes_sent_rate: shown.sent, bytes_recv_rate: shown.received,
+      interfaces: [
+        { name: 'eth0', bytes_sent: 536_870_912, bytes_recv: 1_320_702_444, bytes_sent_rate: shown.sent,
+          bytes_recv_rate: shown.received },
+      ],
     },
-    disk_io: {
-      read_bytes: 0, write_bytes: 0, read_rate: shown.read, write_rate: shown.written, read_count: 0, write_count: 0,
-      disks: [],
-    },
+    disk_io: { read_rate: shown.read, write_rate: shown.written, disks: [{ name: 'sda' }, { name: 'sda1' }] },
     processes: [],
     timestamp: '2026-11-17T10:00:00',
   };
@@ -555,6 +557,16 @@ test.describe('Dashboard', () => {
     });
 
     test('sees the dashboard in Russian', async ({ page }) => {
+      // The stand-in's own socket: the network's and the disks' rates, without the host's
+      // interfaces, which are System > Network's, an administrator's page (ADR-0388).
+      const networks: { interfaces: unknown[] }[] = [];
+      page.on('websocket', (ws) => {
+        if (new URL(ws.url()).pathname !== '/ws/v1/events') return;
+        ws.on('framereceived', (frame) => {
+          const message = JSON.parse(String(frame.payload));
+          if (message.type === 'stats') networks.push(message.data.network);
+        });
+      });
       await page.goto('/login');
       await chooseRussian(page);
       await page.reload();
@@ -572,6 +584,12 @@ test.describe('Dashboard', () => {
         '/system#security',
       );
       await expect(main.getByText('Signed in as')).toHaveCount(0);
+
+      const card = (label: string) => main.locator('.card', { has: page.getByText(label, { exact: true }) });
+      await expect(card('Сеть').locator('.text-lg')).toHaveText([/^[\d.]+ (Б|КБ|МБ|ГБ|ТБ)\/с$/, /^[\d.]+ (Б|КБ|МБ|ГБ|ТБ)\/с$/]);
+      await expect(card('Дисковый ввод-вывод').locator('.text-lg')).toHaveText([/\/с$/, /\/с$/]);
+      await expect.poll(() => networks.length, { timeout: 15000 }).toBeGreaterThan(1);
+      expect(networks.map((network) => network.interfaces)).toEqual(networks.map(() => []));
     });
   });
 });

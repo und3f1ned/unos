@@ -137,11 +137,16 @@ the next statistics arrive.
 - **CPU** - Current processor usage
 - **Memory** - RAM usage and total
 - **Network** - The bytes per second the NAS receives (↓) and sends (↑), over
-  the interfaces that **System** → **Network** lists: not the loopback or
-  Docker's bridges and virtual interfaces. Traffic through a bridge, bond or
-  VLAN that you set up on the host counts on both the port and the bridge.
+  the interfaces that **System** → **Network** lists: not the loopback,
+  `dummy0` or Docker's bridges and virtual interfaces. Traffic through a
+  bridge, bond or VLAN that you set up on the host counts on both the port
+  and the bridge, and traffic through a tunnel (WireGuard's `wg0`, a 6in4
+  tunnel) on both the tunnel and the port that carries it.
 - **Disk I/O** - The bytes per second read from and written to the host's
-  disks
+  physical disks (SATA, NVMe, USB, SD card), without their partitions. RAM
+  disks (zram, where Armbian keeps its swap and `/var/log`), loop devices,
+  encrypted or LVM volumes (device mapper) and software RAID (md) do not
+  count, so a write through LUKS or LVM counts once, on its disk.
 - **Temperature** - The temperature of the CPU (Intel, AMD) or of the SoC of
   an ARM board, such as a Raspberry Pi or an RK3588. On a host where UNOS does
   not recognize the CPU's sensor, the first sensor the host lists, which may be

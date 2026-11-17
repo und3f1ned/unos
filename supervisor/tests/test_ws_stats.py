@@ -1,5 +1,7 @@
 """The stats message of /ws/v1/events (ADR-0006, ADR-0374)."""
 
+from types import SimpleNamespace
+
 import psutil
 import pytest
 
@@ -17,7 +19,7 @@ def clock(monkeypatch):
     monkeypatch.setattr(events, "_processes_at", None)
     monkeypatch.setattr(events, "_prev_time", None)
     monkeypatch.setattr(events, "_prev_net", {})
-    monkeypatch.setattr(events, "_prev_disk_io", None)
+    monkeypatch.setattr(events, "_prev_disks", {})
     monkeypatch.setattr(events, "_net_unreadable_logged", False)
     return now
 
@@ -31,11 +33,11 @@ NET_DEV_HEADER = (
 )
 
 
-def net_dev(**interfaces: tuple[int, int, int, int]) -> str:
-    """/proc/net/dev with each interface's received bytes and packets and sent bytes and packets."""
+def net_dev(**interfaces: tuple[int, int]) -> str:
+    """/proc/net/dev with each interface's received and sent bytes ("_" in a name is "-")."""
     lines = [
-        f"{name.replace('_', '-'):>6}: {rx} {rx_packets} 0 0 0 0 0 0 {tx} {tx_packets} 0 0 0 0 0 0\n"
-        for name, (rx, rx_packets, tx, tx_packets) in interfaces.items()
+        f"{name.replace('_', '-'):>6}: {rx} 7 0 0 0 0 0 0 {tx} 5 0 0 0 0 0 0\n"
+        for name, (rx, tx) in interfaces.items()
     ]
     return NET_DEV_HEADER + "".join(lines)
 
@@ -57,41 +59,69 @@ def host_net_dev(monkeypatch, tmp_path):
     return path
 
 
+@pytest.fixture
+def host_disks(monkeypatch, tmp_path):
+    """The host's block devices: ``host_disks.sysfs(physical=[...], virtual=[...])`` makes them in a
+    /sys/block of the test (a physical disk has its ``device`` link there, a zram, loop, dm or md
+    device none, a partition no entry), and ``host_disks.counters`` is /proc/diskstats as psutil
+    reads it per device: name -> (read bytes, written bytes). ``host_disks.reads`` counts psutil's
+    reads; its totals over every device of /sys/block are never asked."""
+    sys_block = tmp_path / "sys-block"
+    sys_block.mkdir()
+    monkeypatch.setattr(events, "SYS_BLOCK", str(sys_block))
+    disks = SimpleNamespace(counters={}, reads=0)
+
+    def sysfs(physical=(), virtual=()):
+        for name in physical:
+            (sys_block / name / "device").mkdir(parents=True)
+        for name in virtual:
+            (sys_block / name).mkdir()
+
+    def disk_io_counters(perdisk=False, nowrap=True):
+        assert perdisk, "psutil's totals of every device of /sys/block were read"
+        disks.reads += 1
+        return {
+            name: psutil._common.sdiskio(1, 1, read, written, 0, 0)
+            for name, (read, written) in disks.counters.items()
+        }
+
+    monkeypatch.setattr(events.psutil, "disk_io_counters", disk_io_counters)
+    disks.sysfs = sysfs
+    return disks
+
+
 def test_the_network_is_the_traffic_of_the_hosts_interfaces(clock, host_net_dev):
     """system.dashboard (ADR-0388): the supervisor's container has a network namespace of its own
     (unos-net), so psutil showed its own traffic to Caddy as the host's. The network of the stats
     message is the host's, from PID 1's /proc/net/dev, over the interfaces that System > Network
-    lists: not the loopback or Docker's bridges and veths."""
+    lists: not the loopback, dummy0 or Docker's bridges and veths."""
     host_net_dev.write_text(net_dev(
-        lo=(9_000_000, 900, 9_000_000, 900),
-        eth0=(1_000_000, 1000, 500_000, 600),
-        wlan0=(20_000, 30, 10_000, 20),
-        docker0=(70_000, 70, 80_000, 80),
-        veth1a2b3c=(70_000, 70, 80_000, 80),
-        br_0123456789ab=(70_000, 70, 80_000, 80),
+        lo=(9_000_000, 9_000_000),
+        eth0=(1_000_000, 500_000),
+        wlan0=(20_000, 10_000),
+        docker0=(70_000, 80_000),
+        dummy0=(70_000, 80_000),
+        veth1a2b3c=(70_000, 80_000),
+        br_0123456789ab=(70_000, 80_000),
     ))
     first = events.get_system_stats()["data"]["network"]
 
     clock[0] += 2
     host_net_dev.write_text(net_dev(
-        lo=(19_000_000, 1900, 19_000_000, 1900),
-        eth0=(1_002_000, 1010, 501_000, 605),
-        wlan0=(20_400, 34, 10_000, 20),
-        docker0=(170_000, 170, 180_000, 180),
-        veth1a2b3c=(170_000, 170, 180_000, 180),
-        br_0123456789ab=(170_000, 170, 180_000, 180),
+        lo=(19_000_000, 19_000_000),
+        eth0=(1_002_000, 501_000),
+        wlan0=(20_400, 10_000),
+        docker0=(170_000, 180_000),
+        dummy0=(170_000, 180_000),
+        veth1a2b3c=(170_000, 180_000),
+        br_0123456789ab=(170_000, 180_000),
     ))
     second = events.get_system_stats()["data"]["network"]
 
     assert (first["bytes_recv_rate"], first["bytes_sent_rate"]) == (0.0, 0.0)
-    assert (first["bytes_recv"], first["bytes_sent"]) == (1_020_000, 510_000)
     assert second == {
-        "bytes_recv": 1_022_400,
-        "bytes_sent": 511_000,
         "bytes_recv_rate": 1200.0,
         "bytes_sent_rate": 500.0,
-        "packets_recv": 1044,
-        "packets_sent": 625,
         "interfaces": [
             {"name": "eth0", "bytes_recv": 1_002_000, "bytes_sent": 501_000,
              "bytes_recv_rate": 1000.0, "bytes_sent_rate": 500.0},
@@ -102,20 +132,20 @@ def test_the_network_is_the_traffic_of_the_hosts_interfaces(clock, host_net_dev)
 
 
 def test_an_interface_that_comes_or_goes_never_makes_a_rate_negative(clock, host_net_dev):
-    """The total of every interface fell when one went away (a USB adapter unplugged, a VPN
-    stopped) and jumped by all its counters when one came: the dashboard showed a negative rate,
-    or one far too high. Each rate is the sum of the interfaces that both samples have, and an
-    interface whose counters went back (its driver loaded again) counts nothing for that sample
-    (ADR-0388)."""
-    host_net_dev.write_text(net_dev(eth0=(1_000_000, 10, 1_000_000, 10), wlan0=(5_000_000, 50, 4_000_000, 40)))
+    """Summed as psutil sums them, the counters of the host's interfaces fall when one goes away
+    (a USB adapter unplugged, a VPN stopped) and jump by all its counters when one comes: a
+    negative rate, or one far too high. Each rate is the sum of the interfaces that both samples
+    have, and an interface whose counters went back (its driver loaded again) counts nothing for
+    that sample (ADR-0388)."""
+    host_net_dev.write_text(net_dev(eth0=(1_000_000, 1_000_000), wlan0=(5_000_000, 4_000_000)))
     events.get_system_stats()
 
     clock[0] += 2
-    host_net_dev.write_text(net_dev(eth0=(1_004_000, 14, 1_002_000, 12), usb0=(80_000_000, 800, 90_000_000, 900)))
+    host_net_dev.write_text(net_dev(eth0=(1_004_000, 1_002_000), usb0=(80_000_000, 90_000_000)))
     unplugged = events.get_system_stats()["data"]["network"]
 
     clock[0] += 2
-    host_net_dev.write_text(net_dev(eth0=(1_000, 1, 2_000, 2), usb0=(80_010_000, 810, 90_020_000, 920)))
+    host_net_dev.write_text(net_dev(eth0=(1_000, 2_000), usb0=(80_010_000, 90_020_000)))
     reloaded = events.get_system_stats()["data"]["network"]
 
     assert (unplugged["bytes_recv_rate"], unplugged["bytes_sent_rate"]) == (2000.0, 1000.0)
@@ -125,41 +155,69 @@ def test_an_interface_that_comes_or_goes_never_makes_a_rate_negative(clock, host
     assert reloaded["interfaces"][0]["bytes_recv_rate"] == 0.0
 
 
+def test_where_the_host_is_the_machine_itself_psutil_reads_its_interfaces(monkeypatch, clock, tmp_path):
+    """With UNOS_HOST_EXEC=local (the stand-in, the compose test stack) the host is the machine the
+    supervisor runs on: psutil's counters of each of its interfaces, with the same interfaces left
+    out, and PID 1's file is not read (ADR-0388)."""
+    monkeypatch.setenv("UNOS_HOST_EXEC", "local")
+    monkeypatch.setattr(events, "HOST_NET_DEV", str(tmp_path / "not-read"))
+    samples = iter([
+        {"lo": (5_000, 5_000), "en0": (10_000, 4_000), "docker0": (1_000, 1_000)},
+        {"lo": (9_000, 9_000), "en0": (30_000, 5_000), "docker0": (9_000, 9_000)},
+    ])
+
+    def net_io_counters(pernic=False, nowrap=True):
+        assert pernic
+        return {
+            name: psutil._common.snetio(sent, received, 3, 3, 0, 0, 0, 0)
+            for name, (received, sent) in next(samples).items()
+        }
+
+    monkeypatch.setattr(events.psutil, "net_io_counters", net_io_counters)
+
+    events.get_system_stats()
+    clock[0] += 2
+    network = events.get_system_stats()["data"]["network"]
+
+    assert network == {
+        "bytes_recv_rate": 10_000.0,
+        "bytes_sent_rate": 500.0,
+        "interfaces": [{"name": "en0", "bytes_recv": 30_000, "bytes_sent": 5_000,
+                        "bytes_recv_rate": 10_000.0, "bytes_sent_rate": 500.0}],
+    }
+    assert not events._net_unreadable_logged
+
+
 def test_the_rates_take_the_time_between_the_samples(clock, host_net_dev):
     """A board without a clock that keeps time sets its clock at boot, from the network: rates over
     the wall clock came out near zero or negative then. They take the monotonic clock (ADR-0388)."""
-    host_net_dev.write_text(net_dev(eth0=(0, 0, 0, 0)))
+    host_net_dev.write_text(net_dev(eth0=(0, 0)))
     events.get_system_stats()
 
     clock[0] += 4
-    host_net_dev.write_text(net_dev(eth0=(8_000, 8, 4_000, 4)))
+    host_net_dev.write_text(net_dev(eth0=(8_000, 4_000)))
     network = events.get_system_stats()["data"]["network"]
 
     assert (network["bytes_recv_rate"], network["bytes_sent_rate"]) == (2000.0, 1000.0)
 
 
-def test_a_sample_after_a_gap_gives_no_rates_of_the_gap(monkeypatch, clock, host_net_dev):
+def test_a_sample_after_a_gap_gives_no_rates_of_the_gap(clock, host_net_dev, host_disks):
     """Samples are taken only while a socket asks. The first one after an hour without a dashboard
     gave the hour's average as the current rate, shown for two seconds; its rates are 0, like the
     first sample's after a start, and the next one has the rates of its two seconds (ADR-0388)."""
-    totals = iter([(1_000_000, 0), (900_000_000, 0), (902_097_152, 4_096)])
-
-    def disk_io_counters(perdisk=False, nowrap=True):
-        if perdisk:
-            return {}
-        read, written = next(totals)
-        return psutil._common.sdiskio(10, 10, read, written, 0, 0)
-
-    monkeypatch.setattr(events.psutil, "disk_io_counters", disk_io_counters)
-    host_net_dev.write_text(net_dev(eth0=(0, 0, 0, 0)))
+    host_disks.sysfs(physical=["sda"])
+    host_disks.counters = {"sda": (1_000_000, 0)}
+    host_net_dev.write_text(net_dev(eth0=(0, 0)))
     events.get_system_stats()
 
     clock[0] += 3600
-    host_net_dev.write_text(net_dev(eth0=(36_000_000_000, 1, 3_600_000, 1)))
+    host_disks.counters = {"sda": (900_000_000, 0)}
+    host_net_dev.write_text(net_dev(eth0=(36_000_000_000, 3_600_000)))
     after_the_gap = events.get_system_stats()["data"]
 
     clock[0] += 2
-    host_net_dev.write_text(net_dev(eth0=(36_000_002_000, 2, 3_600_000, 1)))
+    host_disks.counters = {"sda": (902_097_152, 4_096)}
+    host_net_dev.write_text(net_dev(eth0=(36_000_002_000, 3_600_000)))
     next_one = events.get_system_stats()["data"]
 
     assert events.RATE_MAX_GAP_SECONDS >= 3 * events.STATS_INTERVAL_SECONDS
@@ -179,35 +237,54 @@ def test_unreadable_host_counters_send_no_traffic_and_are_logged_once(clock, hos
     clock[0] += 2
     network = events.get_system_stats()["data"]["network"]
 
-    assert network == {
-        "bytes_recv": 0, "bytes_sent": 0, "bytes_recv_rate": 0.0, "bytes_sent_rate": 0.0,
-        "packets_recv": 0, "packets_sent": 0, "interfaces": [],
-    }
+    assert network == {"bytes_recv_rate": 0.0, "bytes_sent_rate": 0.0, "interfaces": []}
     assert caplog.text.count("host's network counters") == 1
 
 
-def test_the_disk_rates_follow_the_hosts_disks_and_are_never_negative(monkeypatch, clock):
-    """The disk I/O card of the dashboard shows the read and write rates of the host's disks
-    (ADR-0388). A disk that goes away takes its counters out of the total: the rate of that
-    sample is 0, not negative."""
-    totals = iter([(1_000_000, 2_000_000), (3_097_152, 2_000_000), (1_000, 1_000)])
-
-    def disk_io_counters(perdisk=False, nowrap=True):
-        if perdisk:
-            return {}
-        read, written = next(totals)
-        return psutil._common.sdiskio(10, 10, read, written, 0, 0)
-
-    monkeypatch.setattr(events.psutil, "disk_io_counters", disk_io_counters)
-
+def test_the_disk_rates_count_the_hosts_physical_disks_only(clock, host_disks):
+    """psutil's totals count every device of /sys/block: zram (Armbian keeps its swap and /var/log
+    there), loop devices, and the device mapper and md devices over the disks, which counted a
+    write to LUKS or LVM twice. The Disk I/O card counts the physical disks only, those with a
+    ``device`` in /sys/block, without their partitions; the list of block devices keeps every one
+    but loop and RAM devices for the Storage page (ADR-0360, ADR-0388)."""
+    host_disks.sysfs(physical=["sda", "nvme0n1", "mmcblk0"], virtual=["zram0", "loop0", "dm-0", "md0"])
+    devices = ["sda", "sda1", "nvme0n1", "nvme0n1p1", "mmcblk0", "mmcblk0p2", "zram0", "loop0", "dm-0", "md0"]
+    host_disks.counters = {name: (1_000_000, 1_000_000) for name in devices}
     events.get_system_stats()
-    clock[0] += 2
-    busy = events.get_system_stats()["data"]["disk_io"]
-    clock[0] += 2
-    unplugged = events.get_system_stats()["data"]["disk_io"]
 
-    assert (busy["read_rate"], busy["write_rate"]) == (1_048_576.0, 0.0)
-    assert (unplugged["read_rate"], unplugged["write_rate"]) == (0.0, 0.0)
+    clock[0] += 2
+    host_disks.counters = {name: (1_000_000 + 10_000, 1_000_000 + 20_000) for name in devices}
+    disk_io = events.get_system_stats()["data"]["disk_io"]
+
+    # sda, nvme0n1 and mmcblk0: 3 x 10 000 bytes read and 3 x 20 000 written in 2 seconds.
+    assert disk_io == {
+        "read_rate": 15_000.0,
+        "write_rate": 30_000.0,
+        "disks": [{"name": name} for name in devices if name != "loop0"],
+    }
+    # One read of /proc/diskstats per sample: the list and the rates come from it.
+    assert host_disks.reads == 2
+
+
+def test_a_disk_that_comes_or_goes_never_makes_the_disk_rates_jump(clock, host_disks):
+    """A disk attached between two samples added all its counters at once, and one removed made the
+    rates negative. The rates are the sum of the disks that both samples have, and a disk whose
+    counters went back counts nothing for that sample, as for the interfaces (ADR-0388)."""
+    host_disks.sysfs(physical=["sda", "sdb", "sdc"])
+    host_disks.counters = {"sda": (1_000_000, 2_000_000), "sdb": (5_000_000, 5_000_000)}
+    events.get_system_stats()
+
+    clock[0] += 2
+    host_disks.counters = {"sda": (3_097_152, 2_000_000), "sdc": (900_000_000, 800_000_000)}
+    swapped = events.get_system_stats()["data"]["disk_io"]
+
+    clock[0] += 2
+    host_disks.counters = {"sda": (1_000, 1_000), "sdc": (900_004_096, 800_000_000)}
+    went_back = events.get_system_stats()["data"]["disk_io"]
+
+    assert (swapped["read_rate"], swapped["write_rate"]) == (1_048_576.0, 0.0)
+    assert [disk["name"] for disk in swapped["disks"]] == ["sda", "sdc"]
+    assert (went_back["read_rate"], went_back["write_rate"]) == (2_048.0, 0.0)
 
 
 def test_one_sample_serves_every_socket_of_an_interval(monkeypatch, clock):
@@ -288,13 +365,17 @@ def test_only_the_listed_processes_are_read_in_full(monkeypatch, clock):
     assert set(processes[0]) == {"pid", "name", "cpu_percent", "memory_percent", "memory_mb", "status", "username"}
 
 
-def test_the_stats_message_has_one_shape(clock, host_net_dev):
+def test_the_stats_message_has_one_shape(clock, host_net_dev, host_disks):
     """system.no-legacy-basic-stats (ADR-0207): the flat fields kept for backward compatibility
     (cpu_percent, memory_used and the others) are gone, as is the disk usage of the container's
     root, which no page read; each value is in its object, as webui/src/lib/stores/stats.ts reads
-    it. An interface has its name, counters and rates: its address, speed and state were the
-    container's, and System > Network takes them from the host (ADR-0388)."""
-    host_net_dev.write_text(net_dev(eth0=(1_000, 1, 2_000, 2)))
+    it. The network and the disks have their rates, and no totals of bytes, packets or operations,
+    which no page read (system.stats-without-unread-parts); an interface has its name, counters
+    and rates: its address, speed and state were the container's, and System > Network takes them
+    from the host; a block device has its name, which the Storage page reads (ADR-0360, ADR-0388)."""
+    host_net_dev.write_text(net_dev(eth0=(1_000, 2_000)))
+    host_disks.sysfs(physical=["sda"])
+    host_disks.counters = {"sda": (4_096, 8_192), "sda1": (4_096, 8_192)}
     message = events.get_system_stats()
 
     assert message["type"] == "stats"
@@ -309,15 +390,11 @@ def test_the_stats_message_has_one_shape(clock, host_net_dev):
     assert sorted(data["memory"]) == [
         "available", "free", "percent", "swap_percent", "swap_total", "swap_used", "total", "used",
     ]
-    assert sorted(data["network"]) == [
-        "bytes_recv", "bytes_recv_rate", "bytes_sent", "bytes_sent_rate", "interfaces", "packets_recv", "packets_sent",
-    ]
+    assert sorted(data["network"]) == ["bytes_recv_rate", "bytes_sent_rate", "interfaces"]
     assert [sorted(interface) for interface in data["network"]["interfaces"]] == [
         ["bytes_recv", "bytes_recv_rate", "bytes_sent", "bytes_sent_rate", "name"],
     ]
-    assert sorted(data["disk_io"]) == [
-        "disks", "read_bytes", "read_count", "read_rate", "write_bytes", "write_count", "write_rate",
-    ]
+    assert data["disk_io"] == {"read_rate": 0.0, "write_rate": 0.0, "disks": [{"name": "sda"}, {"name": "sda1"}]}
 
 
 def test_the_web_ui_keeps_no_unread_stats_code():

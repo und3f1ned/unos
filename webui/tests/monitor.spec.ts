@@ -15,12 +15,10 @@ const STATS = {
     swap_total: 0, swap_used: 0, swap_percent: 0,
   },
   network: {
-    bytes_sent: 0, bytes_recv: 0, bytes_sent_rate: 1024, bytes_recv_rate: 1536, packets_sent: 0, packets_recv: 0,
-    interfaces: [],
+    bytes_sent_rate: 1024, bytes_recv_rate: 1536,
+    interfaces: [{ name: 'eth0', bytes_sent: 4096, bytes_recv: 8192, bytes_sent_rate: 1024, bytes_recv_rate: 1536 }],
   },
-  disk_io: {
-    read_bytes: 0, write_bytes: 0, read_rate: 512, write_rate: 3.25 * 1024 ** 2, read_count: 0, write_count: 0, disks: [],
-  },
+  disk_io: { read_rate: 512, write_rate: 3.25 * 1024 ** 2, disks: [{ name: 'sda' }] },
   processes: [
     { pid: 812, name: 'smbd', cpu_percent: 3.5, memory_percent: 0.5, memory_mb: 42, status: 'sleeping', username: 'root' },
   ],

@@ -67,6 +67,7 @@ import asyncio
 import functools
 import json
 import logging
+import os
 import threading
 import time
 from collections.abc import Callable
@@ -119,9 +120,9 @@ _sockets_before_auth = 0
 _MAX_AUTH_MESSAGE_CHARS = 16 * 1024
 
 # The counters of the last sample, for the rates of the next: each interface's (received bytes,
-# received packets, sent bytes, sent packets), the disks' totals, and the time of _clock.
-_prev_net: dict[str, tuple[int, int, int, int]] = {}
-_prev_disk_io = None
+# sent bytes), each physical disk's (read bytes, written bytes), and the time of _clock.
+_prev_net: dict[str, tuple[int, int]] = {}
+_prev_disks: dict[str, tuple[int, int]] = {}
 _prev_time: float | None = None
 
 # The host's traffic counters (ADR-0388). /proc/net/dev lists the interfaces of the network
@@ -132,6 +133,11 @@ _prev_time: float | None = None
 # machine the supervisor runs on, and psutil reads it.
 HOST_NET_DEV = "/proc/1/net/dev"
 _net_unreadable_logged = False
+
+# The host's block devices: a physical disk has a `device` link in its folder, a zram, loop, device
+# mapper or md device none, and a partition no folder (ADR-0388). Where there is no such folder
+# (the stand-in on macOS), psutil lists whole disks only, and every one counts.
+SYS_BLOCK = "/sys/block"
 
 # Samples are taken only while a socket asks for them. The first after a longer gap would give the
 # average since the last one as the current rate (a dashboard opened in the morning showed the
@@ -202,48 +208,40 @@ def _top_processes() -> list[dict]:
     return _processes
 
 
-def _parse_net_dev(text: str) -> dict[str, tuple[int, int, int, int]]:
-    """Each interface of /proc/net/dev with its received bytes and packets and its sent bytes and
-    packets, in the file's order."""
-    counters: dict[str, tuple[int, int, int, int]] = {}
-    for line in text.splitlines()[2:]:  # two header lines
-        name, _sep, fields = line.partition(":")
-        parts = fields.split()
-        if len(parts) < 16:
-            continue
-        try:
-            counters[name.strip()] = (int(parts[0]), int(parts[1]), int(parts[8]), int(parts[9]))
-        except ValueError:
-            continue
-    return counters
-
-
-def _interface_counters() -> dict[str, tuple[int, int, int, int]]:
-    """The host's interfaces that System > Network lists (not the loopback or Docker's bridges and
-    veths, links.is_hidden), each with its received bytes and packets and its sent bytes and
-    packets. No interface when the host's counters cannot be read, which the log says once: no
-    traffic rather than the container's (ADR-0388)."""
+def _interface_counters() -> dict[str, tuple[int, int]]:
+    """The host's interfaces that System > Network lists (not the loopback, dummy0 or Docker's
+    bridges and veths, links.is_hidden), each with its received and sent bytes. No interface when
+    the host's counters cannot be read, which the log says once: no traffic rather than the
+    container's (ADR-0388)."""
     global _net_unreadable_logged
     if host.runs_locally():
         counters = {
-            name: (c.bytes_recv, c.packets_recv, c.bytes_sent, c.packets_sent)
-            for name, c in psutil.net_io_counters(pernic=True).items()
+            name: (c.bytes_recv, c.bytes_sent) for name, c in psutil.net_io_counters(pernic=True).items()
         }
     else:
         try:
             with open(HOST_NET_DEV, encoding="utf-8", errors="replace") as file:
-                counters = _parse_net_dev(file.read())
+                parsed = links.parse_net_dev(file.read())
         except OSError as exc:
             if not _net_unreadable_logged:
                 _net_unreadable_logged = True
                 logger.warning("The host's network counters cannot be read from %s: %s", HOST_NET_DEV, exc)
             return {}
+        counters = {name: (c.rx_bytes, c.tx_bytes) for name, c in parsed.items()}
     return {name: values for name, values in counters.items() if not links.is_hidden(name)}
+
+
+def _is_physical_disk(name: str, sysfs: bool) -> bool:
+    """Whether a device of /proc/diskstats is a physical disk: one with a ``device`` in its folder
+    of /sys/block (ADR-0388). ``sysfs`` says whether there is a /sys/block to ask."""
+    if not sysfs:
+        return True
+    return os.path.exists(os.path.join(SYS_BLOCK, name.replace("/", "!"), "device"))
 
 
 def get_system_stats() -> dict:
     """Get comprehensive system statistics for WebSocket broadcast."""
-    global _prev_net, _prev_disk_io, _prev_time
+    global _prev_net, _prev_disks, _prev_time
 
     now = _clock()
     elapsed = now - _prev_time if _prev_time is not None else 0.0
@@ -272,41 +270,37 @@ def get_system_stats() -> dict:
     # never makes it negative or adds all its counters at once.
     net = _interface_counters()
     interfaces = []
-    for name, (bytes_recv, _packets_recv, bytes_sent, _packets_sent) in net.items():
+    for name, (bytes_recv, bytes_sent) in net.items():
         before = _prev_net.get(name)
         interfaces.append({
             "name": name,
             "bytes_sent": bytes_sent,
             "bytes_recv": bytes_recv,
-            "bytes_sent_rate": rate(bytes_sent, before[2]) if before else 0.0,
+            "bytes_sent_rate": rate(bytes_sent, before[1]) if before else 0.0,
             "bytes_recv_rate": rate(bytes_recv, before[0]) if before else 0.0,
         })
 
-    # Disk I/O stats with rate calculation: psutil's totals of the host's disks (/proc/diskstats is
-    # the host's), whole disks without their partitions. A disk that goes away takes its counters
-    # out of the totals: that sample's rate is 0, not negative (ADR-0388).
-    disk_io = psutil.disk_io_counters()
+    # One read of the host's /proc/diskstats (not namespaced). The block devices: every one, disks
+    # and partitions, which the kernel lists as soon as it has one, also one attached after the
+    # supervisor started; the Storage page loads its lists again when these names change
+    # (ADR-0360). The rates: the physical disks only, without zram, loop, device mapper and md
+    # devices, which psutil's totals count (a write to LUKS or LVM twice), summed over the disks
+    # that both samples have, as for the interfaces (ADR-0388).
+    per_device = psutil.disk_io_counters(perdisk=True)
+    disks = [{"name": name} for name in per_device if not name.startswith(("loop", "ram"))]
+    sysfs = os.path.isdir(SYS_BLOCK)
+    physical = {
+        name: (counters.read_bytes, counters.write_bytes)
+        for name, counters in per_device.items()
+        if _is_physical_disk(name, sysfs)
+    }
     read_rate = 0.0
     write_rate = 0.0
-    if _prev_disk_io:
-        read_rate = rate(disk_io.read_bytes, _prev_disk_io.read_bytes)
-        write_rate = rate(disk_io.write_bytes, _prev_disk_io.write_bytes)
-
-    # Per-disk stats: every block device of /proc/diskstats, disks and partitions, which the
-    # kernel lists as soon as it has one, also one attached after the supervisor started. The
-    # Storage page loads its lists again when these names change (ADR-0360).
-    disks = []
-    disk_io_per = psutil.disk_io_counters(perdisk=True)
-    for name, counters in disk_io_per.items():
-        if name.startswith("loop") or name.startswith("ram"):
-            continue
-        disks.append({
-            "name": name,
-            "read_bytes": counters.read_bytes,
-            "write_bytes": counters.write_bytes,
-            "read_count": counters.read_count,
-            "write_count": counters.write_count
-        })
+    for name, (read_bytes, write_bytes) in physical.items():
+        before = _prev_disks.get(name)
+        if before:
+            read_rate += rate(read_bytes, before[0])
+            write_rate += rate(write_bytes, before[1])
 
     # Top processes, listed at most every PROCESS_LIST_INTERVAL_SECONDS
     top_processes = _top_processes()
@@ -315,7 +309,7 @@ def get_system_stats() -> dict:
 
     # Store previous values for next calculation
     _prev_net = net
-    _prev_disk_io = disk_io
+    _prev_disks = physical
     _prev_time = now
 
     return {
@@ -346,25 +340,18 @@ def get_system_stats() -> dict:
                 "swap_percent": swap.percent,
             },
 
-            # The host's network: the totals of its interfaces (ADR-0388)
+            # The host's network: the rates of its interfaces and their sums (ADR-0388); regular
+            # users get no interfaces (_for_role).
             "network": {
-                "bytes_sent": sum(values[2] for values in net.values()),
-                "bytes_recv": sum(values[0] for values in net.values()),
                 "bytes_sent_rate": sum(interface["bytes_sent_rate"] for interface in interfaces),
                 "bytes_recv_rate": sum(interface["bytes_recv_rate"] for interface in interfaces),
-                "packets_sent": sum(values[3] for values in net.values()),
-                "packets_recv": sum(values[1] for values in net.values()),
                 "interfaces": interfaces,
             },
 
             # Disk I/O stats
             "disk_io": {
-                "read_bytes": disk_io.read_bytes,
-                "write_bytes": disk_io.write_bytes,
                 "read_rate": read_rate,
                 "write_rate": write_rate,
-                "read_count": disk_io.read_count,
-                "write_count": disk_io.write_count,
                 "disks": disks,
             },
 
@@ -597,6 +584,16 @@ async def _send_installs(websocket: WebSocket, is_admin: bool, sent: int | None)
     return version
 
 
+def _for_role(message: dict, is_admin: bool) -> dict:
+    """The stats message for a socket of this role. The host's interfaces with their traffic are
+    System > Network's, an administrator's page (ADR-0030): a regular user's dashboard gets the
+    network's rates without them (ADR-0388). The sample that every socket shares stays as it is."""
+    network = message.get("data", {}).get("network")
+    if is_admin or not isinstance(network, dict):
+        return message
+    return {**message, "data": {**message["data"], "network": {**network, "interfaces": []}}}
+
+
 @router.websocket("/ws/v1/events")
 async def websocket_endpoint(websocket: WebSocket):
     signed_in = await authenticate_websocket(websocket)
@@ -627,7 +624,7 @@ async def websocket_endpoint(websocket: WebSocket):
             sent_repair = await _send_repair(websocket, role["admin"], sent_repair)
             sent_installs = await _send_installs(websocket, role["admin"], sent_installs)
             stats = await asyncio.to_thread(shared_system_stats)
-            await websocket.send_json(stats)
+            await websocket.send_json(_for_role(stats, role["admin"]))
             await asyncio.wait(
                 {disconnected, revoked},
                 timeout=STATS_INTERVAL_SECONDS,
