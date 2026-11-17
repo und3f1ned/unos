@@ -1,6 +1,6 @@
 import type { Locator, Page, WebSocketRoute } from '@playwright/test';
-import { test, expect } from './fixtures';
-import { createAccount, deleteAccount, type Account } from './accounts';
+import { test, expect, E2E_ADMIN } from './fixtures';
+import { apiLogin, createAccount, deleteAccount, type Account } from './accounts';
 import { FAKE_IMPORTABLE, fakeStorageApi, fakeVolumesWithUse, noBalance } from './storage-fakes';
 import {
   NO_SNAPSHOTS,
@@ -819,6 +819,35 @@ const LONG_FOLDER_VIEW: View = {
   end: (page) => fileRow(page, PHOTOS[PHOTOS.length - 1].path),
 };
 
+/**
+ * The dashboard while its widgets are arranged (webui.dashboard-layout, ADR-0395): every widget has
+ * its toolbar of a handle and three buttons, two cards are hidden and listed under Hidden widgets
+ * with a button each to show them. The layout is the administrator's, kept on the server, so the
+ * test that opens this view puts it back (`resetLayout`).
+ */
+const ARRANGING_VIEW: View = {
+  name: 'Dashboard: arranging the widgets',
+  path: '/',
+  fake: async (page) => {
+    await fakeStorageApi(page);
+    await fakeHealthApi(page, { predictions: () => predictionsAnswer(REPLACE_SOON, HEALTHY_HDD_2) });
+    await serve(page, { ...DOCKER, '/api/v1/system/info': SYSTEM_INFO });
+  },
+  open: async (page) => {
+    await page.getByRole('button', { name: /^(Customize|Настроить)$/ }).click();
+    // The toolbar's last button hides the widget.
+    for (const id of ['disk-io', 'network']) await page.locator(`main [data-widget="${id}"] [data-toolbar] button`).last().click();
+    await expect(page.locator('main [data-widget="network"]')).toHaveCount(0);
+  },
+  shows: (page) => page.getByRole('region', { name: /^(Hidden widgets|Скрытые виджеты)$/ }).getByRole('button').first(),
+  end: (page) => page.getByText('e2e-immich-machine-learning'),
+};
+
+async function resetLayout(page: Page) {
+  const token = await apiLogin(page.request, E2E_ADMIN);
+  await page.request.delete('/api/v1/auth/me/dashboard-layout', { headers: { Authorization: `Bearer ${token}` } });
+}
+
 const VIEWS: View[] = [
   {
     name: 'Dashboard',
@@ -1608,6 +1637,14 @@ for (const [language, locale] of [
         await checkFits(page, view);
       });
     }
+
+    test(`${ARRANGING_VIEW.name} fits the screen`, async ({ authenticatedPage: page }) => {
+      try {
+        await checkFits(page, ARRANGING_VIEW);
+      } finally {
+        await resetLayout(page);
+      }
+    });
 
     test('the sign-in and first-run pages fit the width of the screen', async ({ page }) => {
       await page.goto('/login');

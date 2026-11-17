@@ -366,6 +366,18 @@ manager, encrypted backup uploads, health checks, CI checks).
   `ups_name`, `host` and `port` are checked before they reach `upsc`.
 
 ### Added
+- Each user arranges the dashboard (ADR-0395). **Customize** shows a toolbar on
+  every widget: drag its handle, or use **Move up** and **Move down** (for the
+  keyboard and a phone), **Hide** it, and show it again from **Hidden widgets**;
+  **Reset to default** restores the default. The five stats cards (CPU, Memory,
+  Network, Disk I/O, Temperature) and, for administrators, Storage Pools,
+  Containers, Quick Actions and Recent Activity are widgets; a regular user
+  arranges the stats cards. The layout is kept on the server per user, so it
+  follows the user to another browser: `GET`, `PUT` and `DELETE
+  /api/v1/auth/me/dashboard-layout`, a new table `dashboard_layouts`, written
+  only when the layout changes, and the audit action
+  `dashboard_layout_changed`. The wide widgets sit two to a row from 1280 px
+  (they were from 1024 px).
 - The dashboard has a **Disk I/O** card: the bytes per second read from and
   written to the host's physical disks, from the live statistics; zram, loop,
   device-mapper (LUKS, LVM) and md devices do not count (ADR-0388).

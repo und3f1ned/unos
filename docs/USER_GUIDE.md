@@ -151,6 +151,25 @@ problem: a pool not mounted, degraded or almost full, a volume near its
 quota, a failing disk, a task that failed or missed its run (see
 [Alerts](#alerts)).
 
+### Arranging the Dashboard
+Each widget (the five stats cards below and, for administrators, **Storage
+Overview**, **Containers**, **Quick Actions** and **Recent Activity**) can be
+moved and hidden. Click **Customize** beside **Refresh**:
+- Drag a widget by the handle at the left of its toolbar to the place of
+  another widget. On a phone and with the keyboard, use the toolbar's
+  **Move up** and **Move down** buttons instead; they move the widget past the
+  next one that is shown, and a screen reader is told where it went.
+- **Hide** removes a widget from the page. **Hidden widgets** lists the hidden
+  ones with a **Show** button each, which puts the widget back where it was.
+- **Reset to default** restores the default order and shows every widget.
+- Click **Done** when you have finished. Each change is saved at once.
+
+The layout is yours: it is kept on the NAS for your account, so it is the same
+in every browser you sign in with, and it is not shared with other users. A
+regular user arranges the stats cards, which are all that they see. The alert
+**Disks to Replace** and the health banner are not widgets and cannot be
+hidden. Each change is an entry **Dashboard layout changed** in the audit log.
+
 ### System Stats
 The cards follow the live statistics, which the server sends every 2 seconds
 while the page is open; the time of the last one is shown beside **Refresh**.

@@ -23,7 +23,8 @@ from ..shares.models import SmbAccount, SmbShare, UserGroup, UserGroupMember
 # Rate limiter for auth endpoints
 limiter = Limiter(key_func=get_remote_address)
 from . import requirement, scopes
-from .models import User, APIToken, UsernameTaken
+from . import dashboard
+from .models import DashboardLayout, User, APIToken, UsernameTaken
 from .schemas import (
     UserCreate, UserResponse, TwoFactorRequired, Token, LoginRequest, PasswordChange,
     UserUpdate, TOTPSetupResponse, TOTPVerifyRequest, TOTPEnableRequest,
@@ -42,6 +43,7 @@ from .utils import (
 from ..security.router import record_login_attempt
 
 router = APIRouter(prefix="/auth", tags=["auth"])
+router.include_router(dashboard.router)
 logger = logging.getLogger(__name__)
 
 LAST_ADMIN_DETAIL = "At least one administrator account must remain"
@@ -820,6 +822,7 @@ async def delete_user(
             # autoflushes the account row's DELETE.
             await db.delete(user)
             await end_sessions(db, user_id)  # SQLite enforces no foreign keys (ADR-0319)
+            await db.execute(delete(DashboardLayout).where(DashboardLayout.user_id == user_id))
             if was_admin:
                 await _ensure_an_admin_remains(db)
             await db.commit()

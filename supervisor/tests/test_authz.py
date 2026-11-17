@@ -89,6 +89,10 @@ USER_ALLOWED = {
     ("GET", f"{API}/auth/me/smb"),
     ("POST", f"{API}/auth/me/smb/enable"),
     ("POST", f"{API}/auth/me/smb/disable"),
+    # Own dashboard layout (ADR-0395)
+    ("GET", f"{API}/auth/me/dashboard-layout"),
+    ("PUT", f"{API}/auth/me/dashboard-layout"),
+    ("DELETE", f"{API}/auth/me/dashboard-layout"),
     # Read-only system information, which every signed-in user may read
     ("GET", f"{API}/system/info"),
     ("GET", f"{API}/system/stats"),
