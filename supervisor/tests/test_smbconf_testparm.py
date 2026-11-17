@@ -46,6 +46,17 @@ def test_global_section(tmp_path, guest):
     assert "[global]" in output
 
 
+@pytest.mark.parametrize("interfaces", [("eth0",), ("enx00e04c680001", "eth0", "wlan0"), ()])
+def test_the_chosen_interfaces(tmp_path, interfaces):
+    """Both lines of a choice of interfaces (ADR-0391), with names that the host may lack: testparm
+    reads the list, and smbd skips a name that is not on the host when it starts."""
+    output = testparm(tmp_path, smbconf.render_config([share("docs", readers=["alice"])], interfaces))
+    lines = {key.strip(): value.strip() for key, _, value in
+             (line.partition("=") for line in output.splitlines() if "=" in line)}
+    assert lines["interfaces"].replace(",", " ").split() == ["lo", *sorted(interfaces)]
+    assert lines["bind interfaces only"].lower() == "yes"
+
+
 @pytest.mark.parametrize(
     "render",
     [

@@ -1883,3 +1883,299 @@ test.describe('Group access (fake data)', () => {
     await expect(dialog.getByText('Группы', { exact: true })).toBeVisible();
   });
 });
+
+// ---- Several shares at once (webui.bulk-actions, ADR-0389) ----
+
+test.describe('Deleting several shares (fake data)', () => {
+  const toolbar = (page: Page) => page.getByRole('toolbar', { name: 'Selected shares' });
+  const checkbox = (page: Page, name: string) =>
+    page.getByRole('checkbox', { name: `Select share ${name}`, exact: true });
+  const shares = () => ['docs', 'media', 'photos'].map((name) => fakeShare(name, { available: true }));
+
+  test('Delete asks once, naming each share and its folder, and deletes all of them in one request', async ({
+    authenticatedPage: page,
+  }) => {
+    const fake = await fakeSmbApi(page, { users: fakeUsers(), shares: shares() });
+    await page.goto('/shares');
+    await expect(toolbar(page)).toContainText('0 shares selected');
+    await expect(toolbar(page).getByRole('button', { name: 'Delete selected' })).toBeDisabled();
+
+    await checkbox(page, 'docs').check();
+    await checkbox(page, 'photos').check();
+    await expect(toolbar(page)).toContainText('2 shares selected');
+    await toolbar(page).getByRole('button', { name: 'Delete selected' }).click();
+
+    const dialog = page.getByRole('dialog', { name: 'Delete 2 shares' });
+    await expect(dialog).toContainText('Delete these 2 shares? Open connections to them are closed.');
+    await expect(dialog.getByRole('list', { name: 'Shares to delete' }).getByRole('listitem')).toHaveText([
+      `docs ${POOLS}/tank/docs`,
+      `photos ${POOLS}/tank/photos`,
+    ]);
+    await expect(dialog).toContainText('Their folders and the files in them are kept.');
+    await dialog.getByRole('button', { name: 'Cancel' }).click();
+    await expect(dialog).toBeHidden();
+    expect(fake.writes).toEqual([]);
+    await expect(toolbar(page)).toContainText('2 shares selected');
+
+    await toolbar(page).getByRole('button', { name: 'Delete selected' }).click();
+    // The warnings of the one apply are shown, e.g. a reload that failed.
+    const reloadWarning = 'Samba did not reload smb.conf (e2e); the reload is tried again at the next change';
+    fake.changeWarnings = [reloadWarning];
+    await dialog.getByRole('button', { name: 'Delete 2 shares' }).click();
+    await expect(dialog).toBeHidden();
+
+    // One request with the version of each share as the page loaded it.
+    expect(fake.writes).toEqual([
+      {
+        method: 'POST',
+        path: '/shares/smb/bulk-delete',
+        body: {
+          shares: [
+            { name: 'docs', expected_version: 1, expected_path: `${POOLS}/tank/docs` },
+            { name: 'photos', expected_version: 1, expected_path: `${POOLS}/tank/photos` },
+          ],
+        },
+      },
+    ]);
+    await expect(shareCard(page, 'docs')).toHaveCount(0);
+    await expect(shareCard(page, 'photos')).toHaveCount(0);
+    await expect(shareCard(page, 'media')).toBeVisible();
+    await expect(page.getByText('Deleted 2 shares: docs, photos')).toBeVisible();
+    await expect(page.locator('main .alert-warning')).toHaveText(reloadWarning);
+    await expect(toolbar(page)).toContainText('0 shares selected');
+  });
+
+  test('a share changed or deleted elsewhere is named with the reason, and the others are deleted', async ({
+    authenticatedPage: page,
+  }) => {
+    const fake = await fakeSmbApi(page, { users: fakeUsers(), shares: shares() });
+    await page.goto('/shares');
+    await page.getByRole('checkbox', { name: 'Select all', exact: true }).check();
+    await expect(toolbar(page)).toContainText('3 shares selected');
+    for (const name of ['docs', 'media', 'photos']) await expect(checkbox(page, name)).toBeChecked();
+
+    // After the page loaded them, media is changed in another session and photos is deleted there.
+    fake.shares.find((share) => share.name === 'media')!.version = 2;
+    fake.shares = fake.shares.filter((share) => share.name !== 'photos');
+
+    await toolbar(page).getByRole('button', { name: 'Delete selected' }).click();
+    const dialog = page.getByRole('dialog', { name: 'Delete 3 shares' });
+    await dialog.getByRole('button', { name: 'Delete 3 shares' }).click();
+    await expect(dialog).toBeHidden();
+
+    await expect(page.getByText('Deleted 1 share: docs')).toBeVisible();
+    const notDeleted = page.getByRole('list', { name: '2 shares were not deleted' });
+    await expect(notDeleted.getByRole('listitem')).toHaveText([
+      'media: it was changed meanwhile, so it was not deleted: check it and delete it again',
+      'photos: no share has this name any more: it was deleted or renamed meanwhile',
+    ]);
+    await expect(shareCard(page, 'docs')).toHaveCount(0);
+    await expect(shareCard(page, 'photos')).toHaveCount(0);
+    await expect(shareCard(page, 'media')).toBeVisible();
+    // The share that was not deleted stays selected; the one that is gone leaves the selection.
+    await expect(toolbar(page)).toContainText('1 share selected');
+    await expect(checkbox(page, 'media')).toBeChecked();
+
+    // Asked again, the question takes its new version.
+    await toolbar(page).getByRole('button', { name: 'Delete selected' }).click();
+    await page.getByRole('dialog', { name: 'Delete 1 share' }).getByRole('button', { name: 'Delete 1 share' }).click();
+    await expect(page.getByText('Deleted 1 share: media')).toBeVisible();
+    await expect(notDeleted).toHaveCount(0);
+    expect(fake.writes[1].body).toEqual({
+      shares: [{ name: 'media', expected_version: 2, expected_path: `${POOLS}/tank/media` }],
+    });
+    await expect(page.getByText('No SMB shares yet')).toBeVisible();
+    await expect(toolbar(page)).toHaveCount(0);
+  });
+
+  test('an apply that fails deletes none of them, and the dialog says why', async ({ authenticatedPage: page }) => {
+    const fake = await fakeSmbApi(page, { users: fakeUsers(), shares: shares() });
+    // As the server words a rejection by testparm, which deletes none of them.
+    const rejected = 'testparm rejected the new smb.conf: Error loading services.';
+    fake.intercept = (request) =>
+      request.path === '/shares/smb/bulk-delete' ? { status: 500, json: { detail: rejected } } : undefined;
+    await page.goto('/shares');
+    await checkbox(page, 'docs').check();
+    await checkbox(page, 'media').check();
+    await toolbar(page).getByRole('button', { name: 'Delete selected' }).click();
+    const dialog = page.getByRole('dialog', { name: 'Delete 2 shares' });
+    await dialog.getByRole('button', { name: 'Delete 2 shares' }).click();
+
+    await expect(dialog.getByText('No share was deleted')).toBeVisible();
+    await expect(dialog.getByText(rejected)).toBeVisible();
+    await dialog.getByRole('button', { name: 'Cancel' }).click();
+    await expect(dialog).toBeHidden();
+    for (const name of ['docs', 'media', 'photos']) await expect(shareCard(page, name)).toBeVisible();
+    await expect(toolbar(page)).toContainText('2 shares selected');
+  });
+
+  test('a share made again under its name in another folder is not deleted, nor selected any more', async ({
+    authenticatedPage: page,
+  }) => {
+    const fake = await fakeSmbApi(page, { users: fakeUsers(), shares: shares() });
+    await page.goto('/shares');
+    await checkbox(page, 'docs').check();
+    await checkbox(page, 'media').check();
+    // After the page loaded it, docs is deleted elsewhere and made again: version 1, another folder.
+    fake.shares.find((share) => share.name === 'docs')!.path = `${POOLS}/tank/other`;
+
+    await toolbar(page).getByRole('button', { name: 'Delete selected' }).click();
+    await page.getByRole('dialog', { name: 'Delete 2 shares' }).getByRole('button', { name: 'Delete 2 shares' }).click();
+
+    await expect(page.getByText('Deleted 1 share: media')).toBeVisible();
+    await expect(page.getByRole('list', { name: '1 share was not deleted' }).getByRole('listitem')).toHaveText([
+      'docs: it was changed meanwhile, so it was not deleted: check it and delete it again',
+    ]);
+    await expect(shareCard(page, 'docs')).toContainText(`${POOLS}/tank/other`);
+    // The selection was of docs in its old folder: the share now under that name is not selected.
+    await expect(checkbox(page, 'docs')).not.toBeChecked();
+    await expect(toolbar(page)).toContainText('0 shares selected');
+  });
+
+  test('an error after which some of the shares are gone does not say that none was deleted', async ({
+    authenticatedPage: page,
+  }) => {
+    const fake = await fakeSmbApi(page, { users: fakeUsers(), shares: shares() });
+    // The deletion was made, and then the request failed (its audit entry could not be written).
+    fake.intercept = (request) => {
+      if (request.path !== '/shares/smb/bulk-delete') return undefined;
+      fake.shares = fake.shares.filter((share) => share.name !== 'docs');
+      return { status: 500, json: { detail: 'Audit log write failed' } };
+    };
+    await page.goto('/shares');
+    await checkbox(page, 'docs').check();
+    await toolbar(page).getByRole('button', { name: 'Delete selected' }).click();
+    const dialog = page.getByRole('dialog', { name: 'Delete 1 share' });
+    await expect(dialog).toContainText('Delete this share? Open connections to it are closed.');
+    await expect(dialog).toContainText('The folder and the files in it are kept.');
+    await dialog.getByRole('button', { name: 'Delete 1 share' }).click();
+
+    await expect(dialog.getByText('The deletion failed, and some of these shares are no longer listed')).toBeVisible();
+    await expect(dialog.getByText('Audit log write failed')).toBeVisible();
+    await expect(dialog.getByText('No share was deleted')).toHaveCount(0);
+    await expect(shareCard(page, 'docs')).toHaveCount(0);
+  });
+
+  test('an error after which the list cannot be read again says that what is left is not known', async ({
+    authenticatedPage: page,
+  }) => {
+    const fake = await fakeSmbApi(page, { users: fakeUsers(), shares: shares() });
+    let sent = false;
+    fake.intercept = (request) => {
+      if (request.path === '/shares/smb/bulk-delete') {
+        sent = true;
+        return { status: 500, json: { detail: 'Internal Server Error' } };
+      }
+      if (sent && request.method === 'GET' && request.path === '/shares/smb') {
+        return { status: 503, json: { detail: 'Nothing was changed: the database was busy; try again' } };
+      }
+      return undefined;
+    };
+    await page.goto('/shares');
+    await checkbox(page, 'docs').check();
+    await toolbar(page).getByRole('button', { name: 'Delete selected' }).click();
+    const dialog = page.getByRole('dialog', { name: 'Delete 1 share' });
+    await dialog.getByRole('button', { name: 'Delete 1 share' }).click();
+
+    await expect(
+      dialog.getByText('The deletion failed, and the list could not be read again: which shares are left is not known'),
+    ).toBeVisible();
+    await expect(dialog.getByText('No share was deleted')).toHaveCount(0);
+    await expect(dialog.getByText('some of these shares are no longer listed')).toHaveCount(0);
+  });
+
+  test('one deletion takes at most 200 shares, and the page says so before asking', async ({
+    authenticatedPage: page,
+  }) => {
+    const many = Array.from({ length: 201 }, (_, i) => fakeShare(`share${String(i + 1).padStart(3, '0')}`));
+    const fake = await fakeSmbApi(page, { users: fakeUsers(), shares: many });
+    await page.goto('/shares');
+    await page.getByRole('checkbox', { name: 'Select all', exact: true }).check();
+    await expect(toolbar(page)).toContainText('201 shares selected');
+    await expect(toolbar(page).getByText('One deletion takes at most 200 shares: select fewer')).toBeVisible();
+    await expect(toolbar(page).getByRole('button', { name: 'Delete selected' })).toBeDisabled();
+
+    await checkbox(page, 'share201').uncheck();
+    await expect(toolbar(page)).toContainText('200 shares selected');
+    await expect(toolbar(page).getByText('One deletion takes at most 200 shares: select fewer')).toHaveCount(0);
+    await toolbar(page).getByRole('button', { name: 'Delete selected' }).click();
+    await expect(page.getByRole('dialog', { name: 'Delete 200 shares' })).toBeVisible();
+    expect(fake.writes).toEqual([]);
+  });
+
+  test('the question in Russian takes the form of one for 21 shares', async ({ authenticatedPage: page }) => {
+    const many = Array.from({ length: 21 }, (_, i) => fakeShare(`share${String(i + 1).padStart(2, '0')}`));
+    await fakeSmbApi(page, { users: fakeUsers(), shares: many });
+    await page.evaluate(() => localStorage.setItem('unos-locale', 'ru'));
+    await page.goto('/shares');
+    await page.getByRole('checkbox', { name: 'Выбрать все', exact: true }).check();
+    const bar = page.getByRole('toolbar', { name: 'Выбранные общие папки' });
+    await expect(bar).toContainText('Выбрана 21 общая папка');
+    await bar.getByRole('button', { name: 'Удалить выбранные' }).click();
+    const dialog = page.getByRole('dialog', { name: 'Удаление 21 общей папки' });
+    await expect(dialog).toContainText('Удалить 21 общую папку? Открытые подключения будут закрыты.');
+    await expect(dialog).toContainText('Папка каждой общей папки и файлы в ней сохранятся.');
+    await expect(dialog.getByRole('button', { name: 'Удалить 21 общую папку' })).toBeVisible();
+  });
+
+  test('the selection, the question and the results come from the catalog in Russian', async ({
+    authenticatedPage: page,
+  }) => {
+    const fake = await fakeSmbApi(page, { users: fakeUsers(), shares: shares() });
+    await page.evaluate(() => localStorage.setItem('unos-locale', 'ru'));
+    await page.goto('/shares');
+
+    const bar = page.getByRole('toolbar', { name: 'Выбранные общие папки' });
+    await expect(bar).toContainText('Выбрано 0 общих папок');
+    await page.getByRole('checkbox', { name: 'Выбрать общую папку docs', exact: true }).check();
+    await expect(bar).toContainText('Выбрана 1 общая папка');
+    await page.getByRole('checkbox', { name: 'Выбрать все', exact: true }).check();
+    await expect(bar).toContainText('Выбраны 3 общие папки');
+    fake.shares = fake.shares.filter((share) => share.name !== 'photos');
+
+    await bar.getByRole('button', { name: 'Удалить выбранные' }).click();
+    const dialog = page.getByRole('dialog', { name: 'Удаление 3 общих папок' });
+    await expect(dialog).toContainText('Удалить эти 3 общие папки? Открытые подключения к ним будут закрыты.');
+    await expect(dialog.getByRole('list', { name: 'Удаляемые общие папки' }).getByRole('listitem')).toHaveCount(3);
+    await expect(dialog).toContainText('Папка каждой общей папки и файлы в ней сохранятся.');
+    await dialog.getByRole('button', { name: 'Удалить 3 общие папки' }).click();
+
+    await expect(page.getByText('Удалены 2 общие папки: docs, media')).toBeVisible();
+    await expect(page.getByRole('list', { name: '1 общая папка не удалена' }).getByRole('listitem')).toHaveText([
+      'photos: общей папки с таким именем больше нет: её удалили или переименовали',
+    ]);
+  });
+});
+
+test.describe('Deleting several shares (stand-in)', () => {
+  // The real endpoint answers each share it was sent; this request deletes nothing.
+  test.skip(process.env.E2E_STAND_IN !== '1', 'only where E2E_STAND_IN=1: the stand-in and the compose test stack seed it');
+
+  test('a share of another version and a name no share has are reported, and nothing is deleted', async ({
+    request,
+  }) => {
+    const token = await apiLogin(request, E2E_ADMIN);
+    const headers = { Authorization: `Bearer ${token}` };
+    const seed = await (await request.get(SEED_URL, { headers })).json();
+
+    const response = await request.post('/api/v1/shares/smb/bulk-delete', {
+      headers,
+      data: {
+        shares: [
+          { name: SEED, expected_version: seed.version + 1, expected_path: seed.path },
+          { name: 'e2e_no_such_share', expected_version: 1, expected_path: seed.path },
+        ],
+      },
+    });
+
+    expect(response.status()).toBe(200);
+    expect(await response.json()).toEqual({
+      results: [
+        { name: SEED, status: 'changed', detail: VERSION_CONFLICT },
+        { name: 'e2e_no_such_share', status: 'not_found', detail: 'Share not found' },
+      ],
+      warnings: [],
+    });
+    expect((await request.get(SEED_URL, { headers })).status()).toBe(200);
+  });
+});

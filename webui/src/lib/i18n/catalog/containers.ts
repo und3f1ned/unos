@@ -133,7 +133,30 @@ export const en = {
 	'containers.images.otherTags': 'Its other tags go with it:',
 	'containers.images.removeNote': 'An image that a container uses is not removed. Pull it again to use it later.',
 	'containers.images.notRemoved': 'The image was not removed',
-	'containers.images.remove': 'Remove Image'
+	'containers.images.remove': 'Remove Image',
+
+	// Several containers at once (ADR-0389): the selection above the list, the progress of an
+	// action and its results, one line per container with its state afterwards or its error.
+	'containers.bulk.toolbar': 'Selected containers',
+	'containers.bulk.selectAll': 'Select all shown',
+	'containers.bulk.selectOne': 'Select {name}',
+	'containers.bulk.selected': { one: '{n} container selected', other: '{n} containers selected' },
+	'containers.bulk.start': 'Start selected',
+	'containers.bulk.stop': 'Stop selected',
+	'containers.bulk.restart': 'Restart selected',
+	'containers.bulk.progress.start': 'Starting {name} ({i} of {n})',
+	'containers.bulk.progress.stop': 'Stopping {name} ({i} of {n})',
+	'containers.bulk.progress.restart': 'Restarting {name} ({i} of {n})',
+	'containers.bulk.done.start': { one: 'Started {ok} of {n} container', other: 'Started {ok} of {n} containers' },
+	'containers.bulk.done.stop': { one: 'Stopped {ok} of {n} container', other: 'Stopped {ok} of {n} containers' },
+	'containers.bulk.done.restart': {
+		one: 'Restarted {ok} of {n} container',
+		other: 'Restarted {ok} of {n} containers'
+	},
+	'containers.bulk.itemDone': '{name}: {state}',
+	'containers.bulk.itemFailed': '{name}: failed: {reason}',
+	// Restart selected restarts the running ones, as a container's own Restart.
+	'containers.bulk.itemNotRunning': '{name}: not restarted: it is not running'
 };
 
 export const ru: Translation<typeof en> = {
@@ -260,5 +283,38 @@ export const ru: Translation<typeof en> = {
 	'containers.images.removeNote':
 		'Образ, который используется контейнером, не удаляется. Чтобы использовать образ позже, скачайте его снова.',
 	'containers.images.notRemoved': 'Образ не удалён',
-	'containers.images.remove': 'Удалить образ'
+	'containers.images.remove': 'Удалить образ',
+
+	'containers.bulk.toolbar': 'Выбранные контейнеры',
+	'containers.bulk.selectAll': 'Выбрать все показанные',
+	'containers.bulk.selectOne': 'Выбрать {name}',
+	'containers.bulk.selected': {
+		one: 'Выбран {n} контейнер',
+		few: 'Выбрано {n} контейнера',
+		many: 'Выбрано {n} контейнеров'
+	},
+	'containers.bulk.start': 'Запустить выбранные',
+	'containers.bulk.stop': 'Остановить выбранные',
+	'containers.bulk.restart': 'Перезапустить выбранные',
+	'containers.bulk.progress.start': 'Запуск {name} ({i} из {n})',
+	'containers.bulk.progress.stop': 'Остановка {name} ({i} из {n})',
+	'containers.bulk.progress.restart': 'Перезапуск {name} ({i} из {n})',
+	'containers.bulk.done.start': {
+		one: 'Запущено {ok} из {n} контейнера',
+		few: 'Запущено {ok} из {n} контейнеров',
+		many: 'Запущено {ok} из {n} контейнеров'
+	},
+	'containers.bulk.done.stop': {
+		one: 'Остановлено {ok} из {n} контейнера',
+		few: 'Остановлено {ok} из {n} контейнеров',
+		many: 'Остановлено {ok} из {n} контейнеров'
+	},
+	'containers.bulk.done.restart': {
+		one: 'Перезапущено {ok} из {n} контейнера',
+		few: 'Перезапущено {ok} из {n} контейнеров',
+		many: 'Перезапущено {ok} из {n} контейнеров'
+	},
+	'containers.bulk.itemDone': '{name}: {state}',
+	'containers.bulk.itemFailed': '{name}: не выполнено: {reason}',
+	'containers.bulk.itemNotRunning': '{name}: не перезапущен: контейнер не работает'
 };

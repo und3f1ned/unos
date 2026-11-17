@@ -84,6 +84,20 @@ export interface FakeVolume {
   companion: string | null;
 }
 
+/** A container's limits and its use (ContainerResources of supervisor/src/apps/schemas.py, ADR-0390). */
+export interface FakeResources {
+  memory_limit: number | null;
+  cpu_limit: number | null;
+  memory_used: number | null;
+  cpu_used: number | null;
+  sampled_at: string | null;
+}
+
+/** A container without limits whose use was not read yet. */
+export function noResources(): FakeResources {
+  return { memory_limit: null, cpu_limit: null, memory_used: null, cpu_used: null, sampled_at: null };
+}
+
 export interface FakeCompanion {
   name: string;
   container: string;
@@ -92,6 +106,7 @@ export interface FakeCompanion {
   health: string | null;
   image: string;
   devices: string[];
+  resources: FakeResources;
 }
 
 /** An installed app as GET /api/v1/apps/installed lists it (InstalledApp of supervisor/src/apps/schemas.py). */
@@ -111,6 +126,7 @@ export interface FakeInstalledApp {
   health: string | null;
   companions: FakeCompanion[];
   missing: string[];
+  resources: FakeResources;
 }
 
 /** An app of one container, `id`, running on the pool at `poolPath` with its data folder /config. */
@@ -136,6 +152,7 @@ export function oneContainerApp(
     health: null,
     companions: [],
     missing: [],
+    resources: noResources(),
   };
 }
 
@@ -151,6 +168,7 @@ export interface FakeContainerState {
   status?: string;
   health?: string | null;
   devices?: string[];
+  resources?: FakeResources;
 }
 
 /**
@@ -188,6 +206,7 @@ export function installedImmich(
         health: state.health === undefined ? (name === 'redis' ? null : 'healthy') : state.health,
         image: IMMICH_IMAGES[name],
         devices: state.devices ?? [],
+        resources: state.resources ?? noResources(),
       };
     });
   const hasMain = !missing.includes('immich');
@@ -213,6 +232,7 @@ export function installedImmich(
     health: hasMain ? (main.health === undefined ? 'healthy' : main.health) : null,
     companions,
     missing,
+    resources: hasMain ? (main.resources ?? noResources()) : noResources(),
   };
 }
 

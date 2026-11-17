@@ -110,6 +110,13 @@ significant step. Features and their state live in `feature-list.json`, decision
   reboot; the check found that deleted volumes kept their quota groups, which the monitor now
   destroys, checked again across a second reboot. All pass but `apps.install-progress`, whose
   install with Immich's pulls and App Store card wait for the owner (Open owner actions, 15).
+- On 2026-11-17 that evening (Log): the eighth batch on the branch `mvp.batch-8`, merged into `main`
+  with its record: a command palette on Ctrl+K (`webui.command-palette`, ADR-0393), several
+  containers or shares at once (`webui.bulk-actions`, ADR-0389), memory and CPU limits per
+  container of an app (`apps.container-resource-limits`, ADR-0390), SMB bound to chosen
+  interfaces (`shares.smb-bind-interfaces`, ADR-0391), API tokens limited to reading or to areas
+  (`auth.api-token-scopes`, ADR-0392), and the dashboard's host network and disk I/O
+  (`system.dashboard`, ADR-0388). All pass, with `auth.api-token-last-used-throttle`'s device step.
 - On the device the NFS server runs (nfs-server, rpcbind.socket and rpcbind, enabled since
   2026-11-08, ADR-0303) and exports nothing for now; over IPv6 only LAN sources reach it
   (ADR-0301). avahi-daemon and wsdd2 run (network discovery), and nmbd is disabled since
@@ -160,7 +167,7 @@ significant step. Features and their state live in `feature-list.json`, decision
 
 ## Dev device
 
-State on 2026-11-17, 15:50 UTC. A Banana Pi BPI-W3 (ArmSoM W3, Rockchip RK3588, 8 GB), running
+State on 2026-11-17, 20:30 UTC. A Banana Pi BPI-W3 (ArmSoM W3, Rockchip RK3588, 8 GB), running
 Armbian's community image for `armsom-w3`, upgraded on 2026-11-15 from 26.2.0-trunk.151 to
 26.11.0-trunk.133 (Debian 13, kernel 6.1.172-vendor-rk35xx);
 its address and logins are in `dev.env` (ADR-0212). This journal called it a UGREEN board, after
@@ -171,7 +178,14 @@ the UGREEN firmware on its eMMC, until the owner set that right on 2026-11-15 (A
   since boot, its own wear estimate 0 to 10%. Nothing writes to it.
 - SSH by key only, root by the workstation's key `~/.ssh/unos_dev_ed25519`; root's and the UNOS
   administrator's passwords were rotated and live only in `dev.env` (ADR-0226).
-- Runs b17889f of the branch `mvp.batch-7` (the seventh batch, ADR-0383 to ADR-0387), merged into
+- Runs 7f5dd29 of the branch `mvp.batch-8` (the eighth batch, ADR-0388 to ADR-0393), merged into
+  `main` with the record of its device check, whose commits on top of it change no runtime file.
+  The batch's 320d3ec was deployed at 18:58 to 18:59 UTC (SD MiB sync 5.398, build-supervisor
+  13.543, build-webui 17.879, up 5.691, check.sh 0.258), then 7f5dd29, the supervisor alone, at
+  about 20:20 UTC (sync 1.258, build-supervisor 12.488, up 2.969, check.sh 0.293). A reboot from
+  the API at 19:23:11 UTC (all containers healthy by 19:25:26). SMB listens on every interface
+  again, no app has limits, quotas are off; three alerts of the limits check went to Telegram.
+- Before it, b17889f of the branch `mvp.batch-7` (the seventh batch, ADR-0383 to ADR-0387), merged into
   `main` with the record of its device check, whose commits on top of b17889f change no runtime
   file. Deployed on 2026-11-17 at 15:31 to 15:32 UTC, the supervisor alone (SD MiB status 0, sync
   0.406, build-supervisor 12.473, up 2.898, check.sh 0.016, status 0). Before it that day: 7cca7e9
@@ -537,6 +551,34 @@ Open owner actions:
 
 ## Log
 
+### 2026-11-17: An eighth batch: palette, bulk actions, app limits, SMB interfaces, token scopes
+
+- Six entries built in parallel worktrees from main 05d7bf5, each reviewed in a fresh context
+  (the owner then asked to save tokens: the builders of `shares.smb-bind-interfaces`,
+  `apps.container-resource-limits` and `auth.api-token-scopes` ran that review themselves and fixed
+  its findings, and no second review followed). Findings fixed: regular users got the host's
+  interfaces on the stats socket and Disk I/O counted zram, loop, dm and md (`system.dashboard`);
+  a full /data lost the audit entries of a bulk delete, Restart selected restarted stopped
+  containers (`webui.bulk-actions`); the palette's Russian layout, held key and hand-written
+  dialogs were untested (`webui.command-palette`). Recorded, not fixed: the palette's
+  `test_command_palette.py` and the SMB interfaces' E2E spec were written after their code, and
+  the palette's builder once ran pytest directly; the dashboard still sends regular users the
+  process list and block device names.
+- Merged as ADR-0388 to ADR-0393, after main's PRs #88 (the Audit Log's long names on a phone),
+  #89 (the smart check skips the sleep step while apps use the pool) and #90 (the sideways balance
+  dialog test waits for the list to rest), all three merged into main that day. #89's ADR-0388 took
+  the number 0394 in the batch's merge of main. `make check` 8752 passed; the full E2E run 926
+  passed, 14 skipped, no failure.
+- Device check of 320d3ec (SD MiB per step in each entry's notes): `scenario.sh smb` and `shares`
+  before a reboot from the API at 19:23:11 UTC, `scenario.sh all` after it (187 steps passed, smart's
+  sleep steps skipped), and every entry's steps before and after the reboot. One fault of UNOS:
+  removing a memory limit of a running container answered 500, since Docker 29.9 with runc 1.5
+  keeps the swap limit for MemorySwap -1 and runc refuses a memory limit above it; fixed in
+  7f5dd29 (a swap limit twice the new memory limit; the fake Docker refuses -1 as the device did,
+  and the tests failed before), deployed, and both removals then passed. Not run: a reinstall
+  with a limit (transmission's image tag floats, so its install pulls) and the bulk actions'
+  container steps on the device (the E2E specs show them).
+
 ### 2026-11-17: The balance dialog's check on a phone held sideways no longer depends on timing
 
 - `webui.balance-dialog-sideways`, seen while `webui.audit-log-long-token-name` was built: "On a
@@ -566,7 +608,7 @@ Open owner actions:
 ### 2026-11-17: The smart check skips the disk's sleep while apps use the pool
 
 - `scripts/dev/scenario.sh smart` no longer fails its wait for the pool's disk to sleep when apps
-  keep it awake (ADR-0388): after the seventh batch's reboot `scenario.sh all` failed only that
+  keep it awake (ADR-0394): after the seventh batch's reboot `scenario.sh all` failed only that
   step (sda active after 1980 s, 13 reads and 649 writes), caused by Immich, transmission and
   others with their data on the pool (ADR-0381's cost), which hid any real fault of
   `storage.disk-spindown`. Before the wait, after each of its rounds and once more after the last
@@ -597,11 +639,11 @@ Open owner actions:
   app's write between the last reading and the last power read
   went unseen (now a reading follows it); and the inspects could outlast the device call's 300 s
   (now 120 s at most). Fixed too: UNOS's own containers are every `unos-*`, as the supervisor's
-  `is_system_container` says, and the texts of ADR-0388, the CHANGELOG, the ledger's notes and the
-  feature-pass row say what the code does. Left as is: ADR-0388 changes ADR-0378's device check
+  `is_system_container` says, and the texts of ADR-0394, the CHANGELOG, the ledger's notes and the
+  feature-pass row say what the code does. Left as is: ADR-0394 changes ADR-0378's device check
   without superseding the whole ADR, in the way of ADR-0291 and ADR-0298, since every other rule
   of ADR-0378 stays; a container started again whose new counts are above its old ones is counted
-  short, and one that ran only between two readings is not seen (ADR-0388 says so).
+  short, and one that ran only between two readings is not seen (ADR-0394 says so).
 - On the device, read only: the helper listed every container with its counts, and in two minutes
   Immich's database sent sda 22 writes while sda completed 42 (0.016 MiB); its final form, names
   from `docker ps`, again listed all seven containers (0.000 MiB). `scripts/dev/scenario.sh smart`

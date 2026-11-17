@@ -16,7 +16,7 @@ Covered (the steps of the ledger entry device.scenario-checks-in-repo):
 * every area (files, volumes, smart, backups, smb, smbconf, shares, scrub, balance, offsite, restore, hardware) passes against
   the fake, prints a PASS line with its SD MiB for each step and a summary, and leaves the device as it
   found it;
-* the smart check's wait for the pool's disk to sleep (ADR-0388) is a SKIP that names the containers
+* the smart check's wait for the pool's disk to sleep (ADR-0394) is a SKIP that names the containers
   of apps whose cgroups counted reads or writes on the disk in the wait's last two rounds while
   it stayed active, and so is its step of the SMART reads of the sleeping disk, also when such a
   container woke the disk before them; it fails as before when no app's container did then (the
@@ -4170,7 +4170,7 @@ def test_the_smart_check_waits_for_a_disk_whose_timer_a_smart_monitor_read_resta
     assert nas.smart_monitor_read is None  # it did read the disk
 
 
-# --- the pool's disk while apps use it (ADR-0388) ---------------------------------------------------
+# --- the pool's disk while apps use it (ADR-0394) ---------------------------------------------------
 # On 2026-11-17 the dev device's sda stayed active for the whole wait, with 13 reads and 649 writes
 # counted, while Immich, transmission and others ran with their data on the pool (ADR-0381's cost): the
 # check cannot see the disk sleep then, and says which containers kept it awake instead of failing.
@@ -4187,7 +4187,7 @@ def test_the_smart_check_skips_the_sleep_of_a_disk_that_apps_keep_busy(nas):
                      r"kernel counted 12 reads and 258 writes on it, and in its last 660 s the containers of apps read "
                      r"or wrote it: immich-database 4 reads and 80 writes, transmission 0 reads and 6 writes: apps with "
                      r"data on the pool keep its disk awake \(ADR-0381\), so the check cannot see whether UNOS lets it "
-                     r"sleep; stop them for this step \(ADR-0388\)  \[SD \d+\.\d{3} MiB\]$", output, re.M), output
+                     r"sleep; stop them for this step \(ADR-0394\)  \[SD \d+\.\d{3} MiB\]$", output, re.M), output
     # Only a disk that slept can show that its SMART reads leave it asleep.
     assert re.search(r"^SKIP  \d+\. its SMART data on Storage and on Disk Health leaves sda asleep: sda did not sleep "
                      r"while the containers of apps used it  \[SD ", output, re.M), output
@@ -4385,7 +4385,7 @@ def test_the_smart_check_skips_the_reads_of_a_sleeping_disk_that_an_app_woke(nas
         assert re.search(rf"^SKIP  \d+\. {failed}; since the wait's last power read the kernel counted reads or writes "
                          r"on it, and the containers of apps read or wrote it: immich-database 0 reads and 1 writes: one "
                          r"may have woken it; apps with data on the pool keep its disk awake \(ADR-0381\), so the check "
-                         r"cannot see whether UNOS lets it sleep; stop them for this step \(ADR-0388\)  \[SD ", output,
+                         r"cannot see whether UNOS lets it sleep; stop them for this step \(ADR-0394\)  \[SD ", output,
                          re.M), output
         assert re.search(r"^PASS  \d+\. sda has no idle timeout again", output, re.M), output
     else:

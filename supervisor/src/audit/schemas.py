@@ -50,6 +50,9 @@ class AuditAction(str, Enum):
     SMB_SHARES_IMPORTED = "smb_shares_imported"
     SMB_RECONCILED = "smb_reconciled"
     SMB_RESTORED = "smb_restored"
+    # The network interfaces that SMB listens on, and a restart of smbd by an administrator (ADR-0391)
+    SMB_INTERFACES_CHANGED = "smb_interfaces_changed"
+    SMB_RESTARTED = "smb_restarted"
     # NFS exports (ADR-0321)
     NFS_EXPORT_CREATED = "nfs_export_created"
     NFS_EXPORT_DELETED = "nfs_export_deleted"
@@ -60,6 +63,7 @@ class AuditAction(str, Enum):
     CONTAINER_REMOVED = "container_removed"
     APP_INSTALLED = "app_installed"
     APP_UNINSTALLED = "app_uninstalled"
+    APP_LIMITS_CHANGED = "app_limits_changed"  # the memory or CPU limit of an app's container (ADR-0390)
 
     # System
     BACKUP_CREATED = "backup_created"

@@ -156,6 +156,47 @@ class SmbShareDeleted(BaseModel):
     warnings: list[str] = []
 
 
+# Deleting several shares at once (POST /shares/smb/bulk-delete, ADR-0389): one hold of smb_lock and
+# one apply for all of them.
+BULK_DELETE_MAX = 200
+
+
+class SmbShareToDelete(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(max_length=64)
+    # The share as the question named it: one whose version or folder differs now is not deleted.
+    expected_version: int
+    expected_path: str = Field(max_length=4096)
+
+
+def _unique_shares(entries: list[SmbShareToDelete]) -> list[SmbShareToDelete]:
+    if len({e.name.lower() for e in entries}) != len(entries):
+        raise ValueError("Each share can appear only once")
+    return entries
+
+
+class SmbSharesDelete(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    shares: Annotated[
+        list[SmbShareToDelete], Field(min_length=1, max_length=BULK_DELETE_MAX), AfterValidator(_unique_shares)
+    ]
+
+
+class SmbShareDeleteResult(BaseModel):
+    name: str                                       # as sent
+    # deleted; not_found: no share has the name (deleted or renamed meanwhile); changed: its version
+    # or its folder is no longer the one sent, and it was not deleted
+    status: Literal["deleted", "not_found", "changed"]
+    detail: str | None = None                       # why it was not deleted, as a single request answers it
+
+
+class SmbSharesDeleted(BaseModel):
+    results: list[SmbShareDeleteResult]             # one per share sent, in the order sent
+    warnings: list[str] = []                        # of the one apply
+
+
 class SmbServiceStatus(BaseModel):
     samba_tools_missing: list[str] | None           # from accounts.host_status(); None: check failed
     group_ok: bool | None
@@ -164,6 +205,44 @@ class SmbServiceStatus(BaseModel):
     import_report: list[str]
     unmanaged_samba_users: list[str]                # passdb entries UNOS did not create (they cannot use UNOS shares)
     active_smb_users: int
+
+
+class SmbInterfaceInfo(BaseModel):
+    """One network interface of the host, or a chosen name that is not on the host (ADR-0391)."""
+
+    name: str
+    addresses: list[str]                            # as ip lists them, with their prefix lengths
+    state: str                                      # the operational state ip reports; "" when not on the host
+    present: bool                                   # on the host now
+    enabled: bool                                   # administratively up: Samba binds only such interfaces
+    lan: bool                                       # has an address that hosts allow admits (not loopback or IPv6 link-local)
+    offered: bool                                   # broadcast-capable: Samba skips the others (point-to-point)
+    chosen: bool
+    listening: list[str]                            # its addresses that smbd answers on now
+    missing: list[str]                              # LAN addresses of a chosen interface that smbd does not listen on
+
+
+class SmbInterfaces(BaseModel):
+    """GET /shares/smb-interfaces: where SMB listens (ADR-0391)."""
+
+    chosen: list[str]                               # the valid stored names, sorted
+    bound: bool                                     # smb.conf binds smbd (a choice exists); false: every interface
+    interfaces: list[SmbInterfaceInfo]              # without the loopback and Docker's
+    host_error: str | None                          # why the host's interfaces could not be read
+    listening: list[str] | None                     # smbd's TCP 445 addresses ("0.0.0.0", "::": every one); None: unknown
+    problems: list[str]                             # where smbd's listeners and the choice differ
+    restart_needed: bool                            # a restart of smbd would make them agree
+    sessions: int | None                            # open SMB sessions, which a restart ends; None: unknown
+    restarted: bool = False                         # only in answers to changes: smbd was restarted
+    warnings: list[str] = []                        # only in answers to changes
+
+
+class SmbInterfacesUpdate(BaseModel):
+    """PUT /shares/smb-interfaces: the interfaces to bind besides the loopback; [] for every interface."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    interfaces: list[Annotated[str, Field(max_length=64)]] = Field(max_length=16)
 
 
 class NfsExportCreate(BaseModel):

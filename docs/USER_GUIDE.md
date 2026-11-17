@@ -99,6 +99,28 @@ turning off SMB in a user's edit dialog, opens over that dialog, and Escape
 closes only the dialog on top. Until the question closes, the dialog under it
 takes neither the focus nor clicks: Tab skips its fields and buttons.
 
+### Command Palette
+
+Press **Ctrl+K** (on a Mac **Cmd+K**) on any page after signing in to open the
+command palette; on a phone, tap the search button at the right end of the bar
+at the top. Type part of the name of a page or an action, in English or in
+Russian: the list keeps what matches, names that start with what you typed
+first. **↓** and **↑** choose, **Enter** or a click opens the chosen page or
+starts the action, and **Escape** closes the palette. Ctrl+K also works while
+you are typing in a field, except that on a Mac, Ctrl+K in a field keeps
+deleting to the end of the line (use Cmd+K there); while a dialog is open,
+Ctrl+K does nothing but what the browser does with it.
+
+The palette lists what your account may open: an administrator every page,
+the **Trash**, every tab of **System** and the actions; a regular user
+**Dashboard**, **Account**, the language and **Logout**. It switches the
+language and logs out by itself. The actions that change the NAS end with
+"…" and only open the dialog of their page, which asks before anything
+happens: **Add a user…** opens the **Users** page's **Add user**, and
+**Reboot the host…**, **Shut down the host…** and **Suspend the host…** open
+the confirmations of **System** → **Power Management**. Other changes, such
+as deleting something, are made on their pages.
+
 ### Language
 
 The web interface is in English or Russian. Choose the language on the **Account**
@@ -130,9 +152,23 @@ quota, a failing disk, a task that failed or missed its run (see
 [Alerts](#alerts)).
 
 ### System Stats
+The cards follow the live statistics, which the server sends every 2 seconds
+while the page is open; the time of the last one is shown beside **Refresh**.
+Right after the page opens, the network and disk rates can show 0 B/s until
+the next statistics arrive.
 - **CPU** - Current processor usage
 - **Memory** - RAM usage and total
-- **Network** - Current upload/download speeds
+- **Network** - The bytes per second the NAS receives (↓) and sends (↑), over
+  the interfaces that **System** → **Network** lists: not the loopback,
+  `dummy0` or Docker's bridges and virtual interfaces. Traffic through a
+  bridge, bond or VLAN that you set up on the host counts on both the port
+  and the bridge, and traffic through a tunnel (WireGuard's `wg0`, a 6in4
+  tunnel) on both the tunnel and the port that carries it.
+- **Disk I/O** - The bytes per second read from and written to the host's
+  physical disks (SATA, NVMe, USB, SD card), without their partitions. RAM
+  disks (zram, where Armbian keeps its swap and `/var/log`), loop devices,
+  encrypted or LVM volumes (device mapper) and software RAID (md) do not
+  count, so a write through LUKS or LVM counts once, on its disk.
 - **Temperature** - The temperature of the CPU (Intel, AMD) or of the SoC of
   an ARM board, such as a Raspberry Pi or an RK3588. On a host where UNOS does
   not recognize the CPU's sensor, the first sensor the host lists, which may be
@@ -807,6 +843,15 @@ encryption required loses guest access at the restore, with a note.
   in the share (see below).
 - **Delete** removes the share; the folder and its files are kept. Open
   connections to the share are closed.
+- To delete several shares at once, tick their checkboxes (or **Select all**)
+  and click **Delete selected**, for up to 200 shares at a time. The dialog asks once and names each share
+  with its folder; **Delete N shares** then deletes all of them in one change
+  of smb.conf. Their folders and files are kept, and the open connections to
+  them are closed. A share that someone changed or deleted in the meantime is
+  not deleted: the page names it with the reason and keeps a changed share
+  selected, so you can look at it and delete it again. If Samba's check
+  (testparm) rejects the new smb.conf, or the database is busy, no share is
+  deleted and the dialog says why.
 
 #### Repair Permissions
 
@@ -914,6 +959,44 @@ If a computer connected as a guest or with another account before, remove
 the saved sign-in first, or it keeps using it: on macOS in **Keychain
 Access** (the entry with the NAS's address), on Windows in **Credential
 Manager** → **Windows Credentials**.
+
+#### Network Interfaces
+
+By default SMB listens on every network interface of the NAS. The card
+**Network interfaces** of the SMB tab shows where it listens, and the
+addresses that smbd answers on. **Choose interfaces…** limits SMB to the
+interfaces you tick, for example the wired network card when the NAS also
+has Wi-Fi, a second network card or a VPN: SMB then stops answering on the
+addresses of the others. The NAS itself (the loopback) always stays bound.
+
+- The list shows the NAS's interfaces with their addresses, as the host
+  reports them. Docker's interfaces are not listed: apps reach SMB at the
+  NAS's address. Point-to-point interfaces (tunnels, WireGuard, PPP) cannot
+  be ticked: Samba does not listen there.
+- At least one interface you choose must be on the NAS, enabled and with an
+  address of your local network; otherwise the choice is refused, since no
+  computer could reach SMB. An interface that is not on the NAS now, such as
+  an unplugged USB adapter, can stay chosen: it shows as **Not on the NAS
+  now**, and SMB listens there once it is back and SMB has restarted.
+- **Saving restarts SMB**: every open SMB connection is closed, and the
+  dialog says how many are open. Computers connect again by themselves, but
+  a copy in progress fails.
+- smbd listens on the addresses that the chosen interfaces have when it
+  starts. When an address changes later (a new address from your router, an
+  adapter plugged in), the card names the address that smbd does not listen
+  on and offers **Restart SMB…**, which also closes the open connections.
+  Give the NAS a fixed address in your router (a DHCP reservation). When
+  smbd cannot be restarted after a change, the page says so and offers
+  **Restart SMB…** too.
+- Computers on the network of an interface that is not chosen can still
+  see the NAS in Windows' **Network** and in Finder (see
+  [Finding the NAS](#finding-the-nas)), but cannot connect.
+- **Every network interface (default)** in the same dialog goes back to
+  listening everywhere.
+
+The choice is part of the UNOS database, so a backup holds it. Each change,
+and each Restart SMB, is in the audit log (`smb_interfaces_changed`,
+`smb_restarted`).
 
 ### NFS Exports (Linux and macOS)
 
@@ -1189,6 +1272,17 @@ state, and the search box finds containers by name or image.
   its new state. An app from the App Store does not start while its data folders
   are not on a mounted pool: the message names the pool to mount.
 - **Remove** deletes the container, also a running one, after a confirmation.
+- To act on several containers, tick their checkboxes (in the table or on the
+  cards), or **Select all shown** for every container the search and the state
+  filter show; a container they hide is unselected. **Start selected**, **Stop
+  selected** and **Restart selected** act on each of them in turn, and the page
+  shows which one it is at; meanwhile the containers' own buttons wait.
+  **Restart selected** restarts the running ones only, as a container's own
+  **Restart** does: one that does not run is listed as not restarted. Then the
+  page lists each container with its new state, or why it failed: one
+  container's failure does not stop the others, and what was not done stays
+  selected for another try. Leaving the page stops the run after the container
+  it is at. Removal is one container at a time.
 - Click a container for its details: **Overview**, **Logs** and **Network**.
   **Logs** shows the last 200 lines of its log and then each new line as the
   container writes it, each line with the time Docker received it. When the log
@@ -1459,6 +1553,39 @@ container's log on the **Containers** page if it stops again.
 
 These actions work only on apps installed from the App Store; other containers
 are started and stopped on the **Containers** page.
+
+### Memory and CPU Limits
+
+Each card on the **Installed** tab has **Resources**: every container of the
+app with the memory and the CPUs it uses, as UNOS last read them from the
+kernel (about every 30 seconds; open the tab again for newer values), and its
+limits, with a bar of the use against each limit. A container without limits
+shows its use alone; a stopped one shows only its limits.
+
+**Limits** on a container's line sets its own limits; an app of several
+containers has one per container (Immich's server, database, Valkey and machine
+learning). Leave a field empty for no limit:
+
+- **Memory limit (MB)**: from 64 MB to below the memory of the NAS. A new or
+  lower limit of a running container must leave a margin above what it uses now
+  (10%, at least 32 MB); while UNOS cannot read its use, stop the app first. At
+  its limit the kernel takes memory from the container, and then ends its
+  processes; the container gets no swap beyond the limit.
+- **CPU limit (CPUs)**: from 0.1 to the number of the NAS's CPUs, in hundredths
+  (1.5 is one and a half CPUs). At its limit the container runs slower.
+
+Docker applies the limits at once, without a restart, and keeps them across
+stops, restarts and reboots: `docker inspect` shows them as `Memory`,
+`MemorySwap`, `CpuQuota` and `CpuPeriod`. UNOS also keeps them for the next
+install of the app, also after an uninstall, and the install gives each
+container its own again. A memory limit that you remove shows in `docker
+inspect` as twice the memory of the NAS, which works as no limit. A CPU limit
+set outside UNOS with `docker update --cpus` is shown, but UNOS cannot change
+it. Each change is in the audit log as **App limits changed**.
+
+Crossing a limit sends an alert (see [Alerts](#alerts)): a container that uses
+90% of its memory limit, one held at 90% of its CPU limit for 5 minutes, and
+one whose process the kernel ended for lack of memory.
 
 ---
 
@@ -1807,19 +1934,97 @@ the reason, and **Retry** loads it again.
 
 Tokens give scripts access to the UNOS API with the rights of the account that
 created them: a regular user's token cannot use the administrator-only APIs.
-There is no page for them yet; create one with the API, using the
-`access_token` that `POST /api/v1/auth/login` returns. `name` has 1 to 64
-characters. `expires_in_days` is the token's lifetime, from 1 to 3650 days;
-without it the token does not expire. A token acts with all the rights of its
-user, and `permissions` takes only `*`. A user has at most 100 tokens. The
-answer is the only place that shows the full token (`token`, which starts with
-`unos_`): UNOS keeps only a hash of it, so save it right away.
+A token can be limited to reading, or to areas of the API, so that a script
+gets only what it needs.
+
+**On the Account page** (**System** → **Security**), **API Tokens** lists your
+tokens: each with its name and first 12 characters, its access (**Full
+access**, **Read only** or **Read and change**), its areas, whether it is
+disabled or expired, when it was created, when it expires and when it was last
+used. **Disable Token** and **Enable Token** turn a token off and on again, and
+**Delete Token** revokes it for good, after a confirmation. **New Token** opens
+a dialog:
+
+- **Name**: what the token is for, 1 to 64 characters.
+- **Expires**: never, or after 30, 90 or 365 days.
+- **Access**: **Read only**, which the dialog starts with, or **Read and
+  change**.
+- **Areas of the API**: **Every area**, which the dialog starts with, or
+  **Only these areas** and the areas to tick. With **Read and change**, a
+  warning appears when the areas include **Apps**, **Backups**,
+  **Containers**, **Off-device copy**, **Scheduler** or **Updates** (below).
+
+**Create Token** then shows the token once, with **Copy**: UNOS keeps only a
+hash of it, so save it right away. **Read and change** with **Every area** is a
+full token, which acts with all the rights of your account.
+
+**What a limited token can do.** An area is the part of a path after
+`/api/v1/`, as the API is organised: `apps`, `audit`, `auth` (your account,
+the users and the API tokens), `backup`, `containers`, `files`, `groups`,
+`health` (with `/api/v1/health/full` and `/api/v1/health/prometheus`), `logs`,
+`monitor`, `network`, `notifications`, `offsite`, `power`, `scheduler`,
+`security`, `shares`, `snapshots`, `storage`, `system` and `updates`. A token
+that is read only or limited to areas:
+
+- reaches only its areas: anything else answers 403 "This API token is
+  limited to other areas of the API";
+- when it is read only, only reads: `GET` requests, and two `POST`s that only
+  read, `POST /api/v1/power/ups/test` and
+  `POST /api/v1/files/upload-leftovers/check`. Every other request answers 403
+  "This API token can only read", also the tests of notification channels and
+  `POST /api/v1/notifications/send`, which send messages, and the start of a
+  SMART self-test. Two reads hold secrets and answer 403 "A read-only API token
+  cannot read this: the answer holds secrets": the download of a backup
+  (`GET /api/v1/backup/download/<name>`, the database with the password hashes
+  and the two-factor secrets) and `GET /api/v1/notifications/configs` (the
+  passwords and tokens of the channels). Other reads show what their area
+  shows: a files token reads every file of the pools, the passwords that apps
+  keep there included, and a containers token the logs of the apps;
+- never changes the accounts, the users, the API tokens, its own password,
+  two-factor authentication or the recovery codes, never restores a backup
+  (which replaces the accounts and their tokens) and never turns the
+  requirement of two-factor authentication on or off: these answer 403 "A
+  limited API token cannot change accounts, users, API tokens or two-factor
+  authentication, nor restore a backup: sign in to do it", whatever its access
+  and areas. It reads them with the area `auth`, `GET /api/v1/auth/me`
+  included;
+- opens the WebSockets that its areas reach, also when read only:
+  `/ws/v1/logs/<container>` with `containers`, `/ws/v1/journal` with `logs`,
+  and `/ws/v1/events`, which carries the data of several areas, only with every
+  area. Another socket closes with 4403.
+
+**Read and change** in an area gives the administrator's power over it. In
+**Apps**, **Containers**, **Scheduler** and **Updates** that includes running
+programs as root on the NAS (a privileged app, a container's folders, a custom
+task, the source of updates), from where a token can do everything that a full
+token can. In **Backups** and **Off-device copy** it includes the database,
+with the password hashes and two-factor secrets of every account (a backup
+that the token makes and downloads, an off-device copy to a store of its
+choice), from which a weak password can be guessed offline. Give such a token
+only to a script you trust as much as your password. In **Shares** a token can
+open a guest share, and **Off-device copy** also sends copies of the pools to
+another store.
+
+**With the API**, use the `access_token` that `POST /api/v1/auth/login`
+returns. `name` has 1 to 64 characters. `expires_in_days` is the token's
+lifetime, from 1 to 3650 days; without it the token does not expire.
+`read_only` (`true` or `false`, default `false`) and `areas` (a list of 1 to 21
+area names, each once; without it, or `null`, every area) limit the token;
+without either, the token is full, as before. A field the API does not know,
+such as the `permissions` that earlier versions took, answers 422. A user has at
+most 100 tokens. The answer is the only place that shows the full token
+(`token`, which starts with `unos_`), with its `read_only` and `areas`.
 
 ```bash
 curl --cacert unos-root-ca.crt -X POST https://unos/api/v1/auth/tokens \
   -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"name": "Backup Script", "expires_in_days": 365}'
+  -d '{"name": "Backup Script", "expires_in_days": 365, "areas": ["backup"]}'
+```
+
+A token for monitoring that only reads:
+```bash
+  -d '{"name": "Prometheus", "read_only": true, "areas": ["health", "monitor"]}'
 ```
 
 Use tokens in API requests:
@@ -1832,20 +2037,26 @@ curl --cacert unos-root-ca.crt -H "Authorization: Bearer YOUR_TOKEN" https://uno
 and `unos` the name on the certificate.
 
 - `GET /api/v1/auth/tokens` lists your tokens with their first 12 characters
-  (`token_prefix`), whether they are active, their expiry and their last use,
-  never the full token. Other users, administrators too, neither see nor
-  change your tokens.
+  (`token_prefix`), whether they are active, their expiry, their last use,
+  `read_only` and `areas`, never the full token. `scope_known` is `false` for
+  a token whose stored scope UNOS cannot read, as after a restore of a damaged
+  or foreign database: every request with it answers 403 "This API token's
+  scope cannot be read: delete it and create a new one" until you delete it.
+  Other users, administrators too, neither see nor change your tokens.
 - `POST /api/v1/auth/tokens/<id>/toggle` disables a token, and enables it
   again the next time. A disabled token is refused with 401 "API token is
   disabled", an expired one with 401 "API token has expired".
 - `DELETE /api/v1/auth/tokens/<id>` revokes a token for good.
 - Creating, disabling, enabling and deleting tokens needs the `access_token` of
-  a sign-in: a request made with an API token gets 403, so that a token cannot
-  make tokens that outlive its expiry or its revocation. A token can list
-  them.
+  a sign-in: a request made with a full API token gets 403, so that a token
+  cannot make tokens that outlive its expiry or its revocation. A full token
+  can list them, and so can a limited one whose areas include `auth`. A token's access and
+  areas cannot be changed: create a new token instead.
 - The last use (`last_used_at`) is stored at most once an hour, so that
   scripts do not write to the system disk with every request: it can be up to
   an hour older than the token's latest request.
+- The audit log records each new token with its access and areas, such as
+  `Created API token: Prometheus (read only: health, monitor)`.
 
 ---
 
@@ -2332,9 +2543,11 @@ A run on a pool that is not mounted fails with `Pool <name> is not mounted at
 ### System Backup
 
 Go to **System** → **Backup & Restore**. A backup holds the UNOS database:
-user accounts with their passwords, two-factor authentication, API tokens,
-the login history, the groups of users with their members, and the SMB
-shares with their access lists, those of groups included. It does not
+user accounts with their passwords, two-factor authentication, API tokens
+with their access and areas, the login history, the groups of users with their
+members, the SMB shares with their access lists, those of groups included, the
+memory and CPU limits kept for the apps' next installs, and the network
+interfaces that SMB listens on. It does not
 hold the files in your pools, Samba's own password database, nor settings
 kept elsewhere, such as notification channels, scheduled tasks, firewall
 rules, UPS settings, the network settings and the host's `/etc/fstab`. Each
@@ -2352,11 +2565,22 @@ backup in the list has **Restore**, **Download** and **Delete** buttons.
   also needs its passphrase. Restoring replaces the database with the one in
   the backup: the user accounts with their passwords, two-factor
   authentication, API tokens and the login history are then those of the
-  backup, so an API token revoked after the backup was made works again.
+  backup, so an API token revoked after the backup was made works again, with
+  the access and areas it had then. A restored token whose access and areas
+  UNOS cannot read is refused everywhere until it is deleted, and the restore
+  says how many such tokens it brought back.
   Nothing else is restored: the scheduled tasks that the backups of backup
-  tasks also hold are named in the result as not restored.
+  tasks also hold are named in the result as not restored. The limits kept
+  for the apps' next installs become the backup's, while the installed apps'
+  containers keep the limits that Docker has until you set them again.
 
 SMB after a restore:
+- The network interfaces that SMB listens on come back too, and smbd restarts
+  when they differ from the NAS's: open SMB connections close. A backup made
+  before UNOS had this choice listens on every interface. When none of the
+  restored interfaces is on this NAS (a backup of other hardware), SMB answers
+  only the NAS itself and the Shares page says so: choose the interfaces
+  again.
 - The shares and their access lists, and the groups with their members, come
   back with the database, and UNOS writes smb.conf from them; a backup holds
   no smb.conf. A backup made before UNOS had groups restores without groups,
@@ -2541,6 +2765,9 @@ enabled channel, when it finds it:
 | The latest SMART self-test of a disk failed | error | every hour |
 | The last run of an enabled scheduled task failed | warning | every 5 minutes |
 | An enabled task missed a run: its time passed 10 minutes ago, and it did not run | warning | every 5 minutes |
+| A container of an app uses 90% of its memory limit; the banner keeps it until it is below 80% | warning | every 30 seconds |
+| A container of an app used 90% of its CPU limit on average for 5 minutes; kept until that average is below 70% | warning | every 30 seconds |
+| The kernel ended a process of a container of an app for lack of memory, at its memory limit or because the NAS ran out of memory; kept an hour after the last such end, so that one alert covers a container that is ended again and again | error | every 30 seconds |
 
 A problem is alerted once, not at every check, and stays known while it
 lasts: administrators see it in the health banner above every page, in the
@@ -2557,7 +2784,9 @@ no longer healthy, a filesystem made read-only.
 
 The use of the volumes' quotas is read from the kernel's own counters, which
 reads no disk; the volumes are listed again only after something wrote to the
-pool. UNOS does not watch a volume of a pool with quotas off.
+pool. UNOS does not watch a volume of a pool with quotas off. The use of the
+apps' containers is read from the kernel's counters of each container too, on
+a host with cgroup v2, and only while the container runs.
 
 A disk that sleeps is not woken for the check and keeps what UNOS knew of it,
 unless another disk is at its place. Runs are not made up after the supervisor
@@ -2654,7 +2883,8 @@ yet: every enabled channel receives every alert, and no other event
 6. ✅ Keep guest shares few (guests can only read)
 7. ✅ Keep UNOS updated
 8. ✅ Don't expose to the internet without VPN
-9. ✅ Use API tokens instead of passwords for scripts
+9. ✅ Use API tokens instead of passwords for scripts, each limited to what its
+   script needs ([API Tokens](#api-tokens))
 10. ✅ Review the [audit log](#audit-log) periodically
 
 ### Storage

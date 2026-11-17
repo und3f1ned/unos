@@ -143,6 +143,34 @@ export interface SmbShareDeleted {
   warnings: string[];
 }
 
+/**
+ * A share to delete with others, with the version and the folder the page loaded: one whose version
+ * or folder differs now is not deleted (ADR-0389).
+ */
+export interface SmbShareToDelete {
+  name: string;
+  expected_version: number;
+  expected_path: string;
+}
+
+/**
+ * What happened to one share of a deletion of several: deleted; not_found, no share has the
+ * name (deleted or renamed meanwhile); changed, its version or its folder is no longer the one
+ * sent, and it was not deleted. `detail` is the server's reason for the last two.
+ */
+export interface SmbShareDeleteResult {
+  name: string;
+  status: "deleted" | "not_found" | "changed";
+  detail: string | null;
+}
+
+export interface SmbSharesDeleted {
+  /** One per share sent, in the order sent. */
+  results: SmbShareDeleteResult[];
+  /** Of the one apply of smb.conf. */
+  warnings: string[];
+}
+
 export type RepairState = "running" | "done" | "incomplete" | "failed";
 
 /** A repair of a share's permissions: while it runs (the counts so far), then its result. */
@@ -263,6 +291,11 @@ export async function deleteSmbShare(name: string): Promise<SmbShareDeleted> {
   return api.delete<SmbShareDeleted>(smbSharePath(name));
 }
 
+/** Delete several shares with one apply of smb.conf; their folders are kept (ADR-0389). */
+export async function deleteSmbShares(shares: SmbShareToDelete[]): Promise<SmbSharesDeleted> {
+  return api.post<SmbSharesDeleted>("/shares/smb/bulk-delete", { shares });
+}
+
 /**
  * Start a repair in the background; answers it running (ADR-0363). Its progress and its end come
  * over /ws/v1/events (the store repairJob of $lib/stores/repair).
@@ -287,6 +320,66 @@ export async function getSmbStatus(): Promise<SmbServiceStatus> {
 
 export async function clearImportReport(): Promise<{ status: string }> {
   return api.delete<{ status: string }>("/shares/smb-status/import-report");
+}
+
+/**
+ * One network interface of the host as the server reads it in the host's network namespace, or a
+ * chosen name that the host lacks (supervisor/src/shares/listen.py, ADR-0391).
+ */
+export interface SmbInterface {
+  name: string;
+  /** As ip lists them, with their prefix lengths. */
+  addresses: string[];
+  /** The operational state ip reports (UP, DOWN, UNKNOWN, ...); "" when not on the host. */
+  state: string;
+  present: boolean;
+  /** Administratively up: Samba binds only such interfaces. */
+  enabled: boolean;
+  /** Has an address of the local network (one that hosts allow admits). */
+  lan: boolean;
+  /** Broadcast-capable: Samba does not listen on point-to-point interfaces. */
+  offered: boolean;
+  chosen: boolean;
+  /** Its addresses that smbd answers on now. */
+  listening: string[];
+  /** Addresses of the local network of a chosen interface that smbd does not listen on. */
+  missing: string[];
+}
+
+/** Where SMB listens: GET /shares/smb-interfaces, and the answers to its changes. */
+export interface SmbInterfaces {
+  /** The chosen interfaces, which smbd binds with the loopback. */
+  chosen: string[];
+  /** smb.conf binds smbd: false is every interface, Samba's default; true with no name is the loopback alone. */
+  bound: boolean;
+  /** Without the loopback and Docker's interfaces. */
+  interfaces: SmbInterface[];
+  host_error: string | null;
+  /** smbd's addresses on TCP 445 ("0.0.0.0" and "::" are every address); null: unknown. */
+  listening: string[] | null;
+  /** Where smbd's listeners and the choice differ. */
+  problems: string[];
+  /** A restart of smbd would make them agree. */
+  restart_needed: boolean;
+  /** Open SMB sessions, which a restart ends; null: unknown. */
+  sessions: number | null;
+  /** Only in answers to changes: smbd was restarted. */
+  restarted: boolean;
+  warnings: string[];
+}
+
+export async function getSmbInterfaces(): Promise<SmbInterfaces> {
+  return api.get<SmbInterfaces>("/shares/smb-interfaces");
+}
+
+/** Bind SMB to these interfaces and the loopback; [] for every interface. A change restarts smbd. */
+export async function setSmbInterfaces(interfaces: string[]): Promise<SmbInterfaces> {
+  return api.put<SmbInterfaces>("/shares/smb-interfaces", { interfaces });
+}
+
+/** Restart smbd now: it then listens on what the chosen interfaces have; every connection ends. */
+export async function restartSmb(): Promise<SmbInterfaces> {
+  return api.post<SmbInterfaces>("/shares/smb-interfaces/restart");
 }
 
 export async function getNfsExports(): Promise<NfsExport[]> {

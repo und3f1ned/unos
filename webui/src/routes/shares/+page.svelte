@@ -5,6 +5,7 @@
 		clearImportReport,
 		deleteNfsExport,
 		deleteSmbShare,
+		deleteSmbShares,
 		getNfsExports,
 		getNfsStatus,
 		getSharePaths,
@@ -17,7 +18,8 @@
 		type RepairResult,
 		type SharePath,
 		type SmbServiceStatus,
-		type SmbShare
+		type SmbShare,
+		type SmbShareDeleteResult
 	} from '$lib/api/shares';
 	import { ApiError } from '$lib/api/client';
 	import { Alert, Button, Card, EmptyState, Modal } from '$lib/components/ui';
@@ -25,7 +27,8 @@
 		NfsExportFormModal,
 		RepairPermissionsModal,
 		ShareCard,
-		ShareFormModal
+		ShareFormModal,
+		SmbInterfacesCard
 	} from '$lib/components/shares';
 	import { t } from '$lib/i18n';
 	import { isRepairOf, repairJob } from '$lib/stores/repair';
@@ -64,6 +67,23 @@
 	let deleteError = '';
 	let dismissing: Record<string, boolean> = {};
 
+	// Several shares at once (ADR-0389): the selected shares, each by its name and its folder
+	// (keyOf). A share the list no longer has with both leaves the selection whenever the list is
+	// loaded again: a selection never moves to a share made again under the same name in another
+	// folder.
+	let selected = new Set<string>();
+	// The most shares one deletion takes (BULK_DELETE_MAX of supervisor/src/shares/schemas.py).
+	const BULK_DELETE_MAX = 200;
+	// The one question of a deletion of several: the shares as the page had them when it was asked,
+	// each with the version and the folder that the request sends (a share changed since is not
+	// deleted).
+	let bulkToDelete: SmbShare[] | null = null;
+	let bulkDeleting = false;
+	let bulkError = '';
+	let bulkErrorTitle = '';
+	// The shares of the last deletion of several that were not deleted, each with the reason.
+	let bulkNotDeleted: SmbShareDeleteResult[] = [];
+
 	// ---- NFS ----
 	let nfsExports: NfsExport[] = [];
 	let nfsError = '';
@@ -94,6 +114,11 @@
 		if (ended) void reloadSmb();
 	}
 
+	/** A share as a selection holds it: share names cannot hold a line break. */
+	function keyOf(share: SmbShare): string {
+		return `${share.name}\n${share.path}`;
+	}
+
 	function messageOf(e: unknown): string {
 		return e instanceof Error ? e.message : String(e);
 	}
@@ -110,6 +135,8 @@
 		try {
 			shares = await getSmbShares();
 			sharesError = '';
+			const listed = new Set(shares.map(keyOf));
+			selected = new Set([...selected].filter((key) => listed.has(key)));
 		} catch (e) {
 			sharesError = messageOf(e);
 		}
@@ -182,6 +209,7 @@
 	}
 
 	function showOutcome(message: string, newWarnings: string[] | undefined) {
+		bulkNotDeleted = [];
 		notice = message;
 		warnings = newWarnings ?? [];
 		actionError = '';
@@ -242,6 +270,97 @@
 			deleteError = messageOf(e);
 		} finally {
 			deleting = false;
+		}
+	}
+
+	// ---- Several shares at once (ADR-0389) ----
+
+	$: allSelected = shares.length > 0 && shares.every((share) => selected.has(keyOf(share)));
+
+	function selectShare(event: CustomEvent<{ share: SmbShare; selected: boolean }>) {
+		const { share, selected: on } = event.detail;
+		if (on) selected.add(keyOf(share));
+		else selected.delete(keyOf(share));
+		selected = selected;
+	}
+
+	function selectAll(event: Event) {
+		const on = (event.currentTarget as HTMLInputElement).checked;
+		selected = on ? new Set(shares.map(keyOf)) : new Set();
+	}
+
+	function openBulkDelete() {
+		const chosen = shares.filter((share) => selected.has(keyOf(share)));
+		if (chosen.length === 0 || chosen.length > BULK_DELETE_MAX) return;
+		bulkToDelete = chosen;
+		bulkError = '';
+		bulkNotDeleted = [];
+	}
+
+	function closeBulkDelete() {
+		if (bulkDeleting) return;
+		bulkToDelete = null;
+		bulkError = '';
+	}
+
+	// The status the server answers for a share that was not deleted, through a key (ADR-0287).
+	const NOT_DELETED: Record<string, string> = {
+		not_found: 'shares.bulk.status.notFound',
+		changed: 'shares.bulk.status.changed'
+	};
+
+	/** Why a share was not deleted, in the page's language; a status without a key as the server words it. */
+	$: notDeletedReason = (result: SmbShareDeleteResult): string =>
+		Object.prototype.hasOwnProperty.call(NOT_DELETED, result.status)
+			? $t(NOT_DELETED[result.status])
+			: (result.detail ?? result.status);
+
+	async function confirmBulkDelete() {
+		const asked = bulkToDelete;
+		if (!asked || bulkDeleting) return;
+		bulkDeleting = true;
+		bulkError = '';
+		try {
+			const answer = await deleteSmbShares(
+				asked.map((share) => ({
+					name: share.name,
+					expected_version: share.version,
+					expected_path: share.path
+				}))
+			);
+			const deleted = answer.results.filter((result) => result.status === 'deleted');
+			bulkNotDeleted = answer.results.filter((result) => result.status !== 'deleted');
+			// What was not deleted stays selected, for another look; the list drops what is gone.
+			const kept = new Set(bulkNotDeleted.map((result) => result.name));
+			selected = new Set(asked.filter((share) => kept.has(share.name)).map(keyOf));
+			bulkDeleting = false;
+			closeBulkDelete();
+			notice =
+				deleted.length > 0
+					? $t('shares.bulk.deleted', {
+							n: deleted.length,
+							names: deleted.map((result) => result.name).join(', ')
+						})
+					: '';
+			warnings = answer.warnings;
+			actionError = '';
+			await reloadSmb();
+		} catch (e) {
+			// The session ended: the sign-in page is on its way.
+			if (e instanceof ApiError && e.status === 401) return;
+			// The dialog stays open with the reason. Whether nothing was deleted, the list read again
+			// says: a refusal of the apply deletes none, but an answer that never came (a lost
+			// connection) or an error after the deletion (its audit entry) does not say so.
+			const reason = messageOf(e);
+			await reloadSmb();
+			const listed = new Set(shares.map(keyOf));
+			if (sharesError) bulkErrorTitle = $t('shares.bulk.notKnown');
+			else if (asked.every((share) => listed.has(keyOf(share))))
+				bulkErrorTitle = $t('shares.bulk.noneDeleted');
+			else bulkErrorTitle = $t('shares.bulk.someGone');
+			bulkError = reason;
+		} finally {
+			bulkDeleting = false;
 		}
 	}
 
@@ -383,6 +502,18 @@
 		{#if actionError}
 			<Alert variant="error" dismissible on:dismiss={() => (actionError = '')}>{actionError}</Alert>
 		{/if}
+		{#if bulkNotDeleted.length > 0}
+			{@const title = $t('shares.bulk.notDeleted', { n: bulkNotDeleted.length })}
+			<Alert variant="warning" {title} dismissible on:dismiss={() => (bulkNotDeleted = [])}>
+				<ul class="space-y-1" aria-label={title}>
+					{#each bulkNotDeleted as result (result.name)}
+						<li class="break-words">
+							{$t('shares.bulk.notDeletedItem', { name: result.name, reason: notDeletedReason(result) })}
+						</li>
+					{/each}
+				</ul>
+			</Alert>
+		{/if}
 
 		{#if loading}
 			<p class="loading-text">{$t('common.loading')}</p>
@@ -447,11 +578,48 @@
 						description={$t('shares.smb.emptyHint')}
 					/>
 				{:else}
+					<!-- The selection for an action on several shares (ADR-0389); it wraps on a phone. -->
+					<div
+						class="mb-4 flex flex-wrap items-center gap-x-4 gap-y-2"
+						role="toolbar"
+						aria-label={$t('shares.bulk.toolbar')}
+					>
+						<label class="flex items-center gap-2 text-sm">
+							<input
+								type="checkbox"
+								class="form-checkbox"
+								checked={allSelected}
+								disabled={bulkDeleting}
+								on:change={selectAll}
+							/>
+							{$t('shares.bulk.selectAll')}
+						</label>
+						<span class="text-sm text-content-secondary">
+							{$t('shares.bulk.selected', { n: selected.size })}
+						</span>
+						<Button
+							variant="danger"
+							size="sm"
+							icon={Trash2}
+							disabled={selected.size === 0 || selected.size > BULK_DELETE_MAX || bulkDeleting}
+							on:click={openBulkDelete}
+						>
+							{$t('shares.bulk.delete')}
+						</Button>
+						{#if selected.size > BULK_DELETE_MAX}
+							<p class="w-full text-sm text-warning">
+								{$t('shares.bulk.tooMany', { max: BULK_DELETE_MAX })}
+							</p>
+						{/if}
+					</div>
 					<div class="space-y-4">
 						{#each shares as share (share.name)}
 							<ShareCard
 								{share}
 								{host}
+								selected={selected.has(keyOf(share))}
+								selectDisabled={bulkDeleting}
+								on:select={selectShare}
 								dismissing={dismissing[share.name] ?? false}
 								repairing={$repairJob?.state === 'running' && isRepairOf($repairJob, share.name)}
 								on:edit={(event) => openEdit(event.detail)}
@@ -465,6 +633,8 @@
 
 				<p class="form-hint mt-4">{$t('shares.smb.networkNote')}</p>
 			</Card>
+
+			<SmbInterfacesCard />
 		{:else}
 			{#if nfsStatus}
 				{#if nfsStatus.server_missing}
@@ -580,6 +750,44 @@
 		</Button>
 		<Button variant="danger" class="flex-1" loading={deleting} on:click={confirmDelete}>
 			{$t('shares.smb.delete')}
+		</Button>
+	</svelte:fragment>
+</Modal>
+
+<Modal
+	open={bulkToDelete !== null}
+	title={$t('shares.bulk.deleteTitle', { n: bulkToDelete?.length ?? 0 })}
+	size="md"
+	danger
+	closable={!bulkDeleting}
+	on:close={closeBulkDelete}
+>
+	{#if bulkToDelete}
+		<!-- One question that names every share and its folder (ADR-0389). -->
+		<div class="space-y-3">
+			<p>{$t('shares.bulk.question', { n: bulkToDelete.length })}</p>
+			<ul class="space-y-1" aria-label={$t('shares.bulk.list')}>
+				{#each bulkToDelete as share (share.name)}
+					<li class="min-w-0">
+						<strong class="text-content break-all">{share.name}</strong>{' '}<span
+							class="mono-xs text-muted break-all">{share.path}</span
+						>
+					</li>
+				{/each}
+			</ul>
+			<p class="text-sm text-secondary">{$t('shares.bulk.kept', { n: bulkToDelete.length })}</p>
+			{#if bulkError}
+				<Alert variant="error" title={bulkErrorTitle}>{bulkError}</Alert>
+			{/if}
+		</div>
+	{/if}
+
+	<svelte:fragment slot="footer">
+		<Button variant="secondary" class="flex-1" disabled={bulkDeleting} on:click={closeBulkDelete}>
+			{$t('common.cancel')}
+		</Button>
+		<Button variant="danger" class="flex-1" loading={bulkDeleting} on:click={confirmBulkDelete}>
+			{$t('shares.bulk.confirm', { n: bulkToDelete?.length ?? 0 })}
 		</Button>
 	</svelte:fragment>
 </Modal>

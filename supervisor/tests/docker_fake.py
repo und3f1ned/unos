@@ -28,6 +28,11 @@ response is shut down (``after`` with ``block=True``); ``script(name, *states)``
 one at each reload after its start, the last one staying (an image with a health check is
 otherwise "starting" at its first reload and healthy from its second). ``info`` names
 ``root_dir`` as Docker's root folder.
+
+A container's ``update`` changes its HostConfig as Docker's update does, with Docker's refusals of
+a memory limit below 6 MB, a swap below the memory, a CPU quota below 1 ms and a CPU quota beside
+NanoCpus (ADR-0390); ``api.containers`` is Docker's summary list, and ``events`` answers the events
+of the past that ``oom(name, at)`` recorded, as Docker answers ``GET /events`` with ``until``.
 """
 
 from __future__ import annotations
@@ -61,6 +66,14 @@ class Call(NamedTuple):
 
 def _conflict(message: str) -> APIError:
     return APIError(f"409 Client Error: Conflict ({message})", explanation=message)
+
+
+def _refused(status: int, message: str) -> APIError:
+    """Docker's refusal with its HTTP status, as docker-py raises it: 400 for a value that Docker
+    does not take, 409 for a conflict with what the container has."""
+    reason = {400: "Bad Request", 409: "Conflict"}[status]
+    response = SimpleNamespace(status_code=status, reason=reason, url="http+docker://localhost/v1.47/containers/update")
+    return APIError(f"{status} Client Error: {reason}", response=response, explanation=message)
 
 
 @dataclass
@@ -258,6 +271,11 @@ class Container:
         live = self._docker._find(self.id)
         live.advance()
         self.attrs = copy.deepcopy(live.attrs)
+
+    def update(self, **kwargs: Any) -> dict:
+        """docker-py's Container.update: the low-level update_container of the container."""
+        self._docker._call("container.update", self.name, **kwargs)
+        return self._docker.api._update(self.id, **kwargs)
 
 
 class Network:
@@ -483,6 +501,82 @@ class _Api:
         docker.containers_[name] = _Live(docker, attrs, local)
         return {"Id": container_id, "Warnings": []}
 
+    def containers(self, quiet: bool = False, all: bool = False, trunc: bool = False, latest: bool = False,
+                   since: str | None = None, before: str | None = None, limit: int = -1, size: bool = False,
+                   filters: dict | None = None) -> list[dict]:
+        """docker-py's low-level list: Docker's summary of each container (GET /containers/json), the
+        running ones unless ``all``, filtered by a label as Docker filters them."""
+        self._docker._call("api.containers", None, all=all, filters=filters)
+        if quiet or trunc or latest or since or before or limit != -1 or size:
+            raise TypeError("the fake lists containers by all and filters only")
+        label = (filters or {}).get("label")
+        result = []
+        for container in self._docker.containers_.values():
+            if not all and container.status != "running":
+                continue
+            if label is not None:
+                key, sep, value = label.partition("=")
+                if key not in container.labels or (sep and container.labels[key] != value):
+                    continue
+            result.append({
+                "Id": container.id,
+                "Names": [f"/{container.name}"],
+                "Image": container.attrs["Config"]["Image"],
+                "Labels": dict(container.labels),
+                "State": container.status,
+                "Status": "Up 5 minutes" if container.status == "running" else "Exited (0) 5 minutes ago",
+            })
+        return result
+
+    def _update(self, container: str, *, blkio_weight: Any = None, cpu_period: int | None = None,
+                cpu_quota: int | None = None, cpu_shares: Any = None, cpuset_cpus: Any = None,
+                cpuset_mems: Any = None, mem_limit: int | None = None, mem_reservation: Any = None,
+                memswap_limit: int | None = None, kernel_memory: Any = None, restart_policy: Any = None) -> dict:
+        """Docker's POST /containers/{id}/update as docker-py sends it (a value that is 0 or None is
+        not sent, and Docker takes 0 as unchanged) and as Docker checks it: the values it refuses
+        and the conflicts with a limit already set, with Docker's messages."""
+        if any(value is not None for value in (blkio_weight, cpu_shares, cpuset_cpus, cpuset_mems,
+                                               mem_reservation, kernel_memory, restart_policy)):
+            raise TypeError("the fake updates only the memory, the swap and the CPU quota and period")
+        sent = {key: value for key, value in (("Memory", mem_limit), ("MemorySwap", memswap_limit),
+                                              ("CpuPeriod", cpu_period), ("CpuQuota", cpu_quota)) if value}
+        live = self._docker._find(container)
+        host = live.attrs["HostConfig"]
+        memory, swap = sent.get("Memory", 0), sent.get("MemorySwap", 0)
+        period, quota = sent.get("CpuPeriod", 0), sent.get("CpuQuota", 0)
+        if host.get("NanoCpus") and (period > 0 or quota > 0):
+            raise _refused(409, "Conflicting options: CPU Quota cannot be updated as NanoCPUs has already been set")
+        if memory != 0 and memory < 6 * 1024 * 1024:
+            raise _refused(400, "Minimum memory limit allowed is 6MB")
+        if memory > 0 and swap > 0 and swap < memory:
+            raise _refused(400, "Minimum memoryswap limit should be larger than memory limit, see usage")
+        if (memory > 0 and swap == -1 and (host.get("MemorySwap") or 0) > 0 and memory > host["MemorySwap"]
+                and live.status == "running"):
+            # Docker 29.9 with runc 1.5 on the dev device: -1 leaves the running container's swap
+            # limit as it was, and runc refuses a memory limit above it (2026-11-17).
+            raise _refused(500, "Cannot update container: failed to update resources: runc did not terminate "
+                                "successfully: exit status 1: memory+swap limit should be >= memory limit")
+        if memory > 0 and swap == 0 and (host.get("MemorySwap") or 0) > 0 and memory > host["MemorySwap"]:
+            raise _refused(409, "Memory limit should be smaller than already set memoryswap limit, "
+                                "update the memoryswap at the same time")
+        if period != 0 and not 1000 <= period <= 1000000:
+            raise _refused(400, "CPU cfs period can not be less than 1ms (i.e. 1000) or larger than 1s (i.e. 1000000)")
+        if 0 < quota < 1000:
+            raise _refused(400, "CPU cfs quota can not be less than 1ms (i.e. 1000)")
+        # What the host's kernel cannot limit, Docker discards with a warning (its sysinfo).
+        warnings = []
+        if "memory" in self._docker.unsupported and ("Memory" in sent or "MemorySwap" in sent):
+            sent.pop("Memory", None)
+            sent.pop("MemorySwap", None)
+            warnings.append("Your kernel does not support memory limit capabilities or the cgroup is not mounted. "
+                            "Limitation discarded.")
+        if "cpu" in self._docker.unsupported and ("CpuQuota" in sent or "CpuPeriod" in sent):
+            sent.pop("CpuQuota", None)
+            sent.pop("CpuPeriod", None)
+            warnings.append("Your kernel does not support CPU CFS scheduler. CPU quota discarded.")
+        host.update(sent)
+        return {"Warnings": warnings}
+
     def remove_container(self, container: str, v: bool = False, force: bool = False) -> None:
         self._docker._call("api.remove_container", container, v=v, force=force)
         self._docker._remove(self._docker._find(container), force=force)
@@ -510,6 +604,11 @@ class StackDocker:
         self.images_: dict[str, Image] = {}
         self.registry: dict[str, Image] = {}
         self.scripts: dict[str, list[dict]] = {}
+        # Docker's events, in their order (``oom``).
+        self.events_: list[dict] = []
+        # The limits that the host's kernel cannot apply ("memory", "cpu"): Docker's update
+        # discards them with a warning.
+        self.unsupported: set[str] = set()
         # Called with the reference and each line of a pull before the line is handed out.
         self.pull_hook: Any = None
         # The pulls that stop sending: by reference, after how many lines, and whether the read
@@ -525,6 +624,48 @@ class StackDocker:
         """What Docker says of itself: here only the folder of its data."""
         self._call("info", None)
         return {"DockerRootDir": self.root_dir}
+
+    def events(self, since: int | None = None, until: int | None = None, filters: dict | None = None,
+               decode: bool | None = None) -> Any:
+        """Docker's events of the past, as GET /events with ``until`` answers them and closes: those
+        of ``events_`` from ``since`` to ``until`` (whole seconds, both included, as Docker compares
+        them with each event's timeNano) that the filters of type, event and label match."""
+        self._call("events", None, since=since, until=until, filters=filters, decode=decode)
+        if not decode or until is None:
+            raise TypeError("the fake answers decoded events of the past only (decode and until)")
+        filters = filters or {}
+
+        def matches(event: dict) -> bool:
+            nano = event["timeNano"]
+            if since is not None and nano < since * 1_000_000_000:
+                return False
+            if nano > until * 1_000_000_000:
+                return False
+            for key, attribute in (("type", "Type"), ("event", "Action")):
+                wanted = filters.get(key)
+                if wanted is not None and event[attribute] not in ([wanted] if isinstance(wanted, str) else wanted):
+                    return False
+            label = filters.get("label")
+            for wanted in [] if label is None else [label] if isinstance(label, str) else label:
+                key, sep, value = wanted.partition("=")
+                attributes = event["Actor"]["Attributes"]
+                if key not in attributes or (sep and attributes[key] != value):
+                    return False
+            return True
+
+        return iter([copy.deepcopy(event) for event in self.events_ if matches(event)])
+
+    def oom(self, name: str, at: float) -> None:
+        """The kernel ended a process of the container ``name`` for lack of memory at the time ``at``
+        (seconds since the epoch): Docker's event "oom", which containerd reports for each OOM kill
+        in the container's cgroup, with the container's labels among its attributes."""
+        live = self.containers_[name]
+        self.events_.append({
+            "status": "oom", "id": live.id, "from": live.attrs["Config"]["Image"], "Type": "container",
+            "Action": "oom", "Actor": {"ID": live.id, "Attributes": {
+                "image": live.attrs["Config"]["Image"], "name": name, **live.labels,
+            }}, "scope": "local", "time": int(at), "timeNano": int(at * 1_000_000_000),
+        })
 
     # -- set up -----------------------------------------------------------
 

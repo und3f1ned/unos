@@ -5,8 +5,8 @@ existing databases (there is no migration framework, and columns are never
 added to existing tables). A restore checks the first four in the extracted
 backup database and refuses one that lacks them (ADR-0319); smb_uids it
 makes anew from the live database's, adding the backup's rows that it can
-read only for uids still missing (ADR-0353); the options and the group tables
-it checks when the backup has them. SQLite does not enforce
+read only for uids still missing (ADR-0353); the options, the group tables and
+the interfaces of SMB it checks when the backup has them. SQLite does not enforce
 foreign keys here (no PRAGMA foreign_keys): code that deletes a user or a
 share deletes the dependent rows itself, in the same transaction
 (SQLite reuses the highest rowid, so an orphan row would attach to the next
@@ -99,6 +99,18 @@ class SmbShareOptions(Base):
     previous_versions = Column(Boolean, nullable=False, default=False, server_default="0")
 
     share = relationship("SmbShare", back_populates="options")
+
+
+class SmbBindInterface(Base):
+    """A network interface of the host that SMB listens on (ADR-0391). No row: SMB listens on every
+    interface, Samba's default. With rows, smb.conf binds smbd to the loopback and these interfaces,
+    by name: a row whose interface is not on the host now (an unplugged USB adapter) is kept."""
+
+    __tablename__ = "smb_bind_interfaces"
+
+    # A Linux interface name (security.validators.INTERFACE_NAME_PATTERN), checked when stored and
+    # again when rendered.
+    name = Column(String(15), primary_key=True)
 
 
 class UserGroup(Base):

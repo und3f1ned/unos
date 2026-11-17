@@ -47,6 +47,62 @@ export const en = {
 	'shares.smb.notDeleted': 'Share was not deleted',
 	'shares.smb.delete': 'Delete share',
 
+	// The network interfaces that SMB listens on (GET /shares/smb-interfaces, ADR-0391): the card of
+	// the SMB tab, its dialog and Restart SMB. The server's problems are shown as they come.
+	'shares.interfaces.title': 'Network interfaces',
+	'shares.interfaces.loadError': 'The network interfaces of SMB could not be read',
+	'shares.interfaces.every': 'SMB listens on every network interface of the NAS.',
+	'shares.interfaces.only': 'SMB listens only on {names}, and on the NAS itself (the loopback).',
+	'shares.interfaces.onlyLoopback': 'SMB listens only on the NAS itself (the loopback).',
+	'shares.interfaces.listening': 'smbd answers on:',
+	'shares.interfaces.listeningUnknown': 'unknown',
+	'shares.interfaces.listeningNone': 'no address',
+	'shares.interfaces.everyIpv4': 'every IPv4 address',
+	'shares.interfaces.everyIpv6': 'every IPv6 address',
+	'shares.interfaces.choose': 'Choose interfaces…',
+	'shares.interfaces.restart': 'Restart SMB…',
+	'shares.interfaces.savedEvery': 'SMB listens on every network interface again.',
+	'shares.interfaces.savedSome': 'SMB listens only on {names} now.',
+	'shares.interfaces.restarted': 'SMB was restarted.',
+	'shares.interfaces.dialogTitle': 'Network interfaces of SMB',
+	'shares.interfaces.listenOn': 'SMB listens on',
+	'shares.interfaces.modeEvery': 'Every network interface (default)',
+	'shares.interfaces.modeChosen': 'Only the interfaces chosen below',
+	'shares.interfaces.list': 'Interfaces of the NAS',
+	'shares.interfaces.none': 'No network interface of the NAS could be listed.',
+	'shares.interfaces.noAddress': 'No address',
+	'shares.interfaces.notOnHost': 'Not on the NAS now',
+	'shares.interfaces.disabled': 'Disabled',
+	'shares.interfaces.noLan': 'No address of the local network',
+	'shares.interfaces.pointToPoint': 'Point-to-point: Samba does not listen here',
+	'shares.interfaces.loopbackNote':
+		"The NAS itself (the loopback) stays bound. Docker's interfaces are not listed: apps reach SMB at the NAS's address.",
+	'shares.interfaces.addressNote':
+		'smbd listens on the addresses that the chosen interfaces have when it starts. Give the NAS a fixed address in your router; when an address changes, restart SMB here.',
+	'shares.interfaces.discoveryNote':
+		'Computers on the networks of other interfaces may still list the NAS, but cannot connect.',
+	'shares.interfaces.pickOne': 'Choose at least one interface, or every interface.',
+	'shares.interfaces.restartWarning': {
+		one: 'Saving restarts SMB: the {n} open SMB connection is closed, and its computer connects again.',
+		other: 'Saving restarts SMB: the {n} open SMB connections are closed, and their computers connect again.'
+	},
+	'shares.interfaces.restartWarningNone': 'Saving restarts SMB; no SMB connection is open now.',
+	'shares.interfaces.restartWarningAny':
+		'Saving restarts SMB: every open SMB connection is closed, and the computers connect again.',
+	'shares.interfaces.notSaved': 'The interfaces were not saved',
+	'shares.interfaces.save': 'Save and restart SMB',
+	'shares.interfaces.restartTitle': 'Restart SMB',
+	'shares.interfaces.restartText':
+		'smbd restarts and then listens on the addresses that the chosen interfaces have now.',
+	'shares.interfaces.restartSessions': {
+		one: 'The {n} open SMB connection is closed.',
+		other: 'The {n} open SMB connections are closed.'
+	},
+	'shares.interfaces.restartSessionsNone': 'No SMB connection is open now.',
+	'shares.interfaces.restartSessionsAny': 'Every open SMB connection is closed.',
+	'shares.interfaces.notRestarted': 'SMB was not restarted',
+	'shares.interfaces.restartNow': 'Restart SMB',
+
 	// GET /shares/smb-status.
 	'shares.status.error': 'The SMB status could not be read',
 	'shares.status.sambaMissing': 'Samba is not installed on the host: shares and SMB accounts cannot be used',
@@ -286,7 +342,35 @@ export const en = {
 	'shares.repair.warning': 'This changes the permissions of existing files. It cannot be undone automatically.',
 	'shares.repair.close': 'Close',
 	'shares.repair.run': 'Repair permissions',
-	'shares.repair.stop': 'Stop repair'
+	'shares.repair.stop': 'Stop repair',
+
+	// Several shares at once (ADR-0389): the selection above the list, its one question and the
+	// results. A share's status in the answer is shown through shares.bulk.status.*.
+	'shares.bulk.toolbar': 'Selected shares',
+	'shares.bulk.selectAll': 'Select all',
+	'shares.bulk.selected': { one: '{n} share selected', other: '{n} shares selected' },
+	'shares.bulk.delete': 'Delete selected',
+	'shares.card.select': 'Select share {name}',
+	'shares.bulk.deleteTitle': { one: 'Delete {n} share', other: 'Delete {n} shares' },
+	'shares.bulk.question': {
+		one: 'Delete this share? Open connections to it are closed.',
+		other: 'Delete these {n} shares? Open connections to them are closed.'
+	},
+	'shares.bulk.list': 'Shares to delete',
+	'shares.bulk.kept': {
+		one: 'The folder and the files in it are kept.',
+		other: 'Their folders and the files in them are kept.'
+	},
+	'shares.bulk.confirm': { one: 'Delete {n} share', other: 'Delete {n} shares' },
+	'shares.bulk.noneDeleted': 'No share was deleted',
+	'shares.bulk.someGone': 'The deletion failed, and some of these shares are no longer listed',
+	'shares.bulk.notKnown': 'The deletion failed, and the list could not be read again: which shares are left is not known',
+	'shares.bulk.tooMany': 'One deletion takes at most {max} shares: select fewer',
+	'shares.bulk.deleted': { one: 'Deleted {n} share: {names}', other: 'Deleted {n} shares: {names}' },
+	'shares.bulk.notDeleted': { one: '{n} share was not deleted', other: '{n} shares were not deleted' },
+	'shares.bulk.notDeletedItem': '{name}: {reason}',
+	'shares.bulk.status.notFound': 'no share has this name any more: it was deleted or renamed meanwhile',
+	'shares.bulk.status.changed': 'it was changed meanwhile, so it was not deleted: check it and delete it again'
 };
 
 export const ru: Translation<typeof en> = {
@@ -324,6 +408,62 @@ export const ru: Translation<typeof en> = {
 	'shares.smb.deleteAfter': '? Папка и её файлы сохранятся. Открытые подключения к общей папке будут закрыты.',
 	'shares.smb.notDeleted': 'Общая папка не удалена',
 	'shares.smb.delete': 'Удалить общую папку',
+
+	'shares.interfaces.title': 'Сетевые интерфейсы',
+	'shares.interfaces.loadError': 'Не удалось прочитать сетевые интерфейсы SMB',
+	'shares.interfaces.every': 'SMB принимает подключения на всех сетевых интерфейсах NAS.',
+	'shares.interfaces.only': 'SMB принимает подключения только на {names} и на самом NAS (loopback).',
+	'shares.interfaces.onlyLoopback': 'SMB принимает подключения только на самом NAS (loopback).',
+	'shares.interfaces.listening': 'smbd отвечает на:',
+	'shares.interfaces.listeningUnknown': 'неизвестно',
+	'shares.interfaces.listeningNone': 'ни одном адресе',
+	'shares.interfaces.everyIpv4': 'всех адресах IPv4',
+	'shares.interfaces.everyIpv6': 'всех адресах IPv6',
+	'shares.interfaces.choose': 'Выбрать интерфейсы…',
+	'shares.interfaces.restart': 'Перезапустить SMB…',
+	'shares.interfaces.savedEvery': 'SMB снова принимает подключения на всех сетевых интерфейсах.',
+	'shares.interfaces.savedSome': 'Теперь SMB принимает подключения только на {names}.',
+	'shares.interfaces.restarted': 'SMB перезапущен.',
+	'shares.interfaces.dialogTitle': 'Сетевые интерфейсы SMB',
+	'shares.interfaces.listenOn': 'SMB принимает подключения',
+	'shares.interfaces.modeEvery': 'На всех сетевых интерфейсах (по умолчанию)',
+	'shares.interfaces.modeChosen': 'Только на интерфейсах, выбранных ниже',
+	'shares.interfaces.list': 'Интерфейсы NAS',
+	'shares.interfaces.none': 'Не удалось получить список сетевых интерфейсов NAS.',
+	'shares.interfaces.noAddress': 'Нет адреса',
+	'shares.interfaces.notOnHost': 'Сейчас отсутствует на NAS',
+	'shares.interfaces.disabled': 'Выключен',
+	'shares.interfaces.noLan': 'Нет адреса локальной сети',
+	'shares.interfaces.pointToPoint': 'Точка-точка: Samba здесь не принимает подключения',
+	'shares.interfaces.loopbackNote':
+		'Сам NAS (loopback) остаётся привязанным. Интерфейсы Docker не показаны: приложения подключаются к SMB по адресу NAS.',
+	'shares.interfaces.addressNote':
+		'smbd принимает подключения на адресах, которые есть у выбранных интерфейсов при его запуске. Закрепите за NAS постоянный адрес в роутере; если адрес изменится, перезапустите SMB здесь.',
+	'shares.interfaces.discoveryNote':
+		'Компьютеры в сетях других интерфейсов могут по-прежнему видеть NAS, но не смогут подключиться.',
+	'shares.interfaces.pickOne': 'Выберите хотя бы один интерфейс или все интерфейсы.',
+	'shares.interfaces.restartWarning': {
+		one: 'Сохранение перезапустит SMB: {n} открытое подключение SMB будет закрыто, и компьютер подключится заново.',
+		few: 'Сохранение перезапустит SMB: {n} открытых подключения SMB будут закрыты, и компьютеры подключатся заново.',
+		many: 'Сохранение перезапустит SMB: {n} открытых подключений SMB будут закрыты, и компьютеры подключатся заново.'
+	},
+	'shares.interfaces.restartWarningNone': 'Сохранение перезапустит SMB; открытых подключений SMB сейчас нет.',
+	'shares.interfaces.restartWarningAny':
+		'Сохранение перезапустит SMB: все открытые подключения SMB будут закрыты, и компьютеры подключатся заново.',
+	'shares.interfaces.notSaved': 'Интерфейсы не сохранены',
+	'shares.interfaces.save': 'Сохранить и перезапустить SMB',
+	'shares.interfaces.restartTitle': 'Перезапуск SMB',
+	'shares.interfaces.restartText':
+		'smbd перезапустится и будет принимать подключения на адресах, которые есть у выбранных интерфейсов сейчас.',
+	'shares.interfaces.restartSessions': {
+		one: '{n} открытое подключение SMB будет закрыто.',
+		few: '{n} открытых подключения SMB будут закрыты.',
+		many: '{n} открытых подключений SMB будут закрыты.'
+	},
+	'shares.interfaces.restartSessionsNone': 'Открытых подключений SMB сейчас нет.',
+	'shares.interfaces.restartSessionsAny': 'Все открытые подключения SMB будут закрыты.',
+	'shares.interfaces.notRestarted': 'SMB не перезапущен',
+	'shares.interfaces.restartNow': 'Перезапустить SMB',
 
 	'shares.status.error': 'Не удалось прочитать состояние SMB',
 	'shares.status.sambaMissing': 'Samba не установлена на хосте: общие папки и учётные записи SMB не работают',
@@ -534,5 +674,53 @@ export const ru: Translation<typeof en> = {
 	'shares.repair.warning': 'Это меняет права существующих файлов. Автоматически отменить это нельзя.',
 	'shares.repair.close': 'Закрыть',
 	'shares.repair.run': 'Исправить права',
-	'shares.repair.stop': 'Остановить исправление'
+	'shares.repair.stop': 'Остановить исправление',
+
+	'shares.bulk.toolbar': 'Выбранные общие папки',
+	'shares.bulk.selectAll': 'Выбрать все',
+	'shares.bulk.selected': {
+		one: 'Выбрана {n} общая папка',
+		few: 'Выбраны {n} общие папки',
+		many: 'Выбрано {n} общих папок'
+	},
+	'shares.bulk.delete': 'Удалить выбранные',
+	'shares.card.select': 'Выбрать общую папку {name}',
+	'shares.bulk.deleteTitle': {
+		one: 'Удаление {n} общей папки',
+		few: 'Удаление {n} общих папок',
+		many: 'Удаление {n} общих папок'
+	},
+	'shares.bulk.question': {
+		one: 'Удалить {n} общую папку? Открытые подключения будут закрыты.',
+		few: 'Удалить эти {n} общие папки? Открытые подключения к ним будут закрыты.',
+		many: 'Удалить эти {n} общих папок? Открытые подключения к ним будут закрыты.'
+	},
+	'shares.bulk.list': 'Удаляемые общие папки',
+	'shares.bulk.kept': {
+		one: 'Папка каждой общей папки и файлы в ней сохранятся.',
+		few: 'Папка каждой общей папки и файлы в ней сохранятся.',
+		many: 'Папка каждой общей папки и файлы в ней сохранятся.'
+	},
+	'shares.bulk.confirm': {
+		one: 'Удалить {n} общую папку',
+		few: 'Удалить {n} общие папки',
+		many: 'Удалить {n} общих папок'
+	},
+	'shares.bulk.noneDeleted': 'Ни одна общая папка не удалена',
+	'shares.bulk.someGone': 'Удаление не удалось, и некоторых из этих общих папок больше нет в списке',
+	'shares.bulk.notKnown': 'Удаление не удалось, и список не удалось прочитать снова: неизвестно, какие общие папки остались',
+	'shares.bulk.tooMany': 'За один раз можно удалить не больше {max} общих папок: выберите меньше',
+	'shares.bulk.deleted': {
+		one: 'Удалена {n} общая папка: {names}',
+		few: 'Удалены {n} общие папки: {names}',
+		many: 'Удалено {n} общих папок: {names}'
+	},
+	'shares.bulk.notDeleted': {
+		one: '{n} общая папка не удалена',
+		few: '{n} общие папки не удалены',
+		many: '{n} общих папок не удалено'
+	},
+	'shares.bulk.notDeletedItem': '{name}: {reason}',
+	'shares.bulk.status.notFound': 'общей папки с таким именем больше нет: её удалили или переименовали',
+	'shares.bulk.status.changed': 'её изменили, поэтому она не удалена: проверьте её и удалите снова'
 };

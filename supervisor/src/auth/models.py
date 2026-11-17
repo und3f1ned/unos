@@ -1,6 +1,6 @@
 from sqlalchemy import Column, Integer, String, Boolean, DateTime, ForeignKey, Text
 from sqlalchemy.sql import func
-from sqlalchemy.orm import relationship
+from sqlalchemy.orm import deferred, relationship
 from ..database import Base
 
 
@@ -35,8 +35,10 @@ class APIToken(Base):
     created_at = Column(DateTime, server_default=func.now())
     last_used_at = Column(DateTime, nullable=True)
     expires_at = Column(DateTime, nullable=True)  # Optional expiration
-    # Permissions (JSON string or comma-separated)
-    permissions = Column(String, default="*")  # * for all, or specific like "read,containers"
+    # The token's scope (src/auth/scopes.py, ADR-0392): "*" full, else "read" and the areas,
+    # comma-separated. Deferred: a restored value that is not UTF-8 cannot be read as text, so the
+    # queries that need it select scopes.stored_columns, and the others never load it.
+    permissions = deferred(Column(String, default="*"))
 
     user = relationship("User", back_populates="api_tokens")
 

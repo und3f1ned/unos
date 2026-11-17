@@ -1,5 +1,5 @@
-import { test, expect, type APIRequestContext } from '@playwright/test';
-import { E2E_ADMIN } from './fixtures';
+import { test, expect, type APIRequestContext, type Locator, type Page } from '@playwright/test';
+import { E2E_ADMIN, test as signedIn } from './fixtures';
 
 /**
  * API tokens for scripts (feature auth.api-tokens, ADR-0239), against the stand-in's real
@@ -7,9 +7,12 @@ import { E2E_ADMIN } from './fixtures';
  * it is disabled and once it is deleted, and is out of reach of other users. Only a session
  * creates, disables and deletes tokens, and a name has 1 to 64 characters (ADR-0253). Its last
  * use is stored once and then stays as it is for up to an hour
- * (auth.api-token-last-used-throttle, ADR-0252). API only: no page manages tokens. That a token
- * expires, and the limit of 100 tokens per user, are asserted in supervisor/tests/test_authz.py:
- * the shortest lifetime is a day.
+ * (auth.api-token-last-used-throttle, ADR-0252). A token can be limited to reading and to areas
+ * of the API (auth.api-token-scopes, ADR-0392): a read-only token reads and is refused every
+ * change, a token of an area is refused outside it, and the Account page makes such tokens and
+ * lists them. That a token expires, and the limit of 100 tokens per user, are asserted in
+ * supervisor/tests/test_authz.py: the shortest lifetime is a day; every route for each scope in
+ * supervisor/tests/test_token_scopes.py.
  */
 
 type Credentials = { username: string; password: string };
@@ -189,5 +192,207 @@ test.describe('API tokens', () => {
       expect((await me(request, created.token)).status()).toBe(200);
     }
     expect(await shown()).toBe(first);
+  });
+});
+
+// The 403 details of a limited token, as the server answers them (supervisor/src/auth/scopes.py).
+const READ_ONLY = 'This API token can only read';
+const OUTSIDE_AREAS = 'This API token is limited to other areas of the API';
+const LIMITED_TOKEN_CANNOT =
+  'A limited API token cannot change accounts, users, API tokens or two-factor authentication, nor restore a backup: sign in to do it';
+const SECRET_ANSWER = 'A read-only API token cannot read this: the answer holds secrets';
+
+async function expectRefused(
+  request: APIRequestContext,
+  token: string,
+  method: 'GET' | 'POST' | 'PUT' | 'DELETE',
+  path: string,
+  detail: string,
+) {
+  const response = await request.fetch(`/api/v1${path}`, { method, headers: bearer(token), data: {} });
+  expect(response.status(), `${method} ${path}`).toBe(403);
+  expect((await response.json()).detail, `${method} ${path}`).toBe(detail);
+}
+
+async function expectRead(request: APIRequestContext, token: string, path: string) {
+  const response = await request.get(`/api/v1${path}`, { headers: bearer(token) });
+  expect(response.status(), `GET ${path}: ${await response.text()}`).toBe(200);
+}
+
+test.describe('API token scopes', () => {
+  let adminSession = '';
+  const made: number[] = [];
+
+  test.beforeAll(async ({ request }) => {
+    adminSession = await signIn(request, E2E_ADMIN);
+  });
+
+  test.afterAll(async ({ request }) => {
+    for (const id of made) {
+      await request.delete(`/api/v1/auth/tokens/${id}`, { headers: bearer(adminSession) });
+    }
+  });
+
+  async function limited(request: APIRequestContext, data: Record<string, unknown>) {
+    const created = await createToken(request, adminSession, { name: 'e2e-scoped', ...data });
+    made.push(created.id);
+    return created as Created & { read_only: boolean; areas: string[] | null };
+  }
+
+  test('a read-only token reads, and every change answers 403', async ({ request }) => {
+    const created = await limited(request, { read_only: true });
+    expect([created.read_only, created.areas]).toEqual([true, null]);
+
+    for (const path of ['/auth/me', '/auth/users', '/auth/tokens', '/audit/logs', '/security/login-history']) {
+      await expectRead(request, created.token, path);
+    }
+    await expectRefused(request, created.token, 'PUT', '/system/timezone', READ_ONLY);
+    await expectRefused(request, created.token, 'DELETE', '/audit/logs', READ_ONLY);
+    await expectRefused(request, created.token, 'POST', '/backup/create', READ_ONLY);
+    await expectRefused(request, created.token, 'POST', '/auth/users', LIMITED_TOKEN_CANNOT);
+    await expectRefused(request, created.token, 'POST', '/auth/change-password', LIMITED_TOKEN_CANNOT);
+    await expectRefused(request, created.token, 'DELETE', `/auth/tokens/${created.id}`, LIMITED_TOKEN_CANNOT);
+    await expectRefused(request, created.token, 'GET', '/notifications/configs', SECRET_ANSWER);
+    await expectRefused(request, created.token, 'GET', '/backup/download/unos_backup.tar.gz', SECRET_ANSWER);
+    // The token is still there: its own refused DELETE changed nothing.
+    const { tokens } = await listTokens(request, adminSession);
+    expect(tokens.map((token) => token.id)).toContain(created.id);
+  });
+
+  test('a token limited to an area answers 403 outside it', async ({ request }) => {
+    const created = await limited(request, { areas: ['audit'] });
+    expect([created.read_only, created.areas]).toEqual([false, ['audit']]);
+
+    await expectRead(request, created.token, '/audit/logs');
+    await expectRead(request, created.token, '/audit/actions');
+    await expectRefused(request, created.token, 'GET', '/auth/me', OUTSIDE_AREAS);
+    await expectRefused(request, created.token, 'GET', '/system/info', OUTSIDE_AREAS);
+    await expectRefused(request, created.token, 'GET', '/security/login-history', OUTSIDE_AREAS);
+    await expectRefused(request, created.token, 'PUT', '/system/timezone', OUTSIDE_AREAS);
+  });
+
+  test('a request that still sends permissions, or names an unknown area, makes no token', async ({ request }) => {
+    for (const data of [{ permissions: 'read' }, { permissions: '*' }, { areas: ['nowhere'] }, { areas: [] }]) {
+      const response = await request.post('/api/v1/auth/tokens', {
+        headers: bearer(adminSession),
+        data: { name: 'e2e-refused', ...data },
+      });
+      expect(response.status(), JSON.stringify(data)).toBe(422);
+    }
+    const { tokens } = await listTokens(request, adminSession);
+    expect(tokens.map((token) => token.name)).not.toContain('e2e-refused');
+  });
+});
+
+/** The Account page's card of API tokens, signed in as the administrator. */
+const tokensCard = (page: Page) => page.getByRole('region', { name: 'API Tokens' });
+
+/** Make a token in the dialog; answers the token that the page shows once. */
+async function makeInDialog(page: Page, name: string, choose: (dialog: Locator) => Promise<void>) {
+  await tokensCard(page).getByRole('button', { name: 'New Token' }).click();
+  const dialog = page.getByRole('dialog', { name: 'New API Token' });
+  await dialog.getByLabel('Name').fill(name);
+  await choose(dialog);
+  await dialog.getByRole('button', { name: 'Create Token' }).click();
+  const shown = page.getByRole('dialog', { name: 'Your New API Token' });
+  await expect(shown).toBeVisible();
+  const token = await shown.getByLabel('The new token').inputValue();
+  expect(token).toMatch(/^unos_/);
+  await shown.getByRole('button', { name: 'Done' }).click();
+  await expect(shown).toHaveCount(0);
+  return token;
+}
+
+signedIn.describe('API tokens on the Account page', () => {
+  const prefix = `e2e-page-${Date.now().toString(36)}`;
+
+  signedIn.afterAll(async ({ request }) => {
+    const session = await signIn(request, E2E_ADMIN);
+    const { tokens } = await listTokens(request, session);
+    for (const token of tokens.filter((t) => t.name.startsWith(prefix))) {
+      await request.delete(`/api/v1/auth/tokens/${token.id}`, { headers: bearer(session) });
+    }
+  });
+
+  signedIn('the dialog starts at read only in every area, and the token reads only', async ({
+    authenticatedPage: page,
+    request,
+  }) => {
+    await page.goto('/system#security');
+    const name = `${prefix}-reader`;
+    const token = await makeInDialog(page, name, async (dialog) => {
+      await expect(dialog.getByRole('radio', { name: /^Read only/ })).toBeChecked();
+      await expect(dialog.getByRole('radio', { name: /^Every area/ })).toBeChecked();
+      await expect(dialog.getByRole('checkbox')).toHaveCount(0);
+    });
+
+    const row = tokensCard(page).getByRole('listitem', { name });
+    await expect(row).toContainText('Read only');
+    await expect(row).toContainText('Every area');
+    await expect(row).toContainText('Never used');
+    // The page never shows the token again: the dialog that showed it is gone.
+    await expect(page.getByText(token)).toHaveCount(0);
+    await expect(page.getByLabel('The new token')).toHaveCount(0);
+
+    await expectRead(request, token, '/auth/me');
+    await expectRefused(request, token, 'PUT', '/system/timezone', READ_ONLY);
+  });
+
+  signedIn('a token of chosen areas, with the warning of the areas whose changes reach beyond them', async ({
+    authenticatedPage: page,
+    request,
+  }) => {
+    await page.goto('/system#security');
+    const name = `${prefix}-audit`;
+    const token = await makeInDialog(page, name, async (dialog) => {
+      await dialog.getByRole('radio', { name: /^Read and change/ }).check();
+      await dialog.getByRole('radio', { name: /^Only these areas/ }).check();
+      const create = dialog.getByRole('button', { name: 'Create Token' });
+      await expect(create).toBeDisabled();
+      await expect(dialog.getByText('Choose at least one area.')).toBeVisible();
+      const warning = dialog.getByText(/can run programs as root on the NAS, and to Backups or Off-device copy/);
+      await dialog.getByRole('checkbox', { name: /^Containers/ }).check();
+      await expect(warning).toBeVisible();
+      await dialog.getByRole('checkbox', { name: /^Containers/ }).uncheck();
+      await expect(warning).toHaveCount(0);
+      await dialog.getByRole('checkbox', { name: /^Backups/ }).check();
+      await expect(warning).toBeVisible();
+      await dialog.getByRole('checkbox', { name: /^Backups/ }).uncheck();
+      await expect(warning).toHaveCount(0);
+      await dialog.getByRole('checkbox', { name: /^Audit log/ }).check();
+      await dialog.getByRole('checkbox', { name: /^Storage/ }).check();
+      await expect(create).toBeEnabled();
+    });
+
+    const row = tokensCard(page).getByRole('listitem', { name });
+    await expect(row).toContainText('Read and change');
+    await expect(row).toContainText('Areas: Audit log, Storage');
+
+    await expectRead(request, token, '/audit/logs');
+    await expectRefused(request, token, 'GET', '/auth/me', OUTSIDE_AREAS);
+  });
+
+  signedIn('a token is disabled, enabled and deleted on the page', async ({ authenticatedPage: page, request }) => {
+    await page.goto('/system#security');
+    const name = `${prefix}-lifecycle`;
+    const token = await makeInDialog(page, name, async () => {});
+    const row = tokensCard(page).getByRole('listitem', { name });
+
+    await row.getByRole('button', { name: 'Disable Token' }).click();
+    await expect(row).toContainText('Disabled');
+    const refused = await me(request, token);
+    expect((await refused.json()).detail).toBe('API token is disabled');
+
+    await row.getByRole('button', { name: 'Enable Token' }).click();
+    await expect(row.getByRole('button', { name: 'Disable Token' })).toBeVisible();
+    expect((await me(request, token)).status()).toBe(200);
+
+    await row.getByRole('button', { name: 'Delete Token' }).click();
+    const confirm = page.getByRole('dialog', { name: 'Delete API Token' });
+    await expect(confirm).toContainText(name);
+    await confirm.getByRole('button', { name: 'Delete Token' }).click();
+    await expect(tokensCard(page).getByText(`The token ${name} was deleted`)).toBeVisible();
+    await expect(row).toHaveCount(0);
+    expect((await me(request, token)).status()).toBe(401);
   });
 });

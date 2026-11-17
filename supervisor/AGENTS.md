@@ -44,6 +44,11 @@ Python 3.11 and FastAPI. The package is `src`: tests import `src.*`, some from `
   regular user or nobody signed in may reach is listed in `USER_ALLOWED` or `PUBLIC` of
   `tests/test_authz.py`, which fails for a route without a decision. Request bodies are limited
   before the credentials are checked (ADR-0062).
+- An API token's scope (ADR-0392) is checked in `authenticate_token` for every request and
+  WebSocket. A new router's prefix joins `AREAS` of `src/auth/scopes.py`, a new WebSocket its
+  `SOCKET_AREAS`, and a GET whose answer holds secrets, or a POST that only reads, its
+  `OPERATION_KINDS`; `tests/test_token_scopes.py` walks every route for each scope and fails for
+  a prefix without an area.
 
 ## Writes and data paths
 
@@ -65,6 +70,7 @@ Python 3.11 and FastAPI. The package is `src`: tests import `src.*`, some from `
 | `smbconf.py`, `smb.py` | smb.conf as text (pure); the file on the host, testparm, reload, close-share |
 | `router.py`, `schemas.py`, `interfaces.py`; `repair.py`, `repair_router.py` | the share API and the types the modules share; Repair permissions, a background job (ADR-0363) |
 | `groups.py` | groups of users and their API; smb.conf names their active members (ADR-0385) |
+| `listen.py` | the network interfaces that SMB listens on: the host's interfaces, smbd's listeners, the choice and Restart SMB (ADR-0391) |
 | `exports.py`, `nfs.py` | NFS: export files as exportfs reads them (pure); UNOS's own export file on the host, exportfs and the export rules (ADR-0321, ADR-0293) |
 
 The SMB flows of users (allow, turn on, password changes) are in `src/auth/router.py`. Rules:

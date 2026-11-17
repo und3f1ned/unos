@@ -250,6 +250,9 @@ const IMAGES = [
   },
 ];
 const DOCKER = { '/api/v1/containers': CONTAINERS, '/api/v1/containers/images': IMAGES };
+// Docker's reason for a container that it cannot stop, as the containers API passes it on (409).
+const CONTAINER_CONFLICT =
+  'Cannot stop container 2b3c4d5e6f70: cannot kill container: 2b3c4d5e6f70a1b2c3d4e5f6: tried to kill container, but did not receive an exit event';
 
 const DATA = `${POOLS}/e2e_data`;
 const SUBVOLUMES = [
@@ -298,11 +301,21 @@ const INSTALLED_JELLYFIN = {
   health: null,
   companions: [],
   missing: [],
+  // Its limits and its use against them, with bars (ADR-0390).
+  resources: {
+    memory_limit: 2 ** 30,
+    cpu_limit: 2,
+    memory_used: 700 * 2 ** 20,
+    cpu_used: 0.4,
+    sampled_at: '2026-11-17T10:00:00+00:00',
+  },
 };
 // An app of several containers whose machine learning stopped: its card names its containers and
 // warns about the one that does not run (ADR-0381).
 const INSTALLED_IMMICH = installedImmich(DATA, { companions: { 'machine-learning': { status: 'exited' } } });
 const INSTALLED_APPS = [INSTALLED_JELLYFIN, INSTALLED_IMMICH];
+// What the limits of a container may be on a NAS of 8 GiB and 8 CPUs (GET /apps/limits, ADR-0390).
+const LIMIT_BOUNDS = { memory_min: 64 * 2 ** 20, memory_max: 8 * 2 ** 30, cpu_min: 0.1, cpu_max: 8 };
 
 // The Files page: the pools folder holds e2e_data, which holds a folder and files with long names.
 const FAMILY = `${DATA}/Family photos and videos 2019-2026`;
@@ -562,6 +575,43 @@ const SECURITY = {
   },
 };
 
+// The Account page's API tokens as GET /auth/tokens answers them (APITokenResponse of
+// supervisor/src/auth/schemas.py, ADR-0392): a long name with many areas, a read-only token of
+// every area that is disabled and expired, and a scope that cannot be read. Times in UTC without a zone.
+const EVERY_AREA = [
+  'apps', 'audit', 'auth', 'backup', 'containers', 'files', 'groups', 'health', 'logs', 'monitor', 'network',
+  'notifications', 'offsite', 'power', 'scheduler', 'security', 'shares', 'snapshots', 'storage', 'system', 'updates',
+];
+const API_TOKENS = {
+  ...SECURITY,
+  '/api/v1/auth/tokens': [
+    { id: 1, name: 'nightly_backup_of_the_family_photos_to_the_garage_nas', token_prefix: 'unos_AbCdEfG',
+      is_active: true, read_only: false, areas: EVERY_AREA.slice(0, 20), scope_known: true,
+      created_at: '2026-11-01T09:00:00', last_used_at: '2026-11-16T03:00:00', expires_at: '2027-11-01T09:00:00' },
+    { id: 2, name: 'home-assistant', token_prefix: 'unos_IjKlMnO', is_active: false, read_only: true, areas: null,
+      scope_known: true, created_at: '2026-01-01T09:00:00', last_used_at: null, expires_at: '2026-02-01T09:00:00' },
+    { id: 3, name: 'restored_from_another_installation', token_prefix: 'unos_QrStUvW', is_active: true,
+      read_only: true, areas: [], scope_known: false, created_at: '2026-10-01T09:00:00', last_used_at: null,
+      expires_at: null },
+  ],
+};
+// POST /auth/tokens answers the new token once: 48 characters without a place to break.
+const NEW_API_TOKEN = {
+  id: 4, name: 'nightly_backup_of_the_family_photos_to_the_garage_nas', token: `unos_${'x'.repeat(43)}`,
+  token_prefix: 'unos_xxxxxxx', read_only: false, areas: EVERY_AREA.slice(0, 20), expires_at: null,
+};
+const tokensRegion = (page: Page) => page.getByRole('region', { name: /^(API Tokens|API-токены)$/ });
+/** The dialog of a new token, with every area listed and the warning of the areas whose changes reach beyond them. */
+async function openNewTokenDialog(page: Page): Promise<void> {
+  await tokensRegion(page).getByRole('button', { name: /^(New Token|Новый токен)$/ }).click();
+  const dialog = page.getByRole('dialog');
+  await dialog.getByRole('radio', { name: /^(Read and change|Чтение и изменение)/ }).check();
+  await dialog.getByRole('radio', { name: /^(Only these areas|Только эти области)/ }).check();
+  await dialog.getByRole('checkbox', { name: /^(Containers|Контейнеры)/ }).check();
+  // Back up to the title, which the ticks scrolled away on a phone held sideways.
+  await dialog.getByRole('heading').first().scrollIntoViewIfNeeded();
+}
+
 // A new secret of two-factor authentication as POST /auth/totp/setup answers it: pyotp's
 // random_base32() has 32 characters.
 const TOTP_SECRET = 'JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP';
@@ -647,12 +697,10 @@ const STATS = {
     swap_total: 0, swap_used: 0, swap_percent: 0,
   },
   network: {
-    bytes_sent: 0, bytes_recv: 0, bytes_sent_rate: 1024, bytes_recv_rate: 1536, packets_sent: 0, packets_recv: 0,
-    interfaces: [],
+    bytes_sent_rate: 1024, bytes_recv_rate: 1536,
+    interfaces: [{ name: 'eth0', bytes_sent: 4096, bytes_recv: 8192, bytes_sent_rate: 1024, bytes_recv_rate: 1536 }],
   },
-  disk_io: {
-    read_bytes: 0, write_bytes: 0, read_rate: 512, write_rate: 3.25 * 1024 ** 2, read_count: 0, write_count: 0, disks: [],
-  },
+  disk_io: { read_rate: 512, write_rate: 3.25 * 1024 ** 2, disks: [{ name: 'sda' }] },
   processes: [
     { pid: 812, name: 'smbd', cpu_percent: 3.5, memory_percent: 0.5, memory_mb: 42, status: 'sleeping', username: 'root' },
     { pid: 913, name: 'containerd-shim-runc-v2', cpu_percent: 1.2, memory_percent: 0.3, memory_mb: 12, status: 'sleeping',
@@ -841,9 +889,12 @@ const VIEWS: View[] = [
     shows: (page) => page.getByText(`${DATA}/restore_20261106_090000`).first(),
   },
   {
+    // With the card of the network interfaces: smbd's long IPv6 addresses, and a chosen USB adapter
+    // that is not on the host (ADR-0391).
     name: 'Shares (SMB)',
     path: '/shares',
-    fake: (page) => fakeSmbApi(page, { users: USERS, shares: SHARES }),
+    fake: (page) =>
+      fakeSmbApi(page, { users: USERS, shares: SHARES, interfaces: { chosen: ['enP4p65s0', 'enx00e04c680001'] } }),
     shows: (page) => page.getByText('family_photos_and_videos').first(),
   },
   {
@@ -902,6 +953,30 @@ const VIEWS: View[] = [
     fake: (page) => serve(page, DOCKER),
     open: (page) => page.locator('#docker-tab-images').click(),
     shows: (page) => page.getByText('sha256:7a8b9c0d1e2f'),
+  },
+  {
+    // Several containers selected, and the results of an action on them, one line each with a long
+    // name or a long reason (ADR-0389): the selection's bar and the lines wrap.
+    name: 'Containers: an action on several',
+    path: '/containers',
+    fake: async (page) => {
+      await serve(page, DOCKER);
+      await page.route(
+        (url) => /^\/api\/v1\/containers\/[^/]+\/stop$/.test(url.pathname),
+        (route) => {
+          const id = new URL(route.request().url()).pathname.split('/')[4];
+          const found = CONTAINERS.find((c) => c.id === id)!;
+          return found.name === 'e2e-cache'
+            ? route.fulfill({ status: 409, json: { detail: CONTAINER_CONFLICT } })
+            : route.fulfill({ json: { ...found, state: 'exited', status: 'exited' } });
+        },
+      );
+    },
+    open: async (page) => {
+      await page.getByRole('checkbox', { name: /^(Select all shown|Выбрать все показанные)$/ }).check();
+      await page.getByRole('button', { name: /^(Stop selected|Остановить выбранные)$/ }).click();
+    },
+    shows: (page) => page.getByRole('listitem').filter({ hasText: CONTAINER_CONFLICT }),
   },
   {
     name: 'App Store',
@@ -990,6 +1065,13 @@ const VIEWS: View[] = [
     open: (page) => page.getByRole('button', { name: /^(Set up now|Настроить сейчас)$/ }).click(),
     shows: (page) => page.getByText(TOTP_SECRET),
     end: (page) => page.getByRole('button', { name: /^(Sign out|Выйти)$/ }),
+  },
+  {
+    name: 'System: Security, API tokens',
+    path: '/system#security',
+    fake: (page) => serve(page, API_TOKENS),
+    shows: (page) => page.getByText('nightly_backup_of_the_family_photos_to_the_garage_nas'),
+    end: (page) => tokensRegion(page).getByRole('button', { name: /^(Delete Token|Удалить токен)$/ }).last(),
   },
   {
     name: 'System: Security, the sign-in history',
@@ -1216,6 +1298,40 @@ const VIEWS: View[] = [
     end: dialogEnd,
   },
   {
+    // One question for several shares names each of them and its folder (ADR-0389).
+    name: 'Dialog: delete several shares',
+    path: '/shares',
+    fake: (page) => fakeSmbApi(page, { users: USERS, shares: SHARES }),
+    open: async (page) => {
+      await page.getByRole('checkbox', { name: /^(Select all|Выбрать все)$/ }).check();
+      await page.getByRole('button', { name: /^(Delete selected|Удалить выбранные)$/ }).click();
+    },
+    shows: (page) => page.getByRole('dialog').getByText(`${POOLS}/tank/family_photos_and_videos`),
+    start: dialogTitle,
+    end: dialogEnd,
+  },
+  {
+    // The host's interfaces with their addresses, one chosen that the host lacks (ADR-0391).
+    name: 'Dialog: the network interfaces of SMB',
+    path: '/shares',
+    fake: (page) =>
+      fakeSmbApi(page, { users: USERS, shares: SHARES, interfaces: { chosen: ['enP4p65s0', 'enx00e04c680001'] } }),
+    open: (page) => page.getByRole('button', { name: /^(Choose interfaces…|Выбрать интерфейсы…)$/ }).click(),
+    shows: (page) => page.getByRole('dialog').getByText('2001:db8:1234:5678:9abc:def0:1234:5678/64'),
+    start: dialogTitle,
+    end: dialogEnd,
+  },
+  {
+    name: 'Dialog: restart SMB',
+    path: '/shares',
+    fake: (page) =>
+      fakeSmbApi(page, { users: USERS, shares: SHARES, interfaces: { chosen: ['enP4p65s0'], running: false } }),
+    open: (page) => page.getByRole('button', { name: /^(Restart SMB…|Перезапустить SMB…)$/ }).click(),
+    shows: (page) => page.getByRole('dialog'),
+    start: dialogTitle,
+    end: dialogEnd,
+  },
+  {
     name: 'Dialog: create a container',
     path: '/containers',
     fake: (page) => serve(page, DOCKER),
@@ -1268,6 +1384,19 @@ const VIEWS: View[] = [
     },
     shows: (page) => page.getByRole('dialog').getByRole('group', { name: 'immich-machine-learning' }),
     // Opened on a tab that the click may scroll to, as the view of the variables.
+    end: dialogEnd,
+  },
+  {
+    // The limits of one container of an app, with the bounds of the NAS in its hints (ADR-0390).
+    name: 'Dialog: the limits of a container',
+    path: '/apps',
+    fake: (page) => serve(page, { '/api/v1/apps/installed': INSTALLED_APPS, '/api/v1/apps/limits': LIMIT_BOUNDS }),
+    open: async (page) => {
+      await page.getByRole('button', { name: /^(Installed|Установленные) \(2\)$/ }).click();
+      await page.getByRole('listitem', { name: 'immich-machine-learning', exact: true }).getByRole('button').click();
+    },
+    shows: (page) => page.getByRole('dialog').getByRole('textbox').last(),
+    start: dialogTitle,
     end: dialogEnd,
   },
   {
@@ -1371,6 +1500,35 @@ const VIEWS: View[] = [
     end: (page) => page.getByRole('button', { name: /^(Generate|Создать)$/ }).last(),
   },
   {
+    name: 'Dialog: a new API token',
+    path: '/system#security',
+    fake: (page) => serve(page, API_TOKENS),
+    open: openNewTokenDialog,
+    shows: (page) => page.getByRole('dialog').getByRole('checkbox', { name: /^(Updates|Обновления)/ }),
+    start: dialogTitle,
+    end: dialogEnd,
+  },
+  {
+    name: 'Dialog: the new API token, shown once',
+    path: '/system#security',
+    fake: async (page) => {
+      await serve(page, API_TOKENS);
+      await page.route(
+        (url) => url.pathname === '/api/v1/auth/tokens',
+        (route) => (route.request().method() === 'POST' ? route.fulfill({ json: NEW_API_TOKEN }) : route.fallback()),
+      );
+    },
+    open: async (page) => {
+      await openNewTokenDialog(page);
+      const dialog = page.getByRole('dialog');
+      await dialog.getByLabel(/^(Name|Название)/).fill(NEW_API_TOKEN.name);
+      await dialog.getByRole('button', { name: /^(Create Token|Создать токен)$/ }).click();
+    },
+    shows: (page) => page.getByRole('dialog').getByLabel(/^(The new token|Новый токен)$/),
+    start: dialogTitle,
+    end: dialogEnd,
+  },
+  {
     name: 'Dialog: turn on two-factor authentication',
     path: '/system#security',
     fake: async (page) => {
@@ -1402,6 +1560,22 @@ const VIEWS: View[] = [
     start: (page) =>
       page.getByRole('heading', { name: /^(Disable Two-Factor Authentication|Выключение двухфакторной аутентификации)$/ }),
     end: (page) => page.getByRole('button', { name: /^(Disable 2FA|Выключить 2FA)$/ }),
+  },
+  {
+    // The command palette, which the button of the header bar opens on a phone (ADR-0393), with
+    // every page and action of an administrator: its list scrolls on its own to its last option.
+    name: 'Dialog: the command palette',
+    path: '/',
+    fake: async (page) => {
+      await fakeStorageApi(page);
+      await fakeHealthApi(page, { predictions: () => predictionsAnswer(REPLACE_SOON, HEALTHY_HDD_2) });
+      await serve(page, { ...DOCKER, '/api/v1/system/info': SYSTEM_INFO });
+    },
+    open: (page) =>
+      page.getByRole('button', { name: /^(Open the command palette|Открыть палитру команд)$/ }).click(),
+    shows: (page) => page.getByRole('dialog').getByRole('option').first(),
+    start: dialogTitle,
+    end: (page) => page.getByRole('dialog').getByRole('option').last(),
   },
 ];
 
@@ -1639,8 +1813,10 @@ test.describe('From the md breakpoint up', () => {
   test.use({ viewport: { width: 768, height: 1024 } });
 
   test('the sidebar stays beside the page, without the header bar', async ({ authenticatedPage: page }) => {
-    // Not even hidden: the page's first button is Logout, as before.
+    // Not even hidden: the page's first button is Logout, as before, and the button of the command
+    // palette is the phone's alone (ADR-0393).
     await expect(menuButton(page)).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Open the command palette' })).toHaveCount(0);
     await expect(page.locator('button').first()).toBeVisible();
     await expect(navLink(page, '/storage')).toBeVisible();
     await expect(page.locator('aside').getByText('Administrator', { exact: true })).toBeVisible();

@@ -29,7 +29,7 @@ SD writes of each check (ADR-0214). The areas:
            with its I/O counters unchanged (both SKIPs, which name them, when it stays active
            while the containers of apps, not UNOS's own, read or wrote it in the wait's last 660 s,
            the SMART reads also when it was found awake after such a container used it:
-           ADR-0388), and
+           ADR-0394), and
            the timeout of UNOS's rule set again, or Off: no
            standby timer until the disk's next power cycle, with its offline data collection as
            the check found it (ADR-0378; these steps are skipped with the reason without hdparm
@@ -340,7 +340,7 @@ SPINDOWN_SHORTEST_VALUE = 60
 NO_HDPARM = "The host has no hdparm: install the package hdparm on the host to set idle timeouts"
 SPINDOWN_SETTLE = 30
 SPINDOWN_ROUNDS = 6
-# The rounds at the end of the wait in which the apps' use of a disk still awake counts (ADR-0388): two,
+# The rounds at the end of the wait in which the apps' use of a disk still awake counts (ADR-0394): two,
 # 660 s, longer than the disk needs unused to sleep (its timeout, 300 s, or the dev device's disk's own
 # minimum of about 600 s). A read or write before them did not keep it awake to the end, but for a pass of
 # the hourly SMART monitor that read the disk after it, which restarts its timer once (ADR-0378): a FAIL
@@ -366,7 +366,7 @@ def is_unos_container(name: str) -> bool:
     """A container of UNOS's own, by the rule of src/containers/docker.py's is_system_container
     (unos-supervisor and unos-webui of deploy/docker-compose.yml, and every other unos-*): every other
     running container is an app's, whose reads and writes on the pool's disk keep it awake (ADR-0381),
-    so that the smart check cannot see the disk sleep while they use it (ADR-0388)."""
+    so that the smart check cannot see the disk sleep while they use it (ADR-0394)."""
     return name.startswith("unos-")
 # The token cache in the device's RAM of the shares check's user (api.py's relay, ADR-0222).
 USER_TOKEN = "/dev/shm/unos-scenario-{}.token"
@@ -2290,9 +2290,9 @@ def spindown_steps(c: Check, disk: dict, hdparm_conf: str | None) -> None:
         return ({} if own else apps), notes
 
     # An app's container that uses the pool keeps its disk awake (ADR-0381); then the steps that need it
-    # asleep cannot judge UNOS (ADR-0388).
+    # asleep cannot judge UNOS (ADR-0394).
     kept_awake = ("apps with data on the pool keep its disk awake (ADR-0381), so the check cannot see whether UNOS "
-                  "lets it sleep; stop them for this step (ADR-0388)")
+                  "lets it sleep; stop them for this step (ADR-0394)")
 
     def asleep_or_apps(asleep: object, awake: bool, why: str) -> None:
         """For the SMART reads of the sleeping disk: ASLEEP false fails the step with WHY, unless AWAKE (the
@@ -2446,7 +2446,7 @@ def spindown_steps(c: Check, disk: dict, hdparm_conf: str | None) -> None:
             why = "something reads or writes it (an app or a share on the pool?)"
             if state != "standby":
                 # Reads and writes in the last rounds, or counters that could not be read: the containers say
-                # whose (ADR-0388).
+                # whose (ADR-0394).
                 apps, notes = containers_moved(apps_quiet_start, apps_end, f" in its last {span} s")
                 if apps and state == "active" and quiet_start and end:
                     raise Skipped(f"it is active after {waited} s; meanwhile the kernel counted {moved} on it, and in its "

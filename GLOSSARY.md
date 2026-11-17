@@ -21,9 +21,19 @@ API and WebSocket calls to the supervisor (ADR-0002, ADR-0025). Avoid: frontend 
 (`webui/src/lib/i18n/catalog/<area>.ts`), which the pages show in the language chosen on the
 Account page; the server's messages stay English (ADR-0287). Avoid: dictionary, locale file.
 
+**Command palette**: The dialog that Ctrl+K (Cmd+K on macOS), or the search button of a phone's
+header bar, opens over a signed-in page: typing narrows the pages and actions of the user's role,
+and Enter opens the chosen one. It runs only the actions that change nothing on the NAS; the
+others open their page's own dialog (ADR-0393). Avoid: quick switcher, command bar, search.
+
 **Table frame**: The element of the class `table-frame` around a table that can be wider than a
 phone's screen: the table scrolls sideways inside it, while the page never does (ADR-0302).
 Avoid: scroll wrapper, responsive table.
+
+**Bulk action**: An action that an administrator takes at once on the containers or SMB shares
+selected on their page: Start, Stop or Restart of containers, each through its own endpoint, and
+Delete of shares, after one question and with one apply. Each one selected gets its own result
+(ADR-0389). Avoid: batch, mass action.
 
 **Dev device**: The Banana Pi BPI-W3 (ArmSoM W3, Rockchip RK3588) that UNOS is developed and checked
 on; PROGRESS.md (Dev device) has its state. It holds no data to
@@ -72,7 +82,8 @@ Avoid: alarm.
 
 **Problem**: A condition of the NAS that needs an administrator while it lasts: a managed pool
 that is not mounted, degraded, read-only after an error or almost full, a volume at 80, 90 or 95
-percent of its quota, a failing disk, a scheduled task whose last run failed or that missed a run.
+percent of its quota, a failing disk, a scheduled task whose last run failed or that missed a run,
+a container of an app at its memory or CPU limit or out of memory (ADR-0390).
 It is alerted once when it is found (a volume's again at each further level) and shown in
 the health banner until it is gone; UNOS keeps it in RAM only (ADR-0332). Avoid: issue, incident,
 event.
@@ -228,6 +239,11 @@ WS-Discovery (wsdd2), macOS through Bonjour (the `_smb._tcp` service that smbd r
 avahi-daemon), both over IPv4 only; NetBIOS is off (ADR-0275). Avoid: network browsing (a share's
 "Show in network browsing" lists the share among the NAS's shares), NetBIOS browsing.
 
+**SMB interfaces**: The network interfaces of the host that SMB listens on: every one by default, or
+those that an administrator chose, by name, together with the loopback. smbd binds their addresses
+when it starts, so a change of them, and Restart SMB, restart smbd and end the open SMB connections
+(ADR-0391). Avoid: bind addresses, listen addresses (addresses, not interfaces), SMB network.
+
 **NFS export**: A folder that the host's NFS server offers to the computers of a network: one entry
 of an export file, read as exportfs reads it. UNOS adds lines to its own export file,
 `/etc/exports.d/unos.exports`, deletes only the lines it wrote there, exactly as it writes them,
@@ -255,8 +271,19 @@ it expires or its session ends: Logout, a password change, an administrator (ADR
 ADR-0329). Avoid: cookie, API token.
 
 **API token**: A long-lived token that a user creates for scripts, with that user's rights, shown
-once (ADR-0239); only a session token creates, disables and deletes API tokens (ADR-0253). Avoid:
-session token, API key.
+once (ADR-0239); only a session token creates, disables and deletes API tokens (ADR-0253). It is
+full or limited by its scope (ADR-0392). Avoid: session token, API key.
+
+**Scope**: What an API token may reach: its access, read only or read and change, and its areas of
+the API, every area or a list (ADR-0392). Avoid: permissions (the column that keeps it), role.
+
+**Area of the API**: The first segment of an API path after `/api/v1/`, one per router prefix, such
+as `storage` or `backup`: what a scope lists (ADR-0392). Avoid: module, section, router.
+
+**Limited token**: An API token that is read only or limited to areas; through the API it never
+changes accounts, users, API tokens or two-factor authentication and never restores a backup. The
+others are **full** and act with all of their user's rights (ADR-0392). Avoid: scoped key,
+restricted token.
 
 **Recovery code**: One of the ten codes that a user with two-factor authentication generates on the
 Account page and keeps; each one signs in once in place of a code of the authenticator app
@@ -323,6 +350,17 @@ machine learning's `rk3588-npu` with Immich's `-rknn` image on an RK3588 with th
 node; on any other host the container is installed as elsewhere, and the App Store says nothing
 of it (ADR-0382). Avoid: hardware acceleration (what the App Store calls it for the user),
 passthrough.
+
+**Container limits**: The memory limit and the CPU limit that an administrator sets for one
+container of an app on the Installed tab, each optional: Docker keeps them in the container's
+HostConfig (`docker inspect`: Memory and MemorySwap, CpuQuota per CpuPeriod), and UNOS keeps them
+in its database for the app's next install. Each container of an app has its own (ADR-0390).
+Avoid: quota (a volume's), app limits.
+
+**Container use**: The memory and the CPUs that a running container of an app uses, which UNOS
+reads every 30 seconds from the container's cgroup in the kernel: memory.current without the
+inactive page cache, and the CPU time between two reads (ADR-0390). Avoid: stats (Docker's
+stats stream, which UNOS does not read).
 
 **Backup**: An archive of the UNOS database, encrypted if wanted, without the pools' files
 (ADR-0040). Avoid: snapshot.

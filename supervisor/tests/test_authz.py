@@ -755,8 +755,9 @@ class TestApiTokensAreManagedWithASession:
 
 class TestApiTokenBounds:
     """Each token is a row of the database on the system disk, which any signed-in user can add
-    to: a name has 1 to 64 characters, the permissions are "*", and a user has at most 100
-    tokens (ADR-0253)."""
+    to: a name has 1 to 64 characters, and a user has at most 100 tokens (ADR-0253). Its scope is
+    read_only and areas (ADR-0392, tests/test_token_scopes.py): `permissions` left the API, and a
+    request that still sends it answers 422."""
 
     @pytest.mark.parametrize(
         "body",
@@ -782,10 +783,10 @@ class TestApiTokenBounds:
     def test_a_name_is_kept_without_the_space_around_it(self, client, alice_headers):
         name = "n" * API_TOKEN_NAME_CHARS
 
-        created = client.post(f"{API}/auth/tokens", json={"name": f"  {name} ", "permissions": "*"}, headers=alice_headers)
+        created = client.post(f"{API}/auth/tokens", json={"name": f"  {name} "}, headers=alice_headers)
 
         assert created.status_code == 200, created.text
-        assert (created.json()["name"], created.json()["permissions"]) == (name, "*")
+        assert (created.json()["name"], created.json()["read_only"], created.json()["areas"]) == (name, False, None)
         assert [t["name"] for t in client.get(f"{API}/auth/tokens", headers=alice_headers).json()] == [name]
 
     @staticmethod

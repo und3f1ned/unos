@@ -23,6 +23,7 @@ from src import host, main
 files = importlib.import_module("src.files.router")
 health = importlib.import_module("src.health.router")
 power = importlib.import_module("src.power.router")
+app_usage = importlib.import_module("src.apps.usage")
 scheduler = importlib.import_module("src.scheduler.router")
 
 LOOPS = {
@@ -36,6 +37,8 @@ LOOPS = {
     "trash_expiry": (files, "trash_expiry_loop", "_trash_expiry_task"),
     # Looks for the hidden files that uploads left when the supervisor stopped (ADR-0354).
     "upload_leftovers": (files, "first_upload_leftover_check", "_upload_leftover_task"),
+    # Reads the use of the apps' containers against their limits (ADR-0390).
+    "app_resources": (app_usage, "app_resources_loop", "_loop_task"),
 }
 
 

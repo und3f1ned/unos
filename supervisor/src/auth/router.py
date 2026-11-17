@@ -22,7 +22,7 @@ from ..shares.models import SmbAccount, SmbShare, UserGroup, UserGroupMember
 
 # Rate limiter for auth endpoints
 limiter = Limiter(key_func=get_remote_address)
-from . import requirement
+from . import requirement, scopes
 from .models import User, APIToken, UsernameTaken
 from .schemas import (
     UserCreate, UserResponse, TwoFactorRequired, Token, LoginRequest, PasswordChange,
@@ -1023,16 +1023,33 @@ TOO_MANY_API_TOKENS = (
 )
 
 
+def _scope_fields(kind: object, raw: object) -> dict:
+    """The answer's fields of a token's scope as stored (scopes.stored_columns, ADR-0392); a value
+    that cannot be read reaches nothing, and says so."""
+    scope = scopes.parse(scopes.stored_text(kind, raw))
+    if scope is None:
+        return {"read_only": True, "areas": [], "scope_known": False}
+    areas = None if scope.areas is None else sorted(scope.areas)
+    return {"read_only": scope.read_only, "areas": areas, "scope_known": True}
+
+
 @router.get("/tokens", response_model=list[APITokenResponse])
 async def list_api_tokens(
     current_user: User = Depends(verify_token),
     db: AsyncSession = Depends(get_db)
 ):
-    """List all API tokens for current user."""
+    """List all API tokens for current user, each with its scope."""
     result = await db.execute(
-        select(APIToken).where(APIToken.user_id == current_user.id)
+        select(APIToken, *scopes.stored_columns(APIToken.permissions)).where(APIToken.user_id == current_user.id)
     )
-    return result.scalars().all()
+    return [
+        APITokenResponse(
+            id=row.id, name=row.name, token_prefix=row.token_prefix, is_active=bool(row.is_active),
+            created_at=row.created_at, last_used_at=row.last_used_at, expires_at=row.expires_at,
+            **_scope_fields(kind, raw),
+        )
+        for row, kind, raw in result.all()
+    ]
 
 
 @router.post("/tokens", response_model=APITokenCreated)
@@ -1042,7 +1059,8 @@ async def create_api_token(
     current_user: User = Depends(require_session),
     db: AsyncSession = Depends(get_db)
 ):
-    """Create a new API token. The full token is only shown once!"""
+    """Create a new API token, full or limited (ADR-0392). The full token is only shown once!"""
+    scope = data.scope()
     # Generate the token
     full_token, token_hash = generate_api_token()
     token_prefix = full_token[:12]  # Show first 12 chars for identification
@@ -1059,7 +1077,7 @@ async def create_api_token(
         token_hash=token_hash,
         token_prefix=token_prefix,
         user_id=user_id,
-        permissions=data.permissions,
+        permissions=scopes.stored_value(scope),
         expires_at=expires_at
     )
     db.add(api_token)
@@ -1080,7 +1098,7 @@ async def create_api_token(
         user=current_user,
         resource_type="api_token",
         resource_id=data.name,
-        details=f"Created API token: {data.name}"
+        details=f"Created API token: {data.name} ({scopes.describe(scope)})"
     )
 
     return APITokenCreated(
@@ -1088,7 +1106,8 @@ async def create_api_token(
         name=api_token.name,
         token=full_token,
         token_prefix=token_prefix,
-        permissions=api_token.permissions,
+        read_only=scope.read_only,
+        areas=None if scope.areas is None else sorted(scope.areas),
         expires_at=expires_at
     )
 

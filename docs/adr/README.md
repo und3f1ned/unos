@@ -122,6 +122,7 @@ and this index, and `make check-fast` runs it.
 | [0312](0312-a-websockets-credential-re-check-in-progress-runs-to-its-end.md) | A WebSocket's credential re-check in progress runs to its end when the socket closes | accepted | 2026-11-09 |
 | [0329](0329-a-session-is-a-row-and-ending-it-deletes-the-row.md) | A session is a row of user_sessions, and ending a session deletes its row | accepted | 2026-11-10 |
 | [0386](0386-two-factor-authentication-required-for-every-account-after-a-grace-period.md) | An administrator with two-factor authentication requires it for every account, and after a grace period an account without it reaches only its setup | accepted | 2026-11-17 |
+| [0392](0392-an-api-token-can-be-limited-to-reading-and-to-areas-of-the-api.md) | An API token can be limited to reading and to areas of the API, checked where every credential is checked | accepted | 2026-11-17 |
 
 ## Storage
 
@@ -287,6 +288,7 @@ and this index, and `make check-fast` runs it.
 | [0368](0368-a-rename-moves-the-users-smb-account-to-the-new-name-keeping-its-uid.md) | An administrator renames a user, and the user's SMB account moves to the new name with its uid | accepted | 2026-11-12 |
 | [0380](0380-a-share-can-require-encryption-serve-time-machine-and-list-snapshots-as-previous-versions.md) | A share can require encryption, serve Time Machine and list snapshots as Previous Versions | accepted | 2026-11-15 |
 | [0385](0385-groups-of-users-get-share-access-and-smb-conf-names-their-active-members.md) | Groups of users get share access in UNOS's database, and smb.conf names their active members | accepted | 2026-11-17 |
+| [0391](0391-an-administrator-binds-smb-to-chosen-interfaces-by-name-with-the-loopback-and-a-restart-of-smbd.md) | An administrator binds SMB to chosen network interfaces by name, the loopback stays bound, and a change restarts smbd | accepted | 2026-11-17 |
 
 ## Apps
 
@@ -305,6 +307,7 @@ and this index, and `make check-fast` runs it.
 | [0381](0381-an-app-of-several-containers-installs-through-the-docker-api-with-pinned-images-and-a-password-on-its-pool.md) | An app of several containers installs through the Docker API with pinned images and a password on its pool | superseded by [0384](0384-an-apps-install-runs-as-a-background-job-whose-progress-the-app-store-shows.md) | 2026-11-16 |
 | [0382](0382-hardware-profiles-apply-per-container-may-choose-its-image-and-give-immichs-machine-learning-the-rk3588-npu.md) | Hardware profiles apply per container, may choose the container's image and give Immich's machine learning the RK3588's NPU | accepted | 2026-11-16 |
 | [0384](0384-an-apps-install-runs-as-a-background-job-whose-progress-the-app-store-shows.md) | An app's install runs as a background job whose progress the App Store shows | accepted | 2026-11-17 |
+| [0390](0390-each-container-of-an-app-gets-its-own-memory-and-cpu-limits-whose-use-is-read-from-its-cgroup.md) | Each container of an app gets its own memory and CPU limits, kept by Docker and for the next install, and its use is read from its cgroup and alerted | accepted | 2026-11-17 |
 
 ## Backup
 
@@ -372,6 +375,7 @@ and this index, and `make check-fast` runs it.
 | [0366](0366-system-logs-follows-new-journal-entries-over-the-journal-socket.md) | System > Logs reads every source from the host's journal, newest first, and its Auto follows new entries over the journal socket | accepted | 2026-11-12 |
 | [0374](0374-unos-keeps-its-idle-load-within-a-budget-and-check-sh-reports-load-and-heat.md) | UNOS keeps its idle load within a budget, and check.sh reports load and heat | accepted | 2026-11-13 |
 | [0375](0375-the-supervisor-s-healthcheck-runs-bash-and-the-process-list-reads-ten-processes-in-full.md) | The supervisor's healthcheck runs bash, and the process list reads ten processes in full | accepted | 2026-11-13 |
+| [0388](0388-the-dashboard-shows-disk-io-and-the-stats-network-is-the-hosts-interfaces.md) | The dashboard shows the disks' I/O, and the network of the stats message is the traffic of the host's interfaces | accepted | 2026-11-17 |
 
 ## Web UI
 
@@ -393,6 +397,8 @@ and this index, and `make check-fast` runs it.
 | [0302](0302-below-the-md-breakpoint-the-sidebar-is-a-drawer-and-only-a-table-scrolls-sideways.md) | Below the md breakpoint the sidebar is a drawer, and on a phone only a table scrolls sideways | accepted | 2026-11-08 |
 | [0361](0361-open-dialogs-form-a-stack-whose-top-one-alone-answers-escape.md) | Open dialogs form a stack whose top one alone answers Escape, and the focus moves into a dialog and back to its opener | accepted | 2026-11-12 |
 | [0365](0365-a-check-of-webui-src-fails-for-a-setinterval-that-reaches-the-api.md) | A check of webui/src fails for a setInterval whose callback reaches the API | accepted | 2026-11-12 |
+| [0389](0389-several-containers-act-one-after-another-through-their-own-endpoints-and-several-shares-are-deleted-with-one-apply.md) | Several containers act one after another through their own endpoints, and several shares are deleted with one request and one apply | accepted | 2026-11-17 |
+| [0393](0393-ctrl-k-opens-a-command-palette-that-runs-only-actions-that-change-nothing-on-the-nas.md) | Ctrl+K opens a command palette of the pages and actions of the user's role, which runs only actions that change nothing on the NAS | accepted | 2026-11-17 |
 
 ## Deploy
 
@@ -451,7 +457,7 @@ and this index, and `make check-fast` runs it.
 | [0340](0340-the-shares-scenario-check-makes-a-guest-share-a-users-own-smb-activation-and-a-repair.md) | The shares scenario check makes a guest share, a user's own SMB activation and a repair | accepted | 2026-11-11 |
 | [0341](0341-the-restore-scenario-check-restores-a-backup-it-made-moments-before.md) | The restore scenario check restores a backup it made moments before | accepted | 2026-11-11 |
 | [0372](0372-the-bpi-f3-keeps-its-pool-docker-data-root-and-home-assistant-and-frigate-data-on-its-two-ssds.md) | The BPI-F3 keeps its pool, Docker's data root and the data of its Home Assistant and Frigate stack on its two SSDs | accepted | 2026-11-13 |
-| [0388](0388-the-smart-check-skips-the-disk-s-sleep-while-apps-containers-use-the-pool.md) | The smart check skips the disk's sleep while the containers of apps use it, and names them | accepted | 2026-11-17 |
+| [0394](0394-the-smart-check-skips-the-disk-s-sleep-while-apps-containers-use-the-pool.md) | The smart check skips the disk's sleep while the containers of apps use it, and names them | accepted | 2026-11-17 |
 
 ## Testing
 

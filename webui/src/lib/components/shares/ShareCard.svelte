@@ -22,12 +22,16 @@
 	export let dismissing = false;
 	/** A repair of the share's permissions runs (ADR-0363). */
 	export let repairing = false;
+	/** Selected for an action on several shares (ADR-0389); `select` says when its box changes. */
+	export let selected = false;
+	export let selectDisabled = false;
 
 	const dispatch = createEventDispatcher<{
 		edit: SmbShare;
 		repair: SmbShare;
 		delete: SmbShare;
 		dismissNotes: SmbShare;
+		select: { share: SmbShare; selected: boolean };
 	}>();
 
 	$: writers = share.access.filter((entry) => entry.level === 'write');
@@ -73,7 +77,15 @@
 	<div class="flex flex-wrap items-start justify-between gap-3">
 		<div class="min-w-0 space-y-1">
 			<div class="flex flex-wrap items-center gap-2">
-				<h3 class="font-semibold">{share.name}</h3>
+				<input
+					type="checkbox"
+					class="form-checkbox"
+					checked={selected}
+					disabled={selectDisabled}
+					aria-label={$t('shares.card.select', { name: share.name })}
+					on:change={(event) => dispatch('select', { share, selected: event.currentTarget.checked })}
+				/>
+				<h3 class="font-semibold break-all">{share.name}</h3>
 				{#if !share.served}
 					<Badge variant="error">{$t('shares.card.notServed')}</Badge>
 				{/if}

@@ -522,7 +522,7 @@
 
 <!-- Create/Edit Task Modal -->
 {#if showTaskModal}
-  <div class="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+  <div class="modal-overlay p-4">
     <div class="bg-slate-800 rounded-lg w-full max-w-lg max-h-[90vh] overflow-y-auto">
       <!-- Modal Header -->
       <div class="flex items-center justify-between p-4 border-b border-slate-700">
@@ -807,7 +807,7 @@
 
 <!-- History Modal -->
 {#if showHistoryModal}
-  <div class="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+  <div class="modal-overlay p-4">
     <div class="bg-slate-800 rounded-lg w-full max-w-2xl max-h-[80vh] flex flex-col">
       <!-- Modal Header -->
       <div class="flex items-center justify-between p-4 border-b border-slate-700">

@@ -5,7 +5,7 @@ area: device
 decided-by: agent
 ---
 
-# ADR-0388: The smart check skips the disk's sleep while the containers of apps use it, and names them
+# ADR-0394: The smart check skips the disk's sleep while the containers of apps use it, and names them
 
 ## Context
 

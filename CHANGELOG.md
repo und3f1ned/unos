@@ -12,6 +12,27 @@ features (SMB access per user and per share, volumes, copy and move in the file
 manager, encrypted backup uploads, health checks, CI checks).
 
 ### Security
+- An API token can be limited to reading, or to areas of the API (ADR-0392).
+  The areas are the prefixes of the API's paths after `/api/v1/` (`storage`,
+  `backup`, `monitor` and 18 more); `POST /api/v1/auth/tokens` takes
+  `read_only` and `areas`, and its answers and `GET /api/v1/auth/tokens` carry
+  them. A read-only token is refused every request but `GET` (and two `POST`s
+  that only read) with 403 "This API token can only read", and the download of
+  a backup and the notification channels' settings with 403 "A read-only API
+  token cannot read this: the answer holds secrets"; a token of areas is
+  refused outside them with 403 "This API token is limited to other areas of
+  the API", its WebSockets with 4403. Through the API a limited token never
+  changes accounts, users, API tokens or two-factor authentication and never
+  restores a backup; change access to apps, containers, the scheduler or
+  updates runs programs as root, and to backups or the off-device copy takes
+  the database, which the dialog warns of. Without a limit a token is full, as
+  before, and the tokens that exist, which hold `*`, stay full. `permissions` is gone from the API: a request that sends it answers
+  422. The Account page (**System** → **Security**) gets **API Tokens**: the
+  list with each token's access and areas, **Disable Token**, **Enable Token**
+  and **Delete Token**, and **New Token**, which starts at read only. A
+  restored token whose scope cannot be read is refused everywhere, and the
+  restore counts them among its warnings. The audit log names the scope of
+  each new token.
 - An administrator can require two-factor authentication for every account
   (**System** → **Security**, **Two-factor authentication for every
   account**), with a grace period of none, 1, 3, 7 (the default), 14 or 30
@@ -345,6 +366,76 @@ manager, encrypted backup uploads, health checks, CI checks).
   `ups_name`, `host` and `port` are checked before they reach `upsc`.
 
 ### Added
+- The dashboard has a **Disk I/O** card: the bytes per second read from and
+  written to the host's physical disks, from the live statistics; zram, loop,
+  device-mapper (LUKS, LVM) and md devices do not count (ADR-0388).
+- Actions on several containers or shares at once (ADR-0389). On the
+  **Containers** page a checkbox selects a container, and **Select all shown**
+  selects what the search and the state filter show; **Start selected**,
+  **Stop selected** and **Restart selected** then act on each of them, one
+  after another, through its own endpoint, with the checks and audit entries
+  of a single action (Restart, as on a container's own row, for the running
+  ones only; the containers' own buttons wait meanwhile), and list each
+  container's result: its new state, or why it was not done (the others go
+  on; what was not done stays selected). UNOS's own
+  containers are not listed, so they cannot be selected. On the **Shares**
+  page the SMB shares are selected the same way, and **Delete selected** asks
+  once, naming each share and its folder, then deletes all of them (up to
+  200) with one request, `POST /api/v1/shares/smb/bulk-delete` with each share's name and
+  the version and folder the page loaded: one change of smb.conf and one
+  reload of Samba under `smb_lock`, the folders kept, one `share_deleted`
+  audit entry per share (one that cannot be written is a warning of the
+  answer, and the others are still written). A share changed, made again in
+  another folder or
+  deleted elsewhere in the meantime is not deleted and is named with the
+  reason; when testparm rejects the new smb.conf or the database is busy,
+  none is deleted.
+- Memory and CPU limits for the containers of apps (ADR-0390). On the App
+  Store's **Installed** tab each app's card lists its containers with the
+  memory and the CPUs each uses against its limits, and **Limits** sets a
+  container's memory limit (from 64 MB to below the NAS's memory, leaving a
+  running container a margin above what it uses now) and CPU limit (from 0.1 to the NAS's
+  CPUs); an empty field is no limit. Docker applies them at once and keeps
+  them across restarts and reboots (`docker inspect`: `Memory`,
+  `MemorySwap`, `CpuQuota`, `CpuPeriod`), and UNOS keeps them for the app's
+  next install, also after an uninstall. Every 30 seconds UNOS reads each
+  running container's use from its cgroup in the kernel, with no command,
+  no disk read and nothing written, and alerts once a container at 90% of
+  its memory limit (until below 80%), one held at 90% of its CPU limit for
+  5 minutes (until below 70%) and, as an error, one whose process the
+  kernel ended for lack of memory (Docker's `oom` event, kept an hour). The
+  API: `PUT /api/v1/apps/installed/{container}/limits`,
+  `GET /api/v1/apps/limits` and `resources` of each container in
+  `GET /api/v1/apps/installed`; the audit log records `app_limits_changed`.
+- An administrator chooses the network interfaces that SMB listens on
+  (ADR-0391): **Shares** → SMB → **Network interfaces** → **Choose
+  interfaces…**. By default SMB listens on every interface, as before; with a
+  choice, smb.conf gets `interfaces = lo <the chosen names>` and
+  `bind interfaces only = yes`, and smbd binds only the addresses of those
+  interfaces and the loopback. The dialog lists the host's interfaces with
+  their addresses (without the loopback and Docker's; point-to-point ones
+  cannot be ticked), refuses a choice without an enabled interface that has
+  an address of the local network, keeps a chosen interface that is not on
+  the host (an unplugged adapter), and says that saving restarts smbd, with
+  the number of open SMB connections that it closes. The card shows the
+  addresses smbd listens on and names an address of a chosen interface that
+  came after smbd started, with **Restart SMB…**. The choice is in the
+  database (the new table `smb_bind_interfaces`), so a backup holds it.
+  wsdd2 and avahi-daemon keep announcing the NAS on every interface. The API:
+  `GET` and `PUT /api/v1/shares/smb-interfaces` and
+  `POST /api/v1/shares/smb-interfaces/restart`; the audit log records
+  `smb_interfaces_changed` and `smb_restarted`.
+- A command palette (ADR-0393): Ctrl+K, or Cmd+K on macOS, opens it over a
+  signed-in page, and on a phone the search button of the bar at the top.
+  Typing narrows its pages and actions by their English or Russian names,
+  ↓ and ↑ choose, and Enter or a click opens the chosen one. It offers what
+  the account's role may open: an administrator every page, the **Trash** and
+  every tab of **System**; a regular user **Dashboard** and **Account**. It
+  switches the language and logs out itself; **Add a user…**, **Reboot the
+  host…**, **Shut down the host…** and **Suspend the host…** open the
+  **Users** page's dialog and **Power Management**'s confirmations, which act
+  only once confirmed. It does not open over a dialog, Escape closes only it,
+  and it asks the server for nothing.
 - Groups of users (ADR-0385). The **Users** page has a **Groups** card: make
   a group, choose its members (users who are not administrators), rename it
   or delete it. On the **Shares** page a share's access list gives each group
@@ -516,7 +607,7 @@ manager, encrypted backup uploads, health checks, CI checks).
   read or wrote it in the wait's last 660 s, as their cgroups count it, and
   UNOS's own did not, and so are the SMART reads of the sleeping disk then,
   and when the disk was found awake in them after such a container used it:
-  the step names them with their counts (ADR-0388). An app that used the disk
+  the step names them with their counts (ADR-0394). An app that used the disk
   only earlier, UNOS's own use and any other failure still fail; when the
   apps used it just before the last 660 s, the failure says that a pass of the
   SMART monitor after them may have kept the disk awake.
@@ -1171,6 +1262,12 @@ manager, encrypted backup uploads, health checks, CI checks).
   smb.conf as UNOS wrote it.
 
 ### Removed
+- From the live statistics of `/ws/v1/events`: each interface's `ipv4`,
+  `speed` and `is_up`, which were the container's; the network's
+  `bytes_sent`, `bytes_recv`, `packets_sent` and `packets_recv`, the disks'
+  `read_bytes`, `write_bytes`, `read_count` and `write_count`, and those of
+  each block device in `disk_io.disks`, which no page read. Regular users get
+  the network's rates without the host's interfaces (ADR-0388).
 - BookStack, Paperless-ngx and Linkwarden from the App Store's catalog: each
   needs a database or a broker beside it, which they will get as apps of
   several containers (ADR-0381).
@@ -1182,6 +1279,17 @@ manager, encrypted backup uploads, health checks, CI checks).
   holds a long name with no place to break, such as an API token's name of 64
   characters, a long name tried at sign-in or a full IPv6 address: the name
   breaks within its entry.
+- The dashboard's **Network** card and the Resource Monitor showed the traffic
+  of the supervisor's container, which has a network of its own, instead of
+  the host's; **System** → **Network** showed that container's live rates on
+  a host port named like the container's `eth0`, and none on a host whose
+  port has another name. They now show the host's interfaces that **System**
+  → **Network** lists, without the loopback, `dummy0` and Docker's. The disk
+  rates no longer count zram, loop, device-mapper and md devices, and a disk
+  or interface that comes or goes no longer makes a rate negative or adds all
+  its counters at once. Rates no longer jump when the board sets its clock at
+  boot, and the first rates after the dashboard is opened are no longer the
+  average since it was last open (ADR-0388).
 - The dashboard's live stats cost a slow board a large share of a core: every
   open tab took its own sample every two seconds, in the supervisor's event loop,
   and listed every process of the host each time (0.4 s of CPU on a SpacemiT

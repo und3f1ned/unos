@@ -39,7 +39,7 @@ export const en = {
 	'backup.dialog.from': 'This will restore configuration from',
 	'backup.dialog.warning': 'Warning: This will overwrite current settings including:',
 	'backup.dialog.database':
-		'- Database (user accounts with their passwords, two-factor authentication, API tokens and the login history)',
+		'- Database (user accounts with their passwords, two-factor authentication, API tokens with their access and areas, and the login history)',
 	'backup.dialog.shares': '- SMB share configuration',
 	'backup.dialog.passphrase': 'Passphrase of the encrypted backup',
 	'backup.dialog.confirm': 'Type the backup filename to confirm:',
@@ -86,7 +86,7 @@ export const ru: Translation<typeof en> = {
 	'backup.dialog.from': 'Конфигурация будет восстановлена из',
 	'backup.dialog.warning': 'Внимание: текущие настройки будут перезаписаны, в том числе:',
 	'backup.dialog.database':
-		'- База данных (учётные записи пользователей с паролями, двухфакторная аутентификация, API-токены и история входов)',
+		'- База данных (учётные записи пользователей с паролями, двухфакторная аутентификация, API-токены с их доступом и областями, история входов)',
 	'backup.dialog.shares': '- Настройки общих папок SMB',
 	'backup.dialog.passphrase': 'Парольная фраза зашифрованной резервной копии',
 	'backup.dialog.confirm': 'Для подтверждения введите имя файла резервной копии:',

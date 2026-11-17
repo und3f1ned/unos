@@ -33,42 +33,33 @@ export interface MemoryStats {
   swap_percent: number;
 }
 
+// An interface of the host that System > Network lists, with its counters and rates; only
+// administrators get them (ADR-0388).
 export interface NetworkInterface {
   name: string;
-  ipv4: string | null;
-  speed: number;
-  is_up: boolean;
   bytes_sent: number;
   bytes_recv: number;
   bytes_sent_rate: number;
   bytes_recv_rate: number;
 }
 
+// The host's traffic: the sums of the rates of its interfaces (ADR-0388).
 export interface NetworkStats {
-  bytes_sent: number;
-  bytes_recv: number;
   bytes_sent_rate: number;
   bytes_recv_rate: number;
-  packets_sent: number;
-  packets_recv: number;
   interfaces: NetworkInterface[];
 }
 
+// A block device of the host, disk or partition (ADR-0360).
 export interface DiskIO {
   name: string;
-  read_bytes: number;
-  write_bytes: number;
-  read_count: number;
-  write_count: number;
 }
 
+// The host's physical disks: the sums of their rates, without zram, loop, device mapper and md
+// devices (ADR-0388); `disks` lists every block device but loop and RAM devices (ADR-0360).
 export interface DiskIOStats {
-  read_bytes: number;
-  write_bytes: number;
   read_rate: number;
   write_rate: number;
-  read_count: number;
-  write_count: number;
   disks: DiskIO[];
 }
 

@@ -391,9 +391,9 @@ def fast_recheck(monkeypatch):
     checks = []
     real_authenticate = events.authenticate_token
 
-    async def counting_authenticate(token, db):
+    async def counting_authenticate(token, db, **kwargs):
         checks.append(token)
-        return await real_authenticate(token, db)
+        return await real_authenticate(token, db, **kwargs)
 
     monkeypatch.setattr(events, "authenticate_token", counting_authenticate)
     return checks
@@ -661,12 +661,12 @@ class TestReauthentication:
         real_user_for_token = events._user_for_token
         calls = 0
 
-        async def failing_after_handshake(token):
+        async def failing_after_handshake(token, path):
             nonlocal calls
             calls += 1
             if calls > 1:
                 raise RuntimeError("database is locked")
-            return await real_user_for_token(token)
+            return await real_user_for_token(token, path)
 
         monkeypatch.setattr(events, "_user_for_token", failing_after_handshake)
         with client.websocket_connect("/ws/v1/events") as ws:
@@ -689,25 +689,25 @@ class TestReauthentication:
         ends = []
         calls = 0
 
-        async def held_after_handshake(token):
+        async def held_after_handshake(token, path):
             nonlocal calls
             calls += 1
             if calls == 1:
-                return await real_user_for_token(token)  # the handshake
+                return await real_user_for_token(token, path)  # the handshake
             started.set()
             try:
                 while not release.is_set():
                     await asyncio.sleep(0.01)
-                user = await real_user_for_token(token)
+                user = await real_user_for_token(token, path)
             except asyncio.CancelledError:
                 ends.append("cancelled")
                 raise
             ends.append(user.username)
             return user
 
-        async def watch(token, **kwargs):
+        async def watch(token, path, **kwargs):
             try:
-                return await real_watch(token, **kwargs)
+                return await real_watch(token, path, **kwargs)
             finally:
                 watch_ended.set()
 
@@ -732,11 +732,11 @@ class TestReauthentication:
         started, release, failed = threading.Event(), threading.Event(), threading.Event()
         calls = 0
 
-        async def failing_after_the_close(token):
+        async def failing_after_the_close(token, path):
             nonlocal calls
             calls += 1
             if calls == 1:
-                return await real_user_for_token(token)  # the handshake
+                return await real_user_for_token(token, path)  # the handshake
             started.set()
             while not release.is_set():
                 await asyncio.sleep(0.01)
@@ -1232,6 +1232,83 @@ class TestTheInstallsOnTheEventsSocket:
             assert ws.receive_json() == {"type": "auth_ok"}
             install_jobs._publish(_install_job("failed"))
             assert [ws.receive_json()["type"] for _ in range(10)] == ["stats"] * 10
+
+
+# ---------------------------------------------------------------------------
+# The host's interfaces in the stats message (system.dashboard, ADR-0388)
+# ---------------------------------------------------------------------------
+
+# A stats message with the host's interfaces, as get_system_stats sends it (its other parts left out).
+_HOST_INTERFACES = [
+    {"name": "eth0", "bytes_sent": 501_000, "bytes_recv": 1_002_000, "bytes_sent_rate": 500.0, "bytes_recv_rate": 1000.0},
+    {"name": "wlan0", "bytes_sent": 10_000, "bytes_recv": 20_400, "bytes_sent_rate": 0.0, "bytes_recv_rate": 200.0},
+]
+
+
+@pytest.fixture
+def host_stats(fast_recheck, alerts, no_repair, monkeypatch):
+    """Every sample is the same message object, with the host's interfaces; a socket must not
+    change it for the others."""
+    message = {"type": "stats", "data": {
+        "network": {"bytes_sent_rate": 500.0, "bytes_recv_rate": 1200.0, "interfaces": _HOST_INTERFACES},
+        "disk_io": {"read_rate": 0.0, "write_rate": 4096.0, "disks": [{"name": "sda"}]},
+    }}
+    monkeypatch.setattr(events, "_sample", None)
+    monkeypatch.setattr(events, "get_system_stats", lambda: message)
+    return message
+
+
+def _next_stats(ws, timeout: float = 5.0) -> dict:
+    """The data of the next stats message on ``ws``, skipping the others."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        message = ws.receive_json()
+        if message["type"] == "stats":
+            return message["data"]
+    pytest.fail("no stats message")
+
+
+class TestTheInterfacesOnTheEventsSocket:
+    """The host's interfaces with their traffic are System > Network's, an administrator's page:
+    a regular user's dashboard gets the totals of the network and no interfaces (ADR-0030,
+    ADR-0388)."""
+
+    def test_an_administrator_gets_the_host_s_interfaces(self, client, admin_token, host_stats):
+        with client.websocket_connect("/ws/v1/events") as ws:
+            _auth(ws, admin_token)
+            assert ws.receive_json() == {"type": "auth_ok"}
+            assert _next_stats(ws) == host_stats["data"]
+
+    def test_a_regular_user_gets_the_totals_without_the_interfaces(
+            self, client, admin_token, user_token, host_stats):
+        with client.websocket_connect("/ws/v1/events") as ws:
+            _auth(ws, user_token)
+            assert ws.receive_json() == {"type": "auth_ok"}
+            for _ in range(3):
+                assert _next_stats(ws) == {
+                    "network": {"bytes_sent_rate": 500.0, "bytes_recv_rate": 1200.0, "interfaces": []},
+                    "disk_io": {"read_rate": 0.0, "write_rate": 4096.0, "disks": [{"name": "sda"}]},
+                }
+
+        # The sample that every socket shares is unchanged: the next administrator gets them.
+        assert host_stats["data"]["network"]["interfaces"] == _HOST_INTERFACES
+        with client.websocket_connect("/ws/v1/events") as ws:
+            _auth(ws, admin_token)
+            assert ws.receive_json() == {"type": "auth_ok"}
+            assert _next_stats(ws)["network"]["interfaces"] == _HOST_INTERFACES
+
+    def test_an_administrator_who_is_no_longer_one_gets_none_from_the_next_check_on(
+            self, client, ws_db, admin_token, host_stats):
+        with client.websocket_connect("/ws/v1/events") as ws:
+            _auth(ws, admin_token)
+            assert ws.receive_json() == {"type": "auth_ok"}
+            assert _next_stats(ws)["network"]["interfaces"] == _HOST_INTERFACES
+
+            _set_user(ws_db, "ws_admin", is_admin=False)
+            deadline = time.monotonic() + 5
+            while _next_stats(ws)["network"]["interfaces"]:
+                assert time.monotonic() < deadline, "the interfaces are still sent"
+            assert _next_stats(ws)["network"] == {"bytes_sent_rate": 500.0, "bytes_recv_rate": 1200.0, "interfaces": []}
 
 
 class TestSocketCaps:
