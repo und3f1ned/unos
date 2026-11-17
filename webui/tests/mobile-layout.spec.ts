@@ -797,6 +797,19 @@ interface View {
 const dialogTitle = (page: Page) => page.getByRole('dialog').getByRole('heading', { name: /\S/ }).first();
 const dialogEnd = (page: Page) => page.getByRole('dialog').getByRole('button').last();
 
+/**
+ * Wait until `target` has ended its own transitions, such as the 150 ms in which Select's list
+ * flies in, as a finger taps an option where it rests. Playwright's click on an element that
+ * still moves tries again, and the try that finds it at rest scrolls it, by the try's number, to
+ * the end, the center or the start of each box that scrolls it: in a dialog taller than the
+ * screen the overlay is left scrolled down, its title out of view, after the list has closed.
+ */
+async function settled(target: Locator): Promise<void> {
+  await expect
+    .poll(() => target.evaluate((element) => element.getAnimations().length), { message: 'its transitions have ended' })
+    .toBe(0);
+}
+
 const LONG_FOLDER_VIEW: View = {
   name: 'Files: a long folder',
   path: '/files',
@@ -1235,10 +1248,8 @@ const VIEWS: View[] = [
     open: async (page) => {
       await page.getByRole('button', { name: /^(Balance|Балансировка)$/ }).first().click();
       await page.getByRole('dialog').getByRole('combobox').click();
+      await settled(page.getByRole('listbox'));
       await page.getByRole('option', { name: /^(Every chunk \(full balance\)|Все блоки \(полная балансировка\))$/ }).click();
-      // The option's list reaches past the dialog on a short screen, and clicking it scrolls the
-      // overlay to it: the user scrolls back, so the view does too before the title is checked.
-      await dialogTitle(page).evaluate((title) => title.scrollIntoView({ block: 'nearest' }));
     },
     shows: (page) => page.getByRole('dialog').getByRole('checkbox'),
     start: dialogTitle,

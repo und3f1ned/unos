@@ -3351,6 +3351,26 @@
       ]
     },
     {
+      "id": "webui.balance-dialog-sideways",
+      "category": "webui",
+      "description": "The check that the balance dialog fits a phone held sideways does not depend on timing: it passes when mobile-layout.spec.ts runs alone and in the full run",
+      "steps": [
+        "Find why 'On a phone held sideways › Dialog: balance a pool fits the screen' of mobile-layout.spec.ts fails when the spec runs without the other specs, though it passed in two full runs of make e2e-local",
+        "Fix the cause, in the page or in the test, without a retry",
+        "The test passes ten times in a row alone, the spec passes with audit.spec.ts, with which the test failed before, and make e2e-local passes the test"
+      ],
+      "passes": true,
+      "adr": [
+        "ADR-0186",
+        "ADR-0302",
+        "ADR-0379"
+      ],
+      "notes": "Found on 2026-11-17 while webui.audit-log-long-token-name was built: the test failed 10 times of 10 alone (scripts/standin/e2e.sh tests/mobile-layout.spec.ts --grep 'held sideways.*balance a pool' --repeat-each 10), also 3 times of 3 alone with the spec and the Storage page of main, and in a run of mobile-layout.spec.ts with audit.spec.ts, but passed in two full runs: once Every chunk (full balance) was chosen, the dialog's title had a viewport ratio of 0. The cause is in the test, not in the page: Select's list flies in for 150 ms (in:fly), and the view clicked its option at once. Playwright 1.57's click found the option moving on its first try and on its retries after 0 and 20 ms; the try that finds it at rest forces scrollIntoView by its number (none, end, center, start, in turn), and the fourth, after a wait of 100 ms, forced block 'start': the option went to the top of the dialog's overlay, which, 375 px high with a dialog of 452 px, scrolled to its end, 109 px, before the tap, and kept that when the warning and the confirmation made the dialog 604 px high. The page scrolls the overlay only on the keyboard's moves through the list, and a finger scrolls nothing there. On the other views the overlay does not scroll at that point (at 375 x 812 the dialog fits), and no other view chooses an option. How many tries the list takes to rest depends on timing: a click that comes once the list rests, as under a heavy load, scrolls nothing, the likely reason for the passes in the full runs; on main 5623bc1 a full run with Playwright's log (DEBUG=pw:api) failed the test the same way, the overlay at 109 px after the fourth try (840 passed; security.spec.ts's 'a failed reload of the certificates shows no stale list' failed too, outside this change). Fixed in the view's steps: settled() of mobile-layout.spec.ts waits until the list has no animation of its own left (Element.getAnimations(); Svelte keeps the finished animation until its transition ends), and the first try then taps the option without scrolling, as a finger does. Not done: scrolling the title back into view after the tap, which would also hide a page that scrolls its overlay. Step 3: with the change the test passed 10 times of 10 alone, mobile-layout.spec.ts with audit.spec.ts passed (174 tests), and make e2e-local passed (842, 14 skips on listed conditions); after the review's wording changes the three views of the balance dialog passed 10 times each alone. Passed 2026-11-17, with a review in a fresh context that found no defect. Not checked on a phone's own browser (the spec drives Chromium); no step changes the host: no device check is needed.",
+      "verified_by": [
+        "webui/tests/mobile-layout.spec.ts"
+      ]
+    },
+    {
       "id": "webui.translations",
       "category": "webui",
       "description": "The web UI can be shown in another language, Russian first",
