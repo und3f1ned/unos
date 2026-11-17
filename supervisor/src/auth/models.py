@@ -92,3 +92,19 @@ class TwoFactorRequirement(Base):
     # When it was turned on (UTC, without a zone, as SQLite keeps it).
     enabled_at = Column(DateTime, nullable=False)
     enabled_by = Column(String, nullable=False)
+
+
+class DashboardLayout(Base):
+    """The order of a user's dashboard widgets and which are hidden (ADR-0395).
+
+    A new table (ADR-0319): init_db's create_all makes it in a database that lacks it. One row per
+    user who arranged the dashboard; none means the default layout. ``layout`` is the JSON list
+    that src/auth/dashboard.py stores, read again as untrusted at every use (ADR-0144). SQLite
+    enforces no foreign keys here, so deleting a user deletes the row in the same transaction.
+    """
+
+    __tablename__ = "dashboard_layouts"
+
+    user_id = Column(Integer, primary_key=True, autoincrement=False)
+    layout = Column(Text, nullable=False)
+    updated_at = Column(DateTime, server_default=func.now())

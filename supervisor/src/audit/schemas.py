@@ -15,6 +15,8 @@ class AuditAction(str, Enum):
     PASSWORD_CHANGE = "password_change"
     TOTP_ENABLED = "totp_enabled"
     TOTP_DISABLED = "totp_disabled"
+    # A user's own dashboard layout (ADR-0395)
+    DASHBOARD_LAYOUT_CHANGED = "dashboard_layout_changed"
 
     # User management
     USER_CREATED = "user_created"

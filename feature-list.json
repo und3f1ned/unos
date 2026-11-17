@@ -3316,7 +3316,19 @@
         "Drag a widget to another place: it stays there after a reload",
         "Hide a widget, and show it again"
       ],
-      "passes": false
+      "verified_by": [
+        "supervisor/tests/test_dashboard_layout.py",
+        "supervisor/tests/test_authz.py",
+        "supervisor/tests/test_smb_models.py",
+        "supervisor/tests/test_audit_log.py",
+        "webui/tests/dashboard-layout.spec.ts",
+        "webui/tests/mobile-layout.spec.ts"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0395"
+      ],
+      "notes": "Built 2026-11-17 on the workstation (ADR-0395); not host-level. Per user on the server: the new table dashboard_layouts and GET, PUT and DELETE /api/v1/auth/me/dashboard-layout (every signed-in user, own layout only; ids of widgets as ^[a-z0-9][a-z0-9-]{0,31}$, once each, 1 to 64, hidden a boolean, else 422; the server knows no widget catalog; a stored value that is no valid layout reads as the default), written only for a real change and audited as dashboard_layout_changed; the row goes with its user. The dashboard's widgets are cpu, memory, network, disk-io, temperature and, for administrators, storage, containers, quick-actions and recent-activity; the alert of disks to replace is not one. Customize shows a toolbar per widget: a drag handle (HTML5 drag and drop), Move up and Move down (keyboard and phone, focus kept, a live region), Hide; Hidden widgets with Show, and Reset to default. Unknown ids in a stored layout are ignored, missing widgets come last. Tested: test_dashboard_layout.py, dashboard-layout.spec.ts (drag and reload, keyboard, hide and show, reset, unknown ids, save and load failures, only the user's changes reach the API, Russian, a regular user in two browsers) and the phone view in mobile-layout.spec.ts. Dragging with a finger is not supported by design: the buttons are the touch alternative. Reviewed in a fresh context: no BLOCKING finding; fixed: stat cards' equal height, Refresh while a save runs, focus after Hide, Show and Reset, a failed save announced, the drag spec's exact order. Left: two concurrent identical PUTs may both write and audit (last writer wins, harmless); the wide widgets' two-column rows begin at 1280 px, so 1024 to 1279 px shows one per row (disclosed in ADR-0395); the Alert component has no live-region role, so the failed save is announced through the page's status region."
     },
     {
       "id": "webui.mobile-layout",

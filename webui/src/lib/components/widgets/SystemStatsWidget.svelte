@@ -14,6 +14,8 @@
 	export let diskWrite: number = 0;
 	export let temperature: number | null = null;
 	export let compact: boolean = false;
+	// One card of the stats, by its widget id, for the dashboard's grid of widgets (ADR-0395); the dashboard lays the cards out itself.
+	export let only: 'cpu' | 'memory' | 'network' | 'disk-io' | 'temperature' = 'cpu';
 
 	// The units of a size, from bytes up: keys of the catalog (ADR-0297).
 	const UNITS = ['dashboard.unit.b', 'dashboard.unit.kb', 'dashboard.unit.mb', 'dashboard.unit.gb', 'dashboard.unit.tb'];
@@ -58,8 +60,9 @@
 		{/if}
 	</div>
 {:else}
-	<div class="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-4">
+	<div class="stat-cell">
 		<!-- CPU -->
+		{#if only === 'cpu'}
 		<Card>
 			<div class="stat-card-header">
 				<Cpu class="w-5 h-5 icon-cpu" />
@@ -68,8 +71,10 @@
 			<p class="stat-card-value {getPercentColor(cpuPercent)}">{cpuPercent.toFixed(1)}%</p>
 			<ProgressBar value={cpuPercent} size="sm" class="mt-2" />
 		</Card>
+		{/if}
 
 		<!-- Memory -->
+		{#if only === 'memory'}
 		<Card>
 			<div class="stat-card-header">
 				<MemoryStick class="w-5 h-5 icon-memory" />
@@ -79,8 +84,10 @@
 			<p class="stat-card-sublabel">{formatBytes(memoryUsed)} / {formatBytes(memoryTotal)}</p>
 			<ProgressBar value={memoryPercent} size="sm" class="mt-2" />
 		</Card>
+		{/if}
 
 		<!-- Network -->
+		{#if only === 'network'}
 		<Card>
 			<div class="stat-card-header">
 				<Network class="w-5 h-5 icon-network" />
@@ -95,9 +102,11 @@
 				<span class="text-lg font-semibold">{formatRate(networkUp)}</span>
 			</div>
 		</Card>
+		{/if}
 
 		<!-- Disk I/O: read, then written. A label goes above its rate where the card has no room for
 		     both (ADR-0302). -->
+		{#if only === 'disk-io'}
 		<Card>
 			<div class="stat-card-header">
 				<HardDrive class="w-5 h-5 icon-storage flex-shrink-0" />
@@ -112,8 +121,10 @@
 				<span class="text-lg font-semibold">{formatRate(diskWrite)}</span>
 			</p>
 		</Card>
+		{/if}
 
 		<!-- Temperature -->
+		{#if only === 'temperature'}
 		<Card>
 			<div class="stat-card-header">
 				<Thermometer class="w-5 h-5 icon-temperature" />
@@ -125,5 +136,14 @@
 				<p class="stat-card-value text-muted">{$t('dashboard.stats.none')}</p>
 			{/if}
 		</Card>
+		{/if}
 	</div>
 {/if}
+
+<style>
+	/* The card fills its cell of the dashboard's grid, as tall as the tallest of its row. */
+	.stat-cell,
+	.stat-cell > :global(.card) {
+		height: 100%;
+	}
+</style>

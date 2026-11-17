@@ -399,6 +399,7 @@ and this index, and `make check-fast` runs it.
 | [0365](0365-a-check-of-webui-src-fails-for-a-setinterval-that-reaches-the-api.md) | A check of webui/src fails for a setInterval whose callback reaches the API | accepted | 2026-11-12 |
 | [0389](0389-several-containers-act-one-after-another-through-their-own-endpoints-and-several-shares-are-deleted-with-one-apply.md) | Several containers act one after another through their own endpoints, and several shares are deleted with one request and one apply | accepted | 2026-11-17 |
 | [0393](0393-ctrl-k-opens-a-command-palette-that-runs-only-actions-that-change-nothing-on-the-nas.md) | Ctrl+K opens a command palette of the pages and actions of the user's role, which runs only actions that change nothing on the NAS | accepted | 2026-11-17 |
+| [0395](0395-each-user-arranges-hides-and-shows-the-dashboards-widgets-and-the-server-keeps-the-layout.md) | Each user arranges, hides and shows the dashboard's widgets, and the server keeps the layout | accepted | 2026-11-17 |
 
 ## Deploy
 

@@ -17,6 +17,11 @@ reads and changes the host for the web UI (ADR-0002). Avoid: backend server, dae
 API and WebSocket calls to the supervisor (ADR-0002, ADR-0025). Avoid: frontend server, dashboard
 (the Dashboard is one page).
 
+**Widget**: One card or section of the Dashboard that a user can move, hide and show: the CPU,
+Memory, Network, Disk I/O and Temperature cards and, for administrators, Storage Pools, Containers,
+Quick Actions and Recent Activity. Its order and hidden state are the user's dashboard layout, kept
+per user on the server (ADR-0395). Avoid: tile, panel.
+
 **Text catalog**: The texts of one area of the web UI in English and Russian
 (`webui/src/lib/i18n/catalog/<area>.ts`), which the pages show in the language chosen on the
 Account page; the server's messages stay English (ADR-0287). Avoid: dictionary, locale file.
