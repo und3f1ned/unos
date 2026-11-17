@@ -588,6 +588,34 @@ Open owner actions:
   0.113 for the other steps, 0.746 for the wait with its 16 readings, 0.309 for the restore,
   1.207 in all). The device's runtime is unchanged: the check runs on the workstation.
 
+### 2026-11-17: The Audit Log fits a phone with an API token's name of 64 characters
+
+- `webui.audit-log-long-token-name`, found while `auth.mandatory-two-factor` was built: on a
+  375 px screen the Audit Log scrolled sideways when an entry named an API token of 64
+  characters, the most the server takes, with no place to break. The supervisor writes the name
+  into the entry's details ("Created API token: <name>"), which the page showed without
+  breaking, and the user (a name tried at sign-in, up to the 128 characters the audit log keeps)
+  and a full IPv6 address did not break either. Now the details break (`break-words`) and the
+  user and the address break anywhere (`break-all`), as ADR-0302 asks and as the resource and
+  the browser already did. Not host-level: no device check.
+- Test first (ADR-0186): the view "Audit Log with long names" of `mobile-layout.spec.ts` serves
+  three entries as the server writes them, the token's creation and deletion and a failed
+  sign-in, each from a full IPv6 address. On the page of main 05d7bf5 it failed in both
+  languages (the page scrolled 615 px in English, 678 px in Russian). A fresh-context review
+  found that the view did not wait for the deleted entry and the failed sign-in, that the spec
+  bounded the sign-in name at 64 characters (the audit log keeps 128), and fakes unlike the
+  server's answers (the id, the hash chain, no browser): all fixed. `min-w-0` on the user and
+  address items, which changed nothing, is gone. Kept as it is: an action the page does not know
+  shows as it comes, without breaking. The server writes only the actions of `AuditAction`, and
+  the longest older one (ADR-0359) fits; only a line edited in the file, which the page marks
+  Chain broken, could carry a longer one.
+- `make check` passed, and so did `make e2e-local` (842, 14 skips on listed conditions), both
+  before and after the review's changes. Outside this change: "On a phone held sideways ›
+  Dialog: balance a pool" of `mobile-layout.spec.ts` (`storage.pool-balance`) passes in the full
+  run but fails when the spec runs without the others. It failed with `audit.spec.ts`, 10 times
+  of 10 alone, and 3 of 3 alone with main's spec and Storage page: the dialog's title is out of
+  view once Every chunk is chosen.
+
 ### 2026-11-17: A seventh batch: install progress, groups, required 2FA, quota use; faster gates
 
 - Immich's smart search, at the owner's word: its CLIP model is nllb-clip-base-siglip__v1, which

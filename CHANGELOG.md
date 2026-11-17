@@ -1178,6 +1178,10 @@ manager, encrypted backup uploads, health checks, CI checks).
   installed once, under its id, and a request with `name` answers 422.
 
 ### Fixed
+- On a phone, the Audit Log no longer reaches past the screen when an entry
+  holds a long name with no place to break, such as an API token's name of 64
+  characters, a long name tried at sign-in or a full IPv6 address: the name
+  breaks within its entry.
 - The dashboard's live stats cost a slow board a large share of a core: every
   open tab took its own sample every two seconds, in the supervisor's event loop,
   and listed every process of the host each time (0.4 s of CPU on a SpacemiT
