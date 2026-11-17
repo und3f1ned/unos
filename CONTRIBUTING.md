@@ -26,8 +26,9 @@ CI. Run `make setup` once per checkout; it needs the network.
 4. **Tests first** (ADR-0186): a test that fails on the code before the change. Backend tests go
    to `supervisor/tests/`, the user flow to a Playwright spec in `webui/tests/`. Weakening such a
    test to get green needs the owner's yes.
-5. **`make check` passes** (ADR-0216). The pre-commit hook runs `make check-fast`; `make setup`
-   installs the hooks (`git config core.hooksPath scripts/git-hooks`).
+5. **`make check` passes** (ADR-0216). The pre-commit hook runs `make check-fast`, unless the
+   working tree is the one in which `make check` or `make check-fast` last passed (ADR-0383);
+   `make setup` installs the hooks (`git config core.hooksPath scripts/git-hooks`).
 6. **A review in a fresh context** (ADR-0017): a reviewer without the session's history gets the
    diff, the ledger entry and its ADRs and tries to refute the change. Its findings are fixed, or
    recorded with the reason, before the feature passes.

@@ -42,7 +42,7 @@ The one exception is the web UI's Russian texts and the tests that check them (A
 | Command | A pass proves |
 | --- | --- |
 | `make check` | The gate (ADR-0216), the only one while CI is off on GitHub (ADR-0230): what the CI workflow's Unit Tests, Lint and Frontend jobs check. All backend tests, `ruff check --select F,E9`, `bash -n` on the shell scripts, JSON syntax, svelte-check, the check of the web UI's texts (ADR-0287) and the production build; `make test`, `make lint` and `make frontend` run its parts. Linux-only tests skip on macOS. |
-| `make check-fast` | Lint plus `make test-fast`: the convention tests of the ADRs, the ledger, the guard, the repository tooling, the dev scripts and the stand-in. The pre-commit hook runs it, and so does the Stop hook `.claude/hooks/stop-check.sh` when the tree changed since its last green run: a failure sends you back to work. |
+| `make check-fast` | Lint plus `make test-fast`: the convention tests of the ADRs, the ledger, the guard, the repository tooling, the dev scripts and the stand-in. The pre-commit hook runs it, and so does the Stop hook `.claude/hooks/stop-check.sh`, unless the working tree is the one in which `make check` or `make check-fast` last passed (ADR-0383): a failure sends you back to work. |
 | `make smoke` | In a few seconds, through existing backend tests: the app starts and serves health, first-run setup and login. The baseline of a session. |
 | `make e2e-local` | The Playwright specs pass against the local stand-in: the real supervisor and the built web UI on this machine. `scripts/standin/e2e.sh <spec> [args]` runs a part. |
 | `scripts/dev/linux-tests.sh [pytest args]` | The backend tests pass on Linux, in the dev device's RAM: the ones that skip on macOS. |
@@ -53,8 +53,9 @@ The one exception is the web UI's Russian texts and the tests that check them (A
 | `scripts/dev/scenario.sh AREA` | The user scenario of an area (`files`, `volumes`, `smart`, `backups`, `smb`, `smbconf`, `shares`, `scrub`, `balance`, `offsite`, `restore`, `hardware`, `all`) works on the dev device, step by step with each step's SD MiB, and the check left the device as it found it (ADR-0304). It changes the device for its duration: on the owner's request. |
 | `make setup`, `make audit` | Bootstrap and dependency audit. Both need the network: the owner runs them. |
 
-The backend tests use fixed paths under `/tmp`: run them through make, whose test targets wait for
-the machine-wide lock `/tmp/unos-backend-tests.lock` (all worktrees), never with pytest directly.
+Run the backend tests through make, never with pytest directly: `make test` and `make test-fast`
+run them in parallel worker processes (pytest-xdist, `TEST_WORKERS`), each with temporary paths of
+its own, so runs in several worktrees go at once, without a lock (ADR-0383).
 Search with `git grep` or `rg`; the guard blocks `grep -r` over a folder that contains `dev.env`.
 
 ## Working loop
@@ -128,7 +129,8 @@ A denial by the guard or the permission system is an answer: ask the owner how t
   through `webui/tests/target.ts`, and by the guard.
 - You push only your own branch; main and master belong to the owner, and pushed history is never
   rewritten (ADR-0208). Enforced by the guard (pushes to main or master, force pushes,
-  `--no-verify`); commit messages by the commit-msg hook (ADR-0209).
+  `--no-verify`, a green run recorded by hand, ADR-0383); commit messages by the commit-msg hook
+  (ADR-0209).
 - A command run in the background (the Bash tool's `run_in_background`) is one call of `timeout`
   with a deadline of at most 2 hours, such as `timeout 1800 make check > <log> 2>&1`, with loops
   and pipelines inside `timeout <seconds> bash -c '...'`: the session wakes only when it ends,

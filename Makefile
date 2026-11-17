@@ -14,6 +14,11 @@ NPM ?= npm
 # make test TESTS=tests/test_smbconf.py PYTEST_ARGS='-x -k render'.
 TESTS ?= tests/
 PYTEST_ARGS ?=
+# make test and make test-fast run the tests in TEST_WORKERS processes of pytest-xdist (auto: one
+# per CPU core; 0: in pytest's own process), each with temporary paths of its own
+# (supervisor/tests/conftest.py, ADR-0383). A Python without pytest-xdist runs them in one process,
+# with a line that says so: make setup installs it.
+TEST_WORKERS ?= auto
 # The repository-convention tests: make test-fast and the pre-commit hook. test_repo_tooling.py
 # also scans the repository's text files for secrets.
 TEST_FAST = tests/test_adrs.py tests/test_feature_list.py tests/test_agent_guard.py \
@@ -27,13 +32,6 @@ SMOKE = tests/test_lifespan.py tests/test_auth.py::TestFirstRunSetup \
 # Arguments for scripts/standin/e2e.sh: make e2e-local E2E_ARGS='tests/auth.spec.ts'.
 E2E_ARGS ?=
 
-# The backend tests use fixed paths under /tmp (supervisor/tests/conftest.py), so only one run
-# per machine may use them at a time, also across worktrees: the test targets wait for this
-# lock (flock on Linux, lockf on macOS). TEST_LOCK= runs without it.
-TEST_LOCK ?= /tmp/unos-backend-tests.lock
-LOCK = $(if $(TEST_LOCK),$(shell if command -v flock > /dev/null 2>&1; then echo "flock -w 1800 $(TEST_LOCK)"; \
-	elif [ -x /usr/bin/lockf ]; then echo "/usr/bin/lockf -k -t 1800 $(TEST_LOCK)"; fi))
-
 SHELL_SCRIPT_DIRS = deploy scripts .claude/hooks
 # The Python that make lint checks with ruff: the supervisor and the repository's own tooling
 # (the guard, scripts/dev, the stand-in, the commit checker).
@@ -44,6 +42,30 @@ JSON_FILES = feature-list.json .claude/settings.json
 absolute = $(if $(findstring /,$(1)),$(abspath $(1)),$(1))
 PY := $(call absolute,$(PYTHON))
 NPM_BIN := $(call absolute,$(NPM))
+
+# pytest's option for TEST_WORKERS, when the Python has pytest-xdist (ADR-0383).
+xdist = $(shell $(PY) -c 'import xdist' > /dev/null 2>&1 && echo "-n $(TEST_WORKERS)")
+workers = $(or $(xdist),$(info make $@: pytest-xdist is not installed for $(PY) (make setup installs it): one process))
+
+# make check and make check-fast record the state of the working tree when they pass, and forget
+# the record when they fail, for the Stop hook and the pre-commit hook (scripts/green-run.py,
+# ADR-0383). A run that may have checked less records nothing: a dry run or one that ignores errors
+# (make -n, -t, -q, -i, -e, also through MAKEFLAGS), a variable on the command line other than the
+# tools and TEST_WORKERS, TESTS or PYTEST_ARGS from the environment, PYTEST_ADDOPTS, a TEST_WORKERS
+# that is not one word, or a MAKE from the environment. GNU make 3.81 writes the single-letter
+# options first in MAKEFLAGS ("n") or after its long ones ("--no-print-directory -n"), and the
+# variables of the command line after them.
+make_options = $(subst -,,$(foreach word,$(filter-out --%,$(MAKEFLAGS)),$(if $(findstring =,$(word)),,$(word))))
+command_line = $(foreach v,$(.VARIABLES),$(if $(filter command line,$(origin $(v))),$(v)))
+narrowed = $(filter-out PYTHON RUFF NPM PIP_AUDIT TEST_WORKERS E2E_ARGS,$(command_line)) \
+	$(filter environment,$(origin TESTS) $(origin PYTEST_ARGS)) $(PYTEST_ADDOPTS) \
+	$(filter-out 1,$(words $(TEST_WORKERS))) $(filter-out default,$(origin MAKE)) \
+	$(foreach o,n t q i e,$(findstring $(o),$(make_options)))
+records_green = $(if $(strip $(narrowed)),,yes)
+green_begin = $(if $(records_green),state=$$($(PY) scripts/green-run.py state 2> /dev/null);)
+green_run = $(green_begin)if ( $(call run_all,$(1)) ); then \
+	$(if $(records_green),[ -z "$$state" ] || $(PY) scripts/green-run.py record "$$state" || true,:); \
+	else $(PY) scripts/green-run.py forget > /dev/null 2>&1; exit 1; fi
 
 # Runs every target of $(1) even when one fails, then fails when any did, so that one run reports
 # every problem (ADR-0190). Each part starts with the line "== make <target>: <part>", which
@@ -62,16 +84,16 @@ help: ## List the targets and the variables
 	@awk 'BEGIN { FS = ":.*## " } /^[a-z][a-z0-9-]*:.*## / { printf "  %-11s %s\n", $$1, $$2 }' $(firstword $(MAKEFILE_LIST))
 	@echo
 	@echo "Variables: PYTHON=$(PYTHON) RUFF=$(RUFF) PIP_AUDIT=$(PIP_AUDIT) NPM=$(NPM)"
-	@echo "           TESTS=$(TESTS) PYTEST_ARGS=$(PYTEST_ARGS) E2E_ARGS=$(E2E_ARGS) TEST_LOCK=$(TEST_LOCK)"
+	@echo "           TESTS=$(TESTS) PYTEST_ARGS=$(PYTEST_ARGS) TEST_WORKERS=$(TEST_WORKERS) E2E_ARGS=$(E2E_ARGS)"
 
 setup: ## Bootstrap this checkout: venvs, npm ci, Chromium, git hooks, dev.env (needs the network)
 	scripts/setup.sh
 
 check: ## The quality gate: lint, test and frontend, as CI runs them, without the audits
-	+@$(call run_all,lint test frontend)
+	+@$(call green_run,lint test frontend)
 
 check-fast: ## lint and test-fast: what the pre-commit hook and the Stop hook run
-	+@$(call run_all,lint test-fast)
+	+@$(call green_run,lint test-fast)
 
 lint: ## ruff (pyflakes, syntax errors), bash -n on the shell scripts, JSON syntax; all three run
 	+@$(call run_all,lint-ruff lint-shell lint-json)
@@ -92,13 +114,13 @@ lint-json:
 	done; if [ -n "$$bad" ]; then echo "lint: not valid JSON:$$bad" >&2; exit 1; fi; echo "JSON: $(JSON_FILES)"
 
 test: ## All backend tests, supervisor/tests (TESTS=..., PYTEST_ARGS=...)
-	cd supervisor && $(LOCK) $(PY) -m pytest $(TESTS) -q --tb=short --ignore=tests/fixtures $(PYTEST_ARGS)
+	cd supervisor && $(PY) -m pytest $(TESTS) -q --tb=short --ignore=tests/fixtures $(workers) $(PYTEST_ARGS)
 
 test-fast: ## The convention tests: ADRs, ledger, guard, repo tooling and secrets, dev and stand-in scripts
-	cd supervisor && $(LOCK) $(PY) -m pytest $(TEST_FAST) -q --tb=short $(PYTEST_ARGS)
+	cd supervisor && $(PY) -m pytest $(TEST_FAST) -q --tb=short $(workers) $(PYTEST_ARGS)
 
 smoke: ## A few seconds: the app starts and serves health, first-run setup and login (backend tests)
-	cd supervisor && $(LOCK) $(PY) -m pytest $(SMOKE) -q --tb=short $(PYTEST_ARGS)
+	cd supervisor && $(PY) -m pytest $(SMOKE) -q --tb=short $(PYTEST_ARGS)
 
 frontend: ## svelte-check, the check of the web UI's texts (ADR-0287) and the production build; all run
 	+@$(call run_all,frontend-check frontend-i18n frontend-build)

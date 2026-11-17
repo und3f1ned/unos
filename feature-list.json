@@ -3684,15 +3684,21 @@
     {
       "id": "testing.per-test-temp-paths",
       "category": "testing",
-      "description": "Each backend test uses temporary paths of its own, so test runs can go in parallel",
+      "description": "Each backend test run, and each worker of a parallel run, uses temporary paths of its own, so test runs can go in parallel",
       "steps": [
-        "tests/conftest.py sets no fixed /tmp path (test_smb.conf, test_exports, test_pools); each test gets its paths from tmp_path",
+        "tests/conftest.py sets no fixed /tmp path (test_smb.conf, test_exports, test_pools): each pytest process, a run's or a worker's, gets a temporary folder of its own for them, removed at its end, and every other file of a test is in its tmp_path",
         "Two runs of make test at once, in two worktrees, both pass"
       ],
-      "passes": false,
+      "passes": true,
       "adr": [
-        "ADR-0210"
-      ]
+        "ADR-0210",
+        "ADR-0383"
+      ],
+      "verified_by": [
+        "supervisor/tests/test_test_paths.py",
+        "supervisor/tests/test_repo_tooling.py"
+      ],
+      "notes": "Built 2026-11-17 (ADR-0383). Step 1: supervisor/tests/conftest.py makes a temporary folder per pytest process (tempfile.mkdtemp, prefix unos-tests-, in TMPDIR) for UNOS_SMB_CONF_PATH, UNOS_NFS_EXPORTS_PATH and UNOS_POOLS_BASE_PATH, and removes it in pytest_unconfigure, or at the process's exit after a usage error; a probe fixture run over the whole suite found nothing in that folder before or after any test, so one folder per process suffices. test_test_paths.py: the settings point into the process's folder, and two pytest runs started at once each get a folder of their own and remove it. Step 2: make test ran in this worktree and in a second checkout of the branch at the same time, beside another worktree's make test of the old suite under the lock, on 2026-11-17: both passed (8096 passed, 118 skipped, 1 xfailed each, in 187 s and 200 s). A first such pair failed one test of test_dev_scenarios.py, whose fake balance paused 0.25 s after the check's wait ended; its margins are now a second on each side. make test runs the tests in pytest-xdist workers (TEST_WORKERS, default auto) and takes no machine-wide lock any more (test_repo_tooling.py test_the_test_targets_run_in_parallel_without_a_machine_wide_lock, test_the_tests_run_in_workers_with_pytest_xdist_and_in_one_process_without). Fixed for parallel runs, no assertion changed: test_totp_once.py (the ids of cases with a secret drawn at random in each process), test_dev_scenarios.py (the clean-up's SIGINT sent to the main thread, which an xdist worker's own threads took otherwise; the offsite poll set in the fixture without pauses, which had slept about 150 s in one test), test_dev_scripts.py (the holder of the device lock works until the test has looked at the lock, not 2 s, which a busy machine used up in one run of make check-fast beside the other runs). Measured on the workstation (10 cores, other worktrees' runs beside), before and after: the backend tests 719 s and 112 s (8048 passed before; the same tests and the new ones after), make check 746 s and 132 s (996 s before with its 250 s wait for the lock), make check-fast 324 s and 60 s (it had waited 409 s for the lock), make smoke 3.1 s and 2.1 s (it had waited 891 s). Reviewed in a fresh context (ADR-0017); its findings were fixed but one, which is the lead's: whether ADR-0383 supersedes ADR-0210 and ADR-0216, whose statements on the lock it replaces. Not host-level."
     },
     {
       "id": "testing.compose-stack-per-worktree",
@@ -4241,6 +4247,26 @@
         "ADR-0230"
       ],
       "notes": "Waits while the CI workflow is off on GitHub (ADR-0230)."
+    },
+    {
+      "id": "ci.pre-commit-reuses-green-run",
+      "category": "ci",
+      "description": "A commit of a working tree that make check or make check-fast has just passed does not run make check-fast again",
+      "steps": [
+        "make check and make check-fast record the state of the working tree when they pass, and record nothing for a dry run, a run of a part of their checks, or a tree that changed during the run",
+        "The pre-commit hook skips make check-fast for a tree in the recorded state, runs it for any other, and says in one line which it did",
+        "The Stop hook skips make check-fast for a tree in the recorded state"
+      ],
+      "verified_by": [
+        "supervisor/tests/test_repo_tooling.py",
+        "supervisor/tests/test_agent_guard.py"
+      ],
+      "passes": true,
+      "adr": [
+        "ADR-0216",
+        "ADR-0383"
+      ],
+      "notes": "Built 2026-11-17 (ADR-0383). Step 1: make check and make check-fast record the state of the working tree (scripts/green-run.py, the Stop hook's SHA-256 of HEAD, git status, the diffs staged and not, without external diff drivers or textconv, and the untracked files) in tmp/stop-check/green when they pass and the tree is still in that state, and forget it when they fail; nothing is recorded for make -n, -t, -q, -i or -e (also through MAKEFLAGS), a variable on the command line other than PYTHON, RUFF, NPM, PIP_AUDIT, TEST_WORKERS (one word) and E2E_ARGS, TESTS or PYTEST_ARGS from the environment, PYTEST_ADDOPTS or MAKE from the environment. Step 2: the pre-commit hook skips make check-fast for a tree in the recorded state, with git commit and git commit -a, and runs it after a change of a tracked file, of the index, of an untracked file or of HEAD, saying which in one line. Step 3: the Stop hook skips it for the recorded state and no longer records one itself. The guard's rule skip-hooks refuses green-run.py record and writes to tmp/stop-check/green (test_agent_guard.py). All in test_repo_tooling.py, with real git commits through the hook and the real Makefile with stub tools. A commit of a tree that make check-fast had just passed spent 0.16 s in the pre-commit hook. Reviewed in a fresh context (ADR-0017): its findings (make -i, other variables and PYTEST_ADDOPTS that narrowed a run, the Stop hook's own record, git's external diff drivers, no forget on a failure, a record by hand) were fixed. Not host-level."
     },
     {
       "id": "storage.import-existing-pool",

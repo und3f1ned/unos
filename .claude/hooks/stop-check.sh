@@ -11,14 +11,17 @@
 #     with pytest; make setup installs them): a warning, as the systemMessage of a JSON answer on
 #     stdout, which Claude Code shows to the user (the plain output of a Stop hook only appears in
 #     its transcript view);
-#   - the working tree is the one of the last green run: the SHA-256 of HEAD, git status, git
-#     diff (staged and not) and the untracked files, kept in tmp/stop-check/green.
+#   - the working tree is the one of the last green run of make check or make check-fast: the
+#     SHA-256 of HEAD, git status, git diff (staged and not) and the untracked files that
+#     scripts/green-run.py records in tmp/stop-check/green (ADR-0383).
 # The output of the last run is in tmp/stop-check/check-fast.log (tmp/ is git-ignored). PYTHON
 # and RUFF from the environment count as they do for make.
 set -u
 
 LINES_PER_PART=25
 
+# The repository's scripts/green-run.py, found from this file: the project may be another tree.
+green_run=$(cd -P "$(dirname "$0")/../.." 2> /dev/null && pwd)/scripts/green-run.py
 cd "${CLAUDE_PROJECT_DIR:-$(dirname "$0")/../..}" 2> /dev/null || exit 0
 input=$(cat)
 if printf '%s' "$input" | grep -Eq '"stop_hook_active"[[:space:]]*:[[:space:]]*true'; then
@@ -50,57 +53,20 @@ command -v "$ruff" > /dev/null 2>&1 || missing="$missing ruff"
 "$python" -c 'import pytest' > /dev/null 2>&1 || missing="$missing pytest ($python)"
 [ -z "$missing" ] || skip "missing:$missing (make setup installs them)"
 
-# The state of the working tree, as one SHA-256. git takes no optional locks here: the hook may
-# run beside another git command.
-read -r -d '' hash_tree << 'PY'
-import hashlib
-import os
-import subprocess
-
-
-def git(*args):
-    return subprocess.run(["git", *args], capture_output=True, check=False).stdout
-
-
-digest = hashlib.sha256()
-for args in (("rev-parse", "--verify", "--quiet", "HEAD"),
-             ("status", "--porcelain=v1", "-z", "--untracked-files=all"),
-             ("diff", "--binary"), ("diff", "--cached", "--binary")):
-    digest.update(git(*args) + b"\0")
-for name in git("ls-files", "-z", "--others", "--exclude-standard").split(b"\0"):
-    if not name or name.startswith(b"tmp/stop-check/"):
-        continue
-    digest.update(name + b"\0")
-    try:
-        if os.path.islink(name):
-            digest.update(os.fsencode(os.readlink(name)))
-        elif os.path.isfile(name):
-            with open(name, "rb") as handle:
-                for block in iter(lambda: handle.read(1 << 20), b""):
-                    digest.update(block)
-    except OSError:
-        digest.update(b"?")
-    digest.update(b"\0")
-print(digest.hexdigest())
-PY
-state=$(GIT_OPTIONAL_LOCKS=0 "$python" -c "$hash_tree" 2> /dev/null) || state=
-
 mkdir -p tmp/stop-check 2> /dev/null || skip "cannot create tmp/stop-check"
-green=tmp/stop-check/green
-if [ -n "$state" ] && [ -f "$green" ] && [ "$(cat "$green")" = "$state" ]; then
+if "$python" "$green_run" check 2> /dev/null; then
     exit 0
 fi
 
 log=tmp/stop-check/check-fast.log
 run=$(mktemp tmp/stop-check/check-fast.XXXXXX) || skip "cannot create a log in tmp/stop-check"
 trap 'rm -f "$run"' EXIT  # when Claude Code stops the hook at its timeout
+# make check-fast records its green run when it passes, and forgets the record when it fails.
 if make --no-print-directory check-fast > "$run" 2>&1; then
     mv -f "$run" "$log"
-    [ -z "$state" ] || printf '%s\n' "$state" > "$green"
     exit 0
 fi
 mv -f "$run" "$log"
-rm -f "$green"
 
 # run_all in the Makefile starts each part with "== make check-fast: <part>" and ends with
 # "make check-fast failed: <parts>".
