@@ -8,6 +8,7 @@
 		stopApp,
 		restartApp,
 		dismissInstallJob,
+		cancelInstallJob,
 		allProfiles,
 		missingHardware,
 		type AppTemplate,
@@ -42,6 +43,7 @@
 	import { Button, Card, Badge, Alert, EmptyState } from '$lib/components/ui';
 	import { AppCategory, AppDetailModal, AppInstallJobs, AppStorageWarning } from '$lib/components/apps';
 	import { t } from '$lib/i18n';
+	import { ApiError } from '$lib/api/client';
 	import { appInstalls } from '$lib/stores/appInstalls';
 
 	let catalog: AppTemplate[] = [];
@@ -89,25 +91,57 @@
 	// seen, since the page's first load reads the apps they made; after a reload the store is
 	// empty, and the socket's first message reads them once more.
 	const ended = new Set($appInstalls.filter((job) => job.state !== 'running').map((job) => job.id));
+	// The installs seen running: one that the store no longer has (a socket that signed in again to
+	// a supervisor that restarted, and forgot it) may have left containers, so the installed apps
+	// are read again too.
+	const running = new Set($appInstalls.filter((job) => job.state === 'running').map((job) => job.id));
 	$: noteEnds($appInstalls);
 	// The app whose install runs: its card offers no Install.
 	$: installing = new Set($appInstalls.filter((job) => job.state === 'running').map((job) => job.template_id));
+	// The running installs whose cancel was asked, until they end.
+	let cancelling: ReadonlySet<string> = new Set();
+	$: cancelling = new Set([...cancelling].filter((id) => $appInstalls.some((job) => job.id === id && job.state === 'running')));
 
 	function noteEnds(jobs: AppInstallJob[]) {
-		let another = false;
+		let changed = false;
 		for (const job of jobs) {
-			if (job.state !== 'running' && !ended.has(job.id)) {
+			if (job.state === 'running') {
+				running.add(job.id);
+			} else if (!ended.has(job.id)) {
 				ended.add(job.id);
-				another = true;
+				running.delete(job.id);
+				changed = true;
 			}
 		}
-		if (another) void loadInstalled();
+		for (const id of [...running]) {
+			if (!jobs.some((job) => job.id === id)) {
+				running.delete(id);
+				changed = true;
+			}
+		}
+		if (changed) void loadInstalled();
 	}
 
 	async function dismiss(event: CustomEvent<AppInstallJob>) {
 		try {
 			await dismissInstallJob(event.detail.id);
 		} catch (e) {
+			// Gone already (dismissed in another tab, or the supervisor restarted): done.
+			if (e instanceof ApiError && e.status === 404) return;
+			error = reasonOf(e);
+		}
+	}
+
+	async function cancel(event: CustomEvent<AppInstallJob>) {
+		const job = event.detail;
+		if (!confirm($t('apps.job.confirmCancel', { name: job.name }))) return;
+		cancelling = new Set([...cancelling, job.id]);
+		try {
+			await cancelInstallJob(job.id);
+		} catch (e) {
+			cancelling = new Set([...cancelling].filter((id) => id !== job.id));
+			// It ended meanwhile: its end shows on its card.
+			if (e instanceof ApiError && e.status === 404) return;
 			error = reasonOf(e);
 		}
 	}
@@ -314,7 +348,7 @@
 	{/if}
 
 	<!-- The installs that run in the background and the last of each app, with their ends (ADR-0383). -->
-	<AppInstallJobs jobs={$appInstalls} {catalog} on:dismiss={dismiss} />
+	<AppInstallJobs jobs={$appInstalls} {catalog} {cancelling} on:dismiss={dismiss} on:cancel={cancel} />
 
 	<!-- Tabs -->
 	<div class="flex gap-1 p-1 bg-surface-elevated rounded-lg w-fit">

@@ -64,11 +64,18 @@ async function fakeApps(page: Page, installed: FakeInstalledApp[] = []) {
   await page.route(
     (url: URL) => url.pathname.startsWith('/api/v1/apps/install/jobs/'),
     async (route: Route) => {
+      // As the server answers (supervisor/src/apps/router.py): GET a kept job; DELETE cancels the
+      // running one (202) and forgets one that ended (204); 404 for one that is not kept.
+      const method = route.request().method();
       const path = new URL(route.request().url()).pathname;
-      requests.push(`${route.request().method()} ${path}`);
-      if (route.request().method() !== 'DELETE') return route.abort();
+      if (method !== 'GET') requests.push(`${method} ${path}`);
+      const job = events.jobs.find((kept) => kept.id === path.slice(path.lastIndexOf('/') + 1));
+      if (!job) return route.fulfill({ status: 404, json: { detail: 'No such install job' } });
+      if (method === 'GET') return route.fulfill({ json: job });
+      if (method !== 'DELETE') return route.abort();
+      if (job.state === 'running') return route.fulfill({ status: 202, json: job });
       await route.fulfill({ status: 204 });
-      await events.forget(path.slice(path.lastIndexOf('/') + 1));
+      await events.forget(job.id);
     },
   );
   return { events, started, requests };
@@ -268,6 +275,98 @@ test.describe('The progress of an install', () => {
 
     await expect(dialog.getByText('An install of Jellyfin is under way: install this app once it has ended.')).toBeVisible();
     await expect(dialog.getByRole('button', { name: 'Install Immich' })).toBeDisabled();
+  });
+});
+
+test.describe('Cancel, Dismiss and a restart', () => {
+  test('Cancel asks first, and the card follows the clean-up to its end', async ({ authenticatedPage: page }) => {
+    const { events, requests } = await fakeApps(page);
+    const images = await openAppStore(page);
+    const job = newInstallJob('immich', 'Immich', ['database', 'redis', 'machine-learning']);
+    await events.update(pulling(job, images));
+    const card = jobCard(page);
+
+    let question = '';
+    page.once('dialog', (dialog) => {
+      question = dialog.message();
+      void dialog.accept();
+    });
+    await card.getByRole('button', { name: 'Cancel install' }).click();
+
+    await expect
+      .poll(() => question)
+      .toBe(
+        'Cancel the install of Immich? What it made so far is removed; its data folders and the downloaded images ' +
+          'are kept.',
+      );
+    await expect(card.getByRole('button', { name: 'Cancelling...' })).toBeDisabled();
+    expect(requests).toEqual([`DELETE /api/v1/apps/install/jobs/${job.id}`]);
+
+    // The server removes what the install made, then ends the job cancelled.
+    await events.update({ ...starting(job, images), step: 'cleaning' });
+    await expect(card.getByText('Removing what the install made')).toBeVisible();
+    await events.update({
+      ...starting(job, images),
+      state: 'cancelled',
+      step: 'cleaning',
+      finished_at: '2026-11-17T10:01:00Z',
+      containers: job.containers.map((container) => ({ ...container, state: 'removed' as const })),
+      error: 'Cancelled by admin; its containers were removed and its data folders kept',
+    });
+    await expect(card.getByText('Cancelled', { exact: true })).toBeVisible();
+    const alert = card.locator('.alert-warning', { hasText: 'The install was cancelled' });
+    await expect(alert).toContainText('Cancelled by admin; its containers were removed and its data folders kept');
+    await expect(card.getByRole('button', { name: 'Cancel install' })).toHaveCount(0);
+    await card.getByRole('button', { name: 'Dismiss' }).click();
+    await expect(card).toHaveCount(0);
+  });
+
+  test('a Dismiss of a job that is gone already is no error', async ({ authenticatedPage: page }) => {
+    const { events, requests } = await fakeApps(page);
+    await openAppStore(page);
+    const job = endedJob(newInstallJob('immich', 'Immich'), { status: 409, detail: PORT_IN_USE });
+    await events.update(job);
+    // Another tab dismissed it: the server no longer keeps it.
+    events.jobs.splice(0, events.jobs.length);
+
+    await jobCard(page).getByRole('button', { name: 'Dismiss' }).click();
+
+    await expect.poll(() => requests).toEqual([`DELETE /api/v1/apps/install/jobs/${job.id}`]);
+    await expect(page.locator('.alert-error').filter({ hasText: 'No such install job' })).toHaveCount(0);
+  });
+
+  test('after a restart during an install, the App Store reads the installed apps again', async ({
+    authenticatedPage: page,
+  }) => {
+    const installed: FakeInstalledApp[] = [];
+    const { events } = await fakeApps(page, installed);
+    const images = await openAppStore(page);
+    await events.update(starting(newInstallJob('immich', 'Immich', ['database', 'redis', 'machine-learning']), images));
+    await expect(page.getByRole('button', { name: 'Installed (0)', exact: true })).toBeVisible();
+    // The install had made Immich's containers when the supervisor restarted.
+    installed.push(installedImmich(POOL.path, { missing: ['immich'] }));
+
+    await events.restart();
+
+    await expect(jobCard(page)).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Installed (1)', exact: true })).toBeVisible();
+  });
+
+  test('the details say so when the supervisor restarted while the install checked', async ({
+    authenticatedPage: page,
+  }) => {
+    const { events, started } = await fakeApps(page);
+    await openAppStore(page);
+    const dialog = await install(page);
+    await expect(dialog.getByText('Checking the pool, the ports and the free space...')).toBeVisible();
+    await expect.poll(() => started.length).toBe(1);
+
+    await events.restart();
+
+    await expect(dialog.locator('.alert', { hasText: 'Installation failed' })).toContainText(
+      'UNOS restarted during the install, and its progress was lost. The Installed tab shows what it made.',
+    );
+    await expect(dialog.getByRole('button', { name: 'Install Immich' })).toBeEnabled();
   });
 });
 

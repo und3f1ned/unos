@@ -123,6 +123,9 @@ PHOTOS = AppTemplate(
         ),
     ],
 )
+# How long the install waits for Docker to connect, and then for each line of a pull: a pull that
+# sends nothing for 10 minutes has stalled (ADR-0383).
+PULL_TIMEOUT = (60, 600)
 # The app's containers in their start order, and its network.
 NAMES = ["photos-database", "photos-cache", "photos-machine-learning", "photos"]
 NETWORK = "unos-app-photos"
@@ -324,7 +327,7 @@ class TestInstall:
             for _, name, tag, n in refs
             for item in (
                 # Docker's pull stream, read line by line for the job's progress (ADR-0383).
-                ("api.pull", f"{name}@{_digest(n)}", (name,), {"tag": _digest(n), "stream": True, "decode": True}),
+                ("api.pull", f"{name}@{_digest(n)}", (name,), {"tag": _digest(n), "timeout": PULL_TIMEOUT}),
                 ("api.tag", f"{name}@{_digest(n)}", (name,), {"tag": tag}),
             )
         ]

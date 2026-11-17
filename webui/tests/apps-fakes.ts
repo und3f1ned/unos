@@ -269,8 +269,8 @@ export interface FakeInstallJob {
   id: string;
   template_id: string;
   name: string;
-  state: 'running' | 'succeeded' | 'failed';
-  step: 'checking' | 'pulling' | 'creating' | 'starting';
+  state: 'running' | 'succeeded' | 'failed' | 'cancelled';
+  step: 'checking' | 'pulling' | 'creating' | 'starting' | 'cleaning';
   started_at: string;
   finished_at: string | null;
   images: FakeImagePull[];
@@ -335,6 +335,11 @@ export interface FakeInstallEvents {
   forget(id: string): Promise<void>;
   /** How many times the page signed in to the socket. */
   signIns(): number;
+  /**
+   * Close the socket as a supervisor that restarts does (1012), which forgets its jobs, and wait
+   * until the page has signed in again.
+   */
+  restart(): Promise<void>;
 }
 
 /**
@@ -375,6 +380,15 @@ export async function fakeInstallEvents(page: Page): Promise<FakeInstallEvents> 
       send(socket!);
     },
     signIns: () => signIns,
+    restart: async () => {
+      await signedIn();
+      const before = signIns;
+      const closing = socket!;
+      socket = null;
+      jobs.splice(0, jobs.length);
+      await closing.close({ code: 1012, reason: 'Service Restart' });
+      await expect.poll(() => signIns, { message: 'the page signed in to the events socket again' }).toBe(before + 1);
+    },
   };
 }
 

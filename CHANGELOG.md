@@ -782,12 +782,18 @@ manager, encrypted backup uploads, health checks, CI checks).
   `GET /api/v1/apps/install/jobs` lists them, `GET
   /api/v1/apps/install/jobs/{id}?wait=SECONDS` (up to 3600) answers once the
   job has ended, and `DELETE /api/v1/apps/install/jobs/{id}` forgets an ended
-  one. The jobs are kept in memory only; a stop of UNOS stops an install at its
-  next step, leaving the containers it made (audited as a failed
-  `app_installed`). The App Store's details wait while the install checks and
-  show a refusal there; then a card above the tabs shows each image's
-  download, each container's start and the result, also after the page is
-  loaded again, until **Dismiss**. `scripts/dev/api.py` waits for an install
+  one; `DELETE` on the running job cancels it (202): it stops at its next
+  step, also in a download, and what it made is removed as after a failure.
+  A pull that sends nothing for 10 minutes fails the install. Up to 4 such
+  GETs wait at once (429 beyond). The jobs are kept in memory only; a stop of
+  UNOS stops an install at its next step, leaving the containers it made
+  (audited as a failed `app_installed`), and uvicorn now ends the requests
+  still open 3 s after a stop (`--timeout-graceful-shutdown 3`), so that a
+  waiting GET cannot hold back that stop. The App Store's details wait while
+  the install checks and show a refusal there; then a card above the tabs
+  shows each image's download, each container's start and the result, also
+  after the page is loaded again, with **Cancel install** while it runs and
+  **Dismiss** once it ended. `scripts/dev/api.py` waits for an install
   with `GET /apps/install/jobs/<id> --param wait=3600` instead of a
   `--timeout 3600 POST`.
 - `GET /api/v1/apps/installed` lists an app once, with `health`, `missing`

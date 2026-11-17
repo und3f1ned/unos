@@ -242,7 +242,18 @@ export const en = {
 	'apps.job.container.running': 'Running',
 	'apps.job.container.failed': 'Failed',
 	'apps.job.container.removed': 'Removed',
-	'apps.job.dismiss': 'Dismiss'
+	'apps.job.dismiss': 'Dismiss',
+	// A running install can be cancelled from its card, after a question; the clean-up is a step of
+	// its own; and the details say when the supervisor restarted while they waited for the checks.
+	'apps.job.state.cancelled': 'Cancelled',
+	'apps.job.step.cleaning': 'Removing what the install made',
+	'apps.job.cancel': 'Cancel install',
+	'apps.job.cancelling': 'Cancelling...',
+	'apps.job.confirmCancel':
+		'Cancel the install of {name}? What it made so far is removed; its data folders and the downloaded images are kept.',
+	'apps.job.cancelledTitle': 'The install was cancelled',
+	'apps.detail.jobLost':
+		'UNOS restarted during the install, and its progress was lost. The Installed tab shows what it made.'
 };
 
 export const ru: Translation<typeof en> = {
@@ -454,5 +465,14 @@ export const ru: Translation<typeof en> = {
 	'apps.job.container.running': 'Работает',
 	'apps.job.container.failed': 'Ошибка',
 	'apps.job.container.removed': 'Удалён',
-	'apps.job.dismiss': 'Скрыть'
+	'apps.job.dismiss': 'Скрыть',
+	'apps.job.state.cancelled': 'Отменено',
+	'apps.job.step.cleaning': 'Удаление сделанного установкой',
+	'apps.job.cancel': 'Отменить установку',
+	'apps.job.cancelling': 'Отмена...',
+	'apps.job.confirmCancel':
+		'Отменить установку приложения {name}? Всё, что она успела сделать, будет удалено; папки с данными и загруженные образы останутся.',
+	'apps.job.cancelledTitle': 'Установка отменена',
+	'apps.detail.jobLost':
+		'UNOS перезапустился во время установки, и её ход потерян. Что она успела сделать, видно на вкладке «Установленные».'
 };

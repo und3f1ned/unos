@@ -17,6 +17,8 @@
 	import { Button, Badge, Modal, Alert, Input, Select } from '$lib/components/ui';
 	import { intlLocale, t } from '$lib/i18n';
 	import { appInstalls } from '$lib/stores/appInstalls';
+	import { wsConnected } from '$lib/stores/stats';
+	import { ApiError } from '$lib/api/client';
 	import AppCategory from './AppCategory.svelte';
 	import AppStorageWarning from './AppStorageWarning.svelte';
 	import AppHardwareHint from './AppHardwareHint.svelte';
@@ -33,6 +35,7 @@
 		type EnvVar,
 		appContainers,
 		getAppPools,
+		getInstallJob,
 		installApp,
 		poolHostPath,
 		isInsidePools,
@@ -64,6 +67,30 @@
 	let installRequest = 0;
 	$: watched = pending ? ($appInstalls.find((job) => job.id === pending?.id) ?? pending) : null;
 	$: if (watched) follow(watched);
+	// The events socket signed in again while the job checked: maybe to a supervisor that restarted
+	// and forgot the job, whose end then never comes. The job is asked for once (ADR-0383).
+	let wasConnected = false;
+	$: noteConnection($wsConnected);
+
+	function noteConnection(connected: boolean) {
+		if (connected && !wasConnected && pending) void askAgain(pending.id);
+		wasConnected = connected;
+	}
+
+	async function askAgain(id: string) {
+		try {
+			const job = await getInstallJob(id);
+			if (pending?.id === id) pending = job;
+		} catch (e) {
+			if (pending?.id !== id) return;
+			pending = null;
+			installing = false;
+			error =
+				e instanceof ApiError && e.status === 404
+					? $t('apps.detail.jobLost')
+					: describeApiError(e, $t('apps.detail.installFailed'));
+		}
+	}
 	// Another install that runs: one install at a time (ADR-0383).
 	$: otherInstall = $appInstalls.find((job) => job.state === 'running' && job.id !== pending?.id) ?? null;
 	let activeTab: 'overview' | 'ports' | 'volumes' | 'environment' = 'overview';
@@ -398,7 +425,7 @@
 	/** The job of this dialog's install as it goes: a refusal of its checks shows here; once they
 	 * have passed, or it ended, the dialog hands it to the App Store and closes. */
 	function follow(job: AppInstallJob) {
-		if (job.state === 'failed') {
+		if (job.state === 'failed' || job.state === 'cancelled') {
 			error = job.error || $t('apps.detail.installFailed');
 			pending = null;
 			installing = false;

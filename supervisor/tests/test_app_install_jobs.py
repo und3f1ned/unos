@@ -299,7 +299,8 @@ class TestFailures:
 
         job = _ended(api)
 
-        assert (job["state"], job["step"], job["error_status"]) == ("failed", "starting", 500)
+        # The clean-up is a step of its own (ADR-0383).
+        assert (job["state"], job["step"], job["error_status"]) == ("failed", "cleaning", 500)
         assert job["error"].startswith("photos-database stopped (exit code 3); its containers were removed")
         assert [(c["name"], c["state"]) for c in job["containers"]] == [
             ("photos-database", "failed"), ("photos-cache", "removed"), ("photos-machine-learning", "removed"),
@@ -318,13 +319,42 @@ class TestTheJobs:
         for response in (api.get(f"{JOBS}/{job['id']}"), api.delete(f"{JOBS}/{job['id']}")):
             assert (response.status_code, response.json()) == (404, {"detail": "No such install job"})
 
-    def test_a_running_job_is_not_dismissed(self, api, pools, docker, held):
+    def test_a_delete_of_a_running_job_cancels_it(self, api, pools, docker, held):
         job = _started(api)
 
         response = api.delete(f"{JOBS}/{job['id']}")
 
-        assert (response.status_code, response.json()) == (409, {"detail": "The install of Photos is still running"})
+        # The cancel is asked: the job answers as it is, still running, until it reaches a step.
+        assert (response.status_code, response.json()["id"], response.json()["state"]) == (202, job["id"], "running")
         held.set()
+        ended = _end(api, job)
+        assert (ended["state"], ended["error_status"]) == ("cancelled", None)
+        assert ended["error"] == "Cancelled by admin before any container of Photos was made"
+        assert docker.called("api.pull", "networks.create", "api.create_container") == []
+        assert _audit() == []
+        # A cancelled job is dismissed like any job that ended.
+        assert api.delete(f"{JOBS}/{job['id']}").status_code == 204
+
+    def test_waiting_gets_are_bounded(self, api, pools, docker, held, monkeypatch):
+        # Each waiting GET holds a connection that counts against uvicorn's --limit-concurrency
+        # (ADR-0333): a few at a time, then 429.
+        monkeypatch.setattr(install_jobs, "MAX_WAITERS", 1)
+        job = _started(api)
+        first = threading.Thread(target=api.get, args=(f"{JOBS}/{job['id']}",), kwargs={"params": {"wait": 3}})
+        first.start()
+        deadline = time.monotonic() + 5
+        while install_jobs._waiters < 1 and time.monotonic() < deadline:
+            time.sleep(0.01)
+
+        second = api.get(f"{JOBS}/{job['id']}", params={"wait": 3})
+        unwaited = api.get(f"{JOBS}/{job['id']}")
+
+        assert (second.status_code, second.json()) == (
+            429, {"detail": "Too many requests wait for install jobs; try again in a moment"}
+        )
+        assert unwaited.status_code == 200
+        held.set()
+        first.join(10)
         assert _end(api, job)["state"] == "succeeded"
 
     def test_a_new_install_of_an_app_replaces_its_last_job(self, api, pools, docker, soc):
@@ -421,10 +451,12 @@ class TestAStopOfTheSupervisor:
         job = _ended(api)
 
         made = "photos-database, photos-cache, photos-machine-learning, photos and the network unos-app-photos"
+        data = pools.alpha / "apps/photos/database/data"
         assert (job["state"], job["step"], job["error_status"]) == ("failed", "starting", 500)
         assert job["error"] == (
             f"A stop of the supervisor stopped the install of Photos; it left {made}: start or uninstall Photos on "
-            "the Installed tab"
+            f"the Installed tab. {data} was empty before this install and may hold data that photos-database did "
+            "not finish setting up: if you uninstall Photos, move it away before you install Photos again."
         )
         # Nothing is stopped or removed: a database halfway through its first start is not killed.
         assert docker.called("container.stop", "container.remove") == []
@@ -459,7 +491,7 @@ class TestThePullStream:
     def _progress(monkeypatch) -> install_jobs.Progress:
         monkeypatch.setattr(install_jobs, "_publish", lambda job: None)
         job = AppInstallJob(id="j", template_id="photos", name="Photos", started_at="2026-11-17T10:00:00Z")
-        progress = install_jobs.Progress(job, threading.Event())
+        progress = install_jobs.Progress(job, install_jobs._Running(job_id="j", name="Photos"))
         progress.pulling([CACHE])
         return progress
 
@@ -490,3 +522,211 @@ class TestThePullStream:
 
         assert str(failed.value) == "toomanyrequests: rate limit"
         assert isinstance(failed.value, apps_router._DOCKER_ERRORS)
+
+
+
+class TestAStalledPull:
+    def test_a_pull_waits_at_most_ten_minutes_for_each_line(self, api, pools, docker):
+        job = _ended(api)
+
+        assert job["state"] == "succeeded"
+        assert {call.kwargs["timeout"] for call in docker.calls if call.name == "api.pull"} == {(60, 600)}
+
+    def test_a_pull_that_sends_nothing_for_ten_minutes_fails_the_install(self, api, pools, docker, caplog):
+        docker.stall("example/valkey@" + CACHE.partition("@")[2], after=3)
+
+        job = _ended(api)
+
+        assert (job["state"], job["step"], job["error_status"]) == ("failed", "pulling", 500)
+        assert job["error"] == (
+            f"Failed to pull image {CACHE}: Docker sent nothing about it for 10 minutes, so the pull was stopped; "
+            "install the app again to try once more"
+        )
+        assert [image["state"] for image in job["images"]] == ["pulled", "failed", "waiting", "waiting"]
+        assert docker.called("networks.create", "api.create_container") == []
+        # A job that failed says so in the supervisor's log, once.
+        assert [r.getMessage() for r in caplog.records if r.name == "src.apps.install_jobs"] == [
+            f"The install of Photos failed (500): {job['error']}"
+        ]
+
+
+class TestCancel:
+    @staticmethod
+    def _blocked(docker: StackDocker) -> threading.Event:
+        """The pull of the cache's image blocks after its second line, until its socket is shut
+        down; the event is set once it blocks."""
+        ref = "example/valkey@" + CACHE.partition("@")[2]
+        docker.stall(ref, after=2, block=True)
+        blocked = threading.Event()
+        lines = []
+
+        def hook(pulled: str, line: dict) -> None:
+            if pulled == ref:
+                lines.append(line)
+                if len(lines) == 2:
+                    blocked.set()
+
+        docker.pull_hook = hook
+        return blocked
+
+    def test_a_cancel_ends_a_pull_that_blocks(self, api, pools, docker):
+        blocked = self._blocked(docker)
+        job = _started(api)
+        assert blocked.wait(10)
+
+        response = api.delete(f"{JOBS}/{job['id']}")
+
+        assert response.status_code == 202
+        ended = _end(api, job)
+        assert (ended["state"], ended["step"]) == ("cancelled", "pulling")
+        assert ended["error"] == "Cancelled by admin before any container of Photos was made"
+        assert [image["state"] for image in ended["images"]] == ["pulled", "failed", "waiting", "waiting"]
+        assert docker.called("networks.create", "api.create_container") == []
+
+    def test_a_stop_of_the_supervisor_ends_a_pull_that_blocks(self, api, pools, docker):
+        blocked = self._blocked(docker)
+        job = _started(api)
+        assert blocked.wait(10)
+
+        began = time.monotonic()
+        install_jobs.stop_for_shutdown(timeout=5)
+
+        assert time.monotonic() - began < 2
+        ended = _end(api, job)
+        assert (ended["state"], ended["error_status"]) == ("failed", 503)
+
+    def test_a_cancel_after_a_container_was_made_removes_what_the_install_made(
+            self, api, pools, docker, clock, monkeypatch):
+        # The database never becomes healthy; the cancel comes while the install waits for it.
+        docker.script("photos-database", STARTING)
+        sleep = clock.sleep
+
+        def cancel_while_waiting(seconds: float) -> None:
+            install_jobs.cancel(install_jobs._running.job_id, "admin")
+            sleep(seconds)
+
+        monkeypatch.setattr(clock, "sleep", cancel_while_waiting)
+
+        job = _ended(api)
+
+        assert (job["state"], job["step"], job["error_status"]) == ("cancelled", "cleaning", None)
+        assert job["error"].startswith("Cancelled by admin; its containers were removed and its data folders kept")
+        assert [c["state"] for c in job["containers"]] == ["removed"] * 4
+        # As after a failure (ADR-0381): the database it started is stopped with its stop timeout.
+        assert ("container.stop", "photos-database") in docker.called("container.stop")
+        assert docker.containers_ == {} and NETWORK not in docker.networks_
+        assert _audit() == []
+
+    def test_a_stop_after_the_network_alone_says_so(self, api, pools, docker, monkeypatch):
+        create = docker.networks.create
+
+        def create_then_stop(*args, **kwargs):
+            network = create(*args, **kwargs)
+            install_jobs._running.stop.set()
+            return network
+
+        monkeypatch.setattr(docker.networks, "create", create_then_stop)
+
+        job = _ended(api)
+
+        assert (job["state"], job["step"], job["error_status"]) == ("failed", "creating", 500)
+        assert job["error"] == (
+            "A stop of the supervisor stopped the install of Photos after it made the network unos-app-photos and "
+            "before any container: install Photos again, which uses that network again"
+        )
+        assert _audit()[0]["details"] == (
+            "Created the network unos-app-photos; then: stopped by a stop of the supervisor; left behind: the "
+            "network unos-app-photos"
+        )
+
+
+class TestTheJobsOwnBookkeeping:
+    def test_a_job_that_cannot_be_made_frees_the_app(self, photos, monkeypatch):
+        def broken(**kwargs):
+            raise ValueError("broken")
+
+        monkeypatch.setattr(install_jobs, "AppInstallJob", broken)
+
+        with pytest.raises(ValueError):
+            install_jobs.start(photos, lambda progress: None)
+
+        assert install_jobs._running is None
+        with stacks_module.app_lock("photos", "Photos"):
+            pass
+
+    def test_the_slot_is_free_even_when_the_end_cannot_be_published(self, photos, monkeypatch):
+        real = install_jobs._publish
+
+        def publish(job):
+            if job.state != "running":
+                raise RuntimeError("not published")
+            real(job)
+
+        monkeypatch.setattr(install_jobs, "_publish", publish)
+        install_jobs.start(photos, lambda progress: None)
+        install_jobs._running.thread.join(5)
+
+        assert install_jobs._running is None
+
+
+class TestAStopOfUvicorn:
+    """A stop of the supervisor's uvicorn reaches the lifespan's shutdown also while a GET waits for
+    a job's end, within Docker's 10 s: uvicorn ends the requests that are still open after
+    --timeout-graceful-shutdown (supervisor/Dockerfile), and the shutdown then stops the install."""
+
+    def test_a_waiting_get_does_not_hold_back_the_shutdown_that_stops_the_install(
+            self, api, photos, tmp_path, monkeypatch):
+        import socket
+        import urllib.request
+
+        import uvicorn
+        from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+        from sqlalchemy.pool import NullPool
+
+        from src import database
+        from src.main import app
+
+        from .test_request_limits import _uvicorn_options
+
+        engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'unos.db'}", poolclass=NullPool)
+        monkeypatch.setattr(database, "engine", engine)
+        monkeypatch.setattr(database, "async_session", async_sessionmaker(engine, expire_on_commit=False))
+        monkeypatch.setenv("UNOS_DISABLE_BACKGROUND_TASKS", "1")
+        graceful = _uvicorn_options("Dockerfile")["timeout_graceful_shutdown"]
+
+        def work(progress):
+            while True:  # an install that runs until it is stopped
+                progress.check()
+                time.sleep(0.02)
+
+        sock = socket.socket()
+        sock.bind(("127.0.0.1", 0))
+        server = uvicorn.Server(uvicorn.Config(app, log_config=None, lifespan="on", timeout_graceful_shutdown=graceful))
+        thread = threading.Thread(target=server.run, kwargs={"sockets": [sock]}, daemon=True)
+        thread.start()
+        try:
+            deadline = time.monotonic() + 30
+            while not server.started:
+                assert thread.is_alive() and time.monotonic() < deadline, "uvicorn did not start"
+                time.sleep(0.05)
+            job = install_jobs.start(photos, work)
+            url = f"http://127.0.0.1:{sock.getsockname()[1]}{JOBS}/{job.id}?wait=60"
+            opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+            waiting = threading.Thread(target=lambda: opener.open(url, timeout=70).read(), daemon=True)
+            waiting.start()
+            while install_jobs._waiters < 1 and time.monotonic() < deadline:
+                time.sleep(0.02)
+            assert install_jobs._waiters == 1
+
+            began = time.monotonic()
+            server.should_exit = True
+            thread.join(9)
+
+            assert not thread.is_alive(), "the shutdown waited for the GET"
+            assert time.monotonic() - began < 9
+            ended = install_jobs.get(job.id)
+            assert (ended.state, ended.error_status) == ("failed", 503)
+        finally:
+            server.should_exit = True
+            thread.join(10)
+            sock.close()

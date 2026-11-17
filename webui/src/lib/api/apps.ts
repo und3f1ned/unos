@@ -345,9 +345,13 @@ export interface AppInstallJob {
   template_id: string;
   /** The app's name in the catalog. */
   name: string;
-  state: "running" | "succeeded" | "failed";
-  /** The step reached: the checks before any pull, the pulls, the creates, the starts. */
-  step: "checking" | "pulling" | "creating" | "starting";
+  /** cancelled: an administrator cancelled it, and what it made was removed. */
+  state: "running" | "succeeded" | "failed" | "cancelled";
+  /**
+   * The step reached: the checks before any pull, the pulls, the creates, the starts, and the
+   * removal of what a failed or cancelled install made.
+   */
+  step: "checking" | "pulling" | "creating" | "starting" | "cleaning";
   started_at: string;
   finished_at: string | null;
   /** Each image once, listed once the checks passed. */
@@ -355,7 +359,7 @@ export interface AppInstallJob {
   containers: ContainerStart[];
   /** What the install made, once it succeeded. */
   result: AppInstallResponse | null;
-  /** Why it failed (the server's message), and the HTTP status of the failure. */
+  /** Why it failed or what its cancel did (the server's message), and the HTTP status of a failure. */
   error: string | null;
   error_status: number | null;
 }
@@ -386,9 +390,22 @@ export async function installApp(req: AppInstallRequest): Promise<AppInstallJob>
   return api.post<AppInstallJob>("/apps/install", req);
 }
 
+/** An install job as the server keeps it now; ApiError 404 once it is gone (the supervisor restarted). */
+export async function getInstallJob(id: string): Promise<AppInstallJob> {
+  return api.get<AppInstallJob>(`/apps/install/jobs/${encodeURIComponent(id)}`);
+}
+
 /** Forget an ended install job (Dismiss): the App Store no longer shows it. */
 export async function dismissInstallJob(id: string): Promise<void> {
-  return api.delete(`/apps/install/jobs/${encodeURIComponent(id)}`);
+  await api.delete(`/apps/install/jobs/${encodeURIComponent(id)}`);
+}
+
+/**
+ * Cancel the running install job: it stops at its next step, also during a pull, and what it made
+ * is removed; the events socket then sends it cancelled (ADR-0383).
+ */
+export async function cancelInstallJob(id: string): Promise<void> {
+  await api.delete(`/apps/install/jobs/${encodeURIComponent(id)}`);
 }
 
 export async function uninstallApp(containerId: string): Promise<void> {

@@ -555,6 +555,28 @@ def test_both_images_limit_the_open_connections_alike():
     assert 64 <= limits["Dockerfile"] <= 512
 
 
+# --- The stop of the supervisor (ADR-0383) ---------------------------------------------------
+#
+# Docker stops the supervisor with SIGTERM and kills it 10 s later (deploy/docker-compose.yml sets
+# no stop_grace_period). Uvicorn waits for the open requests before the lifespan's shutdown, which
+# stops a running install or repair and writes their audit entries: without a bound, a GET that
+# waits for an install's end would hold it back until Docker kills the supervisor.
+
+
+def test_both_images_end_the_open_requests_in_time_for_the_lifespans_shutdown():
+    from src.apps import install_jobs
+    from src.shares import repair_router
+
+    bounds = {name: _uvicorn_options(name)["timeout_graceful_shutdown"] for name in DOCKERFILES}
+    assert len(set(bounds.values())) == 1, bounds
+    bound = bounds["Dockerfile"]
+    assert bound is not None and bound >= 1, "uvicorn must run with --timeout-graceful-shutdown"
+    compose = (SUPERVISOR.parent / "deploy" / "docker-compose.yml").read_text()
+    assert "stop_grace_period" not in compose
+    # The waits for the install and the repair run at once (main.py), with a second to spare.
+    assert bound + max(install_jobs.SHUTDOWN_WAIT_SECONDS, repair_router.SHUTDOWN_WAIT_SECONDS) + 1 <= 10
+
+
 def _health(port: int) -> int:
     connection = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
     try:

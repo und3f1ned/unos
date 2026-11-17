@@ -11,6 +11,7 @@ the Docker client is a MagicMock, and ``os.fchown`` only records its calls.
 import asyncio
 import fcntl
 import importlib
+import json
 import os
 import re
 import shutil
@@ -232,10 +233,30 @@ def pools(tmp_path, monkeypatch):
     )
 
 
+def pull_answer(*lines: dict) -> SimpleNamespace:
+    """What Docker answers a pull (POST /images/create, streamed): 200 and ``lines``."""
+    return SimpleNamespace(
+        status_code=200, reason="OK", iter_lines=lambda: iter([json.dumps(line).encode() for line in lines]),
+        close=lambda: None, raw=SimpleNamespace(shutdown=lambda: None),
+    )
+
+
+def pulled(docker_client) -> list[str]:
+    """The images that the install asked Docker to pull, as name:tag (or name@digest)."""
+    refs = []
+    for call in docker_client.api.post.call_args_list:
+        assert call.args[0].endswith("/images/create") and call.kwargs["stream"] is True, call
+        params = call.kwargs["params"]
+        refs.append(f"{params['fromImage']}{'@' if params['tag'].startswith('sha256:') else ':'}{params['tag']}")
+    return refs
+
+
 @pytest.fixture
 def docker_client(monkeypatch):
-    """Docker without containers; ``containers.create`` makes a running container "c0ffee"."""
+    """Docker without containers; ``containers.create`` makes a running container "c0ffee"; a pull
+    answers an empty stream."""
     client = MagicMock(name="docker")
+    client.api.post.return_value = pull_answer()
     client.containers.get.side_effect = NotFound("No such container")
     client.containers.list.return_value = []
     client.info.return_value = {"DockerRootDir": DOCKER_ROOT}
@@ -460,7 +481,7 @@ class TestPoolSelection:
         assert response.json()["detail"] == (
             "No mounted storage pool — create or mount a pool first"
         )
-        docker_client.api.pull.assert_not_called()
+        docker_client.api.post.assert_not_called()
         assert _tree(pools.root) == before
 
     @pytest.mark.parametrize("pool", ["ghost", "nope", "../alpha", ""])
@@ -471,7 +492,7 @@ class TestPoolSelection:
 
         assert response.status_code == 400
         assert "not mounted" in response.json()["detail"]
-        docker_client.api.pull.assert_not_called()
+        docker_client.api.post.assert_not_called()
         assert _tree(pools.root) == before
 
     def test_app_without_pool_data_installs_without_a_pool(self, api, pools, docker_client):
@@ -510,7 +531,7 @@ class TestPoolSelection:
         response = user_api.post(INSTALL, json={"template_id": "jellyfin"})
 
         assert response.status_code == 403
-        docker_client.api.pull.assert_not_called()
+        docker_client.api.post.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -707,7 +728,7 @@ class TestNoWritesOutsidePool:
 
     def test_pool_unmounted_during_pull_writes_nothing(self, api, pools, docker_client):
         # The pool goes while Docker's pull stream is read: an empty stream once it is gone.
-        docker_client.api.pull.side_effect = lambda *a, **k: pools.mounted.discard(str(pools.alpha)) or iter(())
+        docker_client.api.post.side_effect = lambda *a, **k: pools.mounted.discard(str(pools.alpha)) or pull_answer()
         before = _tree(pools.root)
 
         response = install(api, {**TRANSMISSION})
@@ -758,7 +779,7 @@ class TestVolumeOverrides:
         )
 
         assert response.status_code == 400, response.text
-        docker_client.api.pull.assert_not_called()
+        docker_client.api.post.assert_not_called()
         assert _tree(pools.root) == before
 
     def test_unknown_volume_cannot_be_added(self, api, pools, docker_client):
@@ -769,7 +790,7 @@ class TestVolumeOverrides:
 
         assert response.status_code == 400
         assert "/host-root" in response.json()["detail"]
-        docker_client.api.pull.assert_not_called()
+        docker_client.api.post.assert_not_called()
 
     def test_fixed_host_mount_cannot_be_changed(self, api, pools, docker_client):
         response = install(
@@ -782,7 +803,7 @@ class TestVolumeOverrides:
 
         assert response.status_code == 400
         assert "fixed host mount" in response.json()["detail"]
-        docker_client.api.pull.assert_not_called()
+        docker_client.api.post.assert_not_called()
 
     def test_path_in_selected_pool_is_created_and_normalised(self, api, pools, docker_client):
         raw = f"{pools.alpha}//torrents/./new/"
@@ -809,7 +830,7 @@ class TestVolumeOverrides:
 
         assert response.status_code == 400
         assert "traversal" in response.json()["detail"]
-        docker_client.api.pull.assert_not_called()
+        docker_client.api.post.assert_not_called()
         assert _tree(pools.root) == before
 
     def test_link_to_another_pools_folder_is_not_resolved(self, api, pools, docker_client):
@@ -828,7 +849,7 @@ class TestVolumeOverrides:
         assert response.status_code == 400
         detail = response.json()["detail"]
         assert "symbolic link" in detail and str(pools.alpha / "shared") in detail
-        docker_client.api.pull.assert_not_called()
+        docker_client.api.post.assert_not_called()
         assert _tree(pools.root) == before
 
     @pytest.mark.parametrize("override", ["alias", "alias/torrents"])
@@ -844,7 +865,7 @@ class TestVolumeOverrides:
 
         assert response.status_code == 400
         assert "symbolic link" in response.json()["detail"]
-        docker_client.api.pull.assert_not_called()
+        docker_client.api.post.assert_not_called()
         assert _tree(pools.root) == before
 
     def test_existing_path_in_another_mounted_pool_is_used(self, api, pools, docker_client):
@@ -872,7 +893,7 @@ class TestVolumeOverrides:
         assert response.status_code == 400
         assert "does not exist" in response.json()["detail"]
         assert _tree(pools.root) == before
-        docker_client.api.pull.assert_not_called()
+        docker_client.api.post.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -889,7 +910,7 @@ class TestEnvironment:
 
         assert response.status_code == 400
         assert "PHOTOPRISM_ADMIN_PASSWORD is required" in response.json()["detail"]
-        docker_client.api.pull.assert_not_called()
+        docker_client.api.post.assert_not_called()
 
     @pytest.mark.parametrize(
         "app_id,name,value",
@@ -907,7 +928,7 @@ class TestEnvironment:
         assert response.status_code == 400
         assert name in response.json()["detail"]
         assert "placeholder" in response.json()["detail"]
-        docker_client.api.pull.assert_not_called()
+        docker_client.api.post.assert_not_called()
 
     def test_unique_secret_is_passed_to_the_container(self, api, pools, docker_client):
         response = install(
@@ -933,7 +954,7 @@ class TestEnvironment:
 
         assert response.status_code == 400
         assert "is required" in response.json()["detail"]
-        docker_client.api.pull.assert_not_called()
+        docker_client.api.post.assert_not_called()
 
     def test_transmission_login_is_passed_to_the_container(self, api, pools, docker_client):
         response = install(api, TRANSMISSION)
@@ -1018,7 +1039,7 @@ class TestFileVolumes:
 
         assert response.status_code == 400
         assert "needs a file" in response.json()["detail"]
-        docker_client.api.pull.assert_not_called()
+        docker_client.api.post.assert_not_called()
 
     def test_file_override_is_normalised(self, api, pools, docker_client):
         (pools.beta / "db").mkdir()
@@ -1043,7 +1064,7 @@ class TestFileVolumes:
 
         assert response.status_code == 400
         assert "symbolic link" in response.json()["detail"]
-        docker_client.api.pull.assert_not_called()
+        docker_client.api.post.assert_not_called()
         assert _tree(pools.root) == before
 
     def test_link_in_place_of_the_file_is_refused(self, api, pools, docker_client):
@@ -1054,7 +1075,7 @@ class TestFileVolumes:
 
         assert response.status_code == 409
         assert "symbolic link" in response.json()["detail"]
-        docker_client.api.pull.assert_not_called()
+        docker_client.api.post.assert_not_called()
         assert list(pools.outside.iterdir()) == []
 
     @pytest.mark.parametrize(
@@ -1068,7 +1089,7 @@ class TestFileVolumes:
 
         assert response.status_code == 400
         assert "must name a file" in response.json()["detail"]
-        docker_client.api.pull.assert_not_called()
+        docker_client.api.post.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -1088,7 +1109,7 @@ class TestDockerFlow:
         # One listing of Docker's containers names them all (ADR-0381).
         docker_client.containers.list.assert_called_once_with(all=True, ignore_removed=True)
         docker_client.containers.get.assert_not_called()
-        docker_client.api.pull.assert_not_called()
+        docker_client.api.post.assert_not_called()
         assert not (pools.alpha / "apps").exists()
 
     @pytest.mark.parametrize("name", ["jellyfin", "media"], ids=["its-name", "another-name"])
@@ -1099,7 +1120,7 @@ class TestDockerFlow:
         response = install(api, {"template_id": "jellyfin"})
 
         assert (response.status_code, response.json()) == (409, {"detail": "Jellyfin is already installed"})
-        docker_client.api.pull.assert_not_called()
+        docker_client.api.post.assert_not_called()
 
     def test_failed_start_removes_the_container(self, api, pools, docker_client):
         container = docker_client.containers.create.return_value
@@ -1118,7 +1139,7 @@ class TestDockerFlow:
 
         assert response.status_code == 422
         docker_client.containers.list.assert_not_called()
-        docker_client.api.pull.assert_not_called()
+        docker_client.api.post.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -1162,7 +1183,7 @@ class TestPortCheck:
         })
         # Stopped containers too: Docker binds their ports when they start.
         docker_client.containers.list.assert_called_once_with(all=True, ignore_removed=True)
-        docker_client.api.pull.assert_not_called()
+        docker_client.api.post.assert_not_called()
         docker_client.containers.create.assert_not_called()
         assert not (pools.alpha / "apps").exists()
 
@@ -1212,7 +1233,7 @@ class TestPortCheck:
             "detail": f"Port 8096/tcp is already in use on the host by {holder}: choose another host port for 8096/tcp"
         })
         assert soc.commands[0] == SS
-        docker_client.api.pull.assert_not_called()
+        docker_client.api.post.assert_not_called()
         assert not (pools.alpha / "apps").exists()
 
     def test_listeners_of_other_ports_and_protocols_do_not_count(self, api, pools, docker_client, soc):
@@ -1239,7 +1260,7 @@ class TestPortCheck:
             "Port 53/udp is already in use on the host by systemd-resolve: "
             "choose another host port for 53/udp"
         })
-        docker_client.api.pull.assert_not_called()
+        docker_client.api.post.assert_not_called()
 
     def test_a_port_is_taken_only_for_its_protocol(self, api, pools, docker_client, soc):
         # Transmission's peer port is a TCP and a UDP port of one number; one override moves both.
@@ -1256,7 +1277,7 @@ class TestPortCheck:
         assert docker_client.containers.create.call_args.kwargs["ports"] == {
             "9091/tcp": 9091, "51413/tcp": 51414, "51413/udp": 51414,
         }
-        docker_client.api.pull.assert_called_once()
+        docker_client.api.post.assert_called_once()
 
     def test_a_free_host_port_given_for_a_taken_one_installs(self, api, pools, docker_client, installed, soc):
         installed(_container("emby", status="running", port_bindings=_published(8096)))
@@ -1289,7 +1310,7 @@ class TestPortCheck:
             400, {"detail": f"{name} runs in the host's network: its port {port}/tcp cannot be moved"}
         )
         docker_client.containers.get.assert_not_called()
-        docker_client.api.pull.assert_not_called()
+        docker_client.api.post.assert_not_called()
         assert soc.commands == []
         assert not (pools.alpha / "apps").exists()
 
@@ -1316,7 +1337,7 @@ class TestPortCheck:
             "detail": f"Port {port}/tcp is already in use on the host by python3: "
             f"{name} runs in the host's network and cannot move its port; stop that program first"
         })
-        docker_client.api.pull.assert_not_called()
+        docker_client.api.post.assert_not_called()
 
     @pytest.mark.parametrize(("template_id", "name", "port"), HOST_NETWORK_APPS, ids=[a[0] for a in HOST_NETWORK_APPS])
     def test_a_port_of_an_app_in_the_hosts_network_that_a_container_publishes_asks_to_remove_it(
@@ -1330,7 +1351,7 @@ class TestPortCheck:
             "detail": f"Port {port}/tcp is already used by the container other (exited): "
             f"{name} runs in the host's network and cannot move its port; remove that container first"
         })
-        docker_client.api.pull.assert_not_called()
+        docker_client.api.post.assert_not_called()
 
     @pytest.mark.parametrize("port", [0, -1, 65536])
     def test_a_host_port_outside_the_range_answers_400(self, api, pools, docker_client, soc, port):
@@ -1408,7 +1429,7 @@ class TestPortCheck:
         response = install(api, {"template_id": "jellyfin"})
 
         assert (response.status_code, response.json()) == (503, {"detail": f"Docker is not available: {error}"})
-        docker_client.api.pull.assert_not_called()
+        docker_client.api.post.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -1838,7 +1859,7 @@ class TestNestedFolders:
 
         assert response.status_code == 400
         assert "inside the folder for /downloads" in response.json()["detail"]
-        docker_client.api.pull.assert_not_called()
+        docker_client.api.post.assert_not_called()
         assert _tree(pools.root) == before
 
     def test_writable_folder_cannot_be_moved_to_the_pool_root(self, api, pools, docker_client):
@@ -1850,7 +1871,7 @@ class TestNestedFolders:
 
         assert response.status_code == 400
         assert "inside the folder for /data" in response.json()["detail"]
-        docker_client.api.pull.assert_not_called()
+        docker_client.api.post.assert_not_called()
 
     @pytest.mark.parametrize("app_id", ["filebrowser", "duplicati"])
     def test_templates_built_for_the_pool_root_install(self, api, pools, docker_client, app_id):
@@ -1878,7 +1899,7 @@ class TestNestedFolders:
         assert response.status_code == 409
         assert "symbolic link" in response.json()["detail"]
         assert list(pools.outside.iterdir()) == []
-        docker_client.api.pull.assert_not_called()
+        docker_client.api.post.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -1991,7 +2012,7 @@ class TestRunInUnosSmb:
 
         assert response.status_code == 400
         assert response.json()["detail"] == _set_by_unos(names)
-        docker_client.api.pull.assert_not_called()
+        docker_client.api.post.assert_not_called()
 
     @pytest.mark.parametrize(
         "app_id,name", [("jellyfin", "Jellyfin"), ("plex", "Plex Media Server"), ("filebrowser", "File Browser")]
@@ -2006,7 +2027,7 @@ class TestRunInUnosSmb:
             f"{name} cannot run in the group unos-smb: only linuxserver.io images take the user and "
             "group of their processes from PUID and PGID"
         )
-        docker_client.api.pull.assert_not_called()
+        docker_client.api.post.assert_not_called()
         assert _tree(pools.root) == before
 
     @pytest.mark.parametrize("app_id", ONLY_OWN_DATA)
@@ -2021,7 +2042,7 @@ class TestRunInUnosSmb:
             f"{template.name} cannot run in the group unos-smb: its folders on the pool hold only its "
             "own data (apps/), and none of them can be a share's folder"
         )
-        docker_client.api.pull.assert_not_called()
+        docker_client.api.post.assert_not_called()
         assert _tree(pools.root) == before
 
 
@@ -2069,7 +2090,7 @@ class TestShareFolders:
         assert response.json()["detail"] == (
             f"The folder for {target} ({family}) is the folder of the share family ({family}). {needs}"
         )
-        docker_client.api.pull.assert_not_called()
+        docker_client.api.post.assert_not_called()
         assert _tree(pools.root) == before
 
     def test_an_app_in_the_group_gets_the_share_folder(self, api, pools, docker_client, family):
@@ -2097,7 +2118,7 @@ class TestShareFolders:
             f"The folder for /downloads ({downloads}) is the folder of the share Downloads ({downloads}). "
             + _needs_the_group("Transmission")
         )
-        docker_client.api.pull.assert_not_called()
+        docker_client.api.post.assert_not_called()
 
         allowed = install(api, IN_UNOS_SMB)
 
@@ -2123,7 +2144,7 @@ class TestShareFolders:
             "app given its folder, can put a symbolic link in the place of a folder inside it, and Docker "
             "would follow that link at the next start."
         )
-        docker_client.api.pull.assert_not_called()
+        docker_client.api.post.assert_not_called()
         assert _tree(pools.root) == before
 
     @pytest.mark.parametrize("run_in_unos_smb", [False, True])
@@ -2149,7 +2170,7 @@ class TestShareFolders:
             if run_in_unos_smb
             else f"{where}. " + _needs_the_group("Transmission")
         )
-        docker_client.api.pull.assert_not_called()
+        docker_client.api.post.assert_not_called()
 
     def test_a_read_only_folder_that_holds_shares_needs_the_option(self, api, pools, docker_client, family):
         # Duplicati backs up the whole pool, mounted read-only at /source.
@@ -2160,7 +2181,7 @@ class TestShareFolders:
             f"The folder for /source ({pools.alpha}) holds the folder of the share family ({family}). "
             + _needs_the_group("Duplicati")
         )
-        docker_client.api.pull.assert_not_called()
+        docker_client.api.post.assert_not_called()
 
         allowed = install(api, {"template_id": "duplicati", "run_in_unos_smb": True})
 
@@ -2178,7 +2199,7 @@ class TestShareFolders:
             "File Browser cannot run in the group unos-smb, so it gets no share's files: choose a "
             "folder that holds no share."
         )
-        docker_client.api.pull.assert_not_called()
+        docker_client.api.post.assert_not_called()
 
     def test_the_apps_own_data_never_goes_into_a_share_folder(self, api, pools, docker_client, family):
         response = install(api, {**IN_UNOS_SMB, "volume_overrides": {"/config": str(family)}})
@@ -2189,7 +2210,7 @@ class TestShareFolders:
             f"family ({family}): SMB users would read and change the app's settings. Choose a folder "
             "that is not shared."
         )
-        docker_client.api.pull.assert_not_called()
+        docker_client.api.post.assert_not_called()
 
     @pytest.mark.parametrize(
         "stored",
@@ -2213,7 +2234,7 @@ class TestShareFolders:
             f"The folder for /downloads ({downloads}) is the folder of the share Downloads ({downloads}). "
             + _needs_the_group("Transmission")
         )
-        docker_client.api.pull.assert_not_called()
+        docker_client.api.post.assert_not_called()
 
     @pytest.mark.parametrize(
         "folder,name",
@@ -2251,7 +2272,7 @@ class TestShareFolders:
             f"The folder for {target} ({source}) is in {what}, which keeps files of shares outside "
             f"their folders: no app gets a snapshot or the trash. Choose a folder outside {name}."
         )
-        docker_client.api.pull.assert_not_called()
+        docker_client.api.post.assert_not_called()
         assert _tree(pools.root) == before
 
     def test_snapshots_are_refused_also_where_no_share_is(self, api, pools, docker_client):
@@ -2265,7 +2286,7 @@ class TestShareFolders:
         assert response.json()["detail"].startswith(
             f"The folder for /media ({snapshot}) is in a snapshot folder (.snapshots)"
         )
-        docker_client.api.pull.assert_not_called()
+        docker_client.api.post.assert_not_called()
 
     def test_a_share_of_a_whole_pool_counts_for_nothing(self, api, pools, docker_client, shares):
         # Imported from an old smb.conf: never served (ADR-0145), and no app would install on the pool.
@@ -2728,7 +2749,7 @@ class TestADockerThatDoesNotAnswer:
     def test_a_pull_that_breaks_off_keeps_the_500_of_the_operation(self, api, pools, docker_client, error):
         # Docker answered the name check: the operation that fails after it keeps its own answer
         # (ADR-0254), also when the connection broke during it.
-        docker_client.api.pull.side_effect = error
+        docker_client.api.post.side_effect = error
 
         response = install(api, {"template_id": "jellyfin"})
 
@@ -2736,7 +2757,7 @@ class TestADockerThatDoesNotAnswer:
         docker_client.containers.create.assert_not_called()
 
     def test_a_pull_that_docker_refuses_keeps_its_status(self, api, pools, docker_client):
-        docker_client.api.pull.side_effect = APIError("404 Client Error", explanation="manifest unknown")
+        docker_client.api.post.side_effect = APIError("404 Client Error", explanation="manifest unknown")
 
         response = install(api, {"template_id": "jellyfin"})
 
@@ -3437,7 +3458,7 @@ class TestHardwarePerContainer:
         response = install(api, {"template_id": "photos"})
 
         assert response.status_code == 200, response.text
-        docker_client.api.pull.assert_called_once_with(image, stream=True, decode=True)
+        assert pulled(docker_client) == [image]
         if compatible is None:
             assert docker_client.containers.create.call_args.args == (image,)
         else:
@@ -3650,7 +3671,7 @@ class TestStackCatalog:
         response = install(api, {"template_id": app_id})
 
         assert response.status_code == 404
-        docker_client.api.pull.assert_not_called()
+        docker_client.api.post.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -3686,7 +3707,7 @@ class TestSystemDiskSpace:
             "detail": "The system disk has 1.5 GiB free; at least 2 GiB must stay free when Jellyfin is installed. "
             + NO_SPACE_REMEDY
         })
-        docker_client.api.pull.assert_not_called()
+        docker_client.api.post.assert_not_called()
         docker_client.containers.create.assert_not_called()
         assert not (pools.alpha / "apps").exists()
 
@@ -3698,7 +3719,7 @@ class TestSystemDiskSpace:
 
         assert response.status_code == 200, response.text
         docker_client.images.get.assert_not_called()
-        docker_client.api.pull.assert_called_once_with("jellyfin/jellyfin:latest", stream=True, decode=True)
+        assert pulled(docker_client) == ["jellyfin/jellyfin:latest"]
 
     def test_a_folder_that_the_host_lacks_is_left_out(self, api, pools, docker_client, soc):
         # Docker's own image store keeps everything in its root folder: no /var/lib/containerd.
@@ -3726,7 +3747,7 @@ class TestSystemDiskSpace:
             f"Could not read the free space of the system disk: the host has none of {DOCKER_ROOT}, "
             f"{CONTAINERD_ROOT}; the install goes on"
         ]
-        docker_client.api.pull.assert_called_once()
+        docker_client.api.post.assert_called_once()
         docker_client.containers.create.return_value.start.assert_called_once()
 
     @pytest.mark.parametrize(("df", "reason"), [
@@ -3743,7 +3764,7 @@ class TestSystemDiskSpace:
         response = install(api, {"template_id": "jellyfin"})
 
         assert (response.status_code, response.json()) == (500, _unread_free_space(reason))
-        docker_client.api.pull.assert_not_called()
+        docker_client.api.post.assert_not_called()
         assert not (pools.alpha / "apps").exists()
 
     @pytest.mark.parametrize("info", [{}, {"DockerRootDir": ""}, {"DockerRootDir": "var/lib/docker"}],
@@ -3755,7 +3776,7 @@ class TestSystemDiskSpace:
 
         assert (response.status_code, response.json()) == (500, _unread_free_space("Docker names no root folder"))
         assert not [cmd for cmd in soc.commands if _reads_free_space(cmd)]
-        docker_client.api.pull.assert_not_called()
+        docker_client.api.post.assert_not_called()
 
     def test_a_docker_whose_info_fails_answers_500(self, api, pools, docker_client, soc):
         docker_client.info.side_effect = APIError("500 Server Error: Internal Server Error")
@@ -3765,7 +3786,7 @@ class TestSystemDiskSpace:
         assert (response.status_code, response.json()) == (
             500, _unread_free_space("500 Server Error: Internal Server Error")
         )
-        docker_client.api.pull.assert_not_called()
+        docker_client.api.post.assert_not_called()
 
     def test_an_install_refused_before_reads_no_free_space(self, api, pools, docker_client, soc):
         soc.sockets = ['tcp   LISTEN 0      4096   0.0.0.0:8096   0.0.0.0:*   users:(("EmbyServer",pid=8,fd=7))']

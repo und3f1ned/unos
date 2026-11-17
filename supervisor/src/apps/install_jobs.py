@@ -16,9 +16,12 @@ socket sends administrators the jobs whenever they change (websocket/events.py).
 progress is published at most every PROGRESS_INTERVAL_SECONDS, a change of state at once.
 
 The jobs are kept in memory only, never on the system disk: a restart of the supervisor forgets
-them. A stop of the supervisor asks the running job to stop (``stop_for_shutdown``): the install
-checks for it at each line of a pull, before it writes to the pool, before each create and start,
-and while it waits for a companion to be ready (Progress.check), and stops there.
+them. A stop of the supervisor (``stop_for_shutdown``) and an administrator's cancel (``cancel``)
+ask the running job to stop: the install checks for it at each line of a pull, before it writes to
+the pool, before the network and each create and start, and while it waits for a companion to be
+ready (Progress.check), and a pull's read that blocks is ended at once (pulls.abort). A stop of
+the supervisor leaves what the install made; a cancel removes it, as a failure does
+(router._create_and_start).
 """
 
 from __future__ import annotations
@@ -37,7 +40,7 @@ from docker.errors import DockerException
 from fastapi import HTTPException
 
 from ..security.validators import sanitize_error_message
-from . import stacks
+from . import pulls, stacks
 from .schemas import AppInstallJob, AppInstallResponse, AppTemplate, ContainerStart, ImagePull
 
 logger = logging.getLogger(__name__)
@@ -46,35 +49,58 @@ logger = logging.getLogger(__name__)
 PROGRESS_INTERVAL_SECONDS = 1.0
 # How long a stop of the supervisor waits for the running job to end.
 SHUTDOWN_WAIT_SECONDS = 5.0
-# The longest that GET /apps/install/jobs/{id} waits for the end of a job.
+# The longest that GET /apps/install/jobs/{id} waits for the end of a job, and how many such GETs
+# may wait at once: each holds a connection, which counts against uvicorn's --limit-concurrency
+# (ADR-0333).
 MAX_WAIT_SECONDS = 3600
+MAX_WAITERS = 4
 # How often a waiting GET looks at the job, in memory.
 WAIT_STEP_SECONDS = 0.5
 
 NO_SUCH_JOB = "No such install job"
+TOO_MANY_WAITERS = "Too many requests wait for install jobs; try again in a moment"
 STOPPED_BEFORE_ANY_CONTAINER = "A stop of the supervisor stopped the install of {name} before it made any container"
+CANCELLED_BEFORE_ANY_CONTAINER = "Cancelled by {who} before any container of {name} was made"
 
 
 class Stopped(Exception):
-    """A stop of the supervisor asked the running install to stop (Progress.check)."""
+    """A stop of the supervisor, or with ``cancelled_by`` an administrator's cancel, asked the
+    running install to stop (Progress.check)."""
+
+    def __init__(self, cancelled_by: str | None = None) -> None:
+        super().__init__(cancelled_by or "a stop of the supervisor")
+        self.cancelled_by = cancelled_by
 
 
 @dataclass
 class _Running:
-    """The install that runs: its job's id, its app's name and how to stop it."""
+    """The install that runs: its job's id, its app's name, how to stop it and who cancelled it."""
 
     job_id: str
     name: str
     stop: threading.Event = field(default_factory=threading.Event)
+    cancelled_by: str | None = None
+    # A stop of the supervisor: it wins over a cancel, whose clean-up would not fit in Docker's 10 s.
+    shutting_down: bool = False
     thread: threading.Thread | None = None
+    progress: Progress | None = None
+
+    def ask_to_stop(self) -> None:
+        """Set the stop and end a pull's read that blocks."""
+        self.stop.set()
+        if self.progress is not None:
+            self.progress.abort()
 
 
-_lock = threading.Lock()
+# Reentrant: a job's start publishes it while holding it.
+_lock = threading.RLock()
 # The running job and the last one of each app since the supervisor started, by the app's id.
 _jobs: dict[str, AppInstallJob] = {}
 # Changes with every new state of a job, and when a job is forgotten.
 _version = 0
 _running: _Running | None = None
+# The GETs that wait for a job's end now.
+_waiters = 0
 
 
 def current() -> list[AppInstallJob]:
@@ -94,8 +120,13 @@ def get(job_id: str) -> AppInstallJob | None:
 
 
 def _publish(job: AppInstallJob) -> None:
+    """Keep ``job`` as its app's job: a new job, or a new state of the one kept. A state of a job
+    that another one of the app replaced meanwhile is dropped."""
     global _version
     with _lock:
+        kept = _jobs.get(job.template_id)
+        if kept is not None and kept.id != job.id and kept.state == "running":
+            return
         _jobs[job.template_id] = job
         _version += 1
 
@@ -115,16 +146,58 @@ def forget(job_id: str) -> None:
 
 
 async def wait_for_end(job_id: str, seconds: float) -> AppInstallJob:
-    """The job once it has ended, or as it is after ``seconds``; 404 for one that is not kept.
-    Looks at the job in memory every WAIT_STEP_SECONDS: no thread is held while it waits."""
-    deadline = time.monotonic() + seconds
-    while True:
+    """The job once it has ended, or as it is after ``seconds``; 404 for one that is not kept, 429
+    while MAX_WAITERS others wait. Looks at the job in memory every WAIT_STEP_SECONDS: no thread
+    is held while it waits."""
+    global _waiters
+    if seconds <= 0:
         job = get(job_id)
         if job is None:
             raise HTTPException(404, NO_SUCH_JOB)
-        if job.state != "running" or time.monotonic() >= deadline:
-            return job
-        await asyncio.sleep(min(WAIT_STEP_SECONDS, max(deadline - time.monotonic(), 0)))
+        return job
+    with _lock:
+        if _waiters >= MAX_WAITERS:
+            raise HTTPException(429, TOO_MANY_WAITERS)
+        _waiters += 1
+    try:
+        deadline = time.monotonic() + seconds
+        while True:
+            job = get(job_id)
+            if job is None:
+                raise HTTPException(404, NO_SUCH_JOB)
+            if job.state != "running" or time.monotonic() >= deadline:
+                return job
+            await asyncio.sleep(min(WAIT_STEP_SECONDS, max(deadline - time.monotonic(), 0)))
+    finally:
+        with _lock:
+            _waiters -= 1
+
+
+def cancel(job_id: str, who: str) -> AppInstallJob:
+    """Ask the running job ``job_id`` to stop as ``who``'s cancel: the job as it is now, still
+    running until the install reaches its next step. 404 for a job that does not run."""
+    with _lock:
+        running = _running
+        job = get(job_id)
+        if running is None or job is None or running.job_id != job_id or job.state != "running":
+            raise HTTPException(404, NO_SUCH_JOB)
+        if running.cancelled_by is None:
+            running.cancelled_by = who
+    running.ask_to_stop()
+    return job
+
+
+def dismiss_or_cancel(job_id: str, who: str) -> AppInstallJob | None:
+    """DELETE of a job: the running one is cancelled (``cancel``, the job as it is), one that ended
+    is forgotten (None). 404 for a job that is not kept."""
+    with _lock:
+        job = get(job_id)
+        if job is None:
+            raise HTTPException(404, NO_SUCH_JOB)
+        if job.state != "running":
+            forget(job_id)
+            return None
+    return cancel(job_id, who)
 
 
 def start(template: AppTemplate, work: Callable[[Progress], AppInstallResponse]) -> AppInstallJob:
@@ -134,62 +207,73 @@ def start(template: AppTemplate, work: Callable[[Progress], AppInstallResponse])
     under way (stacks.app_lock). Call it on the event loop: nothing in it waits.
     """
     global _running, _version
+    # The check of the slot, the app's lock and the job are taken in one hold of _lock: no other
+    # start can come between them.
     with _lock:
         running = _running
-    if running is not None:
-        if running.name == template.name:
-            raise HTTPException(409, f"{template.name} is being installed already: wait for the end of its install")
-        raise HTTPException(409, f"An install of {running.name} is under way: install {template.name} once it has ended")
-    lock = stacks.acquire(template.id, template.name)
-    job = AppInstallJob(
-        id=uuid.uuid4().hex,
-        template_id=template.id,
-        name=template.name,
-        started_at=datetime.now(timezone.utc),
-        containers=[
-            ContainerStart(name=stacks.container_name(template, companion.name), companion=companion.name)
-            for companion in template.companions
-        ] + [ContainerStart(name=stacks.container_name(template))],
-    )
-    with _lock:
+        if running is not None:
+            if running.name == template.name:
+                raise HTTPException(409, f"{template.name} is being installed already: wait for the end of its install")
+            raise HTTPException(
+                409, f"An install of {running.name} is under way: install {template.name} once it has ended"
+            )
+        lock = stacks.acquire(template.id, template.name)
         before = _jobs.get(template.id)
-        _running = running = _Running(job_id=job.id, name=template.name)
-    try:
-        _publish(job)
-        running.thread = threading.Thread(
-            target=_run, args=(running, job, work, lock), name=f"app-install-{template.id}", daemon=True
-        )
-        running.thread.start()
-    except BaseException as exc:  # no thread runs: free the app and the slot again
-        lock.release()
-        with _lock:
+        try:
+            job = AppInstallJob(
+                id=uuid.uuid4().hex,
+                template_id=template.id,
+                name=template.name,
+                started_at=datetime.now(timezone.utc),
+                containers=[
+                    ContainerStart(name=stacks.container_name(template, companion.name), companion=companion.name)
+                    for companion in template.companions
+                ] + [ContainerStart(name=stacks.container_name(template))],
+            )
+            _running = running = _Running(job_id=job.id, name=template.name)
+            _publish(job)
+            running.thread = threading.Thread(
+                target=_run, args=(running, job, work, lock), name=f"app-install-{template.id}", daemon=True
+            )
+            running.thread.start()
+        except BaseException as exc:  # no thread runs: free the app and the slot again
+            lock.release()
             _running = None
             if before is None:
                 _jobs.pop(template.id, None)
             else:
                 _jobs[template.id] = before
             _version += 1
-        if isinstance(exc, RuntimeError):
-            raise HTTPException(500, f"The install could not be started: {exc}") from exc
-        raise
+            if isinstance(exc, RuntimeError):
+                raise HTTPException(500, f"The install could not be started: {exc}") from exc
+            raise
     return job
 
 
 def _run(running: _Running, job: AppInstallJob, work: Callable[[Progress], AppInstallResponse],
          lock: threading.Lock) -> None:
-    """The job's thread: the install, then its end, published once the app's lock is free."""
+    """The job's thread: the install, then its end, published once the app's lock and the slot
+    are free. A cancel that comes while the install fails anyway ends it cancelled, with the
+    failure's message: what the install made is removed either way."""
     global _running
-    progress = Progress(job, running.stop)
+    progress = Progress(job, running)
+    running.progress = progress
     # Whatever ends the thread ends the job and frees the app and the slot: never a job that
     # stays running.
     end: dict[str, Any] = {"state": "failed", "error_status": 500, "error": "The install stopped unexpectedly"}
     try:
         result = work(progress)
         end = {"state": "succeeded", "result": result}
-    except Stopped:
-        end = {"state": "failed", "error_status": 503, "error": STOPPED_BEFORE_ANY_CONTAINER.format(name=job.name)}
+    except Stopped as exc:
+        if exc.cancelled_by is not None:
+            end = {"state": "cancelled", "error": CANCELLED_BEFORE_ANY_CONTAINER.format(who=exc.cancelled_by, name=job.name)}
+        else:
+            end = {"state": "failed", "error_status": 503, "error": STOPPED_BEFORE_ANY_CONTAINER.format(name=job.name)}
     except HTTPException as exc:
-        end = {"state": "failed", "error_status": exc.status_code, "error": str(exc.detail)}
+        if running.cancelled_by is not None and not running.shutting_down:
+            end = {"state": "cancelled", "error": str(exc.detail)}
+        else:
+            end = {"state": "failed", "error_status": exc.status_code, "error": str(exc.detail)}
     except Exception as exc:  # a bug in the install must still end the job
         logger.exception("The install of %s stopped on an unexpected error", job.name)
         end = {
@@ -197,12 +281,17 @@ def _run(running: _Running, job: AppInstallJob, work: Callable[[Progress], AppIn
             "error": f"The install stopped on an unexpected error: {sanitize_error_message(exc)}",
         }
     finally:
-        lock.release()
+        try:
+            lock.release()
+        finally:
+            with _lock:
+                if _running is running:
+                    _running = None
+        if end["state"] == "failed":
+            # The request's own answer is 202: the supervisor's log is where a failure shows.
+            logger.warning("The install of %s failed (%s): %s", job.name, end["error_status"], end["error"])
         ended = progress.job.model_copy(update={**end, "finished_at": datetime.now(timezone.utc)})
         _publish(ended)
-        with _lock:
-            if _running is running:
-                _running = None
 
 
 def stop_for_shutdown(timeout: float = SHUTDOWN_WAIT_SECONDS) -> None:
@@ -214,7 +303,8 @@ def stop_for_shutdown(timeout: float = SHUTDOWN_WAIT_SECONDS) -> None:
         running = _running
     if running is None:
         return
-    running.stop.set()
+    running.shutting_down = True
+    running.ask_to_stop()
     if running.thread is not None and running.thread is not threading.current_thread():
         running.thread.join(timeout)
 
@@ -244,16 +334,28 @@ class Progress:
     """What the install reports to its job, from the job's thread: each report publishes a new
     state of the job, but a pull's progress at most every PROGRESS_INTERVAL_SECONDS."""
 
-    def __init__(self, job: AppInstallJob, stop: threading.Event) -> None:
+    def __init__(self, job: AppInstallJob, running: _Running) -> None:
         self.job = job
-        self._stop = stop
+        self._running = running
         self._layers: dict[str, dict[str, _Layer]] = {}
         self._published_at = 0.0
+        # The response of the pull being read, which ``abort`` can end from another thread.
+        self._response: Any = None
 
     def check(self) -> None:
-        """Stopped when a stop of the supervisor asked the install to stop."""
-        if self._stop.is_set():
-            raise Stopped()
+        """Stopped when a stop of the supervisor or a cancel asked the install to stop."""
+        if self._running.stop.is_set():
+            raise Stopped(None if self._running.shutting_down else self._running.cancelled_by)
+
+    def reading(self, response: Any) -> None:
+        """The pull whose response is read now (None: no pull)."""
+        self._response = response
+
+    def abort(self) -> None:
+        """End the read of the pull that is read now, if any (from another thread)."""
+        response = self._response
+        if response is not None:
+            pulls.abort(response)
 
     def _update(self, **changes: Any) -> None:
         self.job = self.job.model_copy(update=changes)

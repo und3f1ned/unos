@@ -10,9 +10,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, NoReturn
 
-from docker.errors import DockerException, NotFound, StreamParseError
+from docker.errors import DockerException, NotFound
 from docker.types import Mount
+from docker.utils import parse_repository_tag
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
+from fastapi.responses import JSONResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -28,7 +30,7 @@ from ..security.validators import open_dir_nofollow, pools_base, validate_pools_
 from ..shares.constants import SMB_APP_UID, SMB_GROUP_GID, SMB_GROUP_NAME
 from ..shares.models import SmbShare
 from ..snapshots.router import SNAPSHOT_DIR_NAME
-from . import app_secrets, install_jobs, preflight, stacks
+from . import app_secrets, install_jobs, preflight, pulls, stacks
 from .catalog import APP_CATALOG, get_app_by_id, get_apps_by_category, search_apps
 from .hardware import ContainerHardware, all_profiles, container_hardware, for_host, read_host_hardware
 from .schemas import (
@@ -1163,8 +1165,9 @@ def _pull(client: Any, ref: str, progress: install_jobs.Progress) -> Any | None:
     image of a pinned one."""
     pinned = _pinned(ref)
     if pinned is None:
+        repository, tag = parse_repository_tag(ref)
         progress.image(ref, "pulling")
-        _read_pull(client.api.pull(ref, stream=True, decode=True), ref, progress)
+        _read_pull(pulls.open_pull(client, repository, tag or "latest"), ref, progress)
         progress.pulled(ref, "pulled")
         return None
     name, tag, digest = pinned
@@ -1177,7 +1180,7 @@ def _pull(client: Any, ref: str, progress: install_jobs.Progress) -> Any | None:
         return image
     progress.image(ref, "pulling")
     # By digest: Docker pulls exactly that image, whatever the tag names now.
-    _read_pull(client.api.pull(name, tag=digest, stream=True, decode=True), ref, progress)
+    _read_pull(pulls.open_pull(client, name, digest), ref, progress)
     image = client.images.get(f"{name}@{digest}")
     try:
         client.api.tag(f"{name}@{digest}", name, tag)
@@ -1187,21 +1190,26 @@ def _pull(client: Any, ref: str, progress: install_jobs.Progress) -> Any | None:
     return image
 
 
-def _read_pull(lines: Any, ref: str, progress: install_jobs.Progress) -> None:
-    """Read Docker's pull stream of ``ref`` to its end, which the pull needs (docker-py stops a
-    pull whose stream is not read), each line to ``progress``; a stop of the supervisor ends it
-    (install_jobs.Stopped)."""
+def _read_pull(response: Any, ref: str, progress: install_jobs.Progress) -> None:
+    """Read Docker's pull stream of ``ref`` to its end, which the pull needs (Docker stops a pull
+    whose client went away), each line to ``progress``. A stop of the supervisor or a cancel ends
+    it (install_jobs.Stopped), also while a read blocks (``progress.abort``); a pull that sends
+    nothing for pulls.PULL_STALL_SECONDS fails with pulls.STALLED (ADR-0383)."""
+    progress.reading(response)
     try:
-        for line in lines:
+        for line in pulls.lines(response):
             progress.check()
-            if isinstance(line, dict):
-                progress.pull_line(ref, line)
-    except StreamParseError as e:  # a RuntimeError of docker-py, not one of its DockerExceptions
-        raise DockerException(f"Docker's pull stream could not be read: {e}") from e
+            progress.pull_line(ref, line)
+    except install_jobs.Stopped:
+        raise
+    except Exception as e:
+        progress.check()  # a stop or a cancel that broke the read off
+        if pulls.stalled(e):
+            raise DockerException(pulls.STALLED) from e
+        raise
     finally:
-        close = getattr(lines, "close", None)
-        if callable(close):
-            close()
+        progress.reading(None)
+        response.close()
 
 
 def _check_image_volumes(template: AppTemplate, containers: list[_NewContainer], images: dict[str, Any]) -> None:
@@ -1274,7 +1282,7 @@ def _create_and_start(
     containers in order and start them in the same order, each companion that the main container
     depends on ready before the next container starts: the containers, in their order. So a
     container that fails to start later meets those companions set up, such as a database that
-    has finished its first start. On a failure, everything this made is removed again
+    has finished its first start. On a failure or a cancel, everything this made is removed again
     (_roll_back); a stop of the supervisor leaves what it made (_left_by_a_stop)."""
     several = bool(template.companions)
     net = stacks.network_name(template.id) if several else None
@@ -1321,8 +1329,14 @@ def _create_and_start(
         current = None
         for container in created:
             container.reload()
-    except install_jobs.Stopped:
-        _left_by_a_stop(template, created, made_network)
+    except install_jobs.Stopped as e:
+        if e.cancelled_by is None:
+            _left_by_a_stop(template, created, made_network, awaited)
+        if not created and made_network is None:
+            raise
+        # A cancel: everything this made goes, as after a failure (ADR-0383).
+        _roll_back(template, containers, created, asked, made_network, f"Cancelled by {e.cancelled_by}", awaited,
+                   progress, None)
     except stacks.NotReady as e:
         _roll_back(template, containers, created, asked, made_network, str(e), awaited, progress, current)
     except _DOCKER_ERRORS as e:
@@ -1330,20 +1344,40 @@ def _create_and_start(
     return created
 
 
-def _left_by_a_stop(template: AppTemplate, created: list[Any], network: Any | None) -> NoReturn:
+def _left_by_a_stop(
+    template: AppTemplate, created: list[Any], network: Any | None, awaited: _NewContainer | None
+) -> NoReturn:
     """A stop of the supervisor stopped the install (ADR-0383): what it made stays as it is, not
     stopped and not removed, since a forced removal would kill a database halfway through its
-    first start; the app is then listed, and its Start or Uninstall goes on from there. Stopped
-    again when it had made nothing; otherwise _InstallFailed, whose audit entry names what is
-    left."""
+    first start; the app is then listed, and its Start or Uninstall goes on from there, or, when
+    only the network was made, the next install uses it again. Stopped again when it had made
+    nothing; otherwise _InstallFailed, whose audit entry names what is left. When it stopped while
+    it waited for ``awaited``, the message names the data folders that may be half set up, as
+    ADR-0381's clean-up does."""
     made = [container.name for container in created] + ([f"the network {network.name}"] if network else [])
     if not made:
         raise install_jobs.Stopped()
     left = stacks.joined(made)
+    done = f"Created {left}; then: stopped by a stop of the supervisor; left behind: {left}"
+    if not created:
+        raise _InstallFailed(
+            f"A stop of the supervisor stopped the install of {template.name} after it made {left} and before any "
+            f"container: install {template.name} again, which uses that network again",
+            done,
+        )
+    unfinished = ""
+    if awaited is not None and awaited.new_data:
+        folders = [str(folder) for folder in awaited.new_data]
+        was, it = ("was", "it") if len(folders) == 1 else ("were", "them")
+        unfinished = (
+            f". {stacks.joined(folders)} {was} empty before this install and may hold data that {awaited.name} did "
+            f"not finish setting up: if you uninstall {template.name}, move {it} away before you install "
+            f"{template.name} again."
+        )
     raise _InstallFailed(
         f"A stop of the supervisor stopped the install of {template.name}; it left {left}: start or uninstall "
-        f"{template.name} on the Installed tab",
-        f"Created {left}; then: stopped by a stop of the supervisor; left behind: {left}",
+        f"{template.name} on the Installed tab{unfinished}",
+        done,
     )
 
 
@@ -1364,7 +1398,9 @@ def _roll_back(
     finish or shut down (a forced removal alone kills it at once). Its folders, password files
     and images stay. 500 with ``reason``, and, when it failed while it waited for ``awaited``, the
     data folders that this may have left half set up; _InstallFailed when something could not be
-    removed. ``progress`` gets the container that ``failed`` and each one removed."""
+    removed. ``progress`` gets the step cleaning, the container that ``failed`` and each one
+    removed."""
+    progress.step("cleaning")
     if failed is not None:
         progress.container(failed.name, "failed")
     left: list[str] = []
@@ -1553,11 +1589,15 @@ async def get_install_job(
     return await install_jobs.wait_for_end(job_id, wait)
 
 
-@router.delete("/install/jobs/{job_id}", status_code=204)
-async def dismiss_install_job(job_id: str, _: User = Depends(require_admin)) -> Response:
-    """Forget an ended install job, as the App Store's Dismiss does: 409 for the running one."""
-    install_jobs.forget(job_id)
-    return Response(status_code=204)
+@router.delete("/install/jobs/{job_id}", status_code=204, responses={202: {"model": AppInstallJob}})
+async def dismiss_or_cancel_install_job(job_id: str, user: User = Depends(require_admin)) -> Response:
+    """Forget an ended install job, as the App Store's Dismiss does (204), or cancel the running one
+    (202 with the job as it is): the install stops at its next step, also during a pull, and what
+    it made is removed, as after a failure (ADR-0383). 404 for a job that is not kept."""
+    job = install_jobs.dismiss_or_cancel(job_id, user.username)
+    if job is None:
+        return Response(status_code=204)
+    return JSONResponse(status_code=202, content=job.model_dump(mode="json"))
 
 
 # ---------------------------------------------------------------------------

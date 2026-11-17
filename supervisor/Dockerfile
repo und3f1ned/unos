@@ -81,5 +81,9 @@ EXPOSE 8080
 # descriptor and the memory of the supervisor; it serves again once they are
 # gone. Room for every tab's live-data socket and Caddy's pooled connections
 # (ADR-0333). Caddy limits the header block to 16 KB (webui/Caddyfile).
+# --timeout-graceful-shutdown 3: at a stop, uvicorn waits for the open requests before the
+# lifespan's shutdown, which stops a running install or repair and writes their audit entries;
+# Docker kills the container 10 s after its SIGTERM. A GET that waits for an install's end (up to
+# an hour, ADR-0383) is ended after 3 s, which leaves the shutdown its 5 s of waits.
 # Keep these options in supervisor/Dockerfile.test the same.
-CMD ["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8080", "--proxy-headers", "--ws-max-size", "65536", "--ws-per-message-deflate", "false", "--limit-concurrency", "128"]
+CMD ["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8080", "--proxy-headers", "--ws-max-size", "65536", "--ws-per-message-deflate", "false", "--limit-concurrency", "128", "--timeout-graceful-shutdown", "3"]

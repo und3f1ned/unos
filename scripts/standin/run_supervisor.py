@@ -273,6 +273,7 @@ def main(argv: list[str] | None = None) -> None:
         ws_max_size=65536,
         ws_per_message_deflate=False,
         limit_concurrency=128,
+        timeout_graceful_shutdown=3,
     )
 
 

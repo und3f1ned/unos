@@ -358,14 +358,16 @@ class AppInstallJob(BaseModel):
 
     Kept in memory only: the running job and the last one of each app since the supervisor
     started. ``step`` is the step reached: checking (the checks before any pull), pulling,
-    creating (the pool's folders, the network and the containers) and starting.
+    creating (the pool's folders, the network and the containers), starting, and cleaning (the
+    removal of what a failed or cancelled install made). ``state`` cancelled: an administrator
+    cancelled it (DELETE on the running job).
     """
     id: str
     template_id: str
     # The app's name in the catalog.
     name: str
-    state: Literal["running", "succeeded", "failed"] = "running"
-    step: Literal["checking", "pulling", "creating", "starting"] = "checking"
+    state: Literal["running", "succeeded", "failed", "cancelled"] = "running"
+    step: Literal["checking", "pulling", "creating", "starting", "cleaning"] = "checking"
     started_at: datetime
     finished_at: datetime | None = None
     # Each image once, in the order of the containers that run it; listed once the checks passed.
@@ -374,7 +376,7 @@ class AppInstallJob(BaseModel):
     containers: list[ContainerStart] = []
     # What the install made, once it succeeded.
     result: AppInstallResponse | None = None
-    # Why it failed, and the HTTP status that its request would have answered (400, 404, 409,
-    # 500, 503).
+    # Why it failed or what its cancel did, and for a failure the HTTP status that its request
+    # would have answered (400, 404, 409, 500, 503).
     error: str | None = None
     error_status: int | None = None

@@ -42,7 +42,7 @@ from src.storage import pools
 from src.storage import router as storage_router
 
 from .audit_helpers import audit_entries
-from .test_apps import install
+from .test_apps import install, pull_answer
 from .test_containers import _container
 from .test_pool_persistence import DATA_UUID
 from .test_sign_in_full_disk import ENTRY_LOST, the_audit_log_is_full
@@ -408,6 +408,8 @@ def docker(monkeypatch):
         c for c in by_name.values() if all or c.status == "running"
     ]
     client.containers.create.side_effect = create
+    # A pull answers an empty stream (ADR-0383).
+    client.api.post.return_value = pull_answer()
     client.add = lambda container: by_name.setdefault(container.name, container)
     monkeypatch.setattr(docker_module, "get_client", lambda: client)
     monkeypatch.setattr(apps_router, "get_client", lambda: client)
@@ -554,7 +556,7 @@ class TestApps:
         docker.add(_container("dozzle", {}, []))
         taken = install(admin, {"template_id": "dozzle"})
         named = install(admin, {"template_id": "dozzle", "name": "logs"})
-        docker.api.pull.side_effect = APIError("pull access denied")
+        docker.api.post.side_effect = APIError("pull access denied")
         failed = install(admin, {"template_id": "glances"})
 
         assert [r.status_code for r in (taken, named, failed)] == [409, 422, 500]

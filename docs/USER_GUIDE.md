@@ -1220,8 +1220,11 @@ name its category the same way. Some of them:
    of its size, and how many of its layers are there), each container as it is
    created and started, and at the end the result, or why the install failed.
    You can leave the page or reload it meanwhile: the install goes on in the
-   background, and the card shows where it is when you come back. **Dismiss**
-   removes the card of an install that has ended
+   background, and the card shows where it is when you come back. **Cancel
+   install** stops an install that runs, after a question: what it made so far
+   (containers, the app's network) is removed, and its data folders and the
+   downloaded images are kept. **Dismiss** removes the card of an install that
+   has ended
 
 Only one app installs at a time: while an install runs, the App Store offers
 no other install until it has ended.
@@ -1245,12 +1248,15 @@ Before it downloads anything, the install checks that:
 Downloading an app's images can take several minutes. A pinned image (one of
 Immich's) that the NAS already has shows as **Already on the NAS** and is not
 downloaded again; any other app's image is asked for again, and only the layers
-that the NAS lacks are downloaded.
+that the NAS lacks are downloaded. A download that makes no progress at all for
+10 minutes is stopped, and the install fails with a message that says so:
+install the app again to try once more.
 Starting or restarting an app from UNOS fails while its data folders are not on
 a mounted pool.
 
 UNOS keeps the progress of installs in memory only: when UNOS restarts during an
-install, the install stops there and its card is gone. If it had made some of
+install, the install stops there and its card is gone (the details of an app
+whose install was still being checked say so). If it had made some of
 the app's containers already, the app is listed on the **Installed** tab,
 stopped or incomplete: start it, or uninstall it (its data folders are kept)
 and install it again. Containers that UNOS had started are left running.

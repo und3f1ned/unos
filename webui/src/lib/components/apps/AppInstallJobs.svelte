@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { createEventDispatcher } from 'svelte';
-	import { X } from 'lucide-svelte';
+	import { Ban, X } from 'lucide-svelte';
 	import { Alert, Badge, Button, Card, ProgressBar } from '$lib/components/ui';
 	import { intlLocale, t } from '$lib/i18n';
 	import { missingHardware, type AppInstallJob, type AppTemplate, type ImagePull } from '$lib/api/apps';
@@ -9,24 +9,28 @@
 	export let jobs: AppInstallJob[] = [];
 	/** The catalog, for each app's icon and what its install's notice adds. */
 	export let catalog: AppTemplate[] = [];
+	/** The ids of the running jobs whose cancel was asked: they say so until they end. */
+	export let cancelling: ReadonlySet<string> = new Set();
 
-	const dispatch = createEventDispatcher<{ dismiss: AppInstallJob }>();
+	const dispatch = createEventDispatcher<{ dismiss: AppInstallJob; cancel: AppInstallJob }>();
 
 	// The apps whose first account to register becomes their administrator: the notice of their
 	// install asks to create it at once, before anyone else on the network can.
 	const FIRST_ADMIN: ReadonlySet<string> = new Set(['immich']);
 
 	// The words of the job's states and steps, of an image's pull and of a container (ADR-0383).
-	const STATE: Record<AppInstallJob['state'], { key: string; variant: 'info' | 'success' | 'error' }> = {
+	const STATE: Record<AppInstallJob['state'], { key: string; variant: 'info' | 'success' | 'error' | 'warning' }> = {
 		running: { key: 'apps.job.state.running', variant: 'info' },
 		succeeded: { key: 'apps.job.state.succeeded', variant: 'success' },
-		failed: { key: 'apps.job.state.failed', variant: 'error' }
+		failed: { key: 'apps.job.state.failed', variant: 'error' },
+		cancelled: { key: 'apps.job.state.cancelled', variant: 'warning' }
 	};
 	const STEP: Record<AppInstallJob['step'], string> = {
 		checking: 'apps.job.step.checking',
 		pulling: 'apps.job.step.pulling',
 		creating: 'apps.job.step.creating',
-		starting: 'apps.job.step.starting'
+		starting: 'apps.job.step.starting',
+		cleaning: 'apps.job.step.cleaning'
 	};
 	const IMAGE: Record<ImagePull['state'], string> = {
 		waiting: 'apps.job.image.waiting',
@@ -89,6 +93,12 @@
 					<Button variant="ghost" size="sm" icon={X} on:click={() => dispatch('dismiss', job)}>
 						{$t('apps.job.dismiss')}
 					</Button>
+				{:else if cancelling.has(job.id)}
+					<Button variant="secondary" size="sm" icon={Ban} disabled>{$t('apps.job.cancelling')}</Button>
+				{:else}
+					<Button variant="secondary" size="sm" icon={Ban} on:click={() => dispatch('cancel', job)}>
+						{$t('apps.job.cancel')}
+					</Button>
 				{/if}
 			</div>
 
@@ -110,6 +120,10 @@
 			{:else if job.state === 'failed'}
 				<Alert variant="error" title={$t('apps.detail.installFailed')} class="mt-4">
 					<p class="break-words">{job.error || $t('apps.detail.installFailed')}</p>
+				</Alert>
+			{:else if job.state === 'cancelled'}
+				<Alert variant="warning" title={$t('apps.job.cancelledTitle')} class="mt-4">
+					<p class="break-words">{job.error || $t('apps.job.cancelledTitle')}</p>
 				</Alert>
 			{/if}
 
