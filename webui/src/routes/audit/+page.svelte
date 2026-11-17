@@ -428,20 +428,22 @@
 									{#if entry.chain === 'broken'}
 										<p class="mt-1 text-sm text-status-error">{$t('audit.chain.brokenHint')}</p>
 									{/if}
+									<!-- A token's name of 64 characters, a name tried at sign-in of 128 and an
+									     IPv6 address break within the entry on a phone (ADR-0302). -->
 									{#if entry.details}
-										<p class="mt-1 text-sm text-content">{entry.details}</p>
+										<p class="mt-1 break-words text-sm text-content">{entry.details}</p>
 									{/if}
 									<dl class="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-sm">
 										{#if entry.username}
 											<div class="flex gap-1">
 												<dt class="text-content-muted">{$t('audit.field.user')}</dt>
-												<dd class="text-content-secondary">{entry.username}</dd>
+												<dd class="break-all text-content-secondary">{entry.username}</dd>
 											</div>
 										{/if}
 										{#if entry.ip_address}
 											<div class="flex gap-1">
 												<dt class="text-content-muted">{$t('audit.field.address')}</dt>
-												<dd class="text-content-secondary">{entry.ip_address}</dd>
+												<dd class="break-all text-content-secondary">{entry.ip_address}</dd>
 											</div>
 										{/if}
 										{#if resourceOf(entry)}

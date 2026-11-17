@@ -172,6 +172,54 @@ async function serve(page: Page, answers: Record<string, unknown>): Promise<void
 // A host name with no hyphen, so no place where a browser breaks it on its own (ADR-0302).
 const LONG_HOST_NAME = 'nasinthelivingroomoftheoldhouse.home.arpa';
 
+// Audit entries whose values have no place to break, as long as the server takes and keeps them:
+// an API token's name of 64 characters (API_TOKEN_NAME_CHARS of supervisor/src/auth/schemas.py),
+// a name tried at sign-in of 128 (MAX_USERNAME_CHARS of supervisor/src/audit/router.py) and a
+// client's full IPv6 address. As supervisor/src/auth/router.py and log_action write them
+// (ADR-0189): the token's name in the resource and in the details, the browser, and the hash chain.
+const LONG_TOKEN_NAME = 'nightlycopyofthefamilyphotosandvideostotheoffsitediskinthegarage';
+const LONG_SIGN_IN_NAME = 'administratorofthenasinthelivingroomoftheoldhouseatthecornerhome'.repeat(2);
+const LONG_ADDRESS = 'fd7a:115c:a1e0:4b2d:8c3f:9e61:d5a8:7b19';
+/** The n-th entry of the chain (1 the oldest), written at 09:4n:12 of the server's day. */
+const auditEntry = (n: number, entry: Record<string, unknown>) => ({
+  id: `audit_20261117094${n}12345678`,
+  timestamp: `2026-11-17T09:4${n}:12.345678`,
+  severity: 'info',
+  ip_address: LONG_ADDRESS,
+  user_agent: 'Mozilla/5.0 (Android 15; Mobile; rv:144.0) Gecko/144.0 Firefox/144.0',
+  resource_type: null,
+  resource_id: null,
+  details: null,
+  success: true,
+  prev_hash: String(n - 1).repeat(64),
+  hash: String(n).repeat(64),
+  chain: 'ok',
+  ...entry,
+});
+const LONG_AUDIT_ENTRIES = [
+  auditEntry(3, {
+    action: 'other',
+    username: 'admin',
+    resource_type: 'api_token',
+    resource_id: LONG_TOKEN_NAME,
+    details: `Deleted API token: ${LONG_TOKEN_NAME}`,
+  }),
+  auditEntry(2, {
+    action: 'other',
+    username: 'admin',
+    resource_type: 'api_token',
+    resource_id: LONG_TOKEN_NAME,
+    details: `Created API token: ${LONG_TOKEN_NAME}`,
+  }),
+  auditEntry(1, {
+    action: 'login_failed',
+    severity: 'warning',
+    username: LONG_SIGN_IN_NAME,
+    details: 'Incorrect username or password',
+    success: false,
+  }),
+];
+
 const SYSTEM_INFO = {
   hostname: 'nas-living-room.home.arpa',
   kernel: '6.12.48+deb13-arm64',
@@ -866,6 +914,24 @@ const VIEWS: View[] = [
     name: 'Audit Log',
     path: '/audit',
     shows: (page) => page.getByRole('listitem').filter({ hasText: 'admin' }).first(),
+  },
+  {
+    // An API token's name of 64 characters, a name tried at sign-in of 128 and an IPv6 address:
+    // each breaks within its entry (webui.audit-log-long-token-name).
+    name: 'Audit Log with long names',
+    path: '/audit',
+    fake: (page) =>
+      serve(page, {
+        '/api/v1/audit/logs': LONG_AUDIT_ENTRIES,
+        '/api/v1/audit/logs/count': { count: LONG_AUDIT_ENTRIES.length },
+      }),
+    // Every entry shows, each with the address.
+    open: async (page) => {
+      await expect(page.getByText(`Deleted API token: ${LONG_TOKEN_NAME}`)).toBeVisible();
+      await expect(page.getByText(LONG_SIGN_IN_NAME, { exact: true })).toBeVisible();
+      await expect(page.getByText(LONG_ADDRESS, { exact: true })).toHaveCount(LONG_AUDIT_ENTRIES.length);
+    },
+    shows: (page) => page.getByText(`Created API token: ${LONG_TOKEN_NAME}`),
   },
   {
     name: 'System: General',
