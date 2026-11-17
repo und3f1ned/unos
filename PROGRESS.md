@@ -83,8 +83,8 @@ significant step. Features and their state live in `feature-list.json`, decision
   computer (Previous Versions); `apps.rk3588-hardware-acceleration` step 1's load on the RKMPP
   cores and its look in a browser, with Jellyfin installed again, and step 2, Immich's NPU, whose
   open parts the next bullet names.
-- That evening (Log): `apps.compose-stacks` (ADR-0381, ADR-0382), merged into `main` with the
-  record of its device check: an app of several containers, Immich's server, database, Redis and
+- That evening (Log): `apps.compose-stacks` (ADR-0381, ADR-0382), merged into `main` by #86 with
+  the record of its device check: an app of several containers, Immich's server, database, Redis and
   machine learning, its images pinned by tag and digest and its database's password generated on
   its pool, and Immich's machine learning on the RK3588's NPU (step 2 of
   `apps.rk3588-hardware-acceleration`). The branch merged with main ce5f86c (41ad495) runs on the
@@ -93,8 +93,8 @@ significant step. Features and their state live in `feature-list.json`, decision
   start and restart in order, an uninstall that keeps the data and a reinstall that uses the same
   database, 0.547 MiB in 30 idle minutes, the six models of Immich's machine learning on the NPU
   and RKMPP in Immich's server; after a reboot from the API the containers with those checks, the
-  models on the NPU again and GET /apps/installed with one Immich and its three companions running,
-  and then the pool's disk awake while Immich runs (ADR-0381's cost). `apps.compose-stacks`
+  models on the NPU again, then the pool's disk awake while Immich runs (ADR-0381's cost), and at
+  23:55 GET /apps/installed with one Immich and its three companions running. `apps.compose-stacks`
   passes. Open, first: Immich has no administrator, and until the owner registers one, anyone on
   the LAN who opens port 2283 can register as its administrator (Open owner actions, 12, at once).
   Then the owner's: photos and Immich's jobs (13) and RKMPP chosen in Immich (14), for
@@ -149,7 +149,7 @@ significant step. Features and their state live in `feature-list.json`, decision
 
 ## Dev device
 
-State on 2026-11-16, 22:48 UTC. A Banana Pi BPI-W3 (ArmSoM W3, Rockchip RK3588, 8 GB), running
+State on 2026-11-17, 00:09 UTC. A Banana Pi BPI-W3 (ArmSoM W3, Rockchip RK3588, 8 GB), running
 Armbian's community image for `armsom-w3`, upgraded on 2026-11-15 from 26.2.0-trunk.151 to
 26.11.0-trunk.133 (Debian 13, kernel 6.1.172-vendor-rk35xx);
 its address and logins are in `dev.env` (ADR-0212). This journal called it a UGREEN board, after
@@ -160,18 +160,19 @@ the UGREEN firmware on its eMMC, until the owner set that right on 2026-11-15 (A
   since boot, its own wear estimate 0 to 10%. Nothing writes to it.
 - SSH by key only, root by the workstation's key `~/.ssh/unos_dev_ed25519`; root's and the UNOS
   administrator's passwords were rotated and live only in `dev.env` (ADR-0226).
-- Runs 41ad495 of the branch `apps.compose-stacks` (ADR-0381, ADR-0382), merged into `main` with
-  the record of its device check, whose commits change no runtime file: its feature commits and a
-  merge of main ce5f86c, which holds the sixth batch. Deployed on 2026-11-16 at
-  21:38 to 21:40 UTC (SD MiB check.sh 0, status and sync --dry-run 0, sync 3.371,
+- Runs 41ad495 of the branch `apps.compose-stacks` (ADR-0381, ADR-0382): its feature commits and a
+  merge of main ce5f86c, which holds the sixth batch. The branch is merged into `main` by #86 with
+  the record of its device check, whose commits on top of 41ad495 change no runtime file. Deployed
+  on 2026-11-16 at 21:38 to 21:40 UTC (SD MiB check.sh 0, status and sync --dry-run 0, sync 3.371,
   build-supervisor 11.934, build-webui 16.762, up 5.352, check.sh 0.227); both containers healthy
   after 7 s, check.sh OK: 112.8 MiB written to the SD card since the boot of 14:42 UTC. Immich
   installed on the pool `data` at 21:40 to 21:45 UTC, uninstalled and installed again at 21:52 to
   21:53 UTC, at the owner's word (Log, 2026-11-16, Immich). A reboot from the API at 22:24:02 UTC
   (the boot of 22:25:22; both UNOS containers healthy by 22:26:14, Immich's four by 22:26:35, with
-  RestartCount 0 each; check.sh OK at 22:27, 13.4 MiB on the card since the boot). At 23:55 to
-  23:57 UTC, read only: GET /apps/installed listed Immich once with its three companions running,
-  in the same boot (its boot id) with RestartCount 0 each (0), and `deploy.sh status` found the
+  RestartCount 0 each; check.sh OK at 22:27, 13.4 MiB on the card since the boot). At 23:55 UTC,
+  read only: GET /apps/installed listed Immich once with its three companions running, and
+  transmission (0); at 00:03:56 UTC the boot id was still the one of 22:26:01, with RestartCount 0
+  in Immich's four containers and transmission (0); at 00:09 UTC `deploy.sh status` found the
   runtime files equal to the record's tree (0).
 - Before it, cc9482e of the branch `mvp.batch-6` (the sixth batch, ADR-0377 to ADR-0380, since
   merged into `main` as ce5f86c), whose runtime differs from the branch's head only in a comment of
@@ -494,7 +495,11 @@ Open owner actions:
     parts are 13 and 14.
 12. At once, Immich's administrator on the dev device: open Immich on port 2283 of the device and
     register its administrator. Until then anyone on the LAN who opens that port can register as
-    Immich's administrator (it had none at the check's last read, 21:53 UTC on 2026-11-16).
+    Immich's administrator (it had none at the check's last read, 21:53 UTC on 2026-11-16). With
+    none registered, the device check took the database's own first-start record, the same before
+    and after the reinstall, and no 'password authentication failed' for the administrator's
+    sign-in after it (`apps.compose-stacks`'s (6)), and `apps.compose-stacks` passes on that: a
+    judgement the owner may overrule, by signing in after a reinstall.
 13. Immich with photos (`apps.rk3588-hardware-acceleration`, step 2's (4) of its notes' steps by
     hand): upload about 30 photos (faces, text, one HEVC video), run Smart Search, Face Detection
     and OCR in Administration > Jobs, record their durations and search for dog; while the jobs
@@ -581,37 +586,56 @@ Open owner actions:
   two reads (its count of completed writes rose from 112 to 467, its reads not), so that no stretch
   without I/O came near the 5 minutes (0.219); then Off again, as found, and the rule file gone
   (0.074). This is ADR-0381's cost: the pool's disk stays awake while Immich runs.
-- GET /apps/installed at 23:55:53, read only, in the boot that the reboot started (the boot id at
-  23:57 the same as at 22:26) and with RestartCount 0 in each of Immich's four containers (0):
-  200, two apps, immich and transmission; Immich once, running and healthy, with the five video
-  nodes, its companions database (running, healthy), redis (running, no health check) and
-  machine-learning (running, healthy, `/dev/dri`), each by its image's digest, and none missing.
+- GET /apps/installed at 23:55:53, read only, in the boot that the reboot started (the boot id,
+  logged at 00:03:56, the same as at 22:26:01, with RestartCount 0 in Immich's four containers and
+  in transmission, 0 MiB): 200, two apps, immich and transmission, both running; Immich once,
+  running and healthy, with the five video nodes, its companions database (running, healthy), redis
+  (running, no health check) and machine-learning (running, healthy, `/dev/dri`), each by its
+  image's digest, and none missing.
 - `apps.compose-stacks` passes, its verified_by now `test_app_stacks.py`, `test_apps.py`,
-  `test_audit_storage_and_apps.py`, `apps-stacks.spec.ts` and `apps.spec.ts`: every condition of its
-  three steps passed on the dev device before and after the reboot, (9)'s GET /apps/installed after
-  the reboot by the read of 23:55, which also shows the one Immich with its three companions running
-  that (5)'s logged listing, cut at 1500 characters after the companion database, did not. The
-  owner's items of its notes, the administrator's registration and docker stats while Immich's jobs
-  run, are no condition of its three steps. `apps.rk3588-hardware-acceleration` stays false, with
-  `test_app_stacks.py` and `apps-stacks.spec.ts` added to its verified_by: step 2's (1), (2), (3),
-  the server's part of (5) and (6) passed, and open are (4), the owner's photos and Immich's jobs,
-  (5)'s RKMPP chosen in Immich and the names of the App Store's hint, and step 1's open parts (Open
-  owner actions, 11, 13 and 14). Of its (2), the reads of `/proc/device-tree/compatible` and
-  `/dev/dri` inside the container were not run (the models loaded from their rk3588 files, and the
-  log has no 'Could not read /proc/device-tree' line), and the log of (6)'s probe was not searched
-  for a download.
+  `test_audit_storage_and_apps.py`, `apps-stacks.spec.ts` and `apps.spec.ts`: every step of its
+  notes' device check passed on the dev device, but for the owner's items and (6)'s sign-in, named
+  below, and its optional (3), the pull measured alone: (1) to (8) before the reboot, but for (7)'s
+  pool disk, (5)'s one Immich with its three companions and (8)'s listing of the apps installed
+  before, which were shown after it, and (9) after it. (9)'s GET /apps/installed by the read of
+  23:55, which also shows the one Immich with its three companions running that (5)'s logged
+  listing, cut at 1500 characters after the companion database, did not (so after the reboot only),
+  and transmission listed and running beside it, as (8) asks of the apps installed before. A port
+  conflict and a failed install, of steps 2 and 3, are the backend tests' (`test_app_stacks.py`,
+  `test_apps.py`), not the device check's. The owner's items of its notes, the administrator's
+  registration and docker stats while Immich's jobs run, are no condition of its three steps, nor is
+  (6)'s administrator's sign-in, for which the database's own first-start record and no 'password
+  authentication failed' stand: a judgement the owner may overrule (Open owner actions, 12).
+  `apps.rk3588-hardware-acceleration` stays false, with `test_app_stacks.py` and
+  `apps-stacks.spec.ts` added to its verified_by: step 2's (1), (2), (3), the server's part of (5)
+  and (6) passed, and open are (4), the owner's photos and Immich's jobs, (5)'s RKMPP chosen in
+  Immich and the names of the App Store's hint, and step 1's open parts (Open owner actions, 11, 13
+  and 14). Of its (2), the reads of `/proc/device-tree/compatible` and `/dev/dri` inside the
+  container were not run (the models loaded from their rk3588 files, and the log has no 'Could not
+  read /proc/device-tree' line), and the log of (6)'s probe was not searched for a download.
 - Review findings: the branch's history names the findings of its reviews in a fresh context as
-  fixed (d587d32: an install that started every companion before it waited for any, and a
-  rollback that removed the containers without a stop; 3071f26: the tests from the review of the
-  web UI stage) and records none left unfixed. The review of this record in a fresh context found
-  a false sentence (that nothing read GET /apps/installed after the reboot), the grep that could
-  miss a failure line, and inexact wording (a sampling interval given as the longest stretch
-  without I/O, health after each action where it was read after the start and the restart, the
-  Now bullet's before and after the reboot, the listing of (5), a confirmation by hand that no
-  log records, the sda and pool bullets' older reads): all fixed in the record's next commit.
+  fixed (d587d32: an install that started every companion before it waited for any, and a rollback
+  that removed the containers without a stop; 3071f26: the tests from the review of the web UI
+  stage) and records none left unfixed. The first review of this record (9c3714f) in a fresh context
+  found a false sentence (that nothing read GET /apps/installed after the reboot), the grep that
+  could miss a failure line, and inexact wording (a sampling interval given as the longest stretch
+  without I/O, health after each action where it was read after the start and the restart, the Now
+  bullet's before and after the reboot, the listing of (5), a confirmation by hand that no log
+  records, the sda and pool bullets' older reads): all fixed in b2c9dce. The review of the pass
+  (e2a5c86) in a fresh context found claims wider than the device check (every condition of the
+  three steps, before and after the reboot), (6)'s administrator's sign-in not named among the
+  owner's items, (8)'s "still list" without its evidence, "merged into `main`" before the pull
+  request, a boot id that no log held, `make check` named for a tree it had not run on, this bullet,
+  the Dev device bullet's wording, the Now bullet's order and the state's time: all fixed in the
+  next commit. The review of that fix in a fresh context found its "(1) to (8) before the reboot"
+  false for (7)'s pool disk and for the listings of (5) and (8), shown after the reboot, (6)'s
+  sign-in missing from the steps left aside, the order of steps 2 and 3, a count that read as a
+  second count, and a `deploy.sh status` without a log: fixed in the same commit, with `make check`
+  run again on its final tree.
 - Open, the administrator first: Immich has no administrator, and until the owner registers one,
-  anyone on the LAN who opens port 2283 can register as its administrator (Open owner actions,
-  12). Immich stays installed on the dev device. `make check` passed on this record.
+  anyone on the LAN who opens port 2283 can register as its administrator (Open owner actions, 12).
+  Immich stays installed on the dev device. `make check` passed on the tree of this record's last
+  commit.
 
 ### 2026-11-16: A sixth batch: the RK3588's video hardware, disk idle timeouts, a pool's balance, share options
 
