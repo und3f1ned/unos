@@ -550,6 +550,12 @@ class _Api:
             raise _refused(400, "Minimum memory limit allowed is 6MB")
         if memory > 0 and swap > 0 and swap < memory:
             raise _refused(400, "Minimum memoryswap limit should be larger than memory limit, see usage")
+        if (memory > 0 and swap == -1 and (host.get("MemorySwap") or 0) > 0 and memory > host["MemorySwap"]
+                and live.status == "running"):
+            # Docker 29.9 with runc 1.5 on the dev device: -1 leaves the running container's swap
+            # limit as it was, and runc refuses a memory limit above it (2026-11-17).
+            raise _refused(500, "Cannot update container: failed to update resources: runc did not terminate "
+                                "successfully: exit status 1: memory+swap limit should be >= memory limit")
         if memory > 0 and swap == 0 and (host.get("MemorySwap") or 0) > 0 and memory > host["MemorySwap"]:
             raise _refused(409, "Memory limit should be smaller than already set memoryswap limit, "
                                 "update the memoryswap at the same time")

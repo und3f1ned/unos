@@ -11,8 +11,10 @@ start, Docker's restart policy and a reboot keep them. The table ``app_resource_
   MemorySwap, so that the container gets no swap beyond it. Docker cannot take a memory limit off
   a container (its update takes 0 as unchanged and refuses less than 6 MB): removing one raises
   it to NO_MEMORY_LIMIT times the host's memory, which the container cannot reach, also after a
-  kernel update that changes MemTotal a little, with unlimited swap again (MemorySwap -1), as a
-  container without a limit has; a limit of the host's memory or more counts as none.
+  kernel update that changes MemTotal a little, with as much swap again (MemorySwap twice that),
+  which no container reaches either: not MemorySwap -1, which Docker takes as the running
+  container's swap limit unchanged, below the new memory limit, so that runc refuses it; a limit
+  of the host's memory or more counts as none.
 - CPU: a quota of CPU time per period of CPU_PERIOD (100 ms, Docker's), from CPU_FLOOR to the
   host's CPUs in hundredths of a CPU; removed with the quota -1. Not NanoCpus: docker-py's update
   has none, and Docker refuses a quota beside them and cannot take them off again.
@@ -132,7 +134,10 @@ def update_args(before: Limits, after: Limits) -> dict[str, int]:
     args: dict[str, int] = {}
     if after.memory != before.memory:
         if after.memory is None:
-            args.update(mem_limit=NO_MEMORY_LIMIT * host_memory(), memswap_limit=-1)
+            # Not MemorySwap -1: Docker leaves a running container's swap limit as it was for it,
+            # and runc then refuses a memory limit above that (Docker 29.9, runc 1.5, 2026-11-17).
+            memory = NO_MEMORY_LIMIT * host_memory()
+            args.update(mem_limit=memory, memswap_limit=2 * memory)
         else:
             args.update(mem_limit=after.memory, memswap_limit=after.memory)
     if after.cpu_quota != before.cpu_quota:

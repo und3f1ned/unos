@@ -270,8 +270,9 @@ class TestSetLimits:
     def test_a_limit_is_removed_with_null(self, api, pools, docker, database):
         """Docker removes a CPU quota with -1; a memory limit it cannot remove from a container
         (its update takes 0 as unchanged and refuses less than 6 MB), so the limit becomes twice the
-        host's memory, which the container cannot reach, and the swap is unlimited again; the
-        listing shows no limit, and the row goes."""
+        host's memory, which the container cannot reach, with as much swap again: Docker leaves a
+        running container's swap limit as it was for -1, and runc then refuses the memory limit (the
+        dev device, 2026-11-17); the listing shows no limit, and the row goes."""
         _installed(api, docker)
         api.put(LIMITS.format("photos-cache"), json={"memory_limit": 256 * MIB, "cpu_limit": 0.5})
 
@@ -280,7 +281,7 @@ class TestSetLimits:
         assert response.status_code == 200, response.text
         assert response.json() == {"container": "photos-cache", "memory_limit": None, "cpu_limit": None}
         host = _host(docker, "photos-cache")
-        assert (host["Memory"], host["MemorySwap"], host["CpuQuota"]) == (2 * HOST_MEMORY, -1, -1)
+        assert (host["Memory"], host["MemorySwap"], host["CpuQuota"]) == (2 * HOST_MEMORY, 4 * HOST_MEMORY, -1)
         assert _listed(api, "photos-cache")["memory_limit"] is None
         assert _listed(api, "photos-cache")["cpu_limit"] is None
         assert _rows(database) == []
