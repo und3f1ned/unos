@@ -1,7 +1,7 @@
 import { api } from "./client";
 
-// SMB shares and per-user access are stored in the UNOS database, and
-// smb.conf is rendered from it (supervisor/src/shares). Share names are
+// SMB shares and their access, per user and per group, are stored in the UNOS database,
+// and smb.conf is rendered from it (supervisor/src/shares). Share names are
 // case-insensitive on the server. NFS exports are the lines of the host's
 // export files; UNOS writes only its own file (supervisor/src/shares/nfs.py).
 
@@ -30,6 +30,33 @@ export interface ShareAccessEntry {
   level: ShareAccessLevel;
 }
 
+/** A member of a group with access to a share. */
+export interface ShareGroupMember {
+  username: string;
+  smb_state: SmbAccountState;
+  /** In smb.conf now: the share is served and the member's SMB account is active. */
+  effective: boolean;
+}
+
+/** One group's access to a share: each member gets the level, or the higher level of their own. */
+export interface ShareGroupAccess {
+  group_id: number;
+  group: string;
+  level: ShareAccessLevel;
+  /** Sorted by username. */
+  members: ShareGroupMember[];
+}
+
+/**
+ * One entry of a group access list sent to the server. `group` is the group's current name: the
+ * server answers 409 when the id now names another.
+ */
+export interface ShareGroupAccessEntry {
+  group_id: number;
+  group: string;
+  level: ShareAccessLevel;
+}
+
 export interface SmbShare {
   name: string;
   path: string;
@@ -39,6 +66,8 @@ export interface SmbShare {
   guest_ok: boolean;
   /** Sorted by username. */
   access: ShareAccess[];
+  /** Sorted by group name. */
+  group_access: ShareGroupAccess[];
   /** Send it back as `expected_version` when changing the share. */
   version: number;
   /** The path passes the server's path rules: the share is in smb.conf. */
@@ -83,6 +112,7 @@ export interface SmbShareCreate {
   browseable?: boolean;
   guest_ok?: boolean;
   access?: ShareAccessEntry[];
+  group_access?: ShareGroupAccessEntry[];
   encryption_required?: boolean;
   time_machine?: boolean;
   previous_versions?: boolean;
@@ -99,6 +129,8 @@ export interface SmbShareUpdate {
   guest_ok?: boolean;
   /** The complete list: it replaces the share's access list. */
   access?: ShareAccessEntry[];
+  /** The complete list: it replaces the share's group access list. */
+  group_access?: ShareGroupAccessEntry[];
   /** Only [] is accepted: it dismisses the import notes. */
   import_notes?: [];
   encryption_required?: boolean;

@@ -1,9 +1,9 @@
 import { expect, type Page, type WebSocketRoute } from '@playwright/test';
 
-// Canned answers of the SMB share, NFS export, user and account APIs for UI
-// tests that must never change a real share, export, user or SMB account.
+// Canned answers of the SMB share, NFS export, group, user and account APIs for UI
+// tests that must never change a real share, export, group, user or SMB account.
 // fakeSmbApi() answers every request of the page to /api/v1/shares/*,
-// /api/v1/auth/users* and /api/v1/auth/me/smb*: writes are recorded and applied
+// /api/v1/groups*, /api/v1/auth/users* and /api/v1/auth/me/smb*: writes are recorded and applied
 // to the fake state (so the page shows their outcome), unknown requests are
 // aborted, and nothing reaches the supervisor. Sign-in (/auth/login, /auth/me)
 // is not faked.
@@ -58,6 +58,14 @@ export const COMMON_PASSWORD_RULE =
 const USERNAME_RULE = /^[a-z][a-z0-9_-]{0,31}$/;
 export const NAME_RULE_TEXT =
   "Use 1 to 32 characters: lowercase letters, digits, '_' and '-', starting with a letter";
+// The name rule of groups and the answers of supervisor/src/shares/groups.py and service.py;
+// supervisor/tests/test_share_groups.py checks them against the server.
+export const GROUP_NAME_RULE =
+  "Group names have 1 to 32 characters: lowercase letters, digits, '_' and '-', starting with a letter";
+export const GROUP_VERSION_CONFLICT = 'The group was changed meanwhile; reload';
+export const groupExists = (name: string) => `Group ${name} already exists`;
+export const groupMissing = (id: number) => `Group ${id} does not exist`;
+export const groupIsNow = (id: number, name: string) => `Group ${id} is now '${name}'; reload the page`;
 export const renameNeedsPassword = (name: string) =>
   `A new password is needed to rename ${name}: SMB is on for ${name}, and Samba's account of the new name is made with it`;
 
@@ -115,6 +123,22 @@ export interface FakeAccess {
   effective: boolean;
 }
 
+export interface FakeGroupAccess {
+  group_id: number;
+  group: string;
+  level: Level;
+  members: { username: string; smb_state: SmbState; effective: boolean }[];
+}
+
+export interface FakeGroup {
+  id: number;
+  name: string;
+  version: number;
+  members: { user_id: number; username: string; smb_state: SmbState }[];
+  /** Filled from the shares' group_access when GET /groups answers. */
+  shares: { share: string; level: Level }[];
+}
+
 export interface FakeShare {
   name: string;
   path: string;
@@ -122,6 +146,7 @@ export interface FakeShare {
   browseable: boolean;
   guest_ok: boolean;
   access: FakeAccess[];
+  group_access: FakeGroupAccess[];
   version: number;
   served: boolean;
   path_problem: string | null;
@@ -226,6 +251,7 @@ export interface FakeRequest {
 export interface FakeSmbApi {
   users: FakeUser[];
   shares: FakeShare[];
+  groups: FakeGroup[];
   status: FakeServiceStatus;
   paths: SharePathInfo[];
   /** Last finished repair per share name (lower case), as GET .../repair-permissions answers. */
@@ -303,6 +329,7 @@ export function fakeShare(name: string, extra: Partial<FakeShare> = {}): FakeSha
     browseable: true,
     guest_ok: false,
     access: [],
+    group_access: [],
     version: 1,
     served: true,
     path_problem: null,
@@ -332,6 +359,44 @@ export function accessOf(
       return { ...entry, smb_state: state, effective: served && state === 'active' };
     })
     .sort((a, b) => a.username.localeCompare(b.username));
+}
+
+/** A group as GET /groups lists it, with the members `users` have under those ids and names. */
+export function fakeGroup(
+  id: number,
+  name: string,
+  users: FakeUser[],
+  memberIds: number[] = [],
+  version = 1,
+): FakeGroup {
+  const members = users
+    .filter((user) => memberIds.includes(user.id))
+    .map((user) => ({ user_id: user.id, username: user.username, smb_state: user.smb.state }))
+    .sort((a, b) => a.username.localeCompare(b.username));
+  return { id, name, version, members, shares: [] };
+}
+
+/** Group access entries as GET /shares/smb reports them, for `groups` (entries name a group). */
+export function groupAccessOf(
+  groups: FakeGroup[],
+  entries: { group: string; level: Level }[],
+  served = true,
+): FakeGroupAccess[] {
+  return entries
+    .map((entry) => {
+      const group = groups.find((g) => g.name === entry.group);
+      return {
+        group_id: group?.id ?? 0,
+        group: group?.name ?? entry.group,
+        level: entry.level,
+        members: (group?.members ?? []).map((member) => ({
+          username: member.username,
+          smb_state: member.smb_state,
+          effective: served && member.smb_state === 'active',
+        })),
+      };
+    })
+    .sort((a, b) => a.group.toLowerCase().localeCompare(b.group.toLowerCase()));
 }
 
 /** Names in the order of the server's sorted(..., key=str.lower). */
@@ -428,6 +493,7 @@ export const FAKE_PATHS: SharePathInfo[] = [
 export interface FakeSmbOptions {
   users?: FakeUser[];
   shares?: FakeShare[];
+  groups?: FakeGroup[];
   status?: Partial<FakeServiceStatus>;
   paths?: SharePathInfo[];
   mySmb?: FakeMySmb;
@@ -517,6 +583,7 @@ export async function fakeSmbApi(page: Page, options: FakeSmbOptions = {}): Prom
   const fake: FakeSmbApi = {
     users,
     shares: options.shares ?? [],
+    groups: options.groups ?? [],
     status: { ...OK_STATUS, ...options.status },
     paths: options.paths ?? FAKE_PATHS,
     repairs: {},
@@ -543,8 +610,129 @@ export async function fakeSmbApi(page: Page, options: FakeSmbOptions = {}): Prom
   const findUser = (id: number) => fake.users.find((u) => u.id === id);
 
   function withAvailability(share: FakeShare): FakeShare {
-    share.available = share.served && (share.guest_ok || share.access.some((a) => a.effective));
+    share.available =
+      share.served &&
+      (share.guest_ok ||
+        share.access.some((a) => a.effective) ||
+        share.group_access.some((g) => g.members.some((m) => m.effective)));
     return share;
+  }
+
+  /** A deleted user, or one made an administrator, leaves every group. */
+  function leaveGroups(userId: number): void {
+    for (const group of fake.groups) group.members = group.members.filter((m) => m.user_id !== userId);
+    refreshGroups();
+  }
+
+  const findGroup = (name: string) => fake.groups.find((g) => g.name.toLowerCase() === name.toLowerCase());
+  const groupById = (id: number) => fake.groups.find((g) => g.id === id);
+  // Group ids are never handed out twice (AUTOINCREMENT).
+  let lastGroupId = Math.max(0, ...fake.groups.map((g) => g.id));
+  type GroupEntry = { group_id: number; group: string; level: Level };
+  type MemberEntry = { user_id: number; username: string };
+
+  /** As service._check_group_access: every group of the entries exists under the name sent. */
+  function groupAccessProblem(entries: GroupEntry[]): FakeResponse | null {
+    for (const entry of entries) {
+      const group = groupById(entry.group_id);
+      if (!group) return detail(400, groupMissing(entry.group_id));
+      if (group.name !== entry.group) return detail(409, groupIsNow(group.id, group.name));
+    }
+    return null;
+  }
+
+  /** As groups._check_members, with the texts of service._check_access. */
+  function membersProblem(entries: MemberEntry[]): FakeResponse | null {
+    return accessProblem(entries.map((entry) => ({ ...entry, level: 'read' as Level })));
+  }
+
+  function membersOf(entries: MemberEntry[]): FakeGroup['members'] {
+    return entries
+      .map((entry) => ({ ...entry, smb_state: findUser(entry.user_id)?.smb.state ?? ('off' as SmbState) }))
+      .sort((a, b) => a.username.localeCompare(b.username));
+  }
+
+  /** The shares of each group, and each share's group access with the members as they are now. */
+  function refreshGroups(): void {
+    for (const group of fake.groups) group.shares = [];
+    for (const share of fake.shares) {
+      const kept = share.group_access
+        .map((entry) => ({ group: groupById(entry.group_id)?.name ?? '', level: entry.level }))
+        .filter((entry) => entry.group !== '');
+      share.group_access = groupAccessOf(fake.groups, kept, share.served);
+      for (const entry of share.group_access) {
+        groupById(entry.group_id)?.shares.push({ share: share.name, level: entry.level });
+      }
+      withAvailability(share);
+    }
+    for (const group of fake.groups) group.shares.sort((a, b) => a.share.toLowerCase().localeCompare(b.share.toLowerCase()));
+  }
+
+  /** The answers of /groups (supervisor/src/shares/groups.py). */
+  function groupAnswer(method: string, path: string, search: string, data: Record<string, unknown>): FakeResponse | null {
+    refreshGroups();
+    if (path === '/groups' && method === 'GET') return ok(fake.groups);
+    if (path === '/groups' && method === 'POST') {
+      const name = String(data.name);
+      if (!USERNAME_RULE.test(name)) return detail(400, GROUP_NAME_RULE);
+      if (findGroup(name)) return detail(409, groupExists(name));
+      const entries = (data.members as MemberEntry[] | undefined) ?? [];
+      const refused = membersProblem(entries);
+      if (refused) return refused;
+      lastGroupId += 1;
+      const group: FakeGroup = { id: lastGroupId, name, version: 1, members: membersOf(entries), shares: [] };
+      fake.groups.push(group);
+      fake.groups.sort((a, b) => a.name.localeCompare(b.name));
+      return ok({ ...group, warnings: [] });
+    }
+    const one = path.match(/^\/groups\/(\d+)$/);
+    if (!one) return null;
+    // As FastAPI: the name the request was made for is required (422) before the group is looked up.
+    const sentName = method === 'DELETE' ? new URLSearchParams(search).get('name') : (data.name as string | undefined);
+    if (method === 'DELETE' && sentName === null) return missing('query', 'name');
+    if (method === 'PATCH' && typeof sentName !== 'string') return missing('body', 'name');
+    const group = groupById(Number(one[1]));
+    if (!group) return detail(404, 'Group not found');
+    if (method === 'GET') return ok(group);
+    if (sentName !== group.name) return detail(409, groupIsNow(group.id, group.name));
+    if (method === 'DELETE') {
+      fake.groups = fake.groups.filter((g) => g !== group);
+      for (const share of fake.shares) {
+        const before = share.group_access.length;
+        share.group_access = share.group_access.filter((g) => g.group_id !== group.id);
+        if (share.group_access.length !== before) share.version += 1;
+      }
+      refreshGroups();
+      return ok({ status: 'deleted', warnings: [...fake.changeWarnings] });
+    }
+    if (method === 'PATCH') {
+      if (data.expected_version !== undefined && data.expected_version !== group.version) {
+        return detail(409, GROUP_VERSION_CONFLICT);
+      }
+      let changed = false;
+      if (typeof data.new_name === 'string' && data.new_name !== group.name) {
+        if (!USERNAME_RULE.test(data.new_name)) return detail(400, GROUP_NAME_RULE);
+        const other = findGroup(data.new_name);
+        if (other && other !== group) return detail(409, groupExists(data.new_name));
+        group.name = data.new_name;
+        changed = true;
+      }
+      if (Array.isArray(data.members)) {
+        const entries = data.members as MemberEntry[];
+        const refused = membersProblem(entries);
+        if (refused) return refused;
+        const members = membersOf(entries);
+        const key = (m: { user_id: number; username: string }) => `${m.user_id}:${m.username}`;
+        if (members.map(key).join('|') !== group.members.map(key).join('|')) {
+          group.members = members;
+          changed = true;
+        }
+      }
+      if (changed) group.version += 1;
+      refreshGroups();
+      return ok({ ...group, warnings: [...fake.changeWarnings] });
+    }
+    return null;
   }
 
   /** As service._check_access: the entries of a create or PATCH, checked against the users now. */
@@ -563,6 +751,11 @@ export async function fakeSmbApi(page: Page, options: FakeSmbOptions = {}): Prom
 
   function answer(method: string, path: string, search: string, body: unknown): FakeResponse | null {
     const data = (body ?? {}) as Record<string, unknown>;
+
+    // ---- Groups ----
+    // The shares name each group as it is now, with its members as they are now.
+    if (fake.groups.length > 0) refreshGroups();
+    if (path === '/groups' || path.startsWith('/groups/')) return groupAnswer(method, path, search, data);
 
     // ---- Shares ----
     if (path === '/shares/paths' && method === 'GET') return ok(fake.paths);
@@ -617,6 +810,9 @@ export async function fakeSmbApi(page: Page, options: FakeSmbOptions = {}): Prom
       const entries = (data.access as AccessEntry[] | undefined) ?? [];
       const refused = accessProblem(entries);
       if (refused) return refused;
+      const groupEntries = (data.group_access as GroupEntry[] | undefined) ?? [];
+      const groupRefused = groupAccessProblem(groupEntries);
+      if (groupRefused) return groupRefused;
       const guest = data.guest_ok === true;
       if (guest && data.encryption_required === true) return detail(400, GUEST_ENCRYPTION);
       const share = withAvailability(
@@ -626,6 +822,7 @@ export async function fakeSmbApi(page: Page, options: FakeSmbOptions = {}): Prom
           browseable: data.browseable !== false,
           guest_ok: guest,
           access: accessOf(fake.users, entries),
+          group_access: groupAccessOf(fake.groups, groupEntries),
           encryption_required: data.encryption_required === true,
           time_machine: data.time_machine === true,
           previous_versions: data.previous_versions === true,
@@ -672,6 +869,9 @@ export async function fakeSmbApi(page: Page, options: FakeSmbOptions = {}): Prom
         const entries = 'access' in data ? (data.access as AccessEntry[]) : null;
         const refused = entries ? accessProblem(entries) : null;
         if (refused) return refused;
+        const groupEntries = 'group_access' in data ? (data.group_access as GroupEntry[]) : null;
+        const groupRefused = groupEntries ? groupAccessProblem(groupEntries) : null;
+        if (groupRefused) return groupRefused;
         // As the server: a share that is not served is saved only when the
         // result grants nothing; a PATCH that only dismisses the import notes
         // grants nothing and is not checked. A new folder is taken as one that
@@ -679,7 +879,9 @@ export async function fakeSmbApi(page: Page, options: FakeSmbOptions = {}): Prom
         const sent = Object.keys(data).filter((key) => key !== 'expected_version');
         const dismissOnly = sent.length === 1 && sent[0] === 'import_notes';
         const served = share.served || 'path' in data;
-        const granted = entries ? entries.length > 0 : share.access.length > 0;
+        const granted =
+          (entries ? entries.length > 0 : share.access.length > 0) ||
+          (groupEntries ? groupEntries.length > 0 : share.group_access.length > 0);
         const guest = 'guest_ok' in data ? data.guest_ok === true : share.guest_ok;
         if (!dismissOnly && !served && (granted || guest)) {
           return detail(400, share.path_problem ?? 'The share is not served');
@@ -705,10 +907,17 @@ export async function fakeSmbApi(page: Page, options: FakeSmbOptions = {}): Prom
           share.served = true;
           share.path_problem = null;
           share.access = accessOf(fake.users, share.access, true);
+          share.group_access = groupAccessOf(fake.groups, share.group_access, true);
         }
         // As the server: an access list that is sent unchanged writes nothing.
         if (entries && !sameEntries(entries, share.access)) {
           share.access = accessOf(fake.users, entries, share.served);
+          changed = true;
+        }
+        const groupText = (list: { group_id: number; level: Level }[]) =>
+          list.map((g) => `${g.group_id}:${g.level}`).sort().join('|');
+        if (groupEntries && groupText(groupEntries) !== groupText(share.group_access)) {
+          share.group_access = groupAccessOf(fake.groups, groupEntries, share.served);
           changed = true;
         }
         if ('import_notes' in data && share.import_notes.length > 0) {
@@ -750,6 +959,7 @@ export async function fakeSmbApi(page: Page, options: FakeSmbOptions = {}): Prom
         // The name the request was prepared for: the id may name someone else now.
         if (queryName !== user.username) return stale();
         fake.users = fake.users.filter((u) => u !== user);
+        leaveGroups(user.id);
         return ok({ status: 'ok', message: 'User deleted', warnings: [...fake.userWarnings] });
       }
       if (method === 'PUT' && !userPath[2]) {
@@ -780,6 +990,9 @@ export async function fakeSmbApi(page: Page, options: FakeSmbOptions = {}): Prom
           for (const share of fake.shares) {
             share.access = share.access.map((a) => (a.user_id === user.id && a.username === old ? { ...a, username: newName } : a));
           }
+          for (const group of fake.groups) {
+            group.members = group.members.map((m) => (m.user_id === user.id ? { ...m, username: newName } : m));
+          }
           return ok({ ...user, warnings: [...fake.userWarnings] });
         }
         if (data.is_admin === true && !user.is_admin) {
@@ -789,6 +1002,7 @@ export async function fakeSmbApi(page: Page, options: FakeSmbOptions = {}): Prom
             share.access = share.access.filter((a) => a.user_id !== user.id);
             withAvailability(share);
           }
+          leaveGroups(user.id);
         } else if (data.is_admin === false && user.is_admin) {
           user.is_admin = false;
           user.smb = smbStatus('off', user.username);
@@ -839,6 +1053,8 @@ export async function fakeSmbApi(page: Page, options: FakeSmbOptions = {}): Prom
   await page.route(
     (url) =>
       url.pathname.startsWith('/api/v1/shares/') ||
+      url.pathname === '/api/v1/groups' ||
+      url.pathname.startsWith('/api/v1/groups/') ||
       url.pathname === '/api/v1/auth/users' ||
       url.pathname.startsWith('/api/v1/auth/users/') ||
       url.pathname === '/api/v1/auth/me/smb' ||

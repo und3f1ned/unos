@@ -18,7 +18,7 @@ from ..security.validators import validate_new_username
 from ..shares import accounts, service
 from ..shares.account_state import SmbAccountState, derive_smb_state
 from ..shares.constants import smb_password_problem
-from ..shares.models import SmbAccount, SmbShare
+from ..shares.models import SmbAccount, SmbShare, UserGroup, UserGroupMember
 
 # Rate limiter for auth endpoints
 limiter = Limiter(key_func=get_remote_address)
@@ -127,6 +127,12 @@ async def _my_smb_status(db: AsyncSession, user: User, row: SmbAccount | None) -
     """The SMB state of ``user`` and the shares they can use. Database only."""
     account = derive_smb_state(user, row)
     active = account.state is SmbAccountState.ACTIVE
+    # The groups the user is a member of under their current name.
+    groups = set((await db.execute(
+        select(UserGroupMember.group_id)
+        .join(UserGroup, UserGroup.id == UserGroupMember.group_id)
+        .where(UserGroupMember.user_id == user.id, UserGroupMember.username == user.username)
+    )).scalars())
     shares: list[MySmbShare] = []
     for share in (await db.execute(select(SmbShare))).scalars():
         if not isinstance(share.name, str):
@@ -134,6 +140,9 @@ async def _my_smb_status(db: AsyncSession, user: User, row: SmbAccount | None) -
         levels = {
             entry.level for entry in share.access
             if entry.user_id == user.id and entry.username == user.username and entry.level in ("read", "write")
+        } | {
+            entry.level for entry in share.group_access
+            if entry.group_id in groups and entry.level in ("read", "write")
         }
         guest = bool(share.guest_ok)
         if not levels and not guest:

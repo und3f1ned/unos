@@ -323,6 +323,23 @@ manager, encrypted backup uploads, health checks, CI checks).
   `ups_name`, `host` and `port` are checked before they reach `upsc`.
 
 ### Added
+- Groups of users (ADR-0383). The **Users** page has a **Groups** card: make
+  a group, choose its members (users who are not administrators), rename it
+  or delete it. On the **Shares** page a share's access list gives each group
+  **No access**, **Read only** or **Read & write**, and the share's card lists
+  each group with its members. Every member whose SMB is on gets the group's
+  access, and so does a user added to the group later; a user who also has a
+  level of their own, or through another group, gets the higher one. Removing
+  a member, lowering a group's level or deleting the group disconnects the
+  open connections to its shares. A group lives in UNOS's database only:
+  smb.conf names its members, and no group is made on the host, so the host's
+  own groups, uninstall.sh and the restore of a backup (which brings the
+  groups back with the database) have nothing more to handle. A deleted user,
+  or one made an administrator, leaves every group, and a renamed user stays
+  in them under the new name. The API: `GET`, `POST /api/v1/groups`, `GET`,
+  `PATCH`, `DELETE /api/v1/groups/{id}`, which take the group's name as the
+  page saw it (409 after a rename), and `group_access` in the share API; the
+  audit log records `group_created`, `group_updated` and `group_deleted`.
 - Apps of several containers (ADR-0381): an app of the catalog may have
   companion containers beside its main one, on a Docker network of its own
   (`unos-app-<app>`, where each answers to its name), which UNOS installs,

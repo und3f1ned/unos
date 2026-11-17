@@ -1657,8 +1657,15 @@
       ],
       "passes": false,
       "adr": [
-        "ADR-0076"
-      ]
+        "ADR-0076",
+        "ADR-0383"
+      ],
+      "verified_by": [
+        "supervisor/tests/test_share_groups.py",
+        "webui/tests/users.spec.ts",
+        "webui/tests/shares.spec.ts"
+      ],
+      "notes": "Built on the branch shares.group-access (ADR-0383), not deployed yet. A group is a row of UNOS's database (user_groups, user_group_members, smb_share_group_access), never a host group: smb.conf names each member whose SMB account is active in the lists of the shares the group has access to, with the higher of the member's own level and their groups' levels. /api/v1/groups (GET, POST, GET/PATCH/DELETE /groups/{name}) and group_access in the share API; the Groups card of the Users page and the groups of a share's access picker and card. A member added gets the access at the save; a member removed, a lowered level or a deleted group closes the share's open connections (ADR-0103). A deleted or promoted user leaves every group, a renamed one stays under the new name; the reconcile purges stale rows; a backup holds the groups and a restore brings them back (the tables optional for older backups). test_share_groups.py proves the steps against the share fixture and, with the FakeSambaHost, a member's lists, the close-share at a removal and the deletion of the user; users.spec.ts and shares.spec.ts the pages on route fakes and a group made, renamed through its user and deleted on the stand-in. Host-level (smb.conf, Samba's access): passes only after the device check and its re-check after a reboot (ADR-0018). The check by hand, with two users unoscheck<hex>a and b with SMB on and a share unoscheck<hex> without access of its own: a group with a, given read: testparm names a in valid users and nobody in write list, smbclient as a lists and reads and a put is refused (NT_STATUS_ACCESS_DENIED), b is refused at the tree connect; the group given write: a's put works and the file gets the group unos-smb; b added to the group: b connects and writes without a change of the share; with b's session open, b removed: b's next command fails (NT_STATUS_NETWORK_NAME_DELETED) and a new connection is refused; a given read of its own beside the group's write: a still writes; the group deleted: valid users = root and available = no; getent group names no group of UNOS's and /etc/group, /etc/passwd and passdb are as before; then the share, its folder and the users deleted. After a reboot: a group with a member and write access made before it is listed by GET /groups and the member writes."
     },
     {
       "id": "shares.smb-discovery",

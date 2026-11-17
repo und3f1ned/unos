@@ -3,10 +3,13 @@ import { E2E_ADMIN, test, expect } from './fixtures';
 import {
   ADMIN_REASON,
   COMMON_PASSWORD_RULE,
+  GROUP_VERSION_CONFLICT,
   accessOf,
+  fakeGroup,
   fakeShare,
   fakeSmbApi,
   fakeUser,
+  groupAccessOf,
   type FakeUser,
 } from './shares-fakes';
 
@@ -295,7 +298,7 @@ test.describe('Users page SMB (fake data)', () => {
     });
     await page.goto('/users');
     const warning = (name: string) =>
-      `Administrators cannot use SMB: making ${name} an administrator removes SMB access and their share permissions, and ends their open SMB connections`;
+      `Administrators cannot use SMB: making ${name} an administrator removes SMB access, their share permissions and their groups, and ends their open SMB connections`;
 
     // SMB off and no share access: nothing to lose.
     await userRow(page, 'carol').getByRole('button', { name: 'Edit user carol' }).click();
@@ -826,7 +829,7 @@ test.describe('Users page in Russian (fake data)', () => {
     await expect(
       bob.getByText(
         'Администраторы не могут пользоваться SMB: назначение bob администратором отключит доступ по SMB, ' +
-          'удалит права на общие папки и закроет открытые подключения по SMB',
+          'удалит права на общие папки и членство в группах и закроет открытые подключения по SMB',
       ),
     ).toBeVisible();
     await bob.getByRole('button', { name: 'Закрыть', exact: true }).click();
@@ -1065,5 +1068,256 @@ test.describe('Sessions', () => {
     await expect(
       userRow(page, E2E_ADMIN.username).getByRole('button', { name: `End the sessions of ${E2E_ADMIN.username}` }),
     ).toHaveCount(0);
+  });
+});
+
+// ---- Groups of users (shares.group-access) ----
+
+/** The card of the groups, and the item of `name` in it. */
+const groupsCard = (page: Page) =>
+  page.locator('.card').filter({ has: page.getByRole('heading', { name: /^(Groups|Группы) \(\d+\)$/ }) });
+const groupItem = (page: Page, name: string) =>
+  groupsCard(page).getByRole('listitem').filter({ has: page.getByRole('heading', { name, exact: true }) });
+
+test.describe('Groups (fake data)', () => {
+  test('a group is made with its members, then renamed with fewer members, then deleted', async ({
+    authenticatedPage: page,
+  }) => {
+    const fake = await fakeSmbApi(page, { users: fakeUsers() });
+    await page.goto('/users');
+    await expect(groupsCard(page).getByRole('heading', { name: 'Groups (0)' })).toBeVisible();
+    await expect(groupsCard(page).getByText('No groups yet.')).toBeVisible();
+
+    await groupsCard(page).getByRole('button', { name: 'New group' }).click();
+    let dialog = page.getByRole('dialog', { name: 'New group' });
+    // The rule of usernames, checked as it is typed.
+    await dialog.getByLabel('Name', { exact: true }).fill('Family');
+    await expect(dialog.getByText('Use 1–32 lowercase letters, digits, _ or -, starting with a letter')).toBeVisible();
+    await dialog.getByLabel('Name', { exact: true }).fill('family');
+    // Users who are not administrators; one whose name SMB cannot use cannot be a member.
+    await expect(dialog.getByRole('checkbox', { name: 'admin' })).toHaveCount(0);
+    await expect(dialog.getByRole('checkbox', { name: /^Erin\.Old/ })).toBeDisabled();
+    await dialog.getByRole('checkbox', { name: 'alice' }).check();
+    await dialog.getByRole('checkbox', { name: /^bob/ }).check();
+    await expect(dialog.getByText('Administrators are not listed: they cannot use SMB.')).toBeVisible();
+    await dialog.getByRole('button', { name: 'Create group' }).click();
+
+    await expect(dialog).toBeHidden();
+    expect(fake.writes.at(-1)).toEqual({
+      method: 'POST',
+      path: '/groups',
+      body: { name: 'family', members: [{ user_id: 2, username: 'alice' }, { user_id: 3, username: 'bob' }] },
+    });
+    await expect(groupsCard(page).getByText('Group "family" created')).toBeVisible();
+    const item = groupItem(page, 'family');
+    // A member whose SMB is not on yet is marked with the state.
+    await expect(item.getByText(/^Members:/).locator('..')).toHaveText(/Members:\s*alice\s*bob\s*Password needed/);
+    await expect(item.getByText('No share access yet: give it on the Shares page.')).toBeVisible();
+
+    await item.getByRole('button', { name: 'Edit group family' }).click();
+    dialog = page.getByRole('dialog', { name: 'Edit group family' });
+    await expect(dialog.getByRole('checkbox', { name: 'alice' })).toBeChecked();
+    await dialog.getByRole('checkbox', { name: /^bob/ }).uncheck();
+    await dialog.getByLabel('Name', { exact: true }).fill('kids');
+    await dialog.getByRole('button', { name: 'Save' }).click();
+    await expect(dialog).toBeHidden();
+    expect(fake.writes.at(-1)).toEqual({
+      method: 'PATCH',
+      path: '/groups/1',
+      body: { name: 'family', expected_version: 1, new_name: 'kids', members: [{ user_id: 2, username: 'alice' }] },
+    });
+    await expect(groupItem(page, 'kids').getByText(/^Members:/).locator('..')).toHaveText(/^\s*Members:\s*alice\s*$/);
+
+    await groupItem(page, 'kids').getByRole('button', { name: 'Delete group kids' }).click();
+    const confirm = page.getByRole('dialog', { name: 'Delete group' });
+    await expect(confirm).toContainText(
+      'Delete group kids? Its members lose the access that the group gives them; the users stay.',
+    );
+    await confirm.getByRole('button', { name: 'Delete group' }).click();
+    await expect(confirm).toBeHidden();
+    expect(fake.writes.at(-1)).toEqual({ method: 'DELETE', path: '/groups/1?name=kids', body: null });
+    await expect(groupsCard(page).getByText('No groups yet.')).toBeVisible();
+  });
+
+  test('a group lists the shares it has access to', async ({ authenticatedPage: page }) => {
+    const users = fakeUsers();
+    const groups = [fakeGroup(1, 'family', users, [2, 4])];
+    await fakeSmbApi(page, {
+      users,
+      groups,
+      shares: [
+        fakeShare('docs', { group_access: groupAccessOf(groups, [{ group: 'family', level: 'write' }]) }),
+        fakeShare('media', { group_access: groupAccessOf(groups, [{ group: 'family', level: 'read' }]) }),
+      ],
+    });
+    await page.goto('/users');
+    const item = groupItem(page, 'family');
+    await expect(item.getByText(/^Access:/).locator('..')).toHaveText('Access: docs (Read & write), media (Read only)');
+    await expect(item.getByText(/^Members:/).locator('..')).toHaveText(/Members:\s*alice\s*carol\s*Off/);
+  });
+
+  test('a name the server refuses, and a group changed meanwhile, are shown in the dialog', async ({
+    authenticatedPage: page,
+  }) => {
+    const users = fakeUsers();
+    const fake = await fakeSmbApi(page, { users, groups: [fakeGroup(1, 'family', users, [2])] });
+    await page.goto('/users');
+
+    // A name that another group has.
+    await groupsCard(page).getByRole('button', { name: 'New group' }).click();
+    let dialog = page.getByRole('dialog', { name: 'New group' });
+    await dialog.getByLabel('Name', { exact: true }).fill('family');
+    await dialog.getByRole('button', { name: 'Create group' }).click();
+    await expect(dialog.locator('.alert', { hasText: 'Group was not created' })).toContainText(
+      'Group family already exists',
+    );
+    await dialog.getByRole('button', { name: 'Cancel' }).click();
+
+    // Someone else added carol meanwhile: the save is refused and the form shows the group as it is now.
+    await groupItem(page, 'family').getByRole('button', { name: 'Edit group family' }).click();
+    dialog = page.getByRole('dialog', { name: 'Edit group family' });
+    fake.groups[0] = fakeGroup(1, 'family', users, [2, 4], 2);
+    await dialog.getByRole('checkbox', { name: /^bob/ }).check();
+    await dialog.getByRole('button', { name: 'Save' }).click();
+    const refused = dialog.locator('.alert', { hasText: 'Group was not saved' });
+    await expect(refused).toContainText(GROUP_VERSION_CONFLICT);
+    await expect(refused).toContainText('The form now shows the current members of the group: make your changes again.');
+    await expect(dialog.getByRole('checkbox', { name: /^carol/ })).toBeChecked();
+    await expect(dialog.getByRole('checkbox', { name: /^bob/ })).not.toBeChecked();
+
+    // The group was deleted meanwhile: the dialog closes, and the card says why and lists it no more.
+    await dialog.getByRole('checkbox', { name: /^bob/ }).check();
+    fake.groups = [];
+    await dialog.getByRole('button', { name: 'Save' }).click();
+    await expect(dialog).toBeHidden();
+    await expect(groupsCard(page).locator('.alert', { hasText: 'The group was not changed' })).toContainText(
+      'Group not found',
+    );
+    await expect(groupsCard(page).getByText('No groups yet.')).toBeVisible();
+  });
+
+  test('the groups are in Russian once Russian is chosen', async ({ authenticatedPage: page }) => {
+    const users = fakeUsers();
+    await fakeSmbApi(page, { users, groups: [fakeGroup(1, 'family', users, [2])] });
+    await page.evaluate(() => localStorage.setItem('unos-locale', 'ru'));
+    await page.goto('/users');
+
+    await expect(groupsCard(page).getByRole('heading', { name: 'Группы (1)' })).toBeVisible();
+    const item = groupItem(page, 'family');
+    await expect(item.getByText(/^Участники:/).locator('..')).toHaveText(/^\s*Участники:\s*alice\s*$/);
+    await expect(
+      item.getByText('Доступа к общим папкам пока нет: выдайте его на странице «Общие папки».'),
+    ).toBeVisible();
+    await groupsCard(page).getByRole('button', { name: 'Новая группа' }).click();
+    const dialog = page.getByRole('dialog', { name: 'Новая группа' });
+    await expect(dialog.getByLabel('Имя', { exact: true })).toBeVisible();
+    await expect(dialog.getByRole('button', { name: 'Создать группу' })).toBeVisible();
+    await dialog.getByRole('button', { name: 'Отмена' }).click();
+    await item.getByRole('button', { name: 'Удалить группу family' }).click();
+    await expect(page.getByRole('dialog', { name: 'Удаление группы' })).toContainText(
+      'Удалить группу family? Её участники потеряют доступ, который даёт группа; сами пользователи останутся.',
+    );
+  });
+});
+
+// ---- Groups on the real server: no host group is made, so the stand-in needs no Samba ----
+
+test.describe('Groups', () => {
+  let token = '';
+  const createdUsers: string[] = [];
+  const createdGroups: { id: number; name: string }[] = [];
+  const headers = () => ({ Authorization: `Bearer ${token}` });
+
+  test.beforeAll(async ({ request }) => {
+    token = await apiLogin(request, E2E_ADMIN);
+  });
+
+  test.afterAll(async ({ request }) => {
+    for (const group of createdGroups) {
+      await request.delete(`/api/v1/groups/${group.id}?name=${encodeURIComponent(group.name)}`, {
+        headers: headers(),
+      });
+    }
+    const response = await request.get('/api/v1/auth/users', { headers: headers() });
+    const users = (await response.json()) as { id: number; username: string }[];
+    for (const user of users.filter((u) => createdUsers.includes(u.username))) {
+      const name = encodeURIComponent(user.username);
+      await request.delete(`/api/v1/auth/users/${user.id}?username=${name}`, { headers: headers() });
+    }
+  });
+
+  test('a group made on the Users page keeps its members, follows a rename and loses a deleted user', async ({
+    authenticatedPage: page,
+    request,
+  }) => {
+    const suffix = Date.now().toString(36);
+    const [first, second, group] = [`e2e_gm1_${suffix}`, `e2e_gm2_${suffix}`, `e2e_group_${suffix}`];
+    for (const username of [first, second]) {
+      const response = await request.post('/api/v1/auth/users', {
+        headers: headers(),
+        data: { username, password: 'e2e-Group-Password-1' },
+      });
+      expect(response.ok(), `create ${username}: HTTP ${response.status()}`).toBeTruthy();
+      createdUsers.push(username);
+    }
+
+    await page.goto('/users');
+    await groupsCard(page).getByRole('button', { name: 'New group' }).click();
+    const dialog = page.getByRole('dialog', { name: 'New group' });
+    await dialog.getByLabel('Name', { exact: true }).fill(group);
+    await dialog.getByRole('checkbox', { name: new RegExp(`^${first}`) }).check();
+    await dialog.getByRole('checkbox', { name: new RegExp(`^${second}`) }).check();
+    await dialog.getByRole('button', { name: 'Create group' }).click();
+    await expect(dialog).toBeHidden();
+    await expect(groupItem(page, group).getByText(/^Members:/).locator('..')).toHaveText(
+      new RegExp(`Members:\\s*${first}\\s*Off\\s*${second}\\s*Off`),
+    );
+
+    const listed = (await (await request.get('/api/v1/groups', { headers: headers() })).json()) as {
+      id: number;
+      name: string;
+    }[];
+    const groupId = listed.find((g) => g.name === group)!.id;
+    createdGroups.push({ id: groupId, name: group });
+    const stored = async () => {
+      const response = await request.get(`/api/v1/groups/${groupId}`, { headers: headers() });
+      expect(response.ok()).toBeTruthy();
+      return (await response.json()) as { members: { username: string }[]; shares: unknown[] };
+    };
+    expect((await stored()).members.map((m) => m.username)).toEqual([first, second]);
+
+    // A rename keeps the user in the group under the new name.
+    const renamed = `e2e_gm3_${suffix}`;
+    createdUsers.push(renamed);
+    const users = (await (await request.get('/api/v1/auth/users', { headers: headers() })).json()) as {
+      id: number;
+      username: string;
+    }[];
+    const firstId = users.find((u) => u.username === first)!.id;
+    const secondId = users.find((u) => u.username === second)!.id;
+    const put = await request.put(`/api/v1/auth/users/${firstId}`, {
+      headers: headers(),
+      data: { username: first, new_username: renamed },
+    });
+    expect(put.ok(), `rename: HTTP ${put.status()}`).toBeTruthy();
+    // Members are listed by name.
+    expect((await stored()).members.map((m) => m.username)).toEqual([second, renamed]);
+
+    // A deleted user leaves the group; the page shows the group as it is after the deletion.
+    await page.reload();
+    await userRow(page, second).getByRole('button', { name: `Delete user ${second}` }).click();
+    await page.getByRole('dialog', { name: 'Delete user' }).getByRole('button', { name: 'Delete user' }).click();
+    await expect(groupItem(page, group).getByText(/^Members:/).locator('..')).toHaveText(
+      new RegExp(`^\\s*Members:\\s*${renamed}\\s*Off\\s*$`),
+    );
+    expect((await stored()).members.map((m) => m.username)).toEqual([renamed]);
+    expect(secondId).toBeGreaterThan(0);
+
+    // The group's deletion keeps the user.
+    await groupItem(page, group).getByRole('button', { name: `Delete group ${group}` }).click();
+    await page.getByRole('dialog', { name: 'Delete group' }).getByRole('button', { name: 'Delete group' }).click();
+    await expect(groupItem(page, group)).toHaveCount(0);
+    expect((await request.get(`/api/v1/groups/${groupId}`, { headers: headers() })).status()).toBe(404);
+    await expect(userRow(page, renamed)).toBeVisible();
   });
 });

@@ -45,6 +45,7 @@ from .auth.router import router as auth_router
 from .system.router import router as system_router
 from .storage.router import router as storage_router
 from .shares.router import router as shares_router
+from .shares.groups import router as groups_router
 from .shares import repair_router
 from .shares.repair_router import router as shares_repair_router
 from .containers.router import router as containers_router
@@ -269,6 +270,7 @@ for _router in (
     storage_router,
     shares_router,
     shares_repair_router,
+    groups_router,
     containers_router,
     apps_router,
     files_router,

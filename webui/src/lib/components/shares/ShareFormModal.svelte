@@ -2,6 +2,7 @@
 	import { createEventDispatcher, onMount } from 'svelte';
 	import { getUsers, type User } from '$lib/api/auth';
 	import { ApiError } from '$lib/api/client';
+	import { getGroups, type Group } from '$lib/api/groups';
 	import {
 		createSmbShare,
 		getSmbShare,
@@ -17,9 +18,12 @@
 	import ShareAccessPicker from './ShareAccessPicker.svelte';
 	import {
 		accessEntries,
+		groupAccessEntries,
+		groupLevelsFromAccess,
 		levelsFromAccess,
 		pickableUsers,
 		sameAccess,
+		sameGroupAccess,
 		type AccessChoice
 	} from './access';
 	import { folderParts, folderProblem, joinSharePath, splitSharePath } from './paths';
@@ -51,6 +55,7 @@
 	let browseable = true;
 	let guestOk = false;
 	let levels: Record<string, AccessChoice> = {};
+	let groupLevels: Record<string, AccessChoice> = {};
 	// The protocol options (ADR-0380), each off by default.
 	let options: Record<ShareOption, boolean> = noOptions();
 
@@ -59,6 +64,7 @@
 	}
 
 	let users: User[] = [];
+	let groups: Group[] = [];
 	let usersLoading = true;
 	let usersError = '';
 
@@ -79,6 +85,7 @@
 			browseable = from.browseable;
 			guestOk = from.guest_ok;
 			levels = levelsFromAccess(from.access);
+			groupLevels = groupLevelsFromAccess(from.group_access ?? []);
 			options = {
 				encryption_required: from.encryption_required,
 				time_machine: from.time_machine,
@@ -92,6 +99,7 @@
 			browseable = true;
 			guestOk = false;
 			levels = {};
+			groupLevels = {};
 			options = noOptions();
 		}
 		attempted = false;
@@ -107,13 +115,15 @@
 		return e instanceof Error ? e.message : String(e);
 	}
 
+	/** The users and the groups that the access picker lists. */
 	async function loadUsers() {
 		usersLoading = true;
 		usersError = '';
 		try {
-			users = await getUsers();
+			[users, groups] = await Promise.all([getUsers(), getGroups()]);
 		} catch (e) {
 			users = [];
+			groups = [];
 			usersError = messageOf(e);
 		} finally {
 			usersLoading = false;
@@ -151,7 +161,10 @@
 	// until its folder is changed to one that can be served. Access it still has
 	// can only be removed: the server saves such a share once it grants nothing.
 	$: accessLocked = editing && loaded?.served === false && (!pathChanged || problem !== '');
-	$: loadedGrants = (loaded?.access.length ?? 0) > 0 || loaded?.guest_ok === true;
+	$: loadedGrants =
+		(loaded?.access.length ?? 0) > 0 ||
+		(loaded?.group_access?.length ?? 0) > 0 ||
+		loaded?.guest_ok === true;
 	// While access is locked, guest access can be turned off, and on again
 	// only when the loaded share has it. Guests' connections are never encrypted:
 	// a share that requires encryption has no guests (the server refuses both).
@@ -180,6 +193,9 @@
 	$: loadedLevels = levelsFromAccess(loaded?.access ?? []);
 	$: currentAccess = accessEntries(listedUsers, levels);
 	$: loadedAccess = accessEntries(listedUsers, loadedLevels);
+	$: loadedGroupLevels = groupLevelsFromAccess(loaded?.group_access ?? []);
+	$: currentGroupAccess = groupAccessEntries(groups, groupLevels);
+	$: loadedGroupAccess = groupAccessEntries(groups, loadedGroupLevels);
 
 	// A changed access list or guest setting is always sent: while access is
 	// locked, the picker and the guest checkbox can only remove access, or give
@@ -191,6 +207,7 @@
 		if (browseable !== from.browseable) patch.browseable = browseable;
 		if (guestOk !== from.guest_ok) patch.guest_ok = guestOk;
 		if (!sameAccess(currentAccess, loadedAccess)) patch.access = currentAccess;
+		if (!sameGroupAccess(currentGroupAccess, loadedGroupAccess)) patch.group_access = currentGroupAccess;
 		for (const name of SHARE_OPTIONS) {
 			if (options[name] !== from[name]) patch[name] = options[name];
 		}
@@ -215,6 +232,7 @@
 					browseable,
 					guest_ok: guestOk,
 					access: currentAccess,
+					group_access: currentGroupAccess,
 					...options
 				});
 				dispatch('saved', { share: created, created: true });
@@ -236,6 +254,9 @@
 			if (e instanceof ApiError && (e.status === 409 || e.status === 404)) stale = true;
 			if (e instanceof ApiError && e.status === 409) {
 				await reloadAfterConflict();
+			} else if (e instanceof ApiError && e.status === 400) {
+				// e.g. "Group 3 does not exist": a group deleted meanwhile leaves the picker.
+				await loadUsers();
 			}
 		} finally {
 			saving = false;
@@ -244,7 +265,7 @@
 
 	/**
 	 * After a 409, load what the server has now: the users (an id may name
-	 * another user now) and, when editing, the share. A share changed meanwhile
+	 * another user now) and the groups and, when editing, the share. A share changed meanwhile
 	 * resets the form, since sending this form's access list again would undo
 	 * the other change.
 	 */
@@ -402,9 +423,12 @@
 			<ShareAccessPicker
 				{users}
 				bind:levels
+				{groups}
+				bind:groupLevels
 				reduceOnly={accessLocked}
 				reduceOnlyHint={$t('shares.form.notServedHint')}
 				savedLevels={loadedLevels}
+				savedGroupLevels={loadedGroupLevels}
 			/>
 		{/if}
 

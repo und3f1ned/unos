@@ -2,7 +2,17 @@ import type { Locator, Page, WebSocketRoute } from '@playwright/test';
 import { test, expect } from './fixtures';
 import { createAccount, deleteAccount, type Account } from './accounts';
 import { FAKE_IMPORTABLE, fakeStorageApi, noBalance } from './storage-fakes';
-import { NO_SNAPSHOTS, POOLS, accessOf, fakeNfsExport, fakeShare, fakeSmbApi, fakeUser } from './shares-fakes';
+import {
+  NO_SNAPSHOTS,
+  POOLS,
+  accessOf,
+  fakeGroup,
+  fakeNfsExport,
+  fakeShare,
+  fakeSmbApi,
+  fakeUser,
+  groupAccessOf,
+} from './shares-fakes';
 import { HEALTHY_HDD_2, REPLACE_SOON, fakeHealthApi, predictionsAnswer } from './health-fakes';
 import { fakeNetworkApi } from './network-fakes';
 import { fakeNotificationsApi, type Channel } from './notifications-fakes';
@@ -633,7 +643,14 @@ const SHARES = [
       { user_id: 3, username: 'bob_the_family_photographer', level: 'read' },
     ]),
   }),
-  fakeShare('documents', { access: accessOf(USERS, [{ user_id: 2, username: 'alice', level: 'write' }]) }),
+  fakeShare('documents', {
+    access: accessOf(USERS, [{ user_id: 2, username: 'alice', level: 'write' }]),
+    // A group's line with its members wraps on a phone.
+    group_access: groupAccessOf(
+      [fakeGroup(1, 'family_and_friends_of_the_house', USERS, [2, 3])],
+      [{ group: 'family_and_friends_of_the_house', level: 'read' }],
+    ),
+  }),
 ];
 
 /** A page or a part of it, opened on the phone. */
@@ -813,7 +830,8 @@ const VIEWS: View[] = [
   {
     name: 'Users',
     path: '/users',
-    fake: (page) => fakeSmbApi(page, { users: USERS }),
+    // With a group whose members and shares wrap.
+    fake: (page) => fakeSmbApi(page, { users: USERS, groups: [fakeGroup(1, 'family_and_friends', USERS, [2, 3])] }),
     shows: (page) => page.getByText('bob_the_family_photographer').first(),
   },
   {
@@ -1094,6 +1112,16 @@ const VIEWS: View[] = [
     fake: (page) => fakeSmbApi(page, { users: USERS }),
     open: (page) => page.getByRole('button', { name: /^(Add user|Добавить пользователя)$/ }).click(),
     shows: (page) => page.getByRole('dialog'),
+    start: dialogTitle,
+    end: dialogEnd,
+  },
+  {
+    // Its list of members, each with the SMB state's badge.
+    name: 'Dialog: a new group',
+    path: '/users',
+    fake: (page) => fakeSmbApi(page, { users: USERS, groups: [fakeGroup(1, 'family_and_friends', USERS, [2, 3])] }),
+    open: (page) => page.getByRole('button', { name: /^(New group|Новая группа)$/ }).click(),
+    shows: (page) => page.getByRole('dialog').getByText('bob_the_family_photographer'),
     start: dialogTitle,
     end: dialogEnd,
   },

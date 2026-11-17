@@ -118,7 +118,7 @@ export const en = {
 	'shares.form.currentFolderAfter': '. Choose a folder that can be shared.',
 	// A share that is not served is saved only once it grants nothing, or with a folder that can be shared.
 	'shares.form.notServedGrants':
-		'Its access entries and guest access do not count while it is not served. To save other changes without a new folder, remove them: No access for every user, and guest access off.',
+		'Its access entries and guest access do not count while it is not served. To save other changes without a new folder, remove them: No access for every user and group, and guest access off.',
 	// Shown when the location list leaves out pools that UNOS does not manage.
 	'shares.form.unmanagedPools':
 		'Pools marked "Not mounted at boot" on the Storage page are not listed: SMB shares need a pool that UNOS manages.',
@@ -176,6 +176,14 @@ export const en = {
 		'SMB is allowed, but the user has not turned it on yet: the access counts once SMB is on',
 	'shares.access.off':
 		'SMB is off for this user: the access counts once SMB is allowed on the Users page and turned on',
+	// The groups of the picker: "Group family", and its members under the level.
+	'shares.access.groups': 'Groups',
+	'shares.access.noGroups': 'No groups yet: make them on the Users page.',
+	'shares.access.groupLabel': 'Group {name}',
+	'shares.access.groupMembers': 'Members: {names}',
+	'shares.access.groupEmpty': 'No members yet',
+	'shares.access.groupsHint':
+		'Every member of a group gets its level once their SMB is on, and so does every user added to the group later. A user who also has a level of their own, or through another group, gets the higher one.',
 
 	// The SMB state of a user (SmbAccountState of supervisor/src/shares/account_state.py).
 	'shares.smbState.active': 'Active',
@@ -210,6 +218,11 @@ export const en = {
 	'shares.card.nobodyOwn': 'No user has access of their own.',
 	// The groups of the access list: "Read & write: alice, bob · Read: carol".
 	'shares.card.read': 'Read',
+	// A group's access: "Group family (Read & write): bob, carol".
+	'shares.card.group': 'Group {group} ({level}):',
+	'shares.card.groupEmpty': 'no members',
+	// A user whose own level is Read but who writes through a group.
+	'shares.card.raised': '{username} also writes through a group: the higher level counts.',
 	// After an entry that does not count yet, for screen readers.
 	'shares.card.notActive': '(not active yet: {reason})',
 	'shares.card.crossedOut':
@@ -374,7 +387,7 @@ export const ru: Translation<typeof en> = {
 	'shares.form.currentFolderBefore': 'Папка сейчас:',
 	'shares.form.currentFolderAfter': '. Выберите папку, которую можно сделать общей.',
 	'shares.form.notServedGrants':
-		'Пока общая папка не раздаётся, её записи доступа и гостевой доступ не действуют. Чтобы сохранить другие изменения без новой папки, уберите их: «Нет доступа» для каждого пользователя и выключенный гостевой доступ.',
+		'Пока общая папка не раздаётся, её записи доступа и гостевой доступ не действуют. Чтобы сохранить другие изменения без новой папки, уберите их: «Нет доступа» для каждого пользователя и группы и выключенный гостевой доступ.',
 	'shares.form.unmanagedPools':
 		'Пулы, которые на странице «Хранилище» отмечены как не монтируемые при загрузке, не показаны: общим папкам SMB нужен пул, которым управляет UNOS.',
 	'shares.form.folderPlaceholder': 'documents',
@@ -425,6 +438,13 @@ export const ru: Translation<typeof en> = {
 		'SMB разрешён, но пользователь ещё не включил его: доступ начнёт действовать, когда SMB будет включён',
 	'shares.access.off':
 		'SMB для этого пользователя выключен: доступ начнёт действовать, когда SMB разрешат на странице «Пользователи» и включат',
+	'shares.access.groups': 'Группы',
+	'shares.access.noGroups': 'Групп пока нет: создайте их на странице «Пользователи».',
+	'shares.access.groupLabel': 'Группа {name}',
+	'shares.access.groupMembers': 'Участники: {names}',
+	'shares.access.groupEmpty': 'Участников пока нет',
+	'shares.access.groupsHint':
+		'Каждый участник группы получает её уровень, как только у него включён SMB, как и любой пользователь, добавленный в группу позже. Пользователь, у которого есть и собственный уровень или уровень через другую группу, получает более высокий.',
 
 	'shares.smbState.active': 'Включён',
 	'shares.smbState.passwordNeeded': 'Нужен пароль',
@@ -454,6 +474,9 @@ export const ru: Translation<typeof en> = {
 	'shares.card.nobody': 'Ни у одного пользователя нет доступа.',
 	'shares.card.nobodyOwn': 'Ни у одного пользователя нет собственного доступа.',
 	'shares.card.read': 'Чтение',
+	'shares.card.group': 'Группа {group} ({level}):',
+	'shares.card.groupEmpty': 'нет участников',
+	'shares.card.raised': '{username} может и записывать через группу: действует более высокий уровень.',
 	'shares.card.notActive': '(ещё не действует: {reason})',
 	'shares.card.crossedOut':
 		'Зачёркнутые пользователи пока не могут подключиться: их доступ по SMB не включён (см. страницу «Пользователи»).',

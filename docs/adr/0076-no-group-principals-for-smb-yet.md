@@ -1,13 +1,16 @@
 ---
-status: accepted
+status: superseded
 date: 2026-11-06
 area: shares
 decided-by: agent
+superseded-by: ADR-0383
 ---
 
 # ADR-0076: Share access names individual users, not groups, for now
 
 ## Context
+
+Superseded by ADR-0383: groups of users get share access in UNOS's database, and smb.conf names their active members.
 
 The audit proposed share permissions for users and groups. In the UNOS model Samba enforces each user's level per share, and on disk every share folder belongs to one shared group, unos-smb (ADR-0150), whoever the share's principals are. Slice 2 had to stay reviewable and deployable (ADR-0014).
 

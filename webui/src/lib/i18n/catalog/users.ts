@@ -54,7 +54,7 @@ export const en = {
 	'users.edit.titleWithoutName': 'Edit user',
 	'users.edit.admin': 'Administrator',
 	'users.edit.adminWarning':
-		'Administrators cannot use SMB: making {name} an administrator removes SMB access and their share permissions, and ends their open SMB connections',
+		'Administrators cannot use SMB: making {name} an administrator removes SMB access, their share permissions and their groups, and ends their open SMB connections',
 	'users.edit.password': 'New password',
 	'users.edit.passwordHint': 'Leave empty to keep the current password',
 	'users.edit.confirm': 'Confirm new password',
@@ -157,7 +157,7 @@ export const ru: Translation<typeof en> = {
 	'users.edit.titleWithoutName': 'Изменение пользователя',
 	'users.edit.admin': 'Администратор',
 	'users.edit.adminWarning':
-		'Администраторы не могут пользоваться SMB: назначение {name} администратором отключит доступ по SMB, удалит права на общие папки и закроет открытые подключения по SMB',
+		'Администраторы не могут пользоваться SMB: назначение {name} администратором отключит доступ по SMB, удалит права на общие папки и членство в группах и закроет открытые подключения по SMB',
 	'users.edit.password': 'Новый пароль',
 	'users.edit.passwordHint': 'Оставьте пустым, чтобы сохранить текущий пароль',
 	'users.edit.confirm': 'Подтверждение нового пароля',
