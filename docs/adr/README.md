@@ -439,6 +439,7 @@ and this index, and `make check-fast` runs it.
 | [0373](0373-the-web-ui-image-of-a-spacemit-k1-is-built-on-another-machine.md) | The web UI's image of a SpacemiT K1 is built on another machine, and install.sh and update.sh build only the supervisor there | proposed | 2026-11-13 |
 | [0376](0376-the-banana-pi-bpi-w3-gets-no-code-of-its-own-for-the-rk3588.md) | The Banana Pi BPI-W3 gets no code of its own for the RK3588 | proposed | 2026-11-15 |
 | [0406](0406-the-supervisors-tmpfs-is-192-mib-and-a-backup-may-hold-a-database-of-48-mib.md) | The supervisor's /tmp tmpfs is 192 MiB and a backup may hold a database of 48 MiB | accepted | 2026-11-18 |
+| [0410](0410-install-sh-installs-only-the-packages-unos-runs-so-no-mdadm-assembles-an-old-nas.md) | The package list of install.sh holds only what UNOS runs, so no mdadm assembles the arrays of an old NAS | accepted | 2026-11-18 |
 
 ## Device
 

@@ -4678,8 +4678,15 @@
         "install.sh installs no mdadm, which no code of UNOS runs, or docs/INSTALL.md says what it is for",
         "On a host whose disks carry the md superblocks of an old NAS, the installation adds no ARRAY line to /etc/mdadm/mdadm.conf and no array to the initramfs, and Storage lists those disks"
       ],
+      "verified_by": [
+        "supervisor/tests/test_deploy_scripts.py",
+        "supervisor/tests/test_disk_safety.py"
+      ],
       "passes": false,
-      "notes": "Found with deploy.riscv64-bpi-f3 (ADR-0370) on 2026-11-13: install_dependencies of install.sh installs mdadm, which nothing in supervisor/src runs. On the owner's BPI-F3, installing Debian's mdadm wrote ARRAY lines for the arrays of old NAS disks into /etc/mdadm/mdadm.conf, which the initramfs carries; the stack there now removes them and rebuilds the initramfs. Not checked for UNOS: what Storage shows for such disks once their arrays are assembled."
+      "adr": [
+        "ADR-0410"
+      ],
+      "notes": "Found with deploy.riscv64-bpi-f3 (ADR-0370) on 2026-11-13: install_dependencies of install.sh installs mdadm, which nothing in supervisor/src runs. On the owner's BPI-F3, installing Debian's mdadm wrote ARRAY lines for the arrays of old NAS disks into /etc/mdadm/mdadm.conf, which the initramfs carries; the stack there now removes them and rebuilds the initramfs. Not checked for UNOS: what Storage shows for such disks once their arrays are assembled. Built 2026-11-18 (ADR-0410): install.sh and docs/INSTALL.md drop mdadm, parted, nvme-cli, lm-sensors, net-tools and wget, none of which supervisor/src, deploy/ or the docs run (checked against HOST_TOOLS, OPTIONAL_HOST_TOOLS, the host commands of the routers and the scripts); smartmontools stays because uninstall.sh runs the host smartctl. update.sh removes nothing: a host with mdadm keeps it. Step 2 answered from the code: a disk or partition that lsblk shows with a child of type raid* is in use (reason: Used by md127 (raid1)); the Storage page shows that reason and offers it for no pool, and create_pool refuses it with force too; an unassembled linux_raid_member is free but holds data and needs force. Tests: test_deploy_scripts.py (the package list, the HOST_TOOLS packages installed, update.sh removes none) and test_disk_safety.py (the partition case, the refusal with force, the unassembled member). Device check, read-only (the dev device already has its packages and install.sh is not run on it): with scripts/dev/sd.sh measure, scripts/dev/ssh.sh runs cat /proc/mdstat and lsblk -o NAME,TYPE,FSTYPE, and scripts/dev/api.py GET /api/v1/storage/disks lists the disks: no raid* row below a data disk unless the owner made one, and each disk's in_use and in_use_reason agree with lsblk. Review (fresh context): no BLOCKING; RISK left: ADR-0002 still says install.sh installs lm-sensors (an accepted ADR is not rewritten; ADR-0410 names the change), and docs/research/riscv64-support-2026-11-07.md lists the old packages as a dated record; the vacuous update.sh test was widened to uninstall.sh. Not checked on hardware: a fresh install.sh run on a host with old md disks; the stub apt-get test shows the package is not installed, and without it nothing writes ARRAY lines."
     },
     {
       "id": "deploy.riscv64-release-images",

@@ -314,12 +314,15 @@ If you prefer manual control, follow these steps:
 ```bash
 sudo apt update
 sudo apt install -y \
-    curl wget git ca-certificates gnupg lsb-release \
-    btrfs-progs smartmontools lm-sensors \
+    curl git ca-certificates gnupg lsb-release \
+    btrfs-progs smartmontools \
     samba samba-common-bin samba-vfs-modules \
-    hdparm parted mdadm nvme-cli \
-    ethtool net-tools iproute2
+    hdparm ethtool iproute2
 ```
+
+UNOS does not install `mdadm`: Debian's package assembles the md arrays of the
+disks of an old NAS at the next boot. A host that already has it keeps it
+(ADR-0410).
 
 UNOS reads the disks' SMART data itself. Turn off smartd, which the package
 smartmontools starts: it would read every awake disk every 30 minutes, and

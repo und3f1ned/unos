@@ -12,6 +12,10 @@ features (SMB access per user and per share, volumes, copy and move in the file
 manager, encrypted backup uploads, health checks, CI checks).
 
 ### Changed
+- `install.sh` and the manual installation no longer install `mdadm`, `parted`, `nvme-cli`, `lm-sensors`,
+  `net-tools` and `wget`, which UNOS does not run: Debian's mdadm assembled the arrays of an old NAS's
+  disks into md arrays on the next boot. A host that has them keeps them; the Storage page already
+  shows a disk under an assembled array as in use and refuses it for a pool (ADR-0410).
 - The web UI has a light theme. Each user chooses **Dark**, **Light** or **System** (the device's
   setting, followed as it changes) on the Account page; the NAS keeps the choice per user
   (`GET`/`PUT /api/v1/auth/me/theme`, audited as `theme_changed`), and the page shows it before it
