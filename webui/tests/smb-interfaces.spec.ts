@@ -11,6 +11,7 @@ import {
   restartFailed,
   type FakeSmbApi,
 } from './shares-fakes';
+import { SESSION_KEY_STORE } from './session';
 
 // The network interfaces that SMB listens on (shares.smb-bind-interfaces, ADR-0391): the card of the
 // Shares page's SMB tab, its dialog and Restart SMB. The stand-in has no host network (ip, ss and
@@ -122,15 +123,16 @@ test.describe('The network interfaces of SMB', () => {
     const fake = await fakeSmbApi(page);
     await page.goto('/shares');
     await expect(card(page)).toBeVisible();
-    const answer = await page.evaluate(async () => {
-      const token = localStorage.getItem('token') ?? '';
+    const answer = await page.evaluate(async (store) => {
+      // A request of the page: the browser sends the session cookie, the page its session key
+      // (ADR-0397).
       const response = await fetch('/api/v1/shares/smb-interfaces', {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        headers: { 'Content-Type': 'application/json', 'X-UNOS-Session-Key': sessionStorage.getItem(store) ?? '' },
         body: JSON.stringify({ interfaces: ['eth*'] }),
       });
       return { status: response.status, body: await response.json() };
-    });
+    }, SESSION_KEY_STORE);
     expect(answer).toEqual({ status: 400, body: { detail: `eth* ${INTERFACE_NAME_RULE}` } });
     expect(fake.interfaces.chosen).toEqual([]);
   });

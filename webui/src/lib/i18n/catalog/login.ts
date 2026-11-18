@@ -16,7 +16,10 @@ export const en = {
 	'login.signingIn': 'Signing in...',
 	'login.verify': 'Verify',
 	'login.signIn': 'Sign In',
-	'login.failed': 'Login failed'
+	'login.failed': 'Login failed',
+	'login.signOutFailed':
+		'The NAS did not confirm the sign-out, so this browser may still be signed in. Sign out again once the NAS can be reached.',
+	'login.signOutAgain': 'Sign Out Again'
 };
 
 export const ru: Translation<typeof en> = {
@@ -33,5 +36,8 @@ export const ru: Translation<typeof en> = {
 	'login.signingIn': 'Вход...',
 	'login.verify': 'Подтвердить',
 	'login.signIn': 'Войти',
-	'login.failed': 'Не удалось войти'
+	'login.failed': 'Не удалось войти',
+	'login.signOutFailed':
+		'NAS не подтвердил выход, поэтому этот браузер, возможно, ещё не вышел из системы. Выйдите ещё раз, когда NAS станет доступен.',
+	'login.signOutAgain': 'Выйти ещё раз'
 };

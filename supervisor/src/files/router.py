@@ -34,6 +34,10 @@ New folders and uploads in a share folder (_share_folder: a folder set up
 for the SMB group as UNOS makes a share's) get the modes that Samba gives
 the entries of SMB users, 2770 and 0660, so that the share's SMB users can
 change them at once (ADR-0273); elsewhere they get what the umask leaves.
+Copies in a share folder, also those of a move to another pool or volume,
+get the modes that Repair permissions gives (2770, 0660, or 0770 for files
+their owner may run; private entries keep theirs), and elsewhere the modes
+of their source (ADR-0396).
 """
 
 import asyncio
@@ -987,7 +991,9 @@ def _rename(path: str, new_name: str) -> FileInfo:
     return get_file_info(new_name, _display_path([*parts[:-1], new_name]), st)
 
 
-def _copy_entry(src_dir_fd: int, name: str, dst_dir_fd: int, without_trash: bool = False) -> None:
+def _copy_entry(
+    src_dir_fd: int, name: str, dst_dir_fd: int, without_trash: bool = False, share: bool = False
+) -> None:
     """Copy ``name`` between two directories without following symlinks.
 
     Symlinks are recreated as symlinks, directories are copied recursively,
@@ -999,9 +1005,21 @@ def _copy_entry(src_dir_fd: int, name: str, dst_dir_fd: int, without_trash: bool
     a copy of a pool or a volume does not take what was deleted there
     (ADR-0259). A move to another filesystem copies everything, because it
     deletes the source afterwards.
+
+    Each copy is private to the supervisor until it is complete (a file
+    0600, a folder 0700, which in a share folder must still be the one that
+    its mkdir made: _open_new_folder), and then gets its mode through its
+    descriptor: a file once its data is written, a folder once everything
+    in it is copied. That mode is the one of the source that was opened
+    (not of an entry that it replaced since its lstat), or with ``share``
+    (``dst_dir_fd`` is a share folder, _share_folder, or a folder that this
+    copy gives the modes of shares) the one that Repair permissions gives
+    an entry of a share (constants.share_entry_mode: folders 2770, files
+    0660, or 0770 for files their owner may run), with the group of the
+    setgid folder; a private source keeps its mode, and what is in a
+    private folder is copied as outside shares (ADR-0396).
     """
     st = os.stat(name, dir_fd=src_dir_fd, follow_symlinks=False)
-    times = (st.st_atime_ns, st.st_mtime_ns)
 
     if stat.S_ISLNK(st.st_mode):
         os.symlink(os.readlink(name, dir_fd=src_dir_fd), name, dir_fd=dst_dir_fd)
@@ -1010,15 +1028,20 @@ def _copy_entry(src_dir_fd: int, name: str, dst_dir_fd: int, without_trash: bool
     if stat.S_ISDIR(st.st_mode):
         src_fd = os.open(name, _DIR_FLAGS, dir_fd=src_dir_fd)
         try:
+            # The mode and times of the folder that was opened, not of one it replaced since the lstat.
+            st = os.fstat(src_fd)
+            share_mode = smb_constants.share_entry_mode(st.st_mode) if share else None
             os.mkdir(name, 0o700, dir_fd=dst_dir_fd)
-            dst_fd = os.open(name, _DIR_FLAGS, dir_fd=dst_dir_fd)
+            # In a share folder whoever can write it may have put another folder at the name; elsewhere the
+            # folder may be on a filesystem that keeps modes and owners of its own (vfat), as before.
+            dst_fd = _open_new_folder(dst_dir_fd, name) if share else os.open(name, _DIR_FLAGS, dir_fd=dst_dir_fd)
             try:
                 with os.scandir(src_fd) as entries:
                     children = [entry.name for entry in entries if not (without_trash and entry.name == TRASH)]
                 for child in children:
-                    _copy_entry(src_fd, child, dst_fd, without_trash)
-                os.fchmod(dst_fd, stat.S_IMODE(st.st_mode))
-                os.utime(dst_fd, ns=times)
+                    _copy_entry(src_fd, child, dst_fd, without_trash, share_mode is not None)
+                os.fchmod(dst_fd, stat.S_IMODE(st.st_mode) if share_mode is None else share_mode)
+                os.utime(dst_fd, ns=(st.st_atime_ns, st.st_mtime_ns))
             finally:
                 os.close(dst_fd)
         finally:
@@ -1028,20 +1051,55 @@ def _copy_entry(src_dir_fd: int, name: str, dst_dir_fd: int, without_trash: bool
     if stat.S_ISREG(st.st_mode):
         src_fd = os.open(name, _READ_FLAGS, dir_fd=src_dir_fd)
         try:
-            if not stat.S_ISREG(os.fstat(src_fd).st_mode):
+            st = os.fstat(src_fd)  # the file that was opened: its mode counts, not that of one it replaced
+            if not stat.S_ISREG(st.st_mode):
                 return  # replaced by something else since the lstat above
+            share_mode = smb_constants.share_entry_mode(st.st_mode) if share else None
             dst_fd = os.open(name, _CREATE_FLAGS, 0o600, dir_fd=dst_dir_fd)
             try:
                 with os.fdopen(src_fd, "rb", closefd=False) as src, os.fdopen(
                     dst_fd, "wb", closefd=False
                 ) as dst:
                     shutil.copyfileobj(src, dst, _CHUNK_SIZE)
-                os.fchmod(dst_fd, stat.S_IMODE(st.st_mode) & ~(stat.S_ISUID | stat.S_ISGID))
-                os.utime(dst_fd, ns=times)
+                own_mode = stat.S_IMODE(st.st_mode) & ~(stat.S_ISUID | stat.S_ISGID)
+                os.fchmod(dst_fd, own_mode if share_mode is None else share_mode)
+                os.utime(dst_fd, ns=(st.st_atime_ns, st.st_mtime_ns))
             finally:
                 os.close(dst_fd)
         finally:
             os.close(src_fd)
+
+
+def _open_new_folder(dir_fd: int, name: str) -> int:
+    """Open the folder ``name`` that a copy has just made in the share folder ``dir_fd`` (mkdir, 0700); its descriptor.
+
+    Whoever can write ``dir_fd`` (the share's SMB users) can put another
+    folder at that name before it is opened. The copy goes on only in the
+    folder that its mkdir made: the supervisor's, still private and empty,
+    as New Folder checks its own (_give_share_mode). Another one, or no
+    folder (a file or a symlink there), is refused with 409 before anything
+    is copied into it or its mode is changed (ADR-0396); the empty folder
+    that the mkdir made stays where it was put, as New Folder's would.
+    """
+    replaced = HTTPException(
+        409, f"Another folder took the place of '{_shown(name)}' while it was copied, so the copy stopped there."
+    )
+    try:
+        fd = os.open(name, _DIR_FLAGS, dir_fd=dir_fd)
+    except OSError as exc:
+        if exc.errno in _GONE:  # removed, or replaced by a file or a symlink
+            raise replaced from None
+        raise
+    try:
+        st = os.fstat(fd)
+        with os.scandir(fd) as entries:
+            empty = next(entries, None) is None
+        if st.st_uid != os.geteuid() or stat.S_IMODE(st.st_mode) & 0o777 != 0o700 or not empty:
+            raise replaced
+    except BaseException:
+        os.close(fd)
+        raise
+    return fd
 
 
 def _recheck_entry(
@@ -1207,7 +1265,9 @@ def _transfer(sources: list[str], destination: str, *, moving: bool) -> list[str
 
     Every item is checked before any is changed. A move that fails at an
     item after others moved is refused with how many moved before it
-    (_done_before).
+    (_done_before). What is copied into a share folder, also by a move to
+    another pool or volume, gets the modes of shares (_copy_entry, ADR-0396);
+    a move within a pool or volume is a rename and keeps the modes.
     """
     dest_parts, plan = _plan_transfer(sources, destination, moving=moving)
     dest_fd = _open_dir(dest_parts)
@@ -1218,10 +1278,11 @@ def _transfer(sources: list[str], destination: str, *, moving: bool) -> list[str
         if moving:  # copies of volumes, and of folders that contain one, are allowed
             _refuse_separate_filesystems(plan, "moved", moving_to=os.fstat(dest_fd).st_dev)
 
+        share = _share_folder(dest_fd)
         done = []
         for parts in plan:
             try:
-                went = _transfer_one(parts, dest_fd, moving)
+                went = _transfer_one(parts, dest_fd, moving, share)
             except (HTTPException, OSError) as exc:
                 if not moving or not done:
                     raise
@@ -1233,8 +1294,11 @@ def _transfer(sources: list[str], destination: str, *, moving: bool) -> list[str
         os.close(dest_fd)
 
 
-def _transfer_one(parts: list[str], dest_fd: int, moving: bool) -> bool:
-    """Copy or move the item ``parts`` into the folder ``dest_fd``; False when it is not there (any more)."""
+def _transfer_one(parts: list[str], dest_fd: int, moving: bool, share: bool) -> bool:
+    """Copy or move the item ``parts`` into the folder ``dest_fd``; False when it is not there (any more).
+
+    ``share``: ``dest_fd`` is a share folder (_share_folder), whose copies get the modes of shares.
+    """
     src_dir_fd = _open_parent_or_none(parts)
     if src_dir_fd is None:
         return False  # missing sources are skipped, as before
@@ -1254,10 +1318,10 @@ def _transfer_one(parts: list[str], dest_fd: int, moving: bool) -> bool:
                 # Different filesystem (e.g. another pool): copy, then delete.
                 if stat.S_ISDIR(st.st_mode):
                     _refuse_nested_filesystems(src_dir_fd, parts, _MOVED_ELSEWHERE)
-                _copy_entry(src_dir_fd, name, dest_fd)
+                _copy_entry(src_dir_fd, name, dest_fd, False, share)
                 _remove_entry(src_dir_fd, parts, _MOVED_ELSEWHERE, expected=st)
         else:
-            _copy_entry(src_dir_fd, name, dest_fd, True)
+            _copy_entry(src_dir_fd, name, dest_fd, True, share)
         return True
     finally:
         os.close(src_dir_fd)

@@ -12,6 +12,24 @@ features (SMB access per user and per share, volumes, copy and move in the file
 manager, encrypted backup uploads, health checks, CI checks).
 
 ### Security
+- The web UI keeps its session in an HttpOnly cookie, `__Host-unos-session`
+  (`Secure`, `SameSite=Strict`, ending with the browser), instead of
+  `localStorage`, so that no script of the page reads the session token
+  (ADR-0397). `POST /api/v1/auth/login` with `"cookie": true` sets it and
+  answers no token, only a `session_key` that the page sends with the cookie
+  (`X-UNOS-Session-Key`, and `"key"` in a WebSocket's first message
+  `{"type": "auth"}`), so that a server on another port of the NAS, to which
+  the browser sends the cookie too, cannot use it; the cookie's token is no
+  Bearer token. Without `cookie` the sign-in answers the token for a Bearer
+  header, as scripts use it. The API takes the cookie only from the web UI's
+  own origin: a change without the page's `Origin`, or a request that the
+  browser marks as from another site, answers 403 "The session cookie is
+  accepted only from the web UI's own page", and a cookie without its key 401.
+  Logout deletes the cookie; when the NAS does not confirm it the login page
+  says so and offers **Sign Out Again**. A reload keeps the session, and so
+  does a new tab while another tab of the web UI is open; the tabs follow each
+  other's sign-ins and sign-outs. The token that earlier versions kept in
+  `localStorage` is removed.
 - An API token can be limited to reading, or to areas of the API (ADR-0392).
   The areas are the prefixes of the API's paths after `/api/v1/` (`storage`,
   `backup`, `monitor` and 18 more); `POST /api/v1/auth/tokens` takes
@@ -366,6 +384,18 @@ manager, encrypted backup uploads, health checks, CI checks).
   `ups_name`, `host` and `port` are checked before they reach `upsc`.
 
 ### Added
+- Each user arranges the dashboard (ADR-0395). **Customize** shows a toolbar on
+  every widget: drag its handle, or use **Move up** and **Move down** (for the
+  keyboard and a phone), **Hide** it, and show it again from **Hidden widgets**;
+  **Reset to default** restores the default. The five stats cards (CPU, Memory,
+  Network, Disk I/O, Temperature) and, for administrators, Storage Pools,
+  Containers, Quick Actions and Recent Activity are widgets; a regular user
+  arranges the stats cards. The layout is kept on the server per user, so it
+  follows the user to another browser: `GET`, `PUT` and `DELETE
+  /api/v1/auth/me/dashboard-layout`, a new table `dashboard_layouts`, written
+  only when the layout changes, and the audit action
+  `dashboard_layout_changed`. The wide widgets sit two to a row from 1280 px
+  (they were from 1024 px).
 - The dashboard has a **Disk I/O** card: the bytes per second read from and
   written to the host's physical disks, from the live statistics; zram, loop,
   device-mapper (LUKS, LVM) and md devices do not count (ADR-0388).
@@ -1015,7 +1045,7 @@ manager, encrypted backup uploads, health checks, CI checks).
   `network_*` fields are gone, and so are the `disk_*` fields of the container's
   root and the `history` of the last two minutes, which no page read.
 - The stats message of `/ws/v1/events` sends the CPU's temperature as
-  `cpu.temperature`, and `GET /api/v1/system/stats` as `cpu_temperature`
+  `cpu.temperature`
   (degrees Celsius, or null without sensors); their `temperatures` objects,
   which held the first reading of every sensor group, are gone.
   `GET /api/v1/system/temperatures` lists every sensor.
@@ -1027,6 +1057,16 @@ manager, encrypted backup uploads, health checks, CI checks).
 - New folders and uploads of the file manager in a share folder get 2770 and
   0660 with the group unos-smb, so the share's SMB users can change them at
   once.
+- Copy, and Move from another pool or volume, give what they put into a share
+  folder the modes of Repair permissions in the group unos-smb: folders 2770,
+  files 0660, or 0770 for files their owner may run, through a whole copied
+  tree; private entries keep theirs, and each entry gets its mode only once it
+  is copied in full (ADR-0396). The share's SMB users change such items at once,
+  without a Repair. A Move within a pool or volume stays a rename that keeps
+  the modes, and outside share folders copies keep the modes of their source.
+  In a share folder a copy goes on only in the folder that it made: another
+  folder put at that name meanwhile is refused with 409 and left as it was; a
+  copy's mode comes from the source that was opened.
 - Samba keeps its own log file in RAM (`/run/samba`), logs failed sign-ins
   through auth_audit to the journal, which System → Logs shows, and SMB
   passwords on a list of common passwords are refused.
@@ -1268,6 +1308,12 @@ manager, encrypted backup uploads, health checks, CI checks).
   `read_bytes`, `write_bytes`, `read_count` and `write_count`, and those of
   each block device in `disk_io.disks`, which no page read. Regular users get
   the network's rates without the host's interfaces (ADR-0388).
+- `GET /api/v1/monitor/network`, `/monitor/disk-io`, `/monitor/history/network`,
+  `/monitor/history/disk-io` and `GET /api/v1/system/stats`, and the `network`
+  and `disk_io` of `/monitor/all`: no page called them, and they reported the
+  supervisor container's network and every block device. They answer 404; the
+  stats message of `/ws/v1/events` is the one source of live stats (ADR-0388,
+  ADR-0207).
 - BookStack, Paperless-ngx and Linkwarden from the App Store's catalog: each
   needs a database or a broker beside it, which they will get as apps of
   several containers (ADR-0381).

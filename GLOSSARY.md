@@ -17,6 +17,11 @@ reads and changes the host for the web UI (ADR-0002). Avoid: backend server, dae
 API and WebSocket calls to the supervisor (ADR-0002, ADR-0025). Avoid: frontend server, dashboard
 (the Dashboard is one page).
 
+**Widget**: One card or section of the Dashboard that a user can move, hide and show: the CPU,
+Memory, Network, Disk I/O and Temperature cards and, for administrators, Storage Pools, Containers,
+Quick Actions and Recent Activity. Its order and hidden state are the user's dashboard layout, kept
+per user on the server (ADR-0395). Avoid: tile, panel.
+
 **Text catalog**: The texts of one area of the web UI in English and Russian
 (`webui/src/lib/i18n/catalog/<area>.ts`), which the pages show in the language chosen on the
 Account page; the server's messages stay English (ADR-0287). Avoid: dictionary, locale file.
@@ -266,9 +271,19 @@ get SMB access (ADR-0030). Avoid: normal user, guest (guests have no account).
 **Host account**: An account of the host's operating system. The marked ones belong to SMB
 accounts; UNOS leaves every other one alone (ADR-0108). Avoid: user.
 
-**Session token**: The token that signing in returns; the web UI sends it with every request until
-it expires or its session ends: Logout, a password change, an administrator (ADR-0009, ADR-0028,
-ADR-0329). Avoid: cookie, API token.
+**Session token**: The token of a sign-in, valid until it expires or its session ends: Logout, a
+password change, an administrator (ADR-0028, ADR-0329). The web UI keeps it in the session cookie;
+a program gets it in the sign-in's answer and sends it as a Bearer token (ADR-0397). Avoid: API
+token.
+
+**Session cookie**: The HttpOnly cookie `__Host-unos-session` that holds the web UI's session token:
+no script of the page reads it, and the server takes it only from the web UI's own page and with
+its session key; it ends with the browser or at Logout (ADR-0397). Avoid: token storage, auth
+cookie.
+
+**Session key**: The value that the sign-in answers with a session and that the web UI's page
+sends with the session cookie; it lives in the tab, and the other tabs ask for it. Neither the key
+nor the cookie alone is a session (ADR-0397). Avoid: CSRF token, session token.
 
 **API token**: A long-lived token that a user creates for scripts, with that user's rights, shown
 once (ADR-0239); only a session token creates, disables and deletes API tokens (ADR-0253). It is

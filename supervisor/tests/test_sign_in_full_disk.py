@@ -202,7 +202,7 @@ class TestSignInWhileDataIsFull:
         world.set_totp("alice", SECRET)
         fill_data(world, monkeypatch)
 
-        assert sign_in(world).json() == {"access_token": "", "token_type": "bearer", "requires_totp": True}
+        assert sign_in(world).json() == {"access_token": "", "token_type": "bearer", "requires_totp": True, "session_key": ""}
         response = sign_in(world, totp_code=clock.code(SECRET))
 
         assert response.status_code == 200, response.text

@@ -81,6 +81,25 @@ _COMMON_PASSWORDS_FILE = Path(__file__).with_name("common_passwords.txt")
 
 SHARE_DIR_MODE = 0o2770   # share folders: group rwx + setgid, nothing for others
 SHARE_FILE_MODE = 0o660   # files created over SMB
+SHARE_EXECUTABLE_FILE_MODE = SHARE_FILE_MODE | 0o110  # files of a share that their owner may run
+
+
+def share_entry_mode(mode: int) -> int | None:
+    """The mode of an entry of a share as Repair permissions gives it (ADR-0363), and so Files to the
+    copies it puts into a share folder (ADR-0396); None when it keeps its own.
+
+    Folders 2770, regular files 0660, or 0770 when their owner may run them
+    (the owner's execute bit). A private entry, which only its owner can use
+    (no group or other bits, such as a 0600 key or a 0700 folder), keeps its
+    mode, and so does whatever is neither a folder nor a regular file.
+    """
+    if not mode & 0o077:
+        return None
+    if stat.S_ISDIR(mode):
+        return SHARE_DIR_MODE
+    if stat.S_ISREG(mode):
+        return SHARE_EXECUTABLE_FILE_MODE if mode & stat.S_IXUSR else SHARE_FILE_MODE
+    return None
 
 
 def linux_name_problem(name: object) -> str | None:

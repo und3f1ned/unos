@@ -859,6 +859,406 @@ def test_move_across_filesystems_falls_back_to_copy(env, monkeypatch):
     assert not (env.pool / "dir").exists()
 
 
+# --- copies and moves into share folders (ADR-0396) ------------------------------------
+#
+# What Copy, and a Move from another pool or volume (which copies, then deletes), put into a
+# share folder (setgid, the SMB group with rwx, nothing for others: _share_folder, ADR-0273) gets
+# the modes that Repair permissions gives the entries of a share: folders 2770, files 0660, or
+# 0770 for files their owner may run; private entries keep theirs. The SMB group is the runner's
+# own (smb_group), so that a test's folders can have it without root.
+
+
+def _file(path, mode, content=b"x"):
+    """``path`` made a file with ``content`` and exactly ``mode``."""
+    path.write_bytes(content)
+    os.chmod(path, mode)
+    return path
+
+
+def _items(top):
+    """``top`` and everything below it, by path below top's folder: (mode with setgid, group), a symlink as its target."""
+    return {
+        entry.relative_to(top.parent).as_posix(): ("link", os.readlink(entry)) if entry.is_symlink() else _mode(entry)
+        for entry in [top, *top.rglob("*")]
+    }
+
+
+def _contents(top):
+    """The bytes of every file in and below ``top``, by path below ``top``."""
+    return {p.relative_to(top).as_posix(): p.read_bytes() for p in top.rglob("*") if p.is_file() and not p.is_symlink()}
+
+
+def _a_tree(folder, target):
+    """The folder ``folder/src`` with a tree of the modes that apps, downloads and uploads outside shares leave.
+
+    ``target`` is a file that the tree's symbolic link points to.
+    """
+    src = _folder(folder / "src", 0o755, os.getgid())
+    _file(src / "doc.txt", 0o644, b"doc")
+    _file(src / "run.sh", 0o755, b"#!/bin/sh\n")
+    _file(src / "tool", 0o4750, b"tool")
+    _file(src / "readonly.txt", 0o444, b"ro")
+    _folder(src / "sub", 0o750, os.getgid())
+    _file(src / "sub" / "deep.txt", 0o640, b"deep")
+    _folder(src / "sub" / "deeper", 0o775, os.getgid())
+    _file(src / "sub" / "deeper" / "x.bin", 0o604, b"x")
+    os.symlink(target, src / "link")
+    return src
+
+
+def test_a_tree_copied_into_a_share_folder_gets_the_modes_of_shares_in_every_entry(env, smb_group):
+    """Folders 2770, files 0660 or, for files their owner may run, 0770, in the group of the share folder.
+
+    A symbolic link stays a link, and its target keeps its mode: nothing is
+    followed. The source keeps its modes.
+    """
+    docs = _folder(env.pool / "docs", 0o2770, smb_group)
+    target = _file(env.pool / "target.txt", 0o644, b"target")
+    src = _a_tree(env.pool, target)
+    top = _file(env.pool / "top.txt", 0o644, b"top")
+    source_before = _items(src)
+
+    response = _copy(env.client, [src, top], docs)
+
+    assert response.status_code == 200, response.text
+    assert response.json()["copied"] == [str(docs / "src"), str(docs / "top.txt")]
+    assert _items(docs / "src") == {
+        "src": (0o2770, smb_group),
+        "src/doc.txt": (0o660, smb_group),
+        "src/run.sh": (0o770, smb_group),
+        "src/tool": (0o770, smb_group),
+        "src/readonly.txt": (0o660, smb_group),
+        "src/sub": (0o2770, smb_group),
+        "src/sub/deep.txt": (0o660, smb_group),
+        "src/sub/deeper": (0o2770, smb_group),
+        "src/sub/deeper/x.bin": (0o660, smb_group),
+        "src/link": ("link", str(target)),
+    }
+    assert _mode(docs / "top.txt") == (0o660, smb_group)
+    assert _contents(docs / "src") == _contents(src)
+    assert (docs / "top.txt").read_bytes() == b"top"
+    assert stat.S_IMODE(os.stat(target).st_mode) == 0o644
+    assert _items(src) == source_before
+
+
+# Share folders a copy or move goes into: the share's own folder, or a folder of the share (2770).
+SHARE_FOLDERS = ["docs", "docs/projects"]
+
+
+@pytest.mark.parametrize("destination", SHARE_FOLDERS)
+@pytest.mark.parametrize("how", ["copy", "move from another pool or volume"])
+def test_a_file_and_a_folder_copied_or_moved_from_elsewhere_into_a_share_folder_get_its_modes(
+    env, smb_group, monkeypatch, destination, how
+):
+    docs = _folder(env.pool / "docs", 0o2770, smb_group)
+    _folder(docs / "projects", 0o2770, smb_group)
+    into = env.pool / destination
+    elsewhere = _folder(env.pool / "elsewhere", 0o755, os.getgid())
+    _file(elsewhere / "a.txt", 0o644, b"a")
+    _folder(elsewhere / "f", 0o755, os.getgid())
+    _file(elsewhere / "f" / "b.sh", 0o755, b"b")
+    sources = [elsewhere / "a.txt", elsewhere / "f"]
+    if how == "copy":
+        response = _copy(env.client, sources, into)
+    else:
+        _cross_device_rename(monkeypatch, "a.txt", "f")
+        response = _move(env.client, sources, into)
+
+    assert response.status_code == 200, response.text
+    assert _mode(into / "a.txt") == (0o660, smb_group)
+    assert _items(into / "f") == {"f": (0o2770, smb_group), "f/b.sh": (0o770, smb_group)}
+    assert ((into / "a.txt").read_bytes(), (into / "f" / "b.sh").read_bytes()) == (b"a", b"b")
+    assert _tree(elsewhere) == ([] if how != "copy" else ["a.txt", "f", "f/b.sh"])
+
+
+def test_private_items_copied_into_a_share_folder_keep_their_modes_as_repair_leaves_them(env, smb_group):
+    """A 0600 file and a 0700 folder, with what is in it: the group gets nothing that only their owner had.
+
+    A private folder is not a share folder, so what is copied into it keeps
+    its modes too, as Repair permissions does not enter it.
+    """
+    docs = _folder(env.pool / "docs", 0o2770, smb_group)
+    src = _folder(env.pool / "src", 0o755, os.getgid())
+    _file(src / "key", 0o600)
+    _folder(src / "private", 0o700, os.getgid())
+    _file(src / "private" / "inside.txt", 0o644)
+    _folder(src / "private" / "folder", 0o755, os.getgid())
+    key = _file(env.pool / "key.pem", 0o600)
+
+    response = _copy(env.client, [src, key], docs)
+
+    assert response.status_code == 200, response.text
+    assert _items(docs / "src") == {
+        "src": (0o2770, smb_group),
+        "src/key": (0o600, smb_group),
+        "src/private": (0o700, smb_group),
+        "src/private/inside.txt": (0o644, smb_group),
+        "src/private/folder": (0o755, smb_group),
+    }
+    assert _mode(docs / "key.pem") == (0o600, smb_group)
+
+
+def test_a_source_in_a_share_folder_gets_the_modes_of_the_folder_that_its_copy_goes_into(env, smb_group):
+    """A file left 0644 in a share (a share that was never repaired) gets 0660 in a share folder.
+
+    Copied out of the share into an ordinary folder, the share's entries keep their modes.
+    """
+    docs = _folder(env.pool / "docs", 0o2770, smb_group)
+    _folder(docs / "projects", 0o2770, smb_group)
+    _file(docs / "old.txt", 0o644, b"old")
+    _file(docs / "report.txt", 0o660, b"report")
+    archive = _folder(env.pool / "archive", 0o755, os.getgid())
+
+    into_share = _copy(env.client, [docs / "old.txt"], docs / "projects")
+    out_of_it = _copy(env.client, [docs / "report.txt", docs / "projects"], archive)
+
+    assert (into_share.status_code, out_of_it.status_code) == (200, 200), (into_share.text, out_of_it.text)
+    assert _mode(docs / "projects" / "old.txt") == (0o660, smb_group)
+    assert stat.S_IMODE(os.lstat(archive / "report.txt").st_mode) == 0o660
+    assert stat.S_IMODE(os.lstat(archive / "projects").st_mode) == 0o2770
+    assert stat.S_IMODE(os.lstat(archive / "projects" / "old.txt").st_mode) == 0o660
+
+
+@pytest.mark.parametrize("how", ["copy", "move from another pool or volume", "move within the pool"])
+@pytest.mark.parametrize("mode, smb", NOT_A_SHARE_FOLDER.values(), ids=NOT_A_SHARE_FOLDER.keys())
+def test_outside_share_folders_copies_and_moves_keep_the_modes_of_the_items(env, monkeypatch, mode, smb, how):
+    monkeypatch.setattr(constants, "SMB_GROUP_GID", os.getgid() if smb else os.getgid() + 1)
+    folder = _folder(env.pool / "folder", mode, os.getgid())
+    elsewhere = _folder(env.pool / "elsewhere", 0o755, os.getgid())
+    _file(elsewhere / "a.txt", 0o640)
+    _folder(elsewhere / "f", 0o750, os.getgid())
+    _file(elsewhere / "f" / "b.txt", 0o604)
+    _file(elsewhere / "f" / "run", 0o4755)
+    sources = [elsewhere / "a.txt", elsewhere / "f"]
+    if how == "copy":
+        response = _copy(env.client, sources, folder)
+    else:
+        if how == "move from another pool or volume":
+            _cross_device_rename(monkeypatch, "a.txt", "f")
+        response = _move(env.client, sources, folder)
+
+    assert response.status_code == 200, response.text
+    modes = {p: stat.S_IMODE(os.lstat(folder / p).st_mode) for p in ("a.txt", "f", "f/b.txt", "f/run")}
+    # A copy is the supervisor's (root's), so it never gets set-user-ID; a rename keeps it.
+    run = 0o4755 if how == "move within the pool" else 0o755
+    assert modes == {"a.txt": 0o640, "f": 0o750, "f/b.txt": 0o604, "f/run": run}
+
+
+def test_a_move_within_a_pool_or_volume_is_a_rename_that_keeps_the_modes_also_into_a_share_folder(env, smb_group):
+    """The same entries, with their owners and modes: Repair permissions gives them the modes of shares."""
+    docs = _folder(env.pool / "docs", 0o2770, smb_group)
+    a = _file(env.pool / "a.txt", 0o644, b"a")
+    _folder(env.pool / "f", 0o755, os.getgid())
+    _file(env.pool / "f" / "b.txt", 0o640)
+    inode = os.lstat(a).st_ino
+
+    response = _move(env.client, [a, env.pool / "f"], docs)
+
+    assert response.status_code == 200, response.text
+    assert os.lstat(docs / "a.txt").st_ino == inode
+    assert stat.S_IMODE(os.lstat(docs / "a.txt").st_mode) == 0o644
+    assert stat.S_IMODE(os.lstat(docs / "f").st_mode) == 0o755
+    assert stat.S_IMODE(os.lstat(docs / "f" / "b.txt").st_mode) == 0o640
+
+
+def _copies_fail_at_the_second_file(monkeypatch):
+    """shutil.copyfileobj of the router fails at its second call with ENOSPC, as a pool that is full."""
+    copy = files_router.shutil.copyfileobj
+    calls = []
+
+    def copy_until_full(src, dst, length=0):
+        calls.append(1)
+        if len(calls) == 2:
+            dst.write(b"part")
+            raise OSError(errno.ENOSPC, os.strerror(errno.ENOSPC))
+        copy(src, dst, length)
+
+    monkeypatch.setattr(files_router.shutil, "copyfileobj", copy_until_full)
+
+
+@pytest.mark.parametrize("how", ["copy", "move from another pool or volume"])
+def test_a_copy_into_a_share_folder_that_stops_part_way_opens_nothing_incomplete_to_the_group(
+    env, smb_group, monkeypatch, how
+):
+    """The error is answered. The folder whose copy stopped stays private to the supervisor, as before.
+
+    An entry gets the modes of shares only once it is complete, a folder
+    once everything in it is: the share's users cannot reach any of an
+    incomplete copy, and the file that stopped half way stays private
+    (0600). A move deletes its source only after a complete copy.
+    """
+    docs = _folder(env.pool / "docs", 0o2770, smb_group)
+    src = _folder(env.pool / "src", 0o755, os.getgid())
+    _file(src / "a.txt", 0o644, b"a")
+    _file(src / "b.txt", 0o644, b"b")
+    _copies_fail_at_the_second_file(monkeypatch)
+    if how == "copy":
+        response = _copy(env.client, [src], docs)
+    else:
+        _cross_device_rename(monkeypatch, "src")
+        response = _move(env.client, [src], docs)
+
+    assert (response.status_code, response.json()["detail"]) == (507, "No space left on device")
+    mode, gid = _mode(docs / "src")
+    assert (mode & 0o777, gid) == (0o700, smb_group)  # Linux gives it the setgid bit of its folder too
+    assert sorted(_mode(p)[0] for p in (docs / "src").iterdir()) == [0o600, 0o660]
+    assert _tree(src) == ["a.txt", "b.txt"]
+    assert ((src / "a.txt").read_bytes(), (src / "b.txt").read_bytes()) == (b"a", b"b")
+
+
+@pytest.mark.parametrize("how", ["copy", "move from another pool or volume"])
+def test_a_copy_that_cannot_get_the_modes_of_shares_answers_the_error_and_stays_private(env, smb_group, monkeypatch, how):
+    """E.g. a filesystem that refuses the mode: the answer says so, and a move keeps its source."""
+    docs = _folder(env.pool / "docs", 0o2770, smb_group)
+    a = _file(env.pool / "a.txt", 0o644, b"a")
+    monkeypatch.setattr(files_router, "os", _OsFailing("fchmod", code=errno.EPERM))
+    if how == "copy":
+        response = _copy(env.client, [a], docs)
+    else:
+        _cross_device_rename(monkeypatch, "a.txt")
+        response = _move(env.client, [a], docs)
+
+    assert (response.status_code, response.json()["detail"]) == (403, "Permission denied")
+    assert _mode(docs / "a.txt") == (0o600, smb_group)
+    assert a.read_bytes() == b"a"
+
+
+@pytest.mark.parametrize("how", ["copy", "move from another pool or volume"])
+@pytest.mark.parametrize("replacement", ["a private folder with files", "a folder the group may only read",
+                                         "another user's empty private folder", "a symbolic link to a folder"])
+def test_a_folder_put_at_the_name_of_a_copied_folder_is_neither_filled_nor_changed(
+    env, smb_group, monkeypatch, replacement, how
+):
+    """Whoever can write the share folder can put another folder at the name of the copy's new folder before the
+    copy opens it: the copy goes on only in the folder that its mkdir made, the supervisor's, private and empty.
+
+    Any other is refused with 409 before anything is copied into it or its
+    mode changed, and a move keeps its source.
+    """
+    docs = _folder(env.pool / "docs", 0o2770, smb_group)
+    src = _folder(env.pool / "src", 0o755, os.getgid())
+    _file(src / "a.txt", 0o644, b"a")
+    other = docs / "other"
+    if replacement == "a private folder with files":
+        _folder(other, 0o700, smb_group)
+        (other / "key").write_bytes(b"secret")
+        os.chmod(other / "key", 0o640)
+        base = os
+    elif replacement == "a folder the group may only read":
+        _folder(other, 0o2750, smb_group)
+        base = os
+    elif replacement == "a symbolic link to a folder":
+        os.symlink(env.outside, other)
+        base = os
+    else:
+        _folder(other, 0o700, smb_group)
+        base = _OsWithOwners([other])
+    # What the folder holds, and its modes, as they must stay under the name of the copy.
+    before = {"src" + path[len("other"):]: facts for path, facts in _items(other).items()}
+    monkeypatch.setattr(files_router, "os", _OsSwappingNewFolders(other, base))
+    if how == "copy":
+        response = _copy(env.client, [src], docs)
+    else:
+        _cross_device_rename(monkeypatch, "src")
+        response = _move(env.client, [src], docs)
+
+    assert (response.status_code, response.json()["detail"]) == (
+        409, "Another folder took the place of 'src' while it was copied, so the copy stopped there.")
+    assert _items(docs / "src") == before
+    assert _tree(src) == ["a.txt"]
+    assert _tree(env.outside) == ["secret.txt"]
+
+
+class _OsSwappingSources:
+    """The files router's os module, in which ``private`` takes the place of the source ``folder/name`` right before
+    the copy opens it, after its lstat.
+
+    As an SMB user who can write the share folder ``folder`` could rename
+    another account's private file or folder over the source in between.
+    """
+
+    def __init__(self, folder, name, private):
+        self._folder = folder
+        self._name = name
+        self._private = private
+        self._swapped = False
+
+    def __getattr__(self, name):
+        return getattr(os, name)
+
+    def open(self, path, flags, mode=0o777, *, dir_fd=None):
+        if (path == self._name and not self._swapped and dir_fd is not None
+                and os.path.samestat(os.fstat(dir_fd), os.stat(self._folder))):
+            self._swapped = True
+            os.rename(self._private, self._folder / self._name)
+        return os.open(path, flags, mode, dir_fd=dir_fd)
+
+
+@pytest.mark.parametrize("private", ["file", "folder"])
+def test_a_private_entry_swapped_in_for_the_source_keeps_its_mode_in_the_share(env, smb_group, monkeypatch, private):
+    """The mode of a copy comes from the source that was opened, not from the entry that its lstat saw."""
+    docs = _folder(env.pool / "docs", 0o2770, smb_group)
+    team = _folder(env.pool / "team", 0o2770, smb_group)
+    if private == "file":
+        _file(team / "notes", 0o644, b"notes")
+        _file(team / "key", 0o600, b"secret")
+    else:
+        _folder(team / "notes", 0o755, os.getgid())
+        _folder(team / "key", 0o700, os.getgid())
+        _file(team / "key" / "inside.txt", 0o644, b"secret")
+    monkeypatch.setattr(files_router, "os", _OsSwappingSources(team, "notes", team / "key"))
+
+    response = _copy(env.client, [team / "notes"], docs)
+
+    assert response.status_code == 200, response.text
+    if private == "file":
+        assert _mode(docs / "notes") == (0o600, smb_group)
+        assert (docs / "notes").read_bytes() == b"secret"
+    else:
+        assert _items(docs / "notes") == {"notes": (0o700, smb_group), "notes/inside.txt": (0o644, smb_group)}
+
+
+ACL_USER_OBJ, ACL_USER, ACL_GROUP_OBJ, ACL_MASK, ACL_OTHER, ACL_UNDEFINED = 0x01, 0x02, 0x04, 0x10, 0x20, 0xFFFFFFFF
+
+
+def _acl(*entries) -> bytes:
+    """A POSIX ACL as Linux keeps it in system.posix_acl_*: version 2, then (tag, permissions, id) entries."""
+    return (2).to_bytes(4, "little") + b"".join(
+        tag.to_bytes(2, "little") + perm.to_bytes(2, "little") + entry_id.to_bytes(4, "little")
+        for tag, perm, entry_id in entries)
+
+
+def _acl_entries(data: bytes) -> list[tuple[int, int, int]]:
+    return [(int.from_bytes(data[i:i + 2], "little"), int.from_bytes(data[i + 2:i + 4], "little"),
+             int.from_bytes(data[i + 4:i + 8], "little")) for i in range(4, len(data), 8)]
+
+
+@pytest.mark.skipif(not hasattr(os, "setxattr"), reason="POSIX ACLs need Linux (the Linux test runner)")
+def test_in_a_share_folder_with_a_default_acl_the_group_bits_of_a_copy_are_its_acl_mask(env, smb_group):
+    """As Repair permissions leaves ACL entries (ADR-0363): the named entry that the folder's default ACL gives
+    every new entry stays, and the group bits of 2770 and 0660 become the copy's mask."""
+    docs = _folder(env.pool / "docs", 0o2770, smb_group)
+    stranger = 4242 if os.geteuid() != 4242 else 4243
+    try:
+        os.setxattr(docs, "system.posix_acl_default", _acl(
+            (ACL_USER_OBJ, 7, ACL_UNDEFINED), (ACL_USER, 7, stranger), (ACL_GROUP_OBJ, 7, ACL_UNDEFINED),
+            (ACL_MASK, 7, ACL_UNDEFINED), (ACL_OTHER, 0, ACL_UNDEFINED)))
+    except OSError as exc:
+        if exc.errno in (errno.ENOTSUP, errno.EOPNOTSUPP):
+            pytest.skip(f"no POSIX ACLs on this file system: {exc}")
+        raise
+    src = _folder(env.pool / "src", 0o755, os.getgid())
+    _file(src / "a.txt", 0o644)
+
+    response = _copy(env.client, [src], docs)
+
+    assert response.status_code == 200, response.text
+    for path, mode, mask in ((docs / "src", 0o2770, 7), (docs / "src" / "a.txt", 0o660, 6)):
+        assert _mode(path) == (mode, smb_group), path
+        entries = _acl_entries(os.getxattr(path, "system.posix_acl_access"))
+        assert (ACL_USER, 7, stranger) in entries and (ACL_MASK, mask, ACL_UNDEFINED) in entries, (path, entries)
+
+
 # --- volumes, other subvolumes and mount points -------------------------------------
 
 

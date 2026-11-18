@@ -1,6 +1,7 @@
 import type { Page, WebSocketRoute } from '@playwright/test';
 import { test, expect } from './fixtures';
-import { apiLogin, createAccount, deleteAccount, type Account } from './accounts';
+import { createAccount, deleteAccount, type Account } from './accounts';
+import { signInPage } from './session';
 
 // The health banner (feature system.alert-events, ADR-0332). The server sends administrators the
 // problems of the NAS that are still there over /ws/v1/events (supervisor/src/websocket/events.py),
@@ -123,11 +124,9 @@ test.describe('The health banner', () => {
       await deleteAccount(request, account, USER.username);
     });
 
-    test('never sees it, even from a socket that sends problems', async ({ page, request }) => {
-      const token = await apiLogin(request, USER);
+    test('never sees it, even from a socket that sends problems', async ({ page }) => {
       await fakeEvents(page, [DEGRADED]);
-      await page.goto('/login');
-      await page.evaluate((value) => localStorage.setItem('token', value), token);
+      await signInPage(page, USER);
       await page.goto('/');
 
       await expect(page.locator('main').getByText(`Signed in as ${USER.username}`, { exact: true })).toBeVisible();

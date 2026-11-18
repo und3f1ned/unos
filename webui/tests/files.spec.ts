@@ -1,9 +1,10 @@
 import { randomBytes } from 'node:crypto';
-import { existsSync, utimesSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, utimesSync, writeFileSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { Locator, Page, Request } from '@playwright/test';
 import { test, expect } from './fixtures';
+import { browserSession } from './session';
 
 /** Show the web UI in Russian from the next page load on: the choice that the Account page keeps (ADR-0287). */
 async function chooseRussian(page: Page) {
@@ -105,10 +106,11 @@ test.describe('File Browser', () => {
 type Entry = { name: string; path: string; type: string; size: number };
 type Scratch = { pool: Entry; name: string; path: string };
 
-let token = '';
+// The browser's session, for the API calls of the spec (ADR-0397).
+let session: Record<string, string> = {};
 let scratch: Scratch | null = null;
 
-const auth = () => ({ Authorization: `Bearer ${token}` });
+const auth = () => session;
 
 async function listNames(page: Page, dir: string): Promise<string[]> {
   const response = await page.request.get(`/api/v1/files/list?path=${encodeURIComponent(dir)}`, {
@@ -279,8 +281,7 @@ const trashToolbar = (page: Page) => page.getByRole('toolbar', { name: 'Selected
 
 test.describe('File Browser operations', () => {
   test.beforeEach(async ({ authenticatedPage: page }) => {
-    token = (await page.evaluate(() => localStorage.getItem('token'))) ?? '';
-    expect(token, 'signed in').not.toBe('');
+    session = await browserSession(page);
     const response = await page.request.get('/api/v1/files/list', { headers: auth() });
     expect(response.ok(), `list pools: HTTP ${response.status()}`).toBeTruthy();
     const name = `e2e-files-${Date.now().toString(36)}`;
@@ -338,7 +339,7 @@ test.describe('File Browser operations', () => {
     await expect(row(page, pool.name)).toBeVisible();
   });
 
-  test('downloads a file with the session token', async ({ authenticatedPage: page }) => {
+  test('downloads a file with the session', async ({ authenticatedPage: page }) => {
     // Larger than the server's 1 MiB read size, with every byte value.
     const content = randomBytes(3 * 1024 * 1024 + 123);
     await putFile(page, scratch!.path, 'data.bin', content);
@@ -350,7 +351,9 @@ test.describe('File Browser operations', () => {
     await selectionBar(page).getByRole('button', { name: 'Download' }).click();
 
     const request = await requestSent;
-    expect(request.headers()['authorization']).toBe(`Bearer ${token}`);
+    // The session cookie with the page's session key, no Authorization header (ADR-0397).
+    expect(request.headers()['authorization']).toBeUndefined();
+    expect(request.headers()['x-unos-session-key']).toBe(session['X-UNOS-Session-Key']);
     expect(new URL(request.url()).searchParams.get('path')).toBe(`${scratch!.path}/data.bin`);
     const download = await downloadStarted;
     expect(download.suggestedFilename()).toBe('data.bin');
@@ -778,6 +781,49 @@ test.describe('File Browser operations', () => {
     await expect(row(page, 'c.txt')).toBeVisible();
     expect(await listNames(page, sub)).toEqual(['b.txt', 'c.txt']);
     expect(await listNames(page, dir)).toEqual(['sub']);
+  });
+
+  test('outside share folders, Copy and Move keep the permissions of the items', async ({
+    authenticatedPage: page,
+  }) => {
+    // Only what Copy, or a Move from another pool or volume, puts into a share folder (setgid, the
+    // group unos-smb, mode 2770) gets the modes of shares (ADR-0396); the stand-in cannot make one.
+    // Elsewhere the copies and the moved items keep their permissions, which the spec sets here.
+    test.skip(!process.env.E2E_STANDIN_STATE, ONLY_THE_STAND_IN_FOLDERS);
+    const { path: dir, name } = scratch!;
+    await putFile(page, dir, 'a.txt', Buffer.from('alpha'));
+    const tree = await makeFolder(page, dir, 'tree');
+    await putFile(page, tree, 'b.txt', Buffer.from('bravo'));
+    chmodSync(join(dir, 'a.txt'), 0o640);
+    chmodSync(tree, 0o750);
+    chmodSync(join(tree, 'b.txt'), 0o604);
+    await makeFolder(page, dir, 'copies');
+    await makeFolder(page, dir, 'moved');
+    const permissions = { 'a.txt': '-rw-r-----', tree: 'drwxr-x---', 'tree/b.txt': '-rw----r--' };
+    await openScratch(page);
+
+    for (const [action, into] of [
+      ['Copy', 'copies'],
+      ['Move', 'moved'],
+    ] as const) {
+      await row(page, 'a.txt').getByRole('checkbox').check();
+      await row(page, 'tree').getByRole('checkbox').check();
+      await selectionBar(page).getByRole('button', { name: action, exact: true }).click();
+      await openFolder(page, into);
+      const answered = page.waitForResponse((response) =>
+        isApi(`/files/${action.toLowerCase()}`)(response.request()),
+      );
+      await page.getByRole('button', { name: `${action} here` }).click();
+      expect((await answered).status()).toBe(200);
+      await expect(row(page, 'a.txt')).toBeVisible();
+      await expect(row(page, 'tree')).toBeVisible();
+      for (const [item, shown] of Object.entries(permissions)) {
+        expect((await infoOf(page, `${dir}/${into}/${item}`)).permissions, `${action}: ${item}`).toBe(shown);
+      }
+      await crumb(page, name).click();
+      await expect(row(page, into)).toBeVisible();
+    }
+    expect(await listNames(page, dir)).toEqual(['copies', 'moved']);
   });
 
   test('uploads files into the open folder', async ({ authenticatedPage: page }) => {
@@ -1524,8 +1570,9 @@ test.describe('File Browser operations', () => {
       const url = new URL(request.url());
       if (url.pathname.startsWith('/api/v1/files/')) sent.push(`${request.method()} ${url.pathname}`);
     });
-    // As if the token had expired: same tab, so no storage event.
-    await page.evaluate(() => localStorage.setItem('token', 'expired-session-token'));
+    // As if the session had ended: the browser's next request carries no session cookie, and the
+    // page learns of it only from the answer.
+    await page.context().clearCookies();
     await page.locator('input[type="file"]').setInputFiles({
       name: 'late.txt',
       mimeType: 'text/plain',
@@ -1548,8 +1595,9 @@ test.describe('File Browser operations', () => {
     });
     const saved: string[] = [];
     page.on('download', (download) => saved.push(download.suggestedFilename()));
-    // As if the token had expired: same tab, so no storage event.
-    await page.evaluate(() => localStorage.setItem('token', 'expired-session-token'));
+    // As if the session had ended: the browser's next request carries no session cookie, and the
+    // page learns of it only from the answer.
+    await page.context().clearCookies();
     await row(page, 'late.txt').dblclick();
     await expect(page).toHaveURL('/login');
     await expect(page.locator('#username')).toBeVisible();

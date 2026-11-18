@@ -100,7 +100,7 @@ and this index, and `make check-fast` runs it.
 
 | ADR | Title | Status | Date |
 | --- | --- | --- | --- |
-| [0009](0009-bearer-tokens-and-a-same-origin-api.md) | The API takes Bearer tokens, not cookies, and refuses cross-origin requests by default | accepted | 2026-02-05 |
+| [0009](0009-bearer-tokens-and-a-same-origin-api.md) | The API takes Bearer tokens, not cookies, and refuses cross-origin requests by default | superseded by [0397](0397-the-web-ui-s-session-is-an-httponly-cookie-accepted-only-from-its-own-origin.md) | 2026-02-05 |
 | [0010](0010-login-rate-limit-per-client.md) | Login is limited to 5 attempts per minute per client IP | accepted | 2026-01-24 |
 | [0028](0028-jwt-secret-generated-per-install.md) | Each install generates its own JWT secret, and published placeholders are refused | accepted | 2026-11-05 |
 | [0029](0029-first-run-setup-creates-one-administrator.md) | There are no default credentials: the first visit creates exactly one administrator | accepted | 2026-11-05 |
@@ -123,6 +123,7 @@ and this index, and `make check-fast` runs it.
 | [0329](0329-a-session-is-a-row-and-ending-it-deletes-the-row.md) | A session is a row of user_sessions, and ending a session deletes its row | accepted | 2026-11-10 |
 | [0386](0386-two-factor-authentication-required-for-every-account-after-a-grace-period.md) | An administrator with two-factor authentication requires it for every account, and after a grace period an account without it reaches only its setup | accepted | 2026-11-17 |
 | [0392](0392-an-api-token-can-be-limited-to-reading-and-to-areas-of-the-api.md) | An API token can be limited to reading and to areas of the API, checked where every credential is checked | accepted | 2026-11-17 |
+| [0397](0397-the-web-ui-s-session-is-an-httponly-cookie-accepted-only-from-its-own-origin.md) | The web UI's session is an HttpOnly cookie accepted only from its own origin, and programs keep Bearer tokens | accepted | 2026-11-17 |
 
 ## Storage
 
@@ -339,6 +340,7 @@ and this index, and `make check-fast` runs it.
 | [0347](0347-an-upload-that-gets-no-data-for-120-seconds-is-cut-off-with-408.md) | An upload that gets no data for 120 seconds is cut off with 408 | accepted | 2026-11-11 |
 | [0348](0348-the-file-manager-refuses-bind-mounts-before-a-move-and-busy-entries-with-409.md) | The file manager never deletes, renames or moves volumes, subvolumes or mounts, bind mounts included, and a busy entry is a conflict | accepted | 2026-11-11 |
 | [0354](0354-leftovers-of-uploads-are-found-after-each-start-and-removed-only-when-an-administrator-asks.md) | Leftovers of uploads are found after each start and removed only when an administrator asks | accepted | 2026-11-12 |
+| [0396](0396-copies-and-moves-from-another-volume-into-a-share-folder-get-the-modes-of-repair-permissions.md) | Copies, and moves from another pool or volume, into a share folder get the modes of Repair permissions | accepted | 2026-11-17 |
 
 ## System
 
@@ -399,6 +401,7 @@ and this index, and `make check-fast` runs it.
 | [0365](0365-a-check-of-webui-src-fails-for-a-setinterval-that-reaches-the-api.md) | A check of webui/src fails for a setInterval whose callback reaches the API | accepted | 2026-11-12 |
 | [0389](0389-several-containers-act-one-after-another-through-their-own-endpoints-and-several-shares-are-deleted-with-one-apply.md) | Several containers act one after another through their own endpoints, and several shares are deleted with one request and one apply | accepted | 2026-11-17 |
 | [0393](0393-ctrl-k-opens-a-command-palette-that-runs-only-actions-that-change-nothing-on-the-nas.md) | Ctrl+K opens a command palette of the pages and actions of the user's role, which runs only actions that change nothing on the NAS | accepted | 2026-11-17 |
+| [0395](0395-each-user-arranges-hides-and-shows-the-dashboards-widgets-and-the-server-keeps-the-layout.md) | Each user arranges, hides and shows the dashboard's widgets, and the server keeps the layout | accepted | 2026-11-17 |
 
 ## Deploy
 

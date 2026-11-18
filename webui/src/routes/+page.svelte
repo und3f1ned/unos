@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { onMount } from "svelte";
-  import { Server, RefreshCw, Clock, UserCog } from "lucide-svelte";
+  import { Server, RefreshCw, Clock, UserCog, SlidersHorizontal, Check, GripVertical, ArrowUp, ArrowDown, EyeOff, Eye, RotateCcw } from "lucide-svelte";
+  import { onMount, tick } from "svelte";
   import { Alert, Button, Card } from "$lib/components/ui";
   import SystemStatsWidget from "$lib/components/widgets/SystemStatsWidget.svelte";
   import StorageWidget from "$lib/components/widgets/StorageWidget.svelte";
@@ -13,6 +13,12 @@
   import { getContainers, type Container } from "$lib/api/containers";
   import { getLogs, type NotificationLog } from "$lib/api/notifications";
   import { getDiskPredictions, replaceSoon, type DiskPrediction } from "$lib/api/health";
+  import {
+    getDashboardLayout, saveDashboardLayout, resetDashboardLayout, type LayoutEntry
+  } from "$lib/api/dashboard";
+  import {
+    WIDGETS, defaultLayout, isDefaultLayout, moveTo, resolveLayout, setHidden, step, widgetDef
+  } from "$lib/dashboard-layout";
   import { stats, wsConnected, wsForbidden, type WebSocketStats } from "$lib/stores/stats";
   import { user } from "$lib/stores/auth";
   import { intlLocale, t } from "$lib/i18n";
@@ -33,6 +39,18 @@
   $: if ($stats) {
     lastUpdate = new Date();
   }
+
+  // The user's layout of the widgets, kept on the server (ADR-0395). It is read with the rest of the
+  // page's data, on opening and on Refresh, and written only when the user changes it: nothing polls.
+  let layout: LayoutEntry[] = defaultLayout(false);
+  let layoutFailed = false;
+  let layoutError = "";
+  let arranging = false;
+  let saving = false;
+  // What a screen reader is told after a move, a hide or a show.
+  let announcement = "";
+  let draggedId: string | null = null;
+  let overId: string | null = null;
 
   onMount(async () => {
     await loadData();
@@ -61,7 +79,7 @@
   async function loadData() {
     loading = true;
     try {
-      const [infoData, poolsData, containersData, logsData] = await Promise.all([
+      const [infoData, poolsData, containersData, logsData, , layoutData] = await Promise.all([
         getSystemInfo().catch((e) => {
           console.error("Failed to load system info:", e);
           return null;
@@ -69,8 +87,18 @@
         isAdmin ? getPools().catch(() => []) : [],
         isAdmin ? getContainers().catch(() => []) : [],
         isAdmin ? getLogs().catch(() => []) : [],
-        loadPredictions()
+        loadPredictions(),
+        getDashboardLayout().catch((e) => {
+          console.error("Failed to load the dashboard layout:", e);
+          return null;
+        })
       ]);
+
+      // A layout that cannot be read shows the default and cannot be changed, so that the stored one
+      // is not overwritten by a guess.
+      layoutFailed = layoutData === null;
+      layout = resolveLayout(layoutData ?? [], isAdmin);
+      if (layoutFailed) arranging = false;
 
       systemInfo = infoData;
       pools = Array.isArray(poolsData) ? poolsData : [];
@@ -137,6 +165,104 @@
     created_at: log.sent_at,
     read: log.success
   }));
+  // A widget shows when it is not hidden and has its data: the stats cards come with the live stats.
+  $: shown = layout.filter((e) => !e.hidden && (currentStats !== null || widgetDef(e.id)?.adminOnly));
+  $: hiddenWidgets = layout.filter((e) => e.hidden);
+  $: nameOf = (id: string): string => {
+    const def = widgetDef(id);
+    return def ? $t(def.nameKey) : id;
+  };
+
+  async function apply(next: LayoutEntry[], message: string, reset = false): Promise<boolean> {
+    if (saving || next === layout) return false;
+    saving = true;
+    const before = layout;
+    layout = next;
+    layoutError = "";
+    try {
+      if (reset) await resetDashboardLayout();
+      else await saveDashboardLayout(next);
+      announcement = message;
+      return true;
+    } catch (e) {
+      layout = before;
+      layoutError = $t("dashboard.layout.saveFailed", {
+        error: e instanceof Error && e.message ? e.message : ""
+      });
+      announcement = layoutError;
+      return false;
+    } finally {
+      saving = false;
+    }
+  }
+
+  // A button of a widget's toolbar keeps the focus after the widget moved: the element is moved in
+  // the page, which drops the focus. 0 is Move up, 1 Move down; a disabled one passes it on.
+  async function focusToolbar(id: string, preferred: 0 | 1) {
+    await tick();
+    const buttons = [...document.querySelectorAll<HTMLButtonElement>(`[data-widget="${id}"] [data-toolbar] button`)];
+    (buttons[preferred]?.disabled ? buttons[1 - preferred] : buttons[preferred])?.focus();
+  }
+
+  async function move(id: string, direction: -1 | 1) {
+    const next = step(layout, id, direction, (other) => shown.some((e) => e.id === other));
+    const done = await apply(next, "");
+    if (!done) return;
+    const position = shown.findIndex((e) => e.id === id) + 1;
+    announcement = $t("dashboard.layout.moved", { name: nameOf(id), position, total: shown.length });
+    await focusToolbar(id, direction === -1 ? 0 : 1);
+  }
+
+  // The button that was pressed goes away or is disabled by the change: the focus goes to where the
+  // widget went, so that a keyboard user does not start again from the top of the page.
+  async function hide(id: string) {
+    if (!(await apply(setHidden(layout, id, true), $t("dashboard.layout.hidden", { name: nameOf(id) })))) return;
+    await tick();
+    document.querySelectorAll<HTMLElement>("[data-hidden-list] button")[hiddenWidgets.findIndex((e) => e.id === id)]?.focus();
+  }
+
+  async function show(id: string) {
+    if (!(await apply(setHidden(layout, id, false), $t("dashboard.layout.shown", { name: nameOf(id) })))) return;
+    await focusToolbar(id, 0);
+  }
+
+  async function resetLayout() {
+    if (!(await apply(defaultLayout(isAdmin), $t("dashboard.layout.wasReset"), true))) return;
+    await tick();
+    document.querySelector<HTMLElement>("[data-customize] button")?.focus();
+  }
+
+  function onDragStart(event: DragEvent, id: string) {
+    draggedId = id;
+    if (!event.dataTransfer) return;
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData("text/plain", id);
+    const card = (event.currentTarget as HTMLElement).closest("[data-widget]");
+    if (card) event.dataTransfer.setDragImage(card, 16, 16);
+  }
+
+  function onDragOver(event: DragEvent, id: string) {
+    if (draggedId === null) return;
+    event.preventDefault();
+    overId = id;
+  }
+
+  async function onDrop(event: DragEvent, id: string) {
+    event.preventDefault();
+    const dragged = draggedId;
+    draggedId = overId = null;
+    if (dragged === null || dragged === id) return;
+    const done = await apply(moveTo(layout, dragged, id), "");
+    if (done) {
+      announcement = $t("dashboard.layout.moved", {
+        name: nameOf(dragged), position: shown.findIndex((e) => e.id === dragged) + 1, total: shown.length
+      });
+    }
+  }
+
+  function onDragEnd() {
+    draggedId = overId = null;
+  }
 </script>
 
 <div class="space-y-6">
@@ -165,7 +291,15 @@
           {$t("dashboard.updated", { time: formatTime(lastUpdate) })}
         </span>
       {/if}
-      <Button variant="secondary" size="icon" on:click={handleRefresh} disabled={loading}>
+      {#if !layoutFailed && !loading}
+        <span data-customize>
+          <Button variant="secondary" size="sm" icon={arranging ? Check : SlidersHorizontal} pressed={arranging}
+            on:click={() => (arranging = !arranging)}>
+            {arranging ? $t("dashboard.layout.done") : $t("dashboard.layout.customize")}
+          </Button>
+        </span>
+      {/if}
+      <Button variant="secondary" size="icon" on:click={handleRefresh} disabled={loading || saving}>
         <RefreshCw class="w-4 h-4 {loading ? 'animate-spin' : ''}" />
         <span class="sr-only">{$t("common.refresh")}</span>
       </Button>
@@ -177,21 +311,7 @@
       <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500"></div>
     </div>
   {:else}
-    <!-- System Stats -->
-    {#if currentStats}
-      <SystemStatsWidget
-        cpuPercent={currentStats.cpu?.percent || 0}
-        memoryPercent={currentStats.memory?.percent || 0}
-        memoryUsed={currentStats.memory?.used || 0}
-        memoryTotal={currentStats.memory?.total || 0}
-        networkUp={currentStats.network?.bytes_sent_rate || 0}
-        networkDown={currentStats.network?.bytes_recv_rate || 0}
-        diskRead={currentStats.disk_io?.read_rate || 0}
-        diskWrite={currentStats.disk_io?.write_rate || 0}
-        temperature={wholeDegrees(currentStats.cpu?.temperature)}
-      />
-    {/if}
-
+    <!-- The disks to replace stay above the widgets, always: a warning is not one of them. -->
     {#if isAdmin}
       {#if toReplace.length > 0}
         <Alert variant="error" title={$t("dashboard.replace.title")}>
@@ -210,25 +330,111 @@
           {predictionsError}
         </Alert>
       {/if}
+    {/if}
 
-      <!-- Main Grid -->
-      <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <!-- Storage -->
-        <StorageWidget pools={poolsForWidget} />
+    {#if layoutFailed}
+      <Alert variant="warning">{$t("dashboard.layout.loadFailed")}</Alert>
+    {/if}
+    {#if layoutError}
+      <Alert variant="error" dismissible on:dismiss={() => (layoutError = "")}>{layoutError}</Alert>
+    {/if}
 
-        <!-- Containers -->
-        <ContainersWidget containers={containersForWidget} limit={5} />
-      </div>
+    <p class="sr-only" role="status" data-layout-status>{announcement}</p>
 
-      <!-- Bottom Row -->
-      <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <!-- Quick Actions -->
-        <QuickActionsWidget />
+    {#if arranging}
+      <Card>
+        <p class="text-sm text-secondary mb-3">{$t("dashboard.layout.hint")}</p>
+        <section aria-label={$t("dashboard.layout.hiddenTitle")} class="mb-3" data-hidden-list>
+          <h2 class="section-title mb-2">{$t("dashboard.layout.hiddenTitle")}</h2>
+          {#if hiddenWidgets.length === 0}
+            <p class="text-sm text-muted">{$t("dashboard.layout.noneHidden")}</p>
+          {:else}
+            <div class="flex flex-wrap gap-2">
+              {#each hiddenWidgets as entry (entry.id)}
+                <Button variant="secondary" size="sm" icon={Eye} disabled={saving} on:click={() => show(entry.id)}>
+                  {$t("dashboard.layout.show", { name: nameOf(entry.id) })}
+                </Button>
+              {/each}
+            </div>
+          {/if}
+        </section>
+        <Button variant="ghost" size="sm" icon={RotateCcw} disabled={saving || isDefaultLayout(layout, isAdmin)}
+          on:click={resetLayout}>
+          {$t("dashboard.layout.reset")}
+        </Button>
+      </Card>
+    {/if}
 
-        <!-- Recent Activity -->
-        <RecentActivityWidget notifications={notificationsForWidget} limit={5} />
-      </div>
-    {:else}
+    <!-- The widgets: small cards five to a row on a wide screen, wide ones two to a row (ADR-0395). -->
+    <div class="grid grid-cols-2 md:grid-cols-6 xl:grid-cols-10 gap-4">
+      {#each shown as entry, index (entry.id)}
+        {@const def = widgetDef(entry.id)}
+        <div
+          data-widget={entry.id}
+          class="widget min-w-0 flex flex-col {def?.size === 'wide' ? 'col-span-2 md:col-span-6 xl:col-span-5' : 'col-span-1 md:col-span-2'}
+            {arranging ? 'rounded-lg border border-dashed border-border p-1' : ''}
+            {overId === entry.id && draggedId !== entry.id ? 'ring-2 ring-blue-500' : ''}
+            {draggedId === entry.id ? 'opacity-50' : ''}"
+          on:dragover={(e) => onDragOver(e, entry.id)}
+          on:drop={(e) => onDrop(e, entry.id)}
+        >
+          {#if arranging}
+            <div data-toolbar class="flex flex-wrap items-center gap-1 mb-1">
+              <!-- Dragging is for a mouse; the buttons are for the keyboard and a finger. -->
+              <span
+                data-drag-handle
+                draggable="true"
+                role="presentation"
+                title={$t("dashboard.layout.drag")}
+                class="p-1.5 cursor-grab text-secondary"
+                on:dragstart={(e) => onDragStart(e, entry.id)}
+                on:dragend={onDragEnd}
+              >
+                <GripVertical class="w-4 h-4" />
+              </span>
+              <Button variant="secondary" size="icon-sm" disabled={saving || index === 0}
+                on:click={() => move(entry.id, -1)}>
+                <ArrowUp class="w-4 h-4" />
+                <span class="sr-only">{$t("dashboard.layout.moveUp", { name: nameOf(entry.id) })}</span>
+              </Button>
+              <Button variant="secondary" size="icon-sm" disabled={saving || index === shown.length - 1}
+                on:click={() => move(entry.id, 1)}>
+                <ArrowDown class="w-4 h-4" />
+                <span class="sr-only">{$t("dashboard.layout.moveDown", { name: nameOf(entry.id) })}</span>
+              </Button>
+              <Button variant="secondary" size="icon-sm" disabled={saving} on:click={() => hide(entry.id)}>
+                <EyeOff class="w-4 h-4" />
+                <span class="sr-only">{$t("dashboard.layout.hide", { name: nameOf(entry.id) })}</span>
+              </Button>
+            </div>
+          {/if}
+          {#if entry.id === "storage"}
+            <StorageWidget pools={poolsForWidget} />
+          {:else if entry.id === "containers"}
+            <ContainersWidget containers={containersForWidget} limit={5} />
+          {:else if entry.id === "quick-actions"}
+            <QuickActionsWidget />
+          {:else if entry.id === "recent-activity"}
+            <RecentActivityWidget notifications={notificationsForWidget} limit={5} />
+          {:else if currentStats}
+            <SystemStatsWidget
+              only={entry.id === "memory" || entry.id === "network" || entry.id === "disk-io" || entry.id === "temperature" ? entry.id : "cpu"}
+              cpuPercent={currentStats.cpu?.percent || 0}
+              memoryPercent={currentStats.memory?.percent || 0}
+              memoryUsed={currentStats.memory?.used || 0}
+              memoryTotal={currentStats.memory?.total || 0}
+              networkUp={currentStats.network?.bytes_sent_rate || 0}
+              networkDown={currentStats.network?.bytes_recv_rate || 0}
+              diskRead={currentStats.disk_io?.read_rate || 0}
+              diskWrite={currentStats.disk_io?.write_rate || 0}
+              temperature={wholeDegrees(currentStats.cpu?.temperature)}
+            />
+          {/if}
+        </div>
+      {/each}
+    </div>
+
+    {#if !isAdmin}
       <Card>
         <div class="flex items-start gap-3">
           <UserCog class="w-5 h-5 text-info mt-0.5" />
@@ -245,3 +451,10 @@
     {/if}
   {/if}
 </div>
+
+<style>
+  /* A widget's card fills the cell of the grid, so that the cards of a row are as tall as the tallest. */
+  .widget > :global(:not([data-toolbar])) {
+    flex: 1 1 auto;
+  }
+</style>

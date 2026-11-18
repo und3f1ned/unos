@@ -1,6 +1,7 @@
 import { test, expect } from './fixtures';
 import { createAccount, deleteAccount, type Account } from './accounts';
 import type { Page } from '@playwright/test';
+import { sessionToken } from './session';
 
 // A user changes their own password on the Account page (feature auth.change-own-password)
 // against the real supervisor: no route fakes. A regular account without SMB is created for
@@ -74,12 +75,14 @@ test.describe('Change Password', () => {
     }
 
     // Step 4: the old password no longer signs in, and the new one does.
+    const signedOut = page.waitForResponse('**/api/v1/auth/logout');
     await page.getByRole('button', { name: 'Logout' }).click();
+    expect((await signedOut).status()).toBe(200);
     await expect(page).toHaveURL('/login');
     await signIn(page, USER.password);
     await expect(page.getByText('Incorrect username or password')).toBeVisible();
     await expect(page).toHaveURL('/login');
-    expect(await page.evaluate(() => localStorage.getItem('token'))).toBeNull();
+    expect(await sessionToken(page)).toBeNull();
     await page.getByLabel('Password').fill(NEW_PASSWORD);
     await page.getByRole('button', { name: 'Sign In' }).click();
     await expect(page).toHaveURL('/');

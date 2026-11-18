@@ -1505,26 +1505,26 @@ def test_the_relay_keeps_the_token_private_and_signs_in_only_when_needed(relay):
     login sends no token; --forget-token deletes the cache. The password goes only in the
     login's body."""
     client, fake, cache = relay
-    assert client.get("/system/stats").status_code == 200
+    assert client.get("/system/info").status_code == 200
     assert fake.logins == 1 and cache.read_text() == "token-1"
     assert stat.S_ISREG(cache.lstat().st_mode) and oct(stat.S_IMODE(cache.lstat().st_mode)) == "0o600"
     assert [p.name for p in cache.parent.iterdir()] == [cache.name]
 
-    assert client.get("/system/stats").status_code == 200
+    assert client.get("/system/info").status_code == 200
     assert fake.logins == 1 and fake.tokens_sent() == ["Bearer token-1", "Bearer token-1"]
 
     fake.valid.clear()  # the API refuses the kept token (a new JWT secret, an expired token)
-    assert client.get("/system/stats").status_code == 200
+    assert client.get("/system/info").status_code == 200
     assert fake.logins == 2 and cache.read_text() == "token-2"
     assert fake.tokens_sent()[-2:] == ["Bearer token-1", "Bearer token-2"]
 
     fake.accept = False  # refused again after the new login: no second one, the 401 is the answer
-    assert client.get("/system/stats").status_code == 401 and fake.logins == 3
+    assert client.get("/system/info").status_code == 401 and fake.logins == 3
 
     fake.accept = True
     asked = len(fake.requests)
-    assert client.request("GET", "/system/stats", auth=False).status_code == 401
-    assert fake.requests[asked:] == [("GET", "/api/v1/system/stats", None)]
+    assert client.request("GET", "/system/info", auth=False).status_code == 401
+    assert fake.requests[asked:] == [("GET", "/api/v1/system/info", None)]
 
     client.forget_token()
     assert not cache.exists()
@@ -1540,7 +1540,7 @@ def test_as_user_signs_in_as_that_user_with_a_token_cache_of_its_own(relay):
     fake.users["unoscheck1a2b3c"] = "pw-of-the-check-user"
     own = cache.parent / "unos-scenario-unoscheck1a2b3c.token"
     mine = client.as_user("unoscheck1a2b3c", "pw-of-the-check-user", str(own))
-    assert client.get("/system/stats").status_code == 200
+    assert client.get("/system/info").status_code == 200
     assert mine.get("/auth/me").status_code == 200
     assert fake.logins == 2 and cache.read_text() == "token-1" and own.read_text() == "token-2"
     assert oct(stat.S_IMODE(own.lstat().st_mode)) == "0o600"
@@ -1577,7 +1577,7 @@ def test_the_relay_never_reads_a_cache_that_is_not_its_own_private_file(relay, p
         cache.symlink_to(target)
     else:
         os.mkfifo(cache, 0o600)
-    assert client.get("/system/stats").status_code == 200
+    assert client.get("/system/info").status_code == 200
     assert fake.logins == 1 and fake.tokens_sent() == ["Bearer token-1"]
     assert stat.S_ISREG(cache.lstat().st_mode) and oct(stat.S_IMODE(cache.lstat().st_mode)) == "0o600"
     assert cache.read_text() == "token-1"
@@ -1617,7 +1617,7 @@ def test_the_relay_writes_the_token_through_no_link(relay):
     target = cache.parent.parent / "elsewhere"
     target.write_text("")
     (cache.parent / (cache.name + ".new")).symlink_to(target)
-    assert client.get("/system/stats").status_code == 200
+    assert client.get("/system/info").status_code == 200
     assert target.read_text() == "" and stat.S_ISREG(cache.lstat().st_mode) and cache.read_text() == "token-1"
 
 
@@ -1627,7 +1627,7 @@ def test_the_relay_calls_only_the_api_of_the_device_itself(relay):
     for url in ("https://10.0.0.9/api/v1", "https://127.0.0.1.example.org/api/v1", "file:///etc/api/v1"):
         client.base_url = url
         with pytest.raises(api.ApiError, match="only the API of the device itself"):
-            client.get("/system/stats")
+            client.get("/system/info")
     assert fake.requests == [] and not cache.exists()
 
 

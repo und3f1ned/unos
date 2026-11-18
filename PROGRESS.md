@@ -117,6 +117,13 @@ significant step. Features and their state live in `feature-list.json`, decision
   interfaces (`shares.smb-bind-interfaces`, ADR-0391), API tokens limited to reading or to areas
   (`auth.api-token-scopes`, ADR-0392), and the dashboard's host network and disk I/O
   (`system.dashboard`, ADR-0388). All pass, with `auth.api-token-last-used-throttle`'s device step.
+- In the night of 2026-11-17 to 18 (Log): the ninth batch on the branch `mvp.batch-9`, merged
+  into `main` with its record: the web UI's session in an HttpOnly cookie that counts only from
+  its own origin and with the tab's session key (`auth.token-storage`, ADR-0397, superseding
+  ADR-0009), copies and moves into share folders with the modes of Repair permissions
+  (`files.group-writable-copies-and-moves-in-shares`, ADR-0396), a dashboard that each user
+  arranges (`webui.dashboard-layout`, ADR-0395), and the container stats endpoints removed
+  (`system.no-container-stats-endpoints`). All four pass.
 - On the device the NFS server runs (nfs-server, rpcbind.socket and rpcbind, enabled since
   2026-11-08, ADR-0303) and exports nothing for now; over IPv6 only LAN sources reach it
   (ADR-0301). avahi-daemon and wsdd2 run (network discovery), and nmbd is disabled since
@@ -167,7 +174,7 @@ significant step. Features and their state live in `feature-list.json`, decision
 
 ## Dev device
 
-State on 2026-11-17, 20:30 UTC. A Banana Pi BPI-W3 (ArmSoM W3, Rockchip RK3588, 8 GB), running
+State on 2026-11-18, 00:20 UTC. A Banana Pi BPI-W3 (ArmSoM W3, Rockchip RK3588, 8 GB), running
 Armbian's community image for `armsom-w3`, upgraded on 2026-11-15 from 26.2.0-trunk.151 to
 26.11.0-trunk.133 (Debian 13, kernel 6.1.172-vendor-rk35xx);
 its address and logins are in `dev.env` (ADR-0212). This journal called it a UGREEN board, after
@@ -178,7 +185,13 @@ the UGREEN firmware on its eMMC, until the owner set that right on 2026-11-15 (A
   since boot, its own wear estimate 0 to 10%. Nothing writes to it.
 - SSH by key only, root by the workstation's key `~/.ssh/unos_dev_ed25519`; root's and the UNOS
   administrator's passwords were rotated and live only in `dev.env` (ADR-0226).
-- Runs 7f5dd29 of the branch `mvp.batch-8` (the eighth batch, ADR-0388 to ADR-0393), merged into
+- Runs 991cb28 of the branch `mvp.batch-9` (the ninth batch, ADR-0395 to ADR-0397), merged into
+  `main` with the record of its device check, whose commits on top of it change no runtime file.
+  Deployed on 2026-11-17 at about 23:10 UTC (SD MiB sync 4.445, build-supervisor 14.023,
+  build-webui 17.438, up 5.461, check.sh 0.242). A reboot from the API at 23:24:54 UTC (all
+  containers healthy by 23:25:53). The web UI's sessions are cookies now: a browser that held the
+  old token signs in again. The device's users are `admin` and `test` (since 2026-01-24).
+- Before it, 7f5dd29 of the branch `mvp.batch-8` (the eighth batch, ADR-0388 to ADR-0393), merged into
   `main` with the record of its device check, whose commits on top of it change no runtime file.
   The batch's 320d3ec was deployed at 18:58 to 18:59 UTC (SD MiB sync 5.398, build-supervisor
   13.543, build-webui 17.879, up 5.691, check.sh 0.258), then 7f5dd29, the supervisor alone, at
@@ -550,6 +563,32 @@ Open owner actions:
     API, the SD MiB and the audit log meanwhile.
 
 ## Log
+
+### 2026-11-18: A ninth batch: session cookie, copies into shares, dashboard layout
+
+- Four entries built in parallel worktrees from main e8384c3, each reviewed in a fresh context
+  by its own builder. Findings fixed: the token that earlier versions left in localStorage stayed,
+  and the browser also sends the cookie to HTTPS apps on other ports of the NAS's name, which the
+  session key now closes; Sign Out Again could end a newer session (`auth.token-storage`, two
+  reviews); a folder swapped in at a copy's name would have been filled and set to 2770, and modes
+  were taken before the source was opened (`files.group-writable-copies-and-moves-in-shares`, two
+  passes); the stat cards' height, Refresh during a save, focus after Hide, Show and Reset, a
+  failed save unannounced (`webui.dashboard-layout`). No blocking finding for
+  `system.no-container-stats-endpoints`. Recorded, not fixed: only Chromium runs the cookie's
+  specs; a 401 to the sign-out counts as signed out; a tab that misses another tab's sign-in goes
+  to the login page; the legacy token's session is not ended but expires within 24 hours; the Vite
+  dev server over plain HTTP cannot sign in; two identical concurrent layout PUTs may both write
+  and audit; ADR-0388, ADR-0346 and ADR-0006 still describe the removed stats routes.
+- Merged as ADR-0395 (dashboard layout), ADR-0396 (copies into shares) and ADR-0397 (session
+  cookie). The full E2E run of the merge found one spec that expected a single 401 where the
+  dashboard's Refresh now sends two requests; fixed in 991cb28. `make check` 8935 passed; the full
+  E2E run 948 passed, 14 skipped, then `roles.spec.ts` 30 of 30 with the fix.
+- Device check of 991cb28 (SD MiB per step in each entry's notes): `scenario.sh smb` 40 of 40 and
+  `files` 17 of 17, the session cookie's checks through Caddy, the removed endpoints' 404s and the
+  layout's write and audit before a reboot from the API at 23:24:54 UTC; `scenario.sh all` after it
+  (every area passed, smart's two sleep steps skipped while Immich uses the pool), the layout kept
+  and deleted, the 404s again; `linux-tests.sh tests/test_files_security.py -k 'default_acl or
+  share'` 42 passed. No fault of UNOS. Not run: Firefox and Safari against the cookie.
 
 ### 2026-11-17: An eighth batch: palette, bulk actions, app limits, SMB interfaces, token scopes
 

@@ -155,7 +155,7 @@ class TestTablesOnAnOldDatabase:
         # and the network interfaces that SMB listens on (ADR-0391), new beside them.
         renames = {"smb_uid_names", "usernames_taken", "smb_share_options", "user_groups", "user_group_members",
                    "smb_share_group_access", "two_factor_requirement", "app_resource_limits",
-                   "smb_bind_interfaces"}
+                   "smb_bind_interfaces", "dashboard_layouts"}
         # sqlite_sequence is SQLite's own: it keeps the AUTOINCREMENT counter of user_groups.
         assert _tables(old_db) == OLD_TABLES | SMB_TABLES | {"user_sessions", "smb_uids", "sqlite_sequence"} | renames
         assert _rows(old_db, "users") == users
@@ -446,7 +446,33 @@ class TestConstants:
             "UNOS SMB user", "/usr/sbin/nologin", "/nonexistent"
         )
         assert (constants.SHARE_DIR_MODE, constants.SHARE_FILE_MODE) == (0o2770, 0o660)
+        assert constants.SHARE_EXECUTABLE_FILE_MODE == 0o770
         assert share_root_mode_ok(stat.S_IFDIR | constants.SHARE_DIR_MODE, constants.SMB_GROUP_GID)
+
+    @pytest.mark.parametrize("mode, want", [
+        (stat.S_IFDIR | 0o755, 0o2770),
+        (stat.S_IFDIR | 0o1777, 0o2770),
+        (stat.S_IFDIR | 0o2750, 0o2770),
+        (stat.S_IFDIR | 0o070, 0o2770),
+        (stat.S_IFREG | 0o644, 0o660),
+        (stat.S_IFREG | 0o444, 0o660),
+        (stat.S_IFREG | 0o604, 0o660),
+        (stat.S_IFREG | 0o755, 0o770),
+        (stat.S_IFREG | 0o4750, 0o770),  # set-user-ID is dropped
+        (stat.S_IFREG | 0o654, 0o660),   # only the owner's execute bit counts
+        # Private: only the owner can use it, and it keeps its mode.
+        (stat.S_IFDIR | 0o700, None),
+        (stat.S_IFDIR | 0o2700, None),
+        (stat.S_IFREG | 0o600, None),
+        (stat.S_IFREG | 0o4700, None),
+        # Neither a folder nor a regular file.
+        (stat.S_IFLNK | 0o777, None),
+        (stat.S_IFIFO | 0o666, None),
+        (stat.S_IFCHR | 0o666, None),
+    ])
+    def test_the_mode_of_an_entry_in_a_share(self, mode, want):
+        """What Repair permissions (ADR-0363) and a copy that Files puts into a share folder (ADR-0396) give it."""
+        assert constants.share_entry_mode(mode) == want
 
     def test_the_user_of_apps_in_the_group_is_no_one_elses(self):
         """The user of the apps that run in unos-smb (ADR-0274) owns what they write in share folders."""

@@ -1,4 +1,5 @@
 import { test, expect } from './fixtures';
+import { browserSession } from './session';
 
 // What the server answers for an error it did not handle; the page shows "Request failed".
 const SERVER_ERROR = { status: 500, contentType: 'text/plain', body: 'Internal Server Error' };
@@ -225,7 +226,7 @@ test.describe('Security Settings', () => {
     } finally {
       // Gone already when the test passed: 404 then.
       await page.request.delete(`/api/v1/security/certificates/custom_${domain}`, {
-        headers: { Authorization: `Bearer ${await page.evaluate(() => localStorage.getItem('token'))}` },
+        headers: await browserSession(page),
       });
     }
   });
@@ -259,8 +260,9 @@ test.describe('Security Settings', () => {
       (url) => url.pathname === '/api/v1/security/certificates',
       (route) => (failing ? route.fulfill(SERVER_ERROR) : route.continue()),
     );
-    await page.goto('/system#security');
-    const headers = { Authorization: `Bearer ${await page.evaluate(() => localStorage.getItem('token'))}` };
+    // The certificate exists before the page opens: a goto to the URL that is open already would
+    // only move to its fragment, without loading the list again.
+    const headers = await browserSession(page);
     try {
       expect((await page.request.post('/api/v1/security/certificates/self-signed', {
         data: { domain }, headers,
@@ -365,9 +367,7 @@ test.describe('Security API', () => {
   test('should fetch login history', async ({ authenticatedPage: page }) => {
     // Make direct API call
     const response = await page.request.get('/api/v1/security/login-history', {
-      headers: {
-        'Authorization': `Bearer ${await page.evaluate(() => localStorage.getItem('token'))}`
-      }
+      headers: await browserSession(page),
     });
 
     expect(response.ok()).toBeTruthy();
@@ -380,9 +380,7 @@ test.describe('Security API', () => {
 
   test('should fetch firewall status', async ({ authenticatedPage: page }) => {
     const response = await page.request.get('/api/v1/security/firewall', {
-      headers: {
-        'Authorization': `Bearer ${await page.evaluate(() => localStorage.getItem('token'))}`
-      }
+      headers: await browserSession(page),
     });
 
     expect(response.ok()).toBeTruthy();
@@ -393,9 +391,7 @@ test.describe('Security API', () => {
 
   test('should fetch certificate status', async ({ authenticatedPage: page }) => {
     const response = await page.request.get('/api/v1/security/certificates/status', {
-      headers: {
-        'Authorization': `Bearer ${await page.evaluate(() => localStorage.getItem('token'))}`
-      }
+      headers: await browserSession(page),
     });
 
     expect(response.ok()).toBeTruthy();
@@ -405,9 +401,7 @@ test.describe('Security API', () => {
 
   test('should fetch certificates list', async ({ authenticatedPage: page }) => {
     const response = await page.request.get('/api/v1/security/certificates', {
-      headers: {
-        'Authorization': `Bearer ${await page.evaluate(() => localStorage.getItem('token'))}`
-      }
+      headers: await browserSession(page),
     });
 
     expect(response.ok()).toBeTruthy();

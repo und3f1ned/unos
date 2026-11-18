@@ -1,13 +1,16 @@
 ---
-status: accepted
+status: superseded
 date: 2026-02-05
 area: auth
 decided-by: owner
+superseded-by: ADR-0397
 ---
 
 # ADR-0009: The API takes Bearer tokens, not cookies, and refuses cross-origin requests by default
 
 ## Context
+
+Superseded by ADR-0397: the web UI's session is an HttpOnly cookie accepted only from its own origin, and programs keep Bearer tokens.
 
 The API serves the web UI, which Caddy serves from the same origin, and automation that uses API tokens. A session cookie, which browsers attach to requests by themselves, would need protection against cross-site request forgery, and open CORS would let any web page read the API's answers.
 

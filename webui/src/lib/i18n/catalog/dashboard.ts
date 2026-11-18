@@ -45,6 +45,25 @@ export const en = {
 
 	'dashboard.manage': 'Manage →',
 
+	// Arranging the widgets (ADR-0395).
+	'dashboard.layout.customize': 'Customize',
+	'dashboard.layout.done': 'Done',
+	'dashboard.layout.hint': 'Drag a widget by its handle, or use the arrows, to move it. Hide the widgets you do not need: they stay here to show again.',
+	'dashboard.layout.drag': 'Drag to move',
+	'dashboard.layout.moveUp': 'Move {name} up',
+	'dashboard.layout.moveDown': 'Move {name} down',
+	'dashboard.layout.hide': 'Hide {name}',
+	'dashboard.layout.show': 'Show {name}',
+	'dashboard.layout.hiddenTitle': 'Hidden widgets',
+	'dashboard.layout.noneHidden': 'No hidden widgets',
+	'dashboard.layout.reset': 'Reset to default',
+	'dashboard.layout.moved': '{name} moved to position {position} of {total}',
+	'dashboard.layout.hidden': '{name} hidden',
+	'dashboard.layout.shown': '{name} shown',
+	'dashboard.layout.wasReset': 'Dashboard reset to the default layout',
+	'dashboard.layout.saveFailed': 'Could not save your dashboard layout: {error}',
+	'dashboard.layout.loadFailed': 'Could not load your dashboard layout; the default is shown',
+
 	'dashboard.storage.title': 'Storage Pools',
 	'dashboard.storage.none': 'No storage pools configured',
 	'dashboard.storage.inaccessible': 'Data not accessible',
@@ -134,6 +153,25 @@ export const ru: Translation<typeof en> = {
 	'dashboard.rate': '{size}/с',
 
 	'dashboard.manage': 'Управление →',
+
+	// Раскладка виджетов (ADR-0395).
+	'dashboard.layout.customize': 'Настроить',
+	'dashboard.layout.done': 'Готово',
+	'dashboard.layout.hint': 'Перетащите виджет за ручку или переместите стрелками. Ненужные виджеты можно скрыть: они останутся здесь, чтобы показать их снова.',
+	'dashboard.layout.drag': 'Перетащить',
+	'dashboard.layout.moveUp': 'Переместить «{name}» выше',
+	'dashboard.layout.moveDown': 'Переместить «{name}» ниже',
+	'dashboard.layout.hide': 'Скрыть «{name}»',
+	'dashboard.layout.show': 'Показать «{name}»',
+	'dashboard.layout.hiddenTitle': 'Скрытые виджеты',
+	'dashboard.layout.noneHidden': 'Скрытых виджетов нет',
+	'dashboard.layout.reset': 'Сбросить по умолчанию',
+	'dashboard.layout.moved': 'Виджет «{name}» теперь на месте {position} из {total}',
+	'dashboard.layout.hidden': 'Виджет «{name}» скрыт',
+	'dashboard.layout.shown': 'Виджет «{name}» показан',
+	'dashboard.layout.wasReset': 'Панель возвращена к раскладке по умолчанию',
+	'dashboard.layout.saveFailed': 'Не удалось сохранить раскладку панели: {error}',
+	'dashboard.layout.loadFailed': 'Не удалось загрузить раскладку панели; показана раскладка по умолчанию',
 
 	'dashboard.storage.title': 'Пулы хранения',
 	'dashboard.storage.none': 'Пулы хранения не настроены',

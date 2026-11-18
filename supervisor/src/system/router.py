@@ -10,7 +10,6 @@ from ..audit.schemas import AuditAction
 from ..auth.utils import require_admin, verify_token
 from ..host import HostResult
 from ..security.validators import validate_timezone, validate_interface_name
-from .sensors import cpu_temperature
 
 # Read-only endpoints are available to every signed-in user;
 # anything that changes the host requires an administrator.
@@ -54,22 +53,6 @@ class SystemInfo(BaseModel):
     boot_time: float  # when the host booted, in seconds since the epoch
 
 
-class SystemStats(BaseModel):
-    cpu_percent: float
-    cpu_count: int
-    memory_total: int
-    memory_used: int
-    memory_percent: float
-    disk_total: int
-    disk_used: int
-    disk_percent: float
-    network_sent: int
-    network_recv: int
-    # The CPU's or SoC's temperature in degrees Celsius, None without sensors (ADR-0346);
-    # GET /system/temperatures lists every sensor.
-    cpu_temperature: float | None
-
-
 @router.get("/info", response_model=SystemInfo)
 async def get_system_info(_=Depends(verify_token)):
     return SystemInfo(
@@ -78,27 +61,6 @@ async def get_system_info(_=Depends(verify_token)):
         os=get_distro_name(),
         architecture=platform.machine(),
         boot_time=psutil.boot_time(),
-    )
-
-
-@router.get("/stats", response_model=SystemStats)
-async def get_system_stats(_=Depends(verify_token)):
-    memory = psutil.virtual_memory()
-    disk = psutil.disk_usage("/")
-    network = psutil.net_io_counters()
-
-    return SystemStats(
-        cpu_percent=psutil.cpu_percent(interval=0.1),
-        cpu_count=psutil.cpu_count(),
-        memory_total=memory.total,
-        memory_used=memory.used,
-        memory_percent=memory.percent,
-        disk_total=disk.total,
-        disk_used=disk.used,
-        disk_percent=disk.percent,
-        network_sent=network.bytes_sent,
-        network_recv=network.bytes_recv,
-        cpu_temperature=cpu_temperature(),
     )
 
 

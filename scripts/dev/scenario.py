@@ -7,11 +7,12 @@ Run it through scripts/dev/scenario.sh, which holds the device lock (ADR-0210) a
 SD writes of each check (ADR-0214). The areas:
 
   files    The File Manager on a pool: New Folder and Upload (755 and 644 root:root outside
-           share folders), Download, Rename, Copy and Move; Delete into the pool's trash, Restore,
-           a restore refused while the name is taken, Delete for good from the trash; a volume
-           that Delete, Rename and Move refuse and Copy copies, a file deleted in the volume that
-           goes into the volume's own trash, and a folder with a subvolume below it that Delete
-           refuses.
+           share folders), Download, Rename, Copy and Move (which keep 644 root:root there);
+           Delete into the pool's trash, Restore, a restore refused while the name is taken,
+           Delete for good from the trash; a volume that Delete, Rename and Move refuse and Copy
+           copies with the modes of its entries, a file and a folder moved out of it, which keep
+           644 and 755 root:root, a file deleted in the volume that goes into the volume's own
+           trash, and a folder with a subvolume below it that Delete refuses.
   volumes  A volume made without a quota and listed, one with a quota of 1 GiB (refused while
            quotas are off on the pool, which the list says, else made with that limit and listed
            with its use against it, as is its use over time: ADR-0387), a Delete refused while a share
@@ -44,8 +45,10 @@ SD writes of each check (ADR-0214). The areas:
            slice 2, ADR-0185): the marked host account and its Samba account, a share list
            without shares, the folder's 2770 root:unos-smb, a signed session that writes, New
            Folder and Upload in the share's folder (2770 and 660 root:unos-smb) changed over SMB,
-           the access lowered to read and then removed during open sessions, a comment saved with
-           the expected version and a stale one refused; the protocol options (ADR-0380) of a
+           a file and a folder of a new volume (644 and 755 root:root there) copied, and another
+           two moved, into the share's folder, which get 660 and 2770 root:unos-smb (ADR-0396) and
+           which the user changes and fills over SMB, the access lowered to read and then removed
+           during open sessions, a comment saved with the expected version and a stale one refused; the protocol options (ADR-0380) of a
            second share, of a folder in a new volume: Previous Versions, with smbd's answer for
            the shadow copies of the volume before its first snapshot, without .snapshots,
            recorded (any answer passes), which list two snapshots of the volume that the check
@@ -1937,14 +1940,17 @@ def files_check(c: Check) -> None:
         names = listed(folder)
         c.expect("b.txt" in names and "a.txt" not in names, f"the folder lists {names}")
 
-    with c.step("Copy puts b.txt into a new folder, and Move takes the copy on into another"):
+    with c.step("Copy puts b.txt into a new folder, and Move takes the copy on into another, both keeping 644 "
+                "root:root outside share folders"):
         for sub in ("copied", "moved"):
             c.post("/files/mkdir", {"path": folder, "name": sub})
         c.post("/files/copy", [f"{folder}/b.txt"], {"destination": f"{folder}/copied"})
         c.expect(c.download(f"{folder}/copied/b.txt") == DATA, "the copy holds other bytes")
+        stat_is(c, c.device.stat([f"{folder}/copied/b.txt"]), f"{folder}/copied/b.txt", "644 root:root")
         c.post("/files/move", [f"{folder}/copied/b.txt"], {"destination": f"{folder}/moved"})
         c.expect(listed(f"{folder}/copied") == [] and listed(f"{folder}/moved") == ["b.txt"],
                  "the copy is not in moved/ alone")
+        stat_is(c, c.device.stat([f"{folder}/moved/b.txt"]), f"{folder}/moved/b.txt", "644 root:root")
 
     trash = f"{root}/.unos-trash"
     with c.step(f"Delete moves b.txt into the pool's trash {trash} (700 root:root), and the folder no longer lists it"):
@@ -1983,9 +1989,23 @@ def files_check(c: Check) -> None:
         volumes = [v["name"] for v in c.get(f"/storage/pools/{name}/volumes")]
         c.expect(volume in volumes and listed(vpath) == ["v.txt"], "the volume changed")
 
-    with c.step("Copy of the volume makes a folder with its files"):
+    with c.step("Copy of the volume makes a folder with its files, with their modes"):
         c.post("/files/copy", [vpath], {"destination": folder})
         c.expect(c.download(f"{folder}/{volume}/v.txt") == DATA, "the copy lacks v.txt")
+        facts = c.device.stat([vpath, f"{vpath}/v.txt", f"{folder}/{volume}", f"{folder}/{volume}/v.txt"])
+        for source in (vpath, f"{vpath}/v.txt"):
+            copied = f"{folder}/{volume}{source[len(vpath):]}"
+            stat_is(c, facts, copied, facts[source])
+
+    with c.step(f"Move of a file and a folder from the volume into {folder} (another subvolume: a copy and a "
+                "delete) keeps 644 and 755 root:root, outside share folders"):
+        c.upload(vpath, "w.txt", DATA)
+        c.post("/files/mkdir", {"path": vpath, "name": "wd"})
+        c.post("/files/move", [f"{vpath}/w.txt", f"{vpath}/wd"], {"destination": folder})
+        facts = c.device.stat([f"{folder}/w.txt", f"{folder}/wd", f"{vpath}/w.txt", f"{vpath}/wd"])
+        for path, want in ((f"{folder}/w.txt", "644 root:root"), (f"{folder}/wd", "755 root:root"),
+                           (f"{vpath}/w.txt", "missing"), (f"{vpath}/wd", "missing")):
+            stat_is(c, facts, path, want)
 
     vtrash = f"{vpath}/.unos-trash"
     with c.step("a file deleted in the volume goes into the volume's own trash, and comes back"):
@@ -2675,6 +2695,7 @@ def smb_check(c: Check) -> None:
                                 for u in c.get("/auth/users")),
             "the shares": sorted(f"{s['name']} {s['path']} " + ",".join(f"{a['username']}:{a['level']}" for a in s["access"])
                                  for s in c.get("/shares/smb")),
+            "the volumes": sorted(v["name"] for v in c.get(f"/storage/pools/{pool['name']}/volumes")),
             "smb.conf": facts["sha256"].get(SMB_CONF),
             "the account files": {f: facts["sha256"].get(f) for f in ACCOUNT_FILES},
             "the SMB host accounts": facts["accounts"],
@@ -2766,6 +2787,49 @@ def smb_check(c: Check) -> None:
             c.expect(done.ok, f"smbclient: {done.status} {tail(done.output, 200)}")
             c.expect(c.device.read(f"{folder}/u.txt") == DATA2, "u.txt holds other bytes")
             c.expect(c.device.stat([f"{folder}/f/g.txt"])[f"{folder}/f/g.txt"] != "missing", "f/g.txt is missing")
+
+        # files.group-writable-copies-and-moves-in-shares (ADR-0396): what Copy, and a Move from
+        # another pool or volume, put into the share's folder gets the modes of Repair permissions.
+        # The items come from a new volume, another subvolume, so that the Move copies and deletes.
+        mvolume = f"{c.run}m"
+        mpath = f"{root}/{mvolume}"
+        with c.step(f"Copy of a file and a folder of a new volume {mvolume} (644 and 755 root:root there) into the "
+                    "share's folder gives them 660 and 2770 root:unos-smb, and the file in the folder 660"):
+            c.on_cleanup(f"delete the volume {mvolume}", lambda: c.delete_volume(pool["name"], mvolume))
+            c.post(f"/storage/pools/{pool['name']}/volumes", {"name": mvolume})
+            for item in ("cp", "mv"):
+                c.upload(mpath, f"{item}.txt", DATA)
+                c.post("/files/mkdir", {"path": mpath, "name": f"{item}d"})
+                c.upload(f"{mpath}/{item}d", "i.txt", DATA)
+            facts = c.device.stat([f"{mpath}/cp.txt", f"{mpath}/cpd", f"{mpath}/cpd/i.txt"])
+            for path, want in ((f"{mpath}/cp.txt", "644 root:root"), (f"{mpath}/cpd", "755 root:root"),
+                               (f"{mpath}/cpd/i.txt", "644 root:root")):
+                stat_is(c, facts, path, want)
+            c.post("/files/copy", [f"{mpath}/cp.txt", f"{mpath}/cpd"], {"destination": folder})
+            facts = c.device.stat([f"{folder}/cp.txt", f"{folder}/cpd", f"{folder}/cpd/i.txt"])
+            for path, want in ((f"{folder}/cp.txt", "660 root:unos-smb"), (f"{folder}/cpd", "2770 root:unos-smb"),
+                               (f"{folder}/cpd/i.txt", "660 root:unos-smb")):
+                stat_is(c, facts, path, want)
+
+        with c.step(f"Move of a file and a folder from {mvolume} into the share's folder (another subvolume: a copy "
+                    "and a delete) gives them 660 and 2770 root:unos-smb, and they leave the volume"):
+            c.post("/files/move", [f"{mpath}/mv.txt", f"{mpath}/mvd"], {"destination": folder})
+            facts = c.device.stat([f"{folder}/mv.txt", f"{folder}/mvd", f"{folder}/mvd/i.txt", f"{mpath}/mv.txt",
+                                   f"{mpath}/mvd"])
+            for path, want in ((f"{folder}/mv.txt", "660 root:unos-smb"), (f"{folder}/mvd", "2770 root:unos-smb"),
+                               (f"{folder}/mvd/i.txt", "660 root:unos-smb"), (f"{mpath}/mv.txt", "missing"),
+                               (f"{mpath}/mvd", "missing")):
+                stat_is(c, facts, path, want)
+
+        with c.step("over SMB the user changes the copied and moved files and puts files into the copied and moved "
+                    "folders"):
+            done = smb.run("put data2.txt cp.txt", "put data2.txt mv.txt", "put data2.txt cpd/i.txt",
+                           "put data2.txt mvd/i.txt", "put data.txt cpd/n.txt", "put data.txt mvd/n.txt")
+            c.expect(done.ok, f"smbclient: {done.status} {tail(done.output, 200)}")
+            for name in ("cp.txt", "mv.txt", "cpd/i.txt", "mvd/i.txt"):
+                c.expect(c.device.read(f"{folder}/{name}") == DATA2, f"{name} holds other bytes")
+            facts = c.device.stat([f"{folder}/cpd/n.txt", f"{folder}/mvd/n.txt"])
+            c.expect("missing" not in facts.values(), f"the new files are {facts}")
 
         with c.step("lowering the access to read during the session makes its next write fail") as s:
             grant("read")

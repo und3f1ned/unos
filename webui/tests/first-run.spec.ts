@@ -1,4 +1,5 @@
 import { test, expect, E2E_ADMIN } from './fixtures';
+import { expectNoTokenInStorage, sessionToken } from './session';
 
 // The first-run setup of a new installation (feature auth.first-run-setup, ADR-0029), against
 // the real supervisor. scripts/standin/e2e.sh starts the stand-in from a new data directory,
@@ -35,10 +36,14 @@ test('a new installation asks for its administrator, signs it in and refuses a s
   await expect(sidebar.getByText(E2E_ADMIN.username, { exact: true })).toBeVisible();
   await expect(sidebar.getByText('Administrator', { exact: true })).toBeVisible();
   await expect(sidebar.locator('nav a[href="/storage"]')).toBeVisible();
-  expect(await page.evaluate(() => localStorage.getItem('token'))).toBeTruthy();
+  // Signed in with the session cookie, which no script of the page reads (ADR-0397).
+  expect(await sessionToken(page)).toBeTruthy();
+  await expectNoTokenInStorage(page);
 
   // A second setup is refused with the server's reason, and it creates nobody.
+  const signedOut = page.waitForResponse('**/api/v1/auth/logout');
   await page.getByRole('button', { name: 'Logout' }).click();
+  expect((await signedOut).status()).toBe(200);
   await expect(page).toHaveURL('/login');
   await page.goto('/setup');
   await page.getByLabel('Username').fill('e2e_second_admin');
@@ -47,7 +52,7 @@ test('a new installation asks for its administrator, signs it in and refuses a s
   await page.getByRole('button', { name: 'Create Admin Account' }).click();
   await expect(page.getByText('Admin user already exists. Use /login instead.')).toBeVisible();
   await expect(page).toHaveURL('/setup');
-  expect(await page.evaluate(() => localStorage.getItem('token'))).toBeNull();
+  expect(await sessionToken(page)).toBeNull();
 
   expect(await (await request.get('/api/v1/auth/status')).json()).toEqual({ setup_required: false });
   const login = await request.post('/api/v1/auth/login', { data: E2E_ADMIN });

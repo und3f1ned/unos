@@ -41,6 +41,16 @@ Welcome to UNOS! This guide will help you get the most out of your NAS.
    administrator with "Admin user already exists. Use /login instead." and
    creates nobody; administrators add further users on the **Users** page.
 
+The browser keeps your session in a cookie that no script of the page can
+read, and the page keeps a key that goes with it (ADR-0397). Reloading a page
+keeps you signed in, and so does opening another tab while a tab of UNOS is
+open; a new tab when none is open asks you to sign in again. The NAS takes the
+cookie only from its own web pages and only with that key, so neither another
+web site nor an app on another port of the NAS can act with your session, even
+an app that the browser sends the cookie to. Closing the browser usually ends
+the cookie; a browser that restores your tabs may keep it, so use **Logout** on
+a computer that others use.
+
 A session lasts 24 hours, or until it is ended: **Logout** ends it on the
 server too, a password change ends your other sessions, and an administrator
 can end all of a user's sessions with the log-out icon in the user's row on
@@ -48,10 +58,12 @@ the **Users** page. When it has ended, the page you have open goes to the
 login page once, at its next request (also during an upload or a download) or
 when the server ends its live statistics. **Logout** in one browser tab signs
 out the other tabs too, and signing in as another account in one tab switches
-the other tabs to that account. Restoring a backup ends every session but that
-of the administrator who restored it: everyone else signs in again. API tokens
-are not sessions: they keep working until they are disabled, expire or are
-deleted.
+the other tabs to that account. When **Logout** cannot reach the NAS,
+the login page says "The NAS did not confirm the sign-out, so this browser may
+still be signed in": click **Sign Out Again** once the NAS can be reached.
+Restoring a backup ends every session but that of the administrator who
+restored it: everyone else signs in again. API tokens are not sessions: they
+keep working until they are disabled, expire or are deleted.
 
 Signing in works also while the disk that holds the UNOS data (`/data`, on the
 system disk) is full, so that an administrator can sign in and free space, for
@@ -150,6 +162,25 @@ every page, administrators see the health banner while UNOS knows of a
 problem: a pool not mounted, degraded or almost full, a volume near its
 quota, a failing disk, a task that failed or missed its run (see
 [Alerts](#alerts)).
+
+### Arranging the Dashboard
+Each widget (the five stats cards below and, for administrators, **Storage
+Overview**, **Containers**, **Quick Actions** and **Recent Activity**) can be
+moved and hidden. Click **Customize** beside **Refresh**:
+- Drag a widget by the handle at the left of its toolbar to the place of
+  another widget. On a phone and with the keyboard, use the toolbar's
+  **Move up** and **Move down** buttons instead; they move the widget past the
+  next one that is shown, and a screen reader is told where it went.
+- **Hide** removes a widget from the page. **Hidden widgets** lists the hidden
+  ones with a **Show** button each, which puts the widget back where it was.
+- **Reset to default** restores the default order and shows every widget.
+- Click **Done** when you have finished. Each change is saved at once.
+
+The layout is yours: it is kept on the NAS for your account, so it is the same
+in every browser you sign in with, and it is not shared with other users. A
+regular user arranges the stats cards, which are all that they see. The alert
+**Disks to Replace** and the health banner are not widgets and cannot be
+hidden. Each change is an entry **Dashboard layout changed** in the audit log.
 
 ### System Stats
 The cards follow the live statistics, which the server sends every 2 seconds
@@ -858,10 +889,12 @@ encryption required loses guest access at the restore, with a note.
 UNOS creates share folders with the group `unos-smb` and the mode 2770, and
 files created over SMB get that group and the mode 660. In such a folder,
 folders made with **New Folder** in the File Browser get the mode 2770 and
-uploaded files 660 as well (see [File Browser](#file-browser)). Files that
-came in another way (from an app, copied or moved in the File Browser, or
-already in the folder when the share was created) keep their permissions
-until you press **Repair permissions** on the share. A share marked
+uploaded files 660 as well, and items copied there, or moved there from
+another pool or volume, get the permissions that a repair gives (see
+[File Browser](#file-browser)). Files that came in another way (from an app,
+moved within the same pool or volume in the File Browser, or already in the
+folder when the share was created) keep their permissions until you press
+**Repair permissions** on the share. A share marked
 **Permissions need repair** needs it. Repairing:
 - gives every file and folder of the share the group `unos-smb` and group
   read and write access (folders 2770, files 660, or 770 for files their
@@ -1174,9 +1207,29 @@ file that replaces one, both in the group `unos-smb`: the users with **Read &
 write** access to the share can change them, and add files to the new
 folder, over SMB at once. Elsewhere new folders get the mode 755 (2755 in a
 folder with the setgid bit) and uploaded files 644, which let other accounts
-read them but not change them. **Copy** and **Move** keep the permissions of
-the items, also into a share: run **Repair permissions** on the share
-afterwards.
+read them but not change them.
+
+In such a share folder, **Copy**, and **Move** from another pool or volume
+(which copies the items and then deletes them where they were), give the
+items the permissions that **Repair permissions** gives, in the group
+`unos-smb`: folders 2770, files 660, or 770 for files their owner may run,
+everything in a copied folder included, so that the users with **Read &
+write** access change them at once. Private files and folders, which only
+their owner can use (such as a 0600 key or a 0700 folder), keep their
+permissions, and so does what is in a private folder; symbolic links are
+copied as links. An item gets its permissions only once it is copied in
+full: when a copy stops part way (for example, the pool is full), the
+message says why, the items copied in full before it have their
+permissions, and the item whose copy stopped stays private, so that SMB
+users cannot open it; delete it in the File Browser and copy it again. A
+move deletes an item where it was only after its copy is complete. A
+**Move** within the same pool or volume only renames the items, which keep
+their owners and permissions: run **Repair permissions** on the share
+afterwards. Everywhere else **Copy** and **Move** keep the permissions of
+the items (a copied file never keeps the set-user-ID and set-group-ID bits).
+If another folder takes the place of a folder that a copy has just made in a
+share folder (an SMB user renamed one to its name), the copy stops there and
+says so, and that folder is left as it was.
 
 Uploads, new folders, copies and moves go into the folders of a pool, not
 into the pools directory itself. The folder of a pool, its volumes, and other
@@ -2006,7 +2059,11 @@ open a guest share, and **Off-device copy** also sends copies of the pools to
 another store.
 
 **With the API**, use the `access_token` that `POST /api/v1/auth/login`
-returns. `name` has 1 to 64 characters. `expires_in_days` is the token's
+returns, in an `Authorization: Bearer` header. (The web UI signs in with
+`"cookie": true` instead: the answer then sets its session cookie and carries
+no token, only the `session_key` that goes with the cookie; the API takes that
+cookie only from the web UI's own pages and with its key, and its token is no
+Bearer token.) `name` has 1 to 64 characters. `expires_in_days` is the token's
 lifetime, from 1 to 3650 days; without it the token does not expire.
 `read_only` (`true` or `false`, default `false`) and `areas` (a list of 1 to 21
 area names, each once; without it, or `null`, every area) limit the token;

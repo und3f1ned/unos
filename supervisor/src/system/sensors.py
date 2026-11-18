@@ -1,8 +1,7 @@
 """The one temperature that the dashboard shows: the host's CPU or SoC (ADR-0346).
 
-`/api/v1/system/stats` (`cpu_temperature`) and the stats message of `/ws/v1/events`
-(`cpu.temperature`) both take it from `cpu_temperature`; `/api/v1/system/temperatures` lists every
-sensor.
+The stats message of `/ws/v1/events` (`cpu.temperature`) takes it from `cpu_temperature`;
+`/api/v1/system/temperatures` lists every sensor.
 """
 import psutil
 

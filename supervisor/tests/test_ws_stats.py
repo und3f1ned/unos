@@ -423,3 +423,18 @@ def test_the_web_ui_keeps_no_unread_stats_code():
     system = texts[lib / "api" / "system.ts"]
     for endpoint in ("/system/stats", "/system/temperatures"):
         assert endpoint not in system, endpoint
+
+
+def test_nothing_asks_for_the_removed_container_stats_endpoints():
+    """system.no-container-stats-endpoints (ADR-0388, ADR-0207): no page, script or test of the
+    web UI asks for the routes that reported the supervisor container's network."""
+    import re
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[2]
+    removed = re.compile(r"/system/stats\b|/monitor/(?:network|disk-io|history/network|history/disk-io)\b")
+    files = [path for folder in ("webui/src", "webui/tests", "scripts") for path in (root / folder).rglob("*")
+             if path.is_file() and path.suffix in (".ts", ".svelte", ".py", ".sh", ".md")]
+    assert files
+    asking = [str(path.relative_to(root)) for path in files if removed.search(path.read_text(encoding="utf-8"))]
+    assert asking == []

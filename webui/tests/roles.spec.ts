@@ -1,6 +1,8 @@
 import { test, expect, type APIRequestContext, type Page } from '@playwright/test';
 import { E2E_ADMIN } from './fixtures';
 import { fakeStorageApi } from './storage-fakes';
+import { useSessionCookie } from './session';
+import { apiLogin } from './accounts';
 
 // Regular (non-administrator) accounts. Every API except live stats and the
 // account's own settings is administrator-only, so the UI offers them only the
@@ -20,18 +22,10 @@ let adminToken = '';
 let userToken = '';
 let userId: number | undefined;
 
-async function apiLogin(request: APIRequestContext, credentials: { username: string; password: string }) {
-  const response = await request.post('/api/v1/auth/login', { data: credentials });
-  expect(response.ok(), `login as ${credentials.username}: HTTP ${response.status()}`).toBeTruthy();
-  const body = await response.json();
-  expect(body.requires_totp).toBe(false);
-  return body.access_token as string;
-}
 
-/** Store the token the way the login form does, then open `path`. */
+/** Go on in `token`'s session, in the browser's session cookie (ADR-0397), then open `path`. */
 async function openAs(page: Page, token: string, path: string) {
-  await page.goto('/login');
-  await page.evaluate((value) => localStorage.setItem('token', value), token);
+  await useSessionCookie(page, token);
   await page.goto(path);
 }
 
@@ -47,13 +41,12 @@ function recordForbidden(page: Page): string[] {
   return forbidden;
 }
 
-/** Storage API requests of the page, sent with `token` (any token if omitted). */
-function recordStorageRequests(page: Page, token?: string): string[] {
+/** Storage API requests of the page. */
+function recordStorageRequests(page: Page): string[] {
   const requests: string[] = [];
   page.on('request', (request) => {
     const url = new URL(request.url());
     if (!url.pathname.startsWith('/api/v1/storage/')) return;
-    if (token && request.headers()['authorization'] !== `Bearer ${token}`) return;
     requests.push(`${request.method()} ${url.pathname}`);
   });
   return requests;
@@ -117,8 +110,7 @@ test.describe('Regular user account', () => {
       const url = new URL(request.url());
       if (url.pathname.startsWith('/api/v1/health/')) health.push(`${request.method()} ${url.pathname}`);
     });
-    await page.goto('/login');
-    await page.evaluate((value) => localStorage.setItem('token', value), userToken);
+    await useSessionCookie(page, userToken);
     // The dashboard sends all of its requests at once: a prediction request
     // would go out before the answer of this one comes in.
     const systemInfo = page.waitForResponse(
@@ -163,7 +155,7 @@ test.describe('Regular user account', () => {
     expect(forbidden).toEqual([]);
   });
 
-  test('a request without a token on a page that needs one leads to /login', async ({ page }) => {
+  test('a request without the session on a page that needs one leads to /login', async ({ page }) => {
     await openAs(page, userToken, '/');
     await expect(page.getByText(`Signed in as ${REGULAR.username}`)).toBeVisible();
     const unauthorized: string[] = [];
@@ -171,26 +163,32 @@ test.describe('Regular user account', () => {
       if (response.status() === 401) unauthorized.push(new URL(response.url()).pathname);
     });
 
-    // The token is gone without a storage event in this tab, so the next
-    // request (Refresh) goes out without one.
-    await page.evaluate(() => localStorage.removeItem('token'));
+    // The browser forgets the session cookie without a word to the page, so the next request
+    // (Refresh) goes out without one.
+    await page.context().clearCookies();
     await page.locator('main button:has(svg.lucide-refresh-cw)').click();
 
     await expect(page).toHaveURL('/login');
     await expect(page.locator('#username')).toBeVisible();
-    // Only once: nothing on the sign-in page needs a session.
+    // Only the requests of the Refresh, which go out together (the system's information and the
+    // user's dashboard layout), each once: nothing on the sign-in page needs a session.
     await page.waitForTimeout(1000);
     await expect(page).toHaveURL('/login');
-    expect(unauthorized).toEqual(['/api/v1/system/info']);
+    expect([...unauthorized].sort()).toEqual(['/api/v1/auth/me/dashboard-layout', '/api/v1/system/info']);
   });
 
-  test('a logout in another tab ends the session in this one', async ({ page, context }) => {
-    await openAs(page, userToken, '/system#security');
+  test('a logout in another tab ends the session in this one', async ({ page, context, request }) => {
+    // A session of its own: the Logout ends it on the server, and the other tests go on in userToken's.
+    await openAs(page, await apiLogin(request, REGULAR), '/system#security');
     await expect(page.locator('h2:has-text("Security Settings")')).toBeVisible();
 
+    // The other tab shares the session cookie.
     const other = await context.newPage();
-    await other.goto('/login');
-    await other.evaluate(() => localStorage.removeItem('token'));
+    await other.goto('/');
+    await expect(other.getByText(`Signed in as ${REGULAR.username}`)).toBeVisible();
+    const signedOut = other.waitForResponse('**/api/v1/auth/logout');
+    await other.getByRole('button', { name: 'Logout' }).click();
+    expect((await signedOut).status()).toBe(200);
 
     await expect(page).toHaveURL('/login');
     await expect(page.locator('#username')).toBeVisible();
@@ -203,21 +201,26 @@ test.describe('Regular user account', () => {
     context,
   }) => {
     await fakeStorageApi(page);
-    const storageWithUserToken = recordStorageRequests(page, userToken);
+    const storageRequests = recordStorageRequests(page);
     await openAs(page, adminToken, '/storage');
     await expect(page.locator('h1:has-text("Storage")')).toBeVisible();
     await expect(page.locator('aside nav a[href="/storage"]')).toHaveCount(1);
+    // From now on a storage request would go out with the regular account's session cookie.
+    storageRequests.length = 0;
 
     const other = await context.newPage();
     await other.goto('/login');
-    await other.evaluate((token) => localStorage.setItem('token', token), userToken);
+    await other.fill('#username', REGULAR.username);
+    await other.fill('#password', REGULAR.password);
+    await other.click('button[type="submit"]');
+    await expect(other).toHaveURL('/');
 
     // This tab now acts for the regular account: its menu, and no administrator page.
     await expect(page).toHaveURL('/');
     await expect(page.getByText(`Signed in as ${REGULAR.username}`)).toBeVisible();
     await expect(page.locator('aside nav a[href="/storage"]')).toHaveCount(0);
     await expect(page.locator('aside').getByText('User', { exact: true })).toBeVisible();
-    expect(storageWithUserToken).toEqual([]);
+    expect(storageRequests).toEqual([]);
     await other.close();
   });
 

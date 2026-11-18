@@ -1,4 +1,4 @@
-import { api, getToken, handleUnauthorized } from './client';
+import { api, currentSession, currentSessionKey, handleUnauthorized } from './client';
 import { WS_CLOSE_FORBIDDEN, WS_CLOSE_UNAUTHORIZED } from '$lib/stores/stats';
 
 export type ContainerState = 'running' | 'exited' | 'paused' | 'restarting' | 'created' | 'dead';
@@ -88,7 +88,7 @@ export async function removeImage(id: string, force = false): Promise<void> {
 export type LogStreamEnd = 'ended' | 'forbidden' | 'lost';
 
 export interface ContainerLogHandlers {
-  /** The server took the token: the last lines of the log follow, then each new one. */
+  /** The server took the session: the last lines of the log follow, then each new one. */
   onLive(): void;
   /** A piece of the log: one or more lines. */
   onLog(data: string): void;
@@ -105,11 +105,11 @@ export interface ContainerLogStream {
 
 /**
  * Follow a container's log over /ws/v1/logs/{id} (supervisor/src/websocket/events.py):
- * the token goes in the first message, never in the URL (ADR-0031), and a close
+ * the first message authenticates it with the session cookie (ADR-0031, ADR-0397), and a close
  * with 4401 ends the session like an HTTP 401 does.
  */
 export function streamContainerLogs(id: string, handlers: ContainerLogHandlers): ContainerLogStream {
-  const token = getToken();
+  const session = currentSession();
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
   const socket = new WebSocket(
     `${protocol}//${window.location.host}/ws/v1/logs/${encodeURIComponent(id)}`
@@ -117,7 +117,8 @@ export function streamContainerLogs(id: string, handlers: ContainerLogHandlers):
   let done = false;
 
   socket.onopen = () => {
-    socket.send(JSON.stringify({ type: 'auth', token }));
+    // No token: the server takes the session cookie of the handshake, with the session key (ADR-0397).
+    socket.send(JSON.stringify({ type: 'auth', key: currentSessionKey() }));
   };
 
   socket.onmessage = (event) => {
@@ -139,8 +140,8 @@ export function streamContainerLogs(id: string, handlers: ContainerLogHandlers):
     if (done) return;
     done = true;
     if (event.code === WS_CLOSE_UNAUTHORIZED) {
-      // Token expired or the account is gone: same as an HTTP 401.
-      handleUnauthorized(token);
+      // The session ended or the account is gone: same as an HTTP 401.
+      handleUnauthorized(session);
       handlers.onEnd('lost');
     } else if (event.code === WS_CLOSE_FORBIDDEN) {
       handlers.onEnd('forbidden');

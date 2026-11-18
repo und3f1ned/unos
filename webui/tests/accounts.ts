@@ -1,5 +1,6 @@
 import { expect, type APIRequestContext } from '@playwright/test';
 import { E2E_ADMIN } from './fixtures';
+import { rememberSessionKey } from './session';
 
 /**
  * Regular accounts that a spec creates for itself through the API, as E2E_ADMIN, and deletes
@@ -18,12 +19,16 @@ export interface Account {
   adminToken: string;
 }
 
-/** Sign in through the API with the password alone; returns the session token. */
+/**
+ * Sign in through the API with the password alone; returns the session token, for a Bearer header.
+ * Its session key is remembered for useSessionCookie of tests/session.ts.
+ */
 export async function apiLogin(request: APIRequestContext, credentials: Credentials): Promise<string> {
   const response = await request.post('/api/v1/auth/login', { data: credentials });
   expect(response.ok(), `login as ${credentials.username}: HTTP ${response.status()}`).toBeTruthy();
   const body = await response.json();
   expect(body.requires_totp).toBe(false);
+  rememberSessionKey(body.access_token, body.session_key);
   return body.access_token as string;
 }
 
