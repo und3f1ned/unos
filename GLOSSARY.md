@@ -195,6 +195,11 @@ disk replace (a copy to a new disk, which UNOS does not start), shrink.
 writing to its disks, also with a disk missing, and how root runs the emergency reset (ADR-0285).
 Avoid: disaster recovery plan, repair guide.
 
+**Hot-plugged disk**: A disk attached while UNOS runs, after the supervisor started, such as a USB
+disk. The Storage page lists it within seconds (ADR-0360); before smartctl reads it, the supervisor
+makes its device node in its own container's `/dev`, which Docker filled only at the start
+(ADR-0414). Avoid: hot-swap (a bay that takes a disk while powered), new disk.
+
 **SMART history**: The sector and error counters of each disk that the SMART monitor records every
 hour while the disk is awake, kept by serial in RAM and in `/data/smart_history.json`, which is
 written when they change (ADR-0235, ADR-0269). Avoid: SMART log (smartctl's own self-test and error

@@ -96,6 +96,21 @@ def _no_problems_yet(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _no_disk_nodes_of_this_machine(monkeypatch, tmp_path_factory):
+    """host.run_smartctl first makes the container's node of the disk the host's (ADR-0414): no test
+    reads this machine's sysfs or makes or replaces a node in its /dev. The three folders are
+    missing ones of the test's own, so container_disk_node changes nothing; install_fake_host gives
+    it the fake host's disks and container, and tests/test_hot_plugged_smart.py folders that it fills."""
+    host = sys.modules.get("src.host")
+    if host is not None:
+        folder = tmp_path_factory.mktemp("disk-nodes")
+        monkeypatch.setattr(host, "SYS_BLOCK", str(folder / "no-sys-block"))
+        monkeypatch.setattr(host, "CONTAINER_DEV", str(folder / "no-dev"))
+        monkeypatch.setattr(host, "HOST_DEV", str(folder / "no-host-dev"))
+        monkeypatch.setattr(host, "_disk_node_problems", set())
+
+
+@pytest.fixture(autouse=True)
 def _no_volume_use_read_yet(monkeypatch, tmp_path_factory):
     """The use of the volumes' quotas that the RAID monitor reads, with its history, is kept in RAM and
     written to /data only at shutdown (storage.volume_usage): every test starts without it, its file is in a

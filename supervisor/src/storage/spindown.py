@@ -269,9 +269,9 @@ def _scans(device: str, switch: str | None = None) -> Scans | None:
     leaves a sleeping disk alone; the Save that runs this woke it with hdparm -S first. ScansUnknown
     when smartctl does not answer within SMARTCTL_TIMEOUT (killed and not waited for, ADR-0290) or
     reads no state."""
-    cmd = ["smartctl", "-n", "standby", *(["-o", switch] if switch else []), "-i", "-c", "-j", device]
+    options = ["-n", "standby", *(["-o", switch] if switch else []), "-i", "-c", "-j"]
     try:
-        result = host.run_in_container(cmd, timeout=SMARTCTL_TIMEOUT)
+        result = host.run_smartctl(options, device, timeout=SMARTCTL_TIMEOUT)
     except subprocess.TimeoutExpired:
         raise ScansUnknown(f"smartctl did not answer within {SMARTCTL_TIMEOUT} seconds") from None
     except OSError as exc:

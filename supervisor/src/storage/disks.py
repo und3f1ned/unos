@@ -733,7 +733,7 @@ def _epc_power_state(device: str) -> PowerState:
     POWER_CHECK_TIMEOUT."""
     try:
         # Killed at its timeout and not waited for (ADR-0290).
-        result = host.run_in_container(["smartctl", "-n", "idle", "-i", "-j", device], timeout=POWER_CHECK_TIMEOUT)
+        result = host.run_smartctl(["-n", "idle", "-i", "-j"], device, timeout=POWER_CHECK_TIMEOUT)
     except (OSError, subprocess.SubprocessError):
         return "unknown"
     return _SMARTCTL_MODES.get(smartctl_stopped_in(result) or "", "unknown")
@@ -747,9 +747,7 @@ def _smartctl_power_state(device: str) -> PowerState:
     POWER_CHECK_TIMEOUT."""
     try:
         # Killed at its timeout and not waited for (ADR-0290).
-        result = host.run_in_container(
-            ["smartctl", "-n", "standby", "-i", "-j", device], timeout=POWER_CHECK_TIMEOUT
-        )
+        result = host.run_smartctl(["-n", "standby", "-i", "-j"], device, timeout=POWER_CHECK_TIMEOUT)
     except (OSError, subprocess.SubprocessError):
         return "unknown"
     if smartctl_found_it_asleep(result):
@@ -1067,9 +1065,7 @@ def get_smart_data(device_path: str) -> SmartData:
     """
     try:
         # Killed at the timeout and not waited for (ADR-0290).
-        result = host.run_in_container(
-            ["smartctl", "-n", "standby", "-j", "-a", device_path], timeout=SMARTCTL_TIMEOUT
-        )
+        result = host.run_smartctl(["-n", "standby", "-j", "-a"], device_path, timeout=SMARTCTL_TIMEOUT)
     except subprocess.TimeoutExpired:
         return SmartData(
             device=device_path,
@@ -1077,6 +1073,8 @@ def get_smart_data(device_path: str) -> SmartData:
             power_state="unknown",
             raw_data={"error": f"smartctl did not answer within {SMARTCTL_TIMEOUT} seconds"},
         )
+    except host.DiskNodeError as exc:  # the container's node of the disk (ADR-0414), logged there
+        return SmartData(device=device_path, healthy=False, power_state="unknown", raw_data={"error": exc.strerror})
     if smartctl_found_it_asleep(result):
         return SmartData(device=device_path, healthy=None, power_state="standby")
 

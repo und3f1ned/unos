@@ -167,6 +167,7 @@ and this index, and `make check-fast` runs it.
 | [0379](0379-a-balance-runs-in-a-host-unit-with-a-usage-limit-of-20-percent-and-a-full-balance-behind-a-confirmation.md) | A balance runs in a unit of the host, rewrites the chunks less than 20% full by default, and a full one needs a confirmation | accepted | 2026-11-15 |
 | [0387](0387-volume-quota-use-is-read-from-sysfs-alerted-at-80-90-and-95-percent-and-kept-in-ram.md) | A volume's quota use is read from the kernel's sysfs, alerted once per level of 80, 90 and 95 percent, and its hourly history is kept in RAM and written at shutdown | accepted | 2026-11-17 |
 | [0411](0411-a-disk-joins-a-pool-at-once-and-leaves-it-in-a-host-unit-after-typed-confirmations-and-checks-of-the-profile-and-the-space.md) | A disk joins a pool at once and leaves it in a unit of the host, after typed confirmations and checks of the profile and the space | accepted | 2026-11-18 |
+| [0414](0414-a-hot-plugged-disk-is-read-by-smartctl-through-a-node-the-supervisor-makes-in-its-own-dev.md) | A disk attached after the supervisor started is read by smartctl through a node that the supervisor makes in its own /dev from the host's sysfs | accepted | 2026-11-18 |
 
 ## Shares
 

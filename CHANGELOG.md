@@ -1933,10 +1933,15 @@ manager, encrypted backup uploads, health checks, CI checks).
   not shown until the page was opened again, nor was a removed one taken off
   the list. The page now loads its lists again within a few seconds of the
   host's block devices changing, as the stats stream reports them, and not
-  while one of its dialogs is open but once it closes (ADR-0360). SMART data
-  of a disk attached after the supervisor started still cannot be read until
-  the supervisor restarts: smartctl runs in the container, whose `/dev` lacks
-  the new disk.
+  while one of its dialogs is open but once it closes (ADR-0360).
+- The SMART data of a disk attached after the supervisor started, such as a
+  USB disk, could not be read, nor its self-tests run, nor did the hourly SMART
+  monitor record it, until the supervisor restarted: smartctl runs in the
+  supervisor's container, whose `/dev` Docker fills once, when it starts.
+  Before each smartctl the supervisor now makes the container's node of the
+  disk from the host's `/sys/block/<disk>/dev`, in RAM, and replaces one whose
+  device number is another's; a disk that was there at the start keeps
+  Docker's node, and the container's privileges are unchanged (ADR-0414).
 
 ### Known issues
 - Not working yet, each with an entry in `feature-list.json`:
@@ -1950,9 +1955,6 @@ manager, encrypted backup uploads, health checks, CI checks).
     channel have no effect (`system.alert-events`).
   - The host name and the time zone cannot be set from the web interface
     (`system.hostname-and-time-zone`).
-  - The SMART data of a disk attached after the supervisor started, such as a
-    USB disk, cannot be read, nor its self-tests run, until the supervisor
-    restarts (`storage.hot-plugged-disks-smart`).
 
 ## [1.0.0] - 2026-02-05
 

@@ -281,9 +281,11 @@ is removed leaves the list the same way, together with the pools and the
 filesystems found on the disks. While a dialog of the page is open, its
 lists stay as they were until it closes, also when the host answers a
 reload that began before it opened, and an error message at the top of the
-page stays through such a reload. The SMART data of a disk attached
-after the supervisor started (**System** → **Disk Health**) can be read
-only once the supervisor has restarted.
+page stays through such a reload. Such a disk needs no restart for its
+SMART data either: **System** → **Disk Health** lists it with its SMART
+data the next time it loads (when opened, or with its refresh button), a
+**SMART Test** task in **System** → **Scheduler** tests it, and the hourly
+SMART records include it.
 
 ### Idle Timeouts (Spin-Down)
 
