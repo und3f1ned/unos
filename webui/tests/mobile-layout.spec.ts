@@ -418,6 +418,22 @@ const LOGS = {
 
 const POWER = {
   '/api/v1/power/pending': { action: 'reboot', at: '2026-11-08T23:00:00+00:00' },
+  '/api/v1/power/config': {
+    wake_on_lan: true, auto_shutdown: true, shutdown_hour: 23, shutdown_minute: 0, auto_wakeup: true,
+    wakeup_hour: 7, wakeup_minute: 0, idle_shutdown: true, idle_timeout_minutes: 45,
+  },
+  '/api/v1/power/schedule': {
+    timezone: 'America/Argentina/ComodRivadavia',
+    shutdown: {
+      enabled: true, time: '23:00', next: '2026-11-09T02:00:00Z', state: 'postponed',
+      held_by: [{ kind: 'scrub', subject: '/mnt/pools/archive-of-the-family-photographs', amount: null, detail: null }],
+    },
+    wake: { enabled: true, time: '07:00', next: null, rtc: { available: false, reason: 'The RTC rtc0 has no wake alarm: /sys/class/rtc/rtc0/wakealarm does not exist', alarm: null } },
+    idle: {
+      enabled: true, minutes: 45, idle: false, since: null, shutdown_at: null,
+      found: [{ kind: 'smb_client', subject: 'fd12:3456:789a:1:2a0:c9ff:fe12:3456', amount: null, detail: null }],
+    },
+  },
   '/api/v1/power/wol': {
     interfaces: [
       { name: 'enp1s0', mac_address: '02:42:ac:11:00:02', supported: true, wol: 'g', enabled: true },

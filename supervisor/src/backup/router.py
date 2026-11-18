@@ -148,6 +148,18 @@ _EXTENDED_HEADERS = frozenset(
 _restore_lock = threading.Lock()
 # A restore request is running (its locked part may outlive a cancelled request).
 _restore_running = False
+# How many backups made by hand (POST /create) are being written now.
+_backups_running = 0
+
+
+def backup_running() -> bool:
+    """Whether a backup made by hand is being written: a running job for the power schedule (ADR-0406)."""
+    return _backups_running > 0
+
+
+def restore_running() -> bool:
+    """Whether a restore runs: a running job for the power schedule (ADR-0406)."""
+    return _restore_running
 
 SMB_REPAIRED_AT_START = "SMB state is repaired at the next start"
 
@@ -1217,11 +1229,15 @@ async def create_backup(
     if config.encrypt and not config.passphrase:
         raise HTTPException(400, "Passphrase required for encrypted backup")
 
+    global _backups_running
+    _backups_running += 1
     try:
         result = await asyncio.to_thread(_create_backup, config)
     except Exception as e:
         logger.exception("Could not create backup")
         raise HTTPException(500, f"Failed to create backup: {e}") from e
+    finally:
+        _backups_running -= 1
     await audit_change(
         AuditAction.BACKUP_CREATED, request, user.username, resource_type="backup",
         resource_id=result["backup"].filename,

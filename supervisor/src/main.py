@@ -86,6 +86,7 @@ from .websocket.events import router as ws_router
 from .scheduler.router import start_scheduler, stop_scheduler
 from .health.router import start_health_monitors, stop_health_monitors
 from .power.router import reapply_wol_settings, start_ups_monitor, stop_ups_monitor
+from .power.schedule import start_power_schedule, stop_power_schedule
 from .storage import pools as storage_pools
 from .storage.pools import reconcile_pools_on_startup
 from .shares.service import reconcile_smb_on_startup
@@ -171,6 +172,9 @@ async def lifespan(app: FastAPI):
         await start_scheduler()
         await start_health_monitors()
         await start_ups_monitor()
+        # The scheduled shutdown, the RTC's wake alarm and the idle shutdown of the power settings,
+        # a pass a minute; it acts only on what an administrator turned on (ADR-0406).
+        await start_power_schedule()
         # Deletes for good what has been in the trash for 30 days (ADR-0259).
         await start_trash_expiry()
         # Looks once for the hidden files that uploads left when the supervisor stopped (ADR-0354).
@@ -188,6 +192,7 @@ async def lifespan(app: FastAPI):
             await stop_app_resources()
             await stop_upload_leftover_check()
             await stop_trash_expiry()
+            await stop_power_schedule()
             await stop_ups_monitor()
             await stop_health_monitors()
         # Always: the runs that Run now of a task started end with it and are recorded, also when the

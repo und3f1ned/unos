@@ -147,6 +147,8 @@ _task_check_task: Optional[asyncio.Task] = None
 # The runs the loop started and that have not ended: the event loop keeps only
 # weak references to tasks. stop_scheduler ends them.
 _runs: set[asyncio.Task] = set()
+# The name of the asyncio task of a run: this, then the task's name (start_run).
+RUN_PREFIX = "unos-task-run:"
 # The warnings about tasks already logged: each is logged once, not at every pass.
 _reported: set[str] = set()
 # The time zone the host named when it was last asked (schedule_zone); None until then.
@@ -1018,6 +1020,21 @@ async def run_task(task: ScheduledTask) -> None:
     _record_end(run, success)
 
 
+def start_run(task: ScheduledTask) -> asyncio.Task:
+    """Start a run of ``task`` beside the caller, kept in _runs until it ends and named after the task,
+    so that the power schedule sees which tasks run (running_task_names, ADR-0406)."""
+    run = asyncio.create_task(run_task(task), name=RUN_PREFIX + task.name)
+    _runs.add(run)
+    run.add_done_callback(_runs.discard)
+    return run
+
+
+def running_task_names() -> list[str]:
+    """The names of the tasks whose runs have not ended, by name: a running job holds a scheduled
+    shutdown and keeps the host from idling (ADR-0406)."""
+    return sorted(run.get_name().removeprefix(RUN_PREFIX) for run in list(_runs) if not run.done())
+
+
 def finish_interrupted_runs() -> None:
     """Record the runs that a stop of the supervisor interrupted as failed, with their tasks (ADR-0268).
 
@@ -1059,9 +1076,7 @@ async def scheduler_loop():
             zone = await asyncio.to_thread(schedule_zone)
             # A clock set back gives an empty window, and the next one starts at its time.
             for task in due_tasks(load_tasks(), max(checked, now - CATCH_UP), now, zone):
-                run = asyncio.create_task(run_task(task))
-                _runs.add(run)
-                run.add_done_callback(_runs.discard)
+                start_run(task)
         except Exception:
             logger.exception("The scheduler could not start the tasks that were due")
         checked = now
@@ -1340,9 +1355,7 @@ async def run_task_now(request: Request, task_id: str, user=Depends(verify_token
     if not task:
         raise HTTPException(404, f"Task not found: {task_id}")
 
-    run = asyncio.create_task(run_task(task))
-    _runs.add(run)
-    run.add_done_callback(_runs.discard)
+    start_run(task)
     await _audit_task(request, user, AuditAction.TASK_RUN, task, f"Started a run of {_named(task)}")
     return {"status": "started", "task_id": task_id}
 

@@ -21,7 +21,10 @@
 		volume_quota_95: 'problems.kind.volume_quota_95',
 		app_memory: 'problems.kind.app_memory',
 		app_cpu: 'problems.kind.app_cpu',
-		app_oom: 'problems.kind.app_oom'
+		app_oom: 'problems.kind.app_oom',
+		shutdown_scheduled: 'problems.kind.shutdown_scheduled',
+		shutdown_postponed: 'problems.kind.shutdown_postponed',
+		shutdown_idle: 'problems.kind.shutdown_idle'
 	};
 
 	$: text = (problem: Problem): string =>

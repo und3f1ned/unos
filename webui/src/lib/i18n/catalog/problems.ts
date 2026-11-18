@@ -2,7 +2,8 @@ import type { Translation } from '../translate';
 
 // The health banner above every page of an administrator: src/lib/components/ProblemsBanner.svelte.
 // One text per kind of problem (supervisor/src/health/problems.py, ADR-0332), with {subject}: the
-// pool's name, the disk's path, the task's name, <pool>/<volume> or a container's name.
+// pool's name, the disk's path, the task's name, <pool>/<volume>, a container's name or the time of a
+// shutdown on the host's clock.
 
 export const en = {
 	'problems.title': {
@@ -27,6 +28,12 @@ export const en = {
 	'problems.kind.app_memory': 'Container {subject} is near its memory limit',
 	'problems.kind.app_cpu': 'Container {subject} is held at its CPU limit',
 	'problems.kind.app_oom': 'Container {subject} ran out of memory: the kernel ended a process of it',
+	// A shutdown of the power settings (ADR-0406): {subject} is its time on the host's clock, "23:00 (Europe/Berlin)".
+	'problems.kind.shutdown_scheduled':
+		'The host shuts down at {subject}, as the power settings schedule it. Running jobs postpone it.',
+	'problems.kind.shutdown_postponed':
+		'The scheduled shutdown of {subject} is postponed: System > Power names what it waits for.',
+	'problems.kind.shutdown_idle': 'The host is idle and shuts down at about {subject} unless it is used before.',
 	// A kind that this web UI does not know yet.
 	'problems.kind.other': 'A problem with {subject}'
 };
@@ -53,5 +60,10 @@ export const ru: Translation<typeof en> = {
 	'problems.kind.app_memory': 'Контейнер {subject} близок к ограничению памяти',
 	'problems.kind.app_cpu': 'Контейнер {subject} упирается в ограничение ЦП',
 	'problems.kind.app_oom': 'Контейнеру {subject} не хватило памяти: ядро завершило его процесс',
+	'problems.kind.shutdown_scheduled':
+		'Хост выключится в {subject} по расписанию настроек питания. Выполняющиеся задания откладывают выключение.',
+	'problems.kind.shutdown_postponed':
+		'Выключение по расписанию в {subject} отложено: в разделе Система > Питание указано, чего оно ждёт.',
+	'problems.kind.shutdown_idle': 'Хост простаивает и выключится примерно в {subject}, если им не воспользуются.',
 	'problems.kind.other': 'Проблема: {subject}'
 };

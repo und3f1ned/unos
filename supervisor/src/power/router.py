@@ -15,6 +15,7 @@ from slowapi import Limiter
 from slowapi.util import get_remote_address
 
 from .. import host, state_files
+from . import schedule
 from ..audit.changes import audit_change, changed_fields
 from ..audit.schemas import AuditAction, AuditSeverity
 from ..auth.utils import verify_token
@@ -91,15 +92,22 @@ UPS_HOST_PATTERN = r"^(?:[A-Za-z0-9][A-Za-z0-9.-]{0,252}|\[[0-9A-Fa-f:.]{2,45}\]
 
 
 class PowerConfig(BaseModel):
+    """The power settings. The shutdown and wake times are on the clock of the host's time zone;
+    supervisor/src/power/schedule.py acts on them (ADR-0406). All off by default."""
     wake_on_lan: bool = True
     auto_shutdown: bool = False
-    shutdown_hour: int = 23
-    shutdown_minute: int = 0
+    shutdown_hour: int = Field(default=23, ge=0, le=23)
+    shutdown_minute: int = Field(default=0, ge=0, le=59)
     auto_wakeup: bool = False
-    wakeup_hour: int = 7
-    wakeup_minute: int = 0
+    wakeup_hour: int = Field(default=7, ge=0, le=23)
+    wakeup_minute: int = Field(default=0, ge=0, le=59)
     idle_shutdown: bool = False
-    idle_timeout_minutes: int = 30
+    idle_timeout_minutes: int = Field(default=30, ge=20, le=1440)
+
+    @property
+    def acts(self) -> bool:
+        """Whether a setting that acts on the host is on."""
+        return self.auto_shutdown or self.auto_wakeup or self.idle_shutdown
 
 
 class UPSSettings(BaseModel):
@@ -439,14 +447,36 @@ async def get_power_config(_: dict = Depends(verify_token)):
 @router.put("/config", response_model=PowerConfig)
 async def update_power_config(request: Request, config: PowerConfig, user=Depends(verify_token)):
     """Update power configuration; the file is written, and the audit log gets settings_changed,
-    only when the settings change (ADR-0214, ADR-0402)."""
+    only when the settings change (ADR-0214, ADR-0402).
+
+    The scheduled shutdown, the wake and the idle shutdown act on the host (ADR-0406): refused with 503
+    where host commands run locally, 400 for a wake less than 10 minutes after the shutdown, 409 for a
+    wake that the host's RTC cannot take, and the RTC's alarm is set or cleared before the settings are
+    stored."""
+    schedule.check_times(config)
+    if config.acts:
+        _refuse_local()
     saved = load_config()
+    armed = await schedule.apply_wake(saved, config)
     changed = changed_fields(saved.model_dump(), config.model_dump())
     if changed:
-        save_config(config)
+        try:
+            save_config(config)
+        except Exception:
+            if armed:  # no alarm for a wake that was not stored
+                await schedule.undo_wake()
+            raise
         await audit_change(AuditAction.SETTINGS_CHANGED, request, user.username, resource_type="power",
                            details=f"Power settings changed: {changed}")
     return config
+
+
+@router.get("/schedule", response_model=schedule.PowerSchedule)
+async def get_power_schedule(_: dict = Depends(verify_token)):
+    """The next scheduled shutdown and what holds it, the next wake and the RTC's alarm, and whether
+    the host is idle and why not (ADR-0406). Reads the host and changes nothing."""
+    _refuse_local()
+    return await schedule.status()
 
 
 # ==================== Reboot, shutdown and suspend (ADR-0233) ====================

@@ -550,6 +550,12 @@ async def authenticate_websocket(
             _open_sockets -= 1
 
 
+def signed_in_sockets() -> int:
+    """The sockets open now whose user signed in: every page of the web UI keeps one open, so each is a
+    web session that keeps the host from idling (ADR-0406)."""
+    return max(0, _open_sockets - _sockets_before_auth)
+
+
 def release_socket() -> None:
     """A socket that signed in has closed: it no longer counts (ADR-0333)."""
     global _open_sockets
