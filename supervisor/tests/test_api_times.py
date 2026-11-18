@@ -383,8 +383,9 @@ MUST_HOLD_TIMES = {
 }
 
 
-# How many GETs answer 200 here at least (about 70 do): the others need the host, Docker or the network.
-MIN_ANSWERED = 60
+# How many GETs answer 200 here at least (55 do): the others need the host, Docker or the network.
+# system.resource-monitor (ADR-0399) removed six monitor routes that answered here and added one.
+MIN_ANSWERED = 55
 
 
 def _holds_a_time(value: object) -> bool:
