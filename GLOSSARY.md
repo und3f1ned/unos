@@ -96,7 +96,7 @@ or disk activity (ADR-0407). Avoid: idle timeout (a data disk's spin-down), slee
 
 **Running job**: Work that a scheduled shutdown waits for and that keeps the host from idling: a run
 of a scheduled task or one due within 2 minutes, a backup, a restore, a scrub, a balance, a disk
-replaced or removed in a pool, an app's install job, the off-device copy's work, a repair of a share's
+replaced or removed in a pool, an app's install, update or rollback job, the off-device copy's work, a repair of a share's
 permissions, an update of UNOS (ADR-0407). Avoid: task (a scheduled task is one kind), process.
 
 **Wake alarm**: The alarm of the host's RTC (`/sys/class/rtc/rtc0/wakealarm`) that UNOS keeps at the
@@ -385,8 +385,33 @@ sidecar, service.
 answers it at once, and it checks, pulls the images, creates and starts the containers and
 reports each step, each image's download and each container's state, then its result or its
 error, to the App Store over the events socket. Kept in memory only, the running one and the last
-of each app; one runs at a time (ADR-0384). Avoid: install task (a task is the Scheduler's), pull
+of each app; one runs at a time (ADR-0384). An app update and an app rollback run as jobs of the
+same kind and share that one slot (ADR-0408). Avoid: install task (a task is the Scheduler's), pull
 (one step of it).
+
+**App update**: Recreating an installed app's containers from the catalog's template when the
+catalog pins newer images for it, keeping its data folders, generated secrets, settings, ports,
+group option and limits: before it runs, the App Store shows each image, what the pulls write to the
+system disk and the database copy; then a job pulls, stops the app, makes the database copy, keeps
+the earlier version and starts the new containers, or returns the app to its earlier version when
+something fails after the stop. Only an image built after the one that runs is taken, and only apps
+whose catalog pins its images are updated (ADR-0408). Avoid: upgrade, reinstall, `update.sh` (which
+updates UNOS itself).
+
+**Database copy**: The copy of a folder of an app's own data that the catalog marks
+`copy_before_update` (Immich's `postgres/data`), which an app update makes beside it on the same pool
+(`<folder>.previous`) after the app stopped and before the new version starts, and which an app
+rollback puts back in its place (ADR-0408). Avoid: database backup, dump, snapshot.
+
+**Earlier version** (of an app): The containers that an app update kept, stopped, as
+`<name>.previous`, with their images, and its database copy, until an app rollback returns to them or
+**Remove earlier version** deletes them; another update waits until then (ADR-0408). Avoid: old
+version, backup.
+
+**App rollback**: Returning an updated app to its earlier version: the newer containers are removed,
+the database copy replaces the database (what the app stored since the update is lost), and the
+earlier containers get their names back and start (ADR-0408). Avoid: restore (a backup's), rollback
+alone (what `update.sh` and `deploy.sh` do).
 
 **Generated secret**: A password file that UNOS writes once, at an app's install, beside the data
 it opens on the pool (64 hexadecimal digits, root, mode 0600), binds read-only into the

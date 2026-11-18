@@ -463,7 +463,7 @@ class TestWhatPostponesAScheduledShutdown:
         elif job == "backup":
             monkeypatch.setattr(backup_router, "_backups_running", 1)
         elif job == "app_install":
-            running = SimpleNamespace(state="running", name="Jellyfin", started_at=world.clock.now)
+            running = SimpleNamespace(state="running", name="Jellyfin", kind="install", started_at=world.clock.now)
             monkeypatch.setattr(install_jobs, "current", lambda: [running])
         elif job == "offsite":
             monkeypatch.setattr(offsite, "_activity", offsite.Activity("copy", world.clock.now))
@@ -501,6 +501,20 @@ class TestWhatPostponesAScheduledShutdown:
         assert world.host.shutdowns == []
         [postponed] = [p for p in power_problems() if p.kind == "shutdown_postponed"]
         assert postponed.subject == "23:00 (Europe/Berlin)"
+
+    @pytest.mark.parametrize("kind", ["install", "update", "rollback"])
+    def test_an_app_job_is_named_by_its_kind(self, world, monkeypatch, kind):
+        # An update or a rollback of an app (ADR-0408) runs as a job of install_jobs: it holds a
+        # shutdown as an install does, and the plan names it for what it is.
+        running = SimpleNamespace(state="running", name="Immich", kind=kind, started_at=world.clock.now)
+        monkeypatch.setattr(install_jobs, "current", lambda: [running])
+
+        found = [f for f in schedule._jobs(world.clock.now, timezone.utc) if f.subject == "Immich"]
+
+        assert [f.kind for f in found] == [f"app_{kind}"]
+        assert schedule._describe(found[0]) == {
+            "install": "the install of Immich", "update": "the update of Immich",
+            "rollback": "the rollback of Immich"}[kind]
 
     def test_finished_btrfs_commands_and_others_hold_nothing(self, world):
         world.quiet.processes = [

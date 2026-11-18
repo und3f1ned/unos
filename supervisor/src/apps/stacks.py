@@ -12,13 +12,19 @@ removes the rest.
 
 One change of an app runs at a time: an install, a start, a stop, a restart or an uninstall of
 an app that another one is changing answers 409; an install job holds the lock from its request
-to its end (ADR-0384). The supervisor runs one process (no uvicorn workers), so a lock of the
-process is enough.
+to its end (ADR-0384), and so do an update and a rollback (ADR-0408). The supervisor runs one
+process (no uvicorn workers), so a lock of the process is enough.
+
+An update keeps the app's earlier containers, stopped, under their names with EARLIER_SUFFIX
+(``immich-database.previous``), until a rollback gives them their names back or the earlier version
+is removed (ADR-0408): they keep their labels, so they belong to the app (``previous``), but they
+are none of its containers for a start, a stop or the listing's fields.
 """
 
 from __future__ import annotations
 
 import contextlib
+import re
 import threading
 import time
 from collections.abc import Callable, Iterable, Iterator
@@ -37,6 +43,11 @@ UNOS_APP_LABEL = "unos.app"
 APP_POOL_LABEL = "unos.app.pool"
 # A companion's name in its app, on each of its containers but the main one.
 COMPANION_LABEL = "unos.app.companion"
+# The catalog's version of the app that a container was created for (ADR-0408).
+VERSION_LABEL = "unos.app.version"
+# The end of the name of an earlier container that an update keeps (ADR-0408): a dot, which no
+# app's or companion's name has.
+EARLIER_SUFFIX = ".previous"
 
 # docker-py raises DockerException subclasses, but connection problems can
 # surface as plain requests exceptions, and those of a stream (a pull) as urllib3's.
@@ -77,6 +88,41 @@ def container_names(template: AppTemplate) -> list[str]:
     """The Docker names of the app's containers in their start order: the companions, then the
     main container."""
     return [*(container_name(template, c.name) for c in template.companions), template.id]
+
+
+def is_earlier(container: Any) -> bool:
+    """Whether the container is an earlier one that an update of its app keeps (ADR-0408)."""
+    return str(container.name).endswith(EARLIER_SUFFIX)
+
+
+def earlier_name(name: str) -> str:
+    return name + EARLIER_SUFFIX
+
+
+def base_name(name: str) -> str:
+    """The name of an earlier container without its suffix: the name it had, and has again after
+    a rollback."""
+    return name[: -len(EARLIER_SUFFIX)] if name.endswith(EARLIER_SUFFIX) else name
+
+
+# An image pinned by tag and digest (ADR-0381), or a container's image created by digest.
+_DIGEST = re.compile(r"@(sha256:[0-9a-f]{64})$")
+
+
+def pinned_digest(ref: str) -> str | None:
+    """The digest of ``name:tag@sha256:...`` or ``name@sha256:...``; None for a floating tag."""
+    match = _DIGEST.search(ref)
+    return match.group(1) if match else None
+
+
+def template_images(template: AppTemplate) -> list[str]:
+    """Every image that an install of ``template`` may run: its containers' own and those of their
+    hardware profiles."""
+    refs: list[str] = []
+    for spec in (template, *template.companions):
+        refs.append(spec.image)
+        refs.extend(profile.image for profile in spec.hardware if profile.image)
+    return list(dict.fromkeys(refs))
 
 
 def joined(names: Iterable[str]) -> str:
@@ -120,12 +166,15 @@ def app_lock(key: str, name: str) -> Iterator[None]:
 
 
 def app_key(container: Any) -> str:
-    """The app that a container labelled ``unos.app`` belongs to: its template id for a companion
-    or for the main container (named after it); otherwise its own name, so that a container that
-    an earlier install named otherwise stays an app of its own."""
+    """The app that a container labelled ``unos.app`` belongs to: its template id for a companion,
+    for the main container (named after it) and for an earlier container that an update kept;
+    otherwise its own name, so that a container that an earlier install named otherwise stays an
+    app of its own."""
     labels = container.labels or {}
     app_id = labels.get(UNOS_APP_LABEL, "")
-    return app_id if COMPANION_LABEL in labels or container.name == app_id else container.name
+    if COMPANION_LABEL in labels or container.name == app_id or (is_earlier(container) and app_id):
+        return app_id
+    return container.name
 
 
 @dataclass
@@ -141,6 +190,8 @@ class InstalledContainers:
     companions: list[Any] = field(default_factory=list)
     # The names of the containers that the template has and Docker lacks.
     missing: list[str] = field(default_factory=list)
+    # The earlier containers that the app's last update kept, stopped (ADR-0408).
+    previous: list[Any] = field(default_factory=list)
 
     @property
     def containers(self) -> list[Any]:
@@ -176,13 +227,47 @@ def group(key: str, members: list[Any], template: AppTemplate | None) -> Install
     catalog's template of its ``unos.app`` label, used only when the key is the template's id."""
     if template is not None and template.id != key:
         template = None
+    # The earlier containers in the start order of their app, those the template no longer names after them.
+    order = {earlier_name(name): n for n, name in enumerate(container_names(template))} if template else {}
+    previous = sorted((c for c in members if is_earlier(c)), key=lambda c: (order.get(c.name, len(order)), c.name))
+    members = [c for c in members if not is_earlier(c)]
     main = next((c for c in members if COMPANION_LABEL not in (c.labels or {})), None)
     by_name = {c.labels[COMPANION_LABEL]: c for c in members if COMPANION_LABEL in (c.labels or {})}
     ordered = [by_name.pop(c.name) for c in (template.companions if template else []) if c.name in by_name]
     companions = [*ordered, *sorted(by_name.values(), key=lambda c: c.name)]
     present = {c.name for c in members}
     missing = [name for name in container_names(template) if name not in present] if template else []
-    return InstalledContainers(key=key, template=template, main=main, companions=companions, missing=missing)
+    return InstalledContainers(
+        key=key, template=template, main=main, companions=companions, missing=missing, previous=previous
+    )
+
+
+def app_version(app: InstalledContainers) -> str | None:
+    """The catalog's version that the app's main container was created for, from its label; None
+    for one created before the label (ADR-0408)."""
+    container = app.main if app.main is not None else next(iter(app.companions), None)
+    return (container.labels or {}).get(VERSION_LABEL) if container is not None else None
+
+
+def update_to(app: InstalledContainers) -> str | None:
+    """The catalog's version that the app can be updated to, or None (ADR-0408): every image of its
+    template is pinned, it is complete, and the catalog pins for one of its containers another
+    image than the one it was created from (its own or that of a hardware profile; which one the
+    host takes is the update's to read). Reads nothing but the containers' configuration."""
+    template = app.template
+    if template is None or app.missing or not app.containers:
+        return None
+    if any(pinned_digest(ref) is None for ref in template_images(template)):
+        return None
+    for container in app.containers:
+        spec = app.spec(container)
+        if spec is None:
+            return template.version
+        wanted = {pinned_digest(ref) for ref in [spec.image, *(p.image for p in spec.hardware if p.image)]}
+        installed = pinned_digest(str((container.attrs.get("Config") or {}).get("Image") or ""))
+        if installed not in wanted:
+            return template.version
+    return None
 
 
 def missing_detail(app: InstalledContainers) -> str:
@@ -262,12 +347,15 @@ def _last_health_output(container: Any) -> str:
     return text[:HEALTH_OUTPUT_CHARS]
 
 
-def wait_ready(container: Any, *, started_now: bool, check: Callable[[], None] | None = None) -> None:
+def wait_ready(container: Any, *, started_now: bool, check: Callable[[], None] | None = None,
+               seconds: float = DEPENDENCY_READY_SECONDS, unhealthy_fails: bool = True) -> None:
     """Wait until ``container`` is ready for the containers that depend on it: healthy when it has
     a health check, otherwise running and not restarting (for POLL_SECONDS after a start that this
-    change made). NotReady at once for one that exited, died or is unhealthy, and when it is not
-    ready within DEPENDENCY_READY_SECONDS. Its errors are Docker's (DOCKER_ERRORS). ``check`` is
-    called before each look at the container: an install job's stop (ADR-0384)."""
+    change made). NotReady at once for one that exited, died or (with ``unhealthy_fails``) is
+    unhealthy, and when it is not ready within ``seconds``. Its errors are Docker's
+    (DOCKER_ERRORS). ``check`` is called before each look at the container: an install job's stop
+    (ADR-0384). An update waits for its new main container with ``unhealthy_fails`` False: a
+    version that migrates its database at its start fails its health check meanwhile (ADR-0408)."""
     began = time.monotonic()
     while True:
         if check is not None:
@@ -277,17 +365,17 @@ def wait_ready(container: Any, *, started_now: bool, check: Callable[[], None] |
         status = health(container)
         if state.get("Status") in ("exited", "dead"):
             raise NotReady(f"{container.name} stopped (exit code {state.get('ExitCode')})")
-        if status == "unhealthy":
+        if status == "unhealthy" and unhealthy_fails:
             output = _last_health_output(container)
             raise NotReady(f"{container.name} is unhealthy" + (f": {output}" if output else ""))
         running = bool(state.get("Running")) and not state.get("Restarting")
         waited = time.monotonic() - began
         if status == "healthy" or (status is None and running and (not started_now or waited >= POLL_SECONDS)):
             return
-        if waited >= DEPENDENCY_READY_SECONDS:
+        if waited >= seconds:
             code = state.get("ExitCode")
             raise NotReady(
-                f"{container.name} did not become ready within {DEPENDENCY_READY_SECONDS} s"
+                f"{container.name} did not become ready within {seconds:g} s"
                 + (f" (exit code {code})" if code else "")
             )
         time.sleep(POLL_SECONDS)

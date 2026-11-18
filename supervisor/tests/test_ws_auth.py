@@ -1188,7 +1188,8 @@ class TestTheInstallsOnTheEventsSocket:
             assert ws.receive_json() == {"type": "problems", "data": []}
             assert ws.receive_json() == {"type": "repair", "data": None}
             assert ws.receive_json() == {"type": "app_installs", "data": [{
-                "id": "job1", "template_id": "dozzle", "name": "Dozzle", "state": "running", "step": "pulling",
+                "id": "job1", "template_id": "dozzle", "name": "Dozzle", "kind": "install", "state": "running",
+                "step": "pulling",
                 "started_at": "2026-11-17T10:00:00Z", "finished_at": None,
                 "images": [{"image": "amir20/dozzle:latest", "state": "pulling", "layers": 3, "layers_done": 1,
                             "bytes_total": 9000, "bytes_done": 4000}],

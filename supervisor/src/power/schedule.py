@@ -108,7 +108,8 @@ NOT_MEASURED = "The disk activity is not measured yet: it is measured from one m
 
 FindingKind = Literal[
     "web_session", "login_session", "smb_client", "nfs_client", "disk_activity", "task", "task_due",
-    "backup", "restore", "scrub", "balance", "disk_replace", "app_install", "offsite", "share_repair", "update",
+    "backup", "restore", "scrub", "balance", "disk_replace", "app_install", "app_update",
+    "app_rollback", "offsite", "share_repair", "update",
     "wake_alarm", "unreadable",
 ]
 
@@ -555,7 +556,8 @@ def _jobs(now: datetime, zone: tzinfo) -> list[Finding]:
         found.append(Finding(kind="backup"))
     if backup.restore_running():
         found.append(Finding(kind="restore"))
-    found += [Finding(kind="app_install", subject=job.name)
+    # An install, an update or a rollback of an app (ADR-0408), one job of install_jobs at a time.
+    found += [Finding(kind=f"app_{job.kind}", subject=job.name)
               for job in _module("..apps.install_jobs").current() if job.state == "running"]
     activity = _module("..offsite.service")._activity
     if activity is not None:
@@ -631,6 +633,8 @@ def _describe(finding: Finding) -> str:
         "balance": f"a balance of {subject}" if subject else "a balance",
         "disk_replace": f"a disk replaced or removed in {subject}" if subject else "a disk replaced or removed",
         "app_install": f"the install of {subject}",
+        "app_update": f"the update of {subject}",
+        "app_rollback": f"the rollback of {subject}",
         "offsite": "the work of the off-device copy",
         "share_repair": f"a permissions repair of the share {subject}",
         "update": "an update of UNOS",

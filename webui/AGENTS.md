@@ -52,8 +52,8 @@ and proxies `/api/*` and `/ws/*` to the supervisor (`webui/Caddyfile`).
   `wsForbidden`, which `/ws/v1/events` feeds every 2 seconds (ADR-0363); a page reads the objects
   of the message it needs (`$stats.cpu`, `$stats.network.interfaces`). The same socket fills the
   stores `problems`, `repairJob` (the running or last repair of a share's permissions) and
-  `appInstalls` (the running install of an app and the last of each, ADR-0384) for
-  administrators. Rates come from the server; a page writes sizes and rates with the units of its
+  `appInstalls` (the running install, update or rollback of an app and the last of each, ADR-0384,
+  ADR-0408) for administrators. Rates come from the server; a page writes sizes and rates with the units of its
   catalog, as `NetworkTab.svelte` and `MonitorTab.svelte` do (ADR-0287).
 - No page polls the API: other live data comes over a WebSocket of its own, as a container's log
   (`streamContainerLogs` of `$lib/api/containers.ts`, ADR-0255) and the journal of System > Logs'

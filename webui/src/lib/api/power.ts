@@ -36,6 +36,8 @@ export interface PowerFinding {
     | "balance"
     | "disk_replace"
     | "app_install"
+    | "app_update"
+    | "app_rollback"
     | "offsite"
     | "share_repair"
     | "update"

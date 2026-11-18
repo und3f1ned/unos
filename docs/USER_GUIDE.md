@@ -1507,10 +1507,11 @@ changed.
   database failed at its first start, the message names its folder, which may
   hold a database that was not finished: move that folder away before you
   install again.
-- **Updates.** UNOS does not update an installed app yet. To move Immich to a
-  newer version of the catalog, take a snapshot of its pool, uninstall Immich
-  and install it again: Immich changes its database at its first start and
-  cannot go back to an older version, so the snapshot is the way back.
+- **Updates.** When the catalog of a newer UNOS pins a newer Immich, its card
+  offers **Update to** that version (see [Updating an App](#updating-an-app)).
+  Immich changes its database at its first start and cannot go back to an
+  older version, so the update copies the database first, and a rollback
+  puts that copy back.
 
 BookStack, Paperless-ngx and Linkwarden are no longer in the catalog: each needs
 a database or a broker beside it, and they will come back as apps of several
@@ -1625,6 +1626,62 @@ container's log on the **Containers** page if it stops again.
 
 These actions work only on apps installed from the App Store; other containers
 are started and stopped on the **Containers** page.
+
+### Updating an App
+
+An app whose catalog pins its images by digest, such as Immich, can be updated
+in place when a newer UNOS brings a catalog that pins newer images for it: its
+card on the **Installed** tab then shows **Update to** and the version. Apps
+whose images float on a tag (`latest`, as Transmission's) are not offered an
+update; uninstall and install them again, which keeps their data.
+
+**Update to** opens a dialog that shows, before anything changes:
+
+- each container with **New image** or **Same image**: the update reads the
+  catalog's image for this NAS's platform from its registry and accepts it only
+  when it was built after the image that runs, so an app never moves to an
+  older image;
+- what the update downloads and about what it writes to the system disk, where
+  Docker keeps its images: only the layers that the NAS does not have yet. At
+  least 2 GB of the system disk must stay free;
+- the copy of the app's database: Immich's `apps/immich/postgres/data` is
+  copied to `data.previous` beside it on the same pool, never on the system
+  disk. The pool must have the database's size and 1 GB more free; on a btrfs
+  pool the copy takes no space until the two differ.
+
+**Update now** starts the update in the background, and the App Store shows its
+card with each step: the checks, the downloads, the app stopped, the database
+copied, the containers created and started. The data folders, the password
+files, the settings you gave at the install, the ports, the group option
+`unos-smb` and the containers' limits stay as they are. When the new version
+does not start (Immich's server is given 15 minutes to migrate its database),
+or something fails after the app was stopped, or you cancel it then, UNOS
+removes the new containers, puts the copy of the database back and starts the
+earlier version again if it ran before: the card says that the app was
+returned to its earlier version. Should the copy not go back in place, UNOS
+leaves the earlier version stopped, under its `.previous` names, and the card
+offers **Roll back**, which tries again once the cause is fixed.
+
+After an update the card shows **Earlier version kept**: the earlier containers
+stay, stopped, as `<name>.previous`, and so does the copy of the database. The
+**Containers** page does not start them, since they use the folders of the
+newer version, and while an app is installed, updated or rolled back it does
+not start, restart or remove that app's containers.
+
+- **Roll back** returns the app to its earlier version and its database to the
+  copy, after a question: what the app stored since the update is lost. It
+  runs in the background too and cannot be cancelled.
+- **Remove earlier version** removes the earlier containers and deletes the
+  copy of the database, after a question; a rollback is then no longer
+  possible. Their images stay until you remove them on **Containers** →
+  **Images**.
+
+Another update waits until the earlier version was rolled back to or removed.
+A copy of a database from an interrupted update, or one left after an
+uninstall, blocks the next update until you move it away. Updates, rollbacks
+and removals are in the audit log as **App updated**, **App rolled back** and
+**App earlier version removed**. One install, update or rollback runs at a
+time.
 
 ### Memory and CPU Limits
 
@@ -2408,7 +2465,7 @@ that the change to winter time shows twice comes the first time.
   channel. A running job postpones it until the job ends: a run of a
   scheduled task (and a task due within two minutes), a backup, a restore, a
   scrub, a balance, a disk replaced or removed in a pool (also one started on
-  the host by hand), an app install, the off-device copy, a permissions repair,
+  the host by hand), an app install, update or rollback, the off-device copy, a permissions repair,
   or an update of UNOS. The postponement is announced too; when the jobs end,
   the shutdown is announced again and comes ten minutes later. A shutdown still
   waiting six hours after its time, or when the wake time passes, is dropped

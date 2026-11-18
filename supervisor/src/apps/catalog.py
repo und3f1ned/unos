@@ -54,6 +54,10 @@ container starts. A companion publishes no port, is never privileged, gets no
 capability and takes no override of the install; its pool folders are under
 {pool}/apps/<id>/.
 
+A folder of an app's own data that a newer version migrates so that the earlier version cannot
+read it (a database) is marked copy_before_update: an update copies it beside itself on the pool
+before the new version starts, and a rollback puts the copy back (ADR-0408).
+
 A password that containers of an app share is a file that UNOS generates on
 the pool, never a variable: a VolumeMapping with generated_secret=True
 (is_file, readonly, under {pool}/apps/<id>/, the same mapping in each
@@ -388,7 +392,9 @@ APP_CATALOG: list[AppTemplate] = [
                 name="database",
                 image=IMMICH_POSTGRES.ref,
                 volumes=[
-                    VolumeMapping(host=IMMICH_DB_DATA, container="/var/lib/postgresql/data"),
+                    # Immich's server migrates the database at its start and refuses a downgrade:
+                    # an update copies it first (ADR-0408).
+                    VolumeMapping(host=IMMICH_DB_DATA, container="/var/lib/postgresql/data", copy_before_update=True),
                     IMMICH_DB_PASSWORD,
                 ],
                 environment=[

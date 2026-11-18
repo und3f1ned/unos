@@ -232,7 +232,9 @@ class TestInstall:
         apps = pools.alpha / "apps/photos"
         database = _created(docker, "photos-database")
         assert database.args == (f"example/photos-db@{_digest(2)}",)
-        assert database.kwargs["labels"] == {"unos.app": "photos", "unos.app.companion": "database", "unos.app.pool": "alpha"}
+        assert database.kwargs["labels"] == {
+            "unos.app": "photos", "unos.app.version": "1.0", "unos.app.companion": "database", "unos.app.pool": "alpha",
+        }
         assert database.kwargs["environment"] == {
             "POSTGRES_PASSWORD_FILE": "/run/secrets/db-password", "LOG_LEVEL": "warning",
         }
@@ -266,7 +268,8 @@ class TestInstall:
         server = _created(docker, "photos")
         assert server.args == (f"example/photos-server@{_digest(1)}",)
         assert server.kwargs["labels"] == {
-            "unos.app": "photos", "unos.app.name": "Photos", "unos.app.icon": "P", "unos.app.pool": "alpha",
+            "unos.app": "photos", "unos.app.version": "1.0", "unos.app.name": "Photos", "unos.app.icon": "P",
+            "unos.app.pool": "alpha",
         }
         assert server.kwargs["environment"] == {
             "DB_HOSTNAME": "database", "DB_PASSWORD_FILE": "/run/secrets/db-password", "LOG_LEVEL": "log",
@@ -447,7 +450,7 @@ class TestInstall:
             ("container.start", "dozzle"),
         ]
         assert docker.container("dozzle").labels == {
-            "unos.app": "dozzle", "unos.app.name": "Dozzle", "unos.app.icon": _icon("dozzle"),
+            "unos.app": "dozzle", "unos.app.version": "latest", "unos.app.name": "Dozzle", "unos.app.icon": _icon("dozzle"),
         }
         assert response.json()["companions"] == [] and response.json()["health"] is None
         assert _audit()[0]["details"] == "Installed Dozzle from the catalog as dozzle"

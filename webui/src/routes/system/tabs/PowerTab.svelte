@@ -184,6 +184,8 @@
     balance: "power.found.balance",
     disk_replace: "power.found.disk_replace",
     app_install: "power.found.app_install",
+    app_update: "power.found.app_update",
+    app_rollback: "power.found.app_rollback",
     offsite: "power.found.offsite",
     share_repair: "power.found.share_repair",
     update: "power.found.update",
