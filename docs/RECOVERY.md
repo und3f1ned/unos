@@ -197,7 +197,8 @@ It asks for the new password twice, without showing it: at least 8 characters, a
 (UTF-8), and no control characters such as tabs. Then it:
 
 1. sets the new password;
-2. turns the administrator's two-factor authentication off and deletes its recovery codes;
+2. turns the administrator's two-factor authentication off and deletes its recovery codes and
+   its [security keys](USER_GUIDE.md#security-keys);
 3. records both in the audit log: `password_change` and, when two-factor authentication was on,
    `totp_disabled` (**Password change** and **Totp disabled** on the Audit Log page), by the user
    `root`, for the resource `user` and the administrator's name, with the severity warning.
@@ -220,11 +221,12 @@ sudo docker exec -it unos-supervisor python -m src.emergency reset-admin [NAME]
 Afterwards:
 
 1. Sign in with the new password: no two-factor code is asked.
-2. Turn two-factor authentication on again (**System** → **Security**) and generate new recovery
-   codes. When an administrator requires two-factor authentication for every account and the
-   administrator's grace period is over, the sign-in leads straight to the setup, and the account
-   can do nothing else until two-factor authentication is on again: have an authenticator app at
-   hand. The reset leaves that requirement as it is.
+2. Turn two-factor authentication on again (**System** → **Security**), generate new recovery
+   codes and add your security keys again. When an administrator requires two-factor
+   authentication for every account and the administrator's grace period is over, the sign-in
+   leads straight to the setup, and the account can do nothing else until two-factor
+   authentication is on again: have an authenticator app at hand. The reset leaves that
+   requirement as it is.
 
 The reset ends every session of the administrator that was signed in before; the account's API
 tokens keep working, and the sessions of other accounts too.

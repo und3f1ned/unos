@@ -71,7 +71,7 @@ from .. import database
 from ..times import UtcDatetime, from_epoch, stored_time_text, utc_now
 from ..audit.changes import audit_change
 from ..audit.schemas import AuditAction, AuditSeverity
-from ..auth import requirement, scopes
+from ..auth import requirement, scopes, webauthn
 from ..auth.utils import CallerSession, caller_session, forget_unstored_sessions, verify_token
 from ..config import get_settings
 from ..database import init_db
@@ -953,6 +953,8 @@ def _restore_locked(backup_path: Path, passphrase: str | None) -> dict:
             previous_db = _keep_copy_of_database(db_path)
             _replace_database(db_file, db_path)
             forget_unstored_sessions()
+            # The pending challenges of security keys name users by id (ADR-0409).
+            webauthn.forget_challenges()
             restored.append("database")
             if two_factor_change is not None:
                 warnings.append(TWO_FACTOR_REQUIRED_BY_RESTORE if two_factor_change else TWO_FACTOR_NOT_REQUIRED_BY_RESTORE)

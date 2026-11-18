@@ -625,6 +625,21 @@ const EVERY_AREA = [
   'apps', 'audit', 'auth', 'backup', 'containers', 'files', 'groups', 'health', 'logs', 'monitor', 'network',
   'notifications', 'offsite', 'power', 'scheduler', 'security', 'shares', 'snapshots', 'storage', 'system', 'updates',
 ];
+// The security keys of an account with two-factor authentication (SecurityKeyInfo of
+// supervisor/src/auth/security_keys.py, ADR-0409): a name of 64 characters (NAME_CHARS) with no place
+// to break, and the address of a long host name where it works.
+const LONG_KEY_NAME = 'yubikeyfivenfconthekeyringofthefamilyintheoldhouseatthecorner064';
+const SECURITY_KEYS = {
+  ...SECURITY,
+  '/api/v1/auth/totp/status': { enabled: true, required: false },
+  '/api/v1/auth/recovery-codes/status': { remaining: 10, generated: true },
+  '/api/v1/auth/security-keys': [
+    { id: 1, name: LONG_KEY_NAME, origin: `https://${LONG_HOST_NAME}:8443`, created_at: '2026-11-01T09:00:00Z',
+      last_used_at: '2026-11-16T03:00:00Z', usable: true },
+    { id: 2, name: 'Spare key', origin: null, created_at: null, last_used_at: null, usable: false },
+  ],
+};
+
 const API_TOKENS = {
   ...SECURITY,
   '/api/v1/auth/tokens': [
@@ -1156,6 +1171,13 @@ const VIEWS: View[] = [
     end: (page) => tokensRegion(page).getByRole('button', { name: /^(Delete Token|Удалить токен)$/ }).last(),
   },
   {
+    name: 'System: Security, security keys',
+    path: '/system#security',
+    fake: (page) => serve(page, SECURITY_KEYS),
+    shows: (page) => page.getByText(LONG_KEY_NAME),
+    end: (page) => page.getByRole('button', { name: /^(Add a security key|Добавить ключ безопасности)$/ }),
+  },
+  {
     name: 'System: Security, the sign-in history',
     path: '/system#security',
     fake: (page) => serve(page, { ...SECURITY, '/api/v1/security/login-history': LOGIN_HISTORY }),
@@ -1660,6 +1682,26 @@ const VIEWS: View[] = [
     start: (page) =>
       page.getByRole('heading', { name: /^(Setup Two-Factor Authentication|Настройка двухфакторной аутентификации)$/ }),
     end: (page) => page.getByRole('button', { name: /^(Enable 2FA|Включить 2FA)$/ }),
+  },
+  {
+    name: 'Dialog: add a security key',
+    path: '/system#security',
+    fake: (page) => serve(page, SECURITY_KEYS),
+    open: (page) =>
+      page.locator('main').getByRole('button', { name: /^(Add a security key|Добавить ключ безопасности)$/ }).click(),
+    shows: (page) => page.getByRole('dialog').getByLabel(/^(Current password|Текущий пароль)/),
+    start: dialogTitle,
+    end: dialogEnd,
+  },
+  {
+    name: 'Dialog: remove a security key',
+    path: '/system#security',
+    fake: (page) => serve(page, SECURITY_KEYS),
+    open: (page) =>
+      page.locator('main').getByRole('button', { name: new RegExp(`^(Remove|Удалить) ${LONG_KEY_NAME}$`) }).click(),
+    shows: (page) => page.getByRole('dialog').getByText(LONG_KEY_NAME),
+    start: dialogTitle,
+    end: dialogEnd,
   },
   {
     name: 'Dialog: turn off two-factor authentication',

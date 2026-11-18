@@ -1,14 +1,17 @@
 ---
-status: accepted
+status: superseded
 date: 2026-11-07
 area: auth
 decided-by: agent
 supersedes: [ADR-0032]
+superseded-by: ADR-0409
 ---
 
 # ADR-0239: Auth keeps bcrypt, one JWT algorithm, a second factor before any token, and hashed API tokens
 
 ## Context
+
+Superseded by ADR-0409: a security key's answer is a third second factor beside the TOTP code and a recovery code; the other practices stay.
 
 ADR-0032 recorded four practices of 1.0.0 that the November 2026 audit found done right, so that later changes would not undo them. Its third practice let only a TOTP code open the session of an account with 2FA. Recovery codes now sign in once in place of a TOTP code (ADR-0238, entry `auth.recovery-codes`), so that practice names both second factors; the other three stay as they were.
 

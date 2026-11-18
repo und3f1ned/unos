@@ -8,8 +8,6 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import delete, select, func, update
 import pyotp
-from slowapi import Limiter
-from slowapi.util import get_remote_address
 from ..database import get_db
 from ..times import db_now
 from ..audit.router import log_action
@@ -21,9 +19,9 @@ from ..shares.constants import smb_password_problem
 from ..shares.models import SmbAccount, SmbShare, UserGroup, UserGroupMember
 
 # Rate limiter for auth endpoints
-limiter = Limiter(key_func=get_remote_address)
+from .limits import limiter
 from . import requirement, scopes
-from . import dashboard, theme
+from . import dashboard, security_keys, theme, webauthn
 from .models import DashboardLayout, User, UserTheme, APIToken, UsernameTaken
 from .schemas import (
     UserCreate, UserResponse, TwoFactorRequired, Token, LoginRequest, PasswordChange,
@@ -46,6 +44,7 @@ from ..security.router import record_login_attempt
 router = APIRouter(prefix="/auth", tags=["auth"])
 router.include_router(dashboard.router)
 router.include_router(theme.router)
+router.include_router(security_keys.router)
 logger = logging.getLogger(__name__)
 
 LAST_ADMIN_DETAIL = "At least one administrator account must remain"
@@ -204,7 +203,7 @@ async def _audit_sign_in(**entry) -> None:
         pass  # log_action reported the entry
 
 
-@router.post("/login", response_model=Token)
+@router.post("/login", response_model=Token, response_model_exclude_none=True)
 @limiter.limit("5/minute")  # 5 login attempts per minute per IP
 async def login(
     request: Request,
@@ -245,8 +244,10 @@ async def login(
         )
 
     # Check if 2FA is enabled. A recovery code takes the place of a code of the
-    # authenticator app, and each one signs in once (ADR-0238).
+    # authenticator app, and each one signs in once (ADR-0238); so does a security key's answer to
+    # the challenge of the code step (ADR-0409).
     used_recovery_code = False
+    used_key: str | None = None
     if user.totp_enabled and login_request.recovery_code:
         if not await _use_recovery_code(db, user.id, login_request.recovery_code):
             await record_login_attempt(
@@ -254,9 +255,21 @@ async def login(
             )
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=RECOVERY_CODE_INVALID)
         used_recovery_code = True
+    elif user.totp_enabled and login_request.security_key is not None:
+        try:
+            used_key = await security_keys.verify_sign_in(db, user, login_request.security_key)
+        except security_keys.KeyRefused as refused:
+            await record_login_attempt(db, login_request.username, False, request, failure_reason=refused.reason)
+            if refused.audit is not None:
+                await _audit_sign_in(
+                    action=AuditAction.LOGIN_FAILED, request=request, username=login_request.username,
+                    details=refused.audit, success=False, severity=AuditSeverity.WARNING,
+                )
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=refused.detail) from None
     elif user.totp_enabled:
         if not login_request.totp_code:
-            return Token(access_token="", requires_totp=True)
+            offer, origins = await security_keys.code_step_offer(db, user, request)
+            return Token(access_token="", requires_totp=True, security_key=offer, security_key_origins=origins)
 
         # A code is accepted once: one seen at a login cannot sign in again.
         check = check_totp_code(user.id, user.totp_secret, login_request.totp_code)
@@ -289,18 +302,21 @@ async def login(
     await keep_unstored_session(db, access_token, user_id)
 
     # Audit log
-    details = None
+    details, severity = None, AuditSeverity.INFO
     if used_recovery_code:
-        details = "Signed in with a recovery code"
+        details, severity = "Signed in with a recovery code", AuditSeverity.WARNING
     elif setup_only:
         details = "Signed in after the grace period: can only set up two-factor authentication"
+        severity = AuditSeverity.WARNING
+    elif used_key is not None:
+        details = f"Signed in with the security key '{used_key}'"
     await _audit_sign_in(
         action=AuditAction.LOGIN_SUCCESS,
         request=request,
         username=username,
         details=details,
         success=True,
-        severity=AuditSeverity.WARNING if details else AuditSeverity.INFO,
+        severity=severity,
     )
 
     key = session_key(decode_access_token(access_token)[1])
@@ -500,6 +516,9 @@ async def enable_totp(
         .values(totp_enabled=True, recovery_codes=None)
         .execution_options(synchronize_session=False)
     )
+    # Nor with security keys of an earlier setup, which a restored database may hold (ADR-0409).
+    if result.rowcount == 1:
+        await security_keys.delete_keys_of(db, user_id)
     await db.commit()
     if result.rowcount != 1:
         enabled = await db.scalar(select(User.totp_enabled).where(User.id == user_id))
@@ -535,18 +554,22 @@ async def disable_totp(
     # generation stored after that load would outlive 2FA: they belong to this setup (ADR-0238).
     # Written only while 2FA is still on: of two requests that both found it on, the second
     # changes nothing and answers as when 2FA was already off (ADR-0343).
+    user_id = current_user.id
     result = await db.execute(
         update(User)
-        .where(User.id == current_user.id, User.totp_enabled.is_(True))
+        .where(User.id == user_id, User.totp_enabled.is_(True))
         .values(totp_enabled=False, totp_secret=None, recovery_codes=None)
         .execution_options(synchronize_session=False)
     )
+    # The security keys are an alternative to the app's codes: they go in the same commit (ADR-0409).
+    keys = await security_keys.delete_keys_of(db, user_id) if result.rowcount == 1 else 0
     await db.commit()
     if result.rowcount != 1:
         raise HTTPException(status_code=400, detail="2FA is not enabled")
+    details = "Two-factor authentication turned off by the user, with its recovery codes"
     await _own_account_audit(
         request, AuditAction.TOTP_DISABLED, username,
-        "Two-factor authentication turned off by the user, with its recovery codes",
+        f"{details} and {security_keys.keys_text(keys)}" if keys else details,
         AuditSeverity.WARNING,
     )
 
@@ -841,10 +864,12 @@ async def delete_user(
             await end_sessions(db, user_id)  # SQLite enforces no foreign keys (ADR-0319)
             await db.execute(delete(DashboardLayout).where(DashboardLayout.user_id == user_id))
             await db.execute(delete(UserTheme).where(UserTheme.user_id == user_id))
+            await security_keys.delete_keys_of(db, user_id)
             if was_admin:
                 await _ensure_an_admin_remains(db)
             await db.commit()
         forget_totp_steps(user_id)
+        webauthn.forget_user(user_id)
         warnings = await accounts.finish_user_removal(db, removal) if removal is not None else []
 
     # Audit log

@@ -21,6 +21,9 @@ class AuditAction(str, Enum):
     DASHBOARD_LAYOUT_CHANGED = "dashboard_layout_changed"
     # A user's own theme of the web UI (ADR-0405)
     THEME_CHANGED = "theme_changed"
+    # A user's own security keys (ADR-0409)
+    SECURITY_KEY_ADDED = "security_key_added"
+    SECURITY_KEY_REMOVED = "security_key_removed"
 
     # User management
     USER_CREATED = "user_created"

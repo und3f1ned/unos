@@ -458,6 +458,15 @@ manager, encrypted backup uploads, health checks, CI checks).
   `GET /api/v1/apps/installed` adds `version`, `update_to` and `previous`; install jobs add `kind`;
   containers get the label `unos.app.version`; audited as `app_updated`, `app_rolled_back` and
   `app_earlier_version_removed` (ADR-0408).
+- Security keys as a second factor: a user with two-factor authentication adds a USB or NFC key,
+  or a passkey, on the Account page (**Two-Factor Authentication** → **Security keys**), with the
+  password and a touch of the key, and at the code step of the sign-in **Use a security key** signs
+  in with a touch in place of the app's code. Up to 10 keys per account, each removed with the
+  password; a key works at the address where it was added and never by IP address, and a signature
+  counter that goes backwards is refused. Turning two-factor authentication off, and the emergency
+  reset of an administrator, remove the keys. UNOS verifies WebAuthn itself (attestation none,
+  ES256, EdDSA and RS256), with no new dependency; audited as `security_key_added`,
+  `security_key_removed` and the sign-ins (ADR-0409, which supersedes ADR-0239).
 - The App Store shows which apps have an image for the host's platform: every image of the
   catalog has its Linux platforms recorded from its registry (`image_platforms.json`), the
   catalog API answers `platforms`, `host_platform` and `available`, an app whose image lacks the

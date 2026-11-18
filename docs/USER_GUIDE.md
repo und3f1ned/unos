@@ -1805,7 +1805,7 @@ active after the restore.
 | Role | Permissions |
 |------|-------------|
 | Admin | Full access to all features, except SMB: administrators cannot use SMB |
-| User | **Dashboard** (system overview and live statistics) and **Account** (language, theme, own password, two-factor authentication, login history and SMB access); SMB shares as an administrator allows |
+| User | **Dashboard** (system overview and live statistics) and **Account** (language, theme, own password, two-factor authentication and security keys, login history and SMB access); SMB shares as an administrator allows |
 
 Every other page and API is for administrators only; regular users do not see
 them. At least one administrator must remain: the last one cannot be demoted
@@ -1995,6 +1995,53 @@ Scripts send the code as `recovery_code` in place of `totp_code` to
 `POST /api/v1/auth/login`; `POST /api/v1/auth/recovery-codes/generate`
 answers new codes, and `GET /api/v1/auth/recovery-codes/status` how many are
 left.
+
+#### Security Keys
+
+A security key (a USB or NFC key such as a YubiKey, or a passkey of your
+phone or computer) signs you in with a touch in place of the code from your
+authenticator app. It is an addition to 2FA, not a replacement: you add keys
+once 2FA is on, and turning 2FA off removes them.
+
+1. Open the web interface by the NAS's name, such as `https://unos.local`,
+   not by its IP address: browsers use security keys only at a name, and only
+   when the page's certificate is trusted (trust UNOS's certificate authority
+   or serve your own certificate, see [HTTPS Certificates](#https-certificates)). Opened by an IP
+   address, the section says so and offers no **Add**.
+2. Go to **Account** (administrators: **System** → **Security**)
+3. Under **Two-Factor Authentication** → **Security keys**, click **Add a
+   security key**
+4. Give the key a name (up to 64 characters, different from your other
+   keys'), enter your current password and click **Add key**
+5. Touch the key when your browser asks: the list shows the key with the
+   address where it works
+
+To sign in with a key, enter your username and password, click **Use a
+security key** at the code step and touch the key. A key works at the address
+where you added it, such as `https://unos.local`: at another name of the NAS
+or at its IP address the code step says where your keys work, and you add a
+key there too or enter the app's code. You can have up to 10 keys.
+
+**Remove** next to a key, with your current password, removes it: do so at
+once for a key you lost. Your app's codes and recovery codes still sign you
+in. Turning 2FA off and turning SMB on still take a code from the app, not a
+key. A key whose signature counter goes backwards, as a copied key's can, is
+refused at the sign-in ("This security key's signature counter went
+backwards, so it may have been copied: sign in another way and remove it"),
+and the audit log records it as a warning. The audit log also records each
+key added (`security_key_added`) and removed (`security_key_removed`) and
+each sign-in with a key. UNOS accepts any authenticator, a passkey kept in
+software too: it checks that the key's private key signed the sign-in, not
+which device holds it.
+
+Scripts send the key's answer as `security_key` (`credential_id`,
+`client_data_json`, `authenticator_data`, `signature`, each in base64url)
+to `POST /api/v1/auth/login`, after the password step whose answer carries
+the challenge in `security_key`: only when the request's `Host` is the
+address where the key was added (`security_key_origins` lists them); `GET /api/v1/auth/security-keys` lists the
+keys, `POST /api/v1/auth/security-keys/register/begin` and `/register/finish`
+add one, and `DELETE /api/v1/auth/security-keys/{id}` with
+`current_password` removes one.
 
 #### Two-Factor Authentication for Every Account
 
