@@ -74,6 +74,7 @@ from .logs.router import router as logs_router
 from .health.router import raid_status_or_none, router as health_router
 from .security.router import router as security_router
 from .monitor.router import router as monitor_router
+from .monitor.history import start_history, stop_history
 from .backup.router import router as backup_router
 from .backup.router import MAX_ARCHIVE_BYTES as MAX_BACKUP_ARCHIVE_BYTES
 from .offsite.router import router as offsite_router
@@ -175,10 +176,14 @@ async def lifespan(app: FastAPI):
         await start_upload_leftover_check()
         # Reads the use of the apps' containers against their limits every 30 s (ADR-0390).
         await start_app_resources()
+        # A point of the host's CPU, memory, network and disks every 10 s, an hour of them in RAM,
+        # for the Resource Monitor's history (ADR-0399).
+        await start_history()
     try:
         yield
     finally:
         if run_background:
+            await stop_history()
             await stop_app_resources()
             await stop_upload_leftover_check()
             await stop_trash_expiry()

@@ -106,6 +106,11 @@ language of the page (ADR-0332). Avoid: alert bar, notification banner.
 channel and the result of each: History in System > Notifications (ADR-0326). Avoid: log (the
 Logs tab shows the journal and container output).
 
+**Monitor history**: The host's CPU, network and disk I/O averaged over each 10 seconds, and its
+memory in use, over the last hour, which the supervisor keeps in RAM from its start and System >
+Resource Monitor shows with the live values of the stats socket (ADR-0399). Avoid: metrics,
+statistics database.
+
 ## Storage
 
 **Pool**: A btrfs filesystem on one or more disks that UNOS mounts under `/mnt/pools` (ADR-0034).

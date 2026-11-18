@@ -1239,6 +1239,11 @@ class TestTheInstallsOnTheEventsSocket:
 # ---------------------------------------------------------------------------
 
 # A stats message with the host's interfaces, as get_system_stats sends it (its other parts left out).
+_HOST_PROCESSES = [
+    {"pid": 812, "name": "smbd", "cpu_percent": 3.5, "memory_bytes": 44_040_192, "username": "alice"},
+]
+_HOST_DISKS = [{"name": "sda"}, {"name": "sda1"}]
+
 _HOST_INTERFACES = [
     {"name": "eth0", "bytes_sent": 501_000, "bytes_recv": 1_002_000, "bytes_sent_rate": 500.0, "bytes_recv_rate": 1000.0},
     {"name": "wlan0", "bytes_sent": 10_000, "bytes_recv": 20_400, "bytes_sent_rate": 0.0, "bytes_recv_rate": 200.0},
@@ -1251,7 +1256,8 @@ def host_stats(fast_recheck, alerts, no_repair, monkeypatch):
     change it for the others."""
     message = {"type": "stats", "data": {
         "network": {"bytes_sent_rate": 500.0, "bytes_recv_rate": 1200.0, "interfaces": _HOST_INTERFACES},
-        "disk_io": {"read_rate": 0.0, "write_rate": 4096.0, "disks": [{"name": "sda"}]},
+        "disk_io": {"read_rate": 0.0, "write_rate": 4096.0, "disks": _HOST_DISKS},
+        "processes": _HOST_PROCESSES,
     }}
     monkeypatch.setattr(events, "_sample", None)
     monkeypatch.setattr(events, "get_system_stats", lambda: message)
@@ -1271,7 +1277,8 @@ def _next_stats(ws, timeout: float = 5.0) -> dict:
 class TestTheInterfacesOnTheEventsSocket:
     """The host's interfaces with their traffic are System > Network's, an administrator's page:
     a regular user's dashboard gets the totals of the network and no interfaces (ADR-0030,
-    ADR-0388)."""
+    ADR-0388). The same for the host's processes, System > Resource Monitor's, and the names of its
+    block devices, the Storage page's (ADR-0399)."""
 
     def test_an_administrator_gets_the_host_s_interfaces(self, client, admin_token, host_stats):
         with client.websocket_connect("/ws/v1/events") as ws:
@@ -1287,15 +1294,18 @@ class TestTheInterfacesOnTheEventsSocket:
             for _ in range(3):
                 assert _next_stats(ws) == {
                     "network": {"bytes_sent_rate": 500.0, "bytes_recv_rate": 1200.0, "interfaces": []},
-                    "disk_io": {"read_rate": 0.0, "write_rate": 4096.0, "disks": [{"name": "sda"}]},
+                    "disk_io": {"read_rate": 0.0, "write_rate": 4096.0, "disks": []},
+                    "processes": [],
                 }
 
         # The sample that every socket shares is unchanged: the next administrator gets them.
         assert host_stats["data"]["network"]["interfaces"] == _HOST_INTERFACES
+        assert host_stats["data"]["disk_io"]["disks"] == _HOST_DISKS
+        assert host_stats["data"]["processes"] == _HOST_PROCESSES
         with client.websocket_connect("/ws/v1/events") as ws:
             _auth(ws, admin_token)
             assert ws.receive_json() == {"type": "auth_ok"}
-            assert _next_stats(ws)["network"]["interfaces"] == _HOST_INTERFACES
+            assert _next_stats(ws) == host_stats["data"]
 
     def test_an_administrator_who_is_no_longer_one_gets_none_from_the_next_check_on(
             self, client, ws_db, admin_token, host_stats):
@@ -1308,7 +1318,9 @@ class TestTheInterfacesOnTheEventsSocket:
             deadline = time.monotonic() + 5
             while _next_stats(ws)["network"]["interfaces"]:
                 assert time.monotonic() < deadline, "the interfaces are still sent"
-            assert _next_stats(ws)["network"] == {"bytes_sent_rate": 500.0, "bytes_recv_rate": 1200.0, "interfaces": []}
+            stats = _next_stats(ws)
+            assert stats["network"] == {"bytes_sent_rate": 500.0, "bytes_recv_rate": 1200.0, "interfaces": []}
+            assert (stats["processes"], stats["disk_io"]["disks"]) == ([], [])
 
 
 class TestSocketCaps:
