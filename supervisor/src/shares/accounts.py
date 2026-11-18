@@ -932,8 +932,8 @@ async def _commit(db: AsyncSession) -> None:
     """Commit; on failure roll back and answer 503 (nothing of this commit was stored)."""
     try:
         await db.commit()
-    except Exception as exc:
-        logger.warning("Saving an SMB account change failed: %s", type(exc).__name__)
+    except Exception:
+        logger.warning("Saving an SMB account change failed", exc_info=True)
         await _rollback(db)
         raise HTTPException(status_code=503, detail=NOTHING_CHANGED) from None
 
@@ -1363,8 +1363,8 @@ async def _turn_off(db: AsyncSession, user: User, row: models.SmbAccount | None,
             setattr(row, key, value)
         try:
             await db.commit()
-        except Exception as exc:
-            logger.warning("Saving the SMB revocation of %s failed: %s", shown, type(exc).__name__)
+        except Exception:
+            logger.warning("Saving the SMB revocation of %s failed", shown, exc_info=True)
             await _rollback(db)
             if removed:
                 await _revoked_but_not_saved(db, user_id, name)
@@ -1478,8 +1478,8 @@ async def revocation_guard(
     except HTTPException:
         await _revocation_not_saved(db, revocation)
         raise
-    except Exception as exc:
-        logger.warning("Saving a promotion or a user deletion failed: %s", type(exc).__name__)
+    except Exception:
+        logger.warning("Saving a promotion or a user deletion failed", exc_info=True)
         await _revocation_not_saved(db, revocation)
         raise HTTPException(status_code=503, detail=DATABASE_BUSY) from None
 
@@ -1782,8 +1782,8 @@ async def store_rename(db: AsyncSession, user: User, row: models.SmbAccount | No
             row.password_set_at = None
         await service.rename_access_of_user(db, rename.user_id, rename.old, rename.new)
         await db.commit()
-    except Exception as exc:
-        logger.warning("Saving the rename of %s failed: %s", _shown(rename.old), type(exc).__name__)
+    except Exception:
+        logger.warning("Saving the rename of %s failed", _shown(rename.old), exc_info=True)
         await _rollback(db)
         failure = await asyncio.to_thread(_rename_back, rename)
         if rename.revoked:

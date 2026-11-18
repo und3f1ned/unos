@@ -1217,6 +1217,7 @@ async def create_backup(
     try:
         result = await asyncio.to_thread(_create_backup, config)
     except Exception as e:
+        logger.exception("Could not create backup")
         raise HTTPException(500, f"Failed to create backup: {e}") from e
     await audit_change(
         AuditAction.BACKUP_CREATED, request, user.username, resource_type="backup",
@@ -1264,6 +1265,7 @@ async def upload_backup(request: Request, user=Depends(verify_token)):
     except StarletteHTTPException:
         raise  # the answers about the form and its file name, and the body limit (413)
     except Exception as e:
+        logger.exception("Could not upload backup")
         raise HTTPException(500, f"Failed to upload backup: {e}") from e
 
     await audit_change(
@@ -1346,6 +1348,7 @@ async def delete_backup(request: Request, filename: str, user=Depends(verify_tok
     try:
         backup_path.unlink()
     except Exception as e:
+        logger.exception("Could not delete backup")
         raise HTTPException(500, f"Failed to delete backup: {e}") from e
     await audit_change(AuditAction.BACKUP_DELETED, request, user.username, resource_type="backup",
                        resource_id=filename)

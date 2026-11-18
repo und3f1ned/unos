@@ -1,4 +1,5 @@
 import asyncio
+import logging
 from collections.abc import Callable
 from typing import Any, TypeVar
 
@@ -35,6 +36,8 @@ from .schemas import (
     VolumeUsageHistory,
 )
 
+logger = logging.getLogger(__name__)
+
 T = TypeVar("T")
 
 # Rate limiter for storage endpoints
@@ -65,7 +68,10 @@ async def _call(func: Callable[..., T], *args: Any) -> T:
     except HTTPException:
         raise
     except Exception as exc:
-        raise _http_error(exc) from exc
+        error = _http_error(exc)
+        if error.status_code >= 500:  # a missing pool, a conflict or a bad value is the caller's, not a failure
+            logger.exception("A storage request failed")
+        raise error from exc
 
 
 async def _change_pools(func: Callable[..., T], *args: Any) -> T:
@@ -118,7 +124,10 @@ async def set_disk_spindown(request: Request, name: str, body: SpindownSet, user
         )
         raise HTTPException(status_code=500, detail=sanitize_error_message(RuntimeError(exc.detail))) from exc
     except Exception as exc:
-        raise _http_error(exc) from exc
+        error = _http_error(exc)
+        if error.status_code >= 500:
+            logger.exception("Could not set the disk's spindown")
+        raise error from exc
     if change.changed or change.scans:  # the rule, or the disk's own offline data collection
         await audit_change(
             AuditAction.SETTINGS_CHANGED, request, user.username, resource_type="disk",
@@ -416,6 +425,7 @@ async def _scrub(func: Callable[[str], ScrubStatus], name: str, *, reads: bool =
     except pools.PoolConflictError as e:  # a start on a pool that is not mounted
         raise HTTPException(status_code=409, detail=str(e))
     except Exception as e:
+        logger.exception("A scrub request failed")
         detail = scrubs.failure(e, validated_name)
         if reads:
             scrubs.note(validated_name, detail)
@@ -467,6 +477,7 @@ async def _balance(func: Callable[..., T], name: str, *args: Any, reads: bool = 
     except pools.PoolConflictError as e:
         raise HTTPException(status_code=409, detail=str(e))
     except Exception as e:
+        logger.exception("A balance request failed")
         detail = balances.failure(e, validated_name)
         if reads:
             balances.note(validated_name, detail)

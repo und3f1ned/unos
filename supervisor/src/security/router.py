@@ -278,6 +278,7 @@ async def enable_firewall(current_user: User = Depends(require_admin)):
     except FileNotFoundError:
         raise HTTPException(500, "UFW is not installed on this system")
     except Exception as e:
+        logger.exception("Could not enable firewall")
         raise HTTPException(500, f"Failed to enable firewall: {str(e)}")
 
 
@@ -298,6 +299,7 @@ async def disable_firewall(current_user: User = Depends(require_admin)):
     except FileNotFoundError:
         raise HTTPException(500, "UFW is not installed on this system")
     except Exception as e:
+        logger.exception("Could not disable firewall")
         raise HTTPException(500, f"Failed to disable firewall: {str(e)}")
 
 
@@ -402,6 +404,7 @@ async def reset_firewall(current_user: User = Depends(require_admin)):
 
         return {"status": "ok", "message": "Firewall reset to defaults"}
     except Exception as e:
+        logger.exception("Could not reset firewall")
         raise HTTPException(500, f"Failed to reset firewall: {str(e)}")
 
 
@@ -726,6 +729,7 @@ async def generate_self_signed_certificate(
     except HTTPException:
         raise
     except Exception as e:
+        logger.exception("Could not generate self signed certificate")
         raise HTTPException(500, f"Failed to generate certificate: {_openssl_error(e)}")
 
 
@@ -774,6 +778,7 @@ async def upload_certificate(
     except HTTPException:
         raise
     except Exception as e:
+        logger.exception("Could not upload certificate")
         raise HTTPException(500, f"Failed to upload certificate: {_openssl_error(e)}")
 
 
@@ -795,6 +800,7 @@ async def delete_certificate(
     try:
         deleted = await asyncio.to_thread(_delete_certificate_files, name)
     except Exception as e:
+        logger.exception("Could not delete certificate")
         raise HTTPException(500, f"Failed to delete certificate: {str(e)}")
     if not deleted:
         raise HTTPException(404, "Certificate not found")

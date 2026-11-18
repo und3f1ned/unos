@@ -85,5 +85,8 @@ EXPOSE 8080
 # lifespan's shutdown, which stops a running install or repair and writes their audit entries;
 # Docker kills the container 10 s after its SIGTERM. A GET that waits for an install's end (up to
 # an hour, ADR-0384) is ended after 3 s, which leaves the shutdown its 5 s of waits.
+# No --log-config or --log-level: src/main.py sets up every logger, uvicorn's included, as one JSON
+# line each at UNOS_LOG_LEVEL (src/logging_setup.py, ADR-0398), after uvicorn has configured its own
+# and before it writes its first line.
 # Keep these options in supervisor/Dockerfile.test the same.
 CMD ["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8080", "--proxy-headers", "--ws-max-size", "65536", "--ws-per-message-deflate", "false", "--limit-concurrency", "128", "--timeout-graceful-shutdown", "3"]

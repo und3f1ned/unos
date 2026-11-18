@@ -35,6 +35,7 @@ after the checks of a volume's Delete.
 
 import asyncio
 import errno
+import logging
 import os
 import re
 import stat
@@ -63,6 +64,8 @@ from ..storage import disks, pools
 from ..storage.router import _call as call_storage
 from ..storage.schemas import RestoreCopyInfo
 from .schemas import SnapshotInfo, SnapshotCreate, SnapshotRestore, SnapshotSubvolume
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/snapshots", tags=["snapshots"])
 
@@ -420,6 +423,7 @@ async def list_subvolumes(_: dict = Depends(verify_token)):
     try:
         return await asyncio.to_thread(_list_subvolumes)
     except Exception as exc:
+        logger.exception("Could not list subvolumes")
         raise HTTPException(500, sanitize_error_message(exc)) from exc
 
 

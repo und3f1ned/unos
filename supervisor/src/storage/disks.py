@@ -915,6 +915,7 @@ def host_disks_or_500() -> list[HostDisk]:
     try:
         return host_disks()
     except Exception as exc:
+        logger.exception("Could not list the host's disks")
         raise HTTPException(
             status_code=500,
             detail=f"Could not list the host's disks: {sanitize_error_message(exc)}",

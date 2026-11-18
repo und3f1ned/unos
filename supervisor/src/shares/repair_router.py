@@ -122,6 +122,7 @@ async def repair_share_permissions(
     except service.PoolListUnavailable as exc:
         raise HTTPException(status_code=503, detail=sanitize_error_message(exc)) from exc
     except Exception as exc:
+        logger.exception("Could not read the share's problem")
         raise HTTPException(status_code=500, detail=sanitize_error_message(exc)) from exc
     # share_problem() read the share's row again, apart from the read above,
     # and a repair does not take smb_lock: a PATCH, a restore or a delete can
@@ -160,6 +161,7 @@ async def repair_share_permissions(
             status_code=409, detail=f"The pool of share {share.name} is not available: {exc}"
         ) from exc
     except Exception as exc:
+        logger.exception("Could not check the pool of the share")
         raise HTTPException(status_code=500, detail=sanitize_error_message(exc)) from exc
     # Whoever can change a folder above the share's folder can swap in another folder,
     # whose files the walk would then give the SMB group. Read-only check, nothing changed.
@@ -168,6 +170,7 @@ async def repair_share_permissions(
     except HTTPException:
         raise
     except Exception as exc:
+        logger.exception("Could not check the folders above the share")
         raise HTTPException(status_code=500, detail=sanitize_error_message(exc)) from exc
     if unsafe is not None:
         raise HTTPException(status_code=409, detail=unsafe.refusal())
@@ -176,6 +179,7 @@ async def repair_share_permissions(
     except HTTPException:
         raise
     except Exception as exc:
+        logger.exception("Could not check the SMB group")
         raise HTTPException(status_code=500, detail=sanitize_error_message(exc)) from exc
     if problem is not None:
         raise HTTPException(status_code=409, detail=problem)

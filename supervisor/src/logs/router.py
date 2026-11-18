@@ -14,6 +14,7 @@ those of the supervisor container's /var/log.
 import asyncio
 import functools
 import json
+import logging
 import re
 import subprocess
 from concurrent.futures import ThreadPoolExecutor
@@ -26,6 +27,8 @@ from pydantic import BaseModel, Field, ValidationError
 
 from .. import host
 from ..auth.utils import verify_token
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/logs", tags=["logs"])
 
@@ -389,6 +392,7 @@ async def get_log_file_content(
             lines=len(content_lines)
         )
     except Exception as e:
+        logger.exception("Could not get log file content")
         raise HTTPException(500, f"Failed to read file: {str(e)}")
 
 

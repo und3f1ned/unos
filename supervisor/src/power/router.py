@@ -373,7 +373,7 @@ async def ups_monitor_loop():
 
                 if should_shutdown and not is_in_container():
                     # Log and initiate shutdown
-                    print(f"UPS auto-shutdown triggered: {reason}")
+                    logger.warning("UPS auto-shutdown triggered: %s", reason)
                     subprocess.Popen(["shutdown", "-h", "+1", f"UPS auto-shutdown: {reason}"])
 
         except Exception as e:
@@ -433,6 +433,7 @@ async def get_power_status(_: dict = Depends(verify_token)):
             load_average=load_average
         )
     except Exception as e:
+        logger.exception("Could not get power status")
         raise HTTPException(500, f"Failed to get power status: {e}")
 
 

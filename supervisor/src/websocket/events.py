@@ -834,6 +834,7 @@ async def _stream_container_logs(websocket: WebSocket, container_id: str, token:
         pass
     except Exception as exc:
         if not disconnected.done():
+            logger.exception("The log stream of container %s failed", container_id)
             try:
                 await websocket.send_json({"type": "error", "message": str(exc)})
             except Exception:

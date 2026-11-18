@@ -10,6 +10,16 @@ Python 3.11 and FastAPI. The package is `src`: tests import `src.*`, some from `
 - Paths below the pools are opened one component at a time without following symlinks:
   `open_dir_nofollow` and `open_subdirs_nofollow` of `src/security/validators.py` (ADR-0042).
 
+## Logging (ADR-0398)
+
+- `logger = logging.getLogger(__name__)`; never `print()` (a test fails for one). `src/logging_setup.py`
+  alone sets the format and levels; do not call `basicConfig` or add handlers. Never log a password,
+  token, session key or TOTP code, nor an exception whose text holds one.
+- A handler that catches an unexpected exception and answers 500 or 503 calls `logger.exception(...)`
+  first, once; one that maps an expected error to 400, 404 or 409 does not.
+- INFO only for a real change of state. A loop, a sampler or a request that changes nothing logs
+  nothing (ADR-0214); `tests/test_logging.py` checks the loops.
+
 ## The host boundary (ADR-0020)
 
 - The supervisor runs in a container with `pid: host`. Whatever must read or change the host

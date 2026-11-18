@@ -22,6 +22,12 @@ def pin_temporary_directory() -> None:
 # Before anything else is imported, so before anything uses tempfile.
 pin_temporary_directory()
 
+# Before any other module of the package is imported, so that a line they log at import is already
+# JSON, and before uvicorn writes its first line (ADR-0398).
+from .logging_setup import configure_logging
+
+configure_logging()
+
 from contextlib import asynccontextmanager
 from fastapi import Depends, FastAPI, Request
 from fastapi.encoders import jsonable_encoder

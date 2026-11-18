@@ -42,7 +42,9 @@ def engine_options(db_path: str) -> dict:
     in-memory database (the tests) has a single shared connection, which
     takes no pool options.
     """
-    options: dict = {"echo": False, "connect_args": {"timeout": BUSY_TIMEOUT_SECONDS}}
+    # hide_parameters: an exception of SQLAlchemy names no bound value in its text, which a handler logs
+    # (ADR-0398): the values of an UPDATE can be a password hash or a two-factor secret.
+    options: dict = {"echo": False, "hide_parameters": True, "connect_args": {"timeout": BUSY_TIMEOUT_SECONDS}}
     if not in_memory(db_path):
         options["max_overflow"] = -1
     return options
