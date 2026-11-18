@@ -304,6 +304,41 @@ class TestTheInstalledList:
         assert stacks.update_to(app) is None
 
 
+    def test_a_container_of_a_floating_tag_is_offered_the_version_that_the_catalog_now_pins(self):
+        # The dev device's transmission was created from lscr.io/linuxserver/transmission:latest,
+        # before its catalog pinned it (ADR-0410), and has no version label.
+        stacks = importlib.import_module("src.apps.stacks")
+        catalog = importlib.import_module("src.apps.catalog")
+        container = type("C", (), {})()
+        container.name, container.labels = "transmission", {"unos.app": "transmission"}
+        container.attrs = {"Config": {"Image": "lscr.io/linuxserver/transmission:latest"}}
+
+        app = stacks.group("transmission", [container], catalog.get_app_by_id("transmission"))
+
+        assert stacks.update_to(app) == catalog.APP_IMAGES["transmission"].tag == "4.1.4-r0-ls370"
+
+    @pytest.mark.parametrize("npu", [True, False])
+    def test_immich_created_from_its_pinned_digests_is_offered_nothing(self, npu):
+        # The dev device's Immich, whose containers name the digests of ADR-0381's pins, is never to
+        # be updated: the catalog keeps those digests (ADR-0410).
+        stacks = importlib.import_module("src.apps.stacks")
+        catalog = importlib.import_module("src.apps.catalog")
+        learning = catalog.IMMICH_ML_RKNN if npu else catalog.IMMICH_ML
+        images = {"immich": catalog.IMMICH_SERVER, "database": catalog.IMMICH_POSTGRES, "redis": catalog.VALKEY,
+                  "machine-learning": learning}
+        containers = []
+        for name, pin in images.items():
+            c = type("C", (), {})()
+            c.name = "immich" if name == "immich" else f"immich-{name}"
+            c.labels = {"unos.app": "immich", **({} if name == "immich" else {"unos.app.companion": name})}
+            c.attrs = {"Config": {"Image": f"{pin.name}@{pin.digest}"}}
+            containers.append(c)
+
+        app = stacks.group("immich", containers, catalog.get_app_by_id("immich"))
+
+        assert app.missing == [] and stacks.update_to(app) is None
+
+
 class TestThePlan:
     def test_it_shows_each_image_what_the_pulls_write_and_the_copy_and_changes_nothing(
         self, api, installed, catalog, versions, pools

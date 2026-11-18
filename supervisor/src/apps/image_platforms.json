@@ -1,10 +1,10 @@
 {
   "images": {
-    "actualbudget/actual-server:latest": [
+    "actualbudget/actual-server:26.11.0@sha256:06cf186569cf58d93e12659ff1a517b65b5b0ebee7050a3991d4bd8a1d398da6": [
       "linux/amd64",
       "linux/arm64"
     ],
-    "adguard/adguardhome:latest": [
+    "adguard/adguardhome:v0.107.80@sha256:e2e1b48c832f7705be915873f95de0d5114de573736441d7f2923a8a6293027c": [
       "linux/386",
       "linux/amd64",
       "linux/arm/v6",
@@ -12,25 +12,25 @@
       "linux/arm64",
       "linux/ppc64le"
     ],
-    "amir20/dozzle:latest": [
+    "amir20/dozzle:v11.4.3@sha256:244f218c876d6ed766277e71a537f34bfb2c01829e1927737e3673a8327deeb8": [
       "linux/amd64",
       "linux/arm/v6",
       "linux/arm/v7",
       "linux/arm64"
     ],
-    "authelia/authelia:latest": [
+    "authelia/authelia:4.39.28@sha256:bd97cff4fcbf715b5ff1f9ae286afbe6033afce385302520b0368122d43a6f54": [
       "linux/amd64",
       "linux/arm/v7",
       "linux/arm64"
     ],
-    "crowdsecurity/crowdsec:latest": [
+    "crowdsecurity/crowdsec:v1.8.2@sha256:65b74942f7e7ed5c60fde4ac15fc4ba715904c398c8b16dd451f4907d90347d4": [
       "linux/386",
       "linux/amd64",
       "linux/arm/v6",
       "linux/arm/v7",
       "linux/arm64"
     ],
-    "deluan/navidrome:latest": [
+    "deluan/navidrome:0.64.2@sha256:38dc2727bfcfd5ede290f8ada114fc90368146f265ae4701ddddbcbe2a44ee52": [
       "linux/386",
       "linux/amd64",
       "linux/arm/v6",
@@ -38,13 +38,13 @@
       "linux/arm64",
       "linux/riscv64"
     ],
-    "docker.io/valkey/valkey:9@sha256:418652cfb58ef879d4978c33553735d7147016032d5aefaa14c828e611eb9dfd": [
+    "docker.io/valkey/valkey:9.1.2@sha256:418652cfb58ef879d4978c33553735d7147016032d5aefaa14c828e611eb9dfd": [
       "linux/amd64",
       "linux/arm/v7",
       "linux/arm64",
       "linux/ppc64le"
     ],
-    "eclipse-mosquitto:latest": [
+    "eclipse-mosquitto:2.1.4-alpine@sha256:fa12172a051310efe5bcb7a6a11b77bd5faacb82cbacd7742aa758bf024fd8e4": [
       "linux/386",
       "linux/amd64",
       "linux/arm/v6",
@@ -52,39 +52,39 @@
       "linux/ppc64le",
       "linux/s390x"
     ],
-    "filebrowser/filebrowser:latest": [
+    "filebrowser/filebrowser:v2.63.23@sha256:a469ea076d4a1b4b1d86a41d130f2f536cd9da996a2b1fb39c0d7635f9d89b9a": [
       "linux/amd64",
       "linux/arm/v7",
       "linux/arm64"
     ],
-    "frooodle/s-pdf:latest": [
+    "frooodle/s-pdf:3.3.0@sha256:ed7b1775c6706b5e5ea24fa6155f078eff1027bd35a17d21834e4407036025e6": [
       "linux/amd64",
       "linux/arm64"
     ],
-    "ghcr.io/advplyr/audiobookshelf:latest": [
+    "ghcr.io/advplyr/audiobookshelf:2.38.0@sha256:60064c23f32fd9099fd39e82c5132c51701d1221135bbca04cd099b589e1edc3": [
       "linux/amd64",
       "linux/arm64"
     ],
-    "ghcr.io/ajnart/homarr:latest": [
+    "ghcr.io/ajnart/homarr:0.16.1@sha256:e103abadfb527186af5b4bd43df4eff7c67afa5cd4df8e65fa97910c8840b2a9": [
       "linux/amd64",
       "linux/arm/v7",
       "linux/arm64"
     ],
-    "ghcr.io/blakeblackshear/frigate:stable": [
+    "ghcr.io/blakeblackshear/frigate:0.18.2@sha256:fd60f99ffd4eb6c42360ed4e14953e270586f239309ab3983e55b2e97ffac09a": [
       "linux/amd64",
       "linux/arm64"
     ],
-    "ghcr.io/dgtlmoon/changedetection.io:latest": [
+    "ghcr.io/dgtlmoon/changedetection.io:0.70.3@sha256:47b1e9cc3eff820e6022b655e3fcc948625f60c1770ae8b9c30aa3bf104dc255": [
       "linux/amd64",
       "linux/arm/v7",
       "linux/arm/v8",
       "linux/arm64"
     ],
-    "ghcr.io/gethomepage/homepage:latest": [
+    "ghcr.io/gethomepage/homepage:v2.8.0@sha256:019d8f063a7299e7c1c51ee4a70b692291809af3244894fbec2c2ac7d1f71b18": [
       "linux/amd64",
       "linux/arm64"
     ],
-    "ghcr.io/home-assistant/home-assistant:stable": [
+    "ghcr.io/home-assistant/home-assistant:2026.11.2@sha256:493a07e8f6530fc640223f4a0a5248f20a61ca2f718bb1d31efbf08a2c5ea28f": [
       "linux/amd64",
       "linux/arm64"
     ],
@@ -103,47 +103,47 @@
       "linux/amd64",
       "linux/arm64"
     ],
-    "ghcr.io/koush/scrypted:latest": [
+    "ghcr.io/koush/scrypted:v0.147.0-noble-full@sha256:e78b4fcecdd6c61acaaf22b50ccef303c738da58cc0be57afdb116521df52296": [
       "linux/amd64",
       "linux/arm64"
     ],
-    "ghcr.io/mealie-recipes/mealie:latest": [
+    "ghcr.io/mealie-recipes/mealie:v3.31.0@sha256:97e21ac96e9a8d1ee15aaf558ba3f14998936b9d6f334e40ebb4c6c2127dc12f": [
       "linux/amd64",
       "linux/arm64"
     ],
-    "ghcr.io/open-webui/open-webui:main": [
+    "ghcr.io/open-webui/open-webui:v0.13.4@sha256:d5168bfbc28609eff5bea1b438dd864cf64d185cf6582c02244865e18385b901": [
       "linux/amd64",
       "linux/arm64"
     ],
-    "gitea/gitea:latest": [
+    "gitea/gitea:28.4.0@sha256:aa90e8f00b755b0d665214ab9c14447ea44d3190dbe6b6d0cb46cd9c4f55d309": [
       "linux/amd64",
       "linux/arm64",
       "linux/riscv64"
     ],
-    "grafana/grafana:latest": [
+    "grafana/grafana:13.3.1@sha256:0615ec4fbd4072004b7d86b46ded63013a74b7d6eb1119273dd89e8fa25c13cf": [
       "linux/amd64",
       "linux/arm/v7",
       "linux/arm64"
     ],
-    "jc21/nginx-proxy-manager:latest": [
+    "jc21/nginx-proxy-manager:2.17.0@sha256:91277490a919c792aa73b8d291af1ca84d32be74df988e543137976515763534": [
       "linux/amd64",
       "linux/arm64"
     ],
-    "jellyfin/jellyfin:latest": [
+    "jellyfin/jellyfin:12.4.20261026-211555@sha256:fea863d0cd9ec445985d9c75fc6ed64e38a1d2766cf0c250a33d553f4fc1b771": [
       "linux/amd64",
       "linux/arm64"
     ],
-    "jlesage/jdownloader-2:latest": [
+    "jlesage/jdownloader-2:v26.09.1@sha256:bd6cd2fdc72818f30207e677b33cd7f1b425048c4e7132624e541e99f992be4c": [
       "linux/386",
       "linux/amd64",
       "linux/arm64"
     ],
-    "jvmilazz0/kavita:latest": [
+    "jvmilazz0/kavita:0.9.1@sha256:31181a32f0dda73cae68721867028a7253d57881b58bea5754cd9e578e75421a": [
       "linux/amd64",
       "linux/arm/v7",
       "linux/arm64"
     ],
-    "koenkk/zigbee2mqtt:latest": [
+    "koenkk/zigbee2mqtt:2.14.3@sha256:fb4a6b0f6868ad1cd6a9996479802b2420e599c3463b62bbff8c8cd9a908f43a": [
       "linux/386",
       "linux/amd64",
       "linux/arm/v6",
@@ -151,133 +151,132 @@
       "linux/arm64",
       "linux/riscv64"
     ],
-    "localai/localai:latest-aio-cpu": [
+    "localai/localai:v3.12.1-aio-cpu@sha256:4cbc20c59558ed6c1cae9bc3f6ae34d75d390b370aa8ac62a59327089fa56cec": [
       "linux/amd64",
       "linux/arm64"
     ],
-    "louislam/uptime-kuma:latest": [
-      "linux/amd64",
-      "linux/arm/v7",
-      "linux/arm64"
-    ],
-    "lscr.io/linuxserver/bazarr:latest": [
-      "linux/amd64",
-      "linux/arm64"
-    ],
-    "lscr.io/linuxserver/calibre-web:latest": [
-      "linux/amd64",
-      "linux/arm64"
-    ],
-    "lscr.io/linuxserver/code-server:latest": [
-      "linux/amd64",
-      "linux/arm64"
-    ],
-    "lscr.io/linuxserver/deluge:latest": [
-      "linux/amd64",
-      "linux/arm64"
-    ],
-    "lscr.io/linuxserver/duplicati:latest": [
-      "linux/amd64",
-      "linux/arm64"
-    ],
-    "lscr.io/linuxserver/emby:latest": [
-      "linux/amd64",
-      "linux/arm64"
-    ],
-    "lscr.io/linuxserver/heimdall:latest": [
-      "linux/amd64",
-      "linux/arm64"
-    ],
-    "lscr.io/linuxserver/lidarr:latest": [
-      "linux/amd64",
-      "linux/arm64"
-    ],
-    "lscr.io/linuxserver/nextcloud:latest": [
-      "linux/amd64",
-      "linux/arm64"
-    ],
-    "lscr.io/linuxserver/nzbget:latest": [
-      "linux/amd64",
-      "linux/arm64"
-    ],
-    "lscr.io/linuxserver/overseerr:latest": [
-      "linux/amd64",
-      "linux/arm64"
-    ],
-    "lscr.io/linuxserver/prowlarr:latest": [
-      "linux/amd64",
-      "linux/arm64"
-    ],
-    "lscr.io/linuxserver/qbittorrent:latest": [
-      "linux/amd64",
-      "linux/arm64"
-    ],
-    "lscr.io/linuxserver/radarr:latest": [
-      "linux/amd64",
-      "linux/arm64"
-    ],
-    "lscr.io/linuxserver/readarr:develop": [],
-    "lscr.io/linuxserver/sabnzbd:latest": [
-      "linux/amd64",
-      "linux/arm64"
-    ],
-    "lscr.io/linuxserver/sonarr:latest": [
-      "linux/amd64",
-      "linux/arm64"
-    ],
-    "lscr.io/linuxserver/syncthing:latest": [
-      "linux/amd64",
-      "linux/arm64"
-    ],
-    "lscr.io/linuxserver/tautulli:latest": [
-      "linux/amd64",
-      "linux/arm64"
-    ],
-    "lscr.io/linuxserver/transmission:latest": [
-      "linux/amd64",
-      "linux/arm64"
-    ],
-    "lscr.io/linuxserver/wikijs:latest": [
-      "linux/amd64",
-      "linux/arm64"
-    ],
-    "lscr.io/linuxserver/wireguard:latest": [
-      "linux/amd64",
-      "linux/arm64"
-    ],
-    "n8nio/n8n:latest": [
-      "linux/amd64",
-      "linux/arm64"
-    ],
-    "netdata/netdata:latest": [
+    "louislam/uptime-kuma:2.5.12@sha256:8e4b6bef96417ec98a35dc103c99cc64fc229a01e584e56d95d9004d2003c02a": [
       "linux/amd64",
       "linux/arm/v7",
       "linux/arm64"
     ],
-    "nicolargo/glances:latest-full": [
+    "lscr.io/linuxserver/bazarr:v1.6.2-ls373@sha256:e0c5d45965242830c5eeddaafe9ae2b5e8ca3f6c01ecda9ee9364f550921dc50": [
       "linux/amd64",
       "linux/arm64"
     ],
-    "nodered/node-red:latest": [
+    "lscr.io/linuxserver/calibre-web:0.6.27-ls410@sha256:adb69d75b9c252e580fc691096f858833b901b5d106ae4080fb476bab104d946": [
       "linux/amd64",
       "linux/arm64"
     ],
-    "ollama/ollama:latest": [
+    "lscr.io/linuxserver/code-server:4.145.2-ls377@sha256:20ffca4512fcfc85dcd5612fb769233c1553192392d2ec417f0859135805f40c": [
       "linux/amd64",
       "linux/arm64"
     ],
-    "p3terx/aria2-pro:latest": [
+    "lscr.io/linuxserver/deluge:2.2.0-ls387@sha256:e2a537991884a514b64d7adf857e39b5e9239a1c76e52114e52bf10707dde772": [
+      "linux/amd64",
+      "linux/arm64"
+    ],
+    "lscr.io/linuxserver/duplicati:v2.4.1.0_stable_2026-10-29-ls318@sha256:ea137d806f2c0556468f2c620bcac963f0825bf45876de274988b42ff13b453a": [
+      "linux/amd64",
+      "linux/arm64"
+    ],
+    "lscr.io/linuxserver/emby:4.10.2.0-ls307@sha256:6149cec5ced1b071e9ed6dcce1e2690b679146a982ad311f7f9604be83eb859a": [
+      "linux/amd64",
+      "linux/arm64"
+    ],
+    "lscr.io/linuxserver/heimdall:v2.8.4-ls373@sha256:47f70751f900be4499017a48c01206c02ab9d18f34a580c6213a13d24cdc1a4a": [
+      "linux/amd64",
+      "linux/arm64"
+    ],
+    "lscr.io/linuxserver/lidarr:3.1.6.5079-ls49@sha256:8fb40ada166dd1880cb1b166df5bcbb081107523f20ab60df05c313e2052a467": [
+      "linux/amd64",
+      "linux/arm64"
+    ],
+    "lscr.io/linuxserver/nextcloud:35.0.3-ls2@sha256:cc5a5cf7385e1a958fd4645aad76d0557ed0f58c8267825329ac7f7980fe0265": [
+      "linux/amd64",
+      "linux/arm64"
+    ],
+    "lscr.io/linuxserver/nzbget:v26.3-ls272@sha256:17e13511d47b1439af19b7ef17d08c8643eb2a5f009b1d3f800b704ebe590218": [
+      "linux/amd64",
+      "linux/arm64"
+    ],
+    "lscr.io/linuxserver/overseerr:v1.35.0-ls158@sha256:53a1b839ffa81f139e1552840772bff8a5d13f5c78a69cce22458b9a6cd0844d": [
+      "linux/amd64",
+      "linux/arm64"
+    ],
+    "lscr.io/linuxserver/prowlarr:3.0.2.5780-ls169@sha256:45117ba8439e2337a92ffe38a451a4dafc0be771754d05d88cdf102419d09646": [
+      "linux/amd64",
+      "linux/arm64"
+    ],
+    "lscr.io/linuxserver/qbittorrent:5.3.0_v2.1.2-ls487@sha256:3d4c4545d51a690a0df15a2ff99038823a88a9822df8e794526447b9afbd7384": [
+      "linux/amd64",
+      "linux/arm64"
+    ],
+    "lscr.io/linuxserver/radarr:7.0.3.10918-ls328@sha256:044788f5508b7f67a3e0368cdd142c77c4d4cd5aec2efaba53e1a68b6b6231e7": [
+      "linux/amd64",
+      "linux/arm64"
+    ],
+    "lscr.io/linuxserver/sabnzbd:5.1.3-ls281@sha256:b356d0a9b22db584e9005364ec4e752dfc081ce501b7145e9a5c0bb38e4d1ba4": [
+      "linux/amd64",
+      "linux/arm64"
+    ],
+    "lscr.io/linuxserver/sonarr:4.0.20.3014-ls5@sha256:c7d1df25e428da6c9ace05daea0d34e59522978a3843ea1944812f855af4086c": [
+      "linux/amd64",
+      "linux/arm64"
+    ],
+    "lscr.io/linuxserver/syncthing:v2.1.7-ls237@sha256:c4207d8f5b66d5f67eedb636b75500b5a04898e9f33299d252f4b966c41a4128": [
+      "linux/amd64",
+      "linux/arm64"
+    ],
+    "lscr.io/linuxserver/tautulli:v2.19.1-ls252@sha256:5e8f80cc18f03c606a3567c8a9b37d80812ed8017d2e2f8ff2e2a91b54a3aef1": [
+      "linux/amd64",
+      "linux/arm64"
+    ],
+    "lscr.io/linuxserver/transmission:4.1.4-r0-ls370@sha256:5baf08cd73a566699f35baad3c4a84ba7d7057220566c5fb29969bf2292dc2ff": [
+      "linux/amd64",
+      "linux/arm64"
+    ],
+    "lscr.io/linuxserver/wikijs:v2.5.317-ls232@sha256:cc4d796a746304d2189de7f815f86462e9762164347972f47fdd67a6b743413e": [
+      "linux/amd64",
+      "linux/arm64"
+    ],
+    "lscr.io/linuxserver/wireguard:1.0.20260223-r0-ls130@sha256:10db56ad834f94541307d5dfdbe87370e26d155bb341a5bf65789f970f24ab5c": [
+      "linux/amd64",
+      "linux/arm64"
+    ],
+    "n8nio/n8n:2.48.5@sha256:c0ea1246a81a34ce8e2b3cfb1f718b97de64b0a1b3747ad24d6d431826bb71ad": [
+      "linux/amd64",
+      "linux/arm64"
+    ],
+    "netdata/netdata:v2.12.3@sha256:c7eab00e20901eb60595ebae0fbfe88e59464e663924461874719d40de0735d2": [
+      "linux/amd64",
+      "linux/arm/v7",
+      "linux/arm64"
+    ],
+    "nicolargo/glances:4.5.9-full@sha256:0b309652e8a4f2e827b823609044b9976b309765517760c0383d2e4f73f756c5": [
+      "linux/amd64",
+      "linux/arm64"
+    ],
+    "nodered/node-red:5.0.10@sha256:3622786c15b6f57f61bf1d0ece59d06a18b742c5c8955f588d189b6bee8dc97d": [
+      "linux/amd64",
+      "linux/arm64"
+    ],
+    "ollama/ollama:0.40.16@sha256:910d0d8107b538fb0894e63163eb195de0cc7aefcbc666dc62d3b18f71124592": [
+      "linux/amd64",
+      "linux/arm64"
+    ],
+    "p3terx/aria2-pro:202209060423@sha256:086d1a37c586edb07ec0fb956bf9edd89d1d38d138ad5309ff96d510c8c9a011": [
       "linux/386",
       "linux/amd64",
       "linux/arm/v6",
       "linux/arm/v7",
       "linux/arm64"
     ],
-    "photoprism/photoprism:latest": [
+    "photoprism/photoprism:261029@sha256:9409cf8e5a6ebcbe3170d14537556cbc20997aaa307096d6eeedbfc5eeef6719": [
       "linux/amd64",
       "linux/arm64"
     ],
-    "pihole/pihole:latest": [
+    "pihole/pihole:2026.11.0@sha256:66c798d79a95c2691f280329c3611dba1746117c61c9f331907ca35a06a52778": [
       "linux/386",
       "linux/amd64",
       "linux/arm/v6",
@@ -285,18 +284,18 @@
       "linux/arm64",
       "linux/riscv64"
     ],
-    "plexinc/pms-docker:latest": [
+    "plexinc/pms-docker:1.43.5.11079-b3b13e506@sha256:6d778d41daae68f89115aa87a44ae14a96b23e71a2093da173b5a9aac4091336": [
       "linux/amd64",
       "linux/arm/v7",
       "linux/arm64"
     ],
-    "portainer/portainer-ce:latest": [
+    "portainer/portainer-ce:2.45.3@sha256:3609c307943bca8e5c492f69ddd6965df177208b50678a4cff28391c8dd4e96e": [
       "linux/amd64",
       "linux/arm/v7",
       "linux/arm64",
       "linux/ppc64le"
     ],
-    "prom/prometheus:latest": [
+    "prom/prometheus:v3.16.0@sha256:e04987641b57704f408e31f6373ba4138ecf27cb4a165d24aabb6c38fddd0f06": [
       "linux/amd64",
       "linux/arm/v7",
       "linux/arm64",
@@ -304,7 +303,7 @@
       "linux/riscv64",
       "linux/s390x"
     ],
-    "restic/rest-server:latest": [
+    "restic/rest-server:0.14.0@sha256:d2aff06f47eb38637dff580c3e6bce4af98f386c396a25d32eb6727ec96214a5": [
       "linux/386",
       "linux/amd64",
       "linux/arm/v6",
@@ -312,13 +311,13 @@
       "linux/arm64",
       "linux/ppc64le"
     ],
-    "tailscale/tailscale:latest": [
+    "tailscale/tailscale:v1.104.7@sha256:72c1e19e0aedca96b8533bbb0b4368564410ff20b17e53b804eb6c1f04a31be4": [
       "linux/386",
       "linux/amd64",
       "linux/arm/v7",
       "linux/arm64"
     ],
-    "traefik:v3.0": [
+    "traefik:v3.7@sha256:b7b1b31e6440de0b1f7c4e0f6cf0a0f3f004866761d30c025fe00c80daaf7d9c": [
       "linux/amd64",
       "linux/arm/v6",
       "linux/arm64",
@@ -326,22 +325,22 @@
       "linux/riscv64",
       "linux/s390x"
     ],
-    "vaultwarden/server:latest": [
-      "linux/amd64",
-      "linux/arm/v6",
-      "linux/arm/v7",
-      "linux/arm64"
-    ],
-    "vikunja/vikunja:latest": [
-      "linux/amd64",
-      "linux/arm/v6",
-      "linux/arm/v7",
-      "linux/arm64"
-    ],
-    "zadam/trilium:latest": [
+    "triliumnext/trilium:v0.107.0@sha256:739ba0f0488f506549f7c21dc9e792decd99382cc759f01d5ec1abba32e87da8": [
       "linux/amd64",
       "linux/arm/v7",
       "linux/arm/v8",
+      "linux/arm64"
+    ],
+    "vaultwarden/server:1.37.5@sha256:4fe17f415f90087377d37c755e0ea3cf189dcc6794e49cdd2a9adbb4937d9e1f": [
+      "linux/amd64",
+      "linux/arm/v6",
+      "linux/arm/v7",
+      "linux/arm64"
+    ],
+    "vikunja/vikunja:2.8.0@sha256:35d937baf3b5d5803bed6b9e11d007448b7b536df9e4346dc35551e1072636c3": [
+      "linux/amd64",
+      "linux/arm/v6",
+      "linux/arm/v7",
       "linux/arm64"
     ]
   }

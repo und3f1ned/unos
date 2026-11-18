@@ -15,8 +15,8 @@ ADR-0290): a pause or a cancel waits for the chunk being moved, which the reques
 seconds for; the status then says pausing or cancelling.
 
 One balance per pool, and none beside a scrub of it: a start or a resume is refused while the pool
-is not mounted or is read-only, while a scrub of it runs, and while a balance of it runs or (for a
-start) is paused; pools.scrub_start refuses a scrub while a balance runs. One pause or cancel at a
+is not mounted or is read-only, while a scrub of it runs, while a disk of it is being removed
+(devices.py, ADR-0411), and while a balance of it runs or (for a start) is paused; pools.scrub_start refuses a scrub while a balance runs. One pause or cancel at a
 time: the kernel pauses a balance with both requested (Linux 6.1.150 and later), so a cancel is
 refused while a pause waits, and a pause while a cancel waits.
 
@@ -38,7 +38,7 @@ from typing import Any
 
 from .. import host
 from ..security.validators import sanitize_error_message
-from . import disks, pools
+from . import devices, disks, pools
 from .schemas import BalanceStart, BalanceStatus
 
 logger = logging.getLogger(__name__)
@@ -175,6 +175,11 @@ def _run_in_unit(pool: str, path: str, btrfs: list[str], action: str) -> Balance
         if pools.get_scrub_status(pool).status == "running":
             raise pools.PoolConflictError(
                 f"A scrub of pool {pool} runs: wait for its end or cancel it, then {action} the balance"
+            )
+        if devices.removal_runs(path):
+            # The kernel refuses a balance beside a removal, another exclusive operation (ADR-0411).
+            raise pools.PoolConflictError(
+                f"A disk of pool {pool} is being removed: wait for the end of its removal, then {action} the balance"
             )
         progress = pools.balance_progress(path).status
         if action == "start" and progress in pools.BALANCE_RUNS:

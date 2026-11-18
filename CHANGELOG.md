@@ -12,6 +12,20 @@ features (SMB access per user and per share, volumes, copy and move in the file
 manager, encrypted backup uploads, health checks, CI checks).
 
 ### Changed
+- Every app of the App Store installs a pinned image: its publisher's version tag and the digest of
+  the index that the tag named on 2026-11-18 (`name:tag@sha256:...`), pulled and run by that
+  digest, with the version shown on its card (transmission `4.1.4-r0-ls370`, Traefik `v3.7`, Netdata
+  `v2.12.3` instead of its nightly `latest`, Open WebUI `v0.13.4` instead of its `main` branch,
+  Trilium from `triliumnext/trilium`). The space check before an install counts every app's images,
+  and an app installed from a floating tag is offered the pinned version as an update. Homarr keeps
+  its database and LocalAI its backends and configuration on the pool, where their images declare
+  them. A weekly audit (`make catalog-tags`, the `tags` job of the Audit workflow) reports a pinned
+  tag that names another index. Immich's digests are unchanged; Valkey's tag reads `9.1.2`, which
+  names the same index as the `9` it replaces (ADR-0410).
+- `install.sh` and the manual installation no longer install `mdadm`, `parted`, `nvme-cli`, `lm-sensors`,
+  `net-tools` and `wget`, which UNOS does not run: Debian's mdadm assembled the arrays of an old NAS's
+  disks into md arrays on the next boot. A host that has them keeps them; the Storage page already
+  shows a disk under an assembled array as in use and refuses it for a pool (ADR-0413).
 - The web UI has a light theme. Each user chooses **Dark**, **Light** or **System** (the device's
   setting, followed as it changes) on the Account page; the NAS keeps the choice per user
   (`GET`/`PUT /api/v1/auth/me/theme`, audited as `theme_changed`), and the page shows it before it
@@ -430,6 +444,17 @@ manager, encrypted backup uploads, health checks, CI checks).
   `ups_name`, `host` and `port` are checked before they reach `upsc`.
 
 ### Added
+- A disk can be added to a mounted pool and removed from one on the Storage page, after its path is
+  typed again: **Add Disk** offers only whole disks that are not the system disk, hold no other pool
+  or btrfs filesystem and are not mounted or in use, erases one with data only with its own
+  confirmation, and runs `btrfs device add`: the pool grows and keeps its profile. **Remove Disk**
+  refuses the pool's only disk, a profile that would keep too few disks and too little space on the
+  disks left, and runs `btrfs device remove` on the host in the unit `unos-disk-remove-<pool>`,
+  which a restart of UNOS does not stop; the pool card follows it over the events socket. Neither
+  runs beside a scrub, a balance or another removal of the pool, and no balance starts beside a
+  removal. `GET`/`POST /api/v1/storage/pools/<name>/devices`, `GET`/`POST
+  /api/v1/storage/pools/<name>/removal`, audited as `pool_disk_added` and
+  `pool_disk_removal_started` (ADR-0411).
 - The power settings act on the host (ADR-0407). System → Power Management has a **Shutdown and
   wake schedule**: a daily shutdown at a time on the host's clock, announced 10 minutes ahead in the
   health banner and to every notification channel and postponed while a job runs (a task, a backup,
@@ -809,6 +834,8 @@ manager, encrypted backup uploads, health checks, CI checks).
 - `scripts/dev/check.sh` shows each container's CPU, the load average and the
   temperatures, and reports a container of UNOS above 15% of a core or a
   thermal zone within 5 C of its throttling point as a problem (ADR-0374).
+  It also reports a UNOS container that runs without a CPU reading from `docker stats`, and shows a
+  thermal zone it cannot read instead of stopping (ADR-0412).
 - RISCV64 hosts on Debian 13 and Ubuntu 24.04, made for the Banana Pi BPI-F3
   (SpacemiT K1): `install.sh` accepts `riscv64` and installs the
   distribution's `docker.io`, `docker-buildx` and `docker-compose` (Debian) or
@@ -1430,6 +1457,8 @@ manager, encrypted backup uploads, health checks, CI checks).
   smb.conf as UNOS wrote it.
 
 ### Removed
+- Readarr from the App Store: the project is retired and its image's tag names an empty index, which
+  no host could install (ADR-0410).
 - `GET /api/v1/monitor/cpu`, `/monitor/memory`, `/monitor/processes`,
   `/monitor/history/cpu`, `/monitor/history/memory` and `/monitor/all`: no
   page called them, and their history held only what calls of `/cpu` and

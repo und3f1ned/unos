@@ -118,28 +118,25 @@ detect_system() {
 # Install system dependencies
 install_dependencies() {
     log_info "Installing system dependencies..."
-    
+
+    # Only what UNOS or this script runs on the host. Not mdadm: Debian's package writes an
+    # ARRAY line into /etc/mdadm/mdadm.conf and the initramfs for every md superblock on the
+    # host's disks, which assembles the arrays of an old NAS's disks (ADR-0413).
     apt-get update -qq
     
     apt-get install -y -qq \
         curl \
-        wget \
         git \
         ca-certificates \
         gnupg \
         lsb-release \
         btrfs-progs \
         smartmontools \
-        lm-sensors \
         samba \
         samba-common-bin \
         samba-vfs-modules \
         hdparm \
-        parted \
-        mdadm \
-        nvme-cli \
         ethtool \
-        net-tools \
         iproute2 \
         >/dev/null 2>&1
     

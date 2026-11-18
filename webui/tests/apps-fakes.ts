@@ -457,7 +457,7 @@ export async function answerInstall(
  * The stand-in's catalog as the catalog API answers it on a host of another platform than this
  * machine's (apps.catalog-platforms, ADR-0403): each app's `platforms` are the real, recorded ones;
  * the host's platform and which apps are available on it are set here by the server's rule
- * (supervisor/src/apps/platforms.py), for a platform that an image publishes by its exact name (every image of the catalog is recorded; Readarr's publishes none).
+ * (supervisor/src/apps/platforms.py), for a platform that an image publishes by its exact name (every image of the catalog is recorded).
  */
 export async function onPlatform(page: Page, platform: string) {
   const mark = (app: { platforms: string[]; companions?: { platforms: string[] }[] }) => ({

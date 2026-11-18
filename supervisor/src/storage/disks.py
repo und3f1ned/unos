@@ -23,7 +23,7 @@ from fastapi import HTTPException
 
 from .. import host
 from ..security.validators import sanitize_error_message, validate_disk_target
-from .schemas import DiskInfo, PartitionInfo, PowerState, SmartData
+from .schemas import DiskCandidate, DiskInfo, PartitionInfo, PowerState, SmartData
 
 logger = logging.getLogger(__name__)
 
@@ -171,6 +171,9 @@ class DeviceFacts:
     serial: str | None = None
     wwn: str | None = None
     size: int = 0
+    # Whether a btrfs filesystem is on it, also below a partition or found by wipefs (ADR-0411).
+    btrfs: bool = False
+    model: str | None = None
 
 
 @dataclass(frozen=True)
@@ -817,6 +820,8 @@ def _node_facts(
         serial=disk_id(disk.get("serial")),
         wwn=disk_id(disk.get("wwn")),
         size=_to_int(node.get("size")),
+        btrfs=any(n.get("fstype") == "btrfs" for n in subtree) or re.search(r"\bbtrfs\b", data or "") is not None,
+        model=disk_id(disk.get("model")),
     )
 
 
@@ -887,6 +892,51 @@ def list_disks() -> list[DiskInfo]:
             )
         )
     return result
+
+
+def addable_problem(fact: DeviceFacts) -> str | None:
+    """Why a disk or partition must not join a pool, or None when it may (ADR-0411): a boot or
+    virtual device, the system disk or a partition of it, one in use (mounted, swap, a member of a
+    mounted pool, held by md, LVM or LUKS), and one with a btrfs filesystem, another pool's or one
+    found on the disks, also when it is not mounted. Other data is erased with ``force``."""
+    if fact.hidden:
+        return "it is a boot or virtual device"
+    if fact.is_system:
+        return f"it is a system device ({fact.in_use_reason})"
+    if fact.in_use:
+        return fact.in_use_reason
+    if fact.btrfs:
+        return f"it holds the btrfs filesystem of the pool '{fact.pool}'" if fact.pool else (
+            "it holds a btrfs filesystem")
+    return None
+
+
+def addable_disks() -> list[DiskCandidate]:
+    """The whole disks that can join a pool (addable_problem), as list_disks reads them: each
+    disk's power first, and a sleeping one is not probed with wipefs (ADR-0378), so that its
+    contents are unknown and count as data. RuntimeError when lsblk fails."""
+    state = _collect_host_state()
+    found: list[DiskCandidate] = []
+    for node in _whole_disks(state.tree):
+        path = node.get("path") or f"/dev/{node['name']}"
+        facts = _node_facts(node, node, state, probe=power_state(path) != "standby")
+        if addable_problem(facts) is None:
+            found.append(DiskCandidate(
+                name=node["name"], path=path, model=facts.model, serial=facts.serial, wwn=facts.wwn,
+                size=facts.size, has_data=facts.has_data, data_description=facts.data_description,
+            ))
+    return found
+
+
+def disk_models(paths: list[str]) -> dict[str, tuple[str | None, str | None]]:
+    """The model and serial of the whole disk of each of ``paths`` that lsblk lists (a disk or a
+    partition), without reading a disk. RuntimeError when lsblk fails."""
+    found: dict[str, tuple[str | None, str | None]] = {}
+    for disk in _lsblk_tree():
+        for node in _walk(disk):
+            for path in _node_paths(node) & set(paths):
+                found.setdefault(path, (disk_id(disk.get("model")), disk_id(disk.get("serial"))))
+    return found
 
 
 def host_disks() -> list[HostDisk]:

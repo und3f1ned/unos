@@ -166,6 +166,7 @@ and this index, and `make check-fast` runs it.
 | [0378](0378-data-disks-get-an-idle-timeout-kept-in-a-udev-rule-and-nothing-periodic-wakes-a-sleeping-disk.md) | Data disks get an idle timeout that UNOS keeps in a udev rule, and nothing UNOS does periodically wakes a sleeping disk | accepted | 2026-11-15 |
 | [0379](0379-a-balance-runs-in-a-host-unit-with-a-usage-limit-of-20-percent-and-a-full-balance-behind-a-confirmation.md) | A balance runs in a unit of the host, rewrites the chunks less than 20% full by default, and a full one needs a confirmation | accepted | 2026-11-15 |
 | [0387](0387-volume-quota-use-is-read-from-sysfs-alerted-at-80-90-and-95-percent-and-kept-in-ram.md) | A volume's quota use is read from the kernel's sysfs, alerted once per level of 80, 90 and 95 percent, and its hourly history is kept in RAM and written at shutdown | accepted | 2026-11-17 |
+| [0411](0411-a-disk-joins-a-pool-at-once-and-leaves-it-in-a-host-unit-after-typed-confirmations-and-checks-of-the-profile-and-the-space.md) | A disk joins a pool at once and leaves it in a unit of the host, after typed confirmations and checks of the profile and the space | accepted | 2026-11-18 |
 
 ## Shares
 
@@ -316,6 +317,7 @@ and this index, and `make check-fast` runs it.
 | [0390](0390-each-container-of-an-app-gets-its-own-memory-and-cpu-limits-whose-use-is-read-from-its-cgroup.md) | Each container of an app gets its own memory and CPU limits, kept by Docker and for the next install, and its use is read from its cgroup and alerted | accepted | 2026-11-17 |
 | [0403](0403-the-app-store-offers-only-apps-whose-images-publish-the-hosts-platform.md) | The App Store offers only apps whose images publish the host's platform, and the install refuses the others before any pull | accepted | 2026-11-18 |
 | [0408](0408-an-installed-app-updates-to-the-catalogs-newer-pinned-images-with-a-copy-of-its-database-and-can-be-rolled-back.md) | An installed app updates to the catalog's newer pinned images with a copy of its database, and can be rolled back | accepted | 2026-11-18 |
+| [0410](0410-every-catalog-image-is-pinned-by-a-version-tag-and-digest-and-a-weekly-audit-reports-moved-tags.md) | Every image of the catalog is pinned by a version tag and its index digest, and a weekly audit reports the tags that moved | accepted | 2026-11-18 |
 
 ## Backup
 
@@ -387,6 +389,7 @@ and this index, and `make check-fast` runs it.
 | [0388](0388-the-dashboard-shows-disk-io-and-the-stats-network-is-the-hosts-interfaces.md) | The dashboard shows the disks' I/O, and the network of the stats message is the traffic of the host's interfaces | accepted | 2026-11-17 |
 | [0399](0399-the-resource-monitor-keeps-an-hour-of-history-in-ram-and-only-administrators-get-the-hosts-processes.md) | The Resource Monitor keeps an hour of history in RAM, read once when its tab opens, and only administrators get the host's processes | accepted | 2026-11-18 |
 | [0407](0407-the-power-settings-shut-the-host-down-at-a-set-time-or-when-idle-and-arm-the-rtc-to-wake-it.md) | The power settings shut the host down at a set time or when idle, and arm the RTC to wake it | accepted | 2026-11-18 |
+| [0412](0412-the-load-check-fails-for-a-unos-container-it-could-not-measure-and-the-two-tab-measurement-is-the-owner-s.md) | The load check fails for a UNOS container it could not measure, and the two-tab measurement is the owner's | accepted | 2026-11-18 |
 
 ## Web UI
 
@@ -439,6 +442,7 @@ and this index, and `make check-fast` runs it.
 | [0373](0373-the-web-ui-image-of-a-spacemit-k1-is-built-on-another-machine.md) | The web UI's image of a SpacemiT K1 is built on another machine, and install.sh and update.sh build only the supervisor there | proposed | 2026-11-13 |
 | [0376](0376-the-banana-pi-bpi-w3-gets-no-code-of-its-own-for-the-rk3588.md) | The Banana Pi BPI-W3 gets no code of its own for the RK3588 | proposed | 2026-11-15 |
 | [0406](0406-the-supervisors-tmpfs-is-192-mib-and-a-backup-may-hold-a-database-of-48-mib.md) | The supervisor's /tmp tmpfs is 192 MiB and a backup may hold a database of 48 MiB | accepted | 2026-11-18 |
+| [0413](0413-install-sh-installs-only-the-packages-unos-runs-so-no-mdadm-assembles-an-old-nas.md) | The package list of install.sh holds only what UNOS runs, so no mdadm assembles the arrays of an old NAS | accepted | 2026-11-18 |
 
 ## Device
 

@@ -1,9 +1,11 @@
-"""scripts/catalog-platforms.py, the audit's tool (ADR-0403, ADR-0218), against recorded registry
-answers: the manifests of five images as Docker Hub and GHCR served them (fixtures/registry_manifests.json),
-behind the anonymous token handshake that both registries ask for. No test reaches the network."""
+"""scripts/catalog-platforms.py, the audit's tool (ADR-0403, ADR-0410, ADR-0218), against recorded
+registry answers: the manifests of five images as Docker Hub and GHCR served them
+(fixtures/registry_manifests.json), behind the anonymous token handshake that both registries ask
+for. No test reaches the network."""
 
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import json
 from pathlib import Path
@@ -27,9 +29,11 @@ class Registries:
     """A transport that answers as the registries did: 401 with a Bearer challenge for a request
     without a token, a token for the realm, and the recorded manifests for one with it."""
 
-    def __init__(self, answers: dict | None = None) -> None:
+    def __init__(self, answers: dict | None = None, digests: bool = True) -> None:
         self.answers = MANIFESTS if answers is None else answers
         self.requests: list[tuple[str, str, dict]] = []
+        # Whether a HEAD of a manifest names its digest (Docker-Content-Digest), as both registries do.
+        self.digests = digests
 
     def __call__(self, method, url, headers):
         self.requests.append((method, url, headers))
@@ -41,8 +45,22 @@ class Registries:
             return 401, {"www-authenticate": challenge}, b'{"errors":[]}'
         if url in self.answers:
             status, answer, body = self.answers[url]
+            if method == "HEAD":
+                named = {"docker-content-digest": digest_of(body)} if status == 200 and self.digests else {}
+                return status, {**answer, **named}, b""
             return status, answer, body.encode()
-        return 404, {}, b'{"errors":[{"code":"MANIFEST_UNKNOWN"}]}'
+        return 404, {}, b"" if method == "HEAD" else b'{"errors":[{"code":"MANIFEST_UNKNOWN"}]}'
+
+
+def digest_of(body: str) -> str:
+    return "sha256:" + hashlib.sha256(body.encode()).hexdigest()
+
+
+SONARR_TAG = "https://ghcr.io/v2/linuxserver/sonarr/manifests/latest"
+# The index that the tag names in the recorded answers.
+SONARR_NOW = digest_of(MANIFESTS[SONARR_TAG][2])
+SONARR_PINNED = f"{SONARR}@{SONARR_NOW}"
+EARLIER = "sha256:" + "e" * 64
 
 
 class TestReferences:
@@ -173,6 +191,19 @@ class TestOnlyHttps:
         assert seen[0][seen[0].index("--proto") + 1] == "=https"
         assert seen[0][seen[0].index("--proto-redir") + 1] == "=https"
 
+    def test_a_head_request_is_curls_head_which_reads_no_body(self, monkeypatch):
+        seen = []
+
+        def run(command, **kwargs):
+            seen.append(command)
+            raise OSError("stop")
+
+        monkeypatch.setattr(tool.subprocess, "run", run)
+        with pytest.raises(tool.QueryError):
+            tool.curl_transport("HEAD", "https://ghcr.io/v2/", {})
+
+        assert "--head" in seen[0] and "-X" not in seen[0]
+
 
 class TestCurlOutput:
     def test_the_status_the_headers_and_the_body(self):
@@ -263,3 +294,83 @@ class TestTheRecordedFile:
         assert listed == list(dict.fromkeys(listed))
         assert {t.image for t in APP_CATALOG} <= set(listed)
         assert set(listed) == set(json.loads(tool.RECORDED.read_text())["images"])
+
+
+class TestMovedTags:
+    """The weekly audit of the pinned tags (ADR-0410): a tag that names another index than the one
+    pinned is reported with the templates that use it."""
+
+    def test_a_tag_that_names_its_pinned_index_passes(self, capsys):
+        assert tool.main(["tags"], Registries(), users={SONARR_PINNED: ["sonarr"]}) == 0
+        out = capsys.readouterr()
+        assert out.err == "" and "1 pinned image" in out.out
+
+    def test_a_moved_tag_fails_and_names_its_templates_and_both_digests(self, capsys):
+        pinned = f"{SONARR}@{EARLIER}"
+
+        assert tool.main(["tags"], Registries(), users={pinned: ["sonarr", "other"]}) == 1
+        err = capsys.readouterr().err
+        assert f"MOVED sonarr, other: {SONARR} names {SONARR_NOW}, not the pinned {EARLIER}" in err
+        # The pinned index is gone from the registry: an install of it fails.
+        assert "the pinned index is gone" in err
+
+    def test_a_moved_tag_whose_pinned_index_is_still_served_says_so(self, capsys):
+        pinned = f"{SONARR}@{EARLIER}"
+        answers = {**MANIFESTS, f"https://ghcr.io/v2/linuxserver/sonarr/manifests/{EARLIER}": [200, {}, "{}"]}
+
+        assert tool.main(["tags"], Registries(answers), users={pinned: ["sonarr"]}) == 1
+        err = capsys.readouterr().err
+        assert f"MOVED sonarr: {SONARR} names {SONARR_NOW}" in err and "gone" not in err
+
+    def test_a_pinned_index_the_registry_cannot_answer_for_is_an_error_not_gone(self, capsys):
+        # Only a 404 says that the index is gone; a refusal or a server error says nothing of it.
+        pinned = f"{SONARR}@{EARLIER}"
+        answers = {**MANIFESTS, f"https://ghcr.io/v2/linuxserver/sonarr/manifests/{EARLIER}": [503, {}, ""]}
+
+        assert tool.main(["tags"], Registries(answers), users={pinned: ["sonarr"]}) == 1
+        err = capsys.readouterr().err
+        assert "ERROR" in err and "HTTP 503" in err and "gone" not in err and "MOVED" not in err
+
+    def test_a_digest_without_a_tag_is_an_error_not_a_check_of_latest(self, capsys):
+        ref = f"lscr.io/linuxserver/sonarr@{SONARR_NOW}"
+
+        assert tool.main(["tags"], Registries(), users={ref: ["sonarr"]}) == 1
+        assert f"ERROR {ref}: not pinned by tag and digest" in capsys.readouterr().err
+
+    def test_an_image_that_floats_on_a_tag_is_an_error(self, capsys):
+        assert tool.main(["tags"], Registries(), users={SONARR: ["sonarr"]}) == 1
+        assert f"ERROR {SONARR}: not pinned by tag and digest" in capsys.readouterr().err
+
+    def test_a_tag_the_registry_does_not_know_is_an_error_not_a_pass(self, capsys):
+        assert tool.main(["tags"], Registries(), users={f"example/none:1@{EARLIER}": ["none"]}) == 1
+        err = capsys.readouterr().err
+        assert "ERROR example/none:1" in err and "HTTP 404" in err
+
+    def test_the_tags_are_asked_for_with_head_only_and_no_request_writes(self):
+        registries = Registries()
+
+        tool.main(["tags"], registries, users={SONARR_PINNED: ["sonarr"], VALKEY: ["immich"]})
+
+        manifests = [(method, url) for method, url, _ in registries.requests if "/manifests/" in url]
+        # A HEAD is no pull: Docker Hub does not count it against its anonymous limit.
+        assert manifests and {method for method, _ in manifests} == {"HEAD"}
+        assert {method for method, _, _ in registries.requests} <= {"GET", "HEAD"}
+        assert ("HEAD", SONARR_TAG) in manifests
+        assert ("HEAD", "https://registry-1.docker.io/v2/valkey/valkey/manifests/9") in manifests
+
+    def test_a_registry_that_names_no_digest_is_read_with_a_get_and_hashed(self, capsys):
+        registries = Registries(digests=False)
+
+        assert tool.main(["tags"], registries, users={SONARR_PINNED: ["sonarr"]}) == 0
+        assert ("GET", SONARR_TAG) in [(method, url) for method, url, _ in registries.requests]
+
+    def test_the_catalog_names_the_templates_of_each_pinned_image(self):
+        from src.apps.catalog import APP_IMAGES, VALKEY as CATALOG_VALKEY, get_app_by_id
+
+        users = tool.catalog_users()
+
+        assert users[CATALOG_VALKEY.ref] == ["immich"]
+        assert users[get_app_by_id("transmission").image] == ["transmission"]
+        assert set(users) == set(tool.catalog_images())
+        assert all("@sha256:" in ref for ref in users)
+        assert len(APP_IMAGES) + 5 == len(users)
