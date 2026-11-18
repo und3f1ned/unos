@@ -1507,10 +1507,11 @@ changed.
   database failed at its first start, the message names its folder, which may
   hold a database that was not finished: move that folder away before you
   install again.
-- **Updates.** UNOS does not update an installed app yet. To move Immich to a
-  newer version of the catalog, take a snapshot of its pool, uninstall Immich
-  and install it again: Immich changes its database at its first start and
-  cannot go back to an older version, so the snapshot is the way back.
+- **Updates.** When the catalog of a newer UNOS pins a newer Immich, its card
+  offers **Update to** that version (see [Updating an App](#updating-an-app)).
+  Immich changes its database at its first start and cannot go back to an
+  older version, so the update copies the database first, and a rollback
+  puts that copy back.
 
 BookStack, Paperless-ngx and Linkwarden are no longer in the catalog: each needs
 a database or a broker beside it, and they will come back as apps of several
@@ -1625,6 +1626,62 @@ container's log on the **Containers** page if it stops again.
 
 These actions work only on apps installed from the App Store; other containers
 are started and stopped on the **Containers** page.
+
+### Updating an App
+
+An app whose catalog pins its images by digest, such as Immich, can be updated
+in place when a newer UNOS brings a catalog that pins newer images for it: its
+card on the **Installed** tab then shows **Update to** and the version. Apps
+whose images float on a tag (`latest`, as Transmission's) are not offered an
+update; uninstall and install them again, which keeps their data.
+
+**Update to** opens a dialog that shows, before anything changes:
+
+- each container with **New image** or **Same image**: the update reads the
+  catalog's image for this NAS's platform from its registry and accepts it only
+  when it was built after the image that runs, so an app never moves to an
+  older image;
+- what the update downloads and about what it writes to the system disk, where
+  Docker keeps its images: only the layers that the NAS does not have yet. At
+  least 2 GB of the system disk must stay free;
+- the copy of the app's database: Immich's `apps/immich/postgres/data` is
+  copied to `data.previous` beside it on the same pool, never on the system
+  disk. The pool must have the database's size and 1 GB more free; on a btrfs
+  pool the copy takes no space until the two differ.
+
+**Update now** starts the update in the background, and the App Store shows its
+card with each step: the checks, the downloads, the app stopped, the database
+copied, the containers created and started. The data folders, the password
+files, the settings you gave at the install, the ports, the group option
+`unos-smb` and the containers' limits stay as they are. When the new version
+does not start (Immich's server is given 15 minutes to migrate its database),
+or something fails after the app was stopped, or you cancel it then, UNOS
+removes the new containers, puts the copy of the database back and starts the
+earlier version again if it ran before: the card says that the app was
+returned to its earlier version. Should the copy not go back in place, UNOS
+leaves the earlier version stopped, under its `.previous` names, and the card
+offers **Roll back**, which tries again once the cause is fixed.
+
+After an update the card shows **Earlier version kept**: the earlier containers
+stay, stopped, as `<name>.previous`, and so does the copy of the database. The
+**Containers** page does not start them, since they use the folders of the
+newer version, and while an app is installed, updated or rolled back it does
+not start, restart or remove that app's containers.
+
+- **Roll back** returns the app to its earlier version and its database to the
+  copy, after a question: what the app stored since the update is lost. It
+  runs in the background too and cannot be cancelled.
+- **Remove earlier version** removes the earlier containers and deletes the
+  copy of the database, after a question; a rollback is then no longer
+  possible. Their images stay until you remove them on **Containers** →
+  **Images**.
+
+Another update waits until the earlier version was rolled back to or removed.
+A copy of a database from an interrupted update, or one left after an
+uninstall, blocks the next update until you move it away. Updates, rollbacks
+and removals are in the audit log as **App updated**, **App rolled back** and
+**App earlier version removed**. One install, update or rollback runs at a
+time.
 
 ### Memory and CPU Limits
 
@@ -1748,7 +1805,7 @@ active after the restore.
 | Role | Permissions |
 |------|-------------|
 | Admin | Full access to all features, except SMB: administrators cannot use SMB |
-| User | **Dashboard** (system overview and live statistics) and **Account** (language, theme, own password, two-factor authentication, login history and SMB access); SMB shares as an administrator allows |
+| User | **Dashboard** (system overview and live statistics) and **Account** (language, theme, own password, two-factor authentication and security keys, login history and SMB access); SMB shares as an administrator allows |
 
 Every other page and API is for administrators only; regular users do not see
 them. At least one administrator must remain: the last one cannot be demoted
@@ -1938,6 +1995,53 @@ Scripts send the code as `recovery_code` in place of `totp_code` to
 `POST /api/v1/auth/login`; `POST /api/v1/auth/recovery-codes/generate`
 answers new codes, and `GET /api/v1/auth/recovery-codes/status` how many are
 left.
+
+#### Security Keys
+
+A security key (a USB or NFC key such as a YubiKey, or a passkey of your
+phone or computer) signs you in with a touch in place of the code from your
+authenticator app. It is an addition to 2FA, not a replacement: you add keys
+once 2FA is on, and turning 2FA off removes them.
+
+1. Open the web interface by the NAS's name, such as `https://unos.local`,
+   not by its IP address: browsers use security keys only at a name, and only
+   when the page's certificate is trusted (trust UNOS's certificate authority
+   or serve your own certificate, see [HTTPS Certificates](#https-certificates)). Opened by an IP
+   address, the section says so and offers no **Add**.
+2. Go to **Account** (administrators: **System** → **Security**)
+3. Under **Two-Factor Authentication** → **Security keys**, click **Add a
+   security key**
+4. Give the key a name (up to 64 characters, different from your other
+   keys'), enter your current password and click **Add key**
+5. Touch the key when your browser asks: the list shows the key with the
+   address where it works
+
+To sign in with a key, enter your username and password, click **Use a
+security key** at the code step and touch the key. A key works at the address
+where you added it, such as `https://unos.local`: at another name of the NAS
+or at its IP address the code step says where your keys work, and you add a
+key there too or enter the app's code. You can have up to 10 keys.
+
+**Remove** next to a key, with your current password, removes it: do so at
+once for a key you lost. Your app's codes and recovery codes still sign you
+in. Turning 2FA off and turning SMB on still take a code from the app, not a
+key. A key whose signature counter goes backwards, as a copied key's can, is
+refused at the sign-in ("This security key's signature counter went
+backwards, so it may have been copied: sign in another way and remove it"),
+and the audit log records it as a warning. The audit log also records each
+key added (`security_key_added`) and removed (`security_key_removed`) and
+each sign-in with a key. UNOS accepts any authenticator, a passkey kept in
+software too: it checks that the key's private key signed the sign-in, not
+which device holds it.
+
+Scripts send the key's answer as `security_key` (`credential_id`,
+`client_data_json`, `authenticator_data`, `signature`, each in base64url)
+to `POST /api/v1/auth/login`, after the password step whose answer carries
+the challenge in `security_key`: only when the request's `Host` is the
+address where the key was added (`security_key_origins` lists them); `GET /api/v1/auth/security-keys` lists the
+keys, `POST /api/v1/auth/security-keys/register/begin` and `/register/finish`
+add one, and `DELETE /api/v1/auth/security-keys/{id}` with
+`current_password` removes one.
 
 #### Two-Factor Authentication for Every Account
 
@@ -2397,9 +2501,57 @@ packet from a computer on the same network, for example with
 the board keeps the network card powered then; many single-board computers
 cut its power, and then only the power button starts the host.
 
-There are no scheduled shutdown or wake times, and the UPS state has no page
-yet (feature-list entries `system.scheduled-power` and
-`system.ups-monitoring`).
+**Shutdown and wake schedule** sets three things, each off until you turn it
+on and press **Save schedule**. The times are on the host's clock, in the
+host's time zone, which the card names (System → General sets it); a time
+that the change to summer time skips comes at the end of the skip, and one
+that the change to winter time shows twice comes the first time.
+
+- **Shut down every day at** shuts the host down at that time. Ten minutes
+  before, UNOS announces it in the health banner and to every notification
+  channel. A running job postpones it until the job ends: a run of a
+  scheduled task (and a task due within two minutes), a backup, a restore, a
+  scrub, a balance, a disk replaced or removed in a pool (also one started on
+  the host by hand), an app install, update or rollback, the off-device copy, a permissions repair,
+  or an update of UNOS. The postponement is announced too; when the jobs end,
+  the shutdown is announced again and comes ten minutes later. A shutdown still
+  waiting six hours after its time, or when the wake time passes, is dropped
+  for that day. The shutdown itself is the one of **Shutdown**: the host goes
+  down one minute later, the tab shows it as pending, and **Cancel shutdown**
+  stops it for that day. A reboot or shutdown already pending is left alone, and
+  a shutdown that would come less than ten minutes before the next wake is
+  skipped. When the host's clock is set (by NTP after a boot without an RTC, or
+  by hand), the schedule starts over from the new time.
+- **Wake every day at** sets the alarm of the host's real-time clock (RTC,
+  `/sys/class/rtc/rtc0/wakealarm`) to the next wake time, and again after each
+  wake, also when the host was shut down by its button or the tab. The card
+  shows the alarm the RTC holds. A host without an RTC, an RTC without a wake
+  alarm, or an RTC whose clock is more than five minutes off the system clock
+  (one kept in local time, or without its battery) cannot take the wake: the
+  card says why, and **Save schedule** refuses to turn the wake on. Whether the
+  board powers on from its RTC is the board's, as with Wake-on-LAN: try it once
+  before you rely on it. The wake time must come at least ten minutes after the
+  shutdown time. Turning the wake off clears the alarm.
+- **Shut down after the host has been idle for** (20 to 1440 minutes) shuts the
+  host down after it has been idle that long, announced ten minutes before. The
+  host is not idle while a page of the web interface is open (this one too),
+  someone is logged in on the host (SSH or the console), an SMB or NFS client
+  is connected, a job of the list above runs, or a disk other than the boot SD
+  card or eMMC reads and writes more than 1 MiB a minute; what UNOS cannot
+  check counts as use. The card lists why the host is not idle. The idle time
+  starts again after each use, after each start of UNOS (so after every boot)
+  and when the wake time passes. After an announcement that use withdrew, the
+  next one comes an hour later at the earliest.
+
+Nothing here writes to the system disk while UNOS checks: the schedule comes
+from the saved settings, and after a reboot or an update UNOS follows it again
+and announces a shutdown that is still due once more; a postponed shutdown is
+forgotten. The card shows the plan as it was when the tab opened or the
+schedule was saved, in this browser's time zone, which it names.
+`GET /api/v1/power/schedule` answers the next shutdown and what holds it, the
+next wake with the RTC's answer, and whether the host is idle and why not.
+
+The UPS state has no page yet (feature-list entry `system.ups-monitoring`).
 
 #### UPS (API only)
 
@@ -2710,8 +2862,10 @@ kept elsewhere, such as notification channels, scheduled tasks, firewall
 rules, UPS settings, the network settings and the host's `/etc/fstab`. Each
 backup in the list has **Restore**, **Download** and **Delete** buttons.
 
-- **Create Backup** - Makes an unencrypted backup (`.tar.gz`).
-- **Upload Backup** - Adds a backup file of at most 256 MiB: `.tar.gz`, or
+- **Create Backup** - Makes an unencrypted backup (`.tar.gz`). The database may be up to 48 MiB: a
+  larger one is refused with the limit in the message, since a restore could not hold it in memory
+  (a board with 1 GB of RAM, ADR-0406).
+- **Upload Backup** - Adds a backup file of at most 64 MiB: `.tar.gz`, or
   `.tar.gz.enc` for an encrypted backup. It is stored under a new name,
   `uploaded_<date>_<time>` with the same extension. A `.tar.gz.enc` file
   that is gzip data to its end, such as an unencrypted backup, is refused.
@@ -2925,6 +3079,7 @@ enabled channel, when it finds it:
 | A container of an app uses 90% of its memory limit; the banner keeps it until it is below 80% | warning | every 30 seconds |
 | A container of an app used 90% of its CPU limit on average for 5 minutes; kept until that average is below 70% | warning | every 30 seconds |
 | The kernel ended a process of a container of an app for lack of memory, at its memory limit or because the NAS ran out of memory; kept an hour after the last such end, so that one alert covers a container that is ended again and again | error | every 30 seconds |
+| The daily shutdown of the power settings comes in 10 minutes, or waits for running jobs; the idle shutdown comes in 10 minutes (System → Power Management) | warning | every minute |
 
 A problem is alerted once, not at every check, and stays known while it
 lasts: administrators see it in the health banner above every page, in the

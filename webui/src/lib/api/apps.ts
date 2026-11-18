@@ -240,6 +240,60 @@ export interface InstalledApp {
   missing: string[];
   /** The main container's limits and use (ADR-0390). */
   resources: ContainerResources;
+  /** The catalog's version that the main container was created for; null before the label (ADR-0408). */
+  version: string | null;
+  /** The catalog's version that the app can be updated to; null: no update (ADR-0408). */
+  update_to: string | null;
+  /** The earlier version that the app's last update kept, until a rollback or its removal. */
+  previous: AppEarlierVersion | null;
+}
+
+/** The earlier version of an app that its last update kept, stopped (ADR-0408). */
+export interface AppEarlierVersion {
+  version: string | null;
+  /** Its containers, named `<name>.previous`, and their images. */
+  containers: string[];
+  images: string[];
+  /** The copies of the app's database made before the update that are there. */
+  copies: string[];
+}
+
+/** One container of an app's update (ContainerUpdate of supervisor/src/apps/schemas.py). */
+export interface ContainerUpdate {
+  name: string;
+  companion: string | null;
+  /** The image it runs now; null for a container that the update adds. */
+  image_from: string | null;
+  /** The catalog's image it gets; null for a container that the catalog no longer has. */
+  image_to: string | null;
+  changed: boolean;
+  built_from: string | null;
+  built_to: string | null;
+}
+
+/** A data folder that an update copies on its pool before the new version starts. */
+export interface DatabaseCopy {
+  container: string;
+  folder: string;
+  copy_folder: string;
+  bytes: number;
+  pool: string;
+  pool_free_bytes: number;
+}
+
+/** What an update of an installed app would do (GET /apps/installed/{id}/update, ADR-0408). */
+export interface AppUpdatePlan {
+  template_id: string;
+  name: string;
+  version_from: string | null;
+  version_to: string;
+  platform: string;
+  containers: ContainerUpdate[];
+  /** What the pulls download, what they write to the system disk and what it has free now. */
+  download_bytes: number;
+  system_disk_bytes: number;
+  system_disk_free_bytes: number | null;
+  copies: DatabaseCopy[];
 }
 
 /** A hardware profile of one container of an app: `container` is its companion's name, or null for the main container. */
@@ -384,13 +438,16 @@ export interface AppInstallJob {
   template_id: string;
   /** The app's name in the catalog. */
   name: string;
+  /** An install, an update to the catalog's newer images or a rollback to the earlier version (ADR-0408). */
+  kind: "install" | "update" | "rollback";
   /** cancelled: an administrator cancelled it, and what it made was removed. */
   state: "running" | "succeeded" | "failed" | "cancelled";
   /**
    * The step reached: the checks before any pull, the pulls, the creates, the starts, and the
-   * removal of what a failed or cancelled install made.
+   * removal of what a failed or cancelled install made; an update also stops the app, copies its
+   * database and, after a failure, restores the earlier version.
    */
-  step: "checking" | "pulling" | "creating" | "starting" | "cleaning";
+  step: "checking" | "pulling" | "stopping" | "copying" | "creating" | "starting" | "cleaning" | "restoring";
   started_at: string;
   finished_at: string | null;
   /** Each image once, listed once the checks passed. */
@@ -449,6 +506,26 @@ export async function cancelInstallJob(id: string): Promise<void> {
 
 export async function uninstallApp(containerId: string): Promise<void> {
   return api.delete(`/apps/installed/${containerId}`);
+}
+
+/** What an update of the app would do; the server reads the registries for it (ADR-0408). */
+export async function getUpdatePlan(containerId: string): Promise<AppUpdatePlan> {
+  return api.get<AppUpdatePlan>(`/apps/installed/${encodeURIComponent(containerId)}/update`);
+}
+
+/** Start the update of the app to the catalog's newer images: its job, which the events socket follows. */
+export async function updateApp(containerId: string): Promise<AppInstallJob> {
+  return api.post<AppInstallJob>(`/apps/installed/${encodeURIComponent(containerId)}/update`);
+}
+
+/** Start the rollback of the app to the earlier version that its update kept: its job. */
+export async function rollbackApp(containerId: string): Promise<AppInstallJob> {
+  return api.post<AppInstallJob>(`/apps/installed/${encodeURIComponent(containerId)}/rollback`);
+}
+
+/** Remove the earlier version that the app's update kept, and the copy of its database. */
+export async function removeEarlierVersion(containerId: string): Promise<void> {
+  await api.delete(`/apps/installed/${encodeURIComponent(containerId)}/previous`);
 }
 
 export async function startApp(containerId: string): Promise<void> {

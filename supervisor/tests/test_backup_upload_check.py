@@ -142,14 +142,14 @@ class Case(NamedTuple):
 # which made the check fail with 500: tarfile could not seek past it.
 HOSTILE = [
     Case("decompression-bomb", lambda: _tar_gz([_file("manifest.json", MANIFEST), _file("padding", bytes(4 * MIB))]),
-         "Backup archive is too large when decompressed", BOMB_LIMIT),
+         "Backup archive is too large when decompressed: the limit is 256 KiB", BOMB_LIMIT),
     Case("bomb-in-many-members",
          lambda: _tar_gz([_file("manifest.json", MANIFEST)] + [_file(f"pad{i}", bytes(64 * KIB)) for i in range(64)]),
-         "Backup archive is too large when decompressed", BOMB_LIMIT),
+         "Backup archive is too large when decompressed: the limit is 256 KiB", BOMB_LIMIT),
     Case("bomb-after-the-end-of-the-tar", lambda: _gz(_tar([_file("manifest.json", MANIFEST)]) + bytes(4 * MIB)),
-         "Backup archive is too large when decompressed", BOMB_LIMIT),
+         "Backup archive is too large when decompressed: the limit is 256 KiB", BOMB_LIMIT),
     Case("bomb-in-a-second-gzip-member", lambda: _gz(_tar([_file("manifest.json", MANIFEST)])) + _gz(bytes(4 * MIB)),
-         "Backup archive is too large when decompressed", BOMB_LIMIT),
+         "Backup archive is too large when decompressed: the limit is 256 KiB", BOMB_LIMIT),
     Case("too-many-entries",
          lambda: _tar_gz([_file("manifest.json", MANIFEST)] + [_file(f"f{i}", b"x") for i in range(256)]),
          "Backup archive has too many entries"),
@@ -186,11 +186,11 @@ HOSTILE = [
     Case("oversized-database",
          lambda: _gz(_members([_file("manifest.json", MANIFEST)])
                      + _header("unos.db", backup_router.MAX_DB_BYTES + 1) + END_OF_TAR),
-         "unos.db in the backup archive is too large"),
+         f"unos.db in the backup archive is too large: the limit is {backup_router.MAX_DB_BYTES // MIB} MiB"),
     Case("oversized-scheduled-tasks",
          lambda: _tar_gz([_file("manifest.json", MANIFEST),
                           _file("scheduled_tasks.json", bytes(backup_router.MAX_CONFIG_BYTES + 1))]),
-         "scheduled_tasks.json in the backup archive is too large"),
+         "scheduled_tasks.json in the backup archive is too large: the limit is 1 MiB"),
     Case("missing-manifest", lambda: _tar_gz([_file("unos.db", DB)]), "Invalid backup: missing manifest"),
     Case("manifest-is-a-directory", lambda: _tar_gz([_directory("manifest.json"), _file("unos.db", DB)]),
          "Invalid backup: missing manifest"),
@@ -202,7 +202,7 @@ HOSTILE = [
          "Invalid backup: manifest.json must be a JSON object"),
     Case("oversized-manifest",
          lambda: _tar_gz([_file("manifest.json", b" " * backup_router.MAX_CONFIG_BYTES + b"{}")]),
-         "manifest.json in the backup archive is too large"),
+         "manifest.json in the backup archive is too large: the limit is 1 MiB"),
     Case("empty-file", lambda: b"", "Invalid backup: corrupt archive"),
     Case("not-gzip", lambda: b"not a gzip stream at all", "Invalid backup: corrupt archive"),
     Case("gzip-but-not-tar", lambda: _gz(b"gzip but not a tar archive" * 100), "Invalid backup: corrupt archive"),
@@ -217,10 +217,10 @@ HOSTILE = [
     Case("size-field-2**63",
          lambda: _gz(_members([_file("manifest.json", MANIFEST)]) + _header("padding", 2**63)
                      + _tar([_file("fstab", b"#\n")])),
-         "Backup archive is too large when decompressed"),
+         f"Backup archive is too large when decompressed: the limit is {backup_router.MAX_TAR_BYTES // MIB} MiB"),
     Case("size-field-2**63-of-the-database",
          lambda: _gz(_members([_file("manifest.json", MANIFEST)]) + _header("unos.db", 2**63) + END_OF_TAR),
-         "unos.db in the backup archive is too large"),
+         f"unos.db in the backup archive is too large: the limit is {backup_router.MAX_DB_BYTES // MIB} MiB"),
 ]
 
 # Accepted, as before: gzip allows zero padding and several members, and
@@ -343,8 +343,8 @@ def test_an_unusual_but_valid_archive_is_accepted_without_temporary_files(env, c
 
 
 def test_the_check_holds_only_small_pieces_of_the_archive_in_memory(env):
-    """64 MiB of decompressed data: the check reads it in pieces of at most 1 MiB, and keeps none."""
-    backup = _tar_gz([_file("manifest.json", MANIFEST), _file("padding", bytes(64 * MIB))])
+    """60 MiB of decompressed data, within the limit: the check reads it in pieces of at most 1 MiB, and keeps none."""
+    backup = _tar_gz([_file("manifest.json", MANIFEST), _file("padding", bytes(60 * MIB))])
     assert len(backup) < 256 * KIB
 
     tracemalloc.start()

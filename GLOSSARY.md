@@ -86,6 +86,23 @@ run is recorded with its status in the task's history (ADR-0044, ADR-0266, ADR-0
 **Custom task**: A scheduled task that runs a shell command as root in the supervisor's container;
 its runs record the command's output and exit status (ADR-0044, ADR-0267). Avoid: script.
 
+**Scheduled shutdown**: The daily shutdown of the power settings at a time on the clock of the
+host's time zone, announced 10 minutes ahead as a problem and postponed while a running job runs
+(ADR-0407). Avoid: auto-shutdown (the setting's name in the API, `auto_shutdown`), the UPS's shutdown.
+
+**Idle shutdown**: The shutdown of the power settings once the host has been idle for the set 20 to
+1440 minutes: no open page of the web UI, login session on the host, SMB or NFS client, running job
+or disk activity (ADR-0407). Avoid: idle timeout (a data disk's spin-down), sleep.
+
+**Running job**: Work that a scheduled shutdown waits for and that keeps the host from idling: a run
+of a scheduled task or one due within 2 minutes, a backup, a restore, a scrub, a balance, a disk
+replaced or removed in a pool, an app's install, update or rollback job, the off-device copy's work, a repair of a share's
+permissions, an update of UNOS (ADR-0407). Avoid: task (a scheduled task is one kind), process.
+
+**Wake alarm**: The alarm of the host's RTC (`/sys/class/rtc/rtc0/wakealarm`) that UNOS keeps at the
+next wake time of the power settings while the wake is on; whether the board powers on from it is
+the board's (ADR-0407). Avoid: alert (a notification), rtcwake (a tool UNOS does not run).
+
 **Notification channel**: Where UNOS sends notifications: e-mail through a mail server, a Telegram
 chat, or the URL of a webhook, Discord or Slack, set up in System > Notifications (ADR-0326).
 Avoid: notifier, integration.
@@ -319,6 +336,16 @@ restricted token.
 Account page and keeps; each one signs in once in place of a code of the authenticator app
 (ADR-0238). Avoid: backup code.
 
+**Security key**: A WebAuthn authenticator (a USB or NFC key, or a passkey of a phone or computer)
+that a user with two-factor authentication adds on the Account page; at the code step of the
+sign-in its answer to a challenge signs in once in place of a code of the authenticator app. It
+works at the web UI's address where it was added, never by IP address (ADR-0409). Avoid: passkey
+(one kind of it), hardware token, U2F key.
+
+**Relying party ID**: The host name to which WebAuthn binds a security key: the name of the web UI's
+address where the key was added, without the port, kept with the key (ADR-0409). Avoid: domain,
+RP name.
+
 **Emergency reset**: Root on the host setting a new password for an administrator and turning its
 two-factor authentication off, with `deploy/reset-admin.sh`, when no administrator can sign in;
 the audit log records it by the user root (ADR-0284). Avoid: password recovery, factory reset.
@@ -368,8 +395,33 @@ sidecar, service.
 answers it at once, and it checks, pulls the images, creates and starts the containers and
 reports each step, each image's download and each container's state, then its result or its
 error, to the App Store over the events socket. Kept in memory only, the running one and the last
-of each app; one runs at a time (ADR-0384). Avoid: install task (a task is the Scheduler's), pull
+of each app; one runs at a time (ADR-0384). An app update and an app rollback run as jobs of the
+same kind and share that one slot (ADR-0408). Avoid: install task (a task is the Scheduler's), pull
 (one step of it).
+
+**App update**: Recreating an installed app's containers from the catalog's template when the
+catalog pins newer images for it, keeping its data folders, generated secrets, settings, ports,
+group option and limits: before it runs, the App Store shows each image, what the pulls write to the
+system disk and the database copy; then a job pulls, stops the app, makes the database copy, keeps
+the earlier version and starts the new containers, or returns the app to its earlier version when
+something fails after the stop. Only an image built after the one that runs is taken, and only apps
+whose catalog pins its images are updated (ADR-0408). Avoid: upgrade, reinstall, `update.sh` (which
+updates UNOS itself).
+
+**Database copy**: The copy of a folder of an app's own data that the catalog marks
+`copy_before_update` (Immich's `postgres/data`), which an app update makes beside it on the same pool
+(`<folder>.previous`) after the app stopped and before the new version starts, and which an app
+rollback puts back in its place (ADR-0408). Avoid: database backup, dump, snapshot.
+
+**Earlier version** (of an app): The containers that an app update kept, stopped, as
+`<name>.previous`, with their images, and its database copy, until an app rollback returns to them or
+**Remove earlier version** deletes them; another update waits until then (ADR-0408). Avoid: old
+version, backup.
+
+**App rollback**: Returning an updated app to its earlier version: the newer containers are removed,
+the database copy replaces the database (what the app stored since the update is lost), and the
+earlier containers get their names back and start (ADR-0408). Avoid: restore (a backup's), rollback
+alone (what `update.sh` and `deploy.sh` do).
 
 **Generated secret**: A password file that UNOS writes once, at an app's install, beside the data
 it opens on the pool (64 hexadecimal digits, root, mode 0600), binds read-only into the

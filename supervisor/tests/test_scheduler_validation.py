@@ -608,6 +608,23 @@ def test_the_task_list_loads_when_the_key_file_cannot_be_read(env):
     assert [(t["id"], t["has_backup_key"]) for t in response.json()] == [(task["id"], None)]
 
 
+def test_a_backup_task_refuses_a_database_over_the_limit_and_names_it(backup_env, monkeypatch):
+    env = backup_env
+    monkeypatch.setattr(backup_router, "MAX_DB_BYTES", 1024 * 1024)
+    conn = sqlite3.connect(scheduler.DB_FILE)
+    conn.execute("CREATE TABLE filler (data BLOB)")
+    conn.execute("INSERT INTO filler VALUES (randomblob(2097152))")
+    conn.commit()
+    conn.close()
+    task = env.client.post("/api/v1/scheduler/tasks", json=_backup_task()).json()
+
+    run = _run_now(env, task["id"])
+
+    assert run["status"] == "failed", run
+    assert "Backup failed: The database is 2.0 MiB, over the 1 MiB limit of a backup" in run["error"], run
+    assert list(env.backups.iterdir()) == []
+
+
 def test_a_backup_task_stores_encrypted_backups(backup_env, monkeypatch):
     env = backup_env
     # The host's smb.conf, as the supervisor's container sees it: a scheduled backup holds none

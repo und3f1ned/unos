@@ -44,6 +44,7 @@ from .schemas import (
     AppPool,
     AppSource,
     AppTemplate,
+    AppEarlierVersion,
     AppVolume,
     CompanionContainer,
     ContainerLimits,
@@ -55,7 +56,7 @@ from .schemas import (
     VolumeMapping,
     is_app_data_path,
 )
-from .stacks import APP_POOL_LABEL, COMPANION_LABEL, UNOS_APP_LABEL
+from .stacks import APP_POOL_LABEL, COMPANION_LABEL, UNOS_APP_LABEL, VERSION_LABEL
 
 router = APIRouter(prefix="/apps", tags=["apps"])
 logger = logging.getLogger(__name__)
@@ -156,9 +157,11 @@ def _list_installed() -> list[InstalledApp]:
 
 
 def _installed_app(app: stacks.InstalledContainers, pools: list[AppPool], bases: list[str]) -> InstalledApp:
-    """The listing of one installed app: the fields of one container are its main container's."""
+    """The listing of one installed app: the fields of one container are its main container's.
+    An app whose update was stopped after it renamed every container keeps only its earlier ones:
+    it is listed by the first of them, missing everything else, so that it can be rolled back."""
     main = app.main
-    first = main if main is not None else app.companions[0]
+    first = main if main is not None else (app.companions or app.previous)[0]
     template_id = first.labels.get(UNOS_APP_LABEL, "")
 
     web_port = None
@@ -196,7 +199,36 @@ def _installed_app(app: stacks.InstalledContainers, pools: list[AppPool], bases:
         companions=[_companion(c) for c in app.companions],
         missing=app.missing,
         resources=_resources(main) if main is not None else ContainerResources(),
+        version=stacks.app_version(app),
+        update_to=stacks.update_to(app),
+        previous=_earlier_version(app, pools),
     )
+
+
+def _earlier_version(app: stacks.InstalledContainers, pools: list[AppPool]) -> AppEarlierVersion | None:
+    """The earlier version that the app's last update kept (ADR-0408): its containers, their images
+    and the copies of its database that are there."""
+    if not app.previous:
+        return None
+    main = next((c for c in app.previous if COMPANION_LABEL not in (c.labels or {})), None)
+    copies: list[str] = []
+    for container in app.previous:
+        spec = app.spec(container)
+        marked = {v.container for v in spec.volumes if v.copy_before_update} if spec is not None else set()
+        for bind in _bind_mounts(container):
+            copy = bind.source + COPY_SUFFIX
+            if bind.target in marked and _pool_containing(bind.source, pools) is not None and os.path.lexists(copy):
+                copies.append(copy)
+    return AppEarlierVersion(
+        version=(main.labels or {}).get(VERSION_LABEL) if main is not None else None,
+        containers=[c.name for c in app.previous],
+        images=[str((c.attrs.get("Config") or {}).get("Image") or "") for c in app.previous],
+        copies=copies,
+    )
+
+
+# The copy of a data folder that an update makes beside it (src/apps/updates.py, ADR-0408).
+COPY_SUFFIX = ".previous"
 
 
 def _companion(container: Any) -> CompanionContainer:
@@ -1286,7 +1318,7 @@ def _create_options(
 ) -> dict[str, Any]:
     """The arguments of the create of one container but its image, masked paths and network."""
     main = c.companion is None
-    labels = {UNOS_APP_LABEL: template.id}
+    labels = {UNOS_APP_LABEL: template.id, VERSION_LABEL: template.version}
     if main:
         labels.update({"unos.app.name": template.name, "unos.app.icon": template.icon})
     else:
@@ -1732,7 +1764,9 @@ def _get_app_and_container(container_id: str) -> tuple[Any, stacks.InstalledCont
     app_id = container.labels[UNOS_APP_LABEL]
     template = get_app_by_id(app_id)
     members = [container]
-    if COMPANION_LABEL in container.labels or (template is not None and template.id == key and template.companions):
+    # An app of the catalog may have companions and earlier containers that its update kept
+    # (ADR-0408): every container of it is listed.
+    if COMPANION_LABEL in container.labels or (template is not None and template.id == key):
         try:
             listed = client.containers.list(
                 all=True, filters={"label": f"{UNOS_APP_LABEL}={app_id}"}, ignore_removed=True
@@ -1740,6 +1774,8 @@ def _get_app_and_container(container_id: str) -> tuple[Any, stacks.InstalledCont
         except _DOCKER_ERRORS as e:
             raise _docker_error(e)
         members = [c for c in listed if stacks.app_key(c) == key]
+        if not any(c.name == container.name for c in members):
+            members.append(container)
     return client, stacks.group(key, members, template), container
 
 
@@ -1908,6 +1944,16 @@ def _uninstall(container_id: str) -> tuple[stacks.InstalledContainers, list[str]
             except _DOCKER_ERRORS as e:
                 raise _failed(done, _failure(app, "remove", container, e))
             done.removed.append(container.name)
+        # The earlier containers that an update kept are the app's too (ADR-0408); the copies of
+        # its database, like its data folders, stay.
+        for container in reversed(app.previous):
+            try:
+                if container.status in RUNNING_STATES:
+                    container.stop(timeout=app.stop_timeout(container))
+                container.remove()
+            except _DOCKER_ERRORS as e:
+                raise _failed(done, _failure(app, "remove", container, e))
+            done.removed.append(container.name)
         if not app.several:
             return app, [], []
         try:
@@ -1932,9 +1978,12 @@ def _uninstall(container_id: str) -> tuple[stacks.InstalledContainers, list[str]
 
 
 def _uninstalled_details(app: stacks.InstalledContainers, removed: list[str], left: list[str]) -> str:
+    earlier = f" and its earlier containers {', '.join(c.name for c in reversed(app.previous))}" if app.previous else ""
     if not app.several:
+        if earlier:
+            return f"Uninstalled the app {app.key}{earlier}; its data folders were kept"
         return f"Uninstalled the app {app.key}; its data folders were kept"
-    names = [c.name for c in reversed(app.containers)]
+    names = [c.name for c in reversed(app.containers)] + [c.name for c in reversed(app.previous)]
     networks = f" and its network {stacks.joined(removed)}" if removed else ""
     kept = f", the network {stacks.joined(left)} was left" if left else ""
     return (
@@ -2186,6 +2235,14 @@ def prepare_app_start(container: Any, pools: list[AppPool] | None = None) -> Non
     therefore never nested inside a folder another app can write to (see
     _check_no_nested_sources).
     """
+    if stacks.is_earlier(container) and UNOS_APP_LABEL in (container.labels or {}):
+        # It binds the data folders that the newer version uses now, a database among them, which
+        # two of its servers at once would destroy (ADR-0408).
+        raise HTTPException(
+            409,
+            f"{container.name} belongs to the earlier version of {container.labels[UNOS_APP_LABEL]} that its update "
+            "kept, which does not start beside the newer one: roll back to it on the App Store's Installed tab",
+        )
     if pools is None:
         pools = list_mounted_pools()
     planned = _plan_installed_binds(container, pools)

@@ -40,7 +40,7 @@ services:
     # The same tmpfs as in docker-compose.yml (see there), so that the tests
     # run backups and restores with its limit and without exec.
     tmpfs:
-      - /tmp:noexec,nosuid,nodev,size=2g
+      - /tmp:noexec,nosuid,nodev,size=192m
       # btrfs scrub rewrites its progress file in /var/lib/btrfs every 5
       # seconds while a scrub runs (hours on a large pool), each time a new
       # file renamed over the old one, which ext4 writes out at once: in RAM,

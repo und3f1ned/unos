@@ -116,7 +116,7 @@ and this index, and `make check-fast` runs it.
 | [0068](0068-own-smb-activation-needs-the-two-factor-code.md) | Turning on one's own SMB access needs the two-factor code | accepted | 2026-11-06 |
 | [0191](0191-throttle-api-token-last-used-writes.md) | Throttle the commit of an API token's last use | superseded by [0252](0252-an-api-tokens-last-use-is-committed-at-most-once-an-hour.md) | 2026-11-07 |
 | [0238](0238-recovery-codes-sign-in-once-in-place-of-a-two-factor-code.md) | Ten recovery codes each sign in once in place of a two-factor code, and end with two-factor authentication | accepted | 2026-11-07 |
-| [0239](0239-kept-authentication-practices-with-a-second-factor-before-any-token.md) | Auth keeps bcrypt, one JWT algorithm, a second factor before any token, and hashed API tokens | accepted | 2026-11-07 |
+| [0239](0239-kept-authentication-practices-with-a-second-factor-before-any-token.md) | Auth keeps bcrypt, one JWT algorithm, a second factor before any token, and hashed API tokens | superseded by [0409](0409-security-keys-sign-in-in-place-of-a-two-factor-code-verified-by-unos-itself.md) | 2026-11-07 |
 | [0251](0251-a-sign-in-answers-while-data-is-full-and-its-lost-records-go-to-the-log.md) | A sign-in answers while /data is full, and the records it cannot write go to the supervisor's log | accepted | 2026-11-07 |
 | [0252](0252-an-api-tokens-last-use-is-committed-at-most-once-an-hour.md) | An API token's last use is committed at most once an hour | accepted | 2026-11-07 |
 | [0253](0253-only-a-session-token-manages-api-tokens-and-their-number-and-names-are-bounded.md) | Only a session token manages API tokens, and their number, names and permissions are bounded | accepted | 2026-11-07 |
@@ -128,6 +128,7 @@ and this index, and `make check-fast` runs it.
 | [0386](0386-two-factor-authentication-required-for-every-account-after-a-grace-period.md) | An administrator with two-factor authentication requires it for every account, and after a grace period an account without it reaches only its setup | accepted | 2026-11-17 |
 | [0392](0392-an-api-token-can-be-limited-to-reading-and-to-areas-of-the-api.md) | An API token can be limited to reading and to areas of the API, checked where every credential is checked | accepted | 2026-11-17 |
 | [0397](0397-the-web-ui-s-session-is-an-httponly-cookie-accepted-only-from-its-own-origin.md) | The web UI's session is an HttpOnly cookie accepted only from its own origin, and programs keep Bearer tokens | accepted | 2026-11-17 |
+| [0409](0409-security-keys-sign-in-in-place-of-a-two-factor-code-verified-by-unos-itself.md) | Security keys sign in in place of a two-factor code, beside the authenticator app, verified by UNOS itself | accepted | 2026-11-18 |
 
 ## Storage
 
@@ -314,6 +315,7 @@ and this index, and `make check-fast` runs it.
 | [0384](0384-an-apps-install-runs-as-a-background-job-whose-progress-the-app-store-shows.md) | An app's install runs as a background job whose progress the App Store shows | accepted | 2026-11-17 |
 | [0390](0390-each-container-of-an-app-gets-its-own-memory-and-cpu-limits-whose-use-is-read-from-its-cgroup.md) | Each container of an app gets its own memory and CPU limits, kept by Docker and for the next install, and its use is read from its cgroup and alerted | accepted | 2026-11-17 |
 | [0403](0403-the-app-store-offers-only-apps-whose-images-publish-the-hosts-platform.md) | The App Store offers only apps whose images publish the host's platform, and the install refuses the others before any pull | accepted | 2026-11-18 |
+| [0408](0408-an-installed-app-updates-to-the-catalogs-newer-pinned-images-with-a-copy-of-its-database-and-can-be-rolled-back.md) | An installed app updates to the catalog's newer pinned images with a copy of its database, and can be rolled back | accepted | 2026-11-18 |
 
 ## Backup
 
@@ -384,6 +386,7 @@ and this index, and `make check-fast` runs it.
 | [0375](0375-the-supervisor-s-healthcheck-runs-bash-and-the-process-list-reads-ten-processes-in-full.md) | The supervisor's healthcheck runs bash, and the process list reads ten processes in full | accepted | 2026-11-13 |
 | [0388](0388-the-dashboard-shows-disk-io-and-the-stats-network-is-the-hosts-interfaces.md) | The dashboard shows the disks' I/O, and the network of the stats message is the traffic of the host's interfaces | accepted | 2026-11-17 |
 | [0399](0399-the-resource-monitor-keeps-an-hour-of-history-in-ram-and-only-administrators-get-the-hosts-processes.md) | The Resource Monitor keeps an hour of history in RAM, read once when its tab opens, and only administrators get the host's processes | accepted | 2026-11-18 |
+| [0407](0407-the-power-settings-shut-the-host-down-at-a-set-time-or-when-idle-and-arm-the-rtc-to-wake-it.md) | The power settings shut the host down at a set time or when idle, and arm the RTC to wake it | accepted | 2026-11-18 |
 
 ## Web UI
 
@@ -419,7 +422,7 @@ and this index, and `make check-fast` runs it.
 | [0049](0049-update-sh-with-backup-health-check-and-rollback.md) | Updates go through update.sh, with a backup, a health check and automatic rollback | accepted | 2026-11-05 |
 | [0050](0050-releases-as-tags-and-multi-arch-images.md) | Release with git tags and multi-arch images on GHCR | proposed | 2026-11-05 |
 | [0176](0176-docker-health-checks-and-ordered-start.md) | Both containers have health checks, and the web UI waits for a healthy supervisor | superseded by [0338](0338-health-checks-ordered-start-and-an-access-log-of-refused-and-failed-requests.md) | 2026-11-06 |
-| [0177](0177-tmpfs-cap-for-small-boards.md) | Size the /tmp tmpfs for boards with 1 GB of RAM | proposed | 2026-11-06 |
+| [0177](0177-tmpfs-cap-for-small-boards.md) | Size the /tmp tmpfs for boards with 1 GB of RAM | superseded by [0406](0406-the-supervisors-tmpfs-is-192-mib-and-a-backup-may-hold-a-database-of-48-mib.md) | 2026-11-06 |
 | [0178](0178-docker-log-rotation.md) | Rotate Docker's json-file logs when they grow | superseded by [0330](0330-docker-rotates-the-logs-of-every-container-unos-creates.md) | 2026-11-06 |
 | [0179](0179-uninstall-removes-smb-accounts.md) | Uninstall removes the SMB host accounts | superseded by [0180](0180-uninstall-keeps-smb-host-accounts.md) | 2026-11-06 |
 | [0180](0180-uninstall-keeps-smb-host-accounts.md) | Uninstall keeps the SMB host accounts and removes only their exact passdb entries | superseded by [0322](0322-uninstall-restarts-smbd-once-and-restores-smb-conf-through-a-temporary-file.md) | 2026-11-06 |
@@ -435,6 +438,7 @@ and this index, and `make check-fast` runs it.
 | [0371](0371-on-riscv64-the-web-ui-builder-runs-vite-without-the-maglev-compiler.md) | On riscv64 the web UI's builder runs vite without Node.js's Maglev compiler | superseded by [0373](0373-the-web-ui-image-of-a-spacemit-k1-is-built-on-another-machine.md) | 2026-11-13 |
 | [0373](0373-the-web-ui-image-of-a-spacemit-k1-is-built-on-another-machine.md) | The web UI's image of a SpacemiT K1 is built on another machine, and install.sh and update.sh build only the supervisor there | proposed | 2026-11-13 |
 | [0376](0376-the-banana-pi-bpi-w3-gets-no-code-of-its-own-for-the-rk3588.md) | The Banana Pi BPI-W3 gets no code of its own for the RK3588 | proposed | 2026-11-15 |
+| [0406](0406-the-supervisors-tmpfs-is-192-mib-and-a-backup-may-hold-a-database-of-48-mib.md) | The supervisor's /tmp tmpfs is 192 MiB and a backup may hold a database of 48 MiB | accepted | 2026-11-18 |
 
 ## Device
 

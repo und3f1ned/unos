@@ -1,13 +1,16 @@
 ---
-status: proposed
+status: superseded
 date: 2026-11-06
 area: deploy
 decided-by: agent
+superseded-by: ADR-0406
 ---
 
 # ADR-0177: Size the /tmp tmpfs for boards with 1 GB of RAM
 
 ## Context
+
+Superseded by ADR-0406: the owner delegated the choice, and a lower fixed cap with lower backup limits was chosen.
 
 The supervisor's `/tmp` is a tmpfs of up to 2 GiB (ADR-0171), sized so that the largest restore and a backup made meanwhile fit: three times `MAX_TAR_BYTES` (640 MiB) of `supervisor/src/backup/router.py`. The documented minimum is 1 GB of RAM (`README.md`, `docs/INSTALL.md`), so on such a board a large backup or restore could run the machine out of memory before the tmpfs is full.
 

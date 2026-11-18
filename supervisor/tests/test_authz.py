@@ -85,6 +85,11 @@ USER_ALLOWED = {
     ("POST", f"{API}/auth/tokens/{{token_id}}/toggle"),
     ("POST", f"{API}/auth/recovery-codes/generate"),
     ("GET", f"{API}/auth/recovery-codes/status"),
+    # Their own security keys (ADR-0409).
+    ("GET", f"{API}/auth/security-keys"),
+    ("POST", f"{API}/auth/security-keys/register/begin"),
+    ("POST", f"{API}/auth/security-keys/register/finish"),
+    ("DELETE", f"{API}/auth/security-keys/{{key_id}}"),
     # Own SMB access: status, turn on with the current password (and 2FA code), turn off
     ("GET", f"{API}/auth/me/smb"),
     ("POST", f"{API}/auth/me/smb/enable"),

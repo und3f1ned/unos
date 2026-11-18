@@ -627,7 +627,7 @@ async def test_a_backup_is_refused_as_soon_as_it_grows_over_the_limit(env, monke
 
     await app(target.scope(), sender.receive, sender.send)
 
-    assert (sender.status, sender.json) == (400, {"detail": "Backup file is too large"})
+    assert (sender.status, sender.json) == (400, {"detail": "Backup file is too large: the limit is 2 MiB"})
     assert sender.reads == 1 + 9  # the headers, and the pieces up to the one that passes 2 MiB
     assert target.stored() == []
 
@@ -753,19 +753,19 @@ async def test_a_file_in_another_field_is_not_stored_anywhere(env, target, name,
 
 
 async def test_the_body_limit_of_the_backup_upload_passes_through(env):
-    """257 MiB without Content-Length: a backup of 1 MiB, then data after the end of the form (ignored)."""
+    """65 MiB without Content-Length: a backup of 1 MiB, then data after the end of the form (ignored)."""
     target = _Target("backup", env)
     filler = b"x" * MIB
     seen = []
     sender = _Sender(
-        [_part(b"file", os.urandom(MIB), target.filename) + END, *[filler] * 258],
+        [_part(b"file", os.urandom(MIB), target.filename) + END, *[filler] * 66],
         on_read=lambda n: seen.append(_temporary_bytes(env)),
     )
 
     await app(target.scope(), sender.receive, sender.send)
 
-    assert (sender.status, sender.json) == (413, {"detail": "Request body too large: the limit is 257 MiB"})
-    assert sender.reads == 1 + 256  # the form (1 MiB and a little), and the fillers up to the limit
+    assert (sender.status, sender.json) == (413, {"detail": "Request body too large: the limit is 65 MiB"})
+    assert sender.reads == 1 + 64  # the form (1 MiB and a little), and the fillers up to the limit
     assert max(seen) >= MIB // 2  # the backup was in the backup directory meanwhile
     assert target.stored() == []
 

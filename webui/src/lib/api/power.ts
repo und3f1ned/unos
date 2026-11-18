@@ -7,6 +7,7 @@ export interface PowerStatus {
   load_average: number[];
 }
 
+/** The power settings; the times are on the clock of the host's time zone (ADR-0407). */
 export interface PowerConfig {
   wake_on_lan: boolean;
   auto_shutdown: boolean;
@@ -17,6 +18,65 @@ export interface PowerConfig {
   wakeup_minute: number;
   idle_shutdown: boolean;
   idle_timeout_minutes: number;
+}
+
+/** One reason why the host is not idle, or why a scheduled shutdown waits (ADR-0407). */
+export interface PowerFinding {
+  kind:
+    | "web_session"
+    | "login_session"
+    | "smb_client"
+    | "nfs_client"
+    | "disk_activity"
+    | "task"
+    | "task_due"
+    | "backup"
+    | "restore"
+    | "scrub"
+    | "balance"
+    | "disk_replace"
+    | "app_install"
+    | "app_update"
+    | "app_rollback"
+    | "offsite"
+    | "share_repair"
+    | "update"
+    | "wake_alarm"
+    | "unreadable";
+  /** A task's or an app's name, a pool's path, a client's address, a user, a disk. */
+  subject: string | null;
+  /** The pages open (web_session), the bytes moved in the last minute (disk_activity). */
+  amount: number | null;
+  /** The server's English text: what could not be read, the RTC's problem. */
+  detail: string | null;
+}
+
+/** GET /power/schedule: what the power settings will do, and what holds them (ADR-0407). */
+export interface PowerSchedule {
+  /** The host's time zone, whose clock the times of the settings follow. */
+  timezone: string;
+  shutdown: {
+    enabled: boolean;
+    time: string;
+    next: string | null;
+    state: "off" | "planned" | "announced" | "postponed" | "issued";
+    held_by: PowerFinding[];
+  };
+  wake: {
+    enabled: boolean;
+    time: string;
+    /** null while the wake is off or the RTC cannot wake the host: no wake is promised. */
+    next: string | null;
+    rtc: { available: boolean; reason: string | null; alarm: string | null };
+  };
+  idle: {
+    enabled: boolean;
+    minutes: number;
+    idle: boolean;
+    since: string | null;
+    shutdown_at: string | null;
+    found: PowerFinding[];
+  };
 }
 
 /** An Ethernet interface of the host and its Wake-on-LAN state (ADR-0233). */
@@ -55,6 +115,10 @@ export async function getPowerConfig(): Promise<PowerConfig> {
 
 export async function updatePowerConfig(config: PowerConfig): Promise<PowerConfig> {
   return api.put<PowerConfig>("/power/config", config);
+}
+
+export async function getPowerSchedule(): Promise<PowerSchedule> {
+  return api.get<PowerSchedule>("/power/schedule");
 }
 
 export async function getPendingAction(): Promise<PendingAction> {

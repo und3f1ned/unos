@@ -5,6 +5,7 @@
   import SmbAccessCard from "$lib/components/account/SmbAccessCard.svelte";
   import TwoFactorRequirementCard from "$lib/components/account/TwoFactorRequirementCard.svelte";
   import RecoveryCodes from "$lib/components/account/RecoveryCodes.svelte";
+  import SecurityKeys from "$lib/components/account/SecurityKeys.svelte";
   import LanguageCard from "$lib/components/account/LanguageCard.svelte";
   import ThemeCard from "$lib/components/account/ThemeCard.svelte";
   import ApiTokensCard from "$lib/components/account/ApiTokensCard.svelte";
@@ -644,9 +645,13 @@
       </Alert>
     {/if}
 
-    <!-- Turning 2FA off removes the codes, and a new setup starts without any. -->
+    <!-- Turning 2FA off removes the codes and the security keys, and a new setup starts without
+         any (ADR-0238, ADR-0409). -->
     {#if totpStatusLoaded && totpEnabled}
       <RecoveryCodes />
+      <SecurityKeys />
+    {:else if totpStatusLoaded}
+      <p class="mt-4 pt-4 border-t border-border text-sm text-content-secondary">{$t("securitykeys.needsTotp")}</p>
     {/if}
   </div>
 

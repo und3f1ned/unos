@@ -309,11 +309,29 @@ const INSTALLED_JELLYFIN = {
     cpu_used: 0.4,
     sampled_at: '2026-11-17T10:00:00+00:00',
   },
+  version: null,
+  update_to: null,
+  previous: null,
 };
 // An app of several containers whose machine learning stopped: its card names its containers and
 // warns about the one that does not run (ADR-0381).
 const INSTALLED_IMMICH = installedImmich(DATA, { companions: { 'machine-learning': { status: 'exited' } } });
 const INSTALLED_APPS = [INSTALLED_JELLYFIN, INSTALLED_IMMICH];
+// Immich with an update to the catalog's newer images, and what the update does, with long image
+// names and folders (GET /apps/installed/{id}/update, ADR-0408).
+const UPDATABLE_APPS = [INSTALLED_JELLYFIN, { ...INSTALLED_IMMICH, update_to: 'v3.5.0' }];
+const UPDATE_PLAN = {
+  template_id: 'immich', name: 'Immich', version_from: 'v3.4.1', version_to: 'v3.5.0', platform: 'linux/arm64',
+  containers: INSTALLED_IMMICH.companions.map((c) => ({
+    name: c.container, companion: c.name, image_from: c.image, image_to: `${c.image.split('@')[0]}:v3.5.0@sha256:${'c'.repeat(64)}`,
+    changed: true, built_from: '2026-10-01T00:00:00Z', built_to: '2026-11-15T00:00:00Z',
+  })),
+  download_bytes: 900 * 2 ** 20, system_disk_bytes: 2 * 2 ** 30, system_disk_free_bytes: 20 * 2 ** 30,
+  copies: [{
+    container: 'immich-database', folder: `${DATA}/apps/immich/postgres/data`,
+    copy_folder: `${DATA}/apps/immich/postgres/data.previous`, bytes: 2 ** 30, pool: 'e2e_data', pool_free_bytes: 2 ** 40,
+  }],
+};
 // What the limits of a container may be on a NAS of 8 GiB and 8 CPUs (GET /apps/limits, ADR-0390).
 const LIMIT_BOUNDS = { memory_min: 64 * 2 ** 20, memory_max: 8 * 2 ** 30, cpu_min: 0.1, cpu_max: 8 };
 
@@ -418,6 +436,22 @@ const LOGS = {
 
 const POWER = {
   '/api/v1/power/pending': { action: 'reboot', at: '2026-11-08T23:00:00+00:00' },
+  '/api/v1/power/config': {
+    wake_on_lan: true, auto_shutdown: true, shutdown_hour: 23, shutdown_minute: 0, auto_wakeup: true,
+    wakeup_hour: 7, wakeup_minute: 0, idle_shutdown: true, idle_timeout_minutes: 45,
+  },
+  '/api/v1/power/schedule': {
+    timezone: 'America/Argentina/ComodRivadavia',
+    shutdown: {
+      enabled: true, time: '23:00', next: '2026-11-09T02:00:00Z', state: 'postponed',
+      held_by: [{ kind: 'scrub', subject: '/mnt/pools/archive-of-the-family-photographs', amount: null, detail: null }],
+    },
+    wake: { enabled: true, time: '07:00', next: null, rtc: { available: false, reason: 'The RTC rtc0 has no wake alarm: /sys/class/rtc/rtc0/wakealarm does not exist', alarm: null } },
+    idle: {
+      enabled: true, minutes: 45, idle: false, since: null, shutdown_at: null,
+      found: [{ kind: 'smb_client', subject: 'fd12:3456:789a:1:2a0:c9ff:fe12:3456', amount: null, detail: null }],
+    },
+  },
   '/api/v1/power/wol': {
     interfaces: [
       { name: 'enp1s0', mac_address: '02:42:ac:11:00:02', supported: true, wol: 'g', enabled: true },
@@ -591,6 +625,21 @@ const EVERY_AREA = [
   'apps', 'audit', 'auth', 'backup', 'containers', 'files', 'groups', 'health', 'logs', 'monitor', 'network',
   'notifications', 'offsite', 'power', 'scheduler', 'security', 'shares', 'snapshots', 'storage', 'system', 'updates',
 ];
+// The security keys of an account with two-factor authentication (SecurityKeyInfo of
+// supervisor/src/auth/security_keys.py, ADR-0409): a name of 64 characters (NAME_CHARS) with no place
+// to break, and the address of a long host name where it works.
+const LONG_KEY_NAME = 'yubikeyfivenfconthekeyringofthefamilyintheoldhouseatthecorner064';
+const SECURITY_KEYS = {
+  ...SECURITY,
+  '/api/v1/auth/totp/status': { enabled: true, required: false },
+  '/api/v1/auth/recovery-codes/status': { remaining: 10, generated: true },
+  '/api/v1/auth/security-keys': [
+    { id: 1, name: LONG_KEY_NAME, origin: `https://${LONG_HOST_NAME}:8443`, created_at: '2026-11-01T09:00:00Z',
+      last_used_at: '2026-11-16T03:00:00Z', usable: true },
+    { id: 2, name: 'Spare key', origin: null, created_at: null, last_used_at: null, usable: false },
+  ],
+};
+
 const API_TOKENS = {
   ...SECURITY,
   '/api/v1/auth/tokens': [
@@ -1122,6 +1171,13 @@ const VIEWS: View[] = [
     end: (page) => tokensRegion(page).getByRole('button', { name: /^(Delete Token|Удалить токен)$/ }).last(),
   },
   {
+    name: 'System: Security, security keys',
+    path: '/system#security',
+    fake: (page) => serve(page, SECURITY_KEYS),
+    shows: (page) => page.getByText(LONG_KEY_NAME),
+    end: (page) => page.getByRole('button', { name: /^(Add a security key|Добавить ключ безопасности)$/ }),
+  },
+  {
     name: 'System: Security, the sign-in history',
     path: '/system#security',
     fake: (page) => serve(page, { ...SECURITY, '/api/v1/security/login-history': LOGIN_HISTORY }),
@@ -1451,6 +1507,22 @@ const VIEWS: View[] = [
     end: dialogEnd,
   },
   {
+    // The update of an app to the catalog's newer images: its containers, the system disk and the
+    // copy of its database on the pool (ADR-0408).
+    name: 'Dialog: the update of an app',
+    path: '/apps',
+    fake: (page) => serve(page, {
+      '/api/v1/apps/installed': UPDATABLE_APPS, '/api/v1/apps/installed/e2e-immich-id/update': UPDATE_PLAN,
+    }),
+    open: async (page) => {
+      await page.getByRole('button', { name: /^(Installed|Установленные) \(2\)$/ }).click();
+      await page.getByRole('button', { name: /^(Update to|Обновить до) v3\.5\.0$/ }).click();
+    },
+    shows: (page) => page.getByRole('dialog').getByText(/data\.previous/),
+    start: dialogTitle,
+    end: dialogEnd,
+  },
+  {
     // Its image, ghcr.io/blakeblackshear/frigate:stable, has no hyphen to break at.
     name: 'Dialog: an app with a long image name',
     path: '/apps',
@@ -1610,6 +1682,26 @@ const VIEWS: View[] = [
     start: (page) =>
       page.getByRole('heading', { name: /^(Setup Two-Factor Authentication|Настройка двухфакторной аутентификации)$/ }),
     end: (page) => page.getByRole('button', { name: /^(Enable 2FA|Включить 2FA)$/ }),
+  },
+  {
+    name: 'Dialog: add a security key',
+    path: '/system#security',
+    fake: (page) => serve(page, SECURITY_KEYS),
+    open: (page) =>
+      page.locator('main').getByRole('button', { name: /^(Add a security key|Добавить ключ безопасности)$/ }).click(),
+    shows: (page) => page.getByRole('dialog').getByLabel(/^(Current password|Текущий пароль)/),
+    start: dialogTitle,
+    end: dialogEnd,
+  },
+  {
+    name: 'Dialog: remove a security key',
+    path: '/system#security',
+    fake: (page) => serve(page, SECURITY_KEYS),
+    open: (page) =>
+      page.locator('main').getByRole('button', { name: new RegExp(`^(Remove|Удалить) ${LONG_KEY_NAME}$`) }).click(),
+    shows: (page) => page.getByRole('dialog').getByText(LONG_KEY_NAME),
+    start: dialogTitle,
+    end: dialogEnd,
   },
   {
     name: 'Dialog: turn off two-factor authentication',

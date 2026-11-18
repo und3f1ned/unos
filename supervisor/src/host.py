@@ -49,7 +49,8 @@ logger = logging.getLogger(__name__)
 # systemd-resolved runs, else /etc/resolv.conf), apps/preflight.py (ss: the host
 # ports that an app's install would take; sh with df: the free space of the system
 # disk before its pulls, ADR-0381), power/router.py (shutdown,
-# busctl, systemctl, ip, ethtool: ADR-0233), logs/router.py (journalctl, under
+# busctl, systemctl, ip, ethtool: ADR-0233), power/schedule.py (shutdown, busctl and ss; sh
+# with cat, which read and set the RTC's wake alarm: ADR-0407), logs/router.py (journalctl, under
 # timeout: ADR-0257, ADR-0258), system/router.py (timedatectl under timeout, hostname:
 # ADR-0331) and notifications/router.py (curl, which sends a notification channel's
 # request from the host's network when the container connects nowhere, and ends

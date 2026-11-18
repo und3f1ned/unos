@@ -140,6 +140,15 @@ significant step. Features and their state live in `feature-list.json`, decision
   serves, with its local CA as the fallback (`security.custom-certificates`, ADR-0404, superseding
   ADR-0357), and a dark, light or system theme for each user (`webui.light-theme`, ADR-0405). All
   four pass; the catalog's check on the BPI-F3 is the owner's.
+- On 2026-11-18 (Log): the twelfth batch on the branch `mvp.batch-12`, merged into `main` with
+  its record: a supervisor tmpfs of 192 MiB on every board and a backup's database of at most
+  48 MiB (`deploy.tmpfs-for-small-boards`, ADR-0406), power settings that shut the host down at a
+  set time or when idle and arm the RTC to wake it (`system.scheduled-power`, ADR-0407), an
+  update in place of an installed app with a rollback to its earlier image
+  (`apps.update-in-place`, ADR-0408), and security keys (WebAuthn) as a second factor
+  (`auth.security-keys`, ADR-0409, superseding ADR-0239). Three pass; the update in place waits
+  for pinned catalog images. A real scheduled shutdown and wake and a hardware key in a browser
+  are the owner's.
 - On the device the NFS server runs (nfs-server, rpcbind.socket and rpcbind, enabled since
   2026-11-08, ADR-0303) and exports nothing for now; over IPv6 only LAN sources reach it
   (ADR-0301). avahi-daemon and wsdd2 run (network discovery), and nmbd is disabled since
@@ -190,7 +199,7 @@ significant step. Features and their state live in `feature-list.json`, decision
 
 ## Dev device
 
-State on 2026-11-18, 11:10 UTC. A Banana Pi BPI-W3 (ArmSoM W3, Rockchip RK3588, 8 GB), running
+State on 2026-11-18, 16:10 UTC. A Banana Pi BPI-W3 (ArmSoM W3, Rockchip RK3588, 8 GB), running
 Armbian's community image for `armsom-w3`, upgraded on 2026-11-15 from 26.2.0-trunk.151 to
 26.11.0-trunk.133 (Debian 13, kernel 6.1.172-vendor-rk35xx);
 its address and logins are in `dev.env` (ADR-0212). This journal called it a UGREEN board, after
@@ -201,12 +210,18 @@ the UGREEN firmware on its eMMC, until the owner set that right on 2026-11-15 (A
   since boot, its own wear estimate 0 to 10%. Nothing writes to it.
 - SSH by key only, root by the workstation's key `~/.ssh/unos_dev_ed25519`; root's and the UNOS
   administrator's passwords were rotated and live only in `dev.env` (ADR-0226).
-- Runs f281749 of the branch `mvp.batch-11` (the eleventh batch, ADR-0402 to ADR-0405), merged
+- Runs 09e792a of the branch `mvp.batch-12` (the twelfth batch, ADR-0406 to ADR-0409), merged
+  into `main` with the record of its device check, whose commits on top of it change no runtime
+  file. Deployed on 2026-11-18 at 14:55 to 14:56 UTC (SD MiB sync 4.902, build-supervisor 15.219,
+  build-webui 20.574, up 5.945, check.sh 0.844). A reboot from the API at 15:07 UTC (all
+  containers healthy by 15:09). The supervisor's tmpfs is 192 MiB; the power settings are all
+  off and the RTC holds no alarm. The device's users are `admin` and `test` (since 2026-01-24).
+- Before it, f281749 of the branch `mvp.batch-11` (the eleventh batch, ADR-0402 to ADR-0405), merged
   into `main` with the record of its device check, whose commits on top of it change no runtime
   file. Deployed on 2026-11-18 at 10:06 to 10:08 UTC (SD MiB sync 4.434, build-supervisor 13.746,
   build-webui 20.094, up 6.012, check.sh 0.262). A reboot from the API at 10:15 UTC (all
   containers healthy by 10:16). Caddy serves its local CA; a stored certificate from before stays
-  stored and not served. The device's users are `admin` and `test` (since 2026-01-24).
+  stored and not served.
 - Before it, 5412b79 of the branch `mvp.batch-10` (the tenth batch, ADR-0398 to ADR-0401), merged into
   `main` with the record of its device check, whose commits on top of it change no runtime file.
   Deployed on 2026-11-18 at 06:22 to 06:23 UTC (SD MiB sync 7.066, build-supervisor 14.367,
@@ -591,6 +606,34 @@ Open owner actions:
     API, the SD MiB and the audit log meanwhile.
 
 ## Log
+
+### 2026-11-18: A twelfth batch: tmpfs for small boards, scheduled power, update in place, security keys
+
+- Four entries built in parallel worktrees from main 145632f, each reviewed in a fresh context
+  by its own builder, which fixed its findings. Recorded, not fixed: restic's cache of an S3 store
+  is unbounded in /tmp, and the 48 MiB limit of a backup's database holds on every board
+  (`deploy.tmpfs-for-small-boards`); the power card reads the plan without polling, a damaged
+  settings file leaves an alarm set before, a SMART self-test holds nothing, the UPS's
+  low-battery shutdown stays with `system.ups-monitoring` and the Wake-on-LAN flag is unused
+  (`system.scheduled-power`); the rollback relies on the current catalog's copy marks, the
+  registry reads have no overall timeout and images built reproducibly are never newer
+  (`apps.update-in-place`); turning two-factor authentication off removes the keys without the
+  password, a registration refused after the touch leaves the credential in the authenticator,
+  and an administrator cannot reset a regular user's two-factor authentication (ADR-0284)
+  (`auth.security-keys`).
+- Merged as ADR-0406 to ADR-0409 in that order. Joined by hand: the power plan's running jobs
+  name an app's update and rollback (findings app_update and app_rollback, from the install jobs
+  of ADR-0408), in the backend, the card and both catalogs. `make check` 9696 passed, 123
+  skipped, 1 xfailed; the full E2E run 995 passed, 14 skipped.
+- Device check of 09e792a (SD MiB per step in each entry's notes): before a reboot from the API
+  at 15:07 UTC, the tmpfs and the database size, the power settings armed far ahead and put back
+  (the RTC's alarm matched the plan, nothing logged a minute), the update's refusal paths with no
+  container changed, and a software security key of a temporary regular user, audited with no
+  secret. After it: the tmpfs, the alarm and the refusals as before; `scenario.sh all` (every
+  area passed, smart's two sleep steps skipped while Immich uses the pool; about 23 MiB in all);
+  the audit chain unbroken over 2577 entries. No fault of UNOS. Not run on the device: a real
+  shutdown and wake, a real update and rollback (transmission floats on latest until
+  `apps.pinned-catalog-images`), and a hardware key in a browser.
 
 ### 2026-11-18: An eleventh batch: audit of the rest, image platforms, served certificate, light theme
 

@@ -71,7 +71,7 @@ from .. import database
 from ..times import UtcDatetime, from_epoch, stored_time_text, utc_now
 from ..audit.changes import audit_change
 from ..audit.schemas import AuditAction, AuditSeverity
-from ..auth import requirement, scopes
+from ..auth import requirement, scopes, webauthn
 from ..auth.utils import CallerSession, caller_session, forget_unstored_sessions, verify_token
 from ..config import get_settings
 from ..database import init_db
@@ -95,10 +95,13 @@ router = APIRouter(prefix="/backup", tags=["backup"])
 BACKUP_DIR = Path("/data/backups")
 BACKUP_VERSION = "1.0"
 
-# Limits for archives that are uploaded or restored.
-MAX_ARCHIVE_BYTES = 256 * 1024 * 1024  # the .tar.gz / .tar.gz.enc file
-MAX_TAR_BYTES = 640 * 1024 * 1024  # the decompressed tar stream
-MAX_DB_BYTES = 512 * 1024 * 1024
+# Limits for backups, made, uploaded or restored (ADR-0406). They follow the supervisor's /tmp tmpfs
+# (deploy/docker-compose.yml, 192 MiB, which a board with 1 GB of RAM can spare): a restore holds the
+# database there, and a backup made meanwhile holds its copy and the small files. The archive may hold
+# the incompressible database and its small files, and an encrypted restore reads it into RAM twice.
+MAX_ARCHIVE_BYTES = 64 * 1024 * 1024  # the .tar.gz / .tar.gz.enc file
+MAX_TAR_BYTES = 64 * 1024 * 1024  # the decompressed tar stream
+MAX_DB_BYTES = 48 * 1024 * 1024
 MAX_CONFIG_BYTES = 1024 * 1024
 MAX_MEMBERS = 256
 PRE_RESTORE_COPIES = 5
@@ -148,12 +151,36 @@ _EXTENDED_HEADERS = frozenset(
 _restore_lock = threading.Lock()
 # A restore request is running (its locked part may outlive a cancelled request).
 _restore_running = False
+# How many backups made by hand (POST /create) are being written now.
+_backups_running = 0
+
+
+def backup_running() -> bool:
+    """Whether a backup made by hand is being written: a running job for the power schedule (ADR-0407)."""
+    return _backups_running > 0
+
+
+def restore_running() -> bool:
+    """Whether a restore runs: a running job for the power schedule (ADR-0407)."""
+    return _restore_running
 
 SMB_REPAIRED_AT_START = "SMB state is repaired at the next start"
 
 
 class BackupValidationError(Exception):
     """The archive is not an acceptable UNOS backup (reported as HTTP 400)."""
+
+
+class BackupTooLarge(BackupValidationError):
+    """The database is over the limit of a backup (answered 413 by Create Backup, ADR-0406)."""
+
+
+def limit_text(limit: int) -> str:
+    """A limit as a person reads it: 64 MiB, 256 KiB, 100 bytes."""
+    for unit, name in ((1024 * 1024, "MiB"), (1024, "KiB")):
+        if limit % unit == 0:
+            return f"{limit // unit} {name}"
+    return f"{limit} bytes"
 
 
 class RestoreSpaceError(Exception):
@@ -223,9 +250,12 @@ def encrypt_file(data: bytes | memoryview, passphrase: str) -> bytes:
 
 def decrypt_file(encrypted_data: bytes, passphrase: str) -> bytes:
     """Decrypt data using AES-256-GCM."""
-    salt = encrypted_data[:SALT_SIZE]
-    nonce = encrypted_data[SALT_SIZE:SALT_SIZE + NONCE_SIZE]
-    ciphertext = encrypted_data[SALT_SIZE + NONCE_SIZE:]
+    # Slices of a memoryview, not copies: a restore of a backup of 64 MiB holds the file and its plain
+    # text, not a third copy of the ciphertext (ADR-0406).
+    view = memoryview(encrypted_data)
+    salt = bytes(view[:SALT_SIZE])
+    nonce = bytes(view[SALT_SIZE:SALT_SIZE + NONCE_SIZE])
+    ciphertext = view[SALT_SIZE + NONCE_SIZE:]
     key = derive_key(passphrase, salt)
     aesgcm = AESGCM(key)
     return aesgcm.decrypt(nonce, ciphertext, None)
@@ -276,6 +306,28 @@ def copy_database(src: Path, dest: Path) -> None:
             target.close()
     finally:
         source.close()
+
+
+def _database_bytes(path: Path) -> int:
+    """The size of a database file; the copy itself is checked again after it is made (the write-ahead
+    log, which the backup API copies into it, may not have been truncated yet and overstates it)."""
+    return path.stat().st_size
+
+
+def _refuse_database_over_the_limit(size: int) -> None:
+    if size > MAX_DB_BYTES:
+        raise BackupTooLarge(
+            f"The database is {size / 1024 / 1024:.1f} MiB, over the {limit_text(MAX_DB_BYTES)} limit of a backup: "
+            "a restore could not hold it in memory")
+
+
+def copy_database_for_backup(src: Path, dest: Path) -> None:
+    """copy_database into a backup's content, refused as BackupTooLarge when the database is over
+    MAX_DB_BYTES (ADR-0406): before the copy, on the live file, so that nothing is written to /tmp,
+    and after it, for a database that grew meanwhile."""
+    _refuse_database_over_the_limit(_database_bytes(src))
+    copy_database(src, dest)
+    _refuse_database_over_the_limit(dest.stat().st_size)
 
 
 def _open_readonly(path: Path) -> sqlite3.Connection:
@@ -392,7 +444,7 @@ def _replace_database(restored: Path, db_path: Path) -> None:
 def _open_archive(backup_path: Path, passphrase: str | None) -> BinaryIO:
     """Open the gzip stream of a backup, decrypting it first if a passphrase is given."""
     if backup_path.stat().st_size > MAX_ARCHIVE_BYTES:
-        raise BackupValidationError("Backup file is too large")
+        raise BackupValidationError(f"Backup file is too large: the limit is {limit_text(MAX_ARCHIVE_BYTES)}")
     if passphrase is None:
         return open(backup_path, "rb")
     data = backup_path.read_bytes()
@@ -440,7 +492,7 @@ def _scan_members(tar: Iterable[tarfile.TarInfo]) -> dict[str, tarfile.TarInfo]:
             if limit is None:
                 continue  # not part of a UNOS backup: ignored
             if member.size > limit:
-                raise BackupValidationError(f"{name} in the backup archive is too large")
+                raise BackupValidationError(f"{name} in the backup archive is too large: the limit is {limit_text(limit)}")
             if member.size < 0:  # a base-256 size field can be negative
                 raise BackupValidationError("Invalid backup: corrupt archive")
             wanted[name] = member
@@ -528,6 +580,10 @@ def _extract(tar: tarfile.TarFile, members: dict[str, tarfile.TarInfo], dest: Pa
         raise BackupValidationError(f"Invalid backup: {e}") from e
 
 
+def _too_large_decompressed() -> str:
+    return f"Backup archive is too large when decompressed: the limit is {limit_text(MAX_TAR_BYTES)}"
+
+
 class _DecompressedStream:
     """The decompressed data of a gzip stream, as tarfile reads it in stream mode.
 
@@ -547,7 +603,7 @@ class _DecompressedStream:
             raise BackupValidationError("Invalid backup: corrupt archive") from e
         self.size += len(data)
         if self.size > MAX_TAR_BYTES:
-            raise BackupValidationError("Backup archive is too large when decompressed")
+            raise BackupValidationError(_too_large_decompressed())
         return data
 
     def read_to_end(self) -> None:
@@ -559,7 +615,7 @@ class _DataPastTheLimit(BackupValidationError):
     """A member's data would end past MAX_TAR_BYTES (_stream_members)."""
 
     def __init__(self) -> None:
-        super().__init__("Backup archive is too large when decompressed")
+        super().__init__(_too_large_decompressed())
 
 
 def _stream_members(
@@ -745,7 +801,7 @@ class _BackupUpload(UploadSink):
         self.tmp: Path | None = None
 
     def too_large(self) -> Exception:
-        return BackupValidationError("Backup file is too large")
+        return BackupValidationError(f"Backup file is too large: the limit is {limit_text(MAX_ARCHIVE_BYTES)}")
 
     def prepare(self) -> None:
         ensure_backup_dir()
@@ -897,6 +953,8 @@ def _restore_locked(backup_path: Path, passphrase: str | None) -> dict:
             previous_db = _keep_copy_of_database(db_path)
             _replace_database(db_file, db_path)
             forget_unstored_sessions()
+            # The pending challenges of security keys name users by id (ADR-0409).
+            webauthn.forget_challenges()
             restored.append("database")
             if two_factor_change is not None:
                 warnings.append(TWO_FACTOR_REQUIRED_BY_RESTORE if two_factor_change else TWO_FACTOR_NOT_REQUIRED_BY_RESTORE)
@@ -1116,7 +1174,7 @@ def _collect_backup_content(content: Path, *, encrypted: bool) -> None:
     # database in use can be torn and would then fail the restore check.
     db_path = _live_db_path()
     if db_path is not None and db_path.exists():
-        copy_database(db_path, content / "unos.db")
+        copy_database_for_backup(db_path, content / "unos.db")
 
 
 def _write_archive(content: Path, out: BinaryIO) -> None:
@@ -1217,11 +1275,17 @@ async def create_backup(
     if config.encrypt and not config.passphrase:
         raise HTTPException(400, "Passphrase required for encrypted backup")
 
+    global _backups_running
+    _backups_running += 1
     try:
         result = await asyncio.to_thread(_create_backup, config)
+    except BackupTooLarge as e:
+        raise HTTPException(413, str(e)) from e
     except Exception as e:
         logger.exception("Could not create backup")
         raise HTTPException(500, f"Failed to create backup: {e}") from e
+    finally:
+        _backups_running -= 1
     await audit_change(
         AuditAction.BACKUP_CREATED, request, user.username, resource_type="backup",
         resource_id=result["backup"].filename,

@@ -25,6 +25,13 @@ manager, encrypted backup uploads, health checks, CI checks).
   `<button>` or a raw palette colour outside `lib/components/ui` (ADR-0400). New tokens keep the old
   look, within what a token allows: `brand`, `surface-hover`, `border-strong`, `content-soft`, `content-on-brand`, `status-neutral`.
 
+- The supervisor's `/tmp` tmpfs is 192 MiB, down from 2 GiB, so that a board with 1 GB of RAM cannot be
+  run out of memory by a backup or a restore, and the backup limits follow it: a backup's database
+  may be 48 MiB (was 512), an uploaded or stored backup file 64 MiB (was 256) and the decompressed
+  archive 64 MiB (was 640). A database over the limit is refused before it is copied by Create
+  Backup (413), by a scheduled backup task and by the off-device copy, and every refusal of a
+  backup's size now names the limit (ADR-0406).
+
 ### Security
 - The audit log records the firewall (turned on or off, rules added and removed, reset), clearing the
   login history, pools mounted, unmounted and imported, containers created, images pulled and removed,
@@ -423,6 +430,43 @@ manager, encrypted backup uploads, health checks, CI checks).
   `ups_name`, `host` and `port` are checked before they reach `upsc`.
 
 ### Added
+- The power settings act on the host (ADR-0407). System → Power Management has a **Shutdown and
+  wake schedule**: a daily shutdown at a time on the host's clock, announced 10 minutes ahead in the
+  health banner and to every notification channel and postponed while a job runs (a task, a backup,
+  a restore, a scrub, a balance, a disk replace, an app install, update or rollback, the off-device copy, a permissions
+  repair, an update), then announced again; a daily
+  wake by the RTC's wake alarm, refused with the reason on a host whose RTC cannot take it; and a
+  shutdown after the host has been idle for 20 to 1440 minutes, where open pages of the web
+  interface, login sessions, SMB and NFS clients, jobs and disk activity count as use. The card
+  shows the next shutdown and what holds it, the next wake and the RTC's alarm, and why the host is
+  not idle (`GET /api/v1/power/schedule`). `PUT /api/v1/power/config` checks the hours, minutes and
+  the idle time, and refuses settings that act on the host where host commands run locally.
+- An installed app whose catalog pins its images updates in place to the catalog's newer images
+  (**Update to** on the App Store's Installed tab): a dialog first shows each container's image,
+  what the pulls download and write to the system disk (only the layers Docker lacks, read from the
+  registry's manifests) and the copy of the database on the pool; then a background job (over
+  `/ws/v1/events`, one install, update or rollback at a time) pulls, stops the app, copies its
+  database (Immich's) beside itself on the pool, keeps the earlier containers as `<name>.previous`
+  and starts the new ones with the data folders, password files, settings, ports, the group option
+  and the limits kept. A failure or a cancel after the stop returns the app to its earlier version (or,
+  when the copy cannot go back in place, leaves it stopped for a rollback). The Containers page does
+  not start the earlier containers, nor start, restart or remove an app's containers while a change of
+  that app runs.
+  **Roll back** returns to the earlier containers and the copy of the database; **Remove earlier
+  version** removes them. Only an image built after the one that runs is accepted. New routes
+  `GET`/`POST /api/v1/apps/installed/{id}/update`, `POST .../rollback`, `DELETE .../previous`;
+  `GET /api/v1/apps/installed` adds `version`, `update_to` and `previous`; install jobs add `kind`;
+  containers get the label `unos.app.version`; audited as `app_updated`, `app_rolled_back` and
+  `app_earlier_version_removed` (ADR-0408).
+- Security keys as a second factor: a user with two-factor authentication adds a USB or NFC key,
+  or a passkey, on the Account page (**Two-Factor Authentication** → **Security keys**), with the
+  password and a touch of the key, and at the code step of the sign-in **Use a security key** signs
+  in with a touch in place of the app's code. Up to 10 keys per account, each removed with the
+  password; a key works at the address where it was added and never by IP address, and a signature
+  counter that goes backwards is refused. Turning two-factor authentication off, and the emergency
+  reset of an administrator, remove the keys. UNOS verifies WebAuthn itself (attestation none,
+  ES256, EdDSA and RS256), with no new dependency; audited as `security_key_added`,
+  `security_key_removed` and the sign-ins (ADR-0409, which supersedes ADR-0239).
 - The App Store shows which apps have an image for the host's platform: every image of the
   catalog has its Linux platforms recorded from its registry (`image_platforms.json`), the
   catalog API answers `platforms`, `host_platform` and `available`, an app whose image lacks the

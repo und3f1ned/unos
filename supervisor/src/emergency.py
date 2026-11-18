@@ -8,7 +8,8 @@ reset-admin takes the administrator NAME, or the only administrator. The new pas
 twice on a terminal, without echo; otherwise it is the first line of standard input. It never
 comes from the command line or the environment, which other processes of the host can read
 (ADR-0125). One UPDATE stores its hash and turns two-factor authentication off, only while the
-account is still as it was read; then the audit log records the change, by the user root.
+account is still as it was read, and its security keys are deleted in the same commit (ADR-0409);
+then the audit log records the change, by the user root.
 
 No route of the API reaches this module: it runs only in a process of its own, in the
 supervisor's container, and no other module imports it.
@@ -33,7 +34,7 @@ from sqlalchemy.pool import NullPool
 
 from .audit.router import log_action
 from .audit.schemas import AuditAction, AuditSeverity
-from .auth.models import User, UserSession
+from .auth.models import SecurityKey, User, UserSession
 from .auth.schemas import MAX_PASSWORD_BYTES
 from .auth.utils import hash_password
 from .config import get_settings
@@ -159,10 +160,11 @@ def _read_password(stdin: TextIO | None, name: str) -> str:
     return password
 
 
-def _store(engine: Engine, admin: Administrator, hashed: str) -> None:
+def _store(engine: Engine, admin: Administrator, hashed: str) -> int:
     """Store the new hash and turn two-factor authentication off, as turning it off does
     (ADR-0238), in one UPDATE that changes the row only while it is as it was read; the
-    administrator's sessions end in the same commit (ADR-0329)."""
+    administrator's sessions end, and its security keys go, in the same commit (ADR-0329,
+    ADR-0409). How many keys went."""
     with Session(engine) as session:
         result = session.execute(
             update(User)
@@ -182,14 +184,17 @@ def _store(engine: Engine, admin: Administrator, hashed: str) -> None:
                 "run the command again."
             )
         session.execute(delete(UserSession).where(UserSession.user_id == admin.id))
+        keys = session.execute(delete(SecurityKey).where(SecurityKey.user_id == admin.id)).rowcount or 0
         session.commit()
+    return keys
 
 
-async def _record(admin: Administrator) -> list[str]:
+async def _record(admin: Administrator, keys: int) -> list[str]:
     """The audit entries of the reset; what kept any of them from being written."""
     entries = [(AuditAction.PASSWORD_CHANGE, PASSWORD_DETAILS)]
     if admin.totp_enabled:
-        entries.append((AuditAction.TOTP_DISABLED, TOTP_DETAILS))
+        key_text = f"{keys} security key" if keys == 1 else f"{keys} security keys"
+        entries.append((AuditAction.TOTP_DISABLED, f"{TOTP_DETAILS} and {key_text}" if keys else TOTP_DETAILS))
     problems = []
     for action, details in entries:
         try:
@@ -221,14 +226,16 @@ def reset_admin(name: str | None) -> int:
             raise EmergencyError(f"{problem}.")
         hashed = hash_password(password)
         try:
-            _store(engine, admin, hashed)
+            keys = _store(engine, admin, hashed)
         except SQLAlchemyError as exc:
             raise EmergencyError(f"Could not write the UNOS database {db_path}: {_reason(exc)}.") from None
     finally:
         engine.dispose()
 
-    problems = asyncio.run(_record(admin))
+    problems = asyncio.run(_record(admin, keys))
     shown = _shown(admin.username)
+    if keys:
+        _say(f"Administrator '{shown}': its security keys are removed.")
     if admin.totp_enabled:
         _say(f"Administrator '{shown}': the password is reset, and two-factor authentication is off.")
         _say("Sign in with the new password, then turn two-factor authentication on again and generate "

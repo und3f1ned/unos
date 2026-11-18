@@ -223,6 +223,23 @@ def check_space(client: Any, template: AppTemplate, images: Iterable[str]) -> No
     raise HTTPException(409, detail)
 
 
+def system_disk_free(client: Any) -> int | None:
+    """The free space of the system disk for Docker's images: the lower of those of the file
+    systems of Docker's root folder and of the containerd image store; None for a host that has
+    neither (logged by the caller's check); 500 when it cannot be read. Blocks."""
+    try:
+        root = client.info().get("DockerRootDir")
+    except DOCKER_ERRORS as exc:
+        raise _unread(str(exc)) from exc
+    if not isinstance(root, str) or not root.startswith("/"):
+        raise _unread("Docker names no root folder")
+    free = _free_bytes([root, CONTAINERD_ROOT])
+    if free is None:
+        logger.warning("Could not read the free space of the system disk: the host has none of %s, %s", root,
+                       CONTAINERD_ROOT)
+    return free
+
+
 def _missing_pins(client: Any, images: Iterable[str]) -> list[PinnedImage]:
     """The pinned images of ``images``, each once, that Docker's image store lacks."""
     missing: list[PinnedImage] = []

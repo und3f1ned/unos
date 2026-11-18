@@ -23,6 +23,7 @@ from src import host, main
 files = importlib.import_module("src.files.router")
 health = importlib.import_module("src.health.router")
 power = importlib.import_module("src.power.router")
+power_schedule = importlib.import_module("src.power.schedule")
 app_usage = importlib.import_module("src.apps.usage")
 monitor_history = importlib.import_module("src.monitor.history")
 scheduler = importlib.import_module("src.scheduler.router")
@@ -34,6 +35,8 @@ LOOPS = {
     "raid_monitor": (health, "raid_monitor_loop", "_raid_monitor_task"),
     "smart_monitor": (health, "smart_monitor_loop", "_smart_monitor_task"),
     "ups_monitor": (power, "ups_monitor_loop", "_ups_monitor_task"),
+    # The scheduled shutdown, the wake alarm and the idle shutdown of the power settings (ADR-0407).
+    "power_schedule": (power_schedule, "power_schedule_loop", "_loop_task"),
     # Deletes for good what has been in the trash for 30 days (ADR-0259).
     "trash_expiry": (files, "trash_expiry_loop", "_trash_expiry_task"),
     # Looks for the hidden files that uploads left when the supervisor stopped (ADR-0354).

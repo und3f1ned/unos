@@ -28,10 +28,46 @@
 	const STEP: Record<AppInstallJob['step'], string> = {
 		checking: 'apps.job.step.checking',
 		pulling: 'apps.job.step.pulling',
+		stopping: 'appUpdates.step.stopping',
+		copying: 'appUpdates.step.copying',
 		creating: 'apps.job.step.creating',
 		starting: 'apps.job.step.starting',
-		cleaning: 'apps.job.step.cleaning'
+		cleaning: 'apps.job.step.cleaning',
+		restoring: 'appUpdates.step.restoring'
 	};
+	// What an update and a rollback (ADR-0408) say instead of an install's words.
+	const LABEL: Record<AppInstallJob['kind'], string> = {
+		install: 'apps.job.label',
+		update: 'appUpdates.job.update',
+		rollback: 'appUpdates.job.rollback'
+	};
+	const RUNNING: Record<AppInstallJob['kind'], string> = {
+		install: 'apps.job.state.running',
+		update: 'appUpdates.state.update',
+		rollback: 'appUpdates.state.rollback'
+	};
+	const SUCCEEDED: Record<AppInstallJob['kind'], string> = {
+		install: 'apps.job.state.succeeded',
+		update: 'appUpdates.state.updated',
+		rollback: 'appUpdates.state.rolledBack'
+	};
+	const FAILED: Record<AppInstallJob['kind'], string> = {
+		install: 'apps.detail.installFailed',
+		update: 'appUpdates.updateFailed',
+		rollback: 'appUpdates.rollbackFailedTitle'
+	};
+
+	/** The word of the job's state, by its kind. */
+	function stateKey(job: AppInstallJob): string {
+		if (job.state === 'running') return RUNNING[job.kind];
+		if (job.state === 'succeeded') return SUCCEEDED[job.kind];
+		return STATE[job.state].key;
+	}
+
+	/** The step's words: an update checks other things than an install. */
+	function stepKey(job: AppInstallJob): string {
+		return job.kind !== 'install' && job.step === 'checking' ? 'appUpdates.step.checking' : STEP[job.step];
+	}
 	const IMAGE: Record<ImagePull['state'], string> = {
 		waiting: 'apps.job.image.waiting',
 		present: 'apps.job.image.present',
@@ -72,7 +108,7 @@
 	{@const template = templateOf(job)}
 	{@const state = STATE[job.state]}
 	<!-- A region named after the app, which the E2E specs find it by. -->
-	<section aria-label={$t('apps.job.label', { name: job.name })}>
+	<section aria-label={$t(LABEL[job.kind], { name: job.name })}>
 		<Card>
 			<div class="flex flex-wrap items-center gap-3">
 				<div
@@ -83,10 +119,10 @@
 				<div class="flex-1 min-w-0">
 					<div class="flex flex-wrap items-center gap-2">
 						<h2 class="font-semibold break-words">{job.name}</h2>
-						<Badge variant={state.variant}>{$t(state.key)}</Badge>
+						<Badge variant={state.variant}>{$t(stateKey(job))}</Badge>
 					</div>
 					{#if job.state === 'running'}
-						<p class="text-sm text-secondary">{$t(STEP[job.step])}</p>
+						<p class="text-sm text-secondary">{$t(stepKey(job))}</p>
 					{/if}
 				</div>
 				{#if job.state !== 'running'}
@@ -95,14 +131,27 @@
 					</Button>
 				{:else if cancelling.has(job.id)}
 					<Button variant="secondary" size="sm" icon={Ban} disabled>{$t('apps.job.cancelling')}</Button>
-				{:else}
+				{:else if job.kind === 'install'}
 					<Button variant="secondary" size="sm" icon={Ban} on:click={() => dispatch('cancel', job)}>
 						{$t('apps.job.cancel')}
+					</Button>
+				{:else if job.kind === 'update'}
+					<!-- A rollback cannot be cancelled: it ends on its own (ADR-0408). -->
+					<Button variant="secondary" size="sm" icon={Ban} on:click={() => dispatch('cancel', job)}>
+						{$t('appUpdates.cancelUpdate')}
 					</Button>
 				{/if}
 			</div>
 
-			{#if job.state === 'succeeded' && job.result}
+			{#if job.state === 'succeeded' && job.kind !== 'install'}
+				<Alert variant="success" class="mt-4">
+					<p>
+						{$t(job.kind === 'update' ? 'appUpdates.updatedNotice' : 'appUpdates.rolledBackNotice', {
+							name: job.name
+						})}
+					</p>
+				</Alert>
+			{:else if job.state === 'succeeded' && job.result}
 				{@const missing = template ? missingHardware(template, job.result).length > 0 : false}
 				<Alert variant={missing ? 'warning' : 'success'} class="mt-4">
 					<p>
@@ -118,12 +167,13 @@
 					{/if}
 				</Alert>
 			{:else if job.state === 'failed'}
-				<Alert variant="error" title={$t('apps.detail.installFailed')} class="mt-4">
-					<p class="break-words">{job.error || $t('apps.detail.installFailed')}</p>
+				<Alert variant="error" title={$t(FAILED[job.kind])} class="mt-4">
+					<p class="break-words">{job.error || $t(FAILED[job.kind])}</p>
 				</Alert>
 			{:else if job.state === 'cancelled'}
-				<Alert variant="warning" title={$t('apps.job.cancelledTitle')} class="mt-4">
-					<p class="break-words">{job.error || $t('apps.job.cancelledTitle')}</p>
+				{@const cancelled = job.kind === 'update' ? 'appUpdates.cancelledTitle' : 'apps.job.cancelledTitle'}
+				<Alert variant="warning" title={$t(cancelled)} class="mt-4">
+					<p class="break-words">{job.error || $t(cancelled)}</p>
 				</Alert>
 			{/if}
 
