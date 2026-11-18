@@ -402,6 +402,14 @@ manager, encrypted backup uploads, health checks, CI checks).
   `ups_name`, `host` and `port` are checked before they reach `upsc`.
 
 ### Added
+- The App Store shows which apps have an image for the host's platform: every image of the
+  catalog has its Linux platforms recorded from its registry (`image_platforms.json`), the
+  catalog API answers `platforms`, `host_platform` and `available`, an app whose image lacks the
+  host's platform shows "Not available for linux/riscv64" (or the host's platform) and no
+  Install, and `POST /api/v1/apps/install` answers 409 for it before any pull (also when only
+  one image of an app of several containers lacks it); before, such an install failed at the
+  pull with a 500. `scripts/catalog-platforms.py check` (`make catalog-platforms`, and the
+  weekly audit workflow) fails when the recorded platforms differ from the registries' (ADR-0403).
 - The supervisor's log is one JSON object per line (`time`, `level`, `logger`,
   `message`, and `fields` and `exception` when there are any), uvicorn's own
   lines included, at INFO by default; before, only warnings reached

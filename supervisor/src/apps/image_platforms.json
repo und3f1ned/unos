@@ -1,0 +1,348 @@
+{
+  "images": {
+    "actualbudget/actual-server:latest": [
+      "linux/amd64",
+      "linux/arm64"
+    ],
+    "adguard/adguardhome:latest": [
+      "linux/386",
+      "linux/amd64",
+      "linux/arm/v6",
+      "linux/arm/v7",
+      "linux/arm64",
+      "linux/ppc64le"
+    ],
+    "amir20/dozzle:latest": [
+      "linux/amd64",
+      "linux/arm/v6",
+      "linux/arm/v7",
+      "linux/arm64"
+    ],
+    "authelia/authelia:latest": [
+      "linux/amd64",
+      "linux/arm/v7",
+      "linux/arm64"
+    ],
+    "crowdsecurity/crowdsec:latest": [
+      "linux/386",
+      "linux/amd64",
+      "linux/arm/v6",
+      "linux/arm/v7",
+      "linux/arm64"
+    ],
+    "deluan/navidrome:latest": [
+      "linux/386",
+      "linux/amd64",
+      "linux/arm/v6",
+      "linux/arm/v7",
+      "linux/arm64",
+      "linux/riscv64"
+    ],
+    "docker.io/valkey/valkey:9@sha256:418652cfb58ef879d4978c33553735d7147016032d5aefaa14c828e611eb9dfd": [
+      "linux/amd64",
+      "linux/arm/v7",
+      "linux/arm64",
+      "linux/ppc64le"
+    ],
+    "eclipse-mosquitto:latest": [
+      "linux/386",
+      "linux/amd64",
+      "linux/arm/v6",
+      "linux/arm64",
+      "linux/ppc64le",
+      "linux/s390x"
+    ],
+    "filebrowser/filebrowser:latest": [
+      "linux/amd64",
+      "linux/arm/v7",
+      "linux/arm64"
+    ],
+    "frooodle/s-pdf:latest": [
+      "linux/amd64",
+      "linux/arm64"
+    ],
+    "ghcr.io/advplyr/audiobookshelf:latest": [
+      "linux/amd64",
+      "linux/arm64"
+    ],
+    "ghcr.io/ajnart/homarr:latest": [
+      "linux/amd64",
+      "linux/arm/v7",
+      "linux/arm64"
+    ],
+    "ghcr.io/blakeblackshear/frigate:stable": [
+      "linux/amd64",
+      "linux/arm64"
+    ],
+    "ghcr.io/dgtlmoon/changedetection.io:latest": [
+      "linux/amd64",
+      "linux/arm/v7",
+      "linux/arm/v8",
+      "linux/arm64"
+    ],
+    "ghcr.io/gethomepage/homepage:latest": [
+      "linux/amd64",
+      "linux/arm64"
+    ],
+    "ghcr.io/home-assistant/home-assistant:stable": [
+      "linux/amd64",
+      "linux/arm64"
+    ],
+    "ghcr.io/immich-app/immich-machine-learning:v3.4.1-rknn@sha256:b7baeb12cab0093803f09f0299b7c863bed46f36349c532096f40bfbf4f10c84": [
+      "linux/arm64"
+    ],
+    "ghcr.io/immich-app/immich-machine-learning:v3.4.1@sha256:8adebf414256f6e4f837bfbb66fa94f14f4da7260e3a1d65cbba49e4e35d8764": [
+      "linux/amd64",
+      "linux/arm64"
+    ],
+    "ghcr.io/immich-app/immich-server:v3.4.1@sha256:7c489add298fc2f92cda4c777de6462aa206877e04087b815f62c7664af0b53b": [
+      "linux/amd64",
+      "linux/arm64"
+    ],
+    "ghcr.io/immich-app/postgres:14-vectorchord0.4.3-pgvectors0.2.0@sha256:bcf63357191b76a916ae5eb93464d65c07511da41e3bf7a8416db519b40b1c23": [
+      "linux/amd64",
+      "linux/arm64"
+    ],
+    "ghcr.io/koush/scrypted:latest": [
+      "linux/amd64",
+      "linux/arm64"
+    ],
+    "ghcr.io/mealie-recipes/mealie:latest": [
+      "linux/amd64",
+      "linux/arm64"
+    ],
+    "ghcr.io/open-webui/open-webui:main": [
+      "linux/amd64",
+      "linux/arm64"
+    ],
+    "gitea/gitea:latest": [
+      "linux/amd64",
+      "linux/arm64",
+      "linux/riscv64"
+    ],
+    "grafana/grafana:latest": [
+      "linux/amd64",
+      "linux/arm/v7",
+      "linux/arm64"
+    ],
+    "jc21/nginx-proxy-manager:latest": [
+      "linux/amd64",
+      "linux/arm64"
+    ],
+    "jellyfin/jellyfin:latest": [
+      "linux/amd64",
+      "linux/arm64"
+    ],
+    "jlesage/jdownloader-2:latest": [
+      "linux/386",
+      "linux/amd64",
+      "linux/arm64"
+    ],
+    "jvmilazz0/kavita:latest": [
+      "linux/amd64",
+      "linux/arm/v7",
+      "linux/arm64"
+    ],
+    "koenkk/zigbee2mqtt:latest": [
+      "linux/386",
+      "linux/amd64",
+      "linux/arm/v6",
+      "linux/arm/v7",
+      "linux/arm64",
+      "linux/riscv64"
+    ],
+    "localai/localai:latest-aio-cpu": [
+      "linux/amd64",
+      "linux/arm64"
+    ],
+    "louislam/uptime-kuma:latest": [
+      "linux/amd64",
+      "linux/arm/v7",
+      "linux/arm64"
+    ],
+    "lscr.io/linuxserver/bazarr:latest": [
+      "linux/amd64",
+      "linux/arm64"
+    ],
+    "lscr.io/linuxserver/calibre-web:latest": [
+      "linux/amd64",
+      "linux/arm64"
+    ],
+    "lscr.io/linuxserver/code-server:latest": [
+      "linux/amd64",
+      "linux/arm64"
+    ],
+    "lscr.io/linuxserver/deluge:latest": [
+      "linux/amd64",
+      "linux/arm64"
+    ],
+    "lscr.io/linuxserver/duplicati:latest": [
+      "linux/amd64",
+      "linux/arm64"
+    ],
+    "lscr.io/linuxserver/emby:latest": [
+      "linux/amd64",
+      "linux/arm64"
+    ],
+    "lscr.io/linuxserver/heimdall:latest": [
+      "linux/amd64",
+      "linux/arm64"
+    ],
+    "lscr.io/linuxserver/lidarr:latest": [
+      "linux/amd64",
+      "linux/arm64"
+    ],
+    "lscr.io/linuxserver/nextcloud:latest": [
+      "linux/amd64",
+      "linux/arm64"
+    ],
+    "lscr.io/linuxserver/nzbget:latest": [
+      "linux/amd64",
+      "linux/arm64"
+    ],
+    "lscr.io/linuxserver/overseerr:latest": [
+      "linux/amd64",
+      "linux/arm64"
+    ],
+    "lscr.io/linuxserver/prowlarr:latest": [
+      "linux/amd64",
+      "linux/arm64"
+    ],
+    "lscr.io/linuxserver/qbittorrent:latest": [
+      "linux/amd64",
+      "linux/arm64"
+    ],
+    "lscr.io/linuxserver/radarr:latest": [
+      "linux/amd64",
+      "linux/arm64"
+    ],
+    "lscr.io/linuxserver/readarr:develop": [],
+    "lscr.io/linuxserver/sabnzbd:latest": [
+      "linux/amd64",
+      "linux/arm64"
+    ],
+    "lscr.io/linuxserver/sonarr:latest": [
+      "linux/amd64",
+      "linux/arm64"
+    ],
+    "lscr.io/linuxserver/syncthing:latest": [
+      "linux/amd64",
+      "linux/arm64"
+    ],
+    "lscr.io/linuxserver/tautulli:latest": [
+      "linux/amd64",
+      "linux/arm64"
+    ],
+    "lscr.io/linuxserver/transmission:latest": [
+      "linux/amd64",
+      "linux/arm64"
+    ],
+    "lscr.io/linuxserver/wikijs:latest": [
+      "linux/amd64",
+      "linux/arm64"
+    ],
+    "lscr.io/linuxserver/wireguard:latest": [
+      "linux/amd64",
+      "linux/arm64"
+    ],
+    "n8nio/n8n:latest": [
+      "linux/amd64",
+      "linux/arm64"
+    ],
+    "netdata/netdata:latest": [
+      "linux/amd64",
+      "linux/arm/v7",
+      "linux/arm64"
+    ],
+    "nicolargo/glances:latest-full": [
+      "linux/amd64",
+      "linux/arm64"
+    ],
+    "nodered/node-red:latest": [
+      "linux/amd64",
+      "linux/arm64"
+    ],
+    "ollama/ollama:latest": [
+      "linux/amd64",
+      "linux/arm64"
+    ],
+    "p3terx/aria2-pro:latest": [
+      "linux/386",
+      "linux/amd64",
+      "linux/arm/v6",
+      "linux/arm/v7",
+      "linux/arm64"
+    ],
+    "photoprism/photoprism:latest": [
+      "linux/amd64",
+      "linux/arm64"
+    ],
+    "pihole/pihole:latest": [
+      "linux/386",
+      "linux/amd64",
+      "linux/arm/v6",
+      "linux/arm/v7",
+      "linux/arm64",
+      "linux/riscv64"
+    ],
+    "plexinc/pms-docker:latest": [
+      "linux/amd64",
+      "linux/arm/v7",
+      "linux/arm64"
+    ],
+    "portainer/portainer-ce:latest": [
+      "linux/amd64",
+      "linux/arm/v7",
+      "linux/arm64",
+      "linux/ppc64le"
+    ],
+    "prom/prometheus:latest": [
+      "linux/amd64",
+      "linux/arm/v7",
+      "linux/arm64",
+      "linux/ppc64le",
+      "linux/riscv64",
+      "linux/s390x"
+    ],
+    "restic/rest-server:latest": [
+      "linux/386",
+      "linux/amd64",
+      "linux/arm/v6",
+      "linux/arm/v7",
+      "linux/arm64",
+      "linux/ppc64le"
+    ],
+    "tailscale/tailscale:latest": [
+      "linux/386",
+      "linux/amd64",
+      "linux/arm/v7",
+      "linux/arm64"
+    ],
+    "traefik:v3.0": [
+      "linux/amd64",
+      "linux/arm/v6",
+      "linux/arm64",
+      "linux/ppc64le",
+      "linux/riscv64",
+      "linux/s390x"
+    ],
+    "vaultwarden/server:latest": [
+      "linux/amd64",
+      "linux/arm/v6",
+      "linux/arm/v7",
+      "linux/arm64"
+    ],
+    "vikunja/vikunja:latest": [
+      "linux/amd64",
+      "linux/arm/v6",
+      "linux/arm/v7",
+      "linux/arm64"
+    ],
+    "zadam/trilium:latest": [
+      "linux/amd64",
+      "linux/arm/v7",
+      "linux/arm/v8",
+      "linux/arm64"
+    ]
+  }
+}

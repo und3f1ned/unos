@@ -367,6 +367,13 @@ that data without the file is refused (ADR-0381). Avoid: password variable.
 estimated for the install's space check (`PINNED_IMAGES`, ADR-0381). The templates of floating
 tags are listed in `UNPINNED_TEMPLATES`, which only shrinks. Avoid: locked image.
 
+**Image platforms**: The Linux platforms (`linux/amd64`, `linux/arm64`, `linux/riscv64`, `linux/arm/v7`)
+that the registry's manifest list publishes for an image of the catalog, recorded in
+`supervisor/src/apps/image_platforms.json` and checked weekly by `scripts/catalog-platforms.py`.
+An app is available on a host when every image of its containers publishes the host's platform;
+otherwise the App Store marks it not available and its install answers 409 (ADR-0403). Avoid:
+architecture (the System page's `architecture` is the host's machine name).
+
 **Hardware profile**: The hardware of a SoC that a container of an app gets when it is installed on
 a host whose device tree names that SoC and that has the nodes the profile requires: the device
 nodes that the host has of the profile's list, the Docker masks and AppArmor profile the

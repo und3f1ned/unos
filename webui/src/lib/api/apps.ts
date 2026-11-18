@@ -96,6 +96,8 @@ export interface ContainerSpec {
   shm_size: string | null;
   /** Seconds Docker gives the container to stop; null: 10. */
   stop_timeout: number | null;
+  /** The platforms its image publishes ("linux/arm64"), recorded from the registry; empty when none is recorded (ADR-0403). */
+  platforms: string[];
 }
 
 /**
@@ -138,6 +140,10 @@ export interface AppTemplate extends ContainerSpec {
   companions: Companion[];
   /** The companions that must be ready before the main container starts. */
   depends_on: string[];
+  /** The platform of the host ("linux/arm64"); null when the server cannot name it (ADR-0403). */
+  host_platform: string | null;
+  /** False when an image of one of its containers publishes no build for the host's platform: the server refuses its install (409). */
+  available: boolean;
 }
 
 /** A container of an app: its Docker name, its companion's name (null for the main container) and its spec. */

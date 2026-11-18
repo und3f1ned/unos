@@ -1410,6 +1410,12 @@ name its category the same way. Some of them:
    downloaded images are kept. **Dismiss** removes the card of an install that
    has ended
 
+An app whose image has no build for your NAS's processor platform (for example most
+apps on a RISC-V board, where only a few images publish `linux/riscv64`) shows **Not
+available for linux/riscv64** (or your platform) on its card, and its details give the
+reason and no **Install**: the server refuses its install before it downloads anything. The
+**Installed** tab is the same on every platform.
+
 Only one app installs at a time: while an install runs, the App Store offers
 no other install until it has ended.
 
