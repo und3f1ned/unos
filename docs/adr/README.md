@@ -406,6 +406,7 @@ and this index, and `make check-fast` runs it.
 | [0393](0393-ctrl-k-opens-a-command-palette-that-runs-only-actions-that-change-nothing-on-the-nas.md) | Ctrl+K opens a command palette of the pages and actions of the user's role, which runs only actions that change nothing on the NAS | accepted | 2026-11-17 |
 | [0395](0395-each-user-arranges-hides-and-shows-the-dashboards-widgets-and-the-server-keeps-the-layout.md) | Each user arranges, hides and shows the dashboard's widgets, and the server keeps the layout | accepted | 2026-11-17 |
 | [0400](0400-a-check-fails-for-raw-controls-and-raw-colours-in-the-web-uis-pages.md) | A check fails for raw controls and raw colours in the web UI's pages | accepted | 2026-11-18 |
+| [0402](0402-each-user-chooses-a-dark-light-or-system-theme-and-the-colour-tokens-have-a-value-per-theme.md) | Each user chooses a dark, light or system theme, and the colour tokens have a value per theme | accepted | 2026-11-18 |
 
 ## Deploy
 

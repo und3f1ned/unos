@@ -13,7 +13,11 @@ and proxies `/api/*` and `/ws/*` to the supervisor (`webui/Caddyfile`).
   dialogs, and Escape closes only the top one, whatever the markup order.
 - Colours are the tokens of `tailwind.config.js`: `surface`, `surface-elevated`,
   `surface-overlay`, `surface-muted`; `content`, `content-secondary`, `content-muted`; `border`;
-  `status-success`, `status-warning`, `status-error`, `status-info`. Icons take the classes of
+  `status-success`, `status-warning`, `status-error`, `status-info`. Each token is a CSS variable of
+  `src/app.css` with a value for the dark and the light theme, which `data-theme` on `<html>`
+  selects (`$lib/stores/theme`, ADR-0402): no colour is written anywhere else, `app.css` and the
+  components of `ui` included, and `supervisor/tests/test_webui_theme.py` fails for a token without
+  a value in both themes or a pair that text or a control uses below WCAG AA (4.5:1, 3:1). Icons take the classes of
   `src/app.css`: `icon-cpu`, `icon-memory`, `icon-network`, `icon-storage`, `icon-container`,
   `icon-temperature`.
 - Layout uses the classes of `src/app.css`: `page-container`, `page-header`, `page-title`,

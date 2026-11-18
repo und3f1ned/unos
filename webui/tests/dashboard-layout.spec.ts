@@ -118,6 +118,8 @@ test.describe('Dashboard layout', () => {
     await page.keyboard.press('Space');
     await expectOrder(page, ['cpu', 'network', 'disk-io', 'memory', 'temperature', 'storage', 'containers', 'quick-actions', 'recent-activity']);
 
+    // The controls are disabled while the move before is saved: a disabled button takes no focus.
+    await expect(page.getByRole('button', { name: 'Move Memory up' })).toBeEnabled();
     await page.getByRole('button', { name: 'Move Memory up' }).focus();
     await page.keyboard.press('Enter');
     await expectOrder(page, ['cpu', 'network', 'memory', 'disk-io', 'temperature', 'storage', 'containers', 'quick-actions', 'recent-activity']);

@@ -463,7 +463,7 @@
 									</span>
 									<span
 										class="text-xs px-1.5 py-0.5 rounded {selectedCategory === cat.value
-											? 'bg-content-on-brand/20 text-content-on-brand'
+											? 'bg-brand-hover text-content-on-brand'
 											: 'bg-surface-overlay text-muted'}"
 									>
 										{cat.count}

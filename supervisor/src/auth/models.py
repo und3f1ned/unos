@@ -108,3 +108,19 @@ class DashboardLayout(Base):
     user_id = Column(Integer, primary_key=True, autoincrement=False)
     layout = Column(Text, nullable=False)
     updated_at = Column(DateTime, server_default=func.now())
+
+
+class UserTheme(Base):
+    """The theme of the web UI that a user chose: dark, light or system (ADR-0402).
+
+    A new table (ADR-0319): init_db's create_all makes it in a database that lacks it. One row per
+    user who chose a theme; none means system. ``theme`` is read again as untrusted at every use
+    (ADR-0144). SQLite enforces no foreign keys here, so deleting a user deletes the row in the same
+    transaction.
+    """
+
+    __tablename__ = "user_themes"
+
+    user_id = Column(Integer, primary_key=True, autoincrement=False)
+    theme = Column(Text, nullable=False)
+    updated_at = Column(DateTime, server_default=func.now())

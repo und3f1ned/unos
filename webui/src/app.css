@@ -3,6 +3,124 @@
 @tailwind utilities;
 
 /* ============================================
+   The themes (ADR-0402)
+   ============================================ */
+
+/* The colour tokens of tailwind.config.js: red, green and blue of each, per theme. The dark theme
+   is the default; static/theme-init.js sets data-theme on <html> before the page is drawn, and the
+   theme store ($lib/stores/theme) keeps it. surface-muted and border-muted are half transparent
+   (tailwind.config.js). supervisor/tests/test_webui_theme.py checks that both themes give every
+   token a value and that the pairs that text and controls use meet WCAG AA. */
+@layer base {
+	:root,
+	[data-theme='dark'] {
+		color-scheme: dark;
+		/* Backgrounds */
+		--color-surface: 15 23 42; /* #0f172a */
+		--color-surface-elevated: 30 41 59; /* #1e293b */
+		--color-surface-overlay: 44 56 76; /* #2c384c */
+		--color-surface-hover: 71 85 105; /* #475569 */
+		--color-surface-muted: 44 56 76; /* #2c384c */
+		/* Borders */
+		--color-border: 51 65 85; /* #334155 */
+		--color-border-strong: 114 130 151; /* #728297 */
+		--color-border-muted: 51 65 85; /* #334155 */
+		/* Text */
+		--color-content: 241 245 249; /* #f1f5f9 */
+		--color-content-soft: 203 213 225; /* #cbd5e1 */
+		--color-content-secondary: 169 182 200; /* #a9b6c8 */
+		--color-content-muted: 151 165 185; /* #97a5b9 */
+		--color-content-inverse: 15 23 42; /* #0f172a */
+		--color-content-on-brand: 255 255 255; /* #ffffff */
+		/* Accents (icons, charts) */
+		--color-accent-cpu: 96 165 250; /* #60a5fa */
+		--color-accent-memory: 220 186 254; /* #dcbafe */
+		--color-accent-network: 74 222 128; /* #4ade80 */
+		--color-accent-storage: 96 165 250; /* #60a5fa */
+		--color-accent-container: 63 217 240; /* #3fd9f0 */
+		--color-accent-temperature: 252 184 128; /* #fcb880 */
+		/* Brand */
+		--color-brand: 37 99 235; /* #2563eb */
+		--color-brand-hover: 29 78 216; /* #1d4ed8 */
+		--color-brand-ring: 59 130 246; /* #3b82f6 */
+		--color-brand-disabled: 30 64 175; /* #1e40af */
+		/* Status */
+		--color-status-success: 83 224 134; /* #53e086 */
+		--color-status-warning: 250 204 21; /* #facc15 */
+		--color-status-error: 253 180 180; /* #fdb4b4 */
+		--color-status-info: 165 204 253; /* #a5ccfd */
+		--color-status-neutral: 116 130 151; /* #748297 */
+		/* Solid fills of buttons */
+		--color-solid-success: 21 128 61; /* #15803d */
+		--color-solid-success-hover: 22 101 52; /* #166534 */
+		--color-solid-warning: 194 65 12; /* #c2410c */
+		--color-solid-warning-hover: 154 52 18; /* #9a3412 */
+		--color-solid-error: 220 38 38; /* #dc2626 */
+		--color-solid-error-hover: 185 28 28; /* #b91c1c */
+		/* The backdrop of dialogs */
+		--color-scrim: 0 0 0; /* #000000 */
+	}
+
+	[data-theme='light'] {
+		color-scheme: light;
+		/* Backgrounds */
+		--color-surface: 241 245 249; /* #f1f5f9 */
+		--color-surface-elevated: 255 255 255; /* #ffffff */
+		--color-surface-overlay: 226 232 240; /* #e2e8f0 */
+		--color-surface-hover: 203 213 225; /* #cbd5e1 */
+		--color-surface-muted: 226 232 240; /* #e2e8f0 */
+		/* Borders */
+		--color-border: 203 213 225; /* #cbd5e1 */
+		--color-border-strong: 100 116 139; /* #64748b */
+		--color-border-muted: 203 213 225; /* #cbd5e1 */
+		/* Text */
+		--color-content: 15 23 42; /* #0f172a */
+		--color-content-soft: 30 41 59; /* #1e293b */
+		--color-content-secondary: 71 85 105; /* #475569 */
+		--color-content-muted: 86 101 122; /* #56657a */
+		--color-content-inverse: 241 245 249; /* #f1f5f9 */
+		--color-content-on-brand: 255 255 255; /* #ffffff */
+		/* Accents (icons, charts) */
+		--color-accent-cpu: 35 94 223; /* #235edf */
+		--color-accent-memory: 117 32 192; /* #7520c0 */
+		--color-accent-network: 22 101 52; /* #166534 */
+		--color-accent-storage: 35 94 223; /* #235edf */
+		--color-accent-container: 21 92 115; /* #155c73 */
+		--color-accent-temperature: 149 50 17; /* #953211 */
+		/* Brand */
+		--color-brand: 37 99 235; /* #2563eb */
+		--color-brand-hover: 29 78 216; /* #1d4ed8 */
+		--color-brand-ring: 37 99 235; /* #2563eb */
+		--color-brand-disabled: 147 197 253; /* #93c5fd */
+		/* Status */
+		--color-status-success: 21 97 50; /* #156132 */
+		--color-status-warning: 125 72 13; /* #7d480d */
+		--color-status-error: 161 24 24; /* #a11818 */
+		--color-status-info: 26 71 197; /* #1a47c5 */
+		--color-status-neutral: 100 116 139; /* #64748b */
+		/* Solid fills of buttons */
+		--color-solid-success: 21 128 61; /* #15803d */
+		--color-solid-success-hover: 22 101 52; /* #166534 */
+		--color-solid-warning: 194 65 12; /* #c2410c */
+		--color-solid-warning-hover: 154 52 18; /* #9a3412 */
+		--color-solid-error: 220 38 38; /* #dc2626 */
+		--color-solid-error-hover: 185 28 28; /* #b91c1c */
+		/* The backdrop of dialogs */
+		--color-scrim: 2 6 23; /* #020617 */
+	}
+
+	body {
+		@apply bg-surface text-content;
+	}
+
+	/* The browser draws checkboxes and radio buttons; they take the theme's selection colour. */
+	input[type='checkbox'],
+	input[type='radio'] {
+		accent-color: rgb(var(--color-brand-ring));
+	}
+}
+
+/* ============================================
    UNOS Design System - Component Classes
    ============================================ */
 
@@ -78,27 +196,27 @@
 
 	/* Button variants */
 	.btn-primary {
-		@apply bg-blue-600 text-white hover:bg-blue-700 focus:ring-blue-500;
+		@apply bg-brand text-content-on-brand hover:bg-brand-hover focus:ring-brand-ring;
 	}
 
 	.btn-secondary {
-		@apply bg-surface-overlay text-content hover:bg-slate-600 focus:ring-slate-500;
+		@apply bg-surface-overlay text-content hover:bg-surface-hover focus:ring-brand-ring;
 	}
 
 	.btn-danger {
-		@apply bg-red-600 text-white hover:bg-red-700 focus:ring-red-500;
+		@apply bg-solid-error text-content-on-brand hover:bg-solid-error-hover focus:ring-brand-ring;
 	}
 
 	.btn-warning {
-		@apply bg-orange-600 text-white hover:bg-orange-700 focus:ring-orange-500;
+		@apply bg-solid-warning text-content-on-brand hover:bg-solid-warning-hover focus:ring-brand-ring;
 	}
 
 	.btn-success {
-		@apply bg-green-600 text-white hover:bg-green-700 focus:ring-green-500;
+		@apply bg-solid-success text-content-on-brand hover:bg-solid-success-hover focus:ring-brand-ring;
 	}
 
 	.btn-ghost {
-		@apply bg-transparent text-content-secondary hover:text-content hover:bg-surface-overlay focus:ring-slate-500;
+		@apply bg-transparent text-content-secondary hover:text-content hover:bg-surface-overlay focus:ring-brand-ring;
 	}
 
 	/* Tabs, for a Button of variant plain: pills in a bar, or a line under the tab in a dialog. */
@@ -126,19 +244,19 @@
 	}
 
 	.form-input {
-		@apply w-full px-3 py-2 bg-surface-overlay border border-border rounded-lg text-content
+		@apply w-full px-3 py-2 bg-surface-overlay border border-border-strong rounded-lg text-content
 		       placeholder:text-content-muted
-		       focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500;
+		       focus:outline-none focus:border-brand-ring focus:ring-1 focus:ring-brand-ring;
 	}
 
 	.form-select {
-		@apply w-full px-3 py-2 bg-surface-overlay border border-border rounded-lg text-content
-		       focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500;
+		@apply w-full px-3 py-2 bg-surface-overlay border border-border-strong rounded-lg text-content
+		       focus:outline-none focus:border-brand-ring focus:ring-1 focus:ring-brand-ring;
 	}
 
 	.form-checkbox {
-		@apply rounded border-border bg-surface-overlay text-blue-600
-		       focus:ring-blue-500 focus:ring-offset-surface;
+		@apply rounded border-border-strong bg-surface-overlay text-brand
+		       focus:ring-brand-ring focus:ring-offset-surface;
 	}
 
 	.form-error {
@@ -157,35 +275,35 @@
 	}
 
 	.badge-success {
-		@apply bg-green-500/20 text-green-400;
+		@apply bg-status-success/20 text-status-success;
 	}
 
 	.badge-warning {
-		@apply bg-yellow-500/20 text-yellow-400;
+		@apply bg-status-warning/20 text-status-warning;
 	}
 
 	.badge-error {
-		@apply bg-red-500/20 text-red-400;
+		@apply bg-status-error/20 text-status-error;
 	}
 
 	.badge-info {
-		@apply bg-blue-500/20 text-blue-400;
+		@apply bg-status-info/20 text-status-info;
 	}
 
 	.badge-neutral {
-		@apply bg-slate-500/20 text-slate-400;
+		@apply bg-status-neutral/20 text-content-secondary;
 	}
 
 	.badge-purple {
-		@apply bg-purple-500/20 text-purple-400;
+		@apply bg-accent-memory/20 text-accent-memory;
 	}
 
 	.badge-cyan {
-		@apply bg-cyan-500/20 text-cyan-400;
+		@apply bg-accent-container/20 text-accent-container;
 	}
 
 	.badge-orange {
-		@apply bg-orange-500/20 text-orange-400;
+		@apply bg-accent-temperature/20 text-accent-temperature;
 	}
 
 	/* ----------------------------------------
@@ -196,26 +314,26 @@
 	}
 
 	.status-dot-success {
-		@apply bg-green-500;
+		@apply bg-status-success;
 	}
 
 	.status-dot-warning {
-		@apply bg-yellow-500;
+		@apply bg-status-warning;
 	}
 
 	.status-dot-error {
-		@apply bg-red-500;
+		@apply bg-status-error;
 	}
 
 	.status-dot-neutral {
-		@apply bg-slate-500;
+		@apply bg-status-neutral;
 	}
 
 	/* ----------------------------------------
 	   Progress Bars
 	   ---------------------------------------- */
 	.progress-bar {
-		@apply h-2.5 bg-slate-900/60 rounded-full overflow-hidden ring-1 ring-slate-700/50;
+		@apply h-2.5 bg-surface/60 rounded-full overflow-hidden ring-1 ring-border-muted;
 	}
 
 	.progress-bar-sm {
@@ -227,19 +345,19 @@
 	}
 
 	.progress-fill-success {
-		@apply bg-green-500;
+		@apply bg-status-success;
 	}
 
 	.progress-fill-warning {
-		@apply bg-yellow-500;
+		@apply bg-status-warning;
 	}
 
 	.progress-fill-error {
-		@apply bg-red-500;
+		@apply bg-status-error;
 	}
 
 	.progress-fill-info {
-		@apply bg-blue-500;
+		@apply bg-status-info;
 	}
 
 	/* ----------------------------------------
@@ -250,27 +368,27 @@
 	}
 
 	.alert-error {
-		@apply bg-red-500/10 border-red-500/50 text-red-400;
+		@apply bg-status-error/10 border-status-error/50 text-status-error;
 	}
 
 	.alert-warning {
-		@apply bg-yellow-500/10 border-yellow-500/50 text-yellow-400;
+		@apply bg-status-warning/10 border-status-warning/50 text-status-warning;
 	}
 
 	.alert-success {
-		@apply bg-green-500/10 border-green-500/50 text-green-400;
+		@apply bg-status-success/10 border-status-success/50 text-status-success;
 	}
 
 	.alert-info {
-		@apply bg-blue-500/10 border-blue-500/50 text-blue-400;
+		@apply bg-status-info/10 border-status-info/50 text-status-info;
 	}
 
 	/* ----------------------------------------
 	   Modal / Dialog
 	   ---------------------------------------- */
-	/* The dimmed backdrop of a dialog or a drawer. */
+	/* The dimmed backdrop of a dialog or a drawer: the theme's scrim colour, half transparent. */
 	.scrim {
-		@apply bg-black/50;
+		background-color: rgb(var(--color-scrim) / 0.5);
 	}
 
 	.modal-overlay {
@@ -359,7 +477,7 @@
 	}
 
 	.nav-item-active {
-		@apply bg-blue-600 text-white;
+		@apply bg-brand text-content-on-brand;
 	}
 
 	.nav-item-inactive {
@@ -493,7 +611,7 @@
 @layer utilities {
 	.scrollbar-thin {
 		scrollbar-width: thin;
-		scrollbar-color: theme('colors.slate.600') transparent;
+		scrollbar-color: rgb(var(--color-surface-hover)) transparent;
 	}
 
 	.scrollbar-thin::-webkit-scrollbar {
@@ -506,11 +624,11 @@
 	}
 
 	.scrollbar-thin::-webkit-scrollbar-thumb {
-		background-color: theme('colors.slate.600');
+		background-color: rgb(var(--color-surface-hover));
 		border-radius: 3px;
 	}
 
 	.scrollbar-thin::-webkit-scrollbar-thumb:hover {
-		background-color: theme('colors.slate.500');
+		background-color: rgb(var(--color-status-neutral));
 	}
 }

@@ -1,56 +1,88 @@
+/**
+ * A colour token: the CSS variable --color-<name> of src/app.css, the red, green and blue of the
+ * current theme, with Tailwind's opacity modifier (bg-surface/50). `opacity` is the token's own,
+ * multiplied by the modifier's.
+ */
+function token(name, opacity) {
+	return opacity === undefined
+		? `rgb(var(--color-${name}) / <alpha-value>)`
+		: `rgb(var(--color-${name}) / calc(<alpha-value> * ${opacity}))`;
+}
+
 /** @type {import('tailwindcss').Config} */
 export default {
 	content: ['./src/**/*.{html,js,svelte,ts}'],
 	theme: {
 		extend: {
+			// The colour tokens (ADR-0012, ADR-0400). Each is a CSS variable of src/app.css with a value
+			// for the dark and one for the light theme (ADR-0402): a page that uses only the tokens
+			// follows the theme. No colour is written here; supervisor/tests/test_webui_theme.py checks
+			// that both themes give every token a value and meet WCAG AA.
 			colors: {
 				// Background colors
 				surface: {
-					DEFAULT: '#0f172a', // slate-900 - main background
-					elevated: '#1e293b', // slate-800 - cards, modals
-					overlay: '#334155', // slate-700 - hover states, nested
-					hover: '#475569', // slate-600 - hover over overlay
-					muted: 'rgba(51, 65, 85, 0.5)' // slate-700/50 - subtle backgrounds
+					DEFAULT: token('surface'), // main background
+					elevated: token('surface-elevated'), // cards, modals
+					overlay: token('surface-overlay'), // fields, secondary buttons, hover states, nested
+					hover: token('surface-hover'), // hover over overlay
+					muted: token('surface-muted', 0.5) // subtle backgrounds (nested cards)
 				},
 				// Border colors
 				border: {
-					DEFAULT: '#334155', // slate-700
-					strong: '#475569', // slate-600 - field borders
-					muted: 'rgba(51, 65, 85, 0.5)' // slate-700/50
+					DEFAULT: token('border'),
+					strong: token('border-strong'), // field borders
+					muted: token('border-muted', 0.5)
 				},
 				// Text colors
 				content: {
-					DEFAULT: '#f1f5f9', // slate-100 - primary text
-					secondary: '#94a3b8', // slate-400 - secondary text
-					muted: '#64748b', // slate-500 - disabled/hint text
-					soft: '#cbd5e1', // slate-300 - between primary and secondary
-					inverse: '#0f172a', // slate-900 - on light backgrounds
-					'on-brand': '#ffffff' // white - on brand and other solid fills
+					DEFAULT: token('content'), // primary text
+					secondary: token('content-secondary'), // secondary text
+					muted: token('content-muted'), // hints, placeholders
+					soft: token('content-soft'), // between primary and secondary
+					inverse: token('content-inverse'), // on a background of the other theme
+					'on-brand': token('content-on-brand') // on brand and other solid fills
 				},
 				// Accent colors (for icons and highlights)
 				accent: {
-					cpu: '#60a5fa', // blue-400
-					memory: '#c084fc', // purple-400
-					network: '#4ade80', // green-400
-					storage: '#60a5fa', // blue-400
-					container: '#22d3ee', // cyan-400
-					temperature: '#fb923c' // orange-400
+					cpu: token('accent-cpu'),
+					memory: token('accent-memory'),
+					network: token('accent-network'),
+					storage: token('accent-storage'),
+					container: token('accent-container'),
+					temperature: token('accent-temperature')
 				},
 				// Brand (primary actions, selected tabs, focus)
 				brand: {
-					DEFAULT: '#2563eb', // blue-600
-					hover: '#1d4ed8', // blue-700
-					ring: '#3b82f6', // blue-500 - focus and selection lines
-					disabled: '#1e40af' // blue-800
+					DEFAULT: token('brand'),
+					hover: token('brand-hover'),
+					ring: token('brand-ring'), // focus and selection lines
+					disabled: token('brand-disabled')
 				},
 				// Semantic status colors
 				status: {
-					success: '#4ade80', // green-400
-					warning: '#facc15', // yellow-400
-					error: '#f87171', // red-400
-					info: '#60a5fa', // blue-400
-					neutral: '#64748b' // slate-500 - off, unknown
+					success: token('status-success'),
+					warning: token('status-warning'),
+					error: token('status-error'),
+					info: token('status-info'),
+					neutral: token('status-neutral') // off, unknown
+				},
+				// Solid fills with content-on-brand text: the variants of Button
+				solid: {
+					success: token('solid-success'),
+					'success-hover': token('solid-success-hover'),
+					warning: token('solid-warning'),
+					'warning-hover': token('solid-warning-hover'),
+					error: token('solid-error'),
+					'error-hover': token('solid-error-hover')
 				}
+			},
+			// A border or a ring without a colour of its own takes the theme's, not Tailwind's gray-200 and
+			// blue-500.
+			borderColor: {
+				DEFAULT: token('border')
+			},
+			ringColor: {
+				DEFAULT: token('brand-ring')
 			},
 			// Consistent spacing scale
 			spacing: {

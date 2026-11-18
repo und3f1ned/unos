@@ -16,6 +16,7 @@
 		TWO_FACTOR_SETUP_PATH
 	} from '$lib/stores/auth';
 	import { connectWebSocket, disconnectWebSocket } from '$lib/stores/stats';
+	import { applyTheme, loadAccountTheme } from '$lib/stores/theme';
 	import ProblemsBanner from '$lib/components/ProblemsBanner.svelte';
 	import CommandPalette from '$lib/components/palette/CommandPalette.svelte';
 	import {
@@ -73,6 +74,9 @@
 
 	// An account that can only set up two-factor authentication gets its setup page alone.
 	$: setupOnly = isSetupOnly($user);
+	// The theme that the signed-in user chose (ADR-0402), once per session; an account that can only
+	// set up two-factor authentication cannot ask, and keeps the theme of this browser.
+	$: if (browser && $user && !setupOnly) void loadAccountTheme();
 	$: navItems = !$user || setupOnly ? [] : $user.is_admin ? adminNavItems : userNavItems;
 
 	let mounted = false;
@@ -178,6 +182,9 @@
 				// A 401 ended the session; anything else leaves the page as it is.
 			});
 	}
+
+	// Every page, the sign-in and first-run pages too, shows the theme of the theme store.
+	onMount(applyTheme);
 
 	onMount(() => {
 		// Any request (or the stats socket) rejected with 401 lands here.
