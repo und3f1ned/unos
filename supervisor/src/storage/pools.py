@@ -1441,7 +1441,7 @@ def _remove_made_mountpoint(target: str) -> None:
 
 def _mount_and_persist(
     name: str, uuid: str, *, already_mounted: bool, devices: list[str], relabel: bool = False
-) -> None:
+) -> bool:
     """Mount ``uuid`` at the pool's mountpoint on the host and keep it in fstab.
 
     A filesystem that this call mounts must show its top level there
@@ -1453,8 +1453,10 @@ def _mount_and_persist(
     exists (Create, Mount) does it stay, write-protected like that of every
     pool that is not mounted. An import that fails leaves nothing behind.
     ``devices`` are the filesystem's, which decide its TRIM (pool_is_trimmed).
+    Returns whether it changed anything: it mounted the pool or wrote the fstab (ADR-0402).
     """
     target = pool_mountpoint(name)
+    changed = not already_mounted
     original = text = _read_fstab()
     conflicts = unmanaged_fstab_entries(text, target)
     if conflicts:
@@ -1468,7 +1470,7 @@ def _mount_and_persist(
     if desired != text and name in parse_managed_fstab(text):
         # Replace an outdated entry (e.g. of an older pool with the same name)
         # before mounting, so systemd's unit no longer points at the old device.
-        _write_fstab(desired, text)
+        changed |= _write_fstab(desired, text)
         text = desired
     if not already_mounted:
         try:
@@ -1495,11 +1497,20 @@ def _mount_and_persist(
             if made:
                 _remove_made_mountpoint(target)
             raise
-    _write_fstab(desired, text)
+    return _write_fstab(desired, text) or changed
 
 
 def mount_pool(name: str) -> PoolInfo:
+    """Mount a pool; see :func:`mount_pool_changed`."""
+    return mount_pool_changed(name)[0]
+
+
+def mount_pool_changed(name: str) -> tuple[PoolInfo, bool]:
     """Mount a pool on the host by UUID and keep its managed fstab entry.
+
+    With whether it changed anything: it mounted the pool or wrote the fstab entry; a pool that
+    was mounted and kept in the fstab is left as it is (its audit entry is written for a real
+    change only, ADR-0402).
 
     This imports a pool found on the disks, too (ADR-0283), so a pool with a
     member on a boot or virtual device or on the system disk is refused
@@ -1538,16 +1549,23 @@ def mount_pool(name: str) -> PoolInfo:
             if problem:
                 raise PoolConflictError(f"Pool '{name}' cannot be mounted: {problem}.")
             _refuse_hidden_files(target)
-        _mount_and_persist(
+        changed = _mount_and_persist(
             name, _check_uuid(fs.uuid), already_mounted=bool(mounted_here), devices=fs.devices
         )
     if not mounted_here:
         _start_pool_apps_later(name)  # after releasing the lock; never raises
-    return get_pool(name)
+    return get_pool(name), changed
 
 
 def unmount_pool(name: str) -> PoolInfo:
+    """Unmount a pool; see :func:`unmount_pool_changed`."""
+    return unmount_pool_changed(name)[0]
+
+
+def unmount_pool_changed(name: str) -> tuple[PoolInfo, bool]:
     """Unmount a pool on the host and remove its managed fstab entry. Data is kept.
+
+    With whether it changed anything: the pool was mounted or its fstab entry was dropped (ADR-0402).
 
     PoolBusyError (HTTP 409) while host processes or containers use the pool;
     DockerUnavailableError (HTTP 503), with nothing changed, when Docker
@@ -1559,10 +1577,11 @@ def unmount_pool(name: str) -> PoolInfo:
         mounts = disks.host_mounts()
         if not _pool_filesystems(name, mounts):
             raise PoolNotFoundError(f"Pool '{name}' not found")
+        mounted = any(m.target == target for m in mounts)
         _unmount_pool_target(name, target, mounts)
-        _forget_fstab_entry(name)
+        forgotten = _forget_fstab_entry(name)
         guard_mountpoint(target)
-        return get_pool(name)
+        return get_pool(name), mounted or forgotten
 
 
 def delete_pool(name: str) -> bool:

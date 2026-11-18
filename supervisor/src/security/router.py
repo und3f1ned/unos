@@ -127,13 +127,15 @@ async def get_login_history(
 
 @router.delete("/login-history")
 async def clear_login_history(
+    request: Request,
     # Up to 100 years back: a negative period would put the cutoff in the future and delete
     # every attempt, and a much longer one reaches before the year 1.
     older_than_days: int = Query(30, ge=0, le=MAX_HISTORY_DAYS),
     current_user: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db)
 ):
-    """Clear login history older than specified days. Admin only."""
+    """Clear login history older than specified days. Admin only. The audit log gets
+    login_history_cleared when it cleared any attempts (ADR-0402)."""
     # The stored times are UTC without a zone, as SQLite's CURRENT_TIMESTAMP gives them (ADR-0262).
     cutoff = db_now() - timedelta(days=older_than_days)
 
@@ -142,12 +144,20 @@ async def clear_login_history(
     result = await db.execute(stmt)
     await db.commit()
 
+    if result.rowcount:
+        count = result.rowcount
+        await audit_change(
+            AuditAction.LOGIN_HISTORY_CLEARED, request, current_user.username, resource_type="login_history",
+            details=f"Cleared {count} login attempt{'' if count == 1 else 's'} older than {older_than_days} days",
+            severity=AuditSeverity.WARNING,
+        )
+
     return {"status": "ok", "deleted_count": result.rowcount}
 
 
 # ==================== Firewall Management ====================
-# Firewall and certificate changes write no audit entry, and AuditAction has no action for them
-# (ADR-0359).
+# The firewall's changes write an audit entry after they were made, for a real change only
+# (ADR-0402); the certificates' changes write none (ADR-0359, security.custom-certificates).
 
 _FIREWALL_RULES = TypeAdapter(list[FirewallRule])
 
@@ -247,6 +257,18 @@ def apply_ufw_rule(rule: FirewallRule, delete: bool = False) -> tuple[bool, str]
         return False, str(e)
 
 
+def _describe_rule(rule: FirewallRule) -> str:
+    """A rule for an audit entry: "Web: allow in tcp port 8080 from 192.0.2.0/24"."""
+    parts = [f"{rule.name}: {rule.action.value} {rule.direction.value}"]
+    if rule.protocol != FirewallProtocol.ANY:
+        parts.append(rule.protocol.value)
+    if rule.port:
+        parts.append(f"port {rule.port}")
+    if rule.source:
+        parts.append(f"from {rule.source}")
+    return " ".join(parts)
+
+
 @router.get("/firewall", response_model=FirewallStatus)
 async def get_firewall_status(_: User = Depends(require_admin)):
     """Get current firewall status and rules."""
@@ -262,9 +284,10 @@ async def get_firewall_status(_: User = Depends(require_admin)):
 
 
 @router.post("/firewall/enable")
-async def enable_firewall(current_user: User = Depends(require_admin)):
-    """Enable the firewall. Admin only."""
+async def enable_firewall(request: Request, current_user: User = Depends(require_admin)):
+    """Enable the firewall. Admin only. The audit log gets firewall_enabled when it was off."""
     try:
+        was_enabled = _ufw_is_active()
         # Enable UFW with default deny incoming
         result = subprocess.run(
             ["ufw", "--force", "enable"],
@@ -275,6 +298,9 @@ async def enable_firewall(current_user: User = Depends(require_admin)):
         if result.returncode != 0:
             raise HTTPException(500, f"Failed to enable firewall: {result.stderr}")
 
+        if not was_enabled:
+            await audit_change(AuditAction.FIREWALL_ENABLED, request, current_user.username,
+                               resource_type="firewall", details="The firewall was turned on")
         return {"status": "ok", "message": "Firewall enabled"}
     except FileNotFoundError:
         raise HTTPException(500, "UFW is not installed on this system")
@@ -284,9 +310,10 @@ async def enable_firewall(current_user: User = Depends(require_admin)):
 
 
 @router.post("/firewall/disable")
-async def disable_firewall(current_user: User = Depends(require_admin)):
-    """Disable the firewall. Admin only."""
+async def disable_firewall(request: Request, current_user: User = Depends(require_admin)):
+    """Disable the firewall. Admin only. The audit log gets firewall_disabled when it was on."""
     try:
+        was_enabled = _ufw_is_active()
         result = subprocess.run(
             ["ufw", "--force", "disable"],
             capture_output=True,
@@ -296,6 +323,10 @@ async def disable_firewall(current_user: User = Depends(require_admin)):
         if result.returncode != 0:
             raise HTTPException(500, f"Failed to disable firewall: {result.stderr}")
 
+        if was_enabled:
+            await audit_change(AuditAction.FIREWALL_DISABLED, request, current_user.username,
+                               resource_type="firewall", details="The firewall was turned off",
+                               severity=AuditSeverity.WARNING)
         return {"status": "ok", "message": "Firewall disabled"}
     except FileNotFoundError:
         raise HTTPException(500, "UFW is not installed on this system")
@@ -306,10 +337,11 @@ async def disable_firewall(current_user: User = Depends(require_admin)):
 
 @router.post("/firewall/rules", response_model=FirewallRule)
 async def create_firewall_rule(
+    request: Request,
     rule: FirewallRuleCreate,
     current_user: User = Depends(require_admin)
 ):
-    """Create a new firewall rule. Admin only."""
+    """Create a new firewall rule. Admin only. The audit log gets firewall_rule_added."""
     rules = load_firewall_rules()
 
     # Generate ID
@@ -326,15 +358,19 @@ async def create_firewall_rule(
     rules.append(new_rule)
     save_firewall_rules(rules)
 
+    await audit_change(AuditAction.FIREWALL_RULE_ADDED, request, current_user.username,
+                       resource_type="firewall_rule", resource_id=new_rule.id,
+                       details=f"Added the rule {_describe_rule(new_rule)}")
     return new_rule
 
 
 @router.delete("/firewall/rules/{rule_id}")
 async def delete_firewall_rule(
+    request: Request,
     rule_id: str,
     current_user: User = Depends(require_admin)
 ):
-    """Delete a firewall rule. Admin only."""
+    """Delete a firewall rule. Admin only. The audit log gets firewall_rule_deleted."""
     rules = load_firewall_rules()
     rule_to_delete = next((r for r in rules if r.id == rule_id), None)
 
@@ -350,63 +386,82 @@ async def delete_firewall_rule(
     rules = [r for r in rules if r.id != rule_id]
     save_firewall_rules(rules)
 
+    await audit_change(AuditAction.FIREWALL_RULE_DELETED, request, current_user.username,
+                       resource_type="firewall_rule", resource_id=rule_id,
+                       details=f"Removed the rule {_describe_rule(rule_to_delete)}",
+                       severity=AuditSeverity.WARNING)
     return {"status": "ok", "message": "Rule deleted"}
 
 
+def _ufw_is_active() -> bool:
+    """Whether ufw is on, read strictly: HTTPException 500 when `ufw status` cannot be read, so that an
+    unreadable state is never taken for a firewall that is off (the audit entry of a switch says what
+    changed, ADR-0402)."""
+    try:
+        result = subprocess.run(["ufw", "status"], capture_output=True, text=True)
+    except FileNotFoundError:
+        raise HTTPException(500, "UFW is not installed on this system")
+    if result.returncode != 0:
+        raise HTTPException(500, f"Failed to read the firewall status: {(result.stderr or result.stdout).strip()}")
+    return "Status: active" in result.stdout
+
+
+def _ufw(*args: str) -> None:
+    """Run ufw with ARGS; raise RuntimeError with what it said when it fails."""
+    result = subprocess.run(["ufw", *args], capture_output=True, text=True)
+    if result.returncode != 0:
+        raise RuntimeError((result.stderr or result.stdout).strip() or f"ufw exited with {result.returncode}")
+
+
+_DEFAULT_FIREWALL_RULES = [
+    FirewallRule(id="rule_default_ssh", name="SSH", action=FirewallAction.ALLOW, direction=FirewallDirection.IN,
+                 protocol=FirewallProtocol.TCP, port="22", enabled=True, comment="SSH access"),
+    FirewallRule(id="rule_default_http", name="HTTP", action=FirewallAction.ALLOW, direction=FirewallDirection.IN,
+                 protocol=FirewallProtocol.TCP, port="80", enabled=True, comment="HTTP access"),
+    FirewallRule(id="rule_default_https", name="HTTPS", action=FirewallAction.ALLOW, direction=FirewallDirection.IN,
+                 protocol=FirewallProtocol.TCP, port="443", enabled=True, comment="HTTPS access"),
+]
+
+
 @router.post("/firewall/reset")
-async def reset_firewall(current_user: User = Depends(require_admin)):
-    """Reset firewall to default rules. Admin only."""
+async def reset_firewall(request: Request, current_user: User = Depends(require_admin)):
+    """Reset firewall to default rules. Admin only.
+
+    The audit log gets firewall_reset: a reset is a change whenever ufw took it, as failed, with what
+    was done, when a step after ufw's own reset fails (ADR-0402).
+    """
+    reset_done = False
     try:
         # Reset UFW
-        subprocess.run(["ufw", "--force", "reset"], capture_output=True, text=True)
+        _ufw("--force", "reset")
+        reset_done = True
 
         # Set default policies
-        subprocess.run(["ufw", "default", "deny", "incoming"], capture_output=True, text=True)
-        subprocess.run(["ufw", "default", "allow", "outgoing"], capture_output=True, text=True)
+        _ufw("default", "deny", "incoming")
+        _ufw("default", "allow", "outgoing")
 
         # Allow SSH and HTTP/HTTPS by default
-        subprocess.run(["ufw", "allow", "22/tcp", "comment", "SSH"], capture_output=True, text=True)
-        subprocess.run(["ufw", "allow", "80/tcp", "comment", "HTTP"], capture_output=True, text=True)
-        subprocess.run(["ufw", "allow", "443/tcp", "comment", "HTTPS"], capture_output=True, text=True)
+        _ufw("allow", "22/tcp", "comment", "SSH")
+        _ufw("allow", "80/tcp", "comment", "HTTP")
+        _ufw("allow", "443/tcp", "comment", "HTTPS")
 
         # Clear saved rules
-        save_firewall_rules([
-            FirewallRule(
-                id="rule_default_ssh",
-                name="SSH",
-                action=FirewallAction.ALLOW,
-                direction=FirewallDirection.IN,
-                protocol=FirewallProtocol.TCP,
-                port="22",
-                enabled=True,
-                comment="SSH access"
-            ),
-            FirewallRule(
-                id="rule_default_http",
-                name="HTTP",
-                action=FirewallAction.ALLOW,
-                direction=FirewallDirection.IN,
-                protocol=FirewallProtocol.TCP,
-                port="80",
-                enabled=True,
-                comment="HTTP access"
-            ),
-            FirewallRule(
-                id="rule_default_https",
-                name="HTTPS",
-                action=FirewallAction.ALLOW,
-                direction=FirewallDirection.IN,
-                protocol=FirewallProtocol.TCP,
-                port="443",
-                enabled=True,
-                comment="HTTPS access"
-            )
-        ])
-
-        return {"status": "ok", "message": "Firewall reset to defaults"}
+        save_firewall_rules(_DEFAULT_FIREWALL_RULES)
     except Exception as e:
         logger.exception("Could not reset firewall")
+        if reset_done:
+            await audit_change(
+                AuditAction.FIREWALL_RESET, request, current_user.username, resource_type="firewall",
+                details=f"ufw was reset, then: Failed to reset firewall: {e}",
+                severity=AuditSeverity.WARNING, success=False,
+            )
         raise HTTPException(500, f"Failed to reset firewall: {str(e)}")
+
+    await audit_change(
+        AuditAction.FIREWALL_RESET, request, current_user.username, resource_type="firewall",
+        details="The firewall was reset to its defaults (SSH, HTTP and HTTPS)", severity=AuditSeverity.WARNING,
+    )
+    return {"status": "ok", "message": "Firewall reset to defaults"}
 
 
 # ==================== SSL/TLS Certificate Management ====================

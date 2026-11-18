@@ -259,7 +259,7 @@ async def list_importable_filesystems_endpoint(_=Depends(verify_token)):
 @router.post("/filesystems/{uuid}/import", response_model=PoolInfo)
 @limiter.limit("10/minute")
 async def import_filesystem_endpoint(
-    request: Request, uuid: str, body: PoolImport, _=Depends(verify_token)
+    request: Request, uuid: str, body: PoolImport, user: User = Depends(verify_token)
 ):
     """Import a filesystem of GET /filesystems/importable as the pool ``name`` (ADR-0283).
 
@@ -274,17 +274,22 @@ async def import_filesystem_endpoint(
     shares, NFS exports or containers of an earlier pool still use the name,
     when the mountpoint is in use or holds files, and when the filesystem
     mounts another subvolume than its top level by default; 503 when Docker
-    does not answer. Then smb.conf is applied again (ADR-0248).
+    does not answer. Then smb.conf is applied again (ADR-0248). The audit log gets pool_imported.
     """
     validated_uuid = validate_filesystem_uuid(uuid)
     validated_name = validate_pool_name(body.name)
 
-    return await _change_pools(pools.import_pool, validated_uuid, validated_name)
+    info = await _change_pools(pools.import_pool, validated_uuid, validated_name)
+    await audit_change(
+        AuditAction.POOL_IMPORTED, request, user.username, resource_type="pool", resource_id=validated_name,
+        details=f"Imported the filesystem {validated_uuid} as the pool {validated_name}",
+    )
+    return info
 
 
 @router.post("/pools/{name}/mount", response_model=PoolInfo)
 @limiter.limit("10/minute")
-async def mount_pool_endpoint(request: Request, name: str, _=Depends(verify_token)):
+async def mount_pool_endpoint(request: Request, name: str, user: User = Depends(verify_token)):
     """Mount a pool on the host by UUID and keep its managed fstab entry.
 
     This imports a pool found on the host's disks, too (ADR-0283). 409 when
@@ -293,16 +298,23 @@ async def mount_pool_endpoint(request: Request, name: str, _=Depends(verify_toke
     it mounts another subvolume than its top level by default: it is
     unmounted again. The pool's apps that could not start without it
     are started in the background; the response does not wait for them. Its
-    SMB shares are served again before it answers (ADR-0248).
+    SMB shares are served again before it answers (ADR-0248). The audit log gets pool_mounted when
+    it mounted the pool or wrote its fstab entry (ADR-0402).
     """
     validated_name = validate_pool_name(name)
 
-    return await _change_pools(pools.mount_pool, validated_name)
+    info, changed = await _change_pools(pools.mount_pool_changed, validated_name)
+    if changed:
+        await audit_change(
+            AuditAction.POOL_MOUNTED, request, user.username, resource_type="pool", resource_id=validated_name,
+            details=f"Mounted the pool {validated_name}",
+        )
+    return info
 
 
 @router.post("/pools/{name}/unmount", response_model=PoolInfo)
 @limiter.limit("10/minute")
-async def unmount_pool_endpoint(request: Request, name: str, _=Depends(verify_token)):
+async def unmount_pool_endpoint(request: Request, name: str, user: User = Depends(verify_token)):
     """Unmount a pool on the host and remove its managed fstab entry.
 
     The copies of its mount that services keep in mount namespaces of their
@@ -314,11 +326,28 @@ async def unmount_pool_endpoint(request: Request, name: str, _=Depends(verify_to
     container that binds /mnt/pools; the pool is then mounted again. 503,
     with nothing changed, when Docker cannot be asked which containers use
     the pool (ADR-0344). Before it answers, smb.conf no longer serves the
-    pool's shares, and their open connections are closed (ADR-0248).
+    pool's shares, and their open connections are closed (ADR-0248). The audit log gets
+    pool_unmounted when the pool was mounted or its fstab entry dropped; as failed when the host
+    unmounted it and it could not be mounted again (ADR-0402).
     """
     validated_name = validate_pool_name(name)
 
-    return await _change_pools(pools.unmount_pool, validated_name)
+    try:
+        info, changed = await _change_pools(pools.unmount_pool_changed, validated_name)
+    except HTTPException as exc:
+        if isinstance(exc.__cause__, pools.PoolLeftUnmountedError):
+            await audit_change(
+                AuditAction.POOL_UNMOUNTED, request, user.username, resource_type="pool",
+                resource_id=validated_name, details=f"Unmounted the pool {validated_name}; then: {exc.detail}",
+                severity=AuditSeverity.WARNING, success=False,
+            )
+        raise
+    if changed:
+        await audit_change(
+            AuditAction.POOL_UNMOUNTED, request, user.username, resource_type="pool", resource_id=validated_name,
+            details=f"Unmounted the pool {validated_name}; its data was kept", severity=AuditSeverity.WARNING,
+        )
+    return info
 
 
 @router.get("/pools/{pool_name}/volumes", response_model=list[VolumeInfo])

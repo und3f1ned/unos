@@ -57,6 +57,7 @@ from fastapi import HTTPException
 from pydantic import BaseModel, Field, ValidationError
 
 from .. import state_files
+from ..audit.changes import changed_fields
 from ..backup.router import (
     MAX_ARCHIVE_BYTES,
     BackupInfo,
@@ -1069,8 +1070,27 @@ def _store(settings: OffsiteSettings, secrets: Secrets) -> None:
     write_settings(settings)
 
 
-async def save_settings(request: SettingsRequest) -> dict:
-    """PUT /offsite/settings: check the settings, test the target with restic, then store them."""
+def _change_made(stored: Optional[OffsiteSettings], kept: Secrets, settings: OffsiteSettings,
+                 secrets: Secrets) -> Optional[str]:
+    """What an entry of the audit log says about the settings that were just stored, or None when they
+    and the secrets are as they were (ADR-0402). The secrets, and the access key ID, come by name
+    only."""
+    if stored is None:
+        return f"Off-device copy set up: {location(settings)}"
+    changed = changed_fields(stored.model_dump(mode="json"), settings.model_dump(mode="json"),
+                             shown=set(OffsiteSettings.model_fields) - {"access_key_id"})
+    named = [name for name, new, old in (("password", secrets.password, kept.password),
+                                         ("s3_secret_access_key", secrets.s3_secret_access_key,
+                                          kept.s3_secret_access_key)) if new != old]
+    both = ", ".join(part for part in (changed, *named) if part)
+    return f"Off-device copy settings changed: {both}" if both else None
+
+
+async def save_settings(request: SettingsRequest, changes: Optional[list[tuple[str, str]]] = None) -> dict:
+    """PUT /offsite/settings: check the settings, test the target with restic, then store them.
+
+    CHANGES, when given, gets (the repository, what changed) once the settings were stored and
+    differ from the stored ones: the router writes the audit entry from it (ADR-0402)."""
     activity = _begin_or_409("save")
     try:
         stored, kept = _stored()
@@ -1089,31 +1109,45 @@ async def save_settings(request: SettingsRequest) -> dict:
             raise
         finally:
             _close(held)
-        await asyncio.to_thread(_store, settings, secrets)
-        logger.info("The off-device copy goes to %s", location(settings))
+        made = _change_made(stored, kept, settings, secrets)
+        if made:  # settings and secrets as they were are not written again (ADR-0214)
+            await asyncio.to_thread(_store, settings, secrets)
+            logger.info("The off-device copy goes to %s", location(settings))
+            if changes is not None:
+                changes.append((location(settings), made))
     finally:
         _end(activity)
     return await settings_answer()
 
 
-def _remove_files() -> None:
+def _remove_files() -> bool:
     """The settings, the secrets and the state, and the copies of them kept as .bad (ADR-0324): a
     damaged secrets file holds the password too."""
+    existed = False
     for name in (SETTINGS_FILE, SECRETS_FILE, STATUS_FILE):
         path = Path(name)
+        existed |= path.exists() or state_files.bad_path(path).exists()
         path.unlink(missing_ok=True)
         state_files.bad_path(path).unlink(missing_ok=True)
         for staged in path.parent.glob(f".{path.name}.*.tmp"):  # of a write that a stop interrupted
             staged.unlink(missing_ok=True)
     _sync_folder(Path(SECRETS_FILE).parent)
+    return existed
 
 
-async def remove_settings() -> dict:
+async def remove_settings(changes: Optional[list[tuple[str, str]]] = None) -> dict:
     """DELETE /offsite/settings: remove the settings, the secrets and the state. The copies stay where
-    they are."""
+    they are. CHANGES, when given, gets (the repository, what was done) if there was anything to
+    remove (ADR-0402)."""
     activity = _begin_or_409("remove")
     try:
-        await asyncio.to_thread(_remove_files)
+        try:
+            stored = await asyncio.to_thread(load_settings)
+        except OSError:
+            stored = None  # the files are removed all the same
+        if await asyncio.to_thread(_remove_files) and changes is not None:
+            where = location(stored) if stored is not None else "the settings"
+            changes.append((where, f"Forgot the off-device copy target {where}; the copies stayed where they are"))
     finally:
         _end(activity)
     return {"status": "deleted"}

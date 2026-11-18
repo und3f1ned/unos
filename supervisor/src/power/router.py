@@ -15,7 +15,7 @@ from slowapi import Limiter
 from slowapi.util import get_remote_address
 
 from .. import host, state_files
-from ..audit.changes import audit_change
+from ..audit.changes import audit_change, changed_fields
 from ..audit.schemas import AuditAction, AuditSeverity
 from ..auth.utils import verify_token
 from ..security.validators import INTERFACE_NAME_PATTERN, validate_interface_name
@@ -437,9 +437,15 @@ async def get_power_config(_: dict = Depends(verify_token)):
 
 
 @router.put("/config", response_model=PowerConfig)
-async def update_power_config(config: PowerConfig, _: dict = Depends(verify_token)):
-    """Update power configuration."""
-    save_config(config)
+async def update_power_config(request: Request, config: PowerConfig, user=Depends(verify_token)):
+    """Update power configuration; the file is written, and the audit log gets settings_changed,
+    only when the settings change (ADR-0214, ADR-0402)."""
+    saved = load_config()
+    changed = changed_fields(saved.model_dump(), config.model_dump())
+    if changed:
+        save_config(config)
+        await audit_change(AuditAction.SETTINGS_CHANGED, request, user.username, resource_type="power",
+                           details=f"Power settings changed: {changed}")
     return config
 
 
@@ -517,14 +523,18 @@ def _cancel() -> tuple[PowerAnswer, Optional[str]]:
     return answer, pending.action
 
 
-def _suspend() -> PowerAnswer:
-    """Suspend the host to RAM, if its kernel offers it."""
+def _check_suspend() -> None:
+    """Refuse a suspend that the host cannot do (HTTPException)."""
     try:
         states = host.read_host_file("/sys/power/state", timeout=HOST_TIMEOUT)
     except (host.HostCommandError, OSError, subprocess.SubprocessError) as exc:
         raise HTTPException(500, f"Could not read the host's sleep states: {exc}")
     if "mem" not in states.split():
         raise HTTPException(409, "The host cannot suspend: its kernel offers no suspend to RAM")
+
+
+def _suspend() -> PowerAnswer:
+    """Suspend the host to RAM now (HTTPException when systemctl fails)."""
     result = _run(["systemctl", "suspend"])
     if not result.ok:
         raise HTTPException(500, f"Could not suspend the host: {_why(result)}")
@@ -583,10 +593,20 @@ async def cancel_shutdown(request: Request, user=Depends(verify_token)):
 
 @router.post("/suspend", response_model=PowerAnswer)
 @limiter.limit("2/minute")  # Rate limit suspend requests
-async def suspend_system(request: Request, _: dict = Depends(verify_token)):
-    """Suspend the host to RAM now."""
+async def suspend_system(request: Request, user=Depends(verify_token)):
+    """Suspend the host to RAM now. The audit log gets system_suspend before systemctl runs, since the
+    host may be asleep when it returns; when systemctl fails, a second entry says so, as failed
+    (ADR-0402)."""
     _refuse_local()
-    return await asyncio.to_thread(_suspend)
+    await asyncio.to_thread(_check_suspend)
+    await audit_change(AuditAction.SYSTEM_SUSPEND, request, user.username, resource_type="host",
+                       details="The host suspends now", severity=AuditSeverity.WARNING)
+    try:
+        return await asyncio.to_thread(_suspend)
+    except HTTPException as exc:
+        await audit_change(AuditAction.SYSTEM_SUSPEND, request, user.username, resource_type="host",
+                           details=str(exc.detail), severity=AuditSeverity.WARNING, success=False)
+        raise
 
 
 # ==================== Wake-on-LAN (ADR-0233) ====================
@@ -791,7 +811,7 @@ async def get_ups_config(_: dict = Depends(verify_token)):
 
 
 @router.put("/ups/config", response_model=UPSConfigAnswer)
-async def update_ups_config(request: UPSConfigRequest, _: dict = Depends(verify_token)):
+async def update_ups_config(http_request: Request, request: UPSConfigRequest, user=Depends(verify_token)):
     """Replace the UPS settings; the file is written only when they change (ADR-0214).
 
     The NUT password is write-only (ADR-0356): a request without one (absent, null or empty)
@@ -810,8 +830,15 @@ async def update_ups_config(request: UPSConfigRequest, _: dict = Depends(verify_
         password = saved.password if saved is not None else None
     config = UPSConfig(**request.model_dump(exclude={"username", "password"}), username=username,
                        password=password)
-    if config != saved:
+    # The settings in force are the defaults while none are saved: the file is written, and the audit
+    # log gets settings_changed, for the fields that differ from them. The credentials come by name
+    # only, never their values (ADR-0214, ADR-0402).
+    changed = changed_fields((saved or UPSConfig()).model_dump(), config.model_dump(),
+                             shown=set(UPSSettings.model_fields) - {"username"})
+    if changed:
         save_ups_config(config)
+        await audit_change(AuditAction.SETTINGS_CHANGED, http_request, user.username, resource_type="ups",
+                           details=f"UPS settings changed: {changed}")
     return _ups_config_answer(config)
 
 

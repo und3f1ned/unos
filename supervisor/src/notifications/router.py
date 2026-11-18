@@ -19,11 +19,14 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from datetime import datetime, timezone
 from pathlib import Path
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, Request
 from pydantic import TypeAdapter, ValidationError
 
 from .. import host, state_files
 from ..times import parse_time, utc_now, utc_text
+from ..audit.changes import audit_change, changed_fields
+from ..audit.schemas import AuditAction, AuditSeverity
+from ..auth.models import User
 from ..auth.utils import verify_token
 from .schemas import (
     NotificationConfig, NotificationEvent, NotificationLog,
@@ -126,8 +129,9 @@ def save_configs(configs: list[NotificationConfig]) -> None:
     _replace_file(Path(CONFIG_FILE), json.dumps([c.model_dump() for c in configs], indent=2))
 
 
-def _change_configs(change: Callable[[list[NotificationConfig]], list[NotificationConfig]]) -> None:
-    """Store the channels that ``change`` makes of the stored ones (blocking: run it in a worker thread).
+def _change_configs(change: Callable[[list[NotificationConfig]], list[NotificationConfig]]) -> bool:
+    """Store the channels that ``change`` makes of the stored ones (blocking: run it in a worker thread);
+    whether they differ from the stored ones: only then is the file written (ADR-0214, ADR-0402).
 
     One change at a time, each on the channels that the one before stored, so
     that none is lost. ``change`` refuses with an HTTPException, and then
@@ -135,11 +139,15 @@ def _change_configs(change: Callable[[list[NotificationConfig]], list[Notificati
     channels stay as they were.
     """
     with _CONFIGS_LOCK:
-        configs = change(load_configs())
+        stored = load_configs()
+        configs = change(stored)
+        if configs == stored:
+            return False
         try:
             save_configs(configs)
         except OSError as error:
             raise HTTPException(500, SAVE_FAILED.format(error=error)) from error
+        return True
 
 
 def load_logs() -> list[NotificationLog]:
@@ -627,40 +635,73 @@ async def list_configs(_: dict = Depends(verify_token)):
     return load_configs()
 
 
+def _channel_name(config: NotificationConfig) -> str:
+    """The channel as an audit entry names it: its name, else its id."""
+    return config.name or config.id or config.channel.value
+
+
 @router.post("/configs", response_model=NotificationConfig)
-async def create_config(config: NotificationConfig, _: dict = Depends(verify_token)):
-    """Create a new notification configuration, with an id of its own."""
+async def create_config(
+    config: NotificationConfig, request: Request, user: User = Depends(verify_token)
+):
+    """Create a new notification configuration, with an id of its own. The audit log gets
+    settings_changed for the channel, never its secrets (ADR-0402)."""
     config.id = f"notif_{uuid.uuid4().hex[:12]}"
     await asyncio.to_thread(_change_configs, lambda configs: [*configs, config])
+    await audit_change(
+        AuditAction.SETTINGS_CHANGED, request, user.username, resource_type="notification_channel",
+        resource_id=_channel_name(config), details=f"Added the {config.channel.value} channel {_channel_name(config)}",
+    )
     return config
 
 
 @router.put("/configs/{config_id}", response_model=NotificationConfig)
-async def update_config(config_id: str, config: NotificationConfig, _: dict = Depends(verify_token)):
-    """Update a notification configuration."""
+async def update_config(
+    config_id: str, config: NotificationConfig, request: Request, user: User = Depends(verify_token)
+):
+    """Update a notification configuration. The audit log gets settings_changed, naming the fields that
+    changed and showing the values of the channel's name and switch alone, when the channel differs from
+    the stored one (ADR-0402)."""
     config.id = config_id
+    before: list[NotificationConfig] = []
 
     def replace(configs: list[NotificationConfig]) -> list[NotificationConfig]:
         for i, c in enumerate(configs):
             if c.id == config_id:
+                before.append(c)
                 return [*configs[:i], config, *configs[i + 1:]]
         raise HTTPException(404, NOT_FOUND.format(id=config_id))
 
-    await asyncio.to_thread(_change_configs, replace)
+    changed = await asyncio.to_thread(_change_configs, replace)
+    if changed:
+        fields = changed_fields(before[0].model_dump(), config.model_dump(), shown={"enabled", "name"},
+                               whole=("webhook_config.headers",))
+        await audit_change(
+            AuditAction.SETTINGS_CHANGED, request, user.username, resource_type="notification_channel",
+            resource_id=_channel_name(config), details=f"Changed the channel {_channel_name(before[0])}: {fields}",
+        )
     return config
 
 
 @router.delete("/configs/{config_id}")
-async def delete_config(config_id: str, _: dict = Depends(verify_token)):
-    """Delete a notification configuration."""
+async def delete_config(config_id: str, request: Request, user: User = Depends(verify_token)):
+    """Delete a notification configuration. The audit log gets settings_changed (ADR-0402)."""
+    removed: list[NotificationConfig] = []
 
     def remove(configs: list[NotificationConfig]) -> list[NotificationConfig]:
         kept = [c for c in configs if c.id != config_id]
         if len(kept) == len(configs):
             raise HTTPException(404, NOT_FOUND.format(id=config_id))
+        removed.extend(c for c in configs if c.id == config_id)
         return kept
 
     await asyncio.to_thread(_change_configs, remove)
+    await audit_change(
+        AuditAction.SETTINGS_CHANGED, request, user.username, resource_type="notification_channel",
+        resource_id=_channel_name(removed[0]),
+        details=f"Removed the {removed[0].channel.value} channel {_channel_name(removed[0])}",
+        severity=AuditSeverity.WARNING,
+    )
     return {"status": "deleted", "id": config_id}
 
 

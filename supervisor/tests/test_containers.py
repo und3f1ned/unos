@@ -599,7 +599,8 @@ class TestRouting:
         docker_client.images.pull.assert_called_once_with("alpine:3.20")
         assert removed.status_code == 200, removed.text
         assert removed.json() == {"status": "removed"}
-        docker_client.images.get.assert_called_once_with("sha256:def456")
+        # The pull looks the reference up first, when the image list does not know it (ADR-0402).
+        assert docker_client.images.get.call_args_list[-1] == call("sha256:def456")
         assert docker_client.images.remove.call_args_list[0] == call("alpine:3.20", force=False)
         docker_client.containers.get.assert_not_called()
 
