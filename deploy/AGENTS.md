@@ -16,7 +16,10 @@
 - `docker-compose.test.yml` is the Docker test stack (project `unos-test`, ports 3443 and 3080 on
   127.0.0.1, the Playwright runner of the `test` profile), for a machine that runs Docker.
 - Caddy's configuration is `webui/Caddyfile`, which the web UI image copies, and no compose file
-  mounts another: HTTPS from Caddy's local CA, without HSTS (ADR-0025).
+  mounts another: HTTPS from Caddy's local CA, without HSTS (ADR-0025), or from the served
+  certificate, which the supervisor writes into the `served-certificate` volume that only it and
+  the web UI (read-only) mount; the web UI's command serves it only when `caddy validate` passes,
+  and the supervisor has Caddy load a change with `caddy reload` through `docker exec` (ADR-0404).
 - `install.sh`, `update.sh` and `uninstall.sh` run as root on a user's host. `update.sh` refuses
   local changes and other branches, backs up, waits for health and rolls back on failure
   (ADR-0049); `uninstall.sh` keeps the SMB host accounts and removes only their exact passdb

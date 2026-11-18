@@ -134,6 +134,10 @@
 		firewall_rule_deleted: 'audit.action.firewallRuleDeleted',
 		firewall_reset: 'audit.action.firewallReset',
 		login_history_cleared: 'audit.action.loginHistoryCleared',
+		certificate_uploaded: 'audit.action.certificateUploaded',
+		certificate_generated: 'audit.action.certificateGenerated',
+		certificate_deleted: 'audit.action.certificateDeleted',
+		certificate_served: 'audit.action.certificateServed',
 		other: 'audit.action.other'
 	};
 	// An info entry shows no severity.
@@ -170,7 +174,8 @@
 		power: 'audit.resource.power',
 		ups: 'audit.resource.ups',
 		notification_channel: 'audit.resource.notificationChannel',
-		offsite: 'audit.resource.offsite'
+		offsite: 'audit.resource.offsite',
+		certificate: 'audit.resource.certificate'
 	};
 
 	/** The text of `value` by its key in `keys`, in the language of the page; else `value`. */
