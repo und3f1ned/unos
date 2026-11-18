@@ -257,6 +257,15 @@ def docker_client(monkeypatch):
     answers an empty stream."""
     client = MagicMock(name="docker")
     client.api.post.return_value = pull_answer()
+
+    def image(key):
+        # Docker lacks every image until a pull (every image of the catalog is pinned and looked
+        # up by digest first, ADR-0410); a pulled one declares no VOLUME.
+        if not client.api.post.called:
+            raise NotFound(f"No such image: {key}")
+        return MagicMock(name="image", attrs={"Config": {"Volumes": None}})
+
+    client.images.get.side_effect = image
     client.containers.get.side_effect = NotFound("No such container")
     client.containers.list.return_value = []
     client.info.return_value = {"DockerRootDir": DOCKER_ROOT}
@@ -2915,7 +2924,8 @@ class TestHardwareOfTheSoc:
         image = docker_client.api.create_container.call_args.args
         create = docker_client.api.create_container.call_args.kwargs
         config = _host_config(docker_client)
-        assert image == ("jellyfin/jellyfin:latest",)
+        pin = catalog_module.APP_IMAGES["jellyfin"]
+        assert image == (f"{pin.name}@{pin.digest}",)
         # Each node, or folder of nodes, as the same path in the container, read and write.
         assert config["Devices"] == [
             {"PathOnHost": path, "PathInContainer": path, "CgroupPermissions": "rwm"} for path in RK3588_VIDEO
@@ -3470,22 +3480,19 @@ class TestHardwarePerContainer:
 # The catalog's apps of several containers and its pinned images (ADR-0381, ADR-0382)
 # ---------------------------------------------------------------------------
 
-# The templates whose images floated on a tag when the catalog pinned its first app (ADR-0381):
-# catalog.UNPINNED_TEMPLATES may only lose ids, until apps.pinned-catalog-images empties it.
-UNPINNED_AT_MOST = frozenset({
-    "actual-budget", "adguard-home", "aria2", "audiobookshelf", "authelia", "bazarr", "calibre-web",
-    "changedetection", "code-server", "crowdsec", "deluge", "dozzle", "duplicati", "emby", "filebrowser",
-    "frigate", "gitea", "glances", "grafana", "heimdall", "homarr", "homeassistant", "homepage",
-    "jdownloader2", "jellyfin", "kavita", "lidarr", "localai", "mealie", "mosquitto", "n8n", "navidrome",
-    "netdata", "nextcloud", "nginx-proxy-manager", "node-red", "nzbget", "ollama", "open-webui", "overseerr",
-    "photoprism", "pihole", "plex", "portainer", "prometheus", "prowlarr", "qbittorrent", "radarr", "readarr",
-    "restic-rest-server", "sabnzbd", "scrypted", "sonarr", "stirling-pdf", "syncthing", "tailscale",
-    "tautulli", "traefik", "transmission", "trilium", "uptime-kuma", "vaultwarden", "vikunja", "wikijs",
-    "wireguard", "zigbee2mqtt",
-})
+# A tag that names no build: latest, a channel, a branch or a bare major line (ADR-0410). A pinned
+# tag names the version it was pinned at, so that it moves only when its publisher pushes that
+# version again, which scripts/catalog-platforms.py tags reports.
+FLOATING_TAG = re.compile(
+    r"(latest|stable|main|master|develop|dev|nightly|edge|beta|lts|sts|next|rolling|unstable)([-_].*)?|v?\d{1,3}",
+    re.IGNORECASE,
+)
 # Templates of apps that need a database or a broker that a one-container template never gave
 # them: apps.catalog-companions brings them back with companions (ADR-0381).
 REMOVED_TEMPLATES = ("bookstack", "paperless-ngx", "linkwarden")
+# Readarr's project is retired and LinuxServer's image of it is deprecated: its tag names an empty
+# index, which no host can pull, so it has no image to pin (ADR-0410).
+RETIRED_TEMPLATES = ("readarr",)
 # The variables of Immich's server that UNOS sets to reach its companions and its password.
 IMMICH_WIRING = {
     "DB_HOSTNAME", "DB_USERNAME", "DB_DATABASE_NAME", "DB_PASSWORD_FILE", "REDIS_HOSTNAME",
@@ -3575,27 +3582,67 @@ class TestStackCatalog:
         # Each pin is an image that a container of the catalog runs.
         assert set(pins) <= {image for spec in _catalog_containers() for image in _images(spec)}
 
-    def test_every_image_of_a_pinned_template_is_pinned(self):
-        unpinned = catalog_module.UNPINNED_TEMPLATES
+    def test_every_image_of_the_catalog_is_pinned(self):
         pins = catalog_module.PINNED_IMAGES
         for template in APP_CATALOG:
             images = [image for spec in (template, *template.companions) for image in _images(spec)]
-            if template.id in unpinned:
-                # Listed while an image of it floats: a template that is pinned leaves the list.
-                assert not template.companions, template.id
-                assert [image for image in images if image not in pins], template.id
-            else:
-                assert all(image in pins for image in images), (template.id, images)
-        # The image of a hardware profile is pinned, whatever its template (ADR-0382).
-        for spec in _catalog_containers():
-            assert all(profile.image in pins for profile in spec.hardware if profile.image), spec.image
+            assert all(image in pins for image in images), (template.id, images)
+        # No list of templates that float is left: none may (ADR-0410).
+        assert not hasattr(catalog_module, "UNPINNED_TEMPLATES")
 
-    def test_the_templates_with_floating_images_only_become_fewer(self):
-        unpinned = catalog_module.UNPINNED_TEMPLATES
+    def test_a_pinned_tag_names_a_version_not_a_channel(self):
+        for ref, pin in catalog_module.PINNED_IMAGES.items():
+            assert not FLOATING_TAG.fullmatch(pin.tag), ref
 
-        assert isinstance(unpinned, frozenset)
-        assert unpinned <= UNPINNED_AT_MOST, sorted(unpinned - UNPINNED_AT_MOST)
-        assert unpinned <= {template.id for template in APP_CATALOG}, sorted(unpinned)
+    def test_an_app_of_one_container_runs_the_image_of_its_version(self):
+        images = catalog_module.APP_IMAGES
+        for template in APP_CATALOG:
+            if template.companions:
+                continue
+            pin = images[template.id]
+            assert template.image == pin.ref, template.id
+            # The version that the App Store shows, the label unos.app.version and an update's
+            # target (ADR-0408) are the pinned tag.
+            assert template.version == pin.tag, template.id
+        assert set(images) == {template.id for template in APP_CATALOG if not template.companions}
+
+    def test_every_volume_that_a_pinned_image_declares_is_on_the_pool_or_in_ram(self):
+        # Docker would make any other VOLUME an anonymous volume in its data root on the system
+        # disk; the install refuses such an image after its pull (ADR-0381), so a template that
+        # left one out could not be installed at all.
+        pins = catalog_module.PINNED_IMAGES
+        for template in APP_CATALOG:
+            for spec in (template, *template.companions):
+                targets = [volume.container for volume in spec.volumes if volume.on_pool] + list(spec.tmpfs)
+                for image in _images(spec):
+                    for path in pins[image].volumes:
+                        assert any(apps_router._is_within(path, target) for target in targets), (template.id, image, path)
+
+    def test_the_volumes_an_app_declares_are_recorded_for_the_images_that_declare_them(self):
+        # The registries' configurations of 2026-11-18 that the templates' binds rest on: Homarr's
+        # database folder and LocalAI's backends and configuration are on the pool for them.
+        declare = {t.id for t in APP_CATALOG if not t.companions and catalog_module.APP_IMAGES[t.id].volumes}
+        assert {"homarr", "localai", "mealie", "plex", "jellyfin", "transmission"} <= declare
+        assert catalog_module.APP_IMAGES["homarr"].volumes == ("/app/data/configs", "/data")
+        assert catalog_module.APP_IMAGES["localai"].volumes == ("/backends", "/configuration", "/models")
+        assert catalog_module.IMMICH_POSTGRES.volumes == ("/var/lib/postgresql/data",)
+        assert catalog_module.IMMICH_SERVER.volumes == ("/data",)
+
+    def test_immichs_pins_are_the_digests_its_install_runs(self):
+        # The dev device runs Immich from these digests and is never updated (apps.update-in-place):
+        # only Valkey's tag changed, to the version tag that names the same index.
+        assert {pin.digest for pin in (catalog_module.IMMICH_SERVER, catalog_module.IMMICH_ML,
+                                       catalog_module.IMMICH_ML_RKNN, catalog_module.IMMICH_POSTGRES,
+                                       catalog_module.VALKEY)} == {
+            "sha256:7c489add298fc2f92cda4c777de6462aa206877e04087b815f62c7664af0b53b",
+            "sha256:8adebf414256f6e4f837bfbb66fa94f14f4da7260e3a1d65cbba49e4e35d8764",
+            "sha256:b7baeb12cab0093803f09f0299b7c863bed46f36349c532096f40bfbf4f10c84",
+            "sha256:bcf63357191b76a916ae5eb93464d65c07511da41e3bf7a8416db519b40b1c23",
+            "sha256:418652cfb58ef879d4978c33553735d7147016032d5aefaa14c828e611eb9dfd",
+        }
+        assert catalog_module.VALKEY.ref == (
+            "docker.io/valkey/valkey:9.1.2@sha256:418652cfb58ef879d4978c33553735d7147016032d5aefaa14c828e611eb9dfd"
+        )
 
     def test_immichs_server_and_machine_learning_are_one_version(self):
         immich = get_app_by_id("immich")
@@ -3661,10 +3708,12 @@ class TestStackCatalog:
         assert containers["database"]["hardware"] == containers["redis"]["hardware"] == []
         assert containers[""]["image"] == catalog_module.IMMICH_SERVER.ref
 
-    @pytest.mark.parametrize("app_id", REMOVED_TEMPLATES)
-    def test_the_apps_that_lack_their_companions_are_not_in_the_catalog(self, api, pools, docker_client, app_id):
+    @pytest.mark.parametrize("app_id", [*REMOVED_TEMPLATES, *RETIRED_TEMPLATES])
+    def test_the_apps_that_lack_their_companions_or_an_image_are_not_in_the_catalog(
+        self, api, pools, docker_client, app_id
+    ):
         assert get_app_by_id(app_id) is None
-        assert app_id not in UNPINNED_AT_MOST
+        assert app_id not in catalog_module.APP_IMAGES
         assert app_id not in {template["id"] for template in api.get("/api/v1/apps/catalog").json()}
         assert api.get(f"/api/v1/apps/catalog/{app_id}").status_code == 404
 
@@ -3703,23 +3752,39 @@ class TestSystemDiskSpace:
 
         response = install(api, {"template_id": "jellyfin"})
 
+        need = preflight_module._gib(catalog_module.APP_IMAGES["jellyfin"].disk_bytes)
         assert (response.status_code, response.json()) == (409, {
-            "detail": "The system disk has 1.5 GiB free; at least 2 GiB must stay free when Jellyfin is installed. "
-            + NO_SPACE_REMEDY
+            "detail": f"Jellyfin's images need about {need} on the system disk, which has 1.5 GiB free; at least "
+            "2 GiB must stay free. " + NO_SPACE_REMEDY
         })
         docker_client.api.post.assert_not_called()
         docker_client.containers.create.assert_not_called()
         assert not (pools.alpha / "apps").exists()
 
-    def test_an_image_of_a_floating_tag_counts_nothing_before_its_pull(self, api, pools, docker_client, soc):
-        # Its size is not known before its pull: the floor alone must be free.
+    def test_an_image_of_a_floating_tag_counts_nothing_before_its_pull(
+        self, api, pools, docker_client, soc, in_catalog
+    ):
+        # Its size is not known before its pull: the floor alone must be free. The catalog has no
+        # such image (ADR-0410); a template that is not pinned is still installed so.
+        in_catalog(AppTemplate(id="notes", name="Notes", description="d", icon="n", category=AppCategory.PRODUCTIVITY,
+                               image="example/notes:latest", version="latest"))
         soc.free = {DOCKER_ROOT: FREE_SPACE_FLOOR, CONTAINERD_ROOT: 64 * GIB}
 
-        response = install(api, {"template_id": "jellyfin"})
+        response = install(api, {"template_id": "notes"})
 
         assert response.status_code == 200, response.text
         docker_client.images.get.assert_not_called()
-        assert pulled(docker_client) == ["jellyfin/jellyfin:latest"]
+        assert pulled(docker_client) == ["example/notes:latest"]
+
+    def test_a_pinned_image_that_docker_lacks_counts_its_estimate(self, api, pools, docker_client, soc):
+        pin = catalog_module.APP_IMAGES["jellyfin"]
+        soc.free = {DOCKER_ROOT: FREE_SPACE_FLOOR + pin.disk_bytes - 1, CONTAINERD_ROOT: 64 * GIB}
+
+        response = install(api, {"template_id": "jellyfin"})
+
+        assert response.status_code == 409, response.text
+        assert "Jellyfin's images need about" in response.json()["detail"]
+        docker_client.api.post.assert_not_called()
 
     def test_a_folder_that_the_host_lacks_is_left_out(self, api, pools, docker_client, soc):
         # Docker's own image store keeps everything in its root folder: no /var/lib/containerd.

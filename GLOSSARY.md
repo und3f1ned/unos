@@ -428,10 +428,15 @@ it opens on the pool (64 hexadecimal digits, root, mode 0600), binds read-only i
 containers that read it and never shows, replaces or makes at a start; an install that finds
 that data without the file is refused (ADR-0381). Avoid: password variable.
 
-**Pinned image**: An image of the catalog named by its tag and the digest of its index
+**Pinned image**: An image of the catalog named by a version tag and the digest of its index
 (`name:tag@sha256:...`), pulled and run by that digest, with its size on the system disk
-estimated for the install's space check (`PINNED_IMAGES`, ADR-0381). The templates of floating
-tags are listed in `UNPINNED_TEMPLATES`, which only shrinks. Avoid: locked image.
+estimated for the install's space check and the `VOLUME`s it declares (`PINNED_IMAGES`,
+`APP_IMAGES`, ADR-0381, ADR-0410). Every image of the catalog is one. Avoid: locked image.
+
+**Moved tag**: The tag of a pinned image that names another index at its registry than the one
+pinned, because the publisher pushed that version again or a line tag (Traefik's `v3.7`) moved on
+to a newer release; the weekly `tags` audit reports it (`make catalog-tags`, ADR-0410). Avoid:
+stale pin, outdated image.
 
 **Image platforms**: The Linux platforms (`linux/amd64`, `linux/arm64`, `linux/riscv64`, `linux/arm/v7`)
 that the registry's manifest list publishes for an image of the catalog, recorded in

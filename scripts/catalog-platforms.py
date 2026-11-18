@@ -1,31 +1,36 @@
 #!/usr/bin/env python3
-"""The platforms that the images of the app catalog publish (ADR-0403): the audit's tool.
+"""The images of the app catalog against their registries (ADR-0403, ADR-0410): the audit's tool.
 
     scripts/catalog-platforms.py check     exit 0 when the platforms recorded in
                                            supervisor/src/apps/image_platforms.json are those
                                            that the registries publish now
     scripts/catalog-platforms.py record    write the file from the registries
+    scripts/catalog-platforms.py tags      exit 0 when the tag of every pinned image of the
+                                           catalog still names the index it is pinned to
 
-Run it with the supervisor's Python (it reads the catalog: `make audit-platforms`, or
-`supervisor/.venv/bin/python scripts/catalog-platforms.py check` by hand); the weekly workflow
-(.github/workflows/audit.yml, ADR-0218) runs the same command. It needs the network and only
-reads: for every image of the catalog (the main container's, the companions' and those of the
-hardware profiles) it asks the image's registry for the manifest of the pinned tag or digest,
-anonymously through curl, and takes the platforms from the manifest list (the OCI index or Docker's manifest
-list), or from the image's config when the tag is a single manifest. It pulls no layer and
-writes nothing but the recorded file, and only for `record`.
+Run it with the supervisor's Python (it reads the catalog: `make catalog-platforms` and
+`make catalog-tags`, or `supervisor/.venv/bin/python scripts/catalog-platforms.py check` by hand);
+the weekly workflow (.github/workflows/audit.yml, ADR-0218) runs the same commands. It needs the
+network and only reads: for every image of the catalog (the main container's, the companions' and
+those of the hardware profiles) it asks the image's registry, anonymously through curl, for the
+manifest of the pinned digest, and takes the platforms from the manifest list (the OCI index or
+Docker's manifest list), or from the image's config when the reference is a single manifest; for
+`tags` it asks with HEAD which digest the pinned tag names now. It pulls no layer and writes
+nothing but the recorded file, and only for `record`.
 
 Never a guess: an image that cannot be queried (a registry that refuses, a manifest it does not
 know) is an error, and `record` then writes nothing. A manifest list that names no Linux platform
 is recorded as none: the image publishes nothing a host can pull. Entries
 that describe no platform ("unknown/unknown": the attestations that BuildKit adds) and those of
-other systems than Linux are left out. Docker Hub counts every manifest it serves against its
-anonymous pull limit (100 per six hours per address): one run asks for each image once.
+other systems than Linux are left out. Docker Hub counts every manifest it serves with GET against
+its anonymous pull limit (its ratelimit-limit header named 100 an hour per address on 2026-11-18):
+`check` and `record` ask for each image once; the HEAD requests of `tags` are not counted.
 """
 
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -52,6 +57,9 @@ INDEX_TYPES = {
     "application/vnd.docker.distribution.manifest.list.v2+json",
 }
 TIMEOUT = 30
+# A reference pinned by tag and digest, as the catalog writes it and the install reads it (ADR-0381):
+# a tag, which holds no slash, then the index digest.
+PINNED = re.compile(r"[^@\s]+:[^@:/\s]+@sha256:[0-9a-f]{64}")
 # lscr.io is LinuxServer.io's redirect to its images on GHCR.
 REGISTRY_ALIASES = {"lscr.io": "ghcr.io", "docker.io": "registry-1.docker.io", "index.docker.io": "registry-1.docker.io"}
 
@@ -67,7 +75,9 @@ class QueryError(Exception):
 def curl_transport(method: str, url: str, headers: dict[str, str]) -> tuple[int, dict[str, str], bytes]:
     """The real transport: the system's curl (on every workstation and CI runner, with the proxy and
     certificate settings of its environment), one retry after a server error, no redirect."""
-    command = ["curl", "-sS", "-i", "--proto", "=https", "--proto-redir", "=https", "--max-time", str(TIMEOUT), "-X", method, "-A", "unos-catalog-platforms"]
+    # A HEAD is curl's --head: with -X HEAD it would wait for the body that the length announces.
+    verb = ["--head"] if method == "HEAD" else ["-X", method]
+    command = ["curl", "-sS", "-i", "--proto", "=https", "--proto-redir", "=https", "--max-time", str(TIMEOUT), *verb, "-A", "unos-catalog-platforms"]
     for name, value in {"Accept-Encoding": "identity", **headers}.items():
         command += ["-H", f"{name}: {value}"]
     for attempt in range(2):
@@ -143,16 +153,16 @@ class Registry:
         self.transport = transport
         self._tokens: dict[tuple[str, str], str] = {}
 
-    def _get(self, host: str, repo: str, path: str, accept: str) -> tuple[int, dict[str, str], bytes]:
+    def _get(self, host: str, repo: str, path: str, accept: str, method: str = "GET") -> tuple[int, dict[str, str], bytes]:
         url = f"https://{host}/v2/{repo}/{path}"
         headers = {"Accept": accept}
         token = self._tokens.get((host, repo))
         if token:
             headers["Authorization"] = f"Bearer {token}"
-        status, answer, body = self.transport("GET", url, headers)
+        status, answer, body = self.transport(method, url, headers)
         if status == 401 and not token:
             self._tokens[(host, repo)] = self._token(answer.get("www-authenticate", ""), repo, url)
-            return self._get(host, repo, path, accept)
+            return self._get(host, repo, path, accept, method)
         return status, answer, body
 
     def _token(self, challenge: str, repo: str, url: str) -> str:
@@ -201,14 +211,44 @@ class Registry:
         except QueryError as exc:
             raise QueryError(f"{ref}: {exc}") from exc
         found.discard(None)
-        # An answer that lists no Linux platform (readarr's empty index) is read, not a failure:
-        # the image publishes none, and no host can pull it.
+        # An answer that lists no Linux platform (an empty index) is read, not a failure: the image
+        # publishes none, and no host can pull it.
         return sorted(found)
 
 
-def catalog_images() -> list[str]:
-    """Every image reference of the catalog, once, in catalog order: each template's own, its
-    companions' and those that a hardware profile substitutes."""
+    def digest(self, ref: str) -> str:
+        """The digest of the manifest that the tag of ``ref`` names now (its index, for a
+        multi-platform image), from a HEAD; from the body of a GET where the registry's answer
+        names none. QueryError when it cannot be read."""
+        host, repo, tag = parse_reference(ref.partition("@")[0])
+        url = f"https://{host}/v2/{repo}/manifests/{tag}"
+        status, answer, _ = self._get(host, repo, f"manifests/{tag}", MANIFEST_TYPES, "HEAD")
+        if status != 200:
+            raise QueryError(f"{ref}: {url}: HTTP {status}")
+        named = answer.get("docker-content-digest", "")
+        if re.fullmatch(r"sha256:[0-9a-f]{64}", named):
+            return named
+        status, _, body = self._get(host, repo, f"manifests/{tag}", MANIFEST_TYPES)
+        if status != 200:
+            raise QueryError(f"{ref}: {url}: HTTP {status}")
+        return "sha256:" + hashlib.sha256(body).hexdigest()
+
+    def served(self, ref: str) -> bool:
+        """Whether the registry still serves the manifest of the digest that ``ref`` pins (a HEAD):
+        False only for a 404; QueryError for any other answer than 200, which says nothing of it."""
+        host, repo, digest = parse_reference(ref)
+        url = f"https://{host}/v2/{repo}/manifests/{digest}"
+        status, _, _ = self._get(host, repo, f"manifests/{digest}", MANIFEST_TYPES, "HEAD")
+        if status == 404:
+            return False
+        if status != 200:
+            raise QueryError(f"{ref}: {url}: HTTP {status}")
+        return True
+
+
+def catalog_users() -> dict[str, list[str]]:
+    """Every image reference of the catalog, once, in catalog order, with the ids of the templates
+    whose containers run it (their own image or a hardware profile's)."""
     sys.path.insert(0, str(ROOT / "supervisor"))
     # Importing the catalog loads the settings: a database in memory and a secret of this run
     # alone keep it from creating files.
@@ -216,14 +256,47 @@ def catalog_images() -> list[str]:
     os.environ.setdefault("UNOS_JWT_SECRET", secrets.token_hex(32))
     from src.apps.catalog import APP_CATALOG  # noqa: E402
 
-    refs: dict[str, None] = {}
+    users: dict[str, list[str]] = {}
     for template in APP_CATALOG:
         for spec in (template, *template.companions):
-            refs[spec.image] = None
-            for profile in spec.hardware:
-                if profile.image:
-                    refs[profile.image] = None
-    return list(refs)
+            for ref in (spec.image, *(profile.image for profile in spec.hardware if profile.image)):
+                ids = users.setdefault(ref, [])
+                if template.id not in ids:
+                    ids.append(template.id)
+    return users
+
+
+def moved_tags(users: dict[str, list[str]], transport: Transport) -> tuple[list[str], list[str]]:
+    """The pinned images whose tag names another index than the pinned one now, each line with the
+    templates that run it, and the errors: an image that is not pinned by digest, or a tag that
+    cannot be read."""
+    registry = Registry(transport)
+    lines: list[str] = []
+    errors: list[str] = []
+    for ref, templates in users.items():
+        tagged, _, pinned = ref.partition("@")
+        if not PINNED.fullmatch(ref):
+            errors.append(f"{ref}: not pinned by tag and digest (name:tag@sha256:...)")
+            continue
+        try:
+            now = registry.digest(ref)
+            if now == pinned:
+                continue
+            gone = not registry.served(ref)
+        except QueryError as exc:
+            errors.append(str(exc))
+            continue
+        line = f"{', '.join(templates)}: {tagged} names {now}, not the pinned {pinned}"
+        if gone:
+            line += "; the pinned index is gone from the registry, so an install of it fails"
+        lines.append(line)
+    return lines, errors
+
+
+def catalog_images() -> list[str]:
+    """Every image reference of the catalog, once, in catalog order: each template's own, its
+    companions' and those that a hardware profile substitutes."""
+    return list(catalog_users())
 
 
 def query_all(refs: list[str], transport: Transport) -> tuple[dict[str, list[str]], list[str]]:
@@ -261,10 +334,21 @@ def differences(recorded: dict[str, list[str]], now: dict[str, list[str]], refs:
 
 
 def main(argv: list[str] | None = None, transport: Transport = curl_transport, path: Path = RECORDED,
-         refs: list[str] | None = None) -> int:
+         refs: list[str] | None = None, users: dict[str, list[str]] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    parser.add_argument("command", choices=["check", "record"])
+    parser.add_argument("command", choices=["check", "record", "tags"])
     command = parser.parse_args(argv).command
+    if command == "tags":
+        users = catalog_users() if users is None else users
+        lines, errors = moved_tags(users, transport)
+        for error in errors:
+            print(f"ERROR {error}", file=sys.stderr)
+        for line in lines:
+            print(f"MOVED {line}", file=sys.stderr)
+        if errors or lines:
+            return 1
+        print(f"The tags of the {len(users)} pinned images name the indexes they are pinned to.")
+        return 0
     refs = catalog_images() if refs is None else refs
     now, errors = query_all(refs, transport)
     for error in errors:

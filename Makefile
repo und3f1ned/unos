@@ -83,7 +83,7 @@ run_all = failed=; for target in $(1); do echo "== make $@: $$target"; \
 
 .DEFAULT_GOAL := help
 .PHONY: help setup check check-fast lint lint-ruff lint-shell lint-json test test-fast smoke
-.PHONY: frontend frontend-check frontend-i18n frontend-design frontend-build e2e-local audit catalog-platforms
+.PHONY: frontend frontend-check frontend-i18n frontend-design frontend-build e2e-local audit catalog-platforms catalog-tags
 
 help: ## List the targets and the variables
 	@echo "UNOS: make <target> [VARIABLE=value ...], from the repository root"
@@ -153,3 +153,6 @@ audit: ## pip-audit and npm audit of the runtime dependencies (needs the network
 
 catalog-platforms: ## The recorded platforms of the catalog's images are the registries' (needs the network; ADR-0403)
 	$(PYTHON) scripts/catalog-platforms.py check
+
+catalog-tags: ## The tag of every pinned image of the catalog still names its pinned index (needs the network; ADR-0410)
+	$(PYTHON) scripts/catalog-platforms.py tags

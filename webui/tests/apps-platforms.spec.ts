@@ -13,7 +13,8 @@ import { answerInstall, catalogCard as card, fakeInstallEvents, onPlatform, oneC
 const POOL = { name: 'data', path: '/mnt/pools/data', free_bytes: 2 ** 34, total_bytes: 2 ** 35 };
 const RISCV64 = 'linux/riscv64';
 const REFUSED =
-  'Plex Media Server is not available for linux/riscv64: plexinc/pms-docker:latest publishes linux/amd64, linux/arm64';
+  'Plex Media Server is not available for linux/riscv64: plexinc/pms-docker:1.43.5.11079-b3b13e506@sha256:' +
+  '6d778d41daae68f89115aa87a44ae14a96b23e71a2093da173b5a9aac4091336 publishes linux/amd64, linux/arm/v7, linux/arm64';
 
 async function fakeDocker(page: Page, installs: string[]) {
   const installed: ReturnType<typeof oneContainerApp>[] = [];
@@ -84,15 +85,16 @@ test.describe('Apps whose image lacks the host platform', () => {
     expect(installs).toEqual(['prometheus']);
   });
 
-  test('on an arm64 host only Readarr, whose image publishes no platform at all, is not available', async ({
-    authenticatedPage: page,
-  }) => {
+  test('on an arm64 host every app of the catalog is available', async ({ authenticatedPage: page }) => {
+    // Every pinned image publishes linux/arm64; Readarr, whose tag published no platform at all,
+    // left the catalog (ADR-0410).
     await onPlatform(page, 'linux/arm64');
     await page.goto('/apps');
 
     await expect(card(page, 'Plex Media Server').getByRole('button', { name: 'Install', exact: true })).toBeEnabled();
-    await expect(page.getByText('Not available for linux/arm64')).toHaveCount(1);
-    await expect(card(page, 'Readarr').getByText('Not available for linux/arm64')).toBeVisible();
+    await expect(card(page, 'Gitea').getByRole('button', { name: 'Install', exact: true })).toBeEnabled();
+    await expect(page.getByText('Not available for linux/arm64')).toHaveCount(0);
+    await expect(page.getByText('Readarr')).toHaveCount(0);
   });
 
   test('in Russian the card and the details give the reason', async ({ authenticatedPage: page }) => {
