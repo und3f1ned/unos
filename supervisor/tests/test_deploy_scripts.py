@@ -1146,6 +1146,42 @@ class TestInstallScript:
         """stdout without colors, its lines joined."""
         return " ".join(re.sub(r"\x1b\[[0-9;]*m", "", result.stdout).split())
 
+    def test_installs_no_package_that_unos_does_not_use(self, tmp_path):
+        # mdadm: Debian's package writes an ARRAY line into /etc/mdadm/mdadm.conf (and the
+        # initramfs) for every md superblock on the host's disks, so the disks of an old NAS are
+        # assembled into arrays that Storage then shows as in use. Nothing of UNOS runs it. The
+        # others of the list below are run by nothing either: parted, nvme-cli, lm-sensors,
+        # net-tools and wget (ADR-0413). A host that has them keeps them: update.sh removes nothing.
+        (tmp_path / "dependencies").mkdir()
+        packages = _install_packages(tmp_path / "dependencies")
+
+        for unused in ("mdadm", "parted", "nvme-cli", "lm-sensors", "net-tools", "wget"):
+            assert unused not in packages
+        # What the code and the scripts do run on the host, or the scripts of install.sh itself.
+        assert {"btrfs-progs", "smartmontools", "samba", "samba-common-bin", "samba-vfs-modules",
+                "hdparm", "ethtool", "iproute2", "curl", "git", "gnupg", "lsb-release"} <= set(packages)
+
+    def test_every_tool_the_supervisor_needs_on_the_host_comes_from_a_package_installed(self, tmp_path):
+        # HOST_TOOLS names the package of each program that the supervisor runs on the host:
+        # one that install.sh neither installs nor finds in an essential package would be missing.
+        from src.host import HOST_TOOLS
+
+        (tmp_path / "dependencies").mkdir()
+        packages = set(_install_packages(tmp_path / "dependencies"))
+        essential = {"e2fsprogs", "util-linux", "mount", "udev", "systemd", "systemd-sysv", "passwd", "libc-bin"}
+        assert set(HOST_TOOLS.values()) <= packages | essential
+
+    @pytest.mark.parametrize("name", ["update.sh", "uninstall.sh"])
+    def test_update_and_uninstall_remove_no_package(self, name):
+        # A host that already has mdadm keeps it (ADR-0413): the owner removes it. uninstall.sh
+        # only tells the owner how to remove Docker (echo lines).
+        lines = (REPO_ROOT / "deploy" / name).read_text().splitlines()
+        commands = [line for line in lines if not line.lstrip().startswith(("#", "echo"))]
+        assert not [
+            line for line in commands
+            if re.search(r"\b(apt|apt-get|dpkg)\b.*\b(remove|purge|autoremove|-r|-P)\b", line)
+        ]
+
     def test_avahi_daemon_comes_without_the_libnss_mdns_it_recommends(self, tmp_path):
         # libnss-mdns puts mdns4_minimal [NOTFOUND=return] before dns in the hosts line of
         # /etc/nsswitch.conf: the host would no longer resolve the names of a DNS zone that

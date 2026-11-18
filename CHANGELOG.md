@@ -22,6 +22,10 @@ manager, encrypted backup uploads, health checks, CI checks).
   them. A weekly audit (`make catalog-tags`, the `tags` job of the Audit workflow) reports a pinned
   tag that names another index. Immich's digests are unchanged; Valkey's tag reads `9.1.2`, which
   names the same index as the `9` it replaces (ADR-0410).
+- `install.sh` and the manual installation no longer install `mdadm`, `parted`, `nvme-cli`, `lm-sensors`,
+  `net-tools` and `wget`, which UNOS does not run: Debian's mdadm assembled the arrays of an old NAS's
+  disks into md arrays on the next boot. A host that has them keeps them; the Storage page already
+  shows a disk under an assembled array as in use and refuses it for a pool (ADR-0413).
 - The web UI has a light theme. Each user chooses **Dark**, **Light** or **System** (the device's
   setting, followed as it changes) on the Account page; the NAS keeps the choice per user
   (`GET`/`PUT /api/v1/auth/me/theme`, audited as `theme_changed`), and the page shows it before it

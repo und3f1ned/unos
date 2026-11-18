@@ -244,6 +244,21 @@ class TestListDisks:
         sdh = by_name(disks.list_disks())["sdh"]
         assert (sdh.in_use, sdh.in_use_reason, sdh.has_data) == (True, "Used by md0 (raid1)", True)
 
+    def test_disk_with_an_assembled_md_array_on_a_partition_is_in_use(self, fake_host):
+        # What an old NAS's disk looks like once a host assembles its array (the kernel's
+        # autodetect, or mdadm's rules): lsblk shows the array below the member partition.
+        fake_host.add_disk("sdh", pttype="gpt")
+        fake_host.add_partition("sdh", "sdh1", fstype="linux_raid_member")
+        fake_host.add_holder("sdh1", "md127", "raid1", fstype="ext4")
+        sdh = by_name(disks.list_disks())["sdh"]
+        assert (sdh.in_use, sdh.in_use_reason, sdh.is_system) == (True, "Used by md127 (raid1)", False)
+
+    def test_disk_with_an_unassembled_md_superblock_holds_data(self, fake_host):
+        # Without mdadm nothing assembles it: the disk is free to use but not blank.
+        fake_host.add_disk("sdh", fstype="linux_raid_member")
+        sdh = by_name(disks.list_disks())["sdh"]
+        assert (sdh.in_use, sdh.has_data) == (False, True)
+
     def test_signature_only_wipefs_sees_counts_as_data(self, fake_host):
         fake_host.add_disk("sdb")
         fake_host.signatures["/dev/sdb"] = [{"device": "sdb", "offset": "0x3a3817d5000", "type": "zfs_member"}]
@@ -424,6 +439,23 @@ class TestCreatePoolGuards:
         nas.mount_pool("media")
         with pytest.raises(pools.DeviceSafetyError, match="Member of pool 'media'"):
             create_forced(nas, ["/dev/sdb", "/dev/sdg"], raid_level="raid1")
+        assert not ran_mkfs(nas)
+
+    @pytest.mark.parametrize("target", ["/dev/sdh", "/dev/sdi1"])
+    def test_refuses_a_disk_held_by_an_assembled_md_array_even_with_force(self, nas, target):
+        nas.add_disk("sdh", fstype="linux_raid_member")
+        nas.add_holder("sdh", "md126", "raid1", fstype="ext4")
+        nas.add_disk("sdi", pttype="gpt")
+        nas.add_partition("sdi", "sdi1", fstype="linux_raid_member")
+        nas.add_holder("sdi1", "md127", "raid1", fstype="ext4")
+        with pytest.raises(pools.DeviceSafetyError, match=r"Refusing to use .*: Used by md12[67] \(raid1\)"):
+            create_forced(nas, [target])
+        assert not ran_mkfs(nas)
+
+    def test_an_unassembled_md_member_needs_force(self, nas):
+        nas.add_disk("sdh", fstype="linux_raid_member")
+        with pytest.raises(pools.DeviceSafetyError, match=r"contains data \(linux_raid_member\).*force"):
+            create(["/dev/sdh"])
         assert not ran_mkfs(nas)
 
     def test_existing_data_requires_force(self, nas):
