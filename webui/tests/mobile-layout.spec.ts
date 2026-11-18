@@ -309,11 +309,29 @@ const INSTALLED_JELLYFIN = {
     cpu_used: 0.4,
     sampled_at: '2026-11-17T10:00:00+00:00',
   },
+  version: null,
+  update_to: null,
+  previous: null,
 };
 // An app of several containers whose machine learning stopped: its card names its containers and
 // warns about the one that does not run (ADR-0381).
 const INSTALLED_IMMICH = installedImmich(DATA, { companions: { 'machine-learning': { status: 'exited' } } });
 const INSTALLED_APPS = [INSTALLED_JELLYFIN, INSTALLED_IMMICH];
+// Immich with an update to the catalog's newer images, and what the update does, with long image
+// names and folders (GET /apps/installed/{id}/update, ADR-0406).
+const UPDATABLE_APPS = [INSTALLED_JELLYFIN, { ...INSTALLED_IMMICH, update_to: 'v3.5.0' }];
+const UPDATE_PLAN = {
+  template_id: 'immich', name: 'Immich', version_from: 'v3.4.1', version_to: 'v3.5.0', platform: 'linux/arm64',
+  containers: INSTALLED_IMMICH.companions.map((c) => ({
+    name: c.container, companion: c.name, image_from: c.image, image_to: `${c.image.split('@')[0]}:v3.5.0@sha256:${'c'.repeat(64)}`,
+    changed: true, built_from: '2026-10-01T00:00:00Z', built_to: '2026-11-15T00:00:00Z',
+  })),
+  download_bytes: 900 * 2 ** 20, system_disk_bytes: 2 * 2 ** 30, system_disk_free_bytes: 20 * 2 ** 30,
+  copies: [{
+    container: 'immich-database', folder: `${DATA}/apps/immich/postgres/data`,
+    copy_folder: `${DATA}/apps/immich/postgres/data.previous`, bytes: 2 ** 30, pool: 'e2e_data', pool_free_bytes: 2 ** 40,
+  }],
+};
 // What the limits of a container may be on a NAS of 8 GiB and 8 CPUs (GET /apps/limits, ADR-0390).
 const LIMIT_BOUNDS = { memory_min: 64 * 2 ** 20, memory_max: 8 * 2 ** 30, cpu_min: 0.1, cpu_max: 8 };
 
@@ -1447,6 +1465,22 @@ const VIEWS: View[] = [
       await page.getByRole('listitem', { name: 'immich-machine-learning', exact: true }).getByRole('button').click();
     },
     shows: (page) => page.getByRole('dialog').getByRole('textbox').last(),
+    start: dialogTitle,
+    end: dialogEnd,
+  },
+  {
+    // The update of an app to the catalog's newer images: its containers, the system disk and the
+    // copy of its database on the pool (ADR-0406).
+    name: 'Dialog: the update of an app',
+    path: '/apps',
+    fake: (page) => serve(page, {
+      '/api/v1/apps/installed': UPDATABLE_APPS, '/api/v1/apps/installed/e2e-immich-id/update': UPDATE_PLAN,
+    }),
+    open: async (page) => {
+      await page.getByRole('button', { name: /^(Installed|Установленные) \(2\)$/ }).click();
+      await page.getByRole('button', { name: /^(Update to|Обновить до) v3\.5\.0$/ }).click();
+    },
+    shows: (page) => page.getByRole('dialog').getByText(/data\.previous/),
     start: dialogTitle,
     end: dialogEnd,
   },

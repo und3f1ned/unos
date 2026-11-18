@@ -59,6 +59,7 @@ from .containers.router import router as containers_router
 from .apps import install_jobs
 from .apps.usage import start_app_resources, stop_app_resources
 from .apps.router import router as apps_router
+from .apps.updates import router as app_updates_router
 from .files.router import router as files_router
 from .files.router import (
     start_trash_expiry,
@@ -295,6 +296,7 @@ for _router in (
     groups_router,
     containers_router,
     apps_router,
+    app_updates_router,
     files_router,
     snapshots_router,
     notifications_router,

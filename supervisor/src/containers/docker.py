@@ -1,3 +1,4 @@
+import contextlib
 import docker
 import threading
 import requests
@@ -246,6 +247,19 @@ def _check_app_start(container: Container) -> None:
         prepare_app_start(container)
 
 
+def _app_change(container: Container) -> contextlib.AbstractContextManager:
+    """The lock of the app that ``container`` belongs to, held while the Containers page starts,
+    restarts or removes it: 409 while an install, an update, a rollback or another change of that
+    app is under way, which would meet a container it did not expect (ADR-0406). Nothing for a
+    container that is no app's."""
+    if UNOS_APP_LABEL not in container.labels:
+        return contextlib.nullcontext()
+    # Imported here: apps.stacks imports this module.
+    from ..apps import stacks
+
+    return stacks.app_lock(stacks.app_key(container), container.labels.get(UNOS_APP_LABEL) or container.name)
+
+
 # Held, per container, from reading its state to the start or stop that follows, so that of two
 # requests at the same moment only one finds the container in the state it changes (the audit entry
 # of a start or a stop is written for that one only, ADR-0402). Docker answers the other without an
@@ -267,12 +281,13 @@ def start_container(container_id: str) -> tuple[ContainerInfo, bool]:
     client = get_client()
     try:
         known = client.containers.get(container_id)
-        _check_app_start(known)  # reads the pools: outside the lock
-        with _state_lock(known):
-            container = client.containers.get(container_id)  # its state now
-            started = container.status not in RUNNING_STATES
-            container.start()
-            container.reload()
+        with _app_change(known):
+            _check_app_start(known)  # reads the pools: outside the lock
+            with _state_lock(known):
+                container = client.containers.get(container_id)  # its state now
+                started = container.status not in RUNNING_STATES
+                container.start()
+                container.reload()
         return get_container(container_id), started
     except NotFound:
         raise ValueError(f"Container {container_id} not found")
@@ -307,9 +322,10 @@ def restart_container(container_id: str) -> ContainerInfo:
         if is_system_container(container.name):
             raise ValueError("Cannot restart system container")
 
-        _check_app_start(container)
-        container.restart()
-        container.reload()
+        with _app_change(container):
+            _check_app_start(container)
+            container.restart()
+            container.reload()
         return get_container(container_id)
     except NotFound:
         raise ValueError(f"Container {container_id} not found")
@@ -324,8 +340,9 @@ def remove_container(container_id: str, force: bool = False) -> str:
         # Prevent removing system containers
         if is_system_container(container.name):
             raise ValueError("Cannot remove system container")
-        
-        container.remove(force=force)
+
+        with _app_change(container):
+            container.remove(force=force)
         return container.name
     except NotFound:
         raise ValueError(f"Container {container_id} not found")

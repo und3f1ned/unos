@@ -109,7 +109,8 @@ class TestTheRequest:
         job = _started(api)
 
         assert job == {
-            "id": ANY, "template_id": "photos", "name": "Photos", "state": "running", "step": "checking",
+            "id": ANY, "template_id": "photos", "name": "Photos", "kind": "install", "state": "running",
+            "step": "checking",
             "started_at": ANY, "finished_at": None, "images": [], "containers": WAITING, "result": None,
             "error": None, "error_status": None,
         }

@@ -423,6 +423,23 @@ manager, encrypted backup uploads, health checks, CI checks).
   `ups_name`, `host` and `port` are checked before they reach `upsc`.
 
 ### Added
+- An installed app whose catalog pins its images updates in place to the catalog's newer images
+  (**Update to** on the App Store's Installed tab): a dialog first shows each container's image,
+  what the pulls download and write to the system disk (only the layers Docker lacks, read from the
+  registry's manifests) and the copy of the database on the pool; then a background job (over
+  `/ws/v1/events`, one install, update or rollback at a time) pulls, stops the app, copies its
+  database (Immich's) beside itself on the pool, keeps the earlier containers as `<name>.previous`
+  and starts the new ones with the data folders, password files, settings, ports, the group option
+  and the limits kept. A failure or a cancel after the stop returns the app to its earlier version (or,
+  when the copy cannot go back in place, leaves it stopped for a rollback). The Containers page does
+  not start the earlier containers, nor start, restart or remove an app's containers while a change of
+  that app runs.
+  **Roll back** returns to the earlier containers and the copy of the database; **Remove earlier
+  version** removes them. Only an image built after the one that runs is accepted. New routes
+  `GET`/`POST /api/v1/apps/installed/{id}/update`, `POST .../rollback`, `DELETE .../previous`;
+  `GET /api/v1/apps/installed` adds `version`, `update_to` and `previous`; install jobs add `kind`;
+  containers get the label `unos.app.version`; audited as `app_updated`, `app_rolled_back` and
+  `app_earlier_version_removed` (ADR-0406).
 - The App Store shows which apps have an image for the host's platform: every image of the
   catalog has its Linux platforms recorded from its registry (`image_platforms.json`), the
   catalog API answers `platforms`, `host_platform` and `available`, an app whose image lacks the

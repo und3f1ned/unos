@@ -22,6 +22,11 @@ the pool, before the network and each create and start, and while it waits for a
 ready (Progress.check), and a pull's read that blocks is ended at once (pulls.abort). A stop of
 the supervisor leaves what the install made; a cancel removes it, as a failure does
 (router._create_and_start).
+
+An update of an app to the catalog's newer images and a rollback to the earlier version that an
+update kept are jobs of the same kind (``kind``, src/apps/updates.py, ADR-0406): they take the same
+slot, so that one install, update or rollback runs at a time, hold the app's lock and report the
+same way. A rollback cannot be cancelled.
 """
 
 from __future__ import annotations
@@ -61,6 +66,14 @@ NO_SUCH_JOB = "No such install job"
 TOO_MANY_WAITERS = "Too many requests wait for install jobs; try again in a moment"
 STOPPED_BEFORE_ANY_CONTAINER = "A stop of the supervisor stopped the install of {name} before it made any container"
 CANCELLED_BEFORE_ANY_CONTAINER = "Cancelled by {who} before any container of {name} was made"
+STOPPED_BEFORE_ANY_CHANGE = "A stop of the supervisor stopped the {noun} of {name} before it changed anything"
+CANCELLED_BEFORE_ANY_CHANGE = "Cancelled by {who} before {name} was stopped: nothing was changed"
+# A kind of job: its noun with its article, its verb and its past participle.
+_WORDS = {
+    "install": ("An install", "install", "installed"),
+    "update": ("An update", "update", "updated"),
+    "rollback": ("A rollback", "roll back", "rolled back"),
+}
 
 
 class Stopped(Exception):
@@ -78,6 +91,7 @@ class _Running:
 
     job_id: str
     name: str
+    kind: str = "install"
     stop: threading.Event = field(default_factory=threading.Event)
     cancelled_by: str | None = None
     # A stop of the supervisor: it wins over a cancel, whose clean-up would not fit in Docker's 10 s.
@@ -181,6 +195,8 @@ def cancel(job_id: str, who: str) -> AppInstallJob:
         job = get(job_id)
         if running is None or job is None or running.job_id != job_id or job.state != "running":
             raise HTTPException(404, NO_SUCH_JOB)
+        if running.kind == "rollback":
+            raise HTTPException(409, f"The rollback of {job.name} cannot be cancelled: it ends on its own")
         if running.cancelled_by is None:
             running.cancelled_by = who
     running.ask_to_stop()
@@ -200,11 +216,14 @@ def dismiss_or_cancel(job_id: str, who: str) -> AppInstallJob | None:
     return cancel(job_id, who)
 
 
-def start(template: AppTemplate, work: Callable[[Progress], AppInstallResponse]) -> AppInstallJob:
-    """Start the job that runs ``work`` (the install) and answer it as it starts, running.
+def start(template: AppTemplate, work: Callable[[Progress], AppInstallResponse], *, kind: str = "install",
+          containers: list[str] | None = None) -> AppInstallJob:
+    """Start the job that runs ``work`` (the install, an update or a rollback: ``kind``) and answer
+    it as it starts, running. ``containers``: the Docker names of the containers that it makes or
+    starts, in their start order (default: those of the template).
 
-    409 while an install runs, of this app or another, and while another change of this app is
-    under way (stacks.app_lock). Call it on the event loop: nothing in it waits.
+    409 while a job runs, of this app or another, and while another change of this app is under
+    way (stacks.app_lock). Call it on the event loop: nothing in it waits.
     """
     global _running, _version
     # The check of the slot, the app's lock and the job are taken in one hold of _lock: no other
@@ -212,25 +231,28 @@ def start(template: AppTemplate, work: Callable[[Progress], AppInstallResponse])
     with _lock:
         running = _running
         if running is not None:
+            article, _, past = _WORDS[running.kind]
             if running.name == template.name:
-                raise HTTPException(409, f"{template.name} is being installed already: wait for the end of its install")
+                raise HTTPException(
+                    409, f"{template.name} is being {past} already: wait for the end of its {_noun(running.kind)}"
+                )
             raise HTTPException(
-                409, f"An install of {running.name} is under way: install {template.name} once it has ended"
+                409, f"{article} of {running.name} is under way: {_WORDS[kind][1]} {template.name} once it has ended"
             )
         lock = stacks.acquire(template.id, template.name)
         before = _jobs.get(template.id)
         try:
+            names = containers if containers is not None else stacks.container_names(template)
+            companions = {stacks.container_name(template, c.name): c.name for c in template.companions}
             job = AppInstallJob(
                 id=uuid.uuid4().hex,
                 template_id=template.id,
                 name=template.name,
+                kind=kind,
                 started_at=datetime.now(timezone.utc),
-                containers=[
-                    ContainerStart(name=stacks.container_name(template, companion.name), companion=companion.name)
-                    for companion in template.companions
-                ] + [ContainerStart(name=stacks.container_name(template))],
+                containers=[ContainerStart(name=name, companion=companions.get(name)) for name in names],
             )
-            _running = running = _Running(job_id=job.id, name=template.name)
+            _running = running = _Running(job_id=job.id, name=template.name, kind=kind)
             _publish(job)
             running.thread = threading.Thread(
                 target=_run, args=(running, job, work, lock), name=f"app-install-{template.id}", daemon=True
@@ -266,20 +288,24 @@ def _run(running: _Running, job: AppInstallJob, work: Callable[[Progress], AppIn
         result = work(progress)
         end = {"state": "succeeded", "result": result}
     except Stopped as exc:
+        install = job.kind == "install"
         if exc.cancelled_by is not None:
-            end = {"state": "cancelled", "error": CANCELLED_BEFORE_ANY_CONTAINER.format(who=exc.cancelled_by, name=job.name)}
+            text = CANCELLED_BEFORE_ANY_CONTAINER if install else CANCELLED_BEFORE_ANY_CHANGE
+            end = {"state": "cancelled", "error": text.format(who=exc.cancelled_by, name=job.name)}
         else:
-            end = {"state": "failed", "error_status": 503, "error": STOPPED_BEFORE_ANY_CONTAINER.format(name=job.name)}
+            text = STOPPED_BEFORE_ANY_CONTAINER if install else STOPPED_BEFORE_ANY_CHANGE
+            end = {"state": "failed", "error_status": 503, "error": text.format(name=job.name, noun=_noun(job.kind))}
     except HTTPException as exc:
         if running.cancelled_by is not None and not running.shutting_down:
             end = {"state": "cancelled", "error": str(exc.detail)}
         else:
             end = {"state": "failed", "error_status": exc.status_code, "error": str(exc.detail)}
     except Exception as exc:  # a bug in the install must still end the job
-        logger.exception("The install of %s stopped on an unexpected error", job.name)
+        noun = _noun(job.kind)
+        logger.exception("The %s of %s stopped on an unexpected error", noun, job.name)
         end = {
             "state": "failed", "error_status": 500,
-            "error": f"The install stopped on an unexpected error: {sanitize_error_message(exc)}",
+            "error": f"The {noun} stopped on an unexpected error: {sanitize_error_message(exc)}",
         }
     finally:
         try:
@@ -290,9 +316,13 @@ def _run(running: _Running, job: AppInstallJob, work: Callable[[Progress], AppIn
                     _running = None
         if end["state"] == "failed":
             # The request's own answer is 202: the supervisor's log is where a failure shows.
-            logger.warning("The install of %s failed (%s): %s", job.name, end["error_status"], end["error"])
+            logger.warning("The %s of %s failed (%s): %s", _noun(job.kind), job.name, end["error_status"], end["error"])
         ended = progress.job.model_copy(update={**end, "finished_at": datetime.now(timezone.utc)})
         _publish(ended)
+
+
+def _noun(kind: str) -> str:
+    return "rollback" if kind == "rollback" else kind
 
 
 def stop_for_shutdown(timeout: float = SHUTDOWN_WAIT_SECONDS) -> None:
@@ -342,6 +372,11 @@ class Progress:
         self._published_at = 0.0
         # The response of the pull being read, which ``abort`` can end from another thread.
         self._response: Any = None
+
+    @property
+    def shutting_down(self) -> bool:
+        """Whether a stop of the supervisor asked the job to stop."""
+        return self._running.shutting_down
 
     def check(self) -> None:
         """Stopped when a stop of the supervisor or a cancel asked the install to stop."""

@@ -80,6 +80,10 @@ class VolumeMapping(BaseModel):
     # that finds that folder not empty and the password file missing is refused (409), never
     # given a new password, which the data would not take.
     secret_for: str | None = None
+    # A folder of the app's own data that a newer version may migrate so that the earlier one
+    # cannot read it (a database): an update copies it beside itself on the pool before the new
+    # version starts, and a rollback puts the copy back (ADR-0406).
+    copy_before_update: bool = False
 
     @computed_field  # type: ignore[misc]
     @property
@@ -334,6 +338,72 @@ class InstalledApp(BaseModel):
     missing: list[str] = []
     # The main container's limits and use (ADR-0390); empty while it is missing.
     resources: ContainerResources = ContainerResources()
+    # The catalog's version that the main container was created for (its label unos.app.version);
+    # None for a container made before the label (ADR-0406).
+    version: str | None = None
+    # The catalog's version that the app can be updated to: the catalog pins another image for one
+    # of its containers than the one it runs (ADR-0406); None: no update.
+    update_to: str | None = None
+    # The earlier version that the app's last update kept, until a rollback or its removal.
+    previous: "AppEarlierVersion | None" = None
+
+
+class AppEarlierVersion(BaseModel):
+    """The earlier version of an app that its last update kept (ADR-0406): its containers, stopped
+    and named ``<name>.previous``, and the copies of its database made before the update."""
+    version: str | None = None
+    containers: list[str] = []
+    # The images of those containers, as Docker created them (name@sha256:...).
+    images: list[str] = []
+    # The copies of the app's database folders that are there.
+    copies: list[str] = []
+
+
+InstalledApp.model_rebuild()
+
+
+class ContainerUpdate(BaseModel):
+    """One container of an app's update (ADR-0406)."""
+    name: str
+    companion: str | None = None
+    # The image its container was created from; None for a container that the update adds.
+    image_from: str | None = None
+    # The catalog's pinned image that the update creates it from; None for a container that the
+    # catalog no longer has, which the update leaves with the earlier version.
+    image_to: str | None = None
+    # Whether it runs another image afterwards.
+    changed: bool = False
+    # When the image that runs and the catalog's were built, for an image that changes.
+    built_from: UtcDatetime | None = None
+    built_to: UtcDatetime | None = None
+
+
+class DatabaseCopy(BaseModel):
+    """A data folder that an update copies on its pool before the new version starts (ADR-0406)."""
+    container: str
+    folder: str
+    copy_folder: str
+    # What the folder takes on its disk, and what its pool has free.
+    bytes: int
+    pool: str
+    pool_free_bytes: int
+
+
+class AppUpdatePlan(BaseModel):
+    """What an update of an installed app would do (GET /apps/installed/{id}/update, ADR-0406)."""
+    template_id: str
+    name: str
+    version_from: str | None = None
+    version_to: str
+    # The host's platform, whose images it pulls.
+    platform: str
+    containers: list[ContainerUpdate]
+    # The compressed layers that Docker lacks, which the pulls download, and what they take on
+    # the system disk once pulled (the blobs and the unpacked layers), with its free space now.
+    download_bytes: int
+    system_disk_bytes: int
+    system_disk_free_bytes: int | None = None
+    copies: list[DatabaseCopy] = []
 
 
 class AppPool(BaseModel):
@@ -426,8 +496,15 @@ class AppInstallJob(BaseModel):
     template_id: str
     # The app's name in the catalog.
     name: str
+    # An install, an update to the catalog's newer images or a rollback to the earlier version
+    # that an update kept (ADR-0406).
+    kind: Literal["install", "update", "rollback"] = "install"
     state: Literal["running", "succeeded", "failed", "cancelled"] = "running"
-    step: Literal["checking", "pulling", "creating", "starting", "cleaning"] = "checking"
+    # An update also stops the app, copies its database and, after a failure, restores it; a
+    # rollback stops the newer containers and restores the earlier ones (ADR-0406).
+    step: Literal[
+        "checking", "pulling", "stopping", "copying", "creating", "starting", "cleaning", "restoring"
+    ] = "checking"
     started_at: UtcDatetime
     finished_at: UtcDatetime | None = None
     # Each image once, in the order of the containers that run it; listed once the checks passed.

@@ -9,6 +9,8 @@
 		restartApp,
 		dismissInstallJob,
 		cancelInstallJob,
+		rollbackApp,
+		removeEarlierVersion,
 		allProfiles,
 		missingHardware,
 		type AppTemplate,
@@ -39,7 +41,9 @@
 		LayoutGrid,
 		Sparkles,
 		Home,
-		Cpu
+		Cpu,
+		ArrowUpCircle,
+		Undo2
 	} from 'lucide-svelte';
 	import { Button, Card, Badge, Alert, EmptyState } from '$lib/components/ui';
 	import {
@@ -48,7 +52,8 @@
 		AppInstallJobs,
 		AppLimitsDialog,
 		AppResources,
-		AppStorageWarning
+		AppStorageWarning,
+		AppUpdateDialog
 	} from '$lib/components/apps';
 	import { t } from '$lib/i18n';
 	import { ApiError } from '$lib/api/client';
@@ -154,9 +159,39 @@
 		}
 	}
 
+	// The installed app whose update the dialog shows (ADR-0406).
+	let updating: InstalledApp | null = null;
+
+	/** The app's name in the catalog, or its own. */
+	function nameOf(app: InstalledApp): string {
+		return catalog.find((c) => c.id === app.template_id)?.name ?? app.name;
+	}
+
+	async function handleRollback(app: InstalledApp) {
+		if (!confirm($t('appUpdates.confirmRollback', { name: nameOf(app) }))) return;
+		error = '';
+		try {
+			await rollbackApp(app.container_id);
+		} catch (e) {
+			error = $t('appUpdates.rollbackFailed', { error: reasonOf(e) });
+		}
+	}
+
+	async function handleRemoveEarlier(app: InstalledApp) {
+		if (!confirm($t('appUpdates.confirmRemove', { name: nameOf(app) }))) return;
+		error = '';
+		try {
+			await removeEarlierVersion(app.container_id);
+		} catch (e) {
+			error = $t('appUpdates.removeFailed', { error: reasonOf(e) });
+		}
+		await loadInstalled();
+	}
+
 	async function cancel(event: CustomEvent<AppInstallJob>) {
 		const job = event.detail;
-		if (!confirm($t('apps.job.confirmCancel', { name: job.name }))) return;
+		const question = job.kind === 'update' ? 'appUpdates.confirmCancel' : 'apps.job.confirmCancel';
+		if (!confirm($t(question, { name: job.name }))) return;
 		cancelling = new Set([...cancelling, job.id]);
 		try {
 			await cancelInstallJob(job.id);
@@ -661,6 +696,12 @@
 								{/if}
 							</div>
 							<div class="flex flex-wrap items-center gap-2">
+								{#if app.update_to && !app.previous && !installing.has(app.template_id)}
+									<!-- The catalog pins newer images: the dialog shows what the update does (ADR-0406). -->
+									<Button variant="primary" size="sm" icon={ArrowUpCircle} on:click={() => (updating = app)}>
+										{$t('appUpdates.available', { version: app.update_to })}
+									</Button>
+								{/if}
 								{#if getWebUrl(app) && app.missing.length === 0}
 									<Button href={getWebUrl(app)} target="_blank" rel="noopener" variant="secondary">
 										<ExternalLink class="w-4 h-4" />
@@ -726,6 +767,43 @@
 								</p>
 							</Alert>
 						{/if}
+						{#if app.previous}
+							{@const earlier = app.previous}
+							<!-- The earlier version that the last update kept, and its copy of the database (ADR-0406). -->
+							<Alert variant="info" title={$t('appUpdates.earlierTitle')} class="mt-4">
+								<p class="break-words">
+									{earlier.copies.length > 0
+										? $t('appUpdates.earlier', {
+												containers: earlier.containers.join(', '),
+												copies: earlier.copies.join(', ')
+											})
+										: $t('appUpdates.earlierNoCopy', { containers: earlier.containers.join(', ') })}
+								</p>
+								{#if earlier.version}
+									<p class="mt-1">{$t('appUpdates.earlierVersion', { version: earlier.version })}</p>
+								{/if}
+								<div class="flex flex-wrap gap-2 mt-3">
+									<Button
+										variant="warning"
+										size="sm"
+										icon={Undo2}
+										disabled={installing.has(app.template_id)}
+										on:click={() => handleRollback(app)}
+									>
+										{$t('appUpdates.rollback')}
+									</Button>
+									<Button
+										variant="secondary"
+										size="sm"
+										icon={Trash2}
+										disabled={installing.has(app.template_id)}
+										on:click={() => handleRemoveEarlier(app)}
+									>
+										{$t('appUpdates.removeEarlier')}
+									</Button>
+								</div>
+							</Alert>
+						{/if}
 						<AppStorageWarning {app} class="mt-4" />
 						<AppResources {app} on:limits={openLimits} />
 					</Card>
@@ -734,6 +812,15 @@
 		{/if}
 	{/if}
 </div>
+
+<!-- What the update of an installed app does, and its start (ADR-0406) -->
+<AppUpdateDialog
+	open={updating !== null}
+	app={updating}
+	name={updating ? nameOf(updating) : ''}
+	on:close={() => (updating = null)}
+	on:started={() => (updating = null)}
+/>
 
 <!-- The limits of one container of an installed app (ADR-0390) -->
 <AppLimitsDialog

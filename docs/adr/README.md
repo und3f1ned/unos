@@ -314,6 +314,7 @@ and this index, and `make check-fast` runs it.
 | [0384](0384-an-apps-install-runs-as-a-background-job-whose-progress-the-app-store-shows.md) | An app's install runs as a background job whose progress the App Store shows | accepted | 2026-11-17 |
 | [0390](0390-each-container-of-an-app-gets-its-own-memory-and-cpu-limits-whose-use-is-read-from-its-cgroup.md) | Each container of an app gets its own memory and CPU limits, kept by Docker and for the next install, and its use is read from its cgroup and alerted | accepted | 2026-11-17 |
 | [0403](0403-the-app-store-offers-only-apps-whose-images-publish-the-hosts-platform.md) | The App Store offers only apps whose images publish the host's platform, and the install refuses the others before any pull | accepted | 2026-11-18 |
+| [0406](0406-an-installed-app-updates-to-the-catalogs-newer-pinned-images-with-a-copy-of-its-database-and-can-be-rolled-back.md) | An installed app updates to the catalog's newer pinned images with a copy of its database, and can be rolled back | accepted | 2026-11-18 |
 
 ## Backup
 

@@ -29,6 +29,13 @@ one at each reload after its start, the last one staying (an image with a health
 otherwise "starting" at its first reload and healthy from its second). ``info`` names
 ``root_dir`` as Docker's root folder.
 
+For an app's update (ADR-0406) an image also has the ``created`` time and the ``diff_ids`` of its
+configuration, as Docker's inspect shows them (``Created``, ``RootFS.Layers``) and an ``image_id``
+(its configuration's digest, which a registry names too); ``images.list`` lists Docker's store as
+docker-py does (each image inspected), a container's ``rename`` renames it as Docker does,
+``script_image(ref, *states)`` scripts every container created from the image ``ref`` (name@digest)
+and ``start_hook(container)``, when set, is called at each start of a container.
+
 A container's ``update`` changes its HostConfig as Docker's update does, with Docker's refusals of
 a memory limit below 6 MB, a swap below the memory, a CPU quota below 1 ms and a CPU quota beside
 NanoCpus (ADR-0390); ``api.containers`` is Docker's summary list, and ``events`` answers the events
@@ -88,17 +95,24 @@ class Image:
     # after its first layer instead of finishing (None: it finishes).
     layers: tuple[int, ...] = (3000, 1000)
     pull_error: str | None = None
+    # Its configuration's digest (Docker's image id; by default one made from ``ref``), when it was
+    # built, and the digests of its unpacked layers (ADR-0406).
+    image_id: str | None = None
+    created: str = CREATED
+    diff_ids: tuple[str, ...] = ()
 
     @property
     def id(self) -> str:
-        return "sha256:" + hashlib.sha256(self.ref.encode()).hexdigest()
+        return self.image_id or "sha256:" + hashlib.sha256(self.ref.encode()).hexdigest()
 
     @property
     def attrs(self) -> dict:
         return {
             "Id": self.id,
+            "Created": self.created,
             "RepoTags": sorted(n for n in self.names if "@" not in n),
             "RepoDigests": sorted(n for n in self.names if "@" in n),
+            "RootFS": {"Type": "layers", "Layers": list(self.diff_ids)},
             "Config": {
                 "Volumes": {path: {} for path in self.volumes} or None,
                 "Healthcheck": {"Test": ["CMD", "true"]} if self.healthcheck else None,
@@ -193,7 +207,9 @@ class _Live:
         state.update(Status="running", Running=True, Restarting=False, ExitCode=0, StartedAt=CREATED)
         if self.image.healthcheck:
             state["Health"] = {"Status": "starting", "FailingStreak": 0, "Log": []}
-        scripted = self._docker.scripts.get(self.name)
+        scripted = self._docker.scripts.get(self.name) or self._docker.image_scripts.get(self.attrs["Config"]["Image"])
+        if self._docker.start_hook is not None:
+            self._docker.start_hook(self)
         self.pending = [copy.deepcopy(s) for s in scripted] if scripted else (
             [{"Health": {"Status": status, "FailingStreak": 0, "Log": []}} for status in ("starting", "healthy")]
             if self.image.healthcheck else []
@@ -265,6 +281,11 @@ class Container:
     def remove(self, v: bool = False, link: bool = False, force: bool = False) -> None:
         self._docker._call("container.remove", self.name, v=v, force=force)
         self._docker._remove(self._docker._find(self.id), force=force)
+
+    def rename(self, name: str) -> None:
+        """docker-py's Container.rename: Docker renames the container, which keeps everything else."""
+        self._docker._call("container.rename", self.name, name)
+        self._docker._rename(self._docker._find(self.id), name)
 
     def reload(self) -> None:
         self._docker._call("container.reload", self.name)
@@ -365,6 +386,13 @@ class _Containers:
 class _Images:
     def __init__(self, docker: StackDocker) -> None:
         self._docker = docker
+
+    def list(self, name: str | None = None, all: bool = False, filters: dict | None = None) -> list[Image]:
+        """docker-py's list: every image of Docker's store, as its inspect shows it."""
+        self._docker._call("images.list", None, name=name, all=all, filters=filters)
+        if name is not None or filters:
+            raise TypeError("the fake lists every image only")
+        return list(self._docker.images_.values())
 
     def get(self, name: str) -> Image:
         self._docker._call("images.get", name)
@@ -479,7 +507,8 @@ class _Api:
         attrs = {
             "Id": container_id,
             "Name": f"/{name}",
-            "Created": CREATED,
+            "Created": next(docker.create_times) if docker.create_times is not None else CREATED,
+            "Image": local.id,
             "Config": {
                 "Image": image,
                 "Env": env,
@@ -604,6 +633,12 @@ class StackDocker:
         self.images_: dict[str, Image] = {}
         self.registry: dict[str, Image] = {}
         self.scripts: dict[str, list[dict]] = {}
+        # The states of every container created from an image (name@digest), as ``scripts``.
+        self.image_scripts: dict[str, list[dict]] = {}
+        # Called with each container (as Docker has it) that starts.
+        self.start_hook: Any = None
+        # The times of the containers' creates, one after the other (None: all CREATED).
+        self.create_times: Any = None
         # Docker's events, in their order (``oom``).
         self.events_: list[dict] = []
         # The limits that the host's kernel cannot apply ("memory", "cpu"): Docker's update
@@ -670,9 +705,11 @@ class StackDocker:
     # -- set up -----------------------------------------------------------
 
     def publish(self, ref: str, *, volumes: tuple[str, ...] = (), healthcheck: bool = False,
-                layers: tuple[int, ...] = (3000, 1000), pull_error: str | None = None) -> Image:
+                layers: tuple[int, ...] = (3000, 1000), pull_error: str | None = None, image_id: str | None = None,
+                created: str = CREATED, diff_ids: tuple[str, ...] = ()) -> Image:
         """An image a pull can get: by tag and, for a pinned ``ref`` (name:tag@digest), by digest."""
-        image = Image(ref, volumes=volumes, healthcheck=healthcheck, layers=layers, pull_error=pull_error)
+        image = Image(ref, volumes=volumes, healthcheck=healthcheck, layers=layers, pull_error=pull_error,
+                      image_id=image_id, created=created, diff_ids=diff_ids)
         name_tag, _, digest = ref.partition("@")
         self.registry[name_tag] = image
         if digest:
@@ -697,6 +734,10 @@ class StackDocker:
 
     def script(self, name: str, *states: dict) -> None:
         self.scripts[name] = list(states)
+
+    def script_image(self, ref: str, *states: dict) -> None:
+        """The states of every container created from ``ref`` (name@digest), as ``script``."""
+        self.image_scripts[ref] = list(states)
 
     def fail(self, call: str, subject: str | None, error: BaseException) -> None:
         self.failures[(call, subject)] = error
@@ -760,7 +801,15 @@ class StackDocker:
         raise NotFound(f"No such container: {key}")
 
     def _local_image(self, name: str) -> Image | None:
-        return next((image for image in self.images_.values() if name in image.names), None)
+        """An image of Docker's store by one of its references or by its id."""
+        return next((image for image in self.images_.values() if name in image.names or name == image.id), None)
+
+    def _rename(self, container: _Live, name: str) -> None:
+        if name in self.containers_:
+            raise _conflict(f'The container name "/{name}" is already in use')
+        del self.containers_[container.name]
+        container.attrs["Name"] = f"/{name}"
+        self.containers_[name] = container
 
     def _remove(self, container: _Live, *, force: bool) -> None:
         if container.status == "running" and not force:

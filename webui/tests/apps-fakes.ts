@@ -127,6 +127,17 @@ export interface FakeInstalledApp {
   companions: FakeCompanion[];
   missing: string[];
   resources: FakeResources;
+  version: string | null;
+  update_to: string | null;
+  previous: FakeEarlierVersion | null;
+}
+
+/** The earlier version that an app's update kept (AppEarlierVersion, ADR-0406). */
+export interface FakeEarlierVersion {
+  version: string | null;
+  containers: string[];
+  images: string[];
+  copies: string[];
 }
 
 /** An app of one container, `id`, running on the pool at `poolPath` with its data folder /config. */
@@ -153,6 +164,9 @@ export function oneContainerApp(
     companions: [],
     missing: [],
     resources: noResources(),
+    version: null,
+    update_to: null,
+    previous: null,
   };
 }
 
@@ -233,6 +247,9 @@ export function installedImmich(
     companions,
     missing,
     resources: hasMain ? (main.resources ?? noResources()) : noResources(),
+    version: 'v3.4.1',
+    update_to: null,
+    previous: null,
   };
 }
 
@@ -289,8 +306,9 @@ export interface FakeInstallJob {
   id: string;
   template_id: string;
   name: string;
+  kind: 'install' | 'update' | 'rollback';
   state: 'running' | 'succeeded' | 'failed' | 'cancelled';
-  step: 'checking' | 'pulling' | 'creating' | 'starting' | 'cleaning';
+  step: 'checking' | 'pulling' | 'stopping' | 'copying' | 'creating' | 'starting' | 'cleaning' | 'restoring';
   started_at: string;
   finished_at: string | null;
   images: FakeImagePull[];
@@ -312,6 +330,7 @@ export function newInstallJob(templateId: string, name: string, companions: stri
     id: `e2e-job-${jobCount}`,
     template_id: templateId,
     name,
+    kind: 'install',
     state: 'running',
     step: 'checking',
     started_at: '2026-11-17T10:00:00Z',
