@@ -59,7 +59,7 @@ from ..backup.router import (
     BACKUP_KEY_SIZE,
     ENCRYPTED_EXTENSION,
     backup_temp_file,
-    copy_database,
+    copy_database_for_backup,
     encrypt_with_key,
     new_backup_key,
     publish_backup_file,
@@ -580,7 +580,7 @@ def _create_scheduled_backup(keep_count: int | None, key: bytes) -> tuple[bool, 
             # database in use can be torn and would then fail the restore check.
             db_path = Path(DB_FILE)
             if db_path.exists():
-                copy_database(db_path, tmpdir_path / "unos.db")
+                copy_database_for_backup(db_path, tmpdir_path / "unos.db")
 
             # No fstab: the container's describes nothing of the host (ADR-0345).
 

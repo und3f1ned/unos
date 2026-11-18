@@ -25,6 +25,13 @@ manager, encrypted backup uploads, health checks, CI checks).
   `<button>` or a raw palette colour outside `lib/components/ui` (ADR-0400). New tokens keep the old
   look, within what a token allows: `brand`, `surface-hover`, `border-strong`, `content-soft`, `content-on-brand`, `status-neutral`.
 
+- The supervisor's `/tmp` tmpfs is 192 MiB, down from 2 GiB, so that a board with 1 GB of RAM cannot be
+  run out of memory by a backup or a restore, and the backup limits follow it: a backup's database
+  may be 48 MiB (was 512), an uploaded or stored backup file 64 MiB (was 256) and the decompressed
+  archive 64 MiB (was 640). A database over the limit is refused before it is copied by Create
+  Backup (413), by a scheduled backup task and by the off-device copy, and every refusal of a
+  backup's size now names the limit (ADR-0406).
+
 ### Security
 - The audit log records the firewall (turned on or off, rules added and removed, reset), clearing the
   login history, pools mounted, unmounted and imported, containers created, images pulled and removed,

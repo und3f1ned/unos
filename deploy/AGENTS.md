@@ -5,8 +5,9 @@
 - `docker-compose.yml` builds `../supervisor` and `../webui` into `unos-supervisor` and
   `unos-webui` on the fixed subnet `172.31.254.0/24`: the supervisor trusts `X-Forwarded-For`
   only from the web UI's address (ADR-0048). Change every `172.31.254.x` together.
-- Its comments explain its values: the `/tmp` and `/var/lib/btrfs` tmpfs keep volatile writes
-  off the system disk (ADR-0171); the health checks and `depends_on: service_healthy` take
+- Its comments explain its values: the `/tmp` (192 MiB, sized for the backup limits of
+  `supervisor/src/backup/router.py` within the 1 GB of RAM of the smallest board, ADR-0406) and
+  `/var/lib/btrfs` tmpfs keep volatile writes off the system disk (ADR-0171); the health checks and `depends_on: service_healthy` take
   up to 680 s, which `SUPERVISOR_START_TIMEOUT` in `install.sh` and `update.sh` must equal and
   `UNOS_DEV_UP_TIMEOUT` of `scripts/dev/deploy.sh` (700) must exceed (ADR-0338); the web UI's
   `command` waits for the API before it runs the CMD of `webui/Dockerfile`, because at boot

@@ -242,15 +242,15 @@ async def test_backup_upload_has_its_own_limit():
 
     assert client.status == 413
     assert client.json == {"detail": too_large_detail(MAX_ARCHIVE_BYTES + MAX_REQUEST_BODY)}
-    assert client.json["detail"] == "Request body too large: the limit is 257 MiB"
+    assert client.json["detail"] == "Request body too large: the limit is 65 MiB"
     assert client.reads == 0
 
 
-@pytest.mark.parametrize("path", ["/api/v1/files/upload", "/api/v1/backup/upload"])
-async def test_uploads_are_not_held_to_the_default_limit(path):
+@pytest.mark.parametrize(("path", "length"), [("/api/v1/files/upload", 200 << 20), ("/api/v1/backup/upload", 60 << 20)])
+async def test_uploads_are_not_held_to_the_default_limit(path, length):
     """Anonymous: 401 from the credentials check, nothing read (see test_authz.py)."""
     client = _Client([b""])
-    length = 200 << 20  # the file manager takes files of any size
+    # Far over the default limit; the backup upload's is 65 MiB, and the file manager takes files of any size.
     await app(_scope(path, [(b"content-length", str(length).encode())]), client.receive, client.send)
 
     assert client.status == 401

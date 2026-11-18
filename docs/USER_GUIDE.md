@@ -2710,8 +2710,10 @@ kept elsewhere, such as notification channels, scheduled tasks, firewall
 rules, UPS settings, the network settings and the host's `/etc/fstab`. Each
 backup in the list has **Restore**, **Download** and **Delete** buttons.
 
-- **Create Backup** - Makes an unencrypted backup (`.tar.gz`).
-- **Upload Backup** - Adds a backup file of at most 256 MiB: `.tar.gz`, or
+- **Create Backup** - Makes an unencrypted backup (`.tar.gz`). The database may be up to 48 MiB: a
+  larger one is refused with the limit in the message, since a restore could not hold it in memory
+  (a board with 1 GB of RAM, ADR-0406).
+- **Upload Backup** - Adds a backup file of at most 64 MiB: `.tar.gz`, or
   `.tar.gz.enc` for an encrypted backup. It is stored under a new name,
   `uploaded_<date>_<time>` with the same extension. A `.tar.gz.enc` file
   that is gzip data to its end, such as an unencrypted backup, is refused.

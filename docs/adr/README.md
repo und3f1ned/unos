@@ -419,7 +419,7 @@ and this index, and `make check-fast` runs it.
 | [0049](0049-update-sh-with-backup-health-check-and-rollback.md) | Updates go through update.sh, with a backup, a health check and automatic rollback | accepted | 2026-11-05 |
 | [0050](0050-releases-as-tags-and-multi-arch-images.md) | Release with git tags and multi-arch images on GHCR | proposed | 2026-11-05 |
 | [0176](0176-docker-health-checks-and-ordered-start.md) | Both containers have health checks, and the web UI waits for a healthy supervisor | superseded by [0338](0338-health-checks-ordered-start-and-an-access-log-of-refused-and-failed-requests.md) | 2026-11-06 |
-| [0177](0177-tmpfs-cap-for-small-boards.md) | Size the /tmp tmpfs for boards with 1 GB of RAM | proposed | 2026-11-06 |
+| [0177](0177-tmpfs-cap-for-small-boards.md) | Size the /tmp tmpfs for boards with 1 GB of RAM | superseded by [0406](0406-the-supervisors-tmpfs-is-192-mib-and-a-backup-may-hold-a-database-of-48-mib.md) | 2026-11-06 |
 | [0178](0178-docker-log-rotation.md) | Rotate Docker's json-file logs when they grow | superseded by [0330](0330-docker-rotates-the-logs-of-every-container-unos-creates.md) | 2026-11-06 |
 | [0179](0179-uninstall-removes-smb-accounts.md) | Uninstall removes the SMB host accounts | superseded by [0180](0180-uninstall-keeps-smb-host-accounts.md) | 2026-11-06 |
 | [0180](0180-uninstall-keeps-smb-host-accounts.md) | Uninstall keeps the SMB host accounts and removes only their exact passdb entries | superseded by [0322](0322-uninstall-restarts-smbd-once-and-restores-smb-conf-through-a-temporary-file.md) | 2026-11-06 |
@@ -435,6 +435,7 @@ and this index, and `make check-fast` runs it.
 | [0371](0371-on-riscv64-the-web-ui-builder-runs-vite-without-the-maglev-compiler.md) | On riscv64 the web UI's builder runs vite without Node.js's Maglev compiler | superseded by [0373](0373-the-web-ui-image-of-a-spacemit-k1-is-built-on-another-machine.md) | 2026-11-13 |
 | [0373](0373-the-web-ui-image-of-a-spacemit-k1-is-built-on-another-machine.md) | The web UI's image of a SpacemiT K1 is built on another machine, and install.sh and update.sh build only the supervisor there | proposed | 2026-11-13 |
 | [0376](0376-the-banana-pi-bpi-w3-gets-no-code-of-its-own-for-the-rk3588.md) | The Banana Pi BPI-W3 gets no code of its own for the RK3588 | proposed | 2026-11-15 |
+| [0406](0406-the-supervisors-tmpfs-is-192-mib-and-a-backup-may-hold-a-database-of-48-mib.md) | The supervisor's /tmp tmpfs is 192 MiB and a backup may hold a database of 48 MiB | accepted | 2026-11-18 |
 
 ## Device
 

@@ -493,7 +493,7 @@ def test_oversized_member_is_rejected(env, monkeypatch):
     name = _store(env, [_file("manifest.json", MANIFEST), _file("unos.db", _good_db(env))])
     response = _restore(env, name)
     assert response.status_code == 400
-    assert "too large" in response.json()["detail"]
+    assert response.json()["detail"] == "unos.db in the backup archive is too large: the limit is 1 KiB"
     _assert_untouched(env)
 
 
@@ -550,7 +550,7 @@ def test_bad_manifest_is_rejected(env, manifest):
 
 END_OF_TAR = bytes(2 * 512)
 CORRUPT = "Invalid backup: corrupt archive"
-TOO_LARGE = "Backup archive is too large when decompressed"
+TOO_LARGE = f"Backup archive is too large when decompressed: the limit is {backup_router.MAX_TAR_BYTES // (1024 * 1024)} MiB"
 
 
 def _number(value: int) -> bytes:
@@ -759,7 +759,7 @@ def test_extended_headers_beyond_what_a_backup_needs_are_refused_by_upload(env, 
 # --- a full /tmp ------------------------------------------------------------------
 #
 # A restore writes the database it extracts from the archive into /tmp, a
-# tmpfs of 2 GiB in RAM in the container. When the files of a restore did not
+# tmpfs of 192 MiB in RAM in the container. When the files of a restore did not
 # fit, it answered 500 "Failed to restore backup: [Errno 28] No space left
 # on device", which reads like a full system disk.
 

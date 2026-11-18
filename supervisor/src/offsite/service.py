@@ -64,6 +64,7 @@ from ..backup.router import (
     BackupValidationError,
     check_archive,
     configuration_archive,
+    limit_text,
     store_backup,
 )
 from ..security.validators import (
@@ -1671,7 +1672,7 @@ async def restore_configuration(snapshot_id: str) -> dict:
             except _Failed as e:
                 raise HTTPException(503, f"The configuration could not be read from the copy: {e.message}") from None
             if archive.stat().st_size > MAX_ARCHIVE_BYTES:
-                raise _bad("The configuration archive of the snapshot is larger than a backup may be")
+                raise _bad(f"The configuration archive of the snapshot is larger than a backup may be: the limit is {limit_text(MAX_ARCHIVE_BYTES)}")
             try:
                 await asyncio.to_thread(check_archive, archive)
             except BackupValidationError as e:

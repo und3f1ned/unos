@@ -2316,7 +2316,7 @@
       "steps": [
         "Upload a .tar.gz backup: it is checked in one streaming pass and then listed",
         "Upload an encrypted .tar.gz.enc backup: it is stored as uploaded_<date>_<time>.tar.gz.enc and checked when it is restored",
-        "A plain backup named .tar.gz.enc, a corrupt archive and a file over 256 MiB are refused and leave nothing behind"
+        "A plain backup named .tar.gz.enc, a corrupt archive and a file over 64 MiB are refused and leave nothing behind"
       ],
       "verified_by": [
         "supervisor/tests/test_backup_upload_check.py",
@@ -2329,7 +2329,8 @@
       "passes": true,
       "adr": [
         "ADR-0165",
-        "ADR-0166"
+        "ADR-0166",
+        "ADR-0406"
       ]
     },
     {
@@ -3730,10 +3731,20 @@
         "The tmpfs size follows the owner's choice: 25 percent of RAM, or a lower fixed cap with a lower backup size limit",
         "Backups and restores within the limit still work on a 1 GB board"
       ],
+      "verified_by": [
+        "supervisor/tests/test_deploy_scripts.py",
+        "supervisor/tests/test_backup_files.py",
+        "supervisor/tests/test_backup_upload_check.py",
+        "supervisor/tests/test_backup_restore.py",
+        "supervisor/tests/test_upload_streaming.py",
+        "supervisor/tests/test_request_limits.py"
+      ],
       "passes": false,
       "adr": [
-        "ADR-0177"
-      ]
+        "ADR-0177",
+        "ADR-0406"
+      ],
+      "notes": "The owner's choice (delegated) is a lower fixed cap, ADR-0406: /tmp is size=192m in both compose files, and a backup's database is limited to 48 MiB, the archive and the decompressed tar to 64 MiB; a database over the limit is refused before it is copied, with the limit in the message (413 for Create Backup), and uploads and restores name their limits. A host-level change (GLOSSARY.md): the container's tmpfs changes with the deploy, so the reboot rule of ADR-0018 applies. Device check, by hand, with the device-checks skill, after the owner's /deploy-device: (1) the supervisor's /tmp size: `scripts/dev/sd.sh measure tmpfs-size -- scripts/dev/ssh.sh 'docker exec unos-supervisor df -m /tmp'` shows a tmpfs of 192 MiB (the Size column), and `scripts/dev/sd.sh measure tmpfs-options -- scripts/dev/ssh.sh \"docker inspect -f '{{json .HostConfig.Tmpfs}}' unos-supervisor\"` shows /tmp with noexec,nosuid,nodev,size=192m, and `scripts/dev/sd.sh measure db-size -- scripts/dev/api.py GET /health/full` shows components.database.size_mb far below 48; (2) `scripts/dev/scenario.sh backups` and (3) `scripts/dev/scenario.sh restore` pass, each with its SD MiB (the checks' backups are a few MiB, within the limits); (4) after the owner's reboot, steps 1 to 3 again. Review (fresh context) findings: fixed the off-device copy's allowance in the tmpfs (80 MiB for restic's packs), the wrong api.py path, the archive headroom, the decrypt copies, the tests of the scheduled task and the configuration archive, the stale backup.upload step (ADR-0406), the test of file uploads of any size; left open, with the reason: the restic cache of an S3 store is unbounded in /tmp, so its copy fails with a full tmpfs instead of taking the board's memory (ADR-0406 says so; bounding it is a later entry). Not on the device: a database over the limit and a 1 GB board, which the backend tests show (test_backup_files.py, test_deploy_scripts.py TestTemporaryFiles)."
     },
     {
       "id": "deploy.docker-log-rotation",
