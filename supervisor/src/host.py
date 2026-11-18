@@ -20,7 +20,8 @@ on the pools and disks that the privileged container sees, and so does the
 pgrep that looks for a disk's stuck power read (the container has the host's
 process IDs, ``pid: host``):
 :func:`run_in_container` runs them, and at their timeout it kills them
-without waiting for them (ADR-0290).
+without waiting for them (ADR-0290). So does openssl, on the certificates of
+the container's /data/certs (ADR-0414).
 """
 
 from __future__ import annotations
@@ -53,7 +54,8 @@ logger = logging.getLogger(__name__)
 # busctl, systemctl, ip, ethtool: ADR-0233), power/schedule.py (shutdown, busctl and ss; sh
 # with cat, which read and set the RTC's wake alarm: ADR-0407), logs/router.py (journalctl, under
 # timeout: ADR-0257, ADR-0258), system/router.py (timedatectl under timeout, hostname:
-# ADR-0331) and notifications/router.py (curl, which sends a notification channel's
+# ADR-0331), security/firewall.py (ss: the ports that sshd listens on, ADR-0414) and
+# notifications/router.py (curl, which sends a notification channel's
 # request from the host's network when the container connects nowhere, and ends
 # itself at its --max-time: ADR-0336). cat, od (the export files: shares/nfs.py), test,
 # mkdir, rmdir, rm, find, sync, sleep, timeout, hostname, readlink (the time zone:
@@ -108,11 +110,17 @@ HOST_TOOLS: dict[str, str] = {
 # hdparm (ADR-0378): install.sh installs it, but a host set up by hand may lack it.
 # storage/disks.py runs hdparm -C (under timeout) for a disk's power state, one
 # per disk at a time and none while a timed-out one still runs (ADR-0378), and
-# smartctl -n standby -i in the container without it.
+# smartctl -n standby -i in the container without it. security/firewall.py runs ufw, and the
+# firewall card names a missing ufw (ADR-0414); it reads iptables' FORWARD chain (iptables, which
+# the ufw and Docker packages depend on; ip6tables too, in its host scripts) and asks sshd -T for
+# SSH's ports (none without openssh-server), and runs systemd-run and systemctl for the revert.
 OPTIONAL_HOST_TOOLS: dict[str, str] = {
     "exportfs": "nfs-kernel-server",
     "upsc": "nut-client",
     "hdparm": "hdparm",
+    "ufw": "ufw",
+    "iptables": "iptables",
+    "sshd": "openssh-server",
 }
 
 # Enter all of PID 1's namespaces except the user and cgroup namespaces.
@@ -235,14 +243,17 @@ def run_in_container(
     timeout: float,
     stdout: int | IO[Any] = subprocess.PIPE,
     stderr: int | IO[Any] = subprocess.PIPE,
+    input: str | None = None,
 ) -> subprocess.CompletedProcess[str]:
     """Run ``cmd`` in the supervisor's own container; at its timeout, kill it and return at once.
 
     For btrfs and smartctl, which reach the host's pools and disks through
-    the privileged container (ADR-0290). ``stdout`` and ``stderr`` are
-    pipes, whose text is returned (bytes that are not valid in the
-    locale's encoding become U+FFFD), or what Popen takes, such as
-    ``subprocess.DEVNULL`` or a file. The command reads nothing.
+    the privileged container (ADR-0290), and openssl, which reads and makes
+    the certificates of the container's /data/certs (ADR-0414). ``stdout``
+    and ``stderr`` are pipes, whose text is returned (bytes that are not
+    valid in the locale's encoding become U+FFFD), or what Popen takes, such
+    as ``subprocess.DEVNULL`` or a file. The command reads ``input``, or
+    nothing.
 
     The command runs in a session of its own. At ``timeout`` its process
     group, the command and the processes it started, is killed with
@@ -270,7 +281,7 @@ def run_in_container(
     try:
         process = subprocess.Popen(
             cmd,
-            stdin=subprocess.DEVNULL,
+            stdin=subprocess.DEVNULL if input is None else subprocess.PIPE,
             stdout=stdout,
             stderr=stderr,
             text=True,
@@ -278,7 +289,7 @@ def run_in_container(
             start_new_session=True,
         )
         try:
-            out, err = process.communicate(timeout=timeout)
+            out, err = process.communicate(input=input, timeout=timeout)
         except subprocess.TimeoutExpired:
             _kill_and_leave(process, key)
             logger.warning(

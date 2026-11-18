@@ -591,15 +591,25 @@ const CERTIFICATE_STATUS = {
   served_by: 'caddy_local_ca', served_id: null, chosen_id: 'custom_nas-living-room.home.arpa', fingerprint: null,
 };
 const SECURITY = {
+  // The host's ufw with a change that waits to be kept (ADR-0414): the countdown and Keep show too.
   '/api/v1/security/firewall': {
+    installed: true,
     enabled: true,
     default_incoming: 'deny',
     default_outgoing: 'allow',
+    ipv6: true,
+    revert_in: 90,
+    revert_seconds: 120,
     rules: [
-      { id: 'rule_1', name: 'SSH from the home network', action: 'allow', direction: 'in', protocol: 'tcp', port: '22',
-        source: '192.168.1.0/24', destination: null, enabled: true, comment: null },
-      { id: 'rule_2', name: 'SMB', action: 'allow', direction: 'in', protocol: 'tcp', port: '445',
-        source: '2001:db8:1234:5678::/64', destination: null, enabled: true, comment: null },
+      { id: 'fw-000000000001', number: 1, family: 'ipv4', action: 'allow', direction: 'in', route: false, log: false,
+        protocol: 'tcp', port: '22,80,443,445,5357', destination: null, source_port: null, source: '192.168.0.0/16',
+        interface: null, app: null, comment: 'UNOS: web UI, SSH and SMB', unos: true },
+      { id: 'fw-000000000002', number: 2, family: 'ipv4', action: 'allow', direction: 'in', route: false, log: false,
+        protocol: 'tcp', port: '22', destination: null, source_port: null, source: '192.168.1.0/24', interface: null,
+        app: null, comment: 'SSH from the home network', unos: false },
+      { id: 'fw-000000000003', number: 3, family: 'ipv6', action: 'allow', direction: 'in', route: false, log: false,
+        protocol: 'tcp', port: '445', destination: null, source_port: null, source: '2001:db8:1234:5678::/64',
+        interface: null, app: null, comment: 'SMB', unos: false },
     ],
   },
   '/api/v1/security/certificates/status': CERTIFICATE_STATUS,
@@ -1674,6 +1684,21 @@ const VIEWS: View[] = [
     shows: (page) => page.getByRole('heading', { name: /^(Add Firewall Rule|Новое правило брандмауэра)$/ }),
     start: (page) => page.getByRole('heading', { name: /^(Add Firewall Rule|Новое правило брандмауэра)$/ }),
     end: (page) => page.getByRole('button', { name: /^(Add Rule|Добавить правило)$/ }).last(),
+  },
+  {
+    name: 'Dialog: turning the firewall on',
+    path: '/system#security',
+    fake: (page) => serve(page, { ...SECURITY, '/api/v1/security/firewall': {
+      ...SECURITY['/api/v1/security/firewall'], enabled: false, revert_in: null } }),
+    open: async (page) => {
+      const firewall = page.locator('main div.card').filter({
+        has: page.getByRole('heading', { name: /^(Firewall|Брандмауэр)$/ }) });
+      await firewall.getByRole('button', { name: /^(Configure|Настроить)$/ }).click();
+      await firewall.getByRole('button', { name: /^(Enable|Включить)$/ }).click();
+    },
+    shows: (page) => page.getByRole('dialog'),
+    start: (page) => page.getByRole('heading', { name: /^(Turn the firewall on\?|Включить брандмауэр\?)$/ }),
+    end: (page) => page.getByRole('dialog').getByRole('button', { name: /^(Turn on|Включить)$/ }),
   },
   {
     name: 'Dialog: a certificate',

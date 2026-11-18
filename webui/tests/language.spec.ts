@@ -120,12 +120,17 @@ test.describe('Language', () => {
     // supervisor/src/security/schemas.py): the stand-in has no ufw and no certificate. A
     // certificate's dates are in UTC with their offset (ADR-0401).
     const FIREWALL = {
+      installed: true,
       enabled: true,
       default_incoming: 'deny',
       default_outgoing: 'allow',
+      ipv6: true,
+      revert_in: null,
+      revert_seconds: 120,
       rules: [
-        { id: 'rule_1', name: 'SSH', action: 'deny', direction: 'in', protocol: 'tcp', port: '22',
-          source: '192.168.1.0/24', destination: null, enabled: true, comment: null },
+        { id: 'fw-000000000001', number: 1, family: 'ipv4', action: 'deny', direction: 'in', route: false, log: false,
+          protocol: 'tcp', port: '22', destination: null, source_port: null, source: '192.168.1.0/24', interface: null,
+          app: null, comment: 'SSH', unos: false },
       ],
     };
     const VALID_UNTIL = '2027-11-08T01:47:31Z';

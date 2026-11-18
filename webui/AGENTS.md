@@ -86,7 +86,7 @@ and proxies `/api/*` and `/ws/*` to the supervisor (`webui/Caddyfile`).
   `$lib/i18n` collects every catalog file: an area adds its own file and edits no shared one;
   `common.ts` has the words that many areas use. Dates take `$intlLocale`. A value that the
   server answers as a word (an action, a state, a type) is shown through a map from the value to
-  a key, `{ allow: 'account.firewall.allow' }`, never as it comes. System > Network keeps what
+  a key, `{ allow: 'firewall.allow' }`, never as it comes. System > Network keeps what
   ip and ss print in its tables (link types, protocols, socket states) as it comes (ADR-0295).
 - English stays word for word what the specs select: `playwright.config.ts` runs an en-US
   browser, and `tests/language.spec.ts` switches to Russian. The server's messages (the

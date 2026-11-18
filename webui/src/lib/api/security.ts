@@ -18,40 +18,68 @@ export interface LoginHistoryResponse {
   success_count: number;
 }
 
-// Firewall Types
+// Firewall Types: the host's ufw (ADR-0414)
 export type FirewallAction = "allow" | "deny" | "reject";
 export type FirewallProtocol = "tcp" | "udp" | "any";
-export type FirewallDirection = "in" | "out";
 
+/** A rule of the host's ufw, as ufw records it. */
 export interface FirewallRule {
-  id: string | null;
-  name: string;
-  action: FirewallAction;
-  direction: FirewallDirection;
-  protocol: FirewallProtocol;
+  id: string;
+  /** ufw's number, as `ufw status numbered` shows it. */
+  number: number;
+  family: "ipv4" | "ipv6";
+  /** allow, deny, reject or limit. */
+  action: string;
+  /** in or out. */
+  direction: string;
+  route: boolean;
+  log: boolean;
+  /** tcp, udp, any, or another protocol that ufw takes. */
+  protocol: string;
   port: string | null;
-  source: string | null;
   destination: string | null;
-  enabled: boolean;
+  source_port: string | null;
+  /** null: anywhere. */
+  source: string | null;
+  interface: string | null;
+  app: string | null;
   comment: string | null;
+  /** One of UNOS's rules for the local networks, which UNOS does not delete. */
+  unos: boolean;
 }
 
 export interface FirewallStatus {
+  /** The host has ufw. */
+  installed: boolean;
   enabled: boolean;
   default_incoming: string;
   default_outgoing: string;
+  ipv6: boolean;
   rules: FirewallRule[];
+  /** Seconds until a change that waits to be kept is undone; null when none waits. */
+  revert_in: number | null;
+  /** The host undoes a change now. */
+  reverting: boolean;
+  /** The host's last undo could not put everything back. */
+  revert_failed: boolean;
+  revert_seconds: number;
+  /** The asking computer is in the local networks that UNOS's rules let in; null: not known. */
+  client_local: boolean | null;
 }
 
+/** An incoming rule made in UNOS. */
 export interface FirewallRuleCreate {
-  name: string;
   action: FirewallAction;
-  direction?: FirewallDirection;
-  protocol?: FirewallProtocol;
-  port?: string | null;
+  protocol: FirewallProtocol;
+  port: string;
   source?: string | null;
-  destination?: string | null;
   comment?: string | null;
+}
+
+/** The answer of a change: whether it changed the host, and the seconds it waits to be kept. */
+export interface FirewallChange {
+  changed: boolean;
+  revert_in: number | null;
 }
 
 // Certificate Types
@@ -141,28 +169,31 @@ export async function getFirewallStatus(): Promise<FirewallStatus> {
   return api.get<FirewallStatus>("/security/firewall");
 }
 
-export async function enableFirewall(): Promise<{ status: string; message: string }> {
-  return api.post("/security/firewall/enable");
+/** Turn the firewall on: UNOS's rules for the local networks first, and the change is undone
+ *  unless it is kept (keepFirewallChange). */
+export async function enableFirewall(): Promise<FirewallChange> {
+  return api.post<FirewallChange>("/security/firewall/enable");
 }
 
-export async function disableFirewall(): Promise<{ status: string; message: string }> {
-  return api.post("/security/firewall/disable");
+export async function disableFirewall(): Promise<FirewallChange> {
+  return api.post<FirewallChange>("/security/firewall/disable");
 }
 
-export async function createFirewallRule(
-  rule: FirewallRuleCreate
-): Promise<FirewallRule> {
-  return api.post<FirewallRule>("/security/firewall/rules", rule);
+/** Keep the change that waits: its automatic revert is called off. */
+export async function keepFirewallChange(): Promise<{ status: string }> {
+  return api.post<{ status: string }>("/security/firewall/confirm");
 }
 
-export async function deleteFirewallRule(
-  ruleId: string
-): Promise<{ status: string; message: string }> {
-  return api.delete(`/security/firewall/rules/${ruleId}`);
+export async function createFirewallRule(rule: FirewallRuleCreate): Promise<FirewallChange> {
+  return api.post<FirewallChange>("/security/firewall/rules", rule);
 }
 
-export async function resetFirewall(): Promise<{ status: string; message: string }> {
-  return api.post("/security/firewall/reset");
+export async function deleteFirewallRule(ruleId: string): Promise<FirewallChange> {
+  return api.delete<FirewallChange>(`/security/firewall/rules/${encodeURIComponent(ruleId)}`);
+}
+
+export async function resetFirewall(): Promise<FirewallChange> {
+  return api.post<FirewallChange>("/security/firewall/reset");
 }
 
 // Certificate API

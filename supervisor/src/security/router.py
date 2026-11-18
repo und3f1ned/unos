@@ -11,15 +11,14 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession
-from pydantic import TypeAdapter
 from sqlalchemy import select, func, desc, text
 
-from .. import state_files
-from . import serving
+from .. import host
+from . import firewall, serving
 from ..audit.changes import audit_change
 from ..audit.schemas import AuditAction, AuditSeverity
 from ..database import get_db
-from ..times import db_now, utc_now
+from ..times import db_now
 from ..auth import requirement
 from ..auth.utils import (
     API_TOKEN_PREFIX, TOTP_CODE_REUSED, Credential, TotpCheck, check_totp_code, client_ip, credential,
@@ -30,8 +29,7 @@ from .models import LoginAttempt
 from .schemas import (
     TwoFactorRequirementDisable, TwoFactorRequirementEnable, TwoFactorRequirementStatus,
     LoginAttemptResponse, LoginHistoryResponse,
-    FirewallRule, FirewallStatus, FirewallRuleCreate, FirewallAction,
-    FirewallDirection, FirewallProtocol,
+    FirewallChange, FirewallStatus, FirewallRuleCreate,
     Certificate, CertificateListResponse, CertificateType, CertificateStatus,
     CertificateUpload, SelfSignedCertRequest, ServeCertificateResponse, ServedCertificate,
     MAX_CERTIFICATE_NAME_LENGTH, is_dns_hostname, parse_ip_address, validate_certificate_domain,
@@ -40,7 +38,6 @@ from .schemas import (
 router = APIRouter(prefix="/security", tags=["security"])
 logger = logging.getLogger(__name__)
 
-FIREWALL_RULES_FILE = "/data/firewall_rules.json"
 # Uploaded and self-signed certificates. The web UI's container cannot read this directory: the one
 # an administrator chooses is copied, with its chain and key, into the served file of
 # src/security/serving.py, which Caddy loads (ADR-0404).
@@ -161,312 +158,111 @@ async def clear_login_history(
 
 
 # ==================== Firewall Management ====================
-# The firewall's changes write an audit entry after they were made, for a real change only
-# (ADR-0402); so do the certificates' changes (ADR-0404).
-
-_FIREWALL_RULES = TypeAdapter(list[FirewallRule])
-
-
-def load_firewall_rules() -> list[FirewallRule]:
-    """The firewall rules; none without a file, or for one kept as .bad (ADR-0324)."""
-    return state_files.load_json(
-        Path(FIREWALL_RULES_FILE), _FIREWALL_RULES.validate_python, list, what="the firewall rules"
-    )
-
-
-def save_firewall_rules(rules: list[FirewallRule]) -> None:
-    """Replace the firewall rules' file (ADR-0324)."""
-    state_files.write_json(Path(FIREWALL_RULES_FILE), [r.model_dump() for r in rules], sync=False)
-
-
-def get_ufw_status() -> tuple[bool, str, str]:
-    """Get UFW firewall status."""
-    try:
-        result = subprocess.run(
-            ["ufw", "status", "verbose"],
-            capture_output=True,
-            text=True
-        )
-        output = result.stdout
-
-        enabled = "Status: active" in output
-
-        # Parse default policies
-        default_in = "deny"
-        default_out = "allow"
-
-        for line in output.split("\n"):
-            if "Default:" in line:
-                # Parse format: "Default: deny (incoming), allow (outgoing), disabled (routed)"
-                import re
-                # Match incoming policy
-                incoming_match = re.search(r'(\w+)\s*\(incoming\)', line.lower())
-                if incoming_match:
-                    policy = incoming_match.group(1)
-                    if policy in ('allow', 'deny', 'reject'):
-                        default_in = policy
-                # Match outgoing policy
-                outgoing_match = re.search(r'(\w+)\s*\(outgoing\)', line.lower())
-                if outgoing_match:
-                    policy = outgoing_match.group(1)
-                    if policy in ('allow', 'deny', 'reject'):
-                        default_out = policy
-
-        return enabled, default_in, default_out
-    except FileNotFoundError:
-        return False, "deny", "allow"
-    except Exception:
-        return False, "deny", "allow"
-
-
-def apply_ufw_rule(rule: FirewallRule, delete: bool = False) -> tuple[bool, str]:
-    """Apply a single UFW rule."""
-    try:
-        cmd = ["ufw"]
-
-        if delete:
-            cmd.append("delete")
-
-        # Action
-        cmd.append(rule.action.value)
-
-        # Direction
-        if rule.direction == FirewallDirection.IN:
-            cmd.append("in")
-        else:
-            cmd.append("out")
-
-        # Protocol and port
-        if rule.port:
-            if rule.protocol != FirewallProtocol.ANY:
-                cmd.extend(["proto", rule.protocol.value])
-            cmd.extend(["to", "any", "port", rule.port])
-        elif rule.protocol != FirewallProtocol.ANY:
-            cmd.extend(["proto", rule.protocol.value])
-
-        # Source
-        if rule.source:
-            cmd.extend(["from", rule.source])
-
-        # Comment
-        if rule.comment and not delete:
-            cmd.extend(["comment", rule.comment])
-
-        result = subprocess.run(cmd, capture_output=True, text=True)
-
-        if result.returncode != 0:
-            return False, result.stderr or result.stdout
-
-        return True, ""
-    except Exception as e:
-        return False, str(e)
-
-
-def _describe_rule(rule: FirewallRule) -> str:
-    """A rule for an audit entry: "Web: allow in tcp port 8080 from 192.0.2.0/24"."""
-    parts = [f"{rule.name}: {rule.action.value} {rule.direction.value}"]
-    if rule.protocol != FirewallProtocol.ANY:
-        parts.append(rule.protocol.value)
-    if rule.port:
-        parts.append(f"port {rule.port}")
-    if rule.source:
-        parts.append(f"from {rule.source}")
-    return " ".join(parts)
+# The host's ufw (src/security/firewall.py, ADR-0414). The firewall's changes write an audit entry
+# after they were made, for a real change only (ADR-0402); so do the certificates' changes (ADR-0404).
 
 
 @router.get("/firewall", response_model=FirewallStatus)
-async def get_firewall_status(_: User = Depends(require_admin)):
-    """Get current firewall status and rules."""
-    enabled, default_in, default_out = get_ufw_status()
-    rules = load_firewall_rules()
-
+async def get_firewall_status(request: Request, _: User = Depends(require_admin)):
+    """The host's ufw: whether it is installed and on, its default policies, its rules and the change
+    that waits to be kept; and whether the asking computer is in the local networks that UNOS's
+    rules let in."""
+    installed, state = await firewall.status()
+    client_local = firewall.is_local(client_ip(request))
+    if state is None:
+        return FirewallStatus(installed=installed, enabled=False, default_incoming="deny", default_outgoing="allow",
+                              ipv6=True, rules=[], revert_seconds=firewall.REVERT_SECONDS, client_local=client_local)
     return FirewallStatus(
-        enabled=enabled,
-        default_incoming=default_in,
-        default_outgoing=default_out,
-        rules=rules
+        installed=True, enabled=state.enabled, default_incoming=state.defaults.incoming,
+        default_outgoing=state.defaults.outgoing, ipv6=state.defaults.ipv6, rules=state.rules,
+        revert_in=state.waiting.revert_in, reverting=state.waiting.reverting, revert_failed=state.waiting.failed,
+        revert_seconds=firewall.REVERT_SECONDS, client_local=client_local,
     )
 
 
-@router.post("/firewall/enable")
+@router.post("/firewall/enable", response_model=FirewallChange)
 async def enable_firewall(request: Request, current_user: User = Depends(require_admin)):
-    """Enable the firewall. Admin only. The audit log gets firewall_enabled when it was off."""
-    try:
-        was_enabled = _ufw_is_active()
-        # Enable UFW with default deny incoming
-        result = subprocess.run(
-            ["ufw", "--force", "enable"],
-            capture_output=True,
-            text=True
-        )
-
-        if result.returncode != 0:
-            raise HTTPException(500, f"Failed to enable firewall: {result.stderr}")
-
-        if not was_enabled:
-            await audit_change(AuditAction.FIREWALL_ENABLED, request, current_user.username,
-                               resource_type="firewall", details="The firewall was turned on")
-        return {"status": "ok", "message": "Firewall enabled"}
-    except FileNotFoundError:
-        raise HTTPException(500, "UFW is not installed on this system")
-    except Exception as e:
-        logger.exception("Could not enable firewall")
-        raise HTTPException(500, f"Failed to enable firewall: {str(e)}")
+    """Turn the host's ufw on with UNOS's rules, the revert armed first. The audit log gets
+    firewall_enabled when it was off."""
+    change = await firewall.enable()
+    if change.changed:
+        await audit_change(AuditAction.FIREWALL_ENABLED, request, current_user.username,
+                           resource_type="firewall", details="The firewall was turned on")
+    return FirewallChange(changed=change.changed, revert_in=change.revert_in)
 
 
-@router.post("/firewall/disable")
+@router.post("/firewall/disable", response_model=FirewallChange)
 async def disable_firewall(request: Request, current_user: User = Depends(require_admin)):
-    """Disable the firewall. Admin only. The audit log gets firewall_disabled when it was on."""
-    try:
-        was_enabled = _ufw_is_active()
-        result = subprocess.run(
-            ["ufw", "--force", "disable"],
-            capture_output=True,
-            text=True
-        )
-
-        if result.returncode != 0:
-            raise HTTPException(500, f"Failed to disable firewall: {result.stderr}")
-
-        if was_enabled:
-            await audit_change(AuditAction.FIREWALL_DISABLED, request, current_user.username,
-                               resource_type="firewall", details="The firewall was turned off",
-                               severity=AuditSeverity.WARNING)
-        return {"status": "ok", "message": "Firewall disabled"}
-    except FileNotFoundError:
-        raise HTTPException(500, "UFW is not installed on this system")
-    except Exception as e:
-        logger.exception("Could not disable firewall")
-        raise HTTPException(500, f"Failed to disable firewall: {str(e)}")
+    """Turn the host's ufw off. The audit log gets firewall_disabled when it was on."""
+    changed = await firewall.disable()
+    if changed:
+        await audit_change(AuditAction.FIREWALL_DISABLED, request, current_user.username,
+                           resource_type="firewall", details="The firewall was turned off",
+                           severity=AuditSeverity.WARNING)
+    return FirewallChange(changed=changed)
 
 
-@router.post("/firewall/rules", response_model=FirewallRule)
+@router.post("/firewall/confirm")
+async def keep_firewall_change(request: Request, current_user: User = Depends(require_admin)):
+    """Keep the firewall change that waits to be kept: its revert is called off. The audit log gets
+    firewall_change_kept."""
+    await firewall.keep()
+    await audit_change(AuditAction.FIREWALL_CHANGE_KEPT, request, current_user.username,
+                       resource_type="firewall", details="The firewall change was kept")
+    return {"status": "ok"}
+
+
+@router.post("/firewall/rules", response_model=FirewallChange)
 async def create_firewall_rule(
     request: Request,
     rule: FirewallRuleCreate,
     current_user: User = Depends(require_admin)
 ):
-    """Create a new firewall rule. Admin only. The audit log gets firewall_rule_added."""
-    rules = load_firewall_rules()
-
-    # Generate ID
-    new_rule = FirewallRule(
-        id=f"rule_{utc_now().strftime('%Y%m%d%H%M%S')}",
-        **rule.model_dump()
-    )
-
-    # Apply the rule via UFW
-    success, error = apply_ufw_rule(new_rule)
-    if not success:
-        raise HTTPException(500, f"Failed to apply rule: {error}")
-
-    rules.append(new_rule)
-    save_firewall_rules(rules)
-
+    """Add an incoming rule to the host's ufw. The audit log gets firewall_rule_added."""
+    change, added = await firewall.add_rule(rule)
     await audit_change(AuditAction.FIREWALL_RULE_ADDED, request, current_user.username,
-                       resource_type="firewall_rule", resource_id=new_rule.id,
-                       details=f"Added the rule {_describe_rule(new_rule)}")
-    return new_rule
+                       resource_type="firewall_rule", resource_id=added[0].id if added else None,
+                       details=f"Added the rule {firewall.describe(rule)}")
+    return FirewallChange(changed=change.changed, revert_in=change.revert_in)
 
 
-@router.delete("/firewall/rules/{rule_id}")
+@router.delete("/firewall/rules/{rule_id}", response_model=FirewallChange)
 async def delete_firewall_rule(
     request: Request,
     rule_id: str,
     current_user: User = Depends(require_admin)
 ):
-    """Delete a firewall rule. Admin only. The audit log gets firewall_rule_deleted."""
-    rules = load_firewall_rules()
-    rule_to_delete = next((r for r in rules if r.id == rule_id), None)
-
-    if not rule_to_delete:
-        raise HTTPException(404, f"Rule not found: {rule_id}")
-
-    # Remove the rule via UFW
-    success, error = apply_ufw_rule(rule_to_delete, delete=True)
-    # Don't fail if rule doesn't exist in UFW
-    if not success and "Could not delete non-existent rule" not in error:
-        raise HTTPException(500, f"Failed to delete rule: {error}")
-
-    rules = [r for r in rules if r.id != rule_id]
-    save_firewall_rules(rules)
-
+    """Delete a rule of the host's ufw. The audit log gets firewall_rule_deleted."""
+    change, rule = await firewall.delete_rule(rule_id)
     await audit_change(AuditAction.FIREWALL_RULE_DELETED, request, current_user.username,
                        resource_type="firewall_rule", resource_id=rule_id,
-                       details=f"Removed the rule {_describe_rule(rule_to_delete)}",
+                       details=f"Removed the rule {firewall.describe(rule)}",
                        severity=AuditSeverity.WARNING)
-    return {"status": "ok", "message": "Rule deleted"}
+    return FirewallChange(changed=change.changed, revert_in=change.revert_in)
 
 
-def _ufw_is_active() -> bool:
-    """Whether ufw is on, read strictly: HTTPException 500 when `ufw status` cannot be read, so that an
-    unreadable state is never taken for a firewall that is off (the audit entry of a switch says what
-    changed, ADR-0402)."""
-    try:
-        result = subprocess.run(["ufw", "status"], capture_output=True, text=True)
-    except FileNotFoundError:
-        raise HTTPException(500, "UFW is not installed on this system")
-    if result.returncode != 0:
-        raise HTTPException(500, f"Failed to read the firewall status: {(result.stderr or result.stdout).strip()}")
-    return "Status: active" in result.stdout
-
-
-def _ufw(*args: str) -> None:
-    """Run ufw with ARGS; raise RuntimeError with what it said when it fails."""
-    result = subprocess.run(["ufw", *args], capture_output=True, text=True)
-    if result.returncode != 0:
-        raise RuntimeError((result.stderr or result.stdout).strip() or f"ufw exited with {result.returncode}")
-
-
-_DEFAULT_FIREWALL_RULES = [
-    FirewallRule(id="rule_default_ssh", name="SSH", action=FirewallAction.ALLOW, direction=FirewallDirection.IN,
-                 protocol=FirewallProtocol.TCP, port="22", enabled=True, comment="SSH access"),
-    FirewallRule(id="rule_default_http", name="HTTP", action=FirewallAction.ALLOW, direction=FirewallDirection.IN,
-                 protocol=FirewallProtocol.TCP, port="80", enabled=True, comment="HTTP access"),
-    FirewallRule(id="rule_default_https", name="HTTPS", action=FirewallAction.ALLOW, direction=FirewallDirection.IN,
-                 protocol=FirewallProtocol.TCP, port="443", enabled=True, comment="HTTPS access"),
-]
-
-
-@router.post("/firewall/reset")
+@router.post("/firewall/reset", response_model=FirewallChange)
 async def reset_firewall(request: Request, current_user: User = Depends(require_admin)):
-    """Reset firewall to default rules. Admin only.
+    """ufw's reset, its default policies and UNOS's rules; the firewall stays off.
 
     The audit log gets firewall_reset: a reset is a change whenever ufw took it, as failed, with what
     was done, when a step after ufw's own reset fails (ADR-0402).
     """
-    reset_done = False
     try:
-        # Reset UFW
-        _ufw("--force", "reset")
-        reset_done = True
-
-        # Set default policies
-        _ufw("default", "deny", "incoming")
-        _ufw("default", "allow", "outgoing")
-
-        # Allow SSH and HTTP/HTTPS by default
-        _ufw("allow", "22/tcp", "comment", "SSH")
-        _ufw("allow", "80/tcp", "comment", "HTTP")
-        _ufw("allow", "443/tcp", "comment", "HTTPS")
-
-        # Clear saved rules
-        save_firewall_rules(_DEFAULT_FIREWALL_RULES)
-    except Exception as e:
-        logger.exception("Could not reset firewall")
-        if reset_done:
+        await firewall.reset()
+    except firewall.ResetFailed as e:
+        if e.reset_done:
             await audit_change(
                 AuditAction.FIREWALL_RESET, request, current_user.username, resource_type="firewall",
-                details=f"ufw was reset, then: Failed to reset firewall: {e}",
-                severity=AuditSeverity.WARNING, success=False,
+                details=f"ufw was reset, then: {e.detail}", severity=AuditSeverity.WARNING, success=False,
             )
-        raise HTTPException(500, f"Failed to reset firewall: {str(e)}")
-
+        raise
     await audit_change(
         AuditAction.FIREWALL_RESET, request, current_user.username, resource_type="firewall",
-        details="The firewall was reset to its defaults (SSH, HTTP and HTTPS)", severity=AuditSeverity.WARNING,
+        details="The firewall was reset to its defaults: off, with UNOS's rules for the web UI, SSH and SMB",
+        severity=AuditSeverity.WARNING,
     )
-    return {"status": "ok", "message": "Firewall reset to defaults"}
+    return FirewallChange(changed=True)
 
 
 # ==================== SSL/TLS Certificate Management ====================
@@ -777,16 +573,15 @@ def _certificate_info(source: list[str], pem: str | None = None) -> dict | None:
     call this in a worker thread. None when openssl does not read a
     certificate there; an openssl that cannot run (OSError) or takes longer
     than OPENSSL_READ_TIMEOUT seconds (subprocess.TimeoutExpired) raises, as
-    that says nothing about the certificate.
+    that says nothing about the certificate. openssl runs in the container, where /data/certs is,
+    through host.run_in_container (ADR-0414).
     """
     try:
         # Get subject, issuer, dates
-        result = subprocess.run(
+        result = host.run_in_container(
             ["openssl", "x509", *source, "-noout",
              "-subject", "-issuer", "-dates", "-fingerprint", "-sha256"],
             input=pem,
-            capture_output=True,
-            text=True,
             timeout=OPENSSL_READ_TIMEOUT,
         )
 
@@ -827,11 +622,9 @@ def _certificate_info(source: list[str], pem: str | None = None) -> dict | None:
                 info["fingerprint"] = line.split("=", 1)[1].strip()
 
         # Check if certificate is currently valid
-        verify_result = subprocess.run(
+        verify_result = host.run_in_container(
             ["openssl", "x509", *source, "-noout", "-checkend", "0"],
             input=pem,
-            capture_output=True,
-            text=True,
             timeout=OPENSSL_READ_TIMEOUT,
         )
         info["is_valid"] = verify_result.returncode == 0
@@ -995,7 +788,7 @@ async def generate_self_signed_certificate(
         # stored files as they were. -utf8: openssl counts the subject's
         # characters as the schema does, not the bytes of their UTF-8.
         result = await asyncio.to_thread(
-            subprocess.run,
+            host.run_in_container,
             [
                 "openssl", "req", "-x509", "-nodes", "-utf8",
                 "-days", str(data.validity_days),
@@ -1004,7 +797,7 @@ async def generate_self_signed_certificate(
                 "-subj", subject,
                 "-addext", f"subjectAltName={san}",
             ],
-            capture_output=True, text=True, timeout=OPENSSL_GENERATE_TIMEOUT,
+            timeout=OPENSSL_GENERATE_TIMEOUT,
         )
 
         if result.returncode != 0:

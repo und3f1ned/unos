@@ -776,11 +776,13 @@ The [Recovery](RECOVERY.md) guide covers both:
    curl -k https://localhost/api/v1/health
    ```
 
-3. Check firewall:
+3. Check the firewall: `sudo ufw status` lists the host's rules. When System > Security turns
+   ufw on, UNOS lets the local networks reach the web UI, SSH and SMB first
+   ([Firewall](USER_GUIDE.md#firewall)). Over IPv4, ufw does not filter the web UI's ports, which
+   Docker publishes; SSH from a client outside the local networks needs a rule of its own:
    ```bash
    sudo ufw status
-   sudo ufw allow 80/tcp
-   sudo ufw allow 443/tcp
+   sudo ufw allow from 203.0.113.0/24 to any port 22 proto tcp
    ```
 
 4. Check if ports 80 and 443 are in use:

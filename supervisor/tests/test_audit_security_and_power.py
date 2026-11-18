@@ -1,8 +1,8 @@
 """The firewall, the login history, the power settings and suspend are in the audit log
 (security.audit-admin-actions, ADR-0402).
 
-Turning the firewall on or off, adding and removing a rule, resetting it, clearing the login
-history, saving the power or the UPS settings and suspending the host each write one entry of
+Turning the firewall on or off, keeping its change (ADR-0414), adding and removing a rule,
+resetting it, clearing the login history, saving the power or the UPS settings and suspending the host each write one entry of
 their action, by the administrator, with the client address and browser and the resource, after
 the change was made and for a real change only (ADR-0320): a refused or failed request, a firewall
 that is on already, a settings request that changes nothing and a clearing that found nothing to
@@ -30,6 +30,7 @@ from src.main import app
 from src.security.models import LoginAttempt
 
 from . import test_audit_system_actions as system
+from . import test_firewall as firewall_tests
 from .test_audit_system_actions import API, ADMIN, client, entries, entry, lost
 from .test_power import SUSPEND
 from .test_sign_in_full_disk import the_audit_log_is_full
@@ -38,7 +39,7 @@ from .test_sign_in_full_disk import the_audit_log_is_full
 audit_file = system.audit_file
 power_host = system.power_host
 
-security = importlib.import_module("src.security.router")
+firewall = importlib.import_module("src.security.firewall")
 power = importlib.import_module("src.power.router")
 
 
@@ -47,40 +48,13 @@ power = importlib.import_module("src.power.router")
 # ---------------------------------------------------------------------------
 
 
-class FakeUfw:
-    """ufw as `subprocess.run` of the security router meets it: whether it is on, and the commands."""
-
-    def __init__(self) -> None:
-        self.enabled = False
-        self.calls: list[list[str]] = []
-        self.fail: dict[tuple[str, ...], str] = {}
-
-    def run(self, cmd, **kwargs):
-        cmd = list(cmd)
-        self.calls.append(cmd)
-        for prefix, error in self.fail.items():
-            if tuple(cmd[: len(prefix)]) == prefix:
-                return subprocess.CompletedProcess(cmd, 1, "", error)
-        if cmd[:2] == ["ufw", "status"]:
-            return subprocess.CompletedProcess(
-                cmd, 0, "Status: active\nDefault: deny (incoming), allow (outgoing)\n" if self.enabled
-                else "Status: inactive\n", "")
-        if cmd[:3] == ["ufw", "--force", "enable"]:
-            self.enabled = True
-        elif cmd[:3] == ["ufw", "--force", "disable"]:
-            self.enabled = False
-        return subprocess.CompletedProcess(cmd, 0, "", "")
-
-    @property
-    def changes(self) -> list[list[str]]:
-        return [cmd for cmd in self.calls if cmd[:2] != ["ufw", "status"]]
-
-
 @pytest.fixture
-def ufw(monkeypatch, tmp_path, audit_file):
-    fake = FakeUfw()
-    monkeypatch.setattr(subprocess, "run", fake.run)
-    monkeypatch.setattr(security, "FIREWALL_RULES_FILE", str(tmp_path / "firewall_rules.json"))
+def ufw(monkeypatch, audit_file):
+    """The host's ufw of test_firewall.py (FakeUfwHost), and an administrator signed in."""
+    fake = firewall_tests.FakeUfwHost()
+    monkeypatch.delenv("UNOS_HOST_EXEC", raising=False)
+    monkeypatch.setattr(host_module, "run_on_host", fake.run)
+    monkeypatch.setattr(subprocess, "run", firewall_tests._forbidden)
     app.dependency_overrides[verify_token] = lambda: ADMIN
     try:
         yield fake
@@ -88,8 +62,12 @@ def ufw(monkeypatch, tmp_path, audit_file):
         app.dependency_overrides.pop(verify_token, None)
 
 
-RULE = {"name": "Web", "action": "allow", "direction": "in", "protocol": "tcp", "port": "8080",
-        "source": "192.0.2.0/24", "comment": "for the lab"}
+RULE = {"action": "allow", "protocol": "tcp", "port": "8080", "source": "192.0.2.0/24", "comment": "for the lab"}
+DESCRIBED = "allow in tcp port 8080 from 192.0.2.0/24 (for the lab)"
+
+
+def _rule_ids() -> list[str]:
+    return [rule["id"] for rule in client().get(f"{API}/security/firewall").json()["rules"]]
 
 
 class TestFirewall:
@@ -100,15 +78,31 @@ class TestFirewall:
         assert entries(audit_file) == [entry("firewall_enabled", "firewall", None, "The firewall was turned on")]
 
     def test_turning_it_on_when_it_is_on_writes_nothing(self, ufw, audit_file):
-        ufw.enabled = True
+        ufw.active = True
 
         response = client().post(f"{API}/security/firewall/enable")
 
         assert response.status_code == 200, response.text
         assert entries(audit_file) == []
 
+    def test_keeping_the_change_is_in_the_audit_log(self, ufw, audit_file):
+        client().post(f"{API}/security/firewall/enable")
+
+        response = client().post(f"{API}/security/firewall/confirm")
+
+        assert response.status_code == 200, response.text
+        assert entries(audit_file)[1:] == [
+            entry("firewall_change_kept", "firewall", None, "The firewall change was kept")
+        ]
+
+    def test_a_keep_with_nothing_to_keep_writes_nothing(self, ufw, audit_file):
+        response = client().post(f"{API}/security/firewall/confirm")
+
+        assert response.status_code == 409
+        assert entries(audit_file) == []
+
     def test_turning_it_off_is_in_the_audit_log_as_a_warning(self, ufw, audit_file):
-        ufw.enabled = True
+        ufw.active = True
 
         response = client().post(f"{API}/security/firewall/disable")
 
@@ -125,8 +119,9 @@ class TestFirewall:
 
     @pytest.mark.parametrize("path", ["enable", "disable"])
     def test_a_refused_switch_writes_nothing(self, ufw, audit_file, path):
-        ufw.enabled = path == "disable"
-        ufw.fail[("ufw", "--force")] = "ERROR: Could not load logging rules"
+        ufw.active = path == "disable"
+        ufw.fail[("ufw", "--force", "enable")] = "ERROR: Could not load logging rules"
+        ufw.fail[("/bin/sh", "-c", firewall.SCRIPTS["unos-firewall-off"])] = "ERROR: Could not load logging rules"
 
         response = client().post(f"{API}/security/firewall/{path}")
 
@@ -140,17 +135,15 @@ class TestFirewall:
         response = client().post(f"{API}/security/firewall/{path}")
 
         assert response.status_code == 500
-        assert ufw.changes == []
+        assert firewall_tests.summaries(ufw) == []
         assert entries(audit_file) == []
 
     def test_a_rule_added_is_in_the_audit_log(self, ufw, audit_file):
         response = client().post(f"{API}/security/firewall/rules", json=RULE)
 
         assert response.status_code == 200, response.text
-        rule_id = response.json()["id"]
-        assert entries(audit_file) == [entry(
-            "firewall_rule_added", "firewall_rule", rule_id,
-            "Added the rule Web: allow in tcp port 8080 from 192.0.2.0/24")]
+        [rule_id] = _rule_ids()
+        assert entries(audit_file) == [entry("firewall_rule_added", "firewall_rule", rule_id, f"Added the rule {DESCRIBED}")]
 
     def test_a_rule_that_ufw_refused_writes_nothing(self, ufw, audit_file):
         ufw.fail[("ufw", "allow")] = "ERROR: Bad port"
@@ -161,17 +154,18 @@ class TestFirewall:
         assert entries(audit_file) == []
 
     def test_a_rule_removed_is_in_the_audit_log(self, ufw, audit_file):
-        rule_id = client().post(f"{API}/security/firewall/rules", json=RULE).json()["id"]
+        client().post(f"{API}/security/firewall/rules", json=RULE)
+        [rule_id] = _rule_ids()
 
         response = client().delete(f"{API}/security/firewall/rules/{rule_id}")
 
         assert response.status_code == 200, response.text
         assert entries(audit_file)[1:] == [entry(
             "firewall_rule_deleted", "firewall_rule", rule_id,
-            "Removed the rule Web: allow in tcp port 8080 from 192.0.2.0/24", "warning")]
+            "Removed the rule allow in tcp port 8080 from 192.0.2.0/24 (IPv4) (for the lab)", "warning")]
 
     def test_removing_a_rule_that_is_not_there_writes_nothing(self, ufw, audit_file):
-        response = client().delete(f"{API}/security/firewall/rules/rule_nothing")
+        response = client().delete(f"{API}/security/firewall/rules/fw-0123456789ab")
 
         assert response.status_code == 404
         assert entries(audit_file) == []
@@ -181,17 +175,16 @@ class TestFirewall:
 
         assert response.status_code == 200, response.text
         assert entries(audit_file) == [entry(
-            "firewall_reset", "firewall", None, "The firewall was reset to its defaults (SSH, HTTP and HTTPS)",
-            "warning")]
+            "firewall_reset", "firewall", None,
+            "The firewall was reset to its defaults: off, with UNOS's rules for the web UI, SSH and SMB", "warning")]
 
     def test_a_reset_that_ufw_refused_writes_nothing(self, ufw, audit_file):
-        ufw.fail[("ufw", "--force", "reset")] = "ERROR: Could not reset"
+        ufw.fail[("/bin/sh", "-c", firewall.SCRIPTS["unos-firewall-off"])] = "ERROR: Could not reset"
 
         response = client().post(f"{API}/security/firewall/reset")
 
         assert response.status_code == 500
         assert entries(audit_file) == []
-        assert not os.path.exists(security.FIREWALL_RULES_FILE)
 
     def test_a_reset_that_failed_after_ufw_was_reset_is_in_the_audit_log_as_failed(self, ufw, audit_file):
         ufw.fail[("ufw", "allow")] = "ERROR: Could not allow"
@@ -201,17 +194,19 @@ class TestFirewall:
         assert response.status_code == 500
         assert entries(audit_file) == [entry(
             "firewall_reset", "firewall", None,
-            "ufw was reset, then: Failed to reset firewall: ERROR: Could not allow", "warning", success=False)]
+            "ufw was reset, then: Failed to reset the firewall: ERROR: Could not allow", "warning", success=False)]
 
     def test_the_firewall_changes_answer_when_their_entry_cannot_be_written(self, ufw, monkeypatch, caplog):
         the_audit_log_is_full(monkeypatch)
 
         on = client().post(f"{API}/security/firewall/enable")
+        kept = client().post(f"{API}/security/firewall/confirm")
         added = client().post(f"{API}/security/firewall/rules", json=RULE)
 
-        assert (on.status_code, added.status_code) == (200, 200)
-        assert ufw.enabled
-        assert [found["action"] for found in lost(caplog)] == ["firewall_enabled", "firewall_rule_added"]
+        assert (on.status_code, kept.status_code, added.status_code) == (200, 200, 200)
+        assert ufw.active
+        assert [found["action"] for found in lost(caplog)] == [
+            "firewall_enabled", "firewall_change_kept", "firewall_rule_added"]
 
 
 # ---------------------------------------------------------------------------

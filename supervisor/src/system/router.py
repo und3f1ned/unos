@@ -1,6 +1,5 @@
 import platform
 import subprocess
-import json
 import psutil
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
@@ -10,10 +9,11 @@ from ..audit.changes import audit_change
 from ..audit.schemas import AuditAction
 from ..auth.utils import require_admin, verify_token
 from ..host import HostResult
-from ..security.validators import validate_timezone, validate_interface_name
+from ..security.validators import validate_timezone
 
 # Read-only endpoints are available to every signed-in user;
-# anything that changes the host requires an administrator.
+# anything that changes the host requires an administrator. Host commands go through
+# src/host.py only (ADR-0414): tests/test_host_command_layer.py fails for one that does not.
 router = APIRouter(prefix="/system", tags=["system"])
 
 
@@ -65,96 +65,8 @@ async def get_system_info(_=Depends(verify_token)):
     )
 
 
-class NetworkInterface(BaseModel):
-    name: str
-    ip_address: str | None
-    mac_address: str | None
-    speed: int | None
-    is_up: bool
-
-
 class TimezoneUpdate(BaseModel):
     timezone: str
-
-
-def get_host_network_interfaces() -> list[dict]:
-    """Get network interfaces from the host's network namespace."""
-    try:
-        # Use nsenter to access host's network namespace (PID 1 is host's init when pid=host)
-        result = subprocess.run(
-            ["nsenter", "--target", "1", "--net", "ip", "-j", "addr", "show"],
-            capture_output=True, text=True, timeout=10
-        )
-        if result.returncode == 0:
-            return json.loads(result.stdout)
-    except Exception:
-        pass
-    return []
-
-
-def get_interface_speed(ifname: str) -> int | None:
-    """Get interface speed from the host using ethtool."""
-    try:
-        # Validate interface name to prevent command injection
-        validate_interface_name(ifname)
-        result = subprocess.run(
-            ["nsenter", "--target", "1", "--net", "ethtool", ifname],
-            capture_output=True, text=True, timeout=5
-        )
-        if result.returncode == 0:
-            for line in result.stdout.split('\n'):
-                if 'Speed:' in line:
-                    # Parse speed like "1000Mb/s" or "10000Mb/s"
-                    speed_str = line.split(':')[1].strip()
-                    if 'Mb/s' in speed_str:
-                        return int(speed_str.replace('Mb/s', ''))
-                    elif 'Gb/s' in speed_str:
-                        return int(float(speed_str.replace('Gb/s', '')) * 1000)
-    except Exception:
-        pass
-    return None
-
-
-@router.get("/network", response_model=list[NetworkInterface])
-async def get_network_interfaces(_=Depends(verify_token)):
-    """Get network interface information from the host."""
-    interfaces = []
-    
-    # Get interfaces from host's network namespace
-    host_interfaces = get_host_network_interfaces()
-    
-    for iface in host_interfaces:
-        name = iface.get("ifname", "")
-        
-        # Skip loopback, docker, and veth interfaces
-        if name in ("lo", "docker0", "dummy0") or name.startswith("veth") or name.startswith("br-"):
-            continue
-        
-        # Get IPv4 address
-        ip_addr = None
-        for addr in iface.get("addr_info", []):
-            if addr.get("family") == "inet" and addr.get("scope") == "global":
-                ip_addr = addr.get("local")
-                break
-        
-        # Get MAC address
-        mac_addr = iface.get("address")
-        
-        # Get operational state
-        is_up = iface.get("operstate", "").upper() == "UP"
-        
-        # Get speed
-        speed = get_interface_speed(name) if is_up else None
-        
-        interfaces.append(NetworkInterface(
-            name=name,
-            ip_address=ip_addr,
-            mac_address=mac_addr,
-            speed=speed,
-            is_up=is_up
-        ))
-    
-    return interfaces
 
 
 async def _timedatectl(*args: str) -> HostResult | None:
@@ -215,66 +127,6 @@ async def set_timezone(request: Request, data: TimezoneUpdate, user=Depends(requ
             else f"Time zone changed from {old} to {validated_tz}",
         )
     return {"status": "ok", "timezone": validated_tz}
-
-
-class PCIeDevice(BaseModel):
-    slot: str
-    class_name: str
-    vendor: str
-    device: str
-    revision: str | None = None
-    driver: str | None = None
-
-
-@router.get("/pcie", response_model=list[PCIeDevice])
-async def get_pcie_devices(_=Depends(verify_token)):
-    """Get PCIe device information."""
-    devices = []
-    try:
-        # Get basic device list
-        result = subprocess.run(
-            ["lspci", "-vmm"],
-            capture_output=True, text=True
-        )
-        if result.returncode != 0:
-            return devices
-
-        # Parse lspci output
-        current_device = {}
-        for line in result.stdout.split('\n'):
-            line = line.strip()
-            if not line:
-                if current_device:
-                    devices.append(PCIeDevice(
-                        slot=current_device.get('Slot', ''),
-                        class_name=current_device.get('Class', ''),
-                        vendor=current_device.get('Vendor', ''),
-                        device=current_device.get('Device', ''),
-                        revision=current_device.get('Rev'),
-                        driver=current_device.get('Driver')
-                    ))
-                    current_device = {}
-                continue
-
-            if ':' in line:
-                key, _, value = line.partition(':')
-                current_device[key.strip()] = value.strip()
-
-        # Add last device if exists
-        if current_device:
-            devices.append(PCIeDevice(
-                slot=current_device.get('Slot', ''),
-                class_name=current_device.get('Class', ''),
-                vendor=current_device.get('Vendor', ''),
-                device=current_device.get('Device', ''),
-                revision=current_device.get('Rev'),
-                driver=current_device.get('Driver')
-            ))
-
-    except Exception:
-        pass
-
-    return devices
 
 
 class TemperatureSensor(BaseModel):

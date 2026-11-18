@@ -25,9 +25,8 @@ Python 3.11 and FastAPI. The package is `src`: tests import `src.*`, some from `
 - The supervisor runs in a container with `pid: host`. Whatever must read or change the host
   (mounts, `/etc/fstab`, disks, Samba, host accounts) goes through `src/host.py`: `run_on_host`,
   `run_on_host_async`, `read_host_file`, `write_host_file_atomic`, `sync_host_path`. A plain
-  `subprocess.run` reaches only the container: the system and security routers still work that
-  way or call nsenter, and the logs router's `/files` and `/file/{filename}` read the container's
-  `/var/log` (architecture.host-command-layer).
+  `subprocess.run` reaches only the container: `tests/test_host_command_layer.py` fails for one, or
+  for nsenter, in the system, security, logs, NFS, network and power modules (ADR-0414).
 - Commands are argv lists, values validated (ADR-0293); secrets go in `input=`, not argv (ADR-0125).
 - Call `host.run_on_host(...)` after `from .. import host`: tests replace the attribute
   `src.host.run_on_host`, and a name imported with `from ..host import run_on_host` escapes them.
@@ -38,7 +37,8 @@ Python 3.11 and FastAPI. The package is `src`: tests import `src.*`, some from `
   The timeout of `run_on_host` ends only nsenter, not the command on the host: a command that
   can run long runs under the host's `timeout` (ADR-0258).
 - btrfs and smartctl that run in the container (scrubs, a balance's status, pause and cancel, the
-  stats reset, a pool's profiles for a disk's add or removal, SMART tests and reads), and the pgrep of a disk's stuck power read (ADR-0378), go
+  stats reset, a pool's profiles for a disk's add or removal, SMART tests and reads), the pgrep of a disk's stuck power read (ADR-0378)
+  and openssl on the certificates of `/data/certs` (ADR-0414) go
   through `host.run_in_container`: at its timeout it kills
   the command's process group and
   leaves the wait to a daemon thread, so a command stuck in the kernel holds no worker thread;

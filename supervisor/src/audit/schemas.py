@@ -120,6 +120,8 @@ class AuditAction(str, Enum):
     SSL_CERT_GENERATED = "certificate_generated"
     SSL_CERT_DELETED = "certificate_deleted"
     SSL_CERT_SERVED = "certificate_served"
+    # A firewall change kept before its revert undid it (ADR-0414)
+    FIREWALL_CHANGE_KEPT = "firewall_change_kept"
 
     # Generic
     OTHER = "other"

@@ -107,24 +107,6 @@ test.describe('API Tests', () => {
     expect(Array.isArray(data)).toBeTruthy();
   });
 
-  test('GET /api/v1/system/network should return network info', async ({ request }) => {
-    const response = await request.get(`${BASE_URL}/api/v1/system/network`, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    expect(response.ok()).toBeTruthy();
-    const data = await response.json();
-    expect(Array.isArray(data)).toBeTruthy();
-  });
-
-  test('GET /api/v1/system/pcie should return PCIe devices', async ({ request }) => {
-    const response = await request.get(`${BASE_URL}/api/v1/system/pcie`, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    expect(response.ok()).toBeTruthy();
-    const data = await response.json();
-    expect(Array.isArray(data)).toBeTruthy();
-  });
-
   test('GET /api/v1/system/timezone should return current timezone', async ({ request }) => {
     const response = await request.get(`${BASE_URL}/api/v1/system/timezone`, {
       headers: { Authorization: `Bearer ${token}` },
@@ -444,12 +426,13 @@ test.describe('API Tests', () => {
     expect(response.ok()).toBeTruthy();
   });
 
-  test('GET /api/v1/logs/files should return log files', async ({ request }) => {
-    const response = await request.get(`${BASE_URL}/api/v1/logs/files`, {
-      headers: { Authorization: `Bearer ${token}` },
+  // The routes that read the supervisor's container are gone (ADR-0414).
+  for (const path of ['/api/v1/system/network', '/api/v1/system/pcie', '/api/v1/logs/files']) {
+    test(`GET ${path} is gone`, async ({ request }) => {
+      const response = await request.get(`${BASE_URL}${path}`, { headers: { Authorization: `Bearer ${token}` } });
+      expect(response.status()).toBe(404);
     });
-    expect(response.ok()).toBeTruthy();
-  });
+  }
 
   // ==================== Power ====================
   test('GET /api/v1/power/status should return power status', async ({ request }) => {
