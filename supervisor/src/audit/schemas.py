@@ -28,6 +28,10 @@ class AuditAction(str, Enum):
     # Storage
     POOL_CREATED = "pool_created"
     POOL_DELETED = "pool_deleted"
+    # Mounting, unmounting and importing a pool (ADR-0402)
+    POOL_MOUNTED = "pool_mounted"
+    POOL_UNMOUNTED = "pool_unmounted"
+    POOL_IMPORTED = "pool_imported"
     VOLUME_CREATED = "volume_created"
     VOLUME_DELETED = "volume_deleted"
     SNAPSHOT_CREATED = "snapshot_created"
@@ -65,6 +69,9 @@ class AuditAction(str, Enum):
     CONTAINER_STARTED = "container_started"
     CONTAINER_STOPPED = "container_stopped"
     CONTAINER_REMOVED = "container_removed"
+    CONTAINER_CREATED = "container_created"  # on the Containers page (ADR-0402)
+    IMAGE_PULLED = "image_pulled"
+    IMAGE_REMOVED = "image_removed"
     APP_INSTALLED = "app_installed"
     APP_UNINSTALLED = "app_uninstalled"
     APP_LIMITS_CHANGED = "app_limits_changed"  # the memory or CPU limit of an app's container (ADR-0390)
@@ -75,6 +82,7 @@ class AuditAction(str, Enum):
     BACKUP_DELETED = "backup_deleted"
     SYSTEM_REBOOT = "system_reboot"
     SYSTEM_SHUTDOWN = "system_shutdown"
+    SYSTEM_SUSPEND = "system_suspend"  # written before the host goes down (ADR-0402)
     SETTINGS_CHANGED = "settings_changed"
 
     # Scheduler
@@ -85,6 +93,14 @@ class AuditAction(str, Enum):
 
     # Network
     NETWORK_CONFIG_CHANGED = "network_config_changed"
+
+    # The firewall and the login history (ADR-0402)
+    FIREWALL_ENABLED = "firewall_enabled"
+    FIREWALL_DISABLED = "firewall_disabled"
+    FIREWALL_RULE_ADDED = "firewall_rule_added"
+    FIREWALL_RULE_DELETED = "firewall_rule_deleted"
+    FIREWALL_RESET = "firewall_reset"
+    LOGIN_HISTORY_CLEARED = "login_history_cleared"
 
     # Generic
     OTHER = "other"

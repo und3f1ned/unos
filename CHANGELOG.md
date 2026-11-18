@@ -18,6 +18,13 @@ manager, encrypted backup uploads, health checks, CI checks).
   look, within what a token allows: `brand`, `surface-hover`, `border-strong`, `content-soft`, `content-on-brand`, `status-neutral`.
 
 ### Security
+- The audit log records the firewall (turned on or off, rules added and removed, reset), clearing the
+  login history, pools mounted, unmounted and imported, containers created, images pulled and removed,
+  suspend (written before the host goes down), and the power, UPS, notification and off-device copy
+  settings, for real changes only and never with a secret (ADR-0402). The Action filter offers the
+  new actions. Two starts or stops of one container at the same moment write one entry. Saving power,
+  channel or off-device settings that did not change no longer rewrites their files, and a firewall
+  reset that ufw refuses answers 500.
 - Regular users' live statistics (`/ws/v1/events`) no longer carry the host's
   processes or the names of its block devices: `processes` and
   `disk_io.disks` are empty for them, as the host's interfaces already were.

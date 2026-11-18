@@ -2204,13 +2204,22 @@ regular users have no access to it.
   (**Container stopped**), and an enable of a network interface that turned
   it on without all its saved addresses and routes. A refused change of your
   own account, such as a wrong current password or two-factor code, writes
-  no entry either. Mounting, unmounting and importing pools, creating
-  containers and pulling or removing images on the **Containers** page, the
-  snapshots that scheduled tasks take and clean up, the apps started when a
-  pool is mounted, suspend, the off-device copy, notifications, the firewall,
-  the TLS certificates and clearing the login history write no entries.
+  no entry either.
+  Also recorded: a pool mounted, unmounted (a **Warning**) or imported; a container created on
+  the **Containers** page (never its environment); an image pulled, when it is new or
+  its tag moved, and removed (a **Warning**); the firewall turned on or off (off as a
+  **Warning**), a rule added or removed and a reset; clearing the login history (a
+  **Warning**, with how many attempts); suspend (a **Warning**, recorded before the host goes
+  to sleep, and again as **Failed** when the host refuses); and changes of the power, UPS,
+  notification and off-device copy settings (**Settings changed**, resource `power`, `ups`,
+  `notification_channel` or `offsite`), which name the fields that changed and never a
+  password, token, key, webhook address or mail credential. A pool mounted that already was, a
+  firewall turned on that already is and settings saved as they were write no entry. The
+  snapshots that scheduled tasks take and clean up, the apps started when a pool is mounted,
+  the TLS certificates, and the notification tests and the restores of the off-device copy
+  write no entries.
 - **Action** offers only the actions that the NAS records. An older entry
-  whose action UNOS no longer has, such as `firewall_rule_added`, is listed
+  whose action UNOS no longer has is listed
   with its action as recorded.
 
 The same filters work in the API, for administrators: `GET /api/v1/audit/logs`

@@ -80,6 +80,9 @@
 		user_deleted: 'audit.action.userDeleted',
 		pool_created: 'audit.action.poolCreated',
 		pool_deleted: 'audit.action.poolDeleted',
+		pool_mounted: 'audit.action.poolMounted',
+		pool_unmounted: 'audit.action.poolUnmounted',
+		pool_imported: 'audit.action.poolImported',
 		volume_created: 'audit.action.volumeCreated',
 		volume_deleted: 'audit.action.volumeDeleted',
 		snapshot_created: 'audit.action.snapshotCreated',
@@ -107,6 +110,9 @@
 		container_started: 'audit.action.containerStarted',
 		container_stopped: 'audit.action.containerStopped',
 		container_removed: 'audit.action.containerRemoved',
+		container_created: 'audit.action.containerCreated',
+		image_pulled: 'audit.action.imagePulled',
+		image_removed: 'audit.action.imageRemoved',
 		app_installed: 'audit.action.appInstalled',
 		app_uninstalled: 'audit.action.appUninstalled',
 		app_limits_changed: 'audit.action.appLimitsChanged',
@@ -115,12 +121,19 @@
 		backup_deleted: 'audit.action.backupDeleted',
 		system_reboot: 'audit.action.systemReboot',
 		system_shutdown: 'audit.action.systemShutdown',
+		system_suspend: 'audit.action.systemSuspend',
 		settings_changed: 'audit.action.settingsChanged',
 		task_created: 'audit.action.taskCreated',
 		task_updated: 'audit.action.taskUpdated',
 		task_deleted: 'audit.action.taskDeleted',
 		task_run: 'audit.action.taskRun',
 		network_config_changed: 'audit.action.networkConfigChanged',
+		firewall_enabled: 'audit.action.firewallEnabled',
+		firewall_disabled: 'audit.action.firewallDisabled',
+		firewall_rule_added: 'audit.action.firewallRuleAdded',
+		firewall_rule_deleted: 'audit.action.firewallRuleDeleted',
+		firewall_reset: 'audit.action.firewallReset',
+		login_history_cleared: 'audit.action.loginHistoryCleared',
 		other: 'audit.action.other'
 	};
 	// An info entry shows no severity.
@@ -149,7 +162,15 @@
 		host: 'audit.resource.host',
 		network_interface: 'audit.resource.networkInterface',
 		task: 'audit.resource.task',
-		two_factor_requirement: 'audit.resource.twoFactorRequirement'
+		two_factor_requirement: 'audit.resource.twoFactorRequirement',
+		firewall: 'audit.resource.firewall',
+		firewall_rule: 'audit.resource.firewallRule',
+		login_history: 'audit.resource.loginHistory',
+		image: 'audit.resource.image',
+		power: 'audit.resource.power',
+		ups: 'audit.resource.ups',
+		notification_channel: 'audit.resource.notificationChannel',
+		offsite: 'audit.resource.offsite'
 	};
 
 	/** The text of `value` by its key in `keys`, in the language of the page; else `value`. */
