@@ -2,7 +2,8 @@
 
 A password file (``VolumeMapping.generated_secret``) lies beside the data it unlocks, such as an
 app's database, and moves with it in the pool's snapshots. The install creates it when it is
-missing: 64 hexadecimal digits from ``secrets.token_hex(32)``, owned by root with mode 0600,
+missing: 64 hexadecimal digits from ``secrets.token_hex(32)`` (or the ``secret_digits`` of its
+mapping, such as the 32 of BookStack's APP_KEY, ADR-0414), owned by root with mode 0600,
 written to a temporary file of the same folder, opened without following links in a folder
 reached without following links (ADR-0042), synced, linked to its name and the folder synced,
 before any container that reads it is created. A file that appeared meanwhile is kept. A start
@@ -28,7 +29,8 @@ from fastapi import HTTPException
 
 from ..security.validators import open_dir_nofollow
 
-# The longest password file that UNOS takes as its own; it writes 64 bytes.
+# The longest password file that UNOS takes as its own; it writes 64 bytes, or VolumeMapping's
+# secret_digits.
 MAX_BYTES = 256
 _PASSWORD = re.compile(rb"[A-Za-z0-9]+\n?")
 # Errors of an open of the file's name that say something else is there: a link (O_NOFOLLOW), a
@@ -125,10 +127,15 @@ def holds_data(root: str, folder: Path) -> bool:
         os.close(fd)
 
 
-def create(root: str, path: Path, target: str, *, uid: int | None = None, gid: int | None = None) -> bool:
-    """Create the password file ``path`` below the pool root ``root`` (bound at ``target``):
-    True when this call created it, False when a file appeared at its name meanwhile, which is
-    kept. ``uid`` and ``gid`` own it when given (root otherwise); its mode is 0600."""
+def create(
+    root: str, path: Path, target: str, *, uid: int | None = None, gid: int | None = None, digits: int = 64
+) -> bool:
+    """Create the password file ``path`` below the pool root ``root`` (bound at ``target``) with
+    ``digits`` hexadecimal digits: True when this call created it, False when a file appeared at
+    its name meanwhile, which is kept. ``uid`` and ``gid`` own it when given (root otherwise); its
+    mode is 0600."""
+    if digits % 2 or not 2 <= digits <= MAX_BYTES:
+        raise ValueError(f"a generated secret has an even count of digits up to {MAX_BYTES}, not {digits}")
     folders, name = _parts(root, path)
     try:
         dir_fd = open_dir_nofollow(root, folders, create=True)
@@ -143,7 +150,7 @@ def create(root: str, path: Path, target: str, *, uid: int | None = None, gid: i
             os.fchmod(fd, 0o600)
             if uid is not None or gid is not None:
                 os.fchown(fd, uid if uid is not None else -1, gid if gid is not None else -1)
-            view = memoryview(secrets.token_hex(32).encode())
+            view = memoryview(secrets.token_hex(digits // 2).encode())
             while view:
                 view = view[os.write(fd, view):]
             os.fsync(fd)

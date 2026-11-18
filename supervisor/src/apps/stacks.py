@@ -31,7 +31,7 @@ from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass, field
 from typing import Any
 
-from docker.errors import DockerException
+from docker.errors import APIError, DockerException
 from fastapi import HTTPException
 from requests.exceptions import RequestException
 from urllib3.exceptions import HTTPError as Urllib3Error
@@ -347,16 +347,38 @@ def _last_health_output(container: Any) -> str:
     return text[:HEALTH_OUTPUT_CHARS]
 
 
+def _answers(container: Any, command: list[str]) -> tuple[bool, str | None]:
+    """Whether ``command``, run in the running ``container`` (Docker's exec), exits 0, and the
+    start of its output for a message. A container that Docker says does not run (409: it stopped,
+    restarts or is paused meanwhile) has not answered and said nothing (None); the next look at it
+    says why. docker-py reads the exec's output without a timeout: the command bounds its own run
+    (the catalog's ready commands carry one, ADR-0414)."""
+    try:
+        result = container.exec_run(command, stdout=True, stderr=True)
+    except APIError as e:
+        if e.status_code == 409:
+            return False, None
+        raise
+    output = (result.output or b"").decode(errors="replace")
+    text = " ".join("".join(ch if ch.isprintable() else " " for ch in output).split())
+    return result.exit_code == 0, text[:HEALTH_OUTPUT_CHARS]
+
+
 def wait_ready(container: Any, *, started_now: bool, check: Callable[[], None] | None = None,
-               seconds: float = DEPENDENCY_READY_SECONDS, unhealthy_fails: bool = True) -> None:
+               seconds: float = DEPENDENCY_READY_SECONDS, unhealthy_fails: bool = True,
+               ready_command: list[str] | None = None) -> None:
     """Wait until ``container`` is ready for the containers that depend on it: healthy when it has
-    a health check, otherwise running and not restarting (for POLL_SECONDS after a start that this
-    change made). NotReady at once for one that exited, died or (with ``unhealthy_fails``) is
-    unhealthy, and when it is not ready within ``seconds``. Its errors are Docker's
-    (DOCKER_ERRORS). ``check`` is called before each look at the container: an install job's stop
-    (ADR-0384). An update waits for its new main container with ``unhealthy_fails`` False: a
-    version that migrates its database at its start fails its health check meanwhile (ADR-0408)."""
+    a health check; otherwise, with a ``ready_command`` (ContainerSpec.ready_command, ADR-0414),
+    running and the command, run in it at each look, exiting 0; otherwise running and not
+    restarting (for POLL_SECONDS after a start that this change made). NotReady at once for one
+    that exited, died or (with ``unhealthy_fails``) is unhealthy, and when it is not ready within
+    ``seconds`` (a ready command's last run may end up to its own timeout later), with the last
+    output of its command. Its errors are Docker's (DOCKER_ERRORS).
+    ``check`` is called before each look at the container: an install job's stop (ADR-0384). An
+    update waits for its new main container with ``unhealthy_fails`` False: a version that migrates
+    its database at its start fails its health check meanwhile (ADR-0408)."""
     began = time.monotonic()
+    said = ""  # the last output of the ready command
     while True:
         if check is not None:
             check()
@@ -370,12 +392,21 @@ def wait_ready(container: Any, *, started_now: bool, check: Callable[[], None] |
             raise NotReady(f"{container.name} is unhealthy" + (f": {output}" if output else ""))
         running = bool(state.get("Running")) and not state.get("Restarting")
         waited = time.monotonic() - began
-        if status == "healthy" or (status is None and running and (not started_now or waited >= POLL_SECONDS)):
+        if status == "healthy":
+            return
+        if status is None and running and ready_command is not None:
+            answered, output = _answers(container, ready_command)
+            if answered:
+                return
+            said = said if output is None else output
+            waited = time.monotonic() - began
+        elif status is None and running and (not started_now or waited >= POLL_SECONDS):
             return
         if waited >= seconds:
             code = state.get("ExitCode")
             raise NotReady(
                 f"{container.name} did not become ready within {seconds:g} s"
                 + (f" (exit code {code})" if code else "")
+                + (f": {said}" if said else "")
             )
         time.sleep(POLL_SECONDS)

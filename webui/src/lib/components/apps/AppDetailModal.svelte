@@ -179,8 +179,8 @@
 		(!needsPool || selectedPool !== null) &&
 		blockers.length === 0;
 
-	// The apps whose database and jobs keep the pool's hard disks awake while they run (ADR-0381).
-	const DISK_AWAKE: ReadonlySet<string> = new Set(['immich']);
+	// The apps whose database and jobs keep the pool's hard disks awake while they run (ADR-0381, ADR-0414).
+	const DISK_AWAKE: ReadonlySet<string> = new Set(['immich', 'bookstack', 'paperless-ngx', 'linkwarden']);
 
 	// The units of a size, by powers of 1024, as formatBytes of $lib/stores/stats writes them.
 	const SIZE_UNITS = ['apps.size.bytes', 'apps.size.kb', 'apps.size.mb', 'apps.size.gb', 'apps.size.tb'];
@@ -657,6 +657,11 @@
 									</li>
 								{/each}
 							</ul>
+							{#if app.system_disk_bytes}
+								<p class="text-xs text-muted mt-3">
+									{$t('apps.detail.imagesSize', { name: app.name, size: formatSize(app.system_disk_bytes) })}
+								</p>
+							{/if}
 						</div>
 					{:else}
 						<!-- Docker Image: on a phone it goes below its label and breaks (ADR-0302). -->
@@ -665,6 +670,11 @@
 								<span class="text-secondary text-sm">{$t('apps.detail.image')}</span>
 								<code class="mono text-sm min-w-0 break-all">{app.image}</code>
 							</div>
+							{#if app.system_disk_bytes}
+								<p class="text-xs text-muted mt-2">
+									{$t('apps.detail.imagesSize', { name: app.name, size: formatSize(app.system_disk_bytes) })}
+								</p>
+							{/if}
 						</div>
 					{/if}
 

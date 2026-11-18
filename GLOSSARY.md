@@ -392,9 +392,21 @@ one or more containers. Avoid: app.
 **Companion container**: A container of an app besides its main container (the one of the
 template's own image, ports and overrides, named after the app): named `<app>-<name>` and
 labelled `unos.app.companion=<name>`, on the app's network `unos-app-<app>`, where it answers to
-its name, as Immich's `database`, `redis` and `machine-learning`. It publishes no port and takes no
-override; the main container starts once those it depends on are ready (ADR-0381). Avoid:
-sidecar, service.
+its name, as Immich's `database`, `redis` and `machine-learning`, BookStack's and Linkwarden's
+`database` and Paperless-ngx's `redis` (ADR-0414). It publishes no port and takes no override; the
+main container starts once those it depends on are ready (ADR-0381). Avoid: sidecar, service.
+
+**Ready command**: The command that UNOS runs in a companion container whose image has no health
+check (Docker's exec), every 2 seconds while the next container waits for it, at the install and
+at each start of its app: the companion is ready once it exits 0, such as MariaDB's
+`healthcheck.sh --connect` and PostgreSQL's `pg_isready` (`ContainerSpec.ready_command`,
+ADR-0414). Docker runs nothing between the waits. Avoid: health check (Docker's own, which writes
+its state to the system disk at each probe).
+
+**Host gateway**: The name `host.docker.internal`, which UNOS points at the NAS itself
+(Docker's `host-gateway`) in the container of an app that reaches another app's port on the NAS:
+Open WebUI's Ollama, Zigbee2MQTT's Mosquitto (`AppTemplate.host_gateway`, ADR-0414). Avoid: host
+network (an app in the host's network shares the NAS's network itself).
 
 **Install job**: An app's install as it runs in the background: `POST /api/v1/apps/install`
 answers it at once, and it checks, pulls the images, creates and starts the containers and
@@ -428,10 +440,11 @@ the database copy replaces the database (what the app stored since the update is
 earlier containers get their names back and start (ADR-0408). Avoid: restore (a backup's), rollback
 alone (what `update.sh` and `deploy.sh` do).
 
-**Generated secret**: A password file that UNOS writes once, at an app's install, beside the data
-it opens on the pool (64 hexadecimal digits, root, mode 0600), binds read-only into the
+**Generated secret**: A password or key file that UNOS writes once, at an app's install, beside
+the data it opens or signs on the pool (64 hexadecimal digits, or the `secret_digits` of its
+mapping, such as the 32 of BookStack's `APP_KEY`; root, mode 0600), binds read-only into the
 containers that read it and never shows, replaces or makes at a start; an install that finds
-that data without the file is refused (ADR-0381). Avoid: password variable.
+that data without the file is refused (ADR-0381, ADR-0414). Avoid: password variable.
 
 **Pinned image**: An image of the catalog named by a version tag and the digest of its index
 (`name:tag@sha256:...`), pulled and run by that digest, with its size on the system disk

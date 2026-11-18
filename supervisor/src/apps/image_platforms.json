@@ -44,6 +44,12 @@
       "linux/arm64",
       "linux/ppc64le"
     ],
+    "docker.io/valkey/valkey:9.1.3-alpine@sha256:bf09d58e96d6b4524a15396b65b242bbe18beebbcc15a04d8ee75ddac62fae0b": [
+      "linux/amd64",
+      "linux/arm/v7",
+      "linux/arm64",
+      "linux/ppc64le"
+    ],
     "eclipse-mosquitto:2.1.4-alpine@sha256:fa12172a051310efe5bcb7a6a11b77bd5faacb82cbacd7742aa758bf024fd8e4": [
       "linux/386",
       "linux/amd64",
@@ -107,11 +113,19 @@
       "linux/amd64",
       "linux/arm64"
     ],
+    "ghcr.io/linkwarden/linkwarden:v2.17.0@sha256:7c11fde57d1a0c819b6de0079966eba3a33584d718464af7dacde22bd470ae46": [
+      "linux/amd64",
+      "linux/arm64"
+    ],
     "ghcr.io/mealie-recipes/mealie:v3.31.0@sha256:97e21ac96e9a8d1ee15aaf558ba3f14998936b9d6f334e40ebb4c6c2127dc12f": [
       "linux/amd64",
       "linux/arm64"
     ],
     "ghcr.io/open-webui/open-webui:v0.13.4@sha256:d5168bfbc28609eff5bea1b438dd864cf64d185cf6582c02244865e18385b901": [
+      "linux/amd64",
+      "linux/arm64"
+    ],
+    "ghcr.io/paperless-ngx/paperless-ngx:3.5.1@sha256:8508853b8a0f8394074260957d0be186c8c64f346973b24a7583de4580f306b9": [
       "linux/amd64",
       "linux/arm64"
     ],
@@ -161,6 +175,10 @@
       "linux/arm64"
     ],
     "lscr.io/linuxserver/bazarr:v1.6.2-ls373@sha256:e0c5d45965242830c5eeddaafe9ae2b5e8ca3f6c01ecda9ee9364f550921dc50": [
+      "linux/amd64",
+      "linux/arm64"
+    ],
+    "lscr.io/linuxserver/bookstack:v26.09.3-ls299@sha256:c741211356966fd38f8fea10483f341ca29c41cdd1b96b5cfcdd4312f26d7f97": [
       "linux/amd64",
       "linux/arm64"
     ],
@@ -244,6 +262,12 @@
       "linux/amd64",
       "linux/arm64"
     ],
+    "mariadb:11.8.9@sha256:d36f18d65a0459510b8b0f643b226a6d299e3206486e2b64ff20754a6d291707": [
+      "linux/amd64",
+      "linux/arm64",
+      "linux/ppc64le",
+      "linux/s390x"
+    ],
     "n8nio/n8n:2.48.5@sha256:c0ea1246a81a34ce8e2b3cfb1f718b97de64b0a1b3747ad24d6d431826bb71ad": [
       "linux/amd64",
       "linux/arm64"
@@ -294,6 +318,16 @@
       "linux/arm/v7",
       "linux/arm64",
       "linux/ppc64le"
+    ],
+    "postgres:16.16-alpine@sha256:81e77a4833487b8132fe4b00bedd39dc3f74b8641e387f19312a48f7de218c2e": [
+      "linux/386",
+      "linux/amd64",
+      "linux/arm/v6",
+      "linux/arm/v7",
+      "linux/arm64",
+      "linux/ppc64le",
+      "linux/riscv64",
+      "linux/s390x"
     ],
     "prom/prometheus:v3.16.0@sha256:e04987641b57704f408e31f6373ba4138ecf27cb4a165d24aabb6c38fddd0f06": [
       "linux/amd64",

@@ -36,6 +36,12 @@ docker-py does (each image inspected), a container's ``rename`` renames it as Do
 ``script_image(ref, *states)`` scripts every container created from the image ``ref`` (name@digest)
 and ``start_hook(container)``, when set, is called at each start of a container.
 
+A container's ``exec_run`` answers a command run in it (a companion's ready command, ADR-0414) from
+``exec_results`` of its name, after ``exec_hook(container)`` when set, and refuses it with 409 for a
+container that does not run, as Docker does; a create keeps the command it was given as the
+container's ``Config.Cmd``, and a health check of ``["NONE"]`` leaves the container of an image with
+one without health.
+
 A container's ``update`` changes its HostConfig as Docker's update does, with Docker's refusals of
 a memory limit below 6 MB, a swap below the memory, a CPU quota below 1 ms and a CPU quota beside
 NanoCpus (ADR-0390); ``api.containers`` is Docker's summary list, and ``events`` answers the events
@@ -54,7 +60,7 @@ from dataclasses import dataclass, field
 from typing import Any, NamedTuple
 
 from docker.errors import APIError, ImageNotFound, NotFound
-from docker.models.containers import _create_container_args
+from docker.models.containers import ExecResult, _create_container_args
 from docker.types import HostConfig
 from docker.types.networks import EndpointConfig, NetworkingConfig
 import requests
@@ -205,14 +211,15 @@ class _Live:
             raise NotFound(f"network {network} not found")
         state = self.attrs["State"]
         state.update(Status="running", Running=True, Restarting=False, ExitCode=0, StartedAt=CREATED)
-        if self.image.healthcheck:
+        checked = self.image.healthcheck and (self.attrs["Config"].get("Healthcheck") or {}).get("Test") != ["NONE"]
+        if checked:
             state["Health"] = {"Status": "starting", "FailingStreak": 0, "Log": []}
         scripted = self._docker.scripts.get(self.name) or self._docker.image_scripts.get(self.attrs["Config"]["Image"])
         if self._docker.start_hook is not None:
             self._docker.start_hook(self)
         self.pending = [copy.deepcopy(s) for s in scripted] if scripted else (
             [{"Health": {"Status": status, "FailingStreak": 0, "Log": []}} for status in ("starting", "healthy")]
-            if self.image.healthcheck else []
+            if checked else []
         )
         self.attrs["NetworkSettings"]["Ports"] = {
             spec: [{"HostIp": "0.0.0.0", "HostPort": b.get("HostPort", "")} for b in binds or []]
@@ -292,6 +299,28 @@ class Container:
         live = self._docker._find(self.id)
         live.advance()
         self.attrs = copy.deepcopy(live.attrs)
+
+    def exec_run(self, cmd: Any, stdout: bool = True, stderr: bool = True, stdin: bool = False, tty: bool = False,
+                 privileged: bool = False, user: str = "", detach: bool = False, stream: bool = False,
+                 socket: bool = False, environment: Any = None, workdir: str | None = None,
+                 demux: bool = False) -> ExecResult:
+        """docker-py's Container.exec_run of a command that ends: its exit code and output, from
+        ``exec_results`` of the container (the next answer at each run, the last one staying; exit
+        code 0 without output by default). Docker refuses it with 409 for a container that does not
+        run, as for one that is restarting."""
+        self._docker._call("container.exec_run", self.name, cmd, stdout=stdout, stderr=stderr)
+        if (stdin, tty, privileged, user, detach, stream, socket, environment, workdir, demux) != (
+            False, False, False, "", False, False, False, None, None, False,
+        ):
+            raise TypeError("the fake runs a command to its end and reads its output only")
+        live = self._docker._find(self.id)
+        if self._docker.exec_hook is not None:
+            self._docker.exec_hook(live)
+        if live.status != "running" or live.attrs["State"].get("Restarting"):
+            raise _refused(409, f"Container {live.id} is not running")
+        answers = self._docker.exec_results.get(self.name) or [(0, b"")]
+        code, output = answers.pop(0) if len(answers) > 1 else answers[0]
+        return ExecResult(code, output)
 
     def update(self, **kwargs: Any) -> dict:
         """docker-py's Container.update: the low-level update_container of the container."""
@@ -475,19 +504,21 @@ class _Api:
     def create_container(self, image: str, command: Any = None, ports: list | None = None,
                          environment: dict | None = None, name: str | None = None,
                          host_config: dict | None = None, labels: dict | None = None,
-                         networking_config: dict | None = None, stop_timeout: int | None = None) -> dict:
+                         networking_config: dict | None = None, stop_timeout: int | None = None,
+                         healthcheck: dict | None = None) -> dict:
         self._docker._call(
             "api.create_container", name, image, ports=ports, environment=environment, host_config=host_config,
-            labels=labels, networking_config=networking_config, stop_timeout=stop_timeout,
+            labels=labels, networking_config=networking_config, stop_timeout=stop_timeout, command=command,
+            healthcheck=healthcheck,
         )
         return self._create(image=image, command=command, ports=ports, environment=environment, name=name,
                             host_config=host_config, labels=labels, networking_config=networking_config,
-                            stop_timeout=stop_timeout)
+                            stop_timeout=stop_timeout, healthcheck=healthcheck)
 
     def _create(self, *, image: str, command: Any = None, ports: list | None = None,
                 environment: dict | list | None = None, name: str | None = None, host_config: dict | None = None,
                 labels: dict | None = None, networking_config: dict | None = None,
-                stop_timeout: int | None = None) -> dict:
+                stop_timeout: int | None = None, healthcheck: dict | None = None) -> dict:
         docker = self._docker
         local = docker._local_image(image)
         if local is None:
@@ -511,6 +542,11 @@ class _Api:
             "Image": local.id,
             "Config": {
                 "Image": image,
+                # The command that the create gave; None: the image's own.
+                "Cmd": list(command) if command else None,
+                # The health check that the create gave (Test ["NONE"]: none); None: the image's own.
+                "Healthcheck": {"Test": list((healthcheck or {}).get("test") or (healthcheck or {}).get("Test"))}
+                if healthcheck else None,
                 "Env": env,
                 "Labels": dict(labels or {}),
                 "StopTimeout": stop_timeout,
@@ -633,6 +669,11 @@ class StackDocker:
         self.images_: dict[str, Image] = {}
         self.registry: dict[str, Image] = {}
         self.scripts: dict[str, list[dict]] = {}
+        # The answers of the commands run in a container (Container.exec_run), by its name: (exit
+        # code, output) at each run, the last one staying.
+        self.exec_results: dict[str, list[tuple[int, bytes]]] = {}
+        # Called with each container (as Docker has it) that a command is run in, before its answer.
+        self.exec_hook: Any = None
         # The states of every container created from an image (name@digest), as ``scripts``.
         self.image_scripts: dict[str, list[dict]] = {}
         # Called with each container (as Docker has it) that starts.

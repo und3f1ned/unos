@@ -71,11 +71,15 @@ class VolumeMapping(BaseModel):
     # existing source and the parent folders are never changed.
     uid: int | None = None
     gid: int | None = None
-    # A password file that the install creates when it is missing (64 hexadecimal digits, mode
-    # 0600), never at a start and never in place of one that is there; bound read-only and named
-    # by a *_FILE variable, so the password is in no Docker configuration (ADR-0381). Its host
-    # path is fixed: an override cannot move it.
+    # A password file that the install creates when it is missing (secret_digits hexadecimal
+    # digits, mode 0600), never at a start and never in place of one that is there; bound read-only
+    # and named by a *_FILE variable, LinuxServer's FILE__ one or the container's command, so the
+    # password is in no Docker configuration (ADR-0381, ADR-0414). Its host path is fixed: an
+    # override cannot move it.
     generated_secret: bool = False
+    # The hexadecimal digits of a generated secret, half as many random bytes: 64 by default; 32
+    # for a key that the app takes as its 32 bytes (BookStack's APP_KEY, ADR-0414).
+    secret_digits: int = Field(default=64, ge=32, le=256, multiple_of=2)
     # The template host path of the data folder that was set up with the password: an install
     # that finds that folder not empty and the password file missing is refused (409), never
     # given a new password, which the data would not take.
@@ -153,6 +157,18 @@ class ContainerSpec(BaseModel):
     # Seconds Docker gives the container to stop before it kills it (Docker's StopTimeout, also
     # at the host's shutdown), and that a stop of the app waits; None: 10.
     stop_timeout: int | None = None
+    # The container's command in place of its image's CMD (Linkwarden's reads its password files
+    # into the variables that it takes, ADR-0414); None: the image's own.
+    command: list[str] | None = None
+    # A companion's readiness when its image has no health check: a command that UNOS runs in the
+    # container (Docker's exec) every POLL_SECONDS while the next container waits for it, ready
+    # once it exits 0, such as a database's check that it takes connections (ADR-0414). Docker runs
+    # nothing between the waits, so nothing is written to the system disk while the app runs.
+    ready_command: list[str] | None = None
+    # False: the container runs without the health check of its image (Docker's NONE), whose every
+    # probe writes the container's state to the system disk while the app runs; its health is then
+    # none (ADR-0414).
+    image_healthcheck: bool = True
 
     @computed_field  # type: ignore[misc]
     @property
@@ -197,13 +213,22 @@ class AppTemplate(ContainerSpec):
     # The app's other containers (ADR-0381): created and started in this order before the main
     # container, and stopped after it.
     companions: list[Companion] = []
-    # The names of the companions that must be ready (healthy, or running without a health check)
-    # before the next container starts, and so before the main container.
+    # The names of the companions that must be ready (healthy, or running without a health check,
+    # or answering their ready_command) before the next container starts, and so before the main
+    # container.
     depends_on: list[str] = []
+    # The main container resolves host.docker.internal to the host (Docker's host-gateway), as on
+    # Docker Desktop, to reach an app that publishes a port on the host: Open WebUI's Ollama and
+    # Zigbee2MQTT's Mosquitto (ADR-0414).
+    host_gateway: bool = False
     # The host's platform and whether every container's image publishes it (ADR-0403): set by the
     # catalog API for the host it runs on. An app that is not available is not installable here.
     host_platform: str | None = None
     available: bool = True
+    # About what the images that the install pulls on this host take on the system disk, the sum of
+    # their pins' estimates (PinnedImage.disk_bytes) whether Docker has them or not: set by the
+    # catalog API, like host_platform (ADR-0414).
+    system_disk_bytes: int | None = None
 
     @model_validator(mode="after")
     def _companions_are_named_once(self) -> "AppTemplate":
@@ -213,6 +238,11 @@ class AppTemplate(ContainerSpec):
         unknown = [name for name in self.depends_on if name not in names]
         if unknown:
             raise ValueError(f"{self.id}: depends_on names no companion: {unknown}")
+        idle = [c.name for c in self.companions if c.ready_command is not None and c.name not in self.depends_on]
+        if self.ready_command is not None or idle:
+            raise ValueError(f"{self.id}: a ready command is waited for only on a companion of depends_on: {idle}")
+        if self.host_gateway and self.network_mode is not None:
+            raise ValueError(f"{self.id}: an app in the network {self.network_mode} has no host gateway of its own")
         return self
 
     @computed_field  # type: ignore[misc]

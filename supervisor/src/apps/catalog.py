@@ -43,16 +43,24 @@ Mark passwords, tokens and keys with secret=True and never ship a default
 value for them; required secrets must be set by the administrator.
 
 An app may have companion containers beside its main container, which the
-template's own fields describe (ADR-0381): AppTemplate.companions, each a
+template's own fields describe (ADR-0381, ADR-0414: Immich, BookStack,
+Paperless-ngx and Linkwarden): AppTemplate.companions, each a
 Companion named ^[a-z][a-z0-9-]*$. The main container is named <id>, a
 companion <id>-<name>, and all of them join the network unos-app-<id>, on
 which each companion answers to its name: the main container reaches it by
 that name (DB_HOSTNAME=database). The companions are created and started in
 their order before the main container; each one named in depends_on is ready
 (healthy, or running if its image has no health check) before the next
-container starts. A companion publishes no port, is never privileged, gets no
+container starts; a database whose image has no health check names the
+command that tells it is ready (ContainerSpec.ready_command), which UNOS runs in
+it while it waits, and which ends within a timeout of its own (docker-py reads
+an exec's output without one). A companion publishes no port, is never privileged, gets no
 capability and takes no override of the install; its pool folders are under
 {pool}/apps/<id>/.
+
+An app that reaches another app's port on the NAS (Open WebUI's Ollama,
+Zigbee2MQTT's Mosquitto) sets host_gateway: host.docker.internal names the
+host in its container (ADR-0414).
 
 A folder of an app's own data that a newer version migrates so that the earlier version cannot
 read it (a database) is marked copy_before_update: an update copies it beside itself on the pool
@@ -61,8 +69,10 @@ before the new version starts, and a rollback puts the copy back (ADR-0408).
 A password that containers of an app share is a file that UNOS generates on
 the pool, never a variable: a VolumeMapping with generated_secret=True
 (is_file, readonly, under {pool}/apps/<id>/, the same mapping in each
-container that reads it), named there by a *_FILE variable, with secret_for
-naming the data folder that was set up with it. Wiring that UNOS sets, such
+container that reads it), named there by a *_FILE variable (LinuxServer's
+images: a FILE__ one; an image that reads neither: the container's command),
+with secret_for naming the data folder that was set up with it; a key that the
+app takes as its bytes gets the secret_digits it needs. Wiring that UNOS sets, such
 as a companion's name or a password file's path, is EnvVar(editable=False).
 Such an app asks the administrator for no secret.
 
@@ -157,6 +167,9 @@ class PinnedImage:
     # The VOLUMEs that its configuration declares, the same on each of its platforms: each lies at or
     # under a bind on the pool or a tmpfs of the container that runs it (a test; ADR-0381).
     volumes: tuple[str, ...] = ()
+    # The CMD of its configuration, recorded where a template's command runs it after its own steps
+    # (Linkwarden's, ADR-0414): a re-pin reads it again, as it reads the VOLUMEs.
+    cmd: tuple[str, ...] = ()
 
     @property
     def ref(self) -> str:
@@ -193,6 +206,45 @@ IMMICH_POSTGRES = PinnedImage(
 VALKEY = PinnedImage(
     "docker.io/valkey/valkey", "9.1.2",
     "sha256:418652cfb58ef879d4978c33553735d7147016032d5aefaa14c828e611eb9dfd", 184_000_000,
+)
+# The images of the apps that came back with companions (ADR-0414): each app's own image by the
+# publisher's version tag of the index that its floating tag named on 2026-11-18, and its database
+# or broker as the app's own docker-compose.yml names it (BookStack's, which names none: MariaDB's
+# 11.8 LTS line), pinned by its version tag, with the estimate on the system disk of
+# APP_IMAGES (four times the compressed layers of the larger linux/arm64 or linux/amd64 image) and
+# the VOLUMEs of its configuration. Each moves with its app, never with Immich's.
+BOOKSTACK = PinnedImage(
+    "lscr.io/linuxserver/bookstack", "v26.09.3-ls299",
+    "sha256:c741211356966fd38f8fea10483f341ca29c41cdd1b96b5cfcdd4312f26d7f97", 385_000_000, ("/config",),
+)
+BOOKSTACK_MARIADB = PinnedImage(
+    "mariadb", "11.8.9",
+    "sha256:d36f18d65a0459510b8b0f643b226a6d299e3206486e2b64ff20754a6d291707", 425_000_000, ("/var/lib/mysql",),
+)
+PAPERLESS = PinnedImage(
+    "ghcr.io/paperless-ngx/paperless-ngx", "3.5.1",
+    "sha256:8508853b8a0f8394074260957d0be186c8c64f346973b24a7583de4580f306b9", 3_282_000_000,
+    ("/usr/src/paperless/consume", "/usr/src/paperless/data", "/usr/src/paperless/export", "/usr/src/paperless/media"),
+)
+# Paperless-ngx's broker: Valkey's Alpine build, as its docker-compose files name it (9-alpine).
+PAPERLESS_VALKEY = PinnedImage(
+    "docker.io/valkey/valkey", "9.1.3-alpine",
+    "sha256:bf09d58e96d6b4524a15396b65b242bbe18beebbcc15a04d8ee75ddac62fae0b", 77_000_000,
+)
+LINKWARDEN = PinnedImage(
+    "ghcr.io/linkwarden/linkwarden", "v2.17.0",
+    "sha256:7c11fde57d1a0c819b6de0079966eba3a33584d718464af7dacde22bd470ae46", 2_283_000_000,
+    cmd=(
+        "sh", "-c",
+        "export PATH=/data/node_modules/.bin:$PATH && prisma migrate deploy --schema=/data/packages/prisma/schema.prisma"
+        ' && exec concurrently -k -n web,worker "cd /data/apps/web && exec next start" "cd /data/apps/worker && exec'
+        ' tsx worker.ts"',
+    ),
+)
+LINKWARDEN_POSTGRES = PinnedImage(
+    "postgres", "16.16-alpine",
+    "sha256:81e77a4833487b8132fe4b00bedd39dc3f74b8641e387f19312a48f7de218c2e", 465_000_000,
+    ("/var/lib/postgresql/data",),
 )
 # The image of each app of one container, by template id (ADR-0410): the publisher's most specific tag
 # for the build (a version, LinuxServer's <version>-ls<build>; never latest, a channel or a branch)
@@ -467,7 +519,11 @@ APP_IMAGES: dict[str, PinnedImage] = {
 # Every pinned image of the catalog, by reference.
 PINNED_IMAGES: dict[str, PinnedImage] = {
     image.ref: image
-    for image in (IMMICH_SERVER, IMMICH_ML, IMMICH_ML_RKNN, IMMICH_POSTGRES, VALKEY, *APP_IMAGES.values())
+    for image in (
+        IMMICH_SERVER, IMMICH_ML, IMMICH_ML_RKNN, IMMICH_POSTGRES, VALKEY,
+        BOOKSTACK, BOOKSTACK_MARIADB, PAPERLESS, PAPERLESS_VALKEY, LINKWARDEN, LINKWARDEN_POSTGRES,
+        *APP_IMAGES.values(),
+    )
 }
 
 # Immich's database and the password it was set up with (ADR-0381).
@@ -480,6 +536,52 @@ IMMICH_DB_PASSWORD = VolumeMapping(
     generated_secret=True,
     secret_for=IMMICH_DB_DATA,
 )
+
+
+def _secret(app: str, path: str, container: str, unlocks: str, digits: int = 64) -> VolumeMapping:
+    """A password or key of ``app`` that UNOS generates at ``{pool}/apps/<app>/<path>``, bound
+    read-only at ``container``, beside the data ``unlocks`` that was set up with it (ADR-0381)."""
+    return VolumeMapping(
+        host=f"{APPS_DATA_PATH}/{app}/{path}",
+        container=container,
+        readonly=True,
+        is_file=True,
+        generated_secret=True,
+        secret_for=f"{APPS_DATA_PATH}/{app}/{unlocks}",
+        secret_digits=digits,
+    )
+
+
+# BookStack's database (ADR-0414): its user's password and root's, and BookStack's APP_KEY, which
+# encrypts what BookStack keeps encrypted in the database (its users' MFA secrets). Laravel takes
+# a key without "base64:" as its bytes, and AES-256 needs 32 of them: 32 hexadecimal digits.
+BOOKSTACK_DB_DATA = f"{APPS_DATA_PATH}/bookstack/database/data"
+BOOKSTACK_DB_PASSWORD = _secret("bookstack", "database/password", "/run/secrets/db-password", "database/data")
+BOOKSTACK_DB_ROOT_PASSWORD = _secret(
+    "bookstack", "database/root-password", "/run/secrets/db-root-password", "database/data"
+)
+BOOKSTACK_APP_KEY = _secret("bookstack", "app-key", "/run/secrets/app-key", "database/data", digits=32)
+# Paperless-ngx's Django SECRET_KEY, which signs its sessions and tokens; its database is SQLite in
+# its data folder.
+PAPERLESS_SECRET_KEY = _secret("paperless-ngx", "secret-key", "/run/secrets/secret-key", "data")
+# Linkwarden's database password and NextAuth's secret, which signs its sessions and access tokens.
+LINKWARDEN_DB_DATA = f"{APPS_DATA_PATH}/linkwarden/database/data"
+LINKWARDEN_DB_PASSWORD = _secret("linkwarden", "database/password", "/run/secrets/db-password", "database/data")
+LINKWARDEN_AUTH_SECRET = _secret("linkwarden", "nextauth-secret", "/run/secrets/nextauth-secret", "database/data")
+# Linkwarden takes its database's password only inside DATABASE_URL and its session secret only as
+# NEXTAUTH_SECRET: its container's command reads both from their files into those variables, which
+# so are in no Docker configuration, then runs the CMD of the pinned image's configuration
+# (LINKWARDEN_START, recorded in its pin): its database's migrations, then its web server and its
+# worker. The password is hexadecimal and needs no escape in the URL.
+LINKWARDEN_START = LINKWARDEN.cmd[2]
+LINKWARDEN_COMMAND = (
+    'password="$(cat "$DATABASE_PASSWORD_FILE")" && secret="$(cat "$NEXTAUTH_SECRET_FILE")"'
+    ' && export DATABASE_URL="postgresql://linkwarden:${password}@database:5432/linkwarden"'
+    ' NEXTAUTH_SECRET="${secret}" && unset password secret && ' + LINKWARDEN_START
+)
+# The temporary files of a LinuxServer or Paperless-ngx image's s6-overlay, the variables that it
+# reads from files (FILE__*, *_FILE) among them: in RAM, where s6 must be able to run its scripts.
+S6_RUN = {"/run": "exec,size=16m"}
 
 APP_CATALOG: list[AppTemplate] = [
     # ═══════════════════════════════════════════════════════════════════════════
@@ -1325,7 +1427,149 @@ APP_CATALOG: list[AppTemplate] = [
             EnvVar(name="DOCKER_ENABLE_SECURITY", value="false"),
         ],
     ),
-    
+
+    # BookStack of two containers (ADR-0414): LinuxServer's image, which runs nginx, PHP and
+    # BookStack's migrations, and its MariaDB on the network unos-app-bookstack. The passwords and
+    # the APP_KEY are files that UNOS generates on the pool, which LinuxServer's FILE__ variables
+    # and MariaDB's *_FILE ones read at the start, as root. BookStack starts once its database
+    # takes connections over TCP (MariaDB's healthcheck.sh), which its first start's temporary
+    # server does not: its migrations then meet a database that is set up. Its first account is
+    # admin@admin.com with the password "password", which the App Store's notice asks to change.
+    AppTemplate(
+        id="bookstack",
+        name="BookStack",
+        description="Simple, self-hosted wiki platform for organizing and storing information",
+        icon="📚",
+        category=AppCategory.DOCUMENTS,
+        source=AppSource.LINUXSERVER,
+        image=BOOKSTACK.ref,
+        version=BOOKSTACK.tag,
+        website="https://www.bookstackapp.com",
+        github="https://github.com/linuxserver/docker-bookstack",
+        documentation="https://www.bookstackapp.com/docs/",
+        min_memory="256m",
+        recommended_memory="1g",
+        ports=[PortMapping(host=6875, container=80)],
+        volumes=[
+            # The image's VOLUME: its .env, uploads, images, themes, logs and backups.
+            VolumeMapping(host=f"{APPS_DATA_PATH}/bookstack/config", container="/config"),
+            BOOKSTACK_APP_KEY,
+            BOOKSTACK_DB_PASSWORD,
+        ],
+        environment=[
+            EnvVar(name="PUID", value="1000"),
+            EnvVar(name="PGID", value="1000"),
+            EnvVar(name="TZ", value="UTC"),
+            EnvVar(
+                name="APP_URL",
+                value="",
+                description="The address you open BookStack at, with its port, such as http://192.168.1.10:6875: "
+                "BookStack makes every link of its pages with it",
+                required=True,
+            ),
+            EnvVar(name="FILE__APP_KEY", value=BOOKSTACK_APP_KEY.container, editable=False),
+            EnvVar(name="DB_HOST", value="database", editable=False),
+            EnvVar(name="DB_PORT", value="3306", editable=False),
+            EnvVar(name="DB_DATABASE", value="bookstack", editable=False),
+            EnvVar(name="DB_USERNAME", value="bookstack", editable=False),
+            EnvVar(name="FILE__DB_PASSWORD", value=BOOKSTACK_DB_PASSWORD.container, editable=False),
+        ],
+        # nginx keeps an upload's body in /tmp while PHP keeps its own copy there: room for two of
+        # the 100 MB that the image allows.
+        tmpfs={**S6_RUN, "/tmp": "size=256m"},
+        depends_on=["database"],
+        companions=[
+            Companion(
+                name="database",
+                image=BOOKSTACK_MARIADB.ref,
+                volumes=[
+                    # BookStack migrates its database at its start: an update copies it first (ADR-0408).
+                    VolumeMapping(host=BOOKSTACK_DB_DATA, container="/var/lib/mysql", copy_before_update=True),
+                    BOOKSTACK_DB_PASSWORD,
+                    BOOKSTACK_DB_ROOT_PASSWORD,
+                ],
+                environment=[
+                    EnvVar(name="MARIADB_DATABASE", value="bookstack"),
+                    EnvVar(name="MARIADB_USER", value="bookstack"),
+                    EnvVar(name="MARIADB_PASSWORD_FILE", value=BOOKSTACK_DB_PASSWORD.container),
+                    EnvVar(name="MARIADB_ROOT_PASSWORD_FILE", value=BOOKSTACK_DB_ROOT_PASSWORD.container),
+                    # A newer MariaDB upgrades the database's system tables at its first start.
+                    EnvVar(name="MARIADB_AUTO_UPGRADE", value="1"),
+                ],
+                # Its socket and process id, and its temporary tables.
+                tmpfs={"/run/mysqld": "size=1m", "/tmp": "size=64m"},
+                stop_timeout=60,
+                # Within 10 s, which ends its client too (coreutils' timeout signals its process group).
+                ready_command=["timeout", "10", "healthcheck.sh", "--connect", "--innodb_initialized"],
+            ),
+        ],
+    ),
+
+    # Paperless-ngx of two containers (ADR-0414): its server, its consumer and its task queue in
+    # one image, with its database in SQLite in its data folder, as its docker-compose.sqlite.yml,
+    # and Valkey as the broker of its task queue on the network unos-app-paperless-ngx. Its
+    # SECRET_KEY is a file that UNOS generates on the pool. Everything it writes is on the pool:
+    # its documents, the OCR's temporary files (PAPERLESS_SCRATCH_DIR and TMPDIR), its search index
+    # and its logs; S6_READ_ONLY_ROOT keeps its start from compiling Python's bytecode into the
+    # container's layer, and no PAPERLESS_OCR_LANGUAGES is set, which would install packages there.
+    # Its first visit asks for its first account, which becomes its superuser.
+    AppTemplate(
+        id="paperless-ngx",
+        name="Paperless-ngx",
+        description="Document management system that transforms physical documents into searchable archive",
+        icon="📄",
+        category=AppCategory.DOCUMENTS,
+        source=AppSource.COMMUNITY,
+        image=PAPERLESS.ref,
+        version=PAPERLESS.tag,
+        website="https://docs.paperless-ngx.com",
+        github="https://github.com/paperless-ngx/paperless-ngx",
+        documentation="https://docs.paperless-ngx.com/",
+        min_memory="1g",
+        recommended_memory="2g",
+        ports=[PortMapping(host=8010, container=8000)],
+        volumes=[
+            # Its database, search index and logs; an update copies it first (ADR-0408).
+            VolumeMapping(
+                host=f"{APPS_DATA_PATH}/paperless-ngx/data", container="/usr/src/paperless/data",
+                copy_before_update=True,
+            ),
+            VolumeMapping(host=f"{APPS_DATA_PATH}/paperless-ngx/media", container="/usr/src/paperless/media"),
+            VolumeMapping(host=f"{APPS_DATA_PATH}/paperless-ngx/export", container="/usr/src/paperless/export"),
+            VolumeMapping(host=f"{APPS_DATA_PATH}/paperless-ngx/consume", container="/usr/src/paperless/consume"),
+            VolumeMapping(host=f"{APPS_DATA_PATH}/paperless-ngx/scratch", container="/usr/src/paperless/scratch"),
+            PAPERLESS_SECRET_KEY,
+        ],
+        environment=[
+            EnvVar(name="PAPERLESS_REDIS", value="redis://redis:6379", editable=False),
+            EnvVar(name="PAPERLESS_DBENGINE", value="sqlite", editable=False),
+            EnvVar(name="PAPERLESS_SECRET_KEY_FILE", value=PAPERLESS_SECRET_KEY.container, editable=False),
+            EnvVar(name="PAPERLESS_SCRATCH_DIR", value="/usr/src/paperless/scratch", editable=False),
+            EnvVar(name="TMPDIR", value="/usr/src/paperless/scratch", editable=False),
+            EnvVar(name="S6_READ_ONLY_ROOT", value="1", editable=False),
+            EnvVar(name="PAPERLESS_OCR_LANGUAGE", value="eng", description="OCR language (eng, deu, fra, ita or spa)"),
+            EnvVar(name="PAPERLESS_TIME_ZONE", value="UTC"),
+            EnvVar(
+                name="PAPERLESS_URL",
+                value="",
+                description="Optional: the address you open Paperless-ngx at, such as https://paperless.example.com, "
+                "behind a reverse proxy",
+            ),
+        ],
+        tmpfs={**S6_RUN, "/tmp": "size=64m"},
+        # Its image's curl every 30 s would write the container's state to the system disk.
+        image_healthcheck=False,
+        depends_on=["redis"],
+        companions=[
+            Companion(
+                name="redis",
+                image=PAPERLESS_VALKEY.ref,
+                # Its snapshots of the queued tasks; the image declares no VOLUME for its /data.
+                volumes=[VolumeMapping(host=f"{APPS_DATA_PATH}/paperless-ngx/redis", container="/data")],
+            ),
+        ],
+    ),
+
     # ═══════════════════════════════════════════════════════════════════════════
     # MONITORING & DASHBOARDS
     # ═══════════════════════════════════════════════════════════════════════════
@@ -1727,8 +1971,18 @@ APP_CATALOG: list[AppTemplate] = [
         ],
         environment=[
             EnvVar(name="TZ", value="UTC"),
+            # Its MQTT broker: the Mosquitto app of the same NAS, on the port that it publishes there
+            # (ADR-0414); Mosquitto takes connections from other hosts only with a listener in its
+            # mosquitto.conf.
+            EnvVar(
+                name="ZIGBEE2MQTT_CONFIG_MQTT_SERVER",
+                value="mqtt://host.docker.internal:1883",
+                description="The MQTT broker: the Mosquitto app of this NAS by default, whose mosquitto.conf needs "
+                "a listener on port 1883",
+            ),
         ],
         privileged=True,
+        host_gateway=True,
     ),
 
     # ═══════════════════════════════════════════════════════════════════════════
@@ -1939,6 +2193,8 @@ APP_CATALOG: list[AppTemplate] = [
         environment=[
             EnvVar(name="OLLAMA_BASE_URL", value="http://host.docker.internal:11434", description="Ollama API URL"),
         ],
+        # host.docker.internal is the NAS, where the Ollama app publishes its port 11434 (ADR-0414).
+        host_gateway=True,
     ),
 
     AppTemplate(
@@ -2088,6 +2344,86 @@ APP_CATALOG: list[AppTemplate] = [
         environment=[
             EnvVar(name="TZ", value="UTC"),
             EnvVar(name="GENERIC_TIMEZONE", value="UTC"),
+        ],
+    ),
+
+    # Linkwarden of two containers (ADR-0414): its web server and its worker in one image, which
+    # also archives pages with Chromium, and PostgreSQL on the network unos-app-linkwarden, as its
+    # docker-compose.yml (without Meilisearch, which its search does not need). Its command reads
+    # the database's password and NextAuth's secret from the files that UNOS generates
+    # (LINKWARDEN_COMMAND). Linkwarden starts once PostgreSQL takes connections over TCP, which its
+    # first start's temporary server does not. Its archives are on the pool, Next.js's image cache
+    # too, and Chromium's profiles and caches in RAM; its first account to register is its
+    # administrator.
+    AppTemplate(
+        id="linkwarden",
+        name="Linkwarden",
+        description="Collaborative bookmark manager to collect, organize and preserve webpages",
+        icon="🔖",
+        category=AppCategory.PRODUCTIVITY,
+        source=AppSource.COMMUNITY,
+        image=LINKWARDEN.ref,
+        version=LINKWARDEN.tag,
+        website="https://linkwarden.app",
+        github="https://github.com/linkwarden/linkwarden",
+        documentation="https://docs.linkwarden.app/",
+        min_memory="1g",
+        recommended_memory="2g",
+        ports=[PortMapping(host=3010, container=3000)],
+        volumes=[
+            # Its archives of the pages: screenshots, PDFs, readable copies.
+            VolumeMapping(host=f"{APPS_DATA_PATH}/linkwarden/data", container="/data/data"),
+            VolumeMapping(host=f"{APPS_DATA_PATH}/linkwarden/next-cache", container="/data/apps/web/.next/cache"),
+            LINKWARDEN_DB_PASSWORD,
+            LINKWARDEN_AUTH_SECRET,
+        ],
+        environment=[
+            EnvVar(
+                name="NEXTAUTH_URL",
+                value="http://localhost:3010/api/v1/auth",
+                description="The address of Linkwarden's sign-in, ending in /api/v1/auth; set the address you open "
+                "it at behind a reverse proxy with HTTPS",
+            ),
+            EnvVar(
+                name="NEXT_PUBLIC_DISABLE_REGISTRATION",
+                value="false",
+                description="true: nobody can register a new account. Anyone who reaches Linkwarden can register "
+                "while it is false",
+            ),
+            EnvVar(name="DATABASE_PASSWORD_FILE", value=LINKWARDEN_DB_PASSWORD.container, editable=False),
+            EnvVar(name="NEXTAUTH_SECRET_FILE", value=LINKWARDEN_AUTH_SECRET.container, editable=False),
+            # No telemetry, no update check of Prisma, and the caches in RAM: nothing of these is
+            # written into the container's layer.
+            EnvVar(name="NEXT_TELEMETRY_DISABLED", value="1", editable=False),
+            EnvVar(name="CHECKPOINT_DISABLE", value="1", editable=False),
+            EnvVar(name="XDG_CACHE_HOME", value="/tmp/cache", editable=False),
+        ],
+        command=["sh", "-c", LINKWARDEN_COMMAND],
+        # Chromium's profiles and its shared memory (Playwright runs it with --disable-dev-shm-usage).
+        tmpfs={"/tmp": "size=512m"},
+        # Its image's curl every 30 s would write the container's state to the system disk.
+        image_healthcheck=False,
+        depends_on=["database"],
+        companions=[
+            Companion(
+                name="database",
+                image=LINKWARDEN_POSTGRES.ref,
+                volumes=[
+                    # Linkwarden migrates its database at its start: an update copies it first (ADR-0408).
+                    VolumeMapping(
+                        host=LINKWARDEN_DB_DATA, container="/var/lib/postgresql/data", copy_before_update=True
+                    ),
+                    LINKWARDEN_DB_PASSWORD,
+                ],
+                environment=[
+                    EnvVar(name="POSTGRES_USER", value="linkwarden"),
+                    EnvVar(name="POSTGRES_DB", value="linkwarden"),
+                    EnvVar(name="POSTGRES_PASSWORD_FILE", value=LINKWARDEN_DB_PASSWORD.container),
+                ],
+                tmpfs={"/var/run/postgresql": "size=1m"},
+                stop_timeout=60,
+                ready_command=["pg_isready", "-t", "5", "-h", "127.0.0.1", "-U", "linkwarden", "-d", "linkwarden"],
+            ),
         ],
     ),
 

@@ -1437,7 +1437,7 @@ name its category the same way. Some of them:
 - **Media** - Plex, Jellyfin, Emby, Immich
 - **Downloads** - qBittorrent, Transmission
 - **Productivity** - Nextcloud, Syncthing
-- **Documents** - Stirling PDF, Wiki.js
+- **Documents** - Stirling PDF, Wiki.js, BookStack, Paperless-ngx
 - **Smart Home** - Home Assistant
 - **Development** - Gitea, Code Server
 - **Monitoring** - Grafana, Uptime Kuma
@@ -1559,9 +1559,55 @@ changed.
   older version, so the update copies the database first, and a rollback
   puts that copy back.
 
-BookStack, Paperless-ngx and Linkwarden are no longer in the catalog: each needs
-a database or a broker beside it, and they will come back as apps of several
-containers.
+BookStack, Paperless-ngx and Linkwarden are apps of two containers each, which
+work the same way:
+
+- **BookStack** (port 6875) runs with its database `bookstack-database`
+  (MariaDB 11.8). Its install asks for **APP_URL**, the address you open it at
+  with its port, such as `http://192.168.1.10:6875`: BookStack builds every
+  link of its pages with it. BookStack comes with the account
+  `admin@admin.com` and the password `password`: sign in as soon as it is
+  installed and change both, since anyone on your network can sign in with
+  them until then. The notice of the install says so.
+- **Paperless-ngx** (port 8010) runs with `paperless-ngx-redis` (Valkey, which
+  queues its tasks) and keeps its database in its data folder. Open it as soon
+  as it is installed and create its first account, which becomes its
+  administrator. It recognizes text in English, German, French, Italian and
+  Spanish (**PAPERLESS_OCR_LANGUAGE**: `eng`, `deu`, `fra`, `ita` or `spa`).
+- **Linkwarden** (port 3010) runs with its database `linkwarden-database`
+  (PostgreSQL 16). Open it as soon as it is installed and register its first
+  account, which becomes its administrator. Anyone who reaches it can register
+  an account while **NEXT_PUBLIC_DISABLE_REGISTRATION** is `false`: to stop
+  that, uninstall Linkwarden (its data is kept) and install it again with
+  `true`; its administrator then adds accounts in Linkwarden.
+
+Their data is all on the pool, in `apps/bookstack`, `apps/paperless-ngx` and
+`apps/linkwarden`: the databases in `database/data` (Paperless-ngx's in
+`data`), BookStack's uploads in `config`, Paperless-ngx's documents in `media`
+(and what it is working on in `scratch`), Linkwarden's archived pages in
+`data`. UNOS generates their passwords and keys at the install, as files that
+only root can read, and never shows them: BookStack's `database/password`,
+`database/root-password` and `app-key`, Paperless-ngx's `secret-key`,
+Linkwarden's `database/password` and `nextauth-secret`. As with Immich, an
+install that finds a database without these files is refused. The app's own
+container starts only once its database takes connections, at the install and
+at every start from the **Installed** tab. The hard disks of their pool stay
+awake while they run, as with Immich. Paperless-ngx and Linkwarden run without
+their images' health checks, which would write to the system disk every 30
+seconds, so the **Installed** tab shows no health for them.
+
+The details of every app say about how much its images take on the system
+disk (BookStack's about 770 MB, Paperless-ngx's 3.1 GB, Linkwarden's 2.6 GB),
+by the estimate that the install's space check counts.
+
+Open WebUI reaches Ollama, and Zigbee2MQTT reaches its MQTT broker, through
+`host.docker.internal`, which names the NAS in their containers: Open WebUI
+the Ollama app's port 11434, and Zigbee2MQTT the Mosquitto app's port 1883
+(**ZIGBEE2MQTT_CONFIG_MQTT_SERVER** names another broker). Mosquitto takes
+connections from other containers only once its `mosquitto.conf`, in
+`apps/mosquitto/config` on its pool, has a listener on port 1883 and its
+authentication. With the firewall on (**System** > **Security**), it must let
+Docker's networks reach those ports of the NAS.
 
 ### Hardware Acceleration
 
