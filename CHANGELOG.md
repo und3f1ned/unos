@@ -12,6 +12,10 @@ features (SMB access per user and per share, volumes, copy and move in the file
 manager, encrypted backup uploads, health checks, CI checks).
 
 ### Changed
+- An install of Open WebUI reaches the Ollama app, and one of Zigbee2MQTT the Mosquitto app, at
+  `host.docker.internal`, which now names the NAS in their containers; Zigbee2MQTT's broker is
+  `mqtt://host.docker.internal:1883` unless changed. Installed ones get it when they are installed
+  again (ADR-0415).
 - Every app of the App Store installs a pinned image: its publisher's version tag and the digest of
   the index that the tag named on 2026-11-18 (`name:tag@sha256:...`), pulled and run by that
   digest, with the version shown on its card (transmission `4.1.4-r0-ls370`, Traefik `v3.7`, Netdata
@@ -444,6 +448,18 @@ manager, encrypted backup uploads, health checks, CI checks).
   `ups_name`, `host` and `port` are checked before they reach `upsc`.
 
 ### Added
+- BookStack, Paperless-ngx and Linkwarden are back in the App Store, each with the container it needs
+  beside it: BookStack with MariaDB 11.8, Paperless-ngx with Valkey and Linkwarden with PostgreSQL 16,
+  every image pinned by its version and digest. UNOS generates their database passwords and keys as
+  files on the pool that only root reads (BookStack's `APP_KEY` among them) and shows them nowhere;
+  their data is all on the pool, and what they write while they run outside it is kept in memory. The
+  app's own container starts once its database takes connections: UNOS asks the database with its
+  own check while it waits. The databases, Paperless-ngx and Linkwarden run without a Docker health
+  check, whose every probe would write to the system disk while they run. The
+  install notice asks to change BookStack's built-in `admin@admin.com` account and to create
+  Paperless-ngx's and Linkwarden's first account at once (ADR-0415).
+- The details of an app in the App Store say about how much its images take on the system disk
+  (`system_disk_bytes` of the catalog API, ADR-0415).
 - A disk can be added to a mounted pool and removed from one on the Storage page, after its path is
   typed again: **Add Disk** offers only whole disks that are not the system disk, hold no other pool
   or btrfs filesystem and are not mounted or in use, erases one with data only with its own

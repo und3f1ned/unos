@@ -534,6 +534,34 @@ class TestTheUpdate:
         again = api.get(f"{INSTALLED}/photos/update")
         assert again.status_code == 409 and "is still there" in again.json()["detail"]
 
+    def test_the_new_containers_get_their_command_host_gateway_health_check_and_ready_command(
+        self, api, installed, catalog, versions
+    ):
+        # The update creates its containers with the options of an install (ADR-0415): its main
+        # container's command and host gateway, and the database awaited by its ready command.
+        v2 = _to_v2(catalog, versions)
+        database = v2.companions[0].model_copy(update={"ready_command": ["pg_isready"], "image_healthcheck": False})
+        catalog[-1] = v2.model_copy(update={
+            "companions": [database, *v2.companions[1:]], "command": ["serve", "--all"], "host_gateway": True,
+        })
+        installed.exec_results["photos-database"] = [(2, b"no response"), (0, b"accepting")]
+
+        job = _job(api, api.post(f"{INSTALLED}/photos/update"))
+
+        assert (job["kind"], job["state"]) == ("update", "succeeded"), job
+        calls = installed.called("container.start", "container.exec_run")
+        assert calls[:4] == [
+            ("container.start", "photos-database"),
+            ("container.exec_run", "photos-database"),
+            ("container.exec_run", "photos-database"),
+            ("container.start", "photos-cache"),
+        ]
+        server = installed.containers_["photos"].attrs
+        assert server["Config"]["Cmd"] == ["serve", "--all"]
+        assert server["HostConfig"]["ExtraHosts"] == ["host.docker.internal:host-gateway"]
+        assert installed.containers_["photos-database"].attrs["Config"]["Healthcheck"] == {"Test": ["NONE"]}
+        assert "Health" not in installed.containers_["photos-database"].attrs["State"]
+
     def test_a_failure_in_the_middle_brings_the_earlier_containers_back(self, api, installed, catalog, versions, pools):
         _to_v2(catalog, versions)
         installed.fail("api.create_container", "photos", APIError("500 Server Error", explanation="no space left"))

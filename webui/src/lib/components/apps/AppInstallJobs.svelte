@@ -15,8 +15,11 @@
 	const dispatch = createEventDispatcher<{ dismiss: AppInstallJob; cancel: AppInstallJob }>();
 
 	// The apps whose first account to register becomes their administrator: the notice of their
-	// install asks to create it at once, before anyone else on the network can.
-	const FIRST_ADMIN: ReadonlySet<string> = new Set(['immich']);
+	// install asks to create it at once, before anyone else on the network can (ADR-0415).
+	const FIRST_ADMIN: ReadonlySet<string> = new Set(['immich', 'paperless-ngx', 'linkwarden']);
+	// The apps that come with an account of a known e-mail and password, which the notice of their
+	// install asks to change at once: BookStack's admin@admin.com (ADR-0415).
+	const DEFAULT_LOGIN: ReadonlySet<string> = new Set(['bookstack']);
 
 	// The words of the job's states and steps, of an image's pull and of a container (ADR-0384).
 	const STATE: Record<AppInstallJob['state'], { key: string; variant: 'info' | 'success' | 'error' | 'warning' }> = {
@@ -161,6 +164,9 @@
 					</p>
 					{#if FIRST_ADMIN.has(job.template_id)}
 						<p class="mt-1">{$t('apps.install.firstAdmin', { name: job.name })}</p>
+					{/if}
+					{#if DEFAULT_LOGIN.has(job.template_id)}
+						<p class="mt-1">{$t('apps.install.defaultLogin', { name: job.name })}</p>
 					{/if}
 					{#if missing}
 						<p class="mt-1">{$t('apps.hardware.missing', { name: job.name })}</p>

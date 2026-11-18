@@ -32,7 +32,7 @@ from ..shares.constants import SMB_APP_UID, SMB_GROUP_GID, SMB_GROUP_NAME
 from ..shares.models import SmbShare
 from ..snapshots.router import SNAPSHOT_DIR_NAME
 from . import app_secrets, install_jobs, limits, preflight, pulls, stacks, usage
-from .catalog import APP_CATALOG, get_app_by_id, get_apps_by_category, search_apps
+from .catalog import APP_CATALOG, PINNED_IMAGES, get_app_by_id, get_apps_by_category, search_apps
 from . import platforms
 from .hardware import ContainerHardware, all_profiles, container_hardware, for_host, read_host_hardware
 from .schemas import (
@@ -122,9 +122,21 @@ async def _for_this_host(apps: list[AppTemplate]) -> list[AppTemplate]:
         apps = [for_host(app, hardware) for app in apps]
     host = platforms.host_platform()
     return [
-        app.model_copy(update={"host_platform": host, "available": not platforms.lacking(app, host)})
+        app.model_copy(update={
+            "host_platform": host,
+            "available": not platforms.lacking(app, host),
+            "system_disk_bytes": _images_size(app),
+        })
         for app in apps
     ]
+
+
+def _images_size(app: AppTemplate) -> int:
+    """About what the images of ``app``, each once, take on the system disk: the estimates of their
+    pins (ADR-0415). ``app`` is the host's copy (for_host), whose containers name the images that
+    its install pulls here, those of its hardware profiles included."""
+    images = dict.fromkeys(spec.image for spec in (app, *app.companions))
+    return sum(PINNED_IMAGES[image].disk_bytes for image in images if image in PINNED_IMAGES)
 
 
 @router.get("/installed", response_model=list[InstalledApp])
@@ -459,6 +471,8 @@ class _PlannedMount:
     # folder that it unlocks on the same pool (VolumeMapping.secret_for).
     generated_secret: bool = False
     secret_for: Path | None = None
+    # The hexadecimal digits of the generated secret (VolumeMapping.secret_digits, ADR-0415).
+    secret_digits: int = 64
 
 
 def _where(m: _PlannedMount) -> str:
@@ -585,6 +599,7 @@ def _plan_volumes(
                 app_data=is_app_data_path(volume.host),
                 generated_secret=volume.generated_secret,
                 secret_for=secret_for,
+                secret_digits=volume.secret_digits,
                 **mount,
             )
         )
@@ -1171,7 +1186,7 @@ def _install(
     generated = [
         str(m.source)
         for m in secrets_to_make
-        if app_secrets.create(_pool_root_of(m), m.source, m.target, uid=m.uid, gid=m.gid)
+        if app_secrets.create(_pool_root_of(m), m.source, m.target, uid=m.uid, gid=m.gid, digits=m.secret_digits)
     ]
 
     created = _create_and_start(client, template, containers, network, port_bindings, pool, progress)
@@ -1349,6 +1364,13 @@ def _create_options(
         options["shm_size"] = c.spec.shm_size
     if c.spec.stop_timeout is not None:
         options["stop_timeout"] = c.spec.stop_timeout
+    if c.spec.command is not None:
+        options["command"] = list(c.spec.command)
+    if not c.spec.image_healthcheck:
+        options["healthcheck"] = {"test": ["NONE"]}
+    # host.docker.internal names the host, as on Docker Desktop (ADR-0415).
+    if main and template.host_gateway:
+        options["extra_hosts"] = {"host.docker.internal": "host-gateway"}
     # The limits kept for it from before: Memory and MemorySwap, CpuPeriod and CpuQuota (ADR-0390).
     options.update(limits.create_args(c.kept_limits))
     return options
@@ -1408,7 +1430,9 @@ def _create_and_start(
             container.start()
             if c.companion in depends_on:
                 awaited = c
-                stacks.wait_ready(container, started_now=True, check=progress.check)
+                stacks.wait_ready(
+                    container, started_now=True, check=progress.check, ready_command=c.spec.ready_command
+                )
                 awaited = None
             progress.container(c.name, "running")
         current = None
@@ -1532,7 +1556,7 @@ def _roll_back(
 
 # The arguments of docker-py's low-level create_container that its high-level create takes too;
 # the others go to the host config.
-_CREATE_KEYS = ("name", "environment", "labels", "stop_timeout")
+_CREATE_KEYS = ("name", "environment", "labels", "stop_timeout", "command", "healthcheck")
 
 
 def _create_container(
@@ -1810,8 +1834,13 @@ def _start_all(app: stacks.InstalledContainers, done: _Done, *, every: bool, act
                 raise _failed(done, _failure(app, action, container, e))
             done.started.append(container.name)
         if container.labels.get(COMPANION_LABEL) in depends_on:
+            spec = app.spec(container)
             try:
-                stacks.wait_ready(container, started_now=container.name in done.started)
+                stacks.wait_ready(
+                    container,
+                    started_now=container.name in done.started,
+                    ready_command=spec.ready_command if spec is not None else None,
+                )
             except stacks.NotReady as e:
                 raise _failed(done, str(e))
             except _DOCKER_ERRORS as e:

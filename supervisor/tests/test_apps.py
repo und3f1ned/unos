@@ -675,10 +675,10 @@ class TestCatalogPaths:
         assert response.json()["volumes"] == [
             {"host": f"{POOL_PLACEHOLDER}/apps/portainer/data", "container": "/data",
              "readonly": False, "is_file": False, "uid": None, "gid": None, "generated_secret": False,
-             "secret_for": None, "copy_before_update": False, "on_pool": True},
+             "secret_digits": 64, "secret_for": None, "copy_before_update": False, "on_pool": True},
             {"host": "/var/run/docker.sock", "container": "/var/run/docker.sock",
              "readonly": False, "is_file": False, "uid": None, "gid": None, "generated_secret": False,
-             "secret_for": None, "copy_before_update": False, "on_pool": False},
+             "secret_digits": 64, "secret_for": None, "copy_before_update": False, "on_pool": False},
         ]
 
 
@@ -3487,9 +3487,6 @@ FLOATING_TAG = re.compile(
     r"(latest|stable|main|master|develop|dev|nightly|edge|beta|lts|sts|next|rolling|unstable)([-_].*)?|v?\d{1,3}",
     re.IGNORECASE,
 )
-# Templates of apps that need a database or a broker that a one-container template never gave
-# them: apps.catalog-companions brings them back with companions (ADR-0381).
-REMOVED_TEMPLATES = ("bookstack", "paperless-ngx", "linkwarden")
 # Readarr's project is retired and LinuxServer's image of it is deprecated: its tag names an empty
 # index, which no host can pull, so it has no image to pin (ADR-0410).
 RETIRED_TEMPLATES = ("readarr",)
@@ -3517,7 +3514,10 @@ class TestStackCatalog:
     def test_immich_is_the_catalogs_app_of_several_containers(self):
         immich = get_app_by_id("immich")
 
-        assert [template.id for template in _with_companions()] == ["immich"]
+        # And BookStack, Paperless-ngx and Linkwarden with their database or broker (ADR-0415).
+        assert sorted(template.id for template in _with_companions()) == [
+            "bookstack", "immich", "linkwarden", "paperless-ngx",
+        ]
         assert [companion.name for companion in immich.companions] == ["database", "redis", "machine-learning"]
         assert immich.depends_on == ["database", "redis"]
         assert stacks_module.container_names(immich) == [
@@ -3562,15 +3562,20 @@ class TestStackCatalog:
                     assert volume.host.startswith(f"{APPS_DATA_PATH}/{template.id}/"), volume.host
                     assert volume.secret_for in hosts and volume.secret_for != volume.host, volume.secret_for
                     # Every mapping of one file names the same data, and every container that
-                    # binds it names its path in a *_FILE variable: the value is in no variable.
+                    # binds it names its path in a *_FILE variable, or LinuxServer's FILE__ one
+                    # (ADR-0415): the value is in no variable.
                     assert unlocks.setdefault(volume.host, volume.secret_for) == volume.secret_for, volume.host
                     assert volume.container in {
-                        var.value for var in spec.environment if var.name.endswith("_FILE")
+                        var.value for var in spec.environment
+                        if var.name.endswith("_FILE") or var.name.startswith("FILE__")
                     }, (template.id, volume.host)
             # An app of several containers asks the administrator for no secret.
             if template.companions:
                 assert not [var.name for spec in containers for var in spec.environment if var.secret], template.id
-        assert secrets == 2  # Immich's password file, bound into its server and its database
+        # Immich's password file, bound into its server and its database (2); BookStack's key (1),
+        # database password (2) and root password (1); Paperless-ngx's key (1); Linkwarden's
+        # database password (2) and session secret (1) (ADR-0415).
+        assert secrets == 10
 
     def test_pinned_images_are_named_by_tag_and_digest(self):
         pins = catalog_module.PINNED_IMAGES
@@ -3708,8 +3713,8 @@ class TestStackCatalog:
         assert containers["database"]["hardware"] == containers["redis"]["hardware"] == []
         assert containers[""]["image"] == catalog_module.IMMICH_SERVER.ref
 
-    @pytest.mark.parametrize("app_id", [*REMOVED_TEMPLATES, *RETIRED_TEMPLATES])
-    def test_the_apps_that_lack_their_companions_or_an_image_are_not_in_the_catalog(
+    @pytest.mark.parametrize("app_id", RETIRED_TEMPLATES)
+    def test_the_apps_that_lack_an_image_are_not_in_the_catalog(
         self, api, pools, docker_client, app_id
     ):
         assert get_app_by_id(app_id) is None

@@ -365,6 +365,7 @@ class TestMovedTags:
         assert ("GET", SONARR_TAG) in [(method, url) for method, url, _ in registries.requests]
 
     def test_the_catalog_names_the_templates_of_each_pinned_image(self):
+        from src.apps import catalog
         from src.apps.catalog import APP_IMAGES, VALKEY as CATALOG_VALKEY, get_app_by_id
 
         users = tool.catalog_users()
@@ -373,4 +374,9 @@ class TestMovedTags:
         assert users[get_app_by_id("transmission").image] == ["transmission"]
         assert set(users) == set(tool.catalog_images())
         assert all("@sha256:" in ref for ref in users)
-        assert len(APP_IMAGES) + 5 == len(users)
+        # Immich's five, and the six of BookStack, Paperless-ngx and Linkwarden with their
+        # companions (ADR-0415), each used by its own app only.
+        assert users[catalog.BOOKSTACK_MARIADB.ref] == ["bookstack"]
+        assert users[catalog.PAPERLESS_VALKEY.ref] == ["paperless-ngx"]
+        assert users[catalog.LINKWARDEN_POSTGRES.ref] == ["linkwarden"]
+        assert len(APP_IMAGES) + 5 + 6 == len(users)

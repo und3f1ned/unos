@@ -636,7 +636,9 @@ def _update(plan: _Plan, progress: install_jobs.Progress) -> tuple[AppInstallRes
             done.renamed.append((container, old_name))
         base._prepare_sources(plan.planned, create=True, status=409)
         for m in plan.secrets:
-            base.app_secrets.create(base._pool_root_of(m), m.source, m.target, uid=m.uid, gid=m.gid)
+            base.app_secrets.create(
+                base._pool_root_of(m), m.source, m.target, uid=m.uid, gid=m.gid, digits=m.secret_digits
+            )
         done.creating = True
         network = _app_network(client, template)
         done.created = base._create_and_start(
