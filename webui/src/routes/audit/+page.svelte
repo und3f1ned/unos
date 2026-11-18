@@ -121,6 +121,10 @@
 		task_deleted: 'audit.action.taskDeleted',
 		task_run: 'audit.action.taskRun',
 		network_config_changed: 'audit.action.networkConfigChanged',
+		certificate_uploaded: 'audit.action.certificateUploaded',
+		certificate_generated: 'audit.action.certificateGenerated',
+		certificate_deleted: 'audit.action.certificateDeleted',
+		certificate_served: 'audit.action.certificateServed',
 		other: 'audit.action.other'
 	};
 	// An info entry shows no severity.
@@ -149,7 +153,8 @@
 		host: 'audit.resource.host',
 		network_interface: 'audit.resource.networkInterface',
 		task: 'audit.resource.task',
-		two_factor_requirement: 'audit.resource.twoFactorRequirement'
+		two_factor_requirement: 'audit.resource.twoFactorRequirement',
+		certificate: 'audit.resource.certificate'
 	};
 
 	/** The text of `value` by its key in `keys`, in the language of the page; else `value`. */

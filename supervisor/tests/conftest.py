@@ -112,6 +112,26 @@ def _no_volume_use_read_yet(monkeypatch, tmp_path_factory):
 
 
 @pytest.fixture(autouse=True)
+def _no_web_ui_to_ask(monkeypatch, tmp_path_factory):
+    """The served certificate (ADR-0402): its file in a temporary folder of each test, and no web
+    UI's Caddy to shake hands with: the handshake goes to a closed port of this machine, and the
+    status says unknown (a test that asks a TLS server gives serving.CADDY_TLS_PORT its own), so
+    that no test looks up the name webui or reaches a server of this machine's network; and no
+    Docker for `caddy reload`, so that no test runs docker exec in a container of this machine."""
+    serving = sys.modules.get("src.security.serving")
+    if serving is not None:
+        monkeypatch.setattr(serving, "SERVED_DIR", str(tmp_path_factory.mktemp("served-certificate")))
+        monkeypatch.setattr(serving, "CADDY_TLS_HOST", "127.0.0.1")
+        monkeypatch.setattr(serving, "CADDY_TLS_PORT", 1)
+
+        def no_docker():
+            from src.containers.docker import DockerUnavailable
+            raise DockerUnavailable("the tests reach no Docker")
+
+        monkeypatch.setattr(serving, "_docker_client", no_docker)
+
+
+@pytest.fixture(autouse=True)
 def _no_app_use_read_yet(monkeypatch):
     """The use of the apps' containers and its problems are kept in RAM (ADR-0390): every test
     starts without them, and the cgroups of this machine are never read (a test that reads cgroups

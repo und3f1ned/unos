@@ -4178,6 +4178,133 @@ def _tmpfs_bytes(size):
     return int(match.group(1)) * _TMPFS_UNITS[match.group(2).lower()]
 
 
+# ==================== The served certificate (security.custom-certificates, ADR-0402) ====================
+
+SERVED_FILE = "/served-certificate/served.pem"
+
+
+class TestServedCertificate:
+    """The supervisor hands the certificate an administrator chose to the web UI's Caddy through
+    one file in a volume that only the two containers mount, the web UI's read-only; the web UI's
+    command serves it only when Caddy validates it, else Caddy's local CA (ADR-0402)."""
+
+    @pytest.mark.parametrize("compose_file", COMPOSE_FILES)
+    def test_only_the_supervisor_and_the_web_ui_mount_the_served_certificate(self, compose_file):
+        compose = _compose_file(compose_file)
+        mounts = {
+            name: [volume for volume in service.get("volumes", []) if str(volume).split(":")[1:2] == ["/served-certificate"]]
+            for name, service in compose["services"].items()
+        }
+        volume = mounts["supervisor"][0].split(":")[0]
+
+        assert mounts["supervisor"] == [f"{volume}:/served-certificate"]
+        assert mounts["webui"] == [f"{volume}:/served-certificate:ro"]
+        assert [name for name, found in mounts.items() if found] == ["supervisor", "webui"]
+        # A named volume of the compose project: no folder of the host, which other programs see.
+        assert volume in compose["volumes"]
+        assert not [v for s in compose["services"].values() for v in s.get("volumes", [])
+                    if str(v).startswith(f"{volume}:") and v not in (mounts["supervisor"] + mounts["webui"])]
+
+    def test_the_supervisor_reloads_the_test_stacks_web_ui(self):
+        """The test stack names its containers otherwise: the supervisor reloads the Caddy of its own."""
+        compose = _compose_file("docker-compose.test.yml")
+        env = dict(item.split("=", 1) for item in compose["services"]["supervisor"]["environment"])
+
+        assert env["UNOS_WEBUI_CONTAINER"] == compose["services"]["webui"]["container_name"]
+        production = _compose_file("docker-compose.yml")["services"]
+        from src.config import Settings
+
+        assert Settings().webui_container == production["webui"]["container_name"] == "unos-webui"
+
+    def test_the_caddyfile_has_a_site_for_each_tls(self):
+        caddyfile = (REPO_ROOT / "webui" / "Caddyfile").read_text()
+
+        local = re.search(r"^\(tls-local\) \{\n(.*?)^\}$", caddyfile, re.M | re.S)
+        served = re.search(r"^\(tls-served\) \{\n(.*?)^\}$", caddyfile, re.M | re.S)
+        assert local and served
+        assert local.group(1).splitlines()[0] == "\t{$UNOS_HOSTNAME:unos}, https:// {"
+        assert "\t\ttls internal\n" in local.group(1)
+        # Every name gets the served certificate: no address of its own for which Caddy would issue
+        # another from its local CA and prefer for that name and for clients without one.
+        assert served.group(1).splitlines()[0] == "\thttps:// {"
+        assert f"\t\ttls {SERVED_FILE} {SERVED_FILE}\n" in served.group(1)
+        for site in (local, served):
+            assert "\t\timport unos-site\n" in site.group(1)
+        assert re.findall(r"^import .*$", caddyfile, re.M) == ["import tls-{$UNOS_TLS:local}"]
+        # No OCSP requests from the LAN, and no staple that Caddy keeps refreshing on the disk.
+        assert re.search(r"^\tocsp_stapling off$", caddyfile.split("\n}\n", 1)[0], re.M)
+        # The supervisor writes that file, and reloads Caddy with that Caddyfile and those modes (as
+        # the module sets them: the tests' own fixture gives each test a folder of its own).
+        module = (REPO_ROOT / "supervisor" / "src" / "security" / "serving.py").read_text()
+        assert f'\nSERVED_DIR = "{SERVED_FILE.rsplit("/", 1)[0]}"\nSERVED_FILE = "served.pem"\n' in module
+        assert '\nWEBUI_CADDYFILE = "/etc/caddy/Caddyfile"\n' in module
+        assert '\nTLS_MODES = ("served", "local")\n' in module
+
+    def test_the_image_build_adapts_both_sites(self):
+        """A Caddyfile that does not adapt fails the build, not the web UI's start."""
+        dockerfile = (REPO_ROOT / "webui" / "Dockerfile").read_text()
+        final = dockerfile[dockerfile.rindex("\nFROM "):]
+
+        assert "RUN caddy adapt --config /etc/caddy/Caddyfile > /dev/null" \
+            " && UNOS_TLS=served caddy adapt --config /etc/caddy/Caddyfile > /dev/null\n" in final
+        assert final.index("COPY Caddyfile /etc/caddy/Caddyfile") < final.index("RUN caddy adapt")
+
+    def _start(self, compose_file, tmp_path, *, served: bool, validates: bool):
+        """Run the web UI's command with a supervisor that answers at once and a fake caddy: the
+        calls of caddy with the UNOS_TLS each had, and what the command printed."""
+        command = [_compose_string(arg) for arg in _compose_file(compose_file)["services"]["webui"]["command"]]
+        served_file = tmp_path / "served.pem"
+        if served:
+            served_file.write_text("bundle")
+        script = command[2]
+        assert script.count(SERVED_FILE) == 1, script
+        bin_dir = tmp_path / "bin"
+        bin_dir.mkdir()
+        calls = tmp_path / "calls"
+        fakes = {
+            "wget": "exit 0",
+            "caddy": textwrap.dedent(f"""\
+                echo "UNOS_TLS=${{UNOS_TLS:-}} caddy $*" >> "{calls}"
+                if [ "$1" = validate ]; then
+                    echo '{{"level":"info","msg":"using config from file"}}' >&2
+                    {'exit 0' if validates else 'echo "Error: loading certificates: tls: private key does not match public key" >&2; exit 1'}
+                fi"""),
+        }
+        for name, body in fakes.items():
+            (bin_dir / name).write_text(f"#!/bin/sh\n{body}\n")
+            (bin_dir / name).chmod(0o755)
+        result = subprocess.run(["/bin/sh", "-c", script.replace(SERVED_FILE, str(served_file))],
+                                env={"PATH": f"{bin_dir}:/usr/bin:/bin"}, capture_output=True, text=True,
+                                timeout=60)
+        assert result.returncode == 0, result.stderr
+        return calls.read_text().splitlines(), (result.stdout + result.stderr).splitlines()
+
+    @pytest.mark.parametrize("compose_file", COMPOSE_FILES)
+    def test_without_a_served_certificate_caddy_serves_its_local_ca(self, compose_file, tmp_path):
+        calls, output = self._start(compose_file, tmp_path, served=False, validates=True)
+
+        assert calls == ["UNOS_TLS=local caddy run --config /etc/caddy/Caddyfile"]
+        assert output == []
+
+    @pytest.mark.parametrize("compose_file", COMPOSE_FILES)
+    def test_a_served_certificate_that_validates_is_served(self, compose_file, tmp_path):
+        calls, output = self._start(compose_file, tmp_path, served=True, validates=True)
+
+        assert calls == ["UNOS_TLS=served caddy validate --config /etc/caddy/Caddyfile",
+                         "UNOS_TLS=served caddy run --config /etc/caddy/Caddyfile"]
+        assert output == []
+
+    @pytest.mark.parametrize("compose_file", COMPOSE_FILES)
+    def test_a_served_certificate_that_does_not_load_leaves_the_local_ca(self, compose_file, tmp_path):
+        calls, output = self._start(compose_file, tmp_path, served=True, validates=False)
+
+        assert calls == ["UNOS_TLS=served caddy validate --config /etc/caddy/Caddyfile",
+                         "UNOS_TLS=local caddy run --config /etc/caddy/Caddyfile"]
+        # One line, with Caddy's reason: the last it printed.
+        assert output == ["unos-webui: the served certificate does not load, Caddy's local CA instead: "
+                          "Error: loading certificates: tls: private key does not match public key"]
+
+
 def _largest_tmp_use():
     """The most legitimate work keeps in the supervisor's /tmp at once, from
     the limits in src/backup/router.py: a restore, and a backup made

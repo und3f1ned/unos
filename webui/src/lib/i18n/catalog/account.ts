@@ -174,10 +174,30 @@ export const en = {
 	'account.certs.manage': 'Manage',
 	'account.certs.description':
 		'HTTPS certificates of the web interface: the one browsers get, and the ones stored on this NAS.',
-	// What browsers get: the certificate of Caddy's local CA, whatever is stored (ADR-0357).
+	// What browsers get, as the web server answered the NAS itself (ADR-0402).
 	'account.certs.servedBy': 'HTTPS for browsers: {source}',
 	'account.certs.servedHint':
-		'Caddy, the web server of UNOS, issues it from its local certificate authority for the name in UNOS_HOSTNAME. Uploaded and self-signed certificates are only stored: browsers do not get them yet.',
+		"Caddy, the web server of UNOS, serves the certificate that its local certificate authority issues for the name in UNOS_HOSTNAME, unless you serve a stored certificate. A stored certificate that the web server cannot load leaves it with its local CA's.",
+	'account.certs.servedUnknownHint': 'UNOS could not ask the web server which certificate it serves.',
+	'account.certs.chosenNotServed':
+		"{domain} is chosen, but the web server could not load it and serves another: {source}. Serve it again, or use Caddy's local CA.",
+	'account.certs.useLocalCa': "Use Caddy's local CA",
+	'account.certs.serve': 'Serve this certificate',
+	'account.certs.serveLabel': 'Serve {domain}',
+	'account.certs.servedBadge': 'SERVED',
+	'account.certs.notLoadedBadge': 'NOT LOADED',
+	'account.certs.expiresSoonBadge': 'EXPIRES SOON',
+	// The confirmation before browsers get another certificate.
+	'account.certs.serveTitle': 'Serve this certificate?',
+	'account.certs.serveText': 'Browsers will get {domain} from this NAS over HTTPS.',
+	'account.certs.localCaTitle': "Use Caddy's local CA?",
+	'account.certs.localCaText': "Browsers will get the certificate of Caddy's local CA again.",
+	'account.certs.newCertificateWarning':
+		'Every browser will see a new certificate. A browser that does not trust it shows a certificate warning, and this page may stop answering until you reload it.',
+	'account.certs.expiresSoonWarning': 'This certificate expires on {date}: replace it in time.',
+	'account.certs.serveConfirm': 'Serve',
+	'account.certs.nowServed': 'Browsers now get {domain}',
+	'account.certs.nowLocalCa': "Browsers now get the certificate of Caddy's local CA",
 	'account.certs.stored': 'Stored Certificates',
 	'account.certs.generateSelfSigned': 'Generate Self-Signed',
 	'account.certs.noneFound': 'No certificates found',
@@ -193,6 +213,8 @@ export const en = {
 	'account.certs.generated': 'Certificate generated successfully',
 	'account.certs.generateFailed': 'Failed to generate certificate',
 	'account.certs.confirmDelete': 'Are you sure you want to delete this certificate?',
+	'account.certs.confirmDeleteServed':
+		"{domain} is served: deleting it gives every browser the certificate of Caddy's local CA, a new certificate for them. Delete it?",
 	'account.certs.deleted': 'Certificate deleted',
 	'account.certs.deleteFailed': 'Failed to delete certificate',
 	'account.certs.generateTitle': 'Generate Self-Signed Certificate',
@@ -211,6 +233,8 @@ export const en = {
 	'account.certs.custom': 'Custom',
 	// What serves the web interface's certificate (served_by).
 	'account.certs.caddyLocalCa': "Caddy's local CA",
+	'account.certs.storedCertificate': 'A stored certificate',
+	'account.certs.servedUnknown': 'Not known',
 
 	'account.history.title': 'Login History',
 	'account.history.show': 'View History',
@@ -405,7 +429,26 @@ export const ru: Translation<typeof en> = {
 		'HTTPS-сертификаты веб-интерфейса: тот, что получают браузеры, и сохранённые на этом NAS.',
 	'account.certs.servedBy': 'HTTPS для браузеров: {source}',
 	'account.certs.servedHint':
-		'Его выпускает Caddy, веб-сервер UNOS, из своего локального центра сертификации для имени из UNOS_HOSTNAME. Загруженные и самоподписанные сертификаты только хранятся: браузеры их пока не получают.',
+		'Caddy, веб-сервер UNOS, отдаёт сертификат, который его локальный центр сертификации выпускает для имени из UNOS_HOSTNAME, если вы не выбрали сохранённый сертификат. Если веб-сервер не может загрузить сохранённый сертификат, он остаётся с сертификатом локального ЦС.',
+	'account.certs.servedUnknownHint': 'UNOS не удалось спросить у веб-сервера, какой сертификат он отдаёт.',
+	'account.certs.chosenNotServed':
+		'{domain} выбран, но веб-сервер не смог его загрузить и отдаёт другой: {source}. Выберите его ещё раз или используйте локальный ЦС Caddy.',
+	'account.certs.useLocalCa': 'Использовать локальный ЦС Caddy',
+	'account.certs.serve': 'Отдавать этот сертификат',
+	'account.certs.serveLabel': 'Отдавать {domain}',
+	'account.certs.servedBadge': 'ОТДАЁТСЯ',
+	'account.certs.notLoadedBadge': 'НЕ ЗАГРУЖЕН',
+	'account.certs.expiresSoonBadge': 'СКОРО ИСТЕЧЁТ',
+	'account.certs.serveTitle': 'Отдавать этот сертификат?',
+	'account.certs.serveText': 'Браузеры будут получать {domain} от этого NAS по HTTPS.',
+	'account.certs.localCaTitle': 'Использовать локальный ЦС Caddy?',
+	'account.certs.localCaText': 'Браузеры снова будут получать сертификат локального ЦС Caddy.',
+	'account.certs.newCertificateWarning':
+		'Все браузеры увидят новый сертификат. Браузер, который ему не доверяет, покажет предупреждение о сертификате, а эта страница может перестать отвечать, пока вы её не перезагрузите.',
+	'account.certs.expiresSoonWarning': 'Срок действия этого сертификата истекает {date}: замените его вовремя.',
+	'account.certs.serveConfirm': 'Отдавать',
+	'account.certs.nowServed': 'Теперь браузеры получают {domain}',
+	'account.certs.nowLocalCa': 'Теперь браузеры получают сертификат локального ЦС Caddy',
 	'account.certs.stored': 'Сохранённые сертификаты',
 	'account.certs.generateSelfSigned': 'Создать самоподписанный',
 	'account.certs.noneFound': 'Сертификатов нет',
@@ -421,6 +464,8 @@ export const ru: Translation<typeof en> = {
 	'account.certs.generated': 'Сертификат создан',
 	'account.certs.generateFailed': 'Не удалось создать сертификат',
 	'account.certs.confirmDelete': 'Удалить этот сертификат?',
+	'account.certs.confirmDeleteServed':
+		'{domain} сейчас отдаётся: после удаления все браузеры получат сертификат локального ЦС Caddy, для них новый. Удалить его?',
 	'account.certs.deleted': 'Сертификат удалён',
 	'account.certs.deleteFailed': 'Не удалось удалить сертификат',
 	'account.certs.generateTitle': 'Создание самоподписанного сертификата',
@@ -437,6 +482,8 @@ export const ru: Translation<typeof en> = {
 	'account.certs.selfSigned': 'Самоподписанный',
 	'account.certs.custom': 'Пользовательский',
 	'account.certs.caddyLocalCa': 'Локальный ЦС Caddy',
+	'account.certs.storedCertificate': 'Сохранённый сертификат',
+	'account.certs.servedUnknown': 'Неизвестно',
 
 	'account.history.title': 'История входов',
 	'account.history.show': 'Показать историю',

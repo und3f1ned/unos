@@ -178,9 +178,12 @@ class CertificateType(str, Enum):
 
 
 class ServedCertificate(str, Enum):
-    """What browsers get from https://<host>/: the certificate of Caddy's local CA (ADR-0025).
-    Nothing hands a stored certificate to the web UI's container yet (ADR-0357)."""
+    """What browsers get from https://<host>/, as a TLS handshake with the web UI's Caddy shows it
+    (ADR-0402): the certificate of its local CA (ADR-0025), a stored certificate, or unknown when
+    Caddy did not answer the handshake."""
     CADDY_LOCAL_CA = "caddy_local_ca"
+    STORED_CERTIFICATE = "stored_certificate"
+    UNKNOWN = "unknown"
 
 
 class Certificate(BaseModel):
@@ -192,14 +195,35 @@ class Certificate(BaseModel):
     valid_from: UtcDatetime | None = None
     valid_until: UtcDatetime | None = None
     is_valid: bool = True
-    # Stored, not served: browsers get the certificate of served_by (ADR-0357).
+    # Valid, and expires within EXPIRY_WARNING_DAYS of src/security/serving.py.
+    expires_soon: bool = False
+    # Browsers get it: the web UI's Caddy serves it (ADR-0402).
     served: bool = False
+    # An administrator chose it: the served file holds it, whether Caddy loaded it or not.
+    chosen: bool = False
+    # SHA-256, as a TLS handshake shows the certificate and openssl prints it.
     fingerprint: str | None = None
+
+
+class CertificateStatus(BaseModel):
+    """What browsers get from https://<host>/, and the stored certificate an administrator chose
+    to serve (ADR-0402)."""
+    served_by: ServedCertificate
+    served_id: str | None = None     # the stored certificate browsers get
+    chosen_id: str | None = None     # the stored certificate chosen; None: Caddy's local CA
+    fingerprint: str | None = None   # SHA-256 of the certificate browsers get
 
 
 class CertificateListResponse(BaseModel):
     certificates: list[Certificate]
-    served_by: ServedCertificate = ServedCertificate.CADDY_LOCAL_CA
+    status: CertificateStatus
+
+
+class ServeCertificateResponse(BaseModel):
+    """The answer of POST /security/certificates/{cert_id}/serve."""
+    changed: bool                    # the served file or what Caddy serves changed
+    expires_soon: bool = False       # the served certificate expires within EXPIRY_WARNING_DAYS
+    status: CertificateStatus
 
 
 class CertificateUpload(BaseModel):
@@ -213,11 +237,6 @@ class SelfSignedCertRequest(BaseModel):
     validity_days: int = 365
     organization: Annotated[str, AfterValidator(validate_organization)] | None = None
     country: Annotated[str, AfterValidator(validate_country)] | None = None
-
-
-class CertificateStatus(BaseModel):
-    """What browsers get from https://<host>/ (ADR-0357)."""
-    served_by: ServedCertificate = ServedCertificate.CADDY_LOCAL_CA
 
 
 # Every account must have two-factor authentication. The grace periods are

@@ -293,7 +293,8 @@ scripts/standin/e2e.sh --help                             # what it does, its se
 directory under `.standin/` (git-ignored): the real supervisor through
 `scripts/standin/run_supervisor.py`, with every data path inside `.standin/`, and
 `scripts/standin/front.mjs` in place of Caddy (HTTPS with a self-signed certificate and the
-security headers of `webui/Caddyfile`). It creates the test administrator `admin` /
+security headers of `webui/Caddyfile`; the served certificate that the supervisor writes into
+`.standin/data/served-certificate/` while it loads, ADR-0402). It creates the test administrator `admin` /
 `unos-e2e-pass` (`E2E_ADMIN` in `webui/tests/fixtures.ts`) as the owner creates theirs: on the new
 stand-in, which has no account yet, a first Playwright run with `E2E_FIRST_RUN=1` runs
 `tests/first-run.spec.ts` alone (never retried), which goes through the `/setup` page; when it

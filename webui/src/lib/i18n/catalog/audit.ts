@@ -104,6 +104,10 @@ export const en = {
 	'audit.action.taskDeleted': 'Task deleted',
 	'audit.action.taskRun': 'Task run',
 	'audit.action.networkConfigChanged': 'Network config changed',
+	'audit.action.certificateUploaded': 'Certificate uploaded',
+	'audit.action.certificateGenerated': 'Certificate generated',
+	'audit.action.certificateDeleted': 'Certificate deleted',
+	'audit.action.certificateServed': 'Certificate served',
 	'audit.action.other': 'Other',
 
 	// The types of resource that the server records: in English as it records them.
@@ -127,7 +131,8 @@ export const en = {
 	'audit.resource.host': 'host',
 	'audit.resource.networkInterface': 'network_interface',
 	'audit.resource.task': 'task',
-	'audit.resource.twoFactorRequirement': 'two_factor_requirement'
+	'audit.resource.twoFactorRequirement': 'two_factor_requirement',
+	'audit.resource.certificate': 'certificate'
 };
 
 export const ru: Translation<typeof en> = {
@@ -226,6 +231,10 @@ export const ru: Translation<typeof en> = {
 	'audit.action.taskDeleted': 'Задача удалена',
 	'audit.action.taskRun': 'Задача запущена вручную',
 	'audit.action.networkConfigChanged': 'Сетевые настройки изменены',
+	'audit.action.certificateUploaded': 'Сертификат загружен',
+	'audit.action.certificateGenerated': 'Сертификат создан',
+	'audit.action.certificateDeleted': 'Сертификат удалён',
+	'audit.action.certificateServed': 'Сертификат HTTPS сменён',
 	'audit.action.other': 'Другое',
 
 	'audit.resource.user': 'пользователь',
@@ -248,5 +257,6 @@ export const ru: Translation<typeof en> = {
 	'audit.resource.host': 'хост',
 	'audit.resource.networkInterface': 'сетевой интерфейс',
 	'audit.resource.task': 'задача',
-	'audit.resource.twoFactorRequirement': 'требование двухфакторной аутентификации'
+	'audit.resource.twoFactorRequirement': 'требование двухфакторной аутентификации',
+	'audit.resource.certificate': 'сертификат'
 };

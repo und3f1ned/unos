@@ -57,6 +57,8 @@ class Settings(BaseSettings):
 
     # Docker
     docker_socket: str = "/var/run/docker.sock"
+    # The web UI's container, whose Caddy loads the served certificate again (ADR-0402).
+    webui_container: str = "unos-webui"
 
     # App catalog
     app_catalog_path: str = "/data/app-catalog.json"

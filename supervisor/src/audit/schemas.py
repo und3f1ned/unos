@@ -86,6 +86,13 @@ class AuditAction(str, Enum):
     # Network
     NETWORK_CONFIG_CHANGED = "network_config_changed"
 
+    # The web UI's TLS certificates (ADR-0402): stored, deleted, and the one Caddy serves (a stored
+    # certificate, or caddy_local_ca as the resource for Caddy's local CA)
+    SSL_CERT_UPLOADED = "certificate_uploaded"
+    SSL_CERT_GENERATED = "certificate_generated"
+    SSL_CERT_DELETED = "certificate_deleted"
+    SSL_CERT_SERVED = "certificate_served"
+
     # Generic
     OTHER = "other"
 

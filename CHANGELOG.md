@@ -18,6 +18,19 @@ manager, encrypted backup uploads, health checks, CI checks).
   look, within what a token allows: `brand`, `surface-hover`, `border-strong`, `content-soft`, `content-on-brand`, `status-neutral`.
 
 ### Security
+- The web UI can serve a stored certificate: **Serve this certificate** on the
+  certificate card of System > Security (or
+  `POST /api/v1/security/certificates/{id}/serve`) checks it (it parses, the
+  key belongs to it and is RSA or EC P-256 or P-384, which browsers take, it is
+  for TLS servers and valid now, the chain is in order; one that expires within
+  30 days is marked) and has Caddy load it from a volume that only the
+  supervisor and the web UI mount; **Use Caddy's local CA** and deleting the
+  served certificate serve the local CA's again. A certificate that Caddy does
+  not load leaves the one it served, and at a restart the local CA's. The card,
+  `GET .../certificates/status` and the listing name what a TLS handshake with
+  Caddy shows (`served_by`, `served_id`, `chosen_id`, the SHA-256
+  `fingerprint`). Certificate uploads, generations, deletes and changes of the
+  served certificate write audit entries (ADR-0402).
 - Regular users' live statistics (`/ws/v1/events`) no longer carry the host's
   processes or the names of its block devices: `processes` and
   `disk_io.disks` are empty for them, as the host's interfaces already were.

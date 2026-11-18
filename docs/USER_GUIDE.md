@@ -2193,7 +2193,10 @@ regular users have no access to it.
   and two-factor authentication required for every account or no longer
   (**Settings changed**, resource `two_factor_requirement`; no longer as a
   **Warning**), with the sign-ins of accounts that can only set it up (a
-  **Warning**).
+  **Warning**). TLS certificates uploaded, generated (self-signed) and
+  deleted, and each change of the certificate that browsers get
+  (**Certificate served**, resource `certificate` with the stored
+  certificate's id and its end date, or `caddy_local_ca`).
   Only a change that was made writes an entry: a refused or failed one, or
   one that changes nothing (the same host name, a task saved unchanged,
   removing a pool that is not there, starting a running container or
@@ -2207,8 +2210,8 @@ regular users have no access to it.
   no entry either. Mounting, unmounting and importing pools, creating
   containers and pulling or removing images on the **Containers** page, the
   snapshots that scheduled tasks take and clean up, the apps started when a
-  pool is mounted, suspend, the off-device copy, notifications, the firewall,
-  the TLS certificates and clearing the login history write no entries.
+  pool is mounted, suspend, the off-device copy, notifications, the firewall
+  and clearing the login history write no entries.
 - **Action** offers only the actions that the NAS records. An older entry
   whose action UNOS no longer has, such as `firewall_rule_added`, is listed
   with its action as recorded.
@@ -2538,26 +2541,45 @@ characters.
 ### HTTPS Certificates
 
 Under **SSL/TLS Certificates** on **System** → **Security** (administrators
-only), the badge names what browsers get over HTTPS: **Caddy's local CA**,
-the certificate that Caddy, the web server of UNOS, issues from its own
-certificate authority for the name in `UNOS_HOSTNAME` (see
-[HTTPS and the Certificate Warning](INSTALL.md#https-and-the-certificate-warning)).
-**Manage** says so again and lists the **Stored Certificates**, each with its
-type, issuer, end date, **VALID** or **EXPIRED** and **NOT SERVED**.
+only), the badge names what browsers get over HTTPS, as the web server itself
+answers UNOS: **Caddy's local CA**, the certificate that Caddy, the web server
+of UNOS, issues from its own certificate authority for the name in
+`UNOS_HOSTNAME` (see
+[HTTPS and the Certificate Warning](INSTALL.md#https-and-the-certificate-warning)),
+or the name of the stored certificate that it serves (**Not known** when the web
+server did not answer). **Manage** says so again and lists the **Stored
+Certificates**, each with its type, issuer, end date, **VALID** or **EXPIRED**,
+**SERVED** or **NOT SERVED**, and **EXPIRES SOON** when it ends within 30 days.
 
-UNOS stores certificates but does not serve them yet: browsers keep getting
-the local CA's certificate whatever is stored (feature-list entry
-`security.custom-certificates`). **Generate Self-Signed** stores a certificate
-for a host name or an IP address (a name of at most 64 characters), valid for
-the days you choose, with an optional organization (at most 64 printable
-characters) and an optional country (two letters, such as `DE`); when UNOS
-refuses what you entered, the dialog says why. The API's
-`POST /api/v1/security/certificates/upload` stores a certificate with its key
-and chain under the name of its subject; a certificate stored under the same
-name replaces the old one with its key, and its chain too, which goes when the
-new certificate has none. A store that fails keeps the old files. The trash
-button deletes a stored certificate. When the certificates cannot be loaded,
-the card says so with the reason and **Retry**.
+**Serve this certificate** makes a valid stored certificate the one that every
+browser gets, after a confirmation: browsers see a new certificate, and one that
+does not trust it warns; an open page may stop answering until you reload it.
+UNOS first checks that the certificate can be read, that its private key
+belongs to it, has no passphrase and is one that browsers take (RSA of at least
+2048 bits, or EC on P-256 or P-384), that the certificate is meant for TLS
+servers when it names its uses, that it is valid now, and that its chain is in
+order (each certificate issued by the next one); it refuses one that fails, and
+says why in the dialog. A certificate that ends within 30 days is served
+with a warning. **Use Caddy's local CA** serves the local CA's certificate
+again. Deleting the served certificate does that first and asks with its own
+question. The choice stays across restarts and reboots. If the web server
+cannot load the chosen certificate, it keeps the certificate it served; when it
+starts and cannot load it, it serves the local CA's, and the card marks the
+chosen certificate **NOT LOADED** with a warning. A certificate stored under the
+name of the served one is refused until another one, or the local CA, is
+served. Every upload, generation, delete and change of the served certificate
+is in the audit log.
+
+**Generate Self-Signed** stores a certificate for a host name or an IP address
+(a name of at most 64 characters), valid for the days you choose, with an
+optional organization (at most 64 printable characters) and an optional
+country (two letters, such as `DE`); when UNOS refuses what you entered, the
+dialog says why. The API's `POST /api/v1/security/certificates/upload` stores a
+certificate with its key and chain under the name of its subject; a
+certificate stored under the same name replaces the old one with its key, and
+its chain too, which goes when the new certificate has none. A store that fails
+keeps the old files. The trash button deletes a stored certificate. When the
+certificates cannot be loaded, the card says so with the reason and **Retry**.
 
 ---
 

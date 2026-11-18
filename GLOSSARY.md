@@ -328,6 +328,16 @@ two-factor requirement has ended: its sessions reach only the setup of two-facto
 its status and the sign-out, and its API tokens and WebSockets nothing (ADR-0386). Avoid: locked
 account, restricted user.
 
+**Stored certificate**: A TLS certificate with its key, and its chain when given, that an
+administrator uploaded through the API or generated (self-signed) on the Security page, kept in the supervisor's
+`/data/certs` (ADR-0402). Avoid: custom certificate (one type of stored certificate).
+
+**Served certificate**: The stored certificate that an administrator chose for the web UI: the
+supervisor copies it with its chain and key into `served.pem` of the `served-certificate` volume,
+and the web UI's Caddy serves it to every browser while it loads; otherwise, and when none is
+chosen, Caddy serves its local CA's (ADR-0025, ADR-0402). What is served is what a TLS handshake
+with Caddy shows. Avoid: active certificate, installed certificate.
+
 ## Apps and backups
 
 **App**: An application installed from the App Store catalog, with its data on a pool (ADR-0039):

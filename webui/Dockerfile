@@ -25,6 +25,9 @@ FROM caddy:2-alpine@sha256:f2b257f20955d6be2229bed86bad24193eeb8c4dc962a4031a6eb
 
 COPY --from=builder /app/build /srv
 COPY Caddyfile /etc/caddy/Caddyfile
+# Both TLS sites of the Caddyfile, Caddy's local CA and the served certificate (ADR-0402), adapt:
+# a Caddyfile that does not fails the build, not the web UI's start. Adapting loads no certificate.
+RUN caddy adapt --config /etc/caddy/Caddyfile > /dev/null && UNOS_TLS=served caddy adapt --config /etc/caddy/Caddyfile > /dev/null
 
 EXPOSE 80 443
 

@@ -6,6 +6,8 @@
 # network in cleartext. Browsers warn about the certificate until the CA root
 # is trusted on the client; it is kept in the caddy-data volume at
 # /data/caddy/pki/authorities/local/root.crt (inside the webui container).
+# Or with a stored certificate that an administrator chose on the Security page
+# (ADR-0402): UNOS_TLS picks the site below.
 # Plain HTTP on 80 only redirects (plus the health check, see below).
 #
 # No Strict-Transport-Security header: browsers do not let users click through
@@ -28,6 +30,10 @@
 	# The HTTP->HTTPS redirect is defined below so the health check can stay
 	# reachable over plain HTTP.
 	auto_https disable_redirects
+	# A served certificate (ADR-0402) that names an OCSP responder would make
+	# Caddy ask the responder at every load and keep refreshing a staple in
+	# caddy-data, on the system disk (ADR-0214); a LAN appliance staples none.
+	ocsp_stapling off
 	servers {
 		# HTTP/3 needs UDP 443, which docker-compose does not publish. Without
 		# it, browsers open WebSockets with the plain HTTP/1.1 upgrade.
@@ -38,11 +44,8 @@
 	}
 }
 
-# Every host name and IP address. The named address makes Caddy issue (and
-# renew) a certificate for UNOS_HOSTNAME; "https://" matches all other hosts.
-{$UNOS_HOSTNAME:unos}, https:// {
-	tls internal
-
+# The site's headers and routes, for both TLS sites below.
+(unos-site) {
 	header {
 		# Applied after reverse_proxy, so these values always win.
 		defer
@@ -73,6 +76,33 @@
 		file_server
 	}
 }
+
+# Caddy's local CA (ADR-0025). The named address makes Caddy issue (and renew)
+# a certificate for UNOS_HOSTNAME; "https://" matches all other hosts.
+(tls-local) {
+	{$UNOS_HOSTNAME:unos}, https:// {
+		tls internal
+		import unos-site
+	}
+}
+
+# The stored certificate that an administrator chose (ADR-0402): the supervisor
+# writes it with its chain and key into the one file of the served-certificate
+# volume (deploy/docker-compose.yml), which this container mounts read-only.
+# Every host name, IP address and client without a name gets it: no address
+# names UNOS_HOSTNAME, so Caddy manages no certificate of its own beside it.
+(tls-served) {
+	https:// {
+		tls /served-certificate/served.pem /served-certificate/served.pem
+		import unos-site
+	}
+}
+
+# UNOS_TLS=served once the web UI's command (deploy/docker-compose.yml) found
+# that the served file loads, and in the `caddy reload` that the supervisor runs
+# in this container after a change (supervisor/src/security/serving.py);
+# otherwise Caddy's local CA.
+import tls-{$UNOS_TLS:local}
 
 http:// {
 	# Health checks (install.sh, update.sh, monitors) keep working over HTTP.

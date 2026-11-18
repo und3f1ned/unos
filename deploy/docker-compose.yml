@@ -40,6 +40,10 @@ services:
       - UNOS_LOG_LEVEL=${UNOS_LOG_LEVEL:-INFO}
     volumes:
       - unos-data:/data
+      # The certificate that the web UI's Caddy serves when an administrator chose a stored one:
+      # one file, mode 0600, which only this container writes and only webui mounts besides
+      # (ADR-0402).
+      - served-certificate:/served-certificate
       - /var/run/docker.sock:/var/run/docker.sock
       - /etc/samba:/etc/samba
       - /etc/os-release:/host/os-release:ro
@@ -130,6 +134,8 @@ services:
     volumes:
       - caddy-data:/data
       - caddy-config:/config
+      # The served certificate that the supervisor writes (ADR-0402), read-only here.
+      - served-certificate:/served-certificate:ro
     # Not before the API answers: until then every request would fail with 502.
     depends_on:
       supervisor:
@@ -144,8 +150,11 @@ services:
     # try writes no file (-O /dev/null), and an error is printed only when it
     # differs from the one before: no log line per try (ADR-0214), and a cause
     # that stays shows in docker logs. $$ is the shell's $ (compose would fill
-    # in a single $ from the host's environment). Then the CMD of
-    # webui/Dockerfile: change both together.
+    # in a single $ from the host's environment). Then the TLS of webui/Caddyfile
+    # (ADR-0402): the served certificate when the supervisor wrote one and Caddy
+    # validates it, else Caddy's local CA, with one line that says why, so that a
+    # certificate that does not load never leaves the web UI without HTTPS; and
+    # the CMD of webui/Dockerfile: change both together.
     command:
       - /bin/sh
       - -c
@@ -153,6 +162,12 @@ services:
         until err=$$(wget -q -Y off -T 5 -O /dev/null http://supervisor:8080/api/v1/health 2>&1);
         do [ "$$err" = "$$last" ] || echo "unos-webui: waiting for the supervisor's API: $$err";
         last=$$err; sleep 2; done;
+        UNOS_TLS=local;
+        if [ -e /served-certificate/served.pem ]; then
+        if err=$$(UNOS_TLS=served caddy validate --config /etc/caddy/Caddyfile 2>&1); then UNOS_TLS=served;
+        else echo "unos-webui: the served certificate does not load, Caddy's local CA instead: $$(echo "$$err" | tail -n 1)";
+        fi; fi;
+        export UNOS_TLS;
         exec caddy run --config /etc/caddy/Caddyfile
     networks:
       unos-net:
@@ -172,6 +187,7 @@ volumes:
   unos-data:
   caddy-data:
   caddy-config:
+  served-certificate:
 
 networks:
   unos-net:

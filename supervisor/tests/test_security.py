@@ -125,12 +125,13 @@ class TestSecuritySchemas:
         assert cert.type == CertificateType.SELF_SIGNED
 
     def test_certificate_status_schema(self):
-        """The status names what browsers get: Caddy's local CA, whatever is stored (ADR-0357)."""
+        """The status names what browsers get, and which stored certificate was chosen (ADR-0402)."""
         from src.security.schemas import Certificate, CertificateStatus, CertificateType
 
-        assert CertificateStatus().model_dump(mode="json") == {"served_by": "caddy_local_ca"}
+        assert CertificateStatus(served_by="caddy_local_ca").model_dump(mode="json") == {
+            "served_by": "caddy_local_ca", "served_id": None, "chosen_id": None, "fingerprint": None}
         stored = Certificate(id="custom_nas.local", type=CertificateType.CUSTOM, domain="nas.local")
-        assert stored.served is False
+        assert (stored.served, stored.chosen, stored.expires_soon) == (False, False, False)
         assert "auto_renew" not in stored.model_dump()
 
     def test_self_signed_cert_request_schema(self):
@@ -297,7 +298,7 @@ SHA256 Fingerprint=AA:BB:CC:DD:EE:FF"""
 
     def test_nothing_reads_caddys_certificates(self):
         """caddy-data is mounted only into unos-webui (deploy/docker-compose.yml): the supervisor
-        has no directory of Caddy's certificates to read, and lists none (ADR-0357)."""
+        has no directory of Caddy's certificates to read, and lists none (ADR-0402)."""
         from src.security import router
 
         assert not hasattr(router, "CADDY_CERTS_DIR")
@@ -1045,29 +1046,41 @@ class TestStoredCertificates:
         assert sorted(path.name for path in upload_env.certs.iterdir()) == ["My NAS.crt"]
 
 
-# ==================== What browsers get (security.custom-certificates, ADR-0357) ====================
+# ==================== What browsers get (security.custom-certificates, ADR-0402) ====================
 
 @needs_openssl
 class TestCertificateStatusNamesWhatIsServed:
-    """Caddy serves only its local CA: nothing hands stored certificates to the web UI's
-    container (deploy/docker-compose.yml mounts caddy-data only there). The status says so, and a
-    stored certificate is listed as stored, not served (ADR-0357)."""
+    """A stored certificate is served only once an administrator chooses it: until then the web UI's
+    Caddy serves its local CA's, and the status and the listing say so, by what a TLS handshake
+    with Caddy shows (ADR-0402; tests/test_certificate_serving.py serves one)."""
+
+    LOCAL_CA = "00:11:22"
+
+    @pytest.fixture(autouse=True)
+    def caddy_serves_its_local_ca(self, monkeypatch):
+        from src.security import serving
+
+        def probe():
+            return self.LOCAL_CA
+
+        monkeypatch.setattr(serving, "probe_fingerprint", probe)
 
     def test_without_a_stored_certificate(self, upload_env, admin_api):
-        assert admin_api.get(f"{API}/status").json() == {"served_by": "caddy_local_ca"}
-        assert admin_api.get(API).json() == {"certificates": [], "served_by": "caddy_local_ca"}
+        local = {"served_by": "caddy_local_ca", "served_id": None, "chosen_id": None, "fingerprint": self.LOCAL_CA}
+        assert admin_api.get(f"{API}/status").json() == local
+        assert admin_api.get(API).json() == {"certificates": [], "status": local}
 
     def test_a_stored_certificate_is_not_named_as_served(self, upload_env, admin_api):
         # A valid certificate, which the status used to name as the active one.
         assert _upload(admin_api, TEST_CERTIFICATE).status_code == 200
 
-        assert admin_api.get(f"{API}/status").json() == {"served_by": "caddy_local_ca"}
+        assert admin_api.get(f"{API}/status").json()["served_by"] == "caddy_local_ca"
         listing = admin_api.get(API).json()
-        assert listing["served_by"] == "caddy_local_ca"
+        assert listing["status"]["served_by"] == "caddy_local_ca"
         [cert] = listing["certificates"]
-        assert (cert["id"], cert["is_valid"], cert["served"]) == ("custom_nas.local", True, False)
+        assert (cert["id"], cert["is_valid"], cert["served"], cert["chosen"]) == ("custom_nas.local", True, False, False)
         assert set(cert) == {"id", "type", "domain", "issuer", "valid_from", "valid_until",
-                             "is_valid", "served", "fingerprint"}
+                             "is_valid", "expires_soon", "served", "chosen", "fingerprint"}
 
 
 def _on_event_loop() -> bool:
@@ -1157,7 +1170,7 @@ class TestOpensslRunsOffTheEventLoop:
 class TestCertificateFilesFollowNoLink:
     """A symbolic link at a certificate's file path is not followed: the new file is renamed over
     the link, or the link is removed with the stale chain, and the link's target stays as it was
-    (ADR-0042, ADR-0357)."""
+    (ADR-0042, ADR-0402)."""
 
     @pytest.fixture
     def victim(self, certs):
@@ -1324,7 +1337,7 @@ class TestCertificateErrorAnswers:
         assert (certs.dir / "nas.local.crt").read_text() == "CERT"
 
 
-# ==================== Stores and deletes (security.custom-certificates, ADR-0357) ====================
+# ==================== Stores and deletes (security.custom-certificates, ADR-0402) ====================
 
 def _upload_without_chain(monkeypatch, admin_api, common_name: str):
     """Upload a certificate and its key, without a chain, whose subject CN is ``common_name``."""
@@ -1389,7 +1402,7 @@ class TestCertificateStoreIsAtomic:
 
 class TestCertificateStoresAndDeletesDoNotMix:
     """Stores and deletes run in worker threads (ADR-0021) and hold one lock, so that two of them
-    never leave the certificate of one beside the key of another (ADR-0357)."""
+    never leave the certificate of one beside the key of another (ADR-0402)."""
 
     @pytest.fixture
     def paused(self, monkeypatch):

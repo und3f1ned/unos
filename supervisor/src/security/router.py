@@ -15,6 +15,7 @@ from pydantic import TypeAdapter
 from sqlalchemy import select, func, desc, text
 
 from .. import state_files
+from . import serving
 from ..audit.changes import audit_change
 from ..audit.schemas import AuditAction, AuditSeverity
 from ..database import get_db
@@ -32,7 +33,7 @@ from .schemas import (
     FirewallRule, FirewallStatus, FirewallRuleCreate, FirewallAction,
     FirewallDirection, FirewallProtocol,
     Certificate, CertificateListResponse, CertificateType, CertificateStatus,
-    CertificateUpload, SelfSignedCertRequest,
+    CertificateUpload, SelfSignedCertRequest, ServeCertificateResponse, ServedCertificate,
     MAX_CERTIFICATE_NAME_LENGTH, is_dns_hostname, parse_ip_address, validate_certificate_domain,
 )
 
@@ -40,12 +41,16 @@ router = APIRouter(prefix="/security", tags=["security"])
 logger = logging.getLogger(__name__)
 
 FIREWALL_RULES_FILE = "/data/firewall_rules.json"
-# Uploaded and self-signed certificates. Stored, not served: Caddy serves the certificate of its
-# local CA, in the web UI's container, which has no access to this directory (ADR-0357).
+# Uploaded and self-signed certificates. The web UI's container cannot read this directory: the one
+# an administrator chooses is copied, with its chain and key, into the served file of
+# src/security/serving.py, which Caddy loads (ADR-0402).
 CERTS_DIR = "/data/certs"
-# Held by every store and delete of the stored certificates, which run in worker threads: two of
-# them never mix their files (ADR-0357).
+# Held by every store and delete of the stored certificates and every change of the served one,
+# which run in worker threads: two of them never mix their files, and the served certificate is
+# never replaced or deleted beside a reload of Caddy (ADR-0402).
 _CERTIFICATES_LOCK = threading.Lock()
+# The id that stands for Caddy's local CA in POST /certificates/{cert_id}/serve and the audit log.
+LOCAL_CA_ID = ServedCertificate.CADDY_LOCAL_CA.value
 # How long openssl may take, in a worker thread (ADR-0021): reading a certificate takes well under
 # a second, making a 2048-bit RSA key a few seconds on a slow board.
 OPENSSL_READ_TIMEOUT = 10
@@ -146,8 +151,7 @@ async def clear_login_history(
 
 
 # ==================== Firewall Management ====================
-# Firewall and certificate changes write no audit entry, and AuditAction has no action for them
-# (ADR-0359).
+# Firewall changes write no audit entry, and AuditAction has no action for them (ADR-0359).
 
 _FIREWALL_RULES = TypeAdapter(list[FirewallRule])
 
@@ -466,7 +470,9 @@ def _store_certificate(name: str, certificate: str, key: str, chain: str | None 
     has succeeded are they renamed over the stored files, and a stored chain is removed when none
     is given, as it belonged to the replaced certificate. A failed write leaves the stored files as
     they were and no temporary file. A rename replaces a symbolic link at a file's path, never its
-    target (ADR-0042). Holds _CERTIFICATES_LOCK: blocking, call it in a worker thread (ADR-0357).
+    target (ADR-0042). CertificateServed, and nothing written, when the certificate stored under
+    ``name`` is the served one (ADR-0402). Holds _CERTIFICATES_LOCK: blocking, call it in a worker
+    thread.
     """
     cert_file, key_file, chain_file = _certificate_files(name)
     files = [
@@ -476,6 +482,8 @@ def _store_certificate(name: str, certificate: str, key: str, chain: str | None 
     if chain:
         files.append((chain_file, lambda path: _write_certificate_file(path, chain, 0o644)))
     with _CERTIFICATES_LOCK:
+        if _is_chosen(name):
+            raise CertificateServed(name)
         cert_file.parent.mkdir(parents=True, exist_ok=True)
         staged: list[tuple[Path, Path]] = []
         try:
@@ -492,20 +500,180 @@ def _store_certificate(name: str, certificate: str, key: str, chain: str | None 
                 temporary.unlink(missing_ok=True)
 
 
-def _delete_certificate_files(name: str) -> bool:
-    """Remove the stored files of the certificate ``name``; False when none is stored under it.
+class CertificateServed(Exception):
+    """The certificate stored under a name is the served one: it is neither replaced nor, without
+    Caddy's local CA first, deleted (ADR-0402)."""
 
-    Holds _CERTIFICATES_LOCK, so that a store of the same name in between leaves no key without its
-    certificate: blocking, call it in a worker thread (ADR-0357).
+    def __init__(self, name: str):
+        super().__init__(f"{name} is the chosen served certificate: serve another certificate or Caddy's local CA "
+                         "before you replace it")
+
+
+def _read_stored(path: Path) -> bytes | None:
+    """A stored file's bytes; None when there is none (a symbolic link at its path is not followed)."""
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    except FileNotFoundError:
+        return None
+    with os.fdopen(fd, "rb") as fh:
+        return fh.read()
+
+
+def _stored_names() -> list[str]:
+    """The names of the stored certificates: those an upload or a generation stores, as listed."""
+    certs_path = Path(CERTS_DIR)
+    if not certs_path.exists():
+        return []
+    return sorted(p.stem for p in certs_path.glob("*.crt") if _uploaded_certificate_name(p.stem) == p.stem)
+
+
+def _stored_fingerprint(name: str) -> str | None:
+    """The SHA-256 fingerprint of the certificate stored under ``name``, read by cryptography."""
+    try:
+        pem = _read_stored(_certificate_files(name)[0])
+    except OSError:
+        return None
+    return serving.leaf_fingerprint(pem) if pem else None
+
+
+def _is_chosen(name: str) -> bool:
+    """Whether the served file holds the certificate stored under ``name``."""
+    served = serving.read_served()
+    if served is None:
+        return False
+    chosen = serving.leaf_fingerprint(served)
+    return chosen is not None and chosen == _stored_fingerprint(name)
+
+
+def _served_and_stored_fingerprints() -> tuple[str | None, dict[str, str]]:
+    """The fingerprint of the served file's certificate, and of each stored certificate by its id.
+    Blocking: call it in a worker thread."""
+    served = serving.read_served()
+    stored = {}
+    for name in _stored_names():
+        found = _stored_fingerprint(name)
+        if found:
+            stored[f"custom_{name}"] = found
+    return (serving.leaf_fingerprint(served) if served else None), stored
+
+
+async def _certificate_status() -> CertificateStatus:
+    """What browsers get, as a TLS handshake with the web UI's Caddy shows it, and the stored
+    certificate an administrator chose, as the served file holds it (ADR-0402).
+
+    A certificate that is neither a stored one nor the chosen one is taken for the local CA's: the
+    two sites of webui/Caddyfile serve nothing else. Every change of the served certificate, the
+    delete of the one Caddy serves included, reloads Caddy first, so that Caddy does not keep
+    serving a certificate that is no longer stored.
+    """
+    probed = await asyncio.to_thread(serving.probe_fingerprint)
+    chosen, stored = await asyncio.to_thread(_served_and_stored_fingerprints)
+    chosen_id = next((cert_id for cert_id, found in stored.items() if found == chosen), None) if chosen else None
+    if probed is None:
+        return CertificateStatus(served_by=ServedCertificate.UNKNOWN, chosen_id=chosen_id)
+    served_id = next((cert_id for cert_id, found in stored.items() if found == probed), None)
+    if served_id or probed == chosen:
+        return CertificateStatus(served_by=ServedCertificate.STORED_CERTIFICATE, served_id=served_id,
+                                 chosen_id=chosen_id, fingerprint=probed)
+    return CertificateStatus(served_by=ServedCertificate.CADDY_LOCAL_CA, chosen_id=chosen_id, fingerprint=probed)
+
+
+def _caddy_takes(tls: str, previous: bytes | None, *, file_changed: bool) -> None:
+    """Reload Caddy with UNOS_TLS=``tls``. When Caddy refused it, or Docker could not run it, put
+    the served file back as it was (``previous``, or none) if the request changed it, so that the
+    file holds what Caddy still serves, and raise. When Docker did not answer in time (Caddy may
+    have loaded it), the file stays as the request wrote it."""
+    try:
+        serving.reload_caddy(tls)
+    except serving.CaddyTimedOut:
+        raise
+    except BaseException:
+        if file_changed:
+            if previous is None:
+                serving.remove_served()
+            else:
+                serving.write_served(previous)
+        raise
+
+
+def _serve_stored(name: str) -> tuple[bool, serving.Prepared]:
+    """Serve the certificate stored under ``name``: check it, write the served file and reload
+    Caddy. Whether that changed anything, and what was checked: nothing changes when the file holds
+    it and Caddy serves it, or cannot be asked (a TLS handshake under the lock, so that two requests
+    never both reload). Raises FileNotFoundError without one, CertificateRefused, CaddyRefused or
+    CaddyUnreachable (the served file then as before). Holds _CERTIFICATES_LOCK: blocking, call it
+    in a worker thread.
     """
     cert_file, key_file, chain_file = _certificate_files(name)
     with _CERTIFICATES_LOCK:
+        certificate, key = _read_stored(cert_file), _read_stored(key_file)
+        if certificate is None:
+            raise FileNotFoundError(cert_file)
+        if key is None:
+            raise serving.CertificateRefused("Its private key is not stored")
+        prepared = serving.prepare(certificate, key, _read_stored(chain_file))
+        previous = serving.read_served()
+        file_changed = previous != prepared.bundle
+        if not file_changed:
+            probed = serving.probe_fingerprint()
+            if probed is None or probed == prepared.fingerprint:
+                return False, prepared
+        else:
+            serving.write_served(prepared.bundle)
+        _caddy_takes("served", previous, file_changed=file_changed)
+        return True, prepared
+
+
+def _serve_local_ca() -> bool:
+    """Serve Caddy's local CA: remove the served file and reload Caddy. False when nothing changed:
+    there is no served file and Caddy serves no stored certificate, or cannot be asked. Holds
+    _CERTIFICATES_LOCK: blocking, call it in a worker thread.
+    """
+    with _CERTIFICATES_LOCK:
+        previous = serving.read_served()
+        if previous is None:
+            _, stored = _served_and_stored_fingerprints()
+            if serving.probe_fingerprint() not in stored.values():
+                return False
+        serving.remove_served()
+        _caddy_takes("local", previous, file_changed=previous is not None)
+        return True
+
+
+def _delete_certificate_files(name: str) -> tuple[bool, str | None]:
+    """Remove the stored files of the certificate ``name``: whether one was stored under it, and the
+    id of what Caddy serves instead when it served this one (ADR-0402): caddy_local_ca when it was
+    the chosen one, whose served file goes, else the chosen certificate's (a reload that Docker did
+    not answer in time, which Caddy then loaded, can leave Caddy serving a certificate that the
+    served file does not hold). When Caddy does not take that, CaddyRefused or CaddyUnreachable, and
+    nothing is deleted.
+
+    Holds _CERTIFICATES_LOCK, so that a store of the same name in between leaves no key without its
+    certificate: blocking, call it in a worker thread.
+    """
+    cert_file, key_file, chain_file = _certificate_files(name)
+    instead = None
+    with _CERTIFICATES_LOCK:
         if not cert_file.exists():
-            return False
+            return False, None
+        previous = serving.read_served()
+        if _is_chosen(name):
+            serving.remove_served()
+            _caddy_takes("local", previous, file_changed=True)
+            instead = LOCAL_CA_ID
+        elif (stored := _stored_fingerprint(name)) is not None and serving.probe_fingerprint() == stored:
+            _caddy_takes("local" if previous is None else "served", previous, file_changed=False)
+            instead = _chosen_id() or LOCAL_CA_ID
         cert_file.unlink(missing_ok=True)
         key_file.unlink(missing_ok=True)
         chain_file.unlink(missing_ok=True)
-    return True
+    return True, instead
+
+
+def _chosen_id() -> str | None:
+    """The id of the stored certificate that the served file holds."""
+    chosen, stored = _served_and_stored_fingerprints()
+    return next((cert_id for cert_id, found in stored.items() if found == chosen), None) if chosen else None
 
 
 def _openssl_error(error: Exception) -> str:
@@ -559,7 +727,7 @@ def _certificate_info(source: list[str], pem: str | None = None) -> dict | None:
         # Get subject, issuer, dates
         result = subprocess.run(
             ["openssl", "x509", *source, "-noout",
-             "-subject", "-issuer", "-dates", "-fingerprint"],
+             "-subject", "-issuer", "-dates", "-fingerprint", "-sha256"],
             input=pem,
             capture_output=True,
             text=True,
@@ -629,11 +797,13 @@ def openssl_time(text: str) -> datetime | None:
 
 
 def get_custom_certificates() -> list[Certificate]:
-    """The stored certificates (uploaded or self-signed), none of them served (ADR-0357).
+    """The stored certificates (uploaded or self-signed), without what is served of them, which the
+    list's status adds (ADR-0402).
 
     Runs openssl for each: call this in a worker thread.
     """
     certs = []
+    now = datetime.now(timezone.utc)
     certs_path = Path(CERTS_DIR)
 
     if not certs_path.exists():
@@ -649,14 +819,17 @@ def get_custom_certificates() -> list[Certificate]:
             # Self-signed: the issuer is the subject. Comparing the issuer's O or CN with the
             # subject's CN took one made with an organization for a custom certificate.
             is_self_signed = bool(info.get("subject_name")) and info.get("issuer_name") == info.get("subject_name")
+            valid_until = info.get("valid_until")
             certs.append(Certificate(
                 id=f"custom_{cert_file.stem}",
                 type=CertificateType.SELF_SIGNED if is_self_signed else CertificateType.CUSTOM,
                 domain=info.get("domain") or cert_file.stem,
                 issuer=info.get("issuer"),
                 valid_from=info.get("valid_from"),
-                valid_until=info.get("valid_until"),
+                valid_until=valid_until,
                 is_valid=info.get("is_valid", False),
+                expires_soon=bool(info.get("is_valid") and valid_until
+                                  and valid_until - now <= timedelta(days=serving.EXPIRY_WARNING_DAYS)),
                 fingerprint=info.get("fingerprint")
             ))
 
@@ -665,44 +838,99 @@ def get_custom_certificates() -> list[Certificate]:
 
 @router.get("/certificates", response_model=CertificateListResponse)
 async def list_certificates(_: User = Depends(require_admin)):
-    """The stored certificates, and what browsers get instead of them (ADR-0357)."""
+    """The stored certificates, which of them browsers get and which was chosen (ADR-0402)."""
     try:
         certificates = await asyncio.to_thread(get_custom_certificates)
     except (OSError, subprocess.SubprocessError) as e:
         raise HTTPException(500, f"Failed to read the stored certificates: {_openssl_error(e)}")
-    return CertificateListResponse(certificates=certificates)
+    status = await _certificate_status()
+    for certificate in certificates:
+        certificate.served = certificate.id == status.served_id
+        certificate.chosen = certificate.id == status.chosen_id
+    return CertificateListResponse(certificates=certificates, status=status)
 
 
 @router.get("/certificates/status", response_model=CertificateStatus)
 async def get_certificate_status(_: User = Depends(require_admin)):
-    """What browsers get from https://<host>/: the certificate of Caddy's local CA (ADR-0025).
+    """What browsers get from https://<host>/, as a TLS handshake with the web UI's Caddy shows
+    it, and the stored certificate an administrator chose (ADR-0402)."""
+    return await _certificate_status()
 
-    Caddy runs in the web UI's container, the only one with its data (deploy/docker-compose.yml),
-    and nothing hands it a stored certificate (ADR-0357).
+
+def _serve_refusal(what: str, error: Exception) -> HTTPException:
+    """The answer to a change of the served certificate that Caddy did not take or could not get."""
+    if isinstance(error, serving.CaddyRefused):
+        return HTTPException(502, f"Caddy did not load {what} and serves what it served before: {error}")
+    return HTTPException(503, f"The web UI's Caddy cannot be reached: {error}")
+
+
+@router.post("/certificates/{cert_id}/serve", response_model=ServeCertificateResponse)
+async def serve_certificate(cert_id: str, request: Request, current_user: User = Depends(require_admin)):
+    """Make the stored certificate ``cert_id`` the one that the web UI's Caddy serves, or, with
+    caddy_local_ca, the certificate of Caddy's local CA again (ADR-0402). Admin only.
+
+    A stored certificate is checked first (src/security/serving.py's prepare): one that fails the
+    checks is refused with 409 and reaches no Caddy. A change that Caddy does not take answers 502,
+    one that cannot reach it 503; Caddy then serves what it served, and the served file holds it.
+    Writes the served file and the audit log only on a real change.
     """
-    return CertificateStatus()
+    if cert_id == LOCAL_CA_ID:
+        name = None
+    else:
+        name = cert_id.removeprefix("custom_")
+        if not cert_id.startswith("custom_") or _uploaded_certificate_name(name) != name:
+            raise HTTPException(400, "Invalid certificate id")
+    prepared = None
+    try:
+        if name is None:
+            changed = await asyncio.to_thread(_serve_local_ca)
+        else:
+            changed, prepared = await asyncio.to_thread(_serve_stored, name)
+    except FileNotFoundError:
+        raise HTTPException(404, "Certificate not found") from None
+    except serving.CertificateRefused as e:
+        raise HTTPException(409, f"{name} cannot be served: {e}") from None
+    except (serving.CaddyRefused, serving.CaddyUnreachable) as e:
+        what = name if name else "its local CA's certificate"
+        logger.warning("Caddy did not take %s: %s", name or "its local CA", e)
+        raise _serve_refusal(what, e) from None
+    except Exception as e:
+        logger.exception("Could not change the served certificate")
+        raise HTTPException(500, f"Failed to change the served certificate: {e}") from None
+    if changed:
+        if name is None:
+            details = "Browsers get the certificate of Caddy's local CA"
+        else:
+            details = f"Browsers get the stored certificate {name}, until {prepared.not_after:%Y-%m-%d}"
+            if prepared.expires_soon:
+                details += f"; it expires within {serving.EXPIRY_WARNING_DAYS} days"
+        await audit_change(AuditAction.SSL_CERT_SERVED, request, current_user.username,
+                           resource_type="certificate", resource_id=cert_id, details=details)
+    return ServeCertificateResponse(changed=changed, expires_soon=bool(prepared and prepared.expires_soon),
+                                    status=await _certificate_status())
 
 
 @router.post("/certificates/self-signed")
 async def generate_self_signed_certificate(
-    request: SelfSignedCertRequest,
+    data: SelfSignedCertRequest,
+    request: Request,
     current_user: User = Depends(require_admin)
 ):
-    """Generate a self-signed certificate. Admin only."""
+    """Generate a self-signed certificate. Admin only. 409 when it would replace the served one."""
     # The schema only accepts a host name or an IP address short enough for a
     # subject CN (and so for the file names), so the domain can name files in
     # CERTS_DIR and go into -subj and -addext as it is; and an organization and
     # a country that X.509 allows.
-    domain = request.domain
+    domain = data.domain
     san = f"IP:{domain}" if parse_ip_address(domain) is not None else f"DNS:{domain}"
 
     try:
         # Build subject string
         subject = f"/CN={domain}"
-        if request.organization:
-            subject += f"/O={_subject_value(request.organization)}"
-        if request.country:
-            subject += f"/C={_subject_value(request.country)}"
+        if data.organization:
+            subject += f"/O={_subject_value(data.organization)}"
+        if data.country:
+            subject += f"/C={_subject_value(data.country)}"
 
         # Generate self-signed certificate. openssl prints the new key and then
         # the certificate, which are stored like uploaded ones once openssl has
@@ -714,7 +942,7 @@ async def generate_self_signed_certificate(
             subprocess.run,
             [
                 "openssl", "req", "-x509", "-nodes", "-utf8",
-                "-days", str(request.validity_days),
+                "-days", str(data.validity_days),
                 "-newkey", "rsa:2048",
                 "-keyout", "-",
                 "-subj", subject,
@@ -730,25 +958,30 @@ async def generate_self_signed_certificate(
         if key is None or certificate is None:
             raise HTTPException(500, "Failed to generate certificate: openssl printed no key or no certificate")
         await asyncio.to_thread(_store_certificate, domain, certificate, key)
-
-        return {
-            "status": "ok",
-            "message": "Self-signed certificate generated",
-            "certificate_id": f"custom_{domain}"
-        }
     except HTTPException:
         raise
+    except CertificateServed as e:
+        raise HTTPException(409, str(e)) from None
     except Exception as e:
         logger.exception("Could not generate self signed certificate")
         raise HTTPException(500, f"Failed to generate certificate: {_openssl_error(e)}")
+    await audit_change(AuditAction.SSL_CERT_GENERATED, request, current_user.username,
+                       resource_type="certificate", resource_id=f"custom_{domain}",
+                       details=f"A self-signed certificate for {domain}, valid for {data.validity_days} days")
+    return {
+        "status": "ok",
+        "message": "Self-signed certificate generated",
+        "certificate_id": f"custom_{domain}"
+    }
 
 
 @router.post("/certificates/upload")
 async def upload_certificate(
     data: CertificateUpload,
+    request: Request,
     current_user: User = Depends(require_admin)
 ):
-    """Upload a custom SSL/TLS certificate. Admin only."""
+    """Upload a custom SSL/TLS certificate. Admin only. 409 when it would replace the served one."""
     try:
         # Validate and parse the certificate to get domain. openssl reads it
         # on its standard input: no temporary file to leave in /tmp on errors.
@@ -778,26 +1011,32 @@ async def upload_certificate(
 
         await asyncio.to_thread(_store_certificate, domain, data.certificate, data.private_key,
                                 data.chain)
-
-        return {
-            "status": "ok",
-            "message": "Certificate uploaded successfully",
-            "certificate_id": f"custom_{domain}",
-            "domain": domain
-        }
     except HTTPException:
         raise
+    except CertificateServed as e:
+        raise HTTPException(409, str(e)) from None
     except Exception as e:
         logger.exception("Could not upload certificate")
         raise HTTPException(500, f"Failed to upload certificate: {_openssl_error(e)}")
+    await audit_change(AuditAction.SSL_CERT_UPLOADED, request, current_user.username,
+                       resource_type="certificate", resource_id=f"custom_{domain}",
+                       details=f"A certificate for {domain}" + (" with its chain" if data.chain else ""))
+    return {
+        "status": "ok",
+        "message": "Certificate uploaded successfully",
+        "certificate_id": f"custom_{domain}",
+        "domain": domain
+    }
 
 
 @router.delete("/certificates/{cert_id}")
 async def delete_certificate(
     cert_id: str,
+    request: Request,
     current_user: User = Depends(require_admin)
 ):
-    """Delete a custom certificate. Admin only."""
+    """Delete a custom certificate. Admin only. The served one is replaced by Caddy's local CA
+    first (ADR-0402): when Caddy does not take it, 502 or 503, and nothing is deleted."""
     if not cert_id.startswith("custom_"):
         raise HTTPException(400, "Can only delete custom certificates")
 
@@ -808,12 +1047,23 @@ async def delete_certificate(
         raise HTTPException(400, "Invalid certificate id")
 
     try:
-        deleted = await asyncio.to_thread(_delete_certificate_files, name)
+        deleted, instead = await asyncio.to_thread(_delete_certificate_files, name)
+    except (serving.CaddyRefused, serving.CaddyUnreachable) as e:
+        logger.warning("Caddy did not take its local CA for the delete of %s: %s", name, e)
+        raise _serve_refusal("its local CA's certificate", e) from None
     except Exception as e:
         logger.exception("Could not delete certificate")
         raise HTTPException(500, f"Failed to delete certificate: {str(e)}")
     if not deleted:
         raise HTTPException(404, "Certificate not found")
+    if instead:
+        what = "the certificate of Caddy's local CA" if instead == LOCAL_CA_ID else \
+            f"the chosen stored certificate {instead.removeprefix('custom_')}"
+        await audit_change(AuditAction.SSL_CERT_SERVED, request, current_user.username,
+                           resource_type="certificate", resource_id=instead,
+                           details=f"Browsers get {what}: the served {name} was deleted")
+    await audit_change(AuditAction.SSL_CERT_DELETED, request, current_user.username,
+                       resource_type="certificate", resource_id=cert_id)
     return {"status": "ok", "message": "Certificate deleted"}
 
 
