@@ -59,9 +59,9 @@ def host(monkeypatch):
     return set_platform
 
 
-# The images whose registry lists no Linux platform at all: Readarr's tag has an empty index (the
-# project is retired), so no host can pull it. The set may only shrink.
-PUBLISH_NOTHING = {"lscr.io/linuxserver/readarr:develop"}
+# The images whose registry lists no Linux platform at all, which no host can pull. The set may only
+# shrink: it held Readarr's tag, an empty index, until Readarr left the catalog (ADR-0410).
+PUBLISH_NOTHING: set[str] = set()
 
 
 class TestRecordedPlatforms:
@@ -77,7 +77,7 @@ class TestRecordedPlatforms:
     def test_every_template_lists_the_platforms_of_its_image(self):
         without = {t.id for t in APP_CATALOG if not t.platforms}
 
-        assert without == {"readarr"}
+        assert without == set()
         assert all(p.startswith("linux/") for t in APP_CATALOG for p in t.platforms)
 
     def test_every_companion_lists_the_platforms_of_its_image(self):
@@ -255,7 +255,7 @@ class TestInstallRefusal:
 
         assert response.status_code == 409
         detail = response.json()["detail"]
-        assert "Plex" in detail and "linux/riscv64" in detail and "plexinc/pms-docker:latest" in detail
+        assert "Plex" in detail and "linux/riscv64" in detail and get_app_by_id("plex").image in detail
         assert docker_client.mock_calls == []
 
     def test_a_companion_without_the_platform_refuses_the_whole_app(

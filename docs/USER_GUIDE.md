@@ -1430,6 +1430,11 @@ available for linux/riscv64** (or your platform) on its card, and its details gi
 reason and no **Install**: the server refuses its install before it downloads anything. The
 **Installed** tab is the same on every platform.
 
+Every app's image is pinned: UNOS installs the version that its catalog names
+(the version on the app's card and in its details), by its digest, whatever
+the publisher's tags name later. A newer UNOS that pins a newer version offers
+it as an update (see [Updating an App](#updating-an-app)).
+
 Only one app installs at a time: while an install runs, the App Store offers
 no other install until it has ended.
 
@@ -1442,17 +1447,15 @@ Before it downloads anything, the install checks that:
   the **Ports** tab. Home Assistant and Scrypted run in the NAS's own network
   and listen on its ports, which cannot be changed: stop the program or remove
   the container that the message names;
-- the system disk has at least 2 GiB free, whatever the app. For an app whose
-  images UNOS pins (Immich), the 2 GiB must also stay free once the images it
-  lacks are downloaded, each counted with its known size; the size of any
-  other app's images is not known before the download, so only the 2 GiB
-  count. When there is too little space, remove unused images on
-  **Containers** > **Images** first.
+- the system disk keeps at least 2 GiB free once the images that the app lacks
+  are downloaded, each counted with its estimated size: four times the download
+  of its larger build for 64-bit ARM and x86 PCs, whatever your NAS's platform,
+  so the estimate errs high (Ollama's is about 13.6 GB, Frigate's 8.6 GB). When
+  there is too little space, remove unused images on **Containers** >
+  **Images** first.
 
-Downloading an app's images can take several minutes. A pinned image (one of
-Immich's) that the NAS already has shows as **Already on the NAS** and is not
-downloaded again; any other app's image is asked for again, and only the layers
-that the NAS lacks are downloaded. A download that makes no progress at all for
+Downloading an app's images can take several minutes. An image that the NAS
+already has shows as **Already on the NAS** and is not downloaded again. A download that makes no progress at all for
 10 minutes is stopped, and the install fails with a message that says so:
 install the app again to try once more.
 Starting or restarting an app from UNOS fails while its data folders are not on
@@ -1629,11 +1632,11 @@ are started and stopped on the **Containers** page.
 
 ### Updating an App
 
-An app whose catalog pins its images by digest, such as Immich, can be updated
-in place when a newer UNOS brings a catalog that pins newer images for it: its
-card on the **Installed** tab then shows **Update to** and the version. Apps
-whose images float on a tag (`latest`, as Transmission's) are not offered an
-update; uninstall and install them again, which keeps their data.
+An installed app can be updated in place when a newer UNOS brings a catalog
+that pins newer images for it: its card on the **Installed** tab then shows
+**Update to** and the version. Every app of the catalog pins its images by
+digest; an app installed from a floating tag (`latest`) before its catalog
+pinned it is offered the pinned version the same way.
 
 **Update to** opens a dialog that shows, before anything changes:
 

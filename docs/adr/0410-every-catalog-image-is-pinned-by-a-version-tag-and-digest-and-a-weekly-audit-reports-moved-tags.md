@@ -1,0 +1,32 @@
+---
+status: accepted
+date: 2026-11-18
+area: apps
+decided-by: agent
+---
+
+# ADR-0410: Every image of the catalog is pinned by a version tag and its index digest, and a weekly audit reports the tags that moved
+
+## Context
+
+ADR-0381 pinned the images of Immich and left the 66 other templates on floating tags in `UNPINNED_TEMPLATES`, for `apps.pinned-catalog-images` to empty. A floating tag installs whatever its publisher pushed that day, is never offered an update (ADR-0408), and escapes the install's check that every `VOLUME` lies on the pool or in RAM, which only reads a pinned image. Readarr's tag names an empty index: the project is retired and no host can pull it (ADR-0403). The owner delegated the choices, asking above all that it be safe.
+
+## Decision
+
+- **Every image is pinned.** `supervisor/src/apps/catalog.py` gives each app of one container a `PinnedImage` in `APP_IMAGES`, by template id, and the template takes its `image` (`name:tag@sha256:<index digest>`) and its `version` (the tag) from it; `PINNED_IMAGES` holds those and Immich's five. `UNPINNED_TEMPLATES` is removed instead of left empty (ADR-0207): `supervisor/tests/test_apps.py` fails for an image of a template, a companion or a hardware profile that is not in `PINNED_IMAGES`.
+- **The tag.** The publisher's most specific tag for the build that the template's floating tag named on 2026-11-18, read from the registries anonymously (HEAD and GET of manifests and configurations, no pull): a version (`2.14.3`, `v0.107.80`), LinuxServer's `<version>-ls<build>` (transmission's `4.1.4-r0-ls370`), never `latest`, a channel, a branch or a bare major line (a test). Where no such tag named that index, the newest release of the same line takes its own index: Open WebUI `v0.13.4` (its `main` is the branch), Netdata `v2.12.3` (its `latest` was `edge`), Glances `4.5.9-full`, LocalAI `v3.12.1-aio-cpu` and Uptime Kuma `2.5.12`. Traefik keeps its line tag `v3.7`: the index of `v3.7.19` names the same images but lacks the linux/riscv64 one, and the catalog keeps the platforms it had. Trilium's floating `zadam/trilium:latest` mirrors TriliumNext's stable release: it is pinned as `triliumnext/trilium:v0.107.0`, the same index. Traefik moves from v3.0 to v3.7.
+- **Immich's digests are unchanged.** The dev device runs Immich and must never be updated: Valkey's tag `9`, which has moved since Immich's docker-compose.yml pinned it, becomes `9.1.2`, the version tag that names the same index, so that the audit does not report it; ADR-0408's update compares digests only, and nothing is offered.
+- **What each pin records.** `disk_bytes`, the estimate for the space check (ADR-0381): four times the compressed layers of the larger of its linux/arm64 and linux/amd64 images, as Immich's measured pins are about four times their arm64 layers; it errs high, so that the check refuses rather than fills the system disk. `volumes`, the `VOLUME`s its configuration declares, the same on every platform: a test fails for one that is not at or under a bind on the pool or a tmpfs of its container. Two templates gained binds for it, Homarr's database (`/data`) and LocalAI's `/backends` and `/configuration`, under `{pool}/apps/<id>/`; without them their install would answer 500 after the pull. A digest's content never changes, so the record is checked once, when the pin is written.
+- **The platforms** of `supervisor/src/apps/image_platforms.json` are recorded for the pinned digests (ADR-0403); no app's availability changed on linux/arm64, linux/amd64 or linux/riscv64.
+- **Readarr leaves the catalog**: it has no image to pin, and no host could install it.
+- **The weekly audit.** `scripts/catalog-platforms.py tags` (`make catalog-tags`, the `tags` job of `.github/workflows/audit.yml`, ADR-0218) asks each registry with HEAD, anonymously, which index the pinned tag names now, and fails for each image whose tag names another one, with the templates that run it, both digests and whether the pinned index is still served (an install of a gone one fails); an image without a tag and a digest, a tag it cannot read and a pinned index whose registry answers anything but 200 or 404 are errors, never a pass. HEAD requests do not count against Docker Hub's anonymous limit. The Audit workflow stays on while CI is off (ADR-0230), and `make catalog-tags` runs the same check by hand. A moved tag is a signal to review, never an automatic re-pin: the new index's platforms, `VOLUME`s and size are read and pinned by hand, which offers installed apps the update of ADR-0408. Immich's five pins move only together, with an Immich release (ADR-0381), never for one moved tag of its Postgres or Valkey: a re-pin offers the dev device's Immich an update. Traefik's line tag moves with each of its patch releases, which the audit reports as well.
+
+## Consequences
+
+- An install pulls by digest the image that was reviewed, on every host, and every installed app of the catalog can be offered an update to a newer pin. Transmission on the dev device, installed from `latest`, is offered `4.1.4-r0-ls370`.
+- Pins age: an image gets its publisher's security fixes only when someone re-pins it. A version tag that a publisher rebuilds (Docker's official images such as `eclipse-mosquitto`, `traefik` and `valkey`) moves, and the audit reports it; LinuxServer's build tags do not.
+- The floating-tag paths of the install, the space check and the update stay for a template that is not pinned; the catalog has none, and their removal is the ledger entry `apps.no-floating-image-paths`.
+- `UNPINNED_TEMPLATES` and the test that held it to its first ids are gone; so is Readarr's empty record, and `apps.catalog-platforms`' device check has no app that lacks linux/arm64 left to refuse.
+- The platforms check of ADR-0403 now reads immutable indexes: it fails only for a pin whose record was not rewritten, or an index that its registry no longer serves; a publisher that adds a platform shows as a moved tag.
+- The space check refuses more installs than before, when the system disk is small: Ollama's estimate is about 13.6 GB, Frigate's 8.6 GB and Open WebUI's 6.6 GB, the larger of their arm64 and amd64 images on every host.
+- `apps.update-in-place`'s device check finds transmission offered `4.1.4-r0-ls370` after the deploy: its refusal of an update of a floating tag no longer applies there, and a POST of the update starts a real one.

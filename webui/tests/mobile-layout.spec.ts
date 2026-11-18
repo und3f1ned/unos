@@ -1523,12 +1523,17 @@ const VIEWS: View[] = [
     end: dialogEnd,
   },
   {
-    // Its image, ghcr.io/blakeblackshear/frigate:stable, has no hyphen to break at.
+    // Its image, pinned by tag and digest (ADR-0410), has no hyphen to break at in its 64 hex digits.
     name: 'Dialog: an app with a long image name',
     path: '/apps',
     fake: (page) => serve(page, { '/api/v1/apps/installed': INSTALLED_APPS }),
     open: (page) => page.getByRole('button', { name: /Frigate NVR/ }).first().click(),
-    shows: (page) => page.getByRole('dialog').getByText('ghcr.io/blakeblackshear/frigate:stable'),
+    shows: (page) =>
+      page
+        .getByRole('dialog')
+        .getByText(
+          'ghcr.io/blakeblackshear/frigate:0.18.2@sha256:fd60f99ffd4eb6c42360ed4e14953e270586f239309ab3983e55b2e97ffac09a',
+        ),
     start: dialogTitle,
     end: dialogEnd,
   },

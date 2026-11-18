@@ -557,6 +557,8 @@ class TestApps:
         taken = install(admin, {"template_id": "dozzle"})
         named = install(admin, {"template_id": "dozzle", "name": "logs"})
         docker.api.post.side_effect = APIError("pull access denied")
+        # Docker lacks Glances' pinned image, so the install pulls it (ADR-0410).
+        docker.images.get.side_effect = NotFound("No such image")
         failed = install(admin, {"template_id": "glances"})
 
         assert [r.status_code for r in (taken, named, failed)] == [409, 422, 500]

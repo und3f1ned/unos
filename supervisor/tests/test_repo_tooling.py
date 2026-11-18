@@ -1389,6 +1389,18 @@ def test_the_audit_workflow_runs_weekly_and_on_demand_the_commands_of_make_audit
     assert dry_run == ["pip-audit -r supervisor/requirements.txt", "cd webui && npm audit --omit=dev --audit-level=high"]
 
 
+def test_the_audit_workflow_checks_the_catalog_images_as_make_does():
+    """The recorded platforms (ADR-0403) and the pinned tags (ADR-0410) of the catalog's images, each
+    in a job of its own, with the commands of make catalog-platforms and make catalog-tags."""
+    jobs = _workflow("audit.yml")["jobs"]
+    runs = {name: [step["run"] for step in job["steps"] if "run" in step] for name, job in jobs.items()}
+
+    for job, target in (("platforms", "catalog-platforms"), ("tags", "catalog-tags")):
+        dry_run = make("-n", target, "PYTHON=python").stdout.splitlines()
+        assert dry_run == [runs[job][-1]], (job, dry_run)
+    assert runs["tags"][-1] == "python scripts/catalog-platforms.py tags"
+
+
 def test_no_workflow_merges_anything():
     texts = [path.read_text() for path in WORKFLOWS.glob("*.yml")]
 

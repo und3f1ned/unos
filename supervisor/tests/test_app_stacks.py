@@ -436,21 +436,40 @@ class TestInstall:
             "severity": "info", "success": True,
         }]
 
+    @pytest.mark.parametrize("app_id", ["homarr", "localai", "transmission", "mealie"])
+    def test_an_app_installs_with_the_volumes_that_its_pinned_image_declares(self, api, pools, docker, soc, app_id):
+        # The VOLUMEs recorded for its pin (ADR-0410), as Docker's image declares them: each lies on a
+        # bind of the pool, so the check after the pull passes (ADR-0381). Homarr's /data and
+        # LocalAI's /backends and /configuration are the binds that its template gained for them.
+        pin = catalog_module.APP_IMAGES[app_id]
+        assert pin.volumes
+        docker.publish(pin.ref, volumes=pin.volumes)
+
+        response = install(api, test_apps.TRANSMISSION if app_id == "transmission" else {"template_id": app_id})
+
+        assert response.status_code == 200, response.text
+        mounts = {m["Target"]: m["Source"] for m in docker.container(app_id).attrs["HostConfig"]["Mounts"]}
+        for path in pin.volumes:
+            target = next(t for t in mounts if path == t or path.startswith(t.rstrip("/") + "/"))
+            assert mounts[target].startswith(str(pools.alpha)), (path, mounts[target])
+
     def test_an_app_of_one_container_takes_no_network(self, api, pools, docker, soc):
-        docker.publish("amir20/dozzle:latest")
+        pin = catalog_module.APP_IMAGES["dozzle"]
+        docker.publish(pin.ref)
 
         response = install(api, {"template_id": "dozzle"})
 
         assert response.status_code == 200, response.text
+        # Pulled and created by its digest, as every image of the catalog (ADR-0410).
         assert docker.called("containers.list", "networks.list", "networks.create", "api.pull",
                              "containers.create", "container.start") == [
             ("containers.list", None),
-            ("api.pull", "amir20/dozzle:latest"),
+            ("api.pull", f"{pin.name}@{pin.digest}"),
             ("containers.create", "dozzle"),
             ("container.start", "dozzle"),
         ]
         assert docker.container("dozzle").labels == {
-            "unos.app": "dozzle", "unos.app.version": "latest", "unos.app.name": "Dozzle", "unos.app.icon": _icon("dozzle"),
+            "unos.app": "dozzle", "unos.app.version": pin.tag, "unos.app.name": "Dozzle", "unos.app.icon": _icon("dozzle"),
         }
         assert response.json()["companions"] == [] and response.json()["health"] is None
         assert _audit()[0]["details"] == "Installed Dozzle from the catalog as dozzle"

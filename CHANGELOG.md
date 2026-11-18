@@ -12,6 +12,16 @@ features (SMB access per user and per share, volumes, copy and move in the file
 manager, encrypted backup uploads, health checks, CI checks).
 
 ### Changed
+- Every app of the App Store installs a pinned image: its publisher's version tag and the digest of
+  the index that the tag named on 2026-11-18 (`name:tag@sha256:...`), pulled and run by that
+  digest, with the version shown on its card (transmission `4.1.4-r0-ls370`, Traefik `v3.7`, Netdata
+  `v2.12.3` instead of its nightly `latest`, Open WebUI `v0.13.4` instead of its `main` branch,
+  Trilium from `triliumnext/trilium`). The space check before an install counts every app's images,
+  and an app installed from a floating tag is offered the pinned version as an update. Homarr keeps
+  its database and LocalAI its backends and configuration on the pool, where their images declare
+  them. A weekly audit (`make catalog-tags`, the `tags` job of the Audit workflow) reports a pinned
+  tag that names another index. Immich's digests are unchanged; Valkey's tag reads `9.1.2`, which
+  names the same index as the `9` it replaces (ADR-0410).
 - The web UI has a light theme. Each user chooses **Dark**, **Light** or **System** (the device's
   setting, followed as it changes) on the Account page; the NAS keeps the choice per user
   (`GET`/`PUT /api/v1/auth/me/theme`, audited as `theme_changed`), and the page shows it before it
@@ -1430,6 +1440,8 @@ manager, encrypted backup uploads, health checks, CI checks).
   smb.conf as UNOS wrote it.
 
 ### Removed
+- Readarr from the App Store: the project is retired and its image's tag names an empty index, which
+  no host could install (ADR-0410).
 - `GET /api/v1/monitor/cpu`, `/monitor/memory`, `/monitor/processes`,
   `/monitor/history/cpu`, `/monitor/history/memory` and `/monitor/all`: no
   page called them, and their history held only what calls of `/cpu` and
