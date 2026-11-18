@@ -5,8 +5,11 @@ router asks for an administrator itself, since a restore writes files into the p
 settings decide where the configuration and the data go. service.py holds the logic.
 """
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 
+from ..audit.changes import audit_change
+from ..audit.schemas import AuditAction, AuditSeverity
+from ..auth.models import User
 from ..auth.utils import require_admin
 from . import service
 
@@ -21,16 +24,31 @@ async def get_settings():
 
 
 @router.put("/settings")
-async def put_settings(request: service.SettingsRequest):
+async def put_settings(
+    request: service.SettingsRequest, http_request: Request, user: User = Depends(require_admin)
+):
     """Check the settings and test the target: restic opens its repository with the password, or makes
-    one when none is there. 400 with restic's message for a wrong password or a store out of reach."""
-    return await service.save_settings(request)
+    one when none is there. 400 with restic's message for a wrong password or a store out of reach.
+    The audit log gets settings_changed when they changed, with the names of the fields and never a
+    secret (ADR-0402)."""
+    changes: list[tuple[str, str]] = []
+    answer = await service.save_settings(request, changes)
+    for where, details in changes:
+        await audit_change(AuditAction.SETTINGS_CHANGED, http_request, user.username, resource_type="offsite",
+                           resource_id=where, details=details)
+    return answer
 
 
 @router.delete("/settings")
-async def delete_settings():
-    """Forget the target: the settings, the secrets and the state. The copies stay where they are."""
-    return await service.remove_settings()
+async def delete_settings(http_request: Request, user: User = Depends(require_admin)):
+    """Forget the target: the settings, the secrets and the state. The copies stay where they are.
+    The audit log gets settings_changed when there was something to forget (ADR-0402)."""
+    changes: list[tuple[str, str]] = []
+    answer = await service.remove_settings(changes)
+    for where, details in changes:
+        await audit_change(AuditAction.SETTINGS_CHANGED, http_request, user.username, resource_type="offsite",
+                           resource_id=where, details=details, severity=AuditSeverity.WARNING)
+    return answer
 
 
 @router.get("/status")

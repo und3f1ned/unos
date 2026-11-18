@@ -667,6 +667,18 @@ When you run `docker compose` yourself, add
 `/opt/unos/deploy/.env` on its own; git ignores that file.) The new
 certificate comes from the same CA, so devices that trust it need nothing new.
 
+### Serve Your Own Certificate
+
+Instead of the local CA's certificate, the web UI can serve a stored
+certificate: a self-signed one made on **System** → **Security**, or one
+uploaded through `POST /api/v1/security/certificates/upload`, such as one issued
+by your own CA. Choose **Serve this certificate** under **SSL/TLS
+Certificates** (see the User Guide's
+[HTTPS Certificates](USER_GUIDE.md#https-certificates)). UNOS keeps it, with its
+key, in the `served-certificate` Docker volume, which only the two UNOS
+containers mount. **Use Caddy's local CA** serves the local CA's certificate
+again; a certificate that no longer loads when UNOS starts leaves the local CA's.
+
 ---
 
 ## Network Discovery

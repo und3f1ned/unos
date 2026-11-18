@@ -1,13 +1,16 @@
 ---
-status: accepted
+status: superseded
 date: 2026-11-12
 area: security
 decided-by: agent
+superseded-by: ADR-0404
 ---
 
 # ADR-0357: Stored certificates are not served yet, and the certificate status names Caddy's local CA
 
 ## Context
+
+Superseded by ADR-0404: Caddy serves a stored certificate that an administrator chooses, from one file shared only with the supervisor, and falls back to its local CA.
 
 System > Security stores uploaded and self-signed certificates in the supervisor's data volume (`/data/certs`), but Caddy serves only the certificate of its local CA (ADR-0025), in the `unos-webui` container, the only one that mounts `caddy-data` (`deploy/docker-compose.yml`): nothing hands a stored certificate to it. Yet the status named the first valid stored certificate as the active one, and the listing looked for Caddy's certificates in a directory of the supervisor's own volume that nothing fills. Working on through the features under the owner's delegation ("work on through the features, ask no questions; I allow everything", in translation), the agent made the status say what is served and left serving stored certificates for later.
 

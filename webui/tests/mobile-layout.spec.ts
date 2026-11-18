@@ -550,8 +550,12 @@ const SCHEDULER = {
   '/api/v1/scheduler/timezone': { timezone: 'Europe/Berlin' },
 };
 
-// As the server answers them (supervisor/src/security/schemas.py): the stand-in has no ufw and no
-// certificate.
+// As the server answers them (supervisor/src/security/schemas.py): the stand-in has no ufw, and a
+// stored certificate that is chosen but that the web server did not load (ADR-0404), so that the card
+// shows its warning and Use Caddy's local CA.
+const CERTIFICATE_STATUS = {
+  served_by: 'caddy_local_ca', served_id: null, chosen_id: 'custom_nas-living-room.home.arpa', fingerprint: null,
+};
 const SECURITY = {
   '/api/v1/security/firewall': {
     enabled: true,
@@ -564,14 +568,19 @@ const SECURITY = {
         source: '2001:db8:1234:5678::/64', destination: null, enabled: true, comment: null },
     ],
   },
-  '/api/v1/security/certificates/status': { served_by: 'caddy_local_ca' },
+  '/api/v1/security/certificates/status': CERTIFICATE_STATUS,
   '/api/v1/security/certificates': {
     certificates: [
       { id: 'custom_nas-living-room.home.arpa', type: 'self_signed', domain: 'nas-living-room.home.arpa',
         issuer: 'nas-living-room.home.arpa', valid_from: '2026-11-08T01:47:31Z',
-        valid_until: '2027-11-08T01:47:31Z', is_valid: true, served: false, fingerprint: null },
+        valid_until: '2027-11-08T01:47:31Z', is_valid: true, expires_soon: false, served: false, chosen: true,
+        fingerprint: null },
+      { id: 'custom_backup-of-the-garage-nas.home.arpa', type: 'custom', domain: 'backup-of-the-garage-nas.home.arpa',
+        issuer: 'Let us encrypt the garage', valid_from: '2026-11-08T01:47:31Z',
+        valid_until: '2026-11-28T01:47:31Z', is_valid: true, expires_soon: true, served: false, chosen: false,
+        fingerprint: null },
     ],
-    served_by: 'caddy_local_ca',
+    status: CERTIFICATE_STATUS,
   },
 };
 
@@ -1540,6 +1549,21 @@ const VIEWS: View[] = [
     start: (page) =>
       page.getByRole('heading', { name: /^(Generate Self-Signed Certificate|Создание самоподписанного сертификата)$/ }),
     end: (page) => page.getByRole('button', { name: /^(Generate|Создать)$/ }).last(),
+  },
+  {
+    name: 'Dialog: serving a certificate',
+    path: '/system#security',
+    fake: (page) => serve(page, SECURITY),
+    open: async (page) => {
+      await page.locator('main').getByRole('button', { name: /^(Manage|Управление)$/ }).click();
+      await page
+        .locator('main')
+        .getByRole('button', { name: /^(Serve|Отдавать) backup-of-the-garage-nas\.home\.arpa$/ })
+        .click();
+    },
+    shows: (page) => page.getByRole('heading', { name: /^(Serve this certificate\?|Отдавать этот сертификат\?)$/ }),
+    start: dialogTitle,
+    end: dialogEnd,
   },
   {
     name: 'Dialog: a new API token',

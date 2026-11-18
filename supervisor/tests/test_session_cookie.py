@@ -519,7 +519,7 @@ class TestNoTokenInWebStorage:
 
     ROOT = Path(__file__).resolve().parents[2] / "webui"
 
-    def test_the_web_ui_uses_web_storage_only_for_the_language(self):
+    def test_the_web_ui_uses_web_storage_only_for_the_language_and_the_theme(self):
         users = {}
         for path in sorted((self.ROOT / "src").rglob("*")):
             if path.suffix in (".ts", ".svelte") and re.search(r"\b(local|session)Storage\b", path.read_text()):
@@ -527,9 +527,11 @@ class TestNoTokenInWebStorage:
                     set(re.findall(r"\b(?:local|session)Storage\.\w+\(\s*([^,)]*)", path.read_text()))
                 )
         # The session key in the tab's sessionStorage; the token that earlier versions kept is removed.
+        # The theme's cache holds only dark, light or system (ADR-0405).
         assert users == {
             "src/lib/api/client.ts": ["'token'", "SESSION_KEY_STORE"],
             "src/lib/i18n/index.ts": ["LOCALE_KEY"],
+            "src/lib/stores/theme.ts": ["THEME_KEY"],
         }
         client = (self.ROOT / "src/lib/api/client.ts").read_text()
         assert re.findall(r"localStorage\.\w+\(\s*'token'", client) == ["localStorage.removeItem('token'"]

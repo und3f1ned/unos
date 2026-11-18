@@ -1,13 +1,16 @@
 ---
-status: accepted
+status: superseded
 date: 2026-11-12
 area: security
 decided-by: agent
+superseded-by: ADR-0402
 ---
 
 # ADR-0359: The audit log's Action filter offers only actions that the supervisor writes, and an older entry's action that AuditAction no longer has is listed as recorded
 
 ## Context
+
+Superseded by ADR-0402: the firewall's actions are written and come back, and the rules of the filter and of the older actions are restated there.
 
 After ADR-0343, ADR-0350 and ADR-0351, three values of `AuditAction` were still written by
 nothing: `firewall_rule_added`, `firewall_rule_deleted` and `ssl_cert_uploaded`. `GET

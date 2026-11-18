@@ -874,15 +874,20 @@ def test_the_action_filter_offers_only_actions_that_the_server_writes(world):
     (step 5 of security.audit-admin-actions, ADR-0359): an action that nothing writes is removed."""
     written = _written_actions()
     # The scan finds the server's writers: calls, power's table and the emergency command line's.
-    assert {"login_failed", "task_run", "system_reboot", "system_shutdown", "password_change", "other"} <= written
+    assert {"login_failed", "task_run", "system_reboot", "system_shutdown", "password_change", "other",
+            "firewall_enabled", "login_history_cleared", "pool_mounted", "image_pulled", "system_suspend"} <= written
 
     offered = {action["value"] for action in get(world, "/actions")["actions"]}
 
-    assert sorted(offered - written) == []
+    # The certificate actions are those of security.custom-certificates, which writes them with the
+    # certificate routes and may add them to the enum: this test neither requires nor forbids them
+    # (ADR-0402). Every other value that the filter offers is written.
+    certificates = {value for value in offered if value.startswith("ssl_cert_")}
+    assert sorted(offered - written - certificates) == []
 
 
 # An action that an older version wrote and AuditAction no longer has (ADR-0359).
-OLD_ACTION = "firewall_rule_added"
+OLD_ACTION = "legacy_example_action"
 
 
 class TestAnActionNoLongerWritten:
@@ -915,8 +920,8 @@ class TestAnActionNoLongerWritten:
 
     @pytest.mark.parametrize("params, expected", [
         pytest.param({"action": OLD_ACTION}, ["audit_old"], id="its-action"),
-        pytest.param({"action": "firewall_rule"}, [], id="its-action-exactly"),
-        pytest.param({"search": "firewall rule added"}, ["audit_old"], id="the-search-by-its-words"),
+        pytest.param({"action": "legacy_example"}, [], id="its-action-exactly"),
+        pytest.param({"search": "legacy example action"}, ["audit_old"], id="the-search-by-its-words"),
         pytest.param({"username": "admin", "search": "8080"}, ["audit_old"], id="the-other-filters"),
     ])
     def test_the_filters_find_it(self, old_entry, params, expected):

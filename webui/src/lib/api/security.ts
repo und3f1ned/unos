@@ -57,9 +57,12 @@ export interface FirewallRuleCreate {
 // Certificate Types
 export type CertificateType = "self_signed" | "custom";
 
-// What browsers get from https://<host>/: Caddy's local CA. Stored certificates are not served
-// (ADR-0357).
-export type ServedCertificate = "caddy_local_ca";
+// What browsers get from https://<host>/, as a TLS handshake with the web UI's Caddy shows it
+// (ADR-0404): its local CA's certificate, a stored one, or unknown when Caddy did not answer.
+export type ServedCertificate = "caddy_local_ca" | "stored_certificate" | "unknown";
+
+/** The id of Caddy's local CA in serveCertificate. */
+export const LOCAL_CA_ID = "caddy_local_ca";
 
 // A certificate stored by an upload or a self-signed generation.
 export interface Certificate {
@@ -70,17 +73,35 @@ export interface Certificate {
   valid_from: string | null;
   valid_until: string | null;
   is_valid: boolean;
+  /** Valid, and expires within 30 days. */
+  expires_soon: boolean;
+  /** Browsers get it. */
   served: boolean;
+  /** An administrator chose it, whether Caddy loaded it or not. */
+  chosen: boolean;
+  /** SHA-256. */
+  fingerprint: string | null;
+}
+
+export interface CertificateStatus {
+  served_by: ServedCertificate;
+  /** The stored certificate browsers get. */
+  served_id: string | null;
+  /** The stored certificate an administrator chose; null: Caddy's local CA. */
+  chosen_id: string | null;
+  /** SHA-256 of the certificate browsers get. */
   fingerprint: string | null;
 }
 
 export interface CertificateListResponse {
   certificates: Certificate[];
-  served_by: ServedCertificate;
+  status: CertificateStatus;
 }
 
-export interface CertificateStatus {
-  served_by: ServedCertificate;
+export interface ServeCertificateResponse {
+  changed: boolean;
+  expires_soon: boolean;
+  status: CertificateStatus;
 }
 
 export interface CertificateUpload {
@@ -163,6 +184,11 @@ export async function uploadCertificate(
   data: CertificateUpload
 ): Promise<{ status: string; message: string; certificate_id: string; domain: string }> {
   return api.post("/security/certificates/upload", data);
+}
+
+/** Make the stored certificate `certId` the one the web UI's Caddy serves, or with LOCAL_CA_ID its local CA's. */
+export async function serveCertificate(certId: string): Promise<ServeCertificateResponse> {
+  return api.post(`/security/certificates/${encodeURIComponent(certId)}/serve`);
 }
 
 export async function deleteCertificate(

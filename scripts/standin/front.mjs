@@ -10,16 +10,24 @@
 //
 // Both listen on 127.0.0.1 and, where the machine has it, ::1.
 //
-// Usage: node front.mjs <buildDir> <httpsPort> <httpPort> <backendPort> <certFile> <keyFile>
+// HTTPS serves <servedFile> while it holds a certificate and its key that load,
+// as Caddy serves the served certificate that the supervisor writes (ADR-0404),
+// from the next connection after each change on; else <certFile> and <keyFile>,
+// as Caddy serves its local CA's.
+//
+// Usage: node front.mjs <buildDir> <httpsPort> <httpPort> <backendPort> <certFile> <keyFile> <servedFile>
 import fs from 'node:fs';
 import http from 'node:http';
 import https from 'node:https';
 import net from 'node:net';
 import path from 'node:path';
+import tls from 'node:tls';
 
-const [, , buildDirArg, httpsPort, httpPort, backendPort, certFile, keyFile] = process.argv;
-if (!keyFile) {
-	console.error('usage: node front.mjs <buildDir> <httpsPort> <httpPort> <backendPort> <certFile> <keyFile>');
+const [, , buildDirArg, httpsPort, httpPort, backendPort, certFile, keyFile, servedFile] = process.argv;
+if (!servedFile) {
+	console.error(
+		'usage: node front.mjs <buildDir> <httpsPort> <httpPort> <backendPort> <certFile> <keyFile> <servedFile>',
+	);
 	process.exit(2);
 }
 const buildDir = path.resolve(buildDirArg);
@@ -155,10 +163,38 @@ function listen(server, port, address, required) {
 	server.listen(Number(port), address, () => log(`listening on [${address}]:${port}`));
 }
 
-const tls = { cert: fs.readFileSync(certFile), key: fs.readFileSync(keyFile) };
+const ownTls = { cert: fs.readFileSync(certFile), key: fs.readFileSync(keyFile) };
+const secureServers = [];
+// The served file as last read (its inode, size and time): it is read again only when it changed.
+let servedStamp = '';
+
+/** Before each TLS connection: the served file's certificate when it changed and loads, else our own. */
+function followServedFile() {
+	const stat = fs.statSync(servedFile, { throwIfNoEntry: false });
+	const stamp = stat ? `${stat.ino}:${stat.size}:${stat.mtimeMs}` : '';
+	if (stamp === servedStamp) return;
+	servedStamp = stamp;
+	let options = ownTls;
+	if (stat) {
+		try {
+			// Read inside: the supervisor may have removed it since.
+			const pem = fs.readFileSync(servedFile);
+			tls.createSecureContext({ cert: pem, key: pem });
+			options = { cert: pem, key: pem };
+		} catch (err) {
+			log('the served certificate does not load, our own instead:', err.message);
+		}
+	}
+	log(options === ownTls ? 'serving our own certificate' : 'serving the served certificate');
+	for (const server of secureServers) server.setSecureContext(options);
+}
+
 for (const [address, required] of [['127.0.0.1', true], ['::1', false]]) {
-	const secure = https.createServer(tls, httpsHandler);
+	const secure = https.createServer(ownTls, httpsHandler);
+	// Before the TLS socket is made with the server's context, which it takes at once.
+	secure.prependListener('connection', followServedFile);
 	secure.on('upgrade', upgradeHandler);
+	secureServers.push(secure);
 	listen(secure, httpsPort, address, required);
 	listen(http.createServer(httpHandler), httpPort, address, required);
 }

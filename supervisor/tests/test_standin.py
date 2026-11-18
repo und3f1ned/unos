@@ -163,6 +163,12 @@ print(json.dumps({
         "DOCKER_HOST", "DOCKER_TLS_VERIFY", "UNOS_HOST_EXEC", "UNOS_DISABLE_BACKGROUND_TASKS",
         "UNOS_INSTALL_DIR", "UNOS_DEBUG_MODE", "container", "TMPDIR")},
     "login_limit": importlib.import_module("src.auth.router").limiter.enabled,
+    "serving": {
+        "dir": str(importlib.import_module("src.security.serving").SERVED_DIR),
+        "host": importlib.import_module("src.security.serving").CADDY_TLS_HOST,
+        "port": importlib.import_module("src.security.serving").CADDY_TLS_PORT,
+        "reload": "run_supervisor." + importlib.import_module("src.security.serving").reload_caddy.__name__,
+    },
     "power_off": importlib.import_module("src.host").runs_locally(),
     "gitignore": (state / ".gitignore").read_text(),
     "seeded": (data / "smb.conf").read_text(),
@@ -1156,3 +1162,120 @@ class TestSpecsAndRunner:
             and spec.name != "target.ts"
         ]
         assert offenders == []
+
+
+# ==================== The served certificate (ADR-0404) ====================
+
+def _made_certificate(common_name: str):
+    """A self-signed certificate and its key in PEM, and its SHA-256 fingerprint."""
+    from datetime import datetime, timedelta, timezone
+
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import ec
+    from cryptography.x509.oid import NameOID
+
+    from src.security.serving import fingerprint
+
+    key = ec.generate_private_key(ec.SECP256R1())
+    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, common_name)])
+    now = datetime.now(timezone.utc)
+    cert = (x509.CertificateBuilder().subject_name(name).issuer_name(name).public_key(key.public_key())
+            .serial_number(x509.random_serial_number()).not_valid_before(now - timedelta(days=1))
+            .not_valid_after(now + timedelta(days=30)).sign(key, hashes.SHA256()))
+    return (cert.public_bytes(serialization.Encoding.PEM).decode(),
+            key.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8,
+                              serialization.NoEncryption()).decode(),
+            fingerprint(cert.public_bytes(serialization.Encoding.DER)))
+
+
+def _fingerprint_served_at(port: int) -> str:
+    """What a client without a server name gets from 127.0.0.1:``port``, as the supervisor asks."""
+    import ssl
+
+    from src.security.serving import fingerprint
+
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    context.check_hostname = False
+    context.verify_mode = ssl.CERT_NONE
+    with socket.create_connection(("127.0.0.1", port), timeout=10) as raw:
+        with context.wrap_socket(raw) as conn:
+            return fingerprint(conn.getpeercert(binary_form=True))
+
+
+class TestServedCertificate:
+    def test_the_supervisor_serves_through_front(self, configured):
+        serving = configured["serving"]
+
+        assert Path(serving["dir"]) == Path(configured["data"]) / "served-certificate"
+        assert (serving["host"], serving["port"]) == ("127.0.0.1", 46443)
+        assert serving["reload"] == "run_supervisor.reload_front"
+
+    def test_e2e_sh_hands_front_the_served_file_and_the_supervisor_fronts_port(self):
+        script = (STANDIN / "e2e.sh").read_text(encoding="utf-8")
+
+        assert '--front-https-port "$https_port"' in script
+        assert '"$tls/key.pem" \\\n  "$state/data/served-certificate/served.pem"' in script
+        assert "https_port=${E2E_HTTPS_PORT:-46443}" in script
+
+    def test_the_reload_refuses_a_file_that_does_not_load(self, tmp_path, monkeypatch):
+        from src.security import serving
+
+        monkeypatch.setattr(serving, "SERVED_DIR", str(tmp_path))
+        runner = _load_runner()
+        cert, key, _ = _made_certificate("nas.local")
+        _, other_key, _ = _made_certificate("nas.local")
+
+        runner.reload_front("local")  # nothing to load: front serves its own
+        serving.write_served((cert + key).encode())
+        runner.reload_front("served")
+        serving.write_served((cert + other_key).encode())
+        with pytest.raises(serving.CaddyRefused):
+            runner.reload_front("served")
+        with pytest.raises(ValueError):
+            runner.reload_front("anything")
+
+    def test_front_serves_the_served_file_while_it_loads(self, tmp_path):
+        node = _node()
+        own_cert, own_key, own = _made_certificate("localhost")
+        cert, key, served = _made_certificate("nas.local")
+        _, other_key, _ = _made_certificate("nas.local")
+        build = tmp_path / "build"
+        build.mkdir()
+        (build / "index.html").write_text("<!doctype html>\n", encoding="utf-8")
+        (tmp_path / "cert.pem").write_text(own_cert, encoding="utf-8")
+        (tmp_path / "key.pem").write_text(own_key, encoding="utf-8")
+        served_file = tmp_path / "served-certificate" / "served.pem"
+        served_file.parent.mkdir()
+        https_port, http_port, backend_port = _free_ports(3)
+        front = subprocess.Popen(
+            [node, str(STANDIN / "front.mjs"), str(build), str(https_port), str(http_port), str(backend_port),
+             str(tmp_path / "cert.pem"), str(tmp_path / "key.pem"), str(served_file)],
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+        )
+        try:
+            for _ in range(100):
+                try:
+                    first = _fingerprint_served_at(https_port)
+                    break
+                except OSError:
+                    if front.poll() is not None:
+                        pytest.fail(front.stdout.read())
+                    import time
+                    time.sleep(0.1)
+            else:
+                pytest.fail("front.mjs did not listen")
+            assert first == own
+
+            served_file.write_text(cert + key, encoding="utf-8")
+            assert _fingerprint_served_at(https_port) == served
+            # A key of another certificate does not load: front's own again, as Caddy's local CA.
+            served_file.write_text(cert + other_key + "\n", encoding="utf-8")
+            assert _fingerprint_served_at(https_port) == own
+            served_file.write_text(cert + key, encoding="utf-8")
+            assert _fingerprint_served_at(https_port) == served
+            served_file.unlink()
+            assert _fingerprint_served_at(https_port) == own
+        finally:
+            front.terminate()
+            front.wait(10)

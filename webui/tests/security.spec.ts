@@ -187,8 +187,8 @@ test.describe('Security Settings', () => {
     await expect(page.locator('text=/Stored Certificates|Generate Self-Signed/i').first()).toBeVisible();
   });
 
-  // Caddy serves only its local CA: nothing hands a stored certificate to the web UI's container
-  // (ADR-0357). The page says so, and lists a stored certificate as stored, not served.
+  // Until an administrator serves one, a stored certificate is only stored: Caddy serves its local
+  // CA's (ADR-0404). The page says so, and lists a stored certificate as stored, not served.
   test('a stored certificate is listed as not served, and browsers get the local CA', async ({
     authenticatedPage: page,
   }) => {
@@ -228,6 +228,141 @@ test.describe('Security Settings', () => {
       await page.request.delete(`/api/v1/security/certificates/custom_${domain}`, {
         headers: await browserSession(page),
       });
+    }
+  });
+
+  // A stored certificate served, Caddy's local CA again, and the served one deleted (ADR-0404). On
+  // the stand-in front.mjs serves the file that the supervisor writes, as the web UI's Caddy does,
+  // and the supervisor's TLS handshake with it says what browsers get.
+  test('a stored certificate is served, then the local CA again, and deleting the served one returns the local CA', async ({
+    authenticatedPage: page,
+  }) => {
+    const domain = `e2e-${Date.now().toString(36)}.home.arpa`;
+    const card = page.locator('div:has(> div > h3:has-text("SSL/TLS Certificates"))');
+    const row = card.locator('div.bg-surface-overlay').filter({ has: page.getByText(domain, { exact: true }) });
+    const dialog = page.getByRole('dialog');
+    const headers = await browserSession(page);
+    const status = async () =>
+      (await page.request.get('/api/v1/security/certificates/status', { headers })).json();
+    try {
+      expect((await page.request.post('/api/v1/security/certificates/self-signed', {
+        data: { domain }, headers,
+      })).ok()).toBeTruthy();
+      await page.goto('/system#security');
+      await card.getByRole('button', { name: 'Manage', exact: true }).click();
+      await expect(row.getByText('NOT SERVED', { exact: true })).toBeVisible();
+      await expect(card.getByRole('button', { name: "Use Caddy's local CA" })).toHaveCount(0);
+
+      // Serve it: the dialog warns that browsers will see a new certificate.
+      await row.getByRole('button', { name: `Serve ${domain}` }).click();
+      await expect(dialog.getByRole('heading', { name: 'Serve this certificate?' })).toBeVisible();
+      await expect(dialog.getByText(`Browsers will get ${domain} from this NAS over HTTPS.`)).toBeVisible();
+      await expect(dialog.getByText('Every browser will see a new certificate.', { exact: false })).toBeVisible();
+      await dialog.getByRole('button', { name: 'Serve', exact: true }).click();
+      await expect(dialog).toHaveCount(0);
+      await expect(card.getByText(`Browsers now get ${domain}`, { exact: true })).toBeVisible();
+      await expect(card.getByText(`HTTPS for browsers: ${domain}`, { exact: true })).toBeVisible();
+      await expect(row.getByText('SERVED', { exact: true })).toBeVisible();
+      await expect(row.getByRole('button', { name: `Serve ${domain}` })).toHaveCount(0);
+      // What the handshake shows is the stored certificate's fingerprint.
+      const listed = (await (await page.request.get('/api/v1/security/certificates', { headers })).json())
+        .certificates.find((cert: { id: string }) => cert.id === `custom_${domain}`);
+      expect(await status()).toEqual({
+        served_by: 'stored_certificate', served_id: `custom_${domain}`, chosen_id: `custom_${domain}`,
+        fingerprint: listed.fingerprint,
+      });
+
+      // Caddy's local CA again, with the same warning.
+      await card.getByRole('button', { name: "Use Caddy's local CA" }).click();
+      await expect(dialog.getByRole('heading', { name: "Use Caddy's local CA?" })).toBeVisible();
+      await expect(dialog.getByText('Every browser will see a new certificate.', { exact: false })).toBeVisible();
+      await dialog.getByRole('button', { name: "Use Caddy's local CA" }).click();
+      await expect(card.getByText("Browsers now get the certificate of Caddy's local CA", { exact: true })).toBeVisible();
+      await expect(card.getByText("HTTPS for browsers: Caddy's local CA", { exact: true })).toBeVisible();
+      await expect(row.getByText('NOT SERVED', { exact: true })).toBeVisible();
+      expect(await status()).toMatchObject({ served_by: 'caddy_local_ca', served_id: null, chosen_id: null });
+
+      // Served again, then deleted: the confirmation says that browsers get the local CA's again.
+      await row.getByRole('button', { name: `Serve ${domain}` }).click();
+      await dialog.getByRole('button', { name: 'Serve', exact: true }).click();
+      await expect(card.getByText(`HTTPS for browsers: ${domain}`, { exact: true })).toBeVisible();
+      let question = '';
+      page.once('dialog', (confirm) => {
+        question = confirm.message();
+        void confirm.accept();
+      });
+      await row.getByRole('button', { name: `Delete ${domain}` }).click();
+      await expect(card.getByText('Certificate deleted')).toBeVisible();
+      expect(question).toBe(
+        `${domain} is served: deleting it gives every browser the certificate of Caddy's local CA, a new certificate for them. Delete it?`,
+      );
+      await expect(card.getByText("HTTPS for browsers: Caddy's local CA", { exact: true })).toBeVisible();
+      await expect(card.getByText(domain, { exact: true })).toHaveCount(0);
+      expect(await status()).toMatchObject({ served_by: 'caddy_local_ca', served_id: null, chosen_id: null });
+    } finally {
+      // The local CA again and the certificate gone, whatever the test reached.
+      await page.request.post('/api/v1/security/certificates/caddy_local_ca/serve', { headers });
+      await page.request.delete(`/api/v1/security/certificates/custom_${domain}`, { headers });
+    }
+  });
+
+  test('a certificate that expires soon is marked, and serving it warns of the date', async ({
+    authenticatedPage: page,
+  }) => {
+    const domain = `e2e-${Date.now().toString(36)}.home.arpa`;
+    const card = page.locator('div:has(> div > h3:has-text("SSL/TLS Certificates"))');
+    const row = card.locator('div.bg-surface-overlay').filter({ has: page.getByText(domain, { exact: true }) });
+    const dialog = page.getByRole('dialog');
+    const headers = await browserSession(page);
+    try {
+      expect((await page.request.post('/api/v1/security/certificates/self-signed', {
+        data: { domain, validity_days: 10 }, headers,
+      })).ok()).toBeTruthy();
+      await page.goto('/system#security');
+      await card.getByRole('button', { name: 'Manage', exact: true }).click();
+      await expect(row.getByText('EXPIRES SOON', { exact: true })).toBeVisible();
+
+      await row.getByRole('button', { name: `Serve ${domain}` }).click();
+      await expect(dialog.getByText(/This certificate expires on \d+\/\d+\/\d{4}, .+: replace it in time\./)).toBeVisible();
+      // Cancel: nothing changes.
+      await dialog.getByRole('button', { name: 'Cancel' }).click();
+      await expect(dialog).toHaveCount(0);
+      await expect(row.getByText('NOT SERVED', { exact: true })).toBeVisible();
+      expect((await (await page.request.get('/api/v1/security/certificates/status', { headers })).json()).served_by)
+        .toBe('caddy_local_ca');
+    } finally {
+      await page.request.delete(`/api/v1/security/certificates/custom_${domain}`, { headers });
+    }
+  });
+
+  test('a certificate that the server does not serve says why in the dialog', async ({ authenticatedPage: page }) => {
+    // The server's 409 for a certificate that fails the checks before Caddy gets it.
+    const domain = `e2e-${Date.now().toString(36)}.home.arpa`;
+    const refusal = `${domain} cannot be served: The private key does not belong to the certificate`;
+    await page.route(
+      (url) => url.pathname === `/api/v1/security/certificates/custom_${domain}/serve`,
+      (route) => route.fulfill({ status: 409, json: { detail: refusal } }),
+    );
+    const card = page.locator('div:has(> div > h3:has-text("SSL/TLS Certificates"))');
+    const row = card.locator('div.bg-surface-overlay').filter({ has: page.getByText(domain, { exact: true }) });
+    const dialog = page.getByRole('dialog');
+    const headers = await browserSession(page);
+    try {
+      expect((await page.request.post('/api/v1/security/certificates/self-signed', {
+        data: { domain }, headers,
+      })).ok()).toBeTruthy();
+      await page.goto('/system#security');
+      await card.getByRole('button', { name: 'Manage', exact: true }).click();
+      await row.getByRole('button', { name: `Serve ${domain}` }).click();
+      await dialog.getByRole('button', { name: 'Serve', exact: true }).click();
+
+      await expect(dialog.getByText(refusal, { exact: true })).toBeVisible();
+      await expect(card.getByText("HTTPS for browsers: Caddy's local CA", { exact: true })).toBeVisible();
+      await dialog.getByRole('button', { name: 'Cancel' }).click();
+      await row.getByRole('button', { name: `Serve ${domain}` }).click();
+      await expect(dialog.getByText(refusal)).toHaveCount(0);
+    } finally {
+      await page.request.delete(`/api/v1/security/certificates/custom_${domain}`, { headers });
     }
   });
 
@@ -395,8 +530,11 @@ test.describe('Security API', () => {
     });
 
     expect(response.ok()).toBeTruthy();
-    // What browsers get: Caddy's local CA, whatever is stored (ADR-0357).
-    expect(await response.json()).toEqual({ served_by: 'caddy_local_ca' });
+    // What browsers get while no stored certificate is served: Caddy's local CA (front.mjs's own
+    // certificate on the stand-in), as the supervisor's TLS handshake with it shows (ADR-0404).
+    const status = await response.json();
+    expect(status).toMatchObject({ served_by: 'caddy_local_ca', served_id: null, chosen_id: null });
+    expect(status.fingerprint).toMatch(/^([0-9A-F]{2}:){31}[0-9A-F]{2}$/);
   });
 
   test('should fetch certificates list', async ({ authenticatedPage: page }) => {
@@ -407,7 +545,7 @@ test.describe('Security API', () => {
     expect(response.ok()).toBeTruthy();
     const data = await response.json();
     expect(data).toHaveProperty('certificates');
-    expect(data.served_by).toBe('caddy_local_ca');
+    expect(data.status.served_by).toBe('caddy_local_ca');
     for (const certificate of data.certificates) expect(certificate.served).toBe(false);
   });
 });

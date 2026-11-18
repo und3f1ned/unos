@@ -72,6 +72,7 @@ The make targets use these environments when they exist, and `python3`, `ruff`, 
 | `make smoke` | backend tests that start the app and serve requests, in a few seconds: the startup and `/api/v1/health` (`test_lifespan.py`), the first-run setup, a login through the proxy layer and the refusal of anonymous requests |
 | `make frontend` | `npm run check` (svelte-kit sync, then svelte-check), `npm run design` (`scripts/design-check.mjs`: no raw button, bare field or raw palette colour in a page, ADR-0400), `npm run i18n` (`scripts/i18n-check.mjs`: the texts of every `.svelte` file that `scripts/i18n-untranslated.txt` does not list come from the catalogs in English and Russian; texts put together at run time and `.ts` modules are for review, ADR-0287) and `npm run build` in `webui/` |
 | `make e2e-local` | the Playwright specs against the local stand-in (`scripts/standin/e2e.sh`); `E2E_ARGS='tests/auth.spec.ts'` for a part |
+| `make catalog-platforms` | `scripts/catalog-platforms.py check`: the platforms recorded for the catalog's images (`supervisor/src/apps/image_platforms.json`) are those the registries publish now; `record` rewrites the file (needs the network, ADR-0403) |
 | `make audit` | `pip-audit -r supervisor/requirements.txt` and `npm audit --omit=dev --audit-level=high` in `webui/` (needs the network) |
 | `make setup` | `scripts/setup.sh` (needs the network) |
 
@@ -293,7 +294,8 @@ scripts/standin/e2e.sh --help                             # what it does, its se
 directory under `.standin/` (git-ignored): the real supervisor through
 `scripts/standin/run_supervisor.py`, with every data path inside `.standin/`, and
 `scripts/standin/front.mjs` in place of Caddy (HTTPS with a self-signed certificate and the
-security headers of `webui/Caddyfile`). It creates the test administrator `admin` /
+security headers of `webui/Caddyfile`; the served certificate that the supervisor writes into
+`.standin/data/served-certificate/` while it loads, ADR-0404). It creates the test administrator `admin` /
 `unos-e2e-pass` (`E2E_ADMIN` in `webui/tests/fixtures.ts`) as the owner creates theirs: on the new
 stand-in, which has no account yet, a first Playwright run with `E2E_FIRST_RUN=1` runs
 `tests/first-run.spec.ts` alone (never retried), which goes through the `/setup` page; when it
@@ -524,6 +526,7 @@ that this page has the commands of the lint and frontend jobs).
 ```bash
 make check      # Unit Tests, Lint and Frontend Checks
 make audit      # the two audits (needs the network)
+make catalog-platforms  # the catalog images' recorded platforms against the registries (needs the network)
 ```
 
 Without `make setup`, the same commands run with the tools of your own environments, for

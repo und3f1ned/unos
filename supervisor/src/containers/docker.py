@@ -1,4 +1,5 @@
 import docker
+import threading
 import requests
 import urllib3
 from docker.errors import APIError, DockerException, NotFound
@@ -223,6 +224,15 @@ def create_container(config: ContainerCreate) -> ContainerInfo:
     return get_container(container.short_id)
 
 
+def container_exists(name: str) -> bool:
+    """Whether Docker has a container of this name: a create that failed at its start leaves one."""
+    try:
+        get_client().containers.get(name)
+    except DockerException:
+        return False
+    return True
+
+
 def _check_app_start(container: Container) -> None:
     """Run the Apps page's checks before a UNOS app starts.
 
@@ -236,6 +246,19 @@ def _check_app_start(container: Container) -> None:
         prepare_app_start(container)
 
 
+# Held, per container, from reading its state to the start or stop that follows, so that of two
+# requests at the same moment only one finds the container in the state it changes (the audit entry
+# of a start or a stop is written for that one only, ADR-0402). Docker answers the other without an
+# error. Keyed by the container's ID, which Docker gives: the other containers go on meanwhile.
+_STATE_CHANGE: dict[str, threading.Lock] = {}
+_STATE_CHANGE_GUARD = threading.Lock()
+
+
+def _state_lock(container: Container) -> threading.Lock:
+    with _STATE_CHANGE_GUARD:
+        return _STATE_CHANGE.setdefault(container.id, threading.Lock())
+
+
 def start_container(container_id: str) -> tuple[ContainerInfo, bool]:
     """Start a stopped container; a UNOS app only if its data folders are usable.
 
@@ -243,11 +266,13 @@ def start_container(container_id: str) -> tuple[ContainerInfo, bool]:
     """
     client = get_client()
     try:
-        container = client.containers.get(container_id)
-        _check_app_start(container)
-        started = container.status not in RUNNING_STATES
-        container.start()
-        container.reload()
+        known = client.containers.get(container_id)
+        _check_app_start(known)  # reads the pools: outside the lock
+        with _state_lock(known):
+            container = client.containers.get(container_id)  # its state now
+            started = container.status not in RUNNING_STATES
+            container.start()
+            container.reload()
         return get_container(container_id), started
     except NotFound:
         raise ValueError(f"Container {container_id} not found")
@@ -257,15 +282,16 @@ def stop_container(container_id: str) -> tuple[ContainerInfo, bool]:
     """Stop a running container; with whether it stopped it: not when it did not run (RUNNING_STATES)."""
     client = get_client()
     try:
-        container = client.containers.get(container_id)
-        
         # Prevent stopping system containers
-        if is_system_container(container.name):
+        known = client.containers.get(container_id)
+        if is_system_container(known.name):
             raise ValueError("Cannot stop system container")
-        
-        stopped = container.status in RUNNING_STATES
-        container.stop()
-        container.reload()
+
+        with _state_lock(known):
+            container = client.containers.get(container_id)  # its state now
+            stopped = container.status in RUNNING_STATES
+            container.stop()
+            container.reload()
         return get_container(container_id), stopped
     except NotFound:
         raise ValueError(f"Container {container_id} not found")
@@ -340,9 +366,26 @@ def list_images() -> list[ImageInfo]:
 
 
 def pull_image(image: str) -> ImageInfo:
-    """Pull an image from registry."""
+    """Pull an image from registry; see :func:`pull_image_changed`."""
+    return pull_image_changed(image)[0]
+
+
+def pull_image_changed(image: str) -> tuple[ImageInfo, bool]:
+    """Pull an image from registry, with whether the pull changed anything: the image is new, or the
+    reference now names another image than before (its audit entry is written for a real change only,
+    ADR-0402)."""
     client = get_client()
+    before = {known.id for known in client.images.list(name=image)}
+    if not before:  # the list may not know a reference by digest
+        try:
+            before = {client.images.get(image).id}
+        except NotFound:
+            pass
     img = client.images.pull(image)
+    return _image_info(img), img.id not in before
+
+
+def _image_info(img) -> ImageInfo:
     return ImageInfo(
         id=img.short_id,
         tags=img.tags,
@@ -362,8 +405,9 @@ def _in_use_message(image: str, containers: list[Container]) -> str:
     return f"The image {image} is used by the containers {', '.join(names)}. Remove the containers first."
 
 
-def remove_image(image_id: str, force: bool = False) -> None:
-    """Remove an image with all its tags.
+def remove_image(image_id: str, force: bool = False) -> str:
+    """Remove an image with all its tags; returns its name for the audit log: its first tag, else its
+    short ID (ADR-0402).
 
     Without force, an image that a container uses, running or stopped, is refused
     (ImageInUse) before anything is removed. Docker deletes an image with more than
@@ -377,9 +421,10 @@ def remove_image(image_id: str, force: bool = False) -> None:
         img = client.images.get(image_id)
         if is_system_image(img.tags):
             raise ValueError("Cannot remove system image")
+        label = img.tags[0] if img.tags else img.short_id
         if force:
             client.images.remove(img.id, force=True)
-            return
+            return label
         users = client.containers.list(all=True, filters={"ancestor": img.id})
         if users:
             raise ImageInUse(_in_use_message(img.tags[0] if img.tags else img.short_id, users))
@@ -391,3 +436,4 @@ def remove_image(image_id: str, force: bool = False) -> None:
         client.images.remove(img.id, force=False)
     except NotFound:
         pass  # removing its last tag removed the image
+    return label

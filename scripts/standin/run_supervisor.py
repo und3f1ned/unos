@@ -43,11 +43,16 @@ The stand-in keeps the supervisor away from this machine's system:
   this machine down.
 * UNOS_INSTALL_DIR names a folder that does not exist: the updater never runs
   git or docker compose in a checkout.
+* The served certificate (ADR-0404) is data/served-certificate/served.pem, which
+  front.mjs serves from its next connection on, while it loads, as Caddy would
+  after a reload: the supervisor's handshake asks front.mjs (--front-https-port)
+  what it serves, and the reload, without Docker, only refuses a file that
+  Python's ssl cannot load, as Caddy refuses one it cannot.
 * UNOS_* and DOCKER_* variables of the caller's environment are dropped.
 
 The login rate limit is off: the E2E specs sign in once per test.
 
-Usage: run_supervisor.py [--state-dir DIR] [--port PORT] [--fresh]
+Usage: run_supervisor.py [--state-dir DIR] [--port PORT] [--fresh] [--front-https-port PORT]
   --fresh  delete data/, pools/ and tmp/ first, then seed them as
            supervisor/tests/fixtures/init-test-data.sh seeds the Docker test
            stack: smb.conf with the share [e2e_seed] (webui/tests/shares.spec.ts)
@@ -61,6 +66,7 @@ import importlib.util
 import logging
 import os
 import shutil
+import ssl
 import sys
 from pathlib import Path, PurePath
 
@@ -100,7 +106,11 @@ DATA_GLOBALS: dict[str, tuple[str, ...]] = {
 HOST_FILE_GLOBALS: dict[str, dict[str, str]] = {
     "src.storage.pools": {"FSTAB_PATH": "fstab", "FSTAB_BACKUP_PATH": "fstab.unos-backup"},
     "src.updates.updater": {"BACKUP_DIR": "update-backups"},
+    # The volume that only the supervisor's and the web UI's containers mount (ADR-0404).
+    "src.security.serving": {"SERVED_DIR": "served-certificate"},
 }
+# The HTTPS port of front.mjs, as e2e.sh starts it by default (E2E_HTTPS_PORT).
+DEFAULT_FRONT_HTTPS_PORT = 46443
 
 SEED_SMB_CONF = """[global]
    workgroup = WORKGROUP
@@ -185,12 +195,27 @@ def _replacement(original: object, new: Path) -> object:
     return new if isinstance(original, PurePath) else str(new)
 
 
-def configure(state: Path) -> Path:
+def reload_front(tls: str) -> None:
+    """In place of `caddy reload` in the web UI's container (src.security.serving.reload_caddy):
+    front.mjs reads the served file at every connection, so only Caddy's refusal of a file that it
+    cannot load is played here, with Python's ssl."""
+    serving = importlib.import_module("src.security.serving")
+    if tls not in serving.TLS_MODES:
+        raise ValueError(f"UNOS_TLS must be one of {serving.TLS_MODES}, not {tls!r}")
+    if tls == "served":
+        try:
+            ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER).load_cert_chain(serving.served_path())
+        except (OSError, ssl.SSLError) as e:
+            raise serving.CaddyRefused(f"loading certificates: {e}") from e
+
+
+def configure(state: Path, *, front_https_port: int = DEFAULT_FRONT_HTTPS_PORT) -> Path:
     """Point the supervisor at ``state`` and import it; return the data directory.
 
     Sets the environment before the first import of the supervisor (its
     settings are read once), then imports src.main and redirects the module
-    globals of DATA_GLOBALS and HOST_FILE_GLOBALS. Call once per process,
+    globals of DATA_GLOBALS and HOST_FILE_GLOBALS. The web UI's Caddy is
+    front.mjs on 127.0.0.1:``front_https_port``. Call once per process,
     after prepare().
     """
     state = state.resolve()
@@ -240,6 +265,12 @@ def configure(state: Path) -> Path:
     # restic's own host name goes into a file of the fake's state, not into /proc of this machine.
     importlib.import_module("src.offsite.restic").HOSTNAME_FILE = str(state / "fake-restic" / "hostname")
 
+    # The served certificate (ADR-0404): front.mjs is the web UI's Caddy.
+    serving = importlib.import_module("src.security.serving")
+    serving.CADDY_TLS_HOST = "127.0.0.1"
+    serving.CADDY_TLS_PORT = front_https_port
+    serving.reload_caddy = reload_front
+
     # 5 attempts per minute and client: the specs sign in through the form once per test.
     importlib.import_module("src.auth.router").limiter.enabled = False
     return data
@@ -250,6 +281,8 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--state-dir", type=Path, default=DEFAULT_STATE, help="default: .standin/ in the repository")
     parser.add_argument("--port", type=int, default=DEFAULT_PORT, help=f"port on 127.0.0.1 (default {DEFAULT_PORT})")
     parser.add_argument("--fresh", action="store_true", help="start from a new data directory")
+    parser.add_argument("--front-https-port", type=int, default=DEFAULT_FRONT_HTTPS_PORT,
+                        help=f"the HTTPS port of front.mjs (default {DEFAULT_FRONT_HTTPS_PORT})")
     args = parser.parse_args(argv)
 
     if hasattr(os, "geteuid") and os.geteuid() == 0:
@@ -258,7 +291,7 @@ def main(argv: list[str] | None = None) -> None:
         )
     state = args.state_dir.resolve()
     prepare(state, fresh=args.fresh)
-    configure(state)
+    configure(state, front_https_port=args.front_https_port)
 
     import uvicorn
     from src import main as supervisor

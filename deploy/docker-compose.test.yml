@@ -29,9 +29,13 @@ services:
       - PYTHONUNBUFFERED=1
       # As in docker-compose.yml: SQLite's temporary files on the tmpfs.
       - TMPDIR=/tmp
+      # The container whose Caddy loads the served certificate again (ADR-0404).
+      - UNOS_WEBUI_CONTAINER=unos-webui-test
     volumes:
       - test-data:/data
       - test-pools:/mnt/pools
+      # As in docker-compose.yml: the served certificate (ADR-0404).
+      - test-served-certificate:/served-certificate
       - /var/run/docker.sock:/var/run/docker.sock:ro
     # The same tmpfs as in docker-compose.yml (see there), so that the tests
     # run backups and restores with its limit and without exec.
@@ -71,6 +75,7 @@ services:
     volumes:
       - caddy-test-data:/data
       - caddy-test-config:/config
+      - test-served-certificate:/served-certificate:ro
     depends_on:
       supervisor:
         condition: service_healthy
@@ -84,6 +89,12 @@ services:
         until err=$$(wget -q -Y off -T 5 -O /dev/null http://supervisor:8080/api/v1/health 2>&1);
         do [ "$$err" = "$$last" ] || echo "unos-webui: waiting for the supervisor's API: $$err";
         last=$$err; sleep 2; done;
+        UNOS_TLS=local;
+        if [ -e /served-certificate/served.pem ]; then
+        if err=$$(UNOS_TLS=served caddy validate --config /etc/caddy/Caddyfile 2>&1); then UNOS_TLS=served;
+        else echo "unos-webui: the served certificate does not load, Caddy's local CA instead: $$(echo "$$err" | tail -n 1)";
+        fi; fi;
+        export UNOS_TLS;
         exec caddy run --config /etc/caddy/Caddyfile
     networks:
       unos-test-net:
@@ -168,6 +179,7 @@ volumes:
   test-pools:
   caddy-test-data:
   caddy-test-config:
+  test-served-certificate:
   test-results:
   test-reports:
 

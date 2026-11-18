@@ -343,11 +343,11 @@ test.describe('Audit log, more entries than one page', () => {
 });
 
 // security.audit-admin-actions, step 5 (ADR-0359): the Action filter offers the actions that the
-// server writes, from the server's own list; the firewall and certificate actions, which nothing
-// wrote, are gone, and an older entry that names one of them shows its action as recorded.
+// server writes, from the server's own list, and an older entry that names an action the server no
+// longer has shows its action as recorded.
 test.describe('Audit log, the actions of the filter', () => {
   const OLD = {
-    id: 'audit_old', timestamp: '2026-11-07T14:30:12Z', action: 'firewall_rule_added', severity: 'info',
+    id: 'audit_old', timestamp: '2026-11-07T14:30:12Z', action: 'legacy_example_action', severity: 'info',
     username: 'admin', ip_address: '192.0.2.10', user_agent: null, resource_type: null, resource_id: null,
     details: 'Allowed TCP port 8080', success: true, prev_hash: null, hash: null, chain: null,
   };
@@ -368,13 +368,53 @@ test.describe('Audit log, the actions of the filter', () => {
     await page.goto('/audit');
 
     await expect(timelineEntries(page)).toHaveCount(1);
-    await expect(timelineEntries(page).first()).toContainText('firewall_rule_added');
+    await expect(timelineEntries(page).first()).toContainText('legacy_example_action');
     await expect(timelineEntries(page).first()).toContainText('Allowed TCP port 8080');
 
     await page.getByRole('combobox', { name: 'Action' }).click();
     await expect(page.getByRole('option', { name: 'Task run', exact: true })).toBeVisible();
     const options = (await page.getByRole('option').allTextContents()).map((text) => text.trim());
-    expect(options.filter((option) => /firewall|ssl/i.test(option))).toEqual([]);
+    expect(options.filter((option) => /legacy/i.test(option))).toEqual([]);
+  });
+});
+
+// security.audit-admin-actions (ADR-0402): the actions and resource types of the firewall, the
+// login history, pools, images, power and notification settings are named, and the filter offers them.
+test.describe('Audit log, the other changes of the administrators', () => {
+  const entry = (n: number, action: string, resource_type: string) => ({
+    id: `audit_new_${n}`, timestamp: `2026-11-18T10:0${n}:00Z`, action, severity: 'info',
+    username: 'admin', ip_address: '192.0.2.10', user_agent: null, resource_type, resource_id: 'x',
+    details: null, success: true, prev_hash: null, hash: null, chain: null,
+  });
+
+  test('names them in the entries and offers them in the filter', async ({ authenticatedPage: page }) => {
+    const entries = [
+      entry(3, 'image_pulled', 'image'),
+      entry(2, 'login_history_cleared', 'login_history'),
+      entry(1, 'firewall_rule_added', 'firewall_rule'),
+    ];
+    await page.route(
+      (url) => url.pathname.startsWith('/api/v1/audit/'),
+      (route) => {
+        const url = new URL(route.request().url());
+        if (url.pathname === '/api/v1/audit/logs') return route.fulfill({ json: entries });
+        if (url.pathname === '/api/v1/audit/logs/count') return route.fulfill({ json: { count: entries.length } });
+        if (url.pathname === '/api/v1/audit/actions') return route.continue();
+        return route.abort();
+      },
+    );
+    await page.goto('/audit');
+
+    await expect(timelineEntries(page)).toHaveCount(3);
+    await expect(timelineEntries(page).nth(0)).toContainText('Image pulled');
+    await expect(timelineEntries(page).nth(1)).toContainText('Login history cleared');
+    await expect(timelineEntries(page).nth(2)).toContainText('Firewall rule added');
+    await expect(timelineEntries(page).nth(2)).toContainText('firewall_rule');
+
+    await page.getByRole('combobox', { name: 'Action' }).click();
+    for (const name of ['Firewall enabled', 'Pool mounted', 'System suspend', 'Image removed']) {
+      await expect(page.getByRole('option', { name, exact: true })).toBeVisible();
+    }
   });
 });
 

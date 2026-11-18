@@ -56,6 +56,8 @@
 
 	let catalog: AppTemplate[] = [];
 	let installed: InstalledApp[] = [];
+	// The apps of the catalog that have an image for this host's platform (ADR-0403).
+	$: availableCount = catalog.filter((app) => app.available).length;
 	// The catalog and the installed apps load each on its own: the catalog needs no Docker, and is
 	// listed as soon as it came, while the installed apps wait for Docker's answer, or fail as when
 	// Docker cannot be reached (503, ADR-0323). A count is shown only from a load that succeeded,
@@ -343,9 +345,9 @@
 				<h1 class="page-title">{$t('apps.title')}</h1>
 				<p class="text-sm text-secondary">
 					{#if catalogState === 'loaded' && installedState === 'loaded'}
-						{$t('apps.summary', { available: catalog.length, installed: installed.length })}
+						{$t('apps.summary', { available: availableCount, installed: installed.length })}
 					{:else if catalogState === 'loaded'}
-						{$t('apps.summaryAvailable', { available: catalog.length })}
+						{$t('apps.summaryAvailable', { available: availableCount })}
 					{/if}
 				</p>
 			</div>
@@ -463,7 +465,7 @@
 									</span>
 									<span
 										class="text-xs px-1.5 py-0.5 rounded {selectedCategory === cat.value
-											? 'bg-content-on-brand/20 text-content-on-brand'
+											? 'bg-brand-hover text-content-on-brand'
 											: 'bg-surface-overlay text-muted'}"
 									>
 										{cat.count}
@@ -576,6 +578,11 @@
 									{:else if installing.has(app.id)}
 										<span class="text-xs text-muted mono">{app.version || ''}</span>
 										<Badge variant="info">{$t('apps.job.state.running')}</Badge>
+									{:else if !app.available}
+										<Badge variant="warning" class="text-xs">
+											{$t('apps.notAvailable', { platform: app.host_platform ?? '' })}
+										</Badge>
+										<Button variant="primary" size="sm" icon={Download} disabled>{$t('apps.install')}</Button>
 									{:else}
 										<span class="text-xs text-muted mono">{app.version || ''}</span>
 										<Button variant="primary" size="sm" icon={Download}>{$t('apps.install')}</Button>

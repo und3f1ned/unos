@@ -22,6 +22,10 @@ Memory, Network, Disk I/O and Temperature cards and, for administrators, Storage
 Quick Actions and Recent Activity. Its order and hidden state are the user's dashboard layout, kept
 per user on the server (ADR-0395). Avoid: tile, panel.
 
+**Theme**: The colours of the web UI, dark or light: the values that the colour tokens take. Each
+user chooses Dark, Light or System (the device's light or dark setting) on the Account page, and the
+server keeps the choice per user (ADR-0405). Avoid: skin, colour mode.
+
 **Text catalog**: The texts of one area of the web UI in English and Russian
 (`webui/src/lib/i18n/catalog/<area>.ts`), which the pages show in the language chosen on the
 Account page; the server's messages stay English (ADR-0287). Avoid: dictionary, locale file.
@@ -328,6 +332,16 @@ two-factor requirement has ended: its sessions reach only the setup of two-facto
 its status and the sign-out, and its API tokens and WebSockets nothing (ADR-0386). Avoid: locked
 account, restricted user.
 
+**Stored certificate**: A TLS certificate with its key, and its chain when given, that an
+administrator uploaded through the API or generated (self-signed) on the Security page, kept in the supervisor's
+`/data/certs` (ADR-0404). Avoid: custom certificate (one type of stored certificate).
+
+**Served certificate**: The stored certificate that an administrator chose for the web UI: the
+supervisor copies it with its chain and key into `served.pem` of the `served-certificate` volume,
+and the web UI's Caddy serves it to every browser while it loads; otherwise, and when none is
+chosen, Caddy serves its local CA's (ADR-0025, ADR-0404). What is served is what a TLS handshake
+with Caddy shows. Avoid: active certificate, installed certificate.
+
 ## Apps and backups
 
 **App**: An application installed from the App Store catalog, with its data on a pool (ADR-0039):
@@ -366,6 +380,13 @@ that data without the file is refused (ADR-0381). Avoid: password variable.
 (`name:tag@sha256:...`), pulled and run by that digest, with its size on the system disk
 estimated for the install's space check (`PINNED_IMAGES`, ADR-0381). The templates of floating
 tags are listed in `UNPINNED_TEMPLATES`, which only shrinks. Avoid: locked image.
+
+**Image platforms**: The Linux platforms (`linux/amd64`, `linux/arm64`, `linux/riscv64`, `linux/arm/v7`)
+that the registry's manifest list publishes for an image of the catalog, recorded in
+`supervisor/src/apps/image_platforms.json` and checked weekly by `scripts/catalog-platforms.py`.
+An app is available on a host when every image of its containers publishes the host's platform;
+otherwise the App Store marks it not available and its install answers 409 (ADR-0403). Avoid:
+architecture (the System page's `architecture` is the host's machine name).
 
 **Hardware profile**: The hardware of a SoC that a container of an app gets when it is installed on
 a host whose device tree names that SoC and that has the nodes the profile requires: the device

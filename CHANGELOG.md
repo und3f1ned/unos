@@ -12,12 +12,40 @@ features (SMB access per user and per share, volumes, copy and move in the file
 manager, encrypted backup uploads, health checks, CI checks).
 
 ### Changed
+- The web UI has a light theme. Each user chooses **Dark**, **Light** or **System** (the device's
+  setting, followed as it changes) on the Account page; the NAS keeps the choice per user
+  (`GET`/`PUT /api/v1/auth/me/theme`, audited as `theme_changed`), and the page shows it before it
+  is drawn. A user who never chose gets **System**, so the web UI turns light on a device set to
+  light. The colour tokens have a value per theme, and the pairs of tokens that text and controls
+  use meet WCAG AA in both themes, which made the dark theme's rows under the pointer and fields a
+  little darker, its secondary and muted text and its status colours lighter, its field borders
+  visible and the warning and success buttons darker (ADR-0405).
 - Web UI pages use the design system everywhere: every button is `Button`, fields carry the
   `form-*` classes and colours are the tokens of `tailwind.config.js`; `make frontend` fails for a raw
   `<button>` or a raw palette colour outside `lib/components/ui` (ADR-0400). New tokens keep the old
   look, within what a token allows: `brand`, `surface-hover`, `border-strong`, `content-soft`, `content-on-brand`, `status-neutral`.
 
 ### Security
+- The audit log records the firewall (turned on or off, rules added and removed, reset), clearing the
+  login history, pools mounted, unmounted and imported, containers created, images pulled and removed,
+  suspend (written before the host goes down), and the power, UPS, notification and off-device copy
+  settings, for real changes only and never with a secret (ADR-0402). The Action filter offers the
+  new actions. Two starts or stops of one container at the same moment write one entry. Saving power,
+  channel or off-device settings that did not change no longer rewrites their files, and a firewall
+  reset that ufw refuses answers 500.
+- The web UI can serve a stored certificate: **Serve this certificate** on the
+  certificate card of System > Security (or
+  `POST /api/v1/security/certificates/{id}/serve`) checks it (it parses, the
+  key belongs to it and is RSA or EC P-256 or P-384, which browsers take, it is
+  for TLS servers and valid now, the chain is in order; one that expires within
+  30 days is marked) and has Caddy load it from a volume that only the
+  supervisor and the web UI mount; **Use Caddy's local CA** and deleting the
+  served certificate serve the local CA's again. A certificate that Caddy does
+  not load leaves the one it served, and at a restart the local CA's. The card,
+  `GET .../certificates/status` and the listing name what a TLS handshake with
+  Caddy shows (`served_by`, `served_id`, `chosen_id`, the SHA-256
+  `fingerprint`). Certificate uploads, generations, deletes and changes of the
+  served certificate write audit entries (ADR-0404).
 - Regular users' live statistics (`/ws/v1/events`) no longer carry the host's
   processes or the names of its block devices: `processes` and
   `disk_io.disks` are empty for them, as the host's interfaces already were.
@@ -395,6 +423,14 @@ manager, encrypted backup uploads, health checks, CI checks).
   `ups_name`, `host` and `port` are checked before they reach `upsc`.
 
 ### Added
+- The App Store shows which apps have an image for the host's platform: every image of the
+  catalog has its Linux platforms recorded from its registry (`image_platforms.json`), the
+  catalog API answers `platforms`, `host_platform` and `available`, an app whose image lacks the
+  host's platform shows "Not available for linux/riscv64" (or the host's platform) and no
+  Install, and `POST /api/v1/apps/install` answers 409 for it before any pull (also when only
+  one image of an app of several containers lacks it); before, such an install failed at the
+  pull with a 500. `scripts/catalog-platforms.py check` (`make catalog-platforms`, and the
+  weekly audit workflow) fails when the recorded platforms differ from the registries' (ADR-0403).
 - The supervisor's log is one JSON object per line (`time`, `level`, `logger`,
   `message`, and `fields` and `exception` when there are any), uvicorn's own
   lines included, at INFO by default; before, only warnings reached

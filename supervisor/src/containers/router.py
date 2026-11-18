@@ -51,15 +51,29 @@ async def list_containers(all: bool = Query(True), _=Depends(verify_token)):
 
 
 @router.post("", response_model=ContainerInfo)
-async def create_container(config: ContainerCreate, _=Depends(verify_token)):
-    """Create a new container (Docker pulls a missing image first)."""
+async def create_container(config: ContainerCreate, request: Request, user: User = Depends(verify_token)):
+    """Create a new container (Docker pulls a missing image first). The audit log gets
+    container_created, with the image and never the environment (ADR-0402)."""
     try:
-        return await _docker(docker_ops.create_container, config)
+        info = await _docker(docker_ops.create_container, config)
     except HTTPException:
         raise
     except Exception as e:
         logger.exception("Could not create container")
+        # Docker made the container and could not start it (a port in use): it stays, so the audit log
+        # gets container_created as failed (ADR-0402).
+        if await asyncio.to_thread(docker_ops.container_exists, config.name):
+            await audit_change(
+                AuditAction.CONTAINER_CREATED, request, user.username, resource_type="container",
+                resource_id=config.name, success=False,
+                details=f"Created the container {config.name} from {config.image}; then: {e}",
+            )
         raise HTTPException(status_code=500, detail=str(e))
+    await audit_change(
+        AuditAction.CONTAINER_CREATED, request, user.username, resource_type="container", resource_id=info.name,
+        details=f"Created the container {info.name} from {config.image}",
+    )
+    return info
 
 
 # Image endpoints. They come before the /{container_id} routes: Starlette tries
@@ -78,25 +92,32 @@ async def list_images(_=Depends(verify_token)):
 
 
 @router.post("/images/pull", response_model=ImageInfo)
-async def pull_image(image: str, _=Depends(verify_token)):
-    """Pull an image from registry."""
+async def pull_image(image: str, request: Request, user: User = Depends(verify_token)):
+    """Pull an image from registry. The audit log gets image_pulled when the pull brought a new image
+    or moved the reference to another (ADR-0402)."""
     try:
-        return await _docker(docker_ops.pull_image, image)
+        info, changed = await _docker(docker_ops.pull_image_changed, image)
     except HTTPException:
         raise
     except Exception as e:
         logger.exception("Could not pull image")
         raise HTTPException(status_code=500, detail=str(e))
+    if changed:
+        await audit_change(
+            AuditAction.IMAGE_PULLED, request, user.username, resource_type="image", resource_id=image,
+            details=f"Pulled the image {image}",
+        )
+    return info
 
 
 @router.delete("/images/{image_id}")
 async def remove_image(
-    image_id: str, force: bool = Query(False), _=Depends(verify_token)
+    image_id: str, request: Request, force: bool = Query(False), user: User = Depends(verify_token)
 ):
-    """Remove an image with all its tags (409 while a container uses it)."""
+    """Remove an image with all its tags (409 while a container uses it). The audit log gets
+    image_removed (ADR-0402)."""
     try:
-        await _docker(docker_ops.remove_image, image_id, force=force)
-        return {"status": "removed"}
+        name = await _docker(docker_ops.remove_image, image_id, force=force)
     except HTTPException:
         raise
     except ValueError as e:
@@ -104,6 +125,11 @@ async def remove_image(
     except Exception as e:
         logger.exception("Could not remove image")
         raise HTTPException(status_code=500, detail=str(e))
+    await audit_change(
+        AuditAction.IMAGE_REMOVED, request, user.username, resource_type="image", resource_id=name,
+        details=f"Removed the image {name}" + (" (forced)" if force else ""), severity=AuditSeverity.WARNING,
+    )
+    return {"status": "removed"}
 
 
 @router.get("/{container_id}", response_model=ContainerInfo)

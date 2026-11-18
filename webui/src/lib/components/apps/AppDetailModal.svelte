@@ -168,6 +168,7 @@
 		...(invalidVolumes.length > 0
 			? [$t('apps.detail.invalidVolumes', { paths: invalidVolumes.join(', ') })]
 			: []),
+		...(app && !app.available ? [$t('apps.detail.notAvailable', { name: app.name, platform: app.host_platform ?? '' })] : []),
 		...(otherInstall ? [$t('apps.detail.installRunning', { name: otherInstall.name })] : [])
 	];
 	$: canInstall =

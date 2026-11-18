@@ -129,14 +129,14 @@ test.describe('Language', () => {
       ],
     };
     const VALID_UNTIL = '2027-11-08T01:47:31Z';
-    const CERTIFICATE_STATUS = { served_by: 'caddy_local_ca' };
+    const CERTIFICATE_STATUS = { served_by: 'caddy_local_ca', served_id: null, chosen_id: null, fingerprint: null };
     const CERTIFICATES = {
       certificates: [
         { id: 'custom_nas.local', type: 'self_signed', domain: 'nas.local', issuer: 'nas.local',
-          valid_from: '2026-11-08T01:47:31Z', valid_until: VALID_UNTIL, is_valid: true, served: false,
-          fingerprint: null },
+          valid_from: '2026-11-08T01:47:31Z', valid_until: VALID_UNTIL, is_valid: true, expires_soon: true,
+          served: false, chosen: false, fingerprint: null },
       ],
-      served_by: 'caddy_local_ca',
+      status: CERTIFICATE_STATUS,
     };
 
     test('come in the language of the page', async ({ authenticatedPage: page }) => {
@@ -166,8 +166,16 @@ test.describe('Language', () => {
       await expect(main.getByText("Caddy's local CA", { exact: true })).toBeVisible();
       await expect(main.getByText("HTTPS for browsers: Caddy's local CA", { exact: true })).toBeVisible();
       await expect(main.getByText('NOT SERVED', { exact: true })).toBeVisible();
+      await expect(main.getByText('EXPIRES SOON', { exact: true })).toBeVisible();
+      await expect(main.getByRole('button', { name: 'Serve nas.local' })).toHaveText('Serve this certificate');
       await expect(main.getByText('Self-signed | Issuer: nas.local | Until: 11/8/2027, 1:47:31 AM', { exact: true }))
         .toBeVisible();
+      // The confirmation, with the date of the end in the language of the page.
+      await main.getByRole('button', { name: 'Serve nas.local' }).click();
+      const dialog = page.getByRole('dialog');
+      await expect(dialog.getByRole('heading', { name: 'Serve this certificate?' })).toBeVisible();
+      await expect(dialog.getByText('This certificate expires on 11/8/2027, 1:47:31 AM: replace it in time.')).toBeVisible();
+      await dialog.getByRole('button', { name: 'Cancel' }).click();
 
       await chooseLanguage(page, 'Interface language', 'Русский');
       await expect(main.getByText('По умолчанию: входящие — запрещены, исходящие — разрешены', { exact: true }))
@@ -178,8 +186,16 @@ test.describe('Language', () => {
       await expect(main.getByText('Локальный ЦС Caddy', { exact: true })).toBeVisible();
       await expect(main.getByText('HTTPS для браузеров: Локальный ЦС Caddy', { exact: true })).toBeVisible();
       await expect(main.getByText('НЕ ОТДАЁТСЯ', { exact: true })).toBeVisible();
+      await expect(main.getByText('СКОРО ИСТЕЧЁТ', { exact: true })).toBeVisible();
+      await expect(main.getByRole('button', { name: 'Отдавать nas.local' })).toHaveText('Отдавать этот сертификат');
       await expect(main.getByText('Самоподписанный | Издатель: nas.local | До: 08.11.2027, 01:47:31', { exact: true }))
         .toBeVisible();
+      await main.getByRole('button', { name: 'Отдавать nas.local' }).click();
+      await expect(dialog.getByRole('heading', { name: 'Отдавать этот сертификат?' })).toBeVisible();
+      await expect(dialog.getByText('Все браузеры увидят новый сертификат.', { exact: false })).toBeVisible();
+      await expect(dialog.getByText('Срок действия этого сертификата истекает 08.11.2027, 01:47:31: замените его вовремя.'))
+        .toBeVisible();
+      await expect(dialog.getByRole('button', { name: 'Отдавать', exact: true })).toBeVisible();
     });
   });
 

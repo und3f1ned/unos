@@ -6,15 +6,16 @@
   import TwoFactorRequirementCard from "$lib/components/account/TwoFactorRequirementCard.svelte";
   import RecoveryCodes from "$lib/components/account/RecoveryCodes.svelte";
   import LanguageCard from "$lib/components/account/LanguageCard.svelte";
+  import ThemeCard from "$lib/components/account/ThemeCard.svelte";
   import ApiTokensCard from "$lib/components/account/ApiTokensCard.svelte";
   import { intlLocale, t } from "$lib/i18n";
   import { formatDateTime } from "$lib/time";
-  import { Alert, Badge, Button } from "$lib/components/ui";
+  import { Alert, Badge, Button, Modal } from "$lib/components/ui";
   import { changePassword, setupTOTP, enableTOTP, disableTOTP, getTOTPStatus, type TOTPSetupResponse } from "$lib/api/auth";
   import {
     getLoginHistory, clearLoginHistory,
     getFirewallStatus, enableFirewall, disableFirewall, createFirewallRule, deleteFirewallRule, resetFirewall,
-    getCertificateStatus, getCertificates, generateSelfSignedCert, deleteCertificate,
+    getCertificateStatus, getCertificates, generateSelfSignedCert, deleteCertificate, serveCertificate, LOCAL_CA_ID,
     type LoginAttempt, type FirewallRule, type FirewallStatus, type Certificate, type CertificateStatus
   } from "$lib/api/security";
   import {
@@ -98,6 +99,11 @@
   let certError = "";
   let genCertError = "";
   let certSuccess = "";
+  // The certificate whose serving waits for its confirmation: a stored one, or null for Caddy's
+  // local CA (ADR-0404); why the server refused it, shown in the dialog.
+  let serveTarget: { cert: Certificate | null } | null = null;
+  let serveBusy = false;
+  let serveError = "";
   let showCertModal = false;
   let showGenCertModal = false;
   let newCert = {
@@ -133,9 +139,16 @@
     self_signed: "account.certs.selfSigned",
     custom: "account.certs.custom"
   };
-  // What browsers get (served_by of CertificateStatus): stored certificates are not served (ADR-0357).
+  // What browsers get (served_by of CertificateStatus), as the web server answered the NAS (ADR-0404).
   const SERVED_BY: Record<string, string> = {
-    caddy_local_ca: "account.certs.caddyLocalCa"
+    caddy_local_ca: "account.certs.caddyLocalCa",
+    stored_certificate: "account.certs.storedCertificate",
+    unknown: "account.certs.servedUnknown"
+  };
+  const SERVED_BADGES: Record<string, "info" | "success" | "warning"> = {
+    caddy_local_ca: "info",
+    stored_certificate: "success",
+    unknown: "warning"
   };
 
   /** The label of `value` in the language of the page; a value without one as it comes. */
@@ -144,6 +157,24 @@
 
   /** A certificate's date (UTC with its offset, ADR-0401) in the language of the page and the browser's time zone. */
   $: formatCertificateDate = (value: string): string => formatDateTime(value, $intlLocale);
+
+  /** The stored certificate of `id` among `listed`. */
+  function storedCertificate(listed: Certificate[], id: string | null | undefined): Certificate | undefined {
+    return id ? listed.find((cert) => cert.id === id) : undefined;
+  }
+  // What browsers get, in words: the served certificate's name, or what serves theirs.
+  $: servedCert = storedCertificate(certificates, certStatus?.served_id);
+  $: chosenCert = storedCertificate(certificates, certStatus?.chosen_id);
+  $: servedSource = !certStatus
+    ? ""
+    : certStatus.served_by === "stored_certificate" && servedCert
+      ? servedCert.domain
+      : labelOf(SERVED_BY, certStatus.served_by);
+  // A stored certificate was chosen, and the web server answered with another.
+  $: chosenNotServed =
+    !!certStatus?.chosen_id &&
+    certStatus.served_by !== "unknown" &&
+    certStatus.served_id !== certStatus.chosen_id;
 
   onMount(async () => {
     await Promise.all([
@@ -442,6 +473,8 @@
       certStatus = await getCertificateStatus();
       const resp = await getCertificates();
       certificates = resp.certificates;
+      // The later answer of the two.
+      certStatus = resp.status;
       certificatesLoaded = true;
     } catch (e) {
       // No list is known: not the one of an earlier load, and not "none".
@@ -485,14 +518,47 @@
     }
   }
 
-  async function handleDeleteCert(certId: string) {
-    if (!confirm($t("account.certs.confirmDelete"))) return;
+  function askServe(cert: Certificate | null) {
+    serveError = "";
+    serveTarget = { cert };
+  }
+
+  function closeServe() {
+    if (!serveBusy) serveTarget = null;
+  }
+
+  async function confirmServe() {
+    if (!serveTarget) return;
+    const cert = serveTarget.cert;
+    serveBusy = true;
+    serveError = "";
+    certSuccess = "";
+    certError = "";
+    try {
+      const answer = await serveCertificate(cert ? cert.id : LOCAL_CA_ID);
+      certStatus = answer.status;
+      certSuccess = cert ? $t("account.certs.nowServed", { domain: cert.domain }) : $t("account.certs.nowLocalCa");
+      serveBusy = false;
+      serveTarget = null;
+      await loadCertificateStatus();
+    } catch (e) {
+      serveError = messageOf(e);
+    } finally {
+      serveBusy = false;
+    }
+  }
+
+  async function handleDeleteCert(cert: Certificate) {
+    const question = cert.chosen
+      ? $t("account.certs.confirmDeleteServed", { domain: cert.domain })
+      : $t("account.certs.confirmDelete");
+    if (!confirm(question)) return;
 
     certLoading = true;
     certError = "";
     certSuccess = "";
     try {
-      await deleteCertificate(certId);
+      await deleteCertificate(cert.id);
       certSuccess = $t("account.certs.deleted");
       await loadCertificateStatus();
     } catch (e: any) {
@@ -507,6 +573,8 @@
   <h2 class="text-xl font-semibold">{$t("account.title")}</h2>
 
   <LanguageCard />
+
+  <ThemeCard />
 
   <!-- Two-Factor Authentication -->
   <div class="bg-surface-elevated rounded-lg p-4">
@@ -851,7 +919,7 @@
       </h3>
       <div class="flex flex-wrap items-center gap-2">
         {#if certStatus}
-          <Badge variant="info">{labelOf(SERVED_BY, certStatus.served_by)}</Badge>
+          <Badge variant={SERVED_BADGES[certStatus.served_by] ?? "info"}>{servedSource}</Badge>
         {/if}
         <Button variant="primary"
           on:click={() => showCertModal = !showCertModal}
@@ -888,9 +956,25 @@
         {#if certStatus}
           <div class="p-3 bg-surface-muted rounded-lg min-w-0 break-words">
             <p class="font-medium">
-              {$t("account.certs.servedBy", { source: labelOf(SERVED_BY, certStatus.served_by) })}
+              {$t("account.certs.servedBy", { source: servedSource })}
             </p>
             <p class="text-sm text-content-secondary">{$t("account.certs.servedHint")}</p>
+            {#if certStatus.served_by === "unknown"}
+              <p class="text-sm text-status-warning mt-2">{$t("account.certs.servedUnknownHint")}</p>
+            {/if}
+            {#if chosenNotServed}
+              <Alert variant="warning" class="mt-3">
+                {$t("account.certs.chosenNotServed", {
+                  domain: chosenCert?.domain ?? certStatus.chosen_id ?? "",
+                  source: servedSource
+                })}
+              </Alert>
+            {/if}
+            {#if certStatus.chosen_id || certStatus.served_by === "stored_certificate"}
+              <Button variant="secondary" size="sm" class="mt-3" on:click={() => askServe(null)}>
+                {$t("account.certs.useLocalCa")}
+              </Button>
+            {/if}
           </div>
         {/if}
 
@@ -912,13 +996,22 @@
         {:else}
           <div class="space-y-2">
             {#each certificates as cert}
-              <div class="flex items-center justify-between gap-2 p-3 bg-surface-overlay rounded-lg">
+              <div class="flex flex-wrap items-center justify-between gap-2 p-3 bg-surface-overlay rounded-lg">
                 <div class="flex flex-wrap items-center gap-x-3 gap-y-1 min-w-0">
                   <span class="px-2 py-1 rounded text-xs font-medium {cert.is_valid ? 'bg-status-success/20 text-status-success' : 'bg-status-error/20 text-status-error'}">
                     {cert.is_valid ? $t("account.certs.validBadge") : $t("account.certs.expiredBadge")}
                   </span>
-                  {#if !cert.served}
+                  {#if cert.served}
+                    <Badge variant="success">{$t("account.certs.servedBadge")}</Badge>
+                  {:else if cert.chosen}
+                    {#if certStatus?.served_by !== "unknown"}
+                      <Badge variant="warning">{$t("account.certs.notLoadedBadge")}</Badge>
+                    {/if}
+                  {:else}
                     <Badge variant="neutral">{$t("account.certs.notServedBadge")}</Badge>
+                  {/if}
+                  {#if cert.expires_soon}
+                    <Badge variant="warning">{$t("account.certs.expiresSoonBadge")}</Badge>
                   {/if}
                   <div class="min-w-0 break-words">
                     <p class="font-medium">{cert.domain}</p>
@@ -929,14 +1022,23 @@
                     </p>
                   </div>
                 </div>
-                {#if cert.id.startsWith('custom_')}
-                  <Button variant="ghost" size="icon" class="text-status-error hover:text-status-error"
-                    on:click={() => handleDeleteCert(cert.id)}
-                    aria-label={$t("account.certs.delete", { domain: cert.domain })}
-                  >
-                    <Trash2 class="w-4 h-4" />
-                  </Button>
-                {/if}
+                <div class="flex flex-wrap items-center gap-2">
+                  {#if cert.is_valid && !cert.served}
+                    <Button variant="secondary" size="sm" on:click={() => askServe(cert)}
+                      aria-label={$t("account.certs.serveLabel", { domain: cert.domain })}
+                    >
+                      {$t("account.certs.serve")}
+                    </Button>
+                  {/if}
+                  {#if cert.id.startsWith('custom_')}
+                    <Button variant="ghost" size="icon" class="text-status-error hover:text-status-error"
+                      on:click={() => handleDeleteCert(cert)}
+                      aria-label={$t("account.certs.delete", { domain: cert.domain })}
+                    >
+                      <Trash2 class="w-4 h-4" />
+                    </Button>
+                  {/if}
+                </div>
               </div>
             {/each}
           </div>
@@ -1306,6 +1408,40 @@
     </div>
   </div>
 {/if}
+
+<!-- Serve a stored certificate, or Caddy's local CA again: every browser sees a new certificate (ADR-0404). -->
+<Modal
+  open={serveTarget !== null}
+  title={serveTarget?.cert ? $t("account.certs.serveTitle") : $t("account.certs.localCaTitle")}
+  size="md"
+  closable={!serveBusy}
+  on:close={closeServe}
+>
+  {#if serveTarget}
+    <p class="break-words">
+      {serveTarget.cert
+        ? $t("account.certs.serveText", { domain: serveTarget.cert.domain })
+        : $t("account.certs.localCaText")}
+    </p>
+    <Alert variant="warning" class="mt-3">{$t("account.certs.newCertificateWarning")}</Alert>
+    {#if serveTarget.cert?.expires_soon && serveTarget.cert.valid_until}
+      <Alert variant="warning" class="mt-3">
+        {$t("account.certs.expiresSoonWarning", { date: formatCertificateDate(serveTarget.cert.valid_until) })}
+      </Alert>
+    {/if}
+    {#if serveError}
+      <Alert variant="error" class="mt-3 break-words">{serveError}</Alert>
+    {/if}
+  {/if}
+  <svelte:fragment slot="footer">
+    <Button variant="secondary" class="flex-1" disabled={serveBusy} on:click={closeServe}>
+      {$t("common.cancel")}
+    </Button>
+    <Button variant="primary" class="flex-1" loading={serveBusy} on:click={confirmServe}>
+      {serveTarget?.cert ? $t("account.certs.serveConfirm") : $t("account.certs.useLocalCa")}
+    </Button>
+  </svelte:fragment>
+</Modal>
 
 <!-- Generate Self-Signed Certificate Modal -->
 {#if showGenCertModal}

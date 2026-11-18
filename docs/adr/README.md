@@ -95,8 +95,10 @@ and this index, and `make check-fast` runs it.
 | [0343](0343-a-users-own-sign-out-password-and-two-factor-changes-are-audited-about-the-user.md) | A user's own sign-out, password change and two-factor changes are audited about the user, and answer when their entry cannot be written | accepted | 2026-11-11 |
 | [0350](0350-pool-volume-snapshot-container-and-app-changes-are-audited-and-answer-when-their-entry-cannot-be-written.md) | Pool, volume, snapshot, container and app changes are audited, and answer when their entry cannot be written | accepted | 2026-11-12 |
 | [0351](0351-backups-power-scheduled-tasks-and-the-hosts-settings-are-audited-after-they-succeed.md) | Backups, power, scheduled tasks and the host's network and system settings are audited after they succeed, and answer when their entry cannot be written | accepted | 2026-11-12 |
-| [0357](0357-stored-certificates-are-not-served-yet-and-the-status-names-caddys-local-ca.md) | Stored certificates are not served yet, and the certificate status names Caddy's local CA | accepted | 2026-11-12 |
-| [0359](0359-the-audit-logs-action-filter-offers-only-written-actions-and-an-older-entrys-action-is-listed-as-recorded.md) | The audit log's Action filter offers only actions that the supervisor writes, and an older entry's action that AuditAction no longer has is listed as recorded | accepted | 2026-11-12 |
+| [0357](0357-stored-certificates-are-not-served-yet-and-the-status-names-caddys-local-ca.md) | Stored certificates are not served yet, and the certificate status names Caddy's local CA | superseded by [0404](0404-caddy-serves-a-stored-certificate-an-administrator-chooses-from-one-shared-file-and-falls-back-to-its-local-ca.md) | 2026-11-12 |
+| [0359](0359-the-audit-logs-action-filter-offers-only-written-actions-and-an-older-entrys-action-is-listed-as-recorded.md) | The audit log's Action filter offers only actions that the supervisor writes, and an older entry's action that AuditAction no longer has is listed as recorded | superseded by [0402](0402-the-firewall-the-login-history-pools-images-power-settings-and-channels-are-audited-and-the-action-filter-offers-what-is-written.md) | 2026-11-12 |
+| [0402](0402-the-firewall-the-login-history-pools-images-power-settings-and-channels-are-audited-and-the-action-filter-offers-what-is-written.md) | The firewall, the login history, pool mounts, images, power and notification settings and the off-device copy are audited, and the Action filter offers what the supervisor writes | accepted | 2026-11-18 |
+| [0404](0404-caddy-serves-a-stored-certificate-an-administrator-chooses-from-one-shared-file-and-falls-back-to-its-local-ca.md) | Caddy serves a stored certificate that an administrator chooses, from one file shared only with the supervisor, and falls back to its local CA | accepted | 2026-11-18 |
 
 ## Auth
 
@@ -311,6 +313,7 @@ and this index, and `make check-fast` runs it.
 | [0382](0382-hardware-profiles-apply-per-container-may-choose-its-image-and-give-immichs-machine-learning-the-rk3588-npu.md) | Hardware profiles apply per container, may choose the container's image and give Immich's machine learning the RK3588's NPU | accepted | 2026-11-16 |
 | [0384](0384-an-apps-install-runs-as-a-background-job-whose-progress-the-app-store-shows.md) | An app's install runs as a background job whose progress the App Store shows | accepted | 2026-11-17 |
 | [0390](0390-each-container-of-an-app-gets-its-own-memory-and-cpu-limits-whose-use-is-read-from-its-cgroup.md) | Each container of an app gets its own memory and CPU limits, kept by Docker and for the next install, and its use is read from its cgroup and alerted | accepted | 2026-11-17 |
+| [0403](0403-the-app-store-offers-only-apps-whose-images-publish-the-hosts-platform.md) | The App Store offers only apps whose images publish the host's platform, and the install refuses the others before any pull | accepted | 2026-11-18 |
 
 ## Backup
 
@@ -406,6 +409,7 @@ and this index, and `make check-fast` runs it.
 | [0393](0393-ctrl-k-opens-a-command-palette-that-runs-only-actions-that-change-nothing-on-the-nas.md) | Ctrl+K opens a command palette of the pages and actions of the user's role, which runs only actions that change nothing on the NAS | accepted | 2026-11-17 |
 | [0395](0395-each-user-arranges-hides-and-shows-the-dashboards-widgets-and-the-server-keeps-the-layout.md) | Each user arranges, hides and shows the dashboard's widgets, and the server keeps the layout | accepted | 2026-11-17 |
 | [0400](0400-a-check-fails-for-raw-controls-and-raw-colours-in-the-web-uis-pages.md) | A check fails for raw controls and raw colours in the web UI's pages | accepted | 2026-11-18 |
+| [0405](0405-each-user-chooses-a-dark-light-or-system-theme-and-the-colour-tokens-have-a-value-per-theme.md) | Each user chooses a dark, light or system theme, and the colour tokens have a value per theme | accepted | 2026-11-18 |
 
 ## Deploy
 

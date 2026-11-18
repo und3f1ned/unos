@@ -551,7 +551,7 @@
                     <td class="px-3 py-2 text-content max-sm:w-full max-sm:p-0 max-sm:pt-1">
                       <span class="break-all"
                         >{#each splitByMatch(entry.message ?? "", search) as part}{#if part.match}<mark
-                              class="bg-status-warning/30 text-status-warning rounded-sm">{part.text}</mark
+                              class="bg-status-warning/20 text-status-warning rounded-sm">{part.text}</mark
                             >{:else}{part.text}{/if}{/each}</span
                       >
                     </td>

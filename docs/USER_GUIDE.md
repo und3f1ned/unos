@@ -133,6 +133,20 @@ happens: **Add a user…** opens the **Users** page's **Add user**, and
 the confirmations of **System** → **Power Management**. Other changes, such
 as deleting something, are made on their pages.
 
+### Theme
+
+The web interface has a dark and a light theme. Choose **Dark**, **Light** or
+**System** on the **Account** page (administrators: **System** → **Security**),
+under **Theme**. **System** follows the light or dark setting of your device, and
+changes with it. The choice applies at once and is kept for your account on the
+NAS: it stays after you sign out and in, and follows you to every browser you
+sign in to. Until you choose, the theme is **System**. Before anyone signs in, the
+login and first-run pages show the last theme used in this browser, or the
+device's setting in a new browser. Each change is an entry **Theme changed** in
+the audit log. The colours that text and controls use meet the WCAG AA contrast
+in both themes. If your saved theme cannot be read, the Account page says so and
+shows this browser's; it asks again when you open the page again.
+
 ### Language
 
 The web interface is in English or Russian. Choose the language on the **Account**
@@ -1410,6 +1424,12 @@ name its category the same way. Some of them:
    downloaded images are kept. **Dismiss** removes the card of an install that
    has ended
 
+An app whose image has no build for your NAS's processor platform (for example most
+apps on a RISC-V board, where only a few images publish `linux/riscv64`) shows **Not
+available for linux/riscv64** (or your platform) on its card, and its details give the
+reason and no **Install**: the server refuses its install before it downloads anything. The
+**Installed** tab is the same on every platform.
+
 Only one app installs at a time: while an install runs, the App Store offers
 no other install until it has ended.
 
@@ -1728,7 +1748,7 @@ active after the restore.
 | Role | Permissions |
 |------|-------------|
 | Admin | Full access to all features, except SMB: administrators cannot use SMB |
-| User | **Dashboard** (system overview and live statistics) and **Account** (language, own password, two-factor authentication, login history and SMB access); SMB shares as an administrator allows |
+| User | **Dashboard** (system overview and live statistics) and **Account** (language, theme, own password, two-factor authentication, login history and SMB access); SMB shares as an administrator allows |
 
 Every other page and API is for administrators only; regular users do not see
 them. At least one administrator must remain: the last one cannot be demoted
@@ -2193,7 +2213,10 @@ regular users have no access to it.
   and two-factor authentication required for every account or no longer
   (**Settings changed**, resource `two_factor_requirement`; no longer as a
   **Warning**), with the sign-ins of accounts that can only set it up (a
-  **Warning**).
+  **Warning**). TLS certificates uploaded, generated (self-signed) and
+  deleted, and each change of the certificate that browsers get
+  (**Certificate served**, resource `certificate` with the stored
+  certificate's id and its end date, or `caddy_local_ca`).
   Only a change that was made writes an entry: a refused or failed one, or
   one that changes nothing (the same host name, a task saved unchanged,
   removing a pool that is not there, starting a running container or
@@ -2204,13 +2227,21 @@ regular users have no access to it.
   (**Container stopped**), and an enable of a network interface that turned
   it on without all its saved addresses and routes. A refused change of your
   own account, such as a wrong current password or two-factor code, writes
-  no entry either. Mounting, unmounting and importing pools, creating
-  containers and pulling or removing images on the **Containers** page, the
-  snapshots that scheduled tasks take and clean up, the apps started when a
-  pool is mounted, suspend, the off-device copy, notifications, the firewall,
-  the TLS certificates and clearing the login history write no entries.
+  no entry either.
+  Also recorded: a pool mounted, unmounted (a **Warning**) or imported; a container created on
+  the **Containers** page (never its environment); an image pulled, when it is new or
+  its tag moved, and removed (a **Warning**); the firewall turned on or off (off as a
+  **Warning**), a rule added or removed and a reset; clearing the login history (a
+  **Warning**, with how many attempts); suspend (a **Warning**, recorded before the host goes
+  to sleep, and again as **Failed** when the host refuses); and changes of the power, UPS,
+  notification and off-device copy settings (**Settings changed**, resource `power`, `ups`,
+  `notification_channel` or `offsite`), which name the fields that changed and never a
+  password, token, key, webhook address or mail credential. A pool mounted that already was, a
+  firewall turned on that already is and settings saved as they were write no entry. The
+  snapshots that scheduled tasks take and clean up, the apps started when a pool is mounted,
+  and the notification tests and the restores of the off-device copy write no entries.
 - **Action** offers only the actions that the NAS records. An older entry
-  whose action UNOS no longer has, such as `firewall_rule_added`, is listed
+  whose action UNOS no longer has is listed
   with its action as recorded.
 
 The same filters work in the API, for administrators: `GET /api/v1/audit/logs`
@@ -2538,26 +2569,45 @@ characters.
 ### HTTPS Certificates
 
 Under **SSL/TLS Certificates** on **System** → **Security** (administrators
-only), the badge names what browsers get over HTTPS: **Caddy's local CA**,
-the certificate that Caddy, the web server of UNOS, issues from its own
-certificate authority for the name in `UNOS_HOSTNAME` (see
-[HTTPS and the Certificate Warning](INSTALL.md#https-and-the-certificate-warning)).
-**Manage** says so again and lists the **Stored Certificates**, each with its
-type, issuer, end date, **VALID** or **EXPIRED** and **NOT SERVED**.
+only), the badge names what browsers get over HTTPS, as the web server itself
+answers UNOS: **Caddy's local CA**, the certificate that Caddy, the web server
+of UNOS, issues from its own certificate authority for the name in
+`UNOS_HOSTNAME` (see
+[HTTPS and the Certificate Warning](INSTALL.md#https-and-the-certificate-warning)),
+or the name of the stored certificate that it serves (**Not known** when the web
+server did not answer). **Manage** says so again and lists the **Stored
+Certificates**, each with its type, issuer, end date, **VALID** or **EXPIRED**,
+**SERVED** or **NOT SERVED**, and **EXPIRES SOON** when it ends within 30 days.
 
-UNOS stores certificates but does not serve them yet: browsers keep getting
-the local CA's certificate whatever is stored (feature-list entry
-`security.custom-certificates`). **Generate Self-Signed** stores a certificate
-for a host name or an IP address (a name of at most 64 characters), valid for
-the days you choose, with an optional organization (at most 64 printable
-characters) and an optional country (two letters, such as `DE`); when UNOS
-refuses what you entered, the dialog says why. The API's
-`POST /api/v1/security/certificates/upload` stores a certificate with its key
-and chain under the name of its subject; a certificate stored under the same
-name replaces the old one with its key, and its chain too, which goes when the
-new certificate has none. A store that fails keeps the old files. The trash
-button deletes a stored certificate. When the certificates cannot be loaded,
-the card says so with the reason and **Retry**.
+**Serve this certificate** makes a valid stored certificate the one that every
+browser gets, after a confirmation: browsers see a new certificate, and one that
+does not trust it warns; an open page may stop answering until you reload it.
+UNOS first checks that the certificate can be read, that its private key
+belongs to it, has no passphrase and is one that browsers take (RSA of at least
+2048 bits, or EC on P-256 or P-384), that the certificate is meant for TLS
+servers when it names its uses, that it is valid now, and that its chain is in
+order (each certificate issued by the next one); it refuses one that fails, and
+says why in the dialog. A certificate that ends within 30 days is served
+with a warning. **Use Caddy's local CA** serves the local CA's certificate
+again. Deleting the served certificate does that first and asks with its own
+question. The choice stays across restarts and reboots. If the web server
+cannot load the chosen certificate, it keeps the certificate it served; when it
+starts and cannot load it, it serves the local CA's, and the card marks the
+chosen certificate **NOT LOADED** with a warning. A certificate stored under the
+name of the served one is refused until another one, or the local CA, is
+served. Every upload, generation, delete and change of the served certificate
+is in the audit log.
+
+**Generate Self-Signed** stores a certificate for a host name or an IP address
+(a name of at most 64 characters), valid for the days you choose, with an
+optional organization (at most 64 printable characters) and an optional
+country (two letters, such as `DE`); when UNOS refuses what you entered, the
+dialog says why. The API's `POST /api/v1/security/certificates/upload` stores a
+certificate with its key and chain under the name of its subject; a
+certificate stored under the same name replaces the old one with its key, and
+its chain too, which goes when the new certificate has none. A store that fails
+keeps the old files. The trash button deletes a stored certificate. When the
+certificates cannot be loaded, the card says so with the reason and **Retry**.
 
 ---
 
