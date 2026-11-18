@@ -44,7 +44,10 @@ Python 3.11 and FastAPI. The package is `src`: tests import `src.*`, some from `
   leaves the wait to a daemon thread, so a command stuck in the kernel holds no worker thread;
   it runs one run of a command at a time, and none while a killed run of it is still stuck
   (ADR-0290). The fake hosts refuse it as they refuse `subprocess.run`. The Snapshots page's
-  `run_cmd` does not use it yet.
+  `run_cmd` does not use it yet. smartctl goes through `host.run_smartctl`, which first makes the
+  container's `/dev/<disk>` the host's disk from `/sys/block` (a disk attached after the start has
+  no node there, ADR-0414); `tests/test_hot_plugged_smart.py` fails for the name `smartctl`
+  anywhere else in `src/`, but the members of its JSON.
 
 ## Routers and roles (ADR-0030)
 

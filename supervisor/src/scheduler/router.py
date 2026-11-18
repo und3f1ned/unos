@@ -772,7 +772,7 @@ async def execute_task(task: ScheduledTask) -> tuple[bool, str]:
             # or USB bridge neither holds a worker thread nor leaves the run "running".
             try:
                 result = await asyncio.to_thread(
-                    host.run_in_container, ["smartctl", "-t", "short", device], timeout=SMART_TEST_TIMEOUT
+                    host.run_smartctl, ["-t", "short"], device, timeout=SMART_TEST_TIMEOUT
                 )
             except subprocess.TimeoutExpired:
                 return False, (
