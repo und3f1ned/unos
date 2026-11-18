@@ -478,7 +478,50 @@ For each pool, you can:
   are closed, and the **Shares** page marks them **Not served** and **Pool
   not mounted**. They keep their access, and mounting the pool serves them
   again
-- **Add Devices** - Expand the pool
+- **Add Disk** - (mounted pools that are not read-only and have all their
+  disks) Add a free disk to the pool: the dialog lists the whole disks that
+  are not the system disk, hold no other pool or btrfs filesystem (also one
+  that is not mounted) and are not mounted or in use; when there is none, it
+  says that no disk can be added. A sleeping disk is listed without waking
+  it, with unknown contents: the add then wakes it and, when it holds
+  something, refuses and names what it holds, which the dialog shows when it
+  is opened again. Only whole disks are added. Select the disk and type its path again (such as
+  `/dev/sdb`); a disk that holds something else (a partition table, another
+  filesystem) is erased only once you tick **Erase everything on <path>**.
+  The pool grows by the disk's size at once and keeps its profile (single,
+  RAID1 and so on): new data goes to the new disk too, and a full **Balance**
+  spreads the data that is there already. When the path names another disk
+  than the one listed (disks change names when they are reconnected), the
+  add is refused: open the dialog again. On a board that hangs on the TRIM of
+  an NVMe drive (ADR-0370), an NVMe drive joins only a pool that has one
+  already
+- **Remove Disk** - (the same pools) Remove a disk from the pool: select it
+  and type its path again. Its data moves to the other disks first, which can
+  take hours on a hard disk; the pool stays usable meanwhile, and the disk
+  leaves it at the end, without its btrfs signature, and is offered by
+  **Add Disk** again. The dialog says why a disk cannot leave: the pool's
+  only disk; a profile that would keep too few disks (RAID1 and RAID0 keep 2,
+  RAID1C3 3, RAID1C4 and RAID10 4); RAID5 and RAID6, from which UNOS removes
+  no disk; or too little space on the disks left, which UNOS estimates on the
+  safe side from the space allocated to chunks, also partly empty ones, with
+  room for the chunk being moved, and from the room for the first chunk on
+  as many other disks as the profile needs: a **Balance** frees partly empty
+  chunks (a full one spreads the chunks over a disk that was just added), or
+  add a disk first. In a rare uneven layout a removal can still run out of
+  space on its way: btrfs then keeps the disk in the pool with its data, and
+  the pool says that the removal failed.
+  While the removal runs, the pool shows the disk and how much is left to
+  move, sent to the open page as it changes. It runs on the host, so a
+  restart of UNOS does not stop it, and the pool shows it again once the page
+  is loaded; a restart or shutdown of the host stops it with the disk still
+  in the pool, whose data is safe, and **Remove Disk** starts it again.
+  Afterwards the pool says that the disk left it, or that the removal failed,
+  with btrfs's error; after a restart of the host, or a removal stopped
+  without an error of btrfs, it shows none. No disk is
+  added or removed while a scrub, a balance (also a paused one) or another
+  removal of the pool runs, and no balance starts or resumes while a removal
+  runs; the pool offers no **Scrub** then either, though a scheduled scrub
+  still starts. A removal cannot be cancelled from UNOS yet
 - **Scrub** - (mounted pools) Check data integrity. While the scrub runs,
   the pool shows its progress (bytes, percent, rate and duration), which UNOS
   sends the open page as it changes, about every 2 seconds, also for a

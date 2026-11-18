@@ -18,14 +18,18 @@ from ..security.validators import (
     validate_volume_name,
 )
 from ..shares import service as shares_service
-from . import balances, disks, pools, scrubs, spindown, volume_usage
+from . import balances, devices, disks, pools, scrubs, spindown, volume_usage
 from .schemas import (
     BalanceStart,
     BalanceStatus,
+    DiskAdd,
     DiskInfo,
+    DiskRemovalStatus,
+    DiskRemove,
     DiskSpindown,
     ImportableFilesystem,
     PoolCreate,
+    PoolDevices,
     PoolImport,
     PoolInfo,
     ScrubStatus,
@@ -582,4 +586,92 @@ async def cancel_balance_endpoint(request: Request, name: str, user: User = Depe
     if cancelled:
         await _audit_balance(AuditAction.BALANCE_CANCELLED, request, user, status.pool,
                              f"Cancelled the balance of the pool {status.pool}")
+    return status
+
+
+@router.get("/pools/{name}/devices", response_model=PoolDevices)
+async def get_pool_devices_endpoint(name: str, _=Depends(verify_token)):
+    """The disks of a mounted pool, each with why it cannot be removed (the only disk, the profile,
+    the space), its profiles, the whole disks that can join it (none that holds the system, a btrfs
+    filesystem or a mount; a sleeping one is not woken) and its disk removal (ADR-0411). 409 when the
+    pool is not mounted; 500 when btrfs cannot report its disks or profiles."""
+    return await _call(devices.describe, validate_pool_name(name))
+
+
+@router.post("/pools/{name}/devices", response_model=PoolInfo)
+@limiter.limit("5/minute")
+async def add_pool_device_endpoint(request: Request, name: str, body: DiskAdd, user: User = Depends(verify_token)):
+    """Add a free disk to a mounted pool with btrfs device add on the host (ADR-0411): the pool
+    grows, and its profile stays. ``confirm_device`` is the path typed again (400 otherwise),
+    ``identity`` the disk as the list showed it (409 when the path now holds another disk) and
+    ``contents`` what the list showed it to hold (409 for a disk with other data); a partition is
+    refused (400). 409, and
+    nothing written: a pool that is not mounted, is read-only or misses a disk; a scrub, a balance
+    (also a paused one) or a disk removal of the pool; a disk that is a boot or virtual device, the
+    system disk, in use, holds a btrfs filesystem or is the pool's already; data without ``force``;
+    an NVMe disk for a pool with TRIM on a board that hangs on its TRIM (ADR-0370). The answer is
+    the pool. The audit log gets pool_disk_added; as failed when btrfs device add fails (500)."""
+    pool = validate_pool_name(name)
+    try:
+        details = await _call(devices.add, pool, body)
+    except HTTPException as exc:
+        if isinstance(exc.__cause__, devices.DiskAddFailedError):
+            await audit_change(
+                AuditAction.POOL_DISK_ADDED, request, user.username, resource_type="pool", resource_id=pool,
+                details=f"Tried to add {body.device} to the pool {pool}; then: {exc.detail}", success=False,
+            )
+        raise
+    await audit_change(
+        AuditAction.POOL_DISK_ADDED, request, user.username, resource_type="pool", resource_id=pool, details=details,
+    )
+    # Audited before: a pool that cannot be read now still has its new disk.
+    return await _call(pools.get_pool, pool)
+
+
+async def _removal(func: Callable[..., DiskRemovalStatus], name: str, *args: Any, reads: bool = False) -> DiskRemovalStatus:
+    """Run a request of a disk removal in a worker thread and note its status for the events socket
+    (storage/devices.py, ADR-0411); for a read of the status (``reads``), also why it failed."""
+    pool = validate_pool_name(name)
+    try:
+        status = await asyncio.to_thread(func, pool, *args)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        error = _http_error(exc)
+        if error.status_code >= 500:
+            logger.exception("A disk removal request failed")
+            error = HTTPException(status_code=500, detail=devices.failure(exc, pool))
+            if reads:
+                devices.note(pool, error.detail)
+        raise error from exc
+    devices.note(pool, status)
+    return status
+
+
+@router.get("/pools/{name}/removal", response_model=DiskRemovalStatus)
+async def get_disk_removal_endpoint(name: str, _=Depends(verify_token)):
+    """The pool's disk removal (ADR-0411): running while the kernel moves the data off a disk, with
+    the bytes still on it and those at its start; else idle, with how the last removal that UNOS
+    started since the host started ended. 409 when the pool is not mounted; 500 when btrfs cannot
+    report its disks or does not answer within devices.READ_TIMEOUT."""
+    return await _removal(devices.status, name, reads=True)
+
+
+@router.post("/pools/{name}/removal", response_model=DiskRemovalStatus)
+@limiter.limit("5/minute")
+async def start_disk_removal_endpoint(request: Request, name: str, body: DiskRemove,
+                                      user: User = Depends(verify_token)):
+    """Start the removal of a disk of a mounted pool (ADR-0411): btrfs device remove in the unit
+    unos-disk-remove-<pool> on the host moves its data to the other disks first, and the disk leaves
+    the pool at the end. ``devid`` and ``device`` name the disk as the list showed it (409 when the
+    path is no longer the devid's), ``confirm_device`` is the path typed again (400). 409, and nothing
+    run, for the refusals of an add, the pool's only disk, a profile that would keep too few disks or
+    that UNOS does not know, and too little space on the disks left. The answer is running; 500 with
+    the reason when systemd or btrfs refuses it. The audit log gets pool_disk_removal_started."""
+    status = await _removal(devices.remove, name, body)
+    await audit_change(
+        AuditAction.POOL_DISK_REMOVAL_STARTED, request, user.username, resource_type="pool", resource_id=status.pool,
+        details=f"Started removing {body.device} (devid {body.devid}) from the pool {status.pool}: its data moves to "
+        "the other disks first",
+    )
     return status

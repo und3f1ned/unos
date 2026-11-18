@@ -440,6 +440,17 @@ manager, encrypted backup uploads, health checks, CI checks).
   `ups_name`, `host` and `port` are checked before they reach `upsc`.
 
 ### Added
+- A disk can be added to a mounted pool and removed from one on the Storage page, after its path is
+  typed again: **Add Disk** offers only whole disks that are not the system disk, hold no other pool
+  or btrfs filesystem and are not mounted or in use, erases one with data only with its own
+  confirmation, and runs `btrfs device add`: the pool grows and keeps its profile. **Remove Disk**
+  refuses the pool's only disk, a profile that would keep too few disks and too little space on the
+  disks left, and runs `btrfs device remove` on the host in the unit `unos-disk-remove-<pool>`,
+  which a restart of UNOS does not stop; the pool card follows it over the events socket. Neither
+  runs beside a scrub, a balance or another removal of the pool, and no balance starts beside a
+  removal. `GET`/`POST /api/v1/storage/pools/<name>/devices`, `GET`/`POST
+  /api/v1/storage/pools/<name>/removal`, audited as `pool_disk_added` and
+  `pool_disk_removal_started` (ADR-0411).
 - The power settings act on the host (ADR-0407). System → Power Management has a **Shutdown and
   wake schedule**: a daily shutdown at a time on the host's clock, announced 10 minutes ahead in the
   health banner and to every notification channel and postponed while a job runs (a task, a backup,

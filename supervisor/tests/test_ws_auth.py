@@ -40,8 +40,8 @@ from src.host import HostResult
 from src.main import app
 from src.shares import repair, repair_router
 from src.storage import pools as storage_pools
-from src.storage import balances, scrubs
-from src.storage.schemas import BalanceStatus, ScrubStatus
+from src.storage import balances, devices, scrubs
+from src.storage.schemas import BalanceStatus, DiskRemovalStatus, ScrubStatus
 from src.websocket import events
 
 from .test_alert_events import _found, _problem
@@ -1061,6 +1061,52 @@ class TestTheBalancesOnTheEventsSocket:
             assert [ws.receive_json()["type"] for _ in range(10)] == ["stats"] * 10
         assert kernel.reads == 0
 
+
+class TestTheDiskRemovalsOnTheEventsSocket:
+    """The disk removals that run, as the balances (ADR-0411): sent to administrators only, read
+    again while they run."""
+
+    @pytest.fixture
+    def kernel(self, monkeypatch):
+        kernel = SimpleNamespace(answer=DiskRemovalStatus(pool="data", status="running", devid=2, device="/dev/sdb",
+                                                          left=3, total=5), reads=0)
+
+        def status(pool):
+            assert pool == "data"
+            kernel.reads += 1
+            return kernel.answer
+
+        monkeypatch.setattr(devices, "status", status)
+        monkeypatch.setattr(devices, "READ_INTERVAL_SECONDS", 0.05)
+        return kernel
+
+    def test_an_administrator_follows_a_running_removal_until_it_ends(self, client, admin_token, fast_recheck, kernel):
+        devices.note("data", DiskRemovalStatus(pool="data", status="running"))  # the start answered running
+        with client.websocket_connect("/ws/v1/events") as ws:
+            _auth(ws, admin_token)
+            assert [ws.receive_json()["type"] for _ in range(2)] == ["auth_ok", "problems"]
+            assert ws.receive_json() == {"type": "disk_removals", "data": [
+                DiskRemovalStatus(pool="data", status="running").model_dump()]}
+            deadline = time.monotonic() + 5
+            while (message := ws.receive_json())["type"] != "disk_removals":
+                assert time.monotonic() < deadline
+            assert message["data"] == [kernel.answer.model_dump()]
+
+            kernel.answer = DiskRemovalStatus(pool="data", status="idle", devid=2, device="/dev/sdb", result="finished")
+            while (message := ws.receive_json())["type"] != "disk_removals":
+                assert time.monotonic() < deadline
+            assert message["data"] == [kernel.answer.model_dump()]
+            reads = kernel.reads
+            assert [ws.receive_json()["type"] for _ in range(10)] == ["stats"] * 10
+            assert kernel.reads == reads  # it no longer runs: nothing is read
+
+    def test_a_regular_user_gets_none_and_nothing_is_read_for_them(self, client, user_token, fast_recheck, kernel):
+        devices.note("data", DiskRemovalStatus(pool="data", status="running"))
+        with client.websocket_connect("/ws/v1/events") as ws:
+            _auth(ws, user_token)
+            assert ws.receive_json() == {"type": "auth_ok"}
+            assert [ws.receive_json()["type"] for _ in range(10)] == ["stats"] * 10
+        assert kernel.reads == 0
 
 
 # ---------------------------------------------------------------------------

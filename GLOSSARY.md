@@ -186,6 +186,11 @@ metadata, to free the space of partly empty ones: by default those less than 20%
 chunk (a full balance). UNOS runs it on the host in the unit `unos-balance-<pool>`, and it can be
 paused, resumed and cancelled (ADR-0379). Avoid: rebalance, defragment (rewrites files, not chunks).
 
+**Disk removal**: Taking a disk out of a pool with `btrfs device remove`, which first moves its
+data to the pool's other disks; UNOS runs it on the host in the unit `unos-disk-remove-<pool>` and
+refuses one that the profile or the space of the disks left cannot survive (ADR-0411). Avoid:
+disk replace (a copy to a new disk, which UNOS does not start), shrink.
+
 **Recovery runbook**: `docs/RECOVERY.md`: how another Linux machine reads a pool's files without
 writing to its disks, also with a disk missing, and how root runs the emergency reset (ADR-0285).
 Avoid: disaster recovery plan, repair guide.

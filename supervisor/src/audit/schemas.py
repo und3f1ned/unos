@@ -47,6 +47,9 @@ class AuditAction(str, Enum):
     BALANCE_PAUSED = "balance_paused"
     BALANCE_RESUMED = "balance_resumed"
     BALANCE_CANCELLED = "balance_cancelled"
+    # A disk added to a pool, and the start of a disk's removal from one (ADR-0411)
+    POOL_DISK_ADDED = "pool_disk_added"
+    POOL_DISK_REMOVAL_STARTED = "pool_disk_removal_started"
 
     # Shares
     SHARE_CREATED = "share_created"

@@ -38,7 +38,7 @@ Python 3.11 and FastAPI. The package is `src`: tests import `src.*`, some from `
   The timeout of `run_on_host` ends only nsenter, not the command on the host: a command that
   can run long runs under the host's `timeout` (ADR-0258).
 - btrfs and smartctl that run in the container (scrubs, a balance's status, pause and cancel, the
-  stats reset, SMART tests and reads), and the pgrep of a disk's stuck power read (ADR-0378), go
+  stats reset, a pool's profiles for a disk's add or removal, SMART tests and reads), and the pgrep of a disk's stuck power read (ADR-0378), go
   through `host.run_in_container`: at its timeout it kills
   the command's process group and
   leaves the wait to a daemon thread, so a command stuck in the kernel holds no worker thread;

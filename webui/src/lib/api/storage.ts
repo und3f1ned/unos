@@ -446,3 +446,102 @@ export async function resumeBalance(poolName: string): Promise<BalanceStatus> {
 export async function cancelBalance(poolName: string): Promise<BalanceStatus> {
   return api.delete<BalanceStatus>(balancePath(poolName));
 }
+
+/** A disk of a mounted pool (supervisor/src/storage/devices.py, ADR-0411). */
+export interface PoolMember {
+  devid: number;
+  path: string;
+  /** The bytes btrfs may use on it: 0 while the kernel removes it. */
+  size: number;
+  /** The bytes of the chunks allocated on it. */
+  used: number;
+  model: string | null;
+  serial: string | null;
+  /** Why it cannot leave the pool (the only disk, the profile, the space), in English; null when it can. */
+  problem: string | null;
+}
+
+/** A whole disk that can join a pool: neither the system disk nor in use, and without btrfs. */
+export interface DiskCandidate {
+  name: string;
+  path: string;
+  model: string | null;
+  serial: string | null;
+  wwn: string | null;
+  size: number;
+  /** What an add erases (with force): a partition table, a filesystem, or unknown contents. */
+  has_data: boolean;
+  data_description: string | null;
+}
+
+/** A pool's disk removal: the one that runs, or how the last one ended (ADR-0411). */
+export interface DiskRemovalStatus {
+  pool: string;
+  status: 'running' | 'idle';
+  devid: number | null;
+  device: string | null;
+  /** Of a removal that runs: the bytes still on the disk, and those at its start when known. */
+  left: number | null;
+  total: number | null;
+  result: 'finished' | 'failed' | null;
+  /** btrfs's error of a failed one, in English. */
+  error: string | null;
+}
+
+/** GET /storage/pools/{name}/devices: the disks of a mounted pool and those that can join it. */
+export interface PoolDevices {
+  pool: string;
+  profiles: string[];
+  members: PoolMember[];
+  candidates: DiskCandidate[];
+  removal: DiskRemovalStatus;
+}
+
+function poolPath(poolName: string, part: string): string {
+  return `/storage/pools/${encodeURIComponent(poolName)}/${part}`;
+}
+
+export async function getPoolDevices(poolName: string): Promise<PoolDevices> {
+  return api.get<PoolDevices>(poolPath(poolName, 'devices'));
+}
+
+/**
+ * Add a free disk to a mounted pool, after its path was typed again (HTTP 400 otherwise); with
+ * force, what it holds is erased. HTTP 409 for a disk that is no longer the one listed, one with
+ * data without force or with other data than the list showed, and beside a scrub, a balance or a
+ * removal of the pool.
+ */
+export async function addPoolDisk(
+  poolName: string,
+  disk: DiskCandidate,
+  confirm: string,
+  force: boolean
+): Promise<Pool> {
+  return api.post<Pool>(poolPath(poolName, 'devices'), {
+    device: disk.path,
+    confirm_device: confirm,
+    identity: { path: disk.path, serial: disk.serial, wwn: disk.wwn, size: disk.size },
+    force,
+    contents: disk.data_description
+  });
+}
+
+export async function getDiskRemoval(poolName: string): Promise<DiskRemovalStatus> {
+  return api.get<DiskRemovalStatus>(poolPath(poolName, 'removal'));
+}
+
+/**
+ * Start the removal of a disk of a mounted pool, after its path was typed again: its data moves
+ * to the other disks first. HTTP 409 when the profile or the space cannot survive it.
+ */
+export async function removePoolDisk(
+  poolName: string,
+  member: PoolMember,
+  confirm: string
+): Promise<DiskRemovalStatus> {
+  return api.post<DiskRemovalStatus>(poolPath(poolName, 'removal'), {
+    devid: member.devid,
+    device: member.path,
+    confirm_device: confirm
+  });
+}
