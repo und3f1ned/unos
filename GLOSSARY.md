@@ -319,6 +319,16 @@ restricted token.
 Account page and keeps; each one signs in once in place of a code of the authenticator app
 (ADR-0238). Avoid: backup code.
 
+**Security key**: A WebAuthn authenticator (a USB or NFC key, or a passkey of a phone or computer)
+that a user with two-factor authentication adds on the Account page; at the code step of the
+sign-in its answer to a challenge signs in once in place of a code of the authenticator app. It
+works at the web UI's address where it was added, never by IP address (ADR-0406). Avoid: passkey
+(one kind of it), hardware token, U2F key.
+
+**Relying party ID**: The host name to which WebAuthn binds a security key: the name of the web UI's
+address where the key was added, without the port, kept with the key (ADR-0406). Avoid: domain,
+RP name.
+
 **Emergency reset**: Root on the host setting a new password for an administrator and turning its
 two-factor authentication off, with `deploy/reset-admin.sh`, when no administrator can sign in;
 the audit log records it by the user root (ADR-0284). Avoid: password recovery, factory reset.

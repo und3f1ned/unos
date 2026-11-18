@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { goto } from "$app/navigation";
-  import { login, getAuthStatus, getMe } from "$lib/api/auth";
+  import { login, getAuthStatus, getMe, type SecurityKeyRequest, type SignIn } from "$lib/api/auth";
   import { ApiError } from "$lib/api/client";
   import {
     user,
@@ -15,7 +15,8 @@
   import { connectWebSocket } from "$lib/stores/stats";
   import { Alert, Button, Input } from "$lib/components/ui";
   import { t } from "$lib/i18n";
-  import { KeyRound, Server, ShieldCheck } from "lucide-svelte";
+  import { browserErrorKey, getAssertion, securityKeysSupported } from "$lib/webauthn";
+  import { KeyRound, Server, ShieldCheck, Usb } from "lucide-svelte";
 
   let username = "";
   let password = "";
@@ -26,6 +27,17 @@
   // At the code step: a recovery code in place of the authenticator app's code.
   let useRecoveryCode = false;
   let recoveryCode = "";
+  // At the code step (ADR-0406): the account has security keys that work at this address, the
+  // challenge of the password step while it is unused and fresh, and where its keys work.
+  let keysHere = false;
+  let keyRequest: SecurityKeyRequest | null = null;
+  let keyRequestAt = 0;
+  let keyOrigins: string[] = [];
+  let usingKey = false;
+  // A challenge lives two minutes on the server and is used up by the answer it gets: an older one,
+  // or a try after an answer, takes a new password step. 50 s and the browser's 60 s for the touch
+  // stay within the two minutes.
+  const KEY_REQUEST_FRESH_MS = 50_000;
 
   onMount(async () => {
     try {
@@ -53,31 +65,79 @@
       if (result.requires_totp) {
         // 2FA is required, show TOTP input
         requiresTOTP = true;
+        codeStep(result);
         loading = false;
         return;
       }
 
-      // Signed in: the session cookie replaced one that a failed sign-out left.
-      forgetFailedSignOut();
-      const me = await getMe();
-      user.set(me);
-      isLoggedIn.set(true);
-      // No socket serves an account that can only set up two-factor authentication.
-      if (!isSetupOnly(me)) connectWebSocket();
-      // While every account must have two-factor authentication, one without it is asked to set
-      // it up at each sign-in, and after its grace period can only do that.
-      goto(me.two_factor_required ? TWO_FACTOR_SETUP_PATH : "/");
+      await signedIn();
     } catch (e: any) {
-      error = e.message || $t("login.failed");
-      // Only a rejected password leads back to the password form. An invalid
-      // or already used code ("Invalid 2FA code", "This two-factor code was
-      // already used; wait for the next one", "Invalid recovery code"), too
-      // many attempts (429) or a server error keep the 2FA step.
-      if (e instanceof ApiError && e.status === 401 && !/2FA|two-factor|recovery code/i.test(error)) {
-        requiresTOTP = false;
-      }
+      failed(e);
     } finally {
       loading = false;
+    }
+  }
+
+  /** What the code step offers besides the app's code. */
+  function codeStep(result: SignIn) {
+    keyRequest = result.security_key ?? null;
+    keyRequestAt = Date.now();
+    keysHere = keyRequest !== null;
+    keyOrigins = result.security_key_origins ?? [];
+  }
+
+  async function signedIn() {
+    // Signed in: the session cookie replaced one that a failed sign-out left.
+    forgetFailedSignOut();
+    const me = await getMe();
+    user.set(me);
+    isLoggedIn.set(true);
+    // No socket serves an account that can only set up two-factor authentication.
+    if (!isSetupOnly(me)) connectWebSocket();
+    // While every account must have two-factor authentication, one without it is asked to set
+    // it up at each sign-in, and after its grace period can only do that.
+    goto(me.two_factor_required ? TWO_FACTOR_SETUP_PATH : "/");
+  }
+
+  function failed(e: any) {
+    const key = browserErrorKey(e);
+    error = key ? $t(key) : e.message || $t("login.failed");
+    // Only a rejected password leads back to the password form. An invalid
+    // or already used code ("Invalid 2FA code", "This two-factor code was
+    // already used; wait for the next one", "Invalid recovery code"), a refused
+    // security key ("Invalid security key"), too many attempts (429) or a server
+    // error keep the 2FA step.
+    if (e instanceof ApiError && e.status === 401 && !/2FA|two-factor|recovery code|security key/i.test(error)) {
+      requiresTOTP = false;
+    }
+  }
+
+  /** Sign in with a touch of a security key, in place of the app's code. */
+  async function useSecurityKey() {
+    if (usingKey || loading) return;
+    error = "";
+    usingKey = true;
+    try {
+      let request = keyRequest;
+      if (!request || Date.now() - keyRequestAt > KEY_REQUEST_FRESH_MS) {
+        const again = await login(username, password);
+        if (!again.requires_totp) {
+          await signedIn();
+          return;
+        }
+        codeStep(again);
+        request = keyRequest;
+        if (!request) return;
+      }
+      const answer = await getAssertion(request);
+      // Sent: the server uses the challenge up, whatever it answers.
+      keyRequest = null;
+      await login(username, password, undefined, undefined, answer);
+      await signedIn();
+    } catch (e: any) {
+      failed(e);
+    } finally {
+      usingKey = false;
     }
   }
 
@@ -86,6 +146,9 @@
     totpCode = "";
     useRecoveryCode = false;
     recoveryCode = "";
+    keysHere = false;
+    keyRequest = null;
+    keyOrigins = [];
     error = "";
   }
 
@@ -195,6 +258,19 @@
           </p>
         </div>
 
+        <!-- A security key in place of the code (ADR-0406), where the account's keys work. -->
+        {#if keysHere && securityKeysSupported()}
+          <Button variant="secondary" class="w-full" icon={Usb} loading={usingKey} disabled={loading}
+            on:click={useSecurityKey}>
+            {usingKey ? $t("securitykeys.login.touch") : $t("securitykeys.login.use")}
+          </Button>
+          <p class="text-center text-sm text-content-muted">{$t("securitykeys.login.or")}</p>
+        {:else if keysHere}
+          <Alert variant="info">{$t("securitykeys.unsupported")}</Alert>
+        {:else if keyOrigins.length > 0}
+          <Alert variant="info">{$t("securitykeys.login.elsewhere", { origins: keyOrigins.join(", ") })}</Alert>
+        {/if}
+
         <div>
           <label
             for="totp"
@@ -233,7 +309,7 @@
 
       <Button variant="primary" class="w-full"
         type="submit"
-        disabled={loading}
+        disabled={loading || usingKey}
        
       >
         {#if loading}

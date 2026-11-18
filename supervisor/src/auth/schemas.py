@@ -59,6 +59,17 @@ class UserResponse(BaseModel):
     two_factor_required: TwoFactorRequired | None = None
 
 
+class SecurityKeyRequest(BaseModel):
+    """What the page passes to the browser's navigator.credentials.get at the code step (ADR-0406):
+    a challenge of the account's own, and the keys registered at the address the page is open at."""
+
+    challenge: str                  # base64url
+    rp_id: str
+    credential_ids: list[str]       # base64url
+    timeout_ms: int
+    user_verification: Literal["discouraged"] = "discouraged"
+
+
 class Token(BaseModel):
     # Empty when the sign-in asked for the session cookie (token_type "cookie", ADR-0397) and at the
     # step that asks for the second factor (requires_totp).
@@ -68,6 +79,23 @@ class Token(BaseModel):
     # The session key, which the web UI's page sends with the session cookie (ADR-0397); empty at the
     # step that asks for the second factor. A program with the token needs none.
     session_key: str = ""
+    # At the step that asks for the second factor (ADR-0406): the request for a security key, when the
+    # account has keys that work at this address, and the addresses where its keys work, when it has
+    # any. The sign-in leaves them out of its answer otherwise (response_model_exclude_none).
+    security_key: SecurityKeyRequest | None = None
+    security_key_origins: list[str] | None = None
+
+
+class SecurityKeyAssertion(BaseModel):
+    """A security key's answer at the code step (navigator.credentials.get), each field base64url.
+    Bounded: a credential id has at most 1023 bytes, a signature at most 512 (RSA-4096)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    credential_id: str = Field(min_length=1, max_length=1364)
+    client_data_json: str = Field(min_length=1, max_length=6000)
+    authenticator_data: str = Field(min_length=1, max_length=2000)
+    signature: str = Field(min_length=1, max_length=1400)
 
 
 class LoginRequest(BaseModel):
@@ -79,14 +107,16 @@ class LoginRequest(BaseModel):
     totp_code: str | None = Field(default=None, max_length=16)
     # In place of totp_code: XXXX-XXXX-XXXX, in any case, with or without dashes and spaces (ADR-0238).
     recovery_code: str | None = Field(default=None, max_length=32)
+    # In place of totp_code: a security key's answer to the challenge of the code step (ADR-0406).
+    security_key: SecurityKeyAssertion | None = None
     # The web UI's sign-in: the session goes into the HttpOnly session cookie, not into the answer
     # (ADR-0397). Programs leave it out and get the token for a Bearer header.
     cookie: StrictBool = False
 
     @model_validator(mode="after")
     def _one_second_factor(self) -> "LoginRequest":
-        if self.totp_code and self.recovery_code:
-            raise ValueError("Send a two-factor code or a recovery code, not both")
+        if sum(bool(factor) for factor in (self.totp_code, self.recovery_code, self.security_key)) > 1:
+            raise ValueError("Send one second factor: a two-factor code, a recovery code or a security key")
         return self
 
 

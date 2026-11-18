@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Boolean, DateTime, ForeignKey, Text
+from sqlalchemy import Column, Integer, LargeBinary, String, Boolean, DateTime, ForeignKey, Text
 from sqlalchemy.sql import func
 from sqlalchemy.orm import deferred, relationship
 from ..database import Base
@@ -124,3 +124,33 @@ class UserTheme(Base):
     user_id = Column(Integer, primary_key=True, autoincrement=False)
     theme = Column(Text, nullable=False)
     updated_at = Column(DateTime, server_default=func.now())
+
+
+class SecurityKey(Base):
+    """A security key (WebAuthn credential) that a user with two-factor authentication registered: it
+    signs in at the code step in place of the authenticator app's code (ADR-0406).
+
+    A new table (ADR-0319): init_db's create_all makes it in a database that lacks it. A backup holds
+    it with the database, and a restore brings it back; its rows are read again as untrusted at every
+    use (ADR-0144, src/auth/security_keys.py). SQLite enforces no foreign keys here, so deleting a
+    user, and turning two-factor authentication off or on again, deletes the user's rows in the same
+    transaction. ``origin`` and ``rp_id`` are the web UI's address at the registration: the key works
+    there only, whatever a later request's Host says.
+    """
+
+    __tablename__ = "security_keys"
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    name = Column(String, nullable=False)
+    # The credential id in base64url without padding: unique across every user.
+    credential_id = Column(String, nullable=False, unique=True)
+    # The credential public key as the authenticator gave it (a COSE_Key), and its COSE algorithm.
+    public_key = Column(LargeBinary, nullable=False)
+    algorithm = Column(Integer, nullable=False)
+    # The signature counter of the last accepted sign-in; 0 for a key that keeps none.
+    sign_count = Column(Integer, nullable=False, default=0)
+    rp_id = Column(String, nullable=False)
+    origin = Column(String, nullable=False)
+    created_at = Column(DateTime, server_default=func.now())
+    last_used_at = Column(DateTime, nullable=True)

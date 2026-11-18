@@ -54,6 +54,64 @@ export interface SignIn {
   requires_totp: boolean;
   /** What the page sends with the session cookie; empty at the code step. */
   session_key: string;
+  /**
+   * At the code step (ADR-0406): the request for a security key, when the account has keys that
+   * work at the address the page is open at; null otherwise.
+   */
+  security_key?: SecurityKeyRequest | null;
+  /** At the code step: the web UI's addresses where the account's security keys work. */
+  security_key_origins?: string[];
+}
+
+/** What the page passes to navigator.credentials.get at the code step; bytes in base64url. */
+export interface SecurityKeyRequest {
+  challenge: string;
+  rp_id: string;
+  credential_ids: string[];
+  timeout_ms: number;
+  user_verification: UserVerificationRequirement;
+}
+
+/** A security key's answer at the code step, each field base64url. */
+export interface SecurityKeyAssertion {
+  credential_id: string;
+  client_data_json: string;
+  authenticator_data: string;
+  signature: string;
+}
+
+/** POST /auth/security-keys/register/begin: the options of navigator.credentials.create. */
+export interface SecurityKeyCreation {
+  challenge: string;
+  rp_id: string;
+  rp_name: string;
+  user_id: string;
+  user_name: string;
+  algorithms: number[];
+  exclude_credentials: string[];
+  timeout_ms: number;
+  attestation: AttestationConveyancePreference;
+  user_verification: UserVerificationRequirement;
+  resident_key: ResidentKeyRequirement;
+}
+
+/** The answer of navigator.credentials.create, as /register/finish takes it. */
+export interface SecurityKeyAttestation {
+  credential_id: string;
+  client_data_json: string;
+  attestation_object: string;
+}
+
+/** A security key of the signed-in account (GET /auth/security-keys). */
+export interface SecurityKey {
+  id: number;
+  name: string;
+  /** The web UI's address where the key works; null when the stored one cannot be read. */
+  origin: string | null;
+  created_at: string | null;
+  last_used_at: string | null;
+  /** False for a key whose stored data cannot be read: it signs in nowhere and can only be removed. */
+  usable: boolean;
 }
 
 export interface AuthStatus {
@@ -136,13 +194,15 @@ export async function login(
   username: string,
   password: string,
   totp_code?: string,
-  recovery_code?: string
+  recovery_code?: string,
+  security_key?: SecurityKeyAssertion
 ): Promise<SignIn> {
   const answer = await api.post<SignIn>("/auth/login", {
     username,
     password,
     totp_code,
     recovery_code,
+    security_key,
     cookie: true,
   });
   if (!answer.requires_totp) {
@@ -311,6 +371,27 @@ export async function generateRecoveryCodes(): Promise<string[]> {
 
 export async function getRecoveryCodesStatus(): Promise<RecoveryCodesStatus> {
   return api.get<RecoveryCodesStatus>("/auth/recovery-codes/status");
+}
+
+// Security keys (ADR-0406): only while 2FA is on, each an alternative to the app's code at the
+// sign-in. Registering and removing one take the current password.
+export async function getSecurityKeys(): Promise<SecurityKey[]> {
+  return api.get<SecurityKey[]>("/auth/security-keys");
+}
+
+export async function beginSecurityKeyRegistration(current_password: string): Promise<SecurityKeyCreation> {
+  return api.post<SecurityKeyCreation>("/auth/security-keys/register/begin", { current_password });
+}
+
+export async function finishSecurityKeyRegistration(
+  name: string,
+  attestation: SecurityKeyAttestation
+): Promise<SecurityKey> {
+  return api.post<SecurityKey>("/auth/security-keys/register/finish", { name, ...attestation });
+}
+
+export async function deleteSecurityKey(id: number, current_password: string): Promise<void> {
+  await api.delete(`/auth/security-keys/${id}`, { current_password });
 }
 
 // API tokens (ADR-0239): only a session makes, disables and deletes them (ADR-0253). A token is

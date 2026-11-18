@@ -418,6 +418,15 @@ secrets from the git-ignored `dev.env` (ADR-0212):
   Immich's settings chose: the dev device's Immich uses nllb-clip-base-siglip__v1, so pass that
   name, or the probe downloads a model Immich does not use. It writes nothing; the machine learning's log says whether the models ran on the NPU
   (ADR-0382).
+- `scripts/dev/security-key-probe.py`: security keys through the device's API (ADR-0406), with a
+  software authenticator that signs with the openssl command line. Copied into `/dev/shm` and run
+  there as root with the host's python3 (`python3 -I -B security-key-probe.py`), it reads the name
+  and password of a temporary regular user, which the check made through `api.py`, as one JSON
+  line on standard input; it turns the user's two-factor authentication on, registers a key for the
+  name `unoscheck.invalid`, signs in with it, sees the same answer refused, removes the key and its
+  folder in `/dev/shm`, and prints PASS or FAIL for each step. It signs in 5 times, the login's
+  limit of a minute for 127.0.0.1, which the relay of `api.py` shares: start it a minute after the
+  relay's last sign-in. `supervisor/tests/test_security_keys.py` runs it against the API.
 - `scripts/dev/linux-tests.sh`: the backend tests on Linux in the device's RAM.
 - `scripts/dev/deploy.sh`: `status`, `sync --dry-run` and `backup` only read the device
   (ADR-0223). `backup` copies the device's fstab, smb.conf and `unos-data` volume into the

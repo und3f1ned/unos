@@ -116,7 +116,7 @@ and this index, and `make check-fast` runs it.
 | [0068](0068-own-smb-activation-needs-the-two-factor-code.md) | Turning on one's own SMB access needs the two-factor code | accepted | 2026-11-06 |
 | [0191](0191-throttle-api-token-last-used-writes.md) | Throttle the commit of an API token's last use | superseded by [0252](0252-an-api-tokens-last-use-is-committed-at-most-once-an-hour.md) | 2026-11-07 |
 | [0238](0238-recovery-codes-sign-in-once-in-place-of-a-two-factor-code.md) | Ten recovery codes each sign in once in place of a two-factor code, and end with two-factor authentication | accepted | 2026-11-07 |
-| [0239](0239-kept-authentication-practices-with-a-second-factor-before-any-token.md) | Auth keeps bcrypt, one JWT algorithm, a second factor before any token, and hashed API tokens | accepted | 2026-11-07 |
+| [0239](0239-kept-authentication-practices-with-a-second-factor-before-any-token.md) | Auth keeps bcrypt, one JWT algorithm, a second factor before any token, and hashed API tokens | superseded by [0406](0406-security-keys-sign-in-in-place-of-a-two-factor-code-verified-by-unos-itself.md) | 2026-11-07 |
 | [0251](0251-a-sign-in-answers-while-data-is-full-and-its-lost-records-go-to-the-log.md) | A sign-in answers while /data is full, and the records it cannot write go to the supervisor's log | accepted | 2026-11-07 |
 | [0252](0252-an-api-tokens-last-use-is-committed-at-most-once-an-hour.md) | An API token's last use is committed at most once an hour | accepted | 2026-11-07 |
 | [0253](0253-only-a-session-token-manages-api-tokens-and-their-number-and-names-are-bounded.md) | Only a session token manages API tokens, and their number, names and permissions are bounded | accepted | 2026-11-07 |
@@ -128,6 +128,7 @@ and this index, and `make check-fast` runs it.
 | [0386](0386-two-factor-authentication-required-for-every-account-after-a-grace-period.md) | An administrator with two-factor authentication requires it for every account, and after a grace period an account without it reaches only its setup | accepted | 2026-11-17 |
 | [0392](0392-an-api-token-can-be-limited-to-reading-and-to-areas-of-the-api.md) | An API token can be limited to reading and to areas of the API, checked where every credential is checked | accepted | 2026-11-17 |
 | [0397](0397-the-web-ui-s-session-is-an-httponly-cookie-accepted-only-from-its-own-origin.md) | The web UI's session is an HttpOnly cookie accepted only from its own origin, and programs keep Bearer tokens | accepted | 2026-11-17 |
+| [0406](0406-security-keys-sign-in-in-place-of-a-two-factor-code-verified-by-unos-itself.md) | Security keys sign in in place of a two-factor code, beside the authenticator app, verified by UNOS itself | accepted | 2026-11-18 |
 
 ## Storage
 
