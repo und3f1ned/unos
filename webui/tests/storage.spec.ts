@@ -23,11 +23,15 @@ import {
   fakeStorageApi,
   mountedElsewhere,
   noBalance,
+  noRemoval,
   noScrub,
+  onlyDisk,
   scansLeftOn,
   stillInUse,
   usedByContainers,
   type FakeBalanceStatus,
+  type FakeDiskRemoval,
+  type FakePoolDevices,
   type FakeScrubStatus,
   type FakeStorageOptions,
   type RecordedWrite,
@@ -1399,6 +1403,240 @@ test.describe('Balance (fake data)', () => {
     await events.restart();
     await expect(card.getByText('Last balance: finished, 3 of 9 chunks rewritten')).toBeVisible();
     expect(balanceReads()).toBe(2);
+  });
+});
+
+// A disk added to a pool and one removed (ADR-0410), on route fakes: no real disk is touched.
+test.describe('Pool disks (fake data)', () => {
+  const GIB = 1024 ** 3;
+  const TWO: typeof HEALTHY_POOL = { ...HEALTHY_POOL, devices: ['/dev/e2e-hd9', '/dev/e2e-hd10'] };
+  const member = (devid: number, path: string, problem: string | null = null) => ({
+    devid, path, size: 4e12, used: 2 * GIB, model: 'E2E Disk', serial: `E2E-${devid}`, problem,
+  });
+  const BLANK = {
+    name: 'e2e-hd2', path: '/dev/e2e-hd2', model: 'E2E Disk', serial: 'E2E2', wwn: '0x5000e2e000000002', size: 4e12,
+    has_data: false, data_description: null,
+  };
+  const USED = {
+    name: 'e2e-hd11', path: '/dev/e2e-hd11', model: 'Old Disk', serial: 'E2E11', wwn: null, size: 2e12,
+    has_data: true, data_description: 'gpt partition table with 1 partition',
+  };
+  const devicesOf = (pool: string, fields: Partial<FakePoolDevices> = {}): FakePoolDevices => ({
+    pool, profiles: ['single'], members: [member(1, '/dev/e2e-hd9'), member(2, '/dev/e2e-hd10')],
+    candidates: [BLANK, USED], removal: noRemoval(pool), ...fields,
+  });
+  const removing = (left: number, total: number | null = 4 * GIB): FakeDiskRemoval => ({
+    ...noRemoval('e2e_data'), status: 'running', devid: 2, device: '/dev/e2e-hd10', left, total,
+  });
+
+  test("the dev device's pool: its only disk cannot leave, and no disk can be added", async ({
+    authenticatedPage: page,
+  }) => {
+    const writes = await fakeStorageApi(page, { pools: [HEALTHY_POOL] });
+    await page.goto('/storage');
+    const card = poolCard(page, 'e2e_data');
+
+    await card.getByRole('button', { name: 'Add Disk' }).click();
+    const add = page.getByRole('dialog', { name: 'Add a disk to e2e_data' });
+    await expect(add.getByText('No disk can be added')).toBeVisible();
+    await expect(add.getByRole('radio')).toHaveCount(0);
+    await expect(add.getByRole('button', { name: 'Add Disk' })).toBeDisabled();
+    await add.getByRole('button', { name: 'Cancel' }).click();
+    await expect(add).toHaveCount(0);
+
+    await card.getByRole('button', { name: 'Remove Disk' }).click();
+    const remove = page.getByRole('dialog', { name: 'Remove a disk from e2e_data' });
+    await expect(remove.getByRole('radio', { name: /\/dev\/e2e-hd9/ })).toBeDisabled();
+    await expect(remove.getByText('Cannot be removed')).toBeVisible();
+    await expect(remove.getByText(onlyDisk('/dev/e2e-hd9'))).toBeVisible();
+    await expect(remove.getByLabel("Type the disk's path to confirm")).toHaveCount(0);
+    await expect(remove.getByRole('button', { name: 'Remove Disk' })).toBeDisabled();
+    expect(writes).toEqual([]);
+  });
+
+  test('a free disk joins the pool once its path is typed again, and one with data once its erase is confirmed', async ({
+    authenticatedPage: page,
+  }) => {
+    const writes = await fakeStorageApi(page, {
+      pools: [HEALTHY_POOL],
+      poolDevices: (pool) => devicesOf(pool, { members: [member(1, '/dev/e2e-hd9', onlyDisk('/dev/e2e-hd9'))] }),
+    });
+    await page.goto('/storage');
+    const card = poolCard(page, 'e2e_data');
+    await card.getByRole('button', { name: 'Add Disk' }).click();
+    const dialog = page.getByRole('dialog', { name: 'Add a disk to e2e_data' });
+    const submit = dialog.getByRole('button', { name: 'Add Disk' });
+    await expect(dialog.getByText('The pool keeps its profile (single)', { exact: false })).toBeVisible();
+
+    // A disk with data: its contents, the erase to confirm and the path to type.
+    await dialog.getByRole('radio', { name: /\/dev\/e2e-hd11/ }).check();
+    await expect(dialog.getByText('gpt partition table with 1 partition')).toBeVisible();
+    const confirm = dialog.getByLabel("Type the disk's path to confirm");
+    await confirm.fill('/dev/e2e-hd1');
+    await expect(dialog.getByText("This is not the disk's path")).toBeVisible();
+    await expect(submit).toBeDisabled();
+    await confirm.fill('/dev/e2e-hd11');
+    await expect(submit).toBeDisabled();
+    await dialog.getByLabel('Erase everything on /dev/e2e-hd11').check();
+    await expect(submit).toBeEnabled();
+
+    // The blank disk instead: no erase to confirm, and its own path to type.
+    await dialog.getByRole('radio', { name: /\/dev\/e2e-hd2/ }).check();
+    await expect(dialog.getByLabel('Erase everything on /dev/e2e-hd2')).toHaveCount(0);
+    await expect(submit).toBeDisabled();
+    await confirm.fill('/dev/e2e-hd2');
+    await submit.click();
+    await expect(dialog).toHaveCount(0);
+
+    expect(writes).toEqual([{
+      method: 'POST', path: '/pools/e2e_data/devices',
+      body: {
+        device: '/dev/e2e-hd2', confirm_device: '/dev/e2e-hd2', force: false, contents: null,
+        identity: { path: '/dev/e2e-hd2', serial: 'E2E2', wwn: '0x5000e2e000000002', size: 4e12 },
+      },
+    }]);
+    // The lists are loaded again: the pool grew.
+    await expect(field(card, 'Devices')).toContainText('/dev/e2e-hd9, /dev/e2e-hd2');
+  });
+
+  test('a disk with data is sent with its erase, and a refusal of the server stays in the dialog', async ({
+    authenticatedPage: page,
+  }) => {
+    const refusal = 'A scrub of pool e2e_data runs: wait for its end or cancel it, then add the disk';
+    let refuse = true;
+    const writes = await fakeStorageApi(page, {
+      pools: [HEALTHY_POOL],
+      poolDevices: (pool) => devicesOf(pool),
+      addDisk: () => (refuse ? { status: 409, json: { detail: refusal } } : undefined),
+    });
+    await page.goto('/storage');
+    await poolCard(page, 'e2e_data').getByRole('button', { name: 'Add Disk' }).click();
+    const dialog = page.getByRole('dialog', { name: 'Add a disk to e2e_data' });
+    await dialog.getByRole('radio', { name: /\/dev\/e2e-hd11/ }).check();
+    await dialog.getByLabel('Erase everything on /dev/e2e-hd11').check();
+    await dialog.getByLabel("Type the disk's path to confirm").fill('/dev/e2e-hd11');
+    await dialog.getByRole('button', { name: 'Add Disk' }).click();
+
+    await expect(dialog.getByText('The disk was not added')).toBeVisible();
+    await expect(dialog.getByText(refusal)).toBeVisible();
+    refuse = false;
+    await dialog.getByRole('button', { name: 'Add Disk' }).click();
+    await expect(dialog).toHaveCount(0);
+    const sent = writes.map((write) => write.body as { force: boolean; contents: string | null });
+    expect(sent.map((body) => [body.force, body.contents])).toEqual([
+      [true, 'gpt partition table with 1 partition'],
+      [true, 'gpt partition table with 1 partition'],
+    ]);
+  });
+
+  test('a disk leaves the pool: the card follows its removal over the events socket until it ends', async ({
+    authenticatedPage: page,
+  }) => {
+    let host = noRemoval('e2e_data');
+    const writes = await fakeStorageApi(page, {
+      pools: [TWO],
+      poolDevices: (pool) => devicesOf(pool, { candidates: [] }),
+      removalStatus: (_pool, action) => {
+        if (action === 'start') host = removing(4 * GIB);
+        return host;
+      },
+    });
+    const events = await fakeScrubEvents(page);
+    await page.goto('/storage');
+    const card = poolCard(page, 'e2e_data');
+
+    await card.getByRole('button', { name: 'Remove Disk' }).click();
+    const dialog = page.getByRole('dialog', { name: 'Remove a disk from e2e_data' });
+    const submit = dialog.getByRole('button', { name: 'Remove Disk' });
+    await dialog.getByRole('radio', { name: /\/dev\/e2e-hd10/ }).check();
+    await expect(submit).toBeDisabled();
+    await dialog.getByLabel("Type the disk's path to confirm").fill('/dev/e2e-hd9');
+    await expect(dialog.getByText("This is not the disk's path")).toBeVisible();
+    await expect(submit).toBeDisabled();
+    await dialog.getByLabel("Type the disk's path to confirm").fill('/dev/e2e-hd10');
+    await submit.click();
+    await expect(dialog).toHaveCount(0);
+    expect(writes).toEqual([{
+      method: 'POST', path: '/pools/e2e_data/removal',
+      body: { devid: 2, device: '/dev/e2e-hd10', confirm_device: '/dev/e2e-hd10' },
+    }]);
+
+    await expect(card.getByText('Removing /dev/e2e-hd10: its data moves to the other disks')).toBeVisible();
+    // One job per pool.
+    for (const name of ['Add Disk', 'Remove Disk', 'Scrub', 'Balance']) {
+      await expect(card.getByRole('button', { name, exact: true })).toBeDisabled();
+    }
+    await events.diskRemovals([removing(GIB)]);
+    await expect(card.getByRole('progressbar', { name: 'Removal progress' })).toHaveAttribute('aria-valuenow', '75');
+    await expect(card.getByText('1.0 GB left to move of 4.0 GB')).toBeVisible();
+
+    host = { ...noRemoval('e2e_data'), devid: 2, device: '/dev/e2e-hd10', result: 'finished' };
+    await events.diskRemovals([host]);
+    await expect(card.getByText('Last disk removal: /dev/e2e-hd10 left the pool')).toBeVisible();
+    await expect(card.getByRole('button', { name: 'Remove Disk' })).toBeEnabled();
+  });
+
+  test('a removal that runs shows again after a reload, and a failed one says why', async ({
+    authenticatedPage: page,
+  }) => {
+    const error = 'ERROR: error removing devid 2: No space left on device';
+    let host: FakeDiskRemoval = removing(3 * GIB, null);
+    await fakeStorageApi(page, { pools: [TWO], removalStatus: () => host });
+    await page.goto('/storage');
+    const card = poolCard(page, 'e2e_data');
+    // Started by hand, or before the supervisor restarted: the bytes left, without a total.
+    await expect(card.getByText('Removing /dev/e2e-hd10: its data moves to the other disks')).toBeVisible();
+    await expect(card.getByText('3.0 GB left to move')).toBeVisible();
+
+    host = { ...noRemoval('e2e_data'), devid: 2, device: '/dev/e2e-hd10', result: 'failed', error };
+    await page.reload();
+    await expect(card.getByText('The removal of /dev/e2e-hd10 failed')).toBeVisible();
+    await expect(card.getByText(error)).toBeVisible();
+  });
+
+  test('a removal that the server refuses stays in the dialog', async ({ authenticatedPage: page }) => {
+    const refusal =
+      "Refusing to remove /dev/e2e-hd10: the other disks cannot hold the pool's chunks: they need 3.2 GiB of disk " +
+      'space with room for the chunk being moved, and the disks left give 1.0 GiB for its profile. A balance ' +
+      'frees the space of partly empty chunks; or add a disk first';
+    await fakeStorageApi(page, {
+      pools: [TWO],
+      poolDevices: (pool) => devicesOf(pool),
+      removalStatus: (pool, action) => (action === 'start' ? { status: 409, json: { detail: refusal } } : noRemoval(pool)),
+    });
+    await page.goto('/storage');
+    await poolCard(page, 'e2e_data').getByRole('button', { name: 'Remove Disk' }).click();
+    const dialog = page.getByRole('dialog', { name: 'Remove a disk from e2e_data' });
+    await dialog.getByRole('radio', { name: /\/dev\/e2e-hd10/ }).check();
+    await dialog.getByLabel("Type the disk's path to confirm").fill('/dev/e2e-hd10');
+    await dialog.getByRole('button', { name: 'Remove Disk' }).click();
+    await expect(dialog.getByText('The removal did not start')).toBeVisible();
+    await expect(dialog.getByText(refusal)).toBeVisible();
+  });
+
+  test('no disk is added or removed beside a scrub or a balance, nor on a read-only pool', async ({
+    authenticatedPage: page,
+  }) => {
+    const mounted = (name: string, uuid: string, readOnly = false) => ({
+      ...TWO, name, uuid, mountpoint: `/mnt/pools/${name}`, read_only: readOnly,
+    });
+    await fakeStorageApi(page, {
+      pools: [
+        TWO,
+        mounted('e2e_ro', '00000000-0000-4000-8000-0000000000e8', true),
+        mounted('e2e_busy', '00000000-0000-4000-8000-0000000000e9'),
+        mounted('e2e_bal', '00000000-0000-4000-8000-0000000000ea'),
+      ],
+      scrubStatus: (pool) => (pool === 'e2e_busy' ? { ...noScrub(pool), status: 'running' } : noScrub(pool)),
+      balanceStatus: (pool) => (pool === 'e2e_bal' ? { ...noBalance(pool), status: 'paused' } : noBalance(pool)),
+    });
+    await page.goto('/storage');
+    for (const name of ['Add Disk', 'Remove Disk']) {
+      await expect(poolCard(page, 'e2e_data').getByRole('button', { name })).toBeEnabled();
+      for (const pool of ['e2e_ro', 'e2e_busy', 'e2e_bal']) {
+        await expect(poolCard(page, pool).getByRole('button', { name })).toBeDisabled();
+      }
+    }
   });
 });
 

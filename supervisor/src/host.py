@@ -41,7 +41,8 @@ logger = logging.getLogger(__name__)
 # Programs the supervisor runs on the host through this module, with the
 # Debian/Ubuntu package that installs them. Callers: storage/pools.py,
 # storage/balances.py (systemd-run, which runs a pool's balance in a unit of
-# its own that outlives the supervisor's container: ADR-0379),
+# its own that outlives the supervisor's container: ADR-0379), storage/devices.py
+# (btrfs device add, and systemd-run for a disk's removal from a pool: ADR-0410),
 # storage/disks.py (lsns and findmnt --task: the mount namespaces of other
 # processes, ADR-0288), shares/smb.py, shares/accounts.py (SMB accounts: getent
 # and the shadow tools, smbpasswd, pdbedit, smbstatus), health/router.py and

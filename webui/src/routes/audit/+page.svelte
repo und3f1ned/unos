@@ -95,6 +95,8 @@
 		balance_paused: 'audit.action.balancePaused',
 		balance_resumed: 'audit.action.balanceResumed',
 		balance_cancelled: 'audit.action.balanceCancelled',
+		pool_disk_added: 'audit.action.poolDiskAdded',
+		pool_disk_removal_started: 'audit.action.poolDiskRemovalStarted',
 		share_created: 'audit.action.shareCreated',
 		share_updated: 'audit.action.shareUpdated',
 		share_deleted: 'audit.action.shareDeleted',

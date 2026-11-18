@@ -1,7 +1,7 @@
 import type { Locator, Page, WebSocketRoute } from '@playwright/test';
 import { test, expect, E2E_ADMIN } from './fixtures';
 import { apiLogin, createAccount, deleteAccount, type Account } from './accounts';
-import { FAKE_IMPORTABLE, fakeStorageApi, fakeVolumesWithUse, noBalance } from './storage-fakes';
+import { FAKE_IMPORTABLE, fakeStorageApi, fakeVolumesWithUse, noBalance, noRemoval } from './storage-fakes';
 import {
   NO_SNAPSHOTS,
   POOLS,
@@ -980,6 +980,21 @@ const VIEWS: View[] = [
     shows: (page) => page.getByText(/^(About 27 h 27 min left|Осталось около 27 ч 27 мин)$/),
   },
   {
+    // A pool card with a disk removal in progress: its long path, its progress and the bytes left (ADR-0410).
+    name: 'Storage: a disk removal in progress',
+    path: '/storage',
+    fake: (page) =>
+      fakeStorageApi(page, {
+        removalStatus: (pool) => ({
+          ...noRemoval(pool),
+          ...(pool === 'e2e_unread'
+            ? { status: 'running', devid: 2, device: '/dev/disk-with-a-rather-long-name-e2e6', left: 3e11, total: 9e11 }
+            : {}),
+        }),
+      }),
+    shows: (page) => page.getByRole('progressbar', { name: /^(Removal progress|Ход удаления)$/ }),
+  },
+  {
     name: 'Snapshots',
     path: '/snapshots',
     fake: (page) => serve(page, SNAPSHOTS_API),
@@ -1359,6 +1374,56 @@ const VIEWS: View[] = [
       await page.getByRole('option', { name: /^(Every chunk \(full balance\)|Все блоки \(полная балансировка\))$/ }).click();
     },
     shows: (page) => page.getByRole('dialog').getByRole('checkbox'),
+    start: dialogTitle,
+    end: dialogEnd,
+  },
+  {
+    // A disk with data selected: its contents, the erase to confirm and the path to type (ADR-0410).
+    name: 'Dialog: add a disk to a pool',
+    path: '/storage',
+    fake: (page) =>
+      fakeStorageApi(page, {
+        poolDevices: (pool) => ({
+          pool, profiles: ['raid1c3'], members: [], removal: noRemoval(pool),
+          candidates: [{
+            name: 'e2e-hd11', path: '/dev/e2e-hd11', model: 'A Disk With A Long Model Name', serial: 'E2E-SERIAL-0011',
+            wwn: null, size: 2e12, has_data: true, data_description: 'gpt partition table with 3 partitions',
+          }],
+        }),
+      }),
+    open: async (page) => {
+      await page.getByRole('button', { name: /^(Add Disk|Добавить диск)$/, disabled: false }).first().click();
+      await page.getByRole('dialog').getByRole('radio').check();
+    },
+    shows: (page) => page.getByRole('dialog').getByRole('checkbox'),
+    start: dialogTitle,
+    end: dialogEnd,
+  },
+  {
+    // A disk that cannot leave, with the server's reason, and one selected (ADR-0410).
+    name: 'Dialog: remove a disk from a pool',
+    path: '/storage',
+    fake: (page) =>
+      fakeStorageApi(page, {
+        poolDevices: (pool) => ({
+          pool, profiles: ['raid1'], candidates: [], removal: noRemoval(pool),
+          members: [
+            { devid: 1, path: '/dev/e2e-hd6', size: 1e12, used: 2e11, model: 'E2E Disk', serial: 'E2E6', problem: null },
+            {
+              devid: 2, path: '/dev/e2e-hd7', size: 1e12, used: 2e11, model: 'E2E Disk', serial: 'E2E7',
+              problem:
+                "the other disks cannot hold the pool's chunks: they need 3.2 GiB of disk space with room for the " +
+                'chunk being moved, and the disks left give 1.0 GiB for its profile. A balance frees the space of ' +
+                'partly empty chunks; or add a disk first',
+            },
+          ],
+        }),
+      }),
+    open: async (page) => {
+      await page.getByRole('button', { name: /^(Remove Disk|Удалить диск)$/, disabled: false }).first().click();
+      await page.getByRole('dialog').getByRole('radio').first().check();
+    },
+    shows: (page) => page.getByRole('dialog').getByRole('textbox'),
     start: dialogTitle,
     end: dialogEnd,
   },

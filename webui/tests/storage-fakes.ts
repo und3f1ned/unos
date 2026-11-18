@@ -205,6 +205,58 @@ export function noBalance(pool: string): FakeBalanceStatus {
   };
 }
 
+/** A disk of a mounted pool as GET /storage/pools/{name}/devices reports it (storage/devices.py, ADR-0410). */
+export interface FakePoolMember {
+  devid: number;
+  path: string;
+  size: number;
+  used: number;
+  model: string | null;
+  serial: string | null;
+  problem: string | null;
+}
+
+/** A whole disk that can join a pool, as GET /storage/pools/{name}/devices offers it. */
+export interface FakeDiskCandidate {
+  name: string;
+  path: string;
+  model: string | null;
+  serial: string | null;
+  wwn: string | null;
+  size: number;
+  has_data: boolean;
+  data_description: string | null;
+}
+
+/** A pool's disk removal as GET /storage/pools/{name}/removal reports it. */
+export interface FakeDiskRemoval {
+  pool: string;
+  status: string;
+  devid: number | null;
+  device: string | null;
+  left: number | null;
+  total: number | null;
+  result: string | null;
+  error: string | null;
+}
+
+/** No removal runs, and none is known to have ended since the host started. */
+export function noRemoval(pool: string): FakeDiskRemoval {
+  return { pool, status: 'idle', devid: null, device: null, left: null, total: null, result: null, error: null };
+}
+
+/** The pool's only disk, as the server says it cannot leave (devices.removal_problem). */
+export const onlyDisk = (path: string) => `${path} is the only disk of the pool`;
+
+/** GET /storage/pools/{name}/devices of a pool: its disks, its profiles, the disks that can join it. */
+export interface FakePoolDevices {
+  pool: string;
+  profiles: string[];
+  members: FakePoolMember[];
+  candidates: FakeDiskCandidate[];
+  removal: FakeDiskRemoval;
+}
+
 // The 409s of an unmount or a removal of a pool in use, word for word as the server sends them
 // (_unmount_pool_target in supervisor/src/storage/pools.py; test_pool_persistence.py checks them).
 
@@ -296,6 +348,21 @@ export interface FakeStorageOptions {
    * resume (POST .../pause, .../resume) or cancel (DELETE).
    */
   balanceStatus?: (pool: string, action: string) => FakeBalanceStatus | FakeResponse;
+  /**
+   * The server's answer to GET /pools/{name}/devices of a mounted pool (default: each of its
+   * devices as a disk of 4 TB, the only one with onlyDisk as its problem, no candidate, no removal).
+   */
+  poolDevices?: (pool: string) => FakePoolDevices | FakeResponse;
+  /**
+   * The server's answer to POST /pools/{name}/devices (default: the disk joins the pool, which grows
+   * by its size, and the answer is the pool).
+   */
+  addDisk?: (pool: string, body: { device: string }) => FakeResponse | undefined;
+  /**
+   * The server's answer to a request of a pool's disk removal (default: none runs, none known):
+   * ``action`` is status (GET) or start (POST).
+   */
+  removalStatus?: (pool: string, action: string) => FakeDiskRemoval | FakeResponse;
   /**
    * The filesystems GET /filesystems/importable answers (default none), besides the pools that
    * share a label with one of them and are neither mounted nor managed: those are no pools, as
@@ -397,7 +464,12 @@ export interface FakeScrubEvents {
   restart(): Promise<void>;
   /** Send one balances message, as the server does whenever a balance that runs changed (ADR-0379). */
   balances(balances: FakeBalanceUpdate[]): Promise<void>;
+  /** Send one disk_removals message, as the server does whenever a removal that runs changed (ADR-0410). */
+  diskRemovals(removals: FakeDiskRemovalUpdate[]): Promise<void>;
 }
+
+/** A pool's disk removal as /ws/v1/events sends administrators: its status, or why it could not be read. */
+export type FakeDiskRemovalUpdate = FakeDiskRemoval | { pool: string; error: string };
 
 /**
  * Stand in for /ws/v1/events with the scrubs that run (supervisor/src/storage/scrubs.py, ADR-0367):
@@ -434,7 +506,11 @@ export async function fakeScrubEvents(page: Page): Promise<FakeScrubEvents> {
     await signedIn();
     socket!.send(JSON.stringify({ type: 'balances', data: updates }));
   };
-  return Object.assign(send, { restart, balances });
+  const diskRemovals = async (updates: FakeDiskRemovalUpdate[]) => {
+    await signedIn();
+    socket!.send(JSON.stringify({ type: 'disk_removals', data: updates }));
+  };
+  return Object.assign(send, { restart, balances, diskRemovals });
 }
 
 /** Serve the disks and pools; returns the list of write requests made. */
@@ -509,6 +585,37 @@ export async function fakeStorageApi(page: Page, options: FakeStorageOptions = {
           balance[2] ?? ({ GET: 'status', POST: 'start', DELETE: 'cancel' } as Record<string, string>)[method];
         if (method !== 'GET') writes.push({ method, path, body: method === 'POST' ? request.postDataJSON() : null });
         const found = options.balanceStatus?.(name, action) ?? noBalance(name);
+        return answer('status' in found && typeof found.status === 'number' ? (found as FakeResponse) : { json: found });
+      }
+      const disksOf = path.match(/^\/pools\/([^/]+)\/devices$/);
+      if (disksOf && ['GET', 'POST'].includes(method)) {
+        const name = decodeURIComponent(disksOf[1]);
+        const pool = pools.find((p) => p.name === name && p.mounted);
+        if (!pool) return route.abort();
+        if (method === 'GET') {
+          const found = options.poolDevices?.(name) ?? {
+            pool: name, profiles: [pool.raid_level ?? 'single'], candidates: [], removal: noRemoval(name),
+            members: pool.devices.map((device, index) => ({
+              devid: index + 1, path: device, size: 4e12, used: 2e9, model: null, serial: null,
+              problem: pool.devices.length === 1 ? onlyDisk(device) : null,
+            })),
+          };
+          return answer('status' in found && typeof found.status === 'number' ? (found as FakeResponse) : { json: found });
+        }
+        const body = request.postDataJSON();
+        writes.push({ method, path, body });
+        const refused = options.addDisk?.(name, body);
+        if (refused) return route.fulfill(refused);
+        pool.devices = [...pool.devices, body.device];
+        pool.total_size += 4e12;
+        return route.fulfill({ json: pool });
+      }
+      const removal = path.match(/^\/pools\/([^/]+)\/removal$/);
+      if (removal && ['GET', 'POST'].includes(method)) {
+        const name = decodeURIComponent(removal[1]);
+        if (!pools.some((p) => p.name === name && p.mounted)) return route.abort();
+        if (method === 'POST') writes.push({ method, path, body: request.postDataJSON() });
+        const found = options.removalStatus?.(name, method === 'GET' ? 'status' : 'start') ?? noRemoval(name);
         return answer('status' in found && typeof found.status === 'number' ? (found as FakeResponse) : { json: found });
       }
       if (method === 'GET' && path === '/filesystems/importable') {

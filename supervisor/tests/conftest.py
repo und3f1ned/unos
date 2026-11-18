@@ -180,6 +180,19 @@ def _no_balances_seen_yet(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _no_disk_removals_seen_yet(monkeypatch):
+    """The disk removals that the events socket follows are kept in RAM (ADR-0410): every test
+    starts without them, as the supervisor does."""
+    devices = sys.modules.get("src.storage.devices")
+    if devices is not None:
+        monkeypatch.setattr(devices, "_removals", {})
+        monkeypatch.setattr(devices, "_version", 0)
+        monkeypatch.setattr(devices, "_noted_at", {})
+        monkeypatch.setattr(devices, "_reading", None)
+        monkeypatch.setattr(devices, "_read_at", float("-inf"))
+
+
+@pytest.fixture(autouse=True)
 def _notification_files_in_tmp_path(monkeypatch, tmp_path):
     """The notification channels and their history are files under /data
     (src/notifications/router.py), and every alert that a monitor sends is recorded in the

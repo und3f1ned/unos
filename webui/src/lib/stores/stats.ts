@@ -3,6 +3,7 @@ import { currentSession, currentSessionKey, handleSetupRequired, handleUnauthori
 import { problems, type Problem } from '$lib/stores/problems';
 import { scrubs, type ScrubUpdate } from '$lib/stores/scrubs';
 import { balances, type BalanceUpdate } from '$lib/stores/balances';
+import { diskRemovals, type DiskRemovalUpdate } from '$lib/stores/diskRemovals';
 import { repairJob } from '$lib/stores/repair';
 import { appInstalls } from '$lib/stores/appInstalls';
 import type { RepairResult } from '$lib/api/shares';
@@ -192,9 +193,11 @@ export function connectWebSocket() {
       wsConnected.set(true);
       // A new socket, maybe to a supervisor that restarted: the scrubs the last one sent need not
       // run any more, and this one sends those that its supervisor saw running (ADR-0367); the
-      // balances likewise (ADR-0379), and the installs of apps (ADR-0384).
+      // balances likewise (ADR-0379), the removals of disks (ADR-0410), and the installs of apps
+      // (ADR-0384).
       scrubs.set([]);
       balances.set([]);
+      diskRemovals.set([]);
       appInstalls.set([]);
     } else if (message.type === 'stats' && message.data) {
       if (!authenticatedAt) authenticatedAt = Date.now();
@@ -209,6 +212,9 @@ export function connectWebSocket() {
     } else if (message.type === 'balances' && Array.isArray(message.data)) {
       // Administrators only: the balances that run, until they end (ADR-0379).
       balances.set(message.data as BalanceUpdate[]);
+    } else if (message.type === 'disk_removals' && Array.isArray(message.data)) {
+      // Administrators only: the removals of disks from pools that run, until they end (ADR-0410).
+      diskRemovals.set(message.data as DiskRemovalUpdate[]);
     } else if (message.type === 'repair') {
       // Administrators only, right after auth_ok and on each change: the running or last repair of
       // a share's permissions, null when none has run since the supervisor started (ADR-0363).
@@ -255,6 +261,7 @@ export function disconnectWebSocket() {
   problems.set([]);
   scrubs.set([]);
   balances.set([]);
+  diskRemovals.set([]);
   repairJob.set(null);
   appInstalls.set([]);
 }

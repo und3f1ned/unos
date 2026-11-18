@@ -81,6 +81,7 @@ class FakeKernel:
         self.unseen = False  # the unit's btrfs has not reached the kernel yet
         self.stops_wait = False  # a pause or cancel waits for the chunk being moved
         self.status_fails: str | None = None
+        self.removing: str | None = None  # the disk that the kernel removes from the pool (ADR-0410)
 
     # --- the container's btrfs
 
@@ -118,6 +119,16 @@ class FakeKernel:
             return result()
         raise AssertionError(f"unexpected container command: {cmd}")
 
+    def show(self) -> str:
+        """btrfs filesystem show --raw of the pool data: a disk that the kernel removes from it has
+        the size 0 (removing, ADR-0410)."""
+        fs = self.host.fs_by_label("data")
+        lines = [f"Label: 'data'  uuid: {fs['uuid']}", f"\tTotal devices {len(fs['devices'])} FS bytes used {fs['used']}"]
+        for devid, device in enumerate(fs["devices"], 1):
+            size = 0 if device == self.removing else self.host.node(device.removeprefix("/dev/"))["size"]
+            lines.append(f"\tdevid {devid:5d} size {size} used 2155872256 path {device}")
+        return "\n".join(lines) + "\n\n"
+
     def chunk_moved(self) -> None:
         """The kernel has moved the chunk and acts on the requests. A pause wins over a cancel
         requested meanwhile (btrfs_balance(), Linux 6.1.150 and later), and the cancel still
@@ -139,6 +150,11 @@ class FakeKernel:
     # --- the host's systemd-run
 
     def run_on_host(self, cmd, **kwargs):
+        if cmd[-5:] == ["btrfs", "filesystem", "show", "--raw", MOUNTPOINT]:
+            # The host's btrfs, which opens each disk of the pool, under the host's timeout (ADR-0410).
+            assert cmd[:-5] == ["timeout", "--signal=KILL", "60"], cmd
+            self.on_loop.append(_on_event_loop())
+            return host.HostResult(0, self.show(), "")
         if cmd[0] != "systemd-run":
             return self.host.run(cmd, **kwargs)
         self.units.append(list(cmd))
@@ -254,6 +270,19 @@ class TestStart:
 
         assert (r.status_code, r.json()) == (409, {
             "detail": "A scrub of pool data runs: wait for its end or cancel it, then start the balance"})
+        assert kernel.units == [] and audited() == []
+
+    @pytest.mark.parametrize("action, url", [("start", URL), ("resume", f"{URL}/resume")])
+    def test_a_balance_is_refused_while_a_disk_of_the_pool_is_removed(self, kernel, action, url):
+        """The kernel refuses it beside a removal, another exclusive operation: UNOS says why (ADR-0410)."""
+        kernel.removing = "/dev/sda"
+        kernel.state = "paused" if action == "resume" else None
+        with admin_client() as client:
+            r = client.post(url, json={})
+
+        assert (r.status_code, r.json()) == (409, {
+            "detail": f"A disk of pool data is being removed: wait for the end of its removal, then {action} the "
+                      "balance"})
         assert kernel.units == [] and audited() == []
 
     @pytest.mark.parametrize("state, why", [

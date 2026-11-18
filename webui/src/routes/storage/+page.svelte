@@ -15,6 +15,7 @@
 		pauseBalance,
 		resumeBalance,
 		cancelBalance,
+		getDiskRemoval,
 		BALANCE_DEFAULT_USAGE,
 		deviceIdentity,
 		isChangedDiskError,
@@ -39,10 +40,13 @@
 		type RaidLevel,
 		type ScrubStatus,
 		type BalanceStatus,
+		type DiskRemovalStatus,
 		type Volume,
 		type VolumeUsagePoint
 	} from '$lib/api/storage';
 	import VolumeUsageChart from '$lib/components/storage/VolumeUsageChart.svelte';
+	import AddDiskDialog from '$lib/components/storage/AddDiskDialog.svelte';
+	import RemoveDiskDialog from '$lib/components/storage/RemoveDiskDialog.svelte';
 	import { ApiError } from '$lib/api/client';
 	import {
 		LineChart,
@@ -62,7 +66,8 @@
 		Timer,
 		Scale,
 		Pause,
-		Play
+		Play,
+		MinusCircle
 	} from 'lucide-svelte';
 	import {
 		Button,
@@ -79,6 +84,7 @@
 	import { stats, wsConnected, type WebSocketStats } from '$lib/stores/stats';
 	import { scrubs, type ScrubUpdate } from '$lib/stores/scrubs';
 	import { balances, type BalanceUpdate } from '$lib/stores/balances';
+	import { diskRemovals, type DiskRemovalUpdate } from '$lib/stores/diskRemovals';
 
 	type BadgeVariant = 'success' | 'warning' | 'error' | 'info' | 'neutral' | 'orange';
 
@@ -140,6 +146,14 @@
 	let scrubErrors: Record<string, string> = {};
 	let startingScrub: Record<string, boolean> = {};
 
+	// Disk removals (ADR-0410): each mounted pool's removal and why it could not be read, and the
+	// pool of the Add Disk or the Remove Disk dialog.
+	let removalStatuses: Record<string, DiskRemovalStatus> = {};
+	let removalErrors: Record<string, string> = {};
+	let addDiskPool: Pool | null = null;
+	let removeDiskPool: Pool | null = null;
+	const removalRuns = (status: DiskRemovalStatus | undefined): boolean => status?.status === 'running';
+
 	// Balance state (ADR-0379): each mounted pool's balance, why it could not be read, and the pools
 	// whose pause, resume or cancel is on its way.
 	let balanceStatuses: Record<string, BalanceStatus> = {};
@@ -183,7 +197,9 @@
 		showDeleteModal ||
 		volumesPool !== null ||
 		spindownDisk !== null ||
-		balanceTarget !== null;
+		balanceTarget !== null ||
+		addDiskPool !== null ||
+		removeDiskPool !== null;
 	$: followBlockDevices($stats);
 	$: if (!dialogOpen) reloadForDevices();
 	$: if (dialogOpen) dropDeviceReload();
@@ -276,6 +292,7 @@
 			}
 			await loadScrubStatuses(load);
 			await loadBalanceStatuses(load);
+			await loadRemovalStatuses(load);
 		}
 		await found;
 		if (load === listsLoad) loading = false;
@@ -317,6 +334,86 @@
 				if (load === listsLoad) showBalanceError(pool.name, e);
 			}
 		}
+	}
+
+	async function loadRemovalStatuses(load: number) {
+		for (const pool of pools.filter((p) => p.mounted)) {
+			if (load !== listsLoad) return;
+			try {
+				const status = await getDiskRemoval(pool.name);
+				if (load === listsLoad) showRemovalStatus(pool.name, status);
+			} catch (e) {
+				if (load === listsLoad) showRemovalError(pool.name, e);
+			}
+		}
+	}
+
+	/**
+	 * Show a pool's disk removal (ADR-0410). Once one that ran has ended, the pool's disks have
+	 * changed: the lists are loaded again.
+	 */
+	function showRemovalStatus(poolName: string, status: DiskRemovalStatus) {
+		const ended = removalRuns(removalStatuses[poolName]) && !removalRuns(status);
+		delete removalErrors[poolName];
+		removalErrors = removalErrors;
+		removalStatuses[poolName] = status;
+		removalStatuses = removalStatuses;
+		if (ended) loadData(false, false);
+	}
+
+	/** As showBalanceError: the last status still decides the buttons. */
+	function showRemovalError(poolName: string, e: unknown) {
+		removalErrors[poolName] = messageOf(e);
+		removalErrors = removalErrors;
+	}
+
+	// A removal that runs is followed over /ws/v1/events as a balance is (ADR-0410).
+	$: followRemovals($diskRemovals);
+
+	function followRemovals(updates: DiskRemovalUpdate[]) {
+		for (const update of updates) {
+			if ('status' in update) showRemovalStatus(update.pool, update);
+			else showRemovalError(update.pool, update.error);
+		}
+	}
+
+	async function readShownRemovalsAgain() {
+		const shown = pools.filter(
+			(pool) => pool.mounted && (removalRuns(removalStatuses[pool.name]) || pool.name in removalErrors)
+		);
+		for (const pool of shown) {
+			try {
+				showRemovalStatus(pool.name, await getDiskRemoval(pool.name));
+			} catch (e) {
+				showRemovalError(pool.name, e);
+			}
+		}
+	}
+
+	/** Neither an add nor a removal beside a scrub, a balance or a removal, nor on a pool that cannot change. */
+	$: diskChangeBlocked = (pool: Pool): boolean =>
+		pool.read_only ||
+		pool.missing_devices > 0 ||
+		scrubStatuses[pool.name]?.status === 'running' ||
+		(balanceStatuses[pool.name] !== undefined && balanceStatuses[pool.name].status !== 'idle') ||
+		removalRuns(removalStatuses[pool.name]);
+
+	function diskAdded() {
+		addDiskPool = null;
+		loadData(false);
+	}
+
+	function removalStarted(event: CustomEvent<DiskRemovalStatus>) {
+		const poolName = removeDiskPool?.name;
+		removeDiskPool = null;
+		if (poolName) showRemovalStatus(poolName, event.detail);
+		// A disk without data leaves at once: the pool's disks changed.
+		if (event.detail.status !== 'running') loadData(false);
+	}
+
+	function removalProgress(status: DiskRemovalStatus): number {
+		if (!status.total || status.left === null) return 0;
+		return Math.min(100, Math.max(0, ((status.total - status.left) / status.total) * 100));
 	}
 
 	/** Show a pool's balance as btrfs reports it (ADR-0379). */
@@ -391,6 +488,7 @@
 		socketDropped = false;
 		readShownScrubsAgain();
 		readShownBalancesAgain();
+		readShownRemovalsAgain();
 	}
 
 	async function readShownBalancesAgain() {
@@ -1335,6 +1433,7 @@
 					{#each pools as pool}
 						{@const scrubStatus = scrubStatuses[pool.name]}
 						{@const balanceStatus = balanceStatuses[pool.name]}
+						{@const removalStatus = removalStatuses[pool.name]}
 						{@const health = healthBadge(pool)}
 						<div class="card-nested">
 							<div class="flex flex-wrap items-center justify-between mb-2 gap-2">
@@ -1361,12 +1460,14 @@
 												{$t('storage.pool.cancelScrub')}
 											</Button>
 										{:else}
-											<!-- No scrub beside a balance that runs (ADR-0379). -->
+											<!-- No scrub beside a balance or a disk removal that runs (ADR-0379, ADR-0410). -->
 											<Button
 												variant="secondary"
 												size="sm"
 												icon={startingScrub[pool.name] ? Loader2 : RefreshCw}
-												disabled={startingScrub[pool.name] || balanceRuns(balanceStatus)}
+												disabled={startingScrub[pool.name] ||
+													balanceRuns(balanceStatus) ||
+													removalRuns(removalStatus)}
 												on:click={() => handleStartScrub(pool.name)}
 											>
 												{$t('storage.pool.scrub')}
@@ -1403,17 +1504,39 @@
 												{$t('storage.pool.cancelBalance')}
 											</Button>
 										{:else}
-											<!-- Not on a read-only pool, nor beside a scrub that runs (ADR-0379). -->
+											<!-- Not on a read-only pool, nor beside a scrub or a disk removal that runs
+											     (ADR-0379, ADR-0410). -->
 											<Button
 												variant="secondary"
 												size="sm"
 												icon={Scale}
-												disabled={pool.read_only || scrubStatus?.status === 'running'}
+												disabled={pool.read_only ||
+													scrubStatus?.status === 'running' ||
+													removalRuns(removalStatus)}
 												on:click={() => openBalance(pool)}
 											>
 												{$t('storage.pool.balance')}
 											</Button>
 										{/if}
+										<!-- One job per pool, and only on a writable pool with all its disks (ADR-0410). -->
+										<Button
+											variant="secondary"
+											size="sm"
+											icon={Plus}
+											disabled={diskChangeBlocked(pool)}
+											on:click={() => (addDiskPool = pool)}
+										>
+											{$t('storage.pool.addDisk')}
+										</Button>
+										<Button
+											variant="secondary"
+											size="sm"
+											icon={MinusCircle}
+											disabled={diskChangeBlocked(pool)}
+											on:click={() => (removeDiskPool = pool)}
+										>
+											{$t('storage.pool.removeDisk')}
+										</Button>
 										<Button
 											variant="secondary"
 											size="sm"
@@ -1643,6 +1766,55 @@
 									<span class="break-words">{balanceStatus.error}</span>
 								</Alert>
 							{/if}
+
+							<!-- A disk removal: its progress while it runs, then how it ended (ADR-0410) -->
+							{#if pool.mounted && removalErrors[pool.name]}
+								<Alert variant="warning" title={$t('storage.removal.statusError')} class="mt-3">
+									{removalErrors[pool.name]}
+								</Alert>
+							{:else if pool.mounted && removalStatus?.status === 'running'}
+								<div class="mt-3 pt-3 border-t border-border space-y-2">
+									<span class="flex items-center gap-2 text-sm text-info break-all">
+										<Loader2 class="w-4 h-4 loading-spinner shrink-0" />
+										{$t('storage.removal.running', { device: removalStatus.device ?? '' })}
+									</span>
+									{#if removalStatus.total}
+										<ProgressBar
+											value={removalProgress(removalStatus)}
+											variant="info"
+											label={$t('storage.removal.progress')}
+										/>
+										<div class="flex flex-wrap justify-between gap-x-2 text-xs text-secondary">
+											<span
+												>{$t('storage.removal.left', {
+													left: formatBytes(removalStatus.left ?? 0),
+													total: formatBytes(removalStatus.total)
+												})}</span
+											>
+											<span>{percentFormat.format(removalProgress(removalStatus) / 100)}</span>
+										</div>
+									{:else if removalStatus.left !== null}
+										<p class="text-xs text-secondary">
+											{$t('storage.removal.leftOnly', { left: formatBytes(removalStatus.left) })}
+										</p>
+									{/if}
+								</div>
+							{:else if pool.mounted && removalStatus?.result === 'finished'}
+								<div
+									class="mt-3 pt-3 border-t border-border flex items-center gap-2 text-sm text-success break-all"
+								>
+									<CheckCircle class="w-4 h-4 shrink-0" />
+									{$t('storage.removal.finished', { device: removalStatus.device ?? '' })}
+								</div>
+							{:else if pool.mounted && removalStatus?.result === 'failed'}
+								<Alert
+									variant="error"
+									title={$t('storage.removal.failed', { device: removalStatus.device ?? '' })}
+									class="mt-3"
+								>
+									<span class="break-words">{removalStatus.error}</span>
+								</Alert>
+							{/if}
 						</div>
 					{/each}
 				</div>
@@ -1857,6 +2029,21 @@
 		</Button>
 	</svelte:fragment>
 </Modal>
+
+<!-- Add Disk and Remove Disk (ADR-0410) -->
+<AddDiskDialog
+	pool={addDiskPool}
+	{formatBytes}
+	{profileLabel}
+	on:close={() => (addDiskPool = null)}
+	on:added={diskAdded}
+/>
+<RemoveDiskDialog
+	pool={removeDiskPool}
+	{formatBytes}
+	on:close={() => (removeDiskPool = null)}
+	on:started={removalStarted}
+/>
 
 <!-- Mount / Unmount Modal -->
 <Modal

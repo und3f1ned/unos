@@ -55,7 +55,9 @@ running with its last status or why it could not be read
 whenever they change; while it is open, the scrubs that run are read again
 every 2 seconds (ADR-0367). The same way, it sends administrators
 ``{"type": "balances", "data": [...]}``, each pool's balance that was seen
-running (``storage.balances.current``, ADR-0379).
+running (``storage.balances.current``, ADR-0379), and
+``{"type": "disk_removals", "data": [...]}``, each pool's disk removal that was seen running
+(``storage.devices.current``, ADR-0410).
 
 It also sends administrators ``{"type": "repair", "data": {...}}``, the running
 repair of a share's permissions with its counts so far, or the last one that
@@ -97,7 +99,7 @@ from ..database import async_session
 from ..health import problems
 from ..logs import router as logs
 from ..network import links
-from ..storage import balances, scrubs
+from ..storage import balances, devices, scrubs
 from ..shares import repair_router
 from ..system.sensors import cpu_temperature
 
@@ -673,6 +675,17 @@ async def _send_balances(websocket: WebSocket, is_admin: bool, sent: int) -> int
     return version
 
 
+async def _send_disk_removals(websocket: WebSocket, is_admin: bool, sent: int) -> int:
+    """_send_scrubs for the disk removals of the pools (ADR-0410)."""
+    if not is_admin:
+        return sent
+    devices.follow()
+    version = devices.version()
+    if version != sent:
+        await websocket.send_json({"type": "disk_removals", "data": devices.current()})
+    return version
+
+
 # What _send_repair has sent a socket before its first repair message.
 _NO_REPAIR_SENT = object()
 
@@ -743,6 +756,7 @@ async def websocket_endpoint(websocket: WebSocket):
     sent_problems: int | None = None
     sent_scrubs = 0
     sent_balances = 0
+    sent_removals = 0
     sent_repair: object = _NO_REPAIR_SENT
     sent_installs: int | None = None
     try:
@@ -751,6 +765,7 @@ async def websocket_endpoint(websocket: WebSocket):
             sent_problems = await _send_problems(websocket, role["admin"], sent_problems)
             sent_scrubs = await _send_scrubs(websocket, role["admin"], sent_scrubs)
             sent_balances = await _send_balances(websocket, role["admin"], sent_balances)
+            sent_removals = await _send_disk_removals(websocket, role["admin"], sent_removals)
             sent_repair = await _send_repair(websocket, role["admin"], sent_repair)
             sent_installs = await _send_installs(websocket, role["admin"], sent_installs)
             stats = await asyncio.to_thread(shared_system_stats)

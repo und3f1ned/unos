@@ -297,3 +297,92 @@ class BalanceStatus(BaseModel):
     # None when that is not known.
     result: str | None = None
     error: str | None = None
+
+
+class DiskAdd(BaseModel):
+    """Body of POST /storage/pools/{name}/devices: the disk that joins the pool (ADR-0410)."""
+
+    device: str
+    # The disk's path typed again, the confirmation of the dialog (HTTP 400 otherwise).
+    confirm_device: str
+    # The disk as GET /storage/pools/{name}/devices offered it: the path must still hold the disk
+    # with this serial, WWN and size (HTTP 409 otherwise), since disks change names when they are
+    # reconnected.
+    identity: DeviceIdentity
+    # Erase what the disk holds: needed for a disk with data (HTTP 409 otherwise).
+    force: bool = False
+    # What the list showed the disk to hold (its data_description): an add of a disk with data is
+    # refused when it now holds something else (HTTP 409), such as a sleeping disk listed with
+    # unknown contents, which the add's read wakes.
+    contents: str | None = None
+
+
+class DiskRemove(BaseModel):
+    """Body of POST /storage/pools/{name}/removal: the disk that leaves the pool (ADR-0410)."""
+
+    # btrfs's number of the disk in the pool, which reconnecting the disk does not change.
+    devid: int = Field(ge=1)
+    # Its path as the list showed it: still the devid's (HTTP 409 otherwise).
+    device: str
+    # The path typed again, the confirmation of the dialog (HTTP 400 otherwise).
+    confirm_device: str
+
+
+class PoolMember(BaseModel):
+    """A disk of a mounted pool, as btrfs filesystem show reports it (ADR-0410)."""
+
+    devid: int
+    path: str
+    # The bytes btrfs may use on it: 0 while the kernel removes it from the pool.
+    size: int
+    # The bytes of the chunks allocated on it.
+    used: int
+    model: str | None = None
+    serial: str | None = None
+    # Why it cannot be removed from the pool (the only disk, the profile, the space); None when it can.
+    problem: str | None = None
+
+
+class DiskCandidate(BaseModel):
+    """A whole disk that can be added to a pool (ADR-0410): neither the system disk nor in use, and
+    without a btrfs filesystem. Read without waking it (ADR-0378): a sleeping one has unknown
+    contents, which count as data."""
+
+    name: str
+    path: str
+    model: str | None = None
+    serial: str | None = None
+    wwn: str | None = None
+    size: int
+    # What it holds, which an add erases (with ``force``).
+    has_data: bool
+    data_description: str | None = None
+
+
+class DiskRemovalStatus(BaseModel):
+    """A pool's disk removal (ADR-0410): the one that runs, or how the last one ended."""
+
+    pool: str
+    # "running" while the kernel moves the data off a disk of the pool (its size is 0), else "idle".
+    status: str
+    # Of a removal that runs, or of the last one when its result is known: the disk.
+    devid: int | None = None
+    device: str | None = None
+    # Of a removal that runs: the bytes still allocated on the disk, and those at its start when known.
+    left: int | None = None
+    total: int | None = None
+    # Of an idle pool: how the last removal that UNOS started since the host started ended,
+    # "finished" or "failed" (``error``: btrfs's error); None when that is not known.
+    result: str | None = None
+    error: str | None = None
+
+
+class PoolDevices(BaseModel):
+    """GET /storage/pools/{name}/devices: the disks of a mounted pool and those that can join it."""
+
+    pool: str
+    # The profiles of its data, metadata and system chunks (btrfs filesystem df), lower case.
+    profiles: list[str]
+    members: list[PoolMember]
+    candidates: list[DiskCandidate]
+    removal: DiskRemovalStatus
