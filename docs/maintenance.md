@@ -11,6 +11,7 @@ nothing is not a result.
 | --- | --- | --- | --- |
 | Dependency audit | GitHub Actions: `.github/workflows/audit.yml`, every week and on demand (`workflow_dispatch`) | `pip-audit -r supervisor/requirements.txt`, and `npm audit --omit=dev --audit-level=high` in `webui/` | A failed run: the owner updates the dependency, or a feature-list entry when the update needs work |
 | Dependency updates | Dependabot: `.github/dependabot.yml` | New versions for pip, npm, GitHub Actions and the Docker base images, grouped, after a cooldown, with Conventional Commit prefixes; no new major npm versions and no Playwright (ADR-0231) | Pull requests that the owner reviews and merges by hand after `make check` passes in a checkout set up from the pull request's branch, since CI is off (ADR-0230): never automatically, because the supervisor runs privileged with the Docker socket |
+| Catalog image platforms | GitHub Actions: the `platforms` job of `audit.yml` | `scripts/catalog-platforms.py check`: the platforms recorded for every image of the app catalog against the registries' manifests (ADR-0402) | A failed run: a publisher added or dropped a platform; the owner runs `make catalog-platforms`, then `scripts/catalog-platforms.py record` and reviews the diff |
 
 `make audit` runs the same audit locally; it needs the network. The hashed lint tools of
 `.github/lint-requirements.txt` are regenerated as `docs/TESTING.md` describes.

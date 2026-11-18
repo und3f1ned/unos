@@ -4,6 +4,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, computed_field, model_validator
 
 from ..times import UtcDatetime
+from .platforms import image_platforms
 
 # Catalog host paths that start with this placeholder live on the storage pool
 # chosen at install time; it is replaced with the pool's mount point (for
@@ -149,6 +150,13 @@ class ContainerSpec(BaseModel):
     # at the host's shutdown), and that a stop of the app waits; None: 10.
     stop_timeout: int | None = None
 
+    @computed_field  # type: ignore[misc]
+    @property
+    def platforms(self) -> list[str]:
+        """The platforms its image publishes, recorded from the registries (ADR-0402); none for
+        an image that nothing is recorded for."""
+        return image_platforms(self.image)
+
 
 # The name of a companion: its DNS alias on the app's network and the end of its container's name.
 COMPANION_NAME = r"^[a-z][a-z0-9-]*$"
@@ -188,6 +196,10 @@ class AppTemplate(ContainerSpec):
     # The names of the companions that must be ready (healthy, or running without a health check)
     # before the next container starts, and so before the main container.
     depends_on: list[str] = []
+    # The host's platform and whether every container's image publishes it (ADR-0402): set by the
+    # catalog API for the host it runs on. An app that is not available is not installable here.
+    host_platform: str | None = None
+    available: bool = True
 
     @model_validator(mode="after")
     def _companions_are_named_once(self) -> "AppTemplate":

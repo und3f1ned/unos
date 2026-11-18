@@ -311,6 +311,7 @@ and this index, and `make check-fast` runs it.
 | [0382](0382-hardware-profiles-apply-per-container-may-choose-its-image-and-give-immichs-machine-learning-the-rk3588-npu.md) | Hardware profiles apply per container, may choose the container's image and give Immich's machine learning the RK3588's NPU | accepted | 2026-11-16 |
 | [0384](0384-an-apps-install-runs-as-a-background-job-whose-progress-the-app-store-shows.md) | An app's install runs as a background job whose progress the App Store shows | accepted | 2026-11-17 |
 | [0390](0390-each-container-of-an-app-gets-its-own-memory-and-cpu-limits-whose-use-is-read-from-its-cgroup.md) | Each container of an app gets its own memory and CPU limits, kept by Docker and for the next install, and its use is read from its cgroup and alerted | accepted | 2026-11-17 |
+| [0402](0402-the-app-store-offers-only-apps-whose-images-publish-the-hosts-platform.md) | The App Store offers only apps whose images publish the host's platform, and the install refuses the others before any pull | accepted | 2026-11-18 |
 
 ## Backup
 

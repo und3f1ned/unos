@@ -33,6 +33,7 @@ from ..shares.models import SmbShare
 from ..snapshots.router import SNAPSHOT_DIR_NAME
 from . import app_secrets, install_jobs, limits, preflight, pulls, stacks, usage
 from .catalog import APP_CATALOG, get_app_by_id, get_apps_by_category, search_apps
+from . import platforms
 from .hardware import ContainerHardware, all_profiles, container_hardware, for_host, read_host_hardware
 from .schemas import (
     POOL_PLACEHOLDER,
@@ -115,10 +116,14 @@ async def _for_this_host(apps: list[AppTemplate]) -> list[AppTemplate]:
     with the image that its install pulls here; the host is read once, in a worker thread, and
     only when a container of one of them has a profile."""
     profiles = [profile for app in apps for profile in all_profiles(app)]
-    if not profiles:
-        return apps
-    hardware = await asyncio.to_thread(read_host_hardware, profiles)
-    return [for_host(app, hardware) for app in apps]
+    if profiles:
+        hardware = await asyncio.to_thread(read_host_hardware, profiles)
+        apps = [for_host(app, hardware) for app in apps]
+    host = platforms.host_platform()
+    return [
+        app.model_copy(update={"host_platform": host, "available": not platforms.lacking(app, host)})
+        for app in apps
+    ]
 
 
 @router.get("/installed", response_model=list[InstalledApp])
@@ -1016,6 +1021,16 @@ class _InstallFailed(HTTPException):
         self.done = done
 
 
+def _check_platform(template: AppTemplate, host: str | None, images: list[str] | None = None) -> None:
+    """409 for an app one of whose images publishes no build for the host's platform, before
+    any pull: it would fail with a 500 (ADR-0402). Reads nothing. ``images``: those that the
+    install pulls here, hardware profiles' included; default: the containers' own."""
+    lacking = platforms.lacking(template, host) if images is None else platforms.images_lacking(images, host)
+    if lacking:
+        published = "; ".join(f"{image} publishes {', '.join(platforms.image_platforms(image))}" for image in lacking)
+        raise HTTPException(409, f"{template.name} is not available for {host}: {published}")
+
+
 def _check_request(template: AppTemplate, req: AppInstallRequest) -> tuple[dict[str, int], dict[str, str]]:
     """400 for a request that ``template`` refuses whatever Docker, the host and the pools hold:
     the group option, the host ports, the variables. Reads nothing: the install request answers it
@@ -1107,6 +1122,8 @@ def _install(
     host_hardware = read_host_hardware(all_profiles(template))
     for c in containers:
         c.hardware = container_hardware(c.spec, host_hardware)
+    # The images that the hardware chose must have the host's platform too (ADR-0402).
+    _check_platform(template, platforms.host_platform(), [c.image for c in containers])
     # Room on the system disk for the images that the hardware chose (ADR-0381).
     preflight.check_space(client, template, [c.image for c in containers])
 
@@ -1556,7 +1573,8 @@ async def install_app(
     """Install an app from the catalog with its data on a mounted pool, as a background job: 202
     at once with the job running (ADR-0384).
 
-    Answered at once: 404 for an app the catalog lacks, 400 for a request that its template
+    Answered at once: 404 for an app the catalog lacks, 409 for one that has no image for the host's
+    platform (ADR-0402), 400 for a request that its template
     refuses (the group option, the host ports, the variables), 409 while an install runs or
     another change of the app is under way. Everything else is checked in the job, before any
     pull, and a refusal ends the job failed with the status and detail of the refusal. The job
@@ -1566,6 +1584,7 @@ async def install_app(
     template = get_app_by_id(req.template_id)
     if not template:
         raise HTTPException(404, f"App {req.template_id} not found")
+    _check_platform(template, platforms.host_platform())
     _check_request(template, req)
     shares = await _share_folders(db)
     # The limits kept from before for the app's containers, which the install gives them (ADR-0390).

@@ -64,3 +64,29 @@ jobs:
       - name: Audit the web UI's runtime dependencies
         working-directory: webui
         run: npm audit --omit=dev --audit-level=high
+
+  # The platforms recorded for the catalog's images against the registries (ADR-0402). The same
+  # command as make catalog-platforms; a difference means a publisher added or dropped a
+  # platform: run scripts/catalog-platforms.py record and review the diff.
+  platforms:
+    name: Catalog image platforms
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+          cache-dependency-path: supervisor/requirements.txt
+
+      - name: Install the supervisor's dependencies (the script reads the catalog)
+        run: pip install -r supervisor/requirements.txt
+
+      - name: Compare the recorded platforms with the registries
+        run: python scripts/catalog-platforms.py check

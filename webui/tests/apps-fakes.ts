@@ -433,3 +433,24 @@ export async function answerInstall(
   await events.update(endedJob(job, end));
   return job;
 }
+
+/**
+ * The stand-in's catalog as the catalog API answers it on a host of another platform than this
+ * machine's (apps.catalog-platforms, ADR-0402): each app's `platforms` are the real, recorded ones;
+ * the host's platform and which apps are available on it are set here by the server's rule
+ * (supervisor/src/apps/platforms.py), for a platform that an image publishes by its exact name (every image of the catalog is recorded; Readarr's publishes none).
+ */
+export async function onPlatform(page: Page, platform: string) {
+  const mark = (app: { platforms: string[]; companions?: { platforms: string[] }[] }) => ({
+    ...app,
+    host_platform: platform,
+    available: [app, ...(app.companions ?? [])].every((spec) => spec.platforms.includes(platform)),
+  });
+  await page.route(
+    (url: URL) => url.pathname === '/api/v1/apps/catalog',
+    async (route: Route) => {
+      const response = await route.fetch();
+      await route.fulfill({ response, json: ((await response.json()) as Parameters<typeof mark>[0][]).map(mark) });
+    },
+  );
+}

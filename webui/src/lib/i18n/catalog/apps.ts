@@ -23,6 +23,9 @@ export const en = {
 	'apps.noneInstalledHint': 'Install apps from the catalog to get started',
 	'apps.browseCatalog': 'Browse Catalog',
 	'apps.install': 'Install',
+	// An app one of whose images has no build for the host's platform (ADR-0402): the card's badge
+	// and the reason in its details; {platform} is Docker's name, such as linux/riscv64.
+	'apps.notAvailable': 'Not available for {platform}',
 	'apps.open': 'Open',
 	'apps.installedNotice': '{name} was installed.',
 	'apps.installedNoticePool': '{name} was installed. Its data is stored on the "{pool}" pool.',
@@ -247,6 +250,8 @@ export const en = {
 	// image's pull (by its state, its download for screen readers, its bytes and layers) and each
 	// container (by its state), and Dismiss of a job that ended.
 	'apps.detail.checking': 'Checking the pool, the ports and the free space...',
+	'apps.detail.notAvailable':
+		"{name} is not available for {platform}: an image of the app has no build for this host's platform, so it cannot be installed here.",
 	'apps.detail.installRunning': 'An install of {name} is under way: install this app once it has ended.',
 	'apps.job.label': 'Install of {name}',
 	'apps.job.state.running': 'Installing',
@@ -305,6 +310,7 @@ export const ru: Translation<typeof en> = {
 	'apps.noneInstalledHint': 'Установите приложения из каталога, чтобы начать',
 	'apps.browseCatalog': 'Перейти в каталог',
 	'apps.install': 'Установить',
+	'apps.notAvailable': 'Недоступно для {platform}',
 	'apps.open': 'Открыть',
 	'apps.installedNotice': 'Приложение {name} установлено.',
 	'apps.installedNoticePool': 'Приложение {name} установлено. Его данные хранятся в пуле «{pool}».',
@@ -497,6 +503,8 @@ export const ru: Translation<typeof en> = {
 	'apps.size.tb': '{size} ТБ',
 
 	'apps.detail.checking': 'Проверка пула, портов и свободного места...',
+	'apps.detail.notAvailable':
+		'{name} недоступно для {platform}: у образа приложения нет сборки для платформы этого сервера, поэтому установить его здесь нельзя.',
 	'apps.detail.installRunning': 'Идёт установка приложения {name}: установите это приложение, когда она закончится.',
 	'apps.job.label': 'Установка приложения {name}',
 	'apps.job.state.running': 'Устанавливается',
