@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import json
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Callable
 
 import pytest
@@ -459,12 +459,7 @@ class TestTwoFactor:
             clock.next_step()
         code = clock.code(secret)
 
-        class AtTheCode(datetime):
-            @classmethod
-            def now(cls, tz=None):
-                return cls(2026, 11, 7, 12, 0, 5, int(code), tzinfo=tz)
-
-        monkeypatch.setattr(audit_router, "datetime", AtTheCode)
+        monkeypatch.setattr(audit_router, "utc_now", lambda: datetime(2026, 11, 7, 12, 0, 5, int(code), tzinfo=timezone.utc))
         if entry == "lost":
             the_audit_log_is_full(monkeypatch)
 
@@ -472,7 +467,7 @@ class TestTwoFactor:
 
         assert response.status_code == 200, response.text
         [stored] = world.audit() if entry == "written" else [lost for lost, _ in reported(world, ENTRY_LOST)]
-        assert (stored["action"], stored["timestamp"]) == ("totp_enabled", f"2026-11-07T12:00:05.{code}")
+        assert (stored["action"], stored["timestamp"]) == ("totp_enabled", f"2026-11-07T12:00:05.{code}Z")
 
 
 class TestAnEntryThatCannotBeWritten:

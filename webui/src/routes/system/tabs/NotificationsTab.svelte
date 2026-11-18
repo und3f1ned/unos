@@ -7,6 +7,7 @@
   } from "lucide-svelte";
   import { Alert, Badge, Button, Card, EmptyState, Input, Modal, Select } from "$lib/components/ui";
   import { intlLocale, t } from "$lib/i18n";
+  import { apiTime, formatDateTime } from "$lib/time";
   import {
     createConfig, deleteConfig, getConfigs, getEventTypes, getLogs, testNotification, updateConfig,
     type ChannelKind, type EventType, type NotificationConfig, type NotificationLog
@@ -201,7 +202,8 @@
 
   // The time of a notification sent: how long ago, within a day; else its date in the language of the page.
   $: formatDate = (sentAt: string): string => {
-    const date = new Date(sentAt);
+    const date = apiTime(sentAt);
+    if (!date) return sentAt;
     const diff = Date.now() - date.getTime();
     if (diff < 60000) return $t("notifications.history.justNow");
     if (diff < 3600000) return $t("notifications.history.minutesAgo", { minutes: Math.floor(diff / 60000) });
@@ -653,7 +655,7 @@
             {#each filteredLogs as log (log.id)}
               {@const expanded = expandedLog === log.id}
               <li class="py-3">
-                <button
+                <Button variant="plain"
                   type="button"
                   class="w-full text-left"
                   aria-expanded={expanded}
@@ -686,12 +688,12 @@
                       <ChevronDown class="w-4 h-4 mt-0.5 text-muted flex-shrink-0" />
                     {/if}
                   </span>
-                </button>
+                </Button>
                 {#if expanded}
                   <dl class="mt-3 grid grid-cols-2 gap-3 text-sm">
                     <div>
                       <dt class="text-muted">{$t("notifications.history.sentAt")}</dt>
-                      <dd>{new Date(log.sent_at).toLocaleString($intlLocale)}</dd>
+                      <dd>{formatDateTime(log.sent_at, $intlLocale)}</dd>
                     </div>
                     <div>
                       <dt class="text-muted">{$t("notifications.history.status")}</dt>

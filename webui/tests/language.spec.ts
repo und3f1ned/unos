@@ -118,7 +118,7 @@ test.describe('Language', () => {
 
     // As the server answers them (FirewallStatus, CertificateStatus and Certificate of
     // supervisor/src/security/schemas.py): the stand-in has no ufw and no certificate. A
-    // certificate's dates are openssl's.
+    // certificate's dates are in UTC with their offset (ADR-0401).
     const FIREWALL = {
       enabled: true,
       default_incoming: 'deny',
@@ -128,12 +128,12 @@ test.describe('Language', () => {
           source: '192.168.1.0/24', destination: null, enabled: true, comment: null },
       ],
     };
-    const VALID_UNTIL = 'Nov  8 01:47:31 2027 GMT';
+    const VALID_UNTIL = '2027-11-08T01:47:31Z';
     const CERTIFICATE_STATUS = { served_by: 'caddy_local_ca' };
     const CERTIFICATES = {
       certificates: [
         { id: 'custom_nas.local', type: 'self_signed', domain: 'nas.local', issuer: 'nas.local',
-          valid_from: 'Nov  8 01:47:31 2026 GMT', valid_until: VALID_UNTIL, is_valid: true, served: false,
+          valid_from: '2026-11-08T01:47:31Z', valid_until: VALID_UNTIL, is_valid: true, served: false,
           fingerprint: null },
       ],
       served_by: 'caddy_local_ca',
@@ -154,7 +154,7 @@ test.describe('Language', () => {
       const main = page.locator('main');
       await main.getByRole('button', { name: 'Configure', exact: true }).click();
       await main.getByRole('button', { name: 'Manage', exact: true }).click();
-      const rule = main.locator('div.bg-slate-700').filter({ has: page.getByText('SSH', { exact: true }) });
+      const rule = main.locator('div.bg-surface-overlay').filter({ has: page.getByText('SSH', { exact: true }) });
 
       // English: the firewall's words as before the catalogs; what browsers get and a certificate's
       // type by their labels, and its dates in the browser's format, not as the server answers them.

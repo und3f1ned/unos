@@ -52,8 +52,8 @@ async def check_for_updates(
         )
     except UpdateError as e:
         raise HTTPException(status_code=502, detail=str(e))
-    except Exception as e:
-        logger.error(f"Update check failed: {e}")
+    except Exception:
+        logger.exception("Update check failed")
         raise HTTPException(status_code=500, detail="Failed to check for updates")
 
 
@@ -77,8 +77,8 @@ async def get_latest_release(
         raise HTTPException(status_code=502, detail=str(e))
     except HTTPException:
         raise
-    except Exception as e:
-        logger.error(f"Failed to fetch latest release: {e}")
+    except Exception:
+        logger.exception("Failed to fetch the latest release")
         raise HTTPException(status_code=500, detail="Failed to fetch release info")
 
 
@@ -143,8 +143,8 @@ async def install_update(
         raise
     except UpdateError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        logger.error(f"Failed to start update: {e}")
+    except Exception:
+        logger.exception("Failed to start the update")
         raise HTTPException(status_code=500, detail="Failed to start update")
 
 

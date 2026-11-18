@@ -110,10 +110,15 @@
         "A handler that catches an exception logs it with its traceback before it answers",
         "supervisor/src has no print() calls"
       ],
-      "passes": false,
+      "passes": true,
       "adr": [
-        "ADR-0023"
-      ]
+        "ADR-0023",
+        "ADR-0398"
+      ],
+      "verified_by": [
+        "supervisor/tests/test_logging.py"
+      ],
+      "notes": "Built per ADR-0398: supervisor/src/logging_setup.py (JSON format, one configuration, UNOS_LOG_LEVEL, default INFO, libraries capped at WARNING), configured first in main.py. tests/test_logging.py runs the image's uvicorn command as a subprocess: every line is JSON, 20 health checks, the first-run setup, a sign-in and a read write no line, a wrong password one access line; secrets never reach a line at DEBUG; no print() in supervisor/src (the emergency CLI writes through _say); every broad except that raises an HTTPException logs its traceback. Device check (owner, not host-level): docker logs unos-supervisor after a restart and a sign-in (every line JSON, uvicorn's too; start lines only; a sign-in adds none; a wrong password adds one access line; no password, token or code), then the SD MiB of an idle minute with scripts/dev/sd.sh measure (expect 0.0 beyond the usual). Device check of 5412b79 on 2026-11-18 (SD MiB): every line of the supervisor's container log since its start parsed as one JSON object with time, level, logger and message (6 lines: uvicorn.error 4, src.shares.service 1, src.storage.pools 1), and the 7 since the reboot after it; a temporary regular user's sign-in added no line and a wrong password exactly one uvicorn.access line with 401; its password, session token and session key and the administrator's token were absent from the whole log (0.219, with the resource monitor's socket step); 600 s idle with no page open 0.086, the container log 2455 bytes before and after."
     },
     {
       "id": "architecture.atomic-state-files",
@@ -147,10 +152,23 @@
         "The database stores times in UTC",
         "The web UI shows times in the browser's time zone"
       ],
-      "passes": false,
+      "verified_by": [
+        "supervisor/tests/test_api_times.py",
+        "supervisor/tests/test_audit_log.py",
+        "webui/tests/times.spec.ts",
+        "webui/tests/audit.spec.ts",
+        "webui/tests/storage.spec.ts",
+        "webui/tests/backup.spec.ts",
+        "webui/tests/language.spec.ts",
+        "webui/tests/api.spec.ts",
+        "webui/tests/api-tokens.spec.ts"
+      ],
+      "passes": true,
       "adr": [
-        "ADR-0023"
-      ]
+        "ADR-0023",
+        "ADR-0401"
+      ],
+      "notes": "Built 2026-11-18 (ADR-0401, which supersedes ADR-0237 and ADR-0300). What a stored time without an offset means: UTC. The DATETIME columns (users, api_tokens, user_sessions, usernames_taken, two_factor_requirement, dashboard_layouts, login_attempts, smb_shares, smb_share_access, smb_accounts, smb_state, app_resource_limits) are SQLite's CURRENT_TIMESTAMP or written by db_now() of supervisor/src/times.py (datetime.utcnow() before): naive UTC, never altered (ADR-0319); the files of /data (the audit log, the update history and progress, the SMART history, the RAID status, the notification history, the scheduler's files, the backups' manifests) took naive datetime.now() of the container, whose clock is UTC, and new writes carry their offset (the audit log, the SMART history and the RAID status Z, as the API answers, so that an exported audit entry's hash can be computed again; the others +00:00); readers take a time without an offset as UTC (UtcText for the scheduler's and the notification history's text, stored_time_text for the SMART history, the RAID status and a restored backup's manifest). Answers: every datetime field of a model is UtcDatetime (Z), the str fields and plain dicts take utc_now()/from_epoch() with +00:00, the audit log answers AuditEntryView (its lines keep their text, so the hash chain holds) and compares instants in its filters, sorting, summary and clearing; its bounds take an offset (Z or +HH:MM). Changed forms: boot_time of /system/info (seconds since the epoch before), last_boot of /power/status (who -b before), a scrub's last_run (btrfs's ctime), a certificate's valid_from and valid_until (openssl's GMT text), a notification event's timestamp (a time, 422 otherwise). The one exception with another offset: a task's next_run, in the host's zone (ADR-0266). Docker's Created times pass as Docker answers them (RFC 3339, Z). Web UI: webui/src/lib/time.ts reads only a time with its offset and every page that writes a server time goes through it; the Audit Log page groups by the browser's day and sends From and To as the browser's day's first and last millisecond in UTC. Step 1: test_api_times.py (TestEveryAnswerCarriesItsOffset walks every GET of the API as an administrator in a process zone of UTC+05:45 with rows and files from before the change and fails for a time without an offset, the stats message; the source check of clock reads without a zone; every datetime field UtcDatetime; TestTimesOfTools), times.spec.ts (the JSON answers that the pages read, against the stand-in) and api.spec.ts (boot_time). Step 2: test_api_times.py TestStoredTimesReadBackAsUtc (old naive rows read back with their clock time in UTC; a new token stored in UTC whatever the process zone) and TestAuditLogAcrossTheChange (entries chained before the change keep their text and their chain, new ones continue it; bounds with offsets; exports; clearing). Step 3: times.spec.ts (the Users page in Asia/Kathmandu), audit.spec.ts (the timeline's times and days and From and To in Asia/Kathmandu), storage.spec.ts (a scrub's start), backup.spec.ts and language.spec.ts (a certificate's dates). Not host-level. The device check after the next deploy: GET /api/v1/system/info, /auth/users, /auth/tokens, /security/login-history, /audit/logs?limit=5 and /updates/history answer every time with its offset and the old rows with the same clock time as before (scripts/dev/api.py); GET /api/v1/audit/logs?limit=10000 shows every entry's chain ok across the entries written before and after the deploy; the Audit Log, Users and Storage pages in a browser outside UTC show the times in its zone. Review (ADR-0017, a fresh subagent): fixed the scheduler's runs and tasks and a restored backup's manifest from before answering naive text (UtcText, stored_time_text, now seeded naive in the walk), a time outside the calendar in UTC raising 500 (as_utc raises ValueError: 422, or a skipped audit line), old notification history entries with an event timestamp that is no time being dropped (kept without it), exported audit hashes that could not be computed again (new lines in the Z form; an old line's hash is over its time without the Z, tested), the walk's coverage (path values for a task's runs and a SMART history, naive SMART history and RAID status seeded, MIN_ANSWERED), the ADR's restatement of ADR-0237 and ADR-0300, the clock check's forms (datetime.datetime.now, now(tz=None), astimezone(), time.strftime), the audit page's datetime attribute (milliseconds), %2B in the user guide, and the verified_by list. Left: GETs that need the host, Docker or the network answer no 200 in the walk (/system/info, /power/status, the storage, snapshot, container and app routes); their models are checked by type (every datetime field UtcDatetime) and their producers by the clock check, and btrfs_time and openssl_time by TestTimesOfTools. ADR-0298 (proposed) still names ADR-0237, which ADR-0401 superseded: its acceptance would supersede ADR-0401's audit rules. Device check of 5412b79 on 2026-11-18 (SD MiB): GET /auth/users answered admin's created_at 2026-01-21T11:44:45Z and test's 2026-01-24T06:22:35Z (0.020); the 58 time-like fields of /system/info, /auth/users, /auth/tokens, /security/login-history, /audit/logs?limit=5 and /updates/history all carried an offset (0.016); /audit/logs?limit=10000 answered 2216 entries with no broken chain: 2031 ok, 4 of them written after the deploy, and 185 without a chain, the oldest, written before ADR-0328 (0.000); after a reboot 2218 entries, none broken (0.016)."
     },
     {
       "id": "architecture.openapi-descriptions",
@@ -2743,13 +2761,22 @@
         "The process list shows the running processes with their CPU and memory use"
       ],
       "verified_by": [
-        "webui/tests/monitor.spec.ts"
+        "webui/tests/monitor.spec.ts",
+        "webui/tests/mobile-layout.spec.ts",
+        "webui/tests/api.spec.ts",
+        "supervisor/tests/test_monitor_history.py",
+        "supervisor/tests/test_ws_stats.py",
+        "supervisor/tests/test_ws_auth.py",
+        "supervisor/tests/test_lifespan.py",
+        "supervisor/tests/test_webui_polling.py"
       ],
-      "passes": false,
+      "passes": true,
       "adr": [
-        "ADR-0006"
+        "ADR-0006",
+        "ADR-0388",
+        "ADR-0399"
       ],
-      "notes": "The E2E spec checks the tab's headings only, and no backend test covers the monitor API. Since ADR-0388 (2026-11-17) the stats socket's network is the host's interfaces that System > Network lists, read from /proc/1/net/dev, not the supervisor container's."
+      "notes": "Built with ADR-0399. The history: supervisor/src/monitor/history.py takes a sample every 10 s in a loop of the lifespan, also while no page is open, and keeps the averages since the last sample of the host's CPU (busy share of /proc/stat's times), network (the interfaces that System > Network lists, /proc/1/net/dev) and physical disks (/proc/diskstats with /sys/block), as the stats message reads them (ADR-0388), and the memory in use at the sample, on a clock that counts a suspend (CLOCK_BOOTTIME), for one hour (360 points) in RAM only: nothing is written, a failing sample is logged once, a restart starts it empty. GET /api/v1/monitor/history (administrators) answers the points with their ages on the monotonic clock; MonitorTab.svelte reads it once when it opens and adds each stats message of /ws/v1/events, no timer (ADR-0365), but not the message the store held at the opening nor one whose new sample_seconds is 0 (the first sample after a gap, whose rates and CPU share are 0), which the cards still show. The time range buttons 5 min (default), 15 min and 1 hour change what each of the four charts draws, with the peak of the range under each and the range in each chart's accessible name. The process list: the host's ten processes that use the most CPU (pid: host, apps' containers included), with PID, name (never the command line), CPU share, resident memory and the effective user as the host's /etc/passwd names it (read through /proc/1/root/etc/passwd when it changed; the container's /etc/passwd named host accounts wrongly or not at all), and regular users' sockets now get no processes and no block device names (the finding of system.dashboard's review). The CPU share of the stats message was of the time since the last sample of the same worker thread (psutil keeps cpu_percent's last reading per thread); it is now of the time since the last sample. Removed: /monitor/cpu, /memory, /processes, /history/cpu, /history/memory and /all, which no page called. Step 1: monitor.spec.ts 'the live stats in English' (each card's values from a fake socket's message, the process table's columns and rows), 'the stand-in' (the real supervisor's history answers 200 and the tab shows the processes of its own socket); test_monitor_history.py (the averages, the host's devices only, devices that come, go or start again, a gap, an hour kept and nothing written, a failure logged once, the loop in a worker thread, the API: 200 to an administrator, 403 to a regular user, 401 without a session, the removed routes 404); test_ws_stats.py (the CPU share in any thread, the message's shape). Step 2: monitor.spec.ts 'the time range buttons change the history shown' (a fake history with points 30, 10 and under 5 minutes old: each range shows its own peak in every card and names its span), 'each stats message extends the history, which the tab reads once' (one request, the peak follows the messages, a message of sample_seconds 0 adds no point), 'the message that the store held when the tab opened is no point of the charts'; the range test also checks the lines drawn (their points' x and y, and the break where points are more than 30 s apart). Step 3: monitor.spec.ts (name, PID, user, CPU and memory of each process), test_ws_stats.py (the host's users, a changed and an unreadable passwd, the machine's own users with UNOS_HOST_EXEC=local, the ten read in full only), test_ws_auth.py (a regular user's socket has no processes and no block devices, also after a demotion). In Russian: monitor.spec.ts 'in Russian' and mobile-layout.spec.ts. Every new test failed first: the spec's six on the old tab (no cards' headings, range buttons, peaks or history), the backend ones on the old events.py (the users came from the container, the CPU share was 0 in a new thread, the regular user got processes and disks) and on the missing history module. Host-level (it reads the host's /proc): it passes only after the device check and the re-check after a reboot (ADR-0018), by hand with the device-checks skill, read-only, each step with its SD MiB: (1) at least 30 s after the supervisor is healthy, scripts/dev/sd.sh measure history -- scripts/dev/api.py GET /monitor/history: HTTP 200, interval_seconds 10, points oldest first about 10 s apart, the newest under 20 s old, cpu_percent and memory_percent within 0 to 100, every rate 0 or more; the newest memory_percent within 3 points of what scripts/dev/ssh.sh free -b gives as (total - available) / total; (2) a read of a file of 1 GiB or more of the pool, scripts/dev/ssh.sh 'dd if=<file> of=/dev/null bs=1M count=1024 iflag=direct', then the GET again: a point after it has disk_read_rate above 10 MiB/s, and the SD card counts no MiB for it; (3) the owner opens System > Resource Monitor as an administrator in a browser: the cards show values, the charts lines, 5 min, 15 min and 1 hour change them, and the process table lists the host's processes (smbd, dockerd, the apps' processes) whose users, for the same PIDs, are those of scripts/dev/ssh.sh 'ps -eo pid,user:32,comm --sort=-%cpu | head -15' (uids without a name on the host as numbers); (4) scripts/dev/sd.sh measure idle -- sleep 600 with no page open: no more MiB than before this change (the sampler writes nothing), and scripts/dev/check.sh: UNOS within its CPU budget (ADR-0374); (5) after an hour of uptime, step 1's GET has 360 points, the oldest about 3590 s old; after the owner's reboot, steps 1 to 4 again, the first GET within 20 s of the supervisor's health answering no or one point. Review (fresh context, ADR-0017): no blocking finding; fixed: a read of the history while the sampler appended could answer 500 (copied first), ages after a suspend (CLOCK_BOOTTIME, and only the last hour answered), a false zero point at every opening (sample_seconds), the charts' lines unasserted, the CPU test blind to guest and iowait, the memory called an average in the docs, a passwd uid of non-ASCII digits, a device step's 10 s bound. Left: 'nothing is written' is asserted in the backend only as no file in the working folder (the device step measures the SD card), and the tab shows its charts only once a stats message has arrived (at most 2 s). Left open: the device check. Before this pass the E2E spec checked the tab's headings only, and no backend test covered the monitor API. Since ADR-0388 (2026-11-17) the stats socket's network is the host's interfaces that System > Network lists, read from /proc/1/net/dev, not the supervisor container's. Device check of 5412b79 on 2026-11-18 (SD MiB): /monitor/history answered a 10 s interval, points 10.0 to 10.1 s apart, the newest 2.6 s old, memory 17.9% against the host's free -b 17.9 (0.000); a 1 GiB file on the pool written at 80 MB/s (0.055) and read with iflag=direct at 92 MB/s (0.000) raised disk_read_rate to 65.7 MiB/s, then deleted; the administrator's events socket's 10 processes matched ps on all 10 PIDs, and a regular user's socket carried stats without processes or block device names; 600 s idle 0.086 with the container log unchanged and the supervisor at 1.3% of a core; after a reboot from the API (0.020) 0 points when the health answered and 6 a minute later, and 63 points after scenario.sh all with memory within 0.1 of the host. Not run: an hour's 360 points (the smbconf scenario restarts the supervisor: 638 s of uptime at the end) and the tab's range buttons in a browser."
     },
     {
       "id": "system.temperatures",
@@ -3199,7 +3226,7 @@
       "category": "system",
       "description": "GET /api/v1/system/info names the boot time boot_time instead of uptime",
       "steps": [
-        "GET /api/v1/system/info returns boot_time, the boot time in seconds since the epoch, and no field named uptime",
+        "GET /api/v1/system/info returns boot_time, the boot time (ISO 8601 with its offset since architecture.times-with-time-zones, ADR-0401; seconds since the epoch before), and no field named uptime",
         "The dashboard and System > General still show how long the host has run",
         "webui/src/lib/api/system.ts and both formatUptime callers use the new field"
       ],
@@ -3211,9 +3238,10 @@
       ],
       "passes": true,
       "adr": [
-        "ADR-0207"
+        "ADR-0207",
+        "ADR-0401"
       ],
-      "notes": "Until 2026-11-09 the field uptime held psutil.boot_time(), which the pages turned into an uptime and API clients would read as a duration. Built 2026-11-09: SystemInfo.boot_time in supervisor/src/system/router.py, no field uptime (ADR-0207). Step 1: test_system.py (test_the_answer_names_the_boot_time_boot_time_and_has_no_uptime) and api.spec.ts on the stand-in. Step 2: dashboard.spec.ts (the dashboard in Russian: the uptime in days, hours or minutes) and updates.spec.ts (System > General's uptime in Russian units), both from the stand-in's real answer. Step 3: system.ts's SystemInfo and both formatUptime callers, which svelte-check holds to the type. Not host-level."
+      "notes": "Until 2026-11-09 the field uptime held psutil.boot_time(), which the pages turned into an uptime and API clients would read as a duration. Built 2026-11-09: SystemInfo.boot_time in supervisor/src/system/router.py, no field uptime (ADR-0207). Step 1: test_system.py (test_the_answer_names_the_boot_time_boot_time_and_has_no_uptime) and api.spec.ts on the stand-in. Step 2: dashboard.spec.ts (the dashboard in Russian: the uptime in days, hours or minutes) and updates.spec.ts (System > General's uptime in Russian units), both from the stand-in's real answer. Step 3: system.ts's SystemInfo and both formatUptime callers, which svelte-check holds to the type. Not host-level. Since 2026-11-18 boot_time is ISO 8601 with its offset (architecture.times-with-time-zones, ADR-0401)."
     },
     {
       "id": "webui.navigation",
@@ -3522,10 +3550,18 @@
         "make lint fails on bg-slate-*, text-slate-* and other raw colour classes where a token exists",
         "The existing uses (about 140 raw buttons and 440 raw colour classes) are replaced first, so the check starts green"
       ],
-      "passes": false,
+      "passes": true,
       "adr": [
-        "ADR-0012"
-      ]
+        "ADR-0012",
+        "ADR-0400"
+      ],
+      "verified_by": [
+        "supervisor/tests/test_webui_design_system.py",
+        "webui/tests/system.spec.ts",
+        "webui/tests/security.spec.ts",
+        "webui/tests/language.spec.ts"
+      ],
+      "notes": "ADR-0400: webui/scripts/design-check.mjs (npm run design) runs in make frontend, so in make check, not in make lint, which has no node (step wording says make lint). It fails for a raw <button>, a raw <a> styled as a button, a raw text field/select/textarea without a form-* class, and a raw palette colour (class attributes, class: directives, string literals) in .svelte files outside lib/components/ui; design-ignore: <reason> exempts. 90 buttons and 504 colour classes were replaced (Button variant plain, tab-pill/tab-underline classes, form-input/form-select, tokens brand, surface-hover, border-strong, content-soft, content-on-brand, status-neutral, class scrim). Button passes restProps and keydown on and has bind:el. The full E2E suite ran on the stand-in. MonitorTab got only a Badge for its connection chip: the system.resource-monitor builder rewrites that tab; the lead runs the check after the merge. After the merge, in which MonitorTab kept system.resource-monitor's rewrite, node scripts/design-check.mjs passed on 58 files; make check and the full E2E run (945 passed, 14 skipped) passed; deployed to the dev device with 5412b79 on 2026-11-18 (build-webui 17.977 SD MiB). Left to the owner: a look at the pages with the new tokens and the orange warning button."
     },
     {
       "id": "webui.dialog-stack",

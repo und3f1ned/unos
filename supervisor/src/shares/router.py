@@ -10,6 +10,7 @@ PUT /shares/smb/{name} is gone (405): PATCH changes only the fields it sends.
 
 import asyncio
 import inspect
+import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
@@ -40,6 +41,8 @@ from .schemas import (
     SmbSharesDeleted,
     SmbShareUpdate,
 )
+
+logger = logging.getLogger(__name__)
 
 # Rate limiter for shares endpoints
 limiter = Limiter(key_func=get_remote_address)
@@ -83,6 +86,7 @@ async def _call(func, *args, not_found_status: int = 400):
     except ValueError as e:
         raise HTTPException(status_code=not_found_status, detail=str(e)) from e
     except Exception as e:
+        logger.exception("A request of this router failed")
         raise HTTPException(status_code=500, detail=sanitize_error_message(e)) from e
 
 

@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { FolderOpen, Share2, Download, Settings } from 'lucide-svelte';
 	import { goto } from '$app/navigation';
-	import { Card } from '$lib/components/ui';
+	import { Card, Button } from '$lib/components/ui';
 	import { t } from '$lib/i18n';
 
 	export let onAction: ((action: string) => void) | undefined = undefined;
@@ -51,13 +51,13 @@
 	<h3 class="card-title mb-4">{$t('dashboard.actions.title')}</h3>
 	<div class="grid grid-cols-2 md:grid-cols-4 gap-2">
 		{#each actions as action}
-			<button
+			<Button variant="plain"
 				on:click={() => handleClick(action)}
-				class="flex flex-col items-center gap-2 p-3 bg-surface-overlay hover:bg-slate-600 rounded-lg transition-colors"
+			 class="flex flex-col items-center gap-2 p-3 bg-surface-overlay hover:bg-surface-hover rounded-lg transition-colors"
 			>
 				<svelte:component this={action.icon} class="w-6 h-6 {action.color}" />
 				<span class="text-xs text-center">{$t(action.key)}</span>
-			</button>
+			</Button>
 		{/each}
 	</div>
 </Card>

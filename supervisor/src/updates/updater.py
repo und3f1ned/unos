@@ -26,6 +26,7 @@ from typing import Optional
 import httpx
 
 from .. import state_files
+from ..times import utc_now
 from .schemas import (
     CurrentVersion,
     ReleaseAsset,
@@ -273,7 +274,7 @@ class Updater:
                 latest_version=None,
                 update_available=False,
                 release_info=None,
-                checked_at=datetime.now(),
+                checked_at=utc_now(),
             )
 
         # Compare versions
@@ -286,7 +287,7 @@ class Updater:
             latest_version=release.tag_name,
             update_available=update_available,
             release_info=release,
-            checked_at=datetime.now(),
+            checked_at=utc_now(),
         )
 
     def _update_progress(
@@ -303,7 +304,7 @@ class Updater:
         self._progress.error = error
 
         if status == UpdateStatus.COMPLETED or status == UpdateStatus.FAILED:
-            self._progress.completed_at = datetime.now()
+            self._progress.completed_at = utc_now()
 
         self._save_progress_state()
 
@@ -353,7 +354,7 @@ class Updater:
     async def _create_backup(self) -> Path:
         """Create a backup of the current installation."""
         BACKUP_DIR.mkdir(parents=True, exist_ok=True)
-        timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        timestamp = utc_now().strftime("%Y%m%d-%H%M%S")
         backup_path = BACKUP_DIR / f"unos-backup-{timestamp}"
 
         try:
@@ -378,7 +379,7 @@ class Updater:
             marker = {
                 "version": current.version,
                 "commit_hash": current.commit_hash,
-                "backup_date": datetime.now().isoformat(),
+                "backup_date": utc_now().isoformat(),
             }
             (backup_path / "backup_info.json").write_text(json.dumps(marker, indent=2))
 
@@ -608,7 +609,7 @@ class Updater:
                 raise UpdateError("An update is already in progress")
 
             current = await self.get_current_version()
-            started_at = datetime.now()
+            started_at = utc_now()
 
             self._progress = UpdateProgress(
                 status=UpdateStatus.CHECKING,
@@ -653,7 +654,7 @@ class Updater:
                     to_version=release.tag_name,
                     status="success",
                     started_at=started_at,
-                    completed_at=datetime.now(),
+                    completed_at=utc_now(),
                     changelog=release.body,
                 )
 
@@ -673,7 +674,7 @@ class Updater:
                     to_version=release.tag_name,
                     status="failed",
                     started_at=started_at,
-                    completed_at=datetime.now(),
+                    completed_at=utc_now(),
                     error=error_msg,
                 )
 

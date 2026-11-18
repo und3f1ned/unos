@@ -74,7 +74,8 @@
 		Input,
 		Select
 	} from '$lib/components/ui';
-	import { intlLocale, locale, t } from '$lib/i18n';
+	import { intlLocale, t } from '$lib/i18n';
+	import { formatDateTime } from '$lib/time';
 	import { stats, wsConnected, type WebSocketStats } from '$lib/stores/stats';
 	import { scrubs, type ScrubUpdate } from '$lib/stores/scrubs';
 	import { balances, type BalanceUpdate } from '$lib/stores/balances';
@@ -538,44 +539,9 @@
 		};
 	};
 
-	// btrfs prints when a scrub started as C's ctime does, in English and in the time zone of the
-	// supervisor's container, which it does not name: "Fri Nov  6 10:00:00 2026".
-	const BTRFS_DATE = /^[A-Z][a-z]{2} ([A-Z][a-z]{2}) +(\d{1,2}) (\d{2}):(\d{2}):(\d{2}) (\d{4})$/;
-	// i18n-ignore: the names of the months in btrfs's dates
-	const BTRFS_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-	// A date and a time as toLocaleString writes them, in UTC: the clock time that btrfs printed.
-	$: startedFormat = new Intl.DateTimeFormat($intlLocale, {
-		year: 'numeric',
-		month: 'numeric',
-		day: 'numeric',
-		hour: 'numeric',
-		minute: 'numeric',
-		second: 'numeric',
-		// i18n-ignore: a time zone, the same in every language
-		timeZone: 'UTC'
-	});
-
-	/**
-	 * When the last scrub started (ADR-0300): as btrfs prints it on an English page, else the same
-	 * date and clock time in the date format of the page's language; a value of another form, or a
-	 * date that does not exist, as it comes.
-	 */
-	$: scrubStarted = (value: string): string => {
-		const match = BTRFS_DATE.exec(value);
-		const month = match ? BTRFS_MONTHS.indexOf(match[1]) : -1;
-		if ($locale === 'en' || !match || month < 0) return value;
-		const [, , day, hours, minutes, seconds, year] = match.map(Number);
-		const date = new Date(Date.UTC(year, month, day, hours, minutes, seconds));
-		// Date.UTC carries what is out of range over to the next field: 30 February is 2 March.
-		const exists =
-			date.getUTCFullYear() === year &&
-			date.getUTCMonth() === month &&
-			date.getUTCDate() === day &&
-			date.getUTCHours() === hours &&
-			date.getUTCMinutes() === minutes &&
-			date.getUTCSeconds() === seconds;
-		return exists ? startedFormat.format(date) : value;
-	};
+	// When the last scrub started: the server answers it in UTC with its offset, the page shows it
+	// in the browser's time zone and the date format of the page's language (ADR-0401).
+	$: scrubStarted = (value: string): string => formatDateTime(value, $intlLocale);
 
 	const scrubResultStyles = {
 		success: { icon: CheckCircle, class: 'text-success' },
@@ -597,7 +563,7 @@
 		return (status.bytes_scrubbed / status.total_bytes) * 100;
 	}
 
-	// The units of the sizes the page writes, by powers of 1024 (ADR-0300).
+	// The units of the sizes the page writes, by powers of 1024 (ADR-0401).
 	const SIZE_UNITS = ['storage.size.bytes', 'storage.size.kb', 'storage.size.mb', 'storage.size.gb', 'storage.size.tb'];
 	// One decimal, without grouping, as the page has always written its sizes and percentages.
 	$: oneDecimal = new Intl.NumberFormat($intlLocale, {
@@ -736,7 +702,7 @@
 			: { variant: 'error', label: pool.health || $t('storage.health.unknown') };
 	};
 
-	// btrfs's data profiles, as the server answers a pool's raid_level (ADR-0300).
+	// btrfs's data profiles, as the server answers a pool's raid_level (ADR-0401).
 	const PROFILES: Record<string, string> = {
 		single: 'storage.profile.single',
 		dup: 'storage.profile.dup',

@@ -76,7 +76,7 @@ function statsMessage(shown: Shown) {
     },
     disk_io: { read_rate: shown.read, write_rate: shown.written, disks: [{ name: 'sda' }, { name: 'sda1' }] },
     processes: [],
-    timestamp: '2026-11-17T10:00:00',
+    timestamp: '2026-11-17T10:00:00+00:00',
   };
 }
 

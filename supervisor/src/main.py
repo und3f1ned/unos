@@ -22,6 +22,12 @@ def pin_temporary_directory() -> None:
 # Before anything else is imported, so before anything uses tempfile.
 pin_temporary_directory()
 
+# Before any other module of the package is imported, so that a line they log at import is already
+# JSON, and before uvicorn writes its first line (ADR-0398).
+from .logging_setup import configure_logging
+
+configure_logging()
+
 from contextlib import asynccontextmanager
 from fastapi import Depends, FastAPI, Request
 from fastapi.encoders import jsonable_encoder
@@ -32,6 +38,7 @@ from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 from . import host
+from .times import utc_now
 from .database import checkpoint_db, init_db
 from .config import get_settings
 from .auth.utils import require_admin
@@ -68,6 +75,7 @@ from .logs.router import router as logs_router
 from .health.router import raid_status_or_none, router as health_router
 from .security.router import router as security_router
 from .monitor.router import router as monitor_router
+from .monitor.history import start_history, stop_history
 from .backup.router import router as backup_router
 from .backup.router import MAX_ARCHIVE_BYTES as MAX_BACKUP_ARCHIVE_BYTES
 from .offsite.router import router as offsite_router
@@ -169,10 +177,14 @@ async def lifespan(app: FastAPI):
         await start_upload_leftover_check()
         # Reads the use of the apps' containers against their limits every 30 s (ADR-0390).
         await start_app_resources()
+        # A point of the host's CPU, memory, network and disks every 10 s, an hour of them in RAM,
+        # for the Resource Monitor's history (ADR-0399).
+        await start_history()
     try:
         yield
     finally:
         if run_background:
+            await stop_history()
             await stop_app_resources()
             await stop_upload_leftover_check()
             await stop_trash_expiry()
@@ -344,11 +356,9 @@ async def full_health_check():
     """
     import psutil
     from pathlib import Path
-    from datetime import datetime
-
     health = {
         "status": "healthy",
-        "timestamp": datetime.now().isoformat(),
+        "timestamp": utc_now().isoformat(),
         "version": "0.1.0",
         "components": {},
         "metrics": {}

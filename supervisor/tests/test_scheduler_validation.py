@@ -439,7 +439,7 @@ def test_an_edit_keeps_the_result_of_a_run_that_ends_while_the_disk_is_checked(e
 
     def a_run_ends_during_the_check(target_disk):
         tasks = scheduler.load_tasks()
-        tasks[0].last_run, tasks[0].last_status = "2026-01-02T03:04:05", "failed"
+        tasks[0].last_run, tasks[0].last_status = "2026-01-02T03:04:05+00:00", "failed"
         scheduler.save_tasks(tasks)
         return real_disk_device(target_disk)
 
@@ -453,7 +453,7 @@ def test_an_edit_keeps_the_result_of_a_run_that_ends_while_the_disk_is_checked(e
     assert response.json()["last_status"] == "failed"
     (stored,) = _stored(env)
     assert (stored["target_disk"], stored["last_run"], stored["last_status"]) == (
-        "/dev/nvme0n1", "2026-01-02T03:04:05", "failed"
+        "/dev/nvme0n1", "2026-01-02T03:04:05+00:00", "failed"
     )
 
 

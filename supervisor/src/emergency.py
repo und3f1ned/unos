@@ -230,18 +230,24 @@ def reset_admin(name: str | None) -> int:
     problems = asyncio.run(_record(admin))
     shown = _shown(admin.username)
     if admin.totp_enabled:
-        print(f"Administrator '{shown}': the password is reset, and two-factor authentication is off.")
-        print("Sign in with the new password, then turn two-factor authentication on again and generate "
-              "new recovery codes (System > Security).")
+        _say(f"Administrator '{shown}': the password is reset, and two-factor authentication is off.")
+        _say("Sign in with the new password, then turn two-factor authentication on again and generate "
+             "new recovery codes (System > Security).")
     else:
-        print(f"Administrator '{shown}': the password is reset (two-factor authentication was off).")
-        print("Sign in with the new password.")
-    print("Its sessions are ended; its API tokens keep working: docs/RECOVERY.md says what else to do.")
+        _say(f"Administrator '{shown}': the password is reset (two-factor authentication was off).")
+        _say("Sign in with the new password.")
+    _say("Its sessions are ended; its API tokens keep working: docs/RECOVERY.md says what else to do.")
     if problems:
-        print(f"reset-admin: The reset is done, but the audit log could not record it ({'; '.join(problems)}).",
-              file=sys.stderr)
+        _say(f"reset-admin: The reset is done, but the audit log could not record it ({'; '.join(problems)}).",
+             sys.stderr)
         return 1
     return 0
+
+
+def _say(text: str, stream: TextIO | None = None) -> None:
+    """One line for the operator at the terminal (standard output by default). This is the
+    command's answer, not the supervisor's log: it is not JSON and it carries no level (ADR-0398)."""
+    (stream or sys.stdout).write(text + "\n")
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -270,8 +276,8 @@ def main(argv: list[str] | None = None) -> int:
         return reset_admin(args.username)
     except EmergencyError as exc:
         if isinstance(exc, Interrupted):
-            print(file=sys.stderr)  # the prompt's line ends without a line break
-        print(f"reset-admin: {exc} {NOTHING_CHANGED}", file=sys.stderr)
+            _say("", sys.stderr)  # the prompt's line ends without a line break
+        _say(f"reset-admin: {exc} {NOTHING_CHANGED}", sys.stderr)
         return exc.exit_status
 
 

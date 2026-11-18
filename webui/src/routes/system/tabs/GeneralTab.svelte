@@ -6,6 +6,7 @@
   import { user } from "$lib/stores/auth";
   import { Alert, Badge, Button, Card, Input, Select } from "$lib/components/ui";
   import { t } from "$lib/i18n";
+  import { apiTime } from "$lib/time";
   import { Server, User, Package, Globe } from "lucide-svelte";
 
   let systemInfo: SystemInfo | null = null;
@@ -98,9 +99,10 @@
   });
 
   // Reactive, so that the uptime follows a change of the language.
-  $: formatUptime = (bootTime: number): string => {
-    const now = Date.now() / 1000;
-    const seconds = Math.floor(now - bootTime);
+  $: formatUptime = (bootTime: string): string => {
+    const booted = apiTime(bootTime);
+    if (!booted) return bootTime;
+    const seconds = Math.floor((Date.now() - booted.getTime()) / 1000);
     const days = Math.floor(seconds / 86400);
     const hours = Math.floor((seconds % 86400) / 3600);
     const minutes = Math.floor((seconds % 3600) / 60);
@@ -118,39 +120,39 @@
   <h2 class="text-xl font-semibold">{$t("general.title")}</h2>
 
   <!-- System Info -->
-  <div class="bg-slate-800 rounded-lg p-4">
+  <div class="bg-surface-elevated rounded-lg p-4">
     <h3 class="text-lg font-semibold mb-4 flex items-center gap-2">
       <Server class="w-5 h-5" />
       {$t("general.info.title")}
     </h3>
 
     {#if loading}
-      <p class="text-slate-500">{$t("common.loading")}</p>
+      <p class="text-content-muted">{$t("common.loading")}</p>
     {:else if systemInfo}
       <div class="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
         <div>
-          <span class="text-slate-400">{$t("general.info.hostname")}</span>
+          <span class="text-content-secondary">{$t("general.info.hostname")}</span>
           <span class="ml-2 font-medium break-words">{systemInfo.hostname}</span>
         </div>
         <div>
-          <span class="text-slate-400">{$t("general.info.os")}</span>
+          <span class="text-content-secondary">{$t("general.info.os")}</span>
           <span class="ml-2">{systemInfo.os}</span>
         </div>
         <div>
-          <span class="text-slate-400">{$t("general.info.kernel")}</span>
+          <span class="text-content-secondary">{$t("general.info.kernel")}</span>
           <span class="ml-2 font-mono text-xs">{systemInfo.kernel}</span>
         </div>
         <div>
-          <span class="text-slate-400">{$t("general.info.architecture")}</span>
+          <span class="text-content-secondary">{$t("general.info.architecture")}</span>
           <span class="ml-2">{systemInfo.architecture}</span>
         </div>
         <div>
-          <span class="text-slate-400">{$t("general.info.uptime")}</span>
+          <span class="text-content-secondary">{$t("general.info.uptime")}</span>
           <span class="ml-2">{formatUptime(systemInfo.boot_time)}</span>
         </div>
       </div>
     {:else}
-      <p class="text-slate-500">{$t("general.info.loadFailed")}</p>
+      <p class="text-content-muted">{$t("general.info.loadFailed")}</p>
     {/if}
   </div>
 
@@ -243,7 +245,7 @@
   </Card>
 
   <!-- User Account -->
-  <div class="bg-slate-800 rounded-lg p-4">
+  <div class="bg-surface-elevated rounded-lg p-4">
     <h3 class="text-lg font-semibold mb-4 flex items-center gap-2">
       <User class="w-5 h-5" />
       {$t("general.user.title")}
@@ -253,29 +255,29 @@
       <div class="space-y-3">
         <div class="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
           <div>
-            <span class="text-slate-400">{$t("general.user.username")}</span>
+            <span class="text-content-secondary">{$t("general.user.username")}</span>
             <span class="ml-2 font-medium">{$user.username}</span>
           </div>
           <div>
-            <span class="text-slate-400">{$t("general.user.role")}</span>
+            <span class="text-content-secondary">{$t("general.user.role")}</span>
             <span class="ml-2">
               {#if $user.is_admin}
-                <span class="px-2 py-0.5 bg-blue-500/20 text-blue-400 rounded text-xs">{$t("general.user.admin")}</span>
+                <span class="px-2 py-0.5 bg-status-info/20 text-status-info rounded text-xs">{$t("general.user.admin")}</span>
               {:else}
-                <span class="px-2 py-0.5 bg-slate-500/20 text-slate-400 rounded text-xs">{$t("general.user.user")}</span>
+                <span class="px-2 py-0.5 bg-status-neutral/20 text-content-secondary rounded text-xs">{$t("general.user.user")}</span>
               {/if}
             </span>
           </div>
         </div>
         <a
           href="/users"
-          class="inline-block px-4 py-2 bg-slate-700 hover:bg-slate-600 rounded-lg transition-colors text-sm"
+          class="inline-block px-4 py-2 bg-surface-overlay hover:bg-surface-hover rounded-lg transition-colors text-sm"
         >
           {$t("general.user.manage")}
         </a>
       </div>
     {:else}
-      <p class="text-slate-500">{$t("general.user.signedOut")}</p>
+      <p class="text-content-muted">{$t("general.user.signedOut")}</p>
     {/if}
   </div>
 </div>

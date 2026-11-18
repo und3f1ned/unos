@@ -360,7 +360,7 @@ export interface ApiToken {
   areas: TokenArea[] | null;
   /** false: the stored scope cannot be read, and the token is refused everywhere. */
   scope_known: boolean;
-  /** UTC without a zone, as the database keeps them. */
+  /** In UTC with their offset (ADR-0401). */
   created_at: string | null;
   last_used_at: string | null;
   expires_at: string | null;

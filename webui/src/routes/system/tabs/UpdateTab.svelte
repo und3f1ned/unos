@@ -4,6 +4,7 @@
   import { checkForUpdates, getCurrentVersion, type CurrentVersion, type UpdateCheck } from "$lib/api/updates";
   import { Alert, Badge, Button, Card } from "$lib/components/ui";
   import { intlLocale, t } from "$lib/i18n";
+  import { formatDate } from "$lib/time";
 
   // What works until the in-app updater does (ADR-0234, ADR-0173): the
   // version the supervisor image was built with, the latest release, and the
@@ -51,7 +52,7 @@
   }
 
   // Reactive, so that the date follows a change of the language.
-  $: formatDate = (date: string): string => new Date(date).toLocaleDateString($intlLocale);
+  $: formatShownDate = (date: string): string => formatDate(date, $intlLocale);
 
   $: release = check?.release_info ?? null;
 
@@ -122,7 +123,7 @@
             </a>
           </div>
           <p class="text-xs text-muted flex flex-wrap items-center gap-2">
-            {$t("updates.latest.published", { date: formatDate(release.published_at) })}
+            {$t("updates.latest.published", { date: formatShownDate(release.published_at) })}
             {#if release.prerelease}
               <Badge variant="warning">{$t("updates.latest.prerelease")}</Badge>
             {/if}

@@ -147,7 +147,7 @@ class TestTheWebUI:
         makefile = (REPO / "Makefile").read_text(encoding="utf-8")
 
         assert package["scripts"]["i18n"] == "node scripts/i18n-check.mjs"
-        assert "frontend-check frontend-i18n frontend-build" in makefile
+        assert "frontend-check frontend-i18n frontend-design frontend-build" in makefile
         assert "frontend-i18n:\n\tcd webui && $(NPM_BIN) run i18n\n" in makefile
 
     def test_a_small_web_ui_passes(self, node, tmp_path):

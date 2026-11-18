@@ -449,21 +449,19 @@
 		aria-label={$t('containers.tabs.label')}
 	>
 		{#each tabs as tab (tab.id)}
-			<button
+			<Button variant="plain"
 				type="button"
 				role="tab"
 				id="docker-tab-{tab.id}"
 				aria-selected={activeTab === tab.id}
 				aria-controls="docker-panel-{tab.id}"
 				tabindex={activeTab === tab.id ? 0 : -1}
-				class="px-4 py-2 rounded-md text-sm font-medium transition-colors {activeTab === tab.id
-					? 'bg-blue-600 text-white'
-					: 'text-secondary hover:text-content'}"
+			 class="tab-pill {activeTab === tab.id ? 'tab-pill-active' : ''}"
 				on:click={() => (activeTab = tab.id)}
 				on:keydown={(event) => tabKeydown(event, tab.id)}
 			>
 				{$t(tab.key)}
-			</button>
+			</Button>
 		{/each}
 	</div>
 
@@ -479,10 +477,10 @@
 		{:else}
 		<!-- Stats Cards -->
 		<div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
-			<button
-				class="card hover:bg-surface-overlay transition-colors text-left cursor-pointer {stateFilter ===
+			<Button variant="plain"
+			 class="card hover:bg-surface-overlay transition-colors text-left cursor-pointer {stateFilter ===
 				'running'
-					? 'ring-2 ring-green-500'
+					? 'ring-2 ring-status-success'
 					: ''}"
 				on:click={() => (stateFilter = stateFilter === 'running' ? '' : 'running')}
 			>
@@ -491,16 +489,16 @@
 						<p class="text-secondary text-sm">{$t('containers.filter.running')}</p>
 						<p class="text-2xl font-bold text-success">{runningCount}</p>
 					</div>
-					<div class="w-10 h-10 rounded-full bg-green-500/20 flex items-center justify-center">
+					<div class="w-10 h-10 rounded-full bg-status-success/20 flex items-center justify-center">
 						<CheckCircle2 class="w-5 h-5 text-success" />
 					</div>
 				</div>
-			</button>
+			</Button>
 
-			<button
-				class="card hover:bg-surface-overlay transition-colors text-left cursor-pointer {stateFilter ===
+			<Button variant="plain"
+			 class="card hover:bg-surface-overlay transition-colors text-left cursor-pointer {stateFilter ===
 				'exited'
-					? 'ring-2 ring-red-500'
+					? 'ring-2 ring-status-error'
 					: ''}"
 				on:click={() => (stateFilter = stateFilter === 'exited' ? '' : 'exited')}
 			>
@@ -509,16 +507,16 @@
 						<p class="text-secondary text-sm">{$t('containers.filter.stopped')}</p>
 						<p class="text-2xl font-bold text-error">{stoppedCount}</p>
 					</div>
-					<div class="w-10 h-10 rounded-full bg-red-500/20 flex items-center justify-center">
+					<div class="w-10 h-10 rounded-full bg-status-error/20 flex items-center justify-center">
 						<XCircle class="w-5 h-5 text-error" />
 					</div>
 				</div>
-			</button>
+			</Button>
 
-			<button
-				class="card hover:bg-surface-overlay transition-colors text-left cursor-pointer {stateFilter ===
+			<Button variant="plain"
+			 class="card hover:bg-surface-overlay transition-colors text-left cursor-pointer {stateFilter ===
 				''
-					? 'ring-2 ring-blue-500'
+					? 'ring-2 ring-brand-ring'
 					: ''}"
 				on:click={() => (stateFilter = '')}
 			>
@@ -527,11 +525,11 @@
 						<p class="text-secondary text-sm">{$t('containers.filter.total')}</p>
 						<p class="text-2xl font-bold">{containers.length}</p>
 					</div>
-					<div class="w-10 h-10 rounded-full bg-blue-500/20 flex items-center justify-center">
+					<div class="w-10 h-10 rounded-full bg-status-info/20 flex items-center justify-center">
 						<Box class="w-5 h-5 text-info" />
 					</div>
 				</div>
-			</button>
+			</Button>
 		</div>
 
 		{#if error}
@@ -594,20 +592,20 @@
 						<option value="restarting">{$t('containers.filter.restarting')}</option>
 					</select>
 					<div class="flex border border-border rounded-lg overflow-hidden">
-						<button
-							class="p-2 {viewMode === 'table' ? 'bg-surface-overlay' : 'bg-transparent'}"
+						<Button variant="plain"
+						 class="p-2 {viewMode === 'table' ? 'bg-surface-overlay' : 'bg-transparent'}"
 							on:click={() => (viewMode = 'table')}
 							title={$t('containers.view.table')}
 						>
 							<List class="w-4 h-4" />
-						</button>
-						<button
-							class="p-2 {viewMode === 'cards' ? 'bg-surface-overlay' : 'bg-transparent'}"
+						</Button>
+						<Button variant="plain"
+						 class="p-2 {viewMode === 'cards' ? 'bg-surface-overlay' : 'bg-transparent'}"
 							on:click={() => (viewMode = 'cards')}
 							title={$t('containers.view.cards')}
 						>
 							<LayoutGrid class="w-4 h-4" />
-						</button>
+						</Button>
 					</div>
 				</div>
 			</div>
@@ -738,7 +736,7 @@
 													target="_blank"
 													rel="noopener"
 													on:click|stopPropagation
-													class="text-info hover:text-blue-300"
+													class="text-info hover:text-status-info"
 													title={$t('containers.openInBrowser')}
 												>
 													<ExternalLink class="w-3.5 h-3.5" />
@@ -749,40 +747,36 @@
 									<td>
 										<div class="flex items-center justify-end gap-1">
 											{#if container.state === 'running'}
-												<button
+												<Button variant="ghost" size="icon-sm" class="text-secondary hover:text-status-warning"
 													disabled={bulkRunning}
 													on:click={(e) => handleQuickAction(e, container.id, 'stop')}
-													class="p-1.5 rounded hover:bg-surface-muted text-secondary hover:text-warning transition-colors"
 													title={$t('containers.action.stop')}
 												>
 													<Square class="w-4 h-4" />
-												</button>
-												<button
+												</Button>
+												<Button variant="ghost" size="icon-sm" class="text-secondary hover:text-status-info"
 													disabled={bulkRunning}
 													on:click={(e) => handleQuickAction(e, container.id, 'restart')}
-													class="p-1.5 rounded hover:bg-surface-muted text-secondary hover:text-info transition-colors"
 													title={$t('containers.action.restart')}
 												>
 													<RotateCw class="w-4 h-4" />
-												</button>
+												</Button>
 											{:else}
-												<button
+												<Button variant="ghost" size="icon-sm" class="text-secondary hover:text-status-success"
 													disabled={bulkRunning}
 													on:click={(e) => handleQuickAction(e, container.id, 'start')}
-													class="p-1.5 rounded hover:bg-surface-muted text-secondary hover:text-success transition-colors"
 													title={$t('containers.action.start')}
 												>
 													<Play class="w-4 h-4" />
-												</button>
+												</Button>
 											{/if}
-											<button
+											<Button variant="ghost" size="icon-sm" class="text-secondary hover:text-status-error"
 												disabled={bulkRunning}
 												on:click={(e) => handleQuickAction(e, container.id, 'remove')}
-												class="p-1.5 rounded hover:bg-surface-muted text-secondary hover:text-error transition-colors"
 												title={$t('containers.action.remove')}
 											>
 												<Trash2 class="w-4 h-4" />
-											</button>
+											</Button>
 										</div>
 									</td>
 								</tr>
@@ -856,32 +850,29 @@
 									</a>
 								{/if}
 								{#if container.state === 'running'}
-									<button
+									<Button variant="ghost" size="icon-sm" class="text-secondary hover:text-status-warning"
 										disabled={bulkRunning}
 										on:click={(e) => handleQuickAction(e, container.id, 'stop')}
-										class="p-1.5 rounded hover:bg-surface-muted text-secondary hover:text-warning transition-colors"
 										title={$t('containers.action.stop')}
 									>
 										<Square class="w-4 h-4" />
-									</button>
+									</Button>
 								{:else}
-									<button
+									<Button variant="ghost" size="icon-sm" class="text-secondary hover:text-status-success"
 										disabled={bulkRunning}
 										on:click={(e) => handleQuickAction(e, container.id, 'start')}
-										class="p-1.5 rounded hover:bg-surface-muted text-secondary hover:text-success transition-colors"
 										title={$t('containers.action.start')}
 									>
 										<Play class="w-4 h-4" />
-									</button>
+									</Button>
 								{/if}
-								<button
+								<Button variant="ghost" size="icon-sm" class="text-secondary hover:text-status-error"
 									disabled={bulkRunning}
 									on:click={(e) => handleQuickAction(e, container.id, 'remove')}
-									class="p-1.5 rounded hover:bg-surface-muted text-secondary hover:text-error transition-colors"
 									title={$t('containers.action.remove')}
 								>
 									<Trash2 class="w-4 h-4" />
-								</button>
+								</Button>
 							</div>
 						</div>
 					</div>
@@ -970,13 +961,13 @@
 							class="flex items-center justify-between py-1.5 px-3 bg-surface-muted rounded text-sm"
 						>
 							<span class="mono">{port.host}:{port.container}/{port.protocol}</span>
-							<button
+							<Button variant="plain"
 								type="button"
 								on:click={() => removePort(i)}
-								class="text-error hover:text-red-300"
+							 class="text-error hover:text-status-error"
 							>
 								<Trash2 class="w-4 h-4" />
-							</button>
+							</Button>
 						</div>
 					{/each}
 				</div>
@@ -1011,13 +1002,13 @@
 							class="flex items-center justify-between py-1.5 px-3 bg-surface-muted rounded text-sm"
 						>
 							<span class="mono">{env.key}={env.value}</span>
-							<button
+							<Button variant="plain"
 								type="button"
 								on:click={() => removeEnvVar(i)}
-								class="text-error hover:text-red-300"
+							 class="text-error hover:text-status-error"
 							>
 								<Trash2 class="w-4 h-4" />
-							</button>
+							</Button>
 						</div>
 					{/each}
 				</div>

@@ -15,6 +15,7 @@
 	import { Archive, Copy, Plus, Trash2, RotateCcw, RefreshCw } from 'lucide-svelte';
 	import { Button, Card, Modal, Alert, Input, Select, EmptyState } from '$lib/components/ui';
 	import { intlLocale, t } from '$lib/i18n';
+	import { formatDateTime } from '$lib/time';
 
 	// Names on the disk, the same in every language (ADR-0296): the folder of a pool or a volume
 	// that holds its snapshots, and the prefixes of the names that UNOS gives, which a name's
@@ -74,11 +75,7 @@
 
 	// The server gives UTC times with their offset; the browser shows them in its own time zone,
 	// in the language of the page (ADR-0287).
-	$: formatDate = (value: string): string => {
-		if (!value) return '-';
-		const date = new Date(value);
-		return Number.isNaN(date.getTime()) ? value : date.toLocaleString($intlLocale);
-	};
+	$: formatDate = (value: string): string => (value ? formatDateTime(value, $intlLocale) : '-');
 
 	$: options = subvolumes.map((sv) => ({ value: sv.path, label: label(sv) }));
 	// Pools offered without their volumes, which could not be read (a disk that dropped off, say).

@@ -14,6 +14,7 @@
 	} from '$lib/api/auth';
 	import { Alert, Badge, Button, Card, EmptyState, Input, Modal, Select } from '$lib/components/ui';
 	import { intlLocale, t } from '$lib/i18n';
+	import { apiTime, formatDateTime } from '$lib/time';
 
 	// The API tokens of the signed-in account (ADR-0239), each full or limited to reading and to
 	// areas of the API (ADR-0392). The page signs in with a session, which alone makes, disables
@@ -90,13 +91,8 @@
 		}
 	}
 
-	/** A time as the API answers a token's: UTC, without a zone. */
-	function utc(value: string): Date {
-		return new Date(/(Z|[+-]\d\d:?\d\d)$/.test(value) ? value : `${value}Z`);
-	}
-
 	function formatted(value: string): string {
-		return utc(value).toLocaleString($intlLocale);
+		return formatDateTime(value, $intlLocale);
 	}
 
 	// i18n-ignore: a path of the API, the same in every language
@@ -112,7 +108,8 @@
 	}
 
 	function expired(token: ApiToken): boolean {
-		return token.expires_at !== null && utc(token.expires_at).getTime() < Date.now();
+		const expires = apiTime(token.expires_at);
+		return expires !== null && expires.getTime() < Date.now();
 	}
 
 	function openCreate() {
@@ -327,7 +324,7 @@
 				<input
 					type="radio"
 					name="api-token-access"
-					class="mt-1 border-border bg-surface-overlay text-blue-600 focus:ring-blue-500"
+					class="mt-1 border-border bg-surface-overlay text-brand focus:ring-brand-ring"
 					value={true}
 					bind:group={readOnly}
 					disabled={saving}
@@ -341,7 +338,7 @@
 				<input
 					type="radio"
 					name="api-token-access"
-					class="mt-1 border-border bg-surface-overlay text-blue-600 focus:ring-blue-500"
+					class="mt-1 border-border bg-surface-overlay text-brand focus:ring-brand-ring"
 					value={false}
 					bind:group={readOnly}
 					disabled={saving}
@@ -359,7 +356,7 @@
 				<input
 					type="radio"
 					name="api-token-areas"
-					class="mt-1 border-border bg-surface-overlay text-blue-600 focus:ring-blue-500"
+					class="mt-1 border-border bg-surface-overlay text-brand focus:ring-brand-ring"
 					value={true}
 					bind:group={everyArea}
 					disabled={saving}
@@ -373,7 +370,7 @@
 				<input
 					type="radio"
 					name="api-token-areas"
-					class="mt-1 border-border bg-surface-overlay text-blue-600 focus:ring-blue-500"
+					class="mt-1 border-border bg-surface-overlay text-brand focus:ring-brand-ring"
 					value={false}
 					bind:group={everyArea}
 					disabled={saving}

@@ -1,4 +1,5 @@
 import asyncio
+import logging
 from collections.abc import Callable
 from typing import Any
 
@@ -10,6 +11,8 @@ from ..auth.models import User
 from ..auth.utils import verify_token
 from .schemas import ContainerInfo, ContainerCreate, ContainerLogs, ImageInfo
 from . import docker as docker_ops
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/containers", tags=["containers"])
 
@@ -43,6 +46,7 @@ async def list_containers(all: bool = Query(True), _=Depends(verify_token)):
     except HTTPException:
         raise
     except Exception as e:
+        logger.exception("Could not list containers")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -54,6 +58,7 @@ async def create_container(config: ContainerCreate, _=Depends(verify_token)):
     except HTTPException:
         raise
     except Exception as e:
+        logger.exception("Could not create container")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -68,6 +73,7 @@ async def list_images(_=Depends(verify_token)):
     except HTTPException:
         raise
     except Exception as e:
+        logger.exception("Could not list images")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -79,6 +85,7 @@ async def pull_image(image: str, _=Depends(verify_token)):
     except HTTPException:
         raise
     except Exception as e:
+        logger.exception("Could not pull image")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -95,6 +102,7 @@ async def remove_image(
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
+        logger.exception("Could not remove image")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -108,6 +116,7 @@ async def get_container(container_id: str, _=Depends(verify_token)):
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
+        logger.exception("Could not get container")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -125,6 +134,7 @@ async def start_container(container_id: str, request: Request, user: User = Depe
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
+        logger.exception("Could not start container")
         raise HTTPException(status_code=500, detail=str(e))
     if started:
         await audit_change(
@@ -145,6 +155,7 @@ async def stop_container(container_id: str, request: Request, user: User = Depen
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
+        logger.exception("Could not stop container")
         raise HTTPException(status_code=500, detail=str(e))
     if stopped:
         await audit_change(
@@ -169,6 +180,7 @@ async def restart_container(container_id: str, request: Request, user: User = De
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
+        logger.exception("Could not restart container")
         raise HTTPException(status_code=500, detail=str(e))
     await audit_change(
         AuditAction.CONTAINER_STARTED, request, user.username, resource_type="container", resource_id=info.name,
@@ -189,6 +201,7 @@ async def remove_container(
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
+        logger.exception("Could not remove container")
         raise HTTPException(status_code=500, detail=str(e))
     await audit_change(
         AuditAction.CONTAINER_REMOVED, request, user.username, resource_type="container", resource_id=name,
@@ -211,4 +224,5 @@ async def get_container_logs(
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
+        logger.exception("Could not get container logs")
         raise HTTPException(status_code=500, detail=str(e))

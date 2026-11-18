@@ -102,7 +102,7 @@
 				<HardDrive class="w-5 h-5 icon-storage" />
 				{$t('dashboard.storage.title')}
 			</h3>
-			<a href="/storage" class="text-sm text-info hover:text-blue-300 transition-colors"
+			<a href="/storage" class="text-sm text-info hover:text-status-info transition-colors"
 				>{$t('dashboard.manage')}</a
 			>
 		</div>

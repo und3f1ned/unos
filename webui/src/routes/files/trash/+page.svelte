@@ -14,6 +14,7 @@
   } from "$lib/api/files";
   import { Alert, Button, Card, EmptyState, Modal } from "$lib/components/ui";
   import { intlLocale, t } from "$lib/i18n";
+  import { formatDate, formatDateTime } from "$lib/time";
   import { ArrowLeft, File, Folder, Link, RefreshCw, RotateCcw, Trash, Trash2 } from "lucide-svelte";
 
   let items: TrashItem[] = [];
@@ -131,11 +132,8 @@
 
   // The server gives UTC times with their offset; the browser shows them in its own time zone,
   // in the language of the page.
-  $: formatTime = (value: string, dateOnly = false): string => {
-    const date = new Date(value);
-    if (Number.isNaN(date.getTime())) return value;
-    return dateOnly ? date.toLocaleDateString($intlLocale) : date.toLocaleString($intlLocale);
-  };
+  $: formatTime = (value: string, dateOnly = false): string =>
+    dateOnly ? formatDate(value, $intlLocale) : formatDateTime(value, $intlLocale);
 
   // The folder an item was deleted from.
   $: folderOf = (item: TrashItem): string => {

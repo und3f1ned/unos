@@ -19,6 +19,7 @@
   } from "$lib/api/files";
   import { Alert, Button, Input, Modal } from "$lib/components/ui";
   import { intlLocale, t } from "$lib/i18n";
+  import { formatDate, formatDateTime } from "$lib/time";
   import {
     Folder,
     File,
@@ -548,21 +549,19 @@
           <span class="sr-only">{$t("files.upload")}</span>
         </Button>
       </span>
-      <button
+      <Button variant="secondary" size="icon"
         on:click={() => (showNewFolder = true)}
-        class="p-2 rounded-lg bg-slate-700 hover:bg-slate-600 transition"
         title={$t("files.newFolder")}
       >
         <Plus class="w-5 h-5" />
-      </button>
-      <button
+      </Button>
+      <Button variant="secondary" size="icon"
         on:click={refresh}
-        class="p-2 rounded-lg bg-slate-700 hover:bg-slate-600 transition"
         title={$t("common.refresh")}
         disabled={loading}
       >
         <RefreshCw class="w-5 h-5 {loading ? 'animate-spin' : ''}" />
-      </button>
+      </Button>
       <Button variant="secondary" icon={Trash} href="/files/trash">{$t("files.trash.title")}</Button>
     </div>
   </div>
@@ -595,14 +594,14 @@
   <div class="flex items-center gap-1 mb-4 text-sm overflow-x-auto">
     {#each breadcrumbs as crumb, i}
       {#if i > 0}
-        <ChevronRight class="w-4 h-4 text-slate-500 flex-shrink-0" />
+        <ChevronRight class="w-4 h-4 text-content-muted flex-shrink-0" />
       {/if}
-      <button
+      <Button variant="plain"
         on:click={() => navigate(crumb.path)}
-        class="px-2 py-1 rounded hover:bg-slate-700 truncate {i === breadcrumbs.length - 1 ? 'text-blue-400' : 'text-slate-300'}"
+        class="px-2 py-1 rounded hover:bg-surface-overlay truncate {i === breadcrumbs.length - 1 ? 'text-status-info' : 'text-content-soft'}"
       >
         {crumb.name}
-      </button>
+      </Button>
     {/each}
   </div>
 
@@ -700,7 +699,7 @@
 
   <!-- File List -->
   <div class="md:flex-1 md:min-h-0 flex flex-col bg-surface-elevated rounded-xl border border-border overflow-hidden">
-    <div class="grid {columnsClass} gap-4 px-4 py-2 bg-slate-900/50 text-sm text-slate-400 border-b border-slate-700">
+    <div class="grid {columnsClass} gap-4 px-4 py-2 bg-surface/50 text-sm text-content-secondary border-b border-border">
       <div class="w-6"></div>
       <div>{$t("files.column.name")}</div>
       <div>{$t("files.column.size")}</div>
@@ -714,17 +713,17 @@
       aria-label={$t("files.contents")}
     >
       {#if listing?.parent}
-        <button
-          bind:this={upButton}
+        <Button variant="plain"
+          bind:el={upButton}
           on:click={goUp}
-          class="w-full grid {columnsClass} gap-4 px-4 py-3 hover:bg-slate-700/50 items-center text-left border-b border-slate-700/50"
+          class="w-full grid {columnsClass} gap-4 px-4 py-3 hover:bg-surface-muted items-center text-left border-b border-border-muted"
           title={$t("files.up")}
         >
-          <ArrowUp class="w-5 h-5 text-slate-400" />
-          <span class="text-slate-400">..</span>
+          <ArrowUp class="w-5 h-5 text-content-secondary" />
+          <span class="text-content-secondary">..</span>
           <span></span>
           <span class="hidden sm:block"></span>
-        </button>
+        </Button>
       {/if}
 
       {#if listing?.items}
@@ -733,7 +732,7 @@
                opens it. From the keyboard, the checkbox selects and the name opens. -->
           <!-- svelte-ignore a11y-click-events-have-key-events a11y-no-static-element-interactions -->
           <div
-            class="grid {columnsClass} gap-4 px-4 py-3 hover:bg-slate-700/50 items-center border-b border-slate-700/50 cursor-pointer {selected.has(item.path) ? 'bg-blue-600/20' : ''}"
+            class="grid {columnsClass} gap-4 px-4 py-3 hover:bg-surface-muted items-center border-b border-border-muted cursor-pointer {selected.has(item.path) ? 'bg-brand/20' : ''}"
             on:click={() => toggleSelect(item.path)}
             on:dblclick={() => handleOpen(item)}
           >
@@ -743,12 +742,12 @@
               data-path={item.path}
               checked={selected.has(item.path)}
               on:click|stopPropagation={() => toggleSelect(item.path)}
-              class="w-4 h-4 rounded bg-slate-700 border-slate-600"
+              class="w-4 h-4 rounded bg-surface-overlay border-border-strong"
             />
             <div class="flex items-center gap-3 min-w-0">
               <svelte:component
                 this={getIcon(item)}
-                class="w-5 h-5 flex-shrink-0 {item.type === 'directory' ? 'text-yellow-400' : 'text-slate-400'}"
+                class="w-5 h-5 flex-shrink-0 {item.type === 'directory' ? 'text-status-warning' : 'text-content-secondary'}"
               />
               {#if renaming === item.path}
                 <!-- Clicks in the field, a double-click on a word too, stay out of the row. -->
@@ -779,11 +778,11 @@
                 <span class="truncate">{item.name}</span>
               {/if}
             </div>
-            <span class="text-sm text-slate-400">
+            <span class="text-sm text-content-secondary">
               {item.type === "directory" ? "-" : formatSize(item.size, units)}
             </span>
-            <span class="hidden sm:block text-sm text-slate-400">
-              {new Date(item.modified).toLocaleDateString($intlLocale)}
+            <span class="hidden sm:block text-sm text-content-secondary">
+              {formatDate(item.modified, $intlLocale)}
             </span>
           </div>
         {/each}
@@ -793,7 +792,7 @@
 
   <!-- Status Bar -->
   {#if listing}
-    <div class="mt-2 text-sm text-slate-400 flex justify-between">
+    <div class="mt-2 text-sm text-content-secondary flex justify-between">
       <span>{$t("files.itemCount", { n: listing.item_count })}</span>
       <span>{formatSize(listing.total_size, units)}</span>
     </div>
@@ -879,7 +878,7 @@
             <p class="text-content-secondary">
               {$t("files.leftovers.file", {
                 size: formatSize(file.size, units),
-                time: new Date(file.modified).toLocaleString($intlLocale),
+                time: formatDateTime(file.modified, $intlLocale),
               })}
             </p>
           </li>

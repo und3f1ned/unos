@@ -61,7 +61,7 @@ UNOS turns any Debian or Ubuntu machine into a full-featured NAS server with a m
 
 ### System Monitoring
 - **Real-time Dashboard** - Live CPU, memory, network, and disk I/O statistics via WebSocket
-- **Process Monitor** - View the top processes by CPU or memory use
+- **Resource Monitor** - The host's CPU, memory, network and disk I/O, live and over the last hour, and the processes that use the most CPU
 - **Temperature Monitoring** - Hardware temperature sensors
 - **Network Statistics** - Per-interface bandwidth monitoring with history graphs
 - **Prometheus Metrics** - `/api/v1/health/prometheus` endpoint for external monitoring (administrator API token)

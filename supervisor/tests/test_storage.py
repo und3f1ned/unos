@@ -867,7 +867,7 @@ SCRUB_OUTPUT = {
     ),
 }
 GIB = 1024**3
-STARTED = "Fri Nov  6 10:00:00 2026"
+STARTED = "2026-11-06T10:00:00Z"  # btrfs's "Fri Nov  6 10:00:00 2026", in UTC (ADR-0401)
 
 
 class TestScrubStatus:

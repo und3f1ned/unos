@@ -771,6 +771,8 @@ const RU_PASSWORD_NEEDED_HINT =
   'Пользователь включает SMB сам на странице «Учётная запись» своим паролем — или задайте ему новый пароль здесь';
 
 test.describe('Users page in Russian (fake data)', () => {
+  // The times of the fakes are in UTC, as the server answers them; the page shows them in this zone.
+  test.use({ timezoneId: 'UTC' });
   test('the page and its dialogs are in Russian once Russian is chosen', async ({ authenticatedPage: page }) => {
     const fake = await fakeSmbApi(page, { users: fakeUsers() });
     // The language as the Account page keeps it in this browser.

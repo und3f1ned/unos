@@ -2,6 +2,7 @@
 	import { Bell, AlertTriangle, Info, CheckCircle, Clock } from 'lucide-svelte';
 	import { Card } from '$lib/components/ui';
 	import { t } from '$lib/i18n';
+	import { apiTime } from '$lib/time';
 
 	export let notifications: Array<{
 		id: string;
@@ -43,7 +44,8 @@
 
 	// How long ago, in the language of the page.
 	$: formatTime = (iso: string): string => {
-		const date = new Date(iso);
+		const date = apiTime(iso);
+		if (!date) return iso;
 		const now = new Date();
 		const diff = now.getTime() - date.getTime();
 		const minutes = Math.floor(diff / 60000);
@@ -65,7 +67,7 @@
 		</h3>
 		<a
 			href="/system#notifications"
-			class="text-sm text-info hover:text-blue-300 transition-colors">{$t('dashboard.activity.viewAll')}</a
+			class="text-sm text-info hover:text-status-info transition-colors">{$t('dashboard.activity.viewAll')}</a
 		>
 	</div>
 

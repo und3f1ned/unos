@@ -512,7 +512,7 @@
 							href={app.website}
 							target="_blank"
 							rel="noopener"
-							class="flex items-center gap-1.5 text-sm text-info hover:text-blue-300 transition-colors"
+							class="flex items-center gap-1.5 text-sm text-info hover:text-status-info transition-colors"
 						>
 							<Globe class="w-4 h-4" />
 							{$t('apps.detail.website')}
@@ -601,51 +601,39 @@
 
 		<!-- Tabs: they wrap on a narrow screen (ADR-0302) -->
 		<div class="flex flex-wrap border-b border-border -mx-6 px-6 mb-4">
-			<button
-				class="flex items-center gap-2 px-4 py-2.5 text-sm font-medium transition-colors {activeTab ===
-				'overview'
-					? 'text-info border-b-2 border-blue-500'
-					: 'text-secondary hover:text-content'}"
+			<Button variant="plain"
+			 class="tab-underline {activeTab === 'overview' ? 'tab-underline-active' : ''}"
 				on:click={() => (activeTab = 'overview')}
 			>
 				<Package class="w-4 h-4" />
 				{$t('apps.detail.tabs.overview')}
-			</button>
+			</Button>
 			{#if app.ports?.length > 0}
-				<button
-					class="flex items-center gap-2 px-4 py-2.5 text-sm font-medium transition-colors {activeTab ===
-					'ports'
-						? 'text-info border-b-2 border-blue-500'
-						: 'text-secondary hover:text-content'}"
+				<Button variant="plain"
+				 class="tab-underline {activeTab === 'ports' ? 'tab-underline-active' : ''}"
 					on:click={() => (activeTab = 'ports')}
 				>
 					<Network class="w-4 h-4" />
 					{$t('apps.detail.tabs.ports', { count: app.ports.length })}
-				</button>
+				</Button>
 			{/if}
 			{#if volumeCount > 0}
-				<button
-					class="flex items-center gap-2 px-4 py-2.5 text-sm font-medium transition-colors {activeTab ===
-					'volumes'
-						? 'text-info border-b-2 border-blue-500'
-						: 'text-secondary hover:text-content'}"
+				<Button variant="plain"
+				 class="tab-underline {activeTab === 'volumes' ? 'tab-underline-active' : ''}"
 					on:click={() => (activeTab = 'volumes')}
 				>
 					<HardDrive class="w-4 h-4" />
 					{$t('apps.detail.tabs.volumes', { count: volumeCount })}
-				</button>
+				</Button>
 			{/if}
 			{#if variableCount > 0}
-				<button
-					class="flex items-center gap-2 px-4 py-2.5 text-sm font-medium transition-colors {activeTab ===
-					'environment'
-						? 'text-info border-b-2 border-blue-500'
-						: 'text-secondary hover:text-content'}"
+				<Button variant="plain"
+				 class="tab-underline {activeTab === 'environment' ? 'tab-underline-active' : ''}"
 					on:click={() => (activeTab = 'environment')}
 				>
 					<Settings class="w-4 h-4" />
 					{$t('apps.detail.tabs.environment', { count: variableCount })}
-				</button>
+				</Button>
 			{/if}
 		</div>
 
@@ -748,12 +736,12 @@
 							<p class="text-xs text-secondary">{$t('apps.detail.ports')}</p>
 						</div>
 						<div class="card-nested text-center">
-							<HardDrive class="w-5 h-5 mx-auto mb-1 text-purple-400" />
+							<HardDrive class="w-5 h-5 mx-auto mb-1 text-accent-memory" />
 							<p class="text-2xl font-bold">{volumeCount}</p>
 							<p class="text-xs text-secondary">{$t('apps.detail.volumes')}</p>
 						</div>
 						<div class="card-nested text-center">
-							<Settings class="w-5 h-5 mx-auto mb-1 text-orange-400" />
+							<Settings class="w-5 h-5 mx-auto mb-1 text-accent-temperature" />
 							<p class="text-2xl font-bold">{variableCount}</p>
 							<p class="text-xs text-secondary">{$t('apps.detail.variables')}</p>
 						</div>

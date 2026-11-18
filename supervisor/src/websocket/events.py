@@ -74,17 +74,18 @@ import functools
 import json
 import logging
 import os
+import pwd
 import threading
 import time
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime
 from typing import Any
 
 import psutil
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
 
 from .. import host
+from ..times import utc_now
 from ..auth import scopes
 from ..auth.models import User
 from ..auth.utils import (
@@ -129,9 +130,11 @@ _sockets_before_auth = 0
 _MAX_AUTH_MESSAGE_CHARS = 16 * 1024
 
 # The counters of the last sample, for the rates of the next: each interface's (received bytes,
-# sent bytes), each physical disk's (read bytes, written bytes), and the time of _clock.
+# sent bytes), each physical disk's (read bytes, written bytes), the busy and total CPU time of the
+# CPU and of each core, and the time of _clock.
 _prev_net: dict[str, tuple[int, int]] = {}
 _prev_disks: dict[str, tuple[int, int]] = {}
+_prev_cpu: tuple[tuple[float, float], list[tuple[float, float]]] | None = None
 _prev_time: float | None = None
 
 # The host's traffic counters (ADR-0388). /proc/net/dev lists the interfaces of the network
@@ -160,6 +163,13 @@ PROCESS_LIST_INTERVAL_SECONDS = 10.0
 _processes: list[dict] = []
 _processes_at: float | None = None
 
+# The host's accounts, which name the users of its processes (ADR-0399): the container's own
+# /etc/passwd has none of them. Read through PID 1's root (pid: host) when the file changed since
+# the last read, by its inode, time and size; None until the first read.
+HOST_PASSWD = "/proc/1/root/etc/passwd"
+_host_users: tuple[tuple[int, int, int], dict[int, str]] | None = None
+_passwd_unreadable_logged = False
+
 # One sample serves every socket of /ws/v1/events until it is STATS_INTERVAL_SECONDS old, taken in
 # a worker thread (shared_system_stats, ADR-0374).
 _sample: dict | None = None
@@ -183,12 +193,51 @@ def shared_system_stats() -> dict:
         return _sample
 
 
+def _host_user_names() -> dict[int, str] | None:
+    """The host's account names by uid, from its /etc/passwd; None where the host is the machine
+    itself (UNOS_HOST_EXEC=local), whose own accounts pwd reads. An empty map when the file cannot
+    be read, which the log says once (ADR-0214): the processes then show their uids."""
+    global _host_users, _passwd_unreadable_logged
+    if host.runs_locally():
+        return None
+    try:
+        with open(HOST_PASSWD, encoding="utf-8", errors="replace") as file:
+            status = os.fstat(file.fileno())
+            key = (status.st_ino, status.st_mtime_ns, status.st_size)
+            if _host_users is not None and _host_users[0] == key:
+                return _host_users[1]
+            names: dict[int, str] = {}
+            for line in file:
+                fields = line.split(":")
+                if len(fields) >= 3 and fields[2].isascii() and fields[2].isdigit():
+                    names.setdefault(int(fields[2]), fields[0])
+    except OSError as exc:
+        if not _passwd_unreadable_logged:
+            _passwd_unreadable_logged = True
+            logger.warning("The host's user names cannot be read from %s: %s", HOST_PASSWD, exc)
+        return {}
+    _host_users = (key, names)
+    return names
+
+
+def _user_name(uid: int, host_names: dict[int, str] | None) -> str:
+    """The name of ``uid`` as the host names it, or the uid as a number when it has none."""
+    if host_names is not None:
+        return host_names.get(uid, str(uid))
+    try:
+        return pwd.getpwuid(uid).pw_name
+    except KeyError:
+        return str(uid)
+
+
 def _top_processes() -> list[dict]:
     """The ten processes of the host that use the most CPU, listed again only when the last list is
     PROCESS_LIST_INTERVAL_SECONDS old; psutil gives each process's CPU share since the listing
     before. Only the CPU share is read for every process, the rest for the ten: on a K1, name,
     memory, status and user of 311 processes took 0.41 s of CPU, their CPU shares 0.13 s
-    (ADR-0375)."""
+    (ADR-0375). With pid: host these are the host's processes, those of the apps' containers
+    too; each has its name, its resident memory and its effective user as the host names it, and
+    never its command line, which can hold a password (ADR-0399)."""
     global _processes, _processes_at
     now = _clock()
     if _processes_at is not None and now - _processes_at < PROCESS_LIST_INTERVAL_SECONDS:
@@ -196,28 +245,50 @@ def _top_processes() -> list[dict]:
     listed = sorted(
         psutil.process_iter(["cpu_percent"]), key=lambda proc: proc.info["cpu_percent"] or 0, reverse=True
     )
+    host_names = _host_user_names()
     processes = []
     for proc in listed:
         if len(processes) == 10:
             break
         try:
-            info = proc.as_dict(["name", "memory_percent", "memory_info", "status", "username"], ad_value=None)
+            info = proc.as_dict(["name", "memory_info", "uids"], ad_value=None)
         except psutil.NoSuchProcess:
             continue
+        uids = info["uids"]
         processes.append({
             "pid": proc.pid,
-            "name": info["name"] or "Unknown",
+            "name": info["name"] or "?",
             "cpu_percent": proc.info["cpu_percent"] or 0,
-            "memory_percent": info["memory_percent"] or 0,
-            "memory_mb": (info["memory_info"].rss / 1024 / 1024) if info["memory_info"] else 0,
-            "status": info["status"] or "unknown",
-            "username": info["username"] or "unknown"
+            "memory_bytes": info["memory_info"].rss if info["memory_info"] else 0,
+            "username": _user_name(uids.effective, host_names) if uids else "?",
         })
     _processes, _processes_at = processes, now
     return _processes
 
 
-def _interface_counters() -> dict[str, tuple[int, int]]:
+def _cpu_busy_and_total(times: Any) -> tuple[float, float]:
+    """The busy and the total CPU time of psutil's ``cpu_times()``, counted as psutil's cpu_percent
+    counts them: Linux counts the guest times in user and nice already, and idle and iowait are not
+    busy."""
+    total = sum(times) - getattr(times, "guest", 0.0) - getattr(times, "guest_nice", 0.0)
+    return total - times.idle - getattr(times, "iowait", 0.0), total
+
+
+def cpu_busy_percent(before: tuple[float, float], after: tuple[float, float]) -> float:
+    """The share of the CPU time between two readings of _cpu_busy_and_total that was busy, in
+    percent with one decimal; 0 when no time passed."""
+    total = after[1] - before[1]
+    if total <= 0:
+        return 0.0
+    return round(min(100.0, max(0.0, (after[0] - before[0]) / total * 100)), 1)
+
+
+def cpu_reading() -> tuple[float, float]:
+    """The host's busy and total CPU time now (/proc/stat, which no namespace hides)."""
+    return _cpu_busy_and_total(psutil.cpu_times())
+
+
+def interface_counters() -> dict[str, tuple[int, int]]:
     """The host's interfaces that System > Network lists (not the loopback, dummy0 or Docker's
     bridges and veths, links.is_hidden), each with its received and sent bytes. No interface when
     the host's counters cannot be read, which the log says once: no traffic rather than the
@@ -248,9 +319,20 @@ def _is_physical_disk(name: str, sysfs: bool) -> bool:
     return os.path.exists(os.path.join(SYS_BLOCK, name.replace("/", "!"), "device"))
 
 
+def physical_disk_counters(per_device: dict[str, Any]) -> dict[str, tuple[int, int]]:
+    """The read and written bytes of each physical disk among psutil's counters of the devices of
+    /proc/diskstats (ADR-0388)."""
+    sysfs = os.path.isdir(SYS_BLOCK)
+    return {
+        name: (counters.read_bytes, counters.write_bytes)
+        for name, counters in per_device.items()
+        if _is_physical_disk(name, sysfs)
+    }
+
+
 def get_system_stats() -> dict:
     """Get comprehensive system statistics for WebSocket broadcast."""
-    global _prev_net, _prev_disks, _prev_time
+    global _prev_net, _prev_disks, _prev_cpu, _prev_time
 
     now = _clock()
     elapsed = now - _prev_time if _prev_time is not None else 0.0
@@ -263,9 +345,17 @@ def get_system_stats() -> dict:
         back (an interface's driver loaded again) counts nothing (ADR-0388)."""
         return max(0, new - old) / elapsed if elapsed > 0 else 0.0
 
-    # CPU stats
-    cpu_percent = psutil.cpu_percent(interval=None)
-    per_core = psutil.cpu_percent(interval=None, percpu=True)
+    # The CPU's and each core's share of busy time since the last sample. psutil's
+    # cpu_percent(interval=None) keeps its last reading per thread, and each sample runs in whichever
+    # worker thread it is given: its share was of the time since that thread's last sample
+    # (ADR-0399). Like the rates, none for the first sample and after a gap.
+    cpu = cpu_reading()
+    cores = [_cpu_busy_and_total(times) for times in psutil.cpu_times(percpu=True)]
+    if elapsed > 0 and _prev_cpu is not None and len(_prev_cpu[1]) == len(cores):
+        cpu_percent = cpu_busy_percent(_prev_cpu[0], cpu)
+        per_core = [cpu_busy_percent(before, after) for before, after in zip(_prev_cpu[1], cores)]
+    else:
+        cpu_percent, per_core = 0.0, [0.0] * len(cores)
     load = psutil.getloadavg()
     cpu_count = psutil.cpu_count(logical=False) or 1
     cpu_threads = psutil.cpu_count(logical=True) or 1
@@ -277,7 +367,7 @@ def get_system_stats() -> dict:
     # The host's network (ADR-0388): each rate is the sum of the rates of the interfaces that both
     # this sample and the last have, so that an interface that comes or goes (a USB adapter, a VPN)
     # never makes it negative or adds all its counters at once.
-    net = _interface_counters()
+    net = interface_counters()
     interfaces = []
     for name, (bytes_recv, bytes_sent) in net.items():
         before = _prev_net.get(name)
@@ -297,12 +387,7 @@ def get_system_stats() -> dict:
     # that both samples have, as for the interfaces (ADR-0388).
     per_device = psutil.disk_io_counters(perdisk=True)
     disks = [{"name": name} for name in per_device if not name.startswith(("loop", "ram"))]
-    sysfs = os.path.isdir(SYS_BLOCK)
-    physical = {
-        name: (counters.read_bytes, counters.write_bytes)
-        for name, counters in per_device.items()
-        if _is_physical_disk(name, sysfs)
-    }
+    physical = physical_disk_counters(per_device)
     read_rate = 0.0
     write_rate = 0.0
     for name, (read_bytes, write_bytes) in physical.items():
@@ -314,11 +399,12 @@ def get_system_stats() -> dict:
     # Top processes, listed at most every PROCESS_LIST_INTERVAL_SECONDS
     top_processes = _top_processes()
 
-    timestamp = datetime.now().isoformat()
+    timestamp = utc_now().isoformat()
 
     # Store previous values for next calculation
     _prev_net = net
     _prev_disks = physical
+    _prev_cpu = (cpu, cores)
     _prev_time = now
 
     return {
@@ -364,8 +450,13 @@ def get_system_stats() -> dict:
                 "disks": disks,
             },
 
-            # Top processes
+            # The host's processes that use the most CPU, for administrators only (_for_role).
             "processes": top_processes,
+
+            # The seconds since the sample before, over which the rates and the CPU shares are taken:
+            # 0 for the first sample and after a gap, whose rates and shares are 0 (ADR-0388). The
+            # Resource Monitor draws no point of such a sample (ADR-0399).
+            "sample_seconds": round(elapsed, 3),
 
             # Timestamp
             "timestamp": timestamp,
@@ -611,11 +702,18 @@ async def _send_installs(websocket: WebSocket, is_admin: bool, sent: int | None)
 def _for_role(message: dict, is_admin: bool) -> dict:
     """The stats message for a socket of this role. The host's interfaces with their traffic are
     System > Network's, an administrator's page (ADR-0030): a regular user's dashboard gets the
-    network's rates without them (ADR-0388). The sample that every socket shares stays as it is."""
-    network = message.get("data", {}).get("network")
-    if is_admin or not isinstance(network, dict):
+    network's rates without them (ADR-0388); likewise the disks' rates without the names of the
+    host's block devices, which the Storage page reads, and no processes of the host, which are
+    System > Resource Monitor's (ADR-0399). The sample that every socket shares stays as it is."""
+    data = message.get("data")
+    if is_admin or not isinstance(data, dict):
         return message
-    return {**message, "data": {**message["data"], "network": {**network, "interfaces": []}}}
+    data = {**data, "processes": []}
+    if isinstance(data.get("network"), dict):
+        data["network"] = {**data["network"], "interfaces": []}
+    if isinstance(data.get("disk_io"), dict):
+        data["disk_io"] = {**data["disk_io"], "disks": []}
+    return {**message, "data": data}
 
 
 @router.websocket("/ws/v1/events")
@@ -834,6 +932,7 @@ async def _stream_container_logs(websocket: WebSocket, container_id: str, token:
         pass
     except Exception as exc:
         if not disconnected.done():
+            logger.exception("The log stream of container %s failed", container_id)
             try:
                 await websocket.send_json({"type": "error", "message": str(exc)})
             except Exception:

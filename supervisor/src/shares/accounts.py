@@ -39,7 +39,6 @@ import unicodedata
 from collections.abc import AsyncIterator, Iterable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
-from datetime import datetime
 
 from fastapi import HTTPException
 from sqlalchemy import DateTime, delete, insert, select, update
@@ -50,6 +49,7 @@ from sqlalchemy.schema import CreateTable
 from .. import host
 from ..auth.models import User
 from ..security.validators import sanitize_error_message
+from ..times import db_now
 from . import account_state, constants, interfaces, models, service, smb, smbconf  # noqa: F401  (models registers the tables)
 
 logger = logging.getLogger(__name__)
@@ -932,8 +932,8 @@ async def _commit(db: AsyncSession) -> None:
     """Commit; on failure roll back and answer 503 (nothing of this commit was stored)."""
     try:
         await db.commit()
-    except Exception as exc:
-        logger.warning("Saving an SMB account change failed: %s", type(exc).__name__)
+    except Exception:
+        logger.warning("Saving an SMB account change failed", exc_info=True)
         await _rollback(db)
         raise HTTPException(status_code=503, detail=NOTHING_CHANGED) from None
 
@@ -1187,7 +1187,7 @@ async def activate(
     # Step 5: the account is active.
     row.enabled = True
     row.password_state = "set"
-    row.password_set_at = datetime.utcnow()
+    row.password_set_at = db_now()
     if new_hash is not None:
         user.hashed_password = new_hash
     try:
@@ -1363,8 +1363,8 @@ async def _turn_off(db: AsyncSession, user: User, row: models.SmbAccount | None,
             setattr(row, key, value)
         try:
             await db.commit()
-        except Exception as exc:
-            logger.warning("Saving the SMB revocation of %s failed: %s", shown, type(exc).__name__)
+        except Exception:
+            logger.warning("Saving the SMB revocation of %s failed", shown, exc_info=True)
             await _rollback(db)
             if removed:
                 await _revoked_but_not_saved(db, user_id, name)
@@ -1427,7 +1427,7 @@ async def update_password_before_store(
         raise _compensation_error(failure, error, by_admin=by_admin) from None
     except SmbHostError as error:
         raise _http(error, self_flow=None if by_admin else "The password was not changed", user=name) from None
-    row.password_set_at = datetime.utcnow()  # type: ignore[union-attr]
+    row.password_set_at = db_now()  # type: ignore[union-attr]
     return PasswordUpdate(user_id=user_id, name=name, current_password=current_password)
 
 
@@ -1478,8 +1478,8 @@ async def revocation_guard(
     except HTTPException:
         await _revocation_not_saved(db, revocation)
         raise
-    except Exception as exc:
-        logger.warning("Saving a promotion or a user deletion failed: %s", type(exc).__name__)
+    except Exception:
+        logger.warning("Saving a promotion or a user deletion failed", exc_info=True)
         await _revocation_not_saved(db, revocation)
         raise HTTPException(status_code=503, detail=DATABASE_BUSY) from None
 
@@ -1782,8 +1782,8 @@ async def store_rename(db: AsyncSession, user: User, row: models.SmbAccount | No
             row.password_set_at = None
         await service.rename_access_of_user(db, rename.user_id, rename.old, rename.new)
         await db.commit()
-    except Exception as exc:
-        logger.warning("Saving the rename of %s failed: %s", _shown(rename.old), type(exc).__name__)
+    except Exception:
+        logger.warning("Saving the rename of %s failed", _shown(rename.old), exc_info=True)
         await _rollback(db)
         failure = await asyncio.to_thread(_rename_back, rename)
         if rename.revoked:

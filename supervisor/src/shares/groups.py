@@ -13,6 +13,7 @@ or user now has another name is refused (409). Names are unique whatever their l
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 
@@ -27,6 +28,8 @@ from ..auth.utils import verify_token
 from ..database import get_db
 from ..security.validators import sanitize_error_message
 from . import account_state, constants, interfaces, models, schemas, service, smb
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/groups", tags=["groups"])
 
@@ -373,6 +376,7 @@ async def _commit(db: AsyncSession) -> None:
     try:
         await db.commit()
     except Exception as exc:
+        logger.exception("A change could not be committed")
         await service._rollback(db)
         raise HTTPException(status_code=503, detail=service.BUSY) from exc
 

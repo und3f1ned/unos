@@ -13,7 +13,7 @@ class FileInfo(BaseModel):
     path: str
     type: FileType
     size: int
-    modified: str
+    modified: str  # its mtime, ISO 8601 in UTC with its offset
     permissions: str
     owner: str
     group: str

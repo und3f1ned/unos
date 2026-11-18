@@ -90,10 +90,11 @@ test.describe('API Tests', () => {
     expect(data).toHaveProperty('hostname');
     expect(data).toHaveProperty('kernel');
     expect(data).toHaveProperty('os');
-    // The host's boot time in seconds since the epoch, under its own name (system.boot-time-field).
-    expect(typeof data.boot_time).toBe('number');
-    expect(data.boot_time).toBeGreaterThan(1e9); // a time, not a duration
-    expect(data.boot_time).toBeLessThan(Date.now() / 1000);
+    // The host's boot time under its own name (system.boot-time-field), in UTC with its offset
+    // (architecture.times-with-time-zones).
+    expect(data.boot_time).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|\+00:00)$/);
+    expect(Date.parse(data.boot_time)).toBeGreaterThan(Date.UTC(2000, 0, 1)); // a time, not a duration
+    expect(Date.parse(data.boot_time)).toBeLessThan(Date.now());
     expect(data).not.toHaveProperty('uptime');
   });
 
@@ -399,32 +400,15 @@ test.describe('API Tests', () => {
   });
 
   // ==================== Monitor ====================
-  test('GET /api/v1/monitor/cpu should return CPU stats', async ({ request }) => {
-    const response = await request.get(`${BASE_URL}/api/v1/monitor/cpu`, {
+  // The Resource Monitor's history (ADR-0399); the stand-in starts no background loop, so it has
+  // no points there.
+  test('GET /api/v1/monitor/history should return the history', async ({ request }) => {
+    const response = await request.get(`${BASE_URL}/api/v1/monitor/history`, {
       headers: { Authorization: `Bearer ${token}` },
     });
     expect(response.ok()).toBeTruthy();
-  });
-
-  test('GET /api/v1/monitor/memory should return memory stats', async ({ request }) => {
-    const response = await request.get(`${BASE_URL}/api/v1/monitor/memory`, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    expect(response.ok()).toBeTruthy();
-  });
-
-  test('GET /api/v1/monitor/processes should return process list', async ({ request }) => {
-    const response = await request.get(`${BASE_URL}/api/v1/monitor/processes`, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    expect(response.ok()).toBeTruthy();
-  });
-
-  test('GET /api/v1/monitor/all should return all monitor stats', async ({ request }) => {
-    const response = await request.get(`${BASE_URL}/api/v1/monitor/all`, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    expect(response.ok()).toBeTruthy();
+    const data = await response.json();
+    expect(data).toEqual({ interval_seconds: 10, points: expect.any(Array) });
   });
 
   // ==================== Health ====================

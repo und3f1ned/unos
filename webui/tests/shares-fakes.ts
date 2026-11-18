@@ -373,7 +373,7 @@ export function smbStatus(state: SmbState, username: string, reason: string | nu
     allowed,
     linux_name: allowed ? username : null,
     uid: state === 'active' ? 70000 : null,
-    password_set_at: state === 'active' ? '2026-11-01T10:00:00' : null,
+    password_set_at: state === 'active' ? '2026-11-01T10:00:00Z' : null,
     reason: state === 'unavailable' ? reason ?? ADMIN_REASON : null,
   };
 }
@@ -390,7 +390,7 @@ export function fakeUser(
     username,
     is_admin: false,
     totp_enabled: false,
-    created_at: '2026-10-01T09:00:00',
+    created_at: '2026-10-01T09:00:00Z',
     ...rest,
     smb: smbStatus(state, username, reason ?? null),
   };
@@ -522,8 +522,8 @@ export function repairResult(share: string, extra: Partial<FakeRepairResult> = {
   return {
     share,
     state: 'done',
-    started_at: '2026-11-06T10:00:00',
-    finished_at: '2026-11-06T10:00:05',
+    started_at: '2026-11-06T10:00:00Z',
+    finished_at: '2026-11-06T10:00:05Z',
     visited: 120,
     changed: 37,
     skipped: { other_filesystem: 0, snapshots: 0, symlink: 0, special: 0, hardlink: 0, private: 0, too_deep: 0, raced: 0 },
@@ -1061,7 +1061,7 @@ export async function fakeSmbApi(page: Page, options: FakeSmbOptions = {}): Prom
       if (method === 'POST') {
         // Each run starts at a time of its own, as on the server.
         repairStarts += 1;
-        const started_at = `2026-11-06T11:00:${String(repairStarts).padStart(2, '0')}`;
+        const started_at = `2026-11-06T11:00:${String(repairStarts).padStart(2, '0')}Z`;
         const answer = fake.repairAnswer ?? { status: 202, json: repairStarted(findShare(name)!.name, { started_at }) };
         if (answer.status === 202) fake.repairing = (answer.json as FakeRepairResult).share;
         return answer;

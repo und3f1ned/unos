@@ -158,8 +158,9 @@ class TestTheRegistry:
         [current] = problems.current()
         assert current.stage == 95
         # The problem is there since its first find; an alert of a further stage is of its own time.
-        assert alerts[0].timestamp == current.since
-        assert all(event.timestamp > current.since for event in alerts[1:])
+        since = datetime.fromisoformat(current.since)
+        assert alerts[0].timestamp == since
+        assert all(event.timestamp > since for event in alerts[1:])
 
     def test_the_stage_stays_out_of_what_the_web_ui_gets(self):
         assert _problem(stage=90).stage == 90

@@ -1647,7 +1647,7 @@ async def restore_configuration(snapshot_id: str) -> dict:
     finally:
         _close(held)
         _end(activity)
-    return {"status": "success", "backup": backup.model_dump()}
+    return {"status": "success", "backup": backup.model_dump(mode="json")}
 
 
 def _snapshot_path(value: Optional[str]) -> Optional[str]:

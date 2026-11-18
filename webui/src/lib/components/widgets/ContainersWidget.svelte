@@ -103,7 +103,7 @@
 				<Container class="w-5 h-5 icon-container" />
 				{$t('dashboard.containers.title')}
 			</h3>
-			<a href="/containers" class="text-sm text-info hover:text-blue-300 transition-colors"
+			<a href="/containers" class="text-sm text-info hover:text-status-info transition-colors"
 				>{$t('dashboard.manage')}</a
 			>
 		</div>
@@ -111,7 +111,7 @@
 		<!-- Summary Stats -->
 		<div class="grid grid-cols-2 gap-3 mb-4">
 			<div class="card-nested flex items-center gap-3">
-				<div class="w-8 h-8 rounded-full bg-green-500/20 flex items-center justify-center">
+				<div class="w-8 h-8 rounded-full bg-status-success/20 flex items-center justify-center">
 					<CheckCircle2 class="w-4 h-4 text-success" />
 				</div>
 				<div>
@@ -120,7 +120,7 @@
 				</div>
 			</div>
 			<div class="card-nested flex items-center gap-3">
-				<div class="w-8 h-8 rounded-full bg-slate-500/20 flex items-center justify-center">
+				<div class="w-8 h-8 rounded-full bg-status-neutral/20 flex items-center justify-center">
 					<XCircle class="w-4 h-4 text-secondary" />
 				</div>
 				<div>

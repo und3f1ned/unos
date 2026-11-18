@@ -185,8 +185,8 @@ hidden. Each change is an entry **Dashboard layout changed** in the audit log.
 ### System Stats
 The cards follow the live statistics, which the server sends every 2 seconds
 while the page is open; the time of the last one is shown beside **Refresh**.
-Right after the page opens, the network and disk rates can show 0 B/s until
-the next statistics arrive.
+Right after the page opens, the CPU can show 0% and the network and disk rates
+0 B/s until the next statistics arrive.
 - **CPU** - Current processor usage
 - **Memory** - RAM usage and total
 - **Network** - The bytes per second the NAS receives (↓) and sends (↑), over
@@ -469,9 +469,8 @@ For each pool, you can:
   the pool shows its progress (bytes, percent, rate and duration), which UNOS
   sends the open page as it changes, about every 2 seconds, also for a
   scheduled scrub, and **Cancel Scrub** stops it. At the end it shows the
-  result with the time the scrub started, as btrfs writes it (in English, such
-  as `Fri Nov  6 10:00:00 2026`) or, when the interface is in another language,
-  the same date and time in that language's format: **Last scrub: No errors**, the
+  result with the time the scrub started, in your browser's time zone and the
+  date format of the interface's language: **Last scrub: No errors**, the
   number of errors btrfs counted (read, super, verify and checksum errors),
   or that the scrub was cancelled or interrupted before it finished, with
   the errors found until then; start a scrub again to check the whole pool.
@@ -2011,6 +2010,14 @@ a dialog:
 hash of it, so save it right away. **Read and change** with **Every area** is a
 full token, which acts with all the rights of your account.
 
+**Times in the API.** Every time that the API answers is ISO 8601 with its
+offset, in UTC (`2026-11-07T14:30:12Z`, or `+00:00` at the end), such as
+`boot_time` of `GET /api/v1/system/info` and when the last scrub of a pool
+started; only a scheduled task's `next_run` is in the NAS's time zone, with
+that zone's offset. A time that the API takes, such as a bound of the audit
+log, may carry an offset; one without an offset is UTC. The web interface
+shows every time in your browser's time zone.
+
 **What a limited token can do.** An area is the part of a path after
 `/api/v1/`, as the API is organised: `apps`, `audit`, `auth` (your account,
 the users and the API tokens), `backup`, `containers`, `files`, `groups`,
@@ -2149,10 +2156,12 @@ regular users have no access to it.
   `-`, `@`, a tab or a carriage return, and such a character after a
   semicolon, a tab or a line break inside a value. The JSON file holds the
   values as recorded.
-- Times are the NAS's clock as the entries record it, without a time zone
-  (UTC unless the supervisor's container is set otherwise), and the days of
-  **From** and **To** are the NAS's days (feature-list entry
-  `architecture.times-with-time-zones`).
+- Times are shown in your browser's time zone, and the timeline's days, and
+  **From** and **To**, are your browser's days. The exports and the API give
+  each time in UTC with its offset (`2026-11-07T14:30:12Z`), also for the
+  entries that the NAS recorded without one, in UTC. An entry's hash covers
+  its time as the log file holds it: in the JSON file, the time as given, or
+  for an entry recorded without an offset the time without its `Z`.
 - Recorded today: sign-ins and failed sign-ins (a wrong two-factor code
   appears only in the login history), sign-outs, a user's own password
   changes (with an SMB account entry when the SMB password changed too) and
@@ -2213,8 +2222,10 @@ the whole unit it names, as the first and as the last one: a date
 (`YYYY-MM-DD`) its day, and a date and time (`YYYY-MM-DDTHH`, `THH:MM`,
 `THH:MM:SS`, or `THH:MM:SS` and a fraction of 1 to 6 digits) its hour,
 minute, second or fraction, so `end_date=2026-11-06T12:00` takes the entries
-up to 12:00:59.999999. Bounds are in the NAS's local time, without a time
-zone; another form gets 422.
+up to 12:00:59.999999. A bound with a time may end with its offset, `Z` or
+`+HH:MM` (`2026-11-06T17:45+05:45`, with the `+` written `%2B` in a URL); one
+without an offset is in UTC; another form gets 422. `DELETE /api/v1/audit/logs` takes its `before_date` in the
+same forms.
 
 ---
 
@@ -2252,6 +2263,33 @@ Access via **System** in the sidebar.
   `sudo /opt/unos/deploy/update.sh` (see
   [Upgrading](INSTALL.md#upgrading)). The web interface cannot install updates
   or roll them back yet (feature-list entry `system.in-app-updater`).
+
+### Resource Monitor
+
+The tab shows the host's CPU, memory, network and disk I/O, live and over the
+last hour, and the processes that use the most CPU:
+- **CPU**, **Memory**, **Network** and **Disk I/O**: the current values, which
+  the server sends every 2 seconds, as the dashboard's cards show them (see
+  [System Stats](#system-stats): network and disks are the host's interfaces
+  and physical disks), and a chart of each over the time range chosen with
+  **5 min**, **15 min** or **1 hour**, with its peak in that range below it. A
+  network or disk chart scales to its peak.
+- The history comes from the NAS: every 10 seconds it notes the averages of
+  CPU, network and disks over those 10 seconds and the memory in use, and
+  keeps the last hour in memory, also while no page is open; the tab reads
+  them when it opens and adds the live values. It is not written to disk, so
+  it starts empty after the NAS or UNOS restarts; a gap in a chart is a time
+  without data. When the history cannot be read, the tab says so and shows
+  the live values.
+- **CPU Cores**: the current use of each core.
+- **Top Processes**: the ten processes of the host that use the most CPU,
+  those of apps included, read every 10 seconds: name, PID, the user as the
+  host names it (its number when the host has no name for it), CPU as a share
+  of one core (above 100% for a process on several cores) and resident
+  memory. Their command lines are not shown, as they can hold passwords.
+
+The tab is for administrators: regular users' live statistics carry no
+processes and no names of disks.
 
 ### Network
 
@@ -2426,6 +2464,18 @@ The output of the UNOS containers themselves is not in the journal: run
 `docker logs unos-supervisor` or `docker logs unos-webui` on the host. Log
 files that the journal does not hold, such as `/var/log/dpkg.log`, are not
 shown.
+
+The supervisor writes one JSON object per line there (`time` in UTC, `level`,
+`logger`, `message`, and `exception` with the traceback of a failure), for
+example `docker logs unos-supervisor 2>&1 | jq -r '[.time,.level,.message]|@tsv'`.
+It logs the start, each real change of state and every failure that an
+endpoint answers with 500 or 503, and nothing while UNOS idles or when someone
+signs in; refused requests (401, 403, 429, ...) appear as uvicorn's access
+lines, at INFO and lower. A failure that lasts is logged once per ten minutes,
+with the number of repeats held back. Passwords, tokens, session keys and two-factor codes are never logged.
+By default it logs from INFO up; to change that, set `UNOS_LOG_LEVEL` to
+`DEBUG`, `WARNING`, `ERROR` or `CRITICAL` in `/etc/unos/secrets.env` and run
+`sudo systemctl restart unos`.
 
 ### Scheduler
 

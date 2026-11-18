@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-from datetime import datetime
 from enum import Enum
 
 from pydantic import BaseModel
+
+from ..times import UtcDatetime
 
 from .constants import SMB_UID_MAX, SMB_UID_MIN, linux_name_problem
 
@@ -27,7 +28,7 @@ class SmbAccountStatus(BaseModel):
     allowed: bool
     linux_name: str | None = None
     uid: int | None = None
-    password_set_at: datetime | None = None
+    password_set_at: UtcDatetime | None = None
     reason: str | None = None
 
 

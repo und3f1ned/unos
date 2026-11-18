@@ -6,6 +6,7 @@
 	import { connectWebSocket, disconnectWebSocket } from '$lib/stores/stats';
 	import { Alert, Button, Card, Input } from '$lib/components/ui';
 	import { intlLocale, t } from '$lib/i18n';
+	import { formatDateTime } from '$lib/time';
 	import { CheckCircle, ShieldCheck } from 'lucide-svelte';
 
 	// The page of an account without two-factor authentication while every account must have it
@@ -23,9 +24,7 @@
 
 	$: required = $user?.two_factor_required ?? null;
 	$: setupOnly = isSetupOnly($user);
-	$: deadline = required
-		? new Date(required.by).toLocaleString($intlLocale, { dateStyle: 'long', timeStyle: 'short' })
-		: '';
+	$: deadline = required ? formatDateTime(required.by, $intlLocale, { dateStyle: 'long', timeStyle: 'short' }) : '';
 	// Nothing to set up: no requirement applies to this account, or no longer.
 	$: if ($user && !required && !done) goto('/', { replaceState: true });
 
@@ -119,7 +118,7 @@
 				<p class="text-sm text-content-secondary">{$t('account.totp.scan')}</p>
 				{#if qrDataUrl}
 					<div class="flex justify-center">
-						<div class="bg-white p-2 rounded-lg">
+						<div class="bg-content-on-brand p-2 rounded-lg">
 							<img src={qrDataUrl} alt={$t('account.totp.qrAlt')} class="w-48 h-48" />
 						</div>
 					</div>
