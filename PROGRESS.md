@@ -124,6 +124,13 @@ significant step. Features and their state live in `feature-list.json`, decision
   (`files.group-writable-copies-and-moves-in-shares`, ADR-0396), a dashboard that each user
   arranges (`webui.dashboard-layout`, ADR-0395), and the container stats endpoints removed
   (`system.no-container-stats-endpoints`). All four pass.
+- On the morning of 2026-11-18 (Log): the tenth batch on the branch `mvp.batch-10`, merged into
+  `main` with its record: the supervisor's log as one JSON object per line, silent while it idles
+  (`architecture.structured-logging`, ADR-0398), an hour of the host's resource history in RAM
+  with the host's processes for administrators only (`system.resource-monitor`, ADR-0399), a check
+  that fails for raw controls and colours in the web UI's pages (`webui.design-system-lint`,
+  ADR-0400), and every time of the API with its offset (`architecture.times-with-time-zones`,
+  ADR-0401, superseding ADR-0237 and ADR-0300). All four pass.
 - On the device the NFS server runs (nfs-server, rpcbind.socket and rpcbind, enabled since
   2026-11-08, ADR-0303) and exports nothing for now; over IPv6 only LAN sources reach it
   (ADR-0301). avahi-daemon and wsdd2 run (network discovery), and nmbd is disabled since
@@ -174,7 +181,7 @@ significant step. Features and their state live in `feature-list.json`, decision
 
 ## Dev device
 
-State on 2026-11-18, 00:20 UTC. A Banana Pi BPI-W3 (ArmSoM W3, Rockchip RK3588, 8 GB), running
+State on 2026-11-18, 07:40 UTC. A Banana Pi BPI-W3 (ArmSoM W3, Rockchip RK3588, 8 GB), running
 Armbian's community image for `armsom-w3`, upgraded on 2026-11-15 from 26.2.0-trunk.151 to
 26.11.0-trunk.133 (Debian 13, kernel 6.1.172-vendor-rk35xx);
 its address and logins are in `dev.env` (ADR-0212). This journal called it a UGREEN board, after
@@ -185,12 +192,18 @@ the UGREEN firmware on its eMMC, until the owner set that right on 2026-11-15 (A
   since boot, its own wear estimate 0 to 10%. Nothing writes to it.
 - SSH by key only, root by the workstation's key `~/.ssh/unos_dev_ed25519`; root's and the UNOS
   administrator's passwords were rotated and live only in `dev.env` (ADR-0226).
-- Runs 991cb28 of the branch `mvp.batch-9` (the ninth batch, ADR-0395 to ADR-0397), merged into
+- Runs 5412b79 of the branch `mvp.batch-10` (the tenth batch, ADR-0398 to ADR-0401), merged into
+  `main` with the record of its device check, whose commits on top of it change no runtime file.
+  Deployed on 2026-11-18 at 06:22 to 06:23 UTC (SD MiB sync 7.066, build-supervisor 14.367,
+  build-webui 17.977, up 5.672, check.sh 0.219). A reboot from the API at about 06:40 UTC (all
+  containers healthy by 06:43). The supervisor's log is JSON lines and the API's times carry
+  their offsets. The device's users are `admin` and `test` (since 2026-01-24).
+- Before it, 991cb28 of the branch `mvp.batch-9` (the ninth batch, ADR-0395 to ADR-0397), merged into
   `main` with the record of its device check, whose commits on top of it change no runtime file.
   Deployed on 2026-11-17 at about 23:10 UTC (SD MiB sync 4.445, build-supervisor 14.023,
   build-webui 17.438, up 5.461, check.sh 0.242). A reboot from the API at 23:24:54 UTC (all
   containers healthy by 23:25:53). The web UI's sessions are cookies now: a browser that held the
-  old token signs in again. The device's users are `admin` and `test` (since 2026-01-24).
+  old token signs in again.
 - Before it, 7f5dd29 of the branch `mvp.batch-8` (the eighth batch, ADR-0388 to ADR-0393), merged into
   `main` with the record of its device check, whose commits on top of it change no runtime file.
   The batch's 320d3ec was deployed at 18:58 to 18:59 UTC (SD MiB sync 5.398, build-supervisor
@@ -563,6 +576,36 @@ Open owner actions:
     API, the SD MiB and the audit log meanwhile.
 
 ## Log
+
+### 2026-11-18: A tenth batch: JSON logs, resource history, design lint, times with offsets
+
+- Four entries built in parallel worktrees from main b5b0060, each reviewed in a fresh context
+  by its own builder, which fixed its findings. Recorded, not fixed: INFO is the default level,
+  set by UNOS_LOG_LEVEL in /etc/unos/secrets.env; the emergency CLI writes through `_say()`; the
+  four commit handlers of `shares/accounts.py` log with their traceback and rely on
+  hide_parameters and the masking, which may mask more than a secret
+  (`architecture.structured-logging`). The tab draws its charts only after the first stats
+  message, and regular users no longer get processes or block device names
+  (`system.resource-monitor`). The lint runs in `make frontend`, not `make lint`, and does not
+  see arbitrary values, `[&_svg]` variants or `.ts` modules; Button defaults to type="button" and
+  the warning button is orange now (`webui.design-system-lint`). A schedule's next_run stays in
+  the host's zone; boot_time is a time now and last_boot comes from the uptime; ADR-0298
+  (proposed) still names ADR-0237; the walk of GETs cannot reach those that need the host
+  (`architecture.times-with-time-zones`).
+- Merged as ADR-0398 to ADR-0401 in that order. MonitorTab kept the resource monitor's rewrite,
+  on which the design check then passed (58 files); the time walk's floor came down to the 55
+  GETs left after six monitor routes went (5412b79). `make check` 9073 passed, 123 skipped; the
+  full E2E run 945 passed, 14 skipped.
+- Device check of 5412b79 (SD MiB per step in each entry's notes): before a reboot from the API
+  at about 06:40 UTC, every supervisor log line JSON, a sign-in silent and a wrong password one
+  access line, no secret in the log; the users' times and 58 time-like fields with offsets, the
+  audit chain unbroken over 2216 entries (185 older than the chain carry none); the resource
+  history, a 1 GiB direct read on the pool seen at 65.7 MiB/s, the processes' users as ps has
+  them, a regular user's socket without processes, 600 s idle at 0.086 MiB with the container log
+  unchanged. After it: no point when the health answered and 6 a minute later, the log and the
+  chain again, `scenario.sh all` (every area passed, smart's two sleep steps skipped while Immich
+  uses the pool; 22.2 MiB in all). No fault of UNOS. Not run: an hour's 360 points (the smbconf
+  scenario restarts the supervisor), the tab in a browser, the owner's look at the new tokens.
 
 ### 2026-11-18: A ninth batch: session cookie, copies into shares, dashboard layout
 
