@@ -2427,6 +2427,18 @@ The output of the UNOS containers themselves is not in the journal: run
 files that the journal does not hold, such as `/var/log/dpkg.log`, are not
 shown.
 
+The supervisor writes one JSON object per line there (`time` in UTC, `level`,
+`logger`, `message`, and `exception` with the traceback of a failure), for
+example `docker logs unos-supervisor 2>&1 | jq -r '[.time,.level,.message]|@tsv'`.
+It logs the start, each real change of state and every failure that an
+endpoint answers with 500 or 503, and nothing while UNOS idles or when someone
+signs in; refused requests (401, 403, 429, ...) appear as uvicorn's access
+lines, at INFO and lower. A failure that lasts is logged once per ten minutes,
+with the number of repeats held back. Passwords, tokens, session keys and two-factor codes are never logged.
+By default it logs from INFO up; to change that, set `UNOS_LOG_LEVEL` to
+`DEBUG`, `WARNING`, `ERROR` or `CRITICAL` in `/etc/unos/secrets.env` and run
+`sudo systemctl restart unos`.
+
 ### Scheduler
 
 **System** → **Scheduler** runs tasks on a schedule: snapshots and scrubs of a

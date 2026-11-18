@@ -2534,7 +2534,7 @@ async def _stage_commit_install(db: AsyncSession) -> tuple[interfaces.ApplyResul
         await db.commit()
         committed = True
     except Exception as exc:
-        logger.warning("A share change could not be committed: %s", exc)
+        logger.warning("A share change could not be committed", exc_info=True)
         await _rollback(db)
         raise HTTPException(status_code=503, detail=BUSY) from exc
     finally:

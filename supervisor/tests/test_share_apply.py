@@ -1701,7 +1701,8 @@ class TestDatabaseEngine:
 
     def test_options(self):
         options = src.database.engine_options("/data/unos.db")
-        assert options == {"echo": False, "connect_args": {"timeout": 15}, "max_overflow": -1}
+        # hide_parameters: no bound value in an exception's text, which a handler logs (ADR-0398)
+        assert options == {"echo": False, "hide_parameters": True, "connect_args": {"timeout": 15}, "max_overflow": -1}
         assert "max_overflow" not in src.database.engine_options(":memory:")  # one shared connection
 
     async def test_other_writers_wait_15_seconds_and_connections_never_run_out(self, tmp_path):

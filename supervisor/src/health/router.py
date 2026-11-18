@@ -1455,6 +1455,7 @@ async def get_raid_health(_: dict = Depends(verify_token)):
     try:
         return await check_raid_health()
     except Exception as exc:
+        logger.exception("Could not get raid health")
         raise HTTPException(500, f"Could not check the pools: {exc}") from exc
 
 
@@ -1467,6 +1468,7 @@ async def get_pool_raid_health(pool_name: str, _: dict = Depends(verify_token)):
     except storage_pools.PoolNotFoundError as exc:
         raise HTTPException(404, f"Pool not found: {name}") from exc
     except Exception as exc:
+        logger.exception("Could not get pool raid health")
         raise HTTPException(500, f"Could not check pool {name}: {exc}") from exc
 
     return await asyncio.to_thread(_raid_health_of_pool, info)

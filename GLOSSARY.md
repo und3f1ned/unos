@@ -51,6 +51,12 @@ stand-in runs and the web UI's static files are built (ADR-0016). Avoid: host, l
 device it is an SD card whose writes are measured and kept minimal (ADR-0214). Avoid: eMMC (the
 dev device's is an SD card), boot disk.
 
+**Supervisor log**: What `unos-supervisor` writes to Docker's container log (`docker logs
+unos-supervisor`): one JSON object per line with `time`, `level`, `logger` and `message`, set up in
+`supervisor/src/logging_setup.py` at the level of `UNOS_LOG_LEVEL` (INFO by default) and silent
+while UNOS idles (ADR-0398). Avoid: log file (the Logs tab's files are the container's `/var/log`),
+audit log (the record of who changed what).
+
 **Write-ahead log**: `unos.db-wal` beside the database `unos.db` in `/data`, to which SQLite appends
 the pages of each commit; a checkpoint, when the log reaches 1000 pages and when the supervisor
 stops, copies them into `unos.db` (ADR-0306). Avoid: journal (SQLite's rollback journal, which

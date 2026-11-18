@@ -381,6 +381,7 @@ sudo install -m 600 /dev/null /etc/unos/secrets.env
 |---------|---------|-------------|
 | `UNOS_HOSTNAME` | `unos` | Name (or IP address) on the HTTPS certificate, see [Set the certificate name](#set-the-certificate-name-unos_hostname) |
 | `JWT_SECRET` | generated | Signing secret for sessions; leave it unset |
+| `UNOS_LOG_LEVEL` | `INFO` | How much the supervisor logs (`docker logs unos-supervisor`, one JSON object per line): `DEBUG`, `INFO`, `WARNING`, `ERROR` or `CRITICAL`. Applied by `sudo systemctl restart unos` |
 
 The supervisor generates its JWT signing secret on first start and keeps it in
 the `unos-data` volume (`/data/jwt_secret`, mode 0600), so the same secret is

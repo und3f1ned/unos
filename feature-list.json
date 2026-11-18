@@ -112,8 +112,13 @@
       ],
       "passes": false,
       "adr": [
-        "ADR-0023"
-      ]
+        "ADR-0023",
+        "ADR-0398"
+      ],
+      "verified_by": [
+        "supervisor/tests/test_logging.py"
+      ],
+      "notes": "Built per ADR-0398: supervisor/src/logging_setup.py (JSON format, one configuration, UNOS_LOG_LEVEL, default INFO, libraries capped at WARNING), configured first in main.py. tests/test_logging.py runs the image's uvicorn command as a subprocess: every line is JSON, 20 health checks, the first-run setup, a sign-in and a read write no line, a wrong password one access line; secrets never reach a line at DEBUG; no print() in supervisor/src (the emergency CLI writes through _say); every broad except that raises an HTTPException logs its traceback. Device check (owner, not host-level): docker logs unos-supervisor after a restart and a sign-in (every line JSON, uvicorn's too; start lines only; a sign-in adds none; a wrong password adds one access line; no password, token or code), then the SD MiB of an idle minute with scripts/dev/sd.sh measure (expect 0.0 beyond the usual)."
     },
     {
       "id": "architecture.atomic-state-files",

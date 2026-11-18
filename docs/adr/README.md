@@ -66,6 +66,7 @@ and this index, and `make check-fast` runs it.
 | [0308](0308-a-sign-in-writes-at-most-0-1-mib-to-the-sd-card.md) | A sign-in in the middle of the write-ahead log writes at most 0.1 MiB to the SD card | accepted | 2026-11-09 |
 | [0324](0324-json-state-files-are-replaced-through-a-rename-and-one-that-cannot-be-read-is-kept-as-bad.md) | JSON state files are replaced through a rename, and one that cannot be read is kept as .bad | accepted | 2026-11-10 |
 | [0363](0363-repair-permissions-runs-as-a-background-job-that-reports-over-the-events-socket.md) | Repair permissions runs as a background job that reports over the events socket, where live data goes | accepted | 2026-11-12 |
+| [0398](0398-the-supervisor-logs-one-json-object-per-line-from-one-setup-and-writes-nothing-while-it-idles.md) | The supervisor logs one JSON object per line from one setup, and writes nothing while it idles | accepted | 2026-11-18 |
 
 ## Security
 

@@ -35,6 +35,9 @@ services:
       # tables) in $SQLITE_TMPDIR, else $TMPDIR, else /var/tmp before /tmp:
       # with this, on the tmpfs below, like those of Python's tempfile.
       - TMPDIR=/tmp
+      # The supervisor's log level (ADR-0398): DEBUG, INFO, WARNING, ERROR or CRITICAL. Set
+      # UNOS_LOG_LEVEL in /etc/unos/secrets.env and recreate the container to change it.
+      - UNOS_LOG_LEVEL=${UNOS_LOG_LEVEL:-INFO}
     volumes:
       - unos-data:/data
       - /var/run/docker.sock:/var/run/docker.sock

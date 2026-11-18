@@ -384,6 +384,16 @@ manager, encrypted backup uploads, health checks, CI checks).
   `ups_name`, `host` and `port` are checked before they reach `upsc`.
 
 ### Added
+- The supervisor's log is one JSON object per line (`time`, `level`, `logger`,
+  `message`, and `fields` and `exception` when there are any), uvicorn's own
+  lines included, at INFO by default; before, only warnings reached
+  `docker logs unos-supervisor`, unformatted. Set `UNOS_LOG_LEVEL` (`DEBUG`,
+  `INFO`, `WARNING`, `ERROR`, `CRITICAL`) in `/etc/unos/secrets.env` and
+  recreate the container to change it; other libraries log warnings and above
+  only. An idle supervisor writes no line, and no line holds a password, token,
+  session key or two-factor code (ADR-0398).
+- A handler that catches an unexpected exception and answers 500 or 503 now
+  logs it once with its traceback.
 - Each user arranges the dashboard (ADR-0395). **Customize** shows a toolbar on
   every widget: drag its handle, or use **Move up** and **Move down** (for the
   keyboard and a phone), **Hide** it, and show it again from **Hidden widgets**;

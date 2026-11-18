@@ -245,6 +245,7 @@ def start(template: AppTemplate, work: Callable[[Progress], AppInstallResponse])
                 _jobs[template.id] = before
             _version += 1
             if isinstance(exc, RuntimeError):
+                logger.exception("The install could not be started")
                 raise HTTPException(500, f"The install could not be started: {exc}") from exc
             raise
     return job

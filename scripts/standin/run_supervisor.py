@@ -58,6 +58,7 @@ from __future__ import annotations
 import argparse
 import importlib
 import importlib.util
+import logging
 import os
 import shutil
 import sys
@@ -261,6 +262,7 @@ def main(argv: list[str] | None = None) -> None:
 
     import uvicorn
     from src import main as supervisor
+    from src.logging_setup import logging_config
 
     uvicorn.run(
         supervisor.app,
@@ -269,7 +271,8 @@ def main(argv: list[str] | None = None) -> None:
         # front.mjs is the proxy, as Caddy is in production.
         proxy_headers=True,
         forwarded_allow_ips="127.0.0.1,::1",
-        log_level="warning",
+        # The supervisor's JSON lines (ADR-0398), as in the image, from warnings up.
+        log_config=logging_config(logging.WARNING),
         # As in supervisor/Dockerfile.
         ws_max_size=65536,
         ws_per_message_deflate=False,
