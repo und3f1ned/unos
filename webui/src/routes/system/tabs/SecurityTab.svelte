@@ -523,21 +523,21 @@
   <LanguageCard />
 
   <!-- Two-Factor Authentication -->
-  <div class="bg-slate-800 rounded-lg p-4">
+  <div class="bg-surface-elevated rounded-lg p-4">
     <h3 class="text-lg font-semibold mb-4 flex items-center gap-2">
       <Smartphone class="w-5 h-5" />
       {$t("account.totp.title")}
     </h3>
 
     {#if totpSuccess}
-      <div class="mb-4 p-3 bg-green-500/20 border border-green-500 text-green-400 rounded-lg flex items-center gap-2">
+      <div class="mb-4 p-3 bg-status-success/20 border border-status-success text-status-success rounded-lg flex items-center gap-2">
         <CheckCircle class="w-5 h-5" />
         {totpSuccess}
       </div>
     {/if}
 
     {#if totpError && !showSetupModal && !showDisableModal}
-      <div class="mb-4 p-3 bg-red-500/20 border border-red-500 text-red-400 rounded-lg flex items-center gap-2">
+      <div class="mb-4 p-3 bg-status-error/20 border border-status-error text-status-error rounded-lg flex items-center gap-2">
         <AlertCircle class="w-5 h-5" />
         {totpError}
       </div>
@@ -546,7 +546,7 @@
     <div class="flex flex-wrap items-center justify-between gap-3">
       <div>
         <p class="font-medium">{$t("account.totp.app")}</p>
-        <p class="text-sm text-slate-400">
+        <p class="text-sm text-content-secondary">
           {$t("account.totp.appHint")}
         </p>
       </div>
@@ -556,27 +556,27 @@
             <span class="text-sm text-content-muted">{$t("common.loading")}</span>
           {/if}
         {:else if totpEnabled}
-          <span class="px-3 py-1 bg-green-500/20 text-green-400 rounded-lg text-sm flex items-center gap-1">
+          <span class="px-3 py-1 bg-status-success/20 text-status-success rounded-lg text-sm flex items-center gap-1">
             <CheckCircle class="w-4 h-4" />
             {$t("account.totp.on")}
           </span>
-          <button
+          <Button variant="danger"
             on:click={() => { showDisableModal = true; totpError = ""; }}
-            class="px-4 py-2 bg-red-600 hover:bg-red-700 rounded-lg text-sm transition-colors"
+           
           >
             {$t("account.totp.disable")}
-          </button>
+          </Button>
         {:else}
-          <span class="px-3 py-1 bg-slate-700 text-slate-400 rounded-lg text-sm">
+          <span class="px-3 py-1 bg-surface-overlay text-content-secondary rounded-lg text-sm">
             {$t("account.totp.off")}
           </span>
-          <button
+          <Button variant="primary"
             on:click={startTOTPSetup}
             disabled={totpLoading}
-            class="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-800 rounded-lg text-sm transition-colors"
+           
           >
             {totpLoading ? $t("account.totp.settingUp") : $t("account.totp.enable")}
-          </button>
+          </Button>
         {/if}
       </div>
     </div>
@@ -597,14 +597,14 @@
   </div>
 
   <!-- Change Password -->
-  <div class="bg-slate-800 rounded-lg p-4">
+  <div class="bg-surface-elevated rounded-lg p-4">
     <h3 class="text-lg font-semibold mb-4 flex items-center gap-2">
       <Key class="w-5 h-5" />
       {$t("account.password.title")}
     </h3>
 
     {#if passwordSuccess}
-      <div class="mb-4 p-3 bg-green-500/20 border border-green-500 text-green-400 rounded-lg flex items-center gap-2">
+      <div class="mb-4 p-3 bg-status-success/20 border border-status-success text-status-success rounded-lg flex items-center gap-2">
         <CheckCircle class="w-5 h-5" />
         {passwordSuccess}
       </div>
@@ -619,7 +619,7 @@
     {/if}
 
     {#if passwordError}
-      <div class="mb-4 p-3 bg-red-500/20 border border-red-500 text-red-400 rounded-lg flex items-center gap-2">
+      <div class="mb-4 p-3 bg-status-error/20 border border-status-error text-status-error rounded-lg flex items-center gap-2">
         <AlertCircle class="w-5 h-5" />
         {passwordError}
       </div>
@@ -627,7 +627,7 @@
 
     <form on:submit|preventDefault={handlePasswordChange} class="space-y-4 max-w-md">
       <div>
-        <label for="currentPassword" class="block text-sm font-medium text-slate-400 mb-1">
+        <label for="currentPassword" class="block text-sm font-medium text-content-secondary mb-1">
           {$t("account.password.current")}
         </label>
         <div class="relative">
@@ -636,7 +636,7 @@
               type="text"
               id="currentPassword"
               bind:value={currentPassword}
-              class="w-full px-4 py-2 pr-10 bg-slate-700 border border-slate-600 rounded-lg focus:outline-none focus:border-blue-500"
+              class="form-input pr-10"
               required
             />
           {:else}
@@ -644,26 +644,26 @@
               type="password"
               id="currentPassword"
               bind:value={currentPassword}
-              class="w-full px-4 py-2 pr-10 bg-slate-700 border border-slate-600 rounded-lg focus:outline-none focus:border-blue-500"
+              class="form-input pr-10"
               required
             />
           {/if}
-          <button
+          <Button variant="plain" class="absolute right-3 top-1/2 -translate-y-1/2 text-content-secondary hover:text-content-soft"
             type="button"
             on:click={() => showCurrentPassword = !showCurrentPassword}
-            class="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-300"
+           
           >
             {#if showCurrentPassword}
               <EyeOff class="w-4 h-4" />
             {:else}
               <Eye class="w-4 h-4" />
             {/if}
-          </button>
+          </Button>
         </div>
       </div>
 
       <div>
-        <label for="newPassword" class="block text-sm font-medium text-slate-400 mb-1">
+        <label for="newPassword" class="block text-sm font-medium text-content-secondary mb-1">
           {$t("account.password.new")}
         </label>
         <div class="relative">
@@ -673,7 +673,7 @@
               id="newPassword"
               bind:value={newPassword}
               minlength="8"
-              class="w-full px-4 py-2 pr-10 bg-slate-700 border border-slate-600 rounded-lg focus:outline-none focus:border-blue-500"
+              class="form-input pr-10"
               required
             />
           {:else}
@@ -682,45 +682,45 @@
               id="newPassword"
               bind:value={newPassword}
               minlength="8"
-              class="w-full px-4 py-2 pr-10 bg-slate-700 border border-slate-600 rounded-lg focus:outline-none focus:border-blue-500"
+              class="form-input pr-10"
               required
             />
           {/if}
-          <button
+          <Button variant="plain" class="absolute right-3 top-1/2 -translate-y-1/2 text-content-secondary hover:text-content-soft"
             type="button"
             on:click={() => showNewPassword = !showNewPassword}
-            class="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-300"
+           
           >
             {#if showNewPassword}
               <EyeOff class="w-4 h-4" />
             {:else}
               <Eye class="w-4 h-4" />
             {/if}
-          </button>
+          </Button>
         </div>
-        <p class="text-xs text-slate-500 mt-1">{$t("account.password.minimum")}</p>
+        <p class="text-xs text-content-muted mt-1">{$t("account.password.minimum")}</p>
       </div>
 
       <div>
-        <label for="confirmPassword" class="block text-sm font-medium text-slate-400 mb-1">
+        <label for="confirmPassword" class="block text-sm font-medium text-content-secondary mb-1">
           {$t("account.password.confirm")}
         </label>
         <input
           type="password"
           id="confirmPassword"
           bind:value={confirmPassword}
-          class="w-full px-4 py-2 bg-slate-700 border border-slate-600 rounded-lg focus:outline-none focus:border-blue-500"
+          class="form-input"
           required
         />
       </div>
 
-      <button
+      <Button variant="primary"
         type="submit"
         disabled={changingPassword}
-        class="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-800 rounded-lg transition-colors"
+       
       >
         {changingPassword ? $t("account.password.changing") : $t("account.password.submit")}
-      </button>
+      </Button>
     </form>
   </div>
 
@@ -734,7 +734,7 @@
   {/if}
 
   <!-- Firewall -->
-  <div class="bg-slate-800 rounded-lg p-4">
+  <div class="bg-surface-elevated rounded-lg p-4">
     <div class="flex flex-wrap items-center justify-between gap-2 mb-4">
       <h3 class="text-lg font-semibold flex items-center gap-2">
         <Flame class="w-5 h-5" />
@@ -743,50 +743,50 @@
       <div class="flex flex-wrap items-center gap-2">
         {#if firewallStatus}
           {#if firewallStatus.enabled}
-            <span class="px-3 py-1 bg-green-500/20 text-green-400 rounded-lg text-sm flex items-center gap-1">
+            <span class="px-3 py-1 bg-status-success/20 text-status-success rounded-lg text-sm flex items-center gap-1">
               <ShieldCheck class="w-4 h-4" />
               {$t("account.firewall.active")}
             </span>
           {:else}
-            <span class="px-3 py-1 bg-yellow-500/20 text-yellow-400 rounded-lg text-sm flex items-center gap-1">
+            <span class="px-3 py-1 bg-status-warning/20 text-status-warning rounded-lg text-sm flex items-center gap-1">
               <ShieldX class="w-4 h-4" />
               {$t("account.firewall.inactive")}
             </span>
           {/if}
         {/if}
-        <button
+        <Button variant="primary"
           on:click={() => showFirewallModal = !showFirewallModal}
-          class="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded-lg text-sm transition-colors"
+         
         >
           {$t("account.firewall.configure")}
-        </button>
+        </Button>
       </div>
     </div>
 
     {#if firewallSuccess}
-      <div class="mb-4 p-3 bg-green-500/20 border border-green-500 text-green-400 rounded-lg flex items-center gap-2">
+      <div class="mb-4 p-3 bg-status-success/20 border border-status-success text-status-success rounded-lg flex items-center gap-2">
         <CheckCircle class="w-5 h-5" />
         {firewallSuccess}
       </div>
     {/if}
 
     {#if firewallError}
-      <div class="mb-4 p-3 bg-red-500/20 border border-red-500 text-red-400 rounded-lg flex items-center gap-2">
+      <div class="mb-4 p-3 bg-status-error/20 border border-status-error text-status-error rounded-lg flex items-center gap-2">
         <AlertCircle class="w-5 h-5" />
         {firewallError}
       </div>
     {/if}
 
-    <p class="text-sm text-slate-400">
+    <p class="text-sm text-content-secondary">
       {$t("account.firewall.description")}
     </p>
 
     {#if showFirewallModal && firewallStatus}
       <div class="mt-4 space-y-4">
-        <div class="flex flex-wrap items-center justify-between gap-2 p-3 bg-slate-700 rounded-lg">
+        <div class="flex flex-wrap items-center justify-between gap-2 p-3 bg-surface-overlay rounded-lg">
           <div>
             <p class="font-medium">{$t("account.firewall.status")}</p>
-            <p class="text-sm text-slate-400">
+            <p class="text-sm text-content-secondary">
               {$t("account.firewall.defaults", {
                 incoming: labelOf(POLICIES, firewallStatus.default_incoming),
                 outgoing: labelOf(POLICIES, firewallStatus.default_outgoing)
@@ -794,60 +794,60 @@
             </p>
           </div>
           <div class="flex flex-wrap gap-2">
-            <button
+            <Button
+              variant={firewallStatus.enabled ? 'danger' : 'success'}
               on:click={toggleFirewall}
               disabled={firewallLoading}
-              class="px-4 py-2 rounded-lg text-sm transition-colors {firewallStatus.enabled ? 'bg-red-600 hover:bg-red-700' : 'bg-green-600 hover:bg-green-700'}"
             >
               {firewallStatus.enabled ? $t("account.firewall.disable") : $t("account.firewall.enable")}
-            </button>
-            <button
+            </Button>
+            <Button variant="secondary"
               on:click={handleResetFirewall}
               disabled={firewallLoading}
-              class="px-4 py-2 bg-slate-600 hover:bg-slate-500 rounded-lg text-sm transition-colors flex items-center gap-1"
+             
             >
               <RefreshCw class="w-4 h-4" />
               {$t("account.firewall.reset")}
-            </button>
+            </Button>
           </div>
         </div>
 
         <div class="flex flex-wrap justify-between items-center gap-2">
           <h4 class="font-medium">{$t("account.firewall.rules")}</h4>
-          <button
+          <Button variant="primary" size="sm"
             on:click={() => showAddRuleModal = true}
-            class="px-3 py-1 bg-blue-600 hover:bg-blue-700 rounded-lg text-sm flex items-center gap-1"
+           
           >
             <Plus class="w-4 h-4" />
             {$t("account.firewall.addRule")}
-          </button>
+          </Button>
         </div>
 
         {#if firewallStatus.rules.length === 0}
-          <p class="text-sm text-slate-400 text-center py-4">{$t("account.firewall.noRules")}</p>
+          <p class="text-sm text-content-secondary text-center py-4">{$t("account.firewall.noRules")}</p>
         {:else}
           <div class="space-y-2">
             {#each firewallStatus.rules as rule}
-              <div class="flex items-center justify-between gap-2 p-3 bg-slate-700 rounded-lg">
+              <div class="flex items-center justify-between gap-2 p-3 bg-surface-overlay rounded-lg">
                 <div class="flex flex-wrap items-center gap-x-3 gap-y-1 min-w-0">
-                  <span class="px-2 py-1 rounded text-xs font-medium uppercase {rule.action === 'allow' ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'}">
+                  <span class="px-2 py-1 rounded text-xs font-medium uppercase {rule.action === 'allow' ? 'bg-status-success/20 text-status-success' : 'bg-status-error/20 text-status-error'}">
                     {labelOf(RULE_ACTIONS, rule.action)}
                   </span>
                   <div class="min-w-0 break-words">
                     <p class="font-medium">{rule.name}</p>
-                    <p class="text-sm text-slate-400">
+                    <p class="text-sm text-content-secondary">
                       {labelOf(RULE_DIRECTIONS, rule.direction)} | {labelOf(RULE_PROTOCOLS, rule.protocol)} |
                       {$t("account.firewall.port", { port: rule.port || $t("account.firewall.any") })}
                       {#if rule.source}| {$t("account.firewall.from", { source: rule.source })}{/if}
                     </p>
                   </div>
                 </div>
-                <button
+                <Button variant="ghost" size="icon" class="text-status-error hover:text-status-error"
                   on:click={() => handleDeleteRule(rule.id || '')}
-                  class="p-2 text-red-400 hover:bg-red-500/20 rounded-lg transition-colors"
+                 
                 >
                   <Trash2 class="w-4 h-4" />
-                </button>
+                </Button>
               </div>
             {/each}
           </div>
@@ -857,7 +857,7 @@
   </div>
 
   <!-- SSL/TLS Certificates -->
-  <div class="bg-slate-800 rounded-lg p-4">
+  <div class="bg-surface-elevated rounded-lg p-4">
     <div class="flex flex-wrap items-center justify-between gap-2 mb-4">
       <h3 class="text-lg font-semibold flex items-center gap-2">
         <FileKey class="w-5 h-5" />
@@ -867,12 +867,12 @@
         {#if certStatus}
           <Badge variant="info">{labelOf(SERVED_BY, certStatus.served_by)}</Badge>
         {/if}
-        <button
+        <Button variant="primary"
           on:click={() => showCertModal = !showCertModal}
-          class="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded-lg text-sm transition-colors"
+         
         >
           {$t("account.certs.manage")}
-        </button>
+        </Button>
       </div>
     </div>
 
@@ -893,7 +893,7 @@
       </Alert>
     {/if}
 
-    <p class="text-sm text-slate-400">
+    <p class="text-sm text-content-secondary">
       {$t("account.certs.description")}
     </p>
 
@@ -910,25 +910,25 @@
 
         <div class="flex flex-wrap justify-between items-center gap-2">
           <h4 class="font-medium">{$t("account.certs.stored")}</h4>
-          <button
+          <Button variant="primary" size="sm"
             on:click={openGenerateDialog}
-            class="px-3 py-1 bg-blue-600 hover:bg-blue-700 rounded-lg text-sm flex items-center gap-1"
+           
           >
             <Plus class="w-4 h-4" />
             {$t("account.certs.generateSelfSigned")}
-          </button>
+          </Button>
         </div>
 
         {#if certificates.length === 0}
           {#if certificatesLoaded}
-            <p class="text-sm text-slate-400 text-center py-4">{$t("account.certs.noneFound")}</p>
+            <p class="text-sm text-content-secondary text-center py-4">{$t("account.certs.noneFound")}</p>
           {/if}
         {:else}
           <div class="space-y-2">
             {#each certificates as cert}
-              <div class="flex items-center justify-between gap-2 p-3 bg-slate-700 rounded-lg">
+              <div class="flex items-center justify-between gap-2 p-3 bg-surface-overlay rounded-lg">
                 <div class="flex flex-wrap items-center gap-x-3 gap-y-1 min-w-0">
-                  <span class="px-2 py-1 rounded text-xs font-medium {cert.is_valid ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'}">
+                  <span class="px-2 py-1 rounded text-xs font-medium {cert.is_valid ? 'bg-status-success/20 text-status-success' : 'bg-status-error/20 text-status-error'}">
                     {cert.is_valid ? $t("account.certs.validBadge") : $t("account.certs.expiredBadge")}
                   </span>
                   {#if !cert.served}
@@ -936,7 +936,7 @@
                   {/if}
                   <div class="min-w-0 break-words">
                     <p class="font-medium">{cert.domain}</p>
-                    <p class="text-sm text-slate-400">
+                    <p class="text-sm text-content-secondary">
                       {labelOf(CERTIFICATE_TYPES, cert.type)} |
                       {$t("account.certs.issuer", { issuer: cert.issuer || $t("account.certs.self") })}
                       {#if cert.valid_until}| {$t("account.certs.until", { date: formatCertificateDate(cert.valid_until) })}{/if}
@@ -944,13 +944,12 @@
                   </div>
                 </div>
                 {#if cert.id.startsWith('custom_')}
-                  <button
+                  <Button variant="ghost" size="icon" class="text-status-error hover:text-status-error"
                     on:click={() => handleDeleteCert(cert.id)}
-                    class="p-2 text-red-400 hover:bg-red-500/20 rounded-lg transition-colors"
                     aria-label={$t("account.certs.delete", { domain: cert.domain })}
                   >
                     <Trash2 class="w-4 h-4" />
-                  </button>
+                  </Button>
                 {/if}
               </div>
             {/each}
@@ -963,28 +962,28 @@
   {/if}
 
   <!-- Login History -->
-  <div class="bg-slate-800 rounded-lg p-4">
+  <div class="bg-surface-elevated rounded-lg p-4">
     <div class="flex flex-wrap items-center justify-between gap-2 mb-4">
       <h3 class="text-lg font-semibold flex items-center gap-2">
         <History class="w-5 h-5" />
         {$t("account.history.title")}
       </h3>
-      <button
+      <Button variant="primary"
         on:click={toggleLoginHistory}
-        class="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded-lg text-sm transition-colors"
+       
       >
         {showLoginHistory ? $t("account.history.hide") : $t("account.history.show")}
-      </button>
+      </Button>
     </div>
 
-    <p class="text-sm text-slate-400">
+    <p class="text-sm text-content-secondary">
       {$t("account.history.description")}
     </p>
 
     {#if showLoginHistory}
       <div class="mt-4 space-y-4">
         {#if loginHistoryLoading}
-          <div class="text-center py-4 text-slate-400">{$t("common.loading")}</div>
+          <div class="text-center py-4 text-content-secondary">{$t("common.loading")}</div>
         {:else if loginHistoryError}
           <Alert variant="error" title={$t("account.history.loadError")}>
             <p>{loginHistoryError}</p>
@@ -993,23 +992,23 @@
         {:else}
           <!-- Stats -->
           <div class="grid grid-cols-3 gap-4">
-            <div class="p-3 bg-slate-700 rounded-lg text-center">
+            <div class="p-3 bg-surface-overlay rounded-lg text-center">
               <p class="text-2xl font-bold">{loginHistoryTotal}</p>
-              <p class="text-sm text-slate-400">{$t("account.history.total")}</p>
+              <p class="text-sm text-content-secondary">{$t("account.history.total")}</p>
             </div>
-            <div class="p-3 bg-slate-700 rounded-lg text-center">
-              <p class="text-2xl font-bold text-green-400">{loginHistorySuccess}</p>
-              <p class="text-sm text-slate-400">{$t("account.history.successful")}</p>
+            <div class="p-3 bg-surface-overlay rounded-lg text-center">
+              <p class="text-2xl font-bold text-status-success">{loginHistorySuccess}</p>
+              <p class="text-sm text-content-secondary">{$t("account.history.successful")}</p>
             </div>
-            <div class="p-3 bg-slate-700 rounded-lg text-center">
-              <p class="text-2xl font-bold text-red-400">{loginHistoryFailed}</p>
-              <p class="text-sm text-slate-400">{$t("account.history.failed")}</p>
+            <div class="p-3 bg-surface-overlay rounded-lg text-center">
+              <p class="text-2xl font-bold text-status-error">{loginHistoryFailed}</p>
+              <p class="text-sm text-content-secondary">{$t("account.history.failed")}</p>
             </div>
           </div>
 
           <!-- History List -->
           {#if loginHistory.length === 0}
-            <p class="text-sm text-slate-400 text-center py-4">{$t("account.history.empty")}</p>
+            <p class="text-sm text-content-secondary text-center py-4">{$t("account.history.empty")}</p>
           {:else}
             <!-- Newest first; the times are the browser's local time (ADR-0262). -->
             <ul class="space-y-2 max-h-80 overflow-y-auto" aria-label={$t("account.history.list")}>
@@ -1049,13 +1048,13 @@
                 </li>
               {/each}
             </ul>
-            <button
+            <Button variant="secondary" class="w-full"
               on:click={loadLoginHistory}
-              class="w-full py-2 bg-slate-700 hover:bg-slate-600 rounded-lg text-sm transition-colors flex items-center justify-center gap-2"
+             
             >
               <RefreshCw class="w-4 h-4" />
               {$t("common.refresh")}
-            </button>
+            </Button>
           {/if}
         {/if}
       </div>
@@ -1076,47 +1075,46 @@
       </h3>
 
       <div class="space-y-4">
-        <p class="text-sm text-slate-400">
+        <p class="text-sm text-content-secondary">
           {$t("account.totp.scan")}
         </p>
 
         {#if qrDataUrl}
           <div class="flex justify-center">
-            <div class="bg-white p-2 rounded-lg">
+            <div class="bg-content-on-brand p-2 rounded-lg">
               <img src={qrDataUrl} alt={$t("account.totp.qrAlt")} class="w-48 h-48" />
             </div>
           </div>
         {/if}
 
         <div class="text-center">
-          <p class="text-xs text-slate-500 mb-2">{$t("account.totp.manual")}</p>
+          <p class="text-xs text-content-muted mb-2">{$t("account.totp.manual")}</p>
           <div class="flex items-center justify-center gap-2">
-            <code class="bg-slate-700 px-3 py-1 rounded font-mono text-sm">
+            <code class="bg-surface-overlay px-3 py-1 rounded font-mono text-sm">
               {totpSetupData.secret}
             </code>
-            <button
+            <Button variant="ghost" size="icon-sm"
               type="button"
               on:click={copySecret}
-              class="p-1 hover:bg-slate-700 rounded transition-colors"
               title={$t("account.totp.copy")}
             >
               <Copy class="w-4 h-4" />
-            </button>
+            </Button>
           </div>
           {#if secretCopied}
-            <p class="text-xs text-green-400 mt-1">{$t("account.totp.copied")}</p>
+            <p class="text-xs text-status-success mt-1">{$t("account.totp.copied")}</p>
           {/if}
         </div>
 
         <div>
-          <label for="totpVerify" class="block text-sm font-medium text-slate-400 mb-1">
+          <label for="totpVerify" class="block text-sm font-medium text-content-secondary mb-1">
             {$t("account.totp.verifyLabel")}
           </label>
           <input
             type="text"
             id="totpVerify"
             bind:value={totpCode}
-            class="w-full px-4 py-2 bg-slate-700 border border-slate-600 rounded-lg focus:outline-none focus:border-blue-500 text-center text-2xl tracking-widest"
+            class="form-input text-center text-2xl tracking-widest"
             placeholder="000000"
             maxlength="6"
             pattern="[0-9]*"
@@ -1125,27 +1123,27 @@
         </div>
 
         {#if totpError}
-          <div class="p-3 bg-red-500/20 border border-red-500 text-red-400 rounded-lg text-sm">
+          <div class="p-3 bg-status-error/20 border border-status-error text-status-error rounded-lg text-sm">
             {totpError}
           </div>
         {/if}
 
         <div class="flex gap-3">
-          <button
+          <Button variant="secondary" class="flex-1"
             type="button"
             on:click={cancelSetup}
-            class="flex-1 px-4 py-2 bg-slate-700 hover:bg-slate-600 rounded-lg transition-colors"
+           
           >
             {$t("common.cancel")}
-          </button>
-          <button
+          </Button>
+          <Button variant="primary" class="flex-1"
             type="button"
             on:click={confirmTOTPEnable}
             disabled={totpLoading || totpCode.length !== 6}
-            class="flex-1 px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-800 rounded-lg transition-colors"
+           
           >
             {totpLoading ? $t("account.totp.verifying") : $t("account.totp.enable2fa")}
-          </button>
+          </Button>
         </div>
       </div>
     </div>
@@ -1156,13 +1154,13 @@
 {#if showDisableModal}
   <div class="modal-overlay items-start overflow-y-auto p-4">
     <div class="bg-surface-elevated rounded-lg p-6 max-w-md w-full my-auto">
-      <h3 class="text-lg font-semibold mb-4 flex items-center gap-2 text-red-400">
+      <h3 class="text-lg font-semibold mb-4 flex items-center gap-2 text-status-error">
         <AlertCircle class="w-5 h-5" />
         {$t("account.totp.disableTitle")}
       </h3>
 
       <div class="space-y-4">
-        <p class="text-sm text-slate-400">
+        <p class="text-sm text-content-secondary">
           {$t("account.totp.disableHint")}
         </p>
         {#if totpRequired}
@@ -1170,14 +1168,14 @@
         {/if}
 
         <div>
-          <label for="disableCode" class="block text-sm font-medium text-slate-400 mb-1">
+          <label for="disableCode" class="block text-sm font-medium text-content-secondary mb-1">
             {$t("account.totp.codeLabel")}
           </label>
           <input
             type="text"
             id="disableCode"
             bind:value={disableCode}
-            class="w-full px-4 py-2 bg-slate-700 border border-slate-600 rounded-lg focus:outline-none focus:border-blue-500 text-center text-2xl tracking-widest"
+            class="form-input text-center text-2xl tracking-widest"
             placeholder="000000"
             maxlength="6"
             pattern="[0-9]*"
@@ -1186,27 +1184,27 @@
         </div>
 
         {#if totpError}
-          <div class="p-3 bg-red-500/20 border border-red-500 text-red-400 rounded-lg text-sm">
+          <div class="p-3 bg-status-error/20 border border-status-error text-status-error rounded-lg text-sm">
             {totpError}
           </div>
         {/if}
 
         <div class="flex gap-3">
-          <button
+          <Button variant="secondary" class="flex-1"
             type="button"
             on:click={cancelDisable}
-            class="flex-1 px-4 py-2 bg-slate-700 hover:bg-slate-600 rounded-lg transition-colors"
+           
           >
             {$t("common.cancel")}
-          </button>
-          <button
+          </Button>
+          <Button variant="danger" class="flex-1"
             type="button"
             on:click={confirmTOTPDisable}
             disabled={totpLoading || disableCode.length !== 6}
-            class="flex-1 px-4 py-2 bg-red-600 hover:bg-red-700 disabled:bg-red-800 rounded-lg transition-colors"
+           
           >
             {totpLoading ? $t("account.totp.disabling") : $t("account.totp.disable2fa")}
-          </button>
+          </Button>
         </div>
       </div>
     </div>
@@ -1224,11 +1222,11 @@
 
       <form on:submit|preventDefault={handleAddRule} class="space-y-4">
         <div>
-          <label class="block text-sm font-medium text-slate-400 mb-1">{$t("account.firewall.name")}</label>
+          <label class="block text-sm font-medium text-content-secondary mb-1">{$t("account.firewall.name")}</label>
           <input
             type="text"
             bind:value={newRule.name}
-            class="w-full px-4 py-2 bg-slate-700 border border-slate-600 rounded-lg focus:outline-none focus:border-blue-500"
+            class="form-input"
             placeholder={$t("account.firewall.namePlaceholder")}
             required
           />
@@ -1236,10 +1234,10 @@
 
         <div class="grid grid-cols-2 gap-4">
           <div>
-            <label class="block text-sm font-medium text-slate-400 mb-1">{$t("account.firewall.action")}</label>
+            <label class="block text-sm font-medium text-content-secondary mb-1">{$t("account.firewall.action")}</label>
             <select
               bind:value={newRule.action}
-              class="w-full px-4 py-2 bg-slate-700 border border-slate-600 rounded-lg focus:outline-none focus:border-blue-500"
+              class="form-select"
             >
               <option value="allow">{$t("account.firewall.allow")}</option>
               <option value="deny">{$t("account.firewall.deny")}</option>
@@ -1247,10 +1245,10 @@
             </select>
           </div>
           <div>
-            <label class="block text-sm font-medium text-slate-400 mb-1">{$t("account.firewall.direction")}</label>
+            <label class="block text-sm font-medium text-content-secondary mb-1">{$t("account.firewall.direction")}</label>
             <select
               bind:value={newRule.direction}
-              class="w-full px-4 py-2 bg-slate-700 border border-slate-600 rounded-lg focus:outline-none focus:border-blue-500"
+              class="form-select"
             >
               <option value="in">{$t("account.firewall.incoming")}</option>
               <option value="out">{$t("account.firewall.outgoing")}</option>
@@ -1260,10 +1258,10 @@
 
         <div class="grid grid-cols-2 gap-4">
           <div>
-            <label class="block text-sm font-medium text-slate-400 mb-1">{$t("account.firewall.protocol")}</label>
+            <label class="block text-sm font-medium text-content-secondary mb-1">{$t("account.firewall.protocol")}</label>
             <select
               bind:value={newRule.protocol}
-              class="w-full px-4 py-2 bg-slate-700 border border-slate-600 rounded-lg focus:outline-none focus:border-blue-500"
+              class="form-select"
             >
               <option value="tcp">{$t("account.firewall.tcp")}</option>
               <option value="udp">{$t("account.firewall.udp")}</option>
@@ -1271,11 +1269,11 @@
             </select>
           </div>
           <div>
-            <label class="block text-sm font-medium text-slate-400 mb-1">{$t("account.firewall.portLabel")}</label>
+            <label class="block text-sm font-medium text-content-secondary mb-1">{$t("account.firewall.portLabel")}</label>
             <input
               type="text"
               bind:value={newRule.port}
-              class="w-full px-4 py-2 bg-slate-700 border border-slate-600 rounded-lg focus:outline-none focus:border-blue-500"
+              class="form-input"
               placeholder={$t("account.firewall.portPlaceholder")}
               required
             />
@@ -1283,40 +1281,40 @@
         </div>
 
         <div>
-          <label class="block text-sm font-medium text-slate-400 mb-1">{$t("account.firewall.source")}</label>
+          <label class="block text-sm font-medium text-content-secondary mb-1">{$t("account.firewall.source")}</label>
           <input
             type="text"
             bind:value={newRule.source}
-            class="w-full px-4 py-2 bg-slate-700 border border-slate-600 rounded-lg focus:outline-none focus:border-blue-500"
+            class="form-input"
             placeholder={$t("account.firewall.sourcePlaceholder")}
           />
         </div>
 
         <div>
-          <label class="block text-sm font-medium text-slate-400 mb-1">{$t("account.firewall.comment")}</label>
+          <label class="block text-sm font-medium text-content-secondary mb-1">{$t("account.firewall.comment")}</label>
           <input
             type="text"
             bind:value={newRule.comment}
-            class="w-full px-4 py-2 bg-slate-700 border border-slate-600 rounded-lg focus:outline-none focus:border-blue-500"
+            class="form-input"
             placeholder={$t("account.firewall.commentPlaceholder")}
           />
         </div>
 
         <div class="flex gap-3">
-          <button
+          <Button variant="secondary" class="flex-1"
             type="button"
             on:click={() => showAddRuleModal = false}
-            class="flex-1 px-4 py-2 bg-slate-700 hover:bg-slate-600 rounded-lg transition-colors"
+           
           >
             {$t("common.cancel")}
-          </button>
-          <button
+          </Button>
+          <Button variant="primary" class="flex-1"
             type="submit"
             disabled={firewallLoading}
-            class="flex-1 px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-800 rounded-lg transition-colors"
+           
           >
             {firewallLoading ? $t("account.firewall.adding") : $t("account.firewall.addRule")}
-          </button>
+          </Button>
         </div>
       </form>
     </div>
@@ -1339,40 +1337,40 @@
         {/if}
 
         <div>
-          <label class="block text-sm font-medium text-slate-400 mb-1">{$t("account.certs.domain")}</label>
+          <label class="block text-sm font-medium text-content-secondary mb-1">{$t("account.certs.domain")}</label>
           <input
             type="text"
             bind:value={newCert.domain}
-            class="w-full px-4 py-2 bg-slate-700 border border-slate-600 rounded-lg focus:outline-none focus:border-blue-500"
+            class="form-input"
             placeholder={$t("account.certs.domainPlaceholder")}
             required
           />
         </div>
 
         <div>
-          <label class="block text-sm font-medium text-slate-400 mb-1">{$t("account.certs.validity")}</label>
+          <label class="block text-sm font-medium text-content-secondary mb-1">{$t("account.certs.validity")}</label>
           <input
             type="number"
             bind:value={newCert.validity_days}
             min="1"
             max="3650"
-            class="w-full px-4 py-2 bg-slate-700 border border-slate-600 rounded-lg focus:outline-none focus:border-blue-500"
+            class="form-input"
           />
         </div>
 
         <div>
-          <label class="block text-sm font-medium text-slate-400 mb-1">{$t("account.certs.organization")}</label>
+          <label class="block text-sm font-medium text-content-secondary mb-1">{$t("account.certs.organization")}</label>
           <input
             type="text"
             bind:value={newCert.organization}
             maxlength="64"
-            class="w-full px-4 py-2 bg-slate-700 border border-slate-600 rounded-lg focus:outline-none focus:border-blue-500"
+            class="form-input"
             placeholder={$t("account.certs.organizationPlaceholder")}
           />
         </div>
 
         <div>
-          <label class="block text-sm font-medium text-slate-400 mb-1">{$t("account.certs.country")}</label>
+          <label class="block text-sm font-medium text-content-secondary mb-1">{$t("account.certs.country")}</label>
           <input
             type="text"
             bind:value={newCert.country}
@@ -1380,26 +1378,26 @@
             maxlength="2"
             pattern="[A-Za-z][A-Za-z]"
             title={$t("account.certs.countryHint")}
-            class="w-full px-4 py-2 bg-slate-700 border border-slate-600 rounded-lg focus:outline-none focus:border-blue-500"
+            class="form-input"
             placeholder={$t("account.certs.countryPlaceholder")}
           />
         </div>
 
         <div class="flex gap-3">
-          <button
+          <Button variant="secondary" class="flex-1"
             type="button"
             on:click={() => showGenCertModal = false}
-            class="flex-1 px-4 py-2 bg-slate-700 hover:bg-slate-600 rounded-lg transition-colors"
+           
           >
             {$t("common.cancel")}
-          </button>
-          <button
+          </Button>
+          <Button variant="primary" class="flex-1"
             type="submit"
             disabled={certLoading}
-            class="flex-1 px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-800 rounded-lg transition-colors"
+           
           >
             {certLoading ? $t("account.certs.generating") : $t("account.certs.generate")}
-          </button>
+          </Button>
         </div>
       </form>
     </div>

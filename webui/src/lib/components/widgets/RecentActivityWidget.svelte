@@ -65,7 +65,7 @@
 		</h3>
 		<a
 			href="/system#notifications"
-			class="text-sm text-info hover:text-blue-300 transition-colors">{$t('dashboard.activity.viewAll')}</a
+			class="text-sm text-info hover:text-status-info transition-colors">{$t('dashboard.activity.viewAll')}</a
 		>
 	</div>
 

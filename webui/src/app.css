@@ -101,6 +101,23 @@
 		@apply bg-transparent text-content-secondary hover:text-content hover:bg-surface-overlay focus:ring-slate-500;
 	}
 
+	/* Tabs, for a Button of variant plain: pills in a bar, or a line under the tab in a dialog. */
+	.tab-pill {
+		@apply px-4 py-2 rounded-md text-sm font-medium transition-colors text-content-secondary hover:text-content;
+	}
+
+	.tab-pill-active {
+		@apply bg-brand text-content-on-brand hover:text-content-on-brand;
+	}
+
+	.tab-underline {
+		@apply flex items-center gap-2 px-4 py-2.5 text-sm font-medium transition-colors text-content-secondary hover:text-content;
+	}
+
+	.tab-underline-active {
+		@apply text-status-info border-b-2 border-brand-ring hover:text-status-info;
+	}
+
 	/* ----------------------------------------
 	   Form Elements
 	   ---------------------------------------- */
@@ -251,8 +268,13 @@
 	/* ----------------------------------------
 	   Modal / Dialog
 	   ---------------------------------------- */
+	/* The dimmed backdrop of a dialog or a drawer. */
+	.scrim {
+		@apply bg-black/50;
+	}
+
 	.modal-overlay {
-		@apply fixed inset-0 bg-black/50 flex items-center justify-center z-50;
+		@apply fixed inset-0 scrim flex items-center justify-center z-50;
 	}
 
 	.modal {

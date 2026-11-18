@@ -231,7 +231,7 @@
 
 {#if open && container}
 	<!-- Backdrop -->
-	<div class="fixed inset-0 bg-black/50 z-40" on:click={close} role="presentation"></div>
+	<div class="fixed inset-0 scrim z-40" on:click={close} role="presentation"></div>
 
 	<!-- Drawer -->
 	<div
@@ -258,19 +258,20 @@
 			<div class="flex items-center gap-3">
 				<Badge variant={getStateVariant(container.state)}>{labelOf(STATES, container.state)}</Badge>
 				{#if getWebUrl(container)}
-					<a
+					<Button
 						href={getWebUrl(container)}
 						target="_blank"
 						rel="noopener"
-						class="btn btn-secondary btn-icon"
+						variant="secondary"
+						size="icon"
 						title={$t('containers.openInBrowser')}
 					>
 						<ExternalLink class="w-4 h-4" />
-					</a>
+					</Button>
 				{/if}
-				<button on:click={close} class="btn btn-ghost btn-icon">
+				<Button variant="ghost" size="icon" on:click={close}>
 					<X class="w-5 h-5" />
-				</button>
+				</Button>
 			</div>
 		</div>
 
@@ -324,36 +325,27 @@
 
 		<!-- Tabs -->
 		<div class="flex border-b border-border px-2">
-			<button
-				class="flex items-center gap-2 px-4 py-3 text-sm font-medium transition-colors {activeTab ===
-				'overview'
-					? 'text-info border-b-2 border-blue-500'
-					: 'text-secondary hover:text-content'}"
+			<Button variant="plain"
+			 class="tab-underline py-3 {activeTab === 'overview' ? 'tab-underline-active' : ''}"
 				on:click={() => (activeTab = 'overview')}
 			>
 				<Info class="w-4 h-4" />
 				{$t('containers.drawer.overview')}
-			</button>
-			<button
-				class="flex items-center gap-2 px-4 py-3 text-sm font-medium transition-colors {activeTab ===
-				'logs'
-					? 'text-info border-b-2 border-blue-500'
-					: 'text-secondary hover:text-content'}"
+			</Button>
+			<Button variant="plain"
+			 class="tab-underline py-3 {activeTab === 'logs' ? 'tab-underline-active' : ''}"
 				on:click={() => (activeTab = 'logs')}
 			>
 				<Terminal class="w-4 h-4" />
 				{$t('containers.drawer.logs')}
-			</button>
-			<button
-				class="flex items-center gap-2 px-4 py-3 text-sm font-medium transition-colors {activeTab ===
-				'network'
-					? 'text-info border-b-2 border-blue-500'
-					: 'text-secondary hover:text-content'}"
+			</Button>
+			<Button variant="plain"
+			 class="tab-underline py-3 {activeTab === 'network' ? 'tab-underline-active' : ''}"
 				on:click={() => (activeTab = 'network')}
 			>
 				<Network class="w-4 h-4" />
 				{$t('containers.drawer.network')}
-			</button>
+			</Button>
 		</div>
 
 		<!-- Tab Content -->
@@ -364,9 +356,8 @@
 					<div class="card-nested p-4">
 						<div class="flex items-center justify-between mb-2">
 							<span class="text-secondary text-sm font-medium">{$t('containers.drawer.id')}</span>
-							<button
+							<Button variant="ghost" size="icon-sm" class="text-secondary"
 								on:click={copyId}
-								class="p-1.5 rounded hover:bg-surface-overlay text-secondary hover:text-content transition-colors"
 								title={$t('containers.drawer.copyId')}
 							>
 								{#if copiedId}
@@ -374,7 +365,7 @@
 								{:else}
 									<Copy class="w-4 h-4" />
 								{/if}
-							</button>
+							</Button>
 						</div>
 						<code class="mono-xs text-content break-all select-all">{container.id}</code>
 					</div>

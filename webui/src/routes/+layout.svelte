@@ -297,10 +297,9 @@
 			<!-- Logo -->
 			<div class="flex items-center gap-2 h-14 px-2 md:h-auto md:p-4 border-b border-border">
 				{#if $narrow}
-					<button
-						bind:this={menuButton}
+					<Button variant="ghost" size="icon"
+						bind:el={menuButton}
 						type="button"
-						class="btn btn-ghost btn-icon"
 						aria-label={$t('layout.menu')}
 						aria-expanded={menuOpen}
 						aria-controls="layout-sidebar"
@@ -311,9 +310,9 @@
 						{:else}
 							<Menu class="w-5 h-5" />
 						{/if}
-					</button>
+					</Button>
 				{/if}
-				<Server class="w-7 h-7 text-blue-500" />
+				<Server class="w-7 h-7 text-brand-ring" />
 				<span class="text-lg font-bold text-content">{$t('common.product')}</span>
 			</div>
 
@@ -321,7 +320,7 @@
 				<!-- Covers the page beside the drawer, which a click on it never reaches; it listens
 				     for the click itself (see handleOutsideClick). -->
 				<div
-					class="md:hidden fixed inset-x-0 top-14 bottom-0 z-30 bg-black/50"
+					class="md:hidden fixed inset-x-0 top-14 bottom-0 z-30 scrim"
 					role="presentation"
 					on:click={() => closeMenu(true)}
 				></div>
@@ -370,13 +369,12 @@
 									<p class="text-xs text-muted">{$user.is_admin ? $t('layout.role.admin') : $t('layout.role.user')}</p>
 								</div>
 							</div>
-							<button
+							<Button variant="ghost" size="icon-sm"
 								on:click={handleLogout}
-								class="btn btn-ghost btn-icon-sm"
 								title={$t('layout.logout')}
 							>
 								<LogOut class="w-4 h-4" />
-							</button>
+							</Button>
 						</div>
 					{/if}
 				</div>
@@ -387,9 +385,8 @@
 			     tab order, and sits at the right end of the bar. -->
 			{#if $narrow && paletteEnabled}
 				<div class="absolute top-0 right-0 h-14 flex items-center px-2">
-					<button
+					<Button variant="ghost" size="icon"
 						type="button"
-						class="btn btn-ghost btn-icon"
 						aria-label={$t('palette.open')}
 						on:click={() => {
 							// The drawer closes first: else its click outside would take the focus back.
@@ -398,7 +395,7 @@
 						}}
 					>
 						<Search class="w-5 h-5" />
-					</button>
+					</Button>
 				</div>
 			{/if}
 		</aside>

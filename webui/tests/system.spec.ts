@@ -82,13 +82,13 @@ test.describe('System tabs and the URL', () => {
 
   test('tab buttons work when the page was opened with a hash', async ({ authenticatedPage: page }) => {
     await page.goto('/system#notifications');
-    await expect(tabButton(page, 'Notifications')).toHaveClass(/bg-blue-600/);
+    await expect(tabButton(page, 'Notifications')).toHaveClass(/bg-brand/);
 
     await tabButton(page, 'Scheduler').click();
     await expect(page).toHaveURL(/\/system#scheduler$/);
     await expect(page.locator('h2:has-text("Scheduled Tasks")')).toBeVisible();
-    await expect(tabButton(page, 'Scheduler')).toHaveClass(/bg-blue-600/);
-    await expect(tabButton(page, 'Notifications')).not.toHaveClass(/bg-blue-600/);
+    await expect(tabButton(page, 'Scheduler')).toHaveClass(/bg-brand/);
+    await expect(tabButton(page, 'Notifications')).not.toHaveClass(/bg-brand/);
 
     await tabButton(page, 'Backup & Restore').click();
     await expect(page).toHaveURL(/\/system#backup$/);

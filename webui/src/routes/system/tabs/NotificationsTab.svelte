@@ -653,7 +653,7 @@
             {#each filteredLogs as log (log.id)}
               {@const expanded = expandedLog === log.id}
               <li class="py-3">
-                <button
+                <Button variant="plain"
                   type="button"
                   class="w-full text-left"
                   aria-expanded={expanded}
@@ -686,7 +686,7 @@
                       <ChevronDown class="w-4 h-4 mt-0.5 text-muted flex-shrink-0" />
                     {/if}
                   </span>
-                </button>
+                </Button>
                 {#if expanded}
                   <dl class="mt-3 grid grid-cols-2 gap-3 text-sm">
                     <div>

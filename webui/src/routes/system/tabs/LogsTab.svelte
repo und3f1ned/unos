@@ -366,16 +366,16 @@
   <div class="flex flex-wrap gap-2">
     {#each sources as s}
       {@const Icon = sourceIcons[s.name] || FileText}
-      <button
+      <Button variant="plain"
         class="px-3 py-1.5 rounded-lg text-sm font-medium flex items-center gap-2 transition-colors
           {source === s.name
-            ? 'bg-blue-600 text-white'
+            ? 'bg-brand text-content-on-brand'
             : 'bg-surface-overlay text-secondary hover:text-content hover:bg-surface-muted'}"
         on:click={() => { source = s.name; handleSourceChange(); }}
       >
         <Icon class="w-4 h-4" />
         {textOf(SOURCE_LABELS, s.name, s.label)}
-      </button>
+      </Button>
     {/each}
   </div>
 
@@ -392,15 +392,14 @@
               bind:value={search}
               on:keydown={(e) => e.key === 'Enter' && handleSearch()}
               placeholder={$t("logs.searchPlaceholder")}
-              class="w-full pl-10 pr-10 py-2 bg-surface-overlay border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              class="form-input pl-10 pr-10 text-sm"
             />
             {#if search}
-              <button
-                class="absolute right-3 top-1/2 -translate-y-1/2 text-secondary hover:text-content"
+              <Button variant="plain" class="absolute right-3 top-1/2 -translate-y-1/2 text-secondary hover:text-content"
                 on:click={clearSearch}
               >
                 <X class="w-4 h-4" />
-              </button>
+              </Button>
             {/if}
           </div>
           <Button variant="primary" size="sm" on:click={handleSearch} disabled={loading}>

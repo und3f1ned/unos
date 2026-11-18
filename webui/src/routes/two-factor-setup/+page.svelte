@@ -119,7 +119,7 @@
 				<p class="text-sm text-content-secondary">{$t('account.totp.scan')}</p>
 				{#if qrDataUrl}
 					<div class="flex justify-center">
-						<div class="bg-white p-2 rounded-lg">
+						<div class="bg-content-on-brand p-2 rounded-lg">
 							<img src={qrDataUrl} alt={$t('account.totp.qrAlt')} class="w-48 h-48" />
 						</div>
 					</div>

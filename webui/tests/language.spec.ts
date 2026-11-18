@@ -154,7 +154,7 @@ test.describe('Language', () => {
       const main = page.locator('main');
       await main.getByRole('button', { name: 'Configure', exact: true }).click();
       await main.getByRole('button', { name: 'Manage', exact: true }).click();
-      const rule = main.locator('div.bg-slate-700').filter({ has: page.getByText('SSH', { exact: true }) });
+      const rule = main.locator('div.bg-surface-overlay').filter({ has: page.getByText('SSH', { exact: true }) });
 
       // English: the firewall's words as before the catalogs; what browsers get and a certificate's
       // type by their labels, and its dates in the browser's format, not as the server answers them.

@@ -108,10 +108,10 @@
   }
 </script>
 
-<div class="min-h-screen flex items-center justify-center bg-slate-900">
-  <div class="bg-slate-800 p-8 rounded-lg shadow-xl w-full max-w-md">
+<div class="min-h-screen flex items-center justify-center bg-surface">
+  <div class="bg-surface-elevated p-8 rounded-lg shadow-xl w-full max-w-md">
     <div class="flex items-center justify-center gap-2 mb-8">
-      <Server class="w-10 h-10 text-blue-500" />
+      <Server class="w-10 h-10 text-brand-ring" />
       <span class="text-2xl font-bold">{$t("common.product")}</span>
     </div>
 
@@ -129,7 +129,7 @@
     <form on:submit|preventDefault={handleSubmit} class="space-y-4">
       {#if error}
         <div
-          class="bg-red-500/20 border border-red-500 text-red-400 px-4 py-2 rounded"
+          class="bg-status-error/20 border border-status-error text-status-error px-4 py-2 rounded"
         >
           {error}
         </div>
@@ -139,7 +139,7 @@
         <div>
           <label
             for="username"
-            class="block text-sm font-medium text-slate-400 mb-1"
+            class="block text-sm font-medium text-content-secondary mb-1"
           >
             {$t("common.username")}
           </label>
@@ -147,8 +147,7 @@
             type="text"
             id="username"
             bind:value={username}
-            class="w-full px-4 py-2 bg-slate-700 border border-slate-600 rounded-lg
-                   focus:outline-none focus:border-blue-500"
+            class="form-input"
             required
           />
         </div>
@@ -156,7 +155,7 @@
         <div>
           <label
             for="password"
-            class="block text-sm font-medium text-slate-400 mb-1"
+            class="block text-sm font-medium text-content-secondary mb-1"
           >
             {$t("common.password")}
           </label>
@@ -164,8 +163,7 @@
             type="password"
             id="password"
             bind:value={password}
-            class="w-full px-4 py-2 bg-slate-700 border border-slate-600 rounded-lg
-                   focus:outline-none focus:border-blue-500"
+            class="form-input"
             required
           />
         </div>
@@ -190,9 +188,9 @@
       {:else}
         <!-- TOTP Input -->
         <div class="text-center mb-4">
-          <ShieldCheck class="w-12 h-12 text-blue-500 mx-auto mb-2" />
+          <ShieldCheck class="w-12 h-12 text-brand-ring mx-auto mb-2" />
           <h2 class="text-lg font-semibold">{$t("login.totpTitle")}</h2>
-          <p class="text-sm text-slate-400">
+          <p class="text-sm text-content-secondary">
             {$t("login.totpHint")}
           </p>
         </div>
@@ -200,7 +198,7 @@
         <div>
           <label
             for="totp"
-            class="block text-sm font-medium text-slate-400 mb-1"
+            class="block text-sm font-medium text-content-secondary mb-1"
           >
             {$t("login.totpLabel")}
           </label>
@@ -208,8 +206,7 @@
             type="text"
             id="totp"
             bind:value={totpCode}
-            class="w-full px-4 py-2 bg-slate-700 border border-slate-600 rounded-lg
-                   focus:outline-none focus:border-blue-500 text-center text-2xl tracking-widest"
+            class="form-input text-center text-2xl tracking-widest"
             placeholder="000000"
             maxlength="6"
             pattern="[0-9]*"
@@ -225,20 +222,19 @@
           {useRecoveryCode ? $t("login.useAppCode") : $t("login.useRecoveryCode")}
         </Button>
 
-        <button
+        <Button variant="plain"
           type="button"
           on:click={resetForm}
-          class="w-full text-sm text-slate-400 hover:text-slate-300"
+          class="w-full text-sm text-content-secondary hover:text-content-soft"
         >
           {$t("login.back")}
-        </button>
+        </Button>
       {/if}
 
-      <button
+      <Button variant="primary" class="w-full"
         type="submit"
         disabled={loading}
-        class="w-full py-2 px-4 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-800
-               rounded-lg font-medium transition-colors"
+       
       >
         {#if loading}
           {$t("login.signingIn")}
@@ -247,7 +243,7 @@
         {:else}
           {$t("login.signIn")}
         {/if}
-      </button>
+      </Button>
     </form>
   </div>
 </div>

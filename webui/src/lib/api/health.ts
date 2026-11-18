@@ -94,34 +94,34 @@ export function replaceSoon(predictions: DiskPrediction[]): DiskPrediction[] {
 export function getHealthColor(status: string): string {
   switch (status) {
     case "PASSED":
-      return "text-green-500";
+      return "text-status-success";
     case "FAILED":
-      return "text-red-500";
+      return "text-status-error";
     default:
-      return "text-yellow-500";
+      return "text-status-warning";
   }
 }
 
 export function getHealthBgColor(status: string): string {
   switch (status) {
     case "PASSED":
-      return "bg-green-500";
+      return "bg-status-success";
     case "FAILED":
-      return "bg-red-500";
+      return "bg-status-error";
     default:
-      return "bg-yellow-500";
+      return "bg-status-warning";
   }
 }
 
 export function getAttributeStatusColor(status: string): string {
   switch (status) {
     case "ok":
-      return "text-green-400";
+      return "text-status-success";
     case "warning":
-      return "text-yellow-400";
+      return "text-status-warning";
     case "critical":
-      return "text-red-400";
+      return "text-status-error";
     default:
-      return "text-slate-400";
+      return "text-content-secondary";
   }
 }

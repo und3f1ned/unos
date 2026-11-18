@@ -11,6 +11,12 @@ Security and robustness hardening, fixes for broken user flows, and a few new
 features (SMB access per user and per share, volumes, copy and move in the file
 manager, encrypted backup uploads, health checks, CI checks).
 
+### Changed
+- Web UI pages use the design system everywhere: every button is `Button`, fields carry the
+  `form-*` classes and colours are the tokens of `tailwind.config.js`; `make frontend` fails for a raw
+  `<button>` or a raw palette colour outside `lib/components/ui` (ADR-0400). New tokens keep the old
+  look, within what a token allows: `brand`, `surface-hover`, `border-strong`, `content-soft`, `content-on-brand`, `status-neutral`.
+
 ### Security
 - Regular users' live statistics (`/ws/v1/events`) no longer carry the host's
   processes or the names of its block devices: `processes` and

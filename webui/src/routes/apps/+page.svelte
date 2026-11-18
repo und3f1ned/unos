@@ -372,21 +372,17 @@
 
 	<!-- Tabs -->
 	<div class="flex gap-1 p-1 bg-surface-elevated rounded-lg w-fit">
-		<button
-			class="px-4 py-2 rounded-md text-sm font-medium transition-colors {activeTab === 'catalog'
-				? 'bg-blue-600 text-white'
-				: 'text-secondary hover:text-content'}"
+		<Button variant="plain"
+		 class="tab-pill {activeTab === 'catalog' ? 'tab-pill-active' : ''}"
 			on:click={() => (activeTab = 'catalog')}
 		>
 			<span class="flex items-center gap-2">
 				<Grid3X3 class="w-4 h-4" />
 				{$t('apps.tabs.catalog')}
 			</span>
-		</button>
-		<button
-			class="px-4 py-2 rounded-md text-sm font-medium transition-colors {activeTab === 'installed'
-				? 'bg-blue-600 text-white'
-				: 'text-secondary hover:text-content'}"
+		</Button>
+		<Button variant="plain"
+		 class="tab-pill {activeTab === 'installed' ? 'tab-pill-active' : ''}"
 			on:click={() => (activeTab = 'installed')}
 		>
 			<span class="flex items-center gap-2">
@@ -395,7 +391,7 @@
 					? $t('apps.tabs.installed', { count: installed.length })
 					: $t('apps.tabs.installedUnknown')}
 			</span>
-		</button>
+		</Button>
 	</div>
 
 	{#if activeTab === 'catalog' && catalogState === 'loading' && catalog.length === 0}
@@ -407,14 +403,14 @@
 		{#if featuredApps.length > 0 && !searchQuery && !selectedCategory}
 			<Card>
 				<div class="flex items-center gap-2 mb-5">
-					<Sparkles class="w-5 h-5 text-yellow-400" />
+					<Sparkles class="w-5 h-5 text-status-warning" />
 					<h2 class="text-lg font-semibold">{$t('apps.featured')}</h2>
 				</div>
 				<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
 					{#each featuredApps as app}
 						{@const installedInfo = getInstalledInfo(app.id)}
-						<button
-							class="bg-surface-muted rounded-xl p-4 text-left hover:bg-surface-overlay transition-colors"
+						<Button variant="plain"
+						 class="bg-surface-muted rounded-xl p-4 text-left hover:bg-surface-overlay transition-colors"
 							on:click={() => openDetail(app)}
 						>
 							<div class="flex items-center gap-4 mb-3">
@@ -430,8 +426,8 @@
 											<div
 												class="w-2 h-2 rounded-full flex-shrink-0 {installedInfo.status ===
 												'running'
-													? 'bg-green-500'
-													: 'bg-slate-500'}"
+													? 'bg-status-success'
+													: 'bg-status-neutral'}"
 											></div>
 										{/if}
 									</div>
@@ -439,7 +435,7 @@
 								</div>
 							</div>
 							<p class="text-sm text-secondary line-clamp-2">{app.description}</p>
-						</button>
+						</Button>
 					{/each}
 				</div>
 			</Card>
@@ -454,10 +450,10 @@
 					<nav class="space-y-1">
 						{#each categoriesWithCounts as cat}
 							{#if cat.count > 0 || cat.value === ''}
-								<button
-									class="w-full flex items-center justify-between px-3 py-2.5 rounded-lg text-sm transition-colors
+								<Button variant="plain"
+								 class="w-full flex items-center justify-between px-3 py-2.5 rounded-lg text-sm transition-colors
 									{selectedCategory === cat.value
-										? 'bg-blue-600 text-white'
+										? 'bg-brand text-content-on-brand'
 										: 'text-secondary hover:text-content hover:bg-surface-overlay'}"
 									on:click={() => (selectedCategory = cat.value)}
 								>
@@ -467,12 +463,12 @@
 									</span>
 									<span
 										class="text-xs px-1.5 py-0.5 rounded {selectedCategory === cat.value
-											? 'bg-white/20 text-white'
+											? 'bg-content-on-brand/20 text-content-on-brand'
 											: 'bg-surface-overlay text-muted'}"
 									>
 										{cat.count}
 									</span>
-								</button>
+								</Button>
 							{/if}
 						{/each}
 					</nav>
@@ -535,8 +531,8 @@
 												<div
 													class="w-2 h-2 rounded-full flex-shrink-0 {installedInfo.status ===
 													'running'
-														? 'bg-green-500'
-														: 'bg-slate-500'}"
+														? 'bg-status-success'
+														: 'bg-status-neutral'}"
 												></div>
 											{/if}
 										</div>
@@ -659,15 +655,10 @@
 							</div>
 							<div class="flex flex-wrap items-center gap-2">
 								{#if getWebUrl(app) && app.missing.length === 0}
-									<a
-										href={getWebUrl(app)}
-										target="_blank"
-										rel="noopener"
-										class="btn btn-secondary btn-md"
-									>
+									<Button href={getWebUrl(app)} target="_blank" rel="noopener" variant="secondary">
 										<ExternalLink class="w-4 h-4" />
 										{$t('apps.open')}
-									</a>
+									</Button>
 								{/if}
 								<!-- An incomplete app does not start (409): a stop of what runs, and Uninstall. -->
 								{#if app.status === 'running'}

@@ -3538,8 +3538,16 @@
       ],
       "passes": false,
       "adr": [
-        "ADR-0012"
-      ]
+        "ADR-0012",
+        "ADR-0400"
+      ],
+      "verified_by": [
+        "supervisor/tests/test_webui_design_system.py",
+        "webui/tests/system.spec.ts",
+        "webui/tests/security.spec.ts",
+        "webui/tests/language.spec.ts"
+      ],
+      "notes": "ADR-0400: webui/scripts/design-check.mjs (npm run design) runs in make frontend, so in make check, not in make lint, which has no node (step wording says make lint). It fails for a raw <button>, a raw <a> styled as a button, a raw text field/select/textarea without a form-* class, and a raw palette colour (class attributes, class: directives, string literals) in .svelte files outside lib/components/ui; design-ignore: <reason> exempts. 90 buttons and 504 colour classes were replaced (Button variant plain, tab-pill/tab-underline classes, form-input/form-select, tokens brand, surface-hover, border-strong, content-soft, content-on-brand, status-neutral, class scrim). Button passes restProps and keydown on and has bind:el. The full E2E suite ran on the stand-in. MonitorTab got only a Badge for its connection chip: the system.resource-monitor builder rewrites that tab; the lead runs the check after the merge."
     },
     {
       "id": "webui.dialog-stack",
