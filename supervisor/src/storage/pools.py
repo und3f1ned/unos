@@ -3042,6 +3042,15 @@ def delete_volume(pool_name: str, volume_name: str) -> None:
 RESTORE_COPY_NAME = re.compile(r"restore_(?P<stamp>[0-9]{8}_[0-9]{6})")
 
 
+def btrfs_time(text: str) -> datetime | None:
+    """A time as btrfs prints it, in C's ctime form, "Fri Nov  6 10:00:00 2026", in UTC: btrfs runs in
+    the supervisor's container, whose clock is UTC (ADR-0401). None for another form."""
+    try:
+        return datetime.strptime(" ".join(text.split()), "%a %b %d %H:%M:%S %Y").replace(tzinfo=timezone.utc)
+    except ValueError:
+        return None
+
+
 def _copy_time(name: str) -> str | None:
     """The time in the name of a restored copy, in UTC with its offset; None for a name that a restore does not give."""
     match = RESTORE_COPY_NAME.fullmatch(name)
@@ -3334,7 +3343,7 @@ def get_scrub_status(pool_name: str) -> ScrubStatus:
     # Parse scrub started time
     started_match = re.search(r"Scrub started:\s*(.+?)(?:\n|$)", output)
     if started_match:
-        last_run = started_match.group(1).strip()
+        last_run = btrfs_time(started_match.group(1))
 
     # Parse bytes scrubbed (various formats)
     scrubbed_match = re.search(r"Bytes scrubbed:\s*([\d.]+)\s*(\w+)", output)

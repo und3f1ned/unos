@@ -19,6 +19,7 @@
   } from "$lib/api/files";
   import { Alert, Button, Input, Modal } from "$lib/components/ui";
   import { intlLocale, t } from "$lib/i18n";
+  import { formatDate, formatDateTime } from "$lib/time";
   import {
     Folder,
     File,
@@ -781,7 +782,7 @@
               {item.type === "directory" ? "-" : formatSize(item.size, units)}
             </span>
             <span class="hidden sm:block text-sm text-content-secondary">
-              {new Date(item.modified).toLocaleDateString($intlLocale)}
+              {formatDate(item.modified, $intlLocale)}
             </span>
           </div>
         {/each}
@@ -877,7 +878,7 @@
             <p class="text-content-secondary">
               {$t("files.leftovers.file", {
                 size: formatSize(file.size, units),
-                time: new Date(file.modified).toLocaleString($intlLocale),
+                time: formatDateTime(file.modified, $intlLocale),
               })}
             </p>
           </li>

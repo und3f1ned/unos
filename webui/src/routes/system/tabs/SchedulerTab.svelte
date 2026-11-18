@@ -18,6 +18,7 @@
   import { getPools, getDisks, type Pool, type Disk } from "$lib/api/storage";
   import { Input, Button } from "$lib/components/ui";
   import { intlLocale, t } from "$lib/i18n";
+  import { apiTime, formatDateTime } from "$lib/time";
   import {
     Calendar,
     Clock,
@@ -366,7 +367,8 @@
 
   $: formatDuration = (start: string, end?: string): string => {
     if (!end) return $t("scheduler.runs.inProgress");
-    const ms = new Date(end).getTime() - new Date(start).getTime();
+    const ms = (apiTime(end)?.getTime() ?? NaN) - (apiTime(start)?.getTime() ?? NaN);
+    if (Number.isNaN(ms)) return "";
     if (ms < 1000) return $t("scheduler.runs.milliseconds", { ms });
     if (ms < 60000) {
       // One decimal, with the decimal separator of the page's language.
@@ -472,7 +474,7 @@
                     <Clock class="w-3 h-3" />
                     {$t("scheduler.task.nextRun")}
                   </span>
-                  <span>{new Date(task.next_run).toLocaleString($intlLocale)}</span>
+                  <span>{formatDateTime(task.next_run, $intlLocale)}</span>
                 </div>
               {/if}
             </div>
@@ -849,7 +851,7 @@
                   <span class="text-xs text-content-muted">{formatDuration(run.started_at, run.finished_at)}</span>
                 </div>
                 <div class="flex flex-wrap gap-x-3 text-xs text-content-secondary">
-                  <span>{new Date(run.started_at).toLocaleString($intlLocale)}</span>
+                  <span>{formatDateTime(run.started_at, $intlLocale)}</span>
                   {#if typeof run.exit_code === "number"}
                     <span>{$t("scheduler.runs.exitStatus", { code: run.exit_code })}</span>
                   {/if}

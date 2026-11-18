@@ -1,14 +1,17 @@
 ---
-status: accepted
+status: superseded
 date: 2026-11-07
 area: security
 decided-by: agent
 supersedes: [ADR-0236]
+superseded-by: ADR-0401
 ---
 
 # ADR-0237: The audit log is filtered alike by whole units of time, exported without spreadsheet formulas and shown on an administrator page
 
 ## Context
+
+Superseded by ADR-0401: the same filters, exports and page, with times in UTC with their offset, bounds that take an offset, and the page's times and days in the browser's time zone.
 
 ADR-0236 gave `GET /api/v1/audit/logs`, `/logs/count` and `/logs/export` one set of filters and the web UI an Audit Log page (feature-list.json: `security.audit-log`, `webui.audit-log-page`). Before its merge, an end bound with a time stood for one microsecond, while entries carry microseconds (`datetime.now().isoformat()`) and the page shows times to the second, so a time as the page shows it, given as both bounds, matched nothing. The CSV export wrote the values as recorded, though a spreadsheet reads a cell that starts with `=`, `+`, `-` or `@` as a formula (CSV injection) and anyone who reaches the login chooses the user name of a failed sign-in. The search did not find the resource as the page shows it.
 

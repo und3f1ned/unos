@@ -549,7 +549,7 @@ def get_file_info(name: str, path: str, st: os.stat_result) -> FileInfo:
         path=path,
         type=file_type,
         size=st.st_size if file_type == FileType.FILE else 0,
-        modified=datetime.fromtimestamp(st.st_mtime).isoformat(),
+        modified=datetime.fromtimestamp(st.st_mtime, timezone.utc).isoformat(),
         permissions=stat.filemode(st.st_mode),
         owner=owner,
         group=group,

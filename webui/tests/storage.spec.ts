@@ -904,8 +904,11 @@ test.describe('Pool unmount, mount and removal (fake data)', () => {
 // page follows it over the events socket, which sends its status whenever it changed
 // (webui.no-http-polling, ADR-0367): the page asks for it only when it loads.
 test.describe('Scrub (fake data)', () => {
+  // UTC+05:45 all year: the start of a scrub, which the server answers in UTC with its offset, is
+  // shown in the browser's time zone (ADR-0401).
+  test.use({ timezoneId: 'Asia/Kathmandu' });
   const GIB = 1024 ** 3;
-  const STARTED = 'Fri Nov  6 10:00:00 2026';
+  const STARTED = '2026-11-06T10:00:00Z';
   const scrub = (status: string, fields: Partial<FakeScrubStatus> = {}): FakeScrubStatus => ({
     ...noScrub('e2e_data'), status, duration: 0, total_bytes: 4 * GIB, rate: 0, last_run: STARTED, ...fields,
   });
@@ -966,7 +969,7 @@ test.describe('Scrub (fake data)', () => {
 
     await sendScrubs([scrub('finished', { duration: 256, rate: 16 * 1024 ** 2 })]);
     await expect(card.getByText('Last scrub: No errors')).toBeVisible();
-    await expect(card.getByText(STARTED)).toBeVisible();
+    await expect(card.getByText('11/6/2026, 3:45:00 PM', { exact: true })).toBeVisible();
     await expect(card.getByText('Scrub in progress')).toHaveCount(0);
     await expect(progress).toHaveCount(0);
     await expect(start).toBeVisible();
@@ -2239,14 +2242,16 @@ test.describe('Storage volumes (fake data)', () => {
 
 // The Storage page in Russian (webui.translations, ADR-0287): its texts come from the catalog
 // storage.ts, and the sizes and percentages the page writes take the number format and the units
-// of the page's language, and when the last scrub started its date format (ADR-0300). A disk's
+// of the page's language, and when the last scrub started its date format (ADR-0401). A disk's
 // in-use reason is the server's message and stays in English. The fakes answer every request, and
 // every dialog is cancelled: nothing is created, mounted, unmounted, imported or removed.
 test.describe('The Storage page in Russian', () => {
+  // UTC+05:45 all year: when a scrub started is shown in the browser's time zone (ADR-0401).
+  test.use({ timezoneId: 'Asia/Kathmandu' });
   const GIB = 1024 ** 3;
   const MIB = 1024 ** 2;
-  // As btrfs prints when a scrub started: in English, without a time zone.
-  const STARTED = 'Fri Nov  6 10:00:00 2026';
+  // When a scrub started, as the server answers it: in UTC with its offset.
+  const STARTED = '2026-11-06T10:00:00Z';
   // What the dialogs ask of a pool's or a volume's name (POOL_NAME_PATTERN and VOLUME_NAME_PATTERN
   // of src/lib/api/storage.ts): Latin letters only, which a Russian reader would not assume.
   const NAME_RULE =
@@ -2277,10 +2282,10 @@ test.describe('The Storage page in Russian', () => {
       ...noScrub('e2e_media'), status: 'running', duration: 64, bytes_scrubbed: GIB, total_bytes: 4 * GIB,
       rate: 16 * MIB, last_run: STARTED,
     },
-    // A date that does not exist is not turned into another one.
+    // btrfs printed no start that the server could read (supervisor/src/storage/pools.py, btrfs_time).
     e2e_halt: {
       ...noScrub('e2e_halt'), status: 'aborted', duration: 130, total_bytes: 4 * GIB, errors: 2,
-      last_run: 'Mon Feb 30 10:00:00 2026',
+      last_run: null,
     },
   };
   let writes: RecordedWrite[] = [];
@@ -2366,15 +2371,14 @@ test.describe('The Storage page in Russian', () => {
       await expect(data.getByRole('button', { name, exact: true })).toBeVisible();
     }
     // The errors of the last scrub in the plural form of their count, and when it started in the
-    // date format of the page, at the clock time btrfs printed.
+    // date format of the page and the browser's time zone, 5:45 ahead of UTC.
     await expect(data.getByText('Последняя проверка: 13 ошибок', { exact: true })).toBeVisible();
-    await expect(data.getByText('06.11.2026, 10:00:00', { exact: true })).toBeVisible();
-    await expect(data.getByText(/Fri|Nov/)).toHaveCount(0);
+    await expect(data.getByText('06.11.2026, 15:45:00', { exact: true })).toBeVisible();
+    await expect(data.getByText(/2026-11-06|10:00:00/)).toHaveCount(0);
     const halted = poolCard(page, 'e2e_halt');
     await expect(
       halted.getByText('Последняя проверка: отменена до завершения, найдены 2 ошибки', { exact: true }),
     ).toBeVisible();
-    await expect(halted.getByText('Mon Feb 30 10:00:00 2026', { exact: true })).toBeVisible();
 
     const media = poolCard(page, 'e2e_media');
     await expect(badge(media, 'Деградирован')).toBeVisible();

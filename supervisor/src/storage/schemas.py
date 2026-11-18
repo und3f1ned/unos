@@ -2,6 +2,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from ..times import UtcDatetime
+
 # A whole disk's power as disks.power_state reads it without waking the disk (ADR-0378): hdparm -C
 # on the host (smartctl -n idle for a power condition it does not name, as an EPC disk's), or
 # smartctl -n standby without hdparm and for an NVMe disk. Active (spinning, or idle), standby (spun
@@ -243,7 +245,9 @@ class ScrubStatus(BaseModel):
     total_bytes: int | None = None
     rate: int | None = None  # bytes per second
     errors: int = 0  # the sum of the error summary: read, super, verify and csum errors (ADR-0313)
-    last_run: str | None = None  # when the scrub started, as btrfs prints it
+    # When the scrub started (ADR-0401): btrfs prints it in the clock of the supervisor's container,
+    # UTC; None when btrfs printed no start, or one of another form.
+    last_run: UtcDatetime | None = None
 
 
 # The usage limit of a balance when the request names none (ADR-0379): the data and metadata

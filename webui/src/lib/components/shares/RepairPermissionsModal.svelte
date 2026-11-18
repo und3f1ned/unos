@@ -5,6 +5,7 @@
 	import { getRepairResult, repairSharePermissions, stopRepair, type RepairResult } from '$lib/api/shares';
 	import { Alert, Badge, Button, Modal } from '$lib/components/ui';
 	import { intlLocale, t } from '$lib/i18n';
+	import { formatDateTime } from '$lib/time';
 	import { isRepairOf, repairJob } from '$lib/stores/repair';
 
 	/**
@@ -105,8 +106,7 @@
 	}
 
 	function formatTime(value: string, locale: string): string {
-		const date = new Date(value);
-		return Number.isNaN(date.getTime()) ? value : date.toLocaleString(locale);
+		return formatDateTime(value, locale);
 	}
 
 	$: skippedCounts = result

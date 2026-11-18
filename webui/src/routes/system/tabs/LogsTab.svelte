@@ -12,6 +12,7 @@
   } from "$lib/api/logs";
   import { Button, Card, Badge, Alert, EmptyState, Select } from "$lib/components/ui";
   import { intlLocale, t } from "$lib/i18n";
+  import { apiTime } from "$lib/time";
   import {
     FileText,
     Search,
@@ -289,8 +290,8 @@
   });
   $: formatTimestamp = (ts: string): string => {
     if (!ts) return "";
-    const date = new Date(ts);
-    return Number.isNaN(date.getTime()) ? ts : dateFormat.format(date);
+    const date = apiTime(ts);
+    return date ? dateFormat.format(date) : ts;
   };
 
   // Split a log message around case-insensitive matches of the search term.

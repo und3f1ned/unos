@@ -69,7 +69,7 @@ def current() -> list[dict[str, Any]]:
     """What the events socket sends, by pool: each status as the scrub API answers it, or
     ``{"pool": ..., "error": ...}`` when it could not be read."""
     return [
-        scrub.model_dump() if isinstance(scrub, ScrubStatus) else {"pool": pool, "error": scrub}
+        scrub.model_dump(mode="json") if isinstance(scrub, ScrubStatus) else {"pool": pool, "error": scrub}
         for pool, scrub in sorted(_scrubs.items())
     ]
 

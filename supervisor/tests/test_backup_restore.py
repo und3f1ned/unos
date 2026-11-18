@@ -220,6 +220,8 @@ def test_restore_database_and_shares(env):
     assert body["status"] == "success"
     assert body["restored"] == ["database", "smb_config"]  # smb.conf is rendered from the restored database
     assert body["manifest"]["version"] == "1.0"
+    # The manifest's time without an offset, as a backup made before ADR-0401 holds it: UTC.
+    assert body["manifest"]["created"] == "2025-01-01T00:00:00Z"
     assert body["warnings"] == []
     assert body["message"] == "Backup restored: database, smb_config."
 

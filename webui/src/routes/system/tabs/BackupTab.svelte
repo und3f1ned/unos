@@ -3,6 +3,7 @@
   import { ApiError } from "$lib/api/client";
   import { Alert, Input, Button } from "$lib/components/ui";
   import { intlLocale, t } from "$lib/i18n";
+  import { formatDateTime } from "$lib/time";
   import { listBackups, createBackup, deleteBackup, downloadBackup, uploadBackup, restoreBackup, formatBytes, type BackupInfo } from "$lib/api/backup";
   import { Archive, Plus, Trash2, RefreshCw, Clock, Download, Upload, RotateCcw, AlertTriangle, CheckCircle, Lock } from "lucide-svelte";
   import OffsiteCopy from "./OffsiteCopy.svelte";
@@ -237,7 +238,7 @@
                 <p class="font-medium text-sm break-all">{backup.filename}</p>
                 <p class="text-xs text-content-secondary flex flex-wrap items-center gap-x-2">
                   <Clock class="w-3 h-3" />
-                  {new Date(backup.created).toLocaleString($intlLocale)}
+                  {formatDateTime(backup.created, $intlLocale)}
                   <span class="text-content-muted">|</span>
                   {formatBytes(backup.size, $intlLocale, sizeUnits)}
                   <span class="text-content-muted">|</span>

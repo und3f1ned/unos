@@ -987,6 +987,21 @@ manager, encrypted backup uploads, health checks, CI checks).
 - A status panel on the Shares page.
 
 ### Changed
+- Every time that the API answers carries its offset, in UTC (ADR-0401,
+  `architecture.times-with-time-zones`): the times that the database keeps
+  without one (users, API tokens, the login history, SMB passwords, the
+  two-factor requirement) and the times that the supervisor wrote without one
+  (the audit log, the update history, the SMART and RAID history) are read as
+  UTC, without rewriting them, so the audit log's hash chain still holds.
+  `boot_time` of `GET /api/v1/system/info` is a time (ISO 8601) instead of
+  seconds since the epoch, `GET /api/v1/power/status` answers `last_boot` as
+  the time less the uptime, a scrub's `last_run` and a certificate's
+  `valid_from` and `valid_until` are ISO 8601 instead of btrfs's and openssl's
+  text, and the bounds of the audit log take an offset (`Z` or `+HH:MM`). The
+  web interface shows every time in the browser's time zone and the page's
+  language: the Audit Log page groups its entries by the browser's days, and
+  From and To are the browser's days; the Storage page shows when a scrub
+  started so in English too.
 - An app's install runs in the background (ADR-0384, which supersedes the
   one-request install of ADR-0381): `POST /api/v1/apps/install` answers 202 at
   once with the install's job, and the checks of the pool, the folders, the

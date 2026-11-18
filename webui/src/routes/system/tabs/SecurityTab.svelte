@@ -8,6 +8,7 @@
   import LanguageCard from "$lib/components/account/LanguageCard.svelte";
   import ApiTokensCard from "$lib/components/account/ApiTokensCard.svelte";
   import { intlLocale, t } from "$lib/i18n";
+  import { formatDateTime } from "$lib/time";
   import { Alert, Badge, Button } from "$lib/components/ui";
   import { changePassword, setupTOTP, enableTOTP, disableTOTP, getTOTPStatus, type TOTPSetupResponse } from "$lib/api/auth";
   import {
@@ -141,19 +142,8 @@
   $: labelOf = (labels: Record<string, string>, value: string): string =>
     Object.prototype.hasOwnProperty.call(labels, value) ? $t(labels[value]) : value;
 
-  // A certificate's dates are openssl's, in UTC: "Nov  8 01:47:31 2027 GMT".
-  const OPENSSL_DATE = /^([A-Z][a-z]{2}) +(\d{1,2}) (\d{2}):(\d{2}):(\d{2}) (\d{4}) GMT$/;
-  // i18n-ignore: openssl's names of the months, which the dates of the server hold
-  const OPENSSL_MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-
-  /** A certificate's date in the language of the page and the browser's time zone; else as it comes. */
-  $: formatCertificateDate = (value: string): string => {
-    const match = OPENSSL_DATE.exec(value);
-    const month = match ? OPENSSL_MONTHS.indexOf(match[1]) : -1;
-    if (!match || month < 0) return value;
-    const [, , day, hours, minutes, seconds, year] = match.map(Number);
-    return new Date(Date.UTC(year, month, day, hours, minutes, seconds)).toLocaleString($intlLocale);
-  };
+  /** A certificate's date (UTC with its offset, ADR-0401) in the language of the page and the browser's time zone. */
+  $: formatCertificateDate = (value: string): string => formatDateTime(value, $intlLocale);
 
   onMount(async () => {
     await Promise.all([
@@ -341,11 +331,7 @@
   // language of the page, in the browser's own format when it is of that language.
   $: formatTimestamp = (ts: string | null): string => {
     if (!ts) return $t("common.unknown");
-    try {
-      return new Date(ts).toLocaleString($intlLocale);
-    } catch {
-      return ts;
-    }
+    return formatDateTime(ts, $intlLocale);
   };
 
   // i18n-ignore: the names of browsers, the same in every language

@@ -152,10 +152,23 @@
         "The database stores times in UTC",
         "The web UI shows times in the browser's time zone"
       ],
+      "verified_by": [
+        "supervisor/tests/test_api_times.py",
+        "supervisor/tests/test_audit_log.py",
+        "webui/tests/times.spec.ts",
+        "webui/tests/audit.spec.ts",
+        "webui/tests/storage.spec.ts",
+        "webui/tests/backup.spec.ts",
+        "webui/tests/language.spec.ts",
+        "webui/tests/api.spec.ts",
+        "webui/tests/api-tokens.spec.ts"
+      ],
       "passes": false,
       "adr": [
-        "ADR-0023"
-      ]
+        "ADR-0023",
+        "ADR-0401"
+      ],
+      "notes": "Built 2026-11-18 (ADR-0401, which supersedes ADR-0237 and ADR-0300). What a stored time without an offset means: UTC. The DATETIME columns (users, api_tokens, user_sessions, usernames_taken, two_factor_requirement, dashboard_layouts, login_attempts, smb_shares, smb_share_access, smb_accounts, smb_state, app_resource_limits) are SQLite's CURRENT_TIMESTAMP or written by db_now() of supervisor/src/times.py (datetime.utcnow() before): naive UTC, never altered (ADR-0319); the files of /data (the audit log, the update history and progress, the SMART history, the RAID status, the notification history, the scheduler's files, the backups' manifests) took naive datetime.now() of the container, whose clock is UTC, and new writes carry their offset (the audit log, the SMART history and the RAID status Z, as the API answers, so that an exported audit entry's hash can be computed again; the others +00:00); readers take a time without an offset as UTC (UtcText for the scheduler's and the notification history's text, stored_time_text for the SMART history, the RAID status and a restored backup's manifest). Answers: every datetime field of a model is UtcDatetime (Z), the str fields and plain dicts take utc_now()/from_epoch() with +00:00, the audit log answers AuditEntryView (its lines keep their text, so the hash chain holds) and compares instants in its filters, sorting, summary and clearing; its bounds take an offset (Z or +HH:MM). Changed forms: boot_time of /system/info (seconds since the epoch before), last_boot of /power/status (who -b before), a scrub's last_run (btrfs's ctime), a certificate's valid_from and valid_until (openssl's GMT text), a notification event's timestamp (a time, 422 otherwise). The one exception with another offset: a task's next_run, in the host's zone (ADR-0266). Docker's Created times pass as Docker answers them (RFC 3339, Z). Web UI: webui/src/lib/time.ts reads only a time with its offset and every page that writes a server time goes through it; the Audit Log page groups by the browser's day and sends From and To as the browser's day's first and last millisecond in UTC. Step 1: test_api_times.py (TestEveryAnswerCarriesItsOffset walks every GET of the API as an administrator in a process zone of UTC+05:45 with rows and files from before the change and fails for a time without an offset, the stats message; the source check of clock reads without a zone; every datetime field UtcDatetime; TestTimesOfTools), times.spec.ts (the JSON answers that the pages read, against the stand-in) and api.spec.ts (boot_time). Step 2: test_api_times.py TestStoredTimesReadBackAsUtc (old naive rows read back with their clock time in UTC; a new token stored in UTC whatever the process zone) and TestAuditLogAcrossTheChange (entries chained before the change keep their text and their chain, new ones continue it; bounds with offsets; exports; clearing). Step 3: times.spec.ts (the Users page in Asia/Kathmandu), audit.spec.ts (the timeline's times and days and From and To in Asia/Kathmandu), storage.spec.ts (a scrub's start), backup.spec.ts and language.spec.ts (a certificate's dates). Not host-level. The device check after the next deploy: GET /api/v1/system/info, /auth/users, /auth/tokens, /security/login-history, /audit/logs?limit=5 and /updates/history answer every time with its offset and the old rows with the same clock time as before (scripts/dev/api.py); GET /api/v1/audit/logs?limit=10000 shows every entry's chain ok across the entries written before and after the deploy; the Audit Log, Users and Storage pages in a browser outside UTC show the times in its zone. Review (ADR-0017, a fresh subagent): fixed the scheduler's runs and tasks and a restored backup's manifest from before answering naive text (UtcText, stored_time_text, now seeded naive in the walk), a time outside the calendar in UTC raising 500 (as_utc raises ValueError: 422, or a skipped audit line), old notification history entries with an event timestamp that is no time being dropped (kept without it), exported audit hashes that could not be computed again (new lines in the Z form; an old line's hash is over its time without the Z, tested), the walk's coverage (path values for a task's runs and a SMART history, naive SMART history and RAID status seeded, MIN_ANSWERED), the ADR's restatement of ADR-0237 and ADR-0300, the clock check's forms (datetime.datetime.now, now(tz=None), astimezone(), time.strftime), the audit page's datetime attribute (milliseconds), %2B in the user guide, and the verified_by list. Left: GETs that need the host, Docker or the network answer no 200 in the walk (/system/info, /power/status, the storage, snapshot, container and app routes); their models are checked by type (every datetime field UtcDatetime) and their producers by the clock check, and btrfs_time and openssl_time by TestTimesOfTools. ADR-0298 (proposed) still names ADR-0237, which ADR-0401 superseded: its acceptance would supersede ADR-0401's audit rules."
     },
     {
       "id": "architecture.openapi-descriptions",
@@ -3213,7 +3226,7 @@
       "category": "system",
       "description": "GET /api/v1/system/info names the boot time boot_time instead of uptime",
       "steps": [
-        "GET /api/v1/system/info returns boot_time, the boot time in seconds since the epoch, and no field named uptime",
+        "GET /api/v1/system/info returns boot_time, the boot time (ISO 8601 with its offset since architecture.times-with-time-zones, ADR-0401; seconds since the epoch before), and no field named uptime",
         "The dashboard and System > General still show how long the host has run",
         "webui/src/lib/api/system.ts and both formatUptime callers use the new field"
       ],
@@ -3225,9 +3238,10 @@
       ],
       "passes": true,
       "adr": [
-        "ADR-0207"
+        "ADR-0207",
+        "ADR-0401"
       ],
-      "notes": "Until 2026-11-09 the field uptime held psutil.boot_time(), which the pages turned into an uptime and API clients would read as a duration. Built 2026-11-09: SystemInfo.boot_time in supervisor/src/system/router.py, no field uptime (ADR-0207). Step 1: test_system.py (test_the_answer_names_the_boot_time_boot_time_and_has_no_uptime) and api.spec.ts on the stand-in. Step 2: dashboard.spec.ts (the dashboard in Russian: the uptime in days, hours or minutes) and updates.spec.ts (System > General's uptime in Russian units), both from the stand-in's real answer. Step 3: system.ts's SystemInfo and both formatUptime callers, which svelte-check holds to the type. Not host-level."
+      "notes": "Until 2026-11-09 the field uptime held psutil.boot_time(), which the pages turned into an uptime and API clients would read as a duration. Built 2026-11-09: SystemInfo.boot_time in supervisor/src/system/router.py, no field uptime (ADR-0207). Step 1: test_system.py (test_the_answer_names_the_boot_time_boot_time_and_has_no_uptime) and api.spec.ts on the stand-in. Step 2: dashboard.spec.ts (the dashboard in Russian: the uptime in days, hours or minutes) and updates.spec.ts (System > General's uptime in Russian units), both from the stand-in's real answer. Step 3: system.ts's SystemInfo and both formatUptime callers, which svelte-check holds to the type. Not host-level. Since 2026-11-18 boot_time is ISO 8601 with its offset (architecture.times-with-time-zones, ADR-0401)."
     },
     {
       "id": "webui.navigation",

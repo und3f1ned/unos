@@ -38,6 +38,7 @@ from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 from . import host
+from .times import utc_now
 from .database import checkpoint_db, init_db
 from .config import get_settings
 from .auth.utils import require_admin
@@ -355,11 +356,9 @@ async def full_health_check():
     """
     import psutil
     from pathlib import Path
-    from datetime import datetime
-
     health = {
         "status": "healthy",
-        "timestamp": datetime.now().isoformat(),
+        "timestamp": utc_now().isoformat(),
         "version": "0.1.0",
         "components": {},
         "metrics": {}

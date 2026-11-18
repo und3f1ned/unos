@@ -1,8 +1,9 @@
-from datetime import datetime
 from enum import Enum
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, computed_field, model_validator
+
+from ..times import UtcDatetime
 
 # Catalog host paths that start with this placeholder live on the storage pool
 # chosen at install time; it is replaced with the pool's mount point (for
@@ -415,8 +416,8 @@ class AppInstallJob(BaseModel):
     name: str
     state: Literal["running", "succeeded", "failed", "cancelled"] = "running"
     step: Literal["checking", "pulling", "creating", "starting", "cleaning"] = "checking"
-    started_at: datetime
-    finished_at: datetime | None = None
+    started_at: UtcDatetime
+    finished_at: UtcDatetime | None = None
     # Each image once, in the order of the containers that run it; listed once the checks passed.
     images: list[ImagePull] = []
     # In their start order: the companions, then the main container.

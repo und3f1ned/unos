@@ -14,7 +14,7 @@ import threading
 import time
 import tracemalloc
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -35,16 +35,8 @@ from .test_backup_restore import (
 backup_router = importlib.import_module("src.backup.router")
 
 PASSPHRASE = "correct horse battery"
-FROZEN = datetime(2026, 1, 2, 3, 4, 5)
-SECOND = "20260102_030405"
-
-
-class _FrozenDatetime(datetime):
-    """datetime.now() always returns FROZEN: everything happens in the same second."""
-
-    @classmethod
-    def now(cls, tz=None):
-        return FROZEN if tz is None else FROZEN.replace(tzinfo=tz)
+FROZEN = datetime(2026, 1, 2, 3, 4, 5, tzinfo=timezone.utc)
+SECOND = "20260102_030405"  # the names carry the time in UTC (ADR-0401)
 
 
 @pytest.fixture
@@ -54,7 +46,8 @@ def env(tmp_path, monkeypatch):
 
 @pytest.fixture
 def same_second(monkeypatch):
-    monkeypatch.setattr(backup_router, "datetime", _FrozenDatetime)
+    """utc_now() always returns FROZEN: everything happens in the same second."""
+    monkeypatch.setattr(backup_router, "utc_now", lambda: FROZEN)
 
 
 def _create(env, **config) -> dict:
@@ -617,7 +610,9 @@ def test_backups_have_no_include_options(env, monkeypatch):
     assert uploaded.status_code == 200, uploaded.text
     restored = _restore(env, uploaded.json()["backup"]["filename"])
     assert restored.status_code == 200, restored.text
-    assert (restored.json()["restored"], restored.json()["manifest"]) == (["database"], older)
+    # The manifest as the backup holds it, its time without an offset answered in UTC (ADR-0401).
+    assert (restored.json()["restored"], restored.json()["manifest"]) == (
+        ["database"], {**older, "created": "2026-11-01T02:00:00Z"})
     assert _usernames(env.db_path) == {"admin2", "bob"}
 
 

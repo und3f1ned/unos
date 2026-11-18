@@ -51,7 +51,7 @@ JOURNAL_WAIT = JOURNAL_TIMEOUT + KILL_AFTER + 5
 # one of them, so that no more than two journalctl run on the host at once and none
 # takes a thread of the default executor, which sign-ins (bcrypt) use.
 _JOURNAL_READS = ThreadPoolExecutor(max_workers=2, thread_name_prefix="unos-journal")
-# Longest text the search takes, as in the audit log (ADR-0237).
+# Longest text the search takes, as in the audit log (ADR-0401).
 MAX_SEARCH_CHARS = 256
 # The time ranges `since` takes, as the web UI sends them ("1 hour ago");
 # journalctl counts them back from the host's clock.
@@ -339,7 +339,7 @@ async def get_log_files(_: dict = Depends(verify_token)):
                             name=f,
                             path=path,
                             size=stat.st_size,
-                            modified=datetime.fromtimestamp(stat.st_mtime).isoformat()
+                            modified=datetime.fromtimestamp(stat.st_mtime, timezone.utc).isoformat()
                         ))
                     except Exception:
                         pass

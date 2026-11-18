@@ -7,7 +7,7 @@ import stat
 import asyncio
 import threading
 from pathlib import Path
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, HTTPException, Depends, Request
 from pydantic import BaseModel, Field, ValidationError
 from typing import Literal, Optional
@@ -19,6 +19,7 @@ from ..audit.changes import audit_change
 from ..audit.schemas import AuditAction, AuditSeverity
 from ..auth.utils import verify_token
 from ..security.validators import INTERFACE_NAME_PATTERN, validate_interface_name
+from ..times import UtcDatetime, utc_now
 
 logger = logging.getLogger(__name__)
 
@@ -148,7 +149,7 @@ class UPSStatus(BaseModel):
     manufacturer: Optional[str] = None
     model: Optional[str] = None
     battery_type: Optional[str] = None
-    last_checked: str = ""
+    last_checked: Optional[UtcDatetime] = None
 
 
 class UPSMonitorStatus(BaseModel):
@@ -159,7 +160,7 @@ class UPSMonitorStatus(BaseModel):
     # before its first check and while the settings are off.
     available: bool
     reason: Optional[str] = None
-    last_checked: Optional[str] = None
+    last_checked: Optional[UtcDatetime] = None
     auto_shutdown: bool
     shutdown_battery_percent: int
     shutdown_runtime_minutes: int
@@ -168,14 +169,14 @@ class UPSMonitorStatus(BaseModel):
 class PowerStatus(BaseModel):
     uptime: str
     uptime_seconds: int
-    last_boot: str
+    last_boot: UtcDatetime  # the current time less the uptime, to the second
     load_average: list[float]
 
 
 class PendingAction(BaseModel):
     """The reboot or shutdown that logind has scheduled on the host; both None when there is none."""
     action: Optional[Literal["reboot", "shutdown"]] = None
-    at: Optional[datetime] = None
+    at: Optional[UtcDatetime] = None
 
 
 class PowerAnswer(BaseModel):
@@ -288,7 +289,7 @@ def _ups_number(data: dict[str, str], key: str) -> Optional[float]:
 def get_ups_status(config: UPSSettings) -> UPSStatus:
     """The UPS's state, as upsc on the host reads it from upsd; unavailable with the reason when it
     cannot be read. Blocking: run it off the event loop."""
-    checked = datetime.now().isoformat()
+    checked = utc_now()
     output, reason = _upsc([config.ups_identifier])
     if output is None:
         return UPSStatus(available=False, reason=reason, last_checked=checked)
@@ -416,15 +417,7 @@ async def get_power_status(_: dict = Depends(verify_token)):
             parts = f.read().split()
             load_average = [float(parts[0]), float(parts[1]), float(parts[2])]
 
-        # Get last boot time
-        try:
-            result = subprocess.run(
-                ["who", "-b"],
-                capture_output=True, text=True
-            )
-            last_boot = result.stdout.strip().replace("system boot", "").strip() if result.returncode == 0 else "Unknown"
-        except Exception:
-            last_boot = "Unknown"
+        last_boot = (utc_now() - timedelta(seconds=uptime_seconds)).replace(microsecond=0)
 
         return PowerStatus(
             uptime=uptime,

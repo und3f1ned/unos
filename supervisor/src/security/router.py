@@ -18,6 +18,7 @@ from .. import state_files
 from ..audit.changes import audit_change
 from ..audit.schemas import AuditAction, AuditSeverity
 from ..database import get_db
+from ..times import db_now, utc_now
 from ..auth import requirement
 from ..auth.utils import (
     API_TOKEN_PREFIX, TOTP_CODE_REUSED, Credential, TotpCheck, check_totp_code, client_ip, credential,
@@ -134,7 +135,7 @@ async def clear_login_history(
 ):
     """Clear login history older than specified days. Admin only."""
     # The stored times are UTC without a zone, as SQLite's CURRENT_TIMESTAMP gives them (ADR-0262).
-    cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=older_than_days)
+    cutoff = db_now() - timedelta(days=older_than_days)
 
     from sqlalchemy import delete
     stmt = delete(LoginAttempt).where(LoginAttempt.timestamp < cutoff)
@@ -313,7 +314,7 @@ async def create_firewall_rule(
 
     # Generate ID
     new_rule = FirewallRule(
-        id=f"rule_{datetime.now().strftime('%Y%m%d%H%M%S')}",
+        id=f"rule_{utc_now().strftime('%Y%m%d%H%M%S')}",
         **rule.model_dump()
     )
 
@@ -571,8 +572,8 @@ def _certificate_info(source: list[str], pem: str | None = None) -> dict | None:
         info = {
             "domain": "",
             "issuer": "",
-            "valid_from": "",
-            "valid_until": "",
+            "valid_from": None,
+            "valid_until": None,
             "fingerprint": "",
             "is_valid": False,
             # The whole subject and issuer as openssl prints them: a certificate is
@@ -595,9 +596,9 @@ def _certificate_info(source: list[str], pem: str | None = None) -> dict | None:
                 cn_match = re.search(r'CN\s*=\s*([^,/]+)', line)
                 info["issuer"] = (org_match or cn_match).group(1).strip() if (org_match or cn_match) else "Unknown"
             elif line.startswith("notBefore="):
-                info["valid_from"] = line.split("=", 1)[1].strip()
+                info["valid_from"] = openssl_time(line.split("=", 1)[1])
             elif line.startswith("notAfter="):
-                info["valid_until"] = line.split("=", 1)[1].strip()
+                info["valid_until"] = openssl_time(line.split("=", 1)[1])
             elif "Fingerprint" in line:
                 info["fingerprint"] = line.split("=", 1)[1].strip()
 
@@ -615,6 +616,15 @@ def _certificate_info(source: list[str], pem: str | None = None) -> dict | None:
     except (OSError, subprocess.SubprocessError):
         raise
     except Exception:
+        return None
+
+
+def openssl_time(text: str) -> datetime | None:
+    """A date as openssl x509 prints it, "Nov  8 01:47:31 2027 GMT", in UTC (ADR-0401); None for
+    another form."""
+    try:
+        return datetime.strptime(" ".join(text.split()), "%b %d %H:%M:%S %Y GMT").replace(tzinfo=timezone.utc)
+    except ValueError:
         return None
 
 

@@ -686,7 +686,8 @@ class TestApiTokenUse:
 
     def test_a_token_works_until_its_lifetime_is_over(self, client, alice_headers, monkeypatch):
         created = self._create(client, alice_headers, expires_in_days=1)
-        expires_at = datetime.fromisoformat(created["expires_at"])
+        # Answered in UTC with its offset; checked against UTC without a zone (_token_time).
+        expires_at = datetime.fromisoformat(created["expires_at"]).astimezone(timezone.utc).replace(tzinfo=None)
         token_headers = _auth(created["token"])
 
         monkeypatch.setattr(auth_utils, "_token_time", lambda: expires_at - timedelta(seconds=1))
@@ -869,7 +870,8 @@ class TestApiTokenExpiry:
 
         assert response.status_code == 200, response.text
         expires_at = datetime.fromisoformat(response.json()["expires_at"])
-        assert abs(expires_at - (datetime.utcnow() + timedelta(days=days))) < timedelta(minutes=1)
+        assert expires_at.utcoffset() == timedelta(0)  # in UTC with its offset (ADR-0401)
+        assert abs(expires_at - (datetime.now(timezone.utc) + timedelta(days=days))) < timedelta(minutes=1)
 
     @pytest.mark.parametrize("body", [{"name": "t"}, {"name": "t", "expires_in_days": None}])
     def test_no_expiry_by_default(self, client, alice_headers, body):

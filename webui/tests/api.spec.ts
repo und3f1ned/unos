@@ -90,10 +90,11 @@ test.describe('API Tests', () => {
     expect(data).toHaveProperty('hostname');
     expect(data).toHaveProperty('kernel');
     expect(data).toHaveProperty('os');
-    // The host's boot time in seconds since the epoch, under its own name (system.boot-time-field).
-    expect(typeof data.boot_time).toBe('number');
-    expect(data.boot_time).toBeGreaterThan(1e9); // a time, not a duration
-    expect(data.boot_time).toBeLessThan(Date.now() / 1000);
+    // The host's boot time under its own name (system.boot-time-field), in UTC with its offset
+    // (architecture.times-with-time-zones).
+    expect(data.boot_time).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|\+00:00)$/);
+    expect(Date.parse(data.boot_time)).toBeGreaterThan(Date.UTC(2000, 0, 1)); // a time, not a duration
+    expect(Date.parse(data.boot_time)).toBeLessThan(Date.now());
     expect(data).not.toHaveProperty('uptime');
   });
 

@@ -30,7 +30,7 @@ const STATS = {
     { pid: 5150, name: 'immich', cpu_percent: 1.25, memory_bytes: 1.5 * 1024 ** 3, username: 'nasadmin' },
   ],
   sample_seconds: 2,
-  timestamp: '2026-11-08T10:00:00',
+  timestamp: '2026-11-08T10:00:00+00:00',
 };
 
 const MB = 1024 ** 2;

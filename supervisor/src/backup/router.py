@@ -68,6 +68,7 @@ from pydantic import BaseModel
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from .. import database
+from ..times import UtcDatetime, from_epoch, stored_time_text, utc_now
 from ..audit.changes import audit_change
 from ..audit.schemas import AuditAction, AuditSeverity
 from ..auth import requirement, scopes
@@ -167,7 +168,7 @@ class RestoreSpaceError(Exception):
 class BackupInfo(BaseModel):
     filename: str
     size: int
-    created: str
+    created: UtcDatetime  # the file's mtime: when it was written
     version: str
     encrypted: bool = False
 
@@ -347,7 +348,7 @@ def _keep_copy_of_database(db_path: Path) -> Path | None:
     """Copy the current database next to it before a restore; keep the newest copies."""
     if not db_path.exists():
         return None
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+    timestamp = utc_now().strftime("%Y%m%d_%H%M%S_%f")
     copy_path = db_path.with_name(f"{db_path.name}.pre-restore-{timestamp}")
     try:
         copy_database(db_path, copy_path)
@@ -668,7 +669,7 @@ def publish_backup_file(tmp: Path, prefix: str, extension: str, when: datetime |
         os.fsync(fd)
     finally:
         os.close(fd)
-    timestamp = (when or datetime.now()).strftime("%Y%m%d_%H%M%S")
+    timestamp = (when or utc_now()).strftime("%Y%m%d_%H%M%S")
     for attempt in range(NAME_ATTEMPTS):
         number = f"_{attempt}" if attempt else ""
         name = f"{prefix}_{timestamp}{number}{extension}"
@@ -909,7 +910,9 @@ def _restore_locked(backup_path: Path, passphrase: str | None) -> dict:
     return {
         "status": "success",
         "restored": restored,
-        "manifest": manifest,
+        # The backup's own manifest; its time in UTC with its offset (a backup made before ADR-0401 holds
+        # the clock of the supervisor's container without one: UTC).
+        "manifest": {**manifest, "created": stored_time_text(manifest["created"])} if "created" in manifest else manifest,
         "message": _restore_message(restored, warnings),
         "warnings": warnings,
         "previous_database": str(previous_db) if previous_db else None,
@@ -1078,7 +1081,7 @@ def _list_backups() -> list[BackupInfo]:
         backups.append(BackupInfo(
             filename=name,
             size=st.st_size,
-            created=datetime.fromtimestamp(mtime).isoformat(),
+            created=from_epoch(mtime),
             version="unknown" if encrypted else _manifest_version(BACKUP_DIR / name),
             encrypted=encrypted,
         ))
@@ -1101,7 +1104,7 @@ def _collect_backup_content(content: Path, *, encrypted: bool) -> None:
     """
     manifest = {
         "version": BACKUP_VERSION,
-        "created": datetime.now().isoformat(),
+        "created": utc_now().isoformat(),
         "hostname": os.uname().nodename,
         "encrypted": encrypted,
     }
@@ -1163,7 +1166,7 @@ def store_backup(source: Path, prefix: str, when: datetime) -> BackupInfo:
     return BackupInfo(
         filename=name,
         size=st.st_size,
-        created=datetime.fromtimestamp(st.st_mtime).isoformat(),
+        created=from_epoch(st.st_mtime),
         version=_manifest_version(BACKUP_DIR / name),
         encrypted=False,
     )
@@ -1196,7 +1199,7 @@ def _create_backup(config: BackupConfig) -> dict:
         "backup": BackupInfo(
             filename=backup_name,
             size=(BACKUP_DIR / backup_name).stat().st_size,
-            created=datetime.now().isoformat(),
+            created=utc_now(),
             version=BACKUP_VERSION,
             encrypted=config.encrypt,
         )
@@ -1277,7 +1280,7 @@ async def upload_backup(request: Request, user=Depends(verify_token)):
         "backup": BackupInfo(
             filename=safe_name,
             size=size,
-            created=datetime.now().isoformat(),
+            created=utc_now(),
             version="unknown" if manifest is None else str(manifest.get("version", BACKUP_VERSION)),
             encrypted=upload.encrypted,
         )

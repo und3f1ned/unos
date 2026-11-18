@@ -30,8 +30,11 @@ async function signIn(request: APIRequestContext, credentials: Credentials): Pro
 
 const bearer = (token: string) => ({ Authorization: `Bearer ${token}` });
 
-/** A time as the API answers it (UTC, ISO 8601 without a zone), in milliseconds. */
-const utc = (value: string) => Date.parse(`${value}Z`);
+/** A time as the API answers it (ISO 8601 in UTC with its offset, ADR-0401), in milliseconds. */
+const utc = (value: string) => {
+  expect(value).toMatch(/(Z|\+00:00)$/);
+  return Date.parse(value);
+};
 
 async function createToken(
   request: APIRequestContext,

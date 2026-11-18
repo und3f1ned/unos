@@ -54,7 +54,7 @@ test.describe('Backup & Restore', () => {
 const FAKE_BACKUP = {
   filename: 'e2e_fake_backup.tar.gz',
   size: 2048,
-  created: '2026-01-02T03:04:05',
+  created: '2026-01-02T03:04:05Z',
   version: '1.0',
   encrypted: false,
 };
@@ -173,6 +173,8 @@ test.describe('Backup errors', () => {
 // its texts, a backup's date and size, the server's words and the restore dialog follow the
 // language; the server's message stays as it comes.
 test.describe('Backup & Restore in Russian', () => {
+  // UTC+05:45 all year: the server's UTC times are shown in the browser's time zone.
+  test.use({ timezoneId: 'Asia/Kathmandu' });
   const row = (page: Page, filename: string) =>
     page.locator('div.justify-between').filter({ has: page.getByText(filename, { exact: true }) });
 
@@ -205,10 +207,10 @@ test.describe('Backup & Restore in Russian', () => {
       page.getByRole('heading', { name: 'Резервное копирование и восстановление', exact: true }),
     ).toBeVisible();
     await expect(page.getByRole('heading', { name: 'Backup and Restore' })).toHaveCount(0);
-    // A backup's date (made at 03:04:05 on 2 January, local time) in the Russian format, its size
+    // A backup's date (made at 03:04:05 UTC on 2 January, 08:49:05 in Kathmandu) in the Russian format, its size
     // in Russian units with the Russian decimal separator, and the version of its format; an
     // encrypted one is marked so.
-    await expect(row(page, FAKE_BACKUP.filename).getByText(/02\.01\.2026, 03:04:05/)).toBeVisible();
+    await expect(row(page, FAKE_BACKUP.filename).getByText(/02\.01\.2026, 08:49:05/)).toBeVisible();
     await expect(row(page, FAKE_BACKUP.filename).getByText(/(^|\s)2 КБ(\s|$)/)).toBeVisible();
     await expect(row(page, encrypted.filename).getByText(/(^|\s)1,46 МБ(\s|$)/)).toBeVisible();
     await expect(row(page, FAKE_BACKUP.filename).getByText(/версия 1\.0/)).toBeVisible();

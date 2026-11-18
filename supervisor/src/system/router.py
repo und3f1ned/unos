@@ -5,6 +5,7 @@ import psutil
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 from .. import host
+from ..times import UtcDatetime, from_epoch
 from ..audit.changes import audit_change
 from ..audit.schemas import AuditAction
 from ..auth.utils import require_admin, verify_token
@@ -50,7 +51,7 @@ class SystemInfo(BaseModel):
     kernel: str
     os: str
     architecture: str
-    boot_time: float  # when the host booted, in seconds since the epoch
+    boot_time: UtcDatetime  # when the host booted (ADR-0401)
 
 
 @router.get("/info", response_model=SystemInfo)
@@ -60,7 +61,7 @@ async def get_system_info(_=Depends(verify_token)):
         kernel=platform.release(),
         os=get_distro_name(),
         architecture=platform.machine(),
-        boot_time=psutil.boot_time(),
+        boot_time=from_epoch(psutil.boot_time()),
     )
 
 

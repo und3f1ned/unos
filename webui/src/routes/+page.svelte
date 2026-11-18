@@ -22,6 +22,7 @@
   import { stats, wsConnected, wsForbidden, type WebSocketStats } from "$lib/stores/stats";
   import { user } from "$lib/stores/auth";
   import { intlLocale, t } from "$lib/i18n";
+  import { apiTime } from "$lib/time";
 
   let systemInfo: SystemInfo | null = null;
   let pools: Pool[] = [];
@@ -113,10 +114,11 @@
     await loadData();
   }
 
-  $: formatUptime = (bootTime: number): string => {
-    // bootTime is Unix timestamp of boot
-    const now = Date.now() / 1000;
-    const seconds = Math.floor(now - bootTime);
+  $: formatUptime = (bootTime: string): string => {
+    // bootTime is when the host booted, ISO 8601 with its offset (ADR-0401)
+    const booted = apiTime(bootTime);
+    if (!booted) return bootTime;
+    const seconds = Math.floor((Date.now() - booted.getTime()) / 1000);
     const days = Math.floor(seconds / 86400);
     const hours = Math.floor((seconds % 86400) / 3600);
     const minutes = Math.floor((seconds % 3600) / 60);

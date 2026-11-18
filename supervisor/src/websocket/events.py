@@ -79,13 +79,13 @@ import threading
 import time
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime
 from typing import Any
 
 import psutil
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
 
 from .. import host
+from ..times import utc_now
 from ..auth import scopes
 from ..auth.models import User
 from ..auth.utils import (
@@ -399,7 +399,7 @@ def get_system_stats() -> dict:
     # Top processes, listed at most every PROCESS_LIST_INTERVAL_SECONDS
     top_processes = _top_processes()
 
-    timestamp = datetime.now().isoformat()
+    timestamp = utc_now().isoformat()
 
     # Store previous values for next calculation
     _prev_net = net

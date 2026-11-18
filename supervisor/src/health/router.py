@@ -8,7 +8,6 @@ import threading
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
-from datetime import datetime
 from pathlib import Path
 from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks
 from pydantic import BaseModel, Field
@@ -16,6 +15,7 @@ from typing import Optional
 
 from . import problems
 from .. import host, state_files
+from ..times import stored_time_text, utc_now, utc_text
 from ..auth.utils import verify_token
 from ..security.validators import validate_pool_name
 from ..storage import disks as storage_disks
@@ -309,7 +309,7 @@ def collect_smart_snapshot(device: str) -> Optional[SmartHistoryEntry]:
 
         health_failed, failed_self_test = _health_verdicts(data)
         return SmartHistoryEntry(
-            timestamp=datetime.now().isoformat(),
+            timestamp=utc_text(utc_now()),
             device=device,
             serial=serial,
             attributes=attributes,
@@ -528,7 +528,7 @@ async def send_smart_alert(alert: SmartTrendAlert):
         type=NotificationType.ERROR if alert.severity == "critical" else NotificationType.WARNING,
         title=f"Disk Health Warning: {alert.device}",
         message=f"{alert.message}\n\nRecommendation: {alert.recommendation}",
-        timestamp=datetime.now().isoformat()
+        timestamp=utc_now(),
     )
     await _deliver_alert(event)
 
@@ -835,7 +835,7 @@ def _raid_health_of_pool(info: PoolInfo) -> RaidHealthInfo:
         status=info.health,
         devices=devices or [],
         total_errors=info.device_errors,
-        last_checked=datetime.now().isoformat(),
+        last_checked=utc_text(utc_now()),
         missing_devices=info.missing_devices,
         read_only=info.read_only,
         forced_read_only=info.forced_read_only,
@@ -999,7 +999,7 @@ async def send_raid_alert(pool: str, status: str, errors: int, details: str):
         type=NotificationType.ERROR if status == "error" else NotificationType.WARNING,
         title=f"RAID Pool '{pool}' {status.upper()}",
         message=f"Pool {pool} has detected {errors} error(s).\n\n{details}\n\nImmediate attention may be required.",
-        timestamp=datetime.now().isoformat()
+        timestamp=utc_now(),
     )
     await _deliver_alert(event)
 
@@ -1519,13 +1519,27 @@ def _clear_raid_errors(pool_name: str) -> None:
         save_raid_status(status)
 
 
+def _answered_raid_status(status: dict) -> dict:
+    """A RAID status with the times of its checks as the API answers them: a time that the file kept
+    without an offset is UTC (ADR-0401)."""
+    return {
+        pool: (
+            {**entry, "last_checked": stored_time_text(entry["last_checked"])}
+            if isinstance(entry, dict) and "last_checked" in entry else entry
+        )
+        for pool, entry in status.items()
+    }
+
+
 @router.get("/raid-monitor/status")
 async def get_raid_monitor_status(_: dict = Depends(verify_token)):
     """Get RAID monitor status."""
     return {
         "running": _raid_monitor_running,
         "check_interval_seconds": RAID_CHECK_INTERVAL,
-        "last_status": _latest_raid_status if _latest_raid_status is not None else load_previous_raid_status(),
+        "last_status": _answered_raid_status(
+            _latest_raid_status if _latest_raid_status is not None else load_previous_raid_status()
+        ),
     }
 
 
@@ -1540,7 +1554,8 @@ def get_smart_history(serial: str, _: dict = Depends(verify_token)):
     if serial not in history:
         raise HTTPException(404, f"No history found for serial: {serial}")
 
-    entries = history[serial]
+    # Times that the history kept without an offset are UTC (ADR-0401).
+    entries = [{**entry, "timestamp": stored_time_text(entry.get("timestamp"))} for entry in history[serial]]
     return {
         "serial": serial,
         "entries": len(entries),
@@ -1733,7 +1748,7 @@ def _histories_of_connected_disks(
         disk = by_path.get(entry.get("device"))
         if disk is None or (lsblk_serial and disk.serial != lsblk_serial):
             continue
-        taken = str(entry.get("timestamp", ""))
+        taken = str(stored_time_text(str(entry.get("timestamp", ""))))
         if disk.path not in by_place or taken > by_place[disk.path][0]:
             by_place[disk.path] = (taken, serial)
     owners = {path: serial for path, (_, serial) in by_place.items() if path not in by_identity}

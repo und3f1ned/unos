@@ -2,7 +2,7 @@ import asyncio
 import json
 import logging
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import timedelta
 from fastapi import APIRouter, Depends, HTTPException, Query, status, Request, Response
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -11,6 +11,7 @@ import pyotp
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 from ..database import get_db
+from ..times import db_now
 from ..audit.router import log_action
 from ..audit.schemas import AuditAction, AuditSeverity
 from ..security.validators import validate_new_username
@@ -1086,7 +1087,7 @@ async def create_api_token(
     # Calculate expiration if specified
     expires_at = None
     if data.expires_in_days:
-        expires_at = datetime.utcnow() + timedelta(days=data.expires_in_days)
+        expires_at = db_now() + timedelta(days=data.expires_in_days)
 
     # Create the token
     user_id = current_user.id

@@ -258,7 +258,7 @@ export interface ScrubStatus {
   rate: number | null;
   /** Every error of btrfs's error summary (read, super, verify and csum). */
   errors: number;
-  /** When the scrub started, as btrfs prints it. */
+  /** When the scrub started, in UTC with its offset (ADR-0401); null when btrfs printed none. */
   last_run: string | null;
 }
 

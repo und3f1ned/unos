@@ -24,6 +24,7 @@
   import { createTask, getTasks, type ScheduledTask } from "$lib/api/scheduler";
   import { Alert, Badge, Button, Card, Input } from "$lib/components/ui";
   import { intlLocale, t } from "$lib/i18n";
+  import { formatDateTime } from "$lib/time";
   import { Play, Plus, RefreshCw, RotateCcw, Trash2, UploadCloud, X } from "lucide-svelte";
 
   const dispatch = createEventDispatcher<{ restored: string }>();
@@ -144,7 +145,7 @@
     return source.slice(base.length + 1).split("/")[0] || null;
   }
 
-  $: when = (iso: string | null | undefined): string => (iso ? new Date(iso).toLocaleString($intlLocale) : "");
+  $: when = (iso: string | null | undefined): string => formatDateTime(iso, $intlLocale);
   $: stepText = (step: string | null): string =>
     step && Object.prototype.hasOwnProperty.call(STEPS, step) ? $t(STEPS[step]) : (step ?? "");
   $: warningText = (warning: { kind: string; message: string }): string =>

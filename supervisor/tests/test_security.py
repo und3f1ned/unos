@@ -935,7 +935,7 @@ class TestCertificateUploadLeavesNoTemporaryFile:
             "type": "self_signed",
             "domain": "nas.local",
             "issuer": "nas.local",
-            "valid_until": "Jan  1 00:00:00 2100 GMT",
+            "valid_until": "2100-01-01T00:00:00Z",  # openssl's "Jan  1 00:00:00 2100 GMT" (ADR-0401)
             "is_valid": True,
         }
         assert cert["fingerprint"]
