@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { Button } from '$lib/components/ui';
   import { page } from "$app/stores";
   import { goto } from "$app/navigation";
   import { isAdmin } from "$lib/stores/auth";
@@ -68,20 +69,20 @@
      above it, and the page scrolls as a whole (ADR-0302). -->
 <div class="flex flex-col md:flex-row md:h-full -m-4 md:-m-6">
   <!-- Sidebar tabs -->
-  <div class="md:w-56 md:shrink-0 bg-slate-800 border-b md:border-b-0 md:border-r border-slate-700 p-3 md:overflow-y-auto">
-    <h2 class="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3 px-2">{$isAdmin ? $t("system.heading.admin") : $t("system.heading.user")}</h2>
+  <div class="md:w-56 md:shrink-0 bg-surface-elevated border-b md:border-b-0 md:border-r border-border p-3 md:overflow-y-auto">
+    <h2 class="text-xs font-semibold text-content-muted uppercase tracking-wider mb-3 px-2">{$isAdmin ? $t("system.heading.admin") : $t("system.heading.user")}</h2>
     <nav class="flex flex-wrap gap-1 md:block md:space-y-1">
       {#each visibleTabs as tab}
-        <button
+        <Button variant="plain"
           on:click={() => setTab(tab.id)}
-          class="md:w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm transition-colors {activeTab === tab.id ? 'bg-blue-600 text-white' : 'text-slate-300 hover:bg-slate-700'}"
+          class="md:w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm transition-colors {activeTab === tab.id ? 'bg-brand text-content-on-brand' : 'text-content-soft hover:bg-surface-overlay'}"
         >
           <svelte:component this={tab.icon} class="w-4 h-4" />
           <span>{tab.label}</span>
           {#if activeTab === tab.id}
             <ChevronRight class="w-4 h-4 ml-auto hidden md:block" />
           {/if}
-        </button>
+        </Button>
       {/each}
     </nav>
   </div>

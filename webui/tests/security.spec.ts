@@ -212,7 +212,7 @@ test.describe('Security Settings', () => {
       await dialog.getByRole('button', { name: 'Generate', exact: true }).click();
       await expect(card.getByText('Certificate generated successfully')).toBeVisible();
 
-      const row = card.locator('div.bg-slate-700').filter({ has: page.getByText(domain, { exact: true }) });
+      const row = card.locator('div.bg-surface-overlay').filter({ has: page.getByText(domain, { exact: true }) });
       await expect(row.getByText('VALID', { exact: true })).toBeVisible();
       await expect(row.getByText('NOT SERVED', { exact: true })).toBeVisible();
       // The new certificate is valid, and still not what browsers get.
@@ -269,7 +269,7 @@ test.describe('Security Settings', () => {
       })).ok()).toBeTruthy();
       await page.goto('/system#security');
       await card.getByRole('button', { name: 'Manage', exact: true }).click();
-      const row = card.locator('div.bg-slate-700').filter({ has: page.getByText(domain, { exact: true }) });
+      const row = card.locator('div.bg-surface-overlay').filter({ has: page.getByText(domain, { exact: true }) });
       await expect(row).toBeVisible();
 
       // The delete succeeds, the reload after it fails: the deleted certificate is not listed.

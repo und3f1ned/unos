@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount, tick } from "svelte";
   import { ApiError } from "$lib/api/client";
-  import { Alert, Input } from "$lib/components/ui";
+  import { Alert, Input, Button } from "$lib/components/ui";
   import { intlLocale, t } from "$lib/i18n";
   import { listBackups, createBackup, deleteBackup, downloadBackup, uploadBackup, restoreBackup, formatBytes, type BackupInfo } from "$lib/api/backup";
   import { Archive, Plus, Trash2, RefreshCw, Clock, Download, Upload, RotateCcw, AlertTriangle, CheckCircle, Lock } from "lucide-svelte";
@@ -182,9 +182,8 @@
         bind:this={fileInput}
         on:change={handleFileSelected}
       />
-      <button
+      <Button variant="secondary" size="sm"
         on:click={handleUploadClick}
-        class="flex items-center gap-2 px-3 py-2 bg-slate-700 hover:bg-slate-600 rounded-lg text-sm"
         disabled={uploading}
       >
         {#if uploading}
@@ -193,10 +192,9 @@
           <Upload class="w-4 h-4" />
         {/if}
         {$t("backup.upload")}
-      </button>
-      <button
+      </Button>
+      <Button variant="primary" size="sm"
         on:click={handleCreate}
-        class="flex items-center gap-2 px-3 py-2 bg-blue-600 hover:bg-blue-500 rounded-lg text-sm"
         disabled={creating}
       >
         {#if creating}
@@ -205,7 +203,7 @@
           <Plus class="w-4 h-4" />
         {/if}
         {$t("backup.create")}
-      </button>
+      </Button>
     </div>
   </div>
 
@@ -218,13 +216,13 @@
     </div>
   {/if}
 
-  <div class="bg-slate-800 rounded-lg p-4">
+  <div class="bg-surface-elevated rounded-lg p-4">
     {#if loading}
       <div class="flex justify-center py-8">
-        <RefreshCw class="w-6 h-6 animate-spin text-blue-500" />
+        <RefreshCw class="w-6 h-6 animate-spin text-brand-ring" />
       </div>
     {:else if backups.length === 0}
-      <div class="text-center py-8 text-slate-400">
+      <div class="text-center py-8 text-content-secondary">
         <Archive class="w-10 h-10 mx-auto mb-2 opacity-50" />
         <p>{$t("backup.empty")}</p>
         <p class="text-sm mt-1">{$t("backup.emptyHint")}</p>
@@ -232,52 +230,49 @@
     {:else}
       <div class="space-y-2">
         {#each backups as backup}
-          <div class="flex items-center justify-between gap-2 p-3 bg-slate-700 rounded-lg">
+          <div class="flex items-center justify-between gap-2 p-3 bg-surface-overlay rounded-lg">
             <div class="flex items-center gap-3 min-w-0">
-              <Archive class="w-8 h-8 text-blue-400 shrink-0" />
+              <Archive class="w-8 h-8 text-status-info shrink-0" />
               <div class="min-w-0">
                 <p class="font-medium text-sm break-all">{backup.filename}</p>
-                <p class="text-xs text-slate-400 flex flex-wrap items-center gap-x-2">
+                <p class="text-xs text-content-secondary flex flex-wrap items-center gap-x-2">
                   <Clock class="w-3 h-3" />
                   {new Date(backup.created).toLocaleString($intlLocale)}
-                  <span class="text-slate-500">|</span>
+                  <span class="text-content-muted">|</span>
                   {formatBytes(backup.size, $intlLocale, sizeUnits)}
-                  <span class="text-slate-500">|</span>
+                  <span class="text-content-muted">|</span>
                   {backup.version === "unknown"
                     ? $t("backup.versionUnknown")
                     : $t("backup.version", { version: backup.version })}
                   {#if backup.encrypted}
-                    <span class="text-slate-500">|</span>
+                    <span class="text-content-muted">|</span>
                     <span class="flex items-center gap-1"><Lock class="w-3 h-3" />{$t("backup.encrypted")}</span>
                   {/if}
                 </p>
               </div>
             </div>
             <div class="flex shrink-0 items-center gap-1">
-              <button
+              <Button variant="ghost" size="icon" class="text-status-success hover:text-status-success"
                 on:click={() => openRestoreModal(backup)}
-                class="p-2 text-green-400 hover:bg-slate-600 rounded"
                 title={$t("backup.restore")}
                 aria-label={$t("backup.restoreOne", { name: backup.filename })}
               >
                 <RotateCcw class="w-4 h-4" />
-              </button>
-              <button
+              </Button>
+              <Button variant="ghost" size="icon" class="text-status-info hover:text-status-info"
                 on:click={() => handleDownload(backup.filename)}
-                class="p-2 text-blue-400 hover:bg-slate-600 rounded"
                 title={$t("backup.download")}
                 aria-label={$t("backup.downloadOne", { name: backup.filename })}
               >
                 <Download class="w-4 h-4" />
-              </button>
-              <button
+              </Button>
+              <Button variant="ghost" size="icon" class="text-status-error hover:text-status-error"
                 on:click={() => handleDelete(backup.filename)}
-                class="p-2 text-red-400 hover:bg-slate-600 rounded"
                 title={$t("backup.delete")}
                 aria-label={$t("backup.deleteOne", { name: backup.filename })}
               >
                 <Trash2 class="w-4 h-4" />
-              </button>
+              </Button>
             </div>
           </div>
         {/each}
@@ -298,46 +293,46 @@
         <!-- Result view -->
         <div class="text-center">
           {#if restoreResult.success}
-            <CheckCircle class="w-12 h-12 text-green-500 mx-auto mb-4" />
+            <CheckCircle class="w-12 h-12 text-status-success mx-auto mb-4" />
             <h3 class="text-lg font-bold mb-2">{$t("backup.dialog.complete")}</h3>
-            <p class="text-slate-400 text-sm mb-4">{restoreResult.message}</p>
+            <p class="text-content-secondary text-sm mb-4">{restoreResult.message}</p>
             {#if restoreResult.restored && restoreResult.restored.length > 0}
-              <div class="bg-slate-700 rounded p-3 mb-4 text-left">
-                <p class="text-xs text-slate-400 mb-2">{$t("backup.dialog.restored")}</p>
+              <div class="bg-surface-overlay rounded p-3 mb-4 text-left">
+                <p class="text-xs text-content-secondary mb-2">{$t("backup.dialog.restored")}</p>
                 <ul class="text-sm space-y-1">
                   {#each restoreResult.restored as item}
-                    <li class="text-green-400">- {itemLabel(item)}</li>
+                    <li class="text-status-success">- {itemLabel(item)}</li>
                   {/each}
                 </ul>
               </div>
             {/if}
           {:else}
-            <AlertTriangle class="w-12 h-12 text-red-500 mx-auto mb-4" />
+            <AlertTriangle class="w-12 h-12 text-status-error mx-auto mb-4" />
             <h3 class="text-lg font-bold mb-2">{$t("backup.dialog.failed")}</h3>
-            <p class="text-red-400 text-sm mb-4">{restoreResult.message}</p>
+            <p class="text-status-error text-sm mb-4">{restoreResult.message}</p>
           {/if}
-          <button
+          <Button variant="secondary"
             on:click={closeRestoreModal}
-            class="px-4 py-2 bg-slate-700 hover:bg-slate-600 rounded-lg"
+           
           >
             {$t("backup.dialog.close")}
-          </button>
+          </Button>
         </div>
       {:else}
         <!-- Confirmation view -->
         <div class="flex items-start gap-3 mb-4">
-          <AlertTriangle class="w-6 h-6 text-yellow-500 flex-shrink-0 mt-1" />
+          <AlertTriangle class="w-6 h-6 text-status-warning flex-shrink-0 mt-1" />
           <div>
             <h3 class="text-lg font-bold">{$t("backup.dialog.title")}</h3>
-            <p class="text-slate-400 text-sm mt-1">
-              {$t("backup.dialog.from")} <span class="text-white font-medium">{restoreTarget.filename}</span>
+            <p class="text-content-secondary text-sm mt-1">
+              {$t("backup.dialog.from")} <span class="text-content-on-brand font-medium">{restoreTarget.filename}</span>
             </p>
           </div>
         </div>
 
-        <div class="bg-slate-700 rounded p-3 mb-4">
-          <p class="text-yellow-400 text-sm">{$t("backup.dialog.warning")}</p>
-          <ul class="text-sm text-slate-300 mt-2 space-y-1">
+        <div class="bg-surface-overlay rounded p-3 mb-4">
+          <p class="text-status-warning text-sm">{$t("backup.dialog.warning")}</p>
+          <ul class="text-sm text-content-soft mt-2 space-y-1">
             <li>{$t("backup.dialog.database")}</li>
             <li>{$t("backup.dialog.shares")}</li>
           </ul>
@@ -356,7 +351,7 @@
         {/if}
 
         <div class="mb-4">
-          <label for="restoreConfirmName" class="block text-sm text-slate-400 mb-2">
+          <label for="restoreConfirmName" class="block text-sm text-content-secondary mb-2">
             {$t("backup.dialog.confirm")}
           </label>
           <input
@@ -364,23 +359,23 @@
             id="restoreConfirmName"
             bind:value={restoreConfirmName}
             placeholder={restoreTarget.filename}
-            class="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded-lg focus:border-blue-500 focus:outline-none text-sm"
+            class="form-input text-sm"
           />
         </div>
 
         <div class="flex gap-3">
-          <button
+          <Button variant="secondary" class="flex-1"
             on:click={closeRestoreModal}
-            class="flex-1 px-4 py-2 bg-slate-700 hover:bg-slate-600 rounded-lg"
+           
           >
             {$t("common.cancel")}
-          </button>
-          <button
+          </Button>
+          <Button variant="warning" class="flex-1"
             on:click={handleRestore}
             disabled={restoreConfirmName !== restoreTarget.filename ||
               (restoreTarget.encrypted && !restorePassphrase) ||
               restoring !== null}
-            class="flex-1 px-4 py-2 bg-yellow-600 hover:bg-yellow-500 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg flex items-center justify-center gap-2"
+           
           >
             {#if restoring}
               <RefreshCw class="w-4 h-4 animate-spin" />
@@ -389,7 +384,7 @@
               <RotateCcw class="w-4 h-4" />
               {$t("backup.restore")}
             {/if}
-          </button>
+          </Button>
         </div>
       {/if}
     </div>

@@ -457,21 +457,19 @@
 		aria-label={$t('shares.tabs.label')}
 	>
 		{#each tabs as tab (tab.id)}
-			<button
+			<Button variant="plain"
 				type="button"
 				role="tab"
 				id="shares-tab-{tab.id}"
 				aria-selected={activeTab === tab.id}
 				aria-controls="shares-panel"
 				tabindex={activeTab === tab.id ? 0 : -1}
-				class="px-4 py-2 rounded-md text-sm font-medium transition-colors {activeTab === tab.id
-					? 'bg-blue-600 text-white'
-					: 'text-secondary hover:text-content'}"
+			 class="tab-pill {activeTab === tab.id ? 'tab-pill-active' : ''}"
 				on:click={() => (activeTab = tab.id)}
 				on:keydown={(event) => tabKeydown(event, tab.id)}
 			>
 				{tab.label}
-			</button>
+			</Button>
 		{/each}
 	</div>
 

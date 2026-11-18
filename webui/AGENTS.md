@@ -29,8 +29,18 @@ and proxies `/api/*` and `/ws/*` to the supervisor (`webui/Caddyfile`).
   `tests/mobile-layout.spec.ts` walks every page, tab and main dialog at 375 x 812 in both
   languages, and the dialogs at 667 x 375 too: a new page, tab or dialog joins its `VIEWS`, a
   dialog with its `start` (title) and `end` (last button).
-- Older pages still have raw `<button>` elements and `slate-*` colours: markup you write or
-  change uses the components and the tokens.
+- Buttons are `Button` (`variant="plain"` for a tab, with `tab-pill` or `tab-underline`, or a
+  clickable card or row; `href` for a link that looks like a button), fields are `Input` and
+  `Select`, or a raw field with a `form-input` or `form-select` class when it needs an attribute
+  they lack. No `.svelte` file outside `ui` uses a palette colour (`bg-slate-700`, `text-red-400`, `text-white`; the classes a `.ts` module returns are for review): the
+  tokens above are the colours, and `brand`, `brand-hover`, `brand-ring`, `brand-disabled`,
+  `surface-hover`, `border-strong`, `content-soft`, `content-on-brand` and `status-neutral` cover
+  the rest; a dialog's backdrop is the class `scrim`. `npm run design` (`scripts/design-check.mjs`,
+  run by `make frontend`, tested by `supervisor/tests/test_webui_design_system.py`) fails for a
+  raw `<button>`, a raw `<a>` styled as a button, a raw text field, select or textarea without a
+  `form-*` class, and a raw palette class in a class attribute, a `class:` directive or a string
+  literal, outside `src/lib/components/ui`, and names the token to use (ADR-0398; the mapping is
+  in the ADR). `// design-ignore: <reason>` (an HTML comment above an element) exempts a use.
 
 ## Data
 
@@ -91,8 +101,8 @@ and proxies `/api/*` and `/ws/*` to the supervisor (`webui/Caddyfile`).
 ## Checks and build
 
 - `make frontend` runs `npm run check` (svelte-kit sync, then svelte-check `--threshold error`:
-  errors fail, warnings do not), `npm run i18n` (the texts, above) and `npm run build` (into
-  `webui/build`).
+  errors fail, warnings do not), `npm run i18n` (the texts, above), `npm run design` (the design
+  system, above) and `npm run build` (into `webui/build`).
 - `webui/node_modules` comes from `make setup` (`npm ci` from `package-lock.json`). A new
   dependency is the owner's call: it needs the network and a lockfile change.
 - The Node.js version of `webui/Dockerfile`, of `engines` in `package.json` and of CI agree;

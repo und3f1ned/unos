@@ -2,6 +2,7 @@
   import { Cpu, MemoryStick, Network, HardDrive, Activity, Wifi, WifiOff } from "lucide-svelte";
   import { stats, wsConnected, type WebSocketStats } from "$lib/stores/stats";
   import { intlLocale, t } from "$lib/i18n";
+  import { Badge } from "$lib/components/ui";
 
   // Local history for charts (built from WebSocket updates)
   let cpuHistory: number[] = [];
@@ -40,11 +41,11 @@
     });
 
   function getPercentColor(p: number): string {
-    return p < 70 ? "text-green-400" : p < 90 ? "text-yellow-400" : "text-red-400";
+    return p < 70 ? "text-status-success" : p < 90 ? "text-status-warning" : "text-status-error";
   }
 
   function getPercentBg(p: number): string {
-    return p < 70 ? "bg-green-500" : p < 90 ? "bg-yellow-500" : "bg-red-500";
+    return p < 70 ? "bg-status-success" : p < 90 ? "bg-status-warning" : "bg-status-error";
   }
 
   function miniChart(history: number[]): string {
@@ -63,7 +64,7 @@
   <div class="flex items-center justify-between">
     <h2 class="text-xl font-bold">{$t("monitor.title")}</h2>
     <div class="flex items-center gap-2">
-      <span class="flex items-center gap-1 px-3 py-1.5 text-sm rounded-lg transition-colors {$wsConnected ? 'bg-green-600' : 'bg-red-600'}">
+      <Badge variant={$wsConnected ? 'success' : 'error'} class="gap-1">
         {#if $wsConnected}
           <Wifi class="w-4 h-4" />
           {$t("monitor.live")}
@@ -71,22 +72,22 @@
           <WifiOff class="w-4 h-4" />
           {$t("monitor.disconnected")}
         {/if}
-      </span>
+      </Badge>
     </div>
   </div>
 
   {#if !currentStats?.cpu}
     <div class="flex items-center justify-center py-12">
-      <div class="text-slate-400">{$t("monitor.waiting")}</div>
+      <div class="text-content-secondary">{$t("monitor.waiting")}</div>
     </div>
   {:else}
     <!-- Stats Grid -->
     <div class="grid grid-cols-2 lg:grid-cols-4 gap-4">
       <!-- CPU -->
-      <div class="bg-slate-800 rounded-lg p-4">
+      <div class="bg-surface-elevated rounded-lg p-4">
         <div class="flex items-center gap-2 mb-2">
-          <Cpu class="w-5 h-5 text-blue-400" />
-          <span class="text-slate-400 text-sm">{$t("monitor.cpu")}</span>
+          <Cpu class="w-5 h-5 text-status-info" />
+          <span class="text-content-secondary text-sm">{$t("monitor.cpu")}</span>
         </div>
         <p class="text-2xl font-bold {getPercentColor(currentStats.cpu.percent)}">{percent(currentStats.cpu.percent)}</p>
         <div class="h-6 mt-2">
@@ -97,47 +98,47 @@
       </div>
 
       <!-- Memory -->
-      <div class="bg-slate-800 rounded-lg p-4">
+      <div class="bg-surface-elevated rounded-lg p-4">
         <div class="flex items-center gap-2 mb-2">
-          <MemoryStick class="w-5 h-5 text-purple-400" />
-          <span class="text-slate-400 text-sm">{$t("monitor.memory")}</span>
+          <MemoryStick class="w-5 h-5 text-accent-memory" />
+          <span class="text-content-secondary text-sm">{$t("monitor.memory")}</span>
         </div>
         <p class="text-2xl font-bold {getPercentColor(currentStats.memory.percent)}">{percent(currentStats.memory.percent)}</p>
-        <p class="text-xs text-slate-500">{amount(currentStats.memory.used, SIZE_UNITS)} / {amount(currentStats.memory.total, SIZE_UNITS)}</p>
+        <p class="text-xs text-content-muted">{amount(currentStats.memory.used, SIZE_UNITS)} / {amount(currentStats.memory.total, SIZE_UNITS)}</p>
       </div>
 
       <!-- Network -->
-      <div class="bg-slate-800 rounded-lg p-4">
+      <div class="bg-surface-elevated rounded-lg p-4">
         <div class="flex items-center gap-2 mb-2">
-          <Network class="w-5 h-5 text-green-400" />
-          <span class="text-slate-400 text-sm">{$t("monitor.network")}</span>
+          <Network class="w-5 h-5 text-status-success" />
+          <span class="text-content-secondary text-sm">{$t("monitor.network")}</span>
         </div>
-        <p class="text-sm">↓ <span class="text-green-400 font-semibold">{amount(currentStats.network.bytes_recv_rate, RATE_UNITS)}</span></p>
-        <p class="text-sm">↑ <span class="text-orange-400 font-semibold">{amount(currentStats.network.bytes_sent_rate, RATE_UNITS)}</span></p>
+        <p class="text-sm">↓ <span class="text-status-success font-semibold">{amount(currentStats.network.bytes_recv_rate, RATE_UNITS)}</span></p>
+        <p class="text-sm">↑ <span class="text-accent-temperature font-semibold">{amount(currentStats.network.bytes_sent_rate, RATE_UNITS)}</span></p>
       </div>
 
       <!-- Disk I/O -->
-      <div class="bg-slate-800 rounded-lg p-4">
+      <div class="bg-surface-elevated rounded-lg p-4">
         <div class="flex items-center gap-2 mb-2">
-          <HardDrive class="w-5 h-5 text-yellow-400" />
-          <span class="text-slate-400 text-sm">{$t("monitor.diskIo")}</span>
+          <HardDrive class="w-5 h-5 text-status-warning" />
+          <span class="text-content-secondary text-sm">{$t("monitor.diskIo")}</span>
         </div>
-        <p class="text-sm">{$t("monitor.read")} <span class="text-green-400 font-semibold">{amount(currentStats.disk_io.read_rate, RATE_UNITS)}</span></p>
-        <p class="text-sm">{$t("monitor.write")} <span class="text-red-400 font-semibold">{amount(currentStats.disk_io.write_rate, RATE_UNITS)}</span></p>
+        <p class="text-sm">{$t("monitor.read")} <span class="text-status-success font-semibold">{amount(currentStats.disk_io.read_rate, RATE_UNITS)}</span></p>
+        <p class="text-sm">{$t("monitor.write")} <span class="text-status-error font-semibold">{amount(currentStats.disk_io.write_rate, RATE_UNITS)}</span></p>
       </div>
     </div>
 
     <!-- CPU Cores -->
     {#if currentStats.cpu.per_core.length > 1}
-      <div class="bg-slate-800 rounded-lg p-4">
+      <div class="bg-surface-elevated rounded-lg p-4">
         <h3 class="text-sm font-semibold mb-3">{$t("monitor.cores")}</h3>
         <div class="grid grid-cols-8 gap-2">
           {#each currentStats.cpu.per_core as core, i}
             <div class="text-center">
-              <div class="h-12 bg-slate-700 rounded relative overflow-hidden">
+              <div class="h-12 bg-surface-overlay rounded relative overflow-hidden">
                 <div class="absolute bottom-0 left-0 right-0 {getPercentBg(core)}" style="height: {core}%"></div>
               </div>
-              <p class="text-xs mt-1 text-slate-500">{i}</p>
+              <p class="text-xs mt-1 text-content-muted">{i}</p>
             </div>
           {/each}
         </div>
@@ -145,7 +146,7 @@
     {/if}
 
     <!-- Top Processes -->
-    <div class="bg-slate-800 rounded-lg p-4">
+    <div class="bg-surface-elevated rounded-lg p-4">
       <h3 class="text-sm font-semibold mb-3 flex items-center gap-2">
         <Activity class="w-4 h-4" />
         {$t("monitor.processes")}
@@ -153,7 +154,7 @@
       <div class="table-frame">
         <table class="w-full text-sm">
           <thead>
-            <tr class="text-slate-400 text-xs">
+            <tr class="text-content-secondary text-xs">
               <th class="text-left py-1">{$t("monitor.process.name")}</th>
               <th class="text-right py-1">{$t("monitor.process.cpu")}</th>
               <th class="text-right py-1">{$t("monitor.process.memory")}</th>
@@ -162,11 +163,11 @@
           </thead>
           <tbody>
             {#each currentStats.processes.slice(0, 8) as proc}
-              <tr class="border-t border-slate-700/50">
+              <tr class="border-t border-border-muted">
                 <td class="py-1.5 font-mono break-all">{proc.name}</td>
                 <td class="py-1.5 text-right {getPercentColor(proc.cpu_percent)}">{percent(proc.cpu_percent)}</td>
                 <td class="py-1.5 text-right">{$t("monitor.size.mb", { value: proc.memory_mb.toFixed(0) })}</td>
-                <td class="py-1.5 text-slate-500">{proc.username}</td>
+                <td class="py-1.5 text-content-muted">{proc.username}</td>
               </tr>
             {/each}
           </tbody>

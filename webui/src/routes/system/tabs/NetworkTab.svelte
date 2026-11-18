@@ -488,7 +488,7 @@
         {@const ifaceIsUp = iface.state === "UP"}
         <section class="card p-0 overflow-hidden" aria-label={$t("network.interface.label", { name: iface.name })}>
           <!-- Interface Header -->
-          <button
+          <Button variant="plain"
             class="w-full p-4 flex items-center justify-between hover:bg-surface-overlay transition-colors"
             aria-expanded={expandedInterface === iface.name}
             on:click={() => toggleExpand(iface.name)}
@@ -543,7 +543,7 @@
                 <ChevronDown class="w-5 h-5 text-content-muted" />
               {/if}
             </div>
-          </button>
+          </Button>
 
           <!-- Expanded Details -->
           {#if expandedInterface === iface.name}

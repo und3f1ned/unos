@@ -16,7 +16,7 @@
     type ScheduleFrequency,
   } from "$lib/api/scheduler";
   import { getPools, getDisks, type Pool, type Disk } from "$lib/api/storage";
-  import { Input } from "$lib/components/ui";
+  import { Input, Button } from "$lib/components/ui";
   import { intlLocale, t } from "$lib/i18n";
   import {
     Calendar,
@@ -354,13 +354,13 @@
   function getStatusColor(status?: string): string {
     switch (status) {
       case "success":
-        return "text-green-400";
+        return "text-status-success";
       case "failed":
-        return "text-red-400";
+        return "text-status-error";
       case "running":
-        return "text-yellow-400";
+        return "text-status-warning";
       default:
-        return "text-slate-500";
+        return "text-content-muted";
     }
   }
 
@@ -382,23 +382,23 @@
   <div class="flex flex-wrap items-center justify-between gap-3">
     <h2 class="text-xl font-bold">{$t("scheduler.title")}</h2>
     <div class="flex flex-wrap gap-2">
-      <button
+      <Button variant="secondary" size="sm"
         on:click={() => openHistoryModal()}
-        class="flex items-center gap-2 px-3 py-2 bg-slate-700 hover:bg-slate-600 rounded-lg text-sm"
+       
       >
         <History class="w-4 h-4" />
         {$t("scheduler.history")}
-      </button>
-      <button on:click={loadTasks} class="p-2 bg-slate-700 rounded-lg hover:bg-slate-600" title={$t("common.refresh")}>
+      </Button>
+      <Button variant="secondary" size="icon" on:click={loadTasks} title={$t("common.refresh")}>
         <RefreshCw class="w-4 h-4 {loading ? 'animate-spin' : ''}" />
-      </button>
-      <button
+      </Button>
+      <Button variant="primary" size="sm"
         on:click={openCreateModal}
-        class="flex items-center gap-2 px-3 py-2 bg-blue-600 hover:bg-blue-500 rounded-lg text-sm"
+       
       >
         <Plus class="w-4 h-4" />
         {$t("scheduler.newTask")}
-      </button>
+      </Button>
     </div>
   </div>
   {#if timeZone}
@@ -406,13 +406,13 @@
   {/if}
 
   <!-- Task List -->
-  <div class="bg-slate-800 rounded-lg p-4">
+  <div class="bg-surface-elevated rounded-lg p-4">
     {#if loading}
       <div class="flex justify-center py-8">
-        <RefreshCw class="w-6 h-6 animate-spin text-blue-500" />
+        <RefreshCw class="w-6 h-6 animate-spin text-brand-ring" />
       </div>
     {:else if tasks.length === 0}
-      <div class="text-center py-8 text-slate-400">
+      <div class="text-center py-8 text-content-secondary">
         <Calendar class="w-10 h-10 mx-auto mb-2 opacity-50" />
         <p>{$t("scheduler.empty")}</p>
         <p class="text-sm mt-1">{$t("scheduler.emptyHint")}</p>
@@ -422,14 +422,14 @@
         {#each tasks as task}
           {@const TypeIcon = getTaskTypeIcon(task.task_type)}
           <!-- Below sm the actions wrap below the task, which keeps the row's width (ADR-0302). -->
-          <div class="flex flex-wrap gap-y-2 items-center justify-between p-3 bg-slate-700 rounded-lg">
+          <div class="flex flex-wrap gap-y-2 items-center justify-between p-3 bg-surface-overlay rounded-lg">
             <div class="flex items-center gap-3 flex-1 max-sm:basis-full min-w-0">
               <!-- Enable/Disable Toggle -->
-              <button
+              <Button variant="plain"
                 on:click={() => handleToggleTask(task)}
-                class="p-1.5 rounded hover:bg-slate-600 transition-colors {task.enabled
-                  ? 'text-green-400'
-                  : 'text-slate-500'}"
+                class="p-1.5 rounded hover:bg-surface-hover transition-colors {task.enabled
+                  ? 'text-status-success'
+                  : 'text-content-muted'}"
                 title={task.enabled ? $t("scheduler.task.disable") : $t("scheduler.task.enable")}
               >
                 {#if task.enabled}
@@ -437,12 +437,12 @@
                 {:else}
                   <Pause class="w-5 h-5" />
                 {/if}
-              </button>
+              </Button>
 
               <!-- Task Info -->
               <div class="flex-1 min-w-0">
                 <div class="flex items-center gap-2">
-                  <TypeIcon class="w-4 h-4 text-blue-400 flex-shrink-0" />
+                  <TypeIcon class="w-4 h-4 text-status-info flex-shrink-0" />
                   <p class="font-medium text-sm truncate">{task.name}</p>
                   {#if task.last_status}
                     <span class={getStatusColor(task.last_status)}>
@@ -454,7 +454,7 @@
                     </span>
                   {/if}
                 </div>
-                <p class="text-xs text-slate-400 truncate">
+                <p class="text-xs text-content-secondary truncate">
                   {getTaskTypeLabel(task.task_type)}
                   {#if task.target_pool}
                     {$t("scheduler.task.on", { target: task.target_pool })}
@@ -467,7 +467,7 @@
 
               <!-- Next Run -->
               {#if task.enabled && task.next_run}
-                <div class="hidden sm:flex flex-col items-end text-xs text-slate-500">
+                <div class="hidden sm:flex flex-col items-end text-xs text-content-muted">
                   <span class="flex items-center gap-1">
                     <Clock class="w-3 h-3" />
                     {$t("scheduler.task.nextRun")}
@@ -479,10 +479,9 @@
 
             <!-- Actions -->
             <div class="flex items-center gap-1 ml-2 max-sm:ml-auto">
-              <button
+              <Button variant="ghost" size="icon" class="text-status-warning hover:text-status-warning"
                 on:click={() => handleRunNow(task)}
                 disabled={runningTaskId === task.id}
-                class="p-2 text-yellow-400 hover:bg-slate-600 rounded disabled:opacity-50"
                 title={$t("scheduler.task.runNow")}
               >
                 {#if runningTaskId === task.id}
@@ -490,28 +489,25 @@
                 {:else}
                   <Zap class="w-4 h-4" />
                 {/if}
-              </button>
-              <button
+              </Button>
+              <Button variant="ghost" size="icon" class="text-content-secondary"
                 on:click={() => openHistoryModal(task.id, task.name)}
-                class="p-2 text-slate-400 hover:bg-slate-600 rounded"
                 title={$t("scheduler.task.viewHistory")}
               >
                 <History class="w-4 h-4" />
-              </button>
-              <button
+              </Button>
+              <Button variant="ghost" size="icon" class="text-status-info hover:text-status-info"
                 on:click={() => openEditModal(task)}
-                class="p-2 text-blue-400 hover:bg-slate-600 rounded"
                 title={$t("scheduler.task.edit")}
               >
                 <Edit3 class="w-4 h-4" />
-              </button>
-              <button
+              </Button>
+              <Button variant="ghost" size="icon" class="text-status-error hover:text-status-error"
                 on:click={() => handleDeleteTask(task)}
-                class="p-2 text-red-400 hover:bg-slate-600 rounded"
                 title={$t("scheduler.task.delete")}
               >
                 <Trash2 class="w-4 h-4" />
-              </button>
+              </Button>
             </div>
           </div>
         {/each}
@@ -523,13 +519,13 @@
 <!-- Create/Edit Task Modal -->
 {#if showTaskModal}
   <div class="modal-overlay p-4">
-    <div class="bg-slate-800 rounded-lg w-full max-w-lg max-h-[90vh] overflow-y-auto">
+    <div class="bg-surface-elevated rounded-lg w-full max-w-lg max-h-[90vh] overflow-y-auto">
       <!-- Modal Header -->
-      <div class="flex items-center justify-between p-4 border-b border-slate-700">
+      <div class="flex items-center justify-between p-4 border-b border-border">
         <h3 class="text-lg font-bold">{editingTask ? $t("scheduler.form.editTitle") : $t("scheduler.form.createTitle")}</h3>
-        <button on:click={closeTaskModal} class="p-1 hover:bg-slate-700 rounded">
+        <Button variant="ghost" size="icon-sm" on:click={closeTaskModal}>
           <X class="w-5 h-5" />
-        </button>
+        </Button>
       </div>
 
       <!-- Modal Body -->
@@ -565,7 +561,7 @@
           <div>
             <label for="task-target-pool" class="form-label">{$t("scheduler.form.pool")}</label>
             {#if pools.length === 0}
-              <p class="text-sm text-yellow-400">{$t("scheduler.form.noPools")}</p>
+              <p class="text-sm text-status-warning">{$t("scheduler.form.noPools")}</p>
             {:else}
               <select
                 id="task-target-pool"
@@ -585,7 +581,7 @@
           <div>
             <label for="task-target-disk" class="form-label">{$t("scheduler.form.disk")}</label>
             {#if disks.length === 0 && !storedDisk}
-              <p class="text-sm text-yellow-400">{$t("scheduler.form.noDisks")}</p>
+              <p class="text-sm text-status-warning">{$t("scheduler.form.noDisks")}</p>
             {:else}
               <!-- Made again when the extra option goes (the disk list arrived and has
                    the disk): Svelte selects the bound value when it changes, not when
@@ -641,7 +637,7 @@
               max="100"
               class="form-input"
             />
-            <p class="text-xs text-slate-500 mt-1">
+            <p class="text-xs text-content-muted mt-1">
               {formData.task_type === "backup" ? $t("scheduler.form.keepBackups") : $t("scheduler.form.keepSnapshots")}
             </p>
           </div>
@@ -671,7 +667,7 @@
           />
         {/if}
 
-        <hr class="border-slate-700" />
+        <hr class="border-border" />
 
         <!-- Schedule Frequency -->
         <div>
@@ -699,7 +695,7 @@
               aria-describedby={timeZoneHint}
               class="form-input font-mono"
             />
-            <p class="text-xs text-slate-500 mt-1">{$t("scheduler.form.cronFormat")}</p>
+            <p class="text-xs text-content-muted mt-1">{$t("scheduler.form.cronFormat")}</p>
           </div>
         {:else}
           <!-- Time Selection -->
@@ -777,21 +773,21 @@
             type="checkbox"
             id="task-enabled"
             bind:checked={formData.enabled}
-            class="w-4 h-4 rounded bg-slate-900 border-slate-600 text-blue-500 focus:ring-blue-500"
+            class="w-4 h-4 rounded bg-surface border-border-strong text-brand-ring focus:ring-brand-ring"
           />
           <label for="task-enabled" class="text-sm">{$t("scheduler.task.enable")}</label>
         </div>
       </div>
 
       <!-- Modal Footer -->
-      <div class="flex gap-3 p-4 border-t border-slate-700">
-        <button on:click={closeTaskModal} class="flex-1 px-4 py-2 bg-slate-700 hover:bg-slate-600 rounded-lg">
+      <div class="flex gap-3 p-4 border-t border-border">
+        <Button variant="secondary" class="flex-1" on:click={closeTaskModal}>
           {$t("common.cancel")}
-        </button>
-        <button
+        </Button>
+        <Button variant="primary" class="flex-1"
           on:click={handleSaveTask}
           disabled={saving || waitsForPassphrase}
-          class="flex-1 px-4 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 rounded-lg flex items-center justify-center gap-2"
+         
         >
           {#if saving}
             <RefreshCw class="w-4 h-4 animate-spin" />
@@ -799,7 +795,7 @@
           {:else}
             {editingTask ? $t("scheduler.form.save") : $t("scheduler.form.create")}
           {/if}
-        </button>
+        </Button>
       </div>
     </div>
   </div>
@@ -808,49 +804,49 @@
 <!-- History Modal -->
 {#if showHistoryModal}
   <div class="modal-overlay p-4">
-    <div class="bg-slate-800 rounded-lg w-full max-w-2xl max-h-[80vh] flex flex-col">
+    <div class="bg-surface-elevated rounded-lg w-full max-w-2xl max-h-[80vh] flex flex-col">
       <!-- Modal Header -->
-      <div class="flex items-center justify-between p-4 border-b border-slate-700">
+      <div class="flex items-center justify-between p-4 border-b border-border">
         <h3 class="text-lg font-bold">
           {$t("scheduler.runs.title", {
             name: historyTaskId ? historyTaskName || $t("scheduler.runs.task") : $t("scheduler.runs.allTasks"),
           })}
         </h3>
-        <button on:click={closeHistoryModal} class="p-1 hover:bg-slate-700 rounded">
+        <Button variant="ghost" size="icon-sm" on:click={closeHistoryModal}>
           <X class="w-5 h-5" />
-        </button>
+        </Button>
       </div>
 
       <!-- Modal Body -->
       <div class="flex-1 overflow-y-auto p-4">
         {#if runs.length === 0}
-          <div class="text-center py-8 text-slate-400">
+          <div class="text-center py-8 text-content-secondary">
             <History class="w-10 h-10 mx-auto mb-2 opacity-50" />
             <p>{$t("scheduler.runs.empty")}</p>
           </div>
         {:else}
           <div class="space-y-2">
             {#each runs as run}
-              <div class="p-3 bg-slate-700 rounded-lg">
+              <div class="p-3 bg-surface-overlay rounded-lg">
                 <div class="flex items-center justify-between mb-2">
                   <div class="flex items-center gap-2">
                     {#if run.status === "success"}
-                      <CheckCircle class="w-4 h-4 text-green-400" />
+                      <CheckCircle class="w-4 h-4 text-status-success" />
                     {:else if run.status === "failed"}
-                      <XCircle class="w-4 h-4 text-red-400" />
+                      <XCircle class="w-4 h-4 text-status-error" />
                     {:else}
-                      <RefreshCw class="w-4 h-4 text-yellow-400 animate-spin" />
+                      <RefreshCw class="w-4 h-4 text-status-warning animate-spin" />
                     {/if}
                     <span class="font-medium text-sm">{run.task_name}</span>
                     <span class="text-xs px-2 py-0.5 rounded {run.status === 'success'
-                      ? 'bg-green-500/20 text-green-400'
+                      ? 'bg-status-success/20 text-status-success'
                       : run.status === 'failed'
-                        ? 'bg-red-500/20 text-red-400'
-                        : 'bg-yellow-500/20 text-yellow-400'}">
+                        ? 'bg-status-error/20 text-status-error'
+                        : 'bg-status-warning/20 text-status-warning'}">
                       {getStatusLabel(run.status)}
                     </span>
                   </div>
-                  <span class="text-xs text-slate-500">{formatDuration(run.started_at, run.finished_at)}</span>
+                  <span class="text-xs text-content-muted">{formatDuration(run.started_at, run.finished_at)}</span>
                 </div>
                 <div class="flex flex-wrap gap-x-3 text-xs text-content-secondary">
                   <span>{new Date(run.started_at).toLocaleString($intlLocale)}</span>
@@ -859,14 +855,14 @@
                   {/if}
                 </div>
                 {#if run.error}
-                  <div class="mt-2 p-2 bg-red-500/10 rounded text-xs text-red-400 font-mono break-all">
+                  <div class="mt-2 p-2 bg-status-error/10 rounded text-xs text-status-error font-mono break-all">
                     {run.error}
                   </div>
                 {/if}
                 {#if run.output}
                   <details class="mt-2">
-                    <summary class="text-xs text-slate-500 cursor-pointer hover:text-slate-400">{$t("scheduler.runs.output")}</summary>
-                    <div class="mt-1 p-2 bg-slate-900 rounded text-xs text-slate-300 font-mono whitespace-pre-wrap break-all max-h-32 overflow-y-auto">
+                    <summary class="text-xs text-content-muted cursor-pointer hover:text-content-secondary">{$t("scheduler.runs.output")}</summary>
+                    <div class="mt-1 p-2 bg-surface rounded text-xs text-content-soft font-mono whitespace-pre-wrap break-all max-h-32 overflow-y-auto">
                       {run.output}
                     </div>
                   </details>
@@ -878,10 +874,10 @@
       </div>
 
       <!-- Modal Footer -->
-      <div class="p-4 border-t border-slate-700">
-        <button on:click={closeHistoryModal} class="w-full px-4 py-2 bg-slate-700 hover:bg-slate-600 rounded-lg">
+      <div class="p-4 border-t border-border">
+        <Button variant="secondary" class="w-full" on:click={closeHistoryModal}>
           {$t("scheduler.runs.close")}
-        </button>
+        </Button>
       </div>
     </div>
   </div>

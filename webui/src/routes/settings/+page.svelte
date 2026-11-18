@@ -9,5 +9,5 @@
 </script>
 
 <div class="flex items-center justify-center h-64">
-  <p class="text-slate-500">{$t('general.redirecting')}</p>
+  <p class="text-content-muted">{$t('general.redirecting')}</p>
 </div>

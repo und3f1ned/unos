@@ -167,19 +167,19 @@ export function getPriorityColor(priority: string): string {
     case "emerg":
     case "alert":
     case "crit":
-      return "text-red-500";
+      return "text-status-error";
     case "err":
-      return "text-red-400";
+      return "text-status-error";
     case "warning":
-      return "text-yellow-400";
+      return "text-status-warning";
     case "notice":
-      return "text-blue-400";
+      return "text-status-info";
     case "info":
-      return "text-slate-300";
+      return "text-content-soft";
     case "debug":
-      return "text-slate-500";
+      return "text-content-muted";
     default:
-      return "text-slate-400";
+      return "text-content-secondary";
   }
 }
 
@@ -188,19 +188,19 @@ export function getPriorityBadgeColor(priority: string): string {
     case "emerg":
     case "alert":
     case "crit":
-      return "bg-red-600";
+      return "bg-status-error";
     case "err":
-      return "bg-red-500";
+      return "bg-status-error";
     case "warning":
-      return "bg-yellow-500";
+      return "bg-status-warning";
     case "notice":
-      return "bg-blue-500";
+      return "bg-brand";
     case "info":
-      return "bg-slate-600";
+      return "bg-surface-hover";
     case "debug":
-      return "bg-slate-700";
+      return "bg-surface-overlay";
     default:
-      return "bg-slate-600";
+      return "bg-surface-hover";
   }
 }
 

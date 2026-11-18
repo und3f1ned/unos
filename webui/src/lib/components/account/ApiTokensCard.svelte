@@ -327,7 +327,7 @@
 				<input
 					type="radio"
 					name="api-token-access"
-					class="mt-1 border-border bg-surface-overlay text-blue-600 focus:ring-blue-500"
+					class="mt-1 border-border bg-surface-overlay text-brand focus:ring-brand-ring"
 					value={true}
 					bind:group={readOnly}
 					disabled={saving}
@@ -341,7 +341,7 @@
 				<input
 					type="radio"
 					name="api-token-access"
-					class="mt-1 border-border bg-surface-overlay text-blue-600 focus:ring-blue-500"
+					class="mt-1 border-border bg-surface-overlay text-brand focus:ring-brand-ring"
 					value={false}
 					bind:group={readOnly}
 					disabled={saving}
@@ -359,7 +359,7 @@
 				<input
 					type="radio"
 					name="api-token-areas"
-					class="mt-1 border-border bg-surface-overlay text-blue-600 focus:ring-blue-500"
+					class="mt-1 border-border bg-surface-overlay text-brand focus:ring-brand-ring"
 					value={true}
 					bind:group={everyArea}
 					disabled={saving}
@@ -373,7 +373,7 @@
 				<input
 					type="radio"
 					name="api-token-areas"
-					class="mt-1 border-border bg-surface-overlay text-blue-600 focus:ring-blue-500"
+					class="mt-1 border-border bg-surface-overlay text-brand focus:ring-brand-ring"
 					value={false}
 					bind:group={everyArea}
 					disabled={saving}

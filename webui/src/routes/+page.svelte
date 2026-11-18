@@ -270,11 +270,11 @@
        long host name breaks (ADR-0302). -->
   <div class="flex flex-wrap items-center justify-between gap-3">
     <div class="flex items-center gap-3 min-w-0">
-      <Server class="w-8 h-8 text-blue-500 flex-shrink-0" />
+      <Server class="w-8 h-8 text-brand-ring flex-shrink-0" />
       <div class="min-w-0">
         <h1 class="text-2xl font-bold break-words">{systemInfo?.hostname || $t("common.product")}</h1>
         {#if systemInfo}
-          <p class="text-sm text-slate-400">
+          <p class="text-sm text-content-secondary">
             {$t("dashboard.osUptime", { os: systemInfo.os, uptime: formatUptime(systemInfo.boot_time) })}
           </p>
         {/if}
@@ -286,7 +286,7 @@
       {:else if !$wsConnected}
         <span class="text-xs text-warning">{$t("dashboard.disconnected")}</span>
       {:else if lastUpdate}
-        <span class="text-xs text-slate-500 flex items-center gap-1">
+        <span class="text-xs text-content-muted flex items-center gap-1">
           <Clock class="w-3 h-3" />
           {$t("dashboard.updated", { time: formatTime(lastUpdate) })}
         </span>
@@ -308,7 +308,7 @@
 
   {#if loading && !currentStats}
     <div class="flex items-center justify-center py-12">
-      <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500"></div>
+      <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-brand-ring"></div>
     </div>
   {:else}
     <!-- The disks to replace stay above the widgets, always: a warning is not one of them. -->
@@ -373,7 +373,7 @@
           data-widget={entry.id}
           class="widget min-w-0 flex flex-col {def?.size === 'wide' ? 'col-span-2 md:col-span-6 xl:col-span-5' : 'col-span-1 md:col-span-2'}
             {arranging ? 'rounded-lg border border-dashed border-border p-1' : ''}
-            {overId === entry.id && draggedId !== entry.id ? 'ring-2 ring-blue-500' : ''}
+            {overId === entry.id && draggedId !== entry.id ? 'ring-2 ring-brand-ring' : ''}
             {draggedId === entry.id ? 'opacity-50' : ''}"
           on:dragover={(e) => onDragOver(e, entry.id)}
           on:drop={(e) => onDrop(e, entry.id)}
