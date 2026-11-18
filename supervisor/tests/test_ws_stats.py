@@ -1,5 +1,9 @@
 """The stats message of /ws/v1/events (ADR-0006, ADR-0374)."""
 
+import os
+import pwd
+import threading
+from collections import namedtuple
 from types import SimpleNamespace
 
 import psutil
@@ -20,7 +24,10 @@ def clock(monkeypatch):
     monkeypatch.setattr(events, "_prev_time", None)
     monkeypatch.setattr(events, "_prev_net", {})
     monkeypatch.setattr(events, "_prev_disks", {})
+    monkeypatch.setattr(events, "_prev_cpu", None)
     monkeypatch.setattr(events, "_net_unreadable_logged", False)
+    monkeypatch.setattr(events, "_host_users", None)
+    monkeypatch.setattr(events, "_passwd_unreadable_logged", False)
     return now
 
 
@@ -221,6 +228,9 @@ def test_a_sample_after_a_gap_gives_no_rates_of_the_gap(clock, host_net_dev, hos
     next_one = events.get_system_stats()["data"]
 
     assert events.RATE_MAX_GAP_SECONDS >= 3 * events.STATS_INTERVAL_SECONDS
+    # The seconds the rates are over, which the Resource Monitor needs to draw no point of a sample
+    # without rates (ADR-0398).
+    assert (after_the_gap["sample_seconds"], next_one["sample_seconds"]) == (0, 2)
     network, disks = after_the_gap["network"], after_the_gap["disk_io"]
     assert (network["bytes_recv_rate"], network["bytes_sent_rate"]) == (0.0, 0.0)
     assert (disks["read_rate"], disks["write_rate"]) == (0.0, 0.0)
@@ -337,7 +347,7 @@ def test_the_process_list_is_taken_at_most_every_process_list_interval(monkeypat
 def test_only_the_listed_processes_are_read_in_full(monkeypatch, clock):
     """Name, memory, status and user of each of 311 processes cost a K1 0.41 s of CPU, the CPU
     share alone 0.13 s: the listing reads the CPU share of every process and the rest for the ten
-    on the dashboard only (ADR-0375)."""
+    on the Resource Monitor only (ADR-0375)."""
     asked = []
     real = psutil.process_iter
 
@@ -345,24 +355,186 @@ def test_only_the_listed_processes_are_read_in_full(monkeypatch, clock):
         asked.append(attrs)
         return real(attrs, *args, **kwargs)
 
-    users = []
-    real_username = psutil.Process.username
+    in_full = []
+    real_as_dict = psutil.Process.as_dict
 
-    def username(self):
-        users.append(self.pid)
-        return real_username(self)
+    def as_dict(self, attrs=None, ad_value=None):
+        # process_iter reads the CPU share of each process with as_dict too.
+        if set(attrs or ()) != {"cpu_percent"}:
+            in_full.append(self.pid)
+        return real_as_dict(self, attrs, ad_value)
 
     monkeypatch.setattr(events.psutil, "process_iter", recording)
-    monkeypatch.setattr(psutil.Process, "username", username)
+    monkeypatch.setattr(psutil.Process, "as_dict", as_dict)
+    monkeypatch.setenv("UNOS_HOST_EXEC", "local")
 
     processes = events.get_system_stats()["data"]["processes"]
 
     assert asked == [["cpu_percent"]]
     assert 0 < len(processes) <= 10
-    assert sorted(users) == sorted(proc["pid"] for proc in processes)
+    assert sorted(in_full) == sorted(proc["pid"] for proc in processes)
     shares = [proc["cpu_percent"] for proc in processes]
     assert shares == sorted(shares, reverse=True)
-    assert set(processes[0]) == {"pid", "name", "cpu_percent", "memory_percent", "memory_mb", "status", "username"}
+    assert set(processes[0]) == {"pid", "name", "cpu_percent", "memory_bytes", "username"}
+
+
+class FakeProcess:
+    """A process of the host as psutil lists it; ``asked`` collects the attributes read in full."""
+
+    asked: list = []
+
+    def __init__(self, pid, name, cpu, rss, uid, real_uid=None):
+        self.pid = pid
+        self.info = {"cpu_percent": cpu}
+        self._values = {
+            "name": name,
+            "memory_info": SimpleNamespace(rss=rss, vms=rss * 4),
+            "uids": SimpleNamespace(real=uid if real_uid is None else real_uid, effective=uid, saved=uid),
+            "cmdline": [name, "--password", "secret"],
+        }
+
+    def as_dict(self, attrs, ad_value=None):
+        FakeProcess.asked.append(sorted(attrs))
+        return {name: self._values[name] for name in attrs}
+
+
+@pytest.fixture
+def host_processes(monkeypatch, tmp_path):
+    """The host's processes, ``host_processes.listed`` (FakeProcess), and its /etc/passwd, as the
+    supervisor reads it through PID 1's root (``host_processes.passwd``, a file of the test)."""
+    passwd = tmp_path / "passwd"
+    monkeypatch.setattr(events, "HOST_PASSWD", str(passwd))
+    monkeypatch.delenv("UNOS_HOST_EXEC", raising=False)
+    FakeProcess.asked = []
+    state = SimpleNamespace(listed=[], passwd=passwd)
+    monkeypatch.setattr(events.psutil, "process_iter", lambda attrs=None: list(state.listed))
+    return state
+
+
+def test_the_process_list_is_the_hosts_with_the_users_the_host_names(clock, host_processes):
+    """System > Resource Monitor (ADR-0398): with pid: host psutil lists the host's processes, those
+    of the apps' containers too, but it named their users from the container's /etc/passwd, which
+    has none of the host's accounts (a uid of the container's Debian, or only a number). The user
+    is the process's effective uid as the host's /etc/passwd names it, as top shows it; the
+    command line, which can hold a password, is never read."""
+    host_processes.passwd.write_text(
+        "root:x:0:0:root:/root:/bin/bash\n"
+        "# a comment\n"
+        "nasadmin:x:1000:1000:NAS admin,,,:/home/nasadmin:/bin/bash\n"
+        "broken line\n"
+        "alice:x:70001:70001::/nonexistent:/usr/sbin/nologin\n"
+        "odd:x:²:1::/:/bin/sh\n"
+    )
+    host_processes.listed = [
+        FakeProcess(4242, "smbd", 12.5, 42 * 1024 ** 2, 70001, real_uid=0),
+        FakeProcess(1, "systemd", 0.5, 12 * 1024 ** 2, 0),
+        FakeProcess(5150, "immich", 30.0, 1536 * 1024 ** 2, 1000),
+        FakeProcess(6000, "jellyfin", 2.0, 0, 80000),
+    ]
+
+    processes = events.get_system_stats()["data"]["processes"]
+
+    assert processes == [
+        {"pid": 5150, "name": "immich", "cpu_percent": 30.0, "memory_bytes": 1536 * 1024 ** 2,
+         "username": "nasadmin"},
+        {"pid": 4242, "name": "smbd", "cpu_percent": 12.5, "memory_bytes": 42 * 1024 ** 2,
+         "username": "alice"},
+        {"pid": 6000, "name": "jellyfin", "cpu_percent": 2.0, "memory_bytes": 0, "username": "80000"},
+        {"pid": 1, "name": "systemd", "cpu_percent": 0.5, "memory_bytes": 12 * 1024 ** 2, "username": "root"},
+    ]
+    assert FakeProcess.asked == [["memory_info", "name", "uids"]] * 4
+
+
+def test_the_host_users_follow_a_change_of_its_passwd(clock, host_processes):
+    host_processes.passwd.write_text("old:x:1000:1000::/home/old:/bin/sh\n")
+    host_processes.listed = [FakeProcess(7, "sh", 1.0, 0, 1000)]
+    assert events.get_system_stats()["data"]["processes"][0]["username"] == "old"
+
+    host_processes.passwd.write_text("renamed:x:1000:1000::/home/renamed:/bin/sh\n")
+    os.utime(host_processes.passwd, ns=(0, os.stat(host_processes.passwd).st_mtime_ns + 1_000_000_000))
+    clock[0] += events.PROCESS_LIST_INTERVAL_SECONDS
+    assert events.get_system_stats()["data"]["processes"][0]["username"] == "renamed"
+
+
+def test_an_unreadable_host_passwd_gives_the_uids_and_is_logged_once(clock, host_processes, caplog):
+    host_processes.listed = [FakeProcess(7, "sh", 1.0, 0, 1000), FakeProcess(8, "init", 0.0, 0, 0)]
+    for _ in range(3):
+        assert [p["username"] for p in events.get_system_stats()["data"]["processes"]] == ["1000", "0"]
+        clock[0] += events.PROCESS_LIST_INTERVAL_SECONDS
+    assert caplog.text.count("host's user names") == 1
+
+
+def test_where_the_host_is_the_machine_itself_its_own_users_name_the_processes(
+        clock, host_processes, monkeypatch):
+    """The stand-in and the compose test stack (UNOS_HOST_EXEC=local): the machine's own accounts."""
+    monkeypatch.setenv("UNOS_HOST_EXEC", "local")
+    uid = os.getuid()
+    host_processes.listed = [FakeProcess(os.getpid(), "python", 1.0, 0, uid)]
+    assert events.get_system_stats()["data"]["processes"][0]["username"] == pwd.getpwuid(uid).pw_name
+
+
+# psutil's CPU times as Linux has them.
+CpuTimes = namedtuple("CpuTimes", "user nice system idle iowait irq softirq steal guest guest_nice")
+
+
+def test_the_cpu_share_counts_as_psutil_counts():
+    """Linux counts the guest times in user and nice already, and the time waiting for I/O is not
+    busy (psutil's cpu_percent, ADR-0398)."""
+    before = events._cpu_busy_and_total(CpuTimes(0, 0, 0, 0, 0, 0, 0, 0, 0, 0))
+    # user 3 (1 of it a guest's), nice 1 (1 of it a guest's), system 1, idle 2, iowait 2, irq 1,
+    # softirq 1, steal 1: busy 8 of 12.
+    after = events._cpu_busy_and_total(CpuTimes(3, 1, 1, 2, 2, 1, 1, 1, 1, 1))
+    assert events.cpu_busy_percent(before, after) == round(8 / 12 * 100, 1)
+    assert events.cpu_busy_percent(after, after) == 0.0
+    # A Mac's psutil has no iowait or guest times.
+    mac = namedtuple("MacTimes", "user nice system idle")
+    assert events.cpu_busy_percent(
+        events._cpu_busy_and_total(mac(0, 0, 0, 0)), events._cpu_busy_and_total(mac(1, 0, 2, 1))
+    ) == 75.0
+
+
+def test_the_cpu_share_is_of_the_time_since_the_last_sample_whichever_thread_takes_it(
+        monkeypatch, clock, host_net_dev):
+    """psutil's cpu_percent(interval=None) keeps its last reading per thread, and every sample runs in
+    whichever worker thread asyncio.to_thread gives it: the share was of the time since that thread's
+    last sample, any number of intervals back. It is now the share of the CPU time since the last
+    sample, of the CPU and of each core (ADR-0398), 0 for the first sample and after a gap, like
+    the rates (ADR-0388)."""
+    host_net_dev.write_text(net_dev(eth0=(0, 0)))
+    cores = [[0.0, 0.0], [0.0, 0.0]]  # busy and idle seconds of each core
+
+    def cpu_times(percpu=False):
+        each = [CpuTimes(busy / 2, 0.0, busy / 2, idle, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0) for busy, idle in cores]
+        return each if percpu else CpuTimes(*(sum(values) for values in zip(*each)))
+
+    monkeypatch.setattr(events.psutil, "cpu_times", cpu_times)
+
+    def sample_in_a_thread() -> dict:
+        taken = {}
+        thread = threading.Thread(target=lambda: taken.update(events.get_system_stats()["data"]["cpu"]))
+        thread.start()
+        thread.join()
+        return taken
+
+    def advance(*busy_idle):
+        clock[0] += events.STATS_INTERVAL_SECONDS
+        for core, (busy, idle) in zip(cores, busy_idle):
+            core[0] += busy
+            core[1] += idle
+
+    first = sample_in_a_thread()
+    advance((1.0, 1.0), (2.0, 0.0))
+    second = sample_in_a_thread()
+    advance((1.5, 0.5), (0.0, 2.0))
+    third = sample_in_a_thread()
+    advance((2.0, 0.0), (2.0, 0.0))
+    clock[0] += events.RATE_MAX_GAP_SECONDS
+    after_a_gap = sample_in_a_thread()
+
+    assert (first["percent"], first["per_core"]) == (0.0, [0.0, 0.0])
+    assert (second["percent"], second["per_core"]) == (75.0, [50.0, 100.0])
+    assert (third["percent"], third["per_core"]) == (37.5, [75.0, 0.0])
+    assert (after_a_gap["percent"], after_a_gap["per_core"]) == (0.0, [0.0, 0.0])
 
 
 def test_the_stats_message_has_one_shape(clock, host_net_dev, host_disks):
@@ -383,7 +555,7 @@ def test_the_stats_message_has_one_shape(clock, host_net_dev, host_disks):
     # No history: no page read it (system.stats-without-unread-parts).
     # One temperature, the CPU's (system.temperatures, ADR-0346), in place of the first reading of
     # every sensor group.
-    assert sorted(data) == ["cpu", "disk_io", "memory", "network", "processes", "timestamp"]
+    assert sorted(data) == ["cpu", "disk_io", "memory", "network", "processes", "sample_seconds", "timestamp"]
     assert sorted(data["cpu"]) == [
         "cores", "load_1", "load_15", "load_5", "per_core", "percent", "temperature", "threads",
     ]
@@ -395,6 +567,10 @@ def test_the_stats_message_has_one_shape(clock, host_net_dev, host_disks):
         ["bytes_recv", "bytes_recv_rate", "bytes_sent", "bytes_sent_rate", "name"],
     ]
     assert data["disk_io"] == {"read_rate": 0.0, "write_rate": 0.0, "disks": [{"name": "sda"}, {"name": "sda1"}]}
+    # A process has what the Resource Monitor shows: no state and no share of the memory, which no
+    # page read (ADR-0398).
+    assert all(sorted(proc) == ["cpu_percent", "memory_bytes", "name", "pid", "username"]
+               for proc in data["processes"])
 
 
 def test_the_web_ui_keeps_no_unread_stats_code():
@@ -427,12 +603,16 @@ def test_the_web_ui_keeps_no_unread_stats_code():
 
 def test_nothing_asks_for_the_removed_container_stats_endpoints():
     """system.no-container-stats-endpoints (ADR-0388, ADR-0207): no page, script or test of the
-    web UI asks for the routes that reported the supervisor container's network."""
+    web UI asks for the routes that reported the supervisor container's network, nor for the monitor
+    routes that no page called (system.resource-monitor, ADR-0398)."""
     import re
     from pathlib import Path
 
     root = Path(__file__).resolve().parents[2]
-    removed = re.compile(r"/system/stats\b|/monitor/(?:network|disk-io|history/network|history/disk-io)\b")
+    removed = re.compile(
+        r"/system/stats\b|/monitor/(?:network|disk-io|cpu|memory|processes|all"
+        r"|history/(?:network|disk-io|cpu|memory))\b"
+    )
     files = [path for folder in ("webui/src", "webui/tests", "scripts") for path in (root / folder).rglob("*")
              if path.is_file() and path.suffix in (".ts", ".svelte", ".py", ".sh", ".md")]
     assert files

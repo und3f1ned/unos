@@ -185,8 +185,8 @@ hidden. Each change is an entry **Dashboard layout changed** in the audit log.
 ### System Stats
 The cards follow the live statistics, which the server sends every 2 seconds
 while the page is open; the time of the last one is shown beside **Refresh**.
-Right after the page opens, the network and disk rates can show 0 B/s until
-the next statistics arrive.
+Right after the page opens, the CPU can show 0% and the network and disk rates
+0 B/s until the next statistics arrive.
 - **CPU** - Current processor usage
 - **Memory** - RAM usage and total
 - **Network** - The bytes per second the NAS receives (↓) and sends (↑), over
@@ -2252,6 +2252,33 @@ Access via **System** in the sidebar.
   `sudo /opt/unos/deploy/update.sh` (see
   [Upgrading](INSTALL.md#upgrading)). The web interface cannot install updates
   or roll them back yet (feature-list entry `system.in-app-updater`).
+
+### Resource Monitor
+
+The tab shows the host's CPU, memory, network and disk I/O, live and over the
+last hour, and the processes that use the most CPU:
+- **CPU**, **Memory**, **Network** and **Disk I/O**: the current values, which
+  the server sends every 2 seconds, as the dashboard's cards show them (see
+  [System Stats](#system-stats): network and disks are the host's interfaces
+  and physical disks), and a chart of each over the time range chosen with
+  **5 min**, **15 min** or **1 hour**, with its peak in that range below it. A
+  network or disk chart scales to its peak.
+- The history comes from the NAS: every 10 seconds it notes the averages of
+  CPU, network and disks over those 10 seconds and the memory in use, and
+  keeps the last hour in memory, also while no page is open; the tab reads
+  them when it opens and adds the live values. It is not written to disk, so
+  it starts empty after the NAS or UNOS restarts; a gap in a chart is a time
+  without data. When the history cannot be read, the tab says so and shows
+  the live values.
+- **CPU Cores**: the current use of each core.
+- **Top Processes**: the ten processes of the host that use the most CPU,
+  those of apps included, read every 10 seconds: name, PID, the user as the
+  host names it (its number when the host has no name for it), CPU as a share
+  of one core (above 100% for a process on several cores) and resident
+  memory. Their command lines are not shown, as they can hold passwords.
+
+The tab is for administrators: regular users' live statistics carry no
+processes and no names of disks.
 
 ### Network
 

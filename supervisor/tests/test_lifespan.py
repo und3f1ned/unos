@@ -24,6 +24,7 @@ files = importlib.import_module("src.files.router")
 health = importlib.import_module("src.health.router")
 power = importlib.import_module("src.power.router")
 app_usage = importlib.import_module("src.apps.usage")
+monitor_history = importlib.import_module("src.monitor.history")
 scheduler = importlib.import_module("src.scheduler.router")
 
 LOOPS = {
@@ -39,6 +40,8 @@ LOOPS = {
     "upload_leftovers": (files, "first_upload_leftover_check", "_upload_leftover_task"),
     # Reads the use of the apps' containers against their limits (ADR-0390).
     "app_resources": (app_usage, "app_resources_loop", "_loop_task"),
+    # The Resource Monitor's history, a point every 10 s kept for an hour in RAM (ADR-0398).
+    "monitor_history": (monitor_history, "history_loop", "_loop_task"),
 }
 
 

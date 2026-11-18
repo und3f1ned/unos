@@ -50,7 +50,7 @@ export interface NetworkStats {
   interfaces: NetworkInterface[];
 }
 
-// A block device of the host, disk or partition (ADR-0360).
+// A block device of the host, disk or partition (ADR-0360); only administrators get them (ADR-0398).
 export interface DiskIO {
   name: string;
 }
@@ -63,13 +63,16 @@ export interface DiskIOStats {
   disks: DiskIO[];
 }
 
+// A process of the host, one of the ten that use the most CPU; only administrators get them
+// (ADR-0398).
 export interface ProcessInfo {
   pid: number;
   name: string;
+  // The share of one core since the last listing, up to 10 s before.
   cpu_percent: number;
-  memory_percent: number;
-  memory_mb: number;
-  status: string;
+  // The resident memory.
+  memory_bytes: number;
+  // Its effective user as the host names it, or the uid where the host has no name for it.
   username: string;
 }
 
@@ -80,6 +83,9 @@ export interface WebSocketStats {
   network: NetworkStats;
   disk_io: DiskIOStats;
   processes: ProcessInfo[];
+  // The seconds since the sample before, over which the rates and the CPU shares are taken: 0 for
+  // the first sample and after a gap, whose rates and shares are 0 (ADR-0388, ADR-0398).
+  sample_seconds: number;
   timestamp: string;
 }
 

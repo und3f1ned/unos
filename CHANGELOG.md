@@ -12,6 +12,11 @@ features (SMB access per user and per share, volumes, copy and move in the file
 manager, encrypted backup uploads, health checks, CI checks).
 
 ### Security
+- Regular users' live statistics (`/ws/v1/events`) no longer carry the host's
+  processes or the names of its block devices: `processes` and
+  `disk_io.disks` are empty for them, as the host's interfaces already were.
+  The Resource Monitor and the Storage page that show them are for
+  administrators (ADR-0398).
 - The web UI keeps its session in an HttpOnly cookie, `__Host-unos-session`
   (`Secure`, `SameSite=Strict`, ending with the browser), instead of
   `localStorage`, so that no script of the page reads the session token
@@ -384,6 +389,18 @@ manager, encrypted backup uploads, health checks, CI checks).
   `ups_name`, `host` and `port` are checked before they reach `upsc`.
 
 ### Added
+- **System** → **Resource Monitor** shows the history of the host's CPU,
+  memory, network and disk I/O, with time range buttons **5 min**, **15 min**
+  and **1 hour** and the peak of each chart in its range (ADR-0398). The
+  supervisor notes every 10 seconds the averages of CPU, network and disks
+  and the memory in use, keeps the last hour in memory, from its start and
+  while no page is open, and writes nothing; the tab reads them once from
+  `GET /api/v1/monitor/history` (administrators) and adds each live message
+  of `/ws/v1/events`, whose new `sample_seconds` (0 for a first sample, whose
+  rates are 0) keeps such a sample out of the charts. Its process list shows each
+  process's PID and its user as the host names it, from the host's
+  `/etc/passwd` (the container's named host accounts wrongly or not at all),
+  and its memory in the largest fitting unit.
 - Each user arranges the dashboard (ADR-0395). **Customize** shows a toolbar on
   every widget: drag its handle, or use **Move up** and **Move down** (for the
   keyboard and a phone), **Hide** it, and show it again from **Hidden widgets**;
@@ -1302,6 +1319,13 @@ manager, encrypted backup uploads, health checks, CI checks).
   smb.conf as UNOS wrote it.
 
 ### Removed
+- `GET /api/v1/monitor/cpu`, `/monitor/memory`, `/monitor/processes`,
+  `/monitor/history/cpu`, `/monitor/history/memory` and `/monitor/all`: no
+  page called them, and their history held only what calls of `/cpu` and
+  `/memory` had taken. They answer 404; `GET /api/v1/monitor/history` is the
+  Resource Monitor's history (ADR-0398, ADR-0207). From each process of the
+  live statistics: `status` and `memory_percent`, which no page read, and
+  `memory_mb`, now `memory_bytes`.
 - From the live statistics of `/ws/v1/events`: each interface's `ipv4`,
   `speed` and `is_up`, which were the container's; the network's
   `bytes_sent`, `bytes_recv`, `packets_sent` and `packets_recv`, the disks'
@@ -1321,6 +1345,10 @@ manager, encrypted backup uploads, health checks, CI checks).
   installed once, under its id, and a request with `name` answers 422.
 
 ### Fixed
+- The CPU share of the live statistics, of the CPU and of each core, was of
+  the time since the last sample taken in the same worker thread, any number
+  of samples back; it is now of the time since the last sample, and 0 in the
+  first one after a start or a pause, like the rates (ADR-0398).
 - On a phone, the Audit Log no longer reaches past the screen when an entry
   holds a long name with no place to break, such as an API token's name of 64
   characters, a long name tried at sign-in or a full IPv6 address: the name

@@ -399,32 +399,15 @@ test.describe('API Tests', () => {
   });
 
   // ==================== Monitor ====================
-  test('GET /api/v1/monitor/cpu should return CPU stats', async ({ request }) => {
-    const response = await request.get(`${BASE_URL}/api/v1/monitor/cpu`, {
+  // The Resource Monitor's history (ADR-0398); the stand-in starts no background loop, so it has
+  // no points there.
+  test('GET /api/v1/monitor/history should return the history', async ({ request }) => {
+    const response = await request.get(`${BASE_URL}/api/v1/monitor/history`, {
       headers: { Authorization: `Bearer ${token}` },
     });
     expect(response.ok()).toBeTruthy();
-  });
-
-  test('GET /api/v1/monitor/memory should return memory stats', async ({ request }) => {
-    const response = await request.get(`${BASE_URL}/api/v1/monitor/memory`, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    expect(response.ok()).toBeTruthy();
-  });
-
-  test('GET /api/v1/monitor/processes should return process list', async ({ request }) => {
-    const response = await request.get(`${BASE_URL}/api/v1/monitor/processes`, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    expect(response.ok()).toBeTruthy();
-  });
-
-  test('GET /api/v1/monitor/all should return all monitor stats', async ({ request }) => {
-    const response = await request.get(`${BASE_URL}/api/v1/monitor/all`, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    expect(response.ok()).toBeTruthy();
+    const data = await response.json();
+    expect(data).toEqual({ interval_seconds: 10, points: expect.any(Array) });
   });
 
   // ==================== Health ====================

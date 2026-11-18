@@ -430,11 +430,6 @@ class TestRouteMatrix:
         one source of live stats."""
         assert client.get(f"{API}{path}", headers=admin_headers).status_code == 404
 
-    def test_monitor_all_has_no_network_or_disk_io(self, client, admin_headers):
-        answer = client.get(f"{API}/monitor/all", headers=admin_headers)
-        assert answer.status_code == 200
-        assert sorted(answer.json()) == ["cpu", "memory", "timestamp"]
-
     def test_api_token_of_a_regular_user_is_not_admin(self, client, alice_headers):
         created = client.post(f"{API}/auth/tokens", json={"name": "cli"}, headers=alice_headers)
         assert created.status_code == 200

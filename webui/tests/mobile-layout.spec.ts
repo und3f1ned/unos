@@ -701,14 +701,24 @@ const STATS = {
     interfaces: [{ name: 'eth0', bytes_sent: 4096, bytes_recv: 8192, bytes_sent_rate: 1024, bytes_recv_rate: 1536 }],
   },
   disk_io: { read_rate: 512, write_rate: 3.25 * 1024 ** 2, disks: [{ name: 'sda' }] },
+  // The host's processes (ADR-0398), with a user of a long name, as an account of the host can have.
   processes: [
-    { pid: 812, name: 'smbd', cpu_percent: 3.5, memory_percent: 0.5, memory_mb: 42, status: 'sleeping', username: 'root' },
-    { pid: 913, name: 'containerd-shim-runc-v2', cpu_percent: 1.2, memory_percent: 0.3, memory_mb: 12, status: 'sleeping',
-      username: 'root' },
-    { pid: 1022, name: 'kworker/u8:2-events_unbound', cpu_percent: 0.4, memory_percent: 0, memory_mb: 0, status: 'idle',
-      username: 'root' },
+    { pid: 812, name: 'smbd', cpu_percent: 3.5, memory_bytes: 42 * 1024 ** 2, username: 'root' },
+    { pid: 913, name: 'containerd-shim-runc-v2', cpu_percent: 1.2, memory_bytes: 12 * 1024 ** 2, username: 'root' },
+    { pid: 1022, name: 'kworker/u8:2-events_unbound', cpu_percent: 0.4, memory_bytes: 0, username: 'root' },
+    { pid: 4194304, name: 'immich-microservices', cpu_percent: 142.5, memory_bytes: 1.5 * 1024 ** 3,
+      username: 'bob_the_family_photographer' },
   ],
   timestamp: '2026-11-08T10:00:00',
+};
+
+// The Resource Monitor's history (supervisor/src/monitor/router.py, ADR-0398): an hour of points.
+const MONITOR_HISTORY = {
+  interval_seconds: 10,
+  points: Array.from({ length: 360 }, (_, i) => ({
+    age_seconds: 3600 - i * 10, cpu_percent: (i * 7) % 100, memory_percent: 40 + (i % 20),
+    net_recv_rate: i * 1024, net_sent_rate: (360 - i) * 1024, disk_read_rate: i * 4096, disk_write_rate: 2 * 1024 ** 3,
+  })),
 };
 
 /** Answer the stats stream with STATS once the page has authenticated it. */
@@ -1112,7 +1122,10 @@ const VIEWS: View[] = [
   {
     name: 'System: Resource Monitor',
     path: '/system#monitor',
-    fake: fakeStatsStream,
+    fake: async (page) => {
+      await fakeStatsStream(page);
+      await serve(page, { '/api/v1/monitor/history': MONITOR_HISTORY });
+    },
     shows: (page) => page.getByText('kworker/u8:2-events_unbound'),
   },
   {
