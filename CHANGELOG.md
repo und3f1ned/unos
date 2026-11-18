@@ -809,6 +809,8 @@ manager, encrypted backup uploads, health checks, CI checks).
 - `scripts/dev/check.sh` shows each container's CPU, the load average and the
   temperatures, and reports a container of UNOS above 15% of a core or a
   thermal zone within 5 C of its throttling point as a problem (ADR-0374).
+  It also reports a UNOS container that runs without a CPU reading from `docker stats`, and shows a
+  thermal zone it cannot read instead of stopping (ADR-0410).
 - RISCV64 hosts on Debian 13 and Ubuntu 24.04, made for the Banana Pi BPI-F3
   (SpacemiT K1): `install.sh` accepts `riscv64` and installs the
   distribution's `docker.io`, `docker-buildx` and `docker-compose` (Debian) or

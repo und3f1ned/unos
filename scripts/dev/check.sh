@@ -12,7 +12,8 @@
 # zone with its first passive trip point (ADR-0374). Exits 0 when unos-supervisor and unos-webui
 # run and are healthy and stay within 15% of a core, smbd, wsdd2 and avahi-daemon are active,
 # nmbd neither runs nor is enabled, the API answers, the filter's unit is active with its table
-# loaded and no thermal zone is within 5 C of its first passive trip; 1 otherwise ("check:
+# loaded and no thermal zone is within 5 C of its first passive trip (a UNOS container without a CPU
+# reading is a problem too, ADR-0410); 1 otherwise ("check:
 # problems").
 #
 # It runs one script on the device, with the root filesystem read-only (dev_remote_ro of
@@ -146,11 +147,17 @@ for i in 1 2 3 4 5; do
 $(docker stats --no-stream --format "{{.Name}} {{.CPUPerc}}" 2> /dev/null)"
     [ "$i" = 5 ] || sleep 1
 done
-averages=$(printf "%s\n" "$readings" | awk "NF == 2 { sub(/%\$/, \"\", \$2); s[\$1] += \$2; n[\$1]++ } END { for (c in s) printf \"%s %.1f\\n\", c, s[c] / n[c] }" | sort)
+averages=$(printf "%s\n" "$readings" | awk "NF == 2 && \$2 ~ /^[0-9.]+%\$/ { sub(/%\$/, \"\", \$2); s[\$1] += \$2; n[\$1]++ } END { for (c in s) printf \"%s %.1f\\n\", c, s[c] / n[c] }" | sort)
 printf "%s\n" "$averages" | awk "NF == 2 { printf \"%s: %s%% of a core\\n\", \$1, \$2 }"
 for c in unos-supervisor unos-webui; do
     avg=$(printf "%s\n" "$averages" | awk -v c="$c" "\$1 == c { print \$2 }")
-    [ -n "$avg" ] || continue
+    if [ -z "$avg" ]; then
+        # A container that runs and has no reading must not pass for one within its budget.
+        case $(docker inspect -f "{{.State.Status}}" "$c" 2> /dev/null) in
+            running) problem "$c has no CPU reading from docker stats, so its budget of $budget% of a core is unchecked (ADR-0374)" ;;
+        esac
+        continue
+    fi
     if awk -v a="$avg" -v b="$budget" "BEGIN { exit !(a > b) }"; then
         problem "$c used $avg% of a core on average, more than its budget of $budget% (ADR-0374)"
     fi
@@ -162,11 +169,20 @@ for z in "$thermal"/thermal_zone*; do
     [ -r "$z/temp" ] || continue
     zones=$((zones + 1))
     name=$(cat "$z/type" 2> /dev/null) || name=${z##*/}
-    t=$(( $(cat "$z/temp") / 1000 ))
+    raw=$(cat "$z/temp" 2> /dev/null) || raw=
+    case $raw in
+        "" | - | *[!0-9-]* | ?*-*)
+            echo "$name: temperature unreadable"
+            continue
+            ;;
+    esac
+    t=$((raw / 1000))
     trip=
     for tt in "$z"/trip_point_*_type; do
         [ -r "$tt" ] && [ "$(cat "$tt")" = passive ] || continue
-        v=$(( $(cat "${tt%_type}_temp") / 1000 ))
+        v=$(cat "${tt%_type}_temp" 2> /dev/null) || v=
+        case $v in "" | - | *[!0-9-]* | ?*-*) continue ;; esac
+        v=$((v / 1000))
         if [ -z "$trip" ] || [ "$v" -lt "$trip" ]; then trip=$v; fi
     done
     if [ -z "$trip" ]; then

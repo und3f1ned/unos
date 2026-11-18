@@ -4710,6 +4710,7 @@
       ],
       "verified_by": [
         "supervisor/tests/test_ws_stats.py",
+        "supervisor/tests/test_ws_auth.py",
         "supervisor/tests/test_upload_leftovers.py",
         "supervisor/tests/test_dev_scripts.py",
         "supervisor/tests/test_deploy_scripts.py"
@@ -4717,9 +4718,10 @@
       "passes": false,
       "adr": [
         "ADR-0374",
-        "ADR-0375"
+        "ADR-0375",
+        "ADR-0410"
       ],
-      "notes": "Found on the owner's BPI-F3 on 2026-11-13 (deploy.riscv64-bpi-f3): an open dashboard cost the supervisor 25 to 64% of a core, one sample 0.4 s of the K1's CPU, and the walk for upload leftovers went through Docker's data root on the pool. After ADR-0375 (07f9c47) on the board: unos-supervisor 3.5% of a core with no dashboard open, 5.6% with two simulated tabs (threads calling shared_system_stats every 2 s); with two real tabs not yet measured (needs the owner's sign-in)."
+      "notes": "Found on the owner's BPI-F3 on 2026-11-13 (deploy.riscv64-bpi-f3): an open dashboard cost the supervisor 25 to 64% of a core, one sample 0.4 s of the K1's CPU, and the walk for upload leftovers went through Docker's data root on the pool. After ADR-0375 (07f9c47) on the board: unos-supervisor 3.5% of a core with no dashboard open, 5.6% with two simulated tabs (threads calling shared_system_stats every 2 s); with two real tabs not yet measured (needs the owner's sign-in). Builder pass 2026-11-18 (ADR-0410): steps 1 to 4 are met by the code of ADR-0374 and ADR-0375 and asserted: step 1 by test_ws_stats.py (one sample per interval, the process list every 10 s, ten processes in full) and TestSharedStatsSample of test_ws_auth.py (two sockets, one sample, taken off the event loop); step 2 by test_supervisor_is_healthy_only_while_the_api_answers of test_deploy_scripts.py; step 3 by test_upload_leftovers.py; step 4 by the check_sh tests of test_dev_scripts.py (CPU of each container averaged over five readings, the 15% and 5 C boundaries, a UNOS container without a reading, unreadable zones, K1 and RK3588 zones, and a reading that writes nothing). Step 5 is the owner's, on the BPI-F3 (passes stays false until then): open the dashboard signed in as an administrator in two browser tabs for 10 minutes, then run scripts/dev/check.sh (its CPU line for unos-supervisor is an average of five readings over about ten seconds; take it three times, a minute apart) and read `docker stats --no-stream` for unos-supervisor in the same minutes; the average must stay below 15% of a core, and the check must say check: OK. Record the figures in PROGRESS.md."
     }
   ]
 }

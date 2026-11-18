@@ -738,7 +738,7 @@ STUB_DOCKER = textwrap.dedent(
             out = args[2]
             for template, value in (("{{.Name}}", "/" + name), ("{{.HostConfig.LogConfig.Type}}", log["Type"]),
                                     ("{{json .HostConfig.LogConfig.Config}}", js(log["Config"])),
-                                    ("{{json .HostConfig.LogConfig}}", js(log)), ("{{.State.Status}}", "running"),
+                                    ("{{json .HostConfig.LogConfig}}", js(log)),                                     ("{{.State.Status}}", os.environ.get("FAKE_DOCKER_STATUS", "running")),
                                     ("{{if .State.Health}}{{.State.Health.Status}}{{else}}no-healthcheck{{end}}", "healthy"),
                                     ("{{.RestartCount}}", "0")):
                 out = out.replace(template, value)
@@ -751,7 +751,14 @@ STUB_DOCKER = textwrap.dedent(
         if "-q" not in args:
             print("deploy-supervisor:latest  sha256:1  2 days ago  300MB")
     elif args[0] == "stats" and args[1:] == ["--no-stream", "--format", "{{.Name}} {{.CPUPerc}}"]:
-        print(os.environ.get("FAKE_DOCKER_STATS", "unos-supervisor 2.00%\\nunos-webui 0.10%\\ntransmission 50.00%"))
+        # FAKE_DOCKER_STATS: one reading, or several joined by "---": each call prints the next, the
+        # last one again after that (the counter is a file, FAKE_DOCKER_STATS_COUNTER).
+        readings = os.environ.get("FAKE_DOCKER_STATS", "unos-supervisor 2.00%\\nunos-webui 0.10%\\ntransmission 50.00%").split("---")
+        counter = os.environ.get("FAKE_DOCKER_STATS_COUNTER")
+        n = int(open(counter).read()) if counter and os.path.exists(counter) else 0
+        if counter:
+            open(counter, "w").write(str(n + 1))
+        print(readings[min(n, len(readings) - 1)])
     else:
         sys.exit(f"the docker stub does not know {args}")
     """
@@ -908,7 +915,7 @@ def _run_check(device, tmp_path, zones, **env):
     device.stub("python3", "#!/usr/bin/env bash\necho 200\n")
     device.stub("sync", "#!/usr/bin/env bash\nexit 0\n")
     device.stub("sleep", "#!/usr/bin/env bash\nexit 0\n")
-    thermal = _thermal_zones(tmp_path / "thermal", zones)
+    thermal = _thermal_zones(tmp_path / f"thermal{len(list(tmp_path.glob('thermal*')))}", zones)
     return device.run(DEV / "check.sh", FAKE_SSH_MODE="local", UNOS_DEV_PYTHON=sys.executable,
                       UNOS_CHECK_THERMAL_DIR=str(thermal), **env)
 
@@ -945,6 +952,118 @@ def test_check_sh_reports_a_board_near_its_throttling_point(local_device, tmp_pa
     assert ("- cluster0_thermal is at 71 C, within 5 C of its first passive trip (75 C), where the "
             "kernel slows the CPU down: the board needs cooling or less load") in out, out + result.stderr
     assert result.returncode == 1
+
+
+def test_check_sh_averages_the_five_readings_of_docker_stats(local_device, tmp_path):
+    """One reading is a spike: the budget is on the average of five (ADR-0374). A supervisor at 40%
+    once and 1% four times averages 8.8%, within the budget; one at 20% in four readings of five
+    averages 16.2%."""
+    zones = [("cluster0_thermal", 53, K1_TRIPS)]
+    one = {"FAKE_DOCKER_STATS": "---".join(f"unos-supervisor {v}%\nunos-webui 0.10%" for v in (40, 1, 1, 1, 1)),
+           "FAKE_DOCKER_STATS_COUNTER": str(tmp_path / "n1")}
+    result = _run_check(local_device, tmp_path, zones, **one)
+    assert "unos-supervisor: 8.8% of a core" in result.stdout and result.returncode == 0, result.stdout
+    four = {"FAKE_DOCKER_STATS": "---".join(f"unos-supervisor {v}%\nunos-webui 0.10%" for v in (20, 20, 20, 20, 1)),
+            "FAKE_DOCKER_STATS_COUNTER": str(tmp_path / "n2")}
+    result = _run_check(local_device, tmp_path, zones, **four)
+    assert "unos-supervisor used 16.2% of a core on average" in result.stdout and result.returncode == 1, result.stdout
+
+
+@pytest.mark.parametrize("cpu, problem", [("15.00", False), ("15.10", True)])
+def test_check_sh_budget_is_15_percent_of_a_core_for_each_container_of_unos(local_device, tmp_path, cpu, problem):
+    zones = [("cluster0_thermal", 53, K1_TRIPS)]
+    for container, other in (("unos-supervisor", "unos-webui"), ("unos-webui", "unos-supervisor")):
+        result = _run_check(local_device, tmp_path, zones,
+                            FAKE_DOCKER_STATS=f"{container} {cpu}%\n{other} 1.00%")
+        assert ("more than its budget of 15%" in result.stdout) is problem, result.stdout
+        assert (f"- {container} used" in result.stdout) is problem and result.returncode == int(problem)
+
+
+def test_check_sh_does_not_pass_a_unos_container_that_docker_stats_does_not_show(local_device, tmp_path):
+    """A running container without a reading, or one that reads "--", has not been measured: that is
+    a problem, not an OK."""
+    zones = [("cluster0_thermal", 53, K1_TRIPS)]
+    for stats in ("unos-webui 0.10%\ntransmission 50.00%", "unos-supervisor --\nunos-webui 0.10%"):
+        result = _run_check(local_device, tmp_path, zones, FAKE_DOCKER_STATS=stats)
+        assert ("- unos-supervisor has no CPU reading from docker stats, so its budget of 15% of a core "
+                "is unchecked (ADR-0374)") in result.stdout, result.stdout
+        assert result.returncode == 1
+
+
+@pytest.mark.parametrize("degrees, problem", [(69, False), (70, True)])
+def test_check_sh_margin_is_5_degrees_below_the_first_passive_trip(local_device, tmp_path, degrees, problem):
+    result = _run_check(local_device, tmp_path, [("cluster0_thermal", degrees, K1_TRIPS)])
+    assert ("within 5 C of its first passive trip (75 C)" in result.stdout) is problem, result.stdout
+    assert result.returncode == int(problem)
+
+
+def test_check_sh_takes_the_lowest_passive_trip_and_ignores_the_others(local_device, tmp_path):
+    """Only a passive trip is where the kernel slows the CPU down; the hot and critical ones, and
+    the higher passive one, are not the margin's."""
+    trips = [("hot", 60), ("passive", 85), ("passive", 75), ("critical", 65)]
+    result = _run_check(local_device, tmp_path, [("cluster0_thermal", 66, trips)])
+    assert "cluster0_thermal: 66 C, first passive trip 75 C" in result.stdout and result.returncode == 0
+
+
+def test_check_sh_shows_a_zone_that_cannot_be_read_and_checks_the_others(local_device, tmp_path):
+    zones = [("cluster0_thermal", 53, K1_TRIPS), ("gpu_thermal", 52, [])]
+    thermal = _thermal_zones(tmp_path / "thermal", zones)
+    (thermal / "thermal_zone0" / "temp").write_text("")
+    (thermal / "thermal_zone1" / "temp").write_text("71000\n")
+    (thermal / "thermal_zone1" / "trip_point_0_type").write_text("passive\n")
+    (thermal / "thermal_zone1" / "trip_point_0_temp").write_text("75000\n")
+    local_device.stub("docker", STUB_DOCKER)
+    local_device.stub("systemctl", STUB_SYSTEMCTL)
+    local_device.stub("nft", STUB_NFT_LIST)
+    local_device.stub("python3", "#!/usr/bin/env bash\necho 200\n")
+    local_device.stub("sync", "#!/usr/bin/env bash\nexit 0\n")
+    local_device.stub("sleep", "#!/usr/bin/env bash\nexit 0\n")
+    result = local_device.run(DEV / "check.sh", FAKE_SSH_MODE="local", UNOS_DEV_PYTHON=sys.executable,
+                              UNOS_CHECK_THERMAL_DIR=str(thermal))
+    assert "cluster0_thermal: temperature unreadable" in result.stdout, result.stdout + result.stderr
+    assert "- gpu_thermal is at 71 C, within 5 C" in result.stdout and result.returncode == 1
+
+
+def test_check_sh_a_container_that_does_not_run_is_not_a_missing_reading(local_device, tmp_path):
+    """The container check says that it does not run; the CPU section adds no second problem."""
+    result = _run_check(local_device, tmp_path, [("cluster0_thermal", 53, K1_TRIPS)],
+                        FAKE_DOCKER_STATUS="exited", FAKE_DOCKER_STATS="transmission 5.00%")
+    assert "no CPU reading" not in result.stdout, result.stdout
+    assert "- unos-supervisor: exited healthy restarts=0" in result.stdout and result.returncode == 1
+
+
+@pytest.mark.parametrize("temp", ["-", "abc", "-5000", "50000"])
+@pytest.mark.parametrize("trip", ["", "-", "x"])
+def test_check_sh_unreadable_values_of_a_zone_never_end_the_check_early(local_device, tmp_path, temp, trip):
+    """An empty or garbled temp or trip file once aborted the script's arithmetic: the output ended
+    without "check: OK" or "check: problems"."""
+    thermal = _thermal_zones(tmp_path / "thermal", [("cluster0_thermal", 53, [("passive", 75)])])
+    zone = thermal / "thermal_zone0"
+    (zone / "temp").write_text(temp)
+    (zone / "trip_point_0_temp").write_text(trip)
+    for stub, body in (("docker", STUB_DOCKER), ("systemctl", STUB_SYSTEMCTL), ("nft", STUB_NFT_LIST),
+                       ("python3", "#!/usr/bin/env bash\necho 200\n"), ("sync", "#!/usr/bin/env bash\nexit 0\n"),
+                       ("sleep", "#!/usr/bin/env bash\nexit 0\n")):
+        local_device.stub(stub, body)
+    result = local_device.run(DEV / "check.sh", FAKE_SSH_MODE="local", UNOS_DEV_PYTHON=sys.executable,
+                              UNOS_CHECK_THERMAL_DIR=str(thermal))
+    assert "check: OK" in result.stdout, result.stdout + result.stderr
+    assert result.returncode == 0
+    assert "cluster0_thermal: " in result.stdout
+
+
+def test_check_sh_reads_load_and_heat_without_writing_anything():
+    """The reading is /proc, /sys and docker stats --no-stream: no redirection into a file, no tool
+    that makes one, so that the check adds nothing to the device's SD card (ADR-0214, ADR-0374)."""
+    script = (DEV / "check.sh").read_text()
+    section = script.split('echo "== load and temperature"', 1)[1].split('echo "== result"', 1)[0]
+    assert "docker stats --no-stream" in section
+    for word in ("tee", "touch", "mkdir", "mktemp", "dd ", "sync", "write", "echo >", "cat >", "docker run", "docker exec"):
+        assert word not in section.replace("// ", ""), word
+    # Every redirection in it goes to /dev/null.
+    shell = "\n".join(line for line in section.splitlines() if "awk -v a=" not in line)  # a > b in awk
+    redirections = re.findall(r"\d?>>?\s*([^\s)\"]+)", shell)
+    assert redirections and all(r == "/dev/null" for r in redirections), redirections
 
 
 # The thermal zones of a Rockchip RK3588 (BPI-W3, ArmSoM W3) under Armbian's vendor kernel 6.1,
