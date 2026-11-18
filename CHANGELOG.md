@@ -22,6 +22,9 @@ manager, encrypted backup uploads, health checks, CI checks).
   them. A weekly audit (`make catalog-tags`, the `tags` job of the Audit workflow) reports a pinned
   tag that names another index. Immich's digests are unchanged; Valkey's tag reads `9.1.2`, which
   names the same index as the `9` it replaces (ADR-0410).
+- The install's pull, its space check and the update's checks no longer have a path for an image
+  that floats on a tag, which no app of the catalog has since ADR-0410; an app installed from a tag
+  before its catalog pinned it is still listed, offered the pinned version and updated.
 - `install.sh` and the manual installation no longer install `mdadm`, `parted`, `nvme-cli`, `lm-sensors`,
   `net-tools` and `wget`, which UNOS does not run: Debian's mdadm assembled the arrays of an old NAS's
   disks into md arrays on the next boot. A host that has them keeps them; the Storage page already

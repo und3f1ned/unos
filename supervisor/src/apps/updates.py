@@ -313,12 +313,6 @@ def _plan(client: Any, app: stacks.InstalledContainers, shares: list[Any]) -> _P
         )
     if app.missing:
         _refuse(f"{stacks.missing_detail(app)}: uninstall it (its data folders are kept) and install it again")
-    floating = [ref for ref in stacks.template_images(template) if stacks.pinned_digest(ref) is None]
-    if floating:
-        _refuse(
-            f"{name}'s image floats on a tag ({', '.join(floating)}): UNOS updates only an app whose catalog pins its "
-            "images by digest"
-        )
     if stacks.update_to(app) is None:
         _refuse(f"{name} runs the images that the catalog pins: there is nothing to update")
     host_platform = platforms.host_platform()

@@ -32,7 +32,7 @@ STALLED = (
 
 
 def open_pull(client: Any, repository: str, tag: str) -> Any:
-    """Ask Docker to pull ``repository`` at ``tag`` (a tag, or a digest sha256:...): the streamed
+    """Ask Docker to pull ``repository`` at ``tag`` (the digest sha256:... of a pinned image): the streamed
     response, whose lines ``lines`` reads. Docker's refusal before the stream (an unknown image)
     is an APIError with Docker's message; its errors otherwise are docker-py's and requests'."""
     api = client.api

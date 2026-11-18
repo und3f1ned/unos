@@ -14,9 +14,8 @@ itself: Docker discards the port bindings of such a container, so its ports cann
 remove the container or stop the program that holds it.
 
 The system disk, where Docker keeps the images: it must keep FREE_SPACE_FLOOR free once the
-install's images are there. A pinned image (PinnedImage of the catalog) counts its estimated
-size unless Docker has it already; an image of a floating tag counts nothing, its size is not
-known before its pull. The free space is the lower of those of the file systems of Docker's root
+install's images are there. An image of the catalog (a PinnedImage, ADR-0410) counts its
+estimated size unless Docker has it already. The free space is the lower of those of the file systems of Docker's root
 folder (Docker's info) and of the containerd image store, read on the host with df through
 src/host.py; when it cannot be read, the install answers 500 and pulls nothing. A host that has
 neither folder, as when the supervisor does not run on Docker's host (the compose test stack), has
@@ -186,9 +185,8 @@ _DF_LINE = re.compile(r"\s(\d+)\s+(\d+)\s+(\d+)\s+\d+%\s")
 
 def check_space(client: Any, template: AppTemplate, images: Iterable[str]) -> None:
     """409 when the system disk would keep less than FREE_SPACE_FLOOR free once those of
-    ``images`` (the references the install pulls) that are pinned and that Docker lacks are
-    pulled, each counted with its PinnedImage.disk_bytes; an image of a floating tag counts
-    nothing, since its size is not known before its pull. The free space is the lower of those of
+    ``images`` (the references the install pulls) that Docker lacks are pulled, each counted
+    with its PinnedImage.disk_bytes. The free space is the lower of those of
     the file systems of Docker's root folder and of the containerd image store, read on the host
     with df; 500 when it cannot be read. A host that has neither folder is logged and not checked.
     Blocks: call it in a worker thread, before any pull."""
@@ -241,7 +239,8 @@ def system_disk_free(client: Any) -> int | None:
 
 
 def _missing_pins(client: Any, images: Iterable[str]) -> list[PinnedImage]:
-    """The pinned images of ``images``, each once, that Docker's image store lacks."""
+    """The PinnedImages of ``images``, each once, that Docker's image store lacks. A reference that
+    PINNED_IMAGES does not record (a test's template) counts nothing."""
     missing: list[PinnedImage] = []
     for ref in dict.fromkeys(images):
         pin = PINNED_IMAGES.get(ref)

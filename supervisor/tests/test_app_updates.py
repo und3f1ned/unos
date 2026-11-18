@@ -24,7 +24,7 @@ import pytest
 from docker.errors import APIError
 
 from src.apps.catalog import APP_CATALOG, PinnedImage
-from src.apps.schemas import AppCategory, AppTemplate, PortMapping
+from src.apps.schemas import AppTemplate
 from src.audit.schemas import AuditAction
 
 from . import test_apps
@@ -423,22 +423,33 @@ class TestThePlan:
         assert response.status_code == 503
         assert response.json()["detail"].endswith("; nothing was changed")
 
-    def test_a_floating_tag_is_refused(self, api, pools, catalog, docker, soc):
-        notes = AppTemplate(id="notes", name="Notes", description="d", icon="N", category=AppCategory.PRODUCTIVITY,
-                            image="example/notes:latest", version="latest", ports=[PortMapping(host=8080, container=80)])
-        catalog.append(notes)
-        docker.publish("example/notes:latest")
-        assert install(api, {"template_id": "notes"}).status_code == 200
-        response = api.get(f"{INSTALLED}/notes/update")
-        assert response.status_code == 409
-        assert response.json()["detail"] == (
-            "Notes's image floats on a tag (example/notes:latest): UNOS updates only an app whose catalog pins its "
-            "images by digest"
-        )
-        # The update's job refuses it too, before it changes anything.
-        job = _job(api, api.post(f"{INSTALLED}/notes/update"))
-        assert (job["kind"], job["state"], job["error_status"]) == ("update", "failed", 409)
-        assert job["error"].startswith("Notes's image floats on a tag")
+    def test_an_app_created_from_floating_tags_is_listed_offered_the_pinned_version_and_updated(
+        self, api, installed, catalog, versions, pools
+    ):
+        # The dev device's transmission, installed from lscr.io/linuxserver/transmission:latest
+        # before its catalog pinned it (ADR-0410): its container runs a tag and has no version label.
+        # Here the two containers that the new version changes do; the registries serve only theirs.
+        _, server, database = versions
+        for name, image in {"photos-database": "example/photos-db:latest", "photos": "example/photos-server:latest"}.items():
+            live = installed.containers_[name]
+            live.attrs["Config"]["Image"] = image
+        for live in installed.containers_.values():
+            live.attrs["Config"]["Labels"].pop("unos.app.version")
+        _to_v2(catalog, versions)
+
+        listed = _photos(api)
+        assert (listed["status"], listed["version"], listed["update_to"]) == ("running", None, "2.0")
+        plan = api.get(f"{INSTALLED}/photos/update")
+        assert plan.status_code == 200, plan.text
+        assert {c["name"]: c["image_from"] for c in plan.json()["containers"]}["photos"] == "example/photos-server:latest"
+
+        job = _job(api, api.post(f"{INSTALLED}/photos/update"))
+        assert (job["state"], job["error"]) == ("succeeded", None), job
+        new = {n: installed.containers_[n].attrs["Config"]["Image"] for n in NAMES}
+        assert new == {"photos-database": _by_digest(database), "photos-cache": _by_digest(CACHE),
+                       "photos-machine-learning": _by_digest(LEARNING), "photos": _by_digest(server)}
+        assert installed.containers_["photos.previous"].attrs["Config"]["Image"] == "example/photos-server:latest"
+        assert (_photos(api)["version"], _photos(api)["update_to"]) == ("2.0", None)
 
     def test_a_copy_left_from_an_earlier_update_is_refused(self, api, installed, catalog, versions, pools):
         _to_v2(catalog, versions)

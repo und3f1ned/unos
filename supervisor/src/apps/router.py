@@ -12,7 +12,6 @@ from typing import Any, NoReturn
 
 from docker.errors import APIError, DockerException, NotFound
 from docker.types import Mount
-from docker.utils import parse_repository_tag
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from fastapi.responses import JSONResponse
 from sqlalchemy import select
@@ -998,17 +997,20 @@ def _build_environment(
 _PINNED = re.compile(r"(?P<name>[^@\s]+):(?P<tag>[^@:/\s]+)@(?P<digest>sha256:[0-9a-f]{64})")
 
 
-def _pinned(ref: str) -> tuple[str, str, str] | None:
-    """The name, tag and digest of a pinned image reference; None for one with a floating tag."""
+def _pinned(ref: str) -> tuple[str, str, str]:
+    """The name, tag and digest of a pinned image reference. Every image of the catalog is pinned
+    (ADR-0410): ValueError for any other, which no install pulls."""
     match = _PINNED.fullmatch(ref)
-    return (match["name"], match["tag"], match["digest"]) if match else None
+    if match is None:
+        raise ValueError(f"{ref} is not pinned by tag and digest")
+    return match["name"], match["tag"], match["digest"]
 
 
 def _by_digest(ref: str) -> str:
-    """What a container is created from: ``name@digest`` for a pinned image, which Docker's
-    store resolves whatever tags it has; the reference itself for a floating one."""
-    pinned = _pinned(ref)
-    return f"{pinned[0]}@{pinned[2]}" if pinned else ref
+    """What a container is created from: ``name@digest``, which Docker's store resolves whatever
+    tags it has."""
+    name, _, digest = _pinned(ref)
+    return f"{name}@{digest}"
 
 
 @dataclass
@@ -1227,9 +1229,8 @@ def _secrets_to_make(template: AppTemplate, planned: list[_PlannedMount]) -> lis
 def _pull_images(
     client: Any, template: AppTemplate, containers: list[_NewContainer], progress: install_jobs.Progress
 ) -> dict[str, Any]:
-    """Pull the image of each container, each once, in the order of the containers: a floating
-    one always (as Docker's pull of a tag), a pinned one by its digest when Docker lacks it,
-    then tagged for the Images tab. The images of the pinned ones, by reference."""
+    """Pull the image of each container, each once, in the order of the containers, by its digest
+    when Docker lacks it, then tagged for the Images tab. The images, by reference."""
     images: dict[str, Any] = {}
     for ref in dict.fromkeys(c.image for c in containers):
         try:
@@ -1243,17 +1244,10 @@ def _pull_images(
     return images
 
 
-def _pull(client: Any, ref: str, progress: install_jobs.Progress) -> Any | None:
-    """Pull ``ref``, reporting each line of Docker's pull stream to ``progress`` (ADR-0384); the
-    image of a pinned one."""
-    pinned = _pinned(ref)
-    if pinned is None:
-        repository, tag = parse_repository_tag(ref)
-        progress.image(ref, "pulling")
-        _read_pull(pulls.open_pull(client, repository, tag or "latest"), ref, progress)
-        progress.pulled(ref, "pulled")
-        return None
-    name, tag, digest = pinned
+def _pull(client: Any, ref: str, progress: install_jobs.Progress) -> Any:
+    """Pull the pinned ``ref`` by its digest unless Docker has it, reporting each line of Docker's
+    pull stream to ``progress`` (ADR-0384); the image."""
+    name, tag, digest = _pinned(ref)
     try:
         image = client.images.get(f"{name}@{digest}")
     except NotFound:
@@ -1296,12 +1290,10 @@ def _read_pull(response: Any, ref: str, progress: install_jobs.Progress) -> None
 
 
 def _check_image_volumes(template: AppTemplate, containers: list[_NewContainer], images: dict[str, Any]) -> None:
-    """500 for a VOLUME that a pinned image declares and that its container neither binds nor
+    """500 for a VOLUME that an image declares and that its container neither binds nor
     keeps in RAM: Docker would make it an anonymous volume on the system disk (ADR-0381)."""
     for c in containers:
-        image = images.get(c.image)
-        if image is None:
-            continue
+        image = images[c.image]
         declared = ((image.attrs or {}).get("Config") or {}).get("Volumes") or {}
         targets = [m.target for m in c.planned] + list(c.spec.tmpfs)
         for path in sorted(declared):
