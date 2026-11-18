@@ -430,6 +430,17 @@ manager, encrypted backup uploads, health checks, CI checks).
   `ups_name`, `host` and `port` are checked before they reach `upsc`.
 
 ### Added
+- The power settings act on the host (ADR-0407). System → Power Management has a **Shutdown and
+  wake schedule**: a daily shutdown at a time on the host's clock, announced 10 minutes ahead in the
+  health banner and to every notification channel and postponed while a job runs (a task, a backup,
+  a restore, a scrub, a balance, a disk replace, an app install, the off-device copy, a permissions
+  repair, an update), then announced again; a daily
+  wake by the RTC's wake alarm, refused with the reason on a host whose RTC cannot take it; and a
+  shutdown after the host has been idle for 20 to 1440 minutes, where open pages of the web
+  interface, login sessions, SMB and NFS clients, jobs and disk activity count as use. The card
+  shows the next shutdown and what holds it, the next wake and the RTC's alarm, and why the host is
+  not idle (`GET /api/v1/power/schedule`). `PUT /api/v1/power/config` checks the hours, minutes and
+  the idle time, and refuses settings that act on the host where host commands run locally.
 - The App Store shows which apps have an image for the host's platform: every image of the
   catalog has its Linux platforms recorded from its registry (`image_platforms.json`), the
   catalog API answers `platforms`, `host_platform` and `available`, an app whose image lacks the

@@ -1,22 +1,28 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { Moon, Network, Power, RotateCcw } from "lucide-svelte";
+  import { CalendarClock, Moon, Network, Power, RotateCcw } from "lucide-svelte";
   import {
     cancelShutdown,
     disableWol,
     enableWol,
     getPendingAction,
+    getPowerConfig,
+    getPowerSchedule,
     getWolStatus,
     rebootSystem,
     shutdownSystem,
     suspendSystem,
+    updatePowerConfig,
     type PendingAction,
     type PowerAnswer,
+    type PowerConfig,
+    type PowerFinding,
+    type PowerSchedule,
     type WolInterface,
   } from "$lib/api/power";
   import { Alert, Badge, Button, Card, EmptyState, Modal } from "$lib/components/ui";
   import { intlLocale, t } from "$lib/i18n";
-  import { formatTimeOfDay } from "$lib/time";
+  import { formatDateTime, formatTimeOfDay } from "$lib/time";
   import { paletteRequest, type PaletteDialog, type PaletteRequest } from "$lib/stores/palette";
 
   // Reboot, shutdown, suspend and Wake-on-LAN act on the host (ADR-0233):
@@ -70,10 +76,141 @@
   let notice = "";
   let actionError = "";
 
+  // The scheduled shutdown, the wake by the RTC and the idle shutdown of the power settings
+  // (ADR-0407): their times are on the host's clock, and the server acts on them.
+  let config: PowerConfig | null = null;
+  let configError = "";
+  let schedule: PowerSchedule | null = null;
+  let scheduleError = "";
+  let form = { autoShutdown: false, shutdownTime: "23:00", autoWakeup: false, wakeTime: "07:00", idleShutdown: false, idleMinutes: 30 };
+  let saving = false;
+  let saveError = "";
+
   onMount(() => {
     void loadPending();
     void loadWol();
+    void loadConfig();
+    void loadSchedule();
   });
+
+  function clockTime(hour: number, minute: number): string {
+    return `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
+  }
+
+  function fillForm(settings: PowerConfig) {
+    form = {
+      autoShutdown: settings.auto_shutdown,
+      shutdownTime: clockTime(settings.shutdown_hour, settings.shutdown_minute),
+      autoWakeup: settings.auto_wakeup,
+      wakeTime: clockTime(settings.wakeup_hour, settings.wakeup_minute),
+      idleShutdown: settings.idle_shutdown,
+      idleMinutes: settings.idle_timeout_minutes,
+    };
+  }
+
+  async function loadConfig() {
+    try {
+      config = await getPowerConfig();
+      fillForm(config);
+      configError = "";
+    } catch (e) {
+      configError = messageOf(e);
+    }
+  }
+
+  async function loadSchedule() {
+    try {
+      schedule = await getPowerSchedule();
+      scheduleError = "";
+    } catch (e) {
+      scheduleError = messageOf(e);
+    }
+  }
+
+  /** "HH:MM" as hour and minute; null for another text. */
+  function parseTime(value: string): [number, number] | null {
+    const match = /^(\d{2}):(\d{2})$/.exec(value);
+    if (!match) return null;
+    const [hour, minute] = [Number(match[1]), Number(match[2])];
+    return hour < 24 && minute < 60 ? [hour, minute] : null;
+  }
+
+  async function saveSchedule() {
+    if (!config || saving) return;
+    const shutdownAt = parseTime(form.shutdownTime);
+    const wakeAt = parseTime(form.wakeTime);
+    const minutes = Number(form.idleMinutes);
+    if (!shutdownAt || !wakeAt || !Number.isInteger(minutes) || minutes < 20 || minutes > 1440) {
+      saveError = $t("power.schedule.badTime");
+      return;
+    }
+    saving = true;
+    saveError = "";
+    try {
+      config = await updatePowerConfig({
+        ...config,
+        auto_shutdown: form.autoShutdown,
+        shutdown_hour: shutdownAt[0],
+        shutdown_minute: shutdownAt[1],
+        auto_wakeup: form.autoWakeup,
+        wakeup_hour: wakeAt[0],
+        wakeup_minute: wakeAt[1],
+        idle_shutdown: form.idleShutdown,
+        idle_timeout_minutes: minutes,
+      });
+      fillForm(config);
+      notice = $t("power.schedule.saved");
+      actionError = "";
+      await loadSchedule();
+    } catch (e) {
+      saveError = messageOf(e);
+    } finally {
+      saving = false;
+    }
+  }
+
+  // The text of each finding: keys of the catalog.
+  const FOUND: Record<PowerFinding["kind"], string> = {
+    web_session: "power.found.web_session",
+    login_session: "power.found.login_session",
+    smb_client: "power.found.smb_client",
+    nfs_client: "power.found.nfs_client",
+    disk_activity: "power.found.disk_activity",
+    task: "power.found.task",
+    task_due: "power.found.task_due",
+    backup: "power.found.backup",
+    restore: "power.found.restore",
+    scrub: "power.found.scrub",
+    balance: "power.found.balance",
+    disk_replace: "power.found.disk_replace",
+    app_install: "power.found.app_install",
+    offsite: "power.found.offsite",
+    share_repair: "power.found.share_repair",
+    update: "power.found.update",
+    wake_alarm: "power.found.wake_alarm",
+    unreadable: "power.found.unreadable",
+  };
+  const FOUND_WITHOUT_SUBJECT: Partial<Record<PowerFinding["kind"], string>> = {
+    scrub: "power.found.scrubAny",
+    balance: "power.found.balanceAny",
+    disk_replace: "power.found.disk_replaceAny",
+  };
+  // The times of the plan are shown in this browser's zone, which may not be the host's.
+  const browserZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const STATES: Record<string, string> = {
+    planned: "power.schedule.state.planned",
+    announced: "power.schedule.state.announced",
+    postponed: "power.schedule.state.postponed",
+    issued: "power.schedule.state.issued",
+  };
+
+  $: describe = (finding: PowerFinding): string => {
+    const key = (finding.subject === null && FOUND_WITHOUT_SUBJECT[finding.kind]) || FOUND[finding.kind] || FOUND.unreadable;
+    const mib = ((finding.amount ?? 0) / 1048576).toLocaleString($intlLocale, { maximumFractionDigits: 1 });
+    return $t(key, { subject: finding.subject ?? "", detail: finding.detail ?? "", n: finding.amount ?? 0, mib });
+  };
+  $: when = (at: string | null): string =>
+    formatDateTime(at, $intlLocale, { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
 
   function messageOf(e: unknown): string {
     return e instanceof Error ? e.message : String(e);
@@ -231,6 +368,139 @@
         <Button variant="danger" icon={Power} on:click={() => ask("shutdown")}>{$t("power.shutdown.button")}</Button>
         <Button variant="secondary" icon={Moon} on:click={() => ask("suspend")}>{$t("power.suspend.button")}</Button>
       </div>
+    </div>
+  </Card>
+
+  <Card>
+    <h3 class="section-title mb-4">
+      <CalendarClock class="w-5 h-5" />
+      {$t("power.schedule.title")}
+    </h3>
+    <div class="space-y-4">
+      <p class="text-sm text-secondary">{$t("power.schedule.hint")}</p>
+      {#if configError}
+        <Alert variant="error" title={$t("power.schedule.configError")}>{configError}</Alert>
+      {:else if !config}
+        <p class="text-sm text-muted">{$t("common.loading")}</p>
+      {:else}
+        <form class="space-y-3" novalidate on:submit|preventDefault={saveSchedule}>
+          {#if schedule}
+            <p class="text-sm text-muted">{$t("power.schedule.zone", { zone: schedule.timezone })}</p>
+          {/if}
+          <div class="flex flex-wrap items-center gap-3">
+            <input
+              type="checkbox"
+              id="power-auto-shutdown"
+              bind:checked={form.autoShutdown}
+              class="w-4 h-4 rounded bg-surface border-border-strong text-brand-ring focus:ring-brand-ring"
+            />
+            <label for="power-auto-shutdown" class="text-sm">{$t("power.schedule.shutdownEvery")}</label>
+            <input
+              type="time"
+              class="form-input w-32"
+              aria-label={$t("power.schedule.shutdownTime")}
+              bind:value={form.shutdownTime}
+            />
+          </div>
+          <div class="flex flex-wrap items-center gap-3">
+            <input
+              type="checkbox"
+              id="power-auto-wakeup"
+              bind:checked={form.autoWakeup}
+              class="w-4 h-4 rounded bg-surface border-border-strong text-brand-ring focus:ring-brand-ring"
+            />
+            <label for="power-auto-wakeup" class="text-sm">{$t("power.schedule.wakeEvery")}</label>
+            <input type="time" class="form-input w-32" aria-label={$t("power.schedule.wakeTime")} bind:value={form.wakeTime} />
+          </div>
+          <div class="flex flex-wrap items-center gap-3">
+            <input
+              type="checkbox"
+              id="power-idle-shutdown"
+              bind:checked={form.idleShutdown}
+              class="w-4 h-4 rounded bg-surface border-border-strong text-brand-ring focus:ring-brand-ring"
+            />
+            <label for="power-idle-shutdown" class="text-sm">{$t("power.schedule.idleAfter")}</label>
+            <input
+              type="number"
+              min="20"
+              max="1440"
+              class="form-input w-24"
+              aria-label={$t("power.schedule.idleMinutes")}
+              bind:value={form.idleMinutes}
+            />
+            <span class="text-sm text-secondary">{$t("power.schedule.minutes")}</span>
+          </div>
+          {#if saveError}
+            <div role="alert">
+              <Alert variant="error" title={$t("power.schedule.saveFailed")}>{saveError}</Alert>
+            </div>
+          {/if}
+          <Button type="submit" variant="primary" loading={saving}>{$t("power.schedule.save")}</Button>
+        </form>
+      {/if}
+
+      {#if scheduleError}
+        <Alert variant="error" title={$t("power.schedule.readError")}>{scheduleError}</Alert>
+      {:else if schedule}
+        <p class="text-sm text-muted">{$t("power.schedule.browserZone", { zone: browserZone })}</p>
+        <dl class="grid gap-3 text-sm sm:grid-cols-[auto_1fr]" aria-label={$t("power.schedule.planLabel")}>
+          <dt class="text-secondary">{$t("power.schedule.nextShutdown")}</dt>
+          <dd data-testid="power-next-shutdown">
+            {#if schedule.shutdown.enabled && schedule.shutdown.next}
+              <span>{when(schedule.shutdown.next)}</span>
+              <Badge variant={schedule.shutdown.state === "postponed" ? "warning" : "info"}>
+                {$t(STATES[schedule.shutdown.state] ?? STATES.planned)}
+              </Badge>
+              {#if schedule.shutdown.held_by.length}
+                <p class="mt-1 text-secondary">{$t("power.schedule.heldBy")}</p>
+                <ul class="list-disc pl-5">
+                  {#each schedule.shutdown.held_by as finding}
+                    <li class="break-words">{describe(finding)}</li>
+                  {/each}
+                </ul>
+              {/if}
+            {:else}
+              {$t("power.schedule.noShutdown")}
+            {/if}
+          </dd>
+          <dt class="text-secondary">{$t("power.schedule.nextWake")}</dt>
+          <dd data-testid="power-next-wake">
+            {#if !schedule.wake.rtc.available}
+              <p class="text-status-warning break-words">
+                {$t("power.schedule.noWakePromised", { reason: schedule.wake.rtc.reason ?? "" })}
+              </p>
+            {:else}
+              <p>{schedule.wake.enabled && schedule.wake.next ? when(schedule.wake.next) : $t("power.schedule.noWake")}</p>
+              <p class="text-secondary">
+                {schedule.wake.rtc.alarm
+                  ? $t("power.schedule.alarmAt", { time: when(schedule.wake.rtc.alarm) })
+                  : $t("power.schedule.noAlarm")}
+              </p>
+              <p class="text-muted">{$t("power.schedule.rtcReady")}</p>
+            {/if}
+          </dd>
+          <dt class="text-secondary">{$t("power.schedule.idleTitle")}</dt>
+          <dd data-testid="power-idle">
+            {#if schedule.idle.idle}
+              {#if schedule.idle.since && schedule.idle.shutdown_at}
+                {$t("power.schedule.idleSince", { since: when(schedule.idle.since), at: when(schedule.idle.shutdown_at) })}
+              {:else}
+                {$t("power.schedule.idleNow")}
+              {/if}
+            {:else}
+              <p>{$t("power.schedule.notIdle")}</p>
+              <ul class="list-disc pl-5">
+                {#each schedule.idle.found as finding}
+                  <li class="break-words">{describe(finding)}</li>
+                {/each}
+              </ul>
+            {/if}
+            {#if !schedule.idle.enabled}
+              <p class="text-muted">{$t("power.schedule.idleOff")}</p>
+            {/if}
+          </dd>
+        </dl>
+      {/if}
     </div>
   </Card>
 

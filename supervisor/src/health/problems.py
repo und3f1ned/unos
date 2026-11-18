@@ -2,8 +2,9 @@
 
 A source is one check that finds problems: "pools" and "volumes" (the RAID monitor, every 5
 minutes), "disks" (the SMART monitor, every hour), "tasks" (the
-scheduler's check, every 5 minutes) and "apps" (the use of the apps' containers against their
-limits, every 30 seconds: apps.usage, ADR-0390). Each pass of
+scheduler's check, every 5 minutes), "apps" (the use of the apps' containers against their
+limits, every 30 seconds: apps.usage, ADR-0390) and "power" (the shutdowns of the power settings
+that come within 10 minutes or wait, every minute: power.schedule, ADR-0407). Each pass of
 a check replaces the problems of its source with what it found (``update``): a problem whose key is
 new is alerted once, through every enabled notification channel; one that the pass no longer finds
 is gone and dropped, and nothing is sent for it; when it comes back, it is new again. The events
@@ -41,9 +42,12 @@ class Problem(BaseModel):
     severity: Severity
     # What the web UI says of it, in the language of the page, with the subject: pool_unmounted,
     # pool_degraded, pool_read_only, pool_low_space, disk_failed, disk_test_failed, task_failed,
-    # task_missed, volume_quota_80, volume_quota_90, volume_quota_95, app_memory, app_cpu, app_oom.
+    # task_missed, volume_quota_80, volume_quota_90, volume_quota_95, app_memory, app_cpu, app_oom,
+    # shutdown_scheduled, shutdown_postponed, shutdown_idle.
     kind: str
-    subject: str  # the pool's name, the disk's path, the task's name, <pool>/<volume> or a container's name
+    # The pool's name, the disk's path, the task's name, <pool>/<volume>, a container's name, or a
+    # shutdown's time on the host's clock ("23:00 (Europe/Berlin)").
+    subject: str
     title: str  # English: the title of the alert
     detail: str  # English: the text of the alert
     since: str = Field(default_factory=_utc_now)  # when it was found, in ISO 8601 with the UTC offset

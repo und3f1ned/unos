@@ -380,7 +380,7 @@ class TestIdleWritesNothing:
         RepeatLimit to one line per ten minutes, and a loop that is new must be listed here."""
         loops_that_log_failures = {
             "app_resources_loop", "scheduler_loop", "task_check_loop", "raid_monitor_loop", "smart_monitor_loop",
-            "ups_monitor_loop", "check_host_tools", "first_upload_leftover_check",
+            "ups_monitor_loop", "check_host_tools", "first_upload_leftover_check", "power_schedule_loop",
         }
         # What a pass logs when it changed something or found a problem, each behind an `if`: the
         # shutdown by the UPS monitor, the items the trash expiry deleted and what it could not, the

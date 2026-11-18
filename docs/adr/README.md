@@ -384,6 +384,7 @@ and this index, and `make check-fast` runs it.
 | [0375](0375-the-supervisor-s-healthcheck-runs-bash-and-the-process-list-reads-ten-processes-in-full.md) | The supervisor's healthcheck runs bash, and the process list reads ten processes in full | accepted | 2026-11-13 |
 | [0388](0388-the-dashboard-shows-disk-io-and-the-stats-network-is-the-hosts-interfaces.md) | The dashboard shows the disks' I/O, and the network of the stats message is the traffic of the host's interfaces | accepted | 2026-11-17 |
 | [0399](0399-the-resource-monitor-keeps-an-hour-of-history-in-ram-and-only-administrators-get-the-hosts-processes.md) | The Resource Monitor keeps an hour of history in RAM, read once when its tab opens, and only administrators get the host's processes | accepted | 2026-11-18 |
+| [0407](0407-the-power-settings-shut-the-host-down-at-a-set-time-or-when-idle-and-arm-the-rtc-to-wake-it.md) | The power settings shut the host down at a set time or when idle, and arm the RTC to wake it | accepted | 2026-11-18 |
 
 ## Web UI
 
