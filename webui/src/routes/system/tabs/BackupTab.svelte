@@ -326,7 +326,7 @@
           <div>
             <h3 class="text-lg font-bold">{$t("backup.dialog.title")}</h3>
             <p class="text-content-secondary text-sm mt-1">
-              {$t("backup.dialog.from")} <span class="text-content-on-brand font-medium">{restoreTarget.filename}</span>
+              {$t("backup.dialog.from")} <span class="text-content font-medium">{restoreTarget.filename}</span>
             </p>
           </div>
         </div>

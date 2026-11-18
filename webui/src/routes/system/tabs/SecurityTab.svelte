@@ -6,6 +6,7 @@
   import TwoFactorRequirementCard from "$lib/components/account/TwoFactorRequirementCard.svelte";
   import RecoveryCodes from "$lib/components/account/RecoveryCodes.svelte";
   import LanguageCard from "$lib/components/account/LanguageCard.svelte";
+  import ThemeCard from "$lib/components/account/ThemeCard.svelte";
   import ApiTokensCard from "$lib/components/account/ApiTokensCard.svelte";
   import { intlLocale, t } from "$lib/i18n";
   import { formatDateTime } from "$lib/time";
@@ -572,6 +573,8 @@
   <h2 class="text-xl font-semibold">{$t("account.title")}</h2>
 
   <LanguageCard />
+
+  <ThemeCard />
 
   <!-- Two-Factor Authentication -->
   <div class="bg-surface-elevated rounded-lg p-4">

@@ -23,6 +23,12 @@ test('a new installation asks for its administrator, signs it in and refuses a s
   await page.goto('/');
   await expect(page).toHaveURL('/setup');
   await expect(page.getByText('Create your admin account to get started')).toBeVisible();
+  // Before any sign-in the page follows the device's colour scheme, as System does (ADR-0405);
+  // Playwright's device prefers light.
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
+  await page.emulateMedia({ colorScheme: 'dark' });
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+  await page.emulateMedia({ colorScheme: 'light' });
   await page.getByLabel('Username').fill(E2E_ADMIN.username);
   await page.getByLabel('Password', { exact: true }).fill(E2E_ADMIN.password);
   await page.getByLabel('Confirm Password').fill(E2E_ADMIN.password);

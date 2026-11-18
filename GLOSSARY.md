@@ -22,6 +22,10 @@ Memory, Network, Disk I/O and Temperature cards and, for administrators, Storage
 Quick Actions and Recent Activity. Its order and hidden state are the user's dashboard layout, kept
 per user on the server (ADR-0395). Avoid: tile, panel.
 
+**Theme**: The colours of the web UI, dark or light: the values that the colour tokens take. Each
+user chooses Dark, Light or System (the device's light or dark setting) on the Account page, and the
+server keeps the choice per user (ADR-0405). Avoid: skin, colour mode.
+
 **Text catalog**: The texts of one area of the web UI in English and Russian
 (`webui/src/lib/i18n/catalog/<area>.ts`), which the pages show in the language chosen on the
 Account page; the server's messages stay English (ADR-0287). Avoid: dictionary, locale file.

@@ -64,7 +64,7 @@
 			use:focusAndSelect={selectOnMount}
 			{maxlength}
 			class="form-input {sizeClass} disabled:cursor-not-allowed disabled:opacity-50"
-			class:border-red-500={error}
+			class:border-status-error={error}
 			on:input
 			on:change
 			on:focus
@@ -87,7 +87,7 @@
 			use:focusAndSelect={selectOnMount}
 			{maxlength}
 			class="form-input {sizeClass} disabled:cursor-not-allowed disabled:opacity-50"
-			class:border-red-500={error}
+			class:border-status-error={error}
 			on:input
 			on:change
 			on:focus
@@ -110,7 +110,7 @@
 			use:focusAndSelect={selectOnMount}
 			{maxlength}
 			class="form-input {sizeClass} disabled:cursor-not-allowed disabled:opacity-50"
-			class:border-red-500={error}
+			class:border-status-error={error}
 			on:input
 			on:change
 			on:focus
@@ -133,7 +133,7 @@
 			aria-label={ariaLabel || undefined}
 			use:focusAndSelect={selectOnMount}
 			class="form-input {sizeClass} disabled:cursor-not-allowed disabled:opacity-50"
-			class:border-red-500={error}
+			class:border-status-error={error}
 			on:change
 			on:focus
 			on:blur
@@ -155,7 +155,7 @@
 			use:focusAndSelect={selectOnMount}
 			{maxlength}
 			class="form-input {sizeClass} disabled:cursor-not-allowed disabled:opacity-50"
-			class:border-red-500={error}
+			class:border-status-error={error}
 			on:input
 			on:change
 			on:focus
@@ -174,8 +174,8 @@
 			{required}
 			{disabled}
 			{autocomplete}
-			class="form-input [color-scheme:dark] disabled:cursor-not-allowed disabled:opacity-50"
-			class:border-red-500={error}
+			class="form-input disabled:cursor-not-allowed disabled:opacity-50"
+			class:border-status-error={error}
 			on:input
 			on:change
 			on:focus

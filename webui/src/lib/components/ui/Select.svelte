@@ -256,23 +256,23 @@
 
 <style>
 	.select-trigger {
-		@apply w-full px-3 py-2 bg-surface-overlay border border-border rounded-lg text-content
+		@apply w-full px-3 py-2 bg-surface-overlay border border-border-strong rounded-lg text-content
 		       text-left flex items-center justify-between gap-2
 		       transition-all duration-150 ease-in-out
-		       hover:border-slate-500
-		       focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500;
+		       hover:border-content-muted
+		       focus:outline-none focus:border-brand-ring focus:ring-1 focus:ring-brand-ring;
 	}
 
 	.select-trigger-open {
-		@apply border-blue-500 ring-1 ring-blue-500;
+		@apply border-brand-ring ring-1 ring-brand-ring;
 	}
 
 	.select-trigger-error {
-		@apply border-red-500;
+		@apply border-status-error;
 	}
 
 	.select-trigger-disabled {
-		@apply opacity-50 cursor-not-allowed hover:border-border;
+		@apply opacity-50 cursor-not-allowed hover:border-border-strong;
 	}
 
 	.select-value {

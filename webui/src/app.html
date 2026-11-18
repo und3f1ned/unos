@@ -5,9 +5,11 @@
 		<link rel="icon" href="%sveltekit.assets%/favicon.png" />
 		<meta name="viewport" content="width=device-width, initial-scale=1" />
 		<title>UNOS</title>
+		<!-- The theme before the page is drawn (ADR-0405): a file, as the CSP allows no inline script but SvelteKit's own. -->
+		<script src="/theme-init.js"></script>
 		%sveltekit.head%
 	</head>
-	<body data-sveltekit-preload-data="hover" class="bg-slate-900 text-white">
+	<body data-sveltekit-preload-data="hover" class="bg-surface text-content">
 		<div style="display: contents">%sveltekit.body%</div>
 	</body>
 </html>

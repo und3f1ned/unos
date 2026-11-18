@@ -12,6 +12,14 @@ features (SMB access per user and per share, volumes, copy and move in the file
 manager, encrypted backup uploads, health checks, CI checks).
 
 ### Changed
+- The web UI has a light theme. Each user chooses **Dark**, **Light** or **System** (the device's
+  setting, followed as it changes) on the Account page; the NAS keeps the choice per user
+  (`GET`/`PUT /api/v1/auth/me/theme`, audited as `theme_changed`), and the page shows it before it
+  is drawn. A user who never chose gets **System**, so the web UI turns light on a device set to
+  light. The colour tokens have a value per theme, and the pairs of tokens that text and controls
+  use meet WCAG AA in both themes, which made the dark theme's rows under the pointer and fields a
+  little darker, its secondary and muted text and its status colours lighter, its field borders
+  visible and the warning and success buttons darker (ADR-0405).
 - Web UI pages use the design system everywhere: every button is `Button`, fields carry the
   `form-*` classes and colours are the tokens of `tailwind.config.js`; `make frontend` fails for a raw
   `<button>` or a raw palette colour outside `lib/components/ui` (ADR-0400). New tokens keep the old

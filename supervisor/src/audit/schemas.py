@@ -19,6 +19,8 @@ class AuditAction(str, Enum):
     TOTP_DISABLED = "totp_disabled"
     # A user's own dashboard layout (ADR-0395)
     DASHBOARD_LAYOUT_CHANGED = "dashboard_layout_changed"
+    # A user's own theme of the web UI (ADR-0405)
+    THEME_CHANGED = "theme_changed"
 
     # User management
     USER_CREATED = "user_created"

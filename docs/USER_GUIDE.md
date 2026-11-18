@@ -133,6 +133,20 @@ happens: **Add a user…** opens the **Users** page's **Add user**, and
 the confirmations of **System** → **Power Management**. Other changes, such
 as deleting something, are made on their pages.
 
+### Theme
+
+The web interface has a dark and a light theme. Choose **Dark**, **Light** or
+**System** on the **Account** page (administrators: **System** → **Security**),
+under **Theme**. **System** follows the light or dark setting of your device, and
+changes with it. The choice applies at once and is kept for your account on the
+NAS: it stays after you sign out and in, and follows you to every browser you
+sign in to. Until you choose, the theme is **System**. Before anyone signs in, the
+login and first-run pages show the last theme used in this browser, or the
+device's setting in a new browser. Each change is an entry **Theme changed** in
+the audit log. The colours that text and controls use meet the WCAG AA contrast
+in both themes. If your saved theme cannot be read, the Account page says so and
+shows this browser's; it asks again when you open the page again.
+
 ### Language
 
 The web interface is in English or Russian. Choose the language on the **Account**
@@ -1734,7 +1748,7 @@ active after the restore.
 | Role | Permissions |
 |------|-------------|
 | Admin | Full access to all features, except SMB: administrators cannot use SMB |
-| User | **Dashboard** (system overview and live statistics) and **Account** (language, own password, two-factor authentication, login history and SMB access); SMB shares as an administrator allows |
+| User | **Dashboard** (system overview and live statistics) and **Account** (language, theme, own password, two-factor authentication, login history and SMB access); SMB shares as an administrator allows |
 
 Every other page and API is for administrators only; regular users do not see
 them. At least one administrator must remain: the last one cannot be demoted

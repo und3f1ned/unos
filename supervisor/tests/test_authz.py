@@ -93,6 +93,9 @@ USER_ALLOWED = {
     ("GET", f"{API}/auth/me/dashboard-layout"),
     ("PUT", f"{API}/auth/me/dashboard-layout"),
     ("DELETE", f"{API}/auth/me/dashboard-layout"),
+    # Own theme of the web UI (ADR-0405)
+    ("GET", f"{API}/auth/me/theme"),
+    ("PUT", f"{API}/auth/me/theme"),
     # Read-only system information, which every signed-in user may read
     ("GET", f"{API}/system/info"),
     ("GET", f"{API}/system/network"),
