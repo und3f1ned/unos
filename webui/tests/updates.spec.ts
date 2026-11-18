@@ -39,7 +39,7 @@ function checked(version: string, latest: Release | null, updateAvailable: boole
     latest_version: latest?.tag_name ?? null,
     update_available: updateAvailable,
     release_info: latest,
-    checked_at: '2026-12-02T08:00:00',
+    checked_at: '2026-12-02T08:00:00Z',
   };
 }
 

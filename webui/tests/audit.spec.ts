@@ -2,10 +2,12 @@ import type { APIRequestContext, Download, Page } from '@playwright/test';
 import { test, expect, E2E_ADMIN } from './fixtures';
 import { SESSION_COOKIE, pageSessionKey, sessionToken } from './session';
 
-// The Audit Log page (feature-list.json: webui.audit-log-page and security.audit-log; ADR-0237),
+// The Audit Log page (feature-list.json: webui.audit-log-page and security.audit-log; ADR-0398),
 // against the real audit log of the target. beforeAll writes the entries the tests look for,
 // all named after this run: a failed sign-in with a name that has no account, and a user
-// created and deleted through the API. The page shows the times as the server writes them.
+// created and deleted through the API. The server answers its times in UTC with their offset;
+// the browser runs in a time zone far from UTC, where the page shows them, groups them by day and
+// filters by day in that zone (ADR-0398).
 
 const RUN = Date.now().toString(36);
 const USER = { username: `e2e_audit_${RUN}`, password: 'e2e-Audit-Password-1' };
@@ -49,6 +51,34 @@ async function chooseAction(page: Page, label: string) {
 
 /** The labels the timeline shows for these entries, in their order. */
 const labelsOf = (entries: Entry[]) => entries.map((entry) => LABELS[entry.action]);
+
+// UTC+05:45 all year: a time read without its offset, or a day of UTC, is off.
+test.use({ timezoneId: 'Asia/Kathmandu' });
+
+/** The browser's day of the time `timestamp` (YYYY-MM-DD). */
+function browserDay(page: Page, timestamp: string): Promise<string> {
+  return page.evaluate((value) => {
+    const date = new Date(value);
+    const pad = (n: number) => String(n).padStart(2, '0');
+    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+  }, timestamp);
+}
+
+/** The time `timestamp` as the page shows it: the browser's clock time in English. */
+function browserTime(page: Page, timestamp: string): Promise<string> {
+  return page.evaluate((value) => new Date(value).toLocaleTimeString('en-US'), timestamp);
+}
+
+/** The bounds that the page sends for the browser's day `day`: its first and its last millisecond. */
+function dayBounds(page: Page, day: string): Promise<{ first: string; last: string }> {
+  return page.evaluate((value) => {
+    const [year, month, date] = value.split('-').map(Number);
+    return {
+      first: new Date(year, month - 1, date).toISOString(),
+      last: new Date(new Date(year, month - 1, date + 1).getTime() - 1).toISOString(),
+    };
+  }, day);
+}
 
 /** The day `days` days after `day` (YYYY-MM-DD). */
 function shiftDay(day: string, days: number): string {
@@ -141,7 +171,10 @@ test.describe('Audit log', () => {
       .locator('li time')
       .evaluateAll((elements) => elements.map((element) => element.getAttribute('datetime') ?? ''));
     expect(times.length).toBeGreaterThanOrEqual(4);
-    expect(times).toEqual([...times].sort().reverse());
+    // The server's times, in UTC with their offset, newest first.
+    for (const time of times) expect(time).toMatch(/(Z|\+00:00)$/);
+    const instants = times.map((time) => Date.parse(time));
+    expect(instants).toEqual([...instants].sort((a, b) => b - a));
 
     await applyFilters(page, { search: USER.username }, () => filter(page, 'Search').fill(USER.username));
     await expectTimeline(page, [/User deleted/, /User created/]);
@@ -150,10 +183,12 @@ test.describe('Audit log', () => {
     await expect(shown).toContainText(`Deleted user: ${USER.username}`);
     await expect(shown).toContainText(E2E_ADMIN.username);
     await expect(shown).toContainText(deleted.ip_address ?? 'no address');
-    await expect(shown).toContainText(deleted.timestamp.slice(11, 19));
-    await expect(timelineEntries(page).nth(1)).toContainText(created.timestamp.slice(11, 19));
-    // Grouped by the server's day.
-    await expect(timeline(page).locator(`h2 time[datetime="${deleted.timestamp.slice(0, 10)}"]`)).toBeVisible();
+    // In the browser's time zone, 5:45 ahead of the server's UTC.
+    await expect(shown).toContainText(await browserTime(page, deleted.timestamp));
+    await expect(timelineEntries(page).nth(1)).toContainText(await browserTime(page, created.timestamp));
+    // Grouped by the browser's day.
+    const day = await browserDay(page, deleted.timestamp);
+    await expect(timeline(page).locator(`h2 time[datetime="${day}"]`)).toBeVisible();
   });
 
   test('search and filters by user, action and time narrow the list', async ({ authenticatedPage: page }) => {
@@ -182,23 +217,30 @@ test.describe('Audit log', () => {
     });
     await expectTimeline(page, [/User deleted/, /User created/, /Login failed/]);
 
-    // From and To include their whole day, as the first and as the last day of the range.
-    const day = runEntries[0].timestamp.slice(0, 10);
-    const ofTheDay = labelsOf(runEntries.filter((entry) => entry.timestamp.startsWith(day)));
-    const beforeTheDay = labelsOf(runEntries.filter((entry) => entry.timestamp < day));
-    await applyFilters(page, { search: RUN, start_date: shiftDay(day, 1) }, () =>
+    // From and To are the browser's days and include their whole day, as the first and as the
+    // last day of the range: the page sends their first and last millisecond, in UTC.
+    const days = await Promise.all(runEntries.map((entry) => browserDay(page, entry.timestamp)));
+    const day = days[0];
+    const ofTheDay = labelsOf(runEntries.filter((_, i) => days[i] === day));
+    const beforeTheDay = labelsOf(runEntries.filter((_, i) => days[i] < day));
+    const [today, tomorrow, yesterday] = await Promise.all(
+      [day, shiftDay(day, 1), shiftDay(day, -1)].map((d) => dayBounds(page, d)),
+    );
+    await applyFilters(page, { search: RUN, start_date: tomorrow.first }, () =>
       filter(page, 'From').fill(shiftDay(day, 1)),
     );
     await expectTimeline(page, []);
-    await applyFilters(page, { search: RUN, start_date: day }, () => filter(page, 'From').fill(day));
+    await applyFilters(page, { search: RUN, start_date: today.first }, () => filter(page, 'From').fill(day));
     await expectTimeline(page, ofTheDay);
-    await applyFilters(page, { search: RUN, start_date: day, end_date: shiftDay(day, -1) }, () =>
+    await applyFilters(page, { search: RUN, start_date: today.first, end_date: yesterday.last }, () =>
       filter(page, 'To').fill(shiftDay(day, -1)),
     );
     await expectTimeline(page, []);
-    await applyFilters(page, { search: RUN, start_date: day, end_date: day }, () => filter(page, 'To').fill(day));
+    await applyFilters(page, { search: RUN, start_date: today.first, end_date: today.last }, () =>
+      filter(page, 'To').fill(day),
+    );
     await expectTimeline(page, ofTheDay);
-    await applyFilters(page, { search: RUN, end_date: shiftDay(day, -1) }, async () => {
+    await applyFilters(page, { search: RUN, end_date: yesterday.last }, async () => {
       await filter(page, 'From').fill('');
       await filter(page, 'To').fill(shiftDay(day, -1));
     });
@@ -255,10 +297,10 @@ test.describe('Audit log', () => {
 
 test.describe('Audit log, more entries than one page', () => {
   const TOTAL = 150;
-  // In the server's form: newest first, a minute apart, times without a zone.
+  // In the server's form: newest first, a minute apart, in UTC with the offset.
   const ENTRIES = Array.from({ length: TOTAL }, (_, n) => ({
     id: `audit_fake_${n}`,
-    timestamp: new Date(Date.UTC(2026, 10, 6, 23, 59) - n * 60_000).toISOString().slice(0, 19),
+    timestamp: new Date(Date.UTC(2026, 10, 6, 23, 59) - n * 60_000).toISOString().slice(0, 19) + 'Z',
     action: 'login_success',
     severity: 'info',
     username: `fake_user_${n}`,
@@ -305,7 +347,7 @@ test.describe('Audit log, more entries than one page', () => {
 // wrote, are gone, and an older entry that names one of them shows its action as recorded.
 test.describe('Audit log, the actions of the filter', () => {
   const OLD = {
-    id: 'audit_old', timestamp: '2026-11-07T14:30:12', action: 'firewall_rule_added', severity: 'info',
+    id: 'audit_old', timestamp: '2026-11-07T14:30:12Z', action: 'firewall_rule_added', severity: 'info',
     username: 'admin', ip_address: '192.0.2.10', user_agent: null, resource_type: null, resource_id: null,
     details: 'Allowed TCP port 8080', success: true, prev_hash: null, hash: null, chain: null,
   };
@@ -341,7 +383,7 @@ test.describe('Audit log, a broken hash chain', () => {
   // place in the chain is "broken"; the others hold.
   const entry = (n: number, chain: 'ok' | 'broken') => ({
     id: `audit_chain_${n}`,
-    timestamp: `2026-11-10T12:0${n}:00`,
+    timestamp: `2026-11-10T12:0${n}:00Z`,
     action: 'login_success',
     severity: 'info',
     username: `chain_user_${n}`,
@@ -427,24 +469,26 @@ test.describe('Audit log errors', () => {
 // are the server's values, shown through the catalog; the counts take their Russian plural forms
 // and the days the Russian format. The details are the server's text and stay in English.
 test.describe('Audit log in Russian', () => {
+  // The days of the fake entries are UTC's.
+  test.use({ timezoneId: 'UTC' });
   // Where this browser keeps the language chosen on the Account page (ADR-0287).
   const LOCALE_KEY = 'unos-locale';
   // In the server's form, newest first: a failed sign-in and a user created on one day, and 99
   // sign-ins the day before.
   const ENTRIES = [
     {
-      id: 'audit_ru_failed', timestamp: '2026-11-07T14:30:12', action: 'login_failed', severity: 'warning',
+      id: 'audit_ru_failed', timestamp: '2026-11-07T14:30:12Z', action: 'login_failed', severity: 'warning',
       username: 'mallory', ip_address: '192.0.2.7', user_agent: 'curl/8.5.0', resource_type: null,
       resource_id: null, details: null, success: false,
     },
     {
-      id: 'audit_ru_created', timestamp: '2026-11-07T09:15:00', action: 'user_created', severity: 'info',
+      id: 'audit_ru_created', timestamp: '2026-11-07T09:15:00Z', action: 'user_created', severity: 'info',
       username: 'admin', ip_address: '192.0.2.10', user_agent: null, resource_type: 'user', resource_id: 'alice',
       details: 'Created new user: alice', success: true,
     },
     ...Array.from({ length: 99 }, (_, n) => ({
       id: `audit_ru_${n}`,
-      timestamp: new Date(Date.UTC(2026, 10, 6, 23, 59) - n * 60_000).toISOString().slice(0, 19),
+      timestamp: new Date(Date.UTC(2026, 10, 6, 23, 59) - n * 60_000).toISOString(),
       action: 'login_success', severity: 'info', username: `fake_user_${n}`, ip_address: '192.0.2.10',
       user_agent: null, resource_type: null, resource_id: null, details: null, success: true,
     })),
@@ -536,7 +580,8 @@ test.describe('Audit log in Russian', () => {
     });
     await expect(timeline.getByRole('listitem')).toHaveCount(1);
     await expect(timeline.getByRole('listitem')).toContainText('Неудачный вход');
-    await applyFilters(page, { username: stranger, start_date: '2000-01-01', end_date: '2000-01-01' }, async () => {
+    const bounds = { start_date: '2000-01-01T00:00:00.000Z', end_date: '2000-01-01T23:59:59.999Z' };
+    await applyFilters(page, { username: stranger, ...bounds }, async () => {
       await filter(page, 'С').fill('2000-01-01');
       await filter(page, 'По').fill('2000-01-01');
     });

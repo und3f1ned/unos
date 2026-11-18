@@ -183,7 +183,7 @@ const LONG_ADDRESS = 'fd7a:115c:a1e0:4b2d:8c3f:9e61:d5a8:7b19';
 /** The n-th entry of the chain (1 the oldest), written at 09:4n:12 of the server's day. */
 const auditEntry = (n: number, entry: Record<string, unknown>) => ({
   id: `audit_20261117094${n}12345678`,
-  timestamp: `2026-11-17T09:4${n}:12.345678`,
+  timestamp: `2026-11-17T09:4${n}:12.345678+00:00`,
   severity: 'info',
   ip_address: LONG_ADDRESS,
   user_agent: 'Mozilla/5.0 (Android 15; Mobile; rv:144.0) Gecko/144.0 Firefox/144.0',
@@ -225,8 +225,8 @@ const SYSTEM_INFO = {
   kernel: '6.12.48+deb13-arm64',
   os: 'Debian GNU/Linux 13 (trixie)',
   architecture: 'aarch64',
-  // When the host started (psutil.boot_time()): 3 days and 4 hours ago.
-  boot_time: Date.now() / 1000 - (3 * 24 + 4) * 3600,
+  // When the host started: 3 days and 4 hours ago, in UTC with its offset.
+  boot_time: new Date(Date.now() - (3 * 24 + 4) * 3600 * 1000).toISOString(),
 };
 
 function container(id: string, name: string, image: string, state: string, ports: object[] = []) {
@@ -443,15 +443,15 @@ const UPDATES = {
     latest_version: 'v1.3.0',
     update_available: true,
     release_info: RELEASE,
-    checked_at: '2026-12-02T08:00:00',
+    checked_at: '2026-12-02T08:00:00Z',
   },
 };
 
 const BACKUPS = {
   '/api/v1/backup/list': {
     backups: [
-      { filename: 'unos_backup_20261107_020000.tar.gz.enc', size: 1_048_576, created: '2026-11-07T02:00:00', version: '1.0', encrypted: true },
-      { filename: 'unos_backup_20261101_020000.tar.gz', size: 980_000, created: '2026-11-01T02:00:00', version: '1.0', encrypted: false },
+      { filename: 'unos_backup_20261107_020000.tar.gz.enc', size: 1_048_576, created: '2026-11-07T02:00:00Z', version: '1.0', encrypted: true },
+      { filename: 'unos_backup_20261101_020000.tar.gz', size: 980_000, created: '2026-11-01T02:00:00Z', version: '1.0', encrypted: false },
     ],
   },
 };
@@ -568,8 +568,8 @@ const SECURITY = {
   '/api/v1/security/certificates': {
     certificates: [
       { id: 'custom_nas-living-room.home.arpa', type: 'self_signed', domain: 'nas-living-room.home.arpa',
-        issuer: 'nas-living-room.home.arpa', valid_from: 'Nov  8 01:47:31 2026 GMT',
-        valid_until: 'Nov  8 01:47:31 2027 GMT', is_valid: true, served: false, fingerprint: null },
+        issuer: 'nas-living-room.home.arpa', valid_from: '2026-11-08T01:47:31Z',
+        valid_until: '2027-11-08T01:47:31Z', is_valid: true, served: false, fingerprint: null },
     ],
     served_by: 'caddy_local_ca',
   },
@@ -587,11 +587,11 @@ const API_TOKENS = {
   '/api/v1/auth/tokens': [
     { id: 1, name: 'nightly_backup_of_the_family_photos_to_the_garage_nas', token_prefix: 'unos_AbCdEfG',
       is_active: true, read_only: false, areas: EVERY_AREA.slice(0, 20), scope_known: true,
-      created_at: '2026-11-01T09:00:00', last_used_at: '2026-11-16T03:00:00', expires_at: '2027-11-01T09:00:00' },
+      created_at: '2026-11-01T09:00:00Z', last_used_at: '2026-11-16T03:00:00Z', expires_at: '2027-11-01T09:00:00Z' },
     { id: 2, name: 'home-assistant', token_prefix: 'unos_IjKlMnO', is_active: false, read_only: true, areas: null,
-      scope_known: true, created_at: '2026-01-01T09:00:00', last_used_at: null, expires_at: '2026-02-01T09:00:00' },
+      scope_known: true, created_at: '2026-01-01T09:00:00Z', last_used_at: null, expires_at: '2026-02-01T09:00:00Z' },
     { id: 3, name: 'restored_from_another_installation', token_prefix: 'unos_QrStUvW', is_active: true,
-      read_only: true, areas: [], scope_known: false, created_at: '2026-10-01T09:00:00', last_used_at: null,
+      read_only: true, areas: [], scope_known: false, created_at: '2026-10-01T09:00:00Z', last_used_at: null,
       expires_at: null },
   ],
 };
@@ -708,7 +708,7 @@ const STATS = {
     { pid: 1022, name: 'kworker/u8:2-events_unbound', cpu_percent: 0.4, memory_percent: 0, memory_mb: 0, status: 'idle',
       username: 'root' },
   ],
-  timestamp: '2026-11-08T10:00:00',
+  timestamp: '2026-11-08T10:00:00+00:00',
 };
 
 /** Answer the stats stream with STATS once the page has authenticated it. */

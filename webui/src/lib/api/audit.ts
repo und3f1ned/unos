@@ -1,12 +1,12 @@
 import { api, downloadAs } from './client';
 
-// The audit log (administrators only): supervisor/src/audit/router.py, ADR-0237.
+// The audit log (administrators only): supervisor/src/audit/router.py, ADR-0398.
 
 export type AuditSeverity = 'info' | 'warning' | 'critical';
 
 export interface AuditEntry {
   id: string;
-  /** The server's local time without a zone, e.g. 2026-11-07T14:30:12.123456. */
+  /** In UTC with its offset, e.g. 2026-11-07T14:30:12.123456Z (ADR-0398). */
   timestamp: string;
   action: string;
   severity: AuditSeverity;
@@ -32,7 +32,8 @@ export interface AuditAction {
 /**
  * The filters that GET /audit/logs, /logs/count and /logs/export share; an empty value
  * filters nothing. username and action match exactly, search any part of an entry in any
- * case, and the dates (YYYY-MM-DD, the server's days) include their whole day.
+ * case, and the bounds (a date, or a date and time, in UTC or with an offset) include the whole
+ * unit they name: the Audit Log page sends the first and the last instant of the browser's days.
  */
 export interface AuditFilters {
   search: string;

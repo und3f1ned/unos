@@ -1,8 +1,9 @@
 """Pydantic schemas for the updates module."""
 
-from datetime import datetime
 from enum import Enum
 from pydantic import BaseModel, Field
+
+from ..times import UtcDatetime
 
 
 class UpdateStatus(str, Enum):
@@ -32,7 +33,7 @@ class ReleaseInfo(BaseModel):
     tag_name: str
     name: str
     body: str  # Changelog/description in markdown
-    published_at: datetime
+    published_at: UtcDatetime
     html_url: str
     prerelease: bool = False
     assets: list[ReleaseAsset] = []
@@ -43,7 +44,7 @@ class CurrentVersion(BaseModel):
     """Current installed version information."""
     version: str
     commit_hash: str
-    install_date: datetime | None = None
+    install_date: UtcDatetime | None = None
     is_development: bool = False
 
 
@@ -54,7 +55,7 @@ class UpdateCheck(BaseModel):
     latest_version: str | None
     update_available: bool
     release_info: ReleaseInfo | None = None
-    checked_at: datetime
+    checked_at: UtcDatetime
 
 
 class UpdateProgress(BaseModel):
@@ -62,8 +63,8 @@ class UpdateProgress(BaseModel):
     status: UpdateStatus
     progress_percent: int = Field(ge=0, le=100, default=0)
     message: str = ""
-    started_at: datetime | None = None
-    completed_at: datetime | None = None
+    started_at: UtcDatetime | None = None
+    completed_at: UtcDatetime | None = None
     error: str | None = None
     can_rollback: bool = False
 
@@ -74,8 +75,8 @@ class UpdateHistoryEntry(BaseModel):
     from_version: str
     to_version: str
     status: str
-    started_at: datetime
-    completed_at: datetime | None = None
+    started_at: UtcDatetime
+    completed_at: UtcDatetime | None = None
     error: str | None = None
     changelog: str | None = None
 

@@ -1,5 +1,5 @@
 """The audit log: append-only (ADR-0224; feature-list.json: security.append-only-audit-log), and
-listed, filtered, searched, counted and exported through the API (ADR-0237; security.audit-log).
+listed, filtered, searched, counted and exported through the API (ADR-0398; security.audit-log).
 
 Entries are JSON lines appended to the log, written in a worker thread, read back without
 the lines that are damaged, and the log rotates by size into a fixed number of old files.
@@ -21,7 +21,7 @@ import sys
 import textwrap
 import threading
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -511,15 +511,17 @@ class TestOtherProcesses:
         assert [e.id for e in audit_router.load_audit_log()] == ["seeded-7", "seeded-8", "ours"]
 
 
-# ==================== The API (ADR-0237; feature-list.json: security.audit-log) ====================
+# ==================== The API (ADR-0398; feature-list.json: security.audit-log) ====================
 
 CLIENT = "192.0.2.10"  # the address the test client connects from
 LISTED_ROUTES = ["/logs", "/logs/count", "/logs/export"]  # the routes that take the filters
-BOUND_REFUSED = "{name} must be a date (YYYY-MM-DD) or a date and time (YYYY-MM-DDTHH:MM:SS) without a time zone"
+BOUND_REFUSED = ("{name} must be a date (YYYY-MM-DD) or a date and time (YYYY-MM-DDTHH:MM:SS), "
+                 "with an offset (Z or +HH:MM) or in UTC")
 
-# Entries at the edges of 2026-11-06, in the order written. Their times are the server's local
-# time without a zone, as log_action writes them: with microseconds, and without them only at a
-# whole second (datetime.isoformat() leaves out a fraction of zero).
+# Entries at the edges of 2026-11-06, in the order written. Their times are UTC without a zone, as
+# log_action wrote them before ADR-0398 in the supervisor's container: with microseconds, and
+# without them only at a whole second (datetime.isoformat() leaves out a fraction of zero). The API
+# answers them in UTC with Z.
 DAY = "2026-11-06"
 SEEDED = [
     {"timestamp": "2026-11-05T23:59:59.999999", "action": "login_failed", "username": "mallory",
@@ -548,7 +550,9 @@ def seeded(world):
 
 
 def stamps(entries: list[dict]) -> list[str]:
-    return [e["timestamp"] for e in entries]
+    """The times of the answered entries as SEEDED writes them: the API answers them in UTC with Z."""
+    assert all(e["timestamp"].endswith("Z") for e in entries), [e["timestamp"] for e in entries]
+    return [e["timestamp"].removesuffix("Z") for e in entries]
 
 
 def ask(world: World, path: str, **params):
@@ -559,7 +563,7 @@ class TestSignInAndUserManagementAreListed:
     def test_the_entries_name_the_user_the_action_the_time_and_the_client_address(self, world):
         world.client = RecordingClient(TestClient(app, raise_server_exceptions=False, client=(CLIENT, 50000)))
         auth_router.limiter.reset()  # the login rate limit is not under test here
-        before = datetime.now()
+        before = datetime.now(timezone.utc)
 
         signed_in = world.client.post(f"{API}/auth/login", json={"username": "admin", "password": ADMIN_PW})
         assert signed_in.status_code == 200, signed_in.text
@@ -572,7 +576,7 @@ class TestSignInAndUserManagementAreListed:
             f"{API}/auth/users/{created.json()['id']}", params={"username": "carol"}, headers=headers
         )
         assert deleted.status_code == 200, deleted.text
-        after = datetime.now()
+        after = datetime.now(timezone.utc)
 
         response = world.client.get(f"{API}/audit/logs", headers=headers)
 
@@ -618,6 +622,12 @@ class TestFilters:
         pytest.param({"start_date": "2026-11-06T12:00", "end_date": "2026-11-07"}, [ALICE_IN, DELETED, CREATED],
                      id="from-a-minute-up-to-a-day"),
         pytest.param({"start_date": "2026-11-06T12:00:01"}, [ALICE_IN, DELETED], id="from-the-next-second"),
+        # With an offset (ADR-0398): the same instants as UTC.
+        pytest.param({"start_date": "2026-11-06T13:00:00+01:00", "end_date": "2026-11-06T13:00:00+01:00"}, [CREATED],
+                     id="an-offset"),
+        pytest.param({"end_date": "2026-11-06T12:00:00Z"}, [CREATED, ADMIN_IN, FAILED], id="utc"),
+        pytest.param({"start_date": "2026-11-06T05:45+05:45", "end_date": "2026-11-07T05:44:59.999+05:45"},
+                     [DELETED, CREATED, ADMIN_IN], id="a-day-of-utc-in-another-zone"),
         pytest.param({"start_date": "2026-11-07", "end_date": DAY}, [], id="an-empty-range"),
         pytest.param({"username": "admin", "action": "user_deleted", "start_date": DAY, "end_date": DAY},
                      [DELETED], id="together"),
@@ -630,8 +640,8 @@ class TestFilters:
     @pytest.mark.parametrize("params", [
         pytest.param({"start_date": "yesterday"}, id="not-a-date"),
         pytest.param({"end_date": "2026-11-31"}, id="no-such-day"),
-        pytest.param({"start_date": "2026-11-06T12:00:00+01:00"}, id="an-offset"),
-        pytest.param({"end_date": "2026-11-06T12:00:00Z"}, id="utc"),
+        pytest.param({"start_date": "2026-11-06+01:00"}, id="an-offset-of-a-date"),
+        pytest.param({"end_date": "2026-11-06T12:00:00+0100"}, id="an-offset-of-the-basic-form"),
         pytest.param({"end_date": "2026-11-06T24:00"}, id="no-such-hour"),
         # Only the forms whose unit is plain: the extended ISO 8601 date, then the time to the
         # hour, minute, second or 1 to 6 digits of a fraction.
@@ -641,7 +651,7 @@ class TestFilters:
         pytest.param({"end_date": "2026-11-06T12:00:00.1234567"}, id="seven-digits-of-a-fraction"),
         pytest.param({"start_date": "2026-11-06T12:0"}, id="a-minute-of-one-digit"),
     ])
-    def test_a_bound_that_is_not_a_date_or_a_time_without_a_zone_is_refused(self, seeded, path, params):
+    def test_a_bound_of_another_form_is_refused(self, seeded, path, params):
         response = ask(seeded, path, **params)
 
         assert response.status_code == 422, response.text
@@ -709,8 +719,8 @@ class TestExport:
         assert header == ["ID", "Timestamp", "Action", "Severity", "Username", "IP Address", "Resource Type",
                           "Resource ID", "Details", "Success"]
         assert [(row[1], row[2], row[4], row[5], row[7]) for row in rows] == [
-            (DELETED, "user_deleted", "admin", CLIENT, "carol"),
-            (CREATED, "user_created", "admin", CLIENT, "carol"),
+            (f"{DELETED}Z", "user_deleted", "admin", CLIENT, "carol"),
+            (f"{CREATED}Z", "user_created", "admin", CLIENT, "carol"),
         ]
 
     def test_a_failed_sign_in_puts_no_formula_into_the_csv_export(self, world):
@@ -755,7 +765,8 @@ class TestExport:
 
         assert response.status_code == 200, response.text
         header, *rows = csv.reader(io.StringIO(response.text, newline=""))
-        assert rows == [[exported, CREATED, "other", "info", exported, exported, exported, exported, exported, "True"]]
+        assert rows == [[exported, f"{CREATED}Z", "other", "info", exported, exported, exported, exported,
+                         exported, "True"]]
         # The entry and the JSON export keep the value as recorded.
         assert get(world, "/logs/export")["entries"][0]["username"] == recorded
 
@@ -792,7 +803,7 @@ AUDIT_PAGE = REPO / "webui" / "src" / "routes" / "audit" / "+page.svelte"
 def test_the_web_ui_names_every_action_by_words_the_search_finds():
     """The Audit Log page shows an action by its name in the audit catalog (ADR-0287, ADR-0298):
     one for every AuditAction, in Russian and in English, where the name is the action with spaces
-    for its underscores and a capital (ADR-0237), words that the search of the list finds in the
+    for its underscores and a capital (ADR-0398), words that the search of the list finds in the
     action's entries."""
     actions = key_map(AUDIT_PAGE, "ACTION_NAMES")
     assert sorted(actions) == sorted(action.value for action in AuditAction)
@@ -822,7 +833,7 @@ def test_the_web_ui_names_every_resource_type_as_the_server_records_it():
     """The Audit Log page shows an entry's resource as its type, by its name in the audit catalog,
     and its id (ADR-0287, ADR-0298): a name for every type the server records, which in English is
     the type as recorded, so that the search finds the resource as the English page shows it
-    (ADR-0237), and a Russian name."""
+    (ADR-0398), and a Russian name."""
     types = key_map(AUDIT_PAGE, "RESOURCE_TYPES")
     recorded = _recorded_resource_types()
     assert {"user", "share", "audit_log"} <= recorded  # the scan finds the server's calls
@@ -884,7 +895,9 @@ class TestAnActionNoLongerWritten:
         log("before")
         before = audit_entries(world.audit_file)[-1]
         # As the writer stored it: chained to the entry before it.
-        old = {"id": "audit_old", "timestamp": datetime.now().isoformat(), "action": OLD_ACTION,
+        # In UTC without an offset, as the supervisor's container wrote it before ADR-0398.
+        old = {"id": "audit_old", "timestamp": datetime.now(timezone.utc).replace(tzinfo=None).isoformat(),
+               "action": OLD_ACTION,
                "severity": "info", "username": "admin", "ip_address": CLIENT,
                "details": "Allowed TCP port 8080", "success": True, "prev_hash": before["hash"]}
         old["hash"] = _entry_hash(old)

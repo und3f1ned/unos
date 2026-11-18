@@ -23,6 +23,7 @@
 	import { SmbStateBadge } from '$lib/components/shares';
 	import { GroupsCard } from '$lib/components/users';
 	import { intlLocale, t } from '$lib/i18n';
+	import { formatDateTime } from '$lib/time';
 
 	const MIN_PASSWORD_LENGTH = 8;
 
@@ -88,7 +89,7 @@
 	// The texts that the functions below make are reactive, so that they follow a change of the
 	// language. Dates are in the language of the page (ADR-0287).
 	$: formatDate = (date: string | null): string =>
-		date ? new Date(date).toLocaleString($intlLocale) : $t('common.unknown');
+		date ? formatDateTime(date, $intlLocale) : $t('common.unknown');
 
 	$: smbHint = (user: User): string => {
 		if (user.smb?.state === 'password_needed') return $t('users.smbPasswordNeeded');

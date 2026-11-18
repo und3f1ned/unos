@@ -1,6 +1,8 @@
 from pydantic import BaseModel
 from enum import Enum
 
+from ..times import UtcDatetime, UtcText
+
 
 class NotificationType(str, Enum):
     INFO = "info"
@@ -75,7 +77,7 @@ class NotificationEvent(BaseModel):
     type: NotificationType
     title: str
     message: str
-    timestamp: str | None = None
+    timestamp: UtcDatetime | None = None  # when it happened; a time without an offset is UTC
 
 
 class NotificationLog(BaseModel):
@@ -86,7 +88,7 @@ class NotificationLog(BaseModel):
     channel: NotificationChannel
     # The name of the channel it went to, as it was then.
     channel_name: str
-    # ISO 8601 with the UTC offset.
-    sent_at: str
+    # ISO 8601 with the UTC offset (one that the file holds without an offset is UTC, ADR-0398).
+    sent_at: UtcText
     success: bool
     error: str | None = None

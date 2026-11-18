@@ -1,6 +1,7 @@
 <script lang="ts">
 	import type { VolumeUsagePoint } from '$lib/api/storage';
 	import { intlLocale, t } from '$lib/i18n';
+	import { apiTime } from '$lib/time';
 
 	// A volume's use over time in the Volumes dialog of the Storage page: one point per
 	// hour of the last 30 days that the supervisor kept, the current reading last, drawn as a line
@@ -13,7 +14,7 @@
 	const WIDTH = 300;
 	const HEIGHT = 80;
 
-	$: times = points.map((point) => Date.parse(point.time));
+	$: times = points.map((point) => apiTime(point.time)?.getTime() ?? NaN);
 	$: first = times[0] ?? 0;
 	$: last = times[times.length - 1] ?? 0;
 	// The top of the chart: the highest quota or use, so that the quota's line is in view.

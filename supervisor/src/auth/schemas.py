@@ -1,9 +1,8 @@
-from datetime import datetime
 from typing import Annotated, Literal
 
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, StrictBool, StringConstraints, model_validator
 
-from ..security.schemas import UtcDatetime
+from ..times import UtcDatetime
 from . import scopes
 from ..shares.account_state import SmbAccountStatus
 
@@ -50,7 +49,7 @@ class UserResponse(BaseModel):
     username: str
     is_admin: bool
     totp_enabled: bool = False
-    created_at: datetime | None = None
+    created_at: UtcDatetime | None = None
     # Set by the user management endpoints; GET /auth/me keeps it null (the
     # Account page uses GET /auth/me/smb).
     smb: SmbAccountStatus | None = None
@@ -211,9 +210,9 @@ class APITokenResponse(BaseModel):
     read_only: bool
     areas: list[str] | None = None
     scope_known: bool = True
-    created_at: datetime | None = None
-    last_used_at: datetime | None = None
-    expires_at: datetime | None = None
+    created_at: UtcDatetime | None = None
+    last_used_at: UtcDatetime | None = None
+    expires_at: UtcDatetime | None = None
 
 
 class APITokenCreated(BaseModel):
@@ -224,7 +223,7 @@ class APITokenCreated(BaseModel):
     token_prefix: str
     read_only: bool
     areas: list[str] | None = None
-    expires_at: datetime | None = None
+    expires_at: UtcDatetime | None = None
 
 
 # 2FA recovery codes (ADR-0238)

@@ -1,6 +1,8 @@
-from pydantic import BaseModel
-from typing import Literal, Optional
+from pydantic import AfterValidator, BaseModel
+from typing import Annotated, Literal, Optional
 from enum import Enum
+
+from ..times import UtcDatetime, parse_time
 
 
 class AuditAction(str, Enum):
@@ -94,9 +96,17 @@ class AuditSeverity(str, Enum):
     CRITICAL = "critical"
 
 
+def _a_time(value: str) -> str:
+    """``value``, which must be an ISO 8601 time: a line with another timestamp is no valid entry."""
+    parse_time(value)
+    return value
+
+
 class AuditEntry(BaseModel):
     id: str
-    timestamp: str
+    # As the line holds it, so that its hash still holds (ADR-0328): in UTC with Z since ADR-0398, as
+    # the API answers it; in UTC without an offset before it (the clock of the supervisor's container).
+    timestamp: Annotated[str, AfterValidator(_a_time)]
     # A value of AuditAction when written; an older entry may name an action that AuditAction no
     # longer has, which is listed, filtered and exported as recorded (ADR-0359).
     action: str
@@ -120,3 +130,5 @@ class AuditEntryView(AuditEntry):
     it hold, "broken" where they do not, None for an entry from before the chain (ADR-0328)."""
 
     chain: Optional[Literal["ok", "broken"]] = None
+    # The entry's time in UTC with its offset, also for an entry whose line holds none (ADR-0398).
+    timestamp: UtcDatetime

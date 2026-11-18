@@ -16,6 +16,7 @@
   } from "$lib/api/power";
   import { Alert, Badge, Button, Card, EmptyState, Modal } from "$lib/components/ui";
   import { intlLocale, t } from "$lib/i18n";
+  import { formatTimeOfDay } from "$lib/time";
   import { paletteRequest, type PaletteDialog, type PaletteRequest } from "$lib/stores/palette";
 
   // Reboot, shutdown, suspend and Wake-on-LAN act on the host (ADR-0233):
@@ -180,8 +181,7 @@
   }
 
   // In the language of the page; reactive, so that a pending action follows a change of the language.
-  $: timeOf = (at: string): string =>
-    new Date(at).toLocaleTimeString($intlLocale, { hour: "2-digit", minute: "2-digit" });
+  $: timeOf = (at: string): string => formatTimeOfDay(at, $intlLocale, { hour: "2-digit", minute: "2-digit" });
 
   $: confirmation = asking ? ACTIONS[asking] : null;
 </script>

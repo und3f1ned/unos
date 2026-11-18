@@ -760,7 +760,7 @@ class TestDockerComponent:
         assert client.closed
 
 
-def _pool_health(errors: int = 0, checked: str = "2026-11-06T07:00:00") -> "health_router.RaidHealthInfo":
+def _pool_health(errors: int = 0, checked: str = "2026-11-06T07:00:00Z") -> "health_router.RaidHealthInfo":
     return health_router.RaidHealthInfo(
         pool="data", mount_point="/mnt/pools/data", profile="single",
         status="healthy" if errors == 0 else "error", devices=[], total_errors=errors, last_checked=checked,
@@ -797,23 +797,23 @@ class TestRaidStatusFile:
         await health_router.raid_monitor_loop()
 
     async def test_a_check_that_changes_nothing_does_not_write_the_file(self, raid_file, monkeypatch):
-        await self._round(monkeypatch, _pool_health(checked="2026-11-06T07:00:00"))
+        await self._round(monkeypatch, _pool_health(checked="2026-11-06T07:00:00Z"))
         written = raid_file.path.read_text()
         stat_before = raid_file.path.stat()
-        await self._round(monkeypatch, _pool_health(checked="2026-11-06T07:05:00"))
-        await self._round(monkeypatch, _pool_health(checked="2026-11-06T07:10:00"))
+        await self._round(monkeypatch, _pool_health(checked="2026-11-06T07:05:00Z"))
+        await self._round(monkeypatch, _pool_health(checked="2026-11-06T07:10:00Z"))
         assert raid_file.path.read_text() == written
         assert raid_file.path.stat().st_mtime_ns == stat_before.st_mtime_ns
-        assert json.loads(written)["data"]["last_checked"] == "2026-11-06T07:00:00"
+        assert json.loads(written)["data"]["last_checked"] == "2026-11-06T07:00:00Z"
 
     async def test_a_change_of_state_is_written(self, raid_file, monkeypatch):
-        await self._round(monkeypatch, _pool_health(checked="2026-11-06T07:00:00"))
-        await self._round(monkeypatch, _pool_health(errors=3, checked="2026-11-06T07:05:00"))
+        await self._round(monkeypatch, _pool_health(checked="2026-11-06T07:00:00Z"))
+        await self._round(monkeypatch, _pool_health(errors=3, checked="2026-11-06T07:05:00Z"))
         stored = json.loads(raid_file.path.read_text())["data"]
-        assert (stored["status"], stored["total_errors"], stored["last_checked"]) == ("error", 3, "2026-11-06T07:05:00")
+        assert (stored["status"], stored["total_errors"], stored["last_checked"]) == ("error", 3, "2026-11-06T07:05:00Z")
         assert len(raid_file.alerts) == 1
         # The next check compares with the stored state: no second alert.
-        await self._round(monkeypatch, _pool_health(errors=3, checked="2026-11-06T07:10:00"))
+        await self._round(monkeypatch, _pool_health(errors=3, checked="2026-11-06T07:10:00Z"))
         assert len(raid_file.alerts) == 1
 
     @pytest.mark.parametrize("content", [None, "{not json", '{"data": "garbage"}', "[1, 2]"])
@@ -825,8 +825,8 @@ class TestRaidStatusFile:
 
     async def test_a_stats_reset_starts_from_the_latest_check(self, raid_file, monkeypatch, admin_api):
         """Not from the file, whose check times can be old: it is written only when the state changes."""
-        await self._round(monkeypatch, _pool_health(errors=3, checked="2026-11-06T07:00:00"))
-        await self._round(monkeypatch, _pool_health(errors=3, checked="2026-11-06T07:05:00"))
+        await self._round(monkeypatch, _pool_health(errors=3, checked="2026-11-06T07:00:00Z"))
+        await self._round(monkeypatch, _pool_health(errors=3, checked="2026-11-06T07:05:00Z"))
 
         health_router._clear_raid_errors("data")
 
@@ -834,8 +834,8 @@ class TestRaidStatusFile:
         stored = json.loads(raid_file.path.read_text())["data"]
         for entry in (shown, stored):
             assert (entry["status"], entry["total_errors"], entry["last_checked"]) == (
-                "healthy", 0, "2026-11-06T07:05:00")
-        await self._round(monkeypatch, _pool_health(errors=3, checked="2026-11-06T07:10:00"))
+                "healthy", 0, "2026-11-06T07:05:00Z")
+        await self._round(monkeypatch, _pool_health(errors=3, checked="2026-11-06T07:10:00Z"))
         assert len(raid_file.alerts) == 2  # errors after the reset are new again
 
     @pytest.fixture
@@ -883,8 +883,8 @@ class TestRaidStatusFile:
         assert btrfs_reset.calls == []
 
     async def test_the_monitor_status_shows_the_latest_check(self, raid_file, monkeypatch, admin_api):
-        await self._round(monkeypatch, _pool_health(checked="2026-11-06T07:00:00"))
-        await self._round(monkeypatch, _pool_health(checked="2026-11-06T07:05:00"))
+        await self._round(monkeypatch, _pool_health(checked="2026-11-06T07:00:00Z"))
+        await self._round(monkeypatch, _pool_health(checked="2026-11-06T07:05:00Z"))
         body = admin_api.get("/api/v1/health/raid-monitor/status").json()
-        assert body["last_status"]["data"]["last_checked"] == "2026-11-06T07:05:00"
-        assert json.loads(raid_file.path.read_text())["data"]["last_checked"] == "2026-11-06T07:00:00"
+        assert body["last_status"]["data"]["last_checked"] == "2026-11-06T07:05:00Z"
+        assert json.loads(raid_file.path.read_text())["data"]["last_checked"] == "2026-11-06T07:00:00Z"

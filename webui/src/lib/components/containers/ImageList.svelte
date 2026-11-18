@@ -5,6 +5,7 @@
 	import { getImages, pullImage, removeImage, type Image } from '$lib/api/containers';
 	import { formatBytes } from '$lib/stores/stats';
 	import { intlLocale, t } from '$lib/i18n';
+	import { formatDateTime } from '$lib/time';
 
 	// The Images tab of the Containers page: the images Docker has, a pull by
 	// name and the removal of an image that no container uses, with all its
@@ -95,10 +96,7 @@
 	}
 
 	// Reactive, so that the list follows a change of the language.
-	$: formatDate = (value: string): string => {
-		const date = new Date(value);
-		return Number.isNaN(date.getTime()) ? value : date.toLocaleString($intlLocale);
-	};
+	$: formatDate = (value: string): string => formatDateTime(value, $intlLocale);
 </script>
 
 <div class="space-y-6">

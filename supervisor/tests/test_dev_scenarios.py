@@ -5118,7 +5118,7 @@ def test_the_restore_check_expects_unos_s_texts():
     assert scenario.PRE_RESTORE_COPIES == PRE_RESTORE_COPIES
     source = (REPO_ROOT / "supervisor" / "src" / "backup" / "router.py").read_text()
     assert 'copy_path = db_path.with_name(f"{db_path.name}.pre-restore-{timestamp}")' in source
-    assert 'timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")' in source
+    assert 'timestamp = utc_now().strftime("%Y%m%d_%H%M%S_%f")' in source
 
 
 @pytest.fixture

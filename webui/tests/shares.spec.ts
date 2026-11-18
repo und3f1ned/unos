@@ -1397,6 +1397,8 @@ test.describe('SMB shares page (fake data)', () => {
 // ---- The Shares page in Russian (ADR-0287), with canned API answers ----
 
 test.describe('In Russian', () => {
+  // The times of the fakes are in UTC, as the server answers them; the page shows them in this zone.
+  test.use({ timezoneId: 'UTC' });
   // The language chosen in this browser, as the Account page keeps it (tests/language.spec.ts).
   const LOCALE_KEY = 'unos-locale';
 

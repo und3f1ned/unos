@@ -2,6 +2,8 @@ from pydantic import BaseModel, Field
 from enum import Enum
 from typing import Optional
 
+from ..times import UtcText
+
 
 class TaskType(str, Enum):
     SNAPSHOT = "snapshot"
@@ -48,13 +50,14 @@ class ScheduledTask(BaseModel):
     # so that a log line or an error text with a task in it never shows it.
     passphrase: Optional[str] = Field(default=None, exclude=True, repr=False)
 
-    # The start of the task's last run (ISO 8601 in UTC, with its offset) and its status.
-    last_run: Optional[str] = None
+    # The start of the task's last run (ISO 8601 in UTC, with its offset; one that the file holds
+    # without an offset is UTC, ADR-0398) and its status.
+    last_run: Optional[UtcText] = None
     last_status: Optional[str] = None
     # When the task was created, enabled again or given another schedule (ISO 8601 in UTC, with
     # its offset): a run it missed is a time of its schedule after this and after its last run
     # (ADR-0332). Set by the server, whatever a request sends.
-    schedule_since: Optional[str] = None
+    schedule_since: Optional[UtcText] = None
 
 
 class ScheduledTaskInfo(ScheduledTask):
@@ -74,10 +77,10 @@ class TaskRun(BaseModel):
     id: str
     task_id: str
     task_name: str
-    started_at: str  # ISO 8601 in UTC, with its offset, as finished_at
+    started_at: UtcText  # ISO 8601 in UTC, with its offset, as finished_at (without one in older files: UTC)
     # None while it runs. For a run that a stop of the supervisor cut off, when the
     # supervisor started again (ADR-0268).
-    finished_at: Optional[str] = None
+    finished_at: Optional[UtcText] = None
     status: str  # running, success, failed
     # What a run of a custom task printed (its last 16 KiB), or what another task reports when it succeeded.
     output: Optional[str] = None

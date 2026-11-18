@@ -567,7 +567,7 @@ def _create_scheduled_backup(keep_count: int | None, key: bytes) -> tuple[bool, 
             # Create manifest
             manifest = {
                 "version": "1.0",
-                "created": datetime.now().isoformat(),
+                "created": _utc_now().isoformat(),
                 "hostname": os.uname().nodename,
                 "type": "scheduled"
             }
@@ -1265,7 +1265,7 @@ async def create_task(request: Request, task: ScheduledTask, user=Depends(verify
     key = await asyncio.to_thread(new_task_key, task, has_key=False)
 
     # Random suffix: tasks created in the same second must not share an id.
-    task.id = f"task_{datetime.now().strftime('%Y%m%d%H%M%S')}_{secrets.token_hex(4)}"
+    task.id = f"task_{_utc_now().strftime('%Y%m%d%H%M%S')}_{secrets.token_hex(4)}"
     task.schedule_since = _utc_now().isoformat()  # it missed no run before it existed (ADR-0332)
 
     # The key first: a task that is then not saved leaves only an unused key.

@@ -1,13 +1,16 @@
 ---
-status: accepted
+status: superseded
 date: 2026-11-08
 area: webui
 decided-by: agent
+superseded-by: ADR-0398
 ---
 
 # ADR-0300: The Storage page writes its sizes and the start of a scrub in the page's language and keeps the server's reasons and btrfs's names
 
 ## Context
+
+Superseded by ADR-0398: the same values, with the start of a scrub answered in UTC with its offset and shown in the browser's time zone in every language.
 
 The second phase of `webui.translations` (ADR-0287) moves the texts of the Storage page (`webui/src/routes/storage/+page.svelte`) into a catalog. The page also shows values that are not texts of its own: the sizes, percentages and rates it writes itself, when the last scrub started as btrfs prints it, a disk's in-use reason that the server writes, and btrfs's names. ADR-0287 settles dates with a time zone and the server's messages, not these. The translated pages write numbers in two ways: the dashboard and Files keep a decimal point in both languages and leave numbers in the format of the page's language to one change across the areas (ADR-0297), while the App Store (ADR-0291, proposed) and the Backup, Network, Scheduler, Resource Monitor and Disk Health tabs of the System page (`webui/src/routes/system/tabs/`) write them in that format already, with a decimal comma in Russian. The English texts stay word for word: the E2E specs pin them.
 

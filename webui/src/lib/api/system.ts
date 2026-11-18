@@ -5,8 +5,8 @@ export interface SystemInfo {
   kernel: string;
   os: string;
   architecture: string;
-  /** When the host booted, in seconds since the epoch. */
-  boot_time: number;
+  /** When the host booted: ISO 8601 with its offset (ADR-0398). */
+  boot_time: string;
 }
 
 export interface PCIeDevice {

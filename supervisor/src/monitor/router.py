@@ -1,10 +1,10 @@
 import psutil
-from datetime import datetime
 from collections import deque
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
 from ..auth.utils import verify_token
+from ..times import utc_now
 
 router = APIRouter(prefix="/monitor", tags=["monitor"])
 
@@ -61,7 +61,7 @@ async def get_cpu_stats(_: dict = Depends(verify_token)) -> CpuStats:
 
     # Store in history
     cpu_history.append({
-        "timestamp": datetime.now().isoformat(),
+        "timestamp": utc_now().isoformat(),
         "value": cpu_percent
     })
 
@@ -84,7 +84,7 @@ async def get_memory_stats(_: dict = Depends(verify_token)) -> MemoryStats:
 
     # Store in history
     memory_history.append({
-        "timestamp": datetime.now().isoformat(),
+        "timestamp": utc_now().isoformat(),
         "value": mem.percent
     })
 
@@ -154,5 +154,5 @@ async def get_all_stats(_: dict = Depends(verify_token)):
     return {
         "cpu": cpu,
         "memory": memory,
-        "timestamp": datetime.now().isoformat()
+        "timestamp": utc_now().isoformat()
     }

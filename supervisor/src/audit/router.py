@@ -8,7 +8,7 @@ through the old files and then the current one, and skip every line that is not 
 Two processes write the log, the supervisor and the emergency command line beside it
 (src/emergency.py, ADR-0284), so its lock holds across processes too (_log_lock, ADR-0286).
 
-Listing, counting and exporting take the same filters (AuditFilter, ADR-0237), and the CSV
+Listing, counting and exporting take the same filters (AuditFilter, ADR-0398), and the CSV
 export holds no cell that a spreadsheet reads as a formula (_spreadsheet_text).
 """
 import asyncio
@@ -24,7 +24,7 @@ import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Literal, Optional
 
@@ -34,6 +34,7 @@ from pydantic import ValidationError
 
 from ..auth.utils import client_ip, require_admin
 from ..auth.models import User
+from ..times import as_utc, parse_time, utc_now, utc_text
 from .schemas import AuditEntry, AuditEntryView, AuditAction, AuditSeverity
 
 logger = logging.getLogger(__name__)
@@ -208,10 +209,10 @@ def _write_chained(fields: dict, prev_hash: Optional[str]) -> AuditEntry:
 
 def _cut_entry(head: tuple[str, Optional[str]]) -> dict:
     """The fields of the entry that says the end of the log was cut or rewritten after ``head``."""
-    now = datetime.now()
+    now = utc_now()
     return {
         "id": f"audit_{now.strftime('%Y%m%d%H%M%S%f')}",
-        "timestamp": now.isoformat(),
+        "timestamp": utc_text(now),
         "action": AuditAction.OTHER.value,
         "severity": AuditSeverity.CRITICAL.value,
         "username": "system",
@@ -320,6 +321,9 @@ def _clear(before_date: Optional[str]) -> int:
     is rewritten (_rewrite). Nothing is deleted before what replaces it is in place, so a
     failure leaves every entry that was to be kept, and no file grows past MAX_FILE_BYTES.
     """
+    # A bound as the filters read it (_bound); "" and a time before the calendar remove nothing.
+    cutoff = None if before_date is None else (
+        _bound("before_date", before_date, last=False) or datetime.min.replace(tzinfo=timezone.utc))
     removed = 0
     with _log_lock():
         for path in _files_oldest_first():
@@ -328,11 +332,11 @@ def _clear(before_date: Optional[str]) -> int:
             if not path.exists():
                 continue
             entries = _read_file(path)
-            if before_date is None:
+            if cutoff is None:
                 older, kept = entries, []
             else:
-                older = [e for e in entries if e.timestamp < before_date]
-                kept = [e for e in entries if e.timestamp >= before_date]
+                older = [e for e in entries if entry_time(e) < cutoff]
+                kept = [e for e in entries if entry_time(e) >= cutoff]
                 if not older and kept:
                     continue  # nothing to remove: the file stays as it is
             if kept:
@@ -377,10 +381,11 @@ async def log_action(
     if user and not actual_username:
         actual_username = user.username
 
-    # Create audit entry
+    # Create audit entry, at the time in UTC as the API answers it (ADR-0398): the hash is over this text
+    now = utc_now()
     entry = AuditEntry(
-        id=f"audit_{datetime.now().strftime('%Y%m%d%H%M%S%f')}",
-        timestamp=datetime.now().isoformat(),
+        id=f"audit_{now.strftime('%Y%m%d%H%M%S%f')}",
+        timestamp=utc_text(now),
         action=action.value,
         severity=severity,
         username=_bounded(actual_username, MAX_USERNAME_CHARS),
@@ -400,25 +405,25 @@ async def log_action(
         raise
 
 
-# ==================== Filters (ADR-0237) ====================
+# ==================== Filters (ADR-0398) ====================
 
-# The forms of start_date and end_date: a date, or a date and time to the hour, the minute, the
-# second or 1 to 6 digits of a fraction of a second, without a time zone (extended ISO 8601).
+# The forms of start_date, end_date and before_date: a date, or a date and time to the hour, the
+# minute, the second or 1 to 6 digits of a fraction of a second, with an offset (Z or +HH:MM) or
+# without one, in UTC (extended ISO 8601, ADR-0398).
 _BOUND_FORM = re.compile(
     r"[0-9]{4}-[0-9]{2}-[0-9]{2}"
     r"(?:[T ](?P<hour>[0-9]{2})(?::(?P<minute>[0-9]{2})(?::(?P<second>[0-9]{2})"
-    r"(?:\.(?P<fraction>[0-9]{1,6}))?)?)?)?"
+    r"(?:\.(?P<fraction>[0-9]{1,6}))?)?)?(?:Z|[+-][0-9]{2}:[0-9]{2})?)?"
 )
 
 
-def _bound(name: str, value: Optional[str], *, last: bool) -> Optional[str]:
-    """The timestamp text that start_date (last=False) or end_date (last=True) stands for.
+def _bound(name: str, value: Optional[str], *, last: bool) -> Optional[datetime]:
+    """The instant (UTC) that start_date (last=False) or end_date (last=True) stands for.
 
-    Entries carry the server's local time without a zone, as datetime.isoformat() writes it,
-    and texts in that form sort as their times do. Both bounds include the whole unit they
-    name: a date its day, a date and time its hour, minute, second or fraction of a second
-    (12:00 takes 12:00:59.999999 too). For start_date the result is the first time in range;
-    for end_date the first time after it (None: nothing comes after it).
+    A bound without an offset is UTC, the clock of the entries (ADR-0398). Both bounds include
+    the whole unit they name: a date its day, a date and time its hour, minute, second or
+    fraction of a second (12:00 takes 12:00:59.999999 too). For start_date the result is the
+    first time in range; for end_date the first time after it (None: nothing comes after it).
     """
     if not value:
         return None
@@ -438,15 +443,21 @@ def _bound(name: str, value: Optional[str], *, last: bool) -> Optional[str]:
                 moment += timedelta(hours=1)
             else:
                 moment += timedelta(days=1)
+        moment = as_utc(moment)
     except OverflowError:
-        return None  # the end of the calendar: no upper bound
+        return None  # the end of the calendar, or past it in UTC: no upper bound
     except ValueError:
         raise HTTPException(
             status_code=422,
-            detail=f"{name} must be a date (YYYY-MM-DD) or a date and time (YYYY-MM-DDTHH:MM:SS) "
-                   "without a time zone",
+            detail=f"{name} must be a date (YYYY-MM-DD) or a date and time (YYYY-MM-DDTHH:MM:SS), "
+                   "with an offset (Z or +HH:MM) or in UTC",
         ) from None
-    return moment.isoformat()
+    return moment
+
+
+def entry_time(entry: AuditEntry) -> datetime:
+    """When ``entry`` was written, in UTC: a timestamp without an offset is UTC (ADR-0398)."""
+    return entry.timestamp if isinstance(entry.timestamp, datetime) else parse_time(entry.timestamp)
 
 
 @dataclass(frozen=True)
@@ -456,8 +467,8 @@ class AuditFilter:
     action: Optional[str] = None  # any action name, also one that AuditAction no longer has
     username: Optional[str] = None
     severity: Optional[AuditSeverity] = None
-    first: Optional[str] = None  # timestamps from this one on
-    after: Optional[str] = None  # timestamps before this one
+    first: Optional[datetime] = None  # times from this one on
+    after: Optional[datetime] = None  # times before this one
     search: Optional[str] = None  # casefolded
 
     def matches(self, entry: AuditEntry) -> bool:
@@ -467,9 +478,9 @@ class AuditFilter:
             return False
         if self.severity is not None and entry.severity != self.severity:
             return False
-        if self.first is not None and entry.timestamp < self.first:
+        if self.first is not None and entry_time(entry) < self.first:
             return False
-        if self.after is not None and entry.timestamp >= self.after:
+        if self.after is not None and entry_time(entry) >= self.after:
             return False
         if self.search:
             action = entry.action
@@ -511,37 +522,48 @@ def chained(entries: list[AuditEntry]) -> list[AuditEntryView]:
     after an entry that was removed or damaged. The oldest entry is where the chain starts: its
     link is not checked, since the entries before it were rotated out or cleared.
     """
-    viewed = []
+    return [_view(entry, chain) for entry, chain in zip(entries, _chain_of(entries))]
+
+
+def _chain_of(entries: list[AuditEntry]) -> list[Optional[str]]:
+    """Where each entry stands in the hash chain (chained): over the fields as the lines hold them."""
+    verdicts: list[Optional[str]] = []
     chain_seen = False
     for i, entry in enumerate(entries):
         if entry.hash is None:
             # Before the first entry with a hash: written before the chain. After it: an entry whose
             # hash was taken away, or one put in without one.
-            chain = "broken" if chain_seen else None
+            verdicts.append("broken" if chain_seen else None)
         else:
             chain_seen = True
             intact = entry.hash == entry_hash(entry)
             linked = i == 0 or entry.prev_hash == entries[i - 1].hash
-            chain = "ok" if intact and linked else "broken"
-        viewed.append(AuditEntryView(**entry.model_dump(), chain=chain))
-    return viewed
+            verdicts.append("ok" if intact and linked else "broken")
+    return verdicts
+
+
+def _view(entry: AuditEntry, chain: Optional[str]) -> AuditEntryView:
+    """``entry`` as the API answers it: its time in UTC with its offset (ADR-0398), and its place in
+    the chain."""
+    return AuditEntryView(**{**entry.model_dump(), "timestamp": entry_time(entry)}, chain=chain)
 
 
 def _selected(selection: AuditFilter, *, with_chain: bool = True) -> list[AuditEntry]:
-    """The entries that match, newest first, with their place in the chain unless ``with_chain``
-    is false, as for a count (blocking: runs in a worker thread)."""
+    """The entries that match, newest first by their time, with their place in the chain unless
+    ``with_chain`` is false, as for a count (blocking: runs in a worker thread)."""
     entries = load_audit_log()
-    if with_chain:
-        entries = chained(entries)
-    entries = [e for e in entries if selection.matches(e)]
-    entries.sort(key=lambda e: e.timestamp, reverse=True)
-    return entries
+    chain = _chain_of(entries) if with_chain else [None] * len(entries)
+    picked = [(entry, verdict) for entry, verdict in zip(entries, chain) if selection.matches(entry)]
+    picked.sort(key=lambda pair: entry_time(pair[0]), reverse=True)
+    if not with_chain:
+        return [entry for entry, _ in picked]
+    return [_view(entry, verdict) for entry, verdict in picked]
 
 
 # CSV injection: a spreadsheet reads a cell that starts with =, +, -, @, a tab or a carriage
 # return as a formula. A cell starts where a value starts, and inside a value after a semicolon
 # (the list separator of many locales), a tab or a line break, where a spreadsheet that splits
-# on them starts one. A ' in front of such a character makes the cell text (ADR-0237).
+# on them starts one. A ' in front of such a character makes the cell text (ADR-0398).
 _FORMULA_START = re.compile(r"(^|[;\t\r\n])(?=[=+\-@\t\r])")
 
 
@@ -585,7 +607,7 @@ async def export_audit_logs(
 ):
     """The entries that match, newest first, as a JSON or CSV file. Admin only."""
     entries = await asyncio.to_thread(_selected, selection)
-    filename = f"audit_log_{datetime.now().strftime('%Y%m%d')}"
+    filename = f"audit_log_{utc_now().strftime('%Y%m%d')}"
 
     if format == "csv":
         output = io.StringIO()
@@ -596,7 +618,7 @@ async def export_audit_logs(
         ])
         for entry in entries:
             writer.writerow([_spreadsheet_text(cell) for cell in (
-                entry.id, entry.timestamp, entry.action, entry.severity.value,
+                entry.id, utc_text(entry.timestamp), entry.action, entry.severity.value,
                 entry.username or "", entry.ip_address or "",
                 entry.resource_type or "", entry.resource_id or "",
                 entry.details or "", entry.success
@@ -610,7 +632,7 @@ async def export_audit_logs(
         )
     return JSONResponse(
         {
-            "exported_at": datetime.now().isoformat(),
+            "exported_at": utc_text(utc_now()),
             "count": len(entries),
             "entries": [e.model_dump(mode="json") for e in entries],
         },
@@ -624,10 +646,10 @@ async def get_audit_summary(
     current_user: User = Depends(require_admin)
 ):
     """Get summary of audit activity. Admin only."""
-    cutoff = (datetime.now() - timedelta(days=days)).isoformat()
+    cutoff = utc_now() - timedelta(days=days)
 
     entries = await asyncio.to_thread(load_audit_log)
-    entries = [e for e in entries if e.timestamp >= cutoff]
+    entries = [e for e in entries if entry_time(e) >= cutoff]
 
     # Count by action
     action_counts = {}
@@ -677,7 +699,9 @@ async def clear_audit_logs(
     before_date: Optional[str] = None,
     current_user: User = Depends(require_admin)
 ):
-    """Clear audit logs. Admin only. Optionally clear only before a date."""
+    """Clear audit logs. Admin only. Optionally clear only before a date, a bound as the filters
+    take it (_bound: 422 for another form)."""
+    _bound("before_date", before_date, last=False)
     try:
         deleted_count = await asyncio.to_thread(_clear, before_date)
     except OSError as exc:

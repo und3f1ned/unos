@@ -26,6 +26,7 @@
 		streamContainerLogs
 	} from '$lib/api/containers';
 	import { intlLocale, t } from '$lib/i18n';
+	import { formatDateTime } from '$lib/time';
 
 	export let container: Container | null = null;
 	export let open = false;
@@ -212,7 +213,7 @@
 	}
 
 	// Reactive, so that an open drawer follows a change of the language.
-	$: formatDate = (dateStr: string): string => new Date(dateStr).toLocaleString($intlLocale);
+	$: formatDate = (dateStr: string): string => formatDateTime(dateStr, $intlLocale);
 
 	function getWebUrl(container: Container): string | null {
 		const webPort = container.ports.find((p) => p.host_port);

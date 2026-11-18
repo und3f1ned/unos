@@ -39,7 +39,6 @@ import unicodedata
 from collections.abc import AsyncIterator, Iterable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
-from datetime import datetime
 
 from fastapi import HTTPException
 from sqlalchemy import DateTime, delete, insert, select, update
@@ -50,6 +49,7 @@ from sqlalchemy.schema import CreateTable
 from .. import host
 from ..auth.models import User
 from ..security.validators import sanitize_error_message
+from ..times import db_now
 from . import account_state, constants, interfaces, models, service, smb, smbconf  # noqa: F401  (models registers the tables)
 
 logger = logging.getLogger(__name__)
@@ -1187,7 +1187,7 @@ async def activate(
     # Step 5: the account is active.
     row.enabled = True
     row.password_state = "set"
-    row.password_set_at = datetime.utcnow()
+    row.password_set_at = db_now()
     if new_hash is not None:
         user.hashed_password = new_hash
     try:
@@ -1427,7 +1427,7 @@ async def update_password_before_store(
         raise _compensation_error(failure, error, by_admin=by_admin) from None
     except SmbHostError as error:
         raise _http(error, self_flow=None if by_admin else "The password was not changed", user=name) from None
-    row.password_set_at = datetime.utcnow()  # type: ignore[union-attr]
+    row.password_set_at = db_now()  # type: ignore[union-attr]
     return PasswordUpdate(user_id=user_id, name=name, current_password=current_password)
 
 

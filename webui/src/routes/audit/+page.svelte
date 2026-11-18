@@ -14,10 +14,11 @@
 	} from '$lib/api/audit';
 	import { Alert, Badge, Button, Card, EmptyState, Input, Select } from '$lib/components/ui';
 	import { intlLocale, t } from '$lib/i18n';
+	import { apiTime, formatTimeOfDay, localDay } from '$lib/time';
 
-	// The audit log as a timeline, newest first (ADR-0237). Times are the server's local time
-	// as the entries carry it, without a zone: the page shows them as they are, and the date
-	// filters are the server's days too.
+	// The audit log as a timeline, newest first (ADR-0398). The server answers each time in UTC
+	// with its offset: the page shows it in the browser's time zone, groups the entries by the
+	// browser's days, and From and To are the browser's days, sent as their first and last instant.
 
 	// Entries per "Show more", and how long typing may pause before the list follows it.
 	const PAGE_SIZE = 100;
@@ -54,8 +55,8 @@
 		search: search.trim(),
 		username: username.trim(),
 		action,
-		start_date: startDate,
-		end_date: endDate
+		start_date: dayBound(startDate, false),
+		end_date: dayBound(endDate, true)
 	};
 	$: filtered = Object.values(filters).some(Boolean);
 	// A change of the filters shows the newest entries that match, from the first page.
@@ -263,16 +264,28 @@
 		}
 	}
 
+	/**
+	 * The bound of the browser's day `day` (YYYY-MM-DD, as a date field holds it) for the server:
+	 * its first instant, or (`last`) its last millisecond, which the server takes as the whole
+	 * millisecond. In UTC with its offset; '' for no day.
+	 */
+	function dayBound(day: string, last: boolean): string {
+		const [year, month, date] = day.split('-').map(Number);
+		if (!year || !month || !date) return '';
+		const moment = last ? new Date(year, month - 1, date + 1).getTime() - 1 : new Date(year, month - 1, date).getTime();
+		return Number.isNaN(moment) ? '' : new Date(moment).toISOString();
+	}
+
 	interface Day {
 		day: string;
 		entries: AuditEntry[];
 	}
 
-	/** The entries by the day of their time, in their order (newest first). */
+	/** The entries by the browser's day of their time, in their order (newest first). */
 	function byDay(list: AuditEntry[]): Day[] {
 		const groups: Day[] = [];
 		for (const entry of list) {
-			const day = entry.timestamp.slice(0, 10);
+			const day = localDay(entry.timestamp) ?? entry.timestamp;
 			const last = groups[groups.length - 1];
 			if (last && last.day === day) last.entries.push(entry);
 			else groups.push({ day, entries: [entry] });
@@ -413,8 +426,8 @@
 										aria-hidden="true"
 									></span>
 									<div class="flex flex-wrap items-center gap-2">
-										<time datetime={entry.timestamp.slice(0, 19)} class="mono text-content-muted"
-											>{entry.timestamp.slice(11, 19)}</time
+										<time datetime={apiTime(entry.timestamp)?.toISOString() ?? entry.timestamp} class="mono text-content-muted"
+											>{formatTimeOfDay(entry.timestamp, $intlLocale)}</time
 										>
 										<span class="font-medium text-content">{textOf(ACTION_NAMES, entry.action)}</span>
 										{#if !entry.success}

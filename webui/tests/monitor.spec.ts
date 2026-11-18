@@ -22,7 +22,7 @@ const STATS = {
   processes: [
     { pid: 812, name: 'smbd', cpu_percent: 3.5, memory_percent: 0.5, memory_mb: 42, status: 'sleeping', username: 'root' },
   ],
-  timestamp: '2026-11-08T10:00:00',
+  timestamp: '2026-11-08T10:00:00+00:00',
 };
 
 /**

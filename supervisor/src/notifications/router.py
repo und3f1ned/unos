@@ -23,6 +23,7 @@ from fastapi import APIRouter, HTTPException, Depends
 from pydantic import TypeAdapter, ValidationError
 
 from .. import host, state_files
+from ..times import parse_time, utc_now, utc_text
 from ..auth.utils import verify_token
 from .schemas import (
     NotificationConfig, NotificationEvent, NotificationLog,
@@ -157,6 +158,20 @@ def load_logs() -> list[NotificationLog]:
         return []
 
 
+def _without_a_time_that_is_none(item: object) -> object:
+    """A history entry whose event's timestamp is no time without that timestamp: POST /send took any
+    text there before ADR-0398, and the entry stays in the history."""
+    event = item.get("event") if isinstance(item, dict) else None
+    stamp = event.get("timestamp") if isinstance(event, dict) else None
+    if stamp is None:
+        return item
+    try:
+        parse_time(stamp)
+    except (TypeError, ValueError):
+        return {**item, "event": {**event, "timestamp": None}}
+    return item
+
+
 def _history(data: object) -> list[NotificationLog]:
     """The decoded history file as the history; ValueError for no list (load_logs)."""
     path = Path(LOGS_FILE)
@@ -165,7 +180,7 @@ def _history(data: object) -> list[NotificationLog]:
     logs = []
     for item in data:
         try:
-            logs.append(NotificationLog.model_validate(item))
+            logs.append(NotificationLog.model_validate(_without_a_time_that_is_none(item)))
         except ValidationError:
             pass
     if len(logs) < len(data):
@@ -178,7 +193,7 @@ def _history(data: object) -> list[NotificationLog]:
 
 def _write_history(logs: list[NotificationLog]) -> None:
     """Replace the history file with ``logs`` (blocking: fsync)."""
-    _replace_file(Path(LOGS_FILE), json.dumps([l.model_dump() for l in logs], indent=2))
+    _replace_file(Path(LOGS_FILE), json.dumps([l.model_dump(mode="json") for l in logs], indent=2))
 
 
 def save_logs(entries: list[NotificationLog]) -> None:
@@ -213,6 +228,11 @@ def history_entry(
         success=success,
         error=error,
     )
+
+
+def _event_time(event: NotificationEvent) -> str:
+    """When ``event`` happened, or now, in ISO 8601 with the UTC offset, as a channel gets it (ADR-0398)."""
+    return utc_text(event.timestamp or utc_now())
 
 
 def _error_text(error: Exception) -> str:
@@ -454,7 +474,7 @@ async def send_email(config: EmailConfig, event: NotificationEvent) -> tuple[boo
 {event.message}
 
 Type: {event.type.value}
-Time: {event.timestamp or datetime.now().isoformat()}
+Time: {_event_time(event)}
 
 --
 UNOS NAS Notification System
@@ -503,7 +523,7 @@ async def send_webhook(config: WebhookConfig, event: NotificationEvent) -> tuple
                 title=event.title,
                 message=event.message,
                 type=event.type.value,
-                timestamp=event.timestamp or datetime.now().isoformat()
+                timestamp=_event_time(event)
             )
         else:
             # Default JSON body
@@ -511,7 +531,7 @@ async def send_webhook(config: WebhookConfig, event: NotificationEvent) -> tuple
                 "title": event.title,
                 "message": event.message,
                 "type": event.type.value,
-                "timestamp": event.timestamp or datetime.now().isoformat(),
+                "timestamp": _event_time(event),
                 "source": "UNOS NAS"
             })
     except Exception as e:
@@ -544,7 +564,7 @@ async def send_discord(config: DiscordConfig, event: NotificationEvent) -> tuple
             "description": event.message,
             "color": colors.get(event.type, 3447003),
             "footer": {"text": "UNOS NAS"},
-            "timestamp": event.timestamp or datetime.now().isoformat()
+            "timestamp": _event_time(event)
         }]
     }
 
@@ -574,7 +594,7 @@ async def send_slack(config: SlackConfig, event: NotificationEvent) -> tuple[boo
             "title": event.title,
             "text": event.message,
             "footer": "UNOS NAS",
-            "ts": int(datetime.now().timestamp())
+            "ts": int((event.timestamp or utc_now()).timestamp())
         }]
     }
 
@@ -655,7 +675,7 @@ async def test_notification(config_id: str, _: dict = Depends(verify_token)):
         type=NotificationType.INFO,
         title=TEST_TITLE,
         message=TEST_MESSAGE,
-        timestamp=datetime.now(timezone.utc).isoformat(),
+        timestamp=utc_now(),
     )
     success, error = await send_through(config, event)
     await asyncio.to_thread(save_logs, [history_entry(config, event, success, error)])

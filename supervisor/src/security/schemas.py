@@ -4,9 +4,9 @@ import unicodedata
 from typing import Annotated, Literal
 
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field
-from datetime import datetime, timezone
 from enum import Enum
 
+from ..times import UtcDatetime
 from .validators import NAME_MAX
 
 # One DNS label: letters, digits and hyphens, 1-63 characters, no hyphen at
@@ -102,18 +102,6 @@ def validate_country(value: str) -> str:
     return value
 
 
-def _as_utc(value: datetime) -> datetime:
-    """A time without a zone is UTC: SQLite's CURRENT_TIMESTAMP is (ADR-0262)."""
-    if value.tzinfo is None:
-        return value.replace(tzinfo=timezone.utc)
-    return value.astimezone(timezone.utc)
-
-
-# Answered with its offset ("2026-11-07T12:00:00Z"): a browser reads a time without one as
-# its own local time.
-UtcDatetime = Annotated[datetime, AfterValidator(_as_utc)]
-
-
 # Login History Schemas
 class LoginAttemptResponse(BaseModel):
     id: int
@@ -201,8 +189,8 @@ class Certificate(BaseModel):
     type: CertificateType
     domain: str
     issuer: str | None = None
-    valid_from: str | None = None
-    valid_until: str | None = None
+    valid_from: UtcDatetime | None = None
+    valid_until: UtcDatetime | None = None
     is_valid: bool = True
     # Stored, not served: browsers get the certificate of served_by (ADR-0357).
     served: bool = False

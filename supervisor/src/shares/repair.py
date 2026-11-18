@@ -60,6 +60,7 @@ from typing import Literal
 from pydantic import BaseModel
 
 from ..security.validators import open_dir_nofollow, pools_base
+from ..times import UtcDatetime
 from . import constants
 
 # The mounts of this process's mount namespace. The supervisor container sees
@@ -103,8 +104,8 @@ class RepairResult(BaseModel):
 
     share: str
     state: Literal["running", "done", "incomplete", "failed"]
-    started_at: datetime
-    finished_at: datetime | None
+    started_at: UtcDatetime
+    finished_at: UtcDatetime | None
     visited: int
     changed: int
     skipped: dict[str, int]      # keys: other_filesystem, snapshots, symlink, special, hardlink, private, too_deep, raced

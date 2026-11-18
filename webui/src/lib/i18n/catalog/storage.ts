@@ -4,7 +4,7 @@ import type { Translation } from '../translate';
 // found on them, the pools and their scrubs, and the dialogs that create, mount, unmount, import
 // and remove a pool and that list, create and delete its volumes. A disk's in-use reason
 // (in_use_reason) is the server's message, and the names of btrfs (filesystems, RAID profiles) are
-// shown as they come (ADR-0300).
+// shown as they come (ADR-0398).
 
 export const en = {
 	'storage.title': 'Storage',

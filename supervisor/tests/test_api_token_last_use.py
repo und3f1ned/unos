@@ -124,7 +124,11 @@ def listed_last_use(world: World, token_id: int, owner: str = "alice") -> dateti
     response = world.client.get(f"{API}/auth/tokens", headers=world.headers(owner))
     assert response.status_code == 200, response.text
     [token] = [t for t in response.json() if t["id"] == token_id]
-    return None if token["last_used_at"] is None else datetime.fromisoformat(token["last_used_at"])
+    if token["last_used_at"] is None:
+        return None
+    shown = datetime.fromisoformat(token["last_used_at"])
+    assert shown.utcoffset() == timedelta(0), shown  # in UTC with its offset (ADR-0398)
+    return shown.replace(tzinfo=None)  # as the clock of these tests keeps it: UTC without a zone
 
 
 class TestLastUse:

@@ -6,6 +6,7 @@
   import { user } from "$lib/stores/auth";
   import { Alert, Badge, Button, Card, Input, Select } from "$lib/components/ui";
   import { t } from "$lib/i18n";
+  import { apiTime } from "$lib/time";
   import { Server, User, Package, Globe } from "lucide-svelte";
 
   let systemInfo: SystemInfo | null = null;
@@ -98,9 +99,10 @@
   });
 
   // Reactive, so that the uptime follows a change of the language.
-  $: formatUptime = (bootTime: number): string => {
-    const now = Date.now() / 1000;
-    const seconds = Math.floor(now - bootTime);
+  $: formatUptime = (bootTime: string): string => {
+    const booted = apiTime(bootTime);
+    if (!booted) return bootTime;
+    const seconds = Math.floor((Date.now() - booted.getTime()) / 1000);
     const days = Math.floor(seconds / 86400);
     const hours = Math.floor((seconds % 86400) / 3600);
     const minutes = Math.floor((seconds % 3600) / 60);

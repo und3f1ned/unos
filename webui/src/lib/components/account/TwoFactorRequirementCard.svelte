@@ -11,6 +11,7 @@
 	} from '$lib/api/security';
 	import { Alert, Badge, Button, Card, Input, Select } from '$lib/components/ui';
 	import { intlLocale, t } from '$lib/i18n';
+	import { formatDateTime } from '$lib/time';
 	import { UsersRound } from 'lucide-svelte';
 
 	// System > Security, administrators only: every account must have two-factor authentication,
@@ -34,7 +35,7 @@
 		value: String(n),
 		label: n === 0 ? $t('twofactor.requirement.graceNone') : $t('twofactor.requirement.graceDays', { n })
 	}));
-	$: since = requirement?.enabled_at ? new Date(requirement.enabled_at).toLocaleString($intlLocale) : '';
+	$: since = formatDateTime(requirement?.enabled_at, $intlLocale);
 
 	onMount(() => {
 		void load();
