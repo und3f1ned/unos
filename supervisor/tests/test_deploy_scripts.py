@@ -4146,17 +4146,21 @@ class TestHealthchecks:
         assert "obsolete" not in result.stderr, result.stderr
 
 
-# The limit of the supervisor's tmpfs at /tmp in both compose files (size=2g):
-# the largest legitimate use (_largest_tmp_use) with a margin, and about a
-# quarter of the RAM of an 8 GB board for a runaway write.
-SUPERVISOR_TMPFS = 2 * 1024**3
+# The limit of the supervisor's tmpfs at /tmp in both compose files (size=192m, ADR-0406): the
+# largest legitimate use (_largest_tmp_use) with a margin, and well within a quarter of the 1 GB
+# of RAM that UNOS documents as its minimum (README.md, docs/INSTALL.md).
+SUPERVISOR_TMPFS = 192 * 1024**2
+MINIMUM_RAM = 1000**3
+# What an off-device copy that runs meanwhile may keep in /tmp: restic's pack files, about 16 MiB each,
+# a few at a time (ADR-0406). The cache of an S3 store is not bounded: its copy fails with a full tmpfs.
+RESTIC_PACKS = 80 * 1024**2
 _TMPFS_UNITS = {"": 1, "k": 1024, "m": 1024**2, "g": 1024**3}
 
 
 def _supervisor_tmpfs(compose_file, path="/tmp"):
     """The options of the supervisor's tmpfs at `path` in `compose_file`, as
-    Compose passes them to Docker (HostConfig.Tmpfs): "/tmp:noexec,size=2g"
-    gives {"noexec": None, "size": "2g"}."""
+    Compose passes them to Docker (HostConfig.Tmpfs): "/tmp:noexec,size=192m"
+    gives {"noexec": None, "size": "192m"}."""
     tmpfs = _compose_file(compose_file)["services"]["supervisor"].get("tmpfs", [])
     mounts = {}
     for entry in [tmpfs] if isinstance(tmpfs, str) else tmpfs:
@@ -4319,12 +4323,13 @@ def _largest_tmp_use():
     a restore (the database MAX_DB_BYTES, any other file MAX_CONFIG_BYTES, at
     most MAX_MEMBERS entries, MAX_TAR_BYTES in all), or it could not be
     restored. deploy/update.sh copies the database there the same way
-    (backup_database_online)."""
+    (backup_database_online). An off-device copy meanwhile keeps restic's
+    pack files there (RESTIC_PACKS)."""
     from src.backup.router import MAX_CONFIG_BYTES, MAX_DB_BYTES, MAX_MEMBERS, MAX_TAR_BYTES
 
     restore = MAX_DB_BYTES
     backup = min(MAX_TAR_BYTES, MAX_DB_BYTES + MAX_MEMBERS * MAX_CONFIG_BYTES)
-    return restore + backup
+    return restore + backup + RESTIC_PACKS
 
 
 class TestTemporaryFiles:
@@ -4341,6 +4346,20 @@ class TestTemporaryFiles:
         # none of them undone by a later option.
         assert {"noexec", "nosuid", "nodev"} <= options.keys()
         assert {"exec", "suid", "dev"}.isdisjoint(options)
+
+    @pytest.mark.parametrize("compose_file", COMPOSE_FILES)
+    def test_the_tmpfs_leaves_a_board_with_the_minimum_ram_most_of_it(self, compose_file):
+        # A tmpfs takes RAM for the files it holds, up to its size: at most a quarter of 1 GB (ADR-0406).
+        # The size is fixed, not a percentage, so that the backup limits can be held against it.
+        size = _tmpfs_bytes(_supervisor_tmpfs(compose_file)["size"])
+
+        assert size <= MINIMUM_RAM // 4
+        assert _largest_tmp_use() <= size < 2 * _largest_tmp_use()
+
+    def test_the_backup_limits_are_the_ones_the_tmpfs_is_sized_for(self):
+        from src.backup.router import MAX_ARCHIVE_BYTES, MAX_DB_BYTES, MAX_TAR_BYTES
+
+        assert (MAX_DB_BYTES, MAX_TAR_BYTES, MAX_ARCHIVE_BYTES) == (48 * 1024**2, 64 * 1024**2, 64 * 1024**2)
 
     @pytest.mark.parametrize("compose_file", COMPOSE_FILES)
     def test_btrfs_scrub_records_its_progress_in_ram(self, compose_file):
@@ -4380,7 +4399,9 @@ class TestTemporaryFiles:
         paragraphs = [p for p in re.split(r"\n\s*\n", guide) if "temporary files in RAM" in p]
 
         assert len(paragraphs) == 1, paragraphs
-        assert f"at most {size / 1024**3:g} GiB" in " ".join(paragraphs[0].split())
+        text = " ".join(paragraphs[0].split())
+        assert f"at most {size // 1024**2} MiB" in text
+        assert "1 GB" in text
 
     @staticmethod
     def _run_online_backup(tmp_path, tmpdir_writable, wal=False):

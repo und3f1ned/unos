@@ -177,6 +177,76 @@ def test_a_failed_create_leaves_no_file(env, monkeypatch):
     assert os.listdir(env.backup_dir) == []
 
 
+def _grow_database(env, mebibytes: int) -> None:
+    """Make the live database about ``mebibytes`` MiB, with pages of random data."""
+    conn = sqlite3.connect(env.db_path)
+    conn.execute("CREATE TABLE IF NOT EXISTS filler (data BLOB)")
+    for _ in range(mebibytes):
+        conn.execute("INSERT INTO filler VALUES (randomblob(1048576))")
+    conn.commit()
+    conn.close()
+
+
+@pytest.mark.parametrize("encrypt", [False, True])
+def test_a_database_over_the_limit_is_refused_before_it_is_copied(env, monkeypatch, encrypt):
+    """The limit of a backup's database (ADR-0406) is checked on the live file, before the copy into /tmp
+    that a restore of the backup could not read back: 413 with the limit, no file, no copy."""
+    monkeypatch.setattr(backup_router, "MAX_DB_BYTES", 2 * 1024 * 1024)
+    _grow_database(env, 3)
+    copies = []
+    real_copy = backup_router.copy_database
+    monkeypatch.setattr(backup_router, "copy_database", lambda *args: copies.append(args) or real_copy(*args))
+
+    response = env.client.post("/api/v1/backup/create", json={"encrypt": encrypt, "passphrase": PASSPHRASE if encrypt else None})
+
+    assert response.status_code == 413, response.text
+    detail = response.json()["detail"]
+    assert re.fullmatch(r"The database is 3\.\d MiB, over the 2 MiB limit of a backup: .*", detail), detail
+    assert copies == []
+    assert os.listdir(env.backup_dir) == []
+
+
+def test_a_database_that_grows_over_the_limit_during_the_copy_is_refused_too(env, monkeypatch):
+    real_copy = backup_router.copy_database
+
+    def grow_then_copy(src, dest):
+        _grow_database(env, 3)
+        real_copy(src, dest)
+
+    monkeypatch.setattr(backup_router, "copy_database", grow_then_copy)
+    monkeypatch.setattr(backup_router, "MAX_DB_BYTES", 2 * 1024 * 1024)
+    monkeypatch.setattr(backup_router, "_database_bytes", lambda path: 0)  # the early check saw it small
+
+    response = env.client.post("/api/v1/backup/create", json={})
+
+    assert response.status_code == 413, response.text
+    assert "over the 2 MiB limit of a backup" in response.json()["detail"]
+    assert os.listdir(env.backup_dir) == []
+
+
+def test_the_off_device_copys_configuration_archive_refuses_a_database_over_the_limit(env, monkeypatch):
+    monkeypatch.setattr(backup_router, "MAX_DB_BYTES", 2 * 1024 * 1024)
+    _grow_database(env, 3)
+
+    with pytest.raises(backup_router.BackupTooLarge, match=r"over the 2 MiB limit of a backup"):
+        backup_router.configuration_archive()
+
+
+def test_a_database_within_the_limit_is_backed_up_and_restores(env, monkeypatch):
+    monkeypatch.setattr(backup_router, "MAX_DB_BYTES", 4 * 1024 * 1024)
+    _grow_database(env, 1)
+    created = _create(env)
+
+    assert _restore(env, created["filename"]).status_code == 200
+
+
+def test_the_limits_of_a_backup_follow_the_tmpfs(env):
+    """The restore holds the database in /tmp, and a backup made meanwhile its copy (ADR-0406)."""
+    assert backup_router.MAX_DB_BYTES == 48 * 1024 * 1024
+    assert backup_router.MAX_TAR_BYTES == 64 * 1024 * 1024
+    assert backup_router.MAX_ARCHIVE_BYTES == 64 * 1024 * 1024
+
+
 def test_a_backup_is_on_disk_before_it_gets_its_name(env, monkeypatch):
     """After a power loss, a listed backup must not turn out empty or cut short."""
     calls: list[str] = []
@@ -412,7 +482,7 @@ def test_encrypted_upload_too_large_is_rejected(env, monkeypatch):
     monkeypatch.setattr(backup_router, "MAX_ARCHIVE_BYTES", 100)
     response = _upload(env, os.urandom(101), filename="big.tar.gz.enc")
     assert response.status_code == 400
-    assert response.json()["detail"] == "Backup file is too large"
+    assert response.json()["detail"] == "Backup file is too large: the limit is 100 bytes"
     assert os.listdir(env.backup_dir) == []
 
 

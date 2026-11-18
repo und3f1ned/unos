@@ -56,21 +56,26 @@ services:
     # disk, on many boards an SD card, which writes wear out. The largest use
     # is a restore (supervisor/src/backup/router.py), which reads the archive
     # in one pass and extracts only the database here, at most MAX_DB_BYTES
-    # (512 MiB), while a backup made meanwhile collects its files here: a copy
-    # of the database and the small files, at most MAX_TAR_BYTES (640 MiB), or
+    # (48 MiB), while a backup made meanwhile collects its files here: a copy
+    # of the database and the small files, at most MAX_TAR_BYTES (64 MiB), or
     # it could not be restored (deploy/update.sh copies the database here the
-    # same way). That is 1152 MiB; 2g leaves a margin. Uploads write nothing
-    # here: an uploaded backup is checked in one pass, as a stream. A tmpfs
-    # takes RAM only for the files it holds: about the size of the database
-    # while a backup is restored or made, nothing in between. The limit keeps a
-    # runaway write to about a quarter of the RAM of an 8 GB board; beyond it,
-    # writes fail with "No space left on device": a backup fails, and a
-    # restore answers 507, before either has changed anything. noexec, nosuid
-    # and nodev are Docker's defaults, stated here: nothing runs from /tmp. A
-    # restart empties it. supervisor/tests/test_deploy_scripts.py checks the
-    # limit against those constants.
+    # same way). That is 112 MiB, and 80 MiB more are for restic's pack files while an
+    # off-device copy runs (its cache for an S3 store is not bounded: a copy
+    # that fills the tmpfs fails). A fixed size, not a
+    # percentage of the RAM, so that the backup limits can be held against it
+    # (ADR-0406): at most a fifth of the 1 GB of RAM that UNOS needs at least.
+    # Uploads write nothing here: an uploaded backup is checked in one pass,
+    # as a stream. A tmpfs takes RAM only for the files it holds: about the
+    # size of the database while a backup is restored or made, nothing in
+    # between. Beyond the limit, writes fail with "No space left on device":
+    # a backup fails, and a restore answers 507, before either has changed
+    # anything; a database over MAX_DB_BYTES is refused before the copy, with
+    # the limit in the message. noexec, nosuid and nodev are Docker's
+    # defaults, stated here: nothing runs from /tmp. A restart empties it.
+    # supervisor/tests/test_deploy_scripts.py checks the limit against those
+    # constants.
     tmpfs:
-      - /tmp:noexec,nosuid,nodev,size=2g
+      - /tmp:noexec,nosuid,nodev,size=192m
       # btrfs scrub rewrites its progress file in /var/lib/btrfs every 5
       # seconds while a scrub runs (hours on a large pool), each time a new
       # file renamed over the old one, which ext4 writes out at once: in RAM,

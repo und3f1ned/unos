@@ -242,9 +242,11 @@ board (ADR-0376).
 | Network | 1 Gbps Ethernet |
 
 The supervisor keeps its temporary files in RAM instead of on the system disk:
-at most 2 GiB, and only while a backup is made or restored, or `update.sh`
-saves the database before an update. A restore, a backup and `update.sh` each
-need about the size of the database. Uploads need none:
+at most 192 MiB, which a board with the minimum of 1 GB of RAM can spare, and
+only while a backup is made or restored, or `update.sh` saves the database
+before an update. A restore, a backup and `update.sh` each need about the size
+of the database, which a backup may hold up to 48 MiB: a larger one is refused
+with the limit in the message (the database of a NAS is a few MiB). Uploads need none:
 files go straight to their folder, and an uploaded backup is checked in one
 pass that writes nothing.
 
