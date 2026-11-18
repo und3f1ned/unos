@@ -110,19 +110,10 @@ _DIGEST = re.compile(r"@(sha256:[0-9a-f]{64})$")
 
 
 def pinned_digest(ref: str) -> str | None:
-    """The digest of ``name:tag@sha256:...`` or ``name@sha256:...``; None for a floating tag."""
+    """The digest of ``name:tag@sha256:...`` or ``name@sha256:...``; None for a
+    container created from a tag, as before its catalog pinned the image (ADR-0410)."""
     match = _DIGEST.search(ref)
     return match.group(1) if match else None
-
-
-def template_images(template: AppTemplate) -> list[str]:
-    """Every image that an install of ``template`` may run: its containers' own and those of their
-    hardware profiles."""
-    refs: list[str] = []
-    for spec in (template, *template.companions):
-        refs.append(spec.image)
-        refs.extend(profile.image for profile in spec.hardware if profile.image)
-    return list(dict.fromkeys(refs))
 
 
 def joined(names: Iterable[str]) -> str:
@@ -250,14 +241,12 @@ def app_version(app: InstalledContainers) -> str | None:
 
 
 def update_to(app: InstalledContainers) -> str | None:
-    """The catalog's version that the app can be updated to, or None (ADR-0408): every image of its
-    template is pinned, it is complete, and the catalog pins for one of its containers another
+    """The catalog's version that the app can be updated to, or None (ADR-0408): it is complete and
+    the catalog pins for one of its containers another
     image than the one it was created from (its own or that of a hardware profile; which one the
     host takes is the update's to read). Reads nothing but the containers' configuration."""
     template = app.template
     if template is None or app.missing or not app.containers:
-        return None
-    if any(pinned_digest(ref) is None for ref in template_images(template)):
         return None
     for container in app.containers:
         spec = app.spec(container)

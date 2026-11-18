@@ -10,6 +10,7 @@ the Docker client is a MagicMock, and ``os.fchown`` only records its calls.
 
 import asyncio
 import fcntl
+import hashlib
 import importlib
 import json
 import os
@@ -998,13 +999,19 @@ class TestEnvironment:
 # ---------------------------------------------------------------------------
 
 
+def _pin(ref: str) -> str:
+    """``ref`` (name:tag) pinned by a digest that only it has: every image that an install pulls is
+    (ADR-0410)."""
+    return f"{ref}@sha256:{hashlib.sha256(ref.encode()).hexdigest()}"
+
+
 DEMO = AppTemplate(
     id="demo",
     name="Demo",
     description="Template with a single-file volume",
     icon="x",
     category=AppCategory.OTHER,
-    image="example/demo:1",
+    image=_pin("example/demo:1"),
     version="1",
     volumes=[
         VolumeMapping(host=f"{POOL_PLACEHOLDER}/apps/demo/app.db", container="/app.db", is_file=True),
@@ -3291,8 +3298,11 @@ NPU = HardwareProfile(
     apparmor_unconfined=True,
 )
 VIDEO = get_app_by_id("jellyfin").hardware[0]
-PHOTOS_ML = "example/photos-ml:1"
-PHOTOS_ML_NPU = "example/photos-ml:1-rknn"
+PHOTOS_ML = _pin("example/photos-ml:1")
+PHOTOS_ML_NPU = _pin("example/photos-ml:1-rknn")
+PHOTOS_SERVER = _pin("example/photos-server:1")
+PHOTOS_SERVER_RK3588 = _pin("example/photos-server:1-rk3588")
+PHOTOS_DB = _pin("example/postgres:14")
 
 
 def _photos(**changes) -> AppTemplate:
@@ -3305,12 +3315,12 @@ def _photos(**changes) -> AppTemplate:
         description="Photos of three containers",
         icon="P",
         category=AppCategory.MEDIA,
-        image="example/photos-server:1",
+        image=PHOTOS_SERVER,
         version="1",
         ports=[PortMapping(host=2283, container=2283)],
         hardware=[VIDEO],
         companions=[
-            Companion(name="database", image="example/postgres:14"),
+            Companion(name="database", image=PHOTOS_DB),
             Companion(
                 name="machine-learning",
                 image=PHOTOS_ML,
@@ -3360,12 +3370,12 @@ class TestHardwarePerContainer:
 
         unmasked = [path for path in DOCKER_MASKED_PATHS if path != "/sys/firmware"]
         assert got["server"] == hardware_module.ContainerHardware(
-            image="example/photos-server:1",
+            image=PHOTOS_SERVER,
             devices=RK3588_VIDEO,
             masked_paths=unmasked,
             security_opt=["apparmor=unconfined"],
         )
-        assert got["database"] == hardware_module.ContainerHardware(image="example/postgres:14")
+        assert got["database"] == hardware_module.ContainerHardware(image=PHOTOS_DB)
         # The folder is passed in; the link that the profile requires is inside it.
         assert got["machine-learning"] == hardware_module.ContainerHardware(
             image=PHOTOS_ML_NPU,
@@ -3384,7 +3394,7 @@ class TestHardwarePerContainer:
         assert soc.commands[1][3:] == ["unos-devices", *RK3588_VIDEO, NPU_LINK]
 
     def test_a_profile_that_two_containers_share_is_read_once(self):
-        template = _photos(companions=[Companion(name="worker", image="example/worker:1", hardware=[VIDEO])])
+        template = _photos(companions=[Companion(name="worker", image=_pin("example/worker:1"), hardware=[VIDEO])])
 
         assert hardware_module.all_profiles(template) == [VIDEO]
 
@@ -3418,8 +3428,8 @@ class TestHardwarePerContainer:
             }
             # The App Store shows the image that the install pulls.
             assert {name: c["image"] for name, c in containers.items()} == {
-                "": "example/photos-server:1",
-                "database": "example/postgres:14",
+                "": PHOTOS_SERVER,
+                "database": PHOTOS_DB,
                 "machine-learning": PHOTOS_ML_NPU,
             }
             assert containers["machine-learning"]["hardware"][0]["image"] == PHOTOS_ML_NPU
@@ -3455,7 +3465,7 @@ class TestHardwarePerContainer:
 
     @pytest.mark.parametrize(
         ("compatible", "image"),
-        [(RK3588, "example/photos-server:1-rk3588"), (None, "example/photos-server:1")],
+        [(RK3588, PHOTOS_SERVER_RK3588), (None, PHOTOS_SERVER)],
         ids=["rk3588", "pc"],
     )
     def test_an_install_pulls_and_creates_the_image_of_the_profile_that_applies(
@@ -3463,16 +3473,18 @@ class TestHardwarePerContainer:
     ):
         soc.compatible = compatible
         soc.devices = set(RK3588_VIDEO)
-        in_catalog(_photos(hardware=[VIDEO.model_copy(update={"image": "example/photos-server:1-rk3588"})], companions=[]))
+        in_catalog(_photos(hardware=[VIDEO.model_copy(update={"image": PHOTOS_SERVER_RK3588})], companions=[]))
 
         response = install(api, {"template_id": "photos"})
 
         assert response.status_code == 200, response.text
-        assert pulled(docker_client) == [image]
+        name_tag, _, digest = image.partition("@")
+        by_digest = f"{name_tag.rpartition(':')[0]}@{digest}"
+        assert pulled(docker_client) == [by_digest]
         if compatible is None:
-            assert docker_client.containers.create.call_args.args == (image,)
+            assert docker_client.containers.create.call_args.args == (by_digest,)
         else:
-            assert low_level.create_container.call_args.args == (image,)
+            assert low_level.create_container.call_args.args == (by_digest,)
             assert response.json()["devices"] == RK3588_VIDEO
 
 
@@ -3598,6 +3610,17 @@ class TestStackCatalog:
     def test_a_pinned_tag_names_a_version_not_a_channel(self):
         for ref, pin in catalog_module.PINNED_IMAGES.items():
             assert not FLOATING_TAG.fullmatch(pin.tag), ref
+
+    @pytest.mark.parametrize("ref", ["example/notes:latest", "example/notes", "example/notes@sha256:" + "a" * 64])
+    def test_the_install_has_no_path_for_an_image_that_is_not_pinned_by_tag_and_digest(self, ref):
+        # The pull, the container's image and the space check handle name:tag@sha256 alone
+        # (ADR-0410): a floating tag is never pulled as latest.
+        with pytest.raises(ValueError, match="is not pinned"):
+            apps_router._pinned(ref)
+        with pytest.raises(ValueError, match="is not pinned"):
+            apps_router._by_digest(ref)
+        assert apps_router._pinned(_pin("example/notes:1")) == (
+            "example/notes", "1", _pin("example/notes:1").partition("@")[2])
 
     def test_an_app_of_one_container_runs_the_image_of_its_version(self):
         images = catalog_module.APP_IMAGES
@@ -3765,21 +3788,6 @@ class TestSystemDiskSpace:
         docker_client.api.post.assert_not_called()
         docker_client.containers.create.assert_not_called()
         assert not (pools.alpha / "apps").exists()
-
-    def test_an_image_of_a_floating_tag_counts_nothing_before_its_pull(
-        self, api, pools, docker_client, soc, in_catalog
-    ):
-        # Its size is not known before its pull: the floor alone must be free. The catalog has no
-        # such image (ADR-0410); a template that is not pinned is still installed so.
-        in_catalog(AppTemplate(id="notes", name="Notes", description="d", icon="n", category=AppCategory.PRODUCTIVITY,
-                               image="example/notes:latest", version="latest"))
-        soc.free = {DOCKER_ROOT: FREE_SPACE_FLOOR, CONTAINERD_ROOT: 64 * GIB}
-
-        response = install(api, {"template_id": "notes"})
-
-        assert response.status_code == 200, response.text
-        docker_client.images.get.assert_not_called()
-        assert pulled(docker_client) == ["example/notes:latest"]
 
     def test_a_pinned_image_that_docker_lacks_counts_its_estimate(self, api, pools, docker_client, soc):
         pin = catalog_module.APP_IMAGES["jellyfin"]

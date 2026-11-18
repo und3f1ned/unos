@@ -81,7 +81,7 @@ multi-platform index, as ADR-0305 pins the Dockerfiles) with its estimated
 size on the system disk and the VOLUMEs it declares, listed in PINNED_IMAGES
 (ADR-0381, ADR-0410); an app of one container takes its image from
 APP_IMAGES and its version from the pin's tag. A test fails for an image
-that floats on a tag.
+that is not pinned; no install, space check or update has a path for one.
 
 Nothing an app writes may land on the system disk, where Docker's data root
 is (ADR-0381): every VOLUME that its image declares lies at or under a bind on

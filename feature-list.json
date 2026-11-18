@@ -4452,7 +4452,11 @@
         "ADR-0207",
         "ADR-0410"
       ],
-      "notes": "Found with apps.pinned-catalog-images: the floating-tag branches of the install's pull, of the space check and of the update's refusal are unreachable for the catalog, whose test refuses an image that is not pinned; the tests keep them alive with templates such as example/notes:latest."
+      "notes": "Found with apps.pinned-catalog-images: the floating-tag branches of the install's pull, of the space check and of the update's refusal were unreachable for the catalog, whose test refuses an image that is not pinned; the tests kept them alive with templates such as example/notes:latest. Removed as ADR-0410 decided (no new ADR): router._pinned raises ValueError for a reference that is not name:tag@sha256 (the pull, _by_digest and the container's image take only those), the space check and stacks.update_to no longer skip an unpinned template, updates._plan has no refusal of a floating tag, stacks.template_images is gone, and the tests' templates (DEMO, the Photos of test_apps.py) are pinned. Kept on purpose: stacks.pinned_digest returns None for an installed container created from a tag, so such a container is listed, offered the pinned version and updated (test_app_updates.py, an_app_created_from_floating_tags_...); registry.read still refuses a reference without a digest.",
+      "verified_by": [
+        "supervisor/tests/test_apps.py",
+        "supervisor/tests/test_app_updates.py"
+      ]
     },
     {
       "id": "apps.install-progress",
