@@ -7,8 +7,7 @@ at most two reads at a time: ``--reverse`` prints the newest entries first, and
 the answer keeps that order. The journal socket of System > Logs' Auto
 (``/ws/v1/journal`` in src/websocket/events.py, ADR-0366) reads the same entries
 with ``journal_query`` and ``read_journal`` and then follows the journal with
-``follow_journal``. The log files of GET /files and GET /file/{filename} are still
-those of the supervisor container's /var/log.
+``follow_journal``. No source reads the supervisor container's own files (ADR-0416).
 """
 
 import asyncio
@@ -115,19 +114,6 @@ class LogSource(BaseModel):
     name: str
     label: str
     description: str
-
-
-class LogFile(BaseModel):
-    name: str
-    path: str
-    size: int
-    modified: str
-
-
-class LogFileContent(BaseModel):
-    filename: str
-    content: str
-    lines: int
 
 
 def _text(value) -> str:
@@ -319,34 +305,6 @@ async def get_log_sources(_: dict = Depends(verify_token)):
     }
 
 
-@router.get("/files")
-async def get_log_files(_: dict = Depends(verify_token)):
-    """Get list of log files."""
-    import os
-    from datetime import datetime
-    
-    files = []
-    log_dirs = ["/var/log"]
-    
-    for log_dir in log_dirs:
-        if os.path.exists(log_dir):
-            for f in os.listdir(log_dir):
-                path = os.path.join(log_dir, f)
-                if os.path.isfile(path) and not f.endswith(".gz"):
-                    try:
-                        stat = os.stat(path)
-                        files.append(LogFile(
-                            name=f,
-                            path=path,
-                            size=stat.st_size,
-                            modified=datetime.fromtimestamp(stat.st_mtime, timezone.utc).isoformat()
-                        ))
-                    except Exception:
-                        pass
-    
-    return {"files": files}
-
-
 @router.get("/entries", response_model=LogsResponse)
 async def get_log_entries(
     source: str = Query("journal", description="A source of GET /sources"),
@@ -359,46 +317,3 @@ async def get_log_entries(
     """The newest entries of a source of the host's journal, newest first (ADR-0366)."""
     _check_query(source, since, search)
     return await read_journal(source, limit=limit, priority=priority, since=since or None, search=search or None)
-
-
-@router.get("/file/{filename}")
-async def get_log_file_content(
-    filename: str,
-    lines: int = Query(100, ge=1, le=10000),
-    _: dict = Depends(verify_token)
-):
-    """Get content of a specific log file."""
-    import os
-    
-    # Sanitize filename to prevent directory traversal
-    if "/" in filename or ".." in filename:
-        raise HTTPException(400, "Invalid filename")
-    
-    path = f"/var/log/{filename}"
-    
-    if not os.path.exists(path):
-        raise HTTPException(404, "Log file not found")
-    
-    if not os.path.isfile(path):
-        raise HTTPException(400, "Not a file")
-    
-    try:
-        with open(path, "r") as f:
-            content_lines = f.readlines()[-lines:]
-        
-        return LogFileContent(
-            filename=filename,
-            content="".join(content_lines),
-            lines=len(content_lines)
-        )
-    except Exception as e:
-        logger.exception("Could not get log file content")
-        raise HTTPException(500, f"Failed to read file: {str(e)}")
-
-
-@router.delete("/clear/{source}")
-async def clear_logs(source: str, _: dict = Depends(verify_token)):
-    """Clear logs for a specific source."""
-    # This is a placeholder - actual log clearing requires elevated privileges
-    # and should be done carefully
-    return {"status": "not_implemented", "message": "Log clearing requires manual intervention"}

@@ -146,6 +146,7 @@
 		certificate_generated: 'audit.action.certificateGenerated',
 		certificate_deleted: 'audit.action.certificateDeleted',
 		certificate_served: 'audit.action.certificateServed',
+		firewall_change_kept: 'audit.action.firewallChangeKept',
 		other: 'audit.action.other'
 	};
 	// An info entry shows no severity.

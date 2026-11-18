@@ -3,7 +3,7 @@ import re
 import unicodedata
 from typing import Annotated, Literal
 
-from pydantic import AfterValidator, BaseModel, ConfigDict, Field
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, model_validator
 from enum import Enum
 
 from ..times import UtcDatetime
@@ -122,7 +122,7 @@ class LoginHistoryResponse(BaseModel):
     success_count: int
 
 
-# Firewall Schemas
+# Firewall Schemas: the host's ufw (ADR-0416)
 class FirewallAction(str, Enum):
     ALLOW = "allow"
     DENY = "deny"
@@ -135,40 +135,106 @@ class FirewallProtocol(str, Enum):
     ANY = "any"
 
 
-class FirewallDirection(str, Enum):
-    IN = "in"
-    OUT = "out"
-
-
 class FirewallRule(BaseModel):
-    id: str | None = None
-    name: str
-    action: FirewallAction
-    direction: FirewallDirection = FirewallDirection.IN
-    protocol: FirewallProtocol = FirewallProtocol.ANY
-    port: str | None = None  # Can be single port, range (80:443), or None for all
-    source: str | None = None  # IP or CIDR
-    destination: str | None = None  # IP or CIDR
-    enabled: bool = True
+    """A rule of the host's ufw, as ufw records it (src/security/firewall.py)."""
+    id: str                          # made from the rule's record: it stays while the rule does
+    number: int                      # ufw's number of the rule, as `ufw status numbered` shows it
+    family: Literal["ipv4", "ipv6"]
+    action: str                      # allow, deny, reject or limit
+    direction: str                   # in or out
+    route: bool = False              # a rule of forwarded traffic (ufw route)
+    log: bool = False                # ufw logs what it matches
+    protocol: str                    # tcp, udp, any, or another that ufw takes (esp, gre, ...)
+    port: str | None = None          # None: every port
+    destination: str | None = None   # None: any address of the host
+    source_port: str | None = None
+    source: str | None = None        # None: anywhere
+    interface: str | None = None
+    app: str | None = None           # an application profile of ufw
     comment: str | None = None
+    unos: bool = False               # one of UNOS's rules, which UNOS does not delete
 
 
 class FirewallStatus(BaseModel):
+    installed: bool                  # the host has ufw
     enabled: bool
     default_incoming: str
     default_outgoing: str
+    ipv6: bool                       # ufw filters IPv6 too (IPV6=yes)
     rules: list[FirewallRule]
+    revert_in: int | None = None     # seconds until a change that waits to be kept is undone
+    reverting: bool = False          # the host undoes a change now
+    revert_failed: bool = False      # the host's last undo could not put everything back
+    revert_seconds: int              # how long a change waits to be kept
+    client_local: bool | None = None  # the asking computer is in the local networks; None: not known
+
+
+class FirewallChange(BaseModel):
+    changed: bool
+    revert_in: int | None = None
+
+
+# ufw takes at most 15 ports in a rule, a range counting as two; a comment of UNOS's rules
+# starts with this, and no rule made in UNOS may.
+_MAX_RULE_PORTS = 15
+_PORT_ITEM = re.compile(r"[0-9]{1,5}(?::[0-9]{1,5})?")
+MAX_FIREWALL_COMMENT = 64
+
+
+def validate_firewall_port(value: str) -> str:
+    """One port, a range a:b or a list of them, as ufw takes them."""
+    items = value.split(",")
+    count = 0
+    for item in items:
+        if not _PORT_ITEM.fullmatch(item):
+            raise ValueError("Ports are numbers from 1 to 65535, a range such as 6000:6007, or a list such as 80,443")
+        bounds = [int(part) for part in item.split(":")]
+        if not all(1 <= port <= 65535 for port in bounds):
+            raise ValueError("Ports are numbers from 1 to 65535")
+        if len(bounds) == 2 and bounds[0] >= bounds[1]:
+            raise ValueError("A range of ports goes from the lower to the higher one")
+        count += len(bounds)
+    if count > _MAX_RULE_PORTS:
+        raise ValueError(f"A rule takes at most {_MAX_RULE_PORTS} ports, a range counting as two")
+    return value
+
+
+def validate_firewall_source(value: str | None) -> str | None:
+    """An IPv4 or IPv6 address or network, as Python's ipaddress writes it; None or "" for anywhere."""
+    if value is None or value == "":
+        return None
+    try:
+        if "/" in value:
+            return str(ipaddress.ip_network(value, strict=True))
+        return str(ipaddress.ip_address(value))
+    except ValueError:
+        raise ValueError("The source is an IPv4 or IPv6 address or network, such as 192.168.1.0/24") from None
+
+
+def validate_firewall_comment(value: str | None) -> str | None:
+    if value is None or value == "":
+        return None
+    if len(value) > MAX_FIREWALL_COMMENT or not value.isprintable():
+        raise ValueError(f"A comment has at most {MAX_FIREWALL_COMMENT} printable characters")
+    if value.startswith("-") or value.upper().startswith("UNOS:"):
+        raise ValueError("A comment starts with neither '-' nor 'UNOS:'")
+    return value
 
 
 class FirewallRuleCreate(BaseModel):
-    name: str
+    """An incoming rule made in UNOS (ADR-0416)."""
+    model_config = ConfigDict(extra="forbid")
     action: FirewallAction
-    direction: FirewallDirection = FirewallDirection.IN
-    protocol: FirewallProtocol = FirewallProtocol.ANY
-    port: str | None = None
-    source: str | None = None
-    destination: str | None = None
-    comment: str | None = None
+    protocol: FirewallProtocol = FirewallProtocol.TCP
+    port: Annotated[str, AfterValidator(validate_firewall_port)]
+    source: Annotated[str | None, AfterValidator(validate_firewall_source)] = None
+    comment: Annotated[str | None, AfterValidator(validate_firewall_comment)] = None
+
+    @model_validator(mode="after")
+    def _one_port_for_any_protocol(self):
+        if self.protocol == FirewallProtocol.ANY and ("," in self.port or ":" in self.port):
+            raise ValueError("A range or a list of ports needs TCP or UDP")
+        return self
 
 
 # SSL/TLS Certificate Schemas

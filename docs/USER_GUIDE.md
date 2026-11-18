@@ -2429,7 +2429,7 @@ regular users have no access to it.
   Also recorded: a pool mounted, unmounted (a **Warning**) or imported; a container created on
   the **Containers** page (never its environment); an image pulled, when it is new or
   its tag moved, and removed (a **Warning**); the firewall turned on or off (off as a
-  **Warning**), a rule added or removed and a reset; clearing the login history (a
+  **Warning**), a change of it kept, a rule added or removed and a reset; clearing the login history (a
   **Warning**, with how many attempts); suspend (a **Warning**, recorded before the host goes
   to sleep, and again as **Failed** when the host refuses); and changes of the power, UPS,
   notification and off-device copy settings (**Settings changed**, resource `power`, `ups`,
@@ -2854,6 +2854,58 @@ certificate stored under the same name replaces the old one with its key, and
 its chain too, which goes when the new certificate has none. A store that fails
 keeps the old files. The trash button deletes a stored certificate. When the
 certificates cannot be loaded, the card says so with the reason and **Retry**.
+
+### Firewall
+
+**Firewall** on **System** → **Security** (administrators only) is the host's
+ufw: the badge says **Active**, **Inactive** or **Not installed**, and
+**Configure** shows its default policies, **Enable** or **Disable**, **Reset**
+and every rule of the host, as ufw keeps it, with its action, protocol, ports,
+source and comment; **IPv6** marks a rule of IPv6. UNOS does not install ufw:
+on a host without it the card says to install the package (`sudo apt install
+ufw`), and nothing can be changed.
+
+**Enable** asks first, and warns when your computer is not in the local
+networks. Before ufw goes on, UNOS adds its own rules, marked
+**UNOS**: the local networks (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16,
+100.64.0.0/10, 169.254.0.0/16, fc00::/7 and fe80::/10, the networks that SMB
+answers) may reach the web UI (80, 443), SSH (22 and every port that sshd
+listens on or is set up for), SMB (445) and network discovery (5357/tcp, 3702
+and 5355/udp; ufw lets mDNS in itself). UNOS also turns ufw's logging of what it blocks off, which would write to the
+system disk all the time (`sudo ufw logging low` turns it on). UNOS's rules have
+no Delete; they come
+after the rules the host had, so an earlier deny of the host still wins.
+UNOS does not turn ufw on where that would cut Docker's containers, the web
+UI's among them, off: `MANAGE_BUILTINS=yes` or a `DEFAULT_FORWARD_POLICY`
+other than `DROP` in `/etc/default/ufw`, or a Docker that does not keep its
+rules in iptables (its nftables backend); the card says which. Then the firewall goes on,
+and the card counts down: **unless you press Keep the change within 120
+seconds, the host turns the firewall off again by itself**, also when the page
+can no longer reach UNOS. Before you keep it, check from another computer that
+SSH and your shares still answer. A change of the rules while the firewall is
+on, **Add Rule** or a rule's Delete, is undone the same way unless you keep it,
+and until it is kept or undone no other change is taken; **Disable** always
+is. Every change, a kept one too, is in the audit log; the undo by the host is
+in its journal (`journalctl -u unos-firewall-revert`). When the host could not
+finish an undo, the card says so until the firewall is turned off or changed
+again.
+
+**Add Rule** makes an incoming rule: **Allow**, **Deny** or **Reject**; TCP,
+UDP or **Any**; one port, a range such as `6000:6007` or a list such as
+`80,443` (ranges and lists need TCP or UDP); an optional source address or
+network (empty: anywhere, as one rule for IPv4 and one for IPv6); and an
+optional comment. **Reset** turns the firewall off, removes every rule (ufw
+keeps copies of its files in `/etc/ufw`) and adds UNOS's rules again.
+
+Other services need rules of their own once the firewall is on, such as NFS
+(2049/tcp; NFSv3 also needs rpcbind's 111 and mountd), and so does a computer
+that reaches the NAS only through a public IPv6 address. Over IPv4, ufw does
+not filter the ports that Docker publishes, those of the web UI and of the apps
+on Docker's networks: Docker's own rules let them in. Over IPv6 it does, and so
+it does for the apps on the host's network, such as Home Assistant: their ports
+need rules. If the host reboots within the 120 seconds, the change is not
+undone: the countdown is gone, and ufw starts at boot as the change left it,
+with UNOS's rules.
 
 ---
 

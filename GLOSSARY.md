@@ -76,8 +76,20 @@ commits and pushes, opens pull requests and holds the credentials (ADR-0208, ADR
 Avoid: user (a UNOS user), admin.
 
 **Automatic revert**: What turns a network interface that UNOS disabled back on, with its saved
-addresses and routes: a timer on the host that runs unless the administrator keeps the disable
-within 60 seconds (ADR-0244). Avoid: rollback (what `update.sh` and `deploy.sh` do), undo.
+addresses and routes, or puts the host's firewall back as it was before a change: a timer on the
+host that runs unless the administrator keeps the change within 60 seconds (an interface,
+ADR-0244) or 120 seconds (the firewall, ADR-0416). Avoid: rollback (what `update.sh` and
+`deploy.sh` do), undo.
+
+**Firewall**: The host's ufw, which System > Security turns on and off and whose rules it lists and
+changes (ADR-0416). Its rules are the host's, as ufw records them; UNOS keeps none of its own.
+Avoid: iptables, the IPv6 inbound filter (the dev device's own nftables table, ADR-0301).
+
+**Local networks**: The private, link-local and unique-local networks of SMB's `hosts allow`
+(10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 100.64.0.0/10, 169.254.0.0/16, fc00::/7, fe80::/10),
+which SMB answers, NFS exports may name and UNOS's firewall rules let reach the web UI, SSH and SMB
+(ADR-0095, ADR-0416). Avoid: LAN when the networks are meant (a LAN can also use global IPv6
+addresses).
 
 **Scheduled task**: A task of System > Scheduler that runs at the times of its schedule on the
 clock of the host's time zone: a snapshot, a scrub, a SMART test, a backup or a custom task. Each

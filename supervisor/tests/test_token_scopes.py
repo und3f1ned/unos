@@ -89,7 +89,6 @@ KIND_TABLE = {
     ("GET", f"{API}/files/download"): READ,
     ("GET", f"{API}/containers/{{container_id}}/logs"): READ,
     ("GET", f"{API}/audit/logs/export"): READ,
-    ("GET", f"{API}/logs/file/{{filename}}"): READ,
     ("GET", f"{API}/scheduler/tasks"): READ,
     ("GET", f"{API}/power/ups/config"): READ,
     ("GET", f"{API}/offsite/settings"): READ,

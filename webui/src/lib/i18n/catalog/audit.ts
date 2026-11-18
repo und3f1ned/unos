@@ -129,6 +129,7 @@ export const en = {
 	'audit.action.certificateGenerated': 'Certificate generated',
 	'audit.action.certificateDeleted': 'Certificate deleted',
 	'audit.action.certificateServed': 'Certificate served',
+	'audit.action.firewallChangeKept': 'Firewall change kept',
 	'audit.action.other': 'Other',
 
 	// The types of resource that the server records: in English as it records them.
@@ -287,6 +288,7 @@ export const ru: Translation<typeof en> = {
 	'audit.action.certificateGenerated': 'Сертификат создан',
 	'audit.action.certificateDeleted': 'Сертификат удалён',
 	'audit.action.certificateServed': 'Сертификат HTTPS сменён',
+	'audit.action.firewallChangeKept': 'Изменение брандмауэра сохранено',
 	'audit.action.other': 'Другое',
 
 	'audit.resource.user': 'пользователь',

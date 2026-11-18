@@ -16,6 +16,19 @@ manager, encrypted backup uploads, health checks, CI checks).
   `host.docker.internal`, which now names the NAS in their containers; Zigbee2MQTT's broker is
   `mqtt://host.docker.internal:1883` unless changed. Installed ones get it when they are installed
   again (ADR-0415).
+- The firewall of System > Security is the host's ufw, which it never reached before: its rules are
+  the host's, read from ufw's own files, and UNOS keeps no list of its own. **Enable** first adds
+  UNOS's rules, which let the local networks reach the web UI, SSH, SMB and network discovery,
+  turns ufw's logging off (it would write to the system disk all the time) and then counts down: unless **Keep the change** is pressed within 120 seconds, a timer on the host
+  turns ufw off again and puts its rules back, also when the page cannot reach UNOS any more. A
+  rule added or deleted while the firewall is on is undone the same way. New rules are incoming
+  ones, checked before they reach ufw; UNOS's rules cannot be deleted from the page. Turning ufw
+  off keeps the FORWARD policies as they were (ufw's own stop opens them), and the undo of an
+  Enable puts back those from before it. UNOS does not turn ufw on where ufw would cut Docker's
+  forwarding. A host without ufw is told to install it; the stand-in and the test stack refuse
+  every firewall request (`firewall_change_kept` in the audit log, ADR-0416).
+- The system, security, logs and NFS routers start no command of their own: a test fails for one
+  outside `src/host.py`, and openssl runs through `host.run_in_container` (ADR-0416).
 - Every app of the App Store installs a pinned image: its publisher's version tag and the digest of
   the index that the tag named on 2026-11-18 (`name:tag@sha256:...`), pulled and run by that
   digest, with the version shown on its card (transmission `4.1.4-r0-ls370`, Traefik `v3.7`, Netdata
@@ -1476,6 +1489,11 @@ manager, encrypted backup uploads, health checks, CI checks).
   smb.conf as UNOS wrote it.
 
 ### Removed
+- `GET /api/v1/system/network` (nsenter of its own), `GET /api/v1/system/pcie` (an lspci that the
+  container lacks), `GET /api/v1/logs/files` and `GET /api/v1/logs/file/{filename}` (the
+  supervisor container's `/var/log`) and `DELETE /api/v1/logs/clear/{source}`, which did nothing:
+  no page called them, and they answer 404 (ADR-0416, ADR-0207). `/data/firewall_rules.json` is
+  gone with UNOS's own list of firewall rules.
 - Readarr from the App Store: the project is retired and its image's tag names an empty index, which
   no host could install (ADR-0410).
 - `GET /api/v1/monitor/cpu`, `/monitor/memory`, `/monitor/processes`,

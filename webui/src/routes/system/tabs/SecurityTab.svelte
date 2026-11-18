@@ -4,6 +4,7 @@
   import { loadCurrentUser, user } from "$lib/stores/auth";
   import SmbAccessCard from "$lib/components/account/SmbAccessCard.svelte";
   import TwoFactorRequirementCard from "$lib/components/account/TwoFactorRequirementCard.svelte";
+  import FirewallCard from "$lib/components/account/FirewallCard.svelte";
   import RecoveryCodes from "$lib/components/account/RecoveryCodes.svelte";
   import SecurityKeys from "$lib/components/account/SecurityKeys.svelte";
   import LanguageCard from "$lib/components/account/LanguageCard.svelte";
@@ -15,13 +16,12 @@
   import { changePassword, setupTOTP, enableTOTP, disableTOTP, getTOTPStatus, type TOTPSetupResponse } from "$lib/api/auth";
   import {
     getLoginHistory, clearLoginHistory,
-    getFirewallStatus, enableFirewall, disableFirewall, createFirewallRule, deleteFirewallRule, resetFirewall,
     getCertificateStatus, getCertificates, generateSelfSignedCert, deleteCertificate, serveCertificate, LOCAL_CA_ID,
-    type LoginAttempt, type FirewallRule, type FirewallStatus, type Certificate, type CertificateStatus
+    type LoginAttempt, type Certificate, type CertificateStatus
   } from "$lib/api/security";
   import {
     Shield, Key, Smartphone, Lock, CheckCircle, AlertCircle, Copy, Eye, EyeOff,
-    Flame, Globe, History, Plus, Trash2, RefreshCw, ShieldCheck, ShieldX,
+    Globe, History, Plus, Trash2, RefreshCw,
     Clock, User, MapPin, Monitor, FileKey
   } from "lucide-svelte";
 
@@ -71,23 +71,6 @@
   let loginHistoryError = "";
   let showLoginHistory = false;
 
-  // Firewall state
-  let firewallStatus: FirewallStatus | null = null;
-  let firewallLoading = false;
-  let firewallError = "";
-  let firewallSuccess = "";
-  let showFirewallModal = false;
-  let showAddRuleModal = false;
-  let newRule = {
-    name: "",
-    action: "allow" as "allow" | "deny" | "reject",
-    direction: "in" as "in" | "out",
-    protocol: "tcp" as "tcp" | "udp" | "any",
-    port: "",
-    source: "",
-    comment: ""
-  };
-
   // Certificate state
   let certStatus: CertificateStatus | null = null;
   let certificates: Certificate[] = [];
@@ -114,28 +97,12 @@
     country: ""
   };
 
-  // Firewall and certificates are administrator-only APIs; every account can
+  // The firewall and the certificates are administrator-only APIs; every account can
   // manage its own password, 2FA and see its own login history.
   $: isAdmin = $user?.is_admin === true;
 
-  // The labels of the values that the server answers as words (FirewallRule, FirewallStatus and
-  // Certificate of $lib/api/security): keys of the catalog, by value.
-  const RULE_ACTIONS: Record<string, string> = {
-    allow: "account.firewall.allow",
-    deny: "account.firewall.deny",
-    reject: "account.firewall.reject"
-  };
-  const RULE_DIRECTIONS: Record<string, string> = { in: "account.firewall.in", out: "account.firewall.out" };
-  const RULE_PROTOCOLS: Record<string, string> = {
-    tcp: "account.firewall.tcp",
-    udp: "account.firewall.udp",
-    any: "account.firewall.anyProtocol"
-  };
-  const POLICIES: Record<string, string> = {
-    allow: "account.firewall.policyAllow",
-    deny: "account.firewall.policyDeny",
-    reject: "account.firewall.policyReject"
-  };
+  // The labels of the values that the server answers as words (Certificate of $lib/api/security):
+  // keys of the catalog, by value.
   const CERTIFICATE_TYPES: Record<string, string> = {
     self_signed: "account.certs.selfSigned",
     custom: "account.certs.custom"
@@ -180,7 +147,7 @@
   onMount(async () => {
     await Promise.all([
       loadTOTPStatus(),
-      ...(isAdmin ? [loadFirewallStatus(), loadCertificateStatus()] : [])
+      ...(isAdmin ? [loadCertificateStatus()] : [])
     ]);
   });
 
@@ -374,97 +341,6 @@
     if (!ua) return $t("common.unknown");
     return BROWSERS.find((name) => ua.includes(name)) ?? $t("account.history.browser");
   };
-
-  // Firewall functions
-  async function loadFirewallStatus() {
-    firewallLoading = true;
-    try {
-      firewallStatus = await getFirewallStatus();
-    } catch (e) {
-      console.error("Failed to load firewall status:", e);
-    } finally {
-      firewallLoading = false;
-    }
-  }
-
-  async function toggleFirewall() {
-    firewallError = "";
-    firewallSuccess = "";
-    firewallLoading = true;
-    try {
-      if (firewallStatus?.enabled) {
-        await disableFirewall();
-        firewallSuccess = $t("account.firewall.disabledNotice");
-      } else {
-        await enableFirewall();
-        firewallSuccess = $t("account.firewall.enabledNotice");
-      }
-      await loadFirewallStatus();
-    } catch (e: any) {
-      firewallError = e.message || $t("account.firewall.toggleFailed");
-    } finally {
-      firewallLoading = false;
-    }
-  }
-
-  async function handleAddRule() {
-    if (!newRule.name || !newRule.port) {
-      firewallError = $t("account.firewall.nameAndPort");
-      return;
-    }
-
-    firewallLoading = true;
-    firewallError = "";
-    try {
-      await createFirewallRule({
-        name: newRule.name,
-        action: newRule.action,
-        direction: newRule.direction,
-        protocol: newRule.protocol,
-        port: newRule.port || null,
-        source: newRule.source || null,
-        comment: newRule.comment || null
-      });
-      firewallSuccess = $t("account.firewall.added");
-      showAddRuleModal = false;
-      newRule = { name: "", action: "allow", direction: "in", protocol: "tcp", port: "", source: "", comment: "" };
-      await loadFirewallStatus();
-    } catch (e: any) {
-      firewallError = e.message || $t("account.firewall.addFailed");
-    } finally {
-      firewallLoading = false;
-    }
-  }
-
-  async function handleDeleteRule(ruleId: string) {
-    if (!confirm($t("account.firewall.confirmDelete"))) return;
-
-    firewallLoading = true;
-    try {
-      await deleteFirewallRule(ruleId);
-      firewallSuccess = $t("account.firewall.deleted");
-      await loadFirewallStatus();
-    } catch (e: any) {
-      firewallError = e.message || $t("account.firewall.deleteFailed");
-    } finally {
-      firewallLoading = false;
-    }
-  }
-
-  async function handleResetFirewall() {
-    if (!confirm($t("account.firewall.confirmReset"))) return;
-
-    firewallLoading = true;
-    try {
-      await resetFirewall();
-      firewallSuccess = $t("account.firewall.resetDone");
-      await loadFirewallStatus();
-    } catch (e: any) {
-      firewallError = e.message || $t("account.firewall.resetFailed");
-    } finally {
-      firewallLoading = false;
-    }
-  }
 
   // Certificate functions
   async function loadCertificateStatus() {
@@ -792,128 +668,7 @@
     <TwoFactorRequirementCard ownTwoFactor={totpEnabled} />
   {/if}
 
-  <!-- Firewall -->
-  <div class="bg-surface-elevated rounded-lg p-4">
-    <div class="flex flex-wrap items-center justify-between gap-2 mb-4">
-      <h3 class="text-lg font-semibold flex items-center gap-2">
-        <Flame class="w-5 h-5" />
-        {$t("account.firewall.title")}
-      </h3>
-      <div class="flex flex-wrap items-center gap-2">
-        {#if firewallStatus}
-          {#if firewallStatus.enabled}
-            <span class="px-3 py-1 bg-status-success/20 text-status-success rounded-lg text-sm flex items-center gap-1">
-              <ShieldCheck class="w-4 h-4" />
-              {$t("account.firewall.active")}
-            </span>
-          {:else}
-            <span class="px-3 py-1 bg-status-warning/20 text-status-warning rounded-lg text-sm flex items-center gap-1">
-              <ShieldX class="w-4 h-4" />
-              {$t("account.firewall.inactive")}
-            </span>
-          {/if}
-        {/if}
-        <Button variant="primary"
-          on:click={() => showFirewallModal = !showFirewallModal}
-         
-        >
-          {$t("account.firewall.configure")}
-        </Button>
-      </div>
-    </div>
-
-    {#if firewallSuccess}
-      <div class="mb-4 p-3 bg-status-success/20 border border-status-success text-status-success rounded-lg flex items-center gap-2">
-        <CheckCircle class="w-5 h-5" />
-        {firewallSuccess}
-      </div>
-    {/if}
-
-    {#if firewallError}
-      <div class="mb-4 p-3 bg-status-error/20 border border-status-error text-status-error rounded-lg flex items-center gap-2">
-        <AlertCircle class="w-5 h-5" />
-        {firewallError}
-      </div>
-    {/if}
-
-    <p class="text-sm text-content-secondary">
-      {$t("account.firewall.description")}
-    </p>
-
-    {#if showFirewallModal && firewallStatus}
-      <div class="mt-4 space-y-4">
-        <div class="flex flex-wrap items-center justify-between gap-2 p-3 bg-surface-overlay rounded-lg">
-          <div>
-            <p class="font-medium">{$t("account.firewall.status")}</p>
-            <p class="text-sm text-content-secondary">
-              {$t("account.firewall.defaults", {
-                incoming: labelOf(POLICIES, firewallStatus.default_incoming),
-                outgoing: labelOf(POLICIES, firewallStatus.default_outgoing)
-              })}
-            </p>
-          </div>
-          <div class="flex flex-wrap gap-2">
-            <Button
-              variant={firewallStatus.enabled ? 'danger' : 'success'}
-              on:click={toggleFirewall}
-              disabled={firewallLoading}
-            >
-              {firewallStatus.enabled ? $t("account.firewall.disable") : $t("account.firewall.enable")}
-            </Button>
-            <Button variant="secondary"
-              on:click={handleResetFirewall}
-              disabled={firewallLoading}
-             
-            >
-              <RefreshCw class="w-4 h-4" />
-              {$t("account.firewall.reset")}
-            </Button>
-          </div>
-        </div>
-
-        <div class="flex flex-wrap justify-between items-center gap-2">
-          <h4 class="font-medium">{$t("account.firewall.rules")}</h4>
-          <Button variant="primary" size="sm"
-            on:click={() => showAddRuleModal = true}
-           
-          >
-            <Plus class="w-4 h-4" />
-            {$t("account.firewall.addRule")}
-          </Button>
-        </div>
-
-        {#if firewallStatus.rules.length === 0}
-          <p class="text-sm text-content-secondary text-center py-4">{$t("account.firewall.noRules")}</p>
-        {:else}
-          <div class="space-y-2">
-            {#each firewallStatus.rules as rule}
-              <div class="flex items-center justify-between gap-2 p-3 bg-surface-overlay rounded-lg">
-                <div class="flex flex-wrap items-center gap-x-3 gap-y-1 min-w-0">
-                  <span class="px-2 py-1 rounded text-xs font-medium uppercase {rule.action === 'allow' ? 'bg-status-success/20 text-status-success' : 'bg-status-error/20 text-status-error'}">
-                    {labelOf(RULE_ACTIONS, rule.action)}
-                  </span>
-                  <div class="min-w-0 break-words">
-                    <p class="font-medium">{rule.name}</p>
-                    <p class="text-sm text-content-secondary">
-                      {labelOf(RULE_DIRECTIONS, rule.direction)} | {labelOf(RULE_PROTOCOLS, rule.protocol)} |
-                      {$t("account.firewall.port", { port: rule.port || $t("account.firewall.any") })}
-                      {#if rule.source}| {$t("account.firewall.from", { source: rule.source })}{/if}
-                    </p>
-                  </div>
-                </div>
-                <Button variant="ghost" size="icon" class="text-status-error hover:text-status-error"
-                  on:click={() => handleDeleteRule(rule.id || '')}
-                 
-                >
-                  <Trash2 class="w-4 h-4" />
-                </Button>
-              </div>
-            {/each}
-          </div>
-        {/if}
-      </div>
-    {/if}
-  </div>
+  <FirewallCard />
 
   <!-- SSL/TLS Certificates -->
   <div class="bg-surface-elevated rounded-lg p-4">
@@ -1300,116 +1055,6 @@
           </Button>
         </div>
       </div>
-    </div>
-  </div>
-{/if}
-
-<!-- Add Firewall Rule Modal -->
-{#if showAddRuleModal}
-  <div class="modal-overlay items-start overflow-y-auto p-4">
-    <div class="bg-surface-elevated rounded-lg p-6 max-w-md w-full my-auto">
-      <h3 class="text-lg font-semibold mb-4 flex items-center gap-2">
-        <Plus class="w-5 h-5" />
-        {$t("account.firewall.addTitle")}
-      </h3>
-
-      <form on:submit|preventDefault={handleAddRule} class="space-y-4">
-        <div>
-          <label class="block text-sm font-medium text-content-secondary mb-1">{$t("account.firewall.name")}</label>
-          <input
-            type="text"
-            bind:value={newRule.name}
-            class="form-input"
-            placeholder={$t("account.firewall.namePlaceholder")}
-            required
-          />
-        </div>
-
-        <div class="grid grid-cols-2 gap-4">
-          <div>
-            <label class="block text-sm font-medium text-content-secondary mb-1">{$t("account.firewall.action")}</label>
-            <select
-              bind:value={newRule.action}
-              class="form-select"
-            >
-              <option value="allow">{$t("account.firewall.allow")}</option>
-              <option value="deny">{$t("account.firewall.deny")}</option>
-              <option value="reject">{$t("account.firewall.reject")}</option>
-            </select>
-          </div>
-          <div>
-            <label class="block text-sm font-medium text-content-secondary mb-1">{$t("account.firewall.direction")}</label>
-            <select
-              bind:value={newRule.direction}
-              class="form-select"
-            >
-              <option value="in">{$t("account.firewall.incoming")}</option>
-              <option value="out">{$t("account.firewall.outgoing")}</option>
-            </select>
-          </div>
-        </div>
-
-        <div class="grid grid-cols-2 gap-4">
-          <div>
-            <label class="block text-sm font-medium text-content-secondary mb-1">{$t("account.firewall.protocol")}</label>
-            <select
-              bind:value={newRule.protocol}
-              class="form-select"
-            >
-              <option value="tcp">{$t("account.firewall.tcp")}</option>
-              <option value="udp">{$t("account.firewall.udp")}</option>
-              <option value="any">{$t("account.firewall.any")}</option>
-            </select>
-          </div>
-          <div>
-            <label class="block text-sm font-medium text-content-secondary mb-1">{$t("account.firewall.portLabel")}</label>
-            <input
-              type="text"
-              bind:value={newRule.port}
-              class="form-input"
-              placeholder={$t("account.firewall.portPlaceholder")}
-              required
-            />
-          </div>
-        </div>
-
-        <div>
-          <label class="block text-sm font-medium text-content-secondary mb-1">{$t("account.firewall.source")}</label>
-          <input
-            type="text"
-            bind:value={newRule.source}
-            class="form-input"
-            placeholder={$t("account.firewall.sourcePlaceholder")}
-          />
-        </div>
-
-        <div>
-          <label class="block text-sm font-medium text-content-secondary mb-1">{$t("account.firewall.comment")}</label>
-          <input
-            type="text"
-            bind:value={newRule.comment}
-            class="form-input"
-            placeholder={$t("account.firewall.commentPlaceholder")}
-          />
-        </div>
-
-        <div class="flex gap-3">
-          <Button variant="secondary" class="flex-1"
-            type="button"
-            on:click={() => showAddRuleModal = false}
-           
-          >
-            {$t("common.cancel")}
-          </Button>
-          <Button variant="primary" class="flex-1"
-            type="submit"
-            disabled={firewallLoading}
-           
-          >
-            {firewallLoading ? $t("account.firewall.adding") : $t("account.firewall.addRule")}
-          </Button>
-        </div>
-      </form>
     </div>
   </div>
 {/if}

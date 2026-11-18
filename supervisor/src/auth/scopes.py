@@ -159,7 +159,6 @@ OPERATION_KINDS: dict[tuple[str, str], Kind] = {
     ("GET", "/api/v1/files/download"): Kind.READ,
     ("GET", "/api/v1/containers/{container_id}/logs"): Kind.READ,
     ("GET", "/api/v1/audit/logs/export"): Kind.READ,
-    ("GET", "/api/v1/logs/file/{filename}"): Kind.READ,
     # No passphrase, password or private key in these answers.
     ("GET", "/api/v1/scheduler/tasks"): Kind.READ,
     ("GET", "/api/v1/power/ups/config"): Kind.READ,

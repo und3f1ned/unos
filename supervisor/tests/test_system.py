@@ -44,68 +44,6 @@ class TestSystemInfo:
         assert datetime.fromisoformat(data["boot_time"]).timestamp() == pytest.approx(psutil.boot_time(), abs=1)
 
 
-class TestPCIeDevices:
-    """Tests for PCIe device listing."""
-
-    @pytest.fixture
-    def mock_lspci_output(self):
-        """Mock lspci -vmm output."""
-        return """Slot:	00:00.0
-Class:	Host bridge
-Vendor:	Intel Corporation
-Device:	Xeon E3-1200 v5/E3-1500 v5/6th Gen Core Processor Host Bridge/DRAM Registers
-Rev:	07
-
-Slot:	00:02.0
-Class:	VGA compatible controller
-Vendor:	Intel Corporation
-Device:	HD Graphics 530
-SVendor:	Dell
-SDevice:	HD Graphics 530
-Rev:	06
-Driver:	i915
-"""
-
-    def test_parse_pcie_devices(self, mock_lspci_output):
-        """Test parsing lspci output."""
-        from src.system.router import get_pcie_devices
-        import asyncio
-        
-        mock_result = MagicMock()
-        mock_result.returncode = 0
-        mock_result.stdout = mock_lspci_output
-        
-        with patch("src.system.router.verify_token"):
-            with patch("src.system.router.subprocess.run", return_value=mock_result):
-                result = asyncio.run(get_pcie_devices())
-        
-        assert len(result) == 2
-        
-        # Check first device
-        assert result[0].slot == "00:00.0"
-        assert result[0].class_name == "Host bridge"
-        assert result[0].vendor == "Intel Corporation"
-        
-        # Check second device
-        assert result[1].slot == "00:02.0"
-        assert result[1].class_name == "VGA compatible controller"
-        assert result[1].driver == "i915"
-
-    def test_pcie_devices_empty_on_lspci_failure(self):
-        """Test that empty list is returned when lspci fails."""
-        from src.system.router import get_pcie_devices
-        import asyncio
-        
-        mock_result = MagicMock()
-        mock_result.returncode = 1
-        
-        with patch("src.system.router.verify_token"):
-            with patch("src.system.router.subprocess.run", return_value=mock_result):
-                result = asyncio.run(get_pcie_devices())
-        
-        assert result == []
-
-
 class TestTemperatures:
     """Tests for temperature sensor readings."""
 
@@ -291,20 +229,3 @@ class TestDashboardTemperature:
         with patch("psutil.sensors_temperatures", create=True, side_effect=OSError("No sensors")):
             message = events.get_system_stats()
         assert message["data"]["cpu"]["temperature"] is None
-
-
-class TestNetworkInterfaces:
-    """Tests for network interface listing."""
-
-    def test_get_network_interfaces_excludes_loopback(self):
-        """Test that loopback interface is excluded."""
-        from src.system.router import get_network_interfaces
-        import asyncio
-        
-        with patch("src.system.router.verify_token"):
-            result = asyncio.run(get_network_interfaces())
-        
-        interface_names = [i.name for i in result]
-        assert "lo" not in interface_names
-
-

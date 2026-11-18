@@ -103,10 +103,8 @@ USER_ALLOWED = {
     ("PUT", f"{API}/auth/me/theme"),
     # Read-only system information, which every signed-in user may read
     ("GET", f"{API}/system/info"),
-    ("GET", f"{API}/system/network"),
     ("GET", f"{API}/system/timezone"),
     ("GET", f"{API}/system/timezones"),
-    ("GET", f"{API}/system/pcie"),
     ("GET", f"{API}/system/temperatures"),
     # Own login history only (admins see everyone's)
     ("GET", f"{API}/security/login-history"),
@@ -421,7 +419,7 @@ class TestRouteMatrix:
         [
             ("GET", f"{API}/auth/users"),
             ("GET", f"{API}/audit/actions"),
-            ("GET", f"{API}/security/firewall"),
+            ("GET", f"{API}/security/two-factor-requirement"),
             ("GET", f"{API}/security/certificates/status"),
         ],
     )
