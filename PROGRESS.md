@@ -149,6 +149,15 @@ significant step. Features and their state live in `feature-list.json`, decision
   (`auth.security-keys`, ADR-0409, superseding ADR-0239). Three pass; the update in place waits
   for pinned catalog images. A real scheduled shutdown and wake and a hardware key in a browser
   are the owner's.
+- On 2026-11-18 (Log): the thirteenth batch on the branch `mvp.batch-13`, merged into `main` with
+  its record: every catalog image pinned by a version tag and digest, with a weekly audit of moved
+  tags and Readarr removed (`apps.pinned-catalog-images`, ADR-0410), a disk added to a pool or
+  removed from it in a host unit after typed confirmations and checks of the profile and the space
+  (`storage.pool-add-and-remove-disks`, ADR-0411), check.sh's load check that fails for a UNOS
+  container it could not measure (`system.idle-load-budget`, ADR-0412), and an install.sh without
+  mdadm and five other unused packages (`deploy.no-unused-mdadm`, ADR-0413). The pinned images
+  pass; the others wait for a spare disk, the owner's BPI-F3 and a fresh install, and
+  transmission's real update for a pull that completes on the device's network.
 - On the device the NFS server runs (nfs-server, rpcbind.socket and rpcbind, enabled since
   2026-11-08, ADR-0303) and exports nothing for now; over IPv6 only LAN sources reach it
   (ADR-0301). avahi-daemon and wsdd2 run (network discovery), and nmbd is disabled since
@@ -199,7 +208,7 @@ significant step. Features and their state live in `feature-list.json`, decision
 
 ## Dev device
 
-State on 2026-11-18, 16:10 UTC. A Banana Pi BPI-W3 (ArmSoM W3, Rockchip RK3588, 8 GB), running
+State on 2026-11-18, 20:10 UTC. A Banana Pi BPI-W3 (ArmSoM W3, Rockchip RK3588, 8 GB), running
 Armbian's community image for `armsom-w3`, upgraded on 2026-11-15 from 26.2.0-trunk.151 to
 26.11.0-trunk.133 (Debian 13, kernel 6.1.172-vendor-rk35xx);
 its address and logins are in `dev.env` (ADR-0212). This journal called it a UGREEN board, after
@@ -210,12 +219,19 @@ the UGREEN firmware on its eMMC, until the owner set that right on 2026-11-15 (A
   since boot, its own wear estimate 0 to 10%. Nothing writes to it.
 - SSH by key only, root by the workstation's key `~/.ssh/unos_dev_ed25519`; root's and the UNOS
   administrator's passwords were rotated and live only in `dev.env` (ADR-0226).
-- Runs 09e792a of the branch `mvp.batch-12` (the twelfth batch, ADR-0406 to ADR-0409), merged
+- Runs e5d531a of the branch `mvp.batch-13` (the thirteenth batch, ADR-0410 to ADR-0413), merged
+  into `main` with the record of its device check, whose commits on top of it change no runtime
+  file. Deployed on 2026-11-18 at 18:57 to 18:58 UTC (SD MiB sync 4.348, build-supervisor 14.379,
+  build-webui 20.816, up 5.883, check.sh 0.660). A reboot from the API at 19:12 UTC (all
+  containers healthy by 19:14). Transmission still runs its image of `latest`: its update to the
+  pinned 4.1.4-r0-ls370 failed twice at the pull. The device's users are `admin` and `test`
+  (since 2026-01-24).
+- Before it, 09e792a of the branch `mvp.batch-12` (the twelfth batch, ADR-0406 to ADR-0409), merged
   into `main` with the record of its device check, whose commits on top of it change no runtime
   file. Deployed on 2026-11-18 at 14:55 to 14:56 UTC (SD MiB sync 4.902, build-supervisor 15.219,
   build-webui 20.574, up 5.945, check.sh 0.844). A reboot from the API at 15:07 UTC (all
   containers healthy by 15:09). The supervisor's tmpfs is 192 MiB; the power settings are all
-  off and the RTC holds no alarm. The device's users are `admin` and `test` (since 2026-01-24).
+  off and the RTC holds no alarm.
 - Before it, f281749 of the branch `mvp.batch-11` (the eleventh batch, ADR-0402 to ADR-0405), merged
   into `main` with the record of its device check, whose commits on top of it change no runtime
   file. Deployed on 2026-11-18 at 10:06 to 10:08 UTC (SD MiB sync 4.434, build-supervisor 13.746,
@@ -606,6 +622,31 @@ Open owner actions:
     API, the SD MiB and the audit log meanwhile.
 
 ## Log
+
+### 2026-11-18: A thirteenth batch: pinned catalog images, pool disks, load check, no mdadm
+
+- Four entries built in parallel worktrees from main f0511fc, each reviewed in a fresh context
+  by its own builder, which fixed its findings. Recorded, not fixed: the code paths of floating
+  images are unreachable now (a new entry, `apps.no-floating-image-paths`), Traefik keeps its line
+  tag `v3.7` since `v3.7.19` lacks riscv64, and the space estimate errs high on arm64
+  (`apps.pinned-catalog-images`); a removal cannot be cancelled from UNOS, a scheduled scrub can
+  start during one, an uneven layout can still run out of space midway (btrfs keeps the disk), and
+  a replace, a profile conversion and a removal from a degraded pool are not covered
+  (`storage.pool-add-and-remove-disks`); the 15% budget is compared on the printed average
+  (`system.idle-load-budget`); ADR-0002 still names lm-sensors (`deploy.no-unused-mdadm`).
+- Merged as ADR-0410 to ADR-0413 in that order; only the feature-pass table and the changelog met,
+  joined by hand. A disk removal already holds a scheduled shutdown (ADR-0407's btrfs jobs).
+  `make check` 9837 passed, 123 skipped, 1 xfailed; the full E2E run 1010 passed, 14 skipped.
+- Device check of e5d531a (SD MiB per step in each entry's notes): before a reboot from the API
+  at 19:12 UTC, check.sh's CPU and thermal lines, no md array, the pinned catalog with Immich
+  offered nothing and transmission 4.1.4-r0-ls370, the update plans read with no pull, and the
+  pool disks' refusals with no unit and no audit entry. Transmission's update was tried twice and
+  failed at the pull both times (Docker's timeout awaiting response headers on lscr.io's blobs,
+  63.582 and 14.516 MiB of partial pulls); it was never stopped. After the reboot: the same
+  answers; `scenario.sh all` (every area passed, smart's sleep steps ran; 22.8 MiB in all); the
+  audit chain unbroken over 2687 entries. No fault of UNOS. Not run: an add or removal that moves
+  data (no spare disk), the dashboard tabs on the BPI-F3, a fresh install on old md disks, and a
+  real update and rollback.
 
 ### 2026-11-18: A twelfth batch: tmpfs for small boards, scheduled power, update in place, security keys
 
