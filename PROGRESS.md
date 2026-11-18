@@ -131,6 +131,15 @@ significant step. Features and their state live in `feature-list.json`, decision
   that fails for raw controls and colours in the web UI's pages (`webui.design-system-lint`,
   ADR-0400), and every time of the API with its offset (`architecture.times-with-time-zones`,
   ADR-0401, superseding ADR-0237 and ADR-0300). All four pass.
+- On 2026-11-18 (Log): the eleventh batch on the branch `mvp.batch-11`, merged into `main` with
+  its record: audit entries for the administrator's actions that ADR-0359 had left open, the
+  firewall, the login history's clear, pools, images, power and UPS settings, notification
+  channels and the off-device settings among them (`security.audit-admin-actions`, ADR-0402,
+  superseding ADR-0359), an App Store that offers only the apps whose images publish the host's
+  platform, riscv64 included (`apps.catalog-platforms`, ADR-0403), a stored certificate that Caddy
+  serves, with its local CA as the fallback (`security.custom-certificates`, ADR-0404, superseding
+  ADR-0357), and a dark, light or system theme for each user (`webui.light-theme`, ADR-0405). All
+  four pass; the catalog's check on the BPI-F3 is the owner's.
 - On the device the NFS server runs (nfs-server, rpcbind.socket and rpcbind, enabled since
   2026-11-08, ADR-0303) and exports nothing for now; over IPv6 only LAN sources reach it
   (ADR-0301). avahi-daemon and wsdd2 run (network discovery), and nmbd is disabled since
@@ -181,7 +190,7 @@ significant step. Features and their state live in `feature-list.json`, decision
 
 ## Dev device
 
-State on 2026-11-18, 07:40 UTC. A Banana Pi BPI-W3 (ArmSoM W3, Rockchip RK3588, 8 GB), running
+State on 2026-11-18, 11:10 UTC. A Banana Pi BPI-W3 (ArmSoM W3, Rockchip RK3588, 8 GB), running
 Armbian's community image for `armsom-w3`, upgraded on 2026-11-15 from 26.2.0-trunk.151 to
 26.11.0-trunk.133 (Debian 13, kernel 6.1.172-vendor-rk35xx);
 its address and logins are in `dev.env` (ADR-0212). This journal called it a UGREEN board, after
@@ -192,12 +201,18 @@ the UGREEN firmware on its eMMC, until the owner set that right on 2026-11-15 (A
   since boot, its own wear estimate 0 to 10%. Nothing writes to it.
 - SSH by key only, root by the workstation's key `~/.ssh/unos_dev_ed25519`; root's and the UNOS
   administrator's passwords were rotated and live only in `dev.env` (ADR-0226).
-- Runs 5412b79 of the branch `mvp.batch-10` (the tenth batch, ADR-0398 to ADR-0401), merged into
+- Runs f281749 of the branch `mvp.batch-11` (the eleventh batch, ADR-0402 to ADR-0405), merged
+  into `main` with the record of its device check, whose commits on top of it change no runtime
+  file. Deployed on 2026-11-18 at 10:06 to 10:08 UTC (SD MiB sync 4.434, build-supervisor 13.746,
+  build-webui 20.094, up 6.012, check.sh 0.262). A reboot from the API at 10:15 UTC (all
+  containers healthy by 10:16). Caddy serves its local CA; a stored certificate from before stays
+  stored and not served. The device's users are `admin` and `test` (since 2026-01-24).
+- Before it, 5412b79 of the branch `mvp.batch-10` (the tenth batch, ADR-0398 to ADR-0401), merged into
   `main` with the record of its device check, whose commits on top of it change no runtime file.
   Deployed on 2026-11-18 at 06:22 to 06:23 UTC (SD MiB sync 7.066, build-supervisor 14.367,
   build-webui 17.977, up 5.672, check.sh 0.219). A reboot from the API at about 06:40 UTC (all
   containers healthy by 06:43). The supervisor's log is JSON lines and the API's times carry
-  their offsets. The device's users are `admin` and `test` (since 2026-01-24).
+  their offsets.
 - Before it, 991cb28 of the branch `mvp.batch-9` (the ninth batch, ADR-0395 to ADR-0397), merged into
   `main` with the record of its device check, whose commits on top of it change no runtime file.
   Deployed on 2026-11-17 at about 23:10 UTC (SD MiB sync 4.445, build-supervisor 14.023,
@@ -576,6 +591,34 @@ Open owner actions:
     API, the SD MiB and the audit log meanwhile.
 
 ## Log
+
+### 2026-11-18: An eleventh batch: audit of the rest, image platforms, served certificate, light theme
+
+- Four entries built in parallel worktrees from main 4ed4ab3, each reviewed in a fresh context
+  by its own builder, which fixed its findings. Recorded, not fixed: an Unmount that fails after
+  the umount, an off-device copy whose second file write fails and the image that Docker pulls
+  for a created container write no entry (`security.audit-admin-actions`); Readarr's develop tag
+  publishes an empty index, so Readarr is unavailable on every platform, and 6 of the 67 apps
+  publish riscv64 (navidrome, prometheus, zigbee2mqtt, pihole, traefik, gitea); a weekly job of
+  the Audit workflow checks the record (`apps.catalog-platforms`); Ed25519 and P-521 keys are
+  refused, OCSP stapling is off and the page has no upload form (`security.custom-certificates`);
+  System is the default theme, the E2E suite runs in the light theme that Playwright's browser
+  gives, and an account that may only set up 2FA gets 403 for the theme (`webui.light-theme`).
+- Merged as ADR-0402 to ADR-0405 in that order; the audit's and the certificates' changes met in
+  the audit schema, its catalog and the audit page and were joined by hand. `make check` 9388
+  passed, 123 skipped, 1 xfailed; the full E2E run 969 passed, 14 skipped.
+- Device check of f281749 (SD MiB per step in each entry's notes): before a reboot from the API
+  at 10:15 UTC, the theme as a temporary regular user; the safe audit steps (power and UPS
+  settings, a disabled webhook channel, the login history's no-op) with no URL in any entry; the
+  catalog with readarr alone unavailable and its install refused with no pull; a generated
+  certificate served across a restart of the web UI. After it: the certificate, the theme, the
+  entries and the catalog kept; an uploaded leaf with its chain, a broken served.pem that fell
+  back to the local CA with one log line, then the local CA again and the check's certificates
+  deleted; `scenario.sh all` (every area passed, smart's two sleep steps skipped while Immich uses
+  the pool; 22.7 MiB in all); the audit chain unbroken over 2454 entries. No fault of UNOS. Not
+  run on the device: the firewall, mounts, container creates, pulls, suspend and the off-device
+  settings; also left: the catalog's check on the BPI-F3 and the owner's look at the light and
+  dark tokens.
 
 ### 2026-11-18: A tenth batch: JSON logs, resource history, design lint, times with offsets
 
