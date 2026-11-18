@@ -218,6 +218,43 @@ class TestEventsSocket:
             _expect_close(ws, 4401)
 
 
+class TestSharedStatsSample:
+    """system.idle-load-budget (ADR-0374): every socket of /ws/v1/events gets the same stats sample,
+    taken once per interval in a worker thread, not in the event loop that serves the API."""
+
+    def test_two_sockets_get_one_sample_taken_off_the_event_loop(self, client, admin_token, user_token, monkeypatch):
+        taken = []
+
+        def sample():
+            try:
+                asyncio.get_running_loop()
+                on_the_loop = True
+            except RuntimeError:
+                on_the_loop = False
+            taken.append(on_the_loop)
+            return {"type": "stats", "data": {"sample": len(taken), "processes": [{"pid": 1}]}}
+
+        monkeypatch.setattr(events, "get_system_stats", sample)
+        monkeypatch.setattr(events, "_sample", None)
+        monkeypatch.setattr(events, "_sample_at", None)
+
+        def stats_of(ws):
+            for _ in range(20):
+                message = ws.receive_json()
+                if message["type"] == "stats":
+                    return message
+            raise AssertionError("no stats message")
+
+        with client.websocket_connect("/ws/v1/events") as first, client.websocket_connect("/ws/v1/events") as second:
+            _auth(first, admin_token)
+            _auth(second, user_token)
+            admin_stats, user_stats = stats_of(first), stats_of(second)
+
+        assert taken == [False]
+        assert admin_stats["data"]["sample"] == user_stats["data"]["sample"] == 1
+        assert admin_stats["data"]["processes"] == [{"pid": 1}] and user_stats["data"]["processes"] == []
+
+
 class _BlockingLogStream:
     """docker-py CancellableStream stand-in: blocks like a quiet container."""
 
