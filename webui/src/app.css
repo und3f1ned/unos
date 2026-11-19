@@ -16,97 +16,111 @@
 	[data-theme='dark'] {
 		color-scheme: dark;
 		/* Backgrounds */
-		--color-surface: 15 23 42; /* #0f172a */
-		--color-surface-elevated: 30 41 59; /* #1e293b */
-		--color-surface-overlay: 44 56 76; /* #2c384c */
-		--color-surface-hover: 71 85 105; /* #475569 */
-		--color-surface-muted: 44 56 76; /* #2c384c */
+		--color-surface: 15 17 21; /* #0f1115 */
+		--color-surface-elevated: 23 26 32; /* #171a20 */
+		--color-surface-overlay: 34 38 46; /* #22262e */
+		--color-surface-hover: 45 50 60; /* #2d323c */
+		--color-surface-muted: 34 38 46; /* #22262e */
 		/* Borders */
-		--color-border: 51 65 85; /* #334155 */
-		--color-border-strong: 114 130 151; /* #728297 */
-		--color-border-muted: 51 65 85; /* #334155 */
+		--color-border: 43 48 57; /* #2b3039 */
+		--color-border-strong: 122 130 144; /* #7a8290 */
+		--color-border-muted: 43 48 57; /* #2b3039 */
 		/* Text */
-		--color-content: 241 245 249; /* #f1f5f9 */
-		--color-content-soft: 203 213 225; /* #cbd5e1 */
-		--color-content-secondary: 169 182 200; /* #a9b6c8 */
-		--color-content-muted: 151 165 185; /* #97a5b9 */
-		--color-content-inverse: 15 23 42; /* #0f172a */
+		--color-content: 236 238 242; /* #eceef2 */
+		--color-content-soft: 205 209 217; /* #cdd1d9 */
+		--color-content-secondary: 170 177 188; /* #aab1bc */
+		--color-content-muted: 149 157 171; /* #959dab */
+		--color-content-inverse: 15 17 21; /* #0f1115 */
 		--color-content-on-brand: 255 255 255; /* #ffffff */
-		/* Accents (icons, charts) */
-		--color-accent-cpu: 96 165 250; /* #60a5fa */
-		--color-accent-memory: 220 186 254; /* #dcbafe */
-		--color-accent-network: 74 222 128; /* #4ade80 */
-		--color-accent-storage: 96 165 250; /* #60a5fa */
-		--color-accent-container: 63 217 240; /* #3fd9f0 */
-		--color-accent-temperature: 252 184 128; /* #fcb880 */
-		/* Brand */
-		--color-brand: 37 99 235; /* #2563eb */
-		--color-brand-hover: 29 78 216; /* #1d4ed8 */
-		--color-brand-ring: 59 130 246; /* #3b82f6 */
-		--color-brand-disabled: 30 64 175; /* #1e40af */
+		--color-content-link: 169 177 255; /* #a9b1ff */
+		/* Accents (chart series, the icon chips of stat tiles) */
+		--color-accent-cpu: 122 167 255; /* #7aa7ff */
+		--color-accent-memory: 208 179 255; /* #d0b3ff */
+		--color-accent-network: 180 224 90; /* #b4e05a */
+		--color-accent-storage: 245 163 207; /* #f5a3cf */
+		--color-accent-container: 90 212 230; /* #5ad4e6 */
+		--color-accent-temperature: 255 178 122; /* #ffb27a */
+		/* Brand: indigo, apart from the blue of status-info */
+		--color-brand: 74 85 214; /* #4a55d6 */
+		--color-brand-hover: 61 71 192; /* #3d47c0 */
+		--color-brand-ring: 143 152 255; /* #8f98ff */
+		--color-brand-disabled: 44 50 121; /* #2c3279 */
 		/* Status */
-		--color-status-success: 83 224 134; /* #53e086 */
-		--color-status-warning: 250 204 21; /* #facc15 */
-		--color-status-error: 253 180 180; /* #fdb4b4 */
-		--color-status-info: 165 204 253; /* #a5ccfd */
-		--color-status-neutral: 116 130 151; /* #748297 */
+		--color-status-success: 90 217 138; /* #5ad98a */
+		--color-status-warning: 242 200 75; /* #f2c84b */
+		--color-status-error: 255 173 173; /* #ffadad */
+		--color-status-info: 156 199 255; /* #9cc7ff */
+		--color-status-neutral: 120 128 141; /* #78808d */
 		/* Solid fills of buttons */
-		--color-solid-success: 21 128 61; /* #15803d */
-		--color-solid-success-hover: 22 101 52; /* #166534 */
-		--color-solid-warning: 194 65 12; /* #c2410c */
-		--color-solid-warning-hover: 154 52 18; /* #9a3412 */
-		--color-solid-error: 220 38 38; /* #dc2626 */
-		--color-solid-error-hover: 185 28 28; /* #b91c1c */
-		/* The backdrop of dialogs */
+		--color-solid-success: 22 121 74; /* #16794a */
+		--color-solid-success-hover: 17 96 58; /* #11603a */
+		--color-solid-warning: 181 72 14; /* #b5480e */
+		--color-solid-warning-hover: 147 58 11; /* #933a0b */
+		--color-solid-error: 201 48 44; /* #c9302c */
+		--color-solid-error-hover: 168 37 34; /* #a82522 */
+		/* The backdrop of dialogs, and the colour of shadows */
 		--color-scrim: 0 0 0; /* #000000 */
+		--color-shadow: 0 0 0; /* #000000 */
+		/* Elevation (no colour of its own: the shadow token) */
+		--scrim-alpha: 0.6;
+		--shadow-raised: none;
+		--shadow-popover: 0 12px 32px -8px rgb(var(--color-shadow) / 0.6);
+		--shadow-dialog: 0 24px 48px -12px rgb(var(--color-shadow) / 0.7);
 	}
 
 	[data-theme='light'] {
 		color-scheme: light;
 		/* Backgrounds */
-		--color-surface: 241 245 249; /* #f1f5f9 */
+		--color-surface: 243 244 247; /* #f3f4f7 */
 		--color-surface-elevated: 255 255 255; /* #ffffff */
-		--color-surface-overlay: 226 232 240; /* #e2e8f0 */
-		--color-surface-hover: 203 213 225; /* #cbd5e1 */
-		--color-surface-muted: 226 232 240; /* #e2e8f0 */
+		--color-surface-overlay: 236 238 242; /* #eceef2 */
+		--color-surface-hover: 221 225 231; /* #dde1e7 */
+		--color-surface-muted: 236 238 242; /* #eceef2 */
 		/* Borders */
-		--color-border: 203 213 225; /* #cbd5e1 */
-		--color-border-strong: 100 116 139; /* #64748b */
-		--color-border-muted: 203 213 225; /* #cbd5e1 */
+		--color-border: 218 221 227; /* #dadde3 */
+		--color-border-strong: 110 117 130; /* #6e7582 */
+		--color-border-muted: 218 221 227; /* #dadde3 */
 		/* Text */
-		--color-content: 15 23 42; /* #0f172a */
-		--color-content-soft: 30 41 59; /* #1e293b */
-		--color-content-secondary: 71 85 105; /* #475569 */
-		--color-content-muted: 86 101 122; /* #56657a */
-		--color-content-inverse: 241 245 249; /* #f1f5f9 */
+		--color-content: 20 22 27; /* #14161b */
+		--color-content-soft: 42 46 54; /* #2a2e36 */
+		--color-content-secondary: 74 80 91; /* #4a505b */
+		--color-content-muted: 88 95 107; /* #585f6b */
+		--color-content-inverse: 243 244 247; /* #f3f4f7 */
 		--color-content-on-brand: 255 255 255; /* #ffffff */
-		/* Accents (icons, charts) */
-		--color-accent-cpu: 35 94 223; /* #235edf */
-		--color-accent-memory: 117 32 192; /* #7520c0 */
-		--color-accent-network: 22 101 52; /* #166534 */
-		--color-accent-storage: 35 94 223; /* #235edf */
-		--color-accent-container: 21 92 115; /* #155c73 */
-		--color-accent-temperature: 149 50 17; /* #953211 */
-		/* Brand */
-		--color-brand: 37 99 235; /* #2563eb */
-		--color-brand-hover: 29 78 216; /* #1d4ed8 */
-		--color-brand-ring: 37 99 235; /* #2563eb */
-		--color-brand-disabled: 147 197 253; /* #93c5fd */
+		--color-content-link: 58 68 184; /* #3a44b8 */
+		/* Accents (chart series, the icon chips of stat tiles) */
+		--color-accent-cpu: 36 87 197; /* #2457c5 */
+		--color-accent-memory: 107 47 192; /* #6b2fc0 */
+		--color-accent-network: 74 102 8; /* #4a6608 */
+		--color-accent-storage: 163 36 95; /* #a3245f */
+		--color-accent-container: 10 90 106; /* #0a5a6a */
+		--color-accent-temperature: 142 53 12; /* #8e350c */
+		/* Brand: indigo, apart from the blue of status-info */
+		--color-brand: 74 85 214; /* #4a55d6 */
+		--color-brand-hover: 61 71 192; /* #3d47c0 */
+		--color-brand-ring: 74 85 214; /* #4a55d6 */
+		--color-brand-disabled: 166 172 238; /* #a6acee */
 		/* Status */
-		--color-status-success: 21 97 50; /* #156132 */
-		--color-status-warning: 125 72 13; /* #7d480d */
-		--color-status-error: 161 24 24; /* #a11818 */
-		--color-status-info: 26 71 197; /* #1a47c5 */
-		--color-status-neutral: 100 116 139; /* #64748b */
+		--color-status-success: 17 95 51; /* #115f33 */
+		--color-status-warning: 122 70 5; /* #7a4605 */
+		--color-status-error: 160 28 23; /* #a01c17 */
+		--color-status-info: 28 72 179; /* #1c48b3 */
+		--color-status-neutral: 110 117 130; /* #6e7582 */
 		/* Solid fills of buttons */
-		--color-solid-success: 21 128 61; /* #15803d */
-		--color-solid-success-hover: 22 101 52; /* #166534 */
-		--color-solid-warning: 194 65 12; /* #c2410c */
-		--color-solid-warning-hover: 154 52 18; /* #9a3412 */
-		--color-solid-error: 220 38 38; /* #dc2626 */
-		--color-solid-error-hover: 185 28 28; /* #b91c1c */
-		/* The backdrop of dialogs */
-		--color-scrim: 2 6 23; /* #020617 */
+		--color-solid-success: 22 121 74; /* #16794a */
+		--color-solid-success-hover: 17 96 58; /* #11603a */
+		--color-solid-warning: 181 72 14; /* #b5480e */
+		--color-solid-warning-hover: 147 58 11; /* #933a0b */
+		--color-solid-error: 201 48 44; /* #c9302c */
+		--color-solid-error-hover: 168 37 34; /* #a82522 */
+		/* The backdrop of dialogs, and the colour of shadows */
+		--color-scrim: 11 13 18; /* #0b0d12 */
+		--color-shadow: 11 13 18; /* #0b0d12 */
+		/* Elevation (no colour of its own: the shadow token) */
+		--scrim-alpha: 0.45;
+		--shadow-raised: 0 1px 2px rgb(var(--color-shadow) / 0.06), 0 1px 3px rgb(var(--color-shadow) / 0.04);
+		--shadow-popover: 0 8px 24px -6px rgb(var(--color-shadow) / 0.18), 0 2px 6px rgb(var(--color-shadow) / 0.08);
+		--shadow-dialog: 0 24px 48px -12px rgb(var(--color-shadow) / 0.25);
 	}
 
 	body {

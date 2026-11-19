@@ -4666,6 +4666,30 @@
       ]
     },
     {
+      "id": "webui.redesign",
+      "category": "webui",
+      "description": "The web UI is redesigned: a calm graphite look with an indigo brand, grouped navigation and one shape per pattern",
+      "steps": [
+        "Both themes take the new tokens, and every pair of text and control colours meets WCAG AA",
+        "The sidebar groups its links under Data, Applications and Administration, and from md a Search button opens the command palette",
+        "The System page has its h1 and shows its twelve tabs in the groups Settings, Monitoring and Maintenance",
+        "The dashboard's header says whether the page is connected and, for an administrator, that there are no problems",
+        "Every page fits a 375 px phone in both themes, and every E2E spec passes"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0428"
+      ],
+      "verified_by": [
+        "supervisor/tests/test_webui_theme.py",
+        "webui/tests/navigation.spec.ts",
+        "webui/tests/command-palette.spec.ts",
+        "webui/tests/mobile-layout.spec.ts",
+        "webui/tests/theme.spec.ts"
+      ],
+      "notes": "In progress on the workstation (ADR-0428); not host-level: the web UI's image rebuilds once on the dev device. Step 1: the tokens of both themes (graphite base, indigo brand #4a55d6, six accent hues, new content-link and shadow) and the new contrast pairs of test_webui_theme.py."
+    },
+    {
       "id": "webui.toolchain-major-versions",
       "category": "webui",
       "description": "The web UI builds with the current major versions of its toolchain",
