@@ -12,6 +12,14 @@ features (SMB access per user and per share, volumes, copy and move in the file
 manager, encrypted backup uploads, health checks, CI checks).
 
 ### Added
+- The off-device copy (System > Backup & Restore) also goes to a restic REST server over HTTPS,
+  with its user and password (only in restic's environment, never answered or logged) and its
+  certificate checked by the system's roots, by a CA certificate or by the SHA-256 fingerprint of
+  the server's own certificate, and to an SFTP server, which the host's ssh (`openssh-client`)
+  reaches with a key pair that UNOS makes (`POST /api/v1/offsite/sftp-key`; the private key is never
+  shown) and the server's host key pinned at the first test and refused when it changes until a
+  save trusts the new one. Copies, their check and restore test, and both restores run to them as
+  to a disk or an S3 store; the upload and download limits apply to both (ADR-0422).
 - Remote access (System > Remote Access): a WireGuard tunnel on the host (wireguard-tools'
   `wg-quick@unos-wg`, enabled so that it comes up at boot) through which devices added as peers reach
   the NAS alone, never the rest of the LAN. The server's key is made on the host and never leaves

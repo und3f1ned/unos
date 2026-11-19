@@ -1,25 +1,41 @@
 import { api } from "./client";
 import type { BackupInfo } from "./backup";
 
-// The off-device copy (ADR-0337): one copy repository, on a disk mounted below /mnt or in an
-// S3-compatible store, that restic fills with the configuration and the pools' folders.
+// The off-device copy (ADR-0337, ADR-0422): one copy repository, on a disk mounted below /mnt, in an
+// S3-compatible store, on a restic REST server or on an SFTP server, that restic fills with the
+// configuration and the pools' folders.
 
-export type OffsiteKind = "disk" | "s3";
+export type OffsiteKind = "disk" | "s3" | "rest" | "sftp";
+/** rest: how the server's certificate is checked. */
+export type OffsiteTls = "system" | "fingerprint" | "ca";
 
 /** The copy target and what is copied, as GET /offsite/settings answers it: no secret. */
 export interface OffsiteSettings {
   kind: OffsiteKind;
-  /** disk: the folder of the repository, below /mnt. */
+  /** disk: the folder of the repository, below /mnt; sftp: its folder on the server. */
   path?: string | null;
-  /** s3: https://host[:port] or http://host[:port]. */
+  /** s3: https://host[:port] or http://host[:port]; rest: https://host[:port]. */
   endpoint?: string | null;
   bucket?: string | null;
+  /** s3: the folders in the bucket; rest: on the server. */
   prefix?: string | null;
   region?: string | null;
   access_key_id?: string | null;
+  /** rest: the server's user; sftp: the login. */
+  username?: string | null;
+  /** sftp: the server and its SSH port. */
+  host?: string | null;
+  port?: number | null;
+  /** sftp: the host key pinned at the first test; the server sets it, never a request. */
+  host_key?: string | null;
+  tls?: OffsiteTls | null;
+  /** rest: the CA's certificate (ca) or the server's own, read at the save (fingerprint), in PEM. */
+  certificate?: string | null;
+  /** rest, tls fingerprint: the SHA-256 fingerprint of the server's certificate. */
+  certificate_sha256?: string | null;
   /** Folders of the pools. */
   sources: string[];
-  /** KiB/s, 0: no limit; s3 only. */
+  /** KiB/s, 0: no limit; s3, rest and sftp. */
   limit_upload_kib: number;
   limit_download_kib: number;
   keep_daily: number;
@@ -36,6 +52,11 @@ export interface OffsiteSettings {
 export interface OffsiteSettingsRequest extends OffsiteSettings {
   password?: string;
   s3_secret_access_key?: string;
+  rest_password?: string;
+  /** sftp: pin the key that the server shows now, for a key that changed on purpose. */
+  trust_new_host_key?: boolean;
+  /** sftp: the fingerprint that the server's host key must have, SHA256:..., checked first. */
+  host_key_fingerprint?: string;
 }
 
 /** A warning about the settings: same_disk, a disk target on the filesystem of a folder it copies. */
@@ -49,6 +70,11 @@ export interface OffsiteSettingsAnswer {
   settings: OffsiteSettings | null;
   has_password: boolean;
   has_s3_secret_access_key: boolean;
+  has_rest_password: boolean;
+  /** The public key of UNOS's key pair for SFTP, for the server's authorized keys; null before one is made. */
+  sftp_public_key: string | null;
+  /** The SHA256 fingerprint of the SFTP server's pinned host key. */
+  host_key_fingerprint: string | null;
   /** The managed pools: their mount points are the folders a copy takes by default. */
   pools: { name: string; path: string }[];
   /** The folder of the pools' mount points (/mnt/pools): a source below it names its pool. */
@@ -131,6 +157,11 @@ export async function getOffsiteSettings(): Promise<OffsiteSettingsAnswer> {
 /** Save the settings; the server tests the target first, and answers 400 with restic's message. */
 export async function saveOffsiteSettings(settings: OffsiteSettingsRequest): Promise<OffsiteSettingsAnswer> {
   return api.put<OffsiteSettingsAnswer>("/offsite/settings", settings);
+}
+
+/** Make a new key pair of UNOS for SFTP, which replaces the one before; the answer holds its public key. */
+export async function makeOffsiteKeyPair(): Promise<OffsiteSettingsAnswer> {
+  return api.post<OffsiteSettingsAnswer>("/offsite/sftp-key");
 }
 
 /** Forget the target: its settings, secrets and state. The copies stay where they are. */

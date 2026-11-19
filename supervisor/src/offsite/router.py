@@ -1,4 +1,5 @@
-"""The off-device copy's API (ADR-0337): the copy target, Run now, the state, the snapshots and the restores.
+"""The off-device copy's API (ADR-0337, ADR-0422): the copy target, UNOS's key pair for SFTP, Run now, the
+state, the snapshots and the restores.
 
 Administrators only: main.py includes the router with the others that are (_ADMIN_ONLY), and the
 router asks for an administrator itself, since a restore writes files into the pools and the
@@ -23,20 +24,26 @@ _SETTINGS_ANSWER = {
     "configured": True,
     "settings": {
         "kind": "disk", "path": "/mnt/pools/backup/unos-copy", "endpoint": None, "bucket": None, "prefix": None,
-        "region": None, "access_key_id": None,
+        "region": None, "access_key_id": None, "username": None, "host": None, "port": None, "host_key": None,
+        "tls": None, "certificate": None, "certificate_sha256": None,
         "sources": ["/mnt/pools/data/documents", "/mnt/pools/data/photos"],
         "limit_upload_kib": 0, "limit_download_kib": 0, "keep_daily": 7, "keep_weekly": 4, "keep_monthly": 12,
         "check_percent": 2,
     },
     "has_password": True,
     "has_s3_secret_access_key": False,
+    "has_rest_password": False,
+    "sftp_public_key": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIHk0bzvQ8a3m2Yc3k6m1x7bU4yJcV0tN1f9zW2p8sLqE unos-off-device-copy",
+    "host_key_fingerprint": None,
     "pools": [{"name": "backup", "path": "/mnt/pools/backup"}, {"name": "data", "path": "/mnt/pools/data"}],
     "pools_base": "/mnt/pools",
     "warnings": [],
 }
 _SETTINGS_TEXT = (
     "configured: whether a copy repository is set up; settings: its settings without a secret, null when none; "
-    "has_password and has_s3_secret_access_key: whether those secrets are stored; pools: the managed pools "
+    "has_password, has_s3_secret_access_key and has_rest_password: whether those secrets are stored; "
+    "sftp_public_key: the public key of UNOS's key pair for SFTP, null before one is made; host_key_fingerprint: "
+    "the SHA256 fingerprint of an SFTP server's pinned host key, null otherwise; pools: the managed pools "
     "(name, path), which a copy takes by default; pools_base: the pools directory; warnings: same_disk, with "
     "its message, when a disk copy repository is on a disk that it copies."
 )
@@ -62,8 +69,9 @@ async def get_settings():
         **answer(_SETTINGS_ANSWER, f"The settings as GET /offsite/settings answers them. {_SETTINGS_TEXT}"),
         **errors(BODY, {
             400: "A setting is not valid or a secret is missing; a folder cannot be copied or cannot hold the copy "
-                 "repository; or the store cannot be reached, or restic cannot open or make the repository, with "
-                 "restic's message.",
+                 "repository; the host has no ssh for SFTP, or UNOS has no key pair for it; the store cannot be "
+                 "reached, shows another certificate or host key than the one pinned or typed, or restic cannot open "
+                 "or make the repository, with restic's message.",
             409: _BUSY,
             500: _UNREADABLE_SETTINGS,
         }),
@@ -73,7 +81,8 @@ async def put_settings(
     request: service.SettingsRequest, http_request: Request, user: User = Depends(require_admin)
 ):
     """Check the settings and test the target: restic opens its repository with the password, or makes
-    one when none is there. 400 with restic's message for a wrong password or a store out of reach.
+    one when none is there. 400 with restic's message for a wrong password or a store out of reach. The
+    first test of an SFTP server pins its host key, which every later command holds to.
     The audit log gets settings_changed when they changed, with the names of the fields and never a
     secret.
     \f
@@ -87,6 +96,30 @@ async def put_settings(
     return answer
 
 
+@router.post(
+    "/sftp-key", summary="Make UNOS's key pair for SFTP",
+    responses={
+        **answer(_SETTINGS_ANSWER, f"The settings as GET /offsite/settings answers them, with the new public key in "
+                                   f"sftp_public_key. {_SETTINGS_TEXT}"),
+        **errors({409: _BUSY, 500: _UNREADABLE_SETTINGS}),
+    },
+)
+async def make_sftp_key(http_request: Request, user: User = Depends(require_admin)):
+    """Make a new SSH key pair (Ed25519) with which the copy logs in to an SFTP server: its public key
+    goes to the server's authorized keys, its private key stays in the secrets file and is never
+    answered. It replaces the one before, which a server then no longer takes. The audit log gets
+    settings_changed with the new key's fingerprint.
+    \f
+    ADR-0422.
+    """
+    changes: list[tuple[str, str]] = []
+    answer = await service.make_key_pair(changes)
+    for where, details in changes:
+        await audit_change(AuditAction.SETTINGS_CHANGED, http_request, user.username, resource_type="offsite",
+                           resource_id=where, details=details, severity=AuditSeverity.WARNING)
+    return answer
+
+
 @router.delete(
     "/settings", summary="Forget the off-device copy's settings",
     responses={
@@ -95,7 +128,8 @@ async def put_settings(
     },
 )
 async def delete_settings(http_request: Request, user: User = Depends(require_admin)):
-    """Forget the target: the settings, the secrets and the state. The copies stay where they are.
+    """Forget the target: the settings, the secrets (with UNOS's key pair for SFTP) and the state. The
+    copies stay where they are.
     The audit log gets settings_changed when there was something to forget.
     \f
     ADR-0402.

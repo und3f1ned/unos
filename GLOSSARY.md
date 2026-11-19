@@ -565,9 +565,19 @@ configuration tested, and its snapshots restore the configuration into the backu
 files into a new folder of a pool (ADR-0337). Avoid: offsite backup, sync, cloud backup.
 
 **Copy repository**: The one restic repository of an installation's off-device copies: a folder on
-a disk mounted below `/mnt` that is not the system disk, or a bucket of an S3-compatible store.
-Saving its settings opens it with its password, or makes it; a copy never makes one (ADR-0337).
+a disk mounted below `/mnt` that is not the system disk, a bucket of an S3-compatible store, a
+repository of a restic REST server, or a folder of an SFTP server (ADR-0422). Saving its settings
+opens it with its password, or makes it; a copy never makes one (ADR-0337).
 Avoid: backup target, vault, bucket (unless it is one).
+
+**Key pair of UNOS**: The SSH key pair (Ed25519) with which the off-device copy logs in to an SFTP
+server: UNOS makes it, the section shows its public key for the server's authorized keys, and its
+private key stays in the copy's secrets file, never answered (ADR-0422). Avoid: SSH key of the NAS
+(the host's own keys are other ones), deploy key.
+
+**Pinned host key**: The SFTP server's host key that the first test of the copy's settings took,
+or that a save trusted anew; every command of the copy holds to it, and a server that shows another
+one is refused (ADR-0422). Avoid: known host, fingerprint (the pinned key has one).
 
 ## Development
 

@@ -1,12 +1,12 @@
 import type { Translation } from '../translate';
 
 // The off-device copy on System > Backup & Restore: src/routes/system/tabs/OffsiteCopy.svelte
-// (ADR-0337).
+// (ADR-0337, ADR-0422).
 
 export const en = {
 	'offsite.title': 'Off-device copy',
 	'offsite.intro':
-		'Copies of the configuration and of the pools’ folders on a disk of its own or in an S3-compatible store, encrypted with a password that only this NAS keeps.',
+		'Copies of the configuration and of the pools’ folders on a disk of its own, in an S3-compatible store, on a restic REST server or on an SFTP server, encrypted with a password that only this NAS keeps.',
 	'offsite.notSetUp': 'No off-device copy is set up.',
 	'offsite.loadFailed': 'Could not load the off-device copy',
 	'offsite.refresh': 'Refresh',
@@ -16,6 +16,8 @@ export const en = {
 	'offsite.form.kind': 'Kind of target',
 	'offsite.form.disk': 'A disk',
 	'offsite.form.s3': 'An S3-compatible store',
+	'offsite.form.rest': 'A restic REST server',
+	'offsite.form.sftp': 'An SFTP server',
 	'offsite.form.path': 'Folder of the copy',
 	'offsite.form.pathHint':
 		'A folder on a disk mounted below /mnt (such as a USB disk added as a pool), made when it is missing. Not the system disk.',
@@ -30,6 +32,50 @@ export const en = {
 	'offsite.form.limitUpload': 'Upload limit, KiB/s',
 	'offsite.form.limitDownload': 'Download limit, KiB/s',
 	'offsite.form.limitHint': '0: no limit.',
+
+	// A REST server.
+	'offsite.rest.endpoint': 'Address of the REST server',
+	'offsite.rest.endpointHint': 'https:// with the host and port, such as https://nas2.example.com:8000',
+	'offsite.rest.prefix': 'Folders on the server (optional)',
+	'offsite.rest.username': 'User of the REST server',
+	'offsite.rest.password': 'Password of the REST server',
+	'offsite.rest.passwordKept': 'Leave it empty to keep the stored password.',
+	'offsite.rest.tls': 'Check of the server’s certificate',
+	'offsite.rest.tlsSystem': 'By the system’s certificate authorities',
+	'offsite.rest.tlsFingerprint': 'By the fingerprint of the server’s own certificate',
+	'offsite.rest.tlsCa': 'By a certificate authority of my own',
+	'offsite.rest.fingerprint': 'SHA-256 fingerprint of the server’s certificate',
+	'offsite.rest.fingerprintHint':
+		'As openssl x509 -noout -fingerprint -sha256 prints it on the server. Saving reads the certificate from the server, compares it and trusts only it from then on: a new certificate needs its new fingerprint.',
+	'offsite.rest.certificate': 'CA certificate (PEM)',
+	'offsite.rest.certificateHint': 'From -----BEGIN CERTIFICATE----- to -----END CERTIFICATE-----. Only this authority is trusted.',
+
+	// An SFTP server.
+	'offsite.sftp.keyTitle': 'Key pair of UNOS',
+	'offsite.sftp.keyIntro':
+		'UNOS logs in to the SFTP server with a key pair of its own, never with a password. Its private key stays on this NAS and is never shown.',
+	'offsite.sftp.noKey': 'No key pair is made yet.',
+	'offsite.sftp.makeKey': 'Make a key pair',
+	'offsite.sftp.newKey': 'Make a new key pair',
+	'offsite.sftp.confirmNewKey':
+		'Make a new key pair? The SFTP server no longer takes the old one: add the new public key to it before the next copy.',
+	'offsite.sftp.keyFailed': 'Could not make the key pair',
+	'offsite.sftp.keyMade': 'A new key pair is made: add its public key to the SFTP server.',
+	'offsite.sftp.publicKey': 'Public key of UNOS',
+	'offsite.sftp.publicKeyHint': 'Add this line to ~/.ssh/authorized_keys of the login on the SFTP server.',
+	'offsite.sftp.host': 'Host of the SFTP server',
+	'offsite.sftp.port': 'SSH port',
+	'offsite.sftp.username': 'Login on the server',
+	'offsite.sftp.path': 'Folder on the server',
+	'offsite.sftp.pathHint': 'An absolute path such as /srv/copies/unos, or one below the login’s home folder. Made when it is missing.',
+	'offsite.sftp.pinned': 'Pinned host key: {fingerprint}',
+	'offsite.sftp.pinnedHint':
+		'The first test pinned the server’s host key. A copy to a server that shows another key fails until you trust the new one with its fingerprint.',
+	'offsite.sftp.trustNewKey': 'The server’s host key changed on purpose: trust its new key at this test',
+	'offsite.sftp.fingerprint': 'Fingerprint of the server’s host key (optional)',
+	'offsite.sftp.newFingerprint': 'Fingerprint of the server’s new host key',
+	'offsite.sftp.fingerprintHint':
+		'SHA256:… as ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub prints it on the server. Empty: the first test pins the key that the server shows.',
 
 	// What is copied.
 	'offsite.form.sources': 'Folders to copy',
@@ -138,7 +184,7 @@ export const en = {
 export const ru: Translation<typeof en> = {
 	'offsite.title': 'Копия вне устройства',
 	'offsite.intro':
-		'Копии конфигурации и папок пулов на отдельном диске или в S3-совместимом хранилище, зашифрованные паролем, который хранится только на этом NAS.',
+		'Копии конфигурации и папок пулов на отдельном диске, в S3-совместимом хранилище, на REST-сервере restic или на SFTP-сервере, зашифрованные паролем, который хранится только на этом NAS.',
 	'offsite.notSetUp': 'Копия вне устройства не настроена.',
 	'offsite.loadFailed': 'Не удалось загрузить копию вне устройства',
 	'offsite.refresh': 'Обновить',
@@ -147,6 +193,8 @@ export const ru: Translation<typeof en> = {
 	'offsite.form.kind': 'Тип хранилища',
 	'offsite.form.disk': 'Диск',
 	'offsite.form.s3': 'S3-совместимое хранилище',
+	'offsite.form.rest': 'REST-сервер restic',
+	'offsite.form.sftp': 'SFTP-сервер',
 	'offsite.form.path': 'Папка копии',
 	'offsite.form.pathHint':
 		'Папка на диске, смонтированном в /mnt (например, USB-диск, добавленный как пул); создаётся, если её нет. Не системный диск.',
@@ -161,6 +209,48 @@ export const ru: Translation<typeof en> = {
 	'offsite.form.limitUpload': 'Ограничение отправки, КиБ/с',
 	'offsite.form.limitDownload': 'Ограничение загрузки, КиБ/с',
 	'offsite.form.limitHint': '0 — без ограничения.',
+
+	'offsite.rest.endpoint': 'Адрес REST-сервера',
+	'offsite.rest.endpointHint': 'https:// с хостом и портом, например https://nas2.example.com:8000',
+	'offsite.rest.prefix': 'Папки на сервере (необязательно)',
+	'offsite.rest.username': 'Пользователь REST-сервера',
+	'offsite.rest.password': 'Пароль REST-сервера',
+	'offsite.rest.passwordKept': 'Оставьте поле пустым, чтобы сохранить прежний пароль.',
+	'offsite.rest.tls': 'Проверка сертификата сервера',
+	'offsite.rest.tlsSystem': 'Центрами сертификации системы',
+	'offsite.rest.tlsFingerprint': 'По отпечатку собственного сертификата сервера',
+	'offsite.rest.tlsCa': 'Своим центром сертификации',
+	'offsite.rest.fingerprint': 'Отпечаток SHA-256 сертификата сервера',
+	'offsite.rest.fingerprintHint':
+		'Так, как его выводит openssl x509 -noout -fingerprint -sha256 на сервере. При сохранении сертификат читается с сервера, сравнивается и дальше доверяют только ему: для нового сертификата нужен его новый отпечаток.',
+	'offsite.rest.certificate': 'Сертификат центра сертификации (PEM)',
+	'offsite.rest.certificateHint': 'От -----BEGIN CERTIFICATE----- до -----END CERTIFICATE-----. Доверяют только этому центру.',
+
+	'offsite.sftp.keyTitle': 'Пара ключей UNOS',
+	'offsite.sftp.keyIntro':
+		'UNOS входит на SFTP-сервер со своей парой ключей и никогда — с паролем. Закрытый ключ остаётся на этом NAS и никогда не показывается.',
+	'offsite.sftp.noKey': 'Пара ключей ещё не создана.',
+	'offsite.sftp.makeKey': 'Создать пару ключей',
+	'offsite.sftp.newKey': 'Создать новую пару ключей',
+	'offsite.sftp.confirmNewKey':
+		'Создать новую пару ключей? Старую SFTP-сервер больше не примет: добавьте на него новый открытый ключ до следующей копии.',
+	'offsite.sftp.keyFailed': 'Не удалось создать пару ключей',
+	'offsite.sftp.keyMade': 'Новая пара ключей создана: добавьте её открытый ключ на SFTP-сервер.',
+	'offsite.sftp.publicKey': 'Открытый ключ UNOS',
+	'offsite.sftp.publicKeyHint': 'Добавьте эту строку в ~/.ssh/authorized_keys пользователя на SFTP-сервере.',
+	'offsite.sftp.host': 'Хост SFTP-сервера',
+	'offsite.sftp.port': 'Порт SSH',
+	'offsite.sftp.username': 'Пользователь на сервере',
+	'offsite.sftp.path': 'Папка на сервере',
+	'offsite.sftp.pathHint': 'Абсолютный путь, например /srv/copies/unos, или путь внутри домашней папки пользователя. Создаётся, если её нет.',
+	'offsite.sftp.pinned': 'Закреплённый ключ хоста: {fingerprint}',
+	'offsite.sftp.pinnedHint':
+		'Первая проверка закрепила ключ хоста сервера. Копия на сервер, который покажет другой ключ, не выполнится, пока вы не доверитесь новому, указав его отпечаток.',
+	'offsite.sftp.trustNewKey': 'Ключ хоста сервера изменился намеренно: довериться новому ключу при этой проверке',
+	'offsite.sftp.fingerprint': 'Отпечаток ключа хоста сервера (необязательно)',
+	'offsite.sftp.newFingerprint': 'Отпечаток нового ключа хоста сервера',
+	'offsite.sftp.fingerprintHint':
+		'SHA256:… так, как его выводит ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub на сервере. Пусто: первая проверка закрепит ключ, который покажет сервер.',
 
 	'offsite.form.sources': 'Папки для копирования',
 	'offsite.form.sourcesHint':

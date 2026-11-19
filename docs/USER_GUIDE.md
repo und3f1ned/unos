@@ -3301,7 +3301,41 @@ installation: give each NAS a folder or a bucket prefix of its own.
   `http://` in your own network, since restic encrypts everything anyway),
   bucket, an optional prefix and region, the access key ID and the secret
   access key. Upload and download limits in KiB/s (0: none) keep a copy from
-  filling your connection.
+  filling your connection; they apply to the REST server and SFTP too.
+- **A restic REST server**, such as `rest-server` on a second NAS: its address
+  (`https://` only, with the host and port: restic sends the server's password
+  with every request), optional folders on the server, the server's user and
+  password. **Check of the server's certificate**: **By the system's
+  certificate authorities** for a certificate of a public authority, such as
+  Let's Encrypt's; **By the fingerprint of the server's own certificate** for
+  a self-signed one: enter its SHA-256 fingerprint as `openssl x509 -noout
+  -fingerprint -sha256 -in <certificate>` prints it on the server, and **Save
+  and test** reads the certificate from the server, compares it and from then
+  on trusts only it (a new certificate needs its new fingerprint); or **By a
+  certificate authority of my own**, whose certificate you paste in PEM. The
+  certificate must name the address you enter (as a subject alternative name)
+  and be valid now, or restic refuses it; with a pinned fingerprint the NAS
+  says so before restic runs.
+- **An SFTP server**, such as a second NAS that you reach over SSH: **Make a
+  key pair** first. UNOS logs in with a key pair of its own, never with a
+  password; its private key stays on this NAS, readable only by the supervisor,
+  and is never shown. Add the **Public key of UNOS** that the section shows to
+  `~/.ssh/authorized_keys` of the login on the server. Then enter the host, the
+  SSH port (22), the login and the folder on the server (`/srv/copies/unos`, or
+  `copies/unos` below the login's home folder). The first **Save and test**
+  pins the server's host key and shows its fingerprint; every later copy,
+  check and restore holds to it, and one that meets another key fails with
+  "Host key verification failed". If you entered **Fingerprint of the server's
+  host key** (`ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub` on the
+  server prints it), a server that shows another key is refused before
+  anything is written. When the server's key changed on purpose (a reinstalled
+  server), check **trust its new key at this test**, enter the **Fingerprint of
+  the server's new host key** as the server prints it, and save again: a
+  changed key is what a server in the middle would show, so it is never
+  trusted without its fingerprint. **Make a
+  new key pair** replaces the key pair: the server then needs the new public
+  key. SFTP runs the host's `ssh`: a host without the package
+  `openssh-client` is refused, with its name.
 
 To set it up:
 
@@ -3319,8 +3353,9 @@ To set it up:
 3. **Save and test**: the NAS opens the repository with the password, or makes
    a new one when the folder or bucket has none. A wrong password, or a store
    that cannot be reached, is refused with restic's message. The NAS first
-   connects to an S3 store: one that does not answer within 10 seconds is
-   refused at once, and restic gets 2 minutes at most.
+   connects to an S3 store or a REST server: one that does not answer within
+   10 seconds is refused at once, and so is an SFTP server that does not take
+   ssh's connection within 10 seconds; restic gets 2 minutes at most.
 4. **Add a daily copy at 03:00** adds a task of the type **Off-device Copy**
    to **System** → **Scheduler**. Until there is one, copies run only on
    **Run now**.
@@ -3375,8 +3410,8 @@ To restore:
 - On a new device: install UNOS, set up the same target with its password,
   **Restore configuration**, restore that backup, then **Restore files**.
 
-**Forget this target** removes the settings and the password from the NAS,
-damaged copies of their files included; the copies stay where they are. A task of the type **Off-device Copy** then fails
+**Forget this target** removes the settings, the passwords and the key pair
+of UNOS from the NAS, damaged copies of their files included; the copies stay where they are. A task of the type **Off-device Copy** then fails
 at each run, which is alerted, until a target is set up again: delete it on
 **System** → **Scheduler** when no copies are wanted.
 

@@ -423,6 +423,14 @@ secrets from the git-ignored `dev.env` (ADR-0212):
   Immich's settings chose: the dev device's Immich uses nllb-clip-base-siglip__v1, so pass that
   name, or the probe downloads a model Immich does not use. It writes nothing; the machine learning's log says whether the models ran on the NPU
   (ADR-0382).
+- `scripts/dev/restic-rest-server.py --listen ADDRESS:PORT --root FOLDER --cert CERT --key KEY --user
+  NAME --password-file FILE`: a minimal restic REST server over HTTPS (restic's REST protocol,
+  versions 1 and 2, with basic authentication), for the device check of the off-device copy to a
+  REST server (`backup.off-device-copies-over-sftp`, the steps in its notes, ADR-0422). Copied into
+  `/dev/shm` and run there in the background with the host's python3, on a folder of the pool and
+  with the password in a file of mode 600 in RAM, never on a command line; it writes only the
+  repositories' files and logs only refused or failed requests, on standard error
+  (`supervisor/tests/test_restic_rest_server.py`).
 - `scripts/dev/security-key-probe.py`: security keys through the device's API (ADR-0409), with a
   software authenticator that signs with the openssl command line. Copied into `/dev/shm` and run
   there as root with the host's python3 (`python3 -I -B security-key-probe.py`), it reads the name

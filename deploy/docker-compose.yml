@@ -63,8 +63,8 @@ services:
     # of the database and the small files, at most MAX_TAR_BYTES (64 MiB), or
     # it could not be restored (deploy/update.sh copies the database here the
     # same way). That is 112 MiB, and 80 MiB more are for restic's pack files while an
-    # off-device copy runs (its cache for an S3 store is not bounded: a copy
-    # that fills the tmpfs fails). A fixed size, not a
+    # off-device copy runs (its cache for an S3 store, a REST server or an SFTP
+    # server is not bounded: a copy that fills the tmpfs fails). A fixed size, not a
     # percentage of the RAM, so that the backup limits can be held against it
     # (ADR-0406): at most a fifth of the 1 GB of RAM that UNOS needs at least.
     # Uploads write nothing here: an uploaded backup is checked in one pass,
