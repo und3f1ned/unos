@@ -144,7 +144,7 @@ class Api:
         if token:
             headers["Authorization"] = "Bearer " + token
         data = None if body is None else json.dumps(body).encode()
-        request = urllib.request.Request(self.base + "/api/v1" + path, data=data, method=method,  # noqa: S310 - https://
+        request = urllib.request.Request(self.base + "/api/v1" + path, data=data, method=method,  # noqa: S310 - the caller's base, https://
                                          headers=headers)
         try:
             with self.opener.open(request, timeout=60) as response:

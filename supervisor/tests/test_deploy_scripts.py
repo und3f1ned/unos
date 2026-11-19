@@ -4814,7 +4814,7 @@ class TestContinuousIntegration:
         assert not [command for command in commands if "pip-audit" in command]
         # make lint runs ruff from PATH there, where the hashed install put it, over the supervisor
         # and the repository's tooling.
-        assert "ruff check --select F,E9 supervisor scripts .claude/hooks" in _make_dry_run(
+        assert "ruff check supervisor scripts .claude/hooks" in _make_dry_run(
             "lint", "RUFF=ruff").splitlines()
 
     def test_lint_requirements_pin_every_package_with_its_hashes(self):

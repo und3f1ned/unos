@@ -38,8 +38,8 @@ SMOKE = tests/test_lifespan.py tests/test_auth.py::TestFirstRunSetup \
 E2E_ARGS ?=
 
 SHELL_SCRIPT_DIRS = deploy scripts .claude/hooks
-# The Python that make lint checks with ruff: the supervisor and the repository's own tooling
-# (the guard, scripts/dev, the stand-in, the commit checker).
+# The Python that make lint checks with ruff, with the rules of ruff.toml (ADR-0425): the supervisor
+# and the repository's own tooling (the guard, scripts/dev, the stand-in, the commit checker).
 PYTHON_DIRS = supervisor scripts .claude/hooks
 JSON_FILES = feature-list.json .claude/settings.json
 
@@ -102,11 +102,11 @@ check: ## The quality gate: lint, test and frontend, as CI runs them, without th
 check-fast: ## lint and test-fast: what the pre-commit hook and the Stop hook run
 	+@$(call green_run,lint test-fast)
 
-lint: ## ruff (pyflakes, syntax errors), bash -n on the shell scripts, JSON syntax; all three run
+lint: ## ruff (the rules of ruff.toml), bash -n on the shell scripts, JSON syntax; all three run
 	+@$(call run_all,lint-ruff lint-shell lint-json)
 
 lint-ruff:
-	$(RUFF) check --select F,E9 $(PYTHON_DIRS)
+	$(RUFF) check $(PYTHON_DIRS)
 
 lint-shell:
 	@n=0; bad=; for f in $$(find $(SHELL_SCRIPT_DIRS) -type f 2> /dev/null | sort); do \
