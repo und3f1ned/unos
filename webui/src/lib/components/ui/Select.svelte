@@ -36,6 +36,10 @@
 		onchange
 	}: Props = $props();
 
+	// The list drops in over --dur-base, at once under reduced motion (ADR-0428).
+	// i18n-ignore: a CSS media query, the same in every language
+	const reducedMotion = typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
 	let open = $state(false);
 	let container: HTMLDivElement;
 	let listbox: HTMLUListElement | undefined = $state();
@@ -240,7 +244,7 @@
 			role="listbox"
 			aria-labelledby={label ? `${inputId}-label` : undefined}
 			class="select-dropdown scrollbar-thin"
-			in:fly={{ y: -8, duration: 150 }}
+			in:fly={{ y: -8, duration: reducedMotion ? 0 : 180 }}
 		>
 			{#each options as option, index}
 				<li
@@ -259,7 +263,7 @@
 				>
 					<span class="select-option-label">{option.label}</span>
 					{#if option.value === value}
-						<Check class="w-4 h-4 text-info" />
+						<Check class="w-4 h-4 text-brand-ring" aria-hidden="true" />
 					{/if}
 				</li>
 			{/each}
@@ -274,16 +278,20 @@
 </div>
 
 <style>
+	/* The trigger looks like Input's field (ADR-0428); the list is a popover. */
 	.select-trigger {
-		@apply w-full px-3 py-2 bg-surface-overlay border border-border-strong rounded-lg text-content
+		@apply w-full min-h-9 px-3 py-1.5 bg-surface-overlay border border-border-strong rounded text-content
 		       text-left flex items-center justify-between gap-2
-		       transition-all duration-150 ease-in-out
-		       hover:border-content-muted
-		       focus:outline-none focus:border-brand-ring focus:ring-1 focus:ring-brand-ring;
+		       hover:border-content-muted;
+		transition: border-color var(--dur-fast), box-shadow var(--dur-fast);
 	}
 
+	.select-trigger:focus,
 	.select-trigger-open {
-		@apply border-brand-ring ring-1 ring-brand-ring;
+		@apply outline-none border-brand-ring;
+		box-shadow:
+			0 0 0 1px rgb(var(--color-brand-ring)),
+			0 0 0 4px rgb(var(--color-brand-ring) / 0.25);
 	}
 
 	.select-trigger-error {
@@ -303,7 +311,8 @@
 	}
 
 	.select-icon {
-		@apply w-4 h-4 text-content-secondary flex-shrink-0 transition-transform duration-150;
+		@apply w-4 h-4 text-content-secondary flex-shrink-0;
+		transition: transform var(--dur-base) var(--ease);
 	}
 
 	.select-icon-open {
@@ -311,13 +320,13 @@
 	}
 
 	.select-dropdown {
-		@apply absolute z-50 w-full mt-1 py-1 bg-surface-elevated border border-border
-		       rounded-lg shadow-lg max-h-60 overflow-auto;
+		@apply absolute z-50 w-full mt-1 p-1 bg-surface-elevated border border-border
+		       rounded-card shadow-popover max-h-60 overflow-auto;
 	}
 
 	.select-option {
-		@apply px-3 py-2 flex items-center justify-between gap-2 cursor-pointer
-		       transition-colors duration-75;
+		@apply min-h-8 px-2.5 py-1.5 rounded flex items-center justify-between gap-2 cursor-pointer;
+		transition: background-color var(--dur-fast);
 	}
 
 	.select-option-highlighted {

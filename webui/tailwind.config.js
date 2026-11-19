@@ -40,7 +40,8 @@ export default {
 					muted: token('content-muted'), // hints, placeholders
 					soft: token('content-soft'), // between primary and secondary
 					inverse: token('content-inverse'), // on a background of the other theme
-					'on-brand': token('content-on-brand') // on brand and other solid fills
+					'on-brand': token('content-on-brand'), // on brand and other solid fills
+					link: token('content-link') // text links (ADR-0428)
 				},
 				// Accent colors (for icons and highlights)
 				accent: {
@@ -90,17 +91,53 @@ export default {
 				'13': '3.25rem',
 				'15': '3.75rem'
 			},
-			// Typography
+			// Typography (ADR-0428): the system's own fonts, no download; all of them carry Cyrillic.
+			fontFamily: {
+				sans: [
+					'ui-sans-serif',
+					'system-ui',
+					'-apple-system',
+					'"Segoe UI"',
+					'Roboto',
+					'"Noto Sans"',
+					'Ubuntu',
+					'Cantarell',
+					'"Helvetica Neue"',
+					'Arial',
+					'sans-serif',
+					'"Apple Color Emoji"',
+					'"Segoe UI Emoji"'
+				],
+				mono: [
+					'ui-monospace',
+					'SFMono-Regular',
+					'"SF Mono"',
+					'Menlo',
+					'"Cascadia Mono"',
+					'"Roboto Mono"',
+					'"Liberation Mono"',
+					'Consolas',
+					'monospace'
+				]
+			},
 			fontSize: {
-				'2xs': ['0.625rem', { lineHeight: '0.75rem' }] // 10px
+				'2xs': ['0.6875rem', { lineHeight: '0.875rem' }] // 11px, counts and group labels
 			},
 			// Animation
 			animation: {
 				'spin-slow': 'spin 2s linear infinite'
 			},
-			// Border radius
+			// Radii (ADR-0428): controls, badges and tabs 6 px, cards and menus 10 px, dialogs 12 px.
 			borderRadius: {
-				DEFAULT: '0.5rem' // 8px - consistent radius
+				DEFAULT: '0.375rem',
+				card: '0.625rem',
+				dialog: '0.75rem'
+			},
+			// Elevation: CSS variables of each theme in src/app.css, built from the token shadow.
+			boxShadow: {
+				raised: 'var(--shadow-raised)',
+				popover: 'var(--shadow-popover)',
+				dialog: 'var(--shadow-dialog)'
 			}
 		}
 	},

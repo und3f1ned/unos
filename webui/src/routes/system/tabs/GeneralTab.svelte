@@ -54,44 +54,45 @@
   let versionLabel = $derived((version: string): string => (version === "unknown" ? $t("general.version.unknown") : version));
 </script>
 
+<!-- A fact as label over value (.kv, ADR-0428). -->
 {#snippet info(label: string, value: string, valueClass: string)}
   <div>
-    <span class="text-content-secondary">{label}</span>
-    <span class={valueClass}>{value}</span>
+    <span class="kv-label">{label}</span>
+    <span class="kv-value {valueClass}">{value}</span>
   </div>
 {/snippet}
 
-<div class="space-y-6">
+<div class="space-y-4">
   <h2 class="text-xl font-semibold">{$t("general.title")}</h2>
 
   <!-- System Info -->
-  <div class="bg-surface-elevated rounded-lg p-4">
-    <h3 class="text-lg font-semibold mb-4 flex items-center gap-2">
-      <Server class="w-5 h-5" />
+  <Card>
+    <h3 class="card-title mb-4">
+      <Server class="w-5 h-5 text-content-secondary" aria-hidden="true" />
       {$t("general.info.title")}
     </h3>
 
     {#if loading}
       <p class="text-content-muted">{$t("common.loading")}</p>
     {:else if systemInfo}
-      <div class="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
-        {@render info($t("general.info.hostname"), systemInfo.hostname, "ml-2 font-medium break-words")}
-        {@render info($t("general.info.os"), systemInfo.os, "ml-2")}
-        {@render info($t("general.info.kernel"), systemInfo.kernel, "ml-2 font-mono text-xs")}
-        {@render info($t("general.info.architecture"), systemInfo.architecture, "ml-2")}
-        {@render info($t("general.info.uptime"), formatUptime(systemInfo.boot_time), "ml-2")}
+      <div class="kv">
+        {@render info($t("general.info.hostname"), systemInfo.hostname, "font-medium break-words")}
+        {@render info($t("general.info.os"), systemInfo.os, "")}
+        {@render info($t("general.info.kernel"), systemInfo.kernel, "font-mono text-xs")}
+        {@render info($t("general.info.architecture"), systemInfo.architecture, "")}
+        {@render info($t("general.info.uptime"), formatUptime(systemInfo.boot_time), "tabular")}
       </div>
     {:else}
       <p class="text-content-muted">{$t("general.info.loadFailed")}</p>
     {/if}
-  </div>
+  </Card>
 
   <HostSettingsCard {host} onrenamed={renamed} />
 
   <!-- UNOS Version: the version the supervisor image was built with (ADR-0234) -->
   <Card>
-    <h3 class="section-title mb-4">
-      <Package class="w-5 h-5" />
+    <h3 class="card-title mb-4">
+      <Package class="w-5 h-5 text-content-secondary" aria-hidden="true" />
       {$t("general.version.title")}
     </h3>
 
@@ -112,39 +113,34 @@
   </Card>
 
   <!-- User Account -->
-  <div class="bg-surface-elevated rounded-lg p-4">
-    <h3 class="text-lg font-semibold mb-4 flex items-center gap-2">
-      <User class="w-5 h-5" />
+  <Card>
+    <h3 class="card-title mb-4">
+      <User class="w-5 h-5 text-content-secondary" aria-hidden="true" />
       {$t("general.user.title")}
     </h3>
 
     {#if $user}
       <div class="space-y-3">
-        <div class="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
+        <div class="kv">
           <div>
-            <span class="text-content-secondary">{$t("general.user.username")}</span>
-            <span class="ml-2 font-medium">{$user.username}</span>
+            <span class="kv-label">{$t("general.user.username")}</span>
+            <span class="kv-value font-medium">{$user.username}</span>
           </div>
           <div>
-            <span class="text-content-secondary">{$t("general.user.role")}</span>
-            <span class="ml-2">
+            <span class="kv-label">{$t("general.user.role")}</span>
+            <span class="kv-value">
               {#if $user.is_admin}
-                <span class="px-2 py-0.5 bg-status-info/20 text-status-info rounded text-xs">{$t("general.user.admin")}</span>
+                <Badge variant="info">{$t("general.user.admin")}</Badge>
               {:else}
-                <span class="px-2 py-0.5 bg-status-neutral/20 text-content-secondary rounded text-xs">{$t("general.user.user")}</span>
+                <Badge variant="neutral">{$t("general.user.user")}</Badge>
               {/if}
             </span>
           </div>
         </div>
-        <a
-          href="/users"
-          class="inline-block px-4 py-2 bg-surface-overlay hover:bg-surface-hover rounded-lg transition-colors text-sm"
-        >
-          {$t("general.user.manage")}
-        </a>
+        <Button href="/users" variant="secondary" size="sm">{$t("general.user.manage")}</Button>
       </div>
     {:else}
       <p class="text-content-muted">{$t("general.user.signedOut")}</p>
     {/if}
-  </div>
+  </Card>
 </div>

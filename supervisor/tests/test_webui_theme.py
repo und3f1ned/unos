@@ -65,7 +65,18 @@ def text_pairs() -> list[tuple[str, tuple, float, str]]:
             pairs.append((accent, over(background, accent, 0.2), TEXT, f"Badge purple, cyan, orange on {name}"))
         # A selected row of the file manager; a search match of System > Logs (a 20 % tint).
         pairs.append(("content", over(background, "brand", 0.2), TEXT, f"a selected row on {name}"))
+        # webui.redesign (ADR-0428): an alert's body is content on its 10 % tint; text links are
+        # content-link; a navigation item or System tab is content-secondary, and the active one a
+        # brand 20 % tint that can hold a link's or a secondary text.
+        for status in STATUSES:
+            pairs.append(("content", over(background, status, 0.1), TEXT, f"an alert's body on {name}"))
+        pairs.append(("content-link", background, TEXT, f"a text link on {name}"))
+        brand_tint = over(background, "brand", 0.2)
+        pairs.append(("content-link", brand_tint, TEXT, f"a link on the active item's tint on {name}"))
+        pairs.append(("content-secondary", brand_tint, TEXT, f"secondary text on the active item's tint on {name}"))
     pairs.append(("content", HOVER, TEXT, "a secondary button under the pointer"))
+    pairs.append(("content-link", HOVER, TEXT, "a link in a row under the pointer"))
+    pairs.append(("content-secondary", HOVER, TEXT, "a ghost button or navigation item under the pointer"))
     for fill in SOLID_FILLS:
         pairs.append(("content-on-brand", ((fill, 1.0),), TEXT,
                       "buttons, the active tab and navigation item, a count on the selected category"))
@@ -81,6 +92,14 @@ def non_text_pairs() -> list[tuple[str, tuple, float, str]]:
                       f"the focus ring of every button, the selected tab's line, a checked radio or checkbox on {name}"))
         for token in (*STATUSES, "status-neutral", *ACCENTS):
             pairs.append((token, background, NON_TEXT, f"status dots, progress bars, icons, chart lines on {name}"))
+        # webui.redesign (ADR-0428): the active item's bar and icon on its brand 20 % tint, and a
+        # stat tile's icon on the 20 % tint of its accent.
+        pairs.append(("brand-ring", over(background, "brand", 0.2), NON_TEXT,
+                      f"the active navigation item's bar and icon on {name}"))
+        for accent in ACCENTS:
+            pairs.append((accent, over(background, accent, 0.2), NON_TEXT, f"a stat tile's icon chip on {name}"))
+    for token in ("border-strong", "brand-ring"):
+        pairs.append((token, HOVER, NON_TEXT, "a field's boundary or the focus ring on surface-hover"))
     return pairs
 
 

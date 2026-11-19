@@ -34,7 +34,8 @@
 	>
 		{#each days as group}
 			<div>
-				<h2 class="section-title mb-3">
+				<!-- A day's heading as a group label, kept in view while its entries scroll (ADR-0428). -->
+				<h2 class="eyebrow sticky top-0 z-[1] -mx-1 px-1 py-1.5 mb-2 bg-surface-elevated">
 					<!-- In the language of the page: the timeline follows a change of the language. -->
 					<time datetime={group.day}>{dayLabel(group.day, $intlLocale)}</time>
 				</h2>

@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onDestroy, onMount, untrack } from 'svelte';
 	import { getContainers, createContainer, type Container } from '$lib/api/containers';
-	import { Container as ContainerIcon, Plus, RefreshCw } from 'lucide-svelte';
+	import { Plus, RefreshCw } from 'lucide-svelte';
 	import { Button, Alert } from '$lib/components/ui';
 	import {
 		BulkStatus,
@@ -204,16 +204,11 @@
 <div class="page-container">
 	<!-- Page Header -->
 	<div class="page-header">
-		<div class="flex items-center gap-3">
-			<div class="w-10 h-10 rounded-lg bg-surface-elevated flex items-center justify-center">
-				<ContainerIcon class="w-5 h-5 icon-container" />
-			</div>
-			<div>
-				<h1 class="page-title">{$t('containers.title')}</h1>
-				<p class="text-sm text-secondary">{$t('containers.subtitle')}</p>
-			</div>
+		<div class="min-w-0">
+			<h1 class="page-title">{$t('containers.title')}</h1>
+			<p class="page-subtitle">{$t('containers.subtitle')}</p>
 		</div>
-		<div class="flex flex-wrap items-center gap-2">
+		<div class="page-actions">
 			<Button
 				variant="secondary"
 				size="icon"

@@ -41,16 +41,16 @@
 </script>
 
 <div class="modal-overlay p-4">
-  <div class="bg-surface-elevated rounded-lg w-full max-w-2xl max-h-[80vh] flex flex-col">
+  <div class="bg-surface-elevated border border-border rounded-dialog shadow-dialog w-full max-w-2xl max-h-[80vh] flex flex-col">
     <!-- Modal Header -->
-    <div class="flex items-center justify-between p-4 border-b border-border">
-      <h3 class="text-lg font-bold">
+    <div class="flex items-center justify-between gap-3 px-5 py-4 border-b border-border">
+      <h3 class="modal-title">
         {$t("scheduler.runs.title", {
           name: history.taskId ? history.taskName || $t("scheduler.runs.task") : $t("scheduler.runs.allTasks"),
         })}
       </h3>
-      <Button variant="ghost" size="icon-sm" onclick={() => history.close()}>
-        <X class="w-5 h-5" />
+      <Button variant="ghost" size="icon-sm" aria-label={$t("ui.modal.close")} onclick={() => history.close()}>
+        <X class="w-4 h-4" />
       </Button>
     </div>
 

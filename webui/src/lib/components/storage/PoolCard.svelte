@@ -3,7 +3,7 @@
 	// disks and mount point, what is wrong with it, and the jobs on it.
 	import { Alert, Badge, ProgressBar } from '$lib/components/ui';
 	import type { BalanceStatus, DiskRemovalStatus, Pool, ScrubStatus } from '$lib/api/storage';
-	import { t } from '$lib/i18n';
+	import { intlLocale, t } from '$lib/i18n';
 	import BalanceProgress from './BalanceProgress.svelte';
 	import PoolActions from './PoolActions.svelte';
 	import RemovalProgress from './RemovalProgress.svelte';
@@ -60,15 +60,21 @@
 			: { variant: 'error', label: pool.health || $t('storage.health.unknown') };
 	});
 
+	// The capacity's share in whole percent, in the language of the page: a job's progress beside it
+	// shows tenths.
+	const wholePercent = $derived(new Intl.NumberFormat($intlLocale, { style: 'percent', maximumFractionDigits: 0 }));
+
 	// i18n-ignore: a command, the same in every language
 	const RESET_COUNTERS = 'btrfs device stats -z';
 </script>
 
-<div class="card-nested">
-	<div class="flex flex-wrap items-center justify-between mb-2 gap-2">
-		<div class="flex flex-wrap items-center gap-2">
-			<h3 class="font-semibold">{pool.name}</h3>
-			<Badge variant={health.variant}>{health.label}</Badge>
+<!-- A pool (ADR-0428): its name and badges with its toolbar, its facts as label over value (each
+     a div of spans, "Mount:" and its value), its capacity, then its problems and its jobs. -->
+<div class="card-nested space-y-4">
+	<div class="flex flex-wrap items-start justify-between gap-3">
+		<div class="flex flex-wrap items-center gap-2 min-w-0 pt-1">
+			<h3 class="text-base font-semibold break-words">{pool.name}</h3>
+			<Badge variant={health.variant} dot>{health.label}</Badge>
 			{#if pool.mounted && !pool.persistent}
 				<Badge variant="warning">{$t('storage.pool.notMountedAtBoot')}</Badge>
 			{:else if pool.mounted}
@@ -88,67 +94,72 @@
 		/>
 	</div>
 
-	<div class="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+	<div class="kv">
 		<div>
-			<span class="text-secondary">{$t('storage.pool.raid')}</span>
+			<span class="kv-label">{$t('storage.pool.raid')}</span>
 			{#if pool.raid_level}
-				<span class="ml-2">{profileLabel(pool.raid_level)}</span>
-				{#if pool.raid_level === 'raid5' || pool.raid_level === 'raid6'}
-					<Badge variant="error">{$t('storage.pool.unsafe')}</Badge>
-				{/if}
+				<span class="kv-value flex flex-wrap items-center gap-2"
+					>{profileLabel(pool.raid_level)}
+					{#if pool.raid_level === 'raid5' || pool.raid_level === 'raid6'}
+						<Badge variant="error">{$t('storage.pool.unsafe')}</Badge>
+					{/if}</span
+				>
 			{:else}
 				<!-- The profile is only read from a mounted filesystem. -->
-				<span class="ml-2 text-muted"
+				<span class="kv-value text-muted"
 					>{$t(pool.mounted ? 'storage.pool.unknown' : 'storage.pool.unknownNotMounted')}</span
 				>
 			{/if}
 		</div>
 		<div>
-			<span class="text-secondary">{$t('storage.pool.used')}</span>
+			<span class="kv-label">{$t('storage.pool.used')}</span>
 			{#if pool.mounted}
-				<span class="ml-2"
+				<span class="kv-value tabular"
 					>{formatBytes(pool.used_size)} / {formatBytes(pool.total_size)}</span
 				>
 			{:else}
-				<span class="ml-2 text-muted">{$t('storage.pool.unknownNotMounted')}</span>
+				<span class="kv-value text-muted">{$t('storage.pool.unknownNotMounted')}</span>
 			{/if}
 		</div>
 		<div>
-			<span class="text-secondary">{$t('storage.pool.devices')}</span>
-			<span class="ml-2 mono-xs break-words">{pool.devices.join(', ') || '-'}</span>
+			<span class="kv-label">{$t('storage.pool.devices')}</span>
+			<span class="kv-value mono-xs break-words">{pool.devices.join(', ') || '-'}</span>
 		</div>
 		<div>
-			<span class="text-secondary">{$t('storage.pool.mountpoint')}</span>
-			<span class="ml-2 mono-xs break-words"
+			<span class="kv-label">{$t('storage.pool.mountpoint')}</span>
+			<span class="kv-value mono-xs break-words"
 				>{pool.mounted ? pool.mountpoint || '-' : $t('storage.pool.notMounted')}</span
 			>
 		</div>
 	</div>
 
 	{#if pool.mounted && pool.total_size > 0}
-		<ProgressBar
-			value={(pool.used_size / pool.total_size) * 100}
-			variant="info"
-			class="mt-3"
-		/>
+		{@const used = (pool.used_size / pool.total_size) * 100}
+		<div>
+			<div class="flex items-center justify-between gap-3 mb-1.5 text-xs text-content-secondary">
+				<span>{$t('storage.pool.capacity')}</span>
+				<span class="tabular">{wholePercent.format(used / 100)}</span>
+			</div>
+			<ProgressBar value={used} variant="info" label={$t('storage.pool.capacityOf', { name: pool.name })} />
+		</div>
 	{/if}
 
 	{#if pool.missing_devices > 0}
-		<Alert variant="error" title={$t('storage.pool.missingTitle')} class="mt-3">
+		<Alert variant="error" title={$t('storage.pool.missingTitle')}>
 			{$t('storage.pool.missing', { n: pool.missing_devices })}
 		</Alert>
 	{/if}
 	{#if pool.forced_read_only}
-		<Alert variant="error" title={$t('storage.pool.forcedReadOnlyTitle')} class="mt-3">
+		<Alert variant="error" title={$t('storage.pool.forcedReadOnlyTitle')}>
 			{$t('storage.pool.forcedReadOnly')}
 		</Alert>
 	{:else if pool.read_only}
-		<Alert variant="warning" title={$t('storage.pool.readOnlyTitle')} class="mt-3">
+		<Alert variant="warning" title={$t('storage.pool.readOnlyTitle')}>
 			{$t('storage.pool.readOnly')}
 		</Alert>
 	{/if}
 	{#if pool.device_errors > 0}
-		<Alert variant="error" title={$t('storage.pool.deviceErrorsTitle')} class="mt-3">
+		<Alert variant="error" title={$t('storage.pool.deviceErrorsTitle')}>
 			{$t('storage.pool.deviceErrors', { n: pool.device_errors })}
 			<span class="mono-xs"
 				>{RESET_COUNTERS} {pool.mountpoint || poolMountpoint(pool.name)}</span
@@ -156,7 +167,7 @@
 		</Alert>
 	{/if}
 	{#if pool.health === 'unknown'}
-		<Alert variant="warning" title={$t('storage.pool.unreadableTitle')} class="mt-3">
+		<Alert variant="warning" title={$t('storage.pool.unreadableTitle')}>
 			{$t('storage.pool.unreadable')}
 		</Alert>
 	{/if}

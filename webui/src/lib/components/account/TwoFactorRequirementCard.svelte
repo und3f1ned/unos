@@ -84,7 +84,7 @@
 
 <Card>
 	<div class="flex flex-wrap items-center justify-between gap-2 mb-4">
-		<h3 class="text-lg font-semibold flex items-center gap-2 min-w-0">
+		<h3 class="card-title min-w-0">
 			<UsersRound class="w-5 h-5 shrink-0" />
 			{$t('twofactor.requirement.title')}
 		</h3>

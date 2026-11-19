@@ -91,5 +91,6 @@
 		diskRead={stats.disk_io?.read_rate || 0}
 		diskWrite={stats.disk_io?.write_rate || 0}
 		temperature={wholeDegrees(stats.cpu?.temperature)}
+		cpuCores={stats.cpu?.cores ?? 0}
 	/>
 {/if}

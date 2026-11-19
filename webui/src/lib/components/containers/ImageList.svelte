@@ -184,8 +184,8 @@
 								<td class="whitespace-nowrap">{formatDate(image.created)}</td>
 								<td>
 									<div class="flex justify-end">
-										<Button variant="ghost" size="icon-sm" onclick={() => askRemove(image)}>
-											<Trash2 class="w-4 h-4 text-error" />
+										<Button variant="ghost-danger" size="icon-sm" onclick={() => askRemove(image)}>
+											<Trash2 class="w-4 h-4" />
 											<span class="sr-only">
 												{$t('containers.images.removeOne', { name: nameOf(image) })}
 											</span>

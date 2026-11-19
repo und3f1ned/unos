@@ -53,8 +53,11 @@
 	let changeBlocked = $derived(diskChangeBlocked(pool, scrub, balance, removal));
 </script>
 
-<div class="flex flex-wrap items-center gap-2">
+<!-- The pool's actions in three groups (ADR-0428): its jobs, its disks and volumes, and its
+     mount and removal. -->
+<div class="toolbar">
 	{#if pool.mounted}
+		<div class="toolbar-group">
 		{#if scrub?.status === 'running'}
 			<Button
 				variant="warning"
@@ -123,6 +126,8 @@
 				{$t('storage.pool.balance')}
 			</Button>
 		{/if}
+		</div>
+		<div class="toolbar-group">
 		<!-- One job per pool, and only on a writable pool with all its disks (ADR-0411). -->
 		<Button
 			variant="secondary"
@@ -150,30 +155,36 @@
 		>
 			{$t('storage.pool.volumes')}
 		</Button>
-		<Button
-			variant="secondary"
-			size="sm"
-			icon={Unplug}
-			onclick={() => onunmount(pool)}
-		>
-			{$t('storage.pool.unmount')}
-		</Button>
-	{:else}
-		<Button
-			variant="primary"
-			size="sm"
-			icon={Plug}
-			onclick={() => onmount(pool)}
-		>
-			{$t('storage.pool.mount')}
-		</Button>
+		</div>
 	{/if}
-	<Button
-		variant="ghost"
-		size="icon-sm"
-		onclick={() => ondelete(pool)}
-	>
-		<Trash2 class="w-4 h-4 text-error" />
-		<span class="sr-only">{$t('storage.pool.remove', { name: pool.name })}</span>
-	</Button>
+	<div class="toolbar-group">
+		{#if pool.mounted}
+			<Button
+				variant="secondary"
+				size="sm"
+				icon={Unplug}
+				onclick={() => onunmount(pool)}
+			>
+				{$t('storage.pool.unmount')}
+			</Button>
+		{:else}
+			<Button
+				variant="primary"
+				size="sm"
+				icon={Plug}
+				onclick={() => onmount(pool)}
+			>
+				{$t('storage.pool.mount')}
+			</Button>
+		{/if}
+		<Button
+			variant="ghost-danger"
+			size="icon-sm"
+			title={$t('storage.pool.remove', { name: pool.name })}
+			onclick={() => ondelete(pool)}
+		>
+			<Trash2 class="w-4 h-4" />
+			<span class="sr-only">{$t('storage.pool.remove', { name: pool.name })}</span>
+		</Button>
+	</div>
 </div>

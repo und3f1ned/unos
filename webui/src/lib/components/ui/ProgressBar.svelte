@@ -9,6 +9,8 @@
 		showLabel?: boolean;
 		/** What the bar measures, for screen readers (ADR-0197). */
 		label?: string | undefined;
+		/** The value as words, where a percent of max would mislead (a temperature). */
+		valueText?: string | undefined;
 		class?: string;
 	};
 
@@ -19,6 +21,7 @@
 		variant = 'auto',
 		showLabel = false,
 		label = undefined,
+		valueText = undefined,
 		class: className = ''
 	}: Props = $props();
 
@@ -43,12 +46,13 @@
 			style="width: {percent}%"
 			role="progressbar"
 			aria-label={label}
+			aria-valuetext={valueText}
 			aria-valuenow={value}
 			aria-valuemin="0"
 			aria-valuemax={max}
 		></div>
 	</div>
 	{#if showLabel}
-		<span class="text-xs text-secondary mt-1">{percent.toFixed(1)}%</span>
+		<span class="block mt-1 text-right text-xs text-secondary tabular">{percent.toFixed(1)}%</span>
 	{/if}
 </div>

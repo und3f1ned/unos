@@ -18,7 +18,7 @@
     <Button variant="ghost" size="sm" onclick={onrefresh}>{$t("network.connections.refresh")}</Button>
   </div>
   <div class="table-frame max-h-96 overflow-y-auto px-3">
-    <table class="table">
+    <table class="table table-compact">
       <thead class="table-header sticky top-0 bg-surface-elevated">
         <tr>
           <th class="pt-3 pr-4">{$t("network.protocol")}</th>

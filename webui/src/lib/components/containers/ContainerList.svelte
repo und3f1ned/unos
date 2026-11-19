@@ -141,8 +141,8 @@
 		{/if}
 	</EmptyState>
 {:else if view === 'table'}
-	<!-- Table View -->
-	<Card>
+	<!-- Table View: a flush card (ADR-0428) -->
+	<Card flush>
 		<div class="table-frame">
 			<table class="table">
 				<thead class="table-header">
@@ -175,18 +175,18 @@
 								<div class="mono text-sm truncate max-w-48">{container.image}</div>
 							</td>
 							<td>
-								<Badge variant={stateVariant(container.state)}>{labelOf(STATES, container.state, $t)}</Badge>
+								<Badge variant={stateVariant(container.state)} dot>{labelOf(STATES, container.state, $t)}</Badge>
 							</td>
 							<td>
 								<div class="flex items-center gap-2">
 									<span class="text-sm text-secondary mono-xs">{formatPorts(container)}</span>
 									{#if href}
-										{@render webLink(href, 'text-info hover:text-status-info', 'w-3.5 h-3.5')}
+										{@render webLink(href, 'text-content-link', 'w-3.5 h-3.5')}
 									{/if}
 								</div>
 							</td>
 							<td>
-								<div class="flex items-center justify-end gap-1">
+								<div class="table-actions">
 									{@render actions(container, true)}
 								</div>
 							</td>
@@ -212,9 +212,10 @@
 					<div class="flex items-center gap-3 min-w-0">
 						{@render selectBox(container, 'form-checkbox flex-shrink-0', true)}
 						<div
-							class="w-10 h-10 rounded-lg bg-surface-muted flex items-center justify-center flex-shrink-0"
+							class="w-10 h-10 rounded-lg bg-surface-overlay flex items-center justify-center flex-shrink-0"
+							aria-hidden="true"
 						>
-							<ContainerIcon class="w-5 h-5 icon-container" />
+							<ContainerIcon class="w-5 h-5 text-content-secondary" />
 						</div>
 						<div class="min-w-0">
 							<h3 class="font-semibold truncate">{container.name}</h3>

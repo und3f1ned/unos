@@ -7,8 +7,9 @@
 	// The attributes of a button, and of a link for one with `href` (target, rel).
 	type Props = Omit<HTMLButtonAttributes, 'type'> & Pick<HTMLAnchorAttributes, 'target' | 'rel'> & {
 		// `plain` brings no look of its own: a control that styles itself through `class` (a tab, a
-		// clickable card or row, the classes `tab-*` of app.css).
-		variant?: 'primary' | 'secondary' | 'danger' | 'warning' | 'success' | 'ghost' | 'plain';
+		// clickable card or row, the classes `tab-*` of app.css). `ghost-danger`: an icon button that
+		// deletes or removes (ADR-0428).
+		variant?: 'primary' | 'secondary' | 'danger' | 'warning' | 'success' | 'ghost' | 'ghost-danger' | 'plain';
 		size?: 'sm' | 'md' | 'lg' | 'icon' | 'icon-sm';
 		type?: 'button' | 'submit' | 'reset';
 		disabled?: boolean;
@@ -45,6 +46,7 @@
 		warning: 'btn-warning',
 		success: 'btn-success',
 		ghost: 'btn-ghost',
+		'ghost-danger': 'btn-ghost-danger',
 		plain: ''
 	};
 
@@ -65,10 +67,10 @@
 
 {#snippet content()}
 	{#if loading}
-		<Loader2 class="w-4 h-4 loading-spinner" />
+		<Loader2 class="w-4 h-4 loading-spinner" aria-hidden="true" />
 	{:else if icon}
 		{@const Icon = icon}
-		<Icon class="w-4 h-4" />
+		<Icon class="w-4 h-4 shrink-0" aria-hidden="true" />
 	{/if}
 	{@render children?.()}
 {/snippet}
@@ -84,6 +86,7 @@
 		{type}
 		disabled={disabled || loading}
 		aria-pressed={pressed}
+		aria-busy={loading || undefined}
 		class={classes}
 	>
 		{@render content()}

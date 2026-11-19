@@ -2,7 +2,7 @@
 	// The Disks card of the Storage page: the host's whole disks, what they hold and their state, and
 	// the button of each disk's idle timeout (ADR-0378).
 	import { HardDrive, Timer } from 'lucide-svelte';
-	import { Alert, Badge, Button, Card } from '$lib/components/ui';
+	import { Alert, Badge, Button, Card, EmptyState } from '$lib/components/ui';
 	import type { Disk, PowerState } from '$lib/api/storage';
 	import { t } from '$lib/i18n';
 	import type { BadgeVariant } from './pools';
@@ -57,27 +57,33 @@
 	}
 </script>
 
-<Card>
-	<h2 class="section-title mb-4">
-		<HardDrive class="w-5 h-5" />
-		{$t('storage.disks.title')}
-	</h2>
+<!-- A flush card: the table reaches its edges (ADR-0428). The columns keep their order. -->
+<Card flush>
+	<div class="card-header">
+		<h2 class="section-title">
+			<HardDrive class="w-5 h-5 text-content-secondary" aria-hidden="true" />
+			{$t('storage.disks.title')}
+		</h2>
+	</div>
 
 	{#if warning}
-		<Alert
-			variant="warning"
-			title={$t('storage.spindown.saved')}
-			dismissible
-			class="mb-4"
-			ondismiss={ondismisswarning}
-		>
-			{warning}
-		</Alert>
+		<div class="px-5 pb-4">
+			<Alert
+				variant="warning"
+				title={$t('storage.spindown.saved')}
+				dismissible
+				ondismiss={ondismisswarning}
+			>
+				{warning}
+			</Alert>
+		</div>
 	{/if}
 	{#if error}
-		<Alert variant="error" title={$t('storage.disks.loadError')}>{error}</Alert>
+		<div class="px-5 pb-5">
+			<Alert variant="error" title={$t('storage.disks.loadError')}>{error}</Alert>
+		</div>
 	{:else if disks.length === 0}
-		<p class="text-muted">{$t('storage.disks.none')}</p>
+		<EmptyState compact icon={HardDrive} title={$t('storage.disks.none')} />
 	{:else}
 		<div class="table-frame">
 			<table class="table">
@@ -85,7 +91,7 @@
 					<tr>
 						<th>{$t('storage.disks.column.device')}</th>
 						<th>{$t('storage.disks.column.model')}</th>
-						<th>{$t('storage.disks.column.size')}</th>
+						<th class="num">{$t('storage.disks.column.size')}</th>
 						<th>{$t('storage.disks.column.type')}</th>
 						<th>{$t('storage.disks.column.contents')}</th>
 						<th>{$t('storage.disks.column.mountedAt')}</th>
@@ -97,16 +103,17 @@
 					{#each disks as disk}
 						{@const status = diskStatus(disk)}
 						<tr class="table-row align-top">
-							<td class="mono">{disk.path}</td>
+							<td class="mono whitespace-nowrap">{disk.path}</td>
 							<td>
 								<p>{disk.model || '-'}</p>
 								{#if disk.serial}
 									<p class="mono-xs text-muted">{disk.serial}</p>
 								{/if}
 							</td>
-							<td>{formatBytes(disk.size)}</td>
+							<td class="num">{formatBytes(disk.size)}</td>
 							<td>
-								<Badge variant={disk.rotational ? 'warning' : 'success'}>
+								<!-- A type is no state: a neutral badge. -->
+								<Badge variant="neutral">
 									{$t(disk.rotational ? 'storage.disks.hdd' : 'storage.disks.ssd')}
 								</Badge>
 							</td>
@@ -130,10 +137,12 @@
 								{/if}
 							</td>
 							<td>
+								<!-- The power state and the idle timeout's button on one line. -->
+								<div class="flex flex-wrap items-center gap-2">
 								<Badge variant={POWER_STATES[disk.power_state].variant}>
 									{$t(POWER_STATES[disk.power_state].key)}
 								</Badge>
-								<div class="relative mt-2">
+								<div class="relative">
 									<Button
 										variant="secondary"
 										size="sm"
@@ -144,6 +153,7 @@
 										<span class="sr-only">{$t('storage.spindown.of', { disk: disk.path })}</span>
 										{timeoutLabel(disk.spindown)}
 									</Button>
+								</div>
 								</div>
 								{#if disk.spindown_problem}
 									<p class="text-xs text-muted mt-1">{disk.spindown_problem}</p>

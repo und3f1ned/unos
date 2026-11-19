@@ -8,6 +8,7 @@ import type { Translation } from '../translate';
 export const en = {
 	'palette.title': 'Command palette',
 	'palette.open': 'Open the command palette',
+	'palette.trigger': 'Search',
 	'palette.field': 'Search pages and actions',
 	'palette.placeholder': 'Type the name of a page or an action',
 	'palette.list': 'Pages and actions',
@@ -49,6 +50,7 @@ export const en = {
 export const ru: Translation<typeof en> = {
 	'palette.title': 'Палитра команд',
 	'palette.open': 'Открыть палитру команд',
+	'palette.trigger': 'Поиск',
 	'palette.field': 'Поиск страниц и действий',
 	'palette.placeholder': 'Введите название страницы или действия',
 	'palette.list': 'Страницы и действия',

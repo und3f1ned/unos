@@ -1,5 +1,6 @@
 ---
-status: accepted
+status: superseded
+superseded-by: ADR-0428
 date: 2026-11-17
 area: webui
 decided-by: agent
@@ -8,6 +9,8 @@ decided-by: agent
 # ADR-0393: Ctrl+K opens a command palette of the pages and actions of the user's role, which runs only actions that change nothing on the NAS
 
 ## Context
+
+Superseded by ADR-0428: only in part, "From md up there is no such button, and the sidebar's first button is still Logout": from `md` the sidebar has a Search button that opens the palette, and the header bar's button stays below `md`; every other rule here stays in force.
 
 The feature `webui.command-palette` asks that Ctrl+K (Cmd+K on macOS) open a command palette that goes to any page or action: typing narrows the choices, and Enter opens the chosen page or starts the action. The owner delegated its decisions to the agent, asking above all that it be safe (ADR-0013): what it offers to each role, which actions it may run itself, how it matches, its keyboard and the browser's own Ctrl+K, the phone, and that it asks the server for nothing.
 

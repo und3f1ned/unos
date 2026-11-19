@@ -1,14 +1,18 @@
 <script lang="ts">
-	import { Check, Clock, RefreshCw, Server, SlidersHorizontal } from 'lucide-svelte';
+	import { AlertTriangle, Check, CheckCircle, RefreshCw, SlidersHorizontal } from 'lucide-svelte';
 	import type { SystemInfo } from '$lib/api/system';
-	import { Button } from '$lib/components/ui';
+	import { Button, StatusDot } from '$lib/components/ui';
 	import { intlLocale, t } from '$lib/i18n';
+	import { isAdmin } from '$lib/stores/auth';
+	import { problems, problemsKnown } from '$lib/stores/problems';
 	import { wsConnected, wsForbidden } from '$lib/stores/stats';
 	import { apiTime } from '$lib/time';
 
-	// The head of the dashboard: the host's name, system and uptime, how fresh the live stats are,
-	// and the buttons Customize (ADR-0395) and Refresh. On a narrow screen the live stats' time and
-	// Refresh go below the host name, and a long host name breaks (ADR-0302).
+	// The head of the dashboard: the host's name, system and uptime, a chip that says how fresh the
+	// live stats are (or why there are none), for an administrator a chip "No problems" while the
+	// problems banner has nothing to say, and the buttons Customize (ADR-0395) and Refresh
+	// (ADR-0428). On a narrow screen the chips and buttons go below the host name, and a long host
+	// name breaks (ADR-0302). The chips are no live region: the time changes every 2 seconds.
 
 	type Props = {
 		systemInfo: SystemInfo | null;
@@ -48,27 +52,36 @@
 	}
 </script>
 
-<div class="flex flex-wrap items-center justify-between gap-3">
-	<div class="flex items-center gap-3 min-w-0">
-		<Server class="w-8 h-8 text-brand-ring flex-shrink-0" />
-		<div class="min-w-0">
-			<h1 class="text-2xl font-bold break-words">{systemInfo?.hostname || $t('common.product')}</h1>
-			{#if systemInfo}
-				<p class="text-sm text-content-secondary">
-					{$t('dashboard.osUptime', { os: systemInfo.os, uptime: formatUptime(systemInfo.boot_time) })}
-				</p>
-			{/if}
-		</div>
+<div class="page-header">
+	<div class="min-w-0">
+		<h1 class="page-title">{systemInfo?.hostname || $t('common.product')}</h1>
+		{#if systemInfo}
+			<p class="page-subtitle">
+				{$t('dashboard.osUptime', { os: systemInfo.os, uptime: formatUptime(systemInfo.boot_time) })}
+			</p>
+		{/if}
 	</div>
-	<div class="flex items-center gap-4">
+	<div class="page-actions">
 		{#if $wsForbidden}
-			<span class="text-xs text-warning">{$t('dashboard.liveStatsForbidden')}</span>
+			<span class="chip text-status-warning">
+				<AlertTriangle class="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+				<span>{$t('dashboard.liveStatsForbidden')}</span>
+			</span>
 		{:else if !$wsConnected}
-			<span class="text-xs text-warning">{$t('dashboard.disconnected')}</span>
+			<span class="chip text-status-warning">
+				<AlertTriangle class="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+				<span>{$t('dashboard.disconnected')}</span>
+			</span>
 		{:else if lastUpdate}
-			<span class="text-xs text-content-muted flex items-center gap-1">
-				<Clock class="w-3 h-3" />
-				{$t('dashboard.updated', { time: formatTime(lastUpdate) })}
+			<span class="chip">
+				<StatusDot status="success" />
+				<span>{$t('dashboard.updated', { time: formatTime(lastUpdate) })}</span>
+			</span>
+		{/if}
+		{#if $isAdmin && $wsConnected && $problemsKnown && $problems.length === 0}
+			<span class="chip text-status-success">
+				<CheckCircle class="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+				<span>{$t('dashboard.noProblems')}</span>
 			</span>
 		{/if}
 		{#if customizable}
@@ -84,8 +97,8 @@
 				</Button>
 			</span>
 		{/if}
-		<Button variant="secondary" size="icon" onclick={onrefresh} disabled={loading || saving}>
-			<RefreshCw class="w-4 h-4 {loading ? 'animate-spin' : ''}" />
+		<Button variant="secondary" size="icon-sm" onclick={onrefresh} disabled={loading || saving} title={$t('common.refresh')}>
+			<RefreshCw class="w-4 h-4 {loading ? 'animate-spin' : ''}" aria-hidden="true" />
 			<span class="sr-only">{$t('common.refresh')}</span>
 		</Button>
 	</div>

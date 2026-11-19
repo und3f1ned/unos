@@ -50,9 +50,8 @@
 					{/if}
 				</div>
 				<Button
-					variant="ghost"
+					variant="ghost-danger"
 					size="icon"
-					class="text-status-error hover:text-status-error"
 					disabled={busy}
 					aria-label={$t('remote.revokeLabel', { name: peer.name })}
 					onclick={() => onrevoke(peer)}

@@ -102,34 +102,32 @@
 		{/if}
 	</div>
 {:else}
-	<Card>
+	<Card class="h-full flex flex-col">
 		<div class="card-header">
 			<h3 class="card-title">
-				<Container class="w-5 h-5 icon-container" />
+				<Container class="w-5 h-5 text-content-secondary" aria-hidden="true" />
 				{$t('dashboard.containers.title')}
 			</h3>
-			<a href="/containers" class="text-sm text-info hover:text-status-info transition-colors"
-				>{$t('dashboard.manage')}</a
-			>
+			<a href="/containers" class="link text-[13px]">{$t('dashboard.manage')}</a>
 		</div>
 
 		<!-- Summary Stats -->
-		<div class="grid grid-cols-2 gap-3 mb-4">
-			<div class="card-nested flex items-center gap-3">
-				<div class="w-8 h-8 rounded-full bg-status-success/20 flex items-center justify-center">
+		<div class="grid grid-cols-2 gap-2 mb-3">
+			<div class="flex items-center gap-2.5 px-3 py-2.5 rounded-lg bg-surface-muted">
+				<div class="w-8 h-8 rounded-full bg-status-success/20 flex items-center justify-center" aria-hidden="true">
 					<CheckCircle2 class="w-4 h-4 text-success" />
 				</div>
 				<div>
-					<p class="text-lg font-bold text-success">{running}</p>
+					<p class="text-xl font-semibold tabular">{running}</p>
 					<p class="text-xs text-secondary">{$t('dashboard.containers.running')}</p>
 				</div>
 			</div>
-			<div class="card-nested flex items-center gap-3">
-				<div class="w-8 h-8 rounded-full bg-status-neutral/20 flex items-center justify-center">
+			<div class="flex items-center gap-2.5 px-3 py-2.5 rounded-lg bg-surface-muted">
+				<div class="w-8 h-8 rounded-full bg-status-neutral/20 flex items-center justify-center" aria-hidden="true">
 					<XCircle class="w-4 h-4 text-secondary" />
 				</div>
 				<div>
-					<p class="text-lg font-bold">{stopped}</p>
+					<p class="text-xl font-semibold tabular">{stopped}</p>
 					<p class="text-xs text-secondary">{$t('dashboard.containers.stopped')}</p>
 				</div>
 			</div>
@@ -139,22 +137,23 @@
 			<div class="text-center py-4">
 				<Container class="w-8 h-8 mx-auto mb-2 text-muted opacity-50" />
 				<p class="text-secondary text-sm">{$t('dashboard.containers.none')}</p>
-				<a href="/containers" class="text-sm text-info hover:underline mt-1 inline-block">
+				<a href="/containers" class="link text-sm mt-1 inline-block">
 					{$t('dashboard.containers.create')}
 				</a>
 			</div>
 		{:else}
-			<div class="space-y-2">
+			<div class="flex flex-col">
 				{#each displayContainers as container}
 					{@const webUrl = getWebUrl(container)}
 					{@const Icon = getStateIcon(container.state)}
 					<a
 						href="/containers"
-						class="flex items-center justify-between p-2.5 bg-surface-muted rounded-lg hover:bg-surface-overlay transition-colors group"
+						class="flex items-center justify-between gap-3 px-2 py-2 -mx-2 rounded border-b border-border-muted last:border-b-0 hover:bg-surface-overlay transition-colors"
 					>
 						<div class="flex items-center gap-3 min-w-0">
 							<div
 								class="w-8 h-8 rounded bg-surface-overlay flex items-center justify-center flex-shrink-0"
+								aria-hidden="true"
 							>
 								<Icon class="w-4 h-4 {getStateColor(container.state)}" />
 							</div>
@@ -173,13 +172,13 @@
 									target="_blank"
 									rel="noopener"
 									onclick={(event) => event.stopPropagation()}
-									class="p-1 rounded hover:bg-surface-elevated text-info opacity-0 group-hover:opacity-100 transition-opacity"
+									class="p-1 rounded hover:bg-surface-elevated text-content-link"
 									title={$t('dashboard.containers.open')}
 								>
 									<ExternalLink class="w-3.5 h-3.5" />
 								</a>
 							{/if}
-							<Badge variant={getStatusDotVariant(container.state)} class="text-xs">
+							<Badge variant={getStatusDotVariant(container.state)} dot>
 								{stateLabel(container.state)}
 							</Badge>
 						</div>
@@ -188,7 +187,7 @@
 				{#if containers.length > limit}
 					<a
 						href="/containers"
-						class="block text-xs text-info text-center py-2 hover:underline"
+						class="link block text-xs text-center pt-2.5"
 					>
 						{$t('dashboard.containers.viewAll', { n: containers.length })}
 					</a>

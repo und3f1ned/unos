@@ -33,7 +33,8 @@
 	}
 </script>
 
-<div class="flex gap-1 p-1 bg-surface-elevated rounded-lg w-fit" role="tablist" aria-label={$t('shares.tabs.label')}>
+<!-- Page tabs: a line under the row, the selected tab's bar in brand-ring (ADR-0428). -->
+<div class="tab-bar" role="tablist" aria-label={$t('shares.tabs.label')}>
 	{#each tabs as tab (tab.id)}
 		<Button
 			variant="plain"
@@ -43,7 +44,7 @@
 			aria-selected={active === tab.id}
 			aria-controls="shares-panel"
 			tabindex={active === tab.id ? 0 : -1}
-			class="tab-pill {active === tab.id ? 'tab-pill-active' : ''}"
+			class="tab-underline {active === tab.id ? 'tab-underline-active' : ''}"
 			onclick={() => onselect(tab.id)}
 			onkeydown={(event) => tabKeydown(event, tab.id)}
 		>

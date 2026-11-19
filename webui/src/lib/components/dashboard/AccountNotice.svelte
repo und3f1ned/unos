@@ -14,13 +14,15 @@
 
 <Card>
 	<div class="flex items-start gap-3">
-		<UserCog class="w-5 h-5 text-info mt-0.5" />
+		<span class="grid place-items-center w-8 h-8 shrink-0 rounded-lg bg-status-info/20 text-status-info" aria-hidden="true">
+			<UserCog class="w-4 h-4" />
+		</span>
 		<div>
 			<p class="font-medium">{$t('dashboard.user.signedInAs', { name: username })}</p>
 			<p class="text-sm text-secondary">
 				{$t('dashboard.user.managed')}
 				{$t('dashboard.user.account')}
-				<a href="/system#security" class="text-info hover:underline">{$t('dashboard.user.accountLink')}</a>.
+				<a href="/system#security" class="link">{$t('dashboard.user.accountLink')}</a>.
 			</p>
 		</div>
 	</div>

@@ -41,8 +41,21 @@
   });
 </script>
 
-<div class="space-y-6">
+<!-- Two runs of cards under divider labels that are no headings (ADR-0428): the signed-in user's
+     own settings, then, for an administrator, the NAS's. -->
+{#snippet divider(label: string)}
+  <div class="flex items-center gap-3 pt-2">
+    <p class="eyebrow shrink-0">{label}</p>
+    <span class="h-px flex-1 bg-border" aria-hidden="true"></span>
+  </div>
+{/snippet}
+
+<div class="space-y-4">
   <h2 class="text-xl font-semibold">{$t("account.title")}</h2>
+
+  {#if isAdmin}
+    {@render divider($t("account.group.mine"))}
+  {/if}
 
   <LanguageCard />
 
@@ -56,7 +69,11 @@
 
   <ApiTokensCard />
 
+  <LoginHistoryCard />
+
   {#if isAdmin}
+    {@render divider($t("account.group.nas"))}
+
     {#if twoFactor.statusLoaded}
       <TwoFactorRequirementCard ownTwoFactor={twoFactor.enabled} />
     {/if}
@@ -65,8 +82,6 @@
 
     <CertificatesCard {certificates} />
   {/if}
-
-  <LoginHistoryCard />
 </div>
 
 <!-- The dialogs below take Modal's overlay (ADR-0302): one taller than the window scrolls with

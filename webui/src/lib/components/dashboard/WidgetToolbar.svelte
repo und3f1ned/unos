@@ -24,28 +24,33 @@
 	let { name, first, last, saving, ondragstart, ondragend, onmove, onhide }: Props = $props();
 </script>
 
-<div data-toolbar class="flex flex-wrap items-center gap-1 mb-1">
+<!-- A small bar at the widget's top right while the widgets are arranged (ADR-0428), in the room
+     that the widget keeps above its card. -->
+<div
+	data-toolbar
+	class="absolute top-0 right-0 z-[2] flex items-center gap-0.5 p-0.5 rounded-lg border border-border bg-surface-elevated shadow-popover"
+>
 	<!-- Dragging is for a mouse; the buttons are for the keyboard and a finger. -->
 	<span
 		data-drag-handle
 		draggable="true"
 		role="presentation"
 		title={$t('dashboard.layout.drag')}
-		class="p-1.5 cursor-grab text-secondary"
+		class="p-1.5 cursor-grab text-secondary rounded hover:bg-surface-overlay"
 		{ondragstart}
 		{ondragend}
 	>
 		<GripVertical class="w-4 h-4" />
 	</span>
-	<Button variant="secondary" size="icon-sm" disabled={saving || first} onclick={() => onmove(-1)}>
+	<Button variant="ghost" size="icon-sm" disabled={saving || first} onclick={() => onmove(-1)}>
 		<ArrowUp class="w-4 h-4" />
 		<span class="sr-only">{$t('dashboard.layout.moveUp', { name })}</span>
 	</Button>
-	<Button variant="secondary" size="icon-sm" disabled={saving || last} onclick={() => onmove(1)}>
+	<Button variant="ghost" size="icon-sm" disabled={saving || last} onclick={() => onmove(1)}>
 		<ArrowDown class="w-4 h-4" />
 		<span class="sr-only">{$t('dashboard.layout.moveDown', { name })}</span>
 	</Button>
-	<Button variant="secondary" size="icon-sm" disabled={saving} onclick={onhide}>
+	<Button variant="ghost" size="icon-sm" disabled={saving} onclick={onhide}>
 		<EyeOff class="w-4 h-4" />
 		<span class="sr-only">{$t('dashboard.layout.hide', { name })}</span>
 	</Button>

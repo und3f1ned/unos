@@ -8,7 +8,7 @@
   // for an encrypted one (.tar.gz.enc), then sees what the restore did. The page shows it while
   // it is open, so that its fields start empty every time.
   import type { BackupInfo } from "$lib/api/backup";
-  import { Button, Input } from "$lib/components/ui";
+  import { Alert, Button, Input } from "$lib/components/ui";
   import { t } from "$lib/i18n";
   import { AlertTriangle, CheckCircle, RefreshCw, RotateCcw } from "lucide-svelte";
 
@@ -42,29 +42,30 @@
 </script>
 
 <!-- Modal's overlay (ADR-0302): taller than the window, the dialog scrolls with it, so that its
-     buttons stay reachable; my-auto centers it while it fits. -->
+     buttons stay reachable; my-auto centers it while it fits. Modal's look (ADR-0428) on markup
+     of its own: its name stays the same while its view changes from the question to the result. -->
 <div class="modal-overlay items-start overflow-y-auto p-4">
-  <div class="bg-surface-elevated rounded-lg p-6 max-w-md w-full my-auto" role="dialog" aria-modal="true" aria-label={$t("backup.dialog.label")}>
+  <div class="modal max-w-md my-auto" role="dialog" aria-modal="true" aria-label={$t("backup.dialog.label")}>
     {#if result}
       <!-- Result view -->
       <div class="text-center">
         {#if result.success}
           <CheckCircle class="w-12 h-12 text-status-success mx-auto mb-4" />
-          <h3 class="text-lg font-bold mb-2">{$t("backup.dialog.complete")}</h3>
+          <h3 class="modal-title mb-2">{$t("backup.dialog.complete")}</h3>
           <p class="text-content-secondary text-sm mb-4">{result.message}</p>
           {#if result.restored && result.restored.length > 0}
-            <div class="bg-surface-overlay rounded p-3 mb-4 text-left">
+            <div class="card-nested p-3 mb-4 text-left">
               <p class="text-xs text-content-secondary mb-2">{$t("backup.dialog.restored")}</p>
               <ul class="text-sm space-y-1">
                 {#each result.restored as item}
-                  <li class="text-status-success">- {itemLabel(item)}</li>
+                  <li>- {itemLabel(item)}</li>
                 {/each}
               </ul>
             </div>
           {/if}
         {:else}
           <AlertTriangle class="w-12 h-12 text-status-error mx-auto mb-4" />
-          <h3 class="text-lg font-bold mb-2">{$t("backup.dialog.failed")}</h3>
+          <h3 class="modal-title mb-2">{$t("backup.dialog.failed")}</h3>
           <p class="text-status-error text-sm mb-4">{result.message}</p>
         {/if}
         <Button variant="secondary" onclick={onclose}>
@@ -74,22 +75,23 @@
     {:else}
       <!-- Confirmation view -->
       <div class="flex items-start gap-3 mb-4">
-        <AlertTriangle class="w-6 h-6 text-status-warning flex-shrink-0 mt-1" />
+        <span class="grid place-items-center w-8 h-8 shrink-0 rounded-full bg-status-warning/20 text-status-warning" aria-hidden="true">
+          <AlertTriangle class="w-4 h-4" />
+        </span>
         <div>
-          <h3 class="text-lg font-bold">{$t("backup.dialog.title")}</h3>
+          <h3 class="modal-title">{$t("backup.dialog.title")}</h3>
           <p class="text-content-secondary text-sm mt-1">
             {$t("backup.dialog.from")} <span class="text-content font-medium">{target.filename}</span>
           </p>
         </div>
       </div>
 
-      <div class="bg-surface-overlay rounded p-3 mb-4">
-        <p class="text-status-warning text-sm">{$t("backup.dialog.warning")}</p>
-        <ul class="text-sm text-content-soft mt-2 space-y-1">
+      <Alert variant="warning" size="sm" class="mb-4" title={$t("backup.dialog.warning")}>
+        <ul class="text-content-soft mt-1 space-y-1">
           <li>{$t("backup.dialog.database")}</li>
           <li>{$t("backup.dialog.shares")}</li>
         </ul>
-      </div>
+      </Alert>
 
       {#if target.encrypted}
         <Input
@@ -104,7 +106,7 @@
       {/if}
 
       <div class="mb-4">
-        <label for="confirmName" class="block text-sm text-content-secondary mb-2">
+        <label for="confirmName" class="form-label">
           {$t("backup.dialog.confirm")}
         </label>
         <input
@@ -116,7 +118,7 @@
         />
       </div>
 
-      <div class="flex gap-3">
+      <div class="modal-footer">
         <Button variant="secondary" class="flex-1" onclick={onclose}>
           {$t("common.cancel")}
         </Button>

@@ -60,8 +60,8 @@
 </script>
 
 <Card>
-  <h3 class="section-title mb-4">
-    <CalendarClock class="w-5 h-5" />
+  <h3 class="card-title mb-4">
+    <CalendarClock class="w-5 h-5 text-content-secondary" />
     {$t("power.schedule.title")}
   </h3>
   <div class="space-y-4">

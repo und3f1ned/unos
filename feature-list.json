@@ -4666,6 +4666,34 @@
       ]
     },
     {
+      "id": "webui.redesign",
+      "category": "webui",
+      "description": "The web UI is redesigned: a calm graphite look with an indigo brand, grouped navigation and one shape per pattern",
+      "steps": [
+        "Both themes take the new tokens, and every pair of text and control colours meets WCAG AA",
+        "The sidebar groups its links under Data, Applications and Administration, and from md a Search button opens the command palette",
+        "The System page has its h1 and shows its twelve tabs in the groups Settings, Monitoring and Maintenance",
+        "The dashboard's header says whether the page is connected and, for an administrator, that there are no problems",
+        "Every page fits a 375 px phone in both themes, and every E2E spec passes"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0428"
+      ],
+      "verified_by": [
+        "supervisor/tests/test_webui_theme.py",
+        "supervisor/tests/test_webui_design_system.py",
+        "webui/tests/navigation.spec.ts",
+        "webui/tests/command-palette.spec.ts",
+        "webui/tests/redesign.spec.ts",
+        "webui/tests/websocket.spec.ts",
+        "webui/tests/mobile-layout.spec.ts",
+        "webui/tests/theme.spec.ts",
+        "webui/tests/language.spec.ts"
+      ],
+      "notes": "Built 2026-11-19 on the workstation from the design proposal the owner asked for (\"refactor and redesign the interface\"), on top of webui.svelte-5 (ADR-0427); decisions in ADR-0428, which supersedes ADR-0302, ADR-0393, ADR-0400 and ADR-0405 in part. Not host-level: only the web UI's image rebuilds once on the dev device. Tokens: a graphite base and an indigo brand #4a55d6 in both themes, six accent hues, new content-link and shadow (three shadows of each theme), the system font stack (no web font), 14 px body, radii 6/10/12 px; test_webui_theme.py checks the new pairs (alert bodies in content on 10 % tints, links, the active item's tint and bar, accent chips on 20 %, border-strong and brand-ring on surface-hover). app.css and ui: one :focus-visible ring, fields with a ring and a halo, Button ghost-danger and aria-busy, Card title/description/headingLevel/actions/flush, Badge dot, Input icon with aria-invalid and aria-describedby, Modal's ghost close button, danger icon circle and a footer right-aligned from sm, Alert size sm, EmptyState compact, StatusDot label, ProgressBar valueText; .kv, .toolbar, .chip, .eyebrow, .tab-bar, .segmented, .table-actions, .card-flush, .content-narrow. Frame: the ten sidebar links unchanged under Data, Applications and Administration (nav named Main); a Search button from md (name 'Search pages and actions', so that System > Logs' exact 'Search' button stays unique) with the key hint; a polite aria-live connection line (Connecting…, Connected, Not connected, No live data; no role status, which audit.spec and power.spec read page-wide); the admin's user block links to Your account; the drawer slides in; the problems banner shows three and Show all N. System: an h1 and the twelve tabs in Settings, Monitoring, Maintenance (the palette's order and SYSTEM_TABS of command-palette.spec.ts follow), a column from xl and labelled chip rows below; Security in two runs (Your account, This NAS) for administrators. Dashboard: status chip (Disconnected from the NAS replaces 'WebSocket disconnected'; websocket.spec.ts checks the new text is absent), No problems once the socket's problems message came (problemsKnown), stat tiles with accent chips and calm values, storage total on top, 2 x 2 quick actions, toolbar in reserved room while arranging, an empty state when every widget is hidden. Pages: headers without icon tiles, underline page tabs, flush tables, toolbar groups on a pool, .kv facts (still div > span), Capacity bars in whole percent, stat buttons and a segmented view switch on Containers, a 480 px container sheet, the sign-in pages as a 400 px card. Spec changes besides new checks: SYSTEM_TABS, the websocket text, and theme.spec.ts's colour of the active nav item (content on a 20 % brand tint, was white on solid brand). New: redesign.spec.ts (connection line, No problems, Show all, all hidden), checks of the Search button (command-palette, mobile-layout) and of the group labels (navigation). Kept for the specs, against the proposal: the App Store's icon tiles keep rounded-xl (appstore.spec.ts counts it); the two-factor code dialogs, the restore dialog and the Scheduler's two keep their own markup (two-factor.spec walks div > h3, backup specs name the dialog by its aria-label through its result view) with Modal's classes; Shares' info notes stay separate small alerts. Not done: Security split and Disk Health on Storage (later entries, as the owner's proposal says); a sparkline on stat tiles; coarse-pointer sizes only for Button."
+    },
+    {
       "id": "webui.toolchain-major-versions",
       "category": "webui",
       "description": "The web UI builds with the current major versions of its toolchain",

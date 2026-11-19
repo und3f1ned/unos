@@ -125,13 +125,13 @@
     >
       <History class="w-4 h-4" />
     </Button>
-    <Button variant="ghost" size="icon" class="text-status-info hover:text-status-info"
+    <Button variant="ghost" size="icon"
       onclick={() => onedit(task)}
       title={$t("scheduler.task.edit")}
     >
       <Edit3 class="w-4 h-4" />
     </Button>
-    <Button variant="ghost" size="icon" class="text-status-error hover:text-status-error"
+    <Button variant="ghost-danger" size="icon"
       onclick={() => ondelete(task)}
       title={$t("scheduler.task.delete")}
     >

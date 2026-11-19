@@ -2225,11 +2225,21 @@ test.describe('From the md breakpoint up', () => {
   test.use({ viewport: { width: 768, height: 1024 } });
 
   test('the sidebar stays beside the page, without the header bar', async ({ authenticatedPage: page }) => {
-    // Not even hidden: the page's first button is Logout, as before, and the button of the command
-    // palette is the phone's alone (ADR-0393).
+    // Not even hidden: the header bar's button of the command palette is the phone's alone
+    // (ADR-0393); from md the sidebar's Search button opens the palette, and it is the page's first
+    // button (ADR-0428).
     await expect(menuButton(page)).toHaveCount(0);
     await expect(page.getByRole('button', { name: 'Open the command palette' })).toHaveCount(0);
     await expect(page.locator('button').first()).toBeVisible();
+    const search = page.locator('aside').getByRole('button', { name: 'Search pages and actions' });
+    await expect(search).toBeVisible();
+    await expect(page.locator('button').first()).toHaveAccessibleName('Search pages and actions');
+    await search.click();
+    const palette = page.getByRole('dialog', { name: 'Command palette' });
+    await expect(palette).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(palette).toBeHidden();
+    await expect(search).toBeFocused();
     await expect(navLink(page, '/storage')).toBeVisible();
     await expect(page.locator('aside').getByText('Administrator', { exact: true })).toBeVisible();
     await navLink(page, '/storage').click();

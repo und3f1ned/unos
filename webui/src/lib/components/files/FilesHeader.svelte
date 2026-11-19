@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { FolderOpen, Plus, RefreshCw, Trash, Upload } from "lucide-svelte";
+  import { Plus, RefreshCw, Trash, Upload } from "lucide-svelte";
   import { Button } from "$lib/components/ui";
   import { t } from "$lib/i18n";
   import type { FileBrowser } from "./browser.svelte";
@@ -22,17 +22,16 @@
   }
 </script>
 
-<div class="flex flex-wrap items-center justify-between gap-2 mb-4">
-  <h1 class="text-2xl font-bold flex items-center gap-2">
-    <FolderOpen class="w-7 h-7" />
-    {$t("files.title")}
-  </h1>
-  <div class="flex flex-wrap items-center gap-2">
+<!-- The page header (ADR-0428): the title, then Upload, New Folder and Refresh as icon buttons
+     with their tooltips, and the Trash. -->
+<div class="page-header mb-4">
+  <h1 class="page-title">{$t("files.title")}</h1>
+  <div class="page-actions">
     <input bind:this={uploadInput} type="file" multiple class="hidden" onchange={handleUpload} />
-    <!-- The span shows the tooltip: Button does not pass a title on. -->
+    <!-- The span shows the tooltip over the button and its text for screen readers. -->
     <span class="flex" title={$t("files.upload")}>
       <Button variant="secondary" size="icon" onclick={() => uploadInput?.click()}>
-        <Upload class="w-5 h-5" />
+        <Upload class="w-4 h-4" />
         <span class="sr-only">{$t("files.upload")}</span>
       </Button>
     </span>
@@ -40,14 +39,14 @@
       onclick={() => (browser.showNewFolder = true)}
       title={$t("files.newFolder")}
     >
-      <Plus class="w-5 h-5" />
+      <Plus class="w-4 h-4" />
     </Button>
     <Button variant="secondary" size="icon"
       onclick={() => browser.refresh()}
       title={$t("common.refresh")}
       disabled={browser.loading}
     >
-      <RefreshCw class="w-5 h-5 {browser.loading ? 'animate-spin' : ''}" />
+      <RefreshCw class="w-4 h-4 {browser.loading ? 'animate-spin' : ''}" />
     </Button>
     <Button variant="secondary" icon={Trash} href="/files/trash">{$t("files.trash.title")}</Button>
   </div>

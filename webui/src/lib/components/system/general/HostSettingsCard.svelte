@@ -54,8 +54,8 @@
 
 <!-- The name and time zone of the host, set on the host (ADR-0331) -->
 <Card>
-  <h3 class="section-title mb-4">
-    <Globe class="w-5 h-5" />
+  <h3 class="card-title mb-4">
+    <Globe class="w-5 h-5 text-content-secondary" />
     {$t("general.host.title")}
   </h3>
 

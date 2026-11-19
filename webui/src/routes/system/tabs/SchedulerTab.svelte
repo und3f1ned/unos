@@ -128,7 +128,7 @@
 <div class="space-y-4">
   <!-- Header -->
   <div class="flex flex-wrap items-center justify-between gap-3">
-    <h2 class="text-xl font-bold">{$t("scheduler.title")}</h2>
+    <h2 class="text-xl font-semibold">{$t("scheduler.title")}</h2>
     <div class="flex flex-wrap gap-2">
       <Button variant="secondary" size="sm" onclick={() => history.show()}>
         <History class="w-4 h-4" />
@@ -148,7 +148,7 @@
   {/if}
 
   <!-- Task List -->
-  <div class="bg-surface-elevated rounded-lg p-4">
+  <div class="card">
     {#if loading}
       <div class="flex justify-center py-8">
         <RefreshCw class="w-6 h-6 animate-spin text-brand-ring" />

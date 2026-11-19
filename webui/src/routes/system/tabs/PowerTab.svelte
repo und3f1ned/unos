@@ -131,7 +131,7 @@
 </script>
 
 <div class="space-y-6">
-  <h2 class="text-xl font-bold">{$t("power.title")}</h2>
+  <h2 class="text-xl font-semibold">{$t("power.title")}</h2>
 
   {#if notice}
     <div role="status">

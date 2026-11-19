@@ -32,8 +32,9 @@
 	onkeypress={(e) => e.key === 'Enter' && onopen(app)}
 >
 	<div class="flex items-start gap-3 mb-3">
+		<!-- rounded-xl, 12 px: appstore.spec.ts finds the catalog's tiles by it. -->
 		<div
-			class="w-12 h-12 rounded-xl bg-surface-muted flex items-center justify-center text-2xl flex-shrink-0"
+			class="w-10 h-10 rounded-xl bg-surface-overlay flex items-center justify-center text-xl flex-shrink-0"
 		>
 			{app.icon}
 		</div>

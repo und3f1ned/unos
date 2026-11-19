@@ -20,7 +20,7 @@
   let { backups, loading, sizeUnits, onrestore, ondownload, ondelete }: Props = $props();
 </script>
 
-<div class="bg-surface-elevated rounded-lg p-4">
+<div class="card">
   {#if loading}
     <div class="flex justify-center py-8">
       <RefreshCw class="w-6 h-6 animate-spin text-brand-ring" />
@@ -63,14 +63,14 @@
             >
               <RotateCcw class="w-4 h-4" />
             </Button>
-            <Button variant="ghost" size="icon" class="text-status-info hover:text-status-info"
+            <Button variant="ghost" size="icon"
               onclick={() => ondownload(backup.filename)}
               title={$t("backup.download")}
               aria-label={$t("backup.downloadOne", { name: backup.filename })}
             >
               <Download class="w-4 h-4" />
             </Button>
-            <Button variant="ghost" size="icon" class="text-status-error hover:text-status-error"
+            <Button variant="ghost-danger" size="icon"
               onclick={() => ondelete(backup.filename)}
               title={$t("backup.delete")}
               aria-label={$t("backup.deleteOne", { name: backup.filename })}

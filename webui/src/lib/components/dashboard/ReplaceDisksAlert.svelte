@@ -26,7 +26,7 @@
 				</li>
 			{/each}
 		</ul>
-		<a href="/system#health" class="text-sm text-info hover:underline">{$t('dashboard.replace.diskHealth')}</a>
+		<a href="/system#health" class="link text-sm">{$t('dashboard.replace.diskHealth')}</a>
 	</Alert>
 {:else if error}
 	<Alert variant="warning" title={$t('dashboard.replace.checkFailed')}>

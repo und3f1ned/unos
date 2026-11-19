@@ -69,7 +69,7 @@
 
 <div class="space-y-4">
   <div class="flex items-center justify-between">
-    <h2 class="text-xl font-bold">{$t("health.title")}</h2>
+    <h2 class="text-xl font-semibold">{$t("health.title")}</h2>
     <Button variant="secondary" size="icon" onclick={loadHealth} disabled={loading}>
       <RefreshCw class="w-4 h-4 {loading ? 'animate-spin' : ''}" />
       <span class="sr-only">{$t("health.refresh")}</span>

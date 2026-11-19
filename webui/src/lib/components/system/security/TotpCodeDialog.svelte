@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { Snippet } from "svelte";
-  import { Button, type IconComponent } from "$lib/components/ui";
+  import { Alert, Button, type IconComponent } from "$lib/components/ui";
   import { t } from "$lib/i18n";
 
   // A dialog that asks for a code of the authenticator app: the setup's confirmation, or turning
@@ -43,10 +43,16 @@
   }: Props = $props();
 </script>
 
+<!-- Modal's look (ADR-0428) on its own markup, whose title and parts the specs walk: a danger
+     dialog's icon in a tinted circle, the title in the text's colour. -->
 <div class="modal-overlay items-start overflow-y-auto p-4">
-  <div class="bg-surface-elevated rounded-lg p-6 max-w-md w-full my-auto">
-    <h3 class={["text-lg font-semibold mb-4 flex items-center gap-2", danger && "text-status-error"]}>
-      <Icon class="w-5 h-5" />
+  <div class="modal max-w-md my-auto">
+    <h3 class="modal-title mb-4 flex items-center gap-3">
+      {#if danger}
+        <span class="modal-danger-icon" aria-hidden="true"><Icon class="w-4 h-4" /></span>
+      {:else}
+        <Icon class="w-5 h-5 text-content-secondary" aria-hidden="true" />
+      {/if}
       {title}
     </h3>
 
@@ -54,7 +60,7 @@
       {@render children()}
 
       <div>
-        <label for={inputId} class="block text-sm font-medium text-content-secondary mb-1">
+        <label for={inputId} class="form-label">
           {label}
         </label>
         <input
@@ -70,12 +76,10 @@
       </div>
 
       {#if error}
-        <div class="p-3 bg-status-error/20 border border-status-error text-status-error rounded-lg text-sm">
-          {error}
-        </div>
+        <Alert variant="error" size="sm">{error}</Alert>
       {/if}
 
-      <div class="flex gap-3">
+      <div class="modal-footer">
         <Button variant="secondary" class="flex-1" type="button" onclick={oncancel}>
           {$t("common.cancel")}
         </Button>

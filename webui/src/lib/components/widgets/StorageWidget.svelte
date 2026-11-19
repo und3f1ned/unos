@@ -92,61 +92,64 @@
 		{/if}
 	</div>
 {:else}
-	<Card>
+	<!-- The total on top, then a row per pool: its name and health, its use and a bar, and its
+	     problems in the status colour (ADR-0428). The card is as tall as its neighbour: the room
+	     falls below. -->
+	<Card class="h-full flex flex-col">
 		<div class="card-header">
 			<h3 class="card-title">
-				<HardDrive class="w-5 h-5 icon-storage" />
+				<HardDrive class="w-5 h-5 text-content-secondary" aria-hidden="true" />
 				{$t('dashboard.storage.title')}
 			</h3>
-			<a href="/storage" class="text-sm text-info hover:text-status-info transition-colors"
-				>{$t('dashboard.manage')}</a
-			>
+			<a href="/storage" class="link text-[13px]">{$t('dashboard.manage')}</a>
 		</div>
 
 		{#if pools.length === 0}
 			<p class="text-secondary text-sm">{$t('dashboard.storage.none')}</p>
 		{:else}
+			<div class="pb-3.5 mb-3.5 border-b border-border">
+				<p class="text-xs text-content-secondary">{$t('dashboard.storage.total')}</p>
+				<p class="mt-0.5 text-lg font-semibold tabular">
+					{formatBytes(totalUsed, $t)} / {formatBytes(totalSize, $t)} ({totalPercent.toFixed(1)}%)
+				</p>
+			</div>
 			<div class="space-y-3">
 				{#each pools as pool}
 					{@const badge = getHealthBadge(pool.health)}
 					{@const mounted = isMounted(pool)}
 					{@const issues = problems(pool)}
 					<div>
-						<div class="flex items-center justify-between mb-1">
-							<div class="flex items-center gap-2">
-								<span class="font-medium">{pool.name}</span>
+						<div class="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
+							<div class="flex items-center gap-2 min-w-0">
+								<span class="font-medium truncate">{pool.name}</span>
 								<Badge variant={badge.variant}>{badge.label}</Badge>
 							</div>
 							{#if mounted}
-								<span class="text-sm text-secondary"
-									>{formatBytes(pool.used, $t)} / {formatBytes(pool.size, $t)}</span
+								<span class="text-[13px] text-secondary tabular whitespace-nowrap"
+									>{formatBytes(pool.used, $t)} / {formatBytes(pool.size, $t)} · {getUsagePercent(
+										pool.used,
+										pool.size
+									).toFixed(0)}%</span
 								>
 							{:else}
-								<span class="text-sm text-muted">{$t('dashboard.storage.inaccessible')}</span>
+								<span class="text-[13px] text-muted">{$t('dashboard.storage.inaccessible')}</span>
 							{/if}
 						</div>
 						{#if mounted}
-							<ProgressBar value={getUsagePercent(pool.used, pool.size)} variant="info" size="sm" />
+							<ProgressBar
+								value={getUsagePercent(pool.used, pool.size)}
+								variant="info"
+								class="mt-2"
+								label={pool.name}
+							/>
 						{/if}
 						{#if issues.length > 0}
-							<p class="text-xs mt-1 {isWarning(pool) ? 'text-warning' : 'text-error'}">
+							<p class="text-xs mt-1.5 {isWarning(pool) ? 'text-warning' : 'text-error'}">
 								{issues.join(' • ')}
 							</p>
 						{/if}
 					</div>
 				{/each}
-			</div>
-
-			<!-- Total -->
-			<div class="mt-4 pt-3 border-t border-border">
-				<div class="flex items-center justify-between text-sm">
-					<span class="text-secondary">{$t('dashboard.storage.total')}</span>
-					<span
-						>{formatBytes(totalUsed, $t)} / {formatBytes(totalSize, $t)} ({totalPercent.toFixed(
-							1
-						)}%)</span
-					>
-				</div>
 			</div>
 		{/if}
 	</Card>

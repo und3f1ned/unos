@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { AlertCircle, AlertTriangle } from 'lucide-svelte';
+	import { Button } from '$lib/components/ui';
 	import { t } from '$lib/i18n';
 	import { problems, type Problem } from '$lib/stores/problems';
 
@@ -34,29 +35,40 @@
 		});
 	}
 	const anyError = $derived($problems.some((problem) => problem.severity === 'error'));
+
+	// Three problems, the rest behind "Show all N" (ADR-0428): a NAS with many problems keeps the
+	// page in view.
+	const SHOWN = 3;
+	let expanded = $state(false);
+	const shown = $derived(expanded ? $problems : $problems.slice(0, SHOWN));
 </script>
 
 {#if $problems.length}
+	<!-- An alert's look (ADR-0428) without its class, which the specs count on the pages. -->
 	<section
-		class="mb-4 rounded-lg border px-4 py-3 {anyError
-			? 'border-status-error/50 bg-status-error/10'
-			: 'border-status-warning/50 bg-status-warning/10'}"
+		class="mb-6 rounded-lg border border-l-[3px] px-3.5 py-3 {anyError
+			? 'border-status-error/35 border-l-status-error bg-status-error/10'
+			: 'border-status-warning/35 border-l-status-warning bg-status-warning/10'}"
 		aria-labelledby="problems-banner-title"
 	>
-		<p id="problems-banner-title" class="font-medium text-content">
+		<p id="problems-banner-title" class="font-semibold text-content">
 			{$t('problems.title', { n: $problems.length })}
 		</p>
-		<ul class="mt-2 space-y-1">
-			{#each $problems as problem (problem.key)}
-				<li
-					class="flex items-start gap-2 text-sm {problem.severity === 'error'
-						? 'text-status-error'
-						: 'text-status-warning'}"
-				>
+		<ul id="problems-banner-list" class="mt-2 space-y-1">
+			{#each shown as problem (problem.key)}
+				<li class="flex items-start gap-2 text-sm text-content">
 					{#if problem.severity === 'error'}
-						<AlertCircle class="w-4 h-4 flex-shrink-0 mt-0.5" role="img" aria-label={$t('problems.error')} />
+						<AlertCircle
+							class="w-4 h-4 flex-shrink-0 mt-0.5 text-status-error"
+							role="img"
+							aria-label={$t('problems.error')}
+						/>
 					{:else}
-						<AlertTriangle class="w-4 h-4 flex-shrink-0 mt-0.5" role="img" aria-label={$t('problems.warning')} />
+						<AlertTriangle
+							class="w-4 h-4 flex-shrink-0 mt-0.5 text-status-warning"
+							role="img"
+							aria-label={$t('problems.warning')}
+						/>
 					{/if}
 					<!-- A long pool name or path breaks: on a phone it would push the banner beyond the
 					     screen (ADR-0302). -->
@@ -64,5 +76,17 @@
 				</li>
 			{/each}
 		</ul>
+		{#if $problems.length > SHOWN}
+			<Button
+				variant="ghost"
+				size="sm"
+				class="mt-2 -ml-2"
+				aria-expanded={expanded}
+				aria-controls="problems-banner-list"
+				onclick={() => (expanded = !expanded)}
+			>
+				{expanded ? $t('problems.showFewer') : $t('problems.showAll', { n: $problems.length })}
+			</Button>
+		{/if}
 	</section>
 {/if}

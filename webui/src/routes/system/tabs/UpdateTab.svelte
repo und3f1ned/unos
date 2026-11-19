@@ -59,11 +59,11 @@
 </script>
 
 <div class="space-y-6">
-  <h2 class="text-xl font-bold">{$t("updates.title")}</h2>
+  <h2 class="text-xl font-semibold">{$t("updates.title")}</h2>
 
   <Card>
-    <h3 class="section-title mb-4">
-      <Package class="w-5 h-5" />
+    <h3 class="card-title mb-4">
+      <Package class="w-5 h-5 text-content-secondary" />
       {$t("updates.current.title")}
     </h3>
     {#if currentError}
@@ -82,8 +82,8 @@
   </Card>
 
   <Card>
-    <h3 class="section-title mb-4">
-      <ArrowUpCircle class="w-5 h-5" />
+    <h3 class="card-title mb-4">
+      <ArrowUpCircle class="w-5 h-5 text-content-secondary" />
       {$t("updates.latest.title")}
     </h3>
     <div class="space-y-4">
@@ -114,7 +114,7 @@
               href={release.html_url}
               target="_blank"
               rel="noopener noreferrer"
-              class="flex items-center gap-1 text-sm text-status-info hover:underline"
+              class="link flex items-center gap-1 text-sm"
             >
               {$t("updates.latest.github")} <ExternalLink class="w-3 h-3" />
             </a>
@@ -149,8 +149,8 @@
   </Card>
 
   <Card>
-    <h3 class="section-title mb-4">
-      <Terminal class="w-5 h-5" />
+    <h3 class="card-title mb-4">
+      <Terminal class="w-5 h-5 text-content-secondary" />
       {$t("updates.how.title")}
     </h3>
     <div class="space-y-3 text-sm">

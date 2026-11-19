@@ -100,25 +100,25 @@
 {#if featuredApps.length > 0 && !search && !category}
 	<Card>
 		<div class="flex items-center gap-2 mb-5">
-			<Sparkles class="w-5 h-5 text-status-warning" />
-			<h2 class="text-lg font-semibold">{$t('apps.featured')}</h2>
+			<Sparkles class="w-5 h-5 text-content-secondary" aria-hidden="true" />
+			<h2 class="section-title">{$t('apps.featured')}</h2>
 		</div>
 		<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
 			{#each featuredApps as app}
 				{@const installedInfo = installedOf(installed, app.id)}
 				<Button variant="plain"
-				 class="bg-surface-muted rounded-xl p-4 text-left hover:bg-surface-overlay transition-colors"
+				 class="bg-surface-muted border border-border-muted rounded-card p-4 text-left hover:bg-surface-overlay hover:border-border-strong transition-colors"
 					onclick={() => onopen(app)}
 				>
 					<div class="flex items-center gap-4 mb-3">
 						<div
-							class="w-14 h-14 rounded-xl bg-surface-overlay flex items-center justify-center text-3xl flex-shrink-0"
+							class="w-12 h-12 rounded-xl bg-surface-overlay flex items-center justify-center text-2xl flex-shrink-0"
 						>
 							{app.icon}
 						</div>
 						<div class="min-w-0 flex-1">
 							<div class="flex items-center gap-2">
-								<h3 class="font-semibold text-lg truncate">{app.name}</h3>
+								<h3 class="font-semibold text-base truncate">{app.name}</h3>
 								{#if installedInfo}
 									<AppRunningDot running={installedInfo.status === 'running'} />
 								{/if}
