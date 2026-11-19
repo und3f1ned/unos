@@ -35,8 +35,9 @@
 	}
 </script>
 
+<!-- Page tabs: a line under the row (ADR-0428). -->
 <div
-	class="flex gap-1 p-1 bg-surface-elevated rounded-lg w-fit"
+	class="tab-bar"
 	role="tablist"
 	aria-label={$t('containers.tabs.label')}
 >
@@ -48,7 +49,7 @@
 			aria-selected={active === tab.id}
 			aria-controls="docker-panel-{tab.id}"
 			tabindex={active === tab.id ? 0 : -1}
-		 class="tab-pill {active === tab.id ? 'tab-pill-active' : ''}"
+		 class="tab-underline {active === tab.id ? 'tab-underline-active' : ''}"
 			onclick={() => onselect(tab.id)}
 			onkeydown={(event) => tabKeydown(event, tab.id)}
 		>

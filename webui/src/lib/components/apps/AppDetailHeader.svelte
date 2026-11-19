@@ -34,7 +34,7 @@
 <div class="-mx-6 -mt-6 mb-6 p-6 bg-gradient-to-b from-surface-overlay to-transparent">
 	<div class="flex items-start gap-4">
 		<div
-			class="w-16 h-16 rounded-xl bg-surface-elevated flex items-center justify-center text-4xl flex-shrink-0 shadow-lg"
+			class="w-14 h-14 rounded-card bg-surface-overlay flex items-center justify-center text-3xl flex-shrink-0"
 		>
 			{app.icon}
 		</div>
@@ -68,7 +68,7 @@
 			{#if app.website}
 				{@render link(
 					app.website,
-					'flex items-center gap-1.5 text-sm text-info hover:text-status-info transition-colors',
+					'flex items-center gap-1.5 text-sm font-medium text-content-link hover:underline',
 					Globe,
 					'apps.detail.website'
 				)}

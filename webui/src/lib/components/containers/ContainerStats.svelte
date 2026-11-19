@@ -31,25 +31,25 @@
 	const [runningStat, stoppedStat, totalStat]: Stat[] = $derived([
 		{
 			active: filter === 'running',
-			ring: 'ring-2 ring-status-success',
+			ring: 'ring-2 ring-brand-ring',
 			next: filter === 'running' ? '' : 'running',
 			label: $t('containers.filter.running'),
 			count: running,
-			countClass: 'text-2xl font-bold text-success',
-			iconBox: 'w-10 h-10 rounded-full bg-status-success/20 flex items-center justify-center',
+			countClass: 'text-xl font-semibold tabular',
+			iconBox: 'w-8 h-8 rounded-full bg-status-success/20 flex items-center justify-center',
 			Icon: CheckCircle2,
-			iconClass: 'w-5 h-5 text-success'
+			iconClass: 'w-4 h-4 text-success'
 		},
 		{
 			active: filter === 'exited',
-			ring: 'ring-2 ring-status-error',
+			ring: 'ring-2 ring-brand-ring',
 			next: filter === 'exited' ? '' : 'exited',
 			label: $t('containers.filter.stopped'),
 			count: stopped,
-			countClass: 'text-2xl font-bold text-error',
-			iconBox: 'w-10 h-10 rounded-full bg-status-error/20 flex items-center justify-center',
+			countClass: 'text-xl font-semibold tabular',
+			iconBox: 'w-8 h-8 rounded-full bg-status-error/20 flex items-center justify-center',
 			Icon: XCircle,
-			iconClass: 'w-5 h-5 text-error'
+			iconClass: 'w-4 h-4 text-error'
 		},
 		{
 			active: filter === '',
@@ -57,32 +57,34 @@
 			next: '',
 			label: $t('containers.filter.total'),
 			count: total,
-			countClass: 'text-2xl font-bold',
-			iconBox: 'w-10 h-10 rounded-full bg-status-info/20 flex items-center justify-center',
+			countClass: 'text-xl font-semibold tabular',
+			iconBox: 'w-8 h-8 rounded-full bg-status-neutral/20 flex items-center justify-center',
 			Icon: Box,
-			iconClass: 'w-5 h-5 text-info'
+			iconClass: 'w-4 h-4 text-content-secondary'
 		}
 	]);
 </script>
 
 {#snippet card(stat: Stat)}
 	<Button variant="plain"
-	 class="card hover:bg-surface-overlay transition-colors text-left cursor-pointer {stat.active ? stat.ring : ''}"
+	 class="card p-3 hover:bg-surface-overlay transition-colors text-left cursor-pointer {stat.active ? stat.ring : ''}"
+		aria-pressed={stat.active}
 		onclick={() => onfilter(stat.next)}
 	>
-		<div class="flex items-center justify-between">
-			<div>
-				<p class="text-secondary text-sm">{stat.label}</p>
-				<p class={stat.countClass}>{stat.count}</p>
-			</div>
-			<div class={stat.iconBox}>
+		<!-- A compact stat button (ADR-0428): the label over the count, a ring while it filters. -->
+		<div class="flex items-center gap-3">
+			<div class={stat.iconBox} aria-hidden="true">
 				<stat.Icon class={stat.iconClass} />
+			</div>
+			<div class="min-w-0">
+				<p class="text-secondary text-xs">{stat.label}</p>
+				<p class={stat.countClass}>{stat.count}</p>
 			</div>
 		</div>
 	</Button>
 {/snippet}
 
-<div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+<div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
 	{@render card(runningStat)}
 	{@render card(stoppedStat)}
 	{@render card(totalStat)}

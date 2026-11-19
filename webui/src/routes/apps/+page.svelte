@@ -173,23 +173,19 @@
 <div class="page-container">
 	<!-- Page Header -->
 	<div class="page-header">
-		<div class="flex items-center gap-3">
-			<div class="w-10 h-10 rounded-lg bg-surface-elevated flex items-center justify-center">
-				<Package class="w-5 h-5 text-info" />
-			</div>
-			<div>
-				<h1 class="page-title">{$t('apps.title')}</h1>
-				<p class="text-sm text-secondary">
-					{#if data.catalogState === 'loaded' && data.installedState === 'loaded'}
-						{$t('apps.summary', { available: data.availableCount, installed: data.installed.length })}
-					{:else if data.catalogState === 'loaded'}
-						{$t('apps.summaryAvailable', { available: data.availableCount })}
-					{/if}
-				</p>
-			</div>
+		<div class="min-w-0">
+			<h1 class="page-title">{$t('apps.title')}</h1>
+			<p class="page-subtitle">
+				{#if data.catalogState === 'loaded' && data.installedState === 'loaded'}
+					{$t('apps.summary', { available: data.availableCount, installed: data.installed.length })}
+				{:else if data.catalogState === 'loaded'}
+					{$t('apps.summaryAvailable', { available: data.availableCount })}
+				{/if}
+			</p>
 		</div>
-		<Button variant="secondary" size="icon" onclick={refresh} disabled={data.loading}>
-			<RefreshCw class="w-4 h-4 {data.loading ? 'animate-spin' : ''}" />
+		<Button variant="secondary" size="icon" onclick={refresh} disabled={data.loading} title={$t('common.refresh')}>
+			<RefreshCw class="w-4 h-4 {data.loading ? 'animate-spin' : ''}" aria-hidden="true" />
+			<span class="sr-only">{$t('common.refresh')}</span>
 		</Button>
 	</div>
 
@@ -208,10 +204,10 @@
 	<!-- The installs that run in the background and the last of each app, with their ends (ADR-0384). -->
 	<AppInstallJobs jobs={$appInstalls} catalog={data.catalog} {cancelling} ondismiss={dismiss} oncancel={cancel} />
 
-	<!-- Tabs -->
-	<div class="flex gap-1 p-1 bg-surface-elevated rounded-lg w-fit">
+	<!-- Page tabs: a line under the row (ADR-0428). -->
+	<div class="tab-bar">
 		<Button variant="plain"
-		 class="tab-pill {activeTab === 'catalog' ? 'tab-pill-active' : ''}"
+		 class="tab-underline {activeTab === 'catalog' ? 'tab-underline-active' : ''}"
 			onclick={() => (activeTab = 'catalog')}
 		>
 			<span class="flex items-center gap-2">
@@ -220,7 +216,7 @@
 			</span>
 		</Button>
 		<Button variant="plain"
-		 class="tab-pill {activeTab === 'installed' ? 'tab-pill-active' : ''}"
+		 class="tab-underline {activeTab === 'installed' ? 'tab-underline-active' : ''}"
 			onclick={() => (activeTab = 'installed')}
 		>
 			<span class="flex items-center gap-2">

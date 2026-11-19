@@ -123,7 +123,7 @@
 
 	<!-- Drawer -->
 	<div
-		class="fixed right-0 top-0 h-full w-full max-w-2xl bg-surface-elevated z-50 shadow-2xl flex flex-col"
+		class="fixed right-0 top-0 h-full w-full md:max-w-[480px] bg-surface-elevated md:border-l border-border z-50 shadow-dialog flex flex-col"
 		role="dialog"
 		aria-modal="true"
 		aria-labelledby="container-drawer-title"
@@ -132,12 +132,13 @@
 		<div class="flex items-center justify-between p-5 border-b border-border">
 			<div class="flex items-center gap-4 min-w-0">
 				<div
-					class="w-12 h-12 rounded-xl bg-surface-overlay flex items-center justify-center flex-shrink-0"
+					class="w-10 h-10 rounded-card bg-surface-overlay flex items-center justify-center flex-shrink-0"
+					aria-hidden="true"
 				>
-					<Box class="w-6 h-6 icon-container" />
+					<Box class="w-5 h-5 text-content-secondary" />
 				</div>
 				<div class="min-w-0">
-					<h2 id="container-drawer-title" class="font-semibold text-xl truncate">
+					<h2 id="container-drawer-title" class="font-semibold text-lg truncate">
 						{container.name}
 					</h2>
 					<p class="text-sm text-secondary truncate">{container.image}</p>

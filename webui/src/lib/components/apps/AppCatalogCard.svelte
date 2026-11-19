@@ -33,7 +33,7 @@
 >
 	<div class="flex items-start gap-3 mb-3">
 		<div
-			class="w-12 h-12 rounded-xl bg-surface-muted flex items-center justify-center text-2xl flex-shrink-0"
+			class="w-10 h-10 rounded-card bg-surface-overlay flex items-center justify-center text-xl flex-shrink-0"
 		>
 			{app.icon}
 		</div>
