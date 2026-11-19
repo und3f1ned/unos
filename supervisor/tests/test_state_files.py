@@ -294,8 +294,6 @@ def state_file(request, tmp_path, monkeypatch) -> tuple[StateFile, Path]:
     path.parent.mkdir()
     original = getattr(case.module, case.attr)
     monkeypatch.setattr(case.module, case.attr, type(original)(path) if isinstance(original, Path) else str(path))
-    if case.module is updates:
-        monkeypatch.setattr(updates, "DATA_DIR", path.parent)
     return case, path
 
 
@@ -325,15 +323,22 @@ def test_each_state_file_that_cannot_be_read_is_kept_as_bad(state_file, caplog):
     assert any(f"{path}.bad" in record.getMessage() for record in caplog.records), caplog.text
 
 
+# The .json files of the data directory that are no state files: the app catalog's file of the
+# setting UNOS_APP_CATALOG_PATH, which no module writes.
+NOT_STATE_FILES = {"app-catalog.json"}
+
+
 def test_the_table_has_every_json_state_file_of_the_supervisor():
-    """A module-level path of a .json file under /data in src is a state file of the table."""
+    """A module-level path of a .json file under /data in src, which src/paths.py names alone
+    (ADR-0417), is a state file of the table."""
     found = set()
     for source in SRC.rglob("*.py"):
         for line in source.read_text().splitlines():
             match = re.match(r'^[A-Z_]+ = (?:"/data/(?:[^"/]+/)*([^"/]+\.json)"|DATA_DIR / "([^"]+\.json)")$', line)
             if match:
                 found.add(match[1] or match[2])
-    assert found == {f.name for f in STATE_FILES}
+    assert found - NOT_STATE_FILES == {f.name for f in STATE_FILES}
+    assert NOT_STATE_FILES <= found
 
 
 def test_no_module_writes_or_reads_its_state_file_around_the_helpers():

@@ -56,7 +56,8 @@ from urllib.parse import urlsplit
 from fastapi import HTTPException
 from pydantic import BaseModel, Field, ValidationError
 
-from .. import state_files
+from .. import paths, state_files
+from ..config import get_settings
 from ..audit.changes import changed_fields
 from ..backup.router import (
     MAX_ARCHIVE_BYTES,
@@ -79,13 +80,14 @@ from . import restic
 
 logger = logging.getLogger(__name__)
 
-SETTINGS_FILE = "/data/offsite.json"
-SECRETS_FILE = "/data/offsite_secrets.json"
-STATUS_FILE = "/data/offsite_status.json"
-# The data volume, and the folder below which the disks are mounted: the filesystems of both are the
-# system disk's, where a disk target is refused (on_system_disk).
-DATA_DIR = "/data"
-MOUNTS_BASE = "/mnt"
+SETTINGS_FILE = str(paths.OFFSITE_SETTINGS)
+SECRETS_FILE = str(paths.OFFSITE_SECRETS)
+STATUS_FILE = str(paths.OFFSITE_STATUS)
+# The data directory (UNOS_DATA_DIR), and the folder below which the disks are mounted
+# (UNOS_MOUNTS_BASE_PATH): the filesystems of both are the system disk's, where a disk target is
+# refused (on_system_disk).
+DATA_DIR = str(paths.DATA_DIR)
+MOUNTS_BASE = get_settings().mounts_base_path
 # Where the disks under a filesystem are found: the block devices by number, the devices of each btrfs
 # filesystem, and the mounts of this process (a filesystem without a device number of its own, FUSE).
 SYS_DEV_BLOCK = "/sys/dev/block"

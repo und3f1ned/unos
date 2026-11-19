@@ -39,17 +39,19 @@ from ..config import get_settings
 
 logger = logging.getLogger(__name__)
 
-# The volume of the served certificate, as the supervisor's container mounts it, and the one file in
-# it. The web UI's container mounts it read-only at the same path, which webui/Caddyfile names.
-SERVED_DIR = "/served-certificate"
+# The volume of the served certificate, as the supervisor's container mounts it (a setting of its own,
+# UNOS_SERVED_CERTIFICATE_DIR, ADR-0417), and the one file in it. The web UI's container mounts it
+# read-only at the same path, which webui/Caddyfile names.
+SERVED_DIR = get_settings().served_certificate_dir
 SERVED_FILE = "served.pem"
 # The Caddyfile of the web UI's image, which `caddy reload` adapts again.
 WEBUI_CADDYFILE = "/etc/caddy/Caddyfile"
 # The values of UNOS_TLS that webui/Caddyfile knows: which of its two sites it serves.
 TLS_MODES = ("served", "local")
-# Where the supervisor reaches the web UI's Caddy over TLS, on the compose network.
-CADDY_TLS_HOST = "webui"
-CADDY_TLS_PORT = 443
+# Where the supervisor reaches the web UI's Caddy over TLS, on the compose network (UNOS_WEBUI_TLS_HOST
+# and UNOS_WEBUI_TLS_PORT).
+CADDY_TLS_HOST = get_settings().webui_tls_host
+CADDY_TLS_PORT = get_settings().webui_tls_port
 # Seconds the handshake that shows what Caddy serves may take, the name's lookup included.
 PROBE_TIMEOUT = 5
 # A certificate that expires within this many days is served with a warning.

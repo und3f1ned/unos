@@ -95,8 +95,9 @@ logger = logging.getLogger(__name__)
 
 settings = get_settings()
 
-FSTAB_PATH = "/etc/fstab"
-FSTAB_BACKUP_PATH = "/etc/fstab.unos-backup"
+# The host's fstab (UNOS_FSTAB_PATH) and the copy kept beside it.
+FSTAB_PATH = settings.fstab_path
+FSTAB_BACKUP_PATH = f"{FSTAB_PATH}.unos-backup"
 FSTAB_MOUNT_OPTIONS = (
     "defaults,noatime,nofail,x-systemd.device-timeout=15s,x-systemd.before=docker.service"
 )

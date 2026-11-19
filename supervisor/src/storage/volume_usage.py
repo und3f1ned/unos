@@ -43,7 +43,7 @@ from typing import Annotated
 from fastapi import HTTPException
 from pydantic import BaseModel, Field, field_validator
 
-from .. import state_files
+from .. import paths, state_files
 from ..health import problems
 from ..security.validators import validate_pool_name, validate_volume_name
 from . import pools, qgroups
@@ -60,7 +60,7 @@ LEVEL_MARGIN = 5
 # The level from which a volume's problem is an error; below it a warning.
 ERROR_LEVEL = 95
 
-HISTORY_FILE = "/data/volume_usage.json"
+HISTORY_FILE = str(paths.VOLUME_USAGE)
 # One point per volume per clock hour, for 30 days.
 HISTORY_STEP = 3600
 HISTORY_DAYS = 30

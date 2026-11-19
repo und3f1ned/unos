@@ -22,7 +22,7 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException, Depends, Request
 from pydantic import TypeAdapter, ValidationError
 
-from .. import host, state_files
+from .. import host, paths, state_files
 from ..times import parse_time, utc_now, utc_text
 from ..audit.changes import audit_change, changed_fields
 from ..audit.schemas import AuditAction, AuditSeverity
@@ -37,8 +37,8 @@ from .schemas import (
 router = APIRouter(prefix="/notifications", tags=["notifications"])
 logger = logging.getLogger(__name__)
 
-CONFIG_FILE = "/data/notifications.json"
-LOGS_FILE = "/data/notification_logs.json"
+CONFIG_FILE = str(paths.NOTIFICATIONS)
+LOGS_FILE = str(paths.NOTIFICATION_LOGS)
 # The history keeps the latest notifications sent (ADR-0326).
 HISTORY_SIZE = 100
 

@@ -67,7 +67,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from .. import database
+from .. import database, paths
 from ..times import UtcDatetime, from_epoch, stored_time_text, utc_now
 from ..audit.changes import audit_change
 from ..audit.schemas import AuditAction, AuditSeverity
@@ -92,7 +92,7 @@ GCM_TAG_SIZE = 16  # AES-GCM appends a 16-byte authentication tag to the ciphert
 
 router = APIRouter(prefix="/backup", tags=["backup"])
 
-BACKUP_DIR = Path("/data/backups")
+BACKUP_DIR = paths.BACKUPS
 BACKUP_VERSION = "1.0"
 
 # Limits for backups, made, uploaded or restored (ADR-0406). They follow the supervisor's /tmp tmpfs

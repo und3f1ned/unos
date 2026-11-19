@@ -32,6 +32,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import ValidationError
 
+from .. import paths
 from ..auth.utils import client_ip, require_admin
 from ..auth.models import User
 from ..times import as_utc, parse_time, utc_now, utc_text
@@ -43,7 +44,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/audit", tags=["audit"], dependencies=[Depends(require_admin)])
 
 # The current file; the older ones are AUDIT_FILE.1 (the newest) to AUDIT_FILE.<KEEP_ROTATED>.
-AUDIT_FILE = "/data/audit/audit.jsonl"
+AUDIT_FILE = str(paths.AUDIT_LOG)
 MAX_FILE_BYTES = 1024 * 1024
 KEEP_ROTATED = 4
 
