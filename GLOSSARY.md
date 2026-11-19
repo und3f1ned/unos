@@ -343,6 +343,10 @@ nor the cookie alone is a session (ADR-0397). Avoid: CSRF token, session token.
 once (ADR-0239); only a session token creates, disables and deletes API tokens (ADR-0253). It is
 full or limited by its scope (ADR-0392). Avoid: session token, API key.
 
+**API documentation**: The supervisor's OpenAPI schema, `app.openapi()`, served at `/openapi.json`
+on its own port, which the web UI's address does not pass on: every route's summary, description,
+parameters, fields, examples and error statuses (ADR-0417). Avoid: Swagger.
+
 **Scope**: What an API token may reach: its access, read only or read and change, and its areas of
 the API, every area or a list (ADR-0392). Avoid: permissions (the column that keeps it), role.
 

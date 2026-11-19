@@ -2340,6 +2340,16 @@ and `unos` the name on the certificate.
 - The audit log records each new token with its access and areas, such as
   `Created API token: Prometheus (read only: health, monitor)`.
 
+**The API's documentation.** The supervisor describes its whole API in an
+OpenAPI schema: for every route a summary and a description, its parameters,
+the fields of what it takes and answers, examples of its JSON requests and
+answers, and the error statuses it answers, each with when (401 and 403 for a
+credential that does not reach the route, 413 for a body over its limit, 429
+over a rate limit, and the route's own). The web UI's address does not pass the schema on; on the
+NAS, save it with
+`docker exec unos-supervisor python -c "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:8080/openapi.json').read().decode())" > unos-openapi.json`
+and open it in any OpenAPI viewer.
+
 ---
 
 ## Audit Log
