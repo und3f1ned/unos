@@ -12,11 +12,13 @@
 		type RemotePeerCreated,
 		type RemoteAccessStatus
 	} from '$lib/api/remoteAccess';
-	import { formatBytes } from '$lib/api/backup';
-	import { Alert, Badge, Button, Card, Input, Modal } from '$lib/components/ui';
-	import { intlLocale, t } from '$lib/i18n';
-	import { formatDateTime } from '$lib/time';
-	import { Download, Globe, Plus, Trash2 } from 'lucide-svelte';
+	import { Alert, Badge, Button, Card, Input } from '$lib/components/ui';
+	import { t } from '$lib/i18n';
+	import { Globe } from 'lucide-svelte';
+	import ConfirmDialog from './ConfirmDialog.svelte';
+	import FormDialog from './FormDialog.svelte';
+	import PeerConfigDialog from './PeerConfigDialog.svelte';
+	import PeerList from './PeerList.svelte';
 
 	// System > Remote access, administrators only: the WireGuard tunnel on the host (ADR-0420). A
 	// new peer's configuration comes in the answer of its creation only: it is shown once, with a
@@ -51,9 +53,6 @@
 		$t('remote.size.terabytes')
 	]);
 	let on = $derived(!!status?.enabled);
-	// A configuration without a private key: the device gave its own public key.
-	// i18n-ignore: a line of WireGuard's configuration
-	let ownKey = $derived(created !== null && !created.config.includes('PrivateKey ='));
 
 	onMount(() => {
 		void load();
@@ -171,19 +170,6 @@
 		qrDataUrl = '';
 	}
 
-	function downloadConfig() {
-		if (!created) return;
-		const blob = new Blob([created.config], { type: 'text/plain' });
-		const url = URL.createObjectURL(blob);
-		const link = document.createElement('a');
-		link.href = url;
-		// i18n-ignore: a file name
-		link.download = `${created.peer.name.replace(/[^A-Za-z0-9._-]+/g, '-') || 'peer'}.conf`;
-		link.click();
-		// Later: some browsers start the download only after the click's event.
-		setTimeout(() => URL.revokeObjectURL(url), 60_000);
-	}
-
 	async function revoke() {
 		const peer = revoking;
 		revoking = null;
@@ -290,163 +276,91 @@
 		{/if}
 
 		{#if status.configured}
-			<div class="mt-6 flex flex-wrap justify-between items-center gap-2">
-				<h4 class="font-medium">{$t('remote.peers')}</h4>
-				<Button variant="primary" size="sm" disabled={busy} onclick={openAdd}>
-					<Plus class="w-4 h-4" />
-					{$t('remote.addPeer')}
-				</Button>
-			</div>
-			{#if status.peers.length === 0}
-				<p class="text-sm text-content-secondary text-center py-4">{$t('remote.noPeers')}</p>
-			{:else}
-				<ul class="mt-3 space-y-2" aria-label={$t('remote.peers')}>
-					{#each status.peers as peer (peer.id)}
-						<li class="flex items-center justify-between gap-2 p-3 bg-surface-overlay rounded-lg">
-							<div class="min-w-0 break-words">
-								<p class="font-medium">{peer.name} <span class="text-content-secondary font-normal">{peer.address}</span></p>
-								<p class="text-sm text-content-secondary">
-									{peer.latest_handshake
-										? $t('remote.handshake', { time: formatDateTime(peer.latest_handshake, $intlLocale) })
-										: $t('remote.neverConnected')}
-								</p>
-								{#if peer.received !== null && peer.sent !== null}
-									<p class="text-sm text-content-secondary">
-										{$t('remote.traffic', {
-											received: formatBytes(peer.received, $intlLocale, sizeUnits),
-											sent: formatBytes(peer.sent, $intlLocale, sizeUnits)
-										})}
-									</p>
-								{/if}
-							</div>
-							<Button
-								variant="ghost"
-								size="icon"
-								class="text-status-error hover:text-status-error"
-								disabled={busy}
-								aria-label={$t('remote.revokeLabel', { name: peer.name })}
-								onclick={() => (revoking = peer)}
-							>
-								<Trash2 class="w-4 h-4" />
-							</Button>
-						</li>
-					{/each}
-				</ul>
-			{/if}
+			<PeerList peers={status.peers} {busy} {sizeUnits} onadd={openAdd} onrevoke={(peer) => (revoking = peer)} />
 		{/if}
 	{/if}
 </Card>
 
-<Modal open={showEnable} title={$t('remote.enableTitle')} onclose={() => (showEnable = false)}>
+<ConfirmDialog
+	open={showEnable}
+	title={$t('remote.enableTitle')}
+	confirmLabel={$t('remote.turnOn')}
+	{busy}
+	oncancel={() => (showEnable = false)}
+	onconfirm={turnOn}
+>
 	<div class="space-y-3 text-sm break-words">
 		<p>{$t('remote.enableNasOnly')}</p>
 		<p>{$t('remote.enableRouter', { port: settings.port, endpoint: settings.endpoint.trim() })}</p>
 		<p>{$t('remote.enableFirewall', { port: settings.port })}</p>
 		<p>{$t('remote.enableLan')}</p>
 	</div>
-	{#snippet footer()}
-		<Button variant="secondary" onclick={() => (showEnable = false)}>{$t('common.cancel')}</Button>
-		<Button variant="primary" disabled={busy} onclick={turnOn}>{$t('remote.turnOn')}</Button>
-	{/snippet}
-</Modal>
+</ConfirmDialog>
 
-<Modal open={showDisable} title={$t('remote.disableTitle')} danger onclose={() => (showDisable = false)}>
-	<p class="text-sm break-words">{$t('remote.disableText')}</p>
-	{#snippet footer()}
-		<Button variant="secondary" onclick={() => (showDisable = false)}>{$t('common.cancel')}</Button>
-		<Button variant="danger" disabled={busy} onclick={turnOff}>{$t('remote.turnOff')}</Button>
-	{/snippet}
-</Modal>
-
-<Modal open={showEndpoint} title={$t('remote.endpointTitle')} closable={!busy} onclose={() => (showEndpoint = false)}>
-	<form
-		id="remote-endpoint"
-		class="space-y-4"
-		onsubmit={(e) => {
-			e.preventDefault();
-			saveEndpoint();
-		}}
-	>
-		<Input
-			label={$t('remote.endpoint')}
-			hint={$t('remote.endpointHint')}
-			placeholder={$t('remote.endpointPlaceholder')}
-			bind:value={endpointValue}
-			required
-		/>
-		<p class="text-sm text-content-secondary">{$t('remote.endpointNote')}</p>
-		{#if endpointError}
-			<Alert variant="error"><p class="break-words">{endpointError}</p></Alert>
-		{/if}
-	</form>
-	{#snippet footer()}
-		<Button variant="secondary" type="button" disabled={busy} onclick={() => (showEndpoint = false)}>{$t('common.cancel')}</Button>
-		<Button variant="primary" type="submit" form="remote-endpoint" disabled={busy || !endpointValue.trim()}>{$t('remote.save')}</Button>
-	{/snippet}
-</Modal>
-
-<Modal open={showAdd} title={$t('remote.addTitle')} closable={!busy} onclose={() => (showAdd = false)}>
-	<form
-		id="remote-add-peer"
-		class="space-y-4"
-		onsubmit={(e) => {
-			e.preventDefault();
-			addPeer();
-		}}
-	>
-		<Input
-			label={$t('remote.peerName')}
-			placeholder={$t('remote.peerNamePlaceholder')}
-			bind:value={peerName}
-			maxlength={32}
-			required
-		/>
-		<Input label={$t('remote.publicKeyLabel')} hint={$t('remote.publicKeyHint')} bind:value={peerKey} spellcheck={false} />
-		{#if addError}
-			<Alert variant="error"><p class="break-words">{addError}</p></Alert>
-		{/if}
-	</form>
-	{#snippet footer()}
-		<Button variant="secondary" type="button" disabled={busy} onclick={() => (showAdd = false)}>{$t('common.cancel')}</Button>
-		<Button variant="primary" type="submit" form="remote-add-peer" disabled={busy || !peerName.trim()}>
-			{busy ? $t('remote.adding') : $t('remote.addPeer')}
-		</Button>
-	{/snippet}
-</Modal>
-
-<Modal
-	open={created !== null}
-	title={created ? $t('remote.configTitle', { name: created.peer.name }) : ''}
-	size="lg"
-	onclose={closeCreated}
+<ConfirmDialog
+	open={showDisable}
+	title={$t('remote.disableTitle')}
+	danger
+	confirmLabel={$t('remote.turnOff')}
+	{busy}
+	oncancel={() => (showDisable = false)}
+	onconfirm={turnOff}
 >
-	{#if created}
-		<div class="space-y-4 text-sm">
-			<Alert variant="warning">{$t('remote.configOnce')}</Alert>
-			{#if ownKey}
-				<Alert variant="info">{$t('remote.configOwnKey')}</Alert>
-			{/if}
-			{#if qrDataUrl}
-				<div class="flex justify-center">
-					<img src={qrDataUrl} alt={$t('remote.qrAlt', { name: created.peer.name })} class="w-64 h-64 max-w-full" />
-				</div>
-			{/if}
-			<pre class="p-3 bg-surface-overlay rounded-lg text-xs whitespace-pre-wrap break-all" aria-label={$t('remote.configTitle', { name: created.peer.name })}>{created.config}</pre>
-		</div>
-	{/if}
-	{#snippet footer()}
-		<Button variant="secondary" onclick={downloadConfig}>
-			<Download class="w-4 h-4" />
-			{$t('remote.download')}
-		</Button>
-		<Button variant="primary" onclick={closeCreated}>{$t('remote.done')}</Button>
-	{/snippet}
-</Modal>
+	<p class="text-sm break-words">{$t('remote.disableText')}</p>
+</ConfirmDialog>
 
-<Modal open={revoking !== null} title={$t('remote.revokeTitle')} danger onclose={() => (revoking = null)}>
+<FormDialog
+	open={showEndpoint}
+	title={$t('remote.endpointTitle')}
+	formId="remote-endpoint"
+	{busy}
+	error={endpointError}
+	submitLabel={$t('remote.save')}
+	submitDisabled={busy || !endpointValue.trim()}
+	oncancel={() => (showEndpoint = false)}
+	onsubmit={saveEndpoint}
+>
+	<Input
+		label={$t('remote.endpoint')}
+		hint={$t('remote.endpointHint')}
+		placeholder={$t('remote.endpointPlaceholder')}
+		bind:value={endpointValue}
+		required
+	/>
+	<p class="text-sm text-content-secondary">{$t('remote.endpointNote')}</p>
+</FormDialog>
+
+<FormDialog
+	open={showAdd}
+	title={$t('remote.addTitle')}
+	formId="remote-add-peer"
+	{busy}
+	error={addError}
+	submitLabel={busy ? $t('remote.adding') : $t('remote.addPeer')}
+	submitDisabled={busy || !peerName.trim()}
+	oncancel={() => (showAdd = false)}
+	onsubmit={addPeer}
+>
+	<Input
+		label={$t('remote.peerName')}
+		placeholder={$t('remote.peerNamePlaceholder')}
+		bind:value={peerName}
+		maxlength={32}
+		required
+	/>
+	<Input label={$t('remote.publicKeyLabel')} hint={$t('remote.publicKeyHint')} bind:value={peerKey} spellcheck={false} />
+</FormDialog>
+
+<PeerConfigDialog {created} {qrDataUrl} onclose={closeCreated} />
+
+<ConfirmDialog
+	open={revoking !== null}
+	title={$t('remote.revokeTitle')}
+	danger
+	confirmLabel={$t('remote.revoke')}
+	{busy}
+	oncancel={() => (revoking = null)}
+	onconfirm={revoke}
+>
 	<p class="text-sm break-words">{$t('remote.revokeText', { name: revoking?.name ?? '' })}</p>
-	{#snippet footer()}
-		<Button variant="secondary" onclick={() => (revoking = null)}>{$t('common.cancel')}</Button>
-		<Button variant="danger" disabled={busy} onclick={revoke}>{$t('remote.revoke')}</Button>
-	{/snippet}
-</Modal>
+</ConfirmDialog>

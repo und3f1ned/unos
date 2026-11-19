@@ -8,9 +8,11 @@
 		type AppName,
 		type AppNamesStatus
 	} from '$lib/api/remoteAccess';
-	import { Alert, Button, Card, Input, Modal, Select } from '$lib/components/ui';
+	import { Alert, Button, Card, Input, Select } from '$lib/components/ui';
 	import { t } from '$lib/i18n';
 	import { Plus, Tag, Trash2 } from 'lucide-svelte';
+	import ConfirmDialog from './ConfirmDialog.svelte';
+	import FormDialog from './FormDialog.svelte';
 
 	// System > Remote access, administrators only: the local names of apps (ADR-0420), routed by the
 	// web UI's Caddy to a published port of the app and announced by avahi on the LAN.
@@ -213,40 +215,36 @@
 	{/if}
 </Card>
 
-<Modal open={showAdd} title={$t('remote.names.addTitle')} closable={!busy} onclose={() => (showAdd = false)}>
-	<form
-		id="app-name-add"
-		class="space-y-4"
-		onsubmit={(e) => {
-			e.preventDefault();
-			add();
-		}}
-	>
-		<Select label={$t('remote.names.app')} options={appOptions} bind:value={choice} />
-		<Input
-			label={$t('remote.names.label')}
-			hint={$t('remote.names.labelHint', { name: label.trim(), host })}
-			bind:value={label}
-			maxlength={32}
-			spellcheck={false}
-			required
-		/>
-		{#if addError}
-			<Alert variant="error"><p class="break-words">{addError}</p></Alert>
-		{/if}
-	</form>
-	{#snippet footer()}
-		<Button variant="secondary" type="button" disabled={busy} onclick={() => (showAdd = false)}>{$t('common.cancel')}</Button>
-		<Button variant="primary" type="submit" form="app-name-add" disabled={busy || !label.trim() || !chosen}>
-			{busy ? $t('remote.names.adding') : $t('remote.names.add')}
-		</Button>
-	{/snippet}
-</Modal>
+<FormDialog
+	open={showAdd}
+	title={$t('remote.names.addTitle')}
+	formId="app-name-add"
+	{busy}
+	error={addError}
+	submitLabel={busy ? $t('remote.names.adding') : $t('remote.names.add')}
+	submitDisabled={busy || !label.trim() || !chosen}
+	oncancel={() => (showAdd = false)}
+	onsubmit={add}
+>
+	<Select label={$t('remote.names.app')} options={appOptions} bind:value={choice} />
+	<Input
+		label={$t('remote.names.label')}
+		hint={$t('remote.names.labelHint', { name: label.trim(), host })}
+		bind:value={label}
+		maxlength={32}
+		spellcheck={false}
+		required
+	/>
+</FormDialog>
 
-<Modal open={removing !== null} title={$t('remote.names.remove')} danger onclose={() => (removing = null)}>
+<ConfirmDialog
+	open={removing !== null}
+	title={$t('remote.names.remove')}
+	danger
+	confirmLabel={$t('remote.names.remove')}
+	{busy}
+	oncancel={() => (removing = null)}
+	onconfirm={remove}
+>
 	<p class="text-sm break-words">{$t('remote.names.removeLabel', { name: removing?.name ?? '' })}</p>
-	{#snippet footer()}
-		<Button variant="secondary" onclick={() => (removing = null)}>{$t('common.cancel')}</Button>
-		<Button variant="danger" disabled={busy} onclick={remove}>{$t('remote.names.remove')}</Button>
-	{/snippet}
-</Modal>
+</ConfirmDialog>

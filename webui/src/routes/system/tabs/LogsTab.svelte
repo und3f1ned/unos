@@ -6,26 +6,23 @@
     streamLogEntries,
     type JournalStream,
     type LogEntry,
-    type LogPriority,
     type LogQueryParams,
     type LogSource
   } from "$lib/api/logs";
-  import { Button, Card, Badge, Alert, EmptyState, Select } from "$lib/components/ui";
-  import { intlLocale, t } from "$lib/i18n";
-  import { apiTime } from "$lib/time";
+  import { Button } from "$lib/components/ui";
+  import LogEntries from "$lib/components/system/journal/LogEntries.svelte";
+  import LogFilters from "$lib/components/system/journal/LogFilters.svelte";
+  import { textOf } from "$lib/components/system/journal/logs";
+  import { t } from "$lib/i18n";
   import {
     FileText,
-    Search,
     RefreshCw,
     Filter,
-    Clock,
-    AlertTriangle,
     Terminal,
     Server,
     Shield,
     Box,
     Calendar,
-    X,
     ChevronDown,
     ChevronUp,
     Pause,
@@ -61,60 +58,6 @@
     auth: "logs.source.authDescription",
     cron: "logs.source.cronDescription"
   };
-  // The journal's levels, the most severe first: the filter lists a level and the more severe
-  // ones. LEVELS names an entry's level in the list.
-  const PRIORITIES: Record<LogPriority, string> = {
-    emerg: "logs.priority.emerg",
-    alert: "logs.priority.alert",
-    crit: "logs.priority.crit",
-    err: "logs.priority.err",
-    warning: "logs.priority.warning",
-    notice: "logs.priority.notice",
-    info: "logs.priority.info",
-    debug: "logs.priority.debug"
-  };
-  const LEVELS: Record<LogPriority, string> = {
-    emerg: "logs.level.emerg",
-    alert: "logs.level.alert",
-    crit: "logs.level.crit",
-    err: "logs.level.err",
-    warning: "logs.level.warning",
-    notice: "logs.level.notice",
-    info: "logs.level.info",
-    debug: "logs.level.debug"
-  };
-  // The time ranges of the filter by the since they send: journalctl's --since, which the server
-  // takes as <N> minutes ago, <N> hours ago or <N> days ago; "" reads the whole journal.
-  const TIME_RANGES: Record<string, string> = {
-    "": "logs.time.all",
-    "5 minutes ago": "logs.time.last5Minutes",
-    "15 minutes ago": "logs.time.last15Minutes",
-    "1 hour ago": "logs.time.lastHour",
-    "6 hours ago": "logs.time.last6Hours",
-    "24 hours ago": "logs.time.last24Hours",
-    "7 days ago": "logs.time.last7Days"
-  };
-
-  /** The text of `value` by its key in `keys`, in the language of the page; else `fallback`. */
-  function textOf(keys: Record<string, string>, value: string, fallback: string = value): string {
-    return Object.prototype.hasOwnProperty.call(keys, value) ? $t(keys[value]) : fallback;
-  }
-
-  // Options for Select components, in the language of the page.
-  let priorityOptions = $derived([
-    { value: "", label: $t("logs.filter.allPriorities") },
-    ...Object.entries(PRIORITIES).map(([value, key]) => ({ value, label: $t(key) }))
-  ]);
-
-  let timeRangeOptions = $derived(Object.entries(TIME_RANGES).map(([value, key]) => ({ value, label: $t(key) })));
-
-  const limitOptions = [
-    { value: "50", label: "50" },
-    { value: "100", label: "100" },
-    { value: "200", label: "200" },
-    { value: "500", label: "500" },
-    { value: "1000", label: "1000" }
-  ];
 
   // Auto: the entries come from the journal socket, the newest ones of the filters and then each
   // new one as the journal gets it (ADR-0366); nothing asks GET /entries again.
@@ -259,59 +202,7 @@
     }
   }
 
-  function getPriorityVariant(p: string): "error" | "warning" | "success" | "info" | "neutral" {
-    switch (p) {
-      case "emerg":
-      case "alert":
-      case "crit":
-      case "err":
-        return "error";
-      case "warning":
-        return "warning";
-      case "notice":
-        return "info";
-      case "info":
-        return "neutral";
-      case "debug":
-        return "neutral";
-      default:
-        return "neutral";
-    }
-  }
-
-  // The server gives UTC times with their offset; the browser shows them in its own time zone,
-  // in the language of the page, as toLocaleString writes them. One formatter per language for
-  // every row (reactive, so that the list follows a change of the language).
-  let dateFormat = $derived(
-    new Intl.DateTimeFormat($intlLocale, {
-      year: "numeric",
-      month: "numeric",
-      day: "numeric",
-      hour: "numeric",
-      minute: "numeric",
-      second: "numeric"
-    })
-  );
-  function formatTimestamp(ts: string): string {
-    if (!ts) return "";
-    const date = apiTime(ts);
-    return date ? dateFormat.format(date) : ts;
-  }
-
-  // Split a log message around case-insensitive matches of the search term.
-  // The parts are rendered as text, never as HTML: log lines are attacker-
-  // controllable (usernames, request paths, container output).
-  function splitByMatch(text: string, term: string): { text: string; match: boolean }[] {
-    if (!term) return [{ text, match: false }];
-    const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    // With one capture group, split() puts the matches at the odd indexes.
-    return text
-      .split(new RegExp(`(${escaped})`, "gi"))
-      .map((part, i) => ({ text: part, match: i % 2 === 1 }))
-      .filter((part) => part.text !== "");
-  }
-
-  let hasActiveFilters = $derived(priority || since || search);
+  let hasActiveFilters = $derived(!!(priority || since || search));
   let currentSource = $derived(sources.find(s => s.name === source));
 </script>
 
@@ -325,7 +216,7 @@
       </h2>
       {#if currentSource}
         <span class="text-sm text-secondary">
-          {textOf(SOURCE_DESCRIPTIONS, currentSource.name, currentSource.description)}
+          {textOf($t, SOURCE_DESCRIPTIONS, currentSource.name, currentSource.description)}
         </span>
       {/if}
     </div>
@@ -379,193 +270,27 @@
         onclick={() => { source = s.name; handleSourceChange(); }}
       >
         <Icon class="w-4 h-4" />
-        {textOf(SOURCE_LABELS, s.name, s.label)}
+        {textOf($t, SOURCE_LABELS, s.name, s.label)}
       </Button>
     {/each}
   </div>
 
   <!-- Filters Panel -->
   {#if showFilters}
-    <Card>
-      <div class="space-y-4">
-        <!-- Search -->
-        <div class="flex gap-2">
-          <div class="relative flex-1">
-            <Search class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-secondary" />
-            <input
-              type="text"
-              bind:value={search}
-              onkeydown={(e) => e.key === 'Enter' && handleSearch()}
-              placeholder={$t("logs.searchPlaceholder")}
-              class="form-input pl-10 pr-10 text-sm"
-            />
-            {#if search}
-              <Button variant="plain" class="absolute right-3 top-1/2 -translate-y-1/2 text-secondary hover:text-content"
-                onclick={clearSearch}
-              >
-                <X class="w-4 h-4" />
-              </Button>
-            {/if}
-          </div>
-          <Button variant="primary" size="sm" onclick={handleSearch} disabled={loading}>
-            {$t("logs.search")}
-          </Button>
-        </div>
-
-        <!-- Filter Row -->
-        <div class="flex flex-wrap items-end gap-4">
-          <!-- Priority Filter -->
-          <Select
-            class="flex-1 min-w-[150px]"
-            label={$t("logs.filter.priority")}
-            bind:value={priority}
-            options={priorityOptions}
-            placeholder={$t("logs.filter.allPriorities")}
-            onchange={handleFilterChange}
-          />
-
-          <!-- Time Range Filter -->
-          <Select
-            class="flex-1 min-w-[150px]"
-            label={$t("logs.filter.timeRange")}
-            bind:value={since}
-            options={timeRangeOptions}
-            placeholder={$t("logs.time.all")}
-            onchange={handleFilterChange}
-          />
-
-          <!-- Limit -->
-          <Select
-            class="w-[120px]"
-            label={$t("logs.filter.limit")}
-            bind:value={limitStr}
-            options={limitOptions}
-            onchange={handleFilterChange}
-          />
-
-          <!-- Clear Filters -->
-          {#if hasActiveFilters}
-            <Button variant="ghost" size="sm" onclick={clearFilters}>
-              <X class="w-4 h-4 mr-1" />
-              {$t("logs.filter.clear")}
-            </Button>
-          {/if}
-        </div>
-
-        <!-- Active Filters Badges -->
-        {#if hasActiveFilters}
-          <div class="flex flex-wrap gap-2 pt-2 border-t border-border">
-            <span class="text-sm text-secondary">{$t("logs.filter.active")}</span>
-            {#if priority}
-              <Badge variant="info">
-                {$t("logs.filter.priorityBadge", { level: textOf(PRIORITIES, priority) })}
-              </Badge>
-            {/if}
-            {#if since}
-              <Badge variant="info">
-                {$t("logs.filter.timeBadge", { range: textOf(TIME_RANGES, since) })}
-              </Badge>
-            {/if}
-            {#if search}
-              <Badge variant="info">
-                {$t("logs.filter.searchBadge", { text: search })}
-              </Badge>
-            {/if}
-          </div>
-        {/if}
-      </div>
-    </Card>
+    <LogFilters
+      bind:search
+      bind:priority
+      bind:since
+      bind:limitStr
+      {loading}
+      {hasActiveFilters}
+      onsearch={handleSearch}
+      onclearsearch={clearSearch}
+      onfilterchange={handleFilterChange}
+      onclear={clearFilters}
+    />
   {/if}
 
   <!-- Error Alert, instead of the list: no entries belong to the request that failed -->
-  {#if error}
-    <Alert variant="error" title={$t("logs.loadError")}>
-      {error}
-    </Alert>
-  {:else}
-    <!-- Logs Display -->
-    <Card>
-      <div class="flex flex-wrap items-center justify-between gap-2 mb-3">
-        <span class="text-sm text-secondary">
-          {#if loading}
-            {$t("common.loading")}
-          {:else}
-            {$t("logs.count", { n: entries.length })}
-          {/if}
-        </span>
-        {#if autoRefresh}
-          <span class="text-xs text-success flex items-center gap-1">
-            <span class="w-2 h-2 bg-success rounded-full animate-pulse"></span>
-            {$t("logs.following")}
-          </span>
-        {:else if autoStopped}
-          <span class="text-xs text-warning">
-            {$t(autoStopped === "forbidden" ? "logs.autoForbidden" : "logs.autoLost")}
-          </span>
-        {/if}
-      </div>
-
-      <div class="bg-surface-muted rounded-lg overflow-hidden">
-        <div class="max-h-[600px] overflow-y-auto scrollbar-thin">
-          {#if loading && entries.length === 0}
-            <div class="flex items-center justify-center py-12">
-              <RefreshCw class="w-6 h-6 animate-spin text-secondary" />
-              <span class="ml-2 text-secondary">{$t("logs.loadingEntries")}</span>
-            </div>
-          {:else if entries.length === 0}
-            <EmptyState
-              icon={FileText}
-              title={$t("logs.empty")}
-              description={hasActiveFilters ? $t("logs.emptyFiltered") : $t("logs.emptySource")}
-            />
-          {:else}
-            <!-- Below sm each entry stacks: its time, level and program on a line, the message
-                 below them at the full width (ADR-0302). -->
-            <table class="w-full text-sm max-sm:block">
-              <thead class="sticky top-0 bg-surface-overlay border-b border-border max-sm:hidden">
-                <tr>
-                  <th class="px-3 py-2 text-left text-secondary font-medium w-[160px]">{$t("logs.column.time")}</th>
-                  <th class="px-3 py-2 text-left text-secondary font-medium w-[80px]">{$t("logs.column.level")}</th>
-                  <th class="px-3 py-2 text-left text-secondary font-medium w-[120px]">{$t("logs.column.source")}</th>
-                  <th class="px-3 py-2 text-left text-secondary font-medium">{$t("logs.column.message")}</th>
-                </tr>
-              </thead>
-              <tbody class="font-mono text-xs max-sm:block">
-                {#each entries as entry, i}
-                  <tr
-                    class="border-b border-border/50 hover:bg-surface-overlay/50 transition-colors max-sm:flex max-sm:flex-wrap max-sm:items-center max-sm:gap-x-3 max-sm:px-3 max-sm:py-2"
-                  >
-                    <td class="px-3 py-2 text-secondary whitespace-nowrap max-sm:p-0">
-                      {formatTimestamp(entry.timestamp)}
-                    </td>
-                    <td class="px-3 py-2 max-sm:p-0">
-                      <Badge variant={getPriorityVariant(entry.priority)} class="text-xs">
-                        {textOf(LEVELS, entry.priority)}
-                      </Badge>
-                    </td>
-                    <td class="px-3 py-2 text-secondary max-sm:p-0 max-sm:min-w-0">
-                      {#if entry.unit}
-                        <span class="truncate block max-w-[120px]" title={entry.unit}>
-                          {entry.unit}
-                        </span>
-                      {:else}
-                        <span class="text-muted">-</span>
-                      {/if}
-                    </td>
-                    <td class="px-3 py-2 text-content max-sm:w-full max-sm:p-0 max-sm:pt-1">
-                      <span class="break-all"
-                        >{#each splitByMatch(entry.message ?? "", search) as part}{#if part.match}<mark
-                              class="bg-status-warning/20 text-status-warning rounded-sm">{part.text}</mark
-                            >{:else}{part.text}{/if}{/each}</span
-                      >
-                    </td>
-                  </tr>
-                {/each}
-              </tbody>
-            </table>
-          {/if}
-        </div>
-      </div>
-    </Card>
-  {/if}
+  <LogEntries {entries} {loading} {error} {search} {hasActiveFilters} {autoRefresh} {autoStopped} />
 </div>
