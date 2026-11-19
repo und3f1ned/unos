@@ -7,10 +7,12 @@
 		getSecurityKeys,
 		type SecurityKey
 	} from '$lib/api/auth';
-	import { Alert, Button, Input, Modal } from '$lib/components/ui';
+	import { Alert, Button } from '$lib/components/ui';
 	import { intlLocale, t } from '$lib/i18n';
 	import { formatDateTime } from '$lib/time';
 	import { browserErrorKey, createCredential, openedByIpAddress, securityKeysSupported } from '$lib/webauthn';
+	import AddSecurityKeyDialog from './AddSecurityKeyDialog.svelte';
+	import RemoveSecurityKeyDialog from './RemoveSecurityKeyDialog.svelte';
 
 	// The security keys of the signed-in account, shown while two-factor authentication is on
 	// (ADR-0409). Each signs in at the code step in place of a code of the authenticator app.
@@ -195,92 +197,22 @@
 	{/if}
 </section>
 
-<Modal open={adding} title={$t('securitykeys.addTitle')} size="md" closable={!busy} onclose={closeAdd}>
-	<form
-		id="security-key-add"
-		class="space-y-4"
-		onsubmit={(event) => {
-			event.preventDefault();
-			add();
-		}}
-	>
-		<p class="text-sm text-content-secondary">{$t('securitykeys.addText')}</p>
-		<Input
-			id="security-key-name"
-			label={$t('securitykeys.nameLabel')}
-			placeholder={$t('securitykeys.namePlaceholder')}
-			bind:value={name}
-			maxlength={64}
-			autocomplete="off"
-			required
-			disabled={busy}
-		/>
-		<Input
-			id="security-key-password"
-			type="password"
-			label={$t('securitykeys.passwordLabel')}
-			bind:value={password}
-			autocomplete="current-password"
-			required
-			disabled={busy}
-		/>
-		{#if touching}
-			<Alert variant="info">{$t('securitykeys.touch')}</Alert>
-		{/if}
-		{#if addError}
-			<Alert variant="error">{addError}</Alert>
-		{/if}
-	</form>
+<AddSecurityKeyDialog
+	open={adding}
+	bind:name
+	bind:password
+	{busy}
+	{touching}
+	error={addError}
+	onadd={add}
+	onclose={closeAdd}
+/>
 
-	{#snippet footer()}
-		<Button variant="secondary" class="flex-1" disabled={busy} onclick={closeAdd}>{$t('common.cancel')}</Button>
-		<Button
-			type="submit"
-			form="security-key-add"
-			class="flex-1"
-			loading={busy}
-			disabled={!name.trim() || !password}
-		>
-			{$t('securitykeys.addButton')}
-		</Button>
-	{/snippet}
-</Modal>
-
-<Modal open={removing !== null} title={$t('securitykeys.removeTitle')} size="md" closable={!busy} danger onclose={closeRemove}>
-	<form
-		id="security-key-remove"
-		class="space-y-4"
-		onsubmit={(event) => {
-			event.preventDefault();
-			remove();
-		}}
-	>
-		<p class="break-words">{$t('securitykeys.removeText', { name: removing?.name ?? '' })}</p>
-		<Input
-			id="security-key-remove-password"
-			type="password"
-			label={$t('securitykeys.passwordLabel')}
-			bind:value={removePassword}
-			autocomplete="current-password"
-			required
-			disabled={busy}
-		/>
-		{#if removeError}
-			<Alert variant="error">{removeError}</Alert>
-		{/if}
-	</form>
-
-	{#snippet footer()}
-		<Button variant="secondary" class="flex-1" disabled={busy} onclick={closeRemove}>{$t('common.cancel')}</Button>
-		<Button
-			type="submit"
-			form="security-key-remove"
-			variant="danger"
-			class="flex-1"
-			loading={busy}
-			disabled={!removePassword}
-		>
-			{$t('securitykeys.removeButton')}
-		</Button>
-	{/snippet}
-</Modal>
+<RemoveSecurityKeyDialog
+	key={removing}
+	bind:password={removePassword}
+	{busy}
+	error={removeError}
+	onremove={remove}
+	onclose={closeRemove}
+/>

@@ -1,12 +1,9 @@
 <script lang="ts">
-  import { Server, RefreshCw, Clock, UserCog, SlidersHorizontal, Check, GripVertical, ArrowUp, ArrowDown, EyeOff, Eye, RotateCcw } from "lucide-svelte";
   import { onMount, tick } from "svelte";
-  import { Alert, Button, Card } from "$lib/components/ui";
-  import SystemStatsWidget from "$lib/components/widgets/SystemStatsWidget.svelte";
-  import StorageWidget from "$lib/components/widgets/StorageWidget.svelte";
-  import ContainersWidget from "$lib/components/widgets/ContainersWidget.svelte";
-  import QuickActionsWidget from "$lib/components/widgets/QuickActionsWidget.svelte";
-  import RecentActivityWidget from "$lib/components/widgets/RecentActivityWidget.svelte";
+  import { Alert } from "$lib/components/ui";
+  import {
+    AccountNotice, DashboardHeader, DashboardWidget, HiddenWidgets, ReplaceDisksAlert, WidgetToolbar
+  } from "$lib/components/dashboard";
 
   import { getSystemInfo, type SystemInfo } from "$lib/api/system";
   import { getPools, type Pool } from "$lib/api/storage";
@@ -17,12 +14,14 @@
     getDashboardLayout, saveDashboardLayout, resetDashboardLayout, type LayoutEntry
   } from "$lib/api/dashboard";
   import {
-    WIDGETS, defaultLayout, isDefaultLayout, moveTo, resolveLayout, setHidden, step, widgetDef
+    defaultLayout, isDefaultLayout, moveTo, resolveLayout, setHidden, step, widgetDef
   } from "$lib/dashboard-layout";
-  import { stats, wsConnected, wsForbidden, type WebSocketStats } from "$lib/stores/stats";
+  import { stats, type WebSocketStats } from "$lib/stores/stats";
   import { user } from "$lib/stores/auth";
-  import { intlLocale, t } from "$lib/i18n";
-  import { apiTime } from "$lib/time";
+  import { t } from "$lib/i18n";
+
+  // The dashboard (ADR-0395): it reads its data on opening and on Refresh, and keeps the user's
+  // layout of the widgets, which the user arranges here.
 
   // The answers of the API, each only ever replaced whole.
   let systemInfo = $state.raw<SystemInfo | null>(null);
@@ -117,66 +116,10 @@
     await loadData();
   }
 
-  // The functions that read $t or $intlLocale do it where the markup calls them: the texts follow
-  // the language.
-  function formatUptime(bootTime: string): string {
-    // bootTime is when the host booted, ISO 8601 with its offset (ADR-0401)
-    const booted = apiTime(bootTime);
-    if (!booted) return bootTime;
-    const seconds = Math.floor((Date.now() - booted.getTime()) / 1000);
-    const days = Math.floor(seconds / 86400);
-    const hours = Math.floor((seconds % 86400) / 3600);
-    const minutes = Math.floor((seconds % 3600) / 60);
-    if (days > 0) return $t("dashboard.uptime.days", { days, hours });
-    if (hours > 0) return $t("dashboard.uptime.hours", { hours, minutes });
-    return $t("dashboard.uptime.minutes", { minutes });
-  }
-
-  // In the language of the page.
-  function formatTime(date: Date): string {
-    return date.toLocaleTimeString($intlLocale);
-  }
-
-  // The CPU's temperature, which the server chooses among the host's sensors (ADR-0346), in whole
-  // degrees; null on a host without sensors.
-  function wholeDegrees(celsius: number | null | undefined): number | null {
-    return celsius == null ? null : Math.round(celsius);
-  }
-
-  // Transform pools for widget
-  const poolsForWidget = $derived(pools.map(p => ({
-    name: p.name,
-    size: p.total_size || 0,
-    used: p.used_size || 0,
-    free: (p.total_size || 0) - (p.used_size || 0),
-    health: p.health ?? "unknown",
-    mounted: p.mounted ?? !!p.mountpoint,
-    missingDevices: p.missing_devices ?? 0,
-    deviceErrors: p.device_errors ?? 0,
-    readOnly: p.read_only ?? false,
-    forcedReadOnly: p.forced_read_only ?? false
-  })));
-
-  // Transform containers for widget
-  const containersForWidget = $derived(containers.map(c => ({
-    id: c.id,
-    name: c.name,
-    state: c.state,
-    image: c.image
-  })));
-
-  // Transform notification logs for widget
-  const notificationsForWidget = $derived(notificationLogs.map(log => ({
-    id: log.id,
-    type: log.event?.type || "info",
-    title: log.event?.title || $t("dashboard.notification"),
-    message: log.event?.message || "",
-    created_at: log.sent_at,
-    read: log.success
-  })));
   // A widget shows when it is not hidden and has its data: the stats cards come with the live stats.
   const shown = $derived(layout.filter((e) => !e.hidden && (currentStats !== null || widgetDef(e.id)?.adminOnly)));
   const hiddenWidgets = $derived(layout.filter((e) => e.hidden));
+  // The name of a widget in the language of the page; it reads $t where it is called.
   function nameOf(id: string): string {
     const def = widgetDef(id);
     return def ? $t(def.nameKey) : id;
@@ -275,45 +218,16 @@
 </script>
 
 <div class="space-y-6">
-  <!-- Header: on a narrow screen the live stats' time and Refresh go below the host name, and a
-       long host name breaks (ADR-0302). -->
-  <div class="flex flex-wrap items-center justify-between gap-3">
-    <div class="flex items-center gap-3 min-w-0">
-      <Server class="w-8 h-8 text-brand-ring flex-shrink-0" />
-      <div class="min-w-0">
-        <h1 class="text-2xl font-bold break-words">{systemInfo?.hostname || $t("common.product")}</h1>
-        {#if systemInfo}
-          <p class="text-sm text-content-secondary">
-            {$t("dashboard.osUptime", { os: systemInfo.os, uptime: formatUptime(systemInfo.boot_time) })}
-          </p>
-        {/if}
-      </div>
-    </div>
-    <div class="flex items-center gap-4">
-      {#if $wsForbidden}
-        <span class="text-xs text-warning">{$t("dashboard.liveStatsForbidden")}</span>
-      {:else if !$wsConnected}
-        <span class="text-xs text-warning">{$t("dashboard.disconnected")}</span>
-      {:else if lastUpdate}
-        <span class="text-xs text-content-muted flex items-center gap-1">
-          <Clock class="w-3 h-3" />
-          {$t("dashboard.updated", { time: formatTime(lastUpdate) })}
-        </span>
-      {/if}
-      {#if !layoutFailed && !loading}
-        <span data-customize>
-          <Button variant="secondary" size="sm" icon={arranging ? Check : SlidersHorizontal} pressed={arranging}
-            onclick={() => (arranging = !arranging)}>
-            {arranging ? $t("dashboard.layout.done") : $t("dashboard.layout.customize")}
-          </Button>
-        </span>
-      {/if}
-      <Button variant="secondary" size="icon" onclick={handleRefresh} disabled={loading || saving}>
-        <RefreshCw class="w-4 h-4 {loading ? 'animate-spin' : ''}" />
-        <span class="sr-only">{$t("common.refresh")}</span>
-      </Button>
-    </div>
-  </div>
+  <DashboardHeader
+    {systemInfo}
+    {lastUpdate}
+    customizable={!layoutFailed && !loading}
+    {arranging}
+    {loading}
+    {saving}
+    oncustomize={() => (arranging = !arranging)}
+    onrefresh={handleRefresh}
+  />
 
   {#if loading && !currentStats}
     <div class="flex items-center justify-center py-12">
@@ -322,23 +236,7 @@
   {:else}
     <!-- The disks to replace stay above the widgets, always: a warning is not one of them. -->
     {#if isAdmin}
-      {#if toReplace.length > 0}
-        <Alert variant="error" title={$t("dashboard.replace.title")}>
-          <ul class="space-y-1 text-sm">
-            {#each toReplace as prediction}
-              <li>
-                <span class="mono">{prediction.device}</span>
-                {$t("dashboard.replace.disk", { serial: prediction.serial, reasons: prediction.risk_factors.join("; ") })}
-              </li>
-            {/each}
-          </ul>
-          <a href="/system#health" class="text-sm text-info hover:underline">{$t("dashboard.replace.diskHealth")}</a>
-        </Alert>
-      {:else if predictionsError}
-        <Alert variant="warning" title={$t("dashboard.replace.checkFailed")}>
-          {predictionsError}
-        </Alert>
-      {/if}
+      <ReplaceDisksAlert {toReplace} error={predictionsError} />
     {/if}
 
     {#if layoutFailed}
@@ -351,27 +249,13 @@
     <p class="sr-only" role="status" data-layout-status>{announcement}</p>
 
     {#if arranging}
-      <Card>
-        <p class="text-sm text-secondary mb-3">{$t("dashboard.layout.hint")}</p>
-        <section aria-label={$t("dashboard.layout.hiddenTitle")} class="mb-3" data-hidden-list>
-          <h2 class="section-title mb-2">{$t("dashboard.layout.hiddenTitle")}</h2>
-          {#if hiddenWidgets.length === 0}
-            <p class="text-sm text-muted">{$t("dashboard.layout.noneHidden")}</p>
-          {:else}
-            <div class="flex flex-wrap gap-2">
-              {#each hiddenWidgets as entry (entry.id)}
-                <Button variant="secondary" size="sm" icon={Eye} disabled={saving} onclick={() => show(entry.id)}>
-                  {$t("dashboard.layout.show", { name: nameOf(entry.id) })}
-                </Button>
-              {/each}
-            </div>
-          {/if}
-        </section>
-        <Button variant="ghost" size="sm" icon={RotateCcw} disabled={saving || isDefaultLayout(layout, isAdmin)}
-          onclick={resetLayout}>
-          {$t("dashboard.layout.reset")}
-        </Button>
-      </Card>
+      <HiddenWidgets
+        widgets={hiddenWidgets.map((entry) => ({ id: entry.id, name: nameOf(entry.id) }))}
+        {saving}
+        resetDisabled={isDefaultLayout(layout, isAdmin)}
+        onshow={show}
+        onreset={resetLayout}
+      />
     {/if}
 
     <!-- The widgets: small cards five to a row on a wide screen, wide ones two to a row (ADR-0395). -->
@@ -388,75 +272,24 @@
           ondrop={(e) => onDrop(e, entry.id)}
         >
           {#if arranging}
-            <div data-toolbar class="flex flex-wrap items-center gap-1 mb-1">
-              <!-- Dragging is for a mouse; the buttons are for the keyboard and a finger. -->
-              <span
-                data-drag-handle
-                draggable="true"
-                role="presentation"
-                title={$t("dashboard.layout.drag")}
-                class="p-1.5 cursor-grab text-secondary"
-                ondragstart={(e) => onDragStart(e, entry.id)}
-                ondragend={onDragEnd}
-              >
-                <GripVertical class="w-4 h-4" />
-              </span>
-              <Button variant="secondary" size="icon-sm" disabled={saving || index === 0}
-                onclick={() => move(entry.id, -1)}>
-                <ArrowUp class="w-4 h-4" />
-                <span class="sr-only">{$t("dashboard.layout.moveUp", { name: nameOf(entry.id) })}</span>
-              </Button>
-              <Button variant="secondary" size="icon-sm" disabled={saving || index === shown.length - 1}
-                onclick={() => move(entry.id, 1)}>
-                <ArrowDown class="w-4 h-4" />
-                <span class="sr-only">{$t("dashboard.layout.moveDown", { name: nameOf(entry.id) })}</span>
-              </Button>
-              <Button variant="secondary" size="icon-sm" disabled={saving} onclick={() => hide(entry.id)}>
-                <EyeOff class="w-4 h-4" />
-                <span class="sr-only">{$t("dashboard.layout.hide", { name: nameOf(entry.id) })}</span>
-              </Button>
-            </div>
-          {/if}
-          {#if entry.id === "storage"}
-            <StorageWidget pools={poolsForWidget} />
-          {:else if entry.id === "containers"}
-            <ContainersWidget containers={containersForWidget} limit={5} />
-          {:else if entry.id === "quick-actions"}
-            <QuickActionsWidget />
-          {:else if entry.id === "recent-activity"}
-            <RecentActivityWidget notifications={notificationsForWidget} limit={5} />
-          {:else if currentStats}
-            <SystemStatsWidget
-              only={entry.id === "memory" || entry.id === "network" || entry.id === "disk-io" || entry.id === "temperature" ? entry.id : "cpu"}
-              cpuPercent={currentStats.cpu?.percent || 0}
-              memoryPercent={currentStats.memory?.percent || 0}
-              memoryUsed={currentStats.memory?.used || 0}
-              memoryTotal={currentStats.memory?.total || 0}
-              networkUp={currentStats.network?.bytes_sent_rate || 0}
-              networkDown={currentStats.network?.bytes_recv_rate || 0}
-              diskRead={currentStats.disk_io?.read_rate || 0}
-              diskWrite={currentStats.disk_io?.write_rate || 0}
-              temperature={wholeDegrees(currentStats.cpu?.temperature)}
+            <WidgetToolbar
+              name={nameOf(entry.id)}
+              first={index === 0}
+              last={index === shown.length - 1}
+              {saving}
+              ondragstart={(e) => onDragStart(e, entry.id)}
+              ondragend={onDragEnd}
+              onmove={(direction) => move(entry.id, direction)}
+              onhide={() => hide(entry.id)}
             />
           {/if}
+          <DashboardWidget id={entry.id} {pools} {containers} {notificationLogs} stats={currentStats} />
         </div>
       {/each}
     </div>
 
     {#if !isAdmin}
-      <Card>
-        <div class="flex items-start gap-3">
-          <UserCog class="w-5 h-5 text-info mt-0.5" />
-          <div>
-            <p class="font-medium">{$t("dashboard.user.signedInAs", { name: $user?.username ?? "" })}</p>
-            <p class="text-sm text-secondary">
-              {$t("dashboard.user.managed")}
-              {$t("dashboard.user.account")}
-              <a href="/system#security" class="text-info hover:underline">{$t("dashboard.user.accountLink")}</a>.
-            </p>
-          </div>
-        </div>
-      </Card>
+      <AccountNotice username={$user?.username ?? ""} />
     {/if}
   {/if}
 </div>

@@ -1,11 +1,12 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { FolderOpen, Share2 } from 'lucide-svelte';
+	import { Share2 } from 'lucide-svelte';
 	import { disableMySmb, enableMySmb, getMySmb, type MySmbStatus } from '$lib/api/auth';
 	import { user } from '$lib/stores/auth';
-	import { Alert, Badge, Button, Card, EmptyState, Input, Modal } from '$lib/components/ui';
-	import { smbUrl, windowsAddress } from '$lib/components/shares/texts';
+	import { Alert, Badge, Button, Card, Input, Modal } from '$lib/components/ui';
 	import { t } from '$lib/i18n';
+	import SmbConnectHelp from './SmbConnectHelp.svelte';
+	import SmbSharesTable from './SmbSharesTable.svelte';
 
 	// SMB (network file) access of the signed-in account. An administrator
 	// allows it; the user turns it on with the current password.
@@ -117,11 +118,8 @@
 	// Without SMB of its own, an account can still use guest shares.
 	const usableShares = $derived(status?.shares.filter((share) => share.usable) ?? []);
 	const showConnect = $derived(allowed || usableShares.length > 0);
+	// The share of the examples of how to connect.
 	const example = $derived((allowed ? status?.shares[0] : usableShares[0])?.name ?? 'share');
-	// i18n-ignore: an option of the command below, the same in every language
-	const mountOption = $derived(allowed ? `username=${signInName}` : 'guest');
-	// i18n-ignore: a command, the same in every language
-	const mountCommand = $derived(`sudo mount -t cifs //${host}/${example} /mnt/${example} -o ${mountOption}`);
 </script>
 
 <Card>
@@ -209,65 +207,10 @@
 				</Alert>
 			{/if}
 
-			<div>
-				<h4 class="card-title mb-2">{$t('account.smb.shares')}</h4>
-				{#if status.shares.length === 0}
-					<EmptyState icon={FolderOpen} title={$t('account.smb.noShares')} />
-				{:else}
-					<div class="table-frame">
-						<table class="table">
-							<thead class="table-header">
-								<tr>
-									<th>{$t('account.smb.name')}</th>
-									<th>{$t('account.smb.access')}</th>
-									<th>{$t('account.smb.comment')}</th>
-								</tr>
-							</thead>
-							<tbody>
-								{#each status.shares as share (share.name)}
-									<tr class="table-row align-top">
-										<td>
-											<span class="mono">{share.name}</span>
-											{#if share.guest_ok}
-												<Badge variant="neutral" class="ml-1">{$t('account.smb.guest')}</Badge>
-											{/if}
-											{#if !share.usable}
-												<p class="text-xs text-muted">{$t('account.smb.notUsable')}</p>
-											{/if}
-										</td>
-										<td>{share.level === 'write' ? $t('account.smb.readWrite') : $t('account.smb.readOnly')}</td>
-										<td class="text-secondary">{share.comment}</td>
-									</tr>
-								{/each}
-							</tbody>
-						</table>
-					</div>
-				{/if}
-			</div>
+			<SmbSharesTable shares={status.shares} />
 
 			{#if showConnect}
-				<div class="space-y-2">
-					<h4 class="card-title">{$t('account.smb.connect')}</h4>
-					<ul class="space-y-1 text-sm">
-						<li>
-							<span class="text-secondary">{$t('account.smb.windows')}</span>
-							<span class="mono">{windowsAddress(host, example)}</span>
-						</li>
-						<li>
-							<span class="text-secondary">{$t('account.smb.macos')}</span>
-							{$t('account.smb.finder')}
-							<span class="mono">{smbUrl(host, example)}</span>
-						</li>
-						<li>
-							<span class="text-secondary">{$t('account.smb.linux')}</span>
-							<span class="mono">{smbUrl(host, example)}</span>
-							{$t('account.smb.or')}
-							<span class="mono break-all">{mountCommand}</span>
-						</li>
-					</ul>
-					<p class="text-sm text-muted">{$t('account.smb.noTwoFactor')}</p>
-					<p class="text-sm text-muted">{$t('account.smb.localAddress')}</p>
-				</div>
+				<SmbConnectHelp {host} share={example} username={allowed ? signInName : null} />
 			{/if}
 		</div>
 	{/if}

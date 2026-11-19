@@ -2,6 +2,7 @@
 	import { HardDrive, Database } from 'lucide-svelte';
 	import { Card, Badge, ProgressBar } from '$lib/components/ui';
 	import { t } from '$lib/i18n';
+	import { formatBytes } from './bytes';
 
 	type Props = {
 		pools?: Array<{
@@ -34,21 +35,11 @@
 		unknown: { variant: 'neutral', key: 'common.unknown' }
 	};
 
-	// The units of a size, from bytes up: keys of the catalog (ADR-0297).
-	const UNITS = ['dashboard.unit.b', 'dashboard.unit.kb', 'dashboard.unit.mb', 'dashboard.unit.gb', 'dashboard.unit.tb'];
-
-	// The functions that read $t do it where the markup calls them: the texts follow the language.
-	function formatBytes(bytes: number): string {
-		if (bytes === 0) return `0 ${$t(UNITS[0])}`;
-		const k = 1024;
-		const i = Math.floor(Math.log(bytes) / Math.log(k));
-		return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + $t(UNITS[i]);
-	}
-
 	function getUsagePercent(used: number, size: number): number {
 		return size > 0 ? (used / size) * 100 : 0;
 	}
 
+	// The functions that read $t do it where the markup calls them: the texts follow the language.
 	// A health without a badge of its own is an error, shown as the server reports it.
 	function getHealthBadge(health: string): { variant: BadgeVariant; label: string } {
 		const value = health?.toLowerCase();
@@ -94,7 +85,7 @@
 		<Database class="w-4 h-4 icon-storage" />
 		<span>{$t('dashboard.storage.pools', { n: pools.length })}</span>
 		<span class="text-muted">•</span>
-		<span>{formatBytes(totalUsed)} / {formatBytes(totalSize)}</span>
+		<span>{formatBytes(totalUsed, $t)} / {formatBytes(totalSize, $t)}</span>
 		{#if problemCount > 0}
 			<span class="text-muted">•</span>
 			<span class="text-warning">{$t('dashboard.storage.attention', { n: problemCount })}</span>
@@ -128,7 +119,7 @@
 							</div>
 							{#if mounted}
 								<span class="text-sm text-secondary"
-									>{formatBytes(pool.used)} / {formatBytes(pool.size)}</span
+									>{formatBytes(pool.used, $t)} / {formatBytes(pool.size, $t)}</span
 								>
 							{:else}
 								<span class="text-sm text-muted">{$t('dashboard.storage.inaccessible')}</span>
@@ -151,7 +142,7 @@
 				<div class="flex items-center justify-between text-sm">
 					<span class="text-secondary">{$t('dashboard.storage.total')}</span>
 					<span
-						>{formatBytes(totalUsed)} / {formatBytes(totalSize)} ({totalPercent.toFixed(
+						>{formatBytes(totalUsed, $t)} / {formatBytes(totalSize, $t)} ({totalPercent.toFixed(
 							1
 						)}%)</span
 					>

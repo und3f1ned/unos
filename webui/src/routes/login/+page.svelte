@@ -13,10 +13,10 @@
     TWO_FACTOR_SETUP_PATH,
   } from "$lib/stores/auth";
   import { connectWebSocket } from "$lib/stores/stats";
-  import { Alert, Button, Input } from "$lib/components/ui";
+  import { Alert, Button } from "$lib/components/ui";
+  import { AuthCard, FormError, PasswordStep, RecoveryCodeStep, TotpStep } from "$lib/components/auth";
   import { t } from "$lib/i18n";
-  import { browserErrorKey, getAssertion, securityKeysSupported } from "$lib/webauthn";
-  import { KeyRound, Server, ShieldCheck, Usb } from "lucide-svelte";
+  import { browserErrorKey, getAssertion } from "$lib/webauthn";
 
   let username = $state("");
   let password = $state("");
@@ -171,161 +171,59 @@
   }
 </script>
 
-<div class="min-h-screen flex items-center justify-center bg-surface">
-  <div class="bg-surface-elevated p-8 rounded-lg shadow-xl w-full max-w-md">
-    <div class="flex items-center justify-center gap-2 mb-8">
-      <Server class="w-10 h-10 text-brand-ring" />
-      <span class="text-2xl font-bold">{$t("common.product")}</span>
-    </div>
+<AuthCard>
+  {#if $signOutFailed}
+    <!-- The page cannot delete the session cookie: only the server's answer to the sign-out does
+         (ADR-0397). -->
+    <Alert variant="warning" class="mb-4">
+      <p>{$t("login.signOutFailed")}</p>
+      <Button variant="secondary" size="sm" class="mt-2" loading={signingOut} onclick={signOutAgain}>
+        {$t("login.signOutAgain")}
+      </Button>
+    </Alert>
+  {/if}
 
-    {#if $signOutFailed}
-      <!-- The page cannot delete the session cookie: only the server's answer to the sign-out does
-           (ADR-0397). -->
-      <Alert variant="warning" class="mb-4">
-        <p>{$t("login.signOutFailed")}</p>
-        <Button variant="secondary" size="sm" class="mt-2" loading={signingOut} onclick={signOutAgain}>
-          {$t("login.signOutAgain")}
-        </Button>
-      </Alert>
+  <form
+    onsubmit={(event) => {
+      event.preventDefault();
+      handleSubmit();
+    }}
+    class="space-y-4"
+  >
+    {#if error}
+      <FormError message={error} />
     {/if}
 
-    <form
-      onsubmit={(event) => {
-        event.preventDefault();
-        handleSubmit();
-      }}
-      class="space-y-4"
-    >
-      {#if error}
-        <div
-          class="bg-status-error/20 border border-status-error text-status-error px-4 py-2 rounded"
-        >
-          {error}
-        </div>
-      {/if}
+    {#if !requiresTOTP}
+      <PasswordStep bind:username bind:password />
+    {:else if useRecoveryCode}
+      <RecoveryCodeStep bind:code={recoveryCode} />
+    {:else}
+      <TotpStep bind:code={totpCode} {keysHere} {keyOrigins} {usingKey} {loading} onusekey={useSecurityKey} />
+    {/if}
 
-      {#if !requiresTOTP}
-        <div>
-          <label
-            for="username"
-            class="block text-sm font-medium text-content-secondary mb-1"
-          >
-            {$t("common.username")}
-          </label>
-          <input
-            type="text"
-            id="username"
-            bind:value={username}
-            class="form-input"
-            required
-          />
-        </div>
-
-        <div>
-          <label
-            for="password"
-            class="block text-sm font-medium text-content-secondary mb-1"
-          >
-            {$t("common.password")}
-          </label>
-          <input
-            type="password"
-            id="password"
-            bind:value={password}
-            class="form-input"
-            required
-          />
-        </div>
-      {:else if useRecoveryCode}
-        <div class="text-center mb-4">
-          <KeyRound class="w-12 h-12 text-status-info mx-auto mb-2" />
-          <h2 class="text-lg font-semibold">{$t("login.recoveryTitle")}</h2>
-          <p class="text-sm text-secondary">
-            {$t("login.recoveryHint")}
-          </p>
-        </div>
-
-        <Input
-          id="recovery-code"
-          label={$t("login.recoveryLabel")}
-          bind:value={recoveryCode}
-          placeholder={$t("login.recoveryPlaceholder")}
-          autocomplete="off"
-          maxlength={32}
-          required
-        />
-      {:else}
-        <!-- TOTP Input -->
-        <div class="text-center mb-4">
-          <ShieldCheck class="w-12 h-12 text-brand-ring mx-auto mb-2" />
-          <h2 class="text-lg font-semibold">{$t("login.totpTitle")}</h2>
-          <p class="text-sm text-content-secondary">
-            {$t("login.totpHint")}
-          </p>
-        </div>
-
-        <!-- A security key in place of the code (ADR-0409), where the account's keys work. -->
-        {#if keysHere && securityKeysSupported()}
-          <Button variant="secondary" class="w-full" icon={Usb} loading={usingKey} disabled={loading}
-            onclick={useSecurityKey}>
-            {usingKey ? $t("securitykeys.login.touch") : $t("securitykeys.login.use")}
-          </Button>
-          <p class="text-center text-sm text-content-muted">{$t("securitykeys.login.or")}</p>
-        {:else if keysHere}
-          <Alert variant="info">{$t("securitykeys.unsupported")}</Alert>
-        {:else if keyOrigins.length > 0}
-          <Alert variant="info">{$t("securitykeys.login.elsewhere", { origins: keyOrigins.join(", ") })}</Alert>
-        {/if}
-
-        <div>
-          <label
-            for="totp"
-            class="block text-sm font-medium text-content-secondary mb-1"
-          >
-            {$t("login.totpLabel")}
-          </label>
-          <input
-            type="text"
-            id="totp"
-            bind:value={totpCode}
-            class="form-input text-center text-2xl tracking-widest"
-            placeholder="000000"
-            maxlength="6"
-            pattern="[0-9]*"
-            inputmode="numeric"
-            autocomplete="one-time-code"
-            required
-          />
-        </div>
-      {/if}
-
-      {#if requiresTOTP}
-        <Button variant="ghost" class="w-full" onclick={switchCode}>
-          {useRecoveryCode ? $t("login.useAppCode") : $t("login.useRecoveryCode")}
-        </Button>
-
-        <Button variant="plain"
-          type="button"
-          onclick={resetForm}
-          class="w-full text-sm text-content-secondary hover:text-content-soft"
-        >
-          {$t("login.back")}
-        </Button>
-      {/if}
-
-      <Button variant="primary" class="w-full"
-        type="submit"
-        disabled={loading || usingKey}
-       
-      >
-        {#if loading}
-          {$t("login.signingIn")}
-        {:else if requiresTOTP}
-          {$t("login.verify")}
-        {:else}
-          {$t("login.signIn")}
-        {/if}
+    {#if requiresTOTP}
+      <Button variant="ghost" class="w-full" onclick={switchCode}>
+        {useRecoveryCode ? $t("login.useAppCode") : $t("login.useRecoveryCode")}
       </Button>
-    </form>
-  </div>
-</div>
+
+      <Button variant="plain"
+        type="button"
+        onclick={resetForm}
+        class="w-full text-sm text-content-secondary hover:text-content-soft"
+      >
+        {$t("login.back")}
+      </Button>
+    {/if}
+
+    <Button variant="primary" class="w-full" type="submit" disabled={loading || usingKey}>
+      {#if loading}
+        {$t("login.signingIn")}
+      {:else if requiresTOTP}
+        {$t("login.verify")}
+      {:else}
+        {$t("login.signIn")}
+      {/if}
+    </Button>
+  </form>
+</AuthCard>

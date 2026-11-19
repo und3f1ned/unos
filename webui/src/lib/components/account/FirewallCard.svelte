@@ -8,14 +8,16 @@
 		getFirewallStatus,
 		keepFirewallChange,
 		resetFirewall,
-		type FirewallAction,
-		type FirewallProtocol,
 		type FirewallRule,
 		type FirewallStatus
 	} from '$lib/api/security';
-	import { Alert, Badge, Button, Card, Input, Modal, Select } from '$lib/components/ui';
+	import { Alert, Badge, Button, Card } from '$lib/components/ui';
 	import { t } from '$lib/i18n';
-	import { Flame, Plus, RefreshCw, ShieldCheck, ShieldX, Trash2 } from 'lucide-svelte';
+	import { Flame, ShieldCheck, ShieldX } from 'lucide-svelte';
+	import FirewallAddRuleDialog from './FirewallAddRuleDialog.svelte';
+	import FirewallDetails from './FirewallDetails.svelte';
+	import FirewallEnableDialog from './FirewallEnableDialog.svelte';
+	import { emptyRule, type NewRule } from './firewall';
 
 	// System > Security, administrators only: the host's ufw (ADR-0416). Turning it on adds UNOS's
 	// rules for the local networks first, and a change made while it is on is undone by the host
@@ -23,7 +25,8 @@
 	// reads the firewall again once the time has run out.
 
 	// The local networks of SMB's hosts allow (ADR-0095) that UNOS's rules let in, as the server
-	// writes them (LOCAL_NETWORKS of supervisor/src/security/firewall.py).
+	// writes them (LOCAL_NETWORKS of supervisor/src/security/firewall.py, which
+	// supervisor/tests/test_firewall.py compares with this line).
 	// i18n-ignore: network addresses, the same in every language
 	const LOCAL_NETWORKS = ['10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16', '100.64.0.0/10', '169.254.0.0/16', 'fc00::/7', 'fe80::/10'];
 	// Seconds the host's revert may take after its time before the card reads the firewall again,
@@ -43,7 +46,6 @@
 	let showEnable = $state(false);
 	let showAdd = $state(false);
 	let addError = $state('');
-	type NewRule = { action: FirewallAction; protocol: FirewallProtocol; port: string; source: string; comment: string };
 	let newRule = $state<NewRule>(emptyRule());
 
 	// The countdown of a change that waits to be kept: when the host undoes it, in the page's clock.
@@ -57,58 +59,6 @@
 	const revertSeconds = $derived(status?.revert_seconds ?? 120);
 	const secondsLeft = $derived(deadline === null ? null : Math.max(0, Math.ceil((deadline - now) / 1000)));
 
-	// The labels of the values that the server answers as words (FirewallRule and FirewallStatus of
-	// $lib/api/security): keys of the catalog, by value.
-	const RULE_ACTIONS: Record<string, string> = {
-		allow: 'firewall.allow',
-		deny: 'firewall.deny',
-		reject: 'firewall.reject',
-		limit: 'firewall.limit'
-	};
-	const RULE_DIRECTIONS: Record<string, string> = { in: 'firewall.in', out: 'firewall.out' };
-	const RULE_PROTOCOLS: Record<string, string> = {
-		tcp: 'firewall.tcp',
-		udp: 'firewall.udp',
-		any: 'firewall.anyProtocol'
-	};
-	const POLICIES: Record<string, string> = {
-		allow: 'firewall.policyAllow',
-		deny: 'firewall.policyDeny',
-		reject: 'firewall.policyReject'
-	};
-
-	// The functions that read $t do it where the markup calls them: the texts follow the language.
-
-	/** The label of `value` in the language of the page; a value without one as it comes. */
-	function labelOf(labels: Record<string, string>, value: string): string {
-		return Object.prototype.hasOwnProperty.call(labels, value) ? $t(labels[value]) : value;
-	}
-
-	/** A rule's direction, protocol, port and addresses: "IN | TCP | Port: 22 | From: 192.168.1.0/24". */
-	function ruleLine(rule: FirewallRule): string {
-		const parts = [
-			labelOf(RULE_DIRECTIONS, rule.direction),
-			labelOf(RULE_PROTOCOLS, rule.protocol),
-			$t('firewall.port', { port: rule.port || $t('firewall.any') })
-		];
-		if (rule.source) parts.push($t('firewall.from', { source: rule.source }));
-		if (rule.destination) parts.push($t('firewall.to', { destination: rule.destination }));
-		if (rule.interface) parts.push($t('firewall.on', { interface: rule.interface }));
-		// i18n-ignore: a separator
-		return parts.join(' | ');
-	}
-
-	const actionOptions = $derived([
-		{ value: 'allow', label: $t('firewall.allow') },
-		{ value: 'deny', label: $t('firewall.deny') },
-		{ value: 'reject', label: $t('firewall.reject') }
-	]);
-	const protocolOptions = $derived([
-		{ value: 'tcp', label: $t('firewall.tcp') },
-		{ value: 'udp', label: $t('firewall.udp') },
-		{ value: 'any', label: $t('firewall.any') }
-	]);
-
 	onMount(() => {
 		void load();
 	});
@@ -117,10 +67,6 @@
 		if (ticker) clearInterval(ticker);
 		if (check) clearTimeout(check);
 	});
-
-	function emptyRule(): NewRule {
-		return { action: 'allow', protocol: 'tcp', port: '', source: '', comment: '' };
-	}
 
 	function messageOf(e: unknown): string {
 		return e instanceof Error ? e.message : String(e);
@@ -377,144 +323,34 @@
 	{/if}
 
 	{#if showDetails && status?.installed}
-		<div class="mt-4 space-y-4">
-			<div class="flex flex-wrap items-center justify-between gap-2 p-3 bg-surface-overlay rounded-lg">
-				<div class="min-w-0">
-					<p class="font-medium">{$t('firewall.status')}</p>
-					<p class="text-sm text-content-secondary">
-						{$t('firewall.defaults', {
-							incoming: labelOf(POLICIES, status.default_incoming),
-							outgoing: labelOf(POLICIES, status.default_outgoing)
-						})}
-					</p>
-				</div>
-				<div class="flex flex-wrap gap-2">
-					{#if status.enabled}
-						<Button variant="danger" disabled={busy} onclick={turnOff}>{$t('firewall.disable')}</Button>
-					{:else}
-						<Button variant="success" disabled={busy} onclick={() => (showEnable = true)}>{$t('firewall.enable')}</Button>
-					{/if}
-					<Button variant="secondary" disabled={busy} onclick={reset}>
-						<RefreshCw class="w-4 h-4" />
-						{$t('firewall.reset')}
-					</Button>
-				</div>
-			</div>
-
-			<p class="text-sm text-content-secondary">{$t('firewall.unosHint')} {$t('firewall.docker')}</p>
-
-			<div class="flex flex-wrap justify-between items-center gap-2">
-				<h4 class="font-medium">{$t('firewall.rules')}</h4>
-				<Button variant="primary" size="sm" disabled={busy} onclick={openAdd}>
-					<Plus class="w-4 h-4" />
-					{$t('firewall.addRule')}
-				</Button>
-			</div>
-
-			{#if status.rules.length === 0}
-				<p class="text-sm text-content-secondary text-center py-4">{$t('firewall.noRules')}</p>
-			{:else}
-				<ul class="space-y-2" aria-label={$t('firewall.rules')}>
-					{#each status.rules as rule (rule.id)}
-						<li>
-							<div class="flex items-center justify-between gap-2 p-3 bg-surface-overlay rounded-lg">
-								<div class="flex flex-wrap items-center gap-x-3 gap-y-1 min-w-0">
-									<span
-										class="px-2 py-1 rounded text-xs font-medium uppercase {rule.action === 'allow'
-											? 'bg-status-success/20 text-status-success'
-											: rule.action === 'limit'
-												? 'bg-status-warning/20 text-status-warning'
-												: 'bg-status-error/20 text-status-error'}"
-									>
-										{labelOf(RULE_ACTIONS, rule.action)}
-									</span>
-									<div class="min-w-0 break-words">
-										<p class="font-medium">
-											{rule.comment ?? rule.app ?? $t('firewall.ruleNumber', { n: rule.number })}
-										</p>
-										<p class="text-sm text-content-secondary">{ruleLine(rule)}</p>
-									</div>
-									{#if rule.family === 'ipv6'}
-										<Badge variant="info">{$t('firewall.ipv6')}</Badge>
-									{/if}
-									{#if rule.route}
-										<Badge variant="neutral">{$t('firewall.route')}</Badge>
-									{/if}
-									{#if rule.unos}
-										<Badge variant="purple">{$t('firewall.unos')}</Badge>
-									{/if}
-								</div>
-								{#if !rule.unos}
-									<Button
-										variant="ghost"
-										size="icon"
-										class="text-status-error hover:text-status-error"
-										disabled={busy}
-										aria-label={$t('firewall.deleteRule', { n: rule.number })}
-										onclick={() => deleteRule(rule)}
-									>
-										<Trash2 class="w-4 h-4" />
-									</Button>
-								{/if}
-							</div>
-						</li>
-					{/each}
-				</ul>
-			{/if}
-		</div>
+		<FirewallDetails
+			{status}
+			{busy}
+			onenable={() => (showEnable = true)}
+			ondisable={turnOff}
+			onreset={reset}
+			onadd={openAdd}
+			ondeleterule={deleteRule}
+		/>
 	{/if}
 </Card>
 
-<Modal open={showEnable} title={$t('firewall.enableTitle')} onclose={() => (showEnable = false)}>
-	<div class="space-y-3 text-sm break-words">
-		<p>{$t('firewall.enableRules', { networks: LOCAL_NETWORKS.join(', ') })}</p>
-		<p>{$t('firewall.enableRevert', { n: revertSeconds })}</p>
-		{#if status?.client_local === false}
-			<Alert variant="warning">{$t('firewall.notLocal')}</Alert>
-		{/if}
-		<p>{$t('firewall.enableOthers')}</p>
-		<p>{$t('firewall.docker')}</p>
-	</div>
-	{#snippet footer()}
-		<Button variant="secondary" onclick={() => (showEnable = false)}>{$t('common.cancel')}</Button>
-		<Button variant="primary" disabled={busy} onclick={turnOn}>{$t('firewall.turnOn')}</Button>
-	{/snippet}
-</Modal>
+<FirewallEnableDialog
+	open={showEnable}
+	networks={LOCAL_NETWORKS}
+	{revertSeconds}
+	notLocal={status?.client_local === false}
+	{busy}
+	onconfirm={turnOn}
+	onclose={() => (showEnable = false)}
+/>
 
-<Modal open={showAdd} title={$t('firewall.addTitle')} closable={!busy} onclose={() => (showAdd = false)}>
-	<form
-		id="firewall-add-rule"
-		class="space-y-4"
-		onsubmit={(event) => {
-			event.preventDefault();
-			addRule();
-		}}
-	>
-		<div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-			<Select label={$t('firewall.action')} options={actionOptions} bind:value={newRule.action} />
-			<Select label={$t('firewall.protocol')} options={protocolOptions} bind:value={newRule.protocol} />
-		</div>
-		<Input
-			label={$t('firewall.portLabel')}
-			bind:value={newRule.port}
-			placeholder={$t('firewall.portPlaceholder')}
-		/>
-		<Input label={$t('firewall.source')} bind:value={newRule.source} placeholder={$t('firewall.sourcePlaceholder')} />
-		<Input
-			label={$t('firewall.comment')}
-			bind:value={newRule.comment}
-			placeholder={$t('firewall.commentPlaceholder')}
-			maxlength={64}
-		/>
-		<p class="text-sm text-content-secondary">{$t('firewall.addHint', { n: revertSeconds })}</p>
-		{#if addError}
-			<Alert variant="error">{addError}</Alert>
-		{/if}
-	</form>
-	{#snippet footer()}
-		<Button variant="secondary" type="button" disabled={busy} onclick={() => (showAdd = false)}>{$t('common.cancel')}</Button>
-		<Button variant="primary" type="submit" form="firewall-add-rule" disabled={busy}>
-			{busy ? $t('firewall.adding') : $t('firewall.addRule')}
-		</Button>
-	{/snippet}
-</Modal>
+<FirewallAddRuleDialog
+	open={showAdd}
+	bind:rule={newRule}
+	{revertSeconds}
+	{busy}
+	error={addError}
+	onadd={addRule}
+	onclose={() => (showAdd = false)}
+/>

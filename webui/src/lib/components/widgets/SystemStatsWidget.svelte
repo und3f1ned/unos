@@ -2,6 +2,7 @@
 	import { Cpu, HardDrive, MemoryStick, Network, Thermometer } from 'lucide-svelte';
 	import { Card, ProgressBar } from '$lib/components/ui';
 	import { t } from '$lib/i18n';
+	import { formatBytes } from './bytes';
 
 	type Props = {
 		cpuPercent?: number;
@@ -33,19 +34,9 @@
 		only = 'cpu'
 	}: Props = $props();
 
-	// The units of a size, from bytes up: keys of the catalog (ADR-0297).
-	const UNITS = ['dashboard.unit.b', 'dashboard.unit.kb', 'dashboard.unit.mb', 'dashboard.unit.gb', 'dashboard.unit.tb'];
-
 	// The functions that read $t do it where the markup calls them: the texts follow the language.
-	function formatBytes(bytes: number): string {
-		if (bytes === 0) return `0 ${$t(UNITS[0])}`;
-		const k = 1024;
-		const i = Math.floor(Math.log(bytes) / Math.log(k));
-		return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + $t(UNITS[i]);
-	}
-
 	function formatRate(bytes: number): string {
-		return $t('dashboard.rate', { size: formatBytes(bytes) });
+		return $t('dashboard.rate', { size: formatBytes(bytes, $t) });
 	}
 
 	function getPercentColor(percent: number): string {
@@ -100,7 +91,7 @@
 				<span class="stat-card-label">{$t('dashboard.stats.memory')}</span>
 			</div>
 			<p class="stat-card-value {getPercentColor(memoryPercent)}">{memoryPercent.toFixed(1)}%</p>
-			<p class="stat-card-sublabel">{formatBytes(memoryUsed)} / {formatBytes(memoryTotal)}</p>
+			<p class="stat-card-sublabel">{formatBytes(memoryUsed, $t)} / {formatBytes(memoryTotal, $t)}</p>
 			<ProgressBar value={memoryPercent} size="sm" class="mt-2" />
 		</Card>
 		{/if}
