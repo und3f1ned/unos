@@ -15,8 +15,10 @@ import {
 } from './shares-fakes';
 import { HEALTHY_HDD_2, REPLACE_SOON, fakeHealthApi, predictionsAnswer } from './health-fakes';
 import { fakeNetworkApi } from './network-fakes';
+import { fakeIscsiApi, fakeTarget } from './iscsi-fakes';
 import { fakeNotificationsApi, type Channel } from './notifications-fakes';
 import { installedImmich } from './apps-fakes';
+import { SERVER_KEY, fakePeer, fakeRemoteApi } from './remote-fakes';
 
 // The web UI on a phone (feature webui.mobile-layout, ADR-0302). At 375 x 812, a small phone,
 // every page of the navigation, the views behind its tabs, each tab of System, the main dialogs,
@@ -171,6 +173,18 @@ async function serve(page: Page, answers: Record<string, unknown>): Promise<void
 
 // A host name with no hyphen, so no place where a browser breaks it on its own (ADR-0302).
 const LONG_HOST_NAME = 'nasinthelivingroomoftheoldhouse.home.arpa';
+
+// System > Remote access on (ADR-0420): the longest peer's name (32 characters, NAME_MAX of
+// supervisor/src/network/wireguard.py) and an endpoint and an app name with no place to break.
+const REMOTE_ON = {
+  enabled: true,
+  endpoint: 'nasinthelivingroomoftheoldhouse.dyndns.example.org',
+  peers: [fakePeer(1, 'phoneofthegrandmotherinthegarden', { latest_handshake: '2026-11-19T08:30:00Z',
+                                                            received: 123456789, sent: 98765 }),
+          fakePeer(2, 'laptop')],
+  names: [{ label: 'photosofthefamilyandthegardenxyz', app: 'immich-server', port: 2283 }],
+  hostName: 'nasinthelivingroom',
+};
 
 // Audit entries whose values have no place to break, as long as the server takes and keeps them:
 // an API token's name of 64 characters (API_TOKEN_NAME_CHARS of supervisor/src/auth/schemas.py),
@@ -856,6 +870,18 @@ const SHARES = [
 ];
 
 /** A page or a part of it, opened on the phone. */
+// Shares > iSCSI: a target with a long name, two initiators of which one is logged in.
+const ISCSI_TARGET = fakeTarget('family-backups-of-every-laptop', {
+  initiators: ['iqn.1991-05.com.microsoft:desktop-of-the-family-living-room', 'iqn.1993-08.org.debian:01:5f3c0a1b2c3d'],
+  sessions: ['iqn.1991-05.com.microsoft:desktop-of-the-family-living-room'],
+  size_gib: 2048,
+});
+
+async function fakeIscsiTab(page: Page) {
+  await fakeSmbApi(page, { users: USERS, shares: SHARES });
+  await fakeIscsiApi(page, { targets: [ISCSI_TARGET] });
+}
+
 interface View {
   name: string;
   path: string;
@@ -1030,6 +1056,14 @@ const VIEWS: View[] = [
       }),
     open: (page) => page.locator('#shares-tab-nfs').click(),
     shows: (page) => page.getByText('2001:db8:1234:5678::/64').first(),
+  },
+  {
+    // A target with a long IQN, two initiators and a session (ADR-0418).
+    name: 'Shares (iSCSI)',
+    path: '/shares',
+    fake: fakeIscsiTab,
+    open: (page) => page.locator('#shares-tab-iscsi').click(),
+    shows: (page) => page.getByText(ISCSI_TARGET.iqn),
   },
   {
     name: 'Files',
@@ -1305,9 +1339,67 @@ const VIEWS: View[] = [
     fake: (page) => serve(page, POWER),
     shows: (page) => page.getByText('enx00e04c680a1b').first(),
   },
+  {
+    name: 'System: Remote access',
+    path: '/system#remote',
+    fake: (page) => fakeRemoteApi(page, REMOTE_ON),
+    shows: (page) => page.getByText(SERVER_KEY),
+    end: (page) => page.getByText('https://photosofthefamilyandthegardenxyz-nasinthelivingroom.local'),
+  },
+  {
+    name: 'System: Remote access (off)',
+    path: '/system#remote',
+    fake: (page) => fakeRemoteApi(page),
+    shows: (page) => page.getByRole('button', { name: /^(Turn on|Включить)$/ }),
+  },
 
   // The dialogs: they fit the width of the screen, and one taller than the screen scrolls, so
   // that its title shows as it opens and its last button once scrolled to its end.
+  {
+    name: 'Dialog: turn remote access on',
+    path: '/system#remote',
+    fake: (page) => fakeRemoteApi(page),
+    open: async (page) => {
+      await page.getByLabel(/Public address|Внешний адрес/).fill('nasinthelivingroomoftheoldhouse.dyndns.example.org');
+      await page.getByRole('button', { name: /^(Turn on|Включить)$/ }).click();
+    },
+    shows: (page) => page.getByRole('dialog'),
+    start: dialogTitle,
+    end: dialogEnd,
+  },
+  {
+    name: 'Dialog: add a remote access peer',
+    path: '/system#remote',
+    fake: (page) => fakeRemoteApi(page, REMOTE_ON),
+    open: (page) => page.getByRole('button', { name: /^(Add peer|Добавить узел)$/ }).click(),
+    shows: (page) => page.getByRole('dialog'),
+    start: dialogTitle,
+    end: dialogEnd,
+  },
+  {
+    // The configuration of a new peer, with its QR code: taller than the screen.
+    name: "Dialog: a new peer's configuration",
+    path: '/system#remote',
+    fake: (page) => fakeRemoteApi(page, REMOTE_ON),
+    open: async (page) => {
+      await page.getByRole('button', { name: /^(Add peer|Добавить узел)$/ }).click();
+      await page.getByRole('dialog').getByLabel(/Device name|Имя устройства/).fill('tabletofthegrandfatherupstairsxy');
+      await page.getByRole('dialog').getByRole('button', { name: /^(Add peer|Добавить узел)$/ }).click();
+      await expect(page.getByRole('dialog').getByRole('img', { name: /QR/ })).toBeVisible();
+    },
+    shows: (page) => page.getByRole('dialog'),
+    start: dialogTitle,
+    end: dialogEnd,
+  },
+  {
+    name: 'Dialog: give an app a name',
+    path: '/system#remote',
+    fake: (page) => fakeRemoteApi(page, REMOTE_ON),
+    open: (page) => page.getByRole('button', { name: /^(Add name|Добавить имя)$/ }).click(),
+    shows: (page) => page.getByRole('dialog'),
+    start: dialogTitle,
+    end: dialogEnd,
+  },
   {
     name: 'Dialog: create a pool',
     path: '/storage',
@@ -1476,6 +1568,31 @@ const VIEWS: View[] = [
     open: (page) => page.getByRole('button', { name: /^(Add SMB share|Добавить общую папку SMB)$/ }).click(),
     // Its list of users, each with the SMB state's badge.
     shows: (page) => page.getByRole('dialog').getByText('bob_the_family_photographer'),
+    start: dialogTitle,
+    end: dialogEnd,
+  },
+  {
+    name: 'Dialog: add an iSCSI target',
+    path: '/shares',
+    fake: fakeIscsiTab,
+    open: async (page) => {
+      await page.locator('#shares-tab-iscsi').click();
+      await page.getByRole('button', { name: /^(Add target|Добавить цель)$/ }).click();
+    },
+    shows: (page) => page.getByRole('dialog').getByRole('combobox'),
+    start: dialogTitle,
+    end: dialogEnd,
+  },
+  {
+    // The typed confirmation, and the initiators whose sessions end.
+    name: 'Dialog: delete an iSCSI target',
+    path: '/shares',
+    fake: fakeIscsiTab,
+    open: async (page) => {
+      await page.locator('#shares-tab-iscsi').click();
+      await page.locator(`li[data-target="${ISCSI_TARGET.name}"]`).getByRole('button', { name: /^(Delete|Удалить)$/ }).click();
+    },
+    shows: (page) => page.getByRole('dialog').getByText(ISCSI_TARGET.path),
     start: dialogTitle,
     end: dialogEnd,
   },

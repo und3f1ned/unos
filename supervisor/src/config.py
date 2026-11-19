@@ -4,8 +4,10 @@ import secrets
 from functools import lru_cache
 from pathlib import Path
 
-from pydantic import Field, model_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from . import paths
 
 logger = logging.getLogger(__name__)
 
@@ -41,8 +43,8 @@ class InsecureConfigurationError(RuntimeError):
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="UNOS_")
 
-    # Database
-    db_path: str = "/data/unos.db"
+    # Database: in the data directory, UNOS_DATA_DIR (src/paths.py, ADR-0419).
+    db_path: str = str(paths.DATABASE)
 
     # JWT. Leave UNOS_JWT_SECRET unset or empty to use <data dir>/jwt_secret,
     # which is generated on first start (see resolve_jwt_secret).
@@ -50,18 +52,30 @@ class Settings(BaseSettings):
     jwt_algorithm: str = "HS256"
     jwt_expire_minutes: int = 1440
 
-    # Paths
+    # Paths of the host and of the container outside the data directory: each has a setting of its
+    # own, which UNOS_DATA_DIR does not move (ADR-0419). The modules read them at their import.
     smb_conf_path: str = "/etc/samba/smb.conf"
     pools_base_path: str = "/mnt/pools"
     nfs_exports_path: str = "/etc/exports"
+    # The host's fstab, where the pools' mounts are kept (storage/pools.py; its backup beside it).
+    fstab_path: str = "/etc/fstab"
+    # The folder below which the disks are mounted, a bind of the host's /mnt (offsite/service.py).
+    mounts_base_path: str = "/mnt"
+    # The volume of the served certificate, which only this container and the web UI's mount (ADR-0404).
+    served_certificate_dir: str = "/served-certificate"
+    # Where the updater keeps a copy of the database and of /etc/unos before an update (updates/updater.py).
+    update_backup_dir: str = "/var/lib/unos/backups"
 
     # Docker
     docker_socket: str = "/var/run/docker.sock"
     # The web UI's container, whose Caddy loads the served certificate again (ADR-0404).
     webui_container: str = "unos-webui"
+    # Where the supervisor reaches the web UI's Caddy over TLS, on the compose network (ADR-0404).
+    webui_tls_host: str = "webui"
+    webui_tls_port: int = 443
 
-    # App catalog
-    app_catalog_path: str = "/data/app-catalog.json"
+    # App catalog, in the data directory
+    app_catalog_path: str = str(paths.APP_CATALOG)
 
     # Security - CORS
     # Comma-separated list of allowed origins. Empty means allow same-origin only.
@@ -70,6 +84,13 @@ class Settings(BaseSettings):
 
     # Debug mode - enables more permissive CORS for development
     debug_mode: bool = False
+
+    @field_validator("fstab_path", "mounts_base_path", "served_certificate_dir", "update_backup_dir")
+    @classmethod
+    def _absolute(cls, value: str) -> str:
+        if not os.path.isabs(value):
+            raise ValueError("must be an absolute path")
+        return value
 
     @model_validator(mode="after")
     def _finalize_jwt_settings(self) -> "Settings":

@@ -61,6 +61,12 @@ unos-supervisor`): one JSON object per line with `time`, `level`, `logger` and `
 while UNOS idles (ADR-0398). Avoid: log file (the Logs tab's files are the container's `/var/log`),
 audit log (the record of who changed what).
 
+**Data directory**: The folder where the supervisor keeps its database (unless `UNOS_DB_PATH` names
+another file), JWT secret, audit log, state files, stored certificates and backups: `UNOS_DATA_DIR`, `/data` in its container (the `unos-data`
+volume), whose paths `supervisor/src/paths.py` alone names (ADR-0419). Host paths such as
+`/etc/fstab` have settings of their own. Avoid: state directory (the local stand-in's folder, which
+holds its data directory), data volume (the Docker volume).
+
 **Write-ahead log**: `unos.db-wal` beside the database `unos.db` in `/data`, to which SQLite appends
 the pages of each commit; a checkpoint, when the log reaches 1000 pages and when the supervisor
 stops, copies them into `unos.db` (ADR-0306). Avoid: journal (SQLite's rollback journal, which
@@ -85,10 +91,27 @@ ADR-0244) or 120 seconds (the firewall, ADR-0416). Avoid: rollback (what `update
 changes (ADR-0416). Its rules are the host's, as ufw records them; UNOS keeps none of its own.
 Avoid: iptables, the IPv6 inbound filter (the dev device's own nftables table, ADR-0301).
 
+**Remote access**: The WireGuard tunnel on the host, the interface `unos-wg` of the unit
+`wg-quick@unos-wg`, through which a peer reaches the NAS from outside the LAN: the NAS's tunnel
+address only, never the rest of the LAN (ADR-0420). Avoid: VPN (it suggests the whole LAN), remote
+desktop.
+
+**Peer**: A device that may connect to remote access: its public key and its `/32` in the tunnel
+network, with a name. Its configuration is shown once, at its creation; revoking it ends its
+tunnel at once (ADR-0420). Avoid: client, user.
+
+**Tunnel network**: The private IPv4 network of remote access (10.99.0.0/24 by default), apart from
+every network of the host; the NAS takes its first address, each peer one more (ADR-0420).
+
+**App name**: A local name of a published port of an installed app, `<label>-<host name>.local`,
+which the host's unit `unos-app-names` announces with avahi-publish and the web UI's Caddy forwards
+over HTTPS to that port (ADR-0420). Avoid: domain,
+subdomain (it is one label).
+
 **Local networks**: The private, link-local and unique-local networks of SMB's `hosts allow`
 (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 100.64.0.0/10, 169.254.0.0/16, fc00::/7, fe80::/10),
-which SMB answers, NFS exports may name and UNOS's firewall rules let reach the web UI, SSH and SMB
-(ADR-0095, ADR-0416). Avoid: LAN when the networks are meant (a LAN can also use global IPv6
+which SMB answers, NFS exports may name and UNOS's firewall rules let reach the web UI, SSH, SMB
+and iSCSI (ADR-0095, ADR-0416, ADR-0418). Avoid: LAN when the networks are meant (a LAN can also use global IPv6
 addresses).
 
 **Scheduled task**: A task of System > Scheduler that runs at the times of its schedule on the
@@ -311,6 +334,25 @@ and keeps every other line (ADR-0292, ADR-0293). Avoid: share (an SMB share), NF
 **Export file**: A file that exportfs reads: `/etc/exports`, then each `*.exports` file of
 `/etc/exports.d` (ADR-0292). Avoid: exports table (the kernel's), etab.
 
+**iSCSI target**: A disk that the host's kernel (LIO) offers over the network to the initiators an
+administrator allows, with CHAP: UNOS's targets are made on Shares > iSCSI, each with one LUN, and
+are named by an IQN that starts with `iqn.2003-01.org.linux-iscsi.unos:`. UNOS makes the kernel's
+state that of its database at every start and change (ADR-0418). Avoid: iSCSI share, volume (the
+pool's folder that holds the LUN), portal (one address and port where targets listen).
+
+**LUN**: The disk of an iSCSI target, its logical unit 0: a sparse file
+`<volume>/.unos-iscsi/<name>.lun` of the size the administrator chose, served by LIO's fileio
+backstore; its folder is root's and immutable while it holds one (ADR-0418). Avoid: image, zvol.
+
+**Initiator**: The iSCSI client of a computer, named by its own IQN (or an `eui.` or `naa.` name),
+which logs in to a target. Only the initiators allowed for a target log in, each with the target's
+CHAP user name and secret (ADR-0418). Avoid: client (an NFS client), iSCSI user.
+
+**CHAP secret**: The shared secret with which an initiator proves itself to a target (and, with
+mutual CHAP, a second one with which the target proves itself to the initiator): 12 to 16
+characters, kept in `/data/iscsi_secrets.json` and shown only once, when it is made (ADR-0418).
+Avoid: iSCSI password.
+
 ## Users and access
 
 **UNOS user**: An account that people sign in to the web UI with: an administrator or a regular
@@ -342,6 +384,10 @@ nor the cookie alone is a session (ADR-0397). Avoid: CSRF token, session token.
 **API token**: A long-lived token that a user creates for scripts, with that user's rights, shown
 once (ADR-0239); only a session token creates, disables and deletes API tokens (ADR-0253). It is
 full or limited by its scope (ADR-0392). Avoid: session token, API key.
+
+**API documentation**: The supervisor's OpenAPI schema, `app.openapi()`, served at `/openapi.json`
+on its own port, which the web UI's address does not pass on: every route's summary, description,
+parameters, fields, examples and error statuses (ADR-0417). Avoid: Swagger.
 
 **Scope**: What an API token may reach: its access, read only or read and change, and its areas of
 the API, every area or a list (ADR-0392). Avoid: permissions (the column that keeps it), role.
@@ -597,6 +643,6 @@ scripts (ADR-0212). Avoid: .env, secrets.env (`/etc/unos/secrets.env` belongs to
 milestone, release.
 
 **Host-level change**: A change whose effect reaches the host: disks, pools, Samba and SMB
-accounts, host files such as fstab, Docker apps and containers, the host's network, power or
-settings, whatever code path does it. It is done only after a check on the dev device and a
+accounts, the kernel's iSCSI targets, host files such as fstab, Docker apps and containers, the
+host's network, power or settings, whatever code path does it. It is done only after a check on the dev device and a
 reboot check (ADR-0018). Avoid: backend change.

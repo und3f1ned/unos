@@ -8,16 +8,20 @@ import secrets
 import threading
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import Annotated
+
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import Path as PathParam
 from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, desc, text
 
-from .. import host
+from .. import host, paths
 from . import firewall, serving
 from ..audit.changes import audit_change
 from ..audit.schemas import AuditAction, AuditSeverity
 from ..database import get_db
+from ..openapi import ADMIN, BODY, SIGNED_IN, answer, errors
 from ..times import db_now
 from ..auth import requirement
 from ..auth.utils import (
@@ -41,7 +45,7 @@ logger = logging.getLogger(__name__)
 # Uploaded and self-signed certificates. The web UI's container cannot read this directory: the one
 # an administrator chooses is copied, with its chain and key, into the served file of
 # src/security/serving.py, which Caddy loads (ADR-0404).
-CERTS_DIR = "/data/certs"
+CERTS_DIR = str(paths.CERTIFICATES)
 # Held by every store and delete of the stored certificates and every change of the served one,
 # which run in worker threads: two of them never mix their files, and the served certificate is
 # never replaced or deleted beside a reload of Caddy (ADR-0404).
@@ -86,16 +90,28 @@ def _visible_attempts(current_user: User, username: str | None) -> list:
     ]
 
 
-@router.get("/login-history", response_model=LoginHistoryResponse)
+@router.get(
+    "/login-history", response_model=LoginHistoryResponse, summary="List the login attempts",
+    responses=errors(SIGNED_IN),
+)
 async def get_login_history(
-    limit: int = 50,
-    offset: int = 0,
-    username: str | None = None,
-    success: bool | None = None,
+    limit: Annotated[int, Query(description="How many attempts the page holds at most.")] = 50,
+    offset: Annotated[int, Query(description="How many of the newest attempts the page skips.")] = 0,
+    username: Annotated[
+        str | None, Query(description="Only the attempts with this username; for administrators, ignored for others.")
+    ] = None,
+    success: Annotated[
+        bool | None, Query(description="Only the attempts that signed in (true) or that failed (false).")
+    ] = None,
     current_user: User = Depends(verify_token),
     db: AsyncSession = Depends(get_db)
 ):
-    """Get login history. Admin sees all, users see only their own."""
+    """The sign-in attempts, newest first, with the counts of those the caller may see. Any
+    signed-in user: a regular user gets the attempts on their own username since their account
+    has had it, an administrator everyone's, or one username's.
+    \f
+    _visible_attempts: ADR-0263, ADR-0368.
+    """
     visible = _visible_attempts(current_user, username)
     query = select(LoginAttempt).where(*visible)
 
@@ -127,17 +143,29 @@ async def get_login_history(
     )
 
 
-@router.delete("/login-history")
+@router.delete(
+    "/login-history", summary="Delete the older login attempts",
+    responses={
+        **answer({"status": "ok", "deleted_count": 12}, "ok, and how many attempts were deleted."),
+        **errors(ADMIN),
+    },
+)
 async def clear_login_history(
     request: Request,
     # Up to 100 years back: a negative period would put the cutoff in the future and delete
     # every attempt, and a much longer one reaches before the year 1.
-    older_than_days: int = Query(30, ge=0, le=MAX_HISTORY_DAYS),
+    older_than_days: int = Query(
+        30, ge=0, le=MAX_HISTORY_DAYS,
+        description="Delete the attempts older than this many days, from 0 (every attempt until now) to 36500.",
+    ),
     current_user: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db)
 ):
-    """Clear login history older than specified days. Admin only. The audit log gets
-    login_history_cleared when it cleared any attempts (ADR-0402)."""
+    """Delete the login attempts older than older_than_days days. The audit log gets
+    login_history_cleared when any were deleted. Administrators only.
+    \f
+    ADR-0402.
+    """
     # The stored times are UTC without a zone, as SQLite's CURRENT_TIMESTAMP gives them (ADR-0262).
     cutoff = db_now() - timedelta(days=older_than_days)
 
@@ -161,12 +189,25 @@ async def clear_login_history(
 # The host's ufw (src/security/firewall.py, ADR-0416). The firewall's changes write an audit entry
 # after they were made, for a real change only (ADR-0402); so do the certificates' changes (ADR-0404).
 
+# The firewall's error texts in the API documentation (ADR-0417): firewall._refuse_locally, installed,
+# _require_ufw and _refuse_while_waiting, which every change runs first.
+_UFW_LOCAL = {503: "The supervisor runs its host commands locally (UNOS_HOST_EXEC=local): this is not a NAS host."}
+_UFW_MISSING = "ufw is not installed on the host"
+_UFW_WAITS = "a firewall change waits to be kept or is being undone"
+_UFW_FAILED = ("The host could not tell whether it has ufw, or a step on the host failed: the answer says which, "
+               "and whether the firewall was left or put back as it was or is undone by the automatic revert.")
 
-@router.get("/firewall", response_model=FirewallStatus)
+
+@router.get(
+    "/firewall", response_model=FirewallStatus, summary="Read the firewall's state and rules",
+    responses=errors(ADMIN, _UFW_LOCAL, {
+        500: "The host could not tell whether it has ufw, or ufw's status or files could not be read.",
+    }),
+)
 async def get_firewall_status(request: Request, _: User = Depends(require_admin)):
     """The host's ufw: whether it is installed and on, its default policies, its rules and the change
     that waits to be kept; and whether the asking computer is in the local networks that UNOS's
-    rules let in."""
+    rules let in. Administrators only."""
     installed, state = await firewall.status()
     client_local = firewall.is_local(client_ip(request))
     if state is None:
@@ -180,10 +221,23 @@ async def get_firewall_status(request: Request, _: User = Depends(require_admin)
     )
 
 
-@router.post("/firewall/enable", response_model=FirewallChange)
+@router.post(
+    "/firewall/enable", response_model=FirewallChange, summary="Turn the firewall on",
+    responses=errors(ADMIN, _UFW_LOCAL, {
+        409: f"{_UFW_MISSING}, {_UFW_WAITS}, or ufw's settings or Docker's rules on the host would let ufw cut the "
+             "containers off.",
+        500: _UFW_FAILED,
+    }),
+)
 async def enable_firewall(request: Request, current_user: User = Depends(require_admin)):
-    """Turn the host's ufw on with UNOS's rules, the revert armed first. The audit log gets
-    firewall_enabled when it was off."""
+    """Turn the host's ufw on, with UNOS's rules that let the local networks reach the web UI, SSH
+    and SMB, and ufw's logging off. The automatic revert is armed first: unless POST
+    /security/firewall/confirm keeps the change within revert_in seconds, the firewall is put back
+    as it was. A ufw that is on already is left as it is. The audit log gets firewall_enabled when
+    it was off. Administrators only.
+    \f
+    ADR-0416.
+    """
     change = await firewall.enable()
     if change.changed:
         await audit_change(AuditAction.FIREWALL_ENABLED, request, current_user.username,
@@ -191,9 +245,17 @@ async def enable_firewall(request: Request, current_user: User = Depends(require
     return FirewallChange(changed=change.changed, revert_in=change.revert_in)
 
 
-@router.post("/firewall/disable", response_model=FirewallChange)
+@router.post(
+    "/firewall/disable", response_model=FirewallChange, summary="Turn the firewall off",
+    responses=errors(ADMIN, _UFW_LOCAL, {
+        409: f"{_UFW_MISSING}.",
+        500: "The host could not tell whether it has ufw, the firewall could not be read, or ufw could not be "
+             "turned off.",
+    }),
+)
 async def disable_firewall(request: Request, current_user: User = Depends(require_admin)):
-    """Turn the host's ufw off. The audit log gets firewall_disabled when it was on."""
+    """Turn the host's ufw off, also while a change waits to be kept. The audit log gets
+    firewall_disabled when it was on. Administrators only."""
     changed = await firewall.disable()
     if changed:
         await audit_change(AuditAction.FIREWALL_DISABLED, request, current_user.username,
@@ -202,23 +264,42 @@ async def disable_firewall(request: Request, current_user: User = Depends(requir
     return FirewallChange(changed=changed)
 
 
-@router.post("/firewall/confirm")
+@router.post(
+    "/firewall/confirm", summary="Keep the firewall change",
+    responses={
+        **answer({"status": "ok"}, "ok: the change was kept."),
+        **errors(ADMIN, _UFW_LOCAL, {
+            409: f"{_UFW_MISSING}, or no firewall change waits to be kept: it was kept already, or undone.",
+            500: "The host could not tell whether it has ufw, or the change could not be kept and the automatic "
+                 "revert undoes it, or whether it was kept is not known.",
+        }),
+    },
+)
 async def keep_firewall_change(request: Request, current_user: User = Depends(require_admin)):
-    """Keep the firewall change that waits to be kept: its revert is called off. The audit log gets
-    firewall_change_kept."""
+    """Keep the firewall change that waits to be kept: its automatic revert is called off. The
+    audit log gets firewall_change_kept. Administrators only."""
     await firewall.keep()
     await audit_change(AuditAction.FIREWALL_CHANGE_KEPT, request, current_user.username,
                        resource_type="firewall", details="The firewall change was kept")
     return {"status": "ok"}
 
 
-@router.post("/firewall/rules", response_model=FirewallChange)
+@router.post(
+    "/firewall/rules", response_model=FirewallChange, summary="Add a firewall rule",
+    responses=errors(ADMIN, BODY, _UFW_LOCAL, {
+        409: f"{_UFW_MISSING}, {_UFW_WAITS}, the source is IPv6 and ufw does not filter IPv6 on the host, or the "
+             "host has this rule already.",
+        500: _UFW_FAILED,
+    }),
+)
 async def create_firewall_rule(
     request: Request,
     rule: FirewallRuleCreate,
     current_user: User = Depends(require_admin)
 ):
-    """Add an incoming rule to the host's ufw. The audit log gets firewall_rule_added."""
+    """Add an incoming rule to the host's ufw. While ufw is on, the automatic revert is armed
+    first: unless the change is kept within revert_in seconds, the rules are put back. The audit
+    log gets firewall_rule_added. Administrators only."""
     change, added = await firewall.add_rule(rule)
     await audit_change(AuditAction.FIREWALL_RULE_ADDED, request, current_user.username,
                        resource_type="firewall_rule", resource_id=added[0].id if added else None,
@@ -226,13 +307,22 @@ async def create_firewall_rule(
     return FirewallChange(changed=change.changed, revert_in=change.revert_in)
 
 
-@router.delete("/firewall/rules/{rule_id}", response_model=FirewallChange)
+@router.delete(
+    "/firewall/rules/{rule_id}", response_model=FirewallChange, summary="Delete a firewall rule",
+    responses=errors(ADMIN, _UFW_LOCAL, {
+        404: "The host's ufw has no rule with this id.",
+        409: f"{_UFW_MISSING}, {_UFW_WAITS}, or the rule is one of UNOS's, which UNOS keeps.",
+        500: _UFW_FAILED,
+    }),
+)
 async def delete_firewall_rule(
     request: Request,
-    rule_id: str,
+    rule_id: Annotated[str, PathParam(description="The rule's id, as GET /security/firewall lists it.")],
     current_user: User = Depends(require_admin)
 ):
-    """Delete a rule of the host's ufw. The audit log gets firewall_rule_deleted."""
+    """Delete a rule of the host's ufw; UNOS's own rules stay. While ufw is on, the automatic
+    revert is armed first: unless the change is kept within revert_in seconds, the rules are put
+    back. The audit log gets firewall_rule_deleted. Administrators only."""
     change, rule = await firewall.delete_rule(rule_id)
     await audit_change(AuditAction.FIREWALL_RULE_DELETED, request, current_user.username,
                        resource_type="firewall_rule", resource_id=rule_id,
@@ -241,12 +331,20 @@ async def delete_firewall_rule(
     return FirewallChange(changed=change.changed, revert_in=change.revert_in)
 
 
-@router.post("/firewall/reset", response_model=FirewallChange)
+@router.post(
+    "/firewall/reset", response_model=FirewallChange, summary="Reset the firewall",
+    responses=errors(ADMIN, _UFW_LOCAL, {
+        409: f"{_UFW_MISSING}, or the last firewall change is being undone.",
+        500: "The host could not tell whether it has ufw, or a step of the reset failed: the answer says which.",
+    }),
+)
 async def reset_firewall(request: Request, current_user: User = Depends(require_admin)):
-    """ufw's reset, its default policies and UNOS's rules; the firewall stays off.
-
-    The audit log gets firewall_reset: a reset is a change whenever ufw took it, as failed, with what
-    was done, when a step after ufw's own reset fails (ADR-0402).
+    """Reset the host's ufw: ufw's own reset, which turns it off, then its default policies (deny
+    incoming, allow outgoing) and UNOS's rules; the firewall stays off, and a change that waits to
+    be kept is called off. The audit log gets firewall_reset, as failed when a step after ufw's own
+    reset fails. Administrators only.
+    \f
+    A reset is a change whenever ufw took it (ADR-0402).
     """
     try:
         await firewall.reset()
@@ -685,9 +783,16 @@ def get_custom_certificates() -> list[Certificate]:
     return certs
 
 
-@router.get("/certificates", response_model=CertificateListResponse)
+@router.get(
+    "/certificates", response_model=CertificateListResponse, summary="List the stored certificates",
+    responses=errors(ADMIN, {500: "openssl could not run, or did not finish in time, on a stored certificate."}),
+)
 async def list_certificates(_: User = Depends(require_admin)):
-    """The stored certificates, which of them browsers get and which was chosen (ADR-0404)."""
+    """The stored certificates, which of them browsers get and which an administrator chose as the
+    served certificate. Administrators only.
+    \f
+    ADR-0404.
+    """
     try:
         certificates = await asyncio.to_thread(get_custom_certificates)
     except (OSError, subprocess.SubprocessError) as e:
@@ -699,10 +804,16 @@ async def list_certificates(_: User = Depends(require_admin)):
     return CertificateListResponse(certificates=certificates, status=status)
 
 
-@router.get("/certificates/status", response_model=CertificateStatus)
+@router.get(
+    "/certificates/status", response_model=CertificateStatus, summary="Read which certificate is served",
+    responses=errors(ADMIN),
+)
 async def get_certificate_status(_: User = Depends(require_admin)):
     """What browsers get from https://<host>/, as a TLS handshake with the web UI's Caddy shows
-    it, and the stored certificate an administrator chose (ADR-0404)."""
+    it, and the stored certificate an administrator chose. Administrators only.
+    \f
+    ADR-0404.
+    """
     return await _certificate_status()
 
 
@@ -713,15 +824,37 @@ def _serve_refusal(what: str, error: Exception) -> HTTPException:
     return HTTPException(503, f"The web UI's Caddy cannot be reached: {error}")
 
 
-@router.post("/certificates/{cert_id}/serve", response_model=ServeCertificateResponse)
-async def serve_certificate(cert_id: str, request: Request, current_user: User = Depends(require_admin)):
-    """Make the stored certificate ``cert_id`` the one that the web UI's Caddy serves, or, with
-    caddy_local_ca, the certificate of Caddy's local CA again (ADR-0404). Admin only.
-
-    A stored certificate is checked first (src/security/serving.py's prepare): one that fails the
-    checks is refused with 409 and reaches no Caddy. A change that Caddy does not take answers 502,
-    one that cannot reach it 503; Caddy then serves what it served, and the served file holds it.
-    Writes the served file and the audit log only on a real change.
+@router.post(
+    "/certificates/{cert_id}/serve", response_model=ServeCertificateResponse, summary="Choose the served certificate",
+    responses=errors(ADMIN, {
+        400: "The id is neither caddy_local_ca nor custom_ followed by a valid certificate name.",
+        404: "No certificate is stored under this id.",
+        409: "The stored certificate fails the checks of a served one, such as a certificate that is not valid now, "
+             "a key that is missing, protected by a passphrase or not its own, a key or usage that browsers refuse, "
+             "or a chain out of order.",
+        500: "The served certificate could not be changed for another reason.",
+        502: "Caddy did not load the change and serves what it served before.",
+        503: "The web UI's Caddy could not be reached, or Docker did not answer in time.",
+    }),
+)
+async def serve_certificate(
+    cert_id: Annotated[str, PathParam(
+        description="The id of a stored certificate, such as custom_nas.example.com, or caddy_local_ca for the "
+                    "certificate of Caddy's local CA."
+    )],
+    request: Request,
+    current_user: User = Depends(require_admin),
+):
+    """Make the stored certificate cert_id the served certificate, or, with caddy_local_ca, have
+    the web UI's Caddy serve the certificate of its local CA again. A stored certificate is checked
+    first: one that fails the checks reaches no Caddy. The audit log gets certificate_served on a
+    real change only. Administrators only.
+    \f
+    ADR-0404. The checks are src/security/serving.py's prepare. A change that Caddy does not take
+    answers 502, one that cannot reach it 503; Caddy then serves what it served, and the served
+    file holds it, except after a reload that Docker did not answer in time (CaddyTimedOut), which
+    leaves the file as written and Caddy with either. Writes the served file and the audit log only
+    on a real change.
     """
     if cert_id == LOCAL_CA_ID:
         name = None
@@ -759,13 +892,28 @@ async def serve_certificate(cert_id: str, request: Request, current_user: User =
                                     status=await _certificate_status())
 
 
-@router.post("/certificates/self-signed")
+@router.post(
+    "/certificates/self-signed", summary="Generate a self-signed certificate",
+    responses={
+        **answer(
+            {"status": "ok", "message": "Self-signed certificate generated", "certificate_id": "custom_nas.example.com"},
+            "ok, and the id of the new stored certificate.",
+        ),
+        **errors(ADMIN, BODY, {
+            409: "The certificate stored under this domain is the served one: serve another one first.",
+            500: "openssl failed, did not finish in time or printed no key or certificate, or the files could not "
+                 "be stored.",
+        }),
+    },
+)
 async def generate_self_signed_certificate(
     data: SelfSignedCertRequest,
     request: Request,
     current_user: User = Depends(require_admin)
 ):
-    """Generate a self-signed certificate. Admin only. 409 when it would replace the served one."""
+    """Generate a self-signed certificate and its key, and store them under the domain, in place of
+    a stored certificate of that name unless it is the served one. The audit log gets
+    certificate_generated. Administrators only."""
     # The schema only accepts a host name or an IP address short enough for a
     # subject CN (and so for the file names), so the domain can name files in
     # CERTS_DIR and go into -subj and -addext as it is; and an organization and
@@ -824,13 +972,31 @@ async def generate_self_signed_certificate(
     }
 
 
-@router.post("/certificates/upload")
+@router.post(
+    "/certificates/upload", summary="Upload a certificate",
+    responses={
+        **answer(
+            {"status": "ok", "message": "Certificate uploaded successfully", "certificate_id": "custom_nas.example.com",
+             "domain": "nas.example.com"},
+            "ok, the id of the stored certificate and its name, the subject CN.",
+        ),
+        **errors(ADMIN, BODY, {
+            400: "openssl cannot read the certificate, its subject CN is not a host name, a wildcard host name or an "
+                 f"IP address of at most {MAX_CERTIFICATE_NAME_LENGTH} characters, or the key or the chain is not "
+                 "text that UTF-8 can encode.",
+            409: "The certificate stored under this subject CN is the served one: serve another one first.",
+            500: "openssl could not run or did not finish in time, or the files could not be stored.",
+        }),
+    },
+)
 async def upload_certificate(
     data: CertificateUpload,
     request: Request,
     current_user: User = Depends(require_admin)
 ):
-    """Upload a custom SSL/TLS certificate. Admin only. 409 when it would replace the served one."""
+    """Store a certificate with its key and its chain under its subject CN, in place of a stored
+    certificate of that name unless it is the served one. The audit log gets certificate_uploaded.
+    Administrators only."""
     try:
         # Validate and parse the certificate to get domain. openssl reads it
         # on its standard input: no temporary file to leave in /tmp on errors.
@@ -878,14 +1044,30 @@ async def upload_certificate(
     }
 
 
-@router.delete("/certificates/{cert_id}")
+@router.delete(
+    "/certificates/{cert_id}", summary="Delete a stored certificate",
+    responses={
+        **answer({"status": "ok", "message": "Certificate deleted"}, "ok: the certificate is no longer stored."),
+        **errors(ADMIN, {
+            400: "The id is not custom_ followed by a valid certificate name.",
+            404: "No certificate is stored under this id.",
+            500: "The certificate could not be deleted for another reason, such as a file that could not be removed.",
+            502: "Caddy did not load another certificate in place of this served one: it stays stored.",
+            503: "The web UI's Caddy could not be reached, or Docker did not answer in time: it stays stored.",
+        }),
+    },
+)
 async def delete_certificate(
-    cert_id: str,
+    cert_id: Annotated[str, PathParam(description="The stored certificate's id, such as custom_nas.example.com.")],
     request: Request,
     current_user: User = Depends(require_admin)
 ):
-    """Delete a custom certificate. Admin only. The served one is replaced by Caddy's local CA
-    first (ADR-0404): when Caddy does not take it, 502 or 503, and nothing is deleted."""
+    """Delete a stored certificate. When Caddy serves it, Caddy is first given the certificate of
+    its local CA, or the one an administrator chose; when Caddy does not take it, nothing is
+    deleted. The audit log gets certificate_deleted. Administrators only.
+    \f
+    ADR-0404.
+    """
     if not cert_id.startswith("custom_"):
         raise HTTPException(400, "Can only delete custom certificates")
 
@@ -925,6 +1107,15 @@ NOT_REQUIRED = "Two-factor authentication is not required"
 CANNOT_STORE = "The two-factor requirement cannot be stored: its table in the database has another layout"
 
 
+# The texts of turning the requirement on and off in the API documentation (ADR-0417).
+_REQUIREMENT_ERRORS = {
+    400: "The code is not a current code of the administrator's authenticator app, or it was used already.",
+    403: "The account is not an administrator, the request came with an API token (only a session changes the "
+         "requirement), the session cookie came from another page than the web UI's, or the account must set up "
+         "two-factor authentication first.",
+}
+
+
 def _requirement_status(current: requirement.Requirement | None) -> TwoFactorRequirementStatus:
     if current is None:
         return TwoFactorRequirementStatus(enabled=False)
@@ -952,13 +1143,24 @@ def _use_own_code(user: User, code: str) -> None:
         )
 
 
-@router.get("/two-factor-requirement", response_model=TwoFactorRequirementStatus)
+@router.get(
+    "/two-factor-requirement", response_model=TwoFactorRequirementStatus, summary="Read the two-factor requirement",
+    responses=errors(ADMIN),
+)
 async def get_two_factor_requirement(_: User = Depends(require_admin), db: AsyncSession = Depends(get_db)):
-    """Whether every account must have two-factor authentication, and with which grace period."""
+    """Whether every account must have two-factor authentication, and with which grace period.
+    Administrators only."""
     return _requirement_status(await requirement.current(db))
 
 
-@router.post("/two-factor-requirement/enable", response_model=TwoFactorRequirementStatus)
+@router.post(
+    "/two-factor-requirement/enable", response_model=TwoFactorRequirementStatus,
+    summary="Turn the two-factor requirement on",
+    responses=errors(ADMIN, BODY, _REQUIREMENT_ERRORS, {
+        409: "The administrator has no two-factor authentication of their own, or the requirement is on already.",
+        500: "The requirement's table in the database has another layout and cannot store it.",
+    }),
+)
 async def enable_two_factor_requirement(
     request: Request,
     data: TwoFactorRequirementEnable,
@@ -966,8 +1168,10 @@ async def enable_two_factor_requirement(
     current_user: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ):
-    """Require two-factor authentication for every account, after ``grace_days``. Only an
-    administrator who has it turns it on, with a current code: the one who imposes it meets it."""
+    """Require two-factor authentication for every account, after grace_days: an account without
+    it then reaches only its setup. Only an administrator who has it turns it on, in a session (not
+    with an API token) and with a current code: the one who imposes it meets it. The audit log gets settings_changed.
+    Administrators only."""
     _require_own_second_factor(found, current_user)
     if await requirement.current(db) is not None:
         raise HTTPException(status_code=409, detail=ALREADY_REQUIRED)
@@ -1000,7 +1204,13 @@ async def enable_two_factor_requirement(
     return _requirement_status(requirement.Requirement(data.grace_days, enabled_at, username))
 
 
-@router.post("/two-factor-requirement/disable", response_model=TwoFactorRequirementStatus)
+@router.post(
+    "/two-factor-requirement/disable", response_model=TwoFactorRequirementStatus,
+    summary="Turn the two-factor requirement off",
+    responses=errors(ADMIN, BODY, _REQUIREMENT_ERRORS, {
+        409: "The administrator has no two-factor authentication of their own, or the requirement is off already.",
+    }),
+)
 async def disable_two_factor_requirement(
     request: Request,
     data: TwoFactorRequirementDisable,
@@ -1009,7 +1219,8 @@ async def disable_two_factor_requirement(
     db: AsyncSession = Depends(get_db),
 ):
     """Stop requiring two-factor authentication: accounts without it have their rights again at
-    their next request. It weakens every sign-in, so it takes what turning it on takes."""
+    their next request. It weakens every sign-in, so it takes what turning it on takes. The audit
+    log gets settings_changed. Administrators only."""
     _require_own_second_factor(found, current_user)
     if await requirement.current(db) is None:
         raise HTTPException(status_code=409, detail=NOT_REQUIRED)

@@ -36,6 +36,8 @@ services:
       - test-pools:/mnt/pools
       # As in docker-compose.yml: the served certificate (ADR-0404).
       - test-served-certificate:/served-certificate
+      # As in docker-compose.yml: the app names' Caddy sites (ADR-0420).
+      - test-app-names:/app-names
       - /var/run/docker.sock:/var/run/docker.sock:ro
     # The same tmpfs as in docker-compose.yml (see there), so that the tests
     # run backups and restores with its limit and without exec.
@@ -76,6 +78,7 @@ services:
       - caddy-test-data:/data
       - caddy-test-config:/config
       - test-served-certificate:/served-certificate:ro
+      - test-app-names:/app-names:ro
     depends_on:
       supervisor:
         condition: service_healthy
@@ -91,10 +94,16 @@ services:
         last=$$err; sleep 2; done;
         UNOS_TLS=local;
         if [ -e /served-certificate/served.pem ]; then
-        if err=$$(UNOS_TLS=served caddy validate --config /etc/caddy/Caddyfile 2>&1); then UNOS_TLS=served;
+        if err=$$(UNOS_TLS=served UNOS_APP_NAMES=off caddy validate --config /etc/caddy/Caddyfile 2>&1); then UNOS_TLS=served;
         else echo "unos-webui: the served certificate does not load, Caddy's local CA instead: $$(echo "$$err" | tail -n 1)";
         fi; fi;
         export UNOS_TLS;
+        UNOS_APP_NAMES=off;
+        if [ -e /app-names/on/sites.caddy ]; then
+        if err=$$(UNOS_APP_NAMES=on caddy validate --config /etc/caddy/Caddyfile 2>&1); then UNOS_APP_NAMES=on;
+        else echo "unos-webui: the app names do not load, the web UI starts without them: $$(echo "$$err" | tail -n 1)";
+        fi; fi;
+        export UNOS_APP_NAMES;
         exec caddy run --config /etc/caddy/Caddyfile
     networks:
       unos-test-net:
@@ -180,6 +189,7 @@ volumes:
   caddy-test-data:
   caddy-test-config:
   test-served-certificate:
+  test-app-names:
   test-results:
   test-reports:
 

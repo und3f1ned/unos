@@ -25,7 +25,8 @@ from typing import Optional
 
 import httpx
 
-from .. import state_files
+from .. import paths, state_files
+from ..config import get_settings
 from ..times import utc_now
 from .schemas import (
     CurrentVersion,
@@ -44,11 +45,13 @@ logger = logging.getLogger(__name__)
 GITHUB_API_BASE = "https://api.github.com"
 ALLOWED_REPOS = {"und3f1ned/unos"}  # Whitelist of allowed repositories
 INSTALL_DIR = Path(os.environ.get("UNOS_INSTALL_DIR", "/opt/unos"))
-BACKUP_DIR = Path("/var/lib/unos/backups")
-DATA_DIR = Path("/data")
-UPDATE_STATE_FILE = DATA_DIR / "update_state.json"
-UPDATE_HISTORY_FILE = DATA_DIR / "update_history.json"
-UPDATE_CONFIG_FILE = DATA_DIR / "update_config.json"
+# The copies made before an update (UNOS_UPDATE_BACKUP_DIR), and the updater's state files (src/paths.py).
+BACKUP_DIR = Path(get_settings().update_backup_dir)
+# The database the supervisor opens (UNOS_DB_PATH, in the data directory by default).
+DB_FILE = Path(get_settings().db_path)
+UPDATE_STATE_FILE = paths.UPDATE_STATE
+UPDATE_HISTORY_FILE = paths.UPDATE_HISTORY
+UPDATE_CONFIG_FILE = paths.UPDATE_CONFIG
 
 # What `git describe --tags --always` names besides a tag: the commits after a
 # tag (v1.2.0-3-g712fc3a) or, without any tag, the commit itself.
@@ -362,7 +365,7 @@ class Updater:
             db_backup = backup_path / "data"
             db_backup.mkdir(parents=True, exist_ok=True)
 
-            db_path = DATA_DIR / "unos.db"
+            db_path = DB_FILE
             if db_path.exists():
                 shutil.copy2(db_path, db_backup / "unos.db")
 
@@ -730,7 +733,7 @@ class Updater:
                 # Restore database if backed up
                 db_backup = latest_backup / "data" / "unos.db"
                 if db_backup.exists():
-                    shutil.copy2(db_backup, DATA_DIR / "unos.db")
+                    shutil.copy2(db_backup, DB_FILE)
 
                 self._update_progress(UpdateStatus.ROLLBACK, 70, "Rebuilding containers...")
 

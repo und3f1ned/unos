@@ -23,7 +23,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Annotated, Literal, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Path, Request, status
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, StringConstraints
 from sqlalchemy import LargeBinary, cast, delete, func, select, update
 from sqlalchemy.exc import IntegrityError
@@ -32,6 +32,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..audit.router import log_action
 from ..audit.schemas import AuditAction, AuditSeverity
 from ..database import get_db
+from ..openapi import BODY, RATE_LIMITED, SIGNED_IN, answer, errors
 from ..times import UtcDatetime, db_now, parse_time
 from . import webauthn
 from .limits import limiter
@@ -88,48 +89,97 @@ KeyName = Annotated[
 
 
 class PasswordBody(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    """The signed-in user's current password, which a change of their security keys needs."""
 
-    current_password: str = Field(max_length=1024)
+    model_config = ConfigDict(
+        extra="forbid", json_schema_extra={"examples": [{"current_password": "example-password"}]},
+    )
+
+    current_password: str = Field(max_length=1024, description="The user's current password.")
 
 
 class RegistrationFinish(BaseModel):
     """The browser's answer to navigator.credentials.create, each binary field base64url."""
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", json_schema_extra={"examples": [{
+        "name": "YubiKey 5C", "credential_id": "example-credential-id",
+        "client_data_json": "example-client-data-json", "attestation_object": "example-attestation-object",
+    }]})
 
-    name: KeyName
-    credential_id: str = Field(min_length=1, max_length=1364)
-    client_data_json: str = Field(min_length=1, max_length=6000)
-    attestation_object: str = Field(min_length=1, max_length=22000)
+    name: KeyName = Field(
+        description="A name for the key, unique among the user's keys: 1 to 64 characters without control "
+                    "characters; white space around it is dropped."
+    )
+    credential_id: str = Field(min_length=1, max_length=1364, description="The key's credential id, base64url.")
+    client_data_json: str = Field(
+        min_length=1, max_length=6000, description="The browser's client data JSON, base64url."
+    )
+    attestation_object: str = Field(
+        min_length=1, max_length=22000, description="The key's attestation object, base64url."
+    )
 
 
 class SecurityKeyCreation(BaseModel):
     """The options of navigator.credentials.create, as the page builds them (base64url for bytes)."""
 
-    challenge: str
-    rp_id: str
-    rp_name: str
-    user_id: str
-    user_name: str
-    algorithms: list[int]
-    exclude_credentials: list[str]
-    timeout_ms: int
-    attestation: Literal["none"] = "none"
-    user_verification: Literal["discouraged"] = "discouraged"
-    resident_key: Literal["discouraged"] = "discouraged"
+    model_config = ConfigDict(json_schema_extra={"examples": [{
+        "challenge": "example-challenge", "rp_id": "nas.example.com", "rp_name": "UNOS",
+        "user_id": "example-user-handle", "user_name": "alice", "algorithms": [-7, -8, -257],
+        "exclude_credentials": ["example-credential-id"], "timeout_ms": 60000, "attestation": "none",
+        "user_verification": "discouraged", "resident_key": "discouraged",
+    }]})
+
+    challenge: str = Field(
+        description="The challenge, base64url: valid once, for 2 minutes, for this user, session and address."
+    )
+    rp_id: str = Field(description="The relying party ID: the host name of the web UI's address, without the port.")
+    rp_name: str = Field(description="The relying party's name: UNOS.")
+    user_id: str = Field(description="A random user handle, base64url, that names no one.")
+    user_name: str = Field(description="The user's name.")
+    algorithms: list[int] = Field(
+        description="The COSE algorithms that UNOS takes, by preference: -7 (ES256), -8 (EdDSA), -257 (RS256)."
+    )
+    exclude_credentials: list[str] = Field(
+        description="The credential ids of the user's keys, base64url, which the browser does not register again."
+    )
+    timeout_ms: int = Field(description="How long the browser waits for the key, in milliseconds.")
+    attestation: Literal["none"] = Field("none", description="Always none: UNOS asks for no attestation.")
+    user_verification: Literal["discouraged"] = Field(
+        "discouraged", description="Always discouraged: the key is a second factor beside the password."
+    )
+    resident_key: Literal["discouraged"] = Field(
+        "discouraged", description="Always discouraged: the key need not keep a discoverable credential."
+    )
 
 
 class SecurityKeyInfo(BaseModel):
-    id: int
-    name: str
+    """One of the user's security keys, without its key material."""
+
+    model_config = ConfigDict(json_schema_extra={"examples": [{
+        "id": 1, "name": "YubiKey 5C", "origin": "https://nas.example.com",
+        "created_at": "2026-11-18T10:02:41.512345Z", "last_used_at": "2026-11-19T08:15:03.004211Z",
+        "usable": True,
+    }]})
+
+    id: int = Field(description="The key's id.")
+    name: str = Field(description="The key's name; ? when the stored one cannot be read.")
     # The web UI's address where the key works; null when the stored one cannot be read.
-    origin: Optional[str] = None
-    created_at: Optional[UtcDatetime] = None
-    last_used_at: Optional[UtcDatetime] = None
+    origin: Optional[str] = Field(
+        None, description="The web UI's address where the key works; null when the stored one cannot be read."
+    )
+    created_at: Optional[UtcDatetime] = Field(
+        None, description="When the key was added, in UTC; null when the stored time cannot be read."
+    )
+    last_used_at: Optional[UtcDatetime] = Field(
+        None, description="When the key last signed in, in UTC; null: never, or a stored time that cannot be read."
+    )
     # False for a key whose stored row cannot be read (a restored or damaged database): it signs in
     # nowhere and can only be removed.
-    usable: bool = True
+    usable: bool = Field(
+        True,
+        description="False for a key whose stored row cannot be read (a restored or damaged database): it signs "
+                    "in nowhere and can only be removed.",
+    )
 
 
 # ==================== The stored keys ====================
@@ -260,6 +310,18 @@ async def _audit(request: Request, action: AuditAction, username: str, details: 
 
 # ==================== Registration ====================
 
+# The 403 of the routes that change the keys (require_session), in the API documentation.
+_SESSION_ONLY = (
+    "an API token (only a session token adds or removes security keys), a session cookie from another page "
+    "than the web UI's, or an account that must set up two-factor authentication first"
+)
+_REGISTRATION_ERRORS = {
+    403: f"The request did not come from the web UI's own page (its Origin), or the credential does not reach "
+         f"this route: {_SESSION_ONLY}.",
+    409: "The web UI is open at an IP address, not by the NAS's name; the user has no two-factor authentication "
+         "with an authenticator app; or they have 10 security keys already.",
+}
+
 
 def _registration_address(request: Request) -> tuple[str, str]:
     """The origin and the RP ID of a registration: the web UI's own page (its Origin is
@@ -274,13 +336,22 @@ def _registration_address(request: Request) -> tuple[str, str]:
     return webauthn.origin_of_host(host), rp_id
 
 
-@router.get("", response_model=list[SecurityKeyInfo])
+@router.get(
+    "", response_model=list[SecurityKeyInfo], summary="List your security keys", responses=errors(SIGNED_IN),
+)
 async def list_security_keys(user: User = Depends(verify_token), db: AsyncSession = Depends(get_db)):
-    """The user's security keys, oldest first; no key material."""
+    """The signed-in user's security keys, oldest first; no key material. Any signed-in user."""
     return [key.info() for key in await _stored_keys(db, user.id)]
 
 
-@router.post("/register/begin", response_model=SecurityKeyCreation)
+@router.post(
+    "/register/begin",
+    response_model=SecurityKeyCreation,
+    summary="Start adding a security key",
+    responses=errors(SIGNED_IN, BODY, RATE_LIMITED, _REGISTRATION_ERRORS, {
+        400: "The current password is wrong.",
+    }),
+)
 @limiter.limit("5/minute")
 async def begin_registration(
     request: Request,
@@ -289,7 +360,11 @@ async def begin_registration(
     user: User = Depends(require_session),
     db: AsyncSession = Depends(get_db),
 ):
-    """Start a registration: a challenge bound to the user, this session and this address."""
+    """Start adding a security key, with the current password: the options for the browser's
+    navigator.credentials.create, with a challenge bound to the user, this session and the web UI's
+    address, by which the key then works. Needs two-factor authentication with an authenticator app, the
+    web UI open by the NAS's name, and a session token from the web UI's own page. Any signed-in user.
+    """
     origin, rp_id = _registration_address(request)
     if not user.totp_enabled:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=NEEDS_TWO_FACTOR)
@@ -317,7 +392,17 @@ def _refused(detail: str = NOT_ACCEPTED, code: int = status.HTTP_400_BAD_REQUEST
     return HTTPException(status_code=code, detail=detail)
 
 
-@router.post("/register/finish", response_model=SecurityKeyInfo)
+@router.post(
+    "/register/finish",
+    response_model=SecurityKeyInfo,
+    summary="Finish adding a security key",
+    responses=errors(SIGNED_IN, BODY, _REGISTRATION_ERRORS, {
+        400: "The key's answer was not accepted, or its challenge expired, was used already or is another "
+             "session's.",
+        409: "The web UI is open at an IP address; the user no longer has two-factor authentication; the key is "
+             "registered already; the user has 10 security keys already; or another of their keys has this name.",
+    }),
+)
 async def finish_registration(
     request: Request,
     body: RegistrationFinish,
@@ -325,7 +410,8 @@ async def finish_registration(
     user: User = Depends(require_session),
     db: AsyncSession = Depends(get_db),
 ):
-    """Check the key's answer to the registration's challenge and store the key."""
+    """Check the key's answer to the challenge of POST /auth/security-keys/register/begin and store the
+    key, for the web UI's address of the registration; written to the audit log. Any signed-in user."""
     origin, rp_id = _registration_address(request)
     user_id, username = user.id, user.username
     try:
@@ -386,16 +472,28 @@ async def finish_registration(
     return added
 
 
-@router.delete("/{key_id}")
+@router.delete(
+    "/{key_id}",
+    summary="Remove a security key",
+    responses={
+        **answer({"status": "ok"}, "The key is removed."),
+        **errors(SIGNED_IN, BODY, RATE_LIMITED, {
+            400: "The current password is wrong.",
+            403: f"The credential does not reach this route: {_SESSION_ONLY}.",
+            404: "The user has no security key with this id.",
+        }),
+    },
+)
 @limiter.limit("5/minute")
 async def delete_security_key(
     request: Request,
-    key_id: int,
+    key_id: Annotated[int, Path(description="The key's id, as GET /auth/security-keys lists it.")],
     body: PasswordBody,
     user: User = Depends(require_session),
     db: AsyncSession = Depends(get_db),
 ):
-    """Remove one of the user's keys, with the current password."""
+    """Remove one of the signed-in user's security keys, with the current password; written to the audit
+    log. Any signed-in user."""
     user_id, username, hashed = user.id, user.username, user.hashed_password
     if not await asyncio.to_thread(verify_password, body.current_password, hashed):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=WRONG_PASSWORD)

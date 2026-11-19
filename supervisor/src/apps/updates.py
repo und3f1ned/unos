@@ -50,6 +50,7 @@ from ..auth.models import User
 from ..auth.utils import require_admin
 from ..containers.docker import RUNNING_STATES
 from ..database import get_db
+from ..openapi import answer, errors
 from ..security.validators import open_dir_nofollow, sanitize_error_message
 import importlib
 
@@ -846,13 +847,26 @@ def _restore(plan: _Plan, done: _Progress, progress: install_jobs.Progress, reas
     )
 
 
-@router.get("/installed/{container_id}/update", response_model=AppUpdatePlan)
-async def update_plan(container_id: str, _: User = Depends(require_admin),
+@router.get(
+    "/installed/{container_id}/update", response_model=AppUpdatePlan, summary="Preview an app update",
+    responses=errors(base.APP_LOOKUP, {
+        400: "The container is no app's (no unos.app label), or a folder of the installed app breaks a rule of the "
+             "install: a share's folder, a snapshot or the trash, or a folder inside another that the app writes to.",
+        409: "The app cannot be updated, with the reason as the detail: such as no newer images in the catalog, an "
+             "earlier version still kept, a missing container, a pool not mounted, a host port taken, an image that "
+             "is not newer or not built for the host's platform, or too little room on the system disk or the pool.",
+        500: "Docker failed, or the system disk's free space or a data folder could not be read.",
+        503: "Docker or an image's registry does not answer.",
+    }),
+)
+async def update_plan(container_id: base.AppContainerId, _: User = Depends(require_admin),
                       db: AsyncSession = Depends(get_db)) -> AppUpdatePlan:
-    """What the update of an installed app to the catalog's newer pinned images would do: each
-    container's image before and after, what its pulls write to the system disk, the copies of its
-    database. Reads Docker, the host and the image registries; changes nothing. 409 for an app that
-    cannot be updated, with the reason; 503 when Docker or a registry does not answer."""
+    """What an app update of an installed app to the catalog's newer pinned images would do: each
+    container's image before and after, what its pulls write to the system disk, and the database
+    copies. Reads Docker, the host and the image registries; changes nothing.
+    \f
+    ADR-0408.
+    """
     shares = await base._share_folders(db)
     await db.close()
 
@@ -863,13 +877,25 @@ async def update_plan(container_id: str, _: User = Depends(require_admin),
     return await asyncio.to_thread(plan)
 
 
-@router.post("/installed/{container_id}/update", response_model=AppInstallJob, status_code=202)
-async def update_app(container_id: str, request: Request, user: User = Depends(require_admin),
+@router.post(
+    "/installed/{container_id}/update", response_model=AppInstallJob, status_code=202,
+    summary="Update an installed app",
+    responses={202: {"description": base.JOB_ANSWER}, **errors(base.APP_LOOKUP, base.JOB_STARTS, {
+        409: "The app is not in the catalog, an install, an update or a rollback runs already, or "
+             + base.CHANGE_UNDER_WAY + ".",
+        500: "Docker failed, or the job could not be started.",
+    })},
+)
+async def update_app(container_id: base.AppContainerId, request: Request, user: User = Depends(require_admin),
                      db: AsyncSession = Depends(get_db)) -> AppInstallJob:
-    """Update an installed app to the catalog's newer pinned images as a background job: 202 at once
-    with the job, whose checks are those of GET .../update (ADR-0408). 404 for no such app, 409
-    while another app's job or another change of this app runs. The job writes app_updated at its
-    end when it changed the app."""
+    """Update an installed app to the catalog's newer pinned images as an install job: 202 at once
+    with the job. The job makes the checks of GET .../update before any pull, and a refusal ends it
+    failed with the status and detail that GET would have answered; a failure after the app was
+    stopped returns the app to its earlier version. The job writes app_updated at its end when it
+    changed the app.
+    \f
+    ADR-0408.
+    """
     shares = await base._share_folders(db)
     await db.close()
     _, app = await asyncio.to_thread(base._get_app, container_id)
@@ -1055,12 +1081,25 @@ def _rollback(container_id: str, progress: install_jobs.Progress) -> tuple[AppIn
     return answer, text
 
 
-@router.post("/installed/{container_id}/rollback", response_model=AppInstallJob, status_code=202)
-async def rollback_app(container_id: str, request: Request, user: User = Depends(require_admin)) -> AppInstallJob:
-    """Roll an app back to the earlier version that its last update kept, as a background job: 202
-    at once (ADR-0408). The job stops and removes the newer containers, puts the copy of the
-    database back, gives the earlier containers their names and starts them; it cannot be
-    cancelled. The job writes app_rolled_back."""
+@router.post(
+    "/installed/{container_id}/rollback", response_model=AppInstallJob, status_code=202,
+    summary="Roll an app back to its earlier version",
+    responses={202: {"description": base.JOB_ANSWER}, **errors(base.APP_LOOKUP, base.JOB_STARTS, {
+        409: "The app has no earlier version or is no longer in the catalog, an install, an update or a rollback "
+             "runs already, or " + base.CHANGE_UNDER_WAY + ".",
+        500: "Docker failed, or the job could not be started.",
+    })},
+)
+async def rollback_app(container_id: base.AppContainerId, request: Request,
+                       user: User = Depends(require_admin)) -> AppInstallJob:
+    """App rollback: return an app to the earlier version that its last update kept, as an install
+    job, 202 at once. The job checks the database copies, stops and removes the newer containers,
+    puts each database copy back in its folder's place (what the app stored since the update is
+    lost), gives the earlier containers their names back and starts them; it cannot be cancelled.
+    The job writes app_rolled_back once its checks passed, as failed when the rollback failed.
+    \f
+    ADR-0408.
+    """
     _, app = await asyncio.to_thread(base._get_app, container_id)
     if not app.previous:
         _refuse(f"{app.name} has no earlier version to roll back to")
@@ -1110,11 +1149,32 @@ def _remove_earlier(container_id: str) -> tuple[stacks.InstalledContainers, list
     return app, removed, deleted
 
 
-@router.delete("/installed/{container_id}/previous")
-async def remove_earlier_version(container_id: str, request: Request, user: User = Depends(require_admin)):
+@router.delete(
+    "/installed/{container_id}/previous", summary="Remove an app's earlier version",
+    responses={
+        **answer(
+            {"status": "removed", "id": "bookstack", "containers": ["bookstack.previous", "bookstack-database.previous"],
+             "copies": ["/mnt/pools/data/apps/bookstack/database/data.previous"]},
+            "Always removed, with id: the container as the request named it; containers: the earlier containers "
+            "removed; copies: the database copies deleted.",
+        ),
+        **errors(base.APP_LOOKUP, {
+            409: "The app has no earlier version, " + base.CHANGE_UNDER_WAY + ", or a database copy cannot be "
+                 "deleted safely: its pool is not mounted, its data folder is missing, or a folder of an earlier "
+                 "rollback is beside it.",
+            500: "Docker failed, such as to remove an earlier container, a database copy could not be deleted, or a "
+                 "folder could not be checked; what was removed so far stays removed.",
+        }),
+    },
+)
+async def remove_earlier_version(container_id: base.AppContainerId, request: Request,
+                                 user: User = Depends(require_admin)):
     """Remove the earlier version that an app's last update kept: its stopped containers and the
-    copy of its database (ADR-0408). Its images stay, for Containers > Images. 409 when there is
-    none, or while another change of the app is under way. Audited as app_earlier_version_removed."""
+    database copies. Its images stay, for Containers > Images. The audit log gets
+    app_earlier_version_removed.
+    \f
+    ADR-0408.
+    """
     try:
         app, removed, deleted = await asyncio.to_thread(_remove_earlier, container_id)
     except base._PartlyChanged as exc:

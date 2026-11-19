@@ -57,7 +57,7 @@ from datetime import datetime, timezone
 from pathlib import PurePosixPath
 from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
 
 from ..security.validators import open_dir_nofollow, pools_base
 from ..times import UtcDatetime
@@ -100,19 +100,49 @@ _OCTAL_ESCAPE = re.compile(rb"\\([0-7]{3})")
 
 
 class RepairResult(BaseModel):
-    """A repair: while it runs (state "running", finished_at None, the counts so far), then its result."""
+    """A repair of a share's permissions: while it runs (state running, the counts so far), then its result."""
 
-    share: str
-    state: Literal["running", "done", "incomplete", "failed"]
-    started_at: UtcDatetime
-    finished_at: UtcDatetime | None
-    visited: int
-    changed: int
-    skipped: dict[str, int]      # keys: other_filesystem, snapshots, symlink, special, hardlink, private, too_deep, raced
-    skipped_paths: list[str]     # at most 20 relative paths of skipped subvolumes and mount points
-    errors: int
-    error_samples: list[str]     # at most 20, "relative/path: strerror"
-    message: str
+    model_config = ConfigDict(json_schema_extra={"examples": [{
+        "share": "media",
+        "state": "done",
+        "started_at": "2026-11-18T09:00:00Z",
+        "finished_at": "2026-11-18T09:02:41Z",
+        "visited": 15230,
+        "changed": 412,
+        "skipped": {
+            "other_filesystem": 1, "snapshots": 0, "symlink": 3, "special": 0, "hardlink": 2, "private": 1,
+            "too_deep": 0, "raced": 0,
+        },
+        "skipped_paths": ["vm-images"],
+        "errors": 0,
+        "error_samples": [],
+        "message": "Permissions repaired.",
+    }]})
+
+    share: str = Field(description="The share's name when the repair started.")
+    state: Literal["running", "done", "incomplete", "failed"] = Field(
+        description="running; done; incomplete: stopped by a request or after 24 hours, run it again to continue; "
+                    "failed: it could not start on the folder, and nothing was changed, or it stopped on an "
+                    "unexpected error. The message says why."
+    )
+    started_at: UtcDatetime = Field(description="When it started, in UTC.")
+    finished_at: UtcDatetime | None = Field(description="When it ended, in UTC; null while it runs.")
+    visited: int = Field(description="The entries examined so far, the share's folder included.")
+    changed: int = Field(description="The entries whose group or mode it changed.")
+    # keys: other_filesystem, snapshots, symlink, special, hardlink, private, too_deep, raced
+    skipped: dict[str, int] = Field(
+        description="The entries skipped, by reason: other_filesystem (subvolumes and mount points), snapshots, "
+                    "symlink, special (FIFOs, sockets, devices), hardlink, private, too_deep, raced (removed or "
+                    "replaced while examined)."
+    )
+    # at most 20 relative paths of skipped subvolumes and mount points
+    skipped_paths: list[str] = Field(
+        description="Up to 20 paths of skipped subvolumes and mount points, relative to the share's folder."
+    )
+    errors: int = Field(description="The entries that could not be changed.")
+    # at most 20, "relative/path: strerror"
+    error_samples: list[str] = Field(description="Up to 20 of them, each as its relative path: the reason.")
+    message: str = Field(description="What the repair did, in a sentence; empty while it runs.")
 
 
 def repair_tree(

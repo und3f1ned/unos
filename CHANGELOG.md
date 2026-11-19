@@ -11,7 +11,28 @@ Security and robustness hardening, fixes for broken user flows, and a few new
 features (SMB access per user and per share, volumes, copy and move in the file
 manager, encrypted backup uploads, health checks, CI checks).
 
+### Added
+- Remote access (System > Remote Access): a WireGuard tunnel on the host (wireguard-tools'
+  `wg-quick@unos-wg`, enabled so that it comes up at boot) through which devices added as peers reach
+  the NAS alone, never the rest of the LAN. The server's key is made on the host and never leaves
+  it; a peer's configuration and its QR code are shown once and kept nowhere; peers are revoked at
+  once; the port and the tunnel network are checked against the host's networks and listeners;
+  turning it on or off leaves the LAN's access as it was; with ufw, UNOS's rule
+  `UNOS: remote access` lets the port in. Apps get local names, `<name>-<host>.local`, announced by
+  the host's unit `unos-app-names` with avahi-publish (package avahi-utils) and forwarded by the web
+  UI's Caddy over HTTPS from its local CA, through the new volume `app-names` (`remote_access_*` and
+  `app_names_changed` in the audit log, ADR-0420).
+
 ### Changed
+- The supervisor keeps its whole data directory (the database, unless `UNOS_DB_PATH` names another
+  file, its JWT secret, the audit log, the state files, the stored certificates and the backups)
+  where `UNOS_DATA_DIR` names, `/data` by default as before, and refuses to start when the value is
+  not an absolute path of an existing folder. Host paths keep settings of their own
+  (`UNOS_FSTAB_PATH`, `UNOS_MOUNTS_BASE_PATH`, `UNOS_SERVED_CERTIFICATE_DIR`,
+  `UNOS_UPDATE_BACKUP_DIR`, and the web UI's TLS address `UNOS_WEBUI_TLS_HOST` and
+  `UNOS_WEBUI_TLS_PORT`), which the local E2E stand-in sets instead of patching the supervisor's
+  modules. Scheduled backups and the updater take the database the supervisor opens. `install.sh` no longer reads a `UNOS_DATA_DIR` of
+  its own: it creates `/var/lib/unos`, which `update.sh` names (ADR-0419).
 - An install of Open WebUI reaches the Ollama app, and one of Zigbee2MQTT the Mosquitto app, at
   `host.docker.internal`, which now names the NAS in their containers; Zigbee2MQTT's broker is
   `mqtt://host.docker.internal:1883` unless changed. Installed ones get it when they are installed
@@ -464,6 +485,22 @@ manager, encrypted backup uploads, health checks, CI checks).
   `ups_name`, `host` and `port` are checked before they reach `upsc`.
 
 ### Added
+- The API's OpenAPI schema (`/openapi.json` of the supervisor, see the user guide's API Tokens)
+  describes every route: a summary and a description, every parameter and every field of what it
+  takes and answers, examples of its JSON requests and answers, and the error statuses it answers,
+  with when. A test checks all of it and derives from each route's code the statuses that it must
+  list at the least (ADR-0417).
+- iSCSI targets on the new **iSCSI** tab of Shares: a target gives the computers you allow a disk,
+  one LUN that is a sparse file in a volume of a pool, served by the kernel's LIO through configfs,
+  without a host package. CHAP is always on, one-way or mutual, with secrets of 12 to 16 characters
+  that UNOS generates or you type, kept in `/data/iscsi_secrets.json` (root only, in no backup) and
+  shown once; only the allowed initiators log in. The targets listen on port 3260 of the NAS's LAN
+  addresses only, which UNOS's firewall rules now let the local networks reach. UNOS restores its
+  targets at every start, and after a restore of the database, and removes those it no longer
+  knows; a target whose pool did not mount, whose LUN file is not as UNOS made it or whose secret is
+  missing is not served, and the tab says why; on a host whose kernel lacks LIO a create is refused
+  before anything is made. A pool or volume that holds a LUN is not unmounted,
+  forgotten or deleted, and a delete needs the target's name typed again (ADR-0418).
 - BookStack, Paperless-ngx and Linkwarden are back in the App Store, each with the container it needs
   beside it: BookStack with MariaDB 11.8, Paperless-ngx with Valkey and Linkwarden with PostgreSQL 16,
   every image pinned by its version and digest. UNOS generates their database passwords and keys as
@@ -1522,6 +1559,11 @@ manager, encrypted backup uploads, health checks, CI checks).
   installed once, under its id, and a request with `name` answers 422.
 
 ### Fixed
+- Linkwarden keeps Prisma's cache in memory too: its start wrote it into its container's layer on
+  the system disk. The App Store's estimates of the system disk for Paperless-ngx and Linkwarden
+  are now what their pulls took, plus about 5%: they were 3% and 8% short (ADR-0415).
+- The tests of the live statistics build psutil's answers themselves: the named tuples of
+  psutil's private module, which psutil 7 no longer has there, failed them on Linux.
 - The CPU share of the live statistics, of the CPU and of each core, was of
   the time since the last sample taken in the same worker thread, any number
   of samples back; it is now of the time since the last sample, and 0 in the

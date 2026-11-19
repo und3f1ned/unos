@@ -869,7 +869,7 @@ def _start_install(tmp_path, *scenario, prelude=""):
 
 # What install.sh creates from setup_directories on (in the sandbox of
 # _run_install_main).
-_INSTALL_TARGETS = {"install", "data", "mnt-pools", "etc-unos", "etc-samba", "etc-systemd-system"}
+_INSTALL_TARGETS = {"install", "var-lib-unos", "mnt-pools", "etc-unos", "etc-samba", "etc-systemd-system"}
 
 # Logs the call; stubs of _run_install_main.
 _LOGGER = '#!/bin/bash\necho "${0##*/} $*" >> "$STUB_DIR/calls"\n'
@@ -924,7 +924,7 @@ def _run_install_main(tmp_path, *scenario, docker_installed=True, system=DEBIAN_
         (bin_dir / name).write_text(body)
         (bin_dir / name).chmod(0o755)
     paths = ["/etc/os-release", "/etc/apt", "/mnt/pools", "/etc/unos", "/etc/samba", "/etc/systemd/system",
-             "/proc/device-tree/compatible", "/etc/udev/rules.d", "/usr/local/sbin"]
+             "/proc/device-tree/compatible", "/etc/udev/rules.d", "/usr/local/sbin", "/var/lib/unos"]
     lib = _install_lib(tmp_path, paths)
 
     result = subprocess.run(
@@ -936,7 +936,6 @@ def _run_install_main(tmp_path, *scenario, docker_installed=True, system=DEBIAN_
             "STUB_DIR": str(stub_dir),
             "DOCKER_DIR": str(docker_dir),
             "UNOS_INSTALL_DIR": str(tmp_path / "install"),
-            "UNOS_DATA_DIR": str(tmp_path / "data"),
             "UNOS_REPO": str(tmp_path / "no-repository"),
         },
         stdin=subprocess.DEVNULL,
@@ -1168,7 +1167,9 @@ class TestInstallScript:
 
         (tmp_path / "dependencies").mkdir()
         packages = set(_install_packages(tmp_path / "dependencies"))
-        essential = {"e2fsprogs", "util-linux", "mount", "udev", "systemd", "systemd-sysv", "passwd", "libc-bin"}
+        # kmod: modprobe, with which the kernel itself loads modules (shares/iscsi.py, ADR-0418).
+        essential = {"e2fsprogs", "util-linux", "mount", "udev", "systemd", "systemd-sysv", "passwd", "libc-bin",
+                     "kmod"}
         assert set(HOST_TOOLS.values()) <= packages | essential
 
     @pytest.mark.parametrize("name", ["update.sh", "uninstall.sh"])
@@ -4270,13 +4271,18 @@ class TestServedCertificate:
         assert f"\t\ttls {SERVED_FILE} {SERVED_FILE}\n" in served.group(1)
         for site in (local, served):
             assert "\t\timport unos-site\n" in site.group(1)
-        assert re.findall(r"^import .*$", caddyfile, re.M) == ["import tls-{$UNOS_TLS:local}"]
+        assert re.findall(r"^import .*$", caddyfile, re.M) == [
+            "import tls-{$UNOS_TLS:local}", "import /app-names/{$UNOS_APP_NAMES:on}/*.caddy"]
         # No OCSP requests from the LAN, and no staple that Caddy keeps refreshing on the disk.
         assert re.search(r"^\tocsp_stapling off$", caddyfile.split("\n}\n", 1)[0], re.M)
         # The supervisor writes that file, and reloads Caddy with that Caddyfile and those modes (as
         # the module sets them: the tests' own fixture gives each test a folder of its own).
+        # The folder is the default of its setting, UNOS_SERVED_CERTIFICATE_DIR (ADR-0419).
+        from src.config import Settings
+
+        assert Settings.model_fields["served_certificate_dir"].default == SERVED_FILE.rsplit("/", 1)[0]
         module = (REPO_ROOT / "supervisor" / "src" / "security" / "serving.py").read_text()
-        assert f'\nSERVED_DIR = "{SERVED_FILE.rsplit("/", 1)[0]}"\nSERVED_FILE = "served.pem"\n' in module
+        assert '\nSERVED_DIR = get_settings().served_certificate_dir\nSERVED_FILE = "served.pem"\n' in module
         assert '\nWEBUI_CADDYFILE = "/etc/caddy/Caddyfile"\n' in module
         assert '\nTLS_MODES = ("served", "local")\n' in module
 
@@ -4344,6 +4350,94 @@ class TestServedCertificate:
         assert output == ["unos-webui: the served certificate does not load, Caddy's local CA instead: "
                           "Error: loading certificates: tls: private key does not match public key"]
 
+
+
+# ==================== The app names (system.remote-access, ADR-0420) ====================
+
+SITES_FILE = "/app-names/on/sites.caddy"
+
+
+class TestAppNamesVolume:
+    """The supervisor writes the app names' Caddy sites into a volume that only the two containers
+    mount, the web UI's read-only; webui/Caddyfile imports them, and the web UI's command starts Caddy
+    with them only when Caddy validates them, else without them (ADR-0420)."""
+
+    @pytest.mark.parametrize("compose_file", COMPOSE_FILES)
+    def test_only_the_supervisor_and_the_web_ui_mount_the_app_names(self, compose_file):
+        compose = _compose_file(compose_file)
+        mounts = {
+            name: [volume for volume in service.get("volumes", []) if str(volume).split(":")[1:2] == ["/app-names"]]
+            for name, service in compose["services"].items()
+        }
+        volume = mounts["supervisor"][0].split(":")[0]
+
+        assert mounts["supervisor"] == [f"{volume}:/app-names"]
+        assert mounts["webui"] == [f"{volume}:/app-names:ro"]
+        assert [name for name, found in mounts.items() if found] == ["supervisor", "webui"]
+        assert volume in compose["volumes"]
+
+    def test_the_caddyfile_imports_the_sites_the_supervisor_writes(self):
+        caddyfile = (REPO_ROOT / "webui" / "Caddyfile").read_text()
+        module = (REPO_ROOT / "supervisor" / "src" / "network" / "app_names.py").read_text()
+
+        assert "\nimport /app-names/{$UNOS_APP_NAMES:on}/*.caddy\n" in caddyfile
+        # After the global options and the web UI's own sites; never inside a site.
+        assert caddyfile.index("import /app-names/") > caddyfile.index("import tls-{$UNOS_TLS:local}")
+        assert '\nAPP_NAMES_DIR = "/app-names"\n' in module
+        assert '\nSITES_DIR = "on"\nSITES_FILE = "sites.caddy"\n' in module
+
+    def _start(self, compose_file, tmp_path, *, names: bool, validates: bool):
+        """The web UI's command with a supervisor that answers at once and a fake caddy: the calls of
+        caddy with the UNOS_TLS and UNOS_APP_NAMES each had, and what the command printed."""
+        command = [_compose_string(arg) for arg in _compose_file(compose_file)["services"]["webui"]["command"]]
+        sites = tmp_path / "sites.caddy"
+        if names:
+            sites.write_text("jellyfin-unos.local {}\n")
+        script = command[2]
+        assert script.count(SITES_FILE) == 1, script
+        bin_dir = tmp_path / "bin"
+        bin_dir.mkdir()
+        calls = tmp_path / "calls"
+        fakes = {
+            "wget": "exit 0",
+            "caddy": textwrap.dedent(f"""\
+                echo "UNOS_TLS=${{UNOS_TLS:-}} UNOS_APP_NAMES=${{UNOS_APP_NAMES:-}} caddy $*" >> "{calls}"
+                if [ "$1" = validate ]; then
+                    {'exit 0' if validates else 'echo "Error: adapting config using caddyfile: ambiguous site definition" >&2; exit 1'}
+                fi"""),
+        }
+        for name, body in fakes.items():
+            (bin_dir / name).write_text(f"#!/bin/sh\n{body}\n")
+            (bin_dir / name).chmod(0o755)
+        result = subprocess.run(["/bin/sh", "-c", script.replace(SITES_FILE, str(sites))],
+                                env={"PATH": f"{bin_dir}:/usr/bin:/bin"}, capture_output=True, text=True,
+                                timeout=60)
+        assert result.returncode == 0, result.stderr
+        return calls.read_text().splitlines(), (result.stdout + result.stderr).splitlines()
+
+    @pytest.mark.parametrize("compose_file", COMPOSE_FILES)
+    def test_without_names_caddy_starts_without_asking(self, compose_file, tmp_path):
+        calls, output = self._start(compose_file, tmp_path, names=False, validates=True)
+
+        assert calls == ["UNOS_TLS=local UNOS_APP_NAMES=off caddy run --config /etc/caddy/Caddyfile"]
+        assert output == []
+
+    @pytest.mark.parametrize("compose_file", COMPOSE_FILES)
+    def test_names_that_validate_are_served(self, compose_file, tmp_path):
+        calls, output = self._start(compose_file, tmp_path, names=True, validates=True)
+
+        assert calls == ["UNOS_TLS=local UNOS_APP_NAMES=on caddy validate --config /etc/caddy/Caddyfile",
+                         "UNOS_TLS=local UNOS_APP_NAMES=on caddy run --config /etc/caddy/Caddyfile"]
+        assert output == []
+
+    @pytest.mark.parametrize("compose_file", COMPOSE_FILES)
+    def test_names_that_do_not_load_leave_the_web_ui_without_them(self, compose_file, tmp_path):
+        calls, output = self._start(compose_file, tmp_path, names=True, validates=False)
+
+        assert calls == ["UNOS_TLS=local UNOS_APP_NAMES=on caddy validate --config /etc/caddy/Caddyfile",
+                         "UNOS_TLS=local UNOS_APP_NAMES=off caddy run --config /etc/caddy/Caddyfile"]
+        assert output == ["unos-webui: the app names do not load, the web UI starts without them: "
+                          "Error: adapting config using caddyfile: ambiguous site definition"]
 
 def _largest_tmp_use():
     """The most legitimate work keeps in the supervisor's /tmp at once, from

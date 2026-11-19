@@ -504,7 +504,10 @@ class TestLinkwarden:
             (str(apps / "database/data"), "/var/lib/postgresql/data", False),
             (str(apps / "database/password"), "/run/secrets/db-password", True),
         ]
-        assert _created(docker, "linkwarden").kwargs["host_config"]["Tmpfs"] == {"/tmp": "size=512m"}
+        # Prisma's cache in RAM too: its start writes /root/.cache/prisma whatever XDG_CACHE_HOME says.
+        assert _created(docker, "linkwarden").kwargs["host_config"]["Tmpfs"] == {
+            "/tmp": "size=512m", "/root/.cache": "size=64m",
+        }
         assert _created(docker, "linkwarden-database").kwargs["host_config"]["Tmpfs"] == {
             "/var/run/postgresql": "size=1m",
         }

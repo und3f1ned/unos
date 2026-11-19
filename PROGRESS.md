@@ -168,6 +168,18 @@ significant step. Features and their state live in `feature-list.json`, decision
   with a revert armed (`architecture.host-command-layer`, `security.host-firewall`, ADR-0416).
   The host-command layer and the firewall pass; the others wait for a USB disk, the owner's
   install of the three apps and a pull of transmission that completes.
+- On 2026-11-19 (Log): the fifteenth batch on the branch `mvp.batch-15`, merged into `main` with
+  its record: the API documentation of every route, field, example and error status, with a test
+  that derives the errors from the code (`architecture.openapi-descriptions`, ADR-0417), iSCSI
+  targets of volumes with mandatory CHAP (`shares.iscsi-targets`, ADR-0418), every data path from
+  `UNOS_DATA_DIR` (`architecture.configurable-data-dir`, ADR-0419), and remote access through
+  WireGuard with local names for apps (`system.remote-access`, ADR-0420). The documentation and
+  the data directory pass; iSCSI waits for a kernel with LIO's file backstore, remote access for
+  the owner's router and a client outside the LAN. The checks that waited for the owner and
+  need no hardware of theirs ran too, at the owner's word ("everything you can do without me, do
+  it yourself"): `apps.manage-installed`, `storage.edge-cases`, `shares.rollback-era-safeguards`,
+  `shares.nfs-exports-parser` and `apps.docker-calls-off-event-loop` pass; Paperless-ngx and
+  Linkwarden installed and ran, BookStack's pull and transmission's update failed at lscr.io.
 - On the device the NFS server runs (nfs-server, rpcbind.socket and rpcbind, enabled since
   2026-11-08, ADR-0303) and exports nothing for now; over IPv6 only LAN sources reach it
   (ADR-0301). avahi-daemon and wsdd2 run (network discovery), and nmbd is disabled since
@@ -218,7 +230,7 @@ significant step. Features and their state live in `feature-list.json`, decision
 
 ## Dev device
 
-State on 2026-11-19, 00:30 UTC. A Banana Pi BPI-W3 (ArmSoM W3, Rockchip RK3588, 8 GB), running
+State on 2026-11-19, 10:05 UTC. A Banana Pi BPI-W3 (ArmSoM W3, Rockchip RK3588, 8 GB), running
 Armbian's community image for `armsom-w3`, upgraded on 2026-11-15 from 26.2.0-trunk.151 to
 26.11.0-trunk.133 (Debian 13, kernel 6.1.172-vendor-rk35xx);
 its address and logins are in `dev.env` (ADR-0212). This journal called it a UGREEN board, after
@@ -229,15 +241,25 @@ the UGREEN firmware on its eMMC, until the owner set that right on 2026-11-15 (A
   since boot, its own wear estimate 0 to 10%. Nothing writes to it.
 - SSH by key only, root by the workstation's key `~/.ssh/unos_dev_ed25519`; root's and the UNOS
   administrator's passwords were rotated and live only in `dev.env` (ADR-0226).
-- Runs 977b364 of the branch `mvp.batch-14` (the fourteenth batch, ADR-0414 to ADR-0416, and the
+- Runs 82346c1 of the branch `mvp.batch-15` (the fifteenth batch, ADR-0417 to ADR-0420, and its
+  fixes), merged into `main` with the record of its device check, whose commits on top of it change
+  no runtime file. 15cf31d was deployed on 2026-11-19 at 07:50 to 08:01 UTC (SD MiB sync 6.215,
+  build-supervisor 17.715, build-webui 21.367, up 6.465), a reboot from the API at 08:21:50 UTC
+  (all containers healthy by 08:23:04), and the iSCSI fix at 09:58 to 10:00 UTC (sync 0.527,
+  build-supervisor 15.168, up 3.270). avahi-utils is installed since that check (53.121), and
+  WireGuard's `/etc/wireguard/unos-wg.conf` and key are kept with remote access off; ufw stays
+  installed and inactive, its files now holding 21 rules of UNOS (the iSCSI ones added by the
+  check's Enable). Paperless-ngx's and Linkwarden's data folders stay on the pool after their
+  uninstall; their images are removed. Transmission still runs its image of `latest`: its update
+  failed a fourth time at the pull.
+- Before it, 977b364 of the branch `mvp.batch-14` (the fourteenth batch, ADR-0414 to ADR-0416, and the
   fix of the firewall's FORWARD policies), merged into `main` with the record of its device check,
   whose commits on top of it change no runtime file. cbe437c was deployed on 2026-11-18 at 22:11
   to 22:13 UTC (SD MiB sync 4.234, build-supervisor 14.828, build-webui 20.387, up 5.898, check.sh
   0.254), a reboot from the API at 22:38 UTC (all containers healthy by 22:41), and the fix on
-  2026-11-19 at 00:24 UTC (sync 0.457, build-supervisor 13.652, up 3.305). ufw 0.36.2-9 is
-  installed and inactive, its files holding UNOS's 14 rules, and LOGLEVEL off. Transmission still
-  runs its image of `latest`: its update to the pinned 4.1.4-r0-ls370 failed three times at the
-  pull. The device's users are `admin` and `test` (since 2026-01-24).
+  2026-11-19 at 00:24 UTC (sync 0.457, build-supervisor 13.652, up 3.305). ufw 0.36.2-9 was
+  installed then, inactive, with LOGLEVEL off. The device's users are `admin` and `test` (since
+  2026-01-24).
 - Before it, e5d531a of the branch `mvp.batch-13` (the thirteenth batch, ADR-0410 to ADR-0413),
   merged into `main` with the record of its device check, whose commits on top of it change no
   runtime file. Deployed on 2026-11-18 at 18:57 to 18:58 UTC (SD MiB sync 4.348, build-supervisor
@@ -592,10 +614,9 @@ Open owner actions:
 4. Sign in as the dev device's regular account `test`: main eceead5, deployed on 2026-11-09 at
    21:07 UTC, checks passwords as given (ADR-0315), so if its password is longer than 72 bytes it
    no longer signs in, and an administrator sets a new one on the Users page.
-5. Make the supervisor image's root filesystem in the dev device's `/dev/shm` again, gone since
-   the reboot (the command that `scripts/dev/linux-tests.sh` prints; it runs a container and
-   writes about 2 MB to the SD card): the Linux-only tests wait for it, `test_share_repair.py` of
-   `shares.rollback-era-safeguards` among them.
+5. Done by the agents on 2026-11-19 at the owner's word: the supervisor image's root filesystem
+   in the dev device's `/dev/shm` (about 1.5 SD MiB, the command that `scripts/dev/linux-tests.sh`
+   prints). A reboot clears it; the agents make it again before a run of the Linux-only tests.
 6. A second microSD card for the dev device, for a fresh `deploy/install.sh` on the BPI-W3 with
    Armbian's `armsom-w3` image (`deploy.arm64-bpi-w3`, step 1).
 7. An NVMe drive for the BPI-W3's M.2 Key M slot, for an NVMe pool before and after a reboot
@@ -637,8 +658,67 @@ Open owner actions:
     second install refused with 409 meanwhile; (3b) Cancel install on the card during the pulls;
     (4) a restart of the supervisor during Immich's wait for its database. The agent reads the job's
     API, the SD MiB and the audit log meanwhile.
+16. The BPI-F3's second SATA SSD (ADR-0372): its pool `data` is a RAID1 of two SSDs, and the
+    second has no link on the adapter's second port since the board was switched on on
+    2026-11-19, so the pool does not mount and Docker and UNOS stay down. Its cable and power,
+    or the owner's word on mounting the pool degraded (one SSD left, then a new second disk and a
+    balance). And a look at its cooling: the thermal zones read 70 to 97 C at idle.
+17. A kernel with LIO's file backstore (`target_core_file`) on a board, for the device check of
+    `shares.iscsi-targets`: neither the BPI-W3's vendor kernel nor the BPI-F3's has one.
+18. `system.remote-access`, step 1: a port forward of UDP 51820 on the router to the dev device,
+    remote access turned on, and a phone or laptop outside the LAN that imports a peer's
+    configuration and reaches the web UI; a Mac's `dns-sd` for an app's name.
+19. The pulls from lscr.io on the dev device's network: Docker's downloads of its blobs fail with
+    "timeout awaiting response headers" (four times since 2026-11-18) while curl on the device
+    fetches the same blob in 0.3 s. BookStack's install and transmission's update wait for it.
 
 ## Log
+
+### 2026-11-19: A fifteenth batch: API documentation, iSCSI, the data directory, remote access; the owner's open checks
+
+- Four builders in parallel worktrees from main 9061fb0, each reviewed in a fresh context by its
+  own builder, which fixed its findings. Recorded, not fixed: the derivation of a route's errors is
+  a floor, the plain-dict answers are documented by example only, and the code weaknesses the
+  documentation found are described as they are (`architecture.openapi-descriptions`); nothing
+  tears iSCSI targets down at a host's shutdown, and the 3260 rule is added only at the firewall's
+  Enable or Reset (`shares.iscsi-targets`); a container is reachable at its published ports by its
+  own address where Docker's FORWARD rules come first, and SMB bound to chosen interfaces leaves
+  the tunnel out (`system.remote-access`); `/run/samba` stays fixed, and step 2 says so now
+  (`architecture.configurable-data-dir`, ADR-0419). The routes of iSCSI and remote access were
+  brought to ADR-0417's documentation at the merge.
+- Merged as ADR-0417 to ADR-0420 in that order. Fixed at the merge: the command palette lacked
+  System > Remote Access; the tests of the live statistics used psutil's private named tuples,
+  which the image's psutil 7.2.2 lacks (8 failures on Linux, none on the workstation's psutil
+  5.9.8). `make check` 10380 passed, 124 skipped, 1 xfailed; the full E2E run 1072 passed, 14
+  skipped.
+- Before the batch's deploy, at the owner's word, the checks that waited for them and need no
+  hardware of theirs, on main 9061fb0, before and after a reboot from the API at 05:57:39 UTC:
+  Paperless-ngx and Linkwarden installed with their companions (3524.414 and 3029.160 SD MiB),
+  checked, rechecked after the reboot and uninstalled with their data kept, their images removed;
+  BookStack's install failed at Docker's pull of an lscr.io blob (587.672) while curl fetched the
+  same blob in 0.3 s; GET /api/v1/health within 0.062 s during the pulls and a stop of
+  transmission; a bind mount's rename and move answered 409; the NFS parser against exportfs; the
+  supervisor's root filesystem in /dev/shm again and the Linux-only tests (test_share_repair.py 68
+  passed; 8 failures of psutil's tuples, fixed above); transmission's update failed a fourth time
+  at the pull (148.309). Found and fixed: Linkwarden's start wrote Prisma's cache into its layer
+  (now a tmpfs), and the estimates of the system disk were 3% and 8% short (3ab6dde).
+- Device check of 15cf31d, before and after a reboot from the API at 08:21:50 UTC (SD MiB per step
+  in each entry's notes): the schema on the device; the data directory where it was; remote access
+  on, a peer in a network namespace through the tunnel and not without it, the LAN unreachable
+  through it, with the firewall on, revoked, off, and back after the reboot; app names announced
+  and served over HTTPS; the NFS parser again; the Linux-only tests 106 passed; `scenario.sh all`
+  (all 12 areas, 23.505 MiB); the audit chain unbroken over 3072 entries; every LAN check OK. One
+  fault of the device and one of UNOS: the device's vendor kernel has LIO's core and iSCSI modules
+  but no backstore, so no target can be served, and a create there made its file, secret and rows
+  before failing with 500. Fixed with a test that failed first (82346c1: 409 before any change)
+  and rechecked on the device after its deploy.
+- The owner's BPI-F3, switched on by the owner at about 09:15 UTC: its pool `data`, the btrfs
+  RAID1 on its two SATA SSDs (ADR-0372), does not mount because its second SSD is not there (the
+  adapter's second port has no link): `btrfs device ready` fails, so Docker, whose data root is on
+  the pool, and UNOS stay down by design. docker.socket retried the start every 15 s, which wrote
+  0.133 SD MiB in two idle minutes; stopped until the next boot, 0.016. Its thermal zones read 70
+  to 97 C within ten seconds at a load of 0.1 with the fan at 3 and 4 of 4, too fast a swing for a
+  real temperature. Its kernel (6.18.45-current-spacemit) has no LIO.
 
 ### 2026-11-18: A fourteenth batch: hot-plugged SMART, companions, no floating images, host commands and firewall
 

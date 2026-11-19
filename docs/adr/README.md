@@ -69,6 +69,8 @@ and this index, and `make check-fast` runs it.
 | [0398](0398-the-supervisor-logs-one-json-object-per-line-from-one-setup-and-writes-nothing-while-it-idles.md) | The supervisor logs one JSON object per line from one setup, and writes nothing while it idles | accepted | 2026-11-18 |
 | [0401](0401-every-time-of-the-api-carries-its-offset-and-stored-times-without-one-are-utc.md) | Every time of the API carries its offset, a stored time without one is UTC, and the web UI shows times in the browser's time zone | accepted | 2026-11-18 |
 | [0416](0416-the-system-security-logs-and-nfs-routers-reach-the-host-only-through-host-py-and-the-firewall-is-the-hosts-ufw-turned-on-only-with-a-revert-armed.md) | The system, security, logs and NFS routers reach the host only through host.py, and the firewall is the host's ufw, changed only with the local networks let in and a revert armed | accepted | 2026-11-18 |
+| [0417](0417-the-api-documentation-describes-every-route-field-example-and-error-status-and-a-test-derives-the-errors.md) | The API documentation describes every route, field, example and error status, and a test derives the errors from the code | accepted | 2026-11-19 |
+| [0419](0419-every-data-path-of-the-supervisor-follows-unos-data-dir-read-once-at-its-start.md) | Every data path of the supervisor follows UNOS_DATA_DIR, read once at its start, and the stand-in patches no constant | accepted | 2026-11-19 |
 
 ## Security
 
@@ -298,6 +300,7 @@ and this index, and `make check-fast` runs it.
 | [0380](0380-a-share-can-require-encryption-serve-time-machine-and-list-snapshots-as-previous-versions.md) | A share can require encryption, serve Time Machine and list snapshots as Previous Versions | accepted | 2026-11-15 |
 | [0385](0385-groups-of-users-get-share-access-and-smb-conf-names-their-active-members.md) | Groups of users get share access in UNOS's database, and smb.conf names their active members | accepted | 2026-11-17 |
 | [0391](0391-an-administrator-binds-smb-to-chosen-interfaces-by-name-with-the-loopback-and-a-restart-of-smbd.md) | An administrator binds SMB to chosen network interfaces by name, the loopback stays bound, and a change restarts smbd | accepted | 2026-11-17 |
+| [0418](0418-an-iscsi-target-serves-a-sparse-file-of-a-volume-through-the-kernels-lio-with-mandatory-chap-restored-at-every-start.md) | An iSCSI target serves a sparse file of a volume through the kernel's LIO with mandatory CHAP, and UNOS restores its targets at every start | accepted | 2026-11-19 |
 
 ## Apps
 
@@ -393,6 +396,7 @@ and this index, and `make check-fast` runs it.
 | [0399](0399-the-resource-monitor-keeps-an-hour-of-history-in-ram-and-only-administrators-get-the-hosts-processes.md) | The Resource Monitor keeps an hour of history in RAM, read once when its tab opens, and only administrators get the host's processes | accepted | 2026-11-18 |
 | [0407](0407-the-power-settings-shut-the-host-down-at-a-set-time-or-when-idle-and-arm-the-rtc-to-wake-it.md) | The power settings shut the host down at a set time or when idle, and arm the RTC to wake it | accepted | 2026-11-18 |
 | [0412](0412-the-load-check-fails-for-a-unos-container-it-could-not-measure-and-the-two-tab-measurement-is-the-owner-s.md) | The load check fails for a UNOS container it could not measure, and the two-tab measurement is the owner's | accepted | 2026-11-18 |
+| [0420](0420-remote-access-is-a-wireguard-tunnel-to-the-nas-alone-and-apps-get-local-names-through-caddy.md) | Remote access is a WireGuard tunnel on the host that reaches the NAS alone, and apps get single-label local names through Caddy | accepted | 2026-11-19 |
 
 ## Web UI
 

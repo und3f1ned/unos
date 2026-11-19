@@ -15,6 +15,9 @@ that fails leaves the file ``failed``, which the status reports. ufw's own stop 
 chains (policy ACCEPT), which Docker closes, and ufw's start closes both (its DEFAULT_FORWARD_POLICY):
 a save with ufw off keeps their policies in ``off4`` and ``off6`` too, which outlive Keep, and
 OFF_SCRIPT, which every turning off runs, puts those back, or after a reboot the policies of ufw on.
+
+UNOS's rules also hold those of remote access and the app names while they are on
+(network/remote_rules.py, ADR-0420): an Enable and a Reset add them like the others.
 """
 
 from __future__ import annotations
@@ -63,8 +66,11 @@ LOCAL_NETWORKS = tuple(
 # mDNS in (ADR-0275).
 UNOS_TCP_PORTS = (22, 80, 443, 445, 5357)
 UNOS_UDP_PORTS = (3702, 5355)
+# iSCSI's targets listen on TCP 3260 of the LAN addresses (ADR-0418).
+ISCSI_PORT = 3260
 WEB_SSH_SMB = "UNOS: web UI, SSH and SMB"
 DISCOVERY = "UNOS: network discovery"
+ISCSI = "UNOS: iSCSI"
 UNOS_PREFIX = "UNOS:"
 # ufw takes at most 15 ports in a rule, a range counting as two.
 MAX_PORTS = 15
@@ -78,7 +84,7 @@ UFW_MISSING = "ufw is not installed on the host: install the package ufw to use 
 CHANGE_WAITS = "A firewall change waits to be kept: keep it, or wait until it is undone"
 REVERT_RUNNING = "The last firewall change is being undone: try again in a few seconds"
 NOTHING_TO_KEEP = "No firewall change waits to be kept: it was kept already, or it was undone"
-UNOS_RULE = "UNOS keeps this rule: it lets the local networks reach the web UI, SSH and SMB"
+UNOS_RULE = "UNOS keeps this rule: it lets the local networks reach the web UI, SSH, SMB and iSCSI"
 RULE_EXISTS = "The host's firewall has this rule already"
 DOCKER_NOT_IN_IPTABLES = (
     "UNOS does not turn ufw on here: Docker's rules are not in the FORWARD chain of iptables (Docker's "
@@ -552,10 +558,14 @@ async def _missing_unos_rules(state: State) -> list[list[str]]:
         if network.version == 6 and not state.defaults.ipv6:
             continue
         family = f"ipv{network.version}"
-        for protocol, ports, comment in (("tcp", tcp_ports, WEB_SSH_SMB), ("udp", udp_ports, DISCOVERY)):
+        for protocol, ports, comment in (("tcp", tcp_ports, WEB_SSH_SMB), ("udp", udp_ports, DISCOVERY),
+                                         ("tcp", str(ISCSI_PORT), ISCSI)):
             if not _has(state.rules, family, protocol, ports, str(network)):
                 commands.append(_ufw_add("allow", protocol, str(network), ports, comment))
-    return commands
+    # The rules of remote access and of the app names (ADR-0420), while they are on.
+    from ..network import remote_rules
+
+    return commands + await remote_rules.missing_commands(state)
 
 
 def is_local(address: str | None) -> bool | None:

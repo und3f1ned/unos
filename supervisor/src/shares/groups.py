@@ -16,8 +16,9 @@ from __future__ import annotations
 import logging
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
+from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -26,6 +27,7 @@ from ..audit.schemas import AuditAction, AuditSeverity
 from ..auth.models import User
 from ..auth.utils import verify_token
 from ..database import get_db
+from ..openapi import BODY, errors
 from ..security.validators import sanitize_error_message
 from . import account_state, constants, interfaces, models, schemas, service, smb
 
@@ -410,53 +412,94 @@ async def _audit(request: Request, actor: str | None, action: AuditAction, chang
     )
 
 
-@router.get("", response_model=list[schemas.GroupInfo])
+GroupId = Annotated[int, Path(description="The group's id.")]
+
+_MEMBER_400 = "a member does not exist, is an administrator or has a username that SMB cannot use"
+_APPLY_500 = "The one-time import of smb.conf failed, or the new smb.conf could not be written or testparm rejected it."
+_APPLY_503 = "The pool list could not be read, or the database was busy."
+
+
+@router.get("", response_model=list[schemas.GroupInfo], summary="List the groups")
 async def list_groups_route(_=Depends(verify_token), db: AsyncSession = Depends(get_db)):
-    """Every group with its members and the shares it has access to."""
+    """Every group with its members and the shares it has group access to, sorted by name."""
     return await list_groups(db)
 
 
-@router.post("", response_model=schemas.GroupInfo)
+@router.post(
+    "", response_model=schemas.GroupInfo, summary="Create a group",
+    responses=errors(BODY, {
+        400: f"The name breaks the rule of group names, or {_MEMBER_400}.",
+        404: "The group was deleted again before its answer was read.",
+        409: "A group already has the name, in any letter case, or a member now has another username.",
+        503: "The database was busy; nothing was changed.",
+    }),
+)
 async def create_group_route(
     request: Request, group: schemas.GroupCreate, user=Depends(verify_token), db: AsyncSession = Depends(get_db)
 ):
-    """Make a group of users; give it access on the Shares page."""
+    """Create a group of users, with no share access yet: a share's group_access gives it access.
+    smb.conf does not change."""
     change = await _call(create_group(db, group))
     await _audit(request, user.username, AuditAction.GROUP_CREATED, change)
     return change.info
 
 
-@router.get("/{group_id}", response_model=schemas.GroupInfo)
-async def get_group_route(group_id: int, _=Depends(verify_token), db: AsyncSession = Depends(get_db)):
-    """One group."""
+@router.get(
+    "/{group_id}", response_model=schemas.GroupInfo, summary="Read a group",
+    responses=errors({404: "No group has the id."}),
+)
+async def get_group_route(group_id: GroupId, _=Depends(verify_token), db: AsyncSession = Depends(get_db)):
+    """One group with its members and the shares it has group access to."""
     return await get_group(db, group_id)
 
 
-@router.patch("/{group_id}", response_model=schemas.GroupInfo)
+@router.patch(
+    "/{group_id}", response_model=schemas.GroupInfo, summary="Change a group",
+    responses=errors(BODY, {
+        400: f"The new name breaks the rule of group names, or {_MEMBER_400}.",
+        404: "No group has the id, also when it was deleted before its answer was read.",
+        409: "The group now has another name than name, expected_version is not its version, another group has "
+             "the new name in any letter case, or a member now has another username.",
+        500: _APPLY_500,
+        503: _APPLY_503,
+    }),
+)
 async def update_group_route(
     request: Request,
-    group_id: int,
+    group_id: GroupId,
     changes: schemas.GroupUpdate,
     user=Depends(verify_token),
     db: AsyncSession = Depends(get_db),
 ):
-    """Rename a group (new_name) or replace its members; name is its current name (409 otherwise).
-    Send expected_version: 409 when the group was changed meanwhile."""
+    """Rename a group (new_name) or replace its members (members); name is its current name: 409
+    otherwise. Send expected_version, the group's version as it was loaded: 409 when the group was
+    changed since. A change of the members applies smb.conf; a rename alone does not."""
     change = await _call(update_group(db, group_id, changes))
     await _audit(request, user.username, AuditAction.GROUP_UPDATED, change)
     return change.info
 
 
-@router.delete("/{group_id}", response_model=schemas.GroupDeleted)
+@router.delete(
+    "/{group_id}", response_model=schemas.GroupDeleted, summary="Delete a group",
+    responses=errors({
+        404: "No group has the id.",
+        409: "The group now has another name than name.",
+        500: _APPLY_500,
+        503: _APPLY_503,
+    }),
+)
 async def delete_group_route(
     request: Request,
-    group_id: int,
+    group_id: GroupId,
     # The name the request was built for: 409 when the group now has another.
-    name: str = Query(max_length=64),
+    name: str = Query(
+        max_length=64, description="The group's name as the client loaded it: 409 when the group now has another."
+    ),
     user=Depends(verify_token),
     db: AsyncSession = Depends(get_db),
 ):
-    """Delete a group: its members lose the access that it gave them; the users stay."""
+    """Delete a group and apply smb.conf: its members lose the access that it gave them, and the
+    shares that lose access close their open connections. The users stay."""
     change = await _call(delete_group(db, group_id, name))
     await _audit(request, user.username, AuditAction.GROUP_DELETED, change)
     return schemas.GroupDeleted(warnings=change.warnings)

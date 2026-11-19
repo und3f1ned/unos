@@ -1188,6 +1188,108 @@ sudo mount -t nfs YOUR_NAS_IP:/mnt/pools/data/media /mnt/media
 sudo mount -t nfs -o resvport YOUR_NAS_IP:/mnt/pools/data/media ~/media
 ```
 
+### iSCSI Targets (a Disk over the Network)
+
+An iSCSI target gives a computer a disk of its own: one LUN, a file in a
+volume of a pool, which the computer's iSCSI initiator connects to and which
+it formats and uses like a local disk (Windows' **iSCSI Initiator**, Linux's
+`iscsiadm` of open-iscsi, macOS with a third-party initiator). Unlike a share,
+a LUN is for one computer at a time, or for a cluster file system: two
+computers that mount the same ordinary file system from it at once destroy
+it. The kernel of the NAS serves the targets (LIO); UNOS needs no package for
+it, and the **iSCSI** tab says when the kernel lacks its modules.
+
+#### Adding a Target
+
+1. Go to **Shares**, open the **iSCSI** tab and click **Add target**
+2. Configure:
+   - **Name** - 1 to 32 lowercase letters, digits and `-`. It becomes part of
+     the target's name on the network, its IQN, such as
+     `iqn.2003-01.org.linux-iscsi.unos:backup.1a2b3c4d`.
+   - **Volume** - A volume of a pool that UNOS manages (create one on the
+     **Storage** page). The LUN is the file `.unos-iscsi/<name>.lun` in it.
+   - **Size (GiB)** - The LUN's size. Its file is sparse: the space is taken
+     as the computer writes, not reserved now. The size must fit in the
+     volume's free space and below its quota, when it has one, but keep the
+     pool's free space above the sizes of its LUNs: when the pool fills up,
+     the computer's writes to the disk fail.
+   - **Allowed initiators** - One iSCSI name per line, as each computer's
+     initiator shows it (`iqn.1991-05.com.microsoft:desktop-pc`,
+     `iqn.1993-08.org.debian:01:...` in `/etc/iscsi/initiatorname.iscsi`,
+     `eui.` or `naa.` names), up to 16. No other initiator logs in.
+   - **CHAP user name** and **CHAP secret** - CHAP is always on. The user
+     name is the target's name unless you type one; the secret has 12 to 16
+     characters (letters, digits and `!#%+,-./:=?@^_~`, what Windows takes).
+     Neither may start with `NULL`. Leave the secret empty and UNOS generates
+     one.
+   - **Mutual CHAP** - The target proves itself to the computer too, with a
+     second secret that must differ from the first.
+3. Click **Create**
+
+UNOS shows the secrets once, right after the target is made: enter them in
+the initiators then. They are kept on the NAS (`/data/iscsi_secrets.json`,
+readable by root only), never shown again, never in a log, the audit log or
+a backup; a lost one can only be replaced: **Change**, **Set a new CHAP
+secret**.
+
+Initiators connect to the NAS's addresses on your local network, port 3260,
+which the tab lists: the targets listen there only, not on Docker's networks
+or on a VPN tunnel. When the NAS gets another address, its targets follow
+within 5 minutes. When the firewall is turned on (or reset), UNOS's rules let
+the local networks reach port 3260 (see [Firewall](#firewall)).
+
+On Windows: **iSCSI Initiator** > **Discovery** > **Discover Portal** with
+the NAS's address, then **Targets**, the target, **Connect** > **Advanced**
+> **Enable CHAP log on** with the user name and secret. On Linux:
+
+```bash
+sudo iscsiadm -m discovery -t sendtargets -p YOUR_NAS_IP
+sudo iscsiadm -m node -T TARGET_IQN -p YOUR_NAS_IP \
+  -o update -n node.session.auth.authmethod -v CHAP
+sudo iscsiadm -m node -T TARGET_IQN -p YOUR_NAS_IP \
+  -o update -n node.session.auth.username -v CHAP_USER
+sudo iscsiadm -m node -T TARGET_IQN -p YOUR_NAS_IP \
+  -o update -n node.session.auth.password -v CHAP_SECRET
+sudo iscsiadm -m node -T TARGET_IQN -p YOUR_NAS_IP --login
+```
+
+Discovery needs no CHAP: it names the targets and their addresses, never a
+disk.
+
+#### While a Target Exists
+
+- The tab shows each target with **Served** or **Not served** and why, its
+  LUN, its initiators and the ones logged in now.
+- A write that the computer was told is done is on the pool's disks: the
+  target writes through, without a cache of its own. Discards (TRIM) of the
+  computer free the pool's space again. The LUN keeps btrfs's checksums, so a
+  scrub of a mirrored pool repairs it like any file; snapshots of the volume
+  hold its state at that moment.
+- After a reboot UNOS serves its targets again when it starts. A target
+  whose pool did not mount, whose LUN file is missing or not as UNOS made it,
+  or whose secret is not stored (a database restored on another NAS) is not
+  served, and the tab says why; mounting its pool on the **Storage** page, or
+  a change of the target, tries again. A target that the kernel refuses (for
+  example a port 3260 that another iSCSI server of the NAS holds) is not
+  served either, and the others are.
+- The pool of a target's volume cannot be unmounted or forgotten, and the
+  volume cannot be deleted: delete the target first. The folder
+  `.unos-iscsi` is immutable while it holds a LUN: neither the file browser
+  nor an SMB user can rename or delete it. An SMB share of the volume shows
+  it as a folder that nobody can open.
+
+#### Changing and Deleting a Target
+
+**Change** sets the allowed initiators, a new CHAP secret, and mutual CHAP on
+or off; an initiator removed from the list loses the disk at once. A new
+secret, and mutual CHAP turned on or off, end the sessions of every initiator
+of the target: they log in again with the new values. The name, the volume
+and the size stay.
+
+**Delete** ends the sessions of the initiators logged in, which the dialog
+names, and deletes the LUN file with every byte on it: type the target's
+name to confirm. The pool must be mounted.
+
 ---
 
 ## File Browser
@@ -2340,6 +2442,16 @@ and `unos` the name on the certificate.
 - The audit log records each new token with its access and areas, such as
   `Created API token: Prometheus (read only: health, monitor)`.
 
+**The API's documentation.** The supervisor describes its whole API in an
+OpenAPI schema: for every route a summary and a description, its parameters,
+the fields of what it takes and answers, examples of its JSON requests and
+answers, and the error statuses it answers, each with when (401 and 403 for a
+credential that does not reach the route, 413 for a body over its limit, 429
+over a rate limit, and the route's own). The web UI's address does not pass the schema on; on the
+NAS, save it with
+`docker exec unos-supervisor python -c "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:8080/openapi.json').read().decode())" > unos-openapi.json`
+and open it in any OpenAPI viewer.
+
 ---
 
 ## Audit Log
@@ -2870,8 +2982,8 @@ networks. Before ufw goes on, UNOS adds its own rules, marked
 **UNOS**: the local networks (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16,
 100.64.0.0/10, 169.254.0.0/16, fc00::/7 and fe80::/10, the networks that SMB
 answers) may reach the web UI (80, 443), SSH (22 and every port that sshd
-listens on or is set up for), SMB (445) and network discovery (5357/tcp, 3702
-and 5355/udp; ufw lets mDNS in itself). UNOS also turns ufw's logging of what it blocks off, which would write to the
+listens on or is set up for), SMB (445), iSCSI (3260) and network discovery
+(5357/tcp, 3702 and 5355/udp; ufw lets mDNS in itself). UNOS also turns ufw's logging of what it blocks off, which would write to the
 system disk all the time (`sudo ufw logging low` turns it on). UNOS's rules have
 no Delete; they come
 after the rules the host had, so an earlier deny of the host still wins.
@@ -2910,6 +3022,77 @@ with UNOS's rules.
 ---
 
 ## Backups & Snapshots
+
+### Remote Access
+
+**System > Remote Access** (administrators) lets your own devices reach the NAS from outside the
+LAN through a WireGuard tunnel on the host, and gives apps names on the LAN (ADR-0420).
+
+The host needs the package wireguard-tools (`sudo apt install wireguard-tools`); without it the
+card says so and offers nothing to change. The stand-in and the test stack refuse every request.
+
+#### Turning it on
+
+Give the **Public address** that your devices connect to from outside: your router's public IP
+address or a dynamic DNS name (UNOS asks no outside service for it). Keep or change the **UDP
+port** (51820) and the **Tunnel network** (10.99.0.0/24: private IPv4 addresses inside 10.0.0.0/8,
+172.16.0.0/12 or 192.168.0.0/16, /16 to /28, that none of the host's networks uses, and that holds
+neither your computer nor another one the NAS talks to, such as a guest network behind the router).
+**Turn on** asks first, then:
+
+- makes the server's key on the host, once; it never leaves the host and the page never shows it,
+  only its public key;
+- writes `/etc/wireguard/unos-wg.conf` and enables `wg-quick@unos-wg`, which comes up at every
+  boot; the NAS takes the first address of the tunnel network (10.99.0.1);
+- lets the UDP port in when the host has ufw (the rule `UNOS: remote access`, which System >
+  Security does not delete).
+
+Turning it on or off does not change how the LAN reaches the web UI, SSH or SMB. The port and the
+tunnel network change only while remote access is off and no peer is listed (their configurations
+name them); the public address changes at any time and only new peers' configurations use it. **Turn off** ends every
+peer's tunnel, also the one the page may use; the peers stay listed and work again once it is on.
+
+#### Peers
+
+A peer is a device that may connect. **Add peer** asks for its name and, optionally, the public
+key of a device that made its own key pair. The answer is the device's WireGuard configuration with
+a QR code, **shown once**: UNOS keeps no copy of the device's private key. Scan the QR code with the
+WireGuard app (Android, iOS) or **Download** the file and import it (Windows, macOS, Linux). A
+device that gave its own public key gets a configuration without a private key; put its own into it.
+
+A peer reaches **the NAS alone**: the web UI, the shares, SSH and the apps' ports at the NAS's
+tunnel address (`https://10.99.0.1`, `\\10.99.0.1\share`, `ssh admin@10.99.0.1`,
+`http://10.99.0.1:8096`), never another computer of your LAN; only its traffic to the NAS goes
+through the tunnel. SMB answers it as a LAN client, unless SMB is bound to chosen interfaces
+(System > Network), which leave the tunnel out. The list shows each peer's last connection and its
+traffic. **Revoke** a lost device's peer: its tunnel ends at once.
+
+#### Reaching the NAS from outside
+
+1. On your router, forward **UDP** port 51820 (or yours) to the NAS's LAN IPv4 address. Give the
+   NAS a fixed address on the router (a DHCP reservation), so that the forward keeps working.
+2. If your public address changes, set up a dynamic DNS name on the router and give it as the
+   public address.
+3. Add a peer for the device and import its configuration in the WireGuard app.
+4. Check from outside the LAN, for example on a phone with Wi-Fi off: turn the tunnel on in the
+   WireGuard app and open `https://10.99.0.1`.
+
+Behind a carrier-grade NAT (the router's WAN address is in 100.64.0.0/10 or another private
+range) no port forward reaches the NAS; remote access then needs a relay such as Tailscale, which
+UNOS does not set up.
+
+#### Local names for apps
+
+**Add name** gives a published port of an installed app a name on the LAN,
+`<name>-<host name>.local` (for example `https://jellyfin-unos.local`); the app's web port is
+offered first. The host needs the package avahi-utils (`sudo apt install avahi-utils`): its unit
+`unos-app-names` announces each name with the host's address, and the web UI's Caddy forwards it
+over HTTPS to the app's port, which must speak plain HTTP. The app's own port keeps working. The certificate comes from the web UI's local certificate authority: a
+browser that trusts it for the web UI trusts the names too, otherwise it warns once per name.
+When the host's address changed, the card says so and **Announce again** announces the new one
+(the host also does at its next boot). The names work on the LAN only: through the tunnel, open
+the app's port at the tunnel address. Some apps check the name they are called by (Transmission's
+host whitelist, for example) and need it added in their own settings.
 
 ### Snapshots
 

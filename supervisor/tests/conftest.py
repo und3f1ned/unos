@@ -27,6 +27,12 @@ _RUN_DIR = tempfile.mkdtemp(prefix="unos-tests-")
 os.environ["UNOS_SMB_CONF_PATH"] = os.path.join(_RUN_DIR, "smb.conf")
 os.environ["UNOS_NFS_EXPORTS_PATH"] = os.path.join(_RUN_DIR, "exports")
 os.environ["UNOS_POOLS_BASE_PATH"] = os.path.join(_RUN_DIR, "pools")
+# The supervisor's data directory too (src/paths.py, ADR-0419): no test reaches /data. The supervisor
+# reads it once, at its first import, so no test changes it: a test moves a module's path with
+# monkeypatch (test_data_dir.py). Read-only, as /data is to the tests: a test that did not move a
+# path it writes fails, instead of leaving a file to the next tests of its process.
+os.environ["UNOS_DATA_DIR"] = os.path.join(_RUN_DIR, "data")
+os.mkdir(os.environ["UNOS_DATA_DIR"], 0o555)
 atexit.register(shutil.rmtree, _RUN_DIR, ignore_errors=True)
 
 
@@ -144,6 +150,15 @@ def _no_web_ui_to_ask(monkeypatch, tmp_path_factory):
             raise DockerUnavailable("the tests reach no Docker")
 
         monkeypatch.setattr(serving, "_docker_client", no_docker)
+
+
+@pytest.fixture(autouse=True)
+def _no_app_names_volume(monkeypatch, tmp_path_factory):
+    """The volume of the app names (ADR-0420) is a folder of each test that does not exist yet, never
+    /app-names of this machine: a test that gives apps names makes it."""
+    app_names = sys.modules.get("src.network.app_names")
+    if app_names is not None:
+        monkeypatch.setattr(app_names, "APP_NAMES_DIR", str(tmp_path_factory.mktemp("app-names") / "volume"))
 
 
 @pytest.fixture(autouse=True)

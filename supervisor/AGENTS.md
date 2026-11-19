@@ -67,8 +67,12 @@ Python 3.11 and FastAPI. The package is `src`: tests import `src.*`, some from `
 
 - Write only on a real change of state; temporary files go to `TMPDIR` (the `/tmp` tmpfs): the
   container's writable layer is on the system disk (ADR-0171, `tests/test_temp_files.py`).
-- A module-level path under `/data` must also be redirected by `scripts/standin/run_supervisor.py`:
-  `tests/test_standin.py` fails for one that is not.
+- Every path of the data directory comes from `src/paths.py`, which reads `UNOS_DATA_DIR` once at
+  its import (ADR-0419): a module binds it to a name of its own, which tests move with monkeypatch;
+  no test changes the variable in its own process. `tests/test_standin.py` fails for a `/data`
+  literal or a path made from `DATA_DIR` anywhere else in `src/` (but the apps' paths inside their
+  containers). A host path gets a setting of its own in `src/config.py`, which
+  the stand-in sets in its environment: `scripts/standin/run_supervisor.py` patches no constant.
 - New tables come from `create_all` in `init_db`; existing tables and columns are never altered,
   and there is no migration framework (ADR-0319). SQLite does not enforce foreign keys here, so
   code deletes the dependent rows in the same transaction.
@@ -85,6 +89,7 @@ Python 3.11 and FastAPI. The package is `src`: tests import `src.*`, some from `
 | `groups.py` | groups of users and their API; smb.conf names their active members (ADR-0385) |
 | `listen.py` | the network interfaces that SMB listens on: the host's interfaces, smbd's listeners, the choice and Restart SMB (ADR-0391) |
 | `exports.py`, `nfs.py` | NFS: export files as exportfs reads them (pure); UNOS's own export file on the host, exportfs and the export rules (ADR-0321, ADR-0293) |
+| `iscsi.py`, `iscsi_router.py` | iSCSI targets: LIO in the host's configfs, the LUN files, the CHAP secrets file, the restore at the start and the API (ADR-0418) |
 
 The SMB flows of users (allow, turn on, password changes) are in `src/auth/router.py`. Rules:
 - UNOS alone writes smb.conf, rendered from the database (ADR-0074); every apply is staged,

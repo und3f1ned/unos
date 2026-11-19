@@ -37,6 +37,7 @@ import re
 import secrets
 import sys
 import subprocess
+import tempfile
 import time
 import urllib.parse
 from collections.abc import Callable
@@ -251,9 +252,11 @@ def catalog_users() -> dict[str, list[str]]:
     whose containers run it (their own image or a hardware profile's)."""
     sys.path.insert(0, str(ROOT / "supervisor"))
     # Importing the catalog loads the settings: a database in memory and a secret of this run
-    # alone keep it from creating files.
+    # alone keep it from creating files, and the data directory, which must exist (ADR-0419), is
+    # the temporary one, where nothing is written.
     os.environ.setdefault("UNOS_DB_PATH", ":memory:")
     os.environ.setdefault("UNOS_JWT_SECRET", secrets.token_hex(32))
+    os.environ.setdefault("UNOS_DATA_DIR", tempfile.gettempdir())
     from src.apps.catalog import APP_CATALOG  # noqa: E402
 
     users: dict[str, list[str]] = {}

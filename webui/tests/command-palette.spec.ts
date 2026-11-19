@@ -122,7 +122,7 @@ async function focusInPalette(page: Page): Promise<boolean> {
 
 const SYSTEM_TABS = [
   'General', 'Updates', 'Security', 'Resource Monitor', 'System Logs', 'Disk Health', 'Backup & Restore',
-  'Scheduler', 'Notifications', 'Network', 'Power Management',
+  'Scheduler', 'Notifications', 'Network', 'Remote Access', 'Power Management',
 ];
 const ADMIN_ACTIONS = [
   'Add a user…', 'Reboot the host…', 'Shut down the host…', 'Suspend the host…',

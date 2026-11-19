@@ -1,9 +1,9 @@
 import asyncio
 import logging
 from collections.abc import Callable
-from typing import Any, TypeVar
+from typing import Annotated, Any, TypeVar
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Path, Request
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 
@@ -11,12 +11,14 @@ from ..audit.changes import audit_change
 from ..audit.schemas import AuditAction, AuditSeverity
 from ..auth.models import User
 from ..auth.utils import verify_token
+from ..openapi import BODY, RATE_LIMITED, answer, errors
 from ..security.validators import (
     sanitize_error_message,
     validate_filesystem_uuid,
     validate_pool_name,
     validate_volume_name,
 )
+from ..shares import iscsi
 from ..shares import service as shares_service
 from . import balances, devices, disks, pools, scrubs, spindown, volume_usage
 from .schemas import (
@@ -48,6 +50,19 @@ T = TypeVar("T")
 limiter = Limiter(key_func=get_remote_address)
 
 router = APIRouter(prefix="/storage", tags=["storage"])
+
+# The path parameters and the error texts that several routes share (ADR-0417).
+DiskName = Annotated[str, Path(description="The disk's name, as GET /storage/disks lists it, such as sda or nvme0n1.")]
+PoolName = Annotated[str, Path(description="The pool's name, such as data.")]
+VolumeName = Annotated[str, Path(description="The volume's name, such as documents.")]
+
+_POOL_400 = {400: "The pool's name is not a valid pool name."}
+_POOL_404 = {404: "No pool has that name."}
+_VOLUME_400 = {400: "The pool's or the volume's name is not valid."}
+_VOLUME_404 = {404: "No pool, or no volume of the pool, has that name."}
+_TOP_LEVEL_409 = "The pool is not mounted, or is mounted at a subvolume other than its top level."
+_BTRFS_500 = "btrfs or the host's mount table cannot be read."
+_DOCKER_503 = "Docker cannot be asked about the running containers and their volumes; nothing changed."
 
 
 def _http_error(exc: Exception) -> HTTPException:
@@ -92,29 +107,41 @@ async def _change_pools(func: Callable[..., T], *args: Any) -> T:
         await shares_service.apply_after_pool_change()
 
 
-@router.get("/disks", response_model=list[DiskInfo])
+@router.get(
+    "/disks", response_model=list[DiskInfo], summary="List the disks",
+    responses=errors({500: "lsblk cannot list the host's disks."}),
+)
 async def list_disks_endpoint(_=Depends(verify_token)):
-    """List physical disks with their host state (system, in use, data), their power state, read
-    without waking them, and their idle timeout (ADR-0378)."""
+    """The host's whole disks, the system disk included, with what they hold and whether they are in
+    use, their power state, read without waking them, and their idle timeout. The boot SD card or
+    eMMC and virtual devices are left out.
+    \f
+    ADR-0378.
+    """
     return await _call(disks.list_disks)
 
 
-@router.put("/disks/{name}/spindown", response_model=DiskSpindown)
-async def set_disk_spindown(request: Request, name: str, body: SpindownSet, user: User = Depends(verify_token)):
-    """Give a whole data disk of GET /disks an idle timeout, ``minutes`` of SPINDOWN_MINUTES, 0 for
-    off (ADR-0378): hdparm -S on the host now, which spins a sleeping disk up, the disk's own
-    automatic offline data collection turned off for a timeout and on again when UNOS turned it off,
-    and UNOS's udev rule, which sets the timeout again whenever the disk appears and records the
-    collection UNOS turned off. When that collection cannot be switched, the timeout is set all the
-    same and ``warning`` says so.
-
-    400 for a name that is no disk of this system, a boot or virtual device or a partition; 409 for
-    the system disk, an NVMe disk, a disk without a serial that a udev rule can match or one that
-    another disk reports too, a disk that udev knows by another serial, and a host without hdparm;
-    422 for minutes that are not offered; 500 when hdparm fails or the rule cannot be read (nothing
-    changed then), and when the rule cannot be written after hdparm set the timeout, which the
-    audit log records as failed. A change of the rule or of the disk's automatic offline data
-    collection is audited as settings_changed.
+@router.put(
+    "/disks/{name}/spindown", response_model=DiskSpindown, summary="Set a disk's idle timeout",
+    responses=errors(BODY, {
+        400: "The name is no disk of this system, or a boot or virtual device or a partition.",
+        409: "The disk can have no idle timeout: the system disk, an NVMe disk, a disk without a serial that a "
+             "udev rule can match or whose serial another disk reports too, one that udev knows by another "
+             "serial, or a host without hdparm.",
+        500: "The disks or the udev rule cannot be read or hdparm fails, and nothing changed; or the rule cannot "
+             "be written after hdparm set the timeout, which the audit log records as failed.",
+    }),
+)
+async def set_disk_spindown(request: Request, name: DiskName, body: SpindownSet, user: User = Depends(verify_token)):
+    """Give a whole data disk of GET /storage/disks an idle timeout of ``minutes``, 0 for off:
+    hdparm -S on the host now, which spins a sleeping disk up; the disk's own automatic offline scans
+    turned off for a timeout, and on again when UNOS turned them off; and UNOS's udev rule, which
+    sets the timeout again whenever the disk appears. When the scans cannot be switched, the timeout
+    is set all the same and ``warning`` says so. A change of the rule or of the scans is written to
+    the audit log as settings_changed.
+    \f
+    ADR-0378. ``minutes`` is one of SPINDOWN_MINUTES (422 otherwise). The udev rule also records the
+    automatic offline data collection that UNOS turned off.
     """
     try:
         change = await asyncio.to_thread(spindown.set_timeout, name, body.minutes)
@@ -140,14 +167,21 @@ async def set_disk_spindown(request: Request, name: str, body: SpindownSet, user
     return DiskSpindown(name=change.name, minutes=change.minutes, warning=change.warning)
 
 
-@router.get("/disks/{name}/smart", response_model=SmartData)
-async def get_disk_smart(name: str, _=Depends(verify_token)):
+@router.get(
+    "/disks/{name}/smart", response_model=SmartData, summary="Read a disk's SMART data",
+    responses=errors({
+        400: "The name is no whole disk of the host: a partition, a RAID array, the boot SD card or eMMC, a "
+             "virtual device, or a name such as null or st0. smartctl does not run.",
+        500: "The host's disks cannot be listed, and smartctl does not run; or smartctl cannot be started.",
+    }),
+)
+async def get_disk_smart(name: DiskName, _=Depends(verify_token)):
     """SMART data of a whole disk of the host, by its name in GET /storage/disks.
 
-    A disk that sleeps stays asleep: its answer has the power state standby
-    and no data (ADR-0378). 400 for anything else (a partition, a RAID array,
-    the boot SD card or eMMC, a virtual device, a name such as null or st0);
-    500 when the host's disks cannot be listed. smartctl is not run then.
+    A disk in standby stays asleep: its answer has the power state standby and no data. A
+    smartctl that does not answer in time gives healthy false and the error in raw_data.
+    \f
+    ADR-0378.
     """
     # Both block, off the event loop: lsblk on the host, and smartctl, which
     # can take many seconds; get_smart_data bounds it with a timeout.
@@ -155,30 +189,44 @@ async def get_disk_smart(name: str, _=Depends(verify_token)):
     return await _call(disks.get_smart_data, device)
 
 
-@router.get("/pools", response_model=list[PoolInfo])
+@router.get(
+    "/pools", response_model=list[PoolInfo], summary="List the pools",
+    responses=errors({500: "btrfs cannot list the host's filesystems."}),
+)
 async def list_pools_endpoint(_=Depends(verify_token)):
-    """List the storage pools (ADR-0283).
+    """The pools, mounted or not: the btrfs filesystems of the host whose label is a valid pool name.
 
     Of several filesystems with one label, only the one mounted or managed
     under it is a pool. A pool found on the disks that is on a boot or
     virtual device or on the system disk is left out: Mount refuses it.
+    \f
+    ADR-0283.
     """
     return await _call(pools.list_pools)
 
 
-@router.post("/pools", response_model=PoolInfo)
+@router.post(
+    "/pools", response_model=PoolInfo, summary="Create a pool",
+    responses=errors(RATE_LIMITED, BODY, {
+        400: "Invalid input, such as an invalid name or device path, confirm_name other than name, too few "
+             "devices for raid_level, a device that is no disk or partition of the host or a boot or virtual "
+             "device, or force without a device_identities entry for every device.",
+        409: "A device is a system device, in use, holds data without force, or no longer holds the disk of its "
+             "device_identities entry; or another btrfs filesystem has the name as its label, or the mountpoint "
+             "is in use, holds files or is in a host fstab line that UNOS does not manage.",
+        500: "mkfs.btrfs or another host command fails; after mkfs, the disks stay formatted.",
+    }),
+)
 @limiter.limit("5/minute")  # Rate limit pool creation
 async def create_pool_endpoint(request: Request, pool: PoolCreate, user: User = Depends(verify_token)):
-    """Create a new storage pool, mounted on the host and persisted in its fstab.
+    """Format the devices as a new pool, mount it on the host at /mnt/pools/<name> and keep it in
+    the host's fstab: a managed pool. The devices are checked again right before they are formatted.
 
-    409 when a selected device is a system device, in use, holds data without
-    ``force``, or no longer matches its ``device_identities`` entry, or when
-    the mountpoint directory holds files; 400 for invalid input, including
-    ``confirm_name != name`` and ``force`` without a ``device_identities``
-    entry for every selected device. Then smb.conf is applied again: SMB
-    shares that a forgotten pool of this name kept are served (ADR-0248).
-    The audit log gets pool_created; as failed, with the formatted devices,
-    when a step after mkfs fails, which answers 500 (ADR-0350).
+    Then smb.conf is applied again: SMB shares that a forgotten pool of this name kept are served.
+    The audit log gets pool_created; as failed, with the formatted devices, when a step after mkfs
+    fails.
+    \f
+    ADR-0248, ADR-0350.
     """
     validate_pool_name(pool.name)
     if pool.confirm_name != pool.name:
@@ -202,26 +250,43 @@ async def create_pool_endpoint(request: Request, pool: PoolCreate, user: User = 
     return info
 
 
-@router.get("/pools/{name}", response_model=PoolInfo)
-async def get_pool_endpoint(name: str, _=Depends(verify_token)):
-    """Get pool details."""
+@router.get(
+    "/pools/{name}", response_model=PoolInfo, summary="Read a pool",
+    responses=errors(_POOL_400, _POOL_404, {500: "btrfs cannot list the host's filesystems."}),
+)
+async def get_pool_endpoint(name: PoolName, _=Depends(verify_token)):
+    """A pool's disks, size, mount and health."""
     # Validate pool name
     validated_name = validate_pool_name(name)
 
     return await _call(pools.get_pool, validated_name)
 
 
-@router.delete("/pools/{name}")
+@router.delete(
+    "/pools/{name}", summary="Forget a pool",
+    responses={
+        **answer({"status": "deleted"}, "Always deleted, also for a name that is no pool, which changes nothing."),
+        **errors(RATE_LIMITED, _POOL_400, {
+            409: "Host processes, running containers or the off-device copy use the pool, or it is still mounted "
+                 "elsewhere after the host's umount; nothing changed, or it is mounted again (or left unmounted "
+                 "when that fails).",
+            500: "The host's mount table cannot be read, or umount, the fstab or another host command fails.",
+            503: "The pool is mounted, and Docker cannot be asked which running containers use it; nothing "
+                 "changed.",
+        }),
+    },
+)
 @limiter.limit("5/minute")  # Rate limit pool deletion
-async def delete_pool_endpoint(request: Request, name: str, user: User = Depends(verify_token)):
+async def delete_pool_endpoint(request: Request, name: PoolName, user: User = Depends(verify_token)):
     """Forget a pool: unmount it on the host and drop its fstab entry and empty mountpoint.
 
     The disks are not wiped; the filesystem is listed again as an unmounted
-    pool and can be mounted later. Refused with 409 or 503 as an unmount is. As
-    after an unmount, its SMB shares stop being served (ADR-0248). The audit log
-    gets pool_deleted when there was something to remove; as failed, with what
-    was done, when a step fails after the pool was unmounted or its fstab
-    entry dropped (ADR-0350).
+    pool and can be mounted later. As after an unmount, its SMB shares stop
+    being served. The audit log gets pool_deleted when there was something to
+    remove; as failed, with what was done, when a step fails after the pool
+    was unmounted or its fstab entry dropped.
+    \f
+    Refused as an unmount is. ADR-0248, ADR-0350.
     """
     # Validate pool name
     validated_name = validate_pool_name(name)
@@ -245,40 +310,62 @@ async def delete_pool_endpoint(request: Request, name: str, user: User = Depends
     return {"status": "deleted"}
 
 
-@router.get("/filesystems/importable", response_model=list[ImportableFilesystem])
+@router.get(
+    "/filesystems/importable", response_model=list[ImportableFilesystem],
+    summary="List the filesystems that can be imported as pools",
+    responses=errors({500: "btrfs, the host's mount table, its fstab or lsblk cannot be read."}),
+)
 async def list_importable_filesystems_endpoint(_=Depends(verify_token)):
-    """The btrfs filesystems on the host's disks that can be imported as pools (ADR-0283).
+    """The btrfs filesystems on the host's disks that can be imported as pools.
 
     Those that are neither the host's system filesystem nor mounted on the
     host, that are not the pool their label names (``label_problem``): they
     have none, it is not a valid pool name, or another btrfs filesystem has
     it too and the pool of that name is the other one or neither; and that
     are on no boot or virtual device and not on the system disk. The pools
-    are listed by GET /pools, and Mount imports them. 500 when btrfs, the
-    host's mount table, its fstab or lsblk cannot be read.
+    are listed by GET /storage/pools, and Mount imports them.
+    \f
+    ADR-0283.
     """
     return await _call(pools.importable_filesystems)
 
 
-@router.post("/filesystems/{uuid}/import", response_model=PoolInfo)
+@router.post(
+    "/filesystems/{uuid}/import", response_model=PoolInfo, summary="Import a filesystem as a pool",
+    responses=errors(RATE_LIMITED, BODY, {
+        400: "The UUID or the pool's name is not valid.",
+        404: "No btrfs filesystem of the host has the UUID.",
+        409: "The filesystem or the name is refused for one of the reasons in the description; nothing changed.",
+        500: "A host command fails, or the host's filesystems, mounts, fstab, SMB shares or NFS exports cannot "
+             "be read.",
+        503: "Docker cannot be asked whether containers keep data on a pool of that name; nothing changed.",
+    }),
+)
 @limiter.limit("10/minute")
 async def import_filesystem_endpoint(
-    request: Request, uuid: str, body: PoolImport, user: User = Depends(verify_token)
+    request: Request,
+    uuid: Annotated[str, Path(description="The filesystem's UUID, as GET /storage/filesystems/importable lists it.")],
+    body: PoolImport,
+    user: User = Depends(verify_token),
 ):
-    """Import a filesystem of GET /filesystems/importable as the pool ``name`` (ADR-0283).
+    """Import a filesystem of GET /storage/filesystems/importable as the managed pool ``name``.
 
     Its disks are not formatted: it is mounted by UUID at /mnt/pools/<name>,
     gets the name as its label through the mount and keeps a managed fstab
-    entry, like every managed pool. 400 for an invalid UUID or name; 404 when
-    no btrfs filesystem has the UUID; 409, and nothing is changed, when the
-    filesystem holds the host's system, is on a boot or virtual device or on
-    the system disk, is mounted, misses devices, is the pool its label names
-    or is managed under another name, when another filesystem of the host has
-    the name as its label or UNOS manages a pool of that name, when SMB
-    shares, NFS exports or containers of an earlier pool still use the name,
-    when the mountpoint is in use or holds files, and when the filesystem
-    mounts another subvolume than its top level by default; 503 when Docker
-    does not answer. Then smb.conf is applied again (ADR-0248). The audit log gets pool_imported.
+    entry, like every managed pool. Then smb.conf is applied again. The audit
+    log gets pool_imported.
+
+    Refused with 409, and nothing is changed, when the filesystem holds the
+    host's system, is on a boot or virtual device or on the system disk, is
+    mounted, misses devices, is the pool its label names or is managed under
+    another name; when another filesystem of the host has the name as its
+    label or UNOS manages a pool of that name; when SMB shares, NFS exports
+    or containers of an earlier pool still use the name; when the mountpoint
+    is in use, in a host fstab line that UNOS does not manage, or holds
+    files; and when the filesystem mounts another subvolume than its top
+    level by default.
+    \f
+    ADR-0283, ADR-0248.
     """
     validated_uuid = validate_filesystem_uuid(uuid)
     validated_name = validate_pool_name(body.name)
@@ -291,19 +378,29 @@ async def import_filesystem_endpoint(
     return info
 
 
-@router.post("/pools/{name}/mount", response_model=PoolInfo)
+@router.post(
+    "/pools/{name}/mount", response_model=PoolInfo, summary="Mount a pool",
+    responses=errors(RATE_LIMITED, _POOL_400, _POOL_404, {
+        409: "Several filesystems have the pool's label, another filesystem is mounted at its mountpoint, a disk "
+             "is missing or is a boot, virtual or system disk, the mountpoint holds files or is in a host fstab "
+             "line that UNOS does not manage, or the filesystem mounts another subvolume than its top level "
+             "(it is unmounted again).",
+        500: "The host's mount table or filesystems cannot be read, or the mount or another host command fails.",
+    }),
+)
 @limiter.limit("10/minute")
-async def mount_pool_endpoint(request: Request, name: str, user: User = Depends(verify_token)):
+async def mount_pool_endpoint(request: Request, name: PoolName, user: User = Depends(verify_token)):
     """Mount a pool on the host by UUID and keep its managed fstab entry.
 
-    This imports a pool found on the host's disks, too (ADR-0283). 409 when
-    the mountpoint directory holds files (they would be hidden), when the
-    filesystem is on a boot or virtual device or on the system disk, and when
-    it mounts another subvolume than its top level by default: it is
-    unmounted again. The pool's apps that could not start without it
-    are started in the background; the response does not wait for them. Its
-    SMB shares are served again before it answers (ADR-0248). The audit log gets pool_mounted when
-    it mounted the pool or wrote its fstab entry (ADR-0402).
+    This imports a pool found on the host's disks, too. A pool that is
+    mounted and kept already is left as it is. The pool's apps that could
+    not start without it are started in the background; the response does
+    not wait for them. Its SMB shares and iSCSI targets are served again before it
+    answers.
+    The audit log gets pool_mounted when it mounted the pool or wrote its
+    fstab entry.
+    \f
+    ADR-0283, ADR-0248, ADR-0418, ADR-0402. A mountpoint that holds files is refused: they would be hidden.
     """
     validated_name = validate_pool_name(name)
 
@@ -313,26 +410,37 @@ async def mount_pool_endpoint(request: Request, name: str, user: User = Depends(
             AuditAction.POOL_MOUNTED, request, user.username, resource_type="pool", resource_id=validated_name,
             details=f"Mounted the pool {validated_name}",
         )
+    # The iSCSI targets of the pool's volumes, not served while it was not mounted (ADR-0418).
+    if iscsi.pool_user(validated_name):
+        await iscsi.restore_targets()
     return info
 
 
-@router.post("/pools/{name}/unmount", response_model=PoolInfo)
+@router.post(
+    "/pools/{name}/unmount", response_model=PoolInfo, summary="Unmount a pool",
+    responses=errors(RATE_LIMITED, _POOL_400, _POOL_404, {
+        409: "Host processes, running containers or the off-device copy use the pool, such as smbd for an SMB "
+             "client with one of its shares open; or another mount namespace still has it mounted after the "
+             "host's umount, and it is mounted again (or left unmounted when that fails).",
+        500: "The host's mount table or filesystems cannot be read, or umount, the fstab or another host command "
+             "fails.",
+        503: "The pool is mounted, and Docker cannot be asked which running containers use it; nothing changed.",
+    }),
+)
 @limiter.limit("10/minute")
-async def unmount_pool_endpoint(request: Request, name: str, user: User = Depends(verify_token)):
-    """Unmount a pool on the host and remove its managed fstab entry.
+async def unmount_pool_endpoint(request: Request, name: PoolName, user: User = Depends(verify_token)):
+    """Unmount a pool on the host and remove its managed fstab entry; its data is kept.
 
     The copies of its mount that services keep in mount namespaces of their
-    own, whose root is the host's, are unmounted with it (ADR-0288). 409
-    while host processes or running containers use the pool, such as smbd
-    for an SMB client that has one of its shares open, and when the mount
-    namespace of another process still has it mounted after the host's
-    umount: elsewhere, or in a namespace with a root of its own, such as a
-    container that binds /mnt/pools; the pool is then mounted again. 503,
-    with nothing changed, when Docker cannot be asked which containers use
-    the pool (ADR-0344). Before it answers, smb.conf no longer serves the
-    pool's shares, and their open connections are closed (ADR-0248). The audit log gets
-    pool_unmounted when the pool was mounted or its fstab entry dropped; as failed when the host
-    unmounted it and it could not be mounted again (ADR-0402).
+    own, whose root is the host's, are unmounted with it. Another mount
+    namespace that still has the pool mounted after the host's umount, such
+    as a container that binds /mnt/pools, keeps the pool mounted: it is then
+    mounted again on the host. Before it answers, smb.conf no longer serves
+    the pool's shares, and their open connections are closed. The audit log
+    gets pool_unmounted when the pool was mounted or its fstab entry dropped;
+    as failed when the host unmounted it and it could not be mounted again.
+    \f
+    ADR-0288, ADR-0344, ADR-0248, ADR-0402.
     """
     validated_name = validate_pool_name(name)
 
@@ -354,26 +462,37 @@ async def unmount_pool_endpoint(request: Request, name: str, user: User = Depend
     return info
 
 
-@router.get("/pools/{pool_name}/volumes", response_model=list[VolumeInfo])
-async def list_volumes_endpoint(pool_name: str, _=Depends(verify_token)):
-    """List the volumes (subvolumes in the top directory) of a pool, each with its quota use.
+@router.get(
+    "/pools/{pool_name}/volumes", response_model=list[VolumeInfo], summary="List a pool's volumes",
+    responses=errors(_POOL_400, _POOL_404, {409: _TOP_LEVEL_409, 500: _BTRFS_500}),
+)
+async def list_volumes_endpoint(pool_name: PoolName, _=Depends(verify_token)):
+    """List the volumes (the subvolumes in the top folder) of a mounted pool, each with its quota use.
 
-    ``used``, ``quota`` and ``usage`` come from the kernel's counters of the volume's quota group
-    (storage.qgroups). 404 for an unknown pool, 409 when it is not mounted or is mounted at a subvolume
-    other than the top level. Read-only pools are listed.
+    ``used``, ``quota`` and ``usage`` come from the kernel's counters of the volume's quota group.
+    The volumes of a read-only pool are listed too.
+    \f
+    storage.qgroups.
     """
     validated_pool = validate_pool_name(pool_name)
 
     return await _call(pools.list_volumes, validated_pool)
 
 
-@router.get("/pools/{pool_name}/volumes/{volume_name}/usage", response_model=VolumeUsageHistory)
-async def volume_usage_endpoint(pool_name: str, volume_name: str, _=Depends(verify_token)):
-    """A volume's use of its quota over time: one point per hour of the last 30 days that the
-    supervisor kept, oldest first, and the current reading last (storage.volume_usage).
-
-    404 for an unknown pool or volume, 409 when the pool is not mounted or is mounted at a
-    subvolume other than the top level.
+@router.get(
+    "/pools/{pool_name}/volumes/{volume_name}/usage", response_model=VolumeUsageHistory,
+    summary="Read a volume's quota use over time",
+    responses=errors(_VOLUME_400, _VOLUME_404, {
+        409: "The pool is not mounted or not at its top level, or its subvolume list gives the volume's name only "
+             "ids of other subvolumes.",
+        500: _BTRFS_500,
+    }),
+)
+async def volume_usage_endpoint(pool_name: PoolName, volume_name: VolumeName, _=Depends(verify_token)):
+    """A volume's quota use over time: one point per hour of the last 30 days that the
+    supervisor kept, oldest first, and the current reading last.
+    \f
+    storage.volume_usage.
     """
     validated_pool = validate_pool_name(pool_name)
     validated_name = validate_volume_name(volume_name)
@@ -381,23 +500,32 @@ async def volume_usage_endpoint(pool_name: str, volume_name: str, _=Depends(veri
     return await _call(volume_usage.usage_history, validated_pool, validated_name)
 
 
-@router.post("/pools/{pool_name}/volumes", response_model=VolumeInfo)
+@router.post(
+    "/pools/{pool_name}/volumes", response_model=VolumeInfo, summary="Create a volume",
+    responses=errors(RATE_LIMITED, BODY, _VOLUME_400, _POOL_404, {
+        409: "The pool is not mounted, mounted read-only or not at its top level, the name is taken, or a quota "
+             "is asked for and quotas are off on the pool, and nothing was created; or the quota could not be "
+             "set, and the answer says what became of the new volume.",
+        500: "btrfs or the host's mount table cannot be read, btrfs fails, or the volume was kept without (or "
+             "perhaps without) its quota.",
+    }),
+)
 @limiter.limit("10/minute")  # Rate limit volume creation
 async def create_volume_endpoint(
-    request: Request, pool_name: str, volume: VolumeCreate, user: User = Depends(verify_token)
+    request: Request, pool_name: PoolName, volume: VolumeCreate, user: User = Depends(verify_token)
 ):
-    """Create a volume: a btrfs subvolume at <mountpoint>/<name> of the pool in the URL.
+    """Create a volume: a btrfs subvolume at /mnt/pools/<pool>/<name> of the pool in the URL, with an
+    optional quota.
 
-    The body is ``{"name": ..., "quota": bytes or null}``; the quota must be
-    between 1 and 2^64 - 2 (422 otherwise; btrfs reads 2^64 - 1 as no
-    limit). 404 for an unknown pool. 409, and nothing is created, when the
-    pool is not mounted, mounted read-only or not at its top level, the name
-    is taken, or a quota is asked for and quotas are not enabled on the
-    pool. 409 as well when the quota cannot be set: the new volume is
-    removed again, unless the subvolume with its name by then existed
-    before it. The audit log gets volume_created (ADR-0350); as failed when
-    the volume is kept without (or perhaps without) its quota, which
-    answers 500.
+    The quota is between 1 and 2^64 - 2 bytes. When it cannot be set, the
+    new volume is removed again, unless the subvolume with its name by then
+    existed before it. The audit log gets volume_created; as failed when the
+    answer is the 500 of a volume kept without (or perhaps without) its quota.
+    A volume kept because its removal failed (500), or whose new subvolume
+    cannot be told from others of its name (409), is not written to the
+    audit log.
+    \f
+    ADR-0350. btrfs reads a quota of 2^64 - 1 as no limit; a quota outside the range answers 422.
     """
     validated_pool = validate_pool_name(pool_name)
     validated_name = validate_volume_name(volume.name)
@@ -422,18 +550,31 @@ async def create_volume_endpoint(
     return info
 
 
-@router.delete("/pools/{pool_name}/volumes/{volume_name}")
+@router.delete(
+    "/pools/{pool_name}/volumes/{volume_name}", summary="Delete a volume",
+    responses={
+        **answer({"status": "deleted"}, "Always deleted: the volume is gone."),
+        **errors(_VOLUME_400, _VOLUME_404, {
+            409: "The pool is not mounted, mounted read-only or not at its top level, or the volume is used by a "
+                 "running container, an SMB share, an NFS export or the off-device copy, is busy, or holds "
+                 "snapshots; nothing was deleted.",
+            500: "btrfs or the host's mount table cannot be read, btrfs fails, or the containers' folders, the SMB "
+                 "shares or the NFS exports cannot be read.",
+            503: _DOCKER_503,
+        }),
+    },
+)
 async def delete_volume_endpoint(
-    request: Request, pool_name: str, volume_name: str, user: User = Depends(verify_token)
+    request: Request, pool_name: PoolName, volume_name: VolumeName, user: User = Depends(verify_token)
 ):
     """Delete a volume with everything in it.
 
-    404 for an unknown pool or volume; 409 when the pool is not mounted,
-    mounted read-only or not at its top level, or the volume is used by a
-    running container (a bind mount, or a Docker volume that binds a folder
-    of it), an SMB share or an NFS export, is busy, or holds snapshots; 503
-    when Docker cannot be asked about the running containers and their
-    volumes. Nothing is deleted then. The audit log gets volume_deleted (ADR-0350).
+    A volume in use is refused: by a running container (a bind mount, or a
+    Docker volume that binds a folder of it), an SMB share, an NFS export or
+    the off-device copy. Nothing is deleted when the request is refused. The
+    audit log gets volume_deleted.
+    \f
+    ADR-0350.
     """
     validated_pool = validate_pool_name(pool_name)
     validated_volume = validate_volume_name(volume_name)
@@ -467,35 +608,54 @@ async def _scrub(func: Callable[[str], ScrubStatus], name: str, *, reads: bool =
     return status
 
 
-@router.post("/pools/{name}/scrub", response_model=ScrubStatus)
-async def start_scrub_endpoint(name: str, _=Depends(verify_token)):
-    """Start a scrub on a pool; answers once btrfs runs it, with its status then (ADR-0071).
+@router.post(
+    "/pools/{name}/scrub", response_model=ScrubStatus, summary="Start a pool's scrub",
+    responses=errors(_POOL_400, {
+        409: "The pool is not mounted, or a balance of it runs; btrfs did not run.",
+        500: "btrfs does not start the scrub, with its error, or does not answer in time, or the host's mount "
+             "table cannot be read.",
+    }),
+)
+async def start_scrub_endpoint(name: PoolName, _=Depends(verify_token)):
+    """Start a scrub of a pool; it answers once btrfs runs it, with its status then.
 
-    409, and no btrfs, when the pool is not mounted (pools.scrub_start). 500 with btrfs's error
-    when it does not start, or when btrfs does not
-    answer within SCRUB_COMMAND_TIMEOUT. A scrub that started is answered
-    running when its status cannot be read yet or says idle (ADR-0313).
+    A scrub that started is answered running when its status cannot be read yet or says idle.
+    \f
+    ADR-0071, ADR-0313. No btrfs runs for a pool that is not mounted (pools.scrub_start); btrfs
+    has SCRUB_COMMAND_TIMEOUT to answer.
     """
     return await _scrub(pools.start_scrub, name)
 
 
-@router.get("/pools/{name}/scrub", response_model=ScrubStatus)
-async def get_scrub_status_endpoint(name: str, _=Depends(verify_token)):
-    """The pool's scrub as btrfs reports it: its progress while it runs, then its result (ADR-0313).
-
-    idle when no scrub is recorded and none runs; 500 with btrfs's error when it
-    cannot report the status, or does not answer within SCRUB_COMMAND_TIMEOUT.
+@router.get(
+    "/pools/{name}/scrub", response_model=ScrubStatus, summary="Read a pool's scrub",
+    responses=errors(_POOL_400, {
+        500: "btrfs cannot report the status, with its error, or does not answer in time.",
+    }),
+)
+async def get_scrub_status_endpoint(name: PoolName, _=Depends(verify_token)):
+    """The pool's scrub as btrfs reports it: its progress while it runs, then its result; idle when no
+    scrub is recorded and none runs.
+    \f
+    ADR-0313. btrfs has SCRUB_COMMAND_TIMEOUT to answer.
     """
     return await _scrub(pools.get_scrub_status, name, reads=True)
 
 
-@router.delete("/pools/{name}/scrub", response_model=ScrubStatus)
-async def cancel_scrub_endpoint(name: str, _=Depends(verify_token)):
-    """Cancel a running scrub; answers its status after btrfs's cancel (aborted once it stopped).
+@router.delete(
+    "/pools/{name}/scrub", response_model=ScrubStatus, summary="Cancel a pool's scrub",
+    responses=errors(_POOL_400, {
+        500: "btrfs fails to cancel the scrub or to report its status, or does not answer in time.",
+    }),
+)
+async def cancel_scrub_endpoint(name: PoolName, _=Depends(verify_token)):
+    """Cancel a running scrub; the answer is its status after btrfs's cancel, aborted once it stopped.
 
     A scrub that no longer runs is no error: the answer is its status. A
     cancelled scrub whose status cannot be read yet or says idle is answered
-    aborted (ADR-0313).
+    aborted.
+    \f
+    ADR-0313.
     """
     return await _scrub(pools.cancel_scrub, name)
 
@@ -523,24 +683,42 @@ async def _audit_balance(action: AuditAction, request: Request, user: User, name
     await audit_change(action, request, user.username, resource_type="pool", resource_id=name, details=details)
 
 
-@router.get("/pools/{name}/balance", response_model=BalanceStatus)
-async def get_balance_status_endpoint(name: str, _=Depends(verify_token)):
+@router.get(
+    "/pools/{name}/balance", response_model=BalanceStatus, summary="Read a pool's balance",
+    responses=errors(_POOL_400, {
+        409: "The pool is not mounted.",
+        500: "btrfs cannot report the balance or does not answer in time, or the host's mount table cannot be "
+             "read.",
+    }),
+)
+async def get_balance_status_endpoint(name: PoolName, _=Depends(verify_token)):
     """The pool's balance as btrfs reports it, with the seconds left while it runs, and how the
-    last one ended when none runs or is paused (ADR-0379). 409 when the pool is not mounted; 500
-    when btrfs cannot report it or does not answer within pools.BALANCE_COMMAND_TIMEOUT."""
+    last one ended when none runs or is paused.
+    \f
+    ADR-0379. btrfs has pools.BALANCE_COMMAND_TIMEOUT to answer.
+    """
     return await _balance(balances.status, name, reads=True)
 
 
-@router.post("/pools/{name}/balance", response_model=BalanceStatus)
+@router.post(
+    "/pools/{name}/balance", response_model=BalanceStatus, summary="Start a pool's balance",
+    responses=errors(RATE_LIMITED, BODY, _POOL_400, {
+        409: "The pool is not mounted or is read-only, a scrub, a disk removal or a balance of it runs, or a "
+             "balance of it is paused; nothing ran.",
+        500: "systemd or btrfs refuses the balance, with the reason, btrfs does not answer in time, or the host's "
+             "mount table cannot be read.",
+    }),
+)
 @limiter.limit("10/minute")
-async def start_balance_endpoint(request: Request, name: str, body: BalanceStart,
+async def start_balance_endpoint(request: Request, name: PoolName, body: BalanceStart,
                                  user: User = Depends(verify_token)):
     """Start a balance of a pool: of the data and metadata chunks less than ``usage`` percent full
-    (20 by default), or of every chunk with ``full`` (ADR-0379). It runs on the host in the unit
+    (20 by default), or of every chunk with ``full``. It runs on the host in the unit
     unos-balance-<pool>; the answer is its status once btrfs runs (running also before the kernel
-    reports it), or how it ended when it ended at once. 409, and nothing run, when the pool is not
-    mounted or is read-only, while a scrub of it runs and while a balance of it runs or is paused;
-    500 with the reason when systemd or btrfs refuses it. The audit log gets balance_started."""
+    reports it), or how it ended when it ended at once. The audit log gets balance_started.
+    \f
+    ADR-0379.
+    """
     status = await _balance(balances.start, name, body)
     what = "a full balance of the pool {}: every chunk" if body.full else (
         "a balance of the pool {}: the data and metadata chunks less than " + f"{body.limit}% full")
@@ -548,13 +726,21 @@ async def start_balance_endpoint(request: Request, name: str, body: BalanceStart
     return status
 
 
-@router.post("/pools/{name}/balance/pause", response_model=BalanceStatus)
-async def pause_balance_endpoint(request: Request, name: str, user: User = Depends(verify_token)):
-    """Pause the pool's running balance after the chunk it moves (ADR-0379): paused, or pausing
-    while btrfs still waits for that chunk after balances.STOP_WAIT seconds. A pool without a
-    running balance, or whose pause waits already, answers its status, and the audit log gets
-    balance_paused only for a pause. 409 while a cancel waits for the chunk: the kernel would
-    pause the balance instead."""
+@router.post(
+    "/pools/{name}/balance/pause", response_model=BalanceStatus, summary="Pause a pool's balance",
+    responses=errors(_POOL_400, {
+        409: "The pool is not mounted, or a cancel of its balance waits for the chunk being moved: the kernel "
+             "would pause the balance instead.",
+        500: "btrfs fails or does not answer in time, or the host's mount table cannot be read.",
+    }),
+)
+async def pause_balance_endpoint(request: Request, name: PoolName, user: User = Depends(verify_token)):
+    """Pause the pool's running balance after the chunk it moves: paused, or pausing while btrfs
+    still waits for that chunk after a few seconds. A pool without a running balance, or whose
+    pause waits already, answers its status, and the audit log gets balance_paused only for a pause.
+    \f
+    ADR-0379. The wait is balances.STOP_WAIT seconds.
+    """
     status, paused = await _balance(balances.pause, name)
     if paused:
         await _audit_balance(AuditAction.BALANCE_PAUSED, request, user, status.pool,
@@ -562,26 +748,43 @@ async def pause_balance_endpoint(request: Request, name: str, user: User = Depen
     return status
 
 
-@router.post("/pools/{name}/balance/resume", response_model=BalanceStatus)
-async def resume_balance_endpoint(request: Request, name: str, user: User = Depends(verify_token)):
-    """Resume the pool's paused balance in its unit on the host (ADR-0379). 409 when none is
-    paused, when the pool is not mounted or is read-only and while a scrub of it runs. The audit
-    log gets balance_resumed."""
+@router.post(
+    "/pools/{name}/balance/resume", response_model=BalanceStatus, summary="Resume a pool's balance",
+    responses=errors(_POOL_400, {
+        409: "No balance of the pool is paused, the pool is not mounted or is read-only, or a scrub or a disk "
+             "removal of it runs.",
+        500: "systemd or btrfs refuses the resume, with the reason, btrfs does not answer in time, or the host's "
+             "mount table cannot be read.",
+    }),
+)
+async def resume_balance_endpoint(request: Request, name: PoolName, user: User = Depends(verify_token)):
+    """Resume the pool's paused balance in its unit on the host. The audit log gets balance_resumed.
+    \f
+    ADR-0379.
+    """
     status = await _balance(balances.resume, name)
     await _audit_balance(AuditAction.BALANCE_RESUMED, request, user, status.pool,
                          f"Resumed the balance of the pool {status.pool}")
     return status
 
 
-@router.delete("/pools/{name}/balance", response_model=BalanceStatus)
-async def cancel_balance_endpoint(request: Request, name: str, user: User = Depends(verify_token)):
-    """Cancel the pool's running or paused balance (ADR-0379): idle with the result cancelled, or
-    cancelling while btrfs still waits for the chunk being moved after balances.STOP_WAIT seconds.
-    A pool without a balance, or whose cancel waits already, answers its status, and so does one
-    whose balance a pause from elsewhere kept; the audit log gets balance_cancelled only for a
-    cancel. 409 while a pause waits for the chunk (the kernel would pause the balance all the
-    same: cancel it once it is paused) and for a paused balance of a read-only pool, which the
-    kernel keeps for its next read-write mount."""
+@router.delete(
+    "/pools/{name}/balance", response_model=BalanceStatus, summary="Cancel a pool's balance",
+    responses=errors(_POOL_400, {
+        409: "The pool is not mounted, a pause of its balance waits for the chunk being moved (cancel it once it "
+             "is paused), or the paused balance is of a read-only pool, which the kernel keeps for its next "
+             "read-write mount.",
+        500: "btrfs fails or does not answer in time, or the host's mount table cannot be read.",
+    }),
+)
+async def cancel_balance_endpoint(request: Request, name: PoolName, user: User = Depends(verify_token)):
+    """Cancel the pool's running or paused balance: idle with the result cancelled, or cancelling
+    while btrfs still waits for the chunk being moved after a few seconds. A pool without a balance,
+    or whose cancel waits already, answers its status, and so does one whose balance a pause from
+    elsewhere kept; the audit log gets balance_cancelled only for a cancel.
+    \f
+    ADR-0379. The wait is balances.STOP_WAIT seconds.
+    """
     status, cancelled = await _balance(balances.cancel, name)
     if cancelled:
         await _audit_balance(AuditAction.BALANCE_CANCELLED, request, user, status.pool,
@@ -589,28 +792,49 @@ async def cancel_balance_endpoint(request: Request, name: str, user: User = Depe
     return status
 
 
-@router.get("/pools/{name}/devices", response_model=PoolDevices)
-async def get_pool_devices_endpoint(name: str, _=Depends(verify_token)):
+@router.get(
+    "/pools/{name}/devices", response_model=PoolDevices, summary="List a pool's disks and the disks that can join it",
+    responses=errors(_POOL_400, {
+        409: "The pool is not mounted.",
+        500: "btrfs cannot report its disks or profiles or does not answer in time, or lsblk or the host's mount "
+             "table cannot be read.",
+    }),
+)
+async def get_pool_devices_endpoint(name: PoolName, _=Depends(verify_token)):
     """The disks of a mounted pool, each with why it cannot be removed (the only disk, the profile,
     the space), its profiles, the whole disks that can join it (none that holds the system, a btrfs
-    filesystem or a mount; a sleeping one is not woken) and its disk removal (ADR-0411). 409 when the
-    pool is not mounted; 500 when btrfs cannot report its disks or profiles."""
+    filesystem or a mount; a sleeping one is not woken) and its disk removal.
+    \f
+    ADR-0411.
+    """
     return await _call(devices.describe, validate_pool_name(name))
 
 
-@router.post("/pools/{name}/devices", response_model=PoolInfo)
+@router.post(
+    "/pools/{name}/devices", response_model=PoolInfo, summary="Add a disk to a pool",
+    responses=errors(RATE_LIMITED, BODY, {
+        400: "The pool's name or the device path is not valid, confirm_device or identity names another path, or "
+             "the device is a partition or no disk of this system.",
+        409: "The pool or the disk is refused for one of the reasons in the description; nothing was written.",
+        500: "btrfs device add fails or does not answer in time, which the audit log records as failed; or btrfs, "
+             "lsblk or the host's mount table cannot be read.",
+    }),
+)
 @limiter.limit("5/minute")
-async def add_pool_device_endpoint(request: Request, name: str, body: DiskAdd, user: User = Depends(verify_token)):
-    """Add a free disk to a mounted pool with btrfs device add on the host (ADR-0411): the pool
-    grows, and its profile stays. ``confirm_device`` is the path typed again (400 otherwise),
-    ``identity`` the disk as the list showed it (409 when the path now holds another disk) and
-    ``contents`` what the list showed it to hold (409 for a disk with other data); a partition is
-    refused (400). 409, and
-    nothing written: a pool that is not mounted, is read-only or misses a disk; a scrub, a balance
-    (also a paused one) or a disk removal of the pool; a disk that is a boot or virtual device, the
-    system disk, in use, holds a btrfs filesystem or is the pool's already; data without ``force``;
-    an NVMe disk for a pool with TRIM on a board that hangs on its TRIM (ADR-0370). The answer is
-    the pool. The audit log gets pool_disk_added; as failed when btrfs device add fails (500)."""
+async def add_pool_device_endpoint(request: Request, name: PoolName, body: DiskAdd,
+                                   user: User = Depends(verify_token)):
+    """Add a free whole disk to a mounted pool with btrfs device add on the host: the pool grows, and
+    its profile stays. The answer is the pool. The audit log gets pool_disk_added; as failed when
+    btrfs device add fails.
+
+    Refused with 409, and nothing written: a pool that is not mounted, is read-only or misses a
+    disk; a scrub, a balance (also a paused one) or a disk removal of the pool; a path that now
+    holds another disk than ``identity``, or other data than ``contents``; a disk that is a boot or
+    virtual device, the system disk, in use, holds a btrfs filesystem or is the pool's already;
+    data without ``force``; an NVMe disk for a pool with TRIM on a board that hangs on its TRIM.
+    \f
+    ADR-0411, ADR-0370 (the NVMe disk on a board that hangs on its TRIM).
+    """
     pool = validate_pool_name(name)
     try:
         details = await _call(devices.add, pool, body)
@@ -648,26 +872,47 @@ async def _removal(func: Callable[..., DiskRemovalStatus], name: str, *args: Any
     return status
 
 
-@router.get("/pools/{name}/removal", response_model=DiskRemovalStatus)
-async def get_disk_removal_endpoint(name: str, _=Depends(verify_token)):
-    """The pool's disk removal (ADR-0411): running while the kernel moves the data off a disk, with
-    the bytes still on it and those at its start; else idle, with how the last removal that UNOS
-    started since the host started ended. 409 when the pool is not mounted; 500 when btrfs cannot
-    report its disks or does not answer within devices.READ_TIMEOUT."""
+@router.get(
+    "/pools/{name}/removal", response_model=DiskRemovalStatus, summary="Read a pool's disk removal",
+    responses=errors(_POOL_400, {
+        409: "The pool is not mounted.",
+        500: "btrfs cannot report the pool's disks or does not answer in time, or the host's mount table cannot "
+             "be read.",
+    }),
+)
+async def get_disk_removal_endpoint(name: PoolName, _=Depends(verify_token)):
+    """The pool's disk removal: running while the kernel moves the data off a disk, with the bytes
+    still on it and those at its start; else idle, with how the last removal that UNOS started since
+    the host started ended.
+    \f
+    ADR-0411. btrfs has devices.READ_TIMEOUT to answer.
+    """
     return await _removal(devices.status, name, reads=True)
 
 
-@router.post("/pools/{name}/removal", response_model=DiskRemovalStatus)
+@router.post(
+    "/pools/{name}/removal", response_model=DiskRemovalStatus, summary="Start a disk removal",
+    responses=errors(RATE_LIMITED, BODY, {
+        400: "The pool's name or the device path is not valid, or confirm_device is not device.",
+        409: "Nothing ran: the pool is not mounted, read-only or misses a disk; a scrub, a balance (also a paused "
+             "one) or a disk removal of it runs; the path is no longer the devid's; or it is the pool's only "
+             "disk, or the profile (or one UNOS does not know) or the space of the disks left cannot do without "
+             "it.",
+        500: "systemd or btrfs refuses the removal, with the reason, btrfs does not answer in time, or the host's "
+             "mount table cannot be read.",
+    }),
+)
 @limiter.limit("5/minute")
-async def start_disk_removal_endpoint(request: Request, name: str, body: DiskRemove,
+async def start_disk_removal_endpoint(request: Request, name: PoolName, body: DiskRemove,
                                       user: User = Depends(verify_token)):
-    """Start the removal of a disk of a mounted pool (ADR-0411): btrfs device remove in the unit
+    """Start the removal of a disk of a mounted pool: btrfs device remove in the unit
     unos-disk-remove-<pool> on the host moves its data to the other disks first, and the disk leaves
-    the pool at the end. ``devid`` and ``device`` name the disk as the list showed it (409 when the
-    path is no longer the devid's), ``confirm_device`` is the path typed again (400). 409, and nothing
-    run, for the refusals of an add, the pool's only disk, a profile that would keep too few disks or
-    that UNOS does not know, and too little space on the disks left. The answer is running; 500 with
-    the reason when systemd or btrfs refuses it. The audit log gets pool_disk_removal_started."""
+    the pool at the end. ``devid`` and ``device`` name the disk as the list showed it. The answer
+    is its status once btrfs runs: running, or how it ended when it ended at once. The audit log
+    gets pool_disk_removal_started.
+    \f
+    ADR-0411.
+    """
     status = await _removal(devices.remove, name, body)
     await audit_change(
         AuditAction.POOL_DISK_REMOVAL_STARTED, request, user.username, resource_type="pool", resource_id=status.pool,

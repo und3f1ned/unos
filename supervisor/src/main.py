@@ -33,7 +33,7 @@ from fastapi import Depends, FastAPI, Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, PlainTextResponse
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
@@ -42,6 +42,7 @@ from .times import utc_now
 from .database import checkpoint_db, init_db
 from .config import get_settings
 from .auth.utils import require_admin
+from .openapi import ADMIN, answer, errors, file_answer
 from .request_limits import MAX_REQUEST_BODY, RequestBodyLimitMiddleware
 
 logger = logging.getLogger(__name__)
@@ -55,6 +56,8 @@ from .shares.router import router as shares_router
 from .shares.groups import router as groups_router
 from .shares import repair_router
 from .shares.repair_router import router as shares_repair_router
+from .shares import iscsi
+from .shares.iscsi_router import router as iscsi_router
 from .containers.router import router as containers_router
 from .apps import install_jobs
 from .apps.usage import start_app_resources, stop_app_resources
@@ -72,6 +75,8 @@ from .notifications.router import router as notifications_router
 from .scheduler.router import router as scheduler_router
 from .power.router import router as power_router, saved_ups_config
 from .network.router import router as network_router
+from .network.remote_router import router as remote_access_router
+from .network import app_names
 from .logs.router import router as logs_router
 from .health.router import raid_status_or_none, router as health_router
 from .security.router import router as security_router
@@ -142,12 +147,17 @@ async def check_host_tools() -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await init_db()
+    # The volumes that hold the LUNs of iSCSI targets, which the Storage page does not unmount or
+    # delete (ADR-0418): read before the first request.
+    await iscsi.load_index()
     # UNOS_DISABLE_BACKGROUND_TASKS=1 (tests, development) also skips the pool
     # mount check below, because it mounts filesystems on the host.
     run_background = os.environ.get("UNOS_DISABLE_BACKGROUND_TASKS") != "1"
     host_tool_check: asyncio.Task | None = None
     smb_reconcile: asyncio.Task | None = None
     wol_reapply: asyncio.Task | None = None
+    iscsi_restore: asyncio.Task | None = None
+    app_names_reconcile: asyncio.Task | None = None
     if run_background:
         # Runs beside the rest of startup (in a worker thread, bounded by
         # HOST_TOOL_CHECK_TIMEOUT), so a slow host neither delays nor fails it.
@@ -166,6 +176,13 @@ async def lifespan(app: FastAPI):
         # the state an administrator chose (power/router.py, ADR-0233), beside
         # the startup. Logs, never raises.
         wol_reapply = asyncio.create_task(reapply_wol_settings(), name="unos-wol-reapply")
+        # configfs is in RAM: the iSCSI targets are served again after a reboot, once the pools are
+        # mounted, and UNOS's targets that the database no longer has are removed (ADR-0418).
+        # Beside the startup. Logs, never raises.
+        iscsi_restore = asyncio.create_task(iscsi.restore_targets(), name="unos-iscsi-restore")
+        # The app names announced with the host's address of now, and Caddy's file as their list
+        # renders it (network/app_names.py, ADR-0420), beside the startup. Logs, never raises.
+        app_names_reconcile = asyncio.create_task(app_names.reconcile_on_startup(), name="unos-app-names")
     # Background loops must be started here. FastAPI ignores router-level
     # @router.on_event hooks when the app defines a lifespan, which silently
     # disabled the scheduler and all monitors in earlier releases.
@@ -185,10 +202,14 @@ async def lifespan(app: FastAPI):
         # A point of the host's CPU, memory, network and disks every 10 s, an hour of them in RAM,
         # for the Resource Monitor's history (ADR-0399).
         await start_history()
+        # Applies the iSCSI targets again when the host's LAN addresses changed, every 5 minutes
+        # while a target exists (ADR-0418).
+        await iscsi.start_follow()
     try:
         yield
     finally:
         if run_background:
+            await iscsi.stop_follow()
             await stop_history()
             await stop_app_resources()
             await stop_upload_leftover_check()
@@ -208,6 +229,12 @@ async def lifespan(app: FastAPI):
         if wol_reapply is not None:
             wol_reapply.cancel()
             await asyncio.gather(wol_reapply, return_exceptions=True)
+        if iscsi_restore is not None:
+            iscsi_restore.cancel()
+            await asyncio.gather(iscsi_restore, return_exceptions=True)
+        if app_names_reconcile is not None:
+            app_names_reconcile.cancel()
+            await asyncio.gather(app_names_reconcile, return_exceptions=True)
         # The copies and restores of the off-device copy that Run now and Restore files started end
         # with their restic, and are recorded as stopped (ADR-0337); the Scheduler's end with it.
         await stop_offsite()
@@ -298,6 +325,7 @@ for _router in (
     storage_router,
     shares_router,
     shares_repair_router,
+    iscsi_router,
     groups_router,
     containers_router,
     apps_router,
@@ -308,6 +336,7 @@ for _router in (
     scheduler_router,
     power_router,
     network_router,
+    remote_access_router,
     logs_router,
     health_router,
     monitor_router,
@@ -315,7 +344,8 @@ for _router in (
     offsite_router,
     updates_router,
 ):
-    app.include_router(_router, prefix="/api/v1", dependencies=_ADMIN_ONLY)
+    # Their 401 and 403 in the API documentation (ADR-0417).
+    app.include_router(_router, prefix="/api/v1", dependencies=_ADMIN_ONLY, responses=errors(ADMIN))
 
 
 HEALTH_PATH = "/api/v1/health"
@@ -349,18 +379,56 @@ class _RefusedOrFailedRequestFilter(logging.Filter):
 logging.getLogger("uvicorn.access").addFilter(_RefusedOrFailedRequestFilter())
 
 
-@app.get(HEALTH_PATH)
+@app.get(
+    HEALTH_PATH,
+    summary="Check that the supervisor answers",
+    responses=answer({"status": "ok"}, "Always ok: the supervisor serves requests."),
+)
 async def health_check():
-    """Basic health check for load balancers."""
+    """Whether the supervisor serves requests, for the Docker health checks and load balancers.
+    Public: it needs no credential."""
     return {"status": "ok"}
 
 
-@app.get("/api/v1/health/full", dependencies=[Depends(require_admin)])
+_FULL_HEALTH_EXAMPLE = {
+    "status": "degraded",
+    "timestamp": "2026-11-18T10:00:00.123456+00:00",
+    "version": "0.1.0",
+    "components": {
+        "database": {"status": "ok", "size_mb": 1.25},
+        "docker": {"status": "ok", "containers_running": 4},
+        "storage": {"status": "ok", "pools": 1},
+        "raid": {"status": "degraded", "pools": ["data"]},
+        "ups": {"status": "not_configured"},
+    },
+    "metrics": {
+        "cpu_percent": 3.5,
+        "memory_percent": 41.2,
+        "disk_percent": 27.0,
+        "load_average": [0.21, 0.3, 0.28],
+        "uptime_seconds": 86400,
+    },
+    "issues": ["raid"],
+}
+
+
+@app.get(
+    "/api/v1/health/full",
+    dependencies=[Depends(require_admin)],
+    summary="Check every component of UNOS",
+    responses={
+        **answer(
+            _FULL_HEALTH_EXAMPLE,
+            "The overall status (healthy, degraded or critical) and the status of the database, Docker, "
+            "the pools, RAID and the UPS, the host's CPU, memory, root disk and load, and the issues found.",
+        ),
+        **errors(ADMIN),
+    },
+)
 async def full_health_check():
-    """
-    Comprehensive health check aggregating all system components.
-    Suitable for monitoring systems like Prometheus, Uptime Robot, etc.
-    """
+    """The state of every component, for monitoring tools: degraded when a component has an issue,
+    critical when memory or the root disk is over 95 % full. A component that cannot be read
+    is reported in the answer, not as an error."""
     import psutil
     from pathlib import Path
     health = {
@@ -373,9 +441,9 @@ async def full_health_check():
 
     issues = []
 
-    # Database check
+    # Database check: the file the supervisor opens, in the data directory (ADR-0419).
     try:
-        db_path = Path("/data/unos.db")
+        db_path = Path(settings.db_path)
         if db_path.exists():
             health["components"]["database"] = {"status": "ok", "size_mb": round(db_path.stat().st_size / 1024 / 1024, 2)}
         else:
@@ -465,12 +533,19 @@ async def full_health_check():
     return health
 
 
-@app.get("/api/v1/health/prometheus", dependencies=[Depends(require_admin)])
+@app.get(
+    "/api/v1/health/prometheus",
+    dependencies=[Depends(require_admin)],
+    summary="Read the metrics for Prometheus",
+    response_class=PlainTextResponse,
+    responses={
+        **file_answer("text/plain", "The metrics in Prometheus's text format: unos_up, CPU, memory, root disk, "
+                                    "load, the number of pools and of healthy and degraded RAID pools."),
+        **errors(ADMIN),
+    },
+)
 async def prometheus_metrics():
-    """
-    Prometheus-compatible metrics endpoint.
-    Returns metrics in Prometheus text format.
-    """
+    """The host's and UNOS's metrics in Prometheus's text format, for a Prometheus scrape."""
     import psutil
 
     lines = []
@@ -532,5 +607,4 @@ async def prometheus_metrics():
     except Exception:
         pass
 
-    from fastapi.responses import PlainTextResponse
     return PlainTextResponse("\n".join(lines) + "\n", media_type="text/plain")

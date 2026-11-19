@@ -1,0 +1,180 @@
+import type { Translation } from '../translate';
+
+// The iSCSI tab of the Shares page (src/lib/components/shares/IscsiTab.svelte): targets of volumes,
+// one LUN each, with CHAP for every allowed initiator (ADR-0418).
+
+export const en = {
+	'iscsi.title': 'iSCSI targets',
+	'iscsi.intro':
+		'An iSCSI target gives computers a disk of their own: a file in a volume of a pool, which they format and use like a local disk. Only the initiators you allow log in, and only with CHAP.',
+	'iscsi.add': 'Add target',
+	'iscsi.loadError': 'Could not load the iSCSI targets',
+	'iscsi.empty': 'No iSCSI targets yet',
+	'iscsi.emptyHint': 'Add a target to give a computer a disk in a volume of a pool.',
+	'iscsi.noVolumes': 'An iSCSI target needs a volume of a pool that UNOS manages: create one on the Storage page.',
+	'iscsi.noKernel':
+		"The host's kernel has no iSCSI target (LIO): the modules target_core_mod, target_core_file and iscsi_target_mod are missing.",
+	'iscsi.portals': 'Initiators connect to: {portals}',
+	'iscsi.noPortals':
+		'The host has no address of the local network, so no initiator can reach the targets.',
+	'iscsi.portalsProblem': "The host's addresses could not be read",
+	'iscsi.served': 'Served',
+	'iscsi.notServed': 'Not served',
+	'iscsi.iqn': 'Target name (IQN)',
+	'iscsi.lun': 'LUN',
+	'iscsi.lunValue': '{size} GiB in the volume {volume} of the pool {pool}',
+	'iscsi.file': 'File',
+	'iscsi.initiators': 'Allowed initiators',
+	'iscsi.chapUser': 'CHAP user name',
+	'iscsi.mutual': 'Mutual CHAP',
+	'iscsi.yes': 'Yes',
+	'iscsi.no': 'No',
+	'iscsi.sessions': 'Logged in now',
+	'iscsi.noSessions': 'No initiator is logged in',
+	'iscsi.change': 'Change',
+	'iscsi.delete': 'Delete',
+	'iscsi.created': 'The iSCSI target {name} was created.',
+	'iscsi.changed': 'The iSCSI target {name} was changed.',
+	'iscsi.deleted': 'The iSCSI target {name} and the data of its LUN were deleted.',
+
+	'iscsi.form.title': 'Add an iSCSI target',
+	'iscsi.form.name': 'Name',
+	'iscsi.form.nameHint': "1 to 32 lowercase letters, digits and '-'. It becomes part of the target's IQN.",
+	'iscsi.form.volume': 'Volume',
+	'iscsi.form.chooseVolume': 'Choose a volume',
+	'iscsi.form.size': 'Size (GiB)',
+	'iscsi.form.sizeHint':
+		'The LUN is a sparse file: its space is taken as data is written, not reserved now. Keep that much free in the pool.',
+	'iscsi.form.initiators': 'Allowed initiators',
+	'iscsi.form.initiatorsHint':
+		"One iSCSI name per line, as each computer's initiator shows it (iqn., eui. or naa.).",
+	'iscsi.form.initiatorsPlaceholder': 'iqn.1991-05.com.microsoft:desktop-pc',
+	'iscsi.form.chapUser': 'CHAP user name',
+	'iscsi.form.chapUserHint': "The target's name when left empty.",
+	'iscsi.form.chapSecret': 'CHAP secret',
+	'iscsi.form.chapSecretHint':
+		'12 to 16 characters. Leave it empty and UNOS generates one. It is shown once, after the target is created.',
+	'iscsi.form.mutual': 'Mutual CHAP: the target proves itself to the initiator too',
+	'iscsi.form.mutualSecret': 'Secret of mutual CHAP',
+	'iscsi.form.mutualSecretHint': 'It must differ from the CHAP secret. Leave it empty and UNOS generates one.',
+	'iscsi.form.create': 'Create',
+	'iscsi.form.notCreated': 'The target was not created',
+	'iscsi.form.nameRequired': 'Enter a name',
+	'iscsi.form.volumeRequired': 'Choose a volume',
+	'iscsi.form.sizeRequired': 'Enter a size in whole GiB',
+	'iscsi.form.initiatorsRequired': 'Enter at least one initiator',
+
+	'iscsi.edit.title': 'Change {name}',
+	'iscsi.edit.newSecret': 'Set a new CHAP secret',
+	'iscsi.edit.newSecretHint':
+		'Every initiator of the target is logged out and must log in again with the new secret. Leave the field empty and UNOS generates one.',
+	'iscsi.edit.mutual': 'Mutual CHAP',
+	'iscsi.edit.newMutualSecret': 'Set a new secret of mutual CHAP',
+	'iscsi.edit.save': 'Save',
+	'iscsi.edit.notChanged': 'The target was not changed',
+
+	'iscsi.secret.title': 'CHAP secret of {name}',
+	'iscsi.secret.once':
+		'Enter it in the initiators now: UNOS shows it only this once and never again. Lost, it can only be replaced by a new one.',
+	'iscsi.secret.chap': 'CHAP secret',
+	'iscsi.secret.mutual': 'Secret of mutual CHAP',
+	'iscsi.secret.copy': 'Copy',
+	'iscsi.secret.copied': 'Copied',
+	'iscsi.secret.copyFailed': 'Could not copy: select the text and copy it yourself.',
+	'iscsi.secret.done': 'Done',
+
+	'iscsi.remove.title': 'Delete {name}?',
+	'iscsi.remove.warning':
+		'This deletes the LUN file {path} and every byte on it: the disk is gone for every initiator, and it cannot be undone.',
+	'iscsi.remove.sessions': 'Logged in now, and their sessions end: {initiators}',
+	'iscsi.remove.type': "Type the target's name, {name}, to delete it",
+	'iscsi.remove.confirm': 'Delete target and data',
+	'iscsi.remove.notDeleted': 'The target was not deleted'
+};
+
+export const ru: Translation<typeof en> = {
+	'iscsi.title': 'Цели iSCSI',
+	'iscsi.intro':
+		'Цель iSCSI даёт компьютерам собственный диск: файл в томе пула, который они форматируют и используют как локальный диск. Входят только разрешённые вами инициаторы и только с CHAP.',
+	'iscsi.add': 'Добавить цель',
+	'iscsi.loadError': 'Не удалось загрузить цели iSCSI',
+	'iscsi.empty': 'Целей iSCSI пока нет',
+	'iscsi.emptyHint': 'Добавьте цель, чтобы дать компьютеру диск в томе пула.',
+	'iscsi.noVolumes': 'Цели iSCSI нужен том пула, которым управляет UNOS: создайте его на странице «Хранилище».',
+	'iscsi.noKernel':
+		'В ядре хоста нет цели iSCSI (LIO): отсутствуют модули target_core_mod, target_core_file и iscsi_target_mod.',
+	'iscsi.portals': 'Инициаторы подключаются к: {portals}',
+	'iscsi.noPortals': 'У хоста нет адреса локальной сети, поэтому ни один инициатор не достучится до целей.',
+	'iscsi.portalsProblem': 'Не удалось прочитать адреса хоста',
+	'iscsi.served': 'Обслуживается',
+	'iscsi.notServed': 'Не обслуживается',
+	'iscsi.iqn': 'Имя цели (IQN)',
+	'iscsi.lun': 'LUN',
+	'iscsi.lunValue': '{size} ГиБ в томе {volume} пула {pool}',
+	'iscsi.file': 'Файл',
+	'iscsi.initiators': 'Разрешённые инициаторы',
+	'iscsi.chapUser': 'Имя пользователя CHAP',
+	'iscsi.mutual': 'Взаимный CHAP',
+	'iscsi.yes': 'Да',
+	'iscsi.no': 'Нет',
+	'iscsi.sessions': 'Сейчас подключены',
+	'iscsi.noSessions': 'Ни один инициатор не подключён',
+	'iscsi.change': 'Изменить',
+	'iscsi.delete': 'Удалить',
+	'iscsi.created': 'Цель iSCSI {name} создана.',
+	'iscsi.changed': 'Цель iSCSI {name} изменена.',
+	'iscsi.deleted': 'Цель iSCSI {name} и данные её LUN удалены.',
+
+	'iscsi.form.title': 'Добавить цель iSCSI',
+	'iscsi.form.name': 'Имя',
+	'iscsi.form.nameHint': 'От 1 до 32 строчных латинских букв, цифр и «-». Входит в IQN цели.',
+	'iscsi.form.volume': 'Том',
+	'iscsi.form.chooseVolume': 'Выберите том',
+	'iscsi.form.size': 'Размер (ГиБ)',
+	'iscsi.form.sizeHint':
+		'LUN — разреженный файл: место занимается по мере записи данных и сейчас не резервируется. Оставьте столько свободного места в пуле.',
+	'iscsi.form.initiators': 'Разрешённые инициаторы',
+	'iscsi.form.initiatorsHint': 'По одному имени iSCSI в строке, как его показывает инициатор компьютера (iqn., eui. или naa.).',
+	'iscsi.form.initiatorsPlaceholder': 'iqn.1991-05.com.microsoft:desktop-pc',
+	'iscsi.form.chapUser': 'Имя пользователя CHAP',
+	'iscsi.form.chapUserHint': 'Если оставить пустым — имя цели.',
+	'iscsi.form.chapSecret': 'Секрет CHAP',
+	'iscsi.form.chapSecretHint':
+		'От 12 до 16 символов. Оставьте пустым, и UNOS создаст его сам. Он будет показан один раз, после создания цели.',
+	'iscsi.form.mutual': 'Взаимный CHAP: цель тоже подтверждает себя инициатору',
+	'iscsi.form.mutualSecret': 'Секрет взаимного CHAP',
+	'iscsi.form.mutualSecretHint': 'Должен отличаться от секрета CHAP. Оставьте пустым, и UNOS создаст его сам.',
+	'iscsi.form.create': 'Создать',
+	'iscsi.form.notCreated': 'Цель не создана',
+	'iscsi.form.nameRequired': 'Введите имя',
+	'iscsi.form.volumeRequired': 'Выберите том',
+	'iscsi.form.sizeRequired': 'Введите размер в целых ГиБ',
+	'iscsi.form.initiatorsRequired': 'Введите хотя бы один инициатор',
+
+	'iscsi.edit.title': 'Изменить {name}',
+	'iscsi.edit.newSecret': 'Задать новый секрет CHAP',
+	'iscsi.edit.newSecretHint':
+		'Все инициаторы цели будут отключены и должны войти снова с новым секретом. Оставьте поле пустым, и UNOS создаст секрет сам.',
+	'iscsi.edit.mutual': 'Взаимный CHAP',
+	'iscsi.edit.newMutualSecret': 'Задать новый секрет взаимного CHAP',
+	'iscsi.edit.save': 'Сохранить',
+	'iscsi.edit.notChanged': 'Цель не изменена',
+
+	'iscsi.secret.title': 'Секрет CHAP цели {name}',
+	'iscsi.secret.once':
+		'Введите его в инициаторах сейчас: UNOS показывает его только один раз. Потерянный секрет можно лишь заменить новым.',
+	'iscsi.secret.chap': 'Секрет CHAP',
+	'iscsi.secret.mutual': 'Секрет взаимного CHAP',
+	'iscsi.secret.copy': 'Копировать',
+	'iscsi.secret.copied': 'Скопировано',
+	'iscsi.secret.copyFailed': 'Не удалось скопировать: выделите текст и скопируйте его сами.',
+	'iscsi.secret.done': 'Готово',
+
+	'iscsi.remove.title': 'Удалить {name}?',
+	'iscsi.remove.warning':
+		'Будет удалён файл LUN {path} со всеми данными: диск исчезнет у всех инициаторов, и это нельзя отменить.',
+	'iscsi.remove.sessions': 'Сейчас подключены, и их сеансы завершатся: {initiators}',
+	'iscsi.remove.type': 'Введите имя цели, {name}, чтобы удалить её',
+	'iscsi.remove.confirm': 'Удалить цель и данные',
+	'iscsi.remove.notDeleted': 'Цель не удалена'
+};

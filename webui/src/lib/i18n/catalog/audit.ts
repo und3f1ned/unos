@@ -130,6 +130,15 @@ export const en = {
 	'audit.action.certificateDeleted': 'Certificate deleted',
 	'audit.action.certificateServed': 'Certificate served',
 	'audit.action.firewallChangeKept': 'Firewall change kept',
+	'audit.action.iscsiTargetCreated': 'Iscsi target created',
+	'audit.action.iscsiTargetChanged': 'Iscsi target changed',
+	'audit.action.iscsiTargetDeleted': 'Iscsi target deleted',
+	'audit.action.remoteAccessEnabled': 'Remote access enabled',
+	'audit.action.remoteAccessDisabled': 'Remote access disabled',
+	'audit.action.remoteAccessChanged': 'Remote access changed',
+	'audit.action.remoteAccessPeerAdded': 'Remote access peer added',
+	'audit.action.remoteAccessPeerRevoked': 'Remote access peer revoked',
+	'audit.action.appNamesChanged': 'App names changed',
 	'audit.action.other': 'Other',
 
 	// The types of resource that the server records: in English as it records them.
@@ -143,6 +152,7 @@ export const en = {
 	'audit.resource.group': 'group',
 	'audit.resource.smbAccount': 'smb_account',
 	'audit.resource.nfsExport': 'nfs_export',
+	'audit.resource.iscsiTarget': 'iscsi_target',
 	'audit.resource.apiToken': 'api_token',
 	'audit.resource.recoveryCodes': 'recovery_codes',
 	'audit.resource.securityKey': 'security_key',
@@ -164,7 +174,10 @@ export const en = {
 	'audit.resource.ups': 'ups',
 	'audit.resource.notificationChannel': 'notification_channel',
 	'audit.resource.offsite': 'offsite',
-	'audit.resource.certificate': 'certificate'
+	'audit.resource.certificate': 'certificate',
+	'audit.resource.remoteAccess': 'remote_access',
+	'audit.resource.remotePeer': 'remote_peer',
+	'audit.resource.appName': 'app_name'
 };
 
 export const ru: Translation<typeof en> = {
@@ -289,6 +302,15 @@ export const ru: Translation<typeof en> = {
 	'audit.action.certificateDeleted': 'Сертификат удалён',
 	'audit.action.certificateServed': 'Сертификат HTTPS сменён',
 	'audit.action.firewallChangeKept': 'Изменение брандмауэра сохранено',
+	'audit.action.iscsiTargetCreated': 'Цель iSCSI создана',
+	'audit.action.iscsiTargetChanged': 'Цель iSCSI изменена',
+	'audit.action.iscsiTargetDeleted': 'Цель iSCSI удалена',
+	'audit.action.remoteAccessEnabled': 'Удалённый доступ включён',
+	'audit.action.remoteAccessDisabled': 'Удалённый доступ выключен',
+	'audit.action.remoteAccessChanged': 'Внешний адрес удалённого доступа изменён',
+	'audit.action.remoteAccessPeerAdded': 'Узел удалённого доступа добавлен',
+	'audit.action.remoteAccessPeerRevoked': 'Узел удалённого доступа отозван',
+	'audit.action.appNamesChanged': 'Имена приложений изменены',
 	'audit.action.other': 'Другое',
 
 	'audit.resource.user': 'пользователь',
@@ -301,6 +323,7 @@ export const ru: Translation<typeof en> = {
 	'audit.resource.group': 'группа',
 	'audit.resource.smbAccount': 'учётная запись SMB',
 	'audit.resource.nfsExport': 'экспорт NFS',
+	'audit.resource.iscsiTarget': 'цель iSCSI',
 	'audit.resource.apiToken': 'API-токен',
 	'audit.resource.recoveryCodes': 'коды восстановления',
 	'audit.resource.securityKey': 'ключ безопасности',
@@ -322,5 +345,8 @@ export const ru: Translation<typeof en> = {
 	'audit.resource.ups': 'ИБП',
 	'audit.resource.notificationChannel': 'канал уведомлений',
 	'audit.resource.offsite': 'копия вне устройства',
-	'audit.resource.certificate': 'сертификат'
+	'audit.resource.certificate': 'сертификат',
+	'audit.resource.remoteAccess': 'удалённый доступ',
+	'audit.resource.remotePeer': 'узел удалённого доступа',
+	'audit.resource.appName': 'имя приложения'
 };

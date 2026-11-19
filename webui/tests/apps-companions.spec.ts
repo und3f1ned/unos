@@ -60,7 +60,7 @@ const APPS: Expected[] = [
     id: 'paperless-ngx',
     name: 'Paperless-ngx',
     companion: 'redis',
-    size: '3.13 GB',
+    size: '3.39 GB',
     secrets: ['secret-key'],
     wiring: [
       ['PAPERLESS_REDIS', 'redis://redis:6379'],
@@ -72,7 +72,7 @@ const APPS: Expected[] = [
     id: 'linkwarden',
     name: 'Linkwarden',
     companion: 'database',
-    size: '2.56 GB',
+    size: '2.94 GB',
     secrets: ['database/password', 'nextauth-secret'],
     wiring: [
       ['DATABASE_PASSWORD_FILE', '/run/secrets/db-password'],

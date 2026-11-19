@@ -54,9 +54,10 @@ from typing import Optional
 from urllib.parse import urlsplit
 
 from fastapi import HTTPException
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from .. import state_files
+from .. import paths, state_files
+from ..config import get_settings
 from ..audit.changes import changed_fields
 from ..backup.router import (
     MAX_ARCHIVE_BYTES,
@@ -79,13 +80,14 @@ from . import restic
 
 logger = logging.getLogger(__name__)
 
-SETTINGS_FILE = "/data/offsite.json"
-SECRETS_FILE = "/data/offsite_secrets.json"
-STATUS_FILE = "/data/offsite_status.json"
-# The data volume, and the folder below which the disks are mounted: the filesystems of both are the
-# system disk's, where a disk target is refused (on_system_disk).
-DATA_DIR = "/data"
-MOUNTS_BASE = "/mnt"
+SETTINGS_FILE = str(paths.OFFSITE_SETTINGS)
+SECRETS_FILE = str(paths.OFFSITE_SECRETS)
+STATUS_FILE = str(paths.OFFSITE_STATUS)
+# The data directory (UNOS_DATA_DIR), and the folder below which the disks are mounted
+# (UNOS_MOUNTS_BASE_PATH): the filesystems of both are the system disk's, where a disk target is
+# refused (on_system_disk).
+DATA_DIR = str(paths.DATA_DIR)
+MOUNTS_BASE = get_settings().mounts_base_path
 # Where the disks under a filesystem are found: the block devices by number, the devices of each btrfs
 # filesystem, and the mounts of this process (a filesystem without a device number of its own, FUSE).
 SYS_DEV_BLOCK = "/sys/dev/block"
@@ -177,31 +179,72 @@ class Kind(str, Enum):
     S3 = "s3"
 
 
+_SOURCES_EXAMPLE = ["/mnt/pools/data/documents", "/mnt/pools/data/photos"]
+_RETENTION_EXAMPLE = {"keep_daily": 7, "keep_weekly": 4, "keep_monthly": 12, "check_percent": 2}
+
+
+def _retention_text(period: str) -> str:
+    return (f"How many {period} snapshots the retention keeps, 0 to {MAX_KEEP}; keep_daily, keep_weekly and "
+            "keep_monthly may not all be 0.")
+
+
 class OffsiteSettings(BaseModel):
     """The copy target and what is copied: SETTINGS_FILE, and the settings in the answers. No secret."""
 
-    kind: Kind
-    path: Optional[str] = None  # disk: the folder of the repository, below MOUNTS_BASE
-    endpoint: Optional[str] = None  # s3: https://host[:port] or http://host[:port]
-    bucket: Optional[str] = None
-    prefix: Optional[str] = None
-    region: Optional[str] = None
-    access_key_id: Optional[str] = None
-    sources: list[str] = []  # folders of the pools
-    limit_upload_kib: int = 0  # KiB/s, 0: none; s3 only
-    limit_download_kib: int = 0
-    keep_daily: int = 7
-    keep_weekly: int = 4
-    keep_monthly: int = 12
-    check_percent: int = 2  # the share of the data that each check reads, 0 to 100
+    kind: Kind = Field(description=f"Where the copy repository is: disk, a folder on a disk mounted below {MOUNTS_BASE} "
+                                   "that is not the system disk; s3, a bucket of an S3-compatible store.")
+    # disk: the folder of the repository, below MOUNTS_BASE
+    path: Optional[str] = Field(None, description=f"disk: the folder of the copy repository, below {MOUNTS_BASE}, "
+                                                  "made when it is missing; null for s3.")
+    # s3: https://host[:port] or http://host[:port]
+    endpoint: Optional[str] = Field(None, description="s3: the store's address, https:// or http://, its host and "
+                                                      "an optional port; null for disk.")
+    bucket: Optional[str] = Field(None, description="s3: the bucket, 3 to 63 letters, digits, '.', '_' or '-'; "
+                                                    "null for disk.")
+    prefix: Optional[str] = Field(None, description="s3: the folders of the copy repository in the bucket, joined "
+                                                    "by /; null for its top.")
+    region: Optional[str] = Field(None, description="s3: the store's region, such as eu-central-1; null when it "
+                                                    "needs none.")
+    access_key_id: Optional[str] = Field(None, description="s3: the access key ID; null for disk.")
+    # folders of the pools
+    sources: list[str] = Field([], description=f"The folders of the pools that a copy takes, 1 to {MAX_SOURCES}, "
+                                               "each on a mounted pool.")
+    # KiB/s, 0: none; s3 only
+    limit_upload_kib: int = Field(0, description=f"s3: the most that restic sends, in KiB/s, 0 to {MAX_LIMIT_KIB}; "
+                                                 "0: no limit.")
+    limit_download_kib: int = Field(0, description=f"s3: the most that restic reads, in KiB/s, 0 to {MAX_LIMIT_KIB}; "
+                                                   "0: no limit.")
+    keep_daily: int = Field(7, description=_retention_text("daily"))
+    keep_weekly: int = Field(4, description=_retention_text("weekly"))
+    keep_monthly: int = Field(12, description=_retention_text("monthly"))
+    # the share of the data that each check reads, 0 to 100
+    check_percent: int = Field(2, description="The share of the data that the check after each copy reads, 0 to "
+                                              "100 percent; 0 checks the repository's structure only.")
 
 
 class SettingsRequest(OffsiteSettings):
     """PUT /offsite/settings. The secrets are write-only: in no answer, no repr() and no settings file.
     Without them an edit of the same target keeps the stored ones."""
 
-    password: Optional[str] = Field(default=None, exclude=True, repr=False)
-    s3_secret_access_key: Optional[str] = Field(default=None, exclude=True, repr=False)
+    model_config = ConfigDict(json_schema_extra={"examples": [
+        {"kind": "disk", "path": "/mnt/pools/backup/unos-copy", "sources": _SOURCES_EXAMPLE,
+         **_RETENTION_EXAMPLE, "password": "example-repository-password"},
+        {"kind": "s3", "endpoint": "https://s3.example.com", "bucket": "nas-copies", "prefix": "unos",
+         "region": "eu-central-1", "access_key_id": "EXAMPLEACCESSKEYID", "sources": _SOURCES_EXAMPLE,
+         "limit_upload_kib": 2048, "limit_download_kib": 0, **_RETENTION_EXAMPLE,
+         "password": "example-repository-password", "s3_secret_access_key": "example-secret-access-key"},
+    ]})
+
+    password: Optional[str] = Field(
+        default=None, exclude=True, repr=False,
+        description=f"The copy repository's password, {MIN_PASSWORD_LENGTH} to {MAX_PASSWORD_LENGTH} characters; "
+                    "write-only. Without it, an edit of the same repository keeps the stored one.",
+    )
+    s3_secret_access_key: Optional[str] = Field(
+        default=None, exclude=True, repr=False,
+        description="s3: the secret access key; write-only. Without it, an edit with the same endpoint and access "
+                    "key ID keeps the stored one.",
+    )
 
 
 class Secrets(BaseModel):
@@ -212,56 +255,84 @@ class Secrets(BaseModel):
 
 
 class CopySummary(BaseModel):
-    files_new: int = 0
-    files_changed: int = 0
-    files_unmodified: int = 0
-    bytes_added: int = 0  # by both snapshots, before compression
-    configuration_snapshot: Optional[str] = None
-    data_snapshot: Optional[str] = None
+    """What a copy added."""
+
+    files_new: int = Field(0, description="The files that the copy of the data found new.")
+    files_changed: int = Field(0, description="The files that it found changed.")
+    files_unmodified: int = Field(0, description="The files that it found unchanged.")
+    # by both snapshots, before compression
+    bytes_added: int = Field(0, description="The bytes that both snapshots added to the copy repository, before "
+                                            "compression.")
+    configuration_snapshot: Optional[str] = Field(None, description="The ID of its configuration snapshot.")
+    data_snapshot: Optional[str] = Field(None, description="The ID of its data snapshot.")
 
 
 class CopyResult(BaseModel):
     """The last copy, in STATUS_FILE. Times are ISO 8601 in UTC."""
 
-    started: str
-    ended: Optional[str] = None
-    trigger: str  # task: a task of the Scheduler; manual: Run now on Backup & Restore
-    success: bool = False
-    step: Optional[str] = None  # the step that failed: settings, folders, unlock, configuration, data, ...
-    error: Optional[str] = None
-    summary: Optional[CopySummary] = None
-    check: Optional[str] = None  # passed or failed; None when the run did not get there
-    restore_test: Optional[str] = None
+    started: str = Field(description="When it started, in UTC with +00:00.")
+    ended: Optional[str] = Field(None, description="When it ended, in UTC with +00:00.")
+    # task: a task of the Scheduler; manual: Run now on Backup & Restore
+    trigger: str = Field(description="task: a task of the Scheduler; manual: Run now.")
+    success: bool = Field(False, description="Whether it succeeded.")
+    # the step that failed: settings, folders, unlock, configuration, data, ...
+    step: Optional[str] = Field(None, description="The step that failed: settings, folders, unlock, "
+                                                  "configuration, data, forget, check or restore_test.")
+    error: Optional[str] = Field(None, description="Why it failed; null after a success.")
+    summary: Optional[CopySummary] = Field(None, description="What it added; null when it did not get that far.")
+    # passed or failed; None when the run did not get there
+    check: Optional[str] = Field(None, description="The check of the copy repository: passed or failed; null when "
+                                                   "the copy did not get there.")
+    restore_test: Optional[str] = Field(None, description="The restore test of the configuration: passed or "
+                                                          "failed; null when the copy did not get there.")
     # What the copy of the data could not read that is not the error: the files that vanished while
     # restic read the folders (no failure), and those that could not be read when a later step failed.
-    note: Optional[str] = None
+    note: Optional[str] = Field(None, description="The files that vanished while restic read them, and those it "
+                                                  "could not read when a later step failed; null when none.")
 
 
 class RestoreResult(BaseModel):
     """The last restore of files, in STATUS_FILE."""
 
-    snapshot_id: str
-    path: Optional[str] = None
-    folder: str
-    started: str
-    ended: Optional[str] = None
-    success: bool = False
-    error: Optional[str] = None
+    snapshot_id: str = Field(description="The full ID of the snapshot.")
+    path: Optional[str] = Field(None, description="The folder of the snapshot that it restored; null for all of it.")
+    folder: str = Field(description="The new folder that it wrote, removed again when a failed restore wrote "
+                                    "nothing into it.")
+    started: str = Field(description="When it started, in UTC with +00:00.")
+    ended: Optional[str] = Field(None, description="When it ended, in UTC with +00:00.")
+    success: bool = Field(False, description="Whether it succeeded.")
+    error: Optional[str] = Field(None, description="Why it failed; null after a success.")
 
 
 class Status(BaseModel):
-    last_copy: Optional[CopyResult] = None
-    last_restore: Optional[RestoreResult] = None
+    last_copy: Optional[CopyResult] = Field(None, description="The last copy; null before the first.")
+    last_restore: Optional[RestoreResult] = Field(None, description="The last restore of files; null before the "
+                                                                    "first.")
+
+
+_SNAPSHOT_ID_TEXT = "A snapshot's ID, or at least its first 8 hexadecimal digits"
 
 
 class RestoreConfigurationRequest(BaseModel):
-    snapshot_id: str
+    """The configuration snapshot to put into the backup list."""
+
+    model_config = ConfigDict(json_schema_extra={"examples": [{"snapshot_id": "4f9a1c2e"}]})
+
+    snapshot_id: str = Field(description=f"{_SNAPSHOT_ID_TEXT}, of a configuration snapshot.")
 
 
 class RestoreFilesRequest(BaseModel):
-    snapshot_id: str
-    pool: str
-    path: Optional[str] = None  # a folder in the snapshot; none: all of it
+    """The snapshot, or a folder of it, to restore into a new folder of a pool."""
+
+    model_config = ConfigDict(json_schema_extra={"examples": [
+        {"snapshot_id": "9b31d07f", "pool": "data", "path": "/mnt/pools/data/photos/2025"},
+    ]})
+
+    snapshot_id: str = Field(description=f"{_SNAPSHOT_ID_TEXT}.")
+    pool: str = Field(description="The pool at whose top the new folder restored-<date>-<time in UTC> is made.")
+    # a folder in the snapshot; none: all of it
+    path: Optional[str] = Field(None, description="A folder in the snapshot, as an absolute path such as "
+                                                  "/mnt/pools/data/photos; none for all of it.")
 
 
 # --- what runs ------------------------------------------------------------------------------------

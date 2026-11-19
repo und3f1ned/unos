@@ -9,12 +9,13 @@ from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
-from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks
-from pydantic import BaseModel, Field
-from typing import Optional
+from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks, Query
+from fastapi import Path as PathParam
+from pydantic import BaseModel, ConfigDict, Field
+from typing import Annotated, Optional
 
 from . import problems
-from .. import host, state_files
+from .. import host, paths, state_files
 from ..times import stored_time_text, utc_now, utc_text
 from ..auth.utils import verify_token
 from ..security.validators import validate_pool_name
@@ -25,82 +26,110 @@ from ..storage.schemas import PoolInfo
 from ..notifications.router import load_configs as load_notification_configs
 from ..notifications.router import history_entry, save_logs, send_email, send_through
 from ..notifications.schemas import NotificationEvent, NotificationType, NotificationChannel
+from ..openapi import answer, errors
 
 router = APIRouter(prefix="/health", tags=["health"])
 logger = logging.getLogger(__name__)
 
 
 class SmartAttribute(BaseModel):
-    id: int
-    name: str
-    value: int
-    worst: int
-    thresh: int
-    raw_value: str
-    status: str  # ok, warning, critical
+    """One ATA SMART attribute of a disk, as smartctl reads it."""
+
+    id: int = Field(description="The attribute's ATA id, such as 5 or 194.")
+    name: str = Field(description="smartctl's name of the attribute, such as Reallocated_Sector_Ct; Unknown without one.")
+    value: int = Field(description="The normalized value, which falls toward thresh as the disk wears.")
+    worst: int = Field(description="The lowest normalized value the disk has recorded.")
+    thresh: int = Field(description="The threshold at or below which the disk's maker counts it as failing; 0 for none.")
+    raw_value: str = Field(description="The raw value, as smartctl gives it.")
+    status: str = Field(description="critical at or below thresh, warning within 10 above it, else ok; ok when thresh is 0.")
 
 
 class SmartInfo(BaseModel):
-    device: str
-    model: str
-    serial: str
-    firmware: str
-    capacity: str
-    temperature: Optional[int]
-    power_on_hours: Optional[int]
-    power_cycle_count: Optional[int]
-    # PASSED, FAILED, UNKNOWN; STANDBY: the disk sleeps, and smartctl -n standby left it alone, so
-    # no SMART data was read (ADR-0378).
-    health_status: str
-    attributes: list[SmartAttribute]  # ATA attributes; NVMe disks have none
-    # The numbers of an NVMe disk's SMART/Health Information log, by smartctl's
-    # names and in its order (critical_warning, available_spare, media_errors,
-    # ...); None for other disks.
-    nvme_health: Optional[dict[str, int]] = None
-    self_test_status: Optional[str]
-    last_test_result: Optional[str]
+    """The SMART data of a whole disk of the host."""
+
+    device: str = Field(description="The disk's path, such as /dev/sda.")
+    model: str = Field(description="The disk's model; Unknown when smartctl reports none (GET /health/disks then gives lsblk's).")
+    serial: str = Field(description="The disk's serial as smartctl reports it; Unknown when it reports none and for a disk "
+                        "in standby, for which GET /health/disks gives lsblk's.")
+    firmware: str = Field(description="The firmware version; Unknown when smartctl reports none.")
+    capacity: str = Field(description="The size, such as 3.64 TB or 476.94 GB; Unknown when smartctl reports none "
+                          "(GET /health/disks then gives lsblk's).")
+    temperature: Optional[int] = Field(description="The temperature in degrees Celsius; null when the disk reports none.")
+    power_on_hours: Optional[int] = Field(description="The hours the disk has been powered on; null when it reports none.")
+    power_cycle_count: Optional[int] = Field(description="How often the disk was powered on; null when it reports none.")
+    # ADR-0378: smartctl -n standby leaves a disk that sleeps alone.
+    health_status: str = Field(description=(
+        "PASSED or FAILED: the disk's overall health self-assessment; UNKNOWN when smartctl cannot tell; "
+        "STANDBY when the disk sleeps: it is left asleep, and no SMART data is read."))
+    attributes: list[SmartAttribute] = Field(description="The disk's ATA SMART attributes; none for NVMe disks.")
+    nvme_health: Optional[dict[str, int]] = Field(None, description=(
+        "An NVMe disk's SMART/Health Information log: its numbers by smartctl's names and in its order, such as "
+        "critical_warning, available_spare and media_errors; null for other disks."))
+    self_test_status: Optional[str] = Field(description=(
+        "The type of the newest self-test in the disk's log, such as Short offline; null when the log has none."))
+    last_test_result: Optional[str] = Field(description=(
+        "The result of the newest self-test, such as Completed without error; null when the log has none."))
 
 
 class SmartTestResult(BaseModel):
-    status: str
-    message: str
+    """A SMART self-test that the disk started."""
+
+    status: str = Field(description="started.")
+    message: str = Field(description="Which test started on which disk, in English.")
 
 
 class RaidDeviceStats(BaseModel):
-    device: str
-    write_io_errs: int
-    read_io_errs: int
-    flush_io_errs: int
-    corruption_errs: int
-    generation_errs: int
-    has_errors: bool
+    """The error counters of one device of a pool, as btrfs device stats reports them since their last reset."""
+
+    device: str = Field(description="The device's path, such as /dev/sda.")
+    write_io_errs: int = Field(description="Writes that failed.")
+    read_io_errs: int = Field(description="Reads that failed.")
+    flush_io_errs: int = Field(description="Flushes to the device that failed.")
+    corruption_errs: int = Field(description="Blocks whose checksum did not match, found by a read or a scrub.")
+    generation_errs: int = Field(description="Blocks of an older generation than expected: writes that the device lost.")
+    has_errors: bool = Field(description="Whether any of its counters is above 0.")
 
 
 class RaidHealthInfo(BaseModel):
-    pool: str
-    mount_point: str
-    profile: Optional[str]
-    # The pool's health as the Storage page reports it (storage.pools):
-    # healthy, degraded (devices missing), error (error counters, or forced
-    # read-only), unmounted (not mounted at mount_point), unknown (the mount
-    # state or the error counters could not be read)
-    status: str
-    devices: list[RaidDeviceStats]
-    total_errors: int
-    last_checked: str
-    missing_devices: int = 0
-    read_only: bool = False
-    # btrfs made the filesystem read-only after an error (read_only is also
-    # true for a pool mounted read-only on purpose).
-    forced_read_only: bool = False
+    """The RAID health of one pool."""
+
+    model_config = ConfigDict(json_schema_extra={"examples": [{
+        "pool": "data", "mount_point": "/mnt/pools/data", "profile": "raid1", "status": "healthy",
+        "devices": [
+            {"device": "/dev/sda", "write_io_errs": 0, "read_io_errs": 0, "flush_io_errs": 0,
+             "corruption_errs": 0, "generation_errs": 0, "has_errors": False},
+            {"device": "/dev/sdb", "write_io_errs": 0, "read_io_errs": 0, "flush_io_errs": 0,
+             "corruption_errs": 0, "generation_errs": 0, "has_errors": False},
+        ],
+        "total_errors": 0, "last_checked": "2026-11-19T08:15:03.481207Z", "missing_devices": 0,
+        "read_only": False, "forced_read_only": False,
+    }]})
+
+    pool: str = Field(description="The pool's name.")
+    mount_point: str = Field(description="Where the pool is mounted when it is, such as /mnt/pools/data.")
+    profile: Optional[str] = Field(description=(
+        "The data profile, such as single, raid1 or raid10; null when the pool is not mounted or btrfs does not tell."))
+    # The pool's health as the Storage page reports it (storage.pools).
+    status: str = Field(description=(
+        "healthy; degraded: devices of the pool are missing; error: its error counters show errors, or btrfs made it "
+        "read-only after an error; unmounted: nothing is mounted at mount_point; unknown: the mount state or the error "
+        "counters could not be read."))
+    devices: list[RaidDeviceStats] = Field(description=(
+        "The error counters of each device; none when the pool is not mounted or they cannot be read."))
+    total_errors: int = Field(description="The sum of the error counters of its devices; 0 when it is not mounted.")
+    last_checked: str = Field(description="When the pool was read, in UTC.")
+    missing_devices: int = Field(0, description="How many devices of the pool btrfs cannot find.")
+    read_only: bool = Field(False, description="Whether it is mounted read-only, on purpose or after an error.")
+    forced_read_only: bool = Field(False, description=(
+        "Whether btrfs made the filesystem read-only after an error (read_only is true then too)."))
 
 
 # In-memory state for RAID monitoring
 _raid_monitor_running = False
 _raid_monitor_task: Optional[asyncio.Task] = None
 RAID_CHECK_INTERVAL = 300  # Check every 5 minutes
-RAID_STATUS_FILE = "/data/raid_status.json"
-SMART_HISTORY_FILE = "/data/smart_history.json"
+RAID_STATUS_FILE = str(paths.RAID_STATUS)
+SMART_HISTORY_FILE = str(paths.SMART_HISTORY)
 SMART_CHECK_INTERVAL = 3600  # Check SMART every hour
 # Snapshots kept per disk: 30 days of hourly passes (ADR-0235).
 SMART_HISTORY_LIMIT = 720
@@ -136,35 +165,43 @@ _smart_monitor_task: Optional[asyncio.Task] = None
 
 
 class SmartHistoryEntry(BaseModel):
-    timestamp: str
-    device: str
-    serial: str  # smartctl's: the key of the disk's history
-    # The disk's serial as lsblk reported it with this snapshot, which tells
-    # which connected disk the history belongs to (ADR-0235); None when lsblk
-    # reports none (some USB bridges).
-    lsblk_serial: Optional[str] = None
-    attributes: dict[int, int]  # attr_id -> raw_value
-    temperature: Optional[int] = None
-    power_on_hours: Optional[int] = None
+    """One snapshot of a disk in the SMART history."""
+
+    timestamp: str = Field(description="When it was taken, in UTC.")
+    device: str = Field(description="The disk's path then, such as /dev/sda.")
+    serial: str = Field(description="The disk's serial as smartctl reports it: the key of its history; unknown without one.")
+    # Tells which connected disk the history belongs to (ADR-0235).
+    lsblk_serial: Optional[str] = Field(None, description=(
+        "The disk's serial as lsblk reported it then; null when lsblk reports none, as behind some USB bridges."))
+    attributes: dict[int, int] = Field(description=(
+        "The raw values of the counters 5, 187, 188, 197, 198 and 199 that the disk reports, by attribute id."))
+    temperature: Optional[int] = Field(None, description="The temperature in degrees Celsius; null when the disk reports none.")
+    power_on_hours: Optional[int] = Field(None, description="The hours the disk has been powered on; null when it reports none.")
     # What smartctl said of the disk's health with this snapshot, which the SMART monitor keeps in
-    # RAM for the disk problems (ADR-0332); never stored in the history (exclude). The overall
-    # health self-assessment FAILED; the result of the newest self-test, when it failed.
-    health_failed: bool = Field(default=False, exclude=True)
-    failed_self_test: Optional[str] = Field(default=None, exclude=True)
+    # RAM for the disk problems (ADR-0332); never stored in the history (exclude).
+    health_failed: bool = Field(default=False, exclude=True, description=(
+        "Whether the disk's overall health self-assessment FAILED."))
+    failed_self_test: Optional[str] = Field(default=None, exclude=True, description=(
+        "The result of the newest self-test when it failed; null otherwise."))
 
 
 class SmartTrendAlert(BaseModel):
-    device: str
-    serial: str
-    model: str
-    attribute_name: str
-    attribute_id: int
-    current_value: int
-    previous_value: int
-    change: int
-    severity: str  # warning, critical
-    message: str
-    recommendation: str
+    """A counter of a disk's SMART history that rose."""
+
+    device: str = Field(description="The disk's path in its latest snapshot.")
+    serial: str = Field(description="The disk's serial as smartctl reports it; unknown for the disks without one.")
+    model: str = Field(description="Empty: the SMART history keeps no model.")
+    attribute_name: str = Field(description="The counter's SMART attribute, such as Reallocated_Sector_Ct.")
+    attribute_id: int = Field(description="Its ATA id: 5, 187, 188, 197, 198 or 199.")
+    current_value: int = Field(description="Its latest raw value.")
+    previous_value: int = Field(description=(
+        "The first of its last 24 raw values in the history (about a day of hourly snapshots), or its oldest one."))
+    change: int = Field(description="current_value less previous_value.")
+    severity: str = Field(description=(
+        "critical for a sector counter (5, 197, 198) that rose by more than 10 or another that rose by more than "
+        "100, else warning."))
+    message: str = Field(description="The rise, in English.")
+    recommendation: str = Field(description="What to do, in English.")
 
 
 class SmartHistoryUnreadable(Exception):
@@ -444,7 +481,7 @@ def _trend_alert(serial: str, device: str, attr_id: int, previous: int, current:
     return SmartTrendAlert(
         device=device,
         serial=serial,
-        model="",  # Filled in later
+        model="",  # the SMART history keeps no model
         attribute_name=attr_name,
         attribute_id=attr_id,
         current_value=current,
@@ -1344,40 +1381,106 @@ def _disk_health(disk: storage_disks.HostDisk) -> SmartInfo:
     return info.model_copy(update=from_lsblk)
 
 
+_DISKS_UNLISTED = "The host's disks cannot be listed."
+_NOT_A_DISK = (
+    "the device is not a whole disk of the host: a partition, a RAID array, the boot SD card or eMMC, a virtual "
+    "device, a /dev/disk/by-id link, or a disk that left the host."
+)
+_HISTORY_UNREADABLE = "The SMART monitor has not read the SMART history yet, and its file cannot be read."
+_SMART_INFO_EXAMPLE = {
+    "device": "/dev/sda", "model": "WDC WD40EFRX-68N32N0", "serial": "WD-EXAMPLE0001", "firmware": "82.00A82",
+    "capacity": "3.64 TB", "temperature": 34, "power_on_hours": 12345, "power_cycle_count": 87,
+    "health_status": "PASSED",
+    "attributes": [
+        {"id": 5, "name": "Reallocated_Sector_Ct", "value": 200, "worst": 200, "thresh": 140, "raw_value": "0",
+         "status": "ok"},
+        {"id": 194, "name": "Temperature_Celsius", "value": 116, "worst": 104, "thresh": 0, "raw_value": "34",
+         "status": "ok"},
+    ],
+    "nvme_health": None, "self_test_status": "Short offline", "last_test_result": "Completed without error",
+}
+_SMART_INFO = (
+    "device, model, serial, firmware, capacity; temperature in degrees Celsius, power_on_hours, power_cycle_count "
+    "(null when the disk reports none); health_status: PASSED, FAILED, UNKNOWN when smartctl cannot tell, or "
+    "STANDBY for a disk that sleeps, left asleep and without data; attributes: the ATA SMART attributes (id, name, "
+    "value, worst, thresh, raw_value, status: ok, warning within 10 of thresh, critical at or below it), none for "
+    "NVMe disks; nvme_health: an NVMe disk's SMART/Health Information log by smartctl's names, null for other disks; "
+    "self_test_status and last_test_result: the type and the result of the newest self-test, null without one."
+)
+_DISK_DEVICE = Annotated[str, PathParam(description="A whole disk of the host, as sda or /dev/sda.")]
+_POOL_NAME = Annotated[str, PathParam(description="The pool's name.")]
+
+
 # The SMART endpoints are plain functions: FastAPI runs them in its thread
 # pool, so smartctl (seconds per disk) and lsblk on the host do not block the
 # event loop.
-@router.get("/disks")
+@router.get(
+    "/disks", summary="List the disks' SMART health",
+    responses={
+        **answer({"disks": [_SMART_INFO_EXAMPLE, {
+            "device": "/dev/sdb", "model": "ST4000VN008-2DR166", "serial": "ZEXAMPLE2", "firmware": "Unknown",
+            "capacity": "3.64 TB", "temperature": None, "power_on_hours": None, "power_cycle_count": None,
+            "health_status": "STANDBY", "attributes": [], "nvme_health": None, "self_test_status": None,
+            "last_test_result": None,
+        }]}, "disks: the SMART data of each whole disk of the host, as GET /health/disk/{device} answers it, but "
+             "that lsblk's model, size and, for a disk in standby, serial stand in for those smartctl does not "
+             "report, and a disk that smartctl cannot read has health_status UNKNOWN. Each disk has " + _SMART_INFO),
+        **errors({500: _DISKS_UNLISTED}),
+    },
+)
 def get_disk_health(_: dict = Depends(verify_token)):
     """SMART health of the host's whole disks, as the Storage page lists them.
 
-    A system disk on NVMe, SATA or USB is included; the boot SD card/eMMC
-    and virtual devices are not (storage.disks.host_disks). Every disk
-    listed here answers on GET /health/disk/{device}. 500 when the host's
-    disks cannot be listed.
+    A system disk on NVMe, SATA or USB is included; the boot SD card or eMMC and virtual devices
+    are not. Every disk listed here answers on GET /health/disk/{device}. A disk that sleeps is
+    left asleep.
+    \f
+    storage.disks.host_disks; ADR-0378.
     """
     return {"disks": [_disk_health(disk) for disk in storage_disks.host_disks_or_500()]}
 
 
-@router.get("/disk/{device:path}")
-def get_disk_smart(device: str, _: dict = Depends(verify_token)):
-    """Get detailed SMART data for a whole disk of the host (``sda`` or ``/dev/sda``).
-
-    400 for anything else (a partition, the boot SD card, /dev/null, a
-    /dev/disk/by-id link, ...); 500 when the host's disks cannot be listed.
+@router.get(
+    "/disk/{device:path}", summary="Read a disk's SMART data",
+    responses={
+        **answer(_SMART_INFO_EXAMPLE, "The disk's SMART data: " + _SMART_INFO),
+        **errors({
+            400: _NOT_A_DISK[0].upper() + _NOT_A_DISK[1:],
+            500: f"{_DISKS_UNLISTED[:-1]}, the container's node of the disk cannot be made, or smartctl gave no "
+                 "JSON or no answer in time.",
+        }),
+    },
+)
+def get_disk_smart(device: _DISK_DEVICE, _: dict = Depends(verify_token)):
+    """The SMART data of a whole disk of the host, given as ``sda`` or ``/dev/sda``. A disk that
+    sleeps is left asleep: its health_status is STANDBY, without data.
+    \f
+    ADR-0378, ADR-0414.
     """
     return parse_smart_data(storage_disks.whole_disk_device(device))
 
 
-@router.post("/disk/{device:path}/test")
+@router.post(
+    "/disk/{device:path}/test", summary="Start a SMART self-test",
+    responses={
+        **answer({"status": "started", "message": "Short test started on /dev/sda"},
+                 "status started, and a message that names the test and the disk."),
+        **errors({
+            400: f"test_type is not short, long or conveyance, or {_NOT_A_DISK}",
+            500: f"{_DISKS_UNLISTED[:-1]}, the container's node of the disk cannot be made, or smartctl failed or "
+                 f"did not answer within {SMARTCTL_TIMEOUT} seconds.",
+        }),
+    },
+)
 def start_smart_test(
-    device: str,
-    test_type: str = "short",
+    device: _DISK_DEVICE,
+    test_type: Annotated[str, Query(description="The self-test: short, long or conveyance.")] = "short",
     background_tasks: BackgroundTasks = None,
     _: dict = Depends(verify_token)
 ):
-    """Start a SMART self-test on a whole disk of the host (``sda`` or ``/dev/sda``).
-
+    """Start a SMART self-test on a whole disk of the host, given as ``sda`` or ``/dev/sda``. The
+    disk runs the test on its own; its result shows in the disk's SMART data when it ends.
+    \f
     400 for another device or test type, also for a disk that left the host after it was listed;
     500 when the host's disks cannot be listed, smartctl fails, the container's node of the disk
     cannot be made (ADR-0414), and when smartctl does not answer within SMARTCTL_TIMEOUT: it is
@@ -1408,10 +1511,24 @@ def start_smart_test(
     )
 
 
-@router.get("/overview")
+@router.get(
+    "/overview", summary="Count the disks by SMART health",
+    responses={
+        **answer({"total_disks": 3, "healthy": 1, "warning": 0, "failed": 0, "unknown": 0, "standby": 2,
+                  "average_temperature": 34},
+                 "total_disks: the disks of GET /health/disks; healthy: PASSED with no attribute at warning or "
+                 "critical; warning: PASSED with one; failed: FAILED; unknown: smartctl could not tell; standby: "
+                 "asleep; average_temperature: the rounded average in degrees Celsius of the disks that report one, "
+                 "null when none does."),
+        **errors({500: _DISKS_UNLISTED}),
+    },
+)
 def get_health_overview(_: dict = Depends(verify_token)):
-    """Health counts of the disks of GET /health/disks (500 when they cannot be listed); a disk that
-    sleeps counts as standby (ADR-0378)."""
+    """How many disks of GET /health/disks are healthy, warn, fail, cannot be read or sleep, and
+    their average temperature. A disk that sleeps is left asleep and counts as standby.
+    \f
+    ADR-0378.
+    """
     disks = storage_disks.host_disks_or_500()
 
     total_disks = len(disks)
@@ -1457,9 +1574,12 @@ def get_health_overview(_: dict = Depends(verify_token)):
 
 # ==================== RAID Health Monitoring ====================
 
-@router.get("/raid", response_model=list[RaidHealthInfo])
+@router.get(
+    "/raid", response_model=list[RaidHealthInfo], summary="Read the RAID health of every pool",
+    responses=errors({500: "The pools cannot be read."}),
+)
 async def get_raid_health(_: dict = Depends(verify_token)):
-    """Get RAID health status for all BTRFS pools."""
+    """The RAID health of every pool, mounted or not: its status and the error counters of its devices."""
     try:
         return await check_raid_health()
     except Exception as exc:
@@ -1467,9 +1587,22 @@ async def get_raid_health(_: dict = Depends(verify_token)):
         raise HTTPException(500, f"Could not check the pools: {exc}") from exc
 
 
-@router.get("/raid/{pool_name}")
-async def get_pool_raid_health(pool_name: str, _: dict = Depends(verify_token)):
-    """Get RAID health for a specific pool."""
+@router.get(
+    "/raid/{pool_name}", summary="Read a pool's RAID health",
+    responses={
+        **answer(RaidHealthInfo.model_config["json_schema_extra"]["examples"][0],
+                 "The pool's RAID health: pool, mount_point, profile (null when not mounted), status (healthy, "
+                 "degraded, error, unmounted or unknown), devices with their error counters, total_errors, "
+                 "last_checked in UTC, missing_devices, read_only and forced_read_only, as GET /health/raid has them."),
+        **errors({
+            400: "The name is not a valid pool name.",
+            404: "No pool has that name.",
+            500: "The pool cannot be read.",
+        }),
+    },
+)
+async def get_pool_raid_health(pool_name: _POOL_NAME, _: dict = Depends(verify_token)):
+    """The RAID health of one pool: its status and the error counters of its devices."""
     name = validate_pool_name(pool_name)
     try:
         info = await asyncio.to_thread(storage_pools.get_pool, name)
@@ -1482,9 +1615,21 @@ async def get_pool_raid_health(pool_name: str, _: dict = Depends(verify_token)):
     return await asyncio.to_thread(_raid_health_of_pool, info)
 
 
-@router.post("/raid/{pool_name}/reset-stats")
-async def reset_device_stats(pool_name: str, _: dict = Depends(verify_token)):
-    """Reset error statistics for a pool (after replacing a drive)."""
+@router.post(
+    "/raid/{pool_name}/reset-stats", summary="Reset the error counters of a pool's devices",
+    responses={
+        **answer({"status": "ok", "message": "Error stats reset for pool data"},
+                 "status ok, and a message that names the pool."),
+        **errors({
+            400: "The name is not a valid pool name.",
+            404: "No pool has that name: its mount point does not exist.",
+            500: "btrfs device stats failed or did not answer in time.",
+        }),
+    },
+)
+async def reset_device_stats(pool_name: _POOL_NAME, _: dict = Depends(verify_token)):
+    """Reset the error counters of a pool's devices to 0, such as after a disk was replaced; the
+    pool's entry in the RAID monitor's status turns healthy, without errors, until its next check."""
     name = validate_pool_name(pool_name)
     pool_path = str(Path(storage_pools.settings.pools_base_path) / name)
     if not Path(pool_path).exists():
@@ -1539,9 +1684,20 @@ def _answered_raid_status(status: dict) -> dict:
     }
 
 
-@router.get("/raid-monitor/status")
+@router.get(
+    "/raid-monitor/status", summary="Read the RAID monitor's status",
+    responses=answer(
+        {"running": True, "check_interval_seconds": RAID_CHECK_INTERVAL, "last_status": {"data": {
+            "status": "healthy", "total_errors": 0, "forced_read_only": False,
+            "last_checked": "2026-11-19T08:15:03.481207Z",
+        }}},
+        "running: whether the RAID monitor runs; check_interval_seconds: the seconds between its checks; "
+        "last_status: the state of each pool by name, from its latest check (status, total_errors, "
+        "forced_read_only, and last_checked in UTC), or the state it last kept on disk; {} before any check.",
+    ),
+)
 async def get_raid_monitor_status(_: dict = Depends(verify_token)):
-    """Get RAID monitor status."""
+    """Whether the RAID monitor runs, how often it checks the pools, and what its latest check found."""
     return {
         "running": _raid_monitor_running,
         "check_interval_seconds": RAID_CHECK_INTERVAL,
@@ -1555,9 +1711,34 @@ async def get_raid_monitor_status(_: dict = Depends(verify_token)):
 
 # Plain functions, like the trends and predictions below: a history that the
 # monitor has not read yet is read from its file, in FastAPI's thread pool.
-@router.get("/smart/history/{serial}")
-def get_smart_history(serial: str, _: dict = Depends(verify_token)):
-    """Get SMART history for a specific disk by serial number."""
+@router.get(
+    "/smart/history/{serial}", summary="Read a disk's SMART history",
+    responses={
+        **answer({
+            "serial": "WD-EXAMPLE0001", "entries": 720, "oldest": "2026-10-20T09:00:04.120385Z",
+            "newest": "2026-11-19T08:00:03.512340Z",
+            "data": [{
+                "timestamp": "2026-11-19T08:00:03.512340Z", "device": "/dev/sda", "serial": "WD-EXAMPLE0001",
+                "lsblk_serial": "WD-EXAMPLE0001",
+                "attributes": {"5": 0, "187": 0, "188": 0, "197": 0, "198": 0, "199": 0},
+                "temperature": 34, "power_on_hours": 12345,
+            }],
+        }, "serial; entries: the disk's snapshots in the SMART history; oldest and newest: the times of the first "
+           "and the last in UTC, null without any; data: the latest 168 snapshots, oldest first, each with its "
+           "timestamp in UTC, the disk's path (device), smartctl's and lsblk's serial (lsblk_serial, null when lsblk "
+           "reports none), the raw values of the counters 5, 187, 188, 197, 198 and 199 by attribute id, the "
+           "temperature in degrees Celsius and the power-on hours (null when the disk reports none)."),
+        **errors({404: "The SMART history holds no disk with that serial.", 500: _HISTORY_UNREADABLE}),
+    },
+)
+def get_smart_history(
+    serial: Annotated[str, PathParam(description=(
+        "The disk's serial as smartctl reports it: the key of its SMART history; unknown for the disks without one."
+    ))],
+    _: dict = Depends(verify_token),
+):
+    """The SMART history of one disk: the counters that the SMART monitor recorded every hour
+    while the disk was awake."""
     history = _smart_history_or_500()
     if serial not in history:
         raise HTTPException(404, f"No history found for serial: {serial}")
@@ -1574,17 +1755,38 @@ def get_smart_history(serial: str, _: dict = Depends(verify_token)):
 
 
 class SmartDiskTrend(BaseModel):
-    serial: str  # smartctl's: the key of the disk's history ("unknown" without one)
-    device: str  # the path of the disk's latest snapshot
-    data_points: int  # the disk's snapshots in the history
-    # The counters that rose over the disk's last 24 values (analyze_smart_trends); none: steady.
-    alerts: list[SmartTrendAlert]
+    """The SMART trend of one disk of the SMART history."""
+
+    serial: str = Field(description=(
+        "The disk's serial as smartctl reports it: the key of its history; unknown for the disks without one, "
+        "which share a history and are told apart by their paths."))
+    device: str = Field(description="The disk's path in its latest snapshot.")
+    data_points: int = Field(description="The disk's snapshots in the SMART history.")
+    # analyze_smart_trends
+    alerts: list[SmartTrendAlert] = Field(description=(
+        "The counters that rose over their last 24 values; none when they are steady."))
 
 
 class SmartTrends(BaseModel):
-    disks: list[SmartDiskTrend]
-    critical_count: int
-    warning_count: int
+    """The SMART trend of every disk of the SMART history."""
+
+    model_config = ConfigDict(json_schema_extra={"examples": [{
+        "disks": [
+            {"serial": "WD-EXAMPLE0001", "device": "/dev/sda", "data_points": 720, "alerts": [{
+                "device": "/dev/sda", "serial": "WD-EXAMPLE0001", "model": "",
+                "attribute_name": "Reallocated_Sector_Ct", "attribute_id": 5, "current_value": 8,
+                "previous_value": 0, "change": 8, "severity": "warning",
+                "message": "Reallocated_Sector_Ct increased by 8 (from 0 to 8)",
+                "recommendation": "Disk is reallocating bad sectors. Consider replacing soon.",
+            }]},
+            {"serial": "WD-EXAMPLE0002", "device": "/dev/sdb", "data_points": 720, "alerts": []},
+        ],
+        "critical_count": 0, "warning_count": 1,
+    }]})
+
+    disks: list[SmartDiskTrend] = Field(description="Every disk in the SMART history, removed disks and steady ones included.")
+    critical_count: int = Field(description="The alerts of every disk of severity critical.")
+    warning_count: int = Field(description="The alerts of every disk of severity warning.")
 
 
 def _disk_trends(history: dict[str, list[dict]]) -> list[SmartDiskTrend]:
@@ -1610,12 +1812,15 @@ def _disk_trends(history: dict[str, list[dict]]) -> list[SmartDiskTrend]:
     return trends
 
 
-@router.get("/smart/trends", response_model=SmartTrends)
+@router.get(
+    "/smart/trends", response_model=SmartTrends, summary="Read the SMART trend of every disk",
+    responses=errors({500: _HISTORY_UNREADABLE}),
+)
 def get_smart_trends(_: dict = Depends(verify_token)):
-    """The SMART trend of every disk in the history, steady ones included (ADR-0270).
-
-    Removed disks stay in the history and are listed too; 500 when the
-    history cannot be read.
+    """The SMART trend of every disk in the SMART history, steady ones included: the counters that
+    rose over their last day. Removed disks stay in the history and are listed too.
+    \f
+    ADR-0270; 500 when the history cannot be read.
     """
     disks = _disk_trends(_smart_history_or_500())
     severities = Counter(alert.severity for disk in disks for alert in disk.alerts)
@@ -1627,17 +1832,33 @@ def get_smart_trends(_: dict = Depends(verify_token)):
 
 
 class DiskPrediction(BaseModel):
-    serial: str  # smartctl's, as GET /health/disks reports it
-    device: str  # the path of the disk now
-    risk_score: int  # 0 to 100
-    status: str  # healthy, watch, monitor_closely, replace_soon
-    risk_factors: list[str]  # the reasons: one for each addition to the score
-    recommendation: str
-    data_points: int  # snapshots in the disk's history
+    """The failure prediction of a connected disk, from its SMART history."""
+
+    serial: str = Field(description="The disk's serial as smartctl reports it, as GET /health/disks shows it.")
+    device: str = Field(description="The disk's path now.")
+    risk_score: int = Field(description=(
+        "0 to 100: 30 for each sector counter (5, 197, 198) that rose over the history, 20 more for one that rose by "
+        "more than 0.1 a snapshot over its last 24 values, and 10 for each of 187, 188 and 199 that rose above 100."))
+    status: str = Field(description=(
+        "healthy below a score of 10, watch from 10, monitor_closely from 30, and replace_soon from 50: the mark "
+        "that Disk Health and the dashboard show."))
+    risk_factors: list[str] = Field(description="The reasons, one for each addition to the score, in English.")
+    recommendation: str = Field(description="What to do, in English.")
+    data_points: int = Field(description="The snapshots in the disk's SMART history.")
 
 
 class DiskPredictions(BaseModel):
-    predictions: list[DiskPrediction]
+    """The failure predictions of the disks connected now."""
+
+    model_config = ConfigDict(json_schema_extra={"examples": [{"predictions": [{
+        "serial": "WD-EXAMPLE0001", "device": "/dev/sda", "risk_score": 50, "status": "replace_soon",
+        "risk_factors": ["Reallocated_Sector_Ct: 40 (was 0)", "Reallocated_Sector_Ct increasing rapidly"],
+        "recommendation": "Disk showing signs of failure. Replace within 30 days.", "data_points": 720,
+    }]}]})
+
+    predictions: list[DiskPrediction] = Field(description=(
+        "One for each connected disk whose SMART history holds at least 24 snapshots and the ATA counters, the "
+        "highest risk first; NVMe disks and disks that smartctl reports without a serial have none."))
 
 
 # A day of hourly snapshots: the least history a prediction needs, and the
@@ -1766,12 +1987,15 @@ def _histories_of_connected_disks(
 
 # A plain function, like the SMART endpoints above: lsblk runs on the host in
 # FastAPI's thread pool. It reads the stored history only and runs no smartctl.
-@router.get("/smart/predictions", response_model=DiskPredictions)
+@router.get(
+    "/smart/predictions", response_model=DiskPredictions, summary="Read the disks' failure predictions",
+    responses=errors({500: f"{_DISKS_UNLISTED[:-1]}, or {_HISTORY_UNREADABLE[0].lower()}{_HISTORY_UNREADABLE[1:]}"}),
+)
 def get_disk_predictions(_: dict = Depends(verify_token)):
-    """Failure predictions from the SMART trends of the disks connected now (ADR-0235).
-
-    The disks of GET /health/disks; 500 when the host's disks cannot be
-    listed or the SMART history cannot be read.
+    """Failure predictions from the SMART history of the disks of GET /health/disks: a score of
+    the rises of their counters, and replace_soon from 50. Runs no smartctl.
+    \f
+    ADR-0235; 500 when the host's disks cannot be listed or the SMART history cannot be read.
     """
     disks = storage_disks.host_disks_or_500()
     histories = _histories_of_connected_disks(_smart_history_or_500(), disks)
@@ -1784,9 +2008,19 @@ def get_disk_predictions(_: dict = Depends(verify_token)):
     return DiskPredictions(predictions=predictions)
 
 
-@router.get("/smart-monitor/status")
+@router.get(
+    "/smart-monitor/status", summary="Read the SMART monitor's status",
+    responses={
+        **answer({"running": True, "check_interval_seconds": SMART_CHECK_INTERVAL, "disks_tracked": 2,
+                  "total_data_points": 1440},
+                 "running: whether the SMART monitor runs; check_interval_seconds: the seconds between its passes; "
+                 "disks_tracked: the serials in the SMART history, removed disks included, the disks without one "
+                 "counted once; total_data_points: their snapshots."),
+        **errors({500: _HISTORY_UNREADABLE}),
+    },
+)
 def get_smart_monitor_status(_: dict = Depends(verify_token)):
-    """Get SMART trend monitor status."""
+    """Whether the SMART monitor runs, how often it reads the disks, and how much the SMART history holds."""
     history = _smart_history_or_500()
     return {
         "running": _smart_monitor_running,

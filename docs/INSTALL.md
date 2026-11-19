@@ -296,7 +296,6 @@ UNOS_BRANCH=develop ./install.sh
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `UNOS_INSTALL_DIR` | `/opt/unos` | Installation directory |
-| `UNOS_DATA_DIR` | `/var/lib/unos` | Data directory |
 | `UNOS_BRANCH` | `main` | Git branch to install |
 | `UNOS_REPO` | GitHub URL | Repository URL |
 

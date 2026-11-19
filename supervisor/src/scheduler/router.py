@@ -42,19 +42,22 @@ import threading
 import asyncio
 from datetime import datetime, timedelta, timezone, tzinfo
 from pathlib import Path
-from typing import NamedTuple, Optional
+from typing import Annotated, NamedTuple, Optional
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from fastapi import APIRouter, HTTPException, Depends, Request
+from fastapi import Path as PathParameter
 from croniter import croniter
 from pydantic import TypeAdapter
 import psutil
 
-from .. import host, state_files
+from .. import host, paths, state_files
+from ..config import get_settings
 from ..audit.changes import audit_change
 from ..audit.schemas import AuditAction
 from ..auth.utils import require_admin, verify_token
 from ..health import problems
 from ..offsite import service as offsite
+from ..openapi import BODY, answer, errors
 from ..backup.router import (
     BACKUP_KEY_SIZE,
     ENCRYPTED_EXTENSION,
@@ -128,12 +131,13 @@ TASK_CHECK_INTERVAL = 300
 MISSED_AFTER = timedelta(minutes=10)
 TASK_PROBLEMS = "tasks"  # their source in health.problems
 
-TASKS_FILE = "/data/scheduled_tasks.json"
-RUNS_FILE = "/data/task_runs.json"
-SCHEDULED_BACKUP_DIR = "/data/backups"
-DB_FILE = "/data/unos.db"
+TASKS_FILE = str(paths.SCHEDULED_TASKS)
+RUNS_FILE = str(paths.TASK_RUNS)
+SCHEDULED_BACKUP_DIR = str(paths.BACKUPS)
+# The database the supervisor opens (UNOS_DB_PATH, in the data directory by default).
+DB_FILE = get_settings().db_path
 # The keys of the backup tasks by task id, base64 of backup.router.new_backup_key.
-BACKUP_KEYS_FILE = "/data/scheduled_backup_keys.json"
+BACKUP_KEYS_FILE = str(paths.SCHEDULED_BACKUP_KEYS)
 MIN_PASSPHRASE_LENGTH = 8  # as for passwords and SMB passwords
 NO_PASSPHRASE = "A backup task needs a passphrase: its backups are encrypted with it"
 NO_BACKUP_KEY = "No passphrase is set for this backup task: edit the task and set one"
@@ -1223,15 +1227,41 @@ def _task_info(task: ScheduledTask, has_key: bool | None, zone: tzinfo, now: dat
     return ScheduledTaskInfo(**task.model_dump(), has_backup_key=has_backup_key, next_run=get_next_run(task, zone, now))
 
 
-@router.get("/timezone")
+# The task of a route's path (ADR-0417).
+TaskId = Annotated[str, PathParameter(description="The task's id, as GET /scheduler/tasks lists it.")]
+
+# What POST and PUT /tasks answer 400 and 500 for (validate_task, new_task_key, the keys file).
+_BAD_TASK = (
+    "The task is not valid: its name, schedule, keep count, pool, disk or command, or a backup task's "
+    "passphrase, missing while the task has no key or shorter than 8 characters."
+)
+_KEYS_OR_DISKS = (
+    "The keys of the backup tasks cannot be read, or the host's disks cannot be listed for a SMART test task."
+)
+_NO_TASK = "No task has that id."
+_TASK_ID_EXAMPLE = "task_20261118090000_1a2b3c4d"
+
+
+@router.get(
+    "/timezone",
+    summary="Read the time zone of the schedules",
+    responses=answer({"timezone": "Europe/Berlin"},
+                     "The name of the zone: the host's, or UTC when the host names none that the supervisor can use."),
+)
 async def get_schedule_timezone(_: dict = Depends(verify_token)):
-    """The time zone whose clock the schedules follow: the host's, or UTC (schedule_zone)."""
+    """The time zone whose clock the schedules follow: the host's, read on the host for each request,
+    or UTC when the host names no zone that the supervisor can use. While the host cannot be asked,
+    the zone it named last.
+    \f
+    schedule_zone, ADR-0266.
+    """
     return {"timezone": str(await asyncio.to_thread(schedule_zone))}
 
 
-@router.get("/tasks", response_model=list[ScheduledTaskInfo])
+@router.get("/tasks", response_model=list[ScheduledTaskInfo], summary="List the scheduled tasks")
 async def list_tasks(_: dict = Depends(verify_token)):
-    """List all scheduled tasks; a backup task says whether it has a key (has_backup_key)."""
+    """Every scheduled task with its next run; a backup task says whether it has its key
+    (has_backup_key), never its passphrase."""
     tasks = load_tasks()
     try:
         keys = load_backup_keys()
@@ -1271,9 +1301,13 @@ async def _audit_task(request: Request, user, action: AuditAction, task: Schedul
                        details=details)
 
 
-@router.post("/tasks", response_model=ScheduledTaskInfo)
+@router.post(
+    "/tasks", response_model=ScheduledTaskInfo, summary="Create a scheduled task",
+    responses=errors(BODY, {400: _BAD_TASK, 500: _KEYS_OR_DISKS}),
+)
 async def create_task(request: Request, task: ScheduledTask, user=Depends(verify_token)):
-    """Create a new scheduled task; a backup task needs a passphrase."""
+    """Create a scheduled task, with an id that the server gives it; a backup task needs a passphrase.
+    An enabled task first runs at the next time of its schedule. The creation is written to the audit log."""
     # In a worker thread: the disk of a SMART task is looked up on the host,
     # and the key of a backup task is derived from its passphrase.
     await asyncio.to_thread(validate_task, task)
@@ -1294,11 +1328,17 @@ async def create_task(request: Request, task: ScheduledTask, user=Depends(verify
     return _task_info(task, key is not None, await asyncio.to_thread(schedule_zone), _utc_now())
 
 
-@router.put("/tasks/{task_id}", response_model=ScheduledTaskInfo)
-async def update_task(request: Request, task_id: str, task: ScheduledTask, user=Depends(verify_token)):
-    """Update a scheduled task. Its last run and last status stay; a backup task
-    without a passphrase keeps the one it has. An edit that changes nothing is
-    neither stored nor audited (ADR-0214, ADR-0351)."""
+@router.put(
+    "/tasks/{task_id}", response_model=ScheduledTaskInfo, summary="Change a scheduled task",
+    responses=errors(BODY, {400: _BAD_TASK, 404: _NO_TASK, 500: _KEYS_OR_DISKS}),
+)
+async def update_task(request: Request, task_id: TaskId, task: ScheduledTask, user=Depends(verify_token)):
+    """Replace a scheduled task's settings with the ones sent. Its last run and last status stay; a
+    backup task without a passphrase keeps the one it has. An edit that changes nothing is neither
+    stored nor written to the audit log.
+    \f
+    ADR-0214, ADR-0351.
+    """
     stored = next((t for t in load_tasks() if t.id == task_id), None)
     kept_disk = stored.target_disk if stored and stored.task_type == TaskType.SMART_TEST else None
     await asyncio.to_thread(validate_task, task, kept_disk=kept_disk)
@@ -1331,10 +1371,22 @@ async def update_task(request: Request, task_id: str, task: ScheduledTask, user=
     raise HTTPException(404, f"Task not found: {task_id}")
 
 
-@router.delete("/tasks/{task_id}")
-async def delete_task(request: Request, task_id: str, user=Depends(verify_token)):
-    """Delete a scheduled task, and first the key of a backup task. The tasks file is
-    written, and the deletion audited, only when the task was there (ADR-0351)."""
+@router.delete(
+    "/tasks/{task_id}",
+    summary="Delete a scheduled task",
+    responses={
+        **answer({"status": "deleted", "id": _TASK_ID_EXAMPLE},
+                 'Status "deleted" and the id sent, also for an id that names no task.'),
+        **errors({500: "The keys of the backup tasks cannot be read."}),
+    },
+)
+async def delete_task(request: Request, task_id: TaskId, user=Depends(verify_token)):
+    """Delete a scheduled task, and first the key of a backup task; its runs stay in the history.
+    An id that names no task is answered as deleted; only a deletion is stored and written to the
+    audit log.
+    \f
+    ADR-0351.
+    """
     await asyncio.to_thread(set_backup_key, task_id, None)
     tasks = load_tasks()
     deleted = next((t for t in tasks if t.id == task_id), None)
@@ -1344,11 +1396,25 @@ async def delete_task(request: Request, task_id: str, user=Depends(verify_token)
     return {"status": "deleted", "id": task_id}
 
 
-@router.post("/tasks/{task_id}/run")
-async def run_task_now(request: Request, task_id: str, user=Depends(verify_token)):
-    """Run a task immediately, beside the request, as the scheduler runs its tasks: stop_scheduler
-    ends the run and records it. (A background task of Starlette runs after the answer, and uvicorn
-    waits for it at its stop without a limit: an off-device copy can take days.)"""
+@router.post(
+    "/tasks/{task_id}/run",
+    summary="Run a scheduled task now",
+    responses={
+        **answer({"status": "started", "task_id": _TASK_ID_EXAMPLE},
+                 'Status "started" and the task\'s id: the run goes on after the answer; GET /scheduler/runs '
+                 "shows it."),
+        **errors({404: _NO_TASK}),
+    },
+)
+async def run_task_now(request: Request, task_id: TaskId, user=Depends(verify_token)):
+    """Start a run of the task at once, enabled or not, as the scheduler runs it; the answer does not
+    wait for the run, whose result goes into the runs and the task. The start is written to the
+    audit log.
+    \f
+    The run goes on beside the request, as the scheduler runs its tasks: stop_scheduler ends the run
+    and records it. (A background task of Starlette runs after the answer, and uvicorn waits for it
+    at its stop without a limit: an off-device copy can take days.)
+    """
     tasks = load_tasks()
 
     task = next((t for t in tasks if t.id == task_id), None)
@@ -1360,9 +1426,20 @@ async def run_task_now(request: Request, task_id: str, user=Depends(verify_token
     return {"status": "started", "task_id": task_id}
 
 
-@router.post("/tasks/{task_id}/toggle")
-async def toggle_task(request: Request, task_id: str, user=Depends(verify_token)):
-    """Enable/disable a task."""
+@router.post(
+    "/tasks/{task_id}/toggle",
+    summary="Enable or disable a scheduled task",
+    responses={
+        **answer({"status": "toggled", "enabled": False}, 'Status "toggled" and whether the task is enabled now.'),
+        **errors({404: _NO_TASK}),
+    },
+)
+async def toggle_task(request: Request, task_id: TaskId, user=Depends(verify_token)):
+    """Enable a disabled task, or disable an enabled one. A task enabled again misses no run of the
+    time it was disabled. The change is written to the audit log.
+    \f
+    ADR-0332.
+    """
     tasks = load_tasks()
 
     for task in tasks:
@@ -1378,14 +1455,15 @@ async def toggle_task(request: Request, task_id: str, user=Depends(verify_token)
     raise HTTPException(404, f"Task not found: {task_id}")
 
 
-@router.get("/runs", response_model=list[TaskRun])
+@router.get("/runs", response_model=list[TaskRun], summary="List the runs of the scheduled tasks")
 async def list_runs(_: dict = Depends(verify_token)):
-    """List recent task runs."""
+    """The last 100 runs of the tasks, oldest first, those that still run included."""
     return load_runs()
 
 
-@router.get("/runs/{task_id}", response_model=list[TaskRun])
-async def list_task_runs(task_id: str, _: dict = Depends(verify_token)):
-    """List runs for a specific task."""
+@router.get("/runs/{task_id}", response_model=list[TaskRun], summary="List the runs of a scheduled task")
+async def list_task_runs(task_id: TaskId, _: dict = Depends(verify_token)):
+    """The task's runs among the last 100 runs, oldest first; none for an id without runs, such as
+    one that names no task (the runs of a deleted task stay)."""
     runs = load_runs()
     return [r for r in runs if r.task_id == task_id]

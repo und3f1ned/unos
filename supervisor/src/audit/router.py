@@ -26,14 +26,16 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Literal, Optional
+from typing import Annotated, Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import ValidationError
 
+from .. import paths
 from ..auth.utils import client_ip, require_admin
 from ..auth.models import User
+from ..openapi import ADMIN, answer, errors, file_answer
 from ..times import as_utc, parse_time, utc_now, utc_text
 from .schemas import AuditEntry, AuditEntryView, AuditAction, AuditSeverity
 
@@ -43,7 +45,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/audit", tags=["audit"], dependencies=[Depends(require_admin)])
 
 # The current file; the older ones are AUDIT_FILE.1 (the newest) to AUDIT_FILE.<KEEP_ROTATED>.
-AUDIT_FILE = "/data/audit/audit.jsonl"
+AUDIT_FILE = str(paths.AUDIT_LOG)
 MAX_FILE_BYTES = 1024 * 1024
 KEEP_ROTATED = 4
 
@@ -492,13 +494,33 @@ class AuditFilter:
         return True
 
 
+_BOUND_FORMS = (
+    "a date (YYYY-MM-DD), or a date and time to the hour, minute, second or fraction of a second "
+    "(YYYY-MM-DDTHH:MM:SS.ffffff), with an offset (Z or +HH:MM) or in UTC; another form is a 422"
+)
+
+
 def audit_filter(
-    action: Optional[str] = None,
-    username: Optional[str] = None,
-    severity: Optional[AuditSeverity] = None,
-    start_date: Optional[str] = None,
-    end_date: Optional[str] = None,
-    search: Optional[str] = Query(None, max_length=MAX_SEARCH_CHARS),
+    action: Annotated[Optional[str], Query(
+        description="Only the entries of this action, by its value, such as login_failed; also an older "
+                    "entry's action that GET /audit/actions no longer lists.",
+    )] = None,
+    username: Annotated[Optional[str], Query(description="Only the entries of this user name, exactly.")] = None,
+    severity: Annotated[Optional[AuditSeverity], Query(
+        description="Only the entries of this severity: info, warning or critical.",
+    )] = None,
+    start_date: Annotated[Optional[str], Query(
+        description=f"Only the entries from this time on, the whole unit it names included: {_BOUND_FORMS}.",
+    )] = None,
+    end_date: Annotated[Optional[str], Query(
+        description=f"Only the entries up to this time, the whole unit it names included (a date its day, "
+                    f"12:00 up to 12:00:59.999999): {_BOUND_FORMS}.",
+    )] = None,
+    search: Optional[str] = Query(
+        None, max_length=MAX_SEARCH_CHARS,
+        description="Only the entries that hold this text, in any letter case, in the user, the action, the "
+                    "client's address, the User-Agent, the resource or the details; at most 256 characters.",
+    ),
 ) -> AuditFilter:
     """The filters of the query: action, user name and severity exactly (the action by its name, also
     one of an older entry that AuditAction no longer has, ADR-0359); start_date and end_date
@@ -578,34 +600,57 @@ def _spreadsheet_text(value: object) -> str:
 
 # ==================== API Endpoints ====================
 
-@router.get("/logs", response_model=list[AuditEntryView])
+@router.get(
+    "/logs", response_model=list[AuditEntryView], summary="List the audit log's entries", responses=errors(ADMIN),
+)
 async def get_audit_logs(
     selection: AuditFilter = Depends(audit_filter),
-    limit: int = Query(100, ge=1),
-    offset: int = Query(0, ge=0),
+    limit: int = Query(100, ge=1, description="How many entries to answer at most."),
+    offset: int = Query(0, ge=0, description="How many of the matching entries to skip, newest first."),
     current_user: User = Depends(require_admin)
 ):
-    """The entries that match, newest first, a page at a time. Admin only."""
+    """The entries that match the filters, newest first, a page at a time, each with where it stands in
+    the hash chain. Administrators only."""
     entries = await asyncio.to_thread(_selected, selection)
     return entries[offset:offset + limit]
 
 
-@router.get("/logs/count")
+@router.get(
+    "/logs/count",
+    summary="Count the audit log's entries",
+    responses={**answer({"count": 1342}, "count: how many entries match the filters."), **errors(ADMIN)},
+)
 async def get_audit_count(
     selection: AuditFilter = Depends(audit_filter),
     current_user: User = Depends(require_admin)
 ):
-    """The number of entries that match. Admin only."""
+    """The number of entries that match the filters. Administrators only."""
     return {"count": len(await asyncio.to_thread(_selected, selection, with_chain=False))}
 
 
-@router.get("/logs/export")
+_EXPORT_ANSWER = answer(
+    {
+        "exported_at": "2026-11-19T09:00:00.125000Z",
+        "count": 1,
+        "entries": [AuditEntryView.model_config["json_schema_extra"]["examples"][0]],
+    },
+    "A file to download (Content-Disposition: attachment): as JSON, the time of the export, the number of "
+    "entries and the entries as GET /audit/logs answers them; as CSV, a header row and a row per entry with "
+    "its id, time, action, severity, user, address, resource type and id, details and success.",
+)
+_EXPORT_ANSWER[200]["content"].update(file_answer("text/csv", "")[200]["content"])
+
+
+@router.get(
+    "/logs/export", summary="Export the audit log", responses={**_EXPORT_ANSWER, **errors(ADMIN)},
+)
 async def export_audit_logs(
-    format: Literal["json", "csv"] = "json",
+    format: Annotated[Literal["json", "csv"], Query(description="The file's format: json or csv.")] = "json",
     selection: AuditFilter = Depends(audit_filter),
     current_user: User = Depends(require_admin)
 ):
-    """The entries that match, newest first, as a JSON or CSV file. Admin only."""
+    """The entries that match the filters, newest first, as a JSON or CSV file. The CSV puts a ' before
+    every cell, or part of a cell, that a spreadsheet would read as a formula. Administrators only."""
     entries = await asyncio.to_thread(_selected, selection)
     filename = f"audit_log_{utc_now().strftime('%Y%m%d')}"
 
@@ -640,12 +685,31 @@ async def export_audit_logs(
     )
 
 
-@router.get("/logs/summary")
+@router.get(
+    "/logs/summary",
+    summary="Summarize the audit log",
+    responses={
+        **answer(
+            {
+                "period_days": 7,
+                "total_entries": 52,
+                "failed_actions": 3,
+                "by_action": {"login_success": 30, "login_failed": 3, "share_updated": 19},
+                "by_severity": {"info": 47, "warning": 5, "critical": 0},
+                "by_user": {"admin": 49, "alice": 3},
+            },
+            "The entries of the last period_days days: how many in all and failed, and how many by action, by "
+            "severity and by user name.",
+        ),
+        **errors(ADMIN),
+    },
+)
 async def get_audit_summary(
-    days: int = 7,
+    days: Annotated[int, Query(description="How many days back from now to count.")] = 7,
     current_user: User = Depends(require_admin)
 ):
-    """Get summary of audit activity. Admin only."""
+    """How many entries the last days have: in all, failed, by action, by severity and by user name.
+    Administrators only."""
     cutoff = utc_now() - timedelta(days=days)
 
     entries = await asyncio.to_thread(load_audit_log)
@@ -681,10 +745,24 @@ async def get_audit_summary(
     }
 
 
-@router.get("/actions")
+@router.get(
+    "/actions",
+    summary="List the audit log's actions",
+    responses={
+        **answer(
+            {"actions": [{"value": "login_success", "name": "LOGIN_SUCCESS"},
+                         {"value": "login_failed", "name": "LOGIN_FAILED"}]},
+            "Every action that the supervisor writes: value, as the entries name it, and name.",
+        ),
+        **errors(ADMIN),
+    },
+)
 async def list_audit_actions(_: User = Depends(require_admin)):
-    """The actions that the supervisor writes, which the Action filter of the Audit Log page offers
-    (ADR-0359)."""
+    """The actions that the supervisor writes, which the Action filter of the Audit Log page offers.
+    Administrators only.
+    \f
+    ADR-0359.
+    """
     return {
         "actions": [
             {"value": action.value, "name": action.name}
@@ -693,14 +771,29 @@ async def list_audit_actions(_: User = Depends(require_admin)):
     }
 
 
-@router.delete("/logs")
+@router.delete(
+    "/logs",
+    summary="Clear the audit log",
+    responses={
+        **answer({"status": "cleared", "deleted_count": 1342}, "deleted_count: how many entries were removed."),
+        **errors(ADMIN, {
+            500: "The log's files could not be changed, such as on a full disk: every entry that was to stay is "
+                 "kept.",
+        }),
+    },
+)
 async def clear_audit_logs(
     request: Request,
-    before_date: Optional[str] = None,
+    before_date: Annotated[Optional[str], Query(
+        description=f"Remove only the entries before this time: {_BOUND_FORMS}. Left out: every entry.",
+    )] = None,
     current_user: User = Depends(require_admin)
 ):
-    """Clear audit logs. Admin only. Optionally clear only before a date, a bound as the filters
-    take it (_bound: 422 for another form)."""
+    """Remove every entry of the audit log, or only those before a time; the clearing itself is then
+    written to the log as a warning. Administrators only.
+    \f
+    before_date is a bound as the filters take it (_bound: 422 for another form).
+    """
     _bound("before_date", before_date, last=False)
     try:
         deleted_count = await asyncio.to_thread(_clear, before_date)

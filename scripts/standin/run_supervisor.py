@@ -4,13 +4,18 @@
 The E2E specs run only against local targets, by default this stand-in (ADR-0215).
 scripts/standin/e2e.sh starts it; supervisor/tests/test_standin.py checks it.
 Everything the supervisor writes goes under the state directory (default:
-.standin/ at the repository root, which ignores itself in git):
+.standin/ at the repository root, which ignores itself in git). The supervisor
+finds it through its environment alone (stand_in_environment): UNOS_DATA_DIR
+and the settings of the host paths. No constant of its modules is patched
+(ADR-0419); configure() replaces only functions, and turns the login limit off:
+no setting may turn a check of a NAS off.
 
-    data/   the SQLite database with its jwt_secret, smb.conf, the NFS exports,
-            every file that supervisor/src keeps under /data (DATA_GLOBALS), and
-            stand-ins for the host files it reads or changes (HOST_FILE_GLOBALS):
-            an empty fstab and, where this machine has no /proc (macOS), an
-            empty mount table
+    data/   UNOS_DATA_DIR: the SQLite database with its jwt_secret and every
+            file that the supervisor keeps in its data directory
+            (supervisor/src/paths.py); smb.conf and the NFS exports; and
+            stand-ins for the host files it reads or changes, each through its
+            setting: an empty fstab, the updater's backups and the served
+            certificate's folder
     pools/  UNOS_POOLS_BASE_PATH; testpool/ is the folder of a pool that UNOS
             does not manage, as on the Docker test stack
     tmp/    TMPDIR of the supervisor
@@ -20,7 +25,8 @@ Everything the supervisor writes goes under the state directory (default:
             installed here
     fake-restic/  the fake's calls, the stores of its s3: repositories, and
             hostname, where each restic writes its host name instead of
-            /proc/sys/kernel/hostname of a UTS namespace of its own
+            /proc/sys/kernel/hostname of a UTS namespace of its own: the fake
+            unshare gives it this file
 
 The stand-in keeps the supervisor away from this machine's system:
 
@@ -31,7 +37,8 @@ The stand-in keeps the supervisor away from this machine's system:
 * Docker is out of reach: UNOS_DOCKER_SOCKET and DOCKER_HOST name a socket that
   does not exist, so no container or image of this machine is touched.
 * The off-device copy runs the fake restic (bin/). The state directory stands
-  for /mnt, where its disk targets lie, as pools/ stands for /mnt/pools, and
+  for /mnt (UNOS_MOUNTS_BASE_PATH), where its disk targets lie, as pools/
+  stands for /mnt/pools, and
   one filesystem holds all of it: the copy's check of the system disk is off
   (there is none to protect here), so that the specs can copy to a folder of
   testpool. No S3 store is connected to before restic runs: the fake keeps
@@ -45,8 +52,9 @@ The stand-in keeps the supervisor away from this machine's system:
   git or docker compose in a checkout.
 * The served certificate (ADR-0404) is data/served-certificate/served.pem, which
   front.mjs serves from its next connection on, while it loads, as Caddy would
-  after a reload: the supervisor's handshake asks front.mjs (--front-https-port)
-  what it serves, and the reload, without Docker, only refuses a file that
+  after a reload: the supervisor's handshake asks front.mjs (--front-https-port,
+  UNOS_WEBUI_TLS_HOST and UNOS_WEBUI_TLS_PORT) what it serves, and the reload,
+  without Docker, only refuses a file that
   Python's ssl cannot load, as Caddy refuses one it cannot.
 * UNOS_* and DOCKER_* variables of the caller's environment are dropped.
 
@@ -68,7 +76,7 @@ import os
 import shutil
 import ssl
 import sys
-from pathlib import Path, PurePath
+from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
 SUPERVISOR = REPO / "supervisor"
@@ -83,32 +91,6 @@ STATE_ENTRIES = frozenset({MARKER, ".gitignore", "data", "pools", "tmp", "bin", 
 # The fake restic that the off-device copy runs here (bin/restic).
 FAKE_RESTIC = SUPERVISOR / "tests" / "fake_restic.py"
 
-# Module globals of supervisor/src that hold a path under /data. Each one is
-# replaced by the same path under the stand-in's data directory
-# (/data/audit/audit.jsonl -> <state>/data/audit/audit.jsonl), keeping its type
-# (str or Path). supervisor/tests/test_standin.py fails when a /data path is
-# left anywhere in the loaded modules.
-DATA_GLOBALS: dict[str, tuple[str, ...]] = {
-    "src.audit.router": ("AUDIT_FILE",),
-    "src.backup.router": ("BACKUP_DIR",),
-    "src.health.router": ("RAID_STATUS_FILE", "SMART_HISTORY_FILE"),
-    "src.notifications.router": ("CONFIG_FILE", "LOGS_FILE"),
-    "src.offsite.service": ("SETTINGS_FILE", "SECRETS_FILE", "STATUS_FILE", "DATA_DIR"),
-    "src.power.router": ("CONFIG_FILE", "UPS_CONFIG_FILE", "WOL_FILE"),
-    "src.scheduler.router": ("TASKS_FILE", "RUNS_FILE", "SCHEDULED_BACKUP_DIR", "DB_FILE", "BACKUP_KEYS_FILE"),
-    "src.security.router": ("CERTS_DIR",),
-    "src.storage.volume_usage": ("HISTORY_FILE",),
-    "src.updates.updater": ("DATA_DIR", "UPDATE_STATE_FILE", "UPDATE_HISTORY_FILE", "UPDATE_CONFIG_FILE"),
-}
-
-# Module globals that name a file of the host outside /data, and the file in
-# the data directory that replaces it.
-HOST_FILE_GLOBALS: dict[str, dict[str, str]] = {
-    "src.storage.pools": {"FSTAB_PATH": "fstab", "FSTAB_BACKUP_PATH": "fstab.unos-backup"},
-    "src.updates.updater": {"BACKUP_DIR": "update-backups"},
-    # The volume that only the supervisor's and the web UI's containers mount (ADR-0404).
-    "src.security.serving": {"SERVED_DIR": "served-certificate"},
-}
 # The HTTPS port of front.mjs, as e2e.sh starts it by default (E2E_HTTPS_PORT).
 DEFAULT_FRONT_HTTPS_PORT = 46443
 
@@ -129,18 +111,29 @@ SEED_SMB_CONF = """[global]
 """
 
 
-def stand_in_environment(state: Path) -> dict[str, str]:
+def stand_in_environment(state: Path, *, front_https_port: int = DEFAULT_FRONT_HTTPS_PORT) -> dict[str, str]:
     """The environment variables the stand-in's supervisor runs with."""
     data = state / "data"
     no_docker = data / "no-docker.sock"
     return {
-        "UNOS_DB_PATH": str(data / "unos.db"),
+        # Every data path of the supervisor, the database included (supervisor/src/paths.py, ADR-0419).
+        "UNOS_DATA_DIR": str(data),
         # Empty: the secret is generated into data/jwt_secret, as in production.
         "UNOS_JWT_SECRET": "",
+        # The host paths, each through its own setting.
         "UNOS_SMB_CONF_PATH": str(data / "smb.conf"),
         "UNOS_NFS_EXPORTS_PATH": str(data / "exports"),
         "UNOS_POOLS_BASE_PATH": str(state / "pools"),
-        "UNOS_APP_CATALOG_PATH": str(data / "app-catalog.json"),
+        "UNOS_FSTAB_PATH": str(data / "fstab"),
+        "UNOS_UPDATE_BACKUP_DIR": str(data / "update-backups"),
+        # The volume that only the supervisor's and the web UI's containers mount (ADR-0404).
+        "UNOS_SERVED_CERTIFICATE_DIR": str(data / "served-certificate"),
+        # The off-device copy's disk targets lie below the state directory, which stands for /mnt as
+        # pools/ stands for /mnt/pools (ADR-0337).
+        "UNOS_MOUNTS_BASE_PATH": str(state),
+        # front.mjs is the web UI's Caddy.
+        "UNOS_WEBUI_TLS_HOST": "127.0.0.1",
+        "UNOS_WEBUI_TLS_PORT": str(front_https_port),
         "UNOS_DOCKER_SOCKET": str(no_docker),
         "DOCKER_HOST": f"unix://{no_docker}",
         "UNOS_INSTALL_DIR": str(state / "no-install"),
@@ -191,10 +184,6 @@ def _install_fake_restic(state: Path) -> None:
     module.install(state / "bin", state / "fake-restic", python=sys.executable)
 
 
-def _replacement(original: object, new: Path) -> object:
-    return new if isinstance(original, PurePath) else str(new)
-
-
 def reload_front(tls: str) -> None:
     """In place of `caddy reload` in the web UI's container (src.security.serving.reload_caddy):
     front.mjs reads the served file at every connection, so only Caddy's refusal of a file that it
@@ -212,66 +201,51 @@ def reload_front(tls: str) -> None:
 def configure(state: Path, *, front_https_port: int = DEFAULT_FRONT_HTTPS_PORT) -> Path:
     """Point the supervisor at ``state`` and import it; return the data directory.
 
-    Sets the environment before the first import of the supervisor (its
-    settings are read once), then imports src.main and redirects the module
-    globals of DATA_GLOBALS and HOST_FILE_GLOBALS. The web UI's Caddy is
-    front.mjs on 127.0.0.1:``front_https_port``. Call once per process,
-    after prepare().
+    Sets the environment (stand_in_environment) before the first import of the
+    supervisor, which reads its settings and UNOS_DATA_DIR once, then imports
+    src.main and replaces the functions that the stand-in fakes. The web UI's
+    Caddy is front.mjs on 127.0.0.1:``front_https_port``. Call once per
+    process, after prepare(), before anything imports the supervisor.
     """
     state = state.resolve()
     data = state / "data"
+    if hasattr(os, "geteuid") and os.geteuid() == 0:
+        raise SystemExit(
+            "run_supervisor.py: refusing to run as root: the stand-in runs host commands on this machine"
+        )
+    if "src" in sys.modules:
+        raise SystemExit("run_supervisor.py: the supervisor was imported before configure(): "
+                         "its paths are not the stand-in's")
     for name in list(os.environ):
         if name.startswith(("UNOS_", "DOCKER_")):
             del os.environ[name]
-    os.environ.update(stand_in_environment(state))
+    os.environ.update(stand_in_environment(state, front_https_port=front_https_port))
     if str(SUPERVISOR) not in sys.path:
         sys.path.insert(0, str(SUPERVISOR))
 
     importlib.import_module("src.main")
 
-    for module_name, names in DATA_GLOBALS.items():
-        module = importlib.import_module(module_name)
-        for name in names:
-            original = getattr(module, name)
-            text = str(original)
-            if not (text == "/data" or text.startswith("/data/")):
-                raise SystemExit(
-                    f"run_supervisor.py: {module_name}.{name} is {text!r}, not a path under /data: "
-                    "update DATA_GLOBALS"
-                )
-            setattr(module, name, _replacement(original, data / os.path.relpath(text, "/data")))
-    for module_name, files in HOST_FILE_GLOBALS.items():
-        module = importlib.import_module(module_name)
-        for name, file_name in files.items():
-            setattr(module, name, _replacement(getattr(module, name), data / file_name))
-
-    # The file manager reads the mount table before it deletes a folder or
-    # moves one to another filesystem (src/files/router.py). Without /proc
-    # (macOS): an empty table; the st_dev checks still run.
-    files = importlib.import_module("src.files.router")
-    if not os.path.exists(files.MOUNTINFO):
-        files.MOUNTINFO = str(data / "mountinfo")
-        Path(files.MOUNTINFO).touch()
-
-    # The off-device copy (ADR-0337): its disk targets lie below the state directory, which stands for
-    # /mnt as pools/ stands for /mnt/pools. One filesystem holds all of it, so nothing here is the
-    # system disk that a copy must stay off, nor the root filesystem where an unmounted pool would be.
+    # The off-device copy (ADR-0337): one filesystem holds the whole state directory, so nothing here
+    # is the system disk that a copy must stay off, nor the root filesystem where an unmounted pool
+    # would be. No setting turns these checks off on a NAS: the functions are replaced.
     offsite = importlib.import_module("src.offsite.service")
-    offsite.MOUNTS_BASE = str(state)
     offsite.on_system_disk = lambda fd: False
     offsite.on_system_filesystem = lambda fd: False
     # Its fake restic keeps an S3 store in its state directory: no store to connect to first.
     offsite.probe_store = lambda endpoint: None
-    # restic's own host name goes into a file of the fake's state, not into /proc of this machine.
-    importlib.import_module("src.offsite.restic").HOSTNAME_FILE = str(state / "fake-restic" / "hostname")
 
-    # The served certificate (ADR-0404): front.mjs is the web UI's Caddy.
-    serving = importlib.import_module("src.security.serving")
-    serving.CADDY_TLS_HOST = "127.0.0.1"
-    serving.CADDY_TLS_PORT = front_https_port
-    serving.reload_caddy = reload_front
+    # The file manager reads the mount table before it deletes a folder or moves one to another
+    # filesystem (src/files/router.py). Without /proc (macOS): an empty table; the st_dev checks
+    # still run.
+    files = importlib.import_module("src.files.router")
+    if not os.path.exists(files.MOUNTINFO):
+        files._read_mount_points = lambda: []
 
-    # 5 attempts per minute and client: the specs sign in through the form once per test.
+    # The served certificate (ADR-0404): front.mjs is the web UI's Caddy, reloaded without Docker.
+    importlib.import_module("src.security.serving").reload_caddy = reload_front
+
+    # 5 attempts per minute and client: the specs sign in through the form once per test. No setting
+    # turns the limit off on a NAS.
     importlib.import_module("src.auth.router").limiter.enabled = False
     return data
 

@@ -43,12 +43,16 @@ import subprocess
 from contextlib import ExitStack
 from datetime import datetime, timezone
 from pathlib import Path
-from fastapi import APIRouter, HTTPException, Depends, Request
+from typing import Annotated
+
+from fastapi import APIRouter, HTTPException, Depends, Query, Request
+from fastapi import Path as PathParameter
 
 from ..audit.changes import audit_change
 from ..audit.schemas import AuditAction, AuditSeverity
 from ..auth.models import User
 from ..auth.utils import verify_token
+from ..openapi import BODY, answer, errors
 from ..security.validators import (
     open_dir_nofollow,
     open_subdirs_nofollow,
@@ -68,6 +72,14 @@ from .schemas import SnapshotInfo, SnapshotCreate, SnapshotRestore, SnapshotSubv
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/snapshots", tags=["snapshots"])
+
+# The parameters and the error texts that several routes share (ADR-0417).
+Subvolume = Annotated[str, Query(
+    description="The folder of the pool or volume: a pool's mountpoint, such as /mnt/pools/data, or a volume's "
+    "folder in it, such as /mnt/pools/data/documents.",
+)]
+_SUBVOLUME_400 = "subvolume is not an absolute path below /mnt/pools, or goes through a symbolic link or a file"
+_COPIES_400 = {400: f"{_SUBVOLUME_400}, or is deeper than a volume's folder."}
 
 SNAPSHOT_DIR_NAME = ".snapshots"
 # The names UNOS gives, before a <date>_<time> of utc_stamp(): snapshots made on the Snapshots
@@ -413,12 +425,17 @@ def _list_subvolumes() -> list[SnapshotSubvolume]:
     return offered
 
 
-@router.get("/subvolumes", response_model=list[SnapshotSubvolume])
+@router.get(
+    "/subvolumes", response_model=list[SnapshotSubvolume], summary="List the pools and volumes to take snapshots of",
+    responses=errors({500: "The host's mount table or its pools cannot be read, with the reason."}),
+)
 async def list_subvolumes(_: dict = Depends(verify_token)):
-    """The pools and volumes that snapshots can be made of: the mounted pools and their volumes.
+    """The pools and volumes that snapshots can be made of: the pools mounted at their mountpoints,
+    each followed by its volumes.
 
-    500 with the reason when the host's mounts or pools cannot be read; a
-    pool whose volumes cannot be read comes with ``volumes_error``.
+    A pool whose volumes cannot be read comes alone, with ``volumes_error``.
+    \f
+    ADR-0243.
     """
     try:
         return await asyncio.to_thread(_list_subvolumes)
@@ -439,25 +456,52 @@ def _pool_and_volume(subvolume: str) -> tuple[str, str | None]:
     return pool, (validate_volume_name(parts[1]) if len(parts) == 2 else None)
 
 
-@router.get("/copies", response_model=list[RestoreCopyInfo])
-async def list_restore_copies(subvolume: str, _: dict = Depends(verify_token)):
-    """The copies that restores made right in the pool or volume ``subvolume``, newest first (ADR-0358).
-
-    404 for an unknown pool or volume, 409 for a pool that is not mounted at
-    its top level, 500 when btrfs fails.
+@router.get(
+    "/copies", response_model=list[RestoreCopyInfo], summary="List the restored copies in a pool or volume",
+    responses=errors(_COPIES_400, {
+        404: "No pool, or no volume of the pool, has that name.",
+        409: "The pool is not mounted, or is mounted at a subvolume other than its top level.",
+        500: "btrfs or the host's mount table cannot be read.",
+    }),
+)
+async def list_restore_copies(subvolume: Subvolume, _: dict = Depends(verify_token)):
+    """The restored copies right in the pool or volume ``subvolume``, newest first.
+    \f
+    ADR-0358.
     """
     pool, volume = _pool_and_volume(subvolume)
     return await call_storage(pools.list_restore_copies, pool, volume)
 
 
-@router.delete("/copies/{name}")
-async def delete_restore_copy(name: str, subvolume: str, request: Request, user: User = Depends(verify_token)):
-    """Delete a copy that a restore made right in the pool or volume ``subvolume``, by its subvolume id (ADR-0358).
-
-    As a volume's Delete: 409 while a running container, an SMB share, an
-    NFS export or the off-device copy uses it, 503 when Docker cannot be
-    asked. 400 for what is not such a copy, 404 when it is not there. The
-    audit log gets snapshot_deleted (ADR-0350).
+@router.delete(
+    "/copies/{name}", summary="Delete a restored copy",
+    responses={
+        **answer({"status": "deleted", "name": "restore_20261112_093000"},
+                 "Always deleted, with the restored copy's name."),
+        **errors({
+            400: f"{_SUBVOLUME_400}, or is deeper than a volume's folder; or the name is no restored copy's "
+                 "(restore_<date>_<time>), or names no writable snapshot.",
+            404: "The pool, the volume or the restored copy is not there.",
+            409: "The pool is not mounted, mounted read-only or not at its top level, or the copy is used by a "
+                 "running container, an SMB share, an NFS export or the off-device copy, is busy or holds "
+                 "subvolumes, or the pool's subvolume list gives its name only ids of other subvolumes; nothing "
+                 "was deleted.",
+            500: "btrfs or the host's mount table cannot be read, btrfs fails, or the containers' folders, the SMB "
+                 "shares or the NFS exports cannot be read.",
+            503: "Docker cannot be asked about the running containers and their volumes; nothing was deleted.",
+        }),
+    },
+)
+async def delete_restore_copy(
+    name: Annotated[str, PathParameter(description="The restored copy's name, restore_<date>_<time>.")],
+    subvolume: Subvolume,
+    request: Request,
+    user: User = Depends(verify_token),
+):
+    """Delete a restored copy right in the pool or volume ``subvolume``, with the checks of a volume's
+    Delete. The audit log gets snapshot_deleted.
+    \f
+    ADR-0358, ADR-0350. Deleted by its subvolume id.
     """
     pool, volume = _pool_and_volume(subvolume)
     name = validate_path_component(name, what="Restored copy")
@@ -471,17 +515,33 @@ async def delete_restore_copy(name: str, subvolume: str, request: Request, user:
     return {"status": "deleted", "name": name}
 
 
-@router.get("/", response_model=list[SnapshotInfo])
-async def list_snapshots(subvolume: str, _: dict = Depends(verify_token)):
-    """The snapshots of one pool or volume, newest first (ADR-0243: no list of every pool)."""
+@router.get(
+    "/", response_model=list[SnapshotInfo], summary="List the snapshots of a pool or volume",
+    responses=errors({400: f"{_SUBVOLUME_400}.", 404: "subvolume is no existing folder."}),
+)
+async def list_snapshots(subvolume: Subvolume, _: dict = Depends(verify_token)):
+    """The snapshots of one pool or volume, newest first; none when it has no .snapshots folder, or
+    one that is a symbolic link.
+    \f
+    ADR-0243: no list of every pool.
+    """
     return await asyncio.to_thread(_list_snapshots, subvolume)
 
 
-@router.post("/", response_model=SnapshotInfo)
+@router.post(
+    "/", response_model=SnapshotInfo, summary="Take a snapshot of a pool or volume",
+    responses=errors(BODY, {
+        400: f"{_SUBVOLUME_400}; the name is not valid or exists already; or .snapshots is a symbolic link or no "
+             "folder.",
+        404: "subvolume is no existing folder.",
+        500: ".snapshots cannot be created, as on a read-only pool, or btrfs fails, with its error.",
+    }),
+)
 async def create_snapshot(req: SnapshotCreate, request: Request, user: User = Depends(verify_token)):
-    """Create a new read-only snapshot; without a name, ``snap_<date>_<time>`` in UTC.
-
-    The audit log gets snapshot_created (ADR-0350).
+    """Take a read-only snapshot of a pool or volume as <subvolume>/.snapshots/<name>; without a name,
+    ``snap_<date>_<time>`` in UTC. The audit log gets snapshot_created.
+    \f
+    ADR-0350. The snapshot is made of the folder that was opened (ADR-0242).
     """
     subvol_path = _validate_subvolume(req.subvolume)
     name = validate_snapshot_name(req.name) if req.name else f"{SNAPSHOT_PREFIX}{utc_stamp()}"
@@ -502,11 +562,30 @@ async def create_snapshot(req: SnapshotCreate, request: Request, user: User = De
     )
 
 
-@router.delete("/{snapshot_id}")
+@router.delete(
+    "/{snapshot_id}", summary="Delete a snapshot",
+    responses={
+        **answer({"status": "deleted", "id": "snap_20261119_093000"},
+                 "Always deleted, with the snapshot's id as the request gave it."),
+        **errors({
+            400: f"{_SUBVOLUME_400}; .snapshots is a symbolic link or no folder; or the snapshot's name is not one "
+                 "path component, or names a symbolic link, a file or a plain folder, which is no snapshot.",
+            404: "subvolume is no existing folder, or it has no snapshot of that name.",
+            409: "The snapshot was renamed or replaced while it was checked: try again.",
+            500: "btrfs fails, with its error.",
+        }),
+    },
+)
 async def delete_snapshot(
-    snapshot_id: str, subvolume: str, request: Request, user: User = Depends(verify_token)
+    snapshot_id: Annotated[str, PathParameter(description="The snapshot's id: its name, as the list gives it.")],
+    subvolume: Subvolume,
+    request: Request,
+    user: User = Depends(verify_token),
 ):
-    """Delete a snapshot, by its subvolume id (ADR-0242); the audit log gets snapshot_deleted (ADR-0350)."""
+    """Delete a snapshot of the pool or volume ``subvolume``. The audit log gets snapshot_deleted.
+    \f
+    By its subvolume id (ADR-0242); ADR-0350.
+    """
     subvol_path = _validate_subvolume(subvolume)
     name = validate_path_component(snapshot_id, what="Snapshot name")
 
@@ -562,11 +641,29 @@ def _restore(subvolume: Path, name: str, shown: str, target_path: str | None) ->
     }
 
 
-@router.post("/restore")
+@router.post(
+    "/restore", summary="Restore a snapshot",
+    responses={
+        **answer(
+            {"status": "restored", "source": "/mnt/pools/data/documents/.snapshots/snap_20261119_093000",
+             "target": "/mnt/pools/data/documents/restore_20261119_101500"},
+            "Always restored, with the snapshot's path (source) and the restored copy's (target).",
+        ),
+        **errors(BODY, {
+            400: "snapshot_path is not of the form <subvolume>/.snapshots/<name> below /mnt/pools, a path goes "
+                 "through a symbolic link or a file, the snapshot is no folder, or the restored copy's name "
+                 "exists already.",
+            404: "The pool or volume, the snapshot or target_path is not there.",
+            500: "btrfs fails, with its error.",
+        }),
+    },
+)
 async def restore_snapshot(req: SnapshotRestore, request: Request, user: User = Depends(verify_token)):
-    """Restore from a snapshot by creating a writable copy next to it (or in target_path).
-
-    The audit log gets snapshot_restored (ADR-0350).
+    """Restore a snapshot: make a writable copy of it, a restored copy ``restore_<date>_<time>``
+    (UTC), in the pool or volume that it was taken of, or in ``target_path``. Nothing is
+    overwritten. The audit log gets snapshot_restored.
+    \f
+    ADR-0350, ADR-0358. The snapshot and the target are the folders that were opened (ADR-0242).
     """
     subvolume, name = _validate_snapshot_path(req.snapshot_path)
     restored = await asyncio.to_thread(_restore, subvolume, name, req.snapshot_path, req.target_path)
