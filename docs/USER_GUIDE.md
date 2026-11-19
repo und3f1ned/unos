@@ -3023,6 +3023,77 @@ with UNOS's rules.
 
 ## Backups & Snapshots
 
+### Remote Access
+
+**System > Remote Access** (administrators) lets your own devices reach the NAS from outside the
+LAN through a WireGuard tunnel on the host, and gives apps names on the LAN (ADR-0420).
+
+The host needs the package wireguard-tools (`sudo apt install wireguard-tools`); without it the
+card says so and offers nothing to change. The stand-in and the test stack refuse every request.
+
+#### Turning it on
+
+Give the **Public address** that your devices connect to from outside: your router's public IP
+address or a dynamic DNS name (UNOS asks no outside service for it). Keep or change the **UDP
+port** (51820) and the **Tunnel network** (10.99.0.0/24: private IPv4 addresses inside 10.0.0.0/8,
+172.16.0.0/12 or 192.168.0.0/16, /16 to /28, that none of the host's networks uses, and that holds
+neither your computer nor another one the NAS talks to, such as a guest network behind the router).
+**Turn on** asks first, then:
+
+- makes the server's key on the host, once; it never leaves the host and the page never shows it,
+  only its public key;
+- writes `/etc/wireguard/unos-wg.conf` and enables `wg-quick@unos-wg`, which comes up at every
+  boot; the NAS takes the first address of the tunnel network (10.99.0.1);
+- lets the UDP port in when the host has ufw (the rule `UNOS: remote access`, which System >
+  Security does not delete).
+
+Turning it on or off does not change how the LAN reaches the web UI, SSH or SMB. The port and the
+tunnel network change only while remote access is off and no peer is listed (their configurations
+name them); the public address changes at any time and only new peers' configurations use it. **Turn off** ends every
+peer's tunnel, also the one the page may use; the peers stay listed and work again once it is on.
+
+#### Peers
+
+A peer is a device that may connect. **Add peer** asks for its name and, optionally, the public
+key of a device that made its own key pair. The answer is the device's WireGuard configuration with
+a QR code, **shown once**: UNOS keeps no copy of the device's private key. Scan the QR code with the
+WireGuard app (Android, iOS) or **Download** the file and import it (Windows, macOS, Linux). A
+device that gave its own public key gets a configuration without a private key; put its own into it.
+
+A peer reaches **the NAS alone**: the web UI, the shares, SSH and the apps' ports at the NAS's
+tunnel address (`https://10.99.0.1`, `\\10.99.0.1\share`, `ssh admin@10.99.0.1`,
+`http://10.99.0.1:8096`), never another computer of your LAN; only its traffic to the NAS goes
+through the tunnel. SMB answers it as a LAN client, unless SMB is bound to chosen interfaces
+(System > Network), which leave the tunnel out. The list shows each peer's last connection and its
+traffic. **Revoke** a lost device's peer: its tunnel ends at once.
+
+#### Reaching the NAS from outside
+
+1. On your router, forward **UDP** port 51820 (or yours) to the NAS's LAN IPv4 address. Give the
+   NAS a fixed address on the router (a DHCP reservation), so that the forward keeps working.
+2. If your public address changes, set up a dynamic DNS name on the router and give it as the
+   public address.
+3. Add a peer for the device and import its configuration in the WireGuard app.
+4. Check from outside the LAN, for example on a phone with Wi-Fi off: turn the tunnel on in the
+   WireGuard app and open `https://10.99.0.1`.
+
+Behind a carrier-grade NAT (the router's WAN address is in 100.64.0.0/10 or another private
+range) no port forward reaches the NAS; remote access then needs a relay such as Tailscale, which
+UNOS does not set up.
+
+#### Local names for apps
+
+**Add name** gives a published port of an installed app a name on the LAN,
+`<name>-<host name>.local` (for example `https://jellyfin-unos.local`); the app's web port is
+offered first. The host needs the package avahi-utils (`sudo apt install avahi-utils`): its unit
+`unos-app-names` announces each name with the host's address, and the web UI's Caddy forwards it
+over HTTPS to the app's port, which must speak plain HTTP. The app's own port keeps working. The certificate comes from the web UI's local certificate authority: a
+browser that trusts it for the web UI trusts the names too, otherwise it warns once per name.
+When the host's address changed, the card says so and **Announce again** announces the new one
+(the host also does at its next boot). The names work on the LAN only: through the tunnel, open
+the app's port at the tunnel address. Some apps check the name they are called by (Transmission's
+host whitelist, for example) and need it added in their own settings.
+
 ### Snapshots
 
 A snapshot is a read-only copy of a pool or a volume at one point in time,

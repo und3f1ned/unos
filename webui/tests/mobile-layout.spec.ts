@@ -18,6 +18,7 @@ import { fakeNetworkApi } from './network-fakes';
 import { fakeIscsiApi, fakeTarget } from './iscsi-fakes';
 import { fakeNotificationsApi, type Channel } from './notifications-fakes';
 import { installedImmich } from './apps-fakes';
+import { SERVER_KEY, fakePeer, fakeRemoteApi } from './remote-fakes';
 
 // The web UI on a phone (feature webui.mobile-layout, ADR-0302). At 375 x 812, a small phone,
 // every page of the navigation, the views behind its tabs, each tab of System, the main dialogs,
@@ -172,6 +173,18 @@ async function serve(page: Page, answers: Record<string, unknown>): Promise<void
 
 // A host name with no hyphen, so no place where a browser breaks it on its own (ADR-0302).
 const LONG_HOST_NAME = 'nasinthelivingroomoftheoldhouse.home.arpa';
+
+// System > Remote access on (ADR-0420): the longest peer's name (32 characters, NAME_MAX of
+// supervisor/src/network/wireguard.py) and an endpoint and an app name with no place to break.
+const REMOTE_ON = {
+  enabled: true,
+  endpoint: 'nasinthelivingroomoftheoldhouse.dyndns.example.org',
+  peers: [fakePeer(1, 'phoneofthegrandmotherinthegarden', { latest_handshake: '2026-11-19T08:30:00Z',
+                                                            received: 123456789, sent: 98765 }),
+          fakePeer(2, 'laptop')],
+  names: [{ label: 'photosofthefamilyandthegardenxyz', app: 'immich-server', port: 2283 }],
+  hostName: 'nasinthelivingroom',
+};
 
 // Audit entries whose values have no place to break, as long as the server takes and keeps them:
 // an API token's name of 64 characters (API_TOKEN_NAME_CHARS of supervisor/src/auth/schemas.py),
@@ -1326,9 +1339,67 @@ const VIEWS: View[] = [
     fake: (page) => serve(page, POWER),
     shows: (page) => page.getByText('enx00e04c680a1b').first(),
   },
+  {
+    name: 'System: Remote access',
+    path: '/system#remote',
+    fake: (page) => fakeRemoteApi(page, REMOTE_ON),
+    shows: (page) => page.getByText(SERVER_KEY),
+    end: (page) => page.getByText('https://photosofthefamilyandthegardenxyz-nasinthelivingroom.local'),
+  },
+  {
+    name: 'System: Remote access (off)',
+    path: '/system#remote',
+    fake: (page) => fakeRemoteApi(page),
+    shows: (page) => page.getByRole('button', { name: /^(Turn on|Включить)$/ }),
+  },
 
   // The dialogs: they fit the width of the screen, and one taller than the screen scrolls, so
   // that its title shows as it opens and its last button once scrolled to its end.
+  {
+    name: 'Dialog: turn remote access on',
+    path: '/system#remote',
+    fake: (page) => fakeRemoteApi(page),
+    open: async (page) => {
+      await page.getByLabel(/Public address|Внешний адрес/).fill('nasinthelivingroomoftheoldhouse.dyndns.example.org');
+      await page.getByRole('button', { name: /^(Turn on|Включить)$/ }).click();
+    },
+    shows: (page) => page.getByRole('dialog'),
+    start: dialogTitle,
+    end: dialogEnd,
+  },
+  {
+    name: 'Dialog: add a remote access peer',
+    path: '/system#remote',
+    fake: (page) => fakeRemoteApi(page, REMOTE_ON),
+    open: (page) => page.getByRole('button', { name: /^(Add peer|Добавить узел)$/ }).click(),
+    shows: (page) => page.getByRole('dialog'),
+    start: dialogTitle,
+    end: dialogEnd,
+  },
+  {
+    // The configuration of a new peer, with its QR code: taller than the screen.
+    name: "Dialog: a new peer's configuration",
+    path: '/system#remote',
+    fake: (page) => fakeRemoteApi(page, REMOTE_ON),
+    open: async (page) => {
+      await page.getByRole('button', { name: /^(Add peer|Добавить узел)$/ }).click();
+      await page.getByRole('dialog').getByLabel(/Device name|Имя устройства/).fill('tabletofthegrandfatherupstairsxy');
+      await page.getByRole('dialog').getByRole('button', { name: /^(Add peer|Добавить узел)$/ }).click();
+      await expect(page.getByRole('dialog').getByRole('img', { name: /QR/ })).toBeVisible();
+    },
+    shows: (page) => page.getByRole('dialog'),
+    start: dialogTitle,
+    end: dialogEnd,
+  },
+  {
+    name: 'Dialog: give an app a name',
+    path: '/system#remote',
+    fake: (page) => fakeRemoteApi(page, REMOTE_ON),
+    open: (page) => page.getByRole('button', { name: /^(Add name|Добавить имя)$/ }).click(),
+    shows: (page) => page.getByRole('dialog'),
+    start: dialogTitle,
+    end: dialogEnd,
+  },
   {
     name: 'Dialog: create a pool',
     path: '/storage',

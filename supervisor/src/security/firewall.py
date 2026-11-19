@@ -15,6 +15,9 @@ that fails leaves the file ``failed``, which the status reports. ufw's own stop 
 chains (policy ACCEPT), which Docker closes, and ufw's start closes both (its DEFAULT_FORWARD_POLICY):
 a save with ufw off keeps their policies in ``off4`` and ``off6`` too, which outlive Keep, and
 OFF_SCRIPT, which every turning off runs, puts those back, or after a reboot the policies of ufw on.
+
+UNOS's rules also hold those of remote access and the app names while they are on
+(network/remote_rules.py, ADR-0420): an Enable and a Reset add them like the others.
 """
 
 from __future__ import annotations
@@ -559,7 +562,10 @@ async def _missing_unos_rules(state: State) -> list[list[str]]:
                                          ("tcp", str(ISCSI_PORT), ISCSI)):
             if not _has(state.rules, family, protocol, ports, str(network)):
                 commands.append(_ufw_add("allow", protocol, str(network), ports, comment))
-    return commands
+    # The rules of remote access and of the app names (ADR-0420), while they are on.
+    from ..network import remote_rules
+
+    return commands + await remote_rules.missing_commands(state)
 
 
 def is_local(address: str | None) -> bool | None:

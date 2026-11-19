@@ -153,6 +153,15 @@ def _no_web_ui_to_ask(monkeypatch, tmp_path_factory):
 
 
 @pytest.fixture(autouse=True)
+def _no_app_names_volume(monkeypatch, tmp_path_factory):
+    """The volume of the app names (ADR-0420) is a folder of each test that does not exist yet, never
+    /app-names of this machine: a test that gives apps names makes it."""
+    app_names = sys.modules.get("src.network.app_names")
+    if app_names is not None:
+        monkeypatch.setattr(app_names, "APP_NAMES_DIR", str(tmp_path_factory.mktemp("app-names") / "volume"))
+
+
+@pytest.fixture(autouse=True)
 def _no_app_use_read_yet(monkeypatch):
     """The use of the apps' containers and its problems are kept in RAM (ADR-0390): every test
     starts without them, and the cgroups of this machine are never read (a test that reads cgroups

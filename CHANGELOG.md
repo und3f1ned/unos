@@ -11,6 +11,18 @@ Security and robustness hardening, fixes for broken user flows, and a few new
 features (SMB access per user and per share, volumes, copy and move in the file
 manager, encrypted backup uploads, health checks, CI checks).
 
+### Added
+- Remote access (System > Remote Access): a WireGuard tunnel on the host (wireguard-tools'
+  `wg-quick@unos-wg`, enabled so that it comes up at boot) through which devices added as peers reach
+  the NAS alone, never the rest of the LAN. The server's key is made on the host and never leaves
+  it; a peer's configuration and its QR code are shown once and kept nowhere; peers are revoked at
+  once; the port and the tunnel network are checked against the host's networks and listeners;
+  turning it on or off leaves the LAN's access as it was; with ufw, UNOS's rule
+  `UNOS: remote access` lets the port in. Apps get local names, `<name>-<host>.local`, announced by
+  the host's unit `unos-app-names` with avahi-publish (package avahi-utils) and forwarded by the web
+  UI's Caddy over HTTPS from its local CA, through the new volume `app-names` (`remote_access_*` and
+  `app_names_changed` in the audit log, ADR-0420).
+
 ### Changed
 - The supervisor keeps its whole data directory (the database, unless `UNOS_DB_PATH` names another
   file, its JWT secret, the audit log, the state files, the stored certificates and the backups)

@@ -444,9 +444,13 @@ def model_example_problems(models: list[type[BaseModel]]) -> list[str]:
 DOCUMENTATION_NETWORKS = [
     ipaddress.ip_network(network)
     for network in ("192.0.2.0/24", "198.51.100.0/24", "203.0.113.0/24", "2001:db8::/32",
-                    "10.0.0.0/24", "fd00::/64")
+                    "10.0.0.0/24", "fd00::/64",
+                    # The tunnel network of remote access by default: UNOS's own (ADR-0420).
+                    "10.99.0.0/24")
 ]
 DOCUMENTATION_DOMAINS = ("example.com", "example.net", "example.org", "example")
+# A local name of an app is <label>-<host name>.local (ADR-0420); .local has no documentation domain.
+DOCUMENTATION_HOST_NAMES = {"jellyfin-nas.local"}
 # Public hosts that UNOS itself talks to: a URL of theirs in an example names no one's NAS. A URL
 # of the chat services carries its secret in the path, which must then be a placeholder.
 PUBLIC_HOSTS = {"github.com", "api.github.com", "ghcr.io", "docker.io", "lscr.io", "host.docker.internal"}
@@ -497,7 +501,7 @@ def _documentation_address(text: str) -> bool:
 
 def _documentation_host(host: str) -> bool:
     host = host.strip("[]").lower()
-    if host in PUBLIC_HOSTS or host == "localhost":
+    if host in PUBLIC_HOSTS or host in DOCUMENTATION_HOST_NAMES or host == "localhost":
         return True
     if any(host == domain or host.endswith("." + domain) for domain in DOCUMENTATION_DOMAINS):
         return True

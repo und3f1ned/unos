@@ -126,6 +126,13 @@ class AuditAction(str, Enum):
     ISCSI_TARGET_CREATED = "iscsi_target_created"
     ISCSI_TARGET_CHANGED = "iscsi_target_changed"
     ISCSI_TARGET_DELETED = "iscsi_target_deleted"
+    # Remote access and the app names (ADR-0420)
+    REMOTE_ACCESS_ENABLED = "remote_access_enabled"
+    REMOTE_ACCESS_DISABLED = "remote_access_disabled"
+    REMOTE_ACCESS_CHANGED = "remote_access_changed"
+    REMOTE_ACCESS_PEER_ADDED = "remote_access_peer_added"
+    REMOTE_ACCESS_PEER_REVOKED = "remote_access_peer_revoked"
+    APP_NAMES_CHANGED = "app_names_changed"
 
     # Generic
     OTHER = "other"

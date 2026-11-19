@@ -124,6 +124,9 @@ HOST_TOOLS: dict[str, str] = {
 # firewall card names a missing ufw (ADR-0416); it reads iptables' FORWARD chain (iptables, which
 # the ufw and Docker packages depend on; ip6tables too, in its host scripts) and asks sshd -T for
 # SSH's ports (none without openssh-server), and runs systemd-run and systemctl for the revert.
+# network/wireguard.py runs wg and wg-quick (through the unit wg-quick@unos-wg) for remote access, and
+# the remote access card names a missing wireguard-tools; network/app_names.py's unit runs
+# avahi-publish, and the app names card names a missing avahi-utils (ADR-0420).
 OPTIONAL_HOST_TOOLS: dict[str, str] = {
     "exportfs": "nfs-kernel-server",
     "upsc": "nut-client",
@@ -131,6 +134,9 @@ OPTIONAL_HOST_TOOLS: dict[str, str] = {
     "ufw": "ufw",
     "iptables": "iptables",
     "sshd": "openssh-server",
+    "wg": "wireguard-tools",
+    "wg-quick": "wireguard-tools",
+    "avahi-publish": "avahi-utils",
 }
 
 # Enter all of PID 1's namespaces except the user and cgroup namespaces.

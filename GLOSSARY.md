@@ -91,6 +91,23 @@ ADR-0244) or 120 seconds (the firewall, ADR-0416). Avoid: rollback (what `update
 changes (ADR-0416). Its rules are the host's, as ufw records them; UNOS keeps none of its own.
 Avoid: iptables, the IPv6 inbound filter (the dev device's own nftables table, ADR-0301).
 
+**Remote access**: The WireGuard tunnel on the host, the interface `unos-wg` of the unit
+`wg-quick@unos-wg`, through which a peer reaches the NAS from outside the LAN: the NAS's tunnel
+address only, never the rest of the LAN (ADR-0420). Avoid: VPN (it suggests the whole LAN), remote
+desktop.
+
+**Peer**: A device that may connect to remote access: its public key and its `/32` in the tunnel
+network, with a name. Its configuration is shown once, at its creation; revoking it ends its
+tunnel at once (ADR-0420). Avoid: client, user.
+
+**Tunnel network**: The private IPv4 network of remote access (10.99.0.0/24 by default), apart from
+every network of the host; the NAS takes its first address, each peer one more (ADR-0420).
+
+**App name**: A local name of a published port of an installed app, `<label>-<host name>.local`,
+which the host's unit `unos-app-names` announces with avahi-publish and the web UI's Caddy forwards
+over HTTPS to that port (ADR-0420). Avoid: domain,
+subdomain (it is one label).
+
 **Local networks**: The private, link-local and unique-local networks of SMB's `hosts allow`
 (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 100.64.0.0/10, 169.254.0.0/16, fc00::/7, fe80::/10),
 which SMB answers, NFS exports may name and UNOS's firewall rules let reach the web UI, SSH, SMB
