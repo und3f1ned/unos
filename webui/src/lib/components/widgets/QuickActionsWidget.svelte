@@ -17,29 +17,25 @@
 			id: 'files',
 			icon: FolderOpen,
 			key: 'dashboard.actions.files',
-			href: '/files',
-			color: 'icon-storage'
+			href: '/files'
 		},
 		{
 			id: 'shares',
 			icon: Share2,
 			key: 'dashboard.actions.shares',
-			href: '/shares',
-			color: 'icon-network'
+			href: '/shares'
 		},
 		{
 			id: 'apps',
 			icon: Download,
 			key: 'dashboard.actions.apps',
-			href: '/apps',
-			color: 'icon-memory'
+			href: '/apps'
 		},
 		{
 			id: 'settings',
 			icon: Settings,
 			key: 'dashboard.actions.settings',
-			href: '/settings',
-			color: 'text-secondary'
+			href: '/settings'
 		}
 	];
 
@@ -52,16 +48,17 @@
 	}
 </script>
 
-<Card>
+<!-- Four tiles in a 2 x 2 grid, so that the card is about as tall as its neighbour (ADR-0428). -->
+<Card class="h-full flex flex-col">
 	<h3 class="card-title mb-4">{$t('dashboard.actions.title')}</h3>
-	<div class="grid grid-cols-2 md:grid-cols-4 gap-2">
+	<div class="grid grid-cols-2 gap-2 flex-1">
 		{#each actions as action}
 			<Button variant="plain"
 				onclick={() => handleClick(action)}
-			 class="flex flex-col items-center gap-2 p-3 bg-surface-overlay hover:bg-surface-hover rounded-lg transition-colors"
+				class="min-h-24 flex flex-col items-start justify-between gap-3 p-3.5 rounded-lg border border-border bg-surface-muted hover:bg-surface-overlay hover:border-border-strong transition-colors text-left"
 			>
-				<action.icon class="w-6 h-6 {action.color}" />
-				<span class="text-xs text-center">{$t(action.key)}</span>
+				<action.icon class="w-5 h-5 text-content-secondary" aria-hidden="true" />
+				<span class="text-sm font-medium">{$t(action.key)}</span>
 			</Button>
 		{/each}
 	</div>

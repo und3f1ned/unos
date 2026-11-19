@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount, tick } from "svelte";
-  import { Alert } from "$lib/components/ui";
+  import { SlidersHorizontal } from "lucide-svelte";
+  import { Alert, EmptyState } from "$lib/components/ui";
   import {
     AccountNotice, DashboardHeader, DashboardWidget, HiddenWidgets, ReplaceDisksAlert, WidgetToolbar
   } from "$lib/components/dashboard";
@@ -217,7 +218,7 @@
   }
 </script>
 
-<div class="space-y-6">
+<div class="page-container">
   <DashboardHeader
     {systemInfo}
     {lastUpdate}
@@ -230,8 +231,16 @@
   />
 
   {#if loading && !currentStats}
-    <div class="flex items-center justify-center py-12">
-      <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-brand-ring"></div>
+    <!-- Skeleton tiles while the page's data loads; the text stays for screen readers. -->
+    <div class="grid grid-cols-2 md:grid-cols-6 xl:grid-cols-10 gap-4" aria-busy="true">
+      {#each [0, 1, 2, 3, 4] as tile (tile)}
+        <div class="col-span-1 md:col-span-2 space-y-3 bg-surface-elevated border border-border rounded-card p-5">
+          <div class="skeleton w-1/2"></div>
+          <div class="skeleton h-6 w-2/3"></div>
+          <div class="skeleton w-full"></div>
+        </div>
+      {/each}
+      <p class="sr-only">{$t("common.loading")}</p>
     </div>
   {:else}
     <!-- The disks to replace stay above the widgets, always: a warning is not one of them. -->
@@ -258,14 +267,24 @@
       />
     {/if}
 
-    <!-- The widgets: small cards five to a row on a wide screen, wide ones two to a row (ADR-0395). -->
-    <div class="grid grid-cols-2 md:grid-cols-6 xl:grid-cols-10 gap-4">
+    {#if shown.length === 0 && !arranging}
+      <!-- Every widget hidden: say so, and where the way back is, the header's Customize (ADR-0428). -->
+      <EmptyState
+        icon={SlidersHorizontal}
+        title={$t("dashboard.layout.allHidden")}
+        description={$t("dashboard.layout.allHiddenHint")}
+      />
+    {/if}
+
+    <!-- The widgets: small cards five to a row on a wide screen, wide ones two to a row (ADR-0395).
+         While they are arranged each has a dashed outline and its toolbar in the top right corner. -->
+    <div class="grid grid-cols-2 md:grid-cols-6 xl:grid-cols-10 gap-4 {arranging ? 'pt-3' : ''}">
       {#each shown as entry, index (entry.id)}
         {@const def = widgetDef(entry.id)}
         <div
           data-widget={entry.id}
-          class="widget min-w-0 flex flex-col {def?.size === 'wide' ? 'col-span-2 md:col-span-6 xl:col-span-5' : 'col-span-1 md:col-span-2'}
-            {arranging ? 'rounded-lg border border-dashed border-border p-1' : ''}
+          class="widget relative min-w-0 flex flex-col {def?.size === 'wide' ? 'col-span-2 md:col-span-6 xl:col-span-5' : 'col-span-1 md:col-span-2'}
+            {arranging ? 'rounded-card outline-dashed outline-1 outline-offset-[3px] outline-border-strong' : ''}
             {overId === entry.id && draggedId !== entry.id ? 'ring-2 ring-brand-ring' : ''}
             {draggedId === entry.id ? 'opacity-50' : ''}"
           ondragover={(e) => onDragOver(e, entry.id)}

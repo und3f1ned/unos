@@ -769,6 +769,13 @@
 		@apply text-content-secondary hover:bg-surface-overlay hover:text-content;
 	}
 
+	/* A chip of a page header: a state in a few words (the dashboard's), wrapping on a phone. */
+	.chip {
+		@apply inline-flex items-center gap-2 max-w-full min-h-8 px-3 py-1 rounded-full border border-border
+		       bg-surface-elevated text-xs text-content-secondary;
+		font-variant-numeric: tabular-nums;
+	}
+
 	/* ----------------------------------------
 	   Stat Cards (Dashboard widgets)
 	   ---------------------------------------- */
