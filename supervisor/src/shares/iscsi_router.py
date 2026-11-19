@@ -61,7 +61,7 @@ async def list_targets(_=Depends(verify_token), db: AsyncSession = Depends(get_d
     responses=errors(BODY, {
         400: "A value breaks its rule.",
         404: "No such pool or volume.",
-        409: "The name is taken, the pool is not mounted, or the LUN does not fit.",
+        409: "The name is taken, the host's kernel has no LIO, the pool is not mounted, or the LUN does not fit.",
     }, _HOST),
 )
 async def create_target(

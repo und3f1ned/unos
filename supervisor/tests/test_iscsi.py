@@ -81,6 +81,7 @@ class FakeLio:
     def __init__(self, fake) -> None:
         self.fake = fake
         self.modules = True  # the kernel has LIO's modules
+        self.loads = True  # and loads them
         self.nodes: dict[str, Node] = {}
         self.interfaces = json.loads(json.dumps(INTERFACES))
         self.avail = 500 * GIB
@@ -107,7 +108,7 @@ class FakeLio:
                 return HostResult(0, self.read(), "")
             if script == iscsi.MODULES_SCRIPT:
                 assert args == [iscsi.CONFIGFS, *iscsi.MODULES]
-                if not self.modules:
+                if not self.modules or not self.loads:
                     return HostResult(1, "", "modprobe: FATAL: Module target_core_mod not found")
                 self.load()
                 return HostResult(0, "", "")
@@ -650,8 +651,19 @@ class TestCreate:
         assert response.json()["detail"] == iscsi.LUN_UNSAFE.format(folder=FOLDER)
         assert lio.files == {} and rows(lio) == []
 
-    def test_a_create_that_the_kernel_refuses_is_taken_back_whole(self, api, lio, tmp_path):
+    def test_a_create_on_a_kernel_without_lio_is_refused_before_any_change(self, api, lio, tmp_path):
+        # The dev device's vendor kernel has target_core_mod and iscsi_target_mod but no backstore
+        # (target_core_file): GET says kernel_support false, and a create changes nothing.
         lio.modules = False
+        response = create(api)
+        assert (response.status_code, response.json()["detail"]) == (409, iscsi.NO_KERNEL_SUPPORT)
+        assert rows(lio) == [] and lio.files == {} and FOLDER not in lio.folders
+        assert not (tmp_path / "iscsi_secrets.json").exists() or stored_secrets(tmp_path) == {}
+        assert [cmd for cmd in lio.fake.calls if iscsi.MODULES_SCRIPT in cmd or iscsi.PREPARE_SCRIPT in cmd] == []
+        assert audit() == []
+
+    def test_a_create_that_the_kernel_refuses_is_taken_back_whole(self, api, lio, tmp_path):
+        lio.loads = False
         response = create(api)
         assert response.status_code == 500
         assert "LIO's modules could not be loaded" in response.json()["detail"]

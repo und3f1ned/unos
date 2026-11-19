@@ -9,7 +9,7 @@ decided-by: agent
 
 ## Context
 
-`shares.iscsi-targets` asks for an iSCSI target that an administrator makes from a volume, with one LUN and CHAP, that several initiators may use and that refuses an initiator without the credentials. The Linux kernel's target (LIO) is configured through configfs, whose state lives in RAM and is gone after a reboot; the dev device has its modules (`target_core_mod`, `iscsi_target_mod`) but no targetcli. The owner asked "above all that it be safe" (ADR-0013): a LUN holds a whole file system of another computer, and its secrets give access to it.
+`shares.iscsi-targets` asks for an iSCSI target that an administrator makes from a volume, with one LUN and CHAP, that several initiators may use and that refuses an initiator without the credentials. The Linux kernel's target (LIO) is configured through configfs, whose state lives in RAM and is gone after a reboot; the dev device has its modules `target_core_mod` and `iscsi_target_mod` but no targetcli, and, as its check of 2026-11-19 found, no backstore: its vendor kernel builds none of FILEIO, IBLOCK, PSCSI and USER, so it has no `target_core_file` and serves no target. The owner asked "above all that it be safe" (ADR-0013): a LUN holds a whole file system of another computer, and its secrets give access to it.
 
 ## Decision
 
@@ -47,6 +47,7 @@ Its lifecycle:
 - Nothing ends LIO's targets when the host shuts down: the kernel holds the LUN files open, so systemd cannot unmount the pool or make it read-only, and the host powers off with the pool mounted, after its last sync; btrfs mounts it cleanly again. Ending the targets when the supervisor stops would end every session at each restart of the supervisor, while the kernel serves them on without it; a unit of the host that ends them at shutdown is left for later.
 - UNOS's rule for 3260 is added when the firewall is turned on or reset: a firewall that was on before has it only after one of those (UNOS has no older installations, ADR-0207).
 - The device check of the entry is by hand (the feature-pass skill), with open-iscsi on the device as the test initiator; the stand-in's E2E specs answer the tab's requests with route fakes.
+- A host whose kernel lacks one of LIO's modules (`target_core_mod`, `target_core_file`, `iscsi_target_mod`) is told so by GET (`kernel_support` false), and a create there answers 409 before anything is made.
 
 ## Considered options
 

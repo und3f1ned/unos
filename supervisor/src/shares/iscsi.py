@@ -1343,6 +1343,14 @@ async def create_target(db: AsyncSession, spec: IscsiTargetCreate) -> IscsiTarge
             raise HTTPException(409, NAME_TAKEN.format(name=name))
         if len(rows) >= MAX_TARGETS:
             raise HTTPException(409, TOO_MANY_TARGETS)
+        # A kernel without LIO's modules, as a vendor kernel without a backstore: refused before
+        # anything is made, as GET says (kernel_support false).
+        try:
+            supported = await asyncio.to_thread(lambda: kernel_support(read_state()))
+        except IscsiError as exc:
+            raise _host_failed(exc) from exc
+        if not supported:
+            raise HTTPException(409, NO_KERNEL_SUPPORT)
         uid = uuid.uuid4().hex
         iqn = f"{IQN_PREFIX}{name}.{uid[:8]}"
         try:

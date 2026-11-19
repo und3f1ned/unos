@@ -498,7 +498,8 @@ manager, encrypted backup uploads, health checks, CI checks).
   addresses only, which UNOS's firewall rules now let the local networks reach. UNOS restores its
   targets at every start, and after a restore of the database, and removes those it no longer
   knows; a target whose pool did not mount, whose LUN file is not as UNOS made it or whose secret is
-  missing is not served, and the tab says why. A pool or volume that holds a LUN is not unmounted,
+  missing is not served, and the tab says why; on a host whose kernel lacks LIO a create is refused
+  before anything is made. A pool or volume that holds a LUN is not unmounted,
   forgotten or deleted, and a delete needs the target's name typed again (ADR-0418).
 - BookStack, Paperless-ngx and Linkwarden are back in the App Store, each with the container it needs
   beside it: BookStack with MariaDB 11.8, Paperless-ngx with Valkey and Linkwarden with PostgreSQL 16,
