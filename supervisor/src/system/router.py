@@ -2,13 +2,14 @@ import platform
 import subprocess
 import psutil
 from fastapi import APIRouter, Depends, HTTPException, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
 from .. import host
 from ..times import UtcDatetime, from_epoch
 from ..audit.changes import audit_change
 from ..audit.schemas import AuditAction
 from ..auth.utils import require_admin, verify_token
 from ..host import HostResult
+from ..openapi import ADMIN, BODY, SIGNED_IN, answer, errors
 from ..security.validators import validate_timezone
 
 # Read-only endpoints are available to every signed-in user;
@@ -47,15 +48,26 @@ async def get_host_hostname() -> str:
 
 
 class SystemInfo(BaseModel):
-    hostname: str
-    kernel: str
-    os: str
-    architecture: str
-    boot_time: UtcDatetime  # when the host booted (ADR-0401)
+    """What the host is and when it booted."""
+
+    model_config = ConfigDict(json_schema_extra={"examples": [{
+        "hostname": "nas", "kernel": "6.1.115-vendor-rk35xx", "os": "Debian GNU/Linux 13 (trixie)",
+        "architecture": "aarch64", "boot_time": "2026-11-18T07:12:03Z",
+    }]})
+
+    hostname: str = Field(description="The host's name; the container's when the host cannot tell.")
+    kernel: str = Field(description="The release of the host's Linux kernel.")
+    os: str = Field(description="The host's distribution, as its /etc/os-release names it.")
+    architecture: str = Field(description="The host's machine architecture, such as x86_64 or aarch64.")
+    boot_time: UtcDatetime = Field(description="When the host booted, in UTC.")  # ADR-0401
 
 
-@router.get("/info", response_model=SystemInfo)
+@router.get(
+    "/info", response_model=SystemInfo, summary="Read the host's name, system and boot time",
+    responses=errors(SIGNED_IN),
+)
 async def get_system_info(_=Depends(verify_token)):
+    """The host's name, kernel, distribution, architecture and boot time. Any signed-in user."""
     return SystemInfo(
         hostname=await get_host_hostname(),
         kernel=platform.release(),
@@ -66,7 +78,11 @@ async def get_system_info(_=Depends(verify_token)):
 
 
 class TimezoneUpdate(BaseModel):
-    timezone: str
+    """The host's new time zone."""
+
+    model_config = ConfigDict(json_schema_extra={"examples": [{"timezone": "Europe/Berlin"}]})
+
+    timezone: str = Field(description="A time zone that the host knows, as GET /system/timezones lists them.")
 
 
 async def _timedatectl(*args: str) -> HostResult | None:
@@ -90,9 +106,12 @@ async def _host_zone() -> str:
     return "Unknown"
 
 
-@router.get("/timezone")
+@router.get(
+    "/timezone", summary="Read the host's time zone",
+    responses={**answer({"timezone": "Europe/Berlin"}, "The host's time zone, or Unknown."), **errors(SIGNED_IN)},
+)
 async def get_timezone(_=Depends(verify_token)):
-    """The host's time zone; "Unknown" when timedatectl cannot tell."""
+    """The host's time zone; "Unknown" when timedatectl cannot tell. Any signed-in user."""
     return {"timezone": await _host_zone()}
 
 
@@ -103,16 +122,35 @@ async def _zones() -> list[str]:
     return [line for line in result.stdout.splitlines() if line.strip()]
 
 
-@router.get("/timezones")
+@router.get(
+    "/timezones", summary="List the time zones the host knows",
+    responses={
+        **answer({"timezones": ["Africa/Abidjan", "Europe/Berlin", "UTC"]},
+                 "The time zones, in timedatectl's order; none when timedatectl cannot tell."),
+        **errors(SIGNED_IN),
+    },
+)
 async def list_timezones(_=Depends(verify_token)):
-    """The time zones the host knows."""
+    """The time zones the host knows. Any signed-in user."""
     return {"timezones": await _zones()}
 
 
-@router.put("/timezone")
+@router.put(
+    "/timezone", summary="Set the host's time zone",
+    responses={
+        **answer({"status": "ok", "timezone": "Europe/Berlin"}, "The zone that the host has now."),
+        **errors(ADMIN, BODY, {
+            400: "The zone is empty, too long, not a zone's name or not one that the host knows.",
+            500: "timedatectl failed or gave no answer in time.",
+        }),
+    },
+)
 async def set_timezone(request: Request, data: TimezoneUpdate, user=Depends(require_admin)):
-    """Set the host's time zone; the Scheduler follows it (ADR-0264). A zone other than the
-    one the host had is audited (ADR-0351)."""
+    """Set the host's time zone; the Scheduler follows it. A zone other than the one the host had
+    is written to the audit log. Administrators only.
+    \f
+    ADR-0264, ADR-0351.
+    """
     zones = set(await _zones())
     validated_tz = validate_timezone(data.timezone, zones or None)
     old = await _host_zone()
@@ -130,20 +168,33 @@ async def set_timezone(request: Request, data: TimezoneUpdate, user=Depends(requ
 
 
 class TemperatureSensor(BaseModel):
-    label: str
-    current: float
-    high: float | None = None
-    critical: float | None = None
+    """One temperature sensor, in degrees Celsius."""
+
+    label: str = Field(description="The sensor's label; Sensor <n> when the driver gives none.")
+    current: float = Field(description="The temperature now.")
+    high: float | None = Field(None, description="The driver's high threshold; null when it gives none.")
+    critical: float | None = Field(None, description="The driver's critical threshold; null when it gives none.")
 
 
 class TemperatureGroup(BaseModel):
-    name: str
-    sensors: list[TemperatureSensor]
+    """The sensors of one driver."""
+
+    model_config = ConfigDict(json_schema_extra={"examples": [{
+        "name": "soc_thermal",
+        "sensors": [{"label": "Sensor 0", "current": 41.5, "high": None, "critical": 115.0}],
+    }]})
+
+    name: str = Field(description="The driver's name, such as coretemp or soc_thermal.")
+    sensors: list[TemperatureSensor] = Field(description="Its sensors.")
 
 
-@router.get("/temperatures", response_model=list[TemperatureGroup])
+@router.get(
+    "/temperatures", response_model=list[TemperatureGroup], summary="Read the host's temperature sensors",
+    responses=errors(SIGNED_IN),
+)
 async def get_temperatures(_=Depends(verify_token)):
-    """Get detailed temperature sensor information."""
+    """The host's temperature sensors by driver; none when the host has none or they cannot be
+    read. Any signed-in user."""
     groups = []
     try:
         sensors = psutil.sensors_temperatures()

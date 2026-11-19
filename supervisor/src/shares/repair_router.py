@@ -22,8 +22,9 @@ import threading
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import PurePosixPath
+from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Path, Request
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 from sqlalchemy import Row, select
@@ -34,6 +35,7 @@ from ..audit.schemas import AuditAction
 from ..auth.models import User
 from ..auth.utils import require_admin
 from ..database import get_db
+from ..openapi import RATE_LIMITED, errors
 from ..security.validators import pools_base, sanitize_error_message
 from . import accounts, constants, models, repair, service
 
@@ -43,6 +45,8 @@ logger = logging.getLogger(__name__)
 limiter = Limiter(key_func=get_remote_address)
 
 router = APIRouter(prefix="/shares", tags=["shares"])
+
+ShareName = Annotated[str, Path(description="The share's name, in any letter case.")]
 
 
 @dataclass
@@ -89,28 +93,36 @@ def _publish(job: repair.RepairResult | None) -> None:
     _job = job
 
 
-@router.post("/smb/{name}/repair-permissions", response_model=repair.RepairResult, status_code=202)
+@router.post(
+    "/smb/{name}/repair-permissions", response_model=repair.RepairResult, status_code=202,
+    summary="Start a repair of a share's permissions",
+    responses=errors(RATE_LIMITED, {
+        404: "No share has the name, also when it was deleted while it was checked.",
+        409: "Nothing was changed: the share was changed while it was checked, it is not served, its pool is not "
+             "mounted or is read-only, a folder above its folder can be changed by other accounts, another host "
+             "group has the gid of unos-smb, or another repair is running.",
+        500: "A check of the share failed unexpectedly, or the repair could not be started.",
+        503: "The pool list could not be read.",
+    }),
+)
 @limiter.limit("6/minute")
 async def repair_share_permissions(
     request: Request,
-    name: str,
+    name: ShareName,
     db: AsyncSession = Depends(get_db),
     admin: User = Depends(require_admin),
 ) -> repair.RepairResult:
-    """Start a repair of the permissions of a share's folder; answers it running (ADR-0363).
+    """Start a repair of the permissions of a share's folder in the background; the answer is the
+    repair running, and the events socket sends its progress. One repair runs at a time.
 
     Every file and folder of the share gets the group unos-smb and group
     read/write (folders 2770, files 0660 or 0770); other accounts lose access.
     Symlinks, hard links, special files, private entries, .snapshots, other
-    filesystems and mount points are skipped. 404 for an unknown share, also
-    one deleted while it was checked. 409, and nothing is changed, when the
-    share was changed while it was checked, the share is not served (its
-    folder breaks a rule of ADR-0145), its pool is not mounted or is mounted
-    read-only, a folder above the share's folder can be changed by other
-    accounts, another host group has the SMB group's gid, or another repair
-    is running. 503 when the pool list cannot be read. The repair runs on in
-    the background until the share is done, stopped (DELETE) or 24 hours
-    have passed (the state "incomplete": run it again to continue).
+    filesystems and mount points are skipped. The repair runs on until the
+    share is done, it is stopped (DELETE) or 24 hours have passed (the state
+    incomplete: run it again to continue).
+    \f
+    ADR-0363. A share that is not served breaks a rule of ADR-0145.
     """
     global _running
     username = admin.username
@@ -214,19 +226,27 @@ async def repair_share_permissions(
     return started
 
 
-@router.delete("/smb/{name}/repair-permissions", response_model=repair.RepairResult, status_code=202)
+@router.delete(
+    "/smb/{name}/repair-permissions", response_model=repair.RepairResult, status_code=202,
+    summary="Stop the repair of a share's permissions",
+    responses=errors({
+        404: "No share has the name, and no running repair started with it.",
+        409: "No repair of this share is running.",
+    }),
+)
 async def stop_repair(
-    name: str,
+    name: ShareName,
     db: AsyncSession = Depends(get_db),
     admin: User = Depends(require_admin),
 ) -> repair.RepairResult:
-    """Ask the running repair of a share to stop; answers the job as it is now (ADR-0363).
+    """Ask the running repair of a share's permissions to stop; the answer is the repair as it is now.
 
-    The walk stops before its next entry and ends "incomplete": what it
+    The walk stops before its next entry and ends incomplete: what it
     changed stays changed, and a new run continues quickly. The repair of a
     share that is gone (deleted while a call of the walk on its folder had
-    not returned) is found by the name it started with. 404 for an unknown
-    share; 409 when no repair of this share runs.
+    not returned) is found by the name it started with.
+    \f
+    ADR-0363.
     """
     result = await db.execute(
         select(models.SmbShare.id).where(models.SmbShare.name == name).order_by(models.SmbShare.id)
@@ -246,13 +266,18 @@ async def stop_repair(
     raise HTTPException(status_code=409, detail=NOT_RUNNING)
 
 
-@router.get("/smb/{name}/repair-permissions", response_model=repair.RepairResult)
+@router.get(
+    "/smb/{name}/repair-permissions", response_model=repair.RepairResult,
+    summary="Read the last repair of a share's permissions",
+    responses=errors({404: "No share has the name, or no repair of it has ended since the supervisor started."}),
+)
 async def get_repair_result(
-    name: str,
+    name: ShareName,
     db: AsyncSession = Depends(get_db),
     _admin: User = Depends(require_admin),
 ) -> repair.RepairResult:
-    """The last repair result of a share since UNOS started; 404 when there is none."""
+    """The result of the last repair of a share's permissions that ended since the supervisor started;
+    the results are kept in memory only."""
     share = await _find_share(db, name)
     result = _last_results.get(share.id)
     if result is None:

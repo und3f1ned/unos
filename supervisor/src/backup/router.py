@@ -56,15 +56,16 @@ import zlib
 from collections.abc import Iterable, Iterator
 from datetime import datetime
 from pathlib import Path
-from typing import BinaryIO, Optional
+from typing import Annotated, BinaryIO, Optional
 
 from cryptography.exceptions import InvalidTag
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import Path as PathParameter
 from fastapi.responses import FileResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from .. import database
@@ -75,7 +76,15 @@ from ..auth import requirement, scopes, webauthn
 from ..auth.utils import CallerSession, caller_session, forget_unstored_sessions, verify_token
 from ..config import get_settings
 from ..database import init_db
-from ..request_limits import UPLOAD_OPENAPI, UploadSink, receive_upload
+from ..openapi import BODY, answer, errors, file_answer
+from ..request_limits import (
+    MAX_REQUEST_BODY,
+    MIB,
+    UPLOAD_IDLE_TIMEOUT,
+    UPLOAD_OPENAPI,
+    UploadSink,
+    receive_upload,
+)
 from ..security.validators import sanitize_error_message
 from ..shares import accounts, service
 
@@ -193,24 +202,42 @@ class RestoreSpaceError(Exception):
 
 
 class BackupInfo(BaseModel):
-    filename: str
-    size: int
-    created: UtcDatetime  # the file's mtime: when it was written
-    version: str
-    encrypted: bool = False
+    """A backup in the backup list."""
+
+    filename: str = Field(description="Its file name, such as unos_backup_<date>_<time> (made here), uploaded_..., "
+                                      "offsite_... (from the off-device copy) or auto_backup_... (a scheduled "
+                                      "backup), in UTC, then .tar.gz, or .tar.gz.enc when it is encrypted.")
+    size: int = Field(description="Its size in bytes.")
+    # the file's mtime: when it was written
+    created: UtcDatetime = Field(description="When its file was written, in UTC.")
+    version: str = Field(description="The backup format in its manifest, such as 1.0. The list says unknown for "
+                                     "an encrypted backup or a manifest that cannot be read; the answer of a new "
+                                     "backup gives its format, encrypted or not.")
+    encrypted: bool = Field(False, description="Whether it is encrypted with a passphrase (.tar.gz.enc).")
 
 
 class BackupConfig(BaseModel):
-    """The body of POST /backup/create. Every backup holds the same files (_collect_backup_content):
-    there are no options of what it holds (ADR-0345, ADR-0355)."""
+    """The body of POST /backup/create. Every backup holds the same files:
+    there are no options of what it holds."""
+    # _collect_backup_content; ADR-0345, ADR-0355.
 
-    encrypt: bool = False
-    passphrase: Optional[str] = None  # Required if encrypt=True
+    model_config = ConfigDict(json_schema_extra={"examples": [{"encrypt": True, "passphrase": "example-passphrase"}]})
+
+    encrypt: bool = Field(False, description="Whether to encrypt it with AES-256-GCM, with a key derived from the "
+                                             "passphrase.")
+    # Required if encrypt=True
+    passphrase: Optional[str] = Field(None, description="The passphrase to encrypt it with; required with encrypt. "
+                                                        "It is not stored: a restore needs it again.")
 
 
 class DecryptRequest(BaseModel):
+    """The passphrase of a restore."""
+
+    model_config = ConfigDict(json_schema_extra={"examples": [{"passphrase": "example-passphrase"}]})
+
     # Optional so that the UI's empty body ({}) is accepted for unencrypted backups.
-    passphrase: Optional[str] = None
+    passphrase: Optional[str] = Field(None, description="The passphrase of an encrypted backup (.tar.gz.enc); "
+                                                        "none for an unencrypted one.")
 
 
 def derive_key(passphrase: str, salt: bytes) -> bytes:
@@ -1146,9 +1173,27 @@ def _list_backups() -> list[BackupInfo]:
     return backups
 
 
-@router.get("/list")
+# The API documentation (ADR-0417).
+_BACKUP_EXAMPLE = {"filename": "unos_backup_20261119_101500.tar.gz.enc", "size": 184392,
+                   "created": "2026-11-19T10:15:00.482911Z", "version": "1.0", "encrypted": True}
+_UPLOADED_EXAMPLE = {"filename": "uploaded_20261119_103012.tar.gz", "size": 176128,
+                     "created": "2026-11-19T10:30:12.774310Z", "version": "1.0", "encrypted": False}
+_Filename = Annotated[str, PathParameter(description="The backup's file name, as GET /backup/list gives it.")]
+_NOT_A_BACKUP = {400: "The name is not a backup's file name.", 404: "No backup has that name."}
+
+
+@router.get(
+    "/list", summary="List the backups",
+    responses=answer(
+        {"backups": [{**_BACKUP_EXAMPLE, "version": "unknown"}, {
+            "filename": "offsite_20261118_020012.tar.gz", "size": 176128, "created": "2026-11-18T02:31:40.120558Z",
+            "version": "1.0", "encrypted": False,
+        }]},
+        "backups: every backup, newest first, with its file name, size, time, format and whether it is encrypted.",
+    ),
+)
 async def list_backups(_: dict = Depends(verify_token)):
-    """List all available backups (both encrypted and unencrypted)."""
+    """List all available backups (both encrypted and unencrypted), newest first."""
     return {"backups": await asyncio.to_thread(_list_backups)}
 
 
@@ -1264,13 +1309,25 @@ def _create_backup(config: BackupConfig) -> dict:
     }
 
 
-@router.post("/create")
+@router.post(
+    "/create", summary="Create a backup",
+    responses={
+        **answer({"status": "success", "encrypted": True, "backup": _BACKUP_EXAMPLE},
+                 "status success, whether it is encrypted, and the new backup."),
+        **errors(BODY, {
+            400: "encrypt is true without a passphrase.",
+            413: f"{BODY[413][:-1]}, or the database is over the {limit_text(MAX_DB_BYTES)} limit of a backup.",
+            500: "The backup could not be written, for example when the disk is full.",
+        }),
+    },
+)
 async def create_backup(
     request: Request,
     config: BackupConfig = BackupConfig(),
     user=Depends(verify_token),
 ):
-    """Create a new backup of UNOS configuration. Optionally encrypted with AES-256."""
+    """Create a new backup of the UNOS configuration: the database and a manifest, not the pools' files.
+    Optionally encrypted with AES-256. It joins the backup list, and the audit log records it."""
     # Validate encryption config
     if config.encrypt and not config.passphrase:
         raise HTTPException(400, "Passphrase required for encrypted backup")
@@ -1294,8 +1351,15 @@ async def create_backup(
     return result
 
 
-@router.get("/download/{filename}")
-async def download_backup(filename: str, _: dict = Depends(verify_token)):
+@router.get(
+    "/download/{filename}", summary="Download a backup", response_class=FileResponse,
+    responses={
+        **file_answer("application/gzip", "The backup's file, as an attachment under its name; an encrypted one "
+                                          "is ciphertext, not gzip data."),
+        **errors(_NOT_A_BACKUP),
+    },
+)
+async def download_backup(filename: _Filename, _: dict = Depends(verify_token)):
     """Download a backup file."""
     ensure_backup_dir()
     backup_path = _backup_path(filename)
@@ -1309,12 +1373,33 @@ async def download_backup(filename: str, _: dict = Depends(verify_token)):
     )
 
 
-@router.post("/upload", openapi_extra=UPLOAD_OPENAPI)
+@router.post(
+    "/upload", openapi_extra=UPLOAD_OPENAPI, summary="Upload a backup",
+    responses={
+        **answer({"status": "success", "backup": _UPLOADED_EXAMPLE},
+                 "status success and the backup, under its new name uploaded_<date>_<time>."),
+        **errors({
+            400: "The form is malformed, has a second file, or too many or too large other fields; the file name "
+                 f"ends in neither .tar.gz nor .tar.gz.enc; the file is over {limit_text(MAX_ARCHIVE_BYTES)}; it "
+                 "fails the checks of a restore, or a .tar.gz.enc file is too short or not encrypted; or the "
+                 "client went away during the upload.",
+            408: f"The client sent nothing for {UPLOAD_IDLE_TIMEOUT} seconds before the upload ended.",
+            422: "The body is not multipart/form-data or holds no complete file in the field file.",
+            413: f"The request body is larger than {limit_text(MAX_ARCHIVE_BYTES + MAX_REQUEST_BODY)}: the "
+                 f"{limit_text(MAX_ARCHIVE_BYTES)} of a backup and {MAX_REQUEST_BODY // MIB} MiB for the form.",
+            500: "The backup could not be stored, for example when the disk is full.",
+        }),
+    },
+)
 async def upload_backup(request: Request, user=Depends(verify_token)):
-    """Upload a backup file (form field "file"). It is validated like a restore, but not applied.
+    """Upload a backup file (form field "file", multipart/form-data) of at most 64 MiB, which joins the
+    backup list under a new name. It is validated like a restore, but not applied. A form without a file
+    in that field answers 422.
 
     Encrypted backups (.tar.gz.enc) cannot be read without their passphrase:
-    they are validated when they are restored. The form is read only here,
+    they are validated when they are restored.
+    \f
+    The form is read only here,
     after the credentials were checked; the extension is checked as soon as
     the file name arrives, and the file goes straight into a temporary file
     in the backup directory as it arrives, not through /tmp
@@ -1351,14 +1436,42 @@ async def upload_backup(request: Request, user=Depends(verify_token)):
     }
 
 
-@router.post("/restore/{filename}")
+@router.post(
+    "/restore/{filename}", summary="Restore a backup",
+    responses={
+        **answer({
+            "status": "success",
+            "restored": ["database", "smb_config"],
+            "manifest": {"version": "1.0", "created": "2026-11-18T02:31:40.120558Z", "hostname": "nas",
+                         "encrypted": False},
+            "message": "Backup restored: database, smb_config.",
+            "warnings": [],
+            # Beside the database (_keep_copy_of_database): a /data literal would escape the stand-in.
+            "previous_database": f"{settings.db_path}.pre-restore-20261119_104500_120931",
+        }, "status success; restored: what was restored, database and smb_config when smb.conf was rendered "
+           "from it, or nothing; the backup's manifest; a message with the warnings; and the copy of the "
+           "database before the restore, null when there was none."),
+        **errors(BODY, _NOT_A_BACKUP, {
+            400: "The name is not a backup's file name, an encrypted backup has no passphrase or a wrong one, or "
+                 "the archive or its database fails the checks of a restore.",
+            409: "Another restore runs.",
+            500: "The restore failed otherwise, for example when the database stayed busy.",
+            503: "The list of pools in the host's fstab, which the SMB checks of the backup's database need, "
+                 "cannot be read: nothing was restored.",
+            507: "/tmp has no room for the restore's temporary files: nothing was restored.",
+        }),
+    },
+)
 async def restore_backup(
     request: Request,
-    filename: str,
+    filename: _Filename,
     decrypt_request: Optional[DecryptRequest] = None,
     user=Depends(verify_token),
 ):
-    """Restore from a backup file. Provide passphrase for encrypted backups.
+    """Restore from a backup file: replace the live database with the backup's once the archive and its
+    database pass the checks, after a copy of the live one is kept beside it. Provide passphrase for
+    encrypted backups. SMB then follows the restored shares and accounts. A restored database ends every
+    session but the caller's, which goes on when it has them as the same administrator.
 
     The archive is checked in one pass over its gzip stream, which extracts
     its database into /tmp (a tmpfs in RAM in the container); when it does
@@ -1404,9 +1517,16 @@ async def restore_backup(
     return result
 
 
-@router.delete("/{filename}")
-async def delete_backup(request: Request, filename: str, user=Depends(verify_token)):
-    """Delete a backup file."""
+@router.delete(
+    "/{filename}", summary="Delete a backup",
+    responses={
+        **answer({"status": "deleted", "filename": "unos_backup_20261119_101500.tar.gz.enc"},
+                 "status deleted and the backup's file name."),
+        **errors(_NOT_A_BACKUP, {500: "The file could not be removed."}),
+    },
+)
+async def delete_backup(request: Request, filename: _Filename, user=Depends(verify_token)):
+    """Delete a backup file; the audit log records it."""
     ensure_backup_dir()
     backup_path = _backup_path(filename)
     if not _is_regular_file(backup_path):

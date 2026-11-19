@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from enum import Enum
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from ..times import UtcDatetime
 
@@ -24,12 +24,26 @@ class SmbAccountState(str, Enum):
 
 
 class SmbAccountStatus(BaseModel):
-    state: SmbAccountState
-    allowed: bool
-    linux_name: str | None = None
-    uid: int | None = None
-    password_set_at: UtcDatetime | None = None
-    reason: str | None = None
+    """A user's SMB state, derived from the database and never stored."""
+
+    state: SmbAccountState = Field(
+        description="active: the user signs in over SMB with the UNOS password; password_needed: allowed, but "
+                    "Samba has no password for the user yet; off: not allowed; unavailable: an administrator, "
+                    "or a username that SMB cannot use."
+    )
+    allowed: bool = Field(description="Whether an administrator allowed SMB for the user.")
+    linux_name: str | None = Field(
+        None, description="The name of the user's SMB account on the host; null unless SMB is allowed."
+    )
+    uid: int | None = Field(
+        None,
+        description="The user id of the SMB account on the host, 70000 to 79999; null unless SMB is allowed and "
+                    "the account has one.",
+    )
+    password_set_at: UtcDatetime | None = Field(
+        None, description="When Samba got the account's password, in UTC; null unless the state is active."
+    )
+    reason: str | None = Field(None, description="Why SMB is unavailable; null for the other states.")
 
 
 def username_smb_problem(username: str) -> str | None:

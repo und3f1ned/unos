@@ -51,43 +51,68 @@ class AppSource(str, Enum):
     COMMUNITY = "community"              # Well-known open source projects
 
 
+# Made-up digests and ids of the examples of the API documentation (ADR-0417); the image names
+# are the catalog's.
+_BOOKSTACK = "lscr.io/linuxserver/bookstack"
+_BOOKSTACK_DIGEST = "sha256:b24437fdf9955d4dc60c69f6cfff2947e19398dafb292c57e00af453796531f9"
+_BOOKSTACK_NEWER_DIGEST = "sha256:d198e813699c5df38de4e7cf215ba4183ac6385b6ff36bb1fa20db41e598194d"
+_MARIADB_DIGEST = "sha256:2b6d9296f58f8913554dc0e9db53e4c4317472b97f53ea75d03018b4f49fe637"
+_BOOKSTACK_FOLDER = "/mnt/pools/data/apps/bookstack"
+
+
 class PortMapping(BaseModel):
-    host: int
-    container: int
-    protocol: str = "tcp"
+    """A port of an app's main container that the host publishes."""
+
+    host: int = Field(description="The host's port that publishes it, unless the install request moves it.")
+    container: int = Field(description="The container's port.")
+    protocol: str = Field("tcp", description="Its protocol: tcp (the default) or udp.")
 
 
 class VolumeMapping(BaseModel):
-    host: str
-    container: str
-    readonly: bool = False
-    # The source is a single file (a database, a config file), not a
-    # directory. On the pool a missing file is created empty, so Docker does
-    # not create a directory in its place.
-    is_file: bool = False
-    # Owner given to the source when the supervisor creates it on the pool.
-    # Set it for images that run as a fixed non-root user: they cannot write
-    # to the root-owned folders the supervisor creates, and crash-loop. An
-    # existing source and the parent folders are never changed.
-    uid: int | None = None
-    gid: int | None = None
-    # A password file that the install creates when it is missing (secret_digits hexadecimal
-    # digits, mode 0600), never at a start and never in place of one that is there; bound read-only
-    # and named by a *_FILE variable, LinuxServer's FILE__ one or the container's command, so the
-    # password is in no Docker configuration (ADR-0381, ADR-0415). Its host path is fixed: an
-    # override cannot move it.
-    generated_secret: bool = False
-    # The hexadecimal digits of a generated secret, half as many random bytes: 64 by default; 32
-    # for a key that the app takes as its 32 bytes (BookStack's APP_KEY, ADR-0415).
-    secret_digits: int = Field(default=64, ge=32, le=256, multiple_of=2)
-    # The template host path of the data folder that was set up with the password: an install
-    # that finds that folder not empty and the password file missing is refused (409), never
-    # given a new password, which the data would not take.
-    secret_for: str | None = None
-    # A folder of the app's own data that a newer version may migrate so that the earlier one
-    # cannot read it (a database): an update copies it beside itself on the pool before the new
-    # version starts, and a rollback puts the copy back (ADR-0408).
-    copy_before_update: bool = False
+    """A folder or file of the host that the catalog binds into a container of an app."""
+
+    host: str = Field(
+        description="The host path: one that starts with {pool} is on the pool that the install chooses, with the "
+                    "pool's mount point in place of {pool}; any other is a fixed path of the host, bound as it is."
+    )
+    container: str = Field(description="Where the container sees it.")
+    readonly: bool = Field(False, description="Whether the container may only read it.")
+    # On the pool a missing file is created empty, so Docker does not create a directory in its place.
+    is_file: bool = Field(
+        False, description="Whether it is one file (a database, a configuration file), not a folder; a missing one "
+                           "on the pool is created empty."
+    )
+    # Set it for images that run as a fixed non-root user: they cannot write to the root-owned folders
+    # the supervisor creates, and crash-loop.
+    uid: int | None = Field(
+        None, description="The user id that the install gives the folder or file when it creates it on the pool; "
+                          "null: root. An existing one, and the folders on the way, keep their owners."
+    )
+    gid: int | None = Field(None, description="The group id that the install gives it, as uid; null: root's group.")
+    # Bound read-only and named by a *_FILE variable, LinuxServer's FILE__ one or the container's
+    # command, so the password is in no Docker configuration (ADR-0381, ADR-0415).
+    generated_secret: bool = Field(
+        False, description="Whether it is a generated secret: a password file that the install writes when it is "
+                           "missing (secret_digits hex digits, mode 0600), never at a start. Its host path cannot be "
+                           "moved."
+    )
+    # Half as many random bytes; 32 for a key that the app takes as its 32 bytes (BookStack's
+    # APP_KEY, ADR-0415).
+    secret_digits: int = Field(
+        default=64, ge=32, le=256, multiple_of=2,
+        description="The hex digits of a generated secret: 64 by default, an even number from 32 to 256.",
+    )
+    # The data would not take a new password.
+    secret_for: str | None = Field(
+        None, description="For a generated secret: the template host path of the data folder that was set up with "
+                          "it. An install that finds that folder not empty and the password file missing is refused. "
+                          "null: none."
+    )
+    # A newer version may migrate it so that the earlier one cannot read it (ADR-0408).
+    copy_before_update: bool = Field(
+        False, description="Whether an app update makes a database copy of this folder beside it on the pool before "
+                           "the new version starts, which an app rollback puts back."
+    )
 
     @computed_field  # type: ignore[misc]
     @property
@@ -97,80 +122,100 @@ class VolumeMapping(BaseModel):
 
 
 class EnvVar(BaseModel):
-    name: str
-    value: str = ""
-    description: str = ""
-    required: bool = False
-    # Password, token or key: the UI masks it, and well-known placeholder
-    # values ("changeme", "admin", ...) are rejected at install time.
-    secret: bool = False
-    # False for wiring that UNOS sets (the name of a companion, the path of a password file): an
-    # override of it answers 400 (ADR-0381).
-    editable: bool = True
+    """A variable of a container's environment."""
+
+    name: str = Field(description="The variable's name.")
+    value: str = Field("", description="Its value unless the install request gives another.")
+    description: str = Field("", description="What it is for, for the App Store; empty when the catalog says nothing.")
+    required: bool = Field(False, description="Whether the install needs a value that is not empty.")
+    secret: bool = Field(
+        False, description="Whether it is a password, token or key: the App Store masks it, and an install refuses "
+                           "well-known placeholders such as changeme."
+    )
+    # An override of it answers 400 (ADR-0381).
+    editable: bool = Field(
+        True, description="False for what UNOS sets (a companion's name, the path of a password file): the install "
+                          "request cannot change it. PUID and PGID cannot be changed either, whatever it says: "
+                          "the install option to run in the group unos-smb sets them."
+    )
 
 
 class HardwareProfile(BaseModel):
-    """Hardware of a SoC that a container of an app gets when it is installed on a host with that
-    SoC (ADR-0382).
-
-    Off that SoC the container is installed as on every host.
-    """
-    # Names the profile in the API; the App Store's hint is chosen by it.
-    id: str
-    # A name of the SoC in the host's device tree (/proc/device-tree/compatible).
-    soc: str
-    # Device nodes, or folders of them, passed into the container under the same paths, read
-    # and write, when the host has them. The container stays unprivileged: its root opens
-    # them whatever their owner and mode, and the device cgroup allows these nodes only.
-    devices: list[str]
-    # Those of the devices without which the container cannot use the hardware, or paths inside
-    # a folder of them (a link in /dev/dri/by-path): the profile applies, and the catalog API
-    # names it, only on a host that has every one of them.
-    requires: list[str]
-    # Paths that Docker masks in every unprivileged container and the app must read: the rest
-    # of Docker's masks stay (hardware.DOCKER_MASKED_PATHS).
-    unmasked_paths: list[str] = []
-    # Run without Docker's AppArmor profile (docker-default), which denies reading what is
-    # unmasked under /sys/firmware, where Docker applies one.
-    apparmor_unconfined: bool = False
-    # Where the profile applies, its container runs this image in place of its own: one built
-    # for the hardware, pinned by tag and digest (ADR-0381). A profile shared by templates
-    # names none; a template gives its copy one (model_copy). At most one profile of a
-    # container names an image.
-    image: str | None = None
+    """A hardware profile: the hardware of a SoC that a container of an app gets when it is
+    installed on a host with that SoC. Off that SoC the container is installed as on every host."""
+    # ADR-0382.
+    # The App Store's hint is chosen by it.
+    id: str = Field(description="The profile's name, such as rk3588-video.")
+    soc: str = Field(description="The SoC, as the host's device tree names it (/proc/device-tree/compatible).")
+    # The container stays unprivileged: its root opens them whatever their owner and mode, and the
+    # device cgroup allows these nodes only.
+    devices: list[str] = Field(
+        description="Device nodes, or folders of them, passed into the container under the same paths, to read and "
+                    "write, when the host has them."
+    )
+    # Such as a link in /dev/dri/by-path.
+    requires: list[str] = Field(
+        description="The devices, or paths inside a folder of them, that the host must have for the profile to apply."
+    )
+    # The rest of Docker's masks stay (hardware.DOCKER_MASKED_PATHS).
+    unmasked_paths: list[str] = Field(
+        [], description="Paths that Docker masks in every unprivileged container and that the container must read."
+    )
+    # Docker's docker-default denies reading what is unmasked under /sys/firmware.
+    apparmor_unconfined: bool = Field(False, description="Whether the container runs without Docker's AppArmor profile.")
+    # Pinned by tag and digest (ADR-0381). A profile shared by templates names none; a template
+    # gives its copy one (model_copy). At most one profile of a container names an image.
+    image: str | None = Field(
+        None, description="The pinned image, built for the hardware, that the container runs in place of its own "
+                          "where the profile applies; null: its own."
+    )
 
 
 class ContainerSpec(BaseModel):
     """What UNOS needs to create one container of an app (ADR-0381): the main container's are
     its template's own fields, a companion's its own."""
-    image: str
-    volumes: list[VolumeMapping] = []
-    environment: list[EnvVar] = []
-    # The hardware of the SoCs that the container gets (ADR-0382). The catalog API answers only
-    # the profiles of the host's SoC, and the image of one of them that names one.
-    hardware: list[HardwareProfile] = []
-    # Paths that the container writes at run time and that are kept in RAM, not on the system
-    # disk: the container path to Docker's tmpfs options ("size=64m").
-    tmpfs: dict[str, str] = {}
-    # The size of the container's /dev/shm ("128m"); None: Docker's 64 MB.
-    shm_size: str | None = None
-    # Seconds Docker gives the container to stop before it kills it (Docker's StopTimeout, also
-    # at the host's shutdown), and that a stop of the app waits; None: 10.
-    stop_timeout: int | None = None
-    # The container's command in place of its image's CMD (Linkwarden's reads its password files
-    # into the variables that it takes, ADR-0415); None: the image's own.
-    command: list[str] | None = None
-    # A companion's readiness when its image has no health check: a command that UNOS runs in the
-    # container (Docker's exec) every POLL_SECONDS while the next container waits for it, ready
-    # once it exits 0, such as a database's check that it takes connections (ADR-0415). Docker runs
-    # nothing between the waits, so nothing is written to the system disk while the app runs.
-    ready_command: list[str] | None = None
-    # False: the container runs without the health check of its image (Docker's NONE), whose every
-    # probe writes the container's state to the system disk while the app runs; its health is then
-    # none (ADR-0415).
-    image_healthcheck: bool = True
+    image: str = Field(
+        description="The pinned image that the container runs, name:tag@sha256:digest; in the catalog API's answer, "
+                    "the one that it runs on this host."
+    )
+    volumes: list[VolumeMapping] = Field([], description="The host's folders and files bound into the container.")
+    environment: list[EnvVar] = Field([], description="The variables of the container's environment.")
+    # ADR-0382.
+    hardware: list[HardwareProfile] = Field(
+        [], description="Its hardware profiles. The catalog API answers only those that apply on this host, and in "
+                        "image the image that the container runs here."
+    )
+    tmpfs: dict[str, str] = Field(
+        {}, description="Paths that the container writes and that are kept in RAM, not on the system disk: the "
+                        "container path to Docker's tmpfs options, such as size=64m."
+    )
+    shm_size: str | None = Field(None, description="The size of the container's /dev/shm, such as 128m; null: 64 MB.")
+    # Docker's StopTimeout, also at the host's shutdown.
+    stop_timeout: int | None = Field(
+        None, description="The seconds that Docker gives the container to stop before it kills it, and that a stop "
+                          "of the app waits; null: 10."
+    )
+    # Linkwarden's reads its password files into the variables that it takes (ADR-0415).
+    command: list[str] | None = Field(
+        None, description="The container's command in place of its image's; null: the image's own."
+    )
+    # Docker's exec every stacks.POLL_SECONDS; nothing is written to the system disk while the app
+    # runs (ADR-0415).
+    ready_command: list[str] | None = Field(
+        None, description="The ready command of a companion container whose image has no health check: UNOS runs it "
+                          "in the container every 2 seconds while the next container waits for it, and the companion "
+                          "is ready once it exits 0; null: none."
+    )
+    # Docker's NONE: every probe of a health check writes the container's state to the system disk
+    # (ADR-0415).
+    image_healthcheck: bool = Field(
+        True, description="False: the container runs without its image's health check, and its health is null."
+    )
 
-    @computed_field  # type: ignore[misc]
+    @computed_field(  # type: ignore[misc]
+        description="The image platforms of its image, such as linux/arm64, as UNOS recorded them from the "
+                    "registry; none for an image that nothing is recorded for."
+    )
     @property
     def platforms(self) -> list[str]:
         """The platforms its image publishes, recorded from the registries (ADR-0403); none for
@@ -183,52 +228,117 @@ COMPANION_NAME = r"^[a-z][a-z0-9-]*$"
 
 
 class Companion(ContainerSpec):
-    """A companion container of an app, beside its main container (ADR-0381): it publishes no
-    port, is never privileged, gets no capability and no override, and runs on the app's network."""
-    # The container's name in the app, its DNS alias on the app's network: the container is
-    # "<app id>-<name>".
-    name: str = Field(pattern=COMPANION_NAME)
+    """A companion container of an app, beside its main container: it publishes no port, is never
+    privileged, gets no capability and no override, and runs on the app's network."""
+    # ADR-0381.
+    name: str = Field(
+        pattern=COMPANION_NAME,
+        description="The companion's name in the app, its DNS name on the app's network; its container is named "
+                    "<app id>-<name>.",
+    )
 
 
 class AppTemplate(ContainerSpec):
-    """An app of the catalog: its main container (image, volumes, environment and hardware of
-    ContainerSpec, with the fields below) and its companion containers."""
-    id: str
-    name: str
-    description: str
-    icon: str
-    category: AppCategory
-    version: str
-    website: str = ""
-    source: AppSource = AppSource.COMMUNITY
-    github: str = ""
-    documentation: str = ""
-    ports: list[PortMapping] = []
-    restart_policy: str = "unless-stopped"
-    privileged: bool = False
-    network_mode: str | None = None
-    capabilities: list[str] = []
-    min_memory: str = "256m"  # Minimum recommended memory
-    recommended_memory: str = "512m"
-    # The app's other containers (ADR-0381): created and started in this order before the main
-    # container, and stopped after it.
-    companions: list[Companion] = []
-    # The names of the companions that must be ready (healthy, or running without a health check,
-    # or answering their ready_command) before the next container starts, and so before the main
-    # container.
-    depends_on: list[str] = []
-    # The main container resolves host.docker.internal to the host (Docker's host-gateway), as on
-    # Docker Desktop, to reach an app that publishes a port on the host: Open WebUI's Ollama and
-    # Zigbee2MQTT's Mosquitto (ADR-0415).
-    host_gateway: bool = False
-    # The host's platform and whether every container's image publishes it (ADR-0403): set by the
-    # catalog API for the host it runs on. An app that is not available is not installable here.
-    host_platform: str | None = None
-    available: bool = True
-    # About what the images that the install pulls on this host take on the system disk, the sum of
-    # their pins' estimates (PinnedImage.disk_bytes) whether Docker has them or not: set by the
-    # catalog API, like host_platform (ADR-0415).
-    system_disk_bytes: int | None = None
+    """An app of the catalog: its main container (the image, volumes, environment and hardware
+    profiles, with the fields below) and its companion containers."""
+
+    model_config = ConfigDict(json_schema_extra={"examples": [{
+        "image": "jellyfin/jellyfin:12.4.20261026-211555@sha256:"
+                 "bd5b9e25937cc592ebd34f13e7f35f278a14717469adb04f10f355ba05bf177c",
+        "volumes": [
+            {"host": "{pool}/apps/jellyfin/config", "container": "/config", "readonly": False, "is_file": False,
+             "uid": None, "gid": None, "generated_secret": False, "secret_digits": 64, "secret_for": None,
+             "copy_before_update": False, "on_pool": True},
+            {"host": "{pool}/media", "container": "/media", "readonly": True, "is_file": False, "uid": None,
+             "gid": None, "generated_secret": False, "secret_digits": 64, "secret_for": None,
+             "copy_before_update": False, "on_pool": True},
+        ],
+        "environment": [
+            {"name": "PUID", "value": "1000", "description": "", "required": False, "secret": False,
+             "editable": True},
+            {"name": "PGID", "value": "1000", "description": "", "required": False, "secret": False,
+             "editable": True},
+            {"name": "TZ", "value": "UTC", "description": "", "required": False, "secret": False, "editable": True},
+        ],
+        "hardware": [{
+            "id": "rk3588-video", "soc": "rockchip,rk3588",
+            "devices": ["/dev/dri", "/dev/dma_heap", "/dev/mpp_service", "/dev/rga", "/dev/mali0"],
+            "requires": ["/dev/mpp_service"], "unmasked_paths": ["/sys/firmware"], "apparmor_unconfined": True,
+            "image": None,
+        }],
+        "tmpfs": {}, "shm_size": None, "stop_timeout": None, "command": None, "ready_command": None,
+        "image_healthcheck": True,
+        "id": "jellyfin",
+        "name": "Jellyfin",
+        "description": "Free software media system - stream movies, shows, music with no subscriptions or tracking",
+        "icon": "\U0001f3b5",
+        "category": "media",
+        "version": "12.4.20261026-211555",
+        "website": "https://jellyfin.example.org",
+        "source": "official",
+        "github": "https://github.com/jellyfin/jellyfin",
+        "documentation": "https://jellyfin.example.org/docs/",
+        "ports": [{"host": 8096, "container": 8096, "protocol": "tcp"}],
+        "restart_policy": "unless-stopped", "privileged": False, "network_mode": None, "capabilities": [],
+        "min_memory": "1g", "recommended_memory": "4g",
+        "companions": [], "depends_on": [], "host_gateway": False,
+        "host_platform": "linux/arm64", "available": True, "system_disk_bytes": 3005000000,
+        "platforms": ["linux/amd64", "linux/arm64"], "can_run_in_unos_smb": False,
+    }]})
+
+    id: str = Field(description="The app's id in the catalog; its main container is named after it.")
+    name: str = Field(description="The app's name.")
+    description: str = Field(description="What the app does.")
+    icon: str = Field(description="The emoji that the App Store shows for it.")
+    category: AppCategory = Field(description="Its category in the App Store.")
+    version: str = Field(description="The app's version in the catalog.")
+    website: str = Field("", description="The project's website; empty when the catalog names none.")
+    source: AppSource = Field(
+        AppSource.COMMUNITY,
+        description="Where its image comes from: linuxserver.io, official (Docker Hub's official images), verified "
+                    "(a Docker Verified Publisher) or community (a well-known open source project).",
+    )
+    github: str = Field("", description="The project's source repository; empty when the catalog names none.")
+    documentation: str = Field("", description="The project's documentation; empty when the catalog names none.")
+    ports: list[PortMapping] = Field([], description="The ports that the main container publishes on the host.")
+    restart_policy: str = Field("unless-stopped", description="Docker's restart policy of the app's containers.")
+    privileged: bool = Field(False, description="Whether the main container runs privileged.")
+    network_mode: str | None = Field(
+        None, description="Docker's network of the main container of an app without companions, such as host (the "
+                          "NAS's network itself); null: Docker's default."
+    )
+    capabilities: list[str] = Field([], description="Linux capabilities that the main container gets beyond Docker's.")
+    min_memory: str = Field("256m", description="The least memory that the app needs, such as 512m or 1g.")
+    recommended_memory: str = Field("512m", description="The memory recommended for the app, such as 2g.")
+    # ADR-0381.
+    companions: list[Companion] = Field(
+        [], description="Its companion containers, created and started in this order before the main container and "
+                        "stopped after it."
+    )
+    depends_on: list[str] = Field(
+        [], description="The companions that must be ready (healthy, running without a health check, or answering "
+                        "their ready command) before the next container starts, and so before the main container."
+    )
+    # Docker's host-gateway, as on Docker Desktop: Open WebUI's Ollama and Zigbee2MQTT's Mosquitto
+    # (ADR-0415).
+    host_gateway: bool = Field(
+        False, description="Whether the main container reaches the NAS itself as host.docker.internal (the host "
+                           "gateway), to reach a port that another app publishes there."
+    )
+    # Set by the catalog API for the host it runs on (ADR-0403).
+    host_platform: str | None = Field(
+        None, description="The host's platform, such as linux/arm64, as the catalog API names it; null when UNOS "
+                          "cannot name it."
+    )
+    available: bool = Field(
+        True, description="False when an image of the app publishes no build for the host's platform: such an app "
+                          "cannot be installed here."
+    )
+    # The sum of the pins' estimates (PinnedImage.disk_bytes), set by the catalog API (ADR-0415).
+    system_disk_bytes: int | None = Field(
+        None, description="About how many bytes the images that its install pulls on this host take on the system "
+                          "disk, whether Docker has them or not, as the catalog API counts them."
+    )
 
     @model_validator(mode="after")
     def _companions_are_named_once(self) -> "AppTemplate":
@@ -245,7 +355,10 @@ class AppTemplate(ContainerSpec):
             raise ValueError(f"{self.id}: an app in the network {self.network_mode} has no host gateway of its own")
         return self
 
-    @computed_field  # type: ignore[misc]
+    @computed_field(  # type: ignore[misc]
+        description="Whether the app can be installed as an app in unos-smb: only an app of one container from "
+                    "linuxserver.io that takes PUID and PGID and has a folder on the pool besides its own data."
+    )
     @property
     def can_run_in_unos_smb(self) -> bool:
         """True if the app can be installed to run in the group unos-smb (ADR-0274).
@@ -268,282 +381,466 @@ class AppTemplate(ContainerSpec):
 
 
 class AppVolume(BaseModel):
-    """A bind mount with the host path that is actually used."""
-    host: str
-    container: str
-    readonly: bool = False
-    # The companion whose container has the mount; None: the main container's.
-    companion: str | None = None
+    """A bind mount of an app's container, with the host path that it really uses."""
+    host: str = Field(description="The host path that Docker binds.")
+    container: str = Field(description="Where the container sees it.")
+    readonly: bool = Field(False, description="Whether it is bound read-only.")
+    companion: str | None = Field(None, description="The companion whose container has it; null: the main container.")
 
 
 class ContainerResources(BaseModel):
-    """A container's limits as Docker keeps them and its use as UNOS last read it (ADR-0390)."""
-    # The memory limit in bytes and the CPU limit in CPUs, as docker inspect shows them
-    # (HostConfig.Memory, CpuQuota / CpuPeriod); None: no limit.
-    memory_limit: int | None = None
-    cpu_limit: float | None = None
-    # The memory that the container uses (its cgroup's memory.current without the page cache that
-    # the kernel can drop, inactive_file), in bytes, and the CPUs it used on average between the
-    # last two reads; None until read, and for a container that does not run.
-    memory_used: int | None = None
-    cpu_used: float | None = None
-    # When the use was read, in ISO 8601 with the UTC offset.
-    sampled_at: str | None = None
+    """A container's limits as Docker keeps them and its use as UNOS last read it."""
+    # ADR-0390.
+    # docker inspect's HostConfig.Memory, and CpuQuota / CpuPeriod.
+    memory_limit: int | None = Field(None, description="Its memory limit, in bytes, as Docker keeps it; null: none.")
+    cpu_limit: float | None = Field(None, description="Its CPU limit, in CPUs, as Docker keeps it; null: none.")
+    # The cgroup's memory.current without inactive_file.
+    memory_used: int | None = Field(
+        None, description="The memory that it uses, in bytes, without the page cache that the kernel can drop; null "
+                          "until UNOS read it, and while the container does not run."
+    )
+    cpu_used: float | None = Field(
+        None, description="The CPUs that it used on average between UNOS's last two reads; null until UNOS read it "
+                          "twice, and while the container does not run."
+    )
+    sampled_at: str | None = Field(
+        None, description="When UNOS read its use, in ISO 8601 with the UTC offset (+00:00); null as memory_used."
+    )
 
 
 class ContainerLimitsRequest(BaseModel):
-    """The limits of one container of an app (ADR-0390): null removes one. Both are required, so
+    """The container limits of one container of an app: null removes one. Both are required, so
     that a field left out never removes a limit."""
-    model_config = ConfigDict(extra="forbid")
+    # ADR-0390.
+    model_config = ConfigDict(extra="forbid", json_schema_extra={"examples": [
+        {"memory_limit": 1073741824, "cpu_limit": 1.5},
+    ]})
 
-    # Bytes; from limits.MEMORY_FLOOR to below the host's memory.
-    memory_limit: int | None
-    # CPUs, in hundredths; from limits.CPU_FLOOR to the host's CPUs.
-    cpu_limit: float | None
+    # From limits.MEMORY_FLOOR to below the host's memory.
+    memory_limit: int | None = Field(
+        description="The memory limit, in bytes: from 64 MiB to below the host's memory (GET /apps/limits); null "
+                    "removes it."
+    )
+    # From limits.CPU_FLOOR to the host's CPUs.
+    cpu_limit: float | None = Field(
+        description="The CPU limit, in CPUs to the hundredth: from 0.1 to the host's CPUs; null removes it."
+    )
 
 
 class ContainerLimits(BaseModel):
-    """The limits of one container, as Docker keeps them after a change (ADR-0390)."""
-    container: str
-    memory_limit: int | None = None
-    cpu_limit: float | None = None
+    """The container limits of one container, as Docker keeps them after the change."""
+    # ADR-0390.
+    model_config = ConfigDict(json_schema_extra={"examples": [
+        {"container": "bookstack-database", "memory_limit": 1073741824, "cpu_limit": 1.5},
+    ]})
+
+    container: str = Field(description="The container's Docker name.")
+    memory_limit: int | None = Field(None, description="Its memory limit, in bytes; null: none.")
+    cpu_limit: float | None = Field(None, description="Its CPU limit, in CPUs; null: none.")
 
 
 class LimitBounds(BaseModel):
-    """What a container's limits may be on this host (ADR-0390)."""
-    memory_min: int
-    # The host's memory: a memory limit must be below it.
-    memory_max: int
-    cpu_min: float
-    # The host's CPUs.
-    cpu_max: float
+    """What the container limits may be on this host."""
+    # ADR-0390.
+    model_config = ConfigDict(json_schema_extra={"examples": [
+        {"memory_min": 67108864, "memory_max": 16719384576, "cpu_min": 0.1, "cpu_max": 8.0},
+    ]})
+
+    memory_min: int = Field(description="The least memory limit, in bytes.")
+    memory_max: int = Field(description="The host's memory, in bytes: a memory limit must be below it.")
+    cpu_min: float = Field(description="The least CPU limit, in CPUs.")
+    cpu_max: float = Field(description="The host's CPUs: the highest CPU limit.")
 
 
 class CompanionContainer(BaseModel):
-    """A companion container of an installed app, as Docker reports it (ADR-0381)."""
-    # The companion's name in the app (its DNS alias), and the container's name and short id.
-    name: str
-    container: str
-    container_id: str
-    status: str
-    # Docker's State.Health.Status (starting, healthy, unhealthy); None without a health check.
-    health: str | None = None
-    # The image the container was created from (name@sha256:... for a pinned one).
-    image: str
-    # The host's device nodes passed into the container (ADR-0382).
-    devices: list[str] = []
-    # Its limits and its use (ADR-0390).
-    resources: ContainerResources = ContainerResources()
+    """A companion container of an installed app, as Docker reports it."""
+    # ADR-0381.
+    name: str = Field(description="The companion's name in the app, its DNS name on the app's network.")
+    container: str = Field(description="The container's Docker name, <app id>-<name>.")
+    container_id: str = Field(description="Docker's short id of the container: 12 hex digits.")
+    status: str = Field(description="Docker's status of the container, such as running or exited.")
+    # Docker's State.Health.Status.
+    health: str | None = Field(
+        None, description="Docker's health of the container: starting, healthy or unhealthy; null without a health "
+                          "check."
+    )
+    image: str = Field(description="The image the container was created from: name@sha256:... for a pinned one.")
+    # ADR-0382.
+    devices: list[str] = Field([], description="The host's device nodes passed into the container.")
+    # ADR-0390.
+    resources: ContainerResources = Field(ContainerResources(), description="Its container limits and container use.")
+
+
+def _resources(memory_used: int, cpu_used: float) -> dict:
+    return {"memory_limit": None, "cpu_limit": None, "memory_used": memory_used, "cpu_used": cpu_used,
+            "sampled_at": "2026-11-18T10:00:30.104512+00:00"}
 
 
 class InstalledApp(BaseModel):
-    """An installed app: the fields that name one container are its main container's
-    (ADR-0381); ``id`` and ``container_id`` name a companion's only while the main one is missing."""
-    id: str
-    template_id: str
-    name: str
-    container_id: str
-    # The main container's status, or "missing" when Docker has no main container.
-    status: str
-    web_port: int | None = None
-    created_at: str
-    # Pool chosen at install time. None for apps without data on a pool.
-    pool: str | None = None
-    # The container's bind mounts as Docker reports them (real host paths).
-    volumes: list[AppVolume] = []
-    # Host paths of data folders that are not on a mounted storage pool, because
-    # their pool is not mounted. UNOS does not start such an app.
-    data_outside_pools: list[str] = []
-    # The app runs in the group unos-smb: its container's PGID is 70000
-    # (ADR-0274). Only such an app is given a share's folder.
-    runs_in_unos_smb: bool = False
-    # The host's device nodes passed into the container (ADR-0382), as Docker keeps them.
-    devices: list[str] = []
-    # The main container's Docker State.Health.Status; None without a health check.
-    health: str | None = None
-    # The app's companion containers, in the catalog's order.
-    companions: list[CompanionContainer] = []
-    # The names of the app's containers that the catalog has and Docker lacks: such an app does
-    # not start, and an uninstall removes the rest.
-    missing: list[str] = []
-    # The main container's limits and use (ADR-0390); empty while it is missing.
-    resources: ContainerResources = ContainerResources()
-    # The catalog's version that the main container was created for (its label unos.app.version);
-    # None for a container made before the label (ADR-0408).
-    version: str | None = None
-    # The catalog's version that the app can be updated to: the catalog pins another image for one
-    # of its containers than the one it runs (ADR-0408); None: no update.
-    update_to: str | None = None
-    # The earlier version that the app's last update kept, until a rollback or its removal.
-    previous: "AppEarlierVersion | None" = None
+    """An installed app: the fields that name one container are its main container's; id and
+    container_id name another of its containers only while the main one is missing."""
+    # ADR-0381.
+
+    model_config = ConfigDict(json_schema_extra={"examples": [{
+        "id": "076a4a225c6b",
+        "template_id": "bookstack",
+        "name": "bookstack",
+        "container_id": "076a4a225c6b",
+        "status": "running",
+        "web_port": 6875,
+        "created_at": "2026-11-10T08:30:12.418273645Z",
+        "pool": "data",
+        "volumes": [
+            {"host": f"{_BOOKSTACK_FOLDER}/config", "container": "/config", "readonly": False, "companion": None},
+            {"host": f"{_BOOKSTACK_FOLDER}/app-key", "container": "/run/secrets/app-key", "readonly": True,
+             "companion": None},
+            {"host": f"{_BOOKSTACK_FOLDER}/database/data", "container": "/var/lib/mysql", "readonly": False,
+             "companion": "database"},
+        ],
+        "data_outside_pools": [],
+        "runs_in_unos_smb": False,
+        "devices": [],
+        "health": None,
+        "companions": [{
+            "name": "database", "container": "bookstack-database", "container_id": "d400bc09c2c9",
+            "status": "running", "health": None, "image": f"mariadb@{_MARIADB_DIGEST}", "devices": [],
+            "resources": _resources(157286400, 0.02),
+        }],
+        "missing": [],
+        "resources": _resources(98566144, 0.01),
+        "version": "v26.09.3-ls299",
+        "update_to": "v26.10.1-ls301",
+        "previous": None,
+    }]})
+
+    id: str = Field(
+        description="Docker's short id of the main container (12 hex digits), or of the app's first other container "
+                    "while the main one is missing."
+    )
+    template_id: str = Field(description="The app's id in the catalog.")
+    name: str = Field(description="The main container's name, the app's id; the app's id while it is missing.")
+    container_id: str = Field(description="The same as id.")
+    status: str = Field(
+        description="Docker's status of the main container, such as running or exited; missing when Docker has no "
+                    "main container."
+    )
+    web_port: int | None = Field(
+        None, description="The first host port that the main container publishes, which the App Store opens the app "
+                          "at; null: none."
+    )
+    created_at: str = Field(description="When Docker created the container of id, as Docker writes it (UTC, with Z).")
+    pool: str | None = Field(
+        None, description="The pool chosen at the install for the app's data; null for an app without data on a pool."
+    )
+    volumes: list[AppVolume] = Field(
+        [], description="The bind mounts of the main container, then of each companion, as Docker reports them (the "
+                        "real host paths)."
+    )
+    data_outside_pools: list[str] = Field(
+        [], description="Host paths of data folders that are on no mounted pool, because their pool is not mounted: "
+                        "UNOS does not start such an app."
+    )
+    # ADR-0274.
+    runs_in_unos_smb: bool = Field(
+        False, description="Whether it is an app in unos-smb: its main container runs with the PGID 70000 of the "
+                           "group unos-smb. Only such an app is given a share's folder."
+    )
+    # ADR-0382.
+    devices: list[str] = Field([], description="The host's device nodes passed into the main container.")
+    # Docker's State.Health.Status.
+    health: str | None = Field(
+        None, description="Docker's health of the main container: starting, healthy or unhealthy; null without a "
+                          "health check."
+    )
+    companions: list[CompanionContainer] = Field([], description="Its companion containers, in the catalog's order.")
+    missing: list[str] = Field(
+        [], description="The names of the app's containers that the catalog has and Docker lacks: such an app does "
+                        "not start, and an uninstall removes the rest."
+    )
+    # ADR-0390.
+    resources: ContainerResources = Field(
+        ContainerResources(), description="The main container's limits and use; all null while it is missing."
+    )
+    # The label unos.app.version (ADR-0408).
+    version: str | None = Field(
+        None, description="The catalog's version that the app's containers were created for; null for containers made "
+                          "before UNOS recorded it."
+    )
+    # ADR-0408.
+    update_to: str | None = Field(
+        None, description="The catalog's version that an app update would move it to, when the catalog pins another "
+                          "image for one of its containers than the one it runs; null: no update."
+    )
+    previous: "AppEarlierVersion | None" = Field(
+        None, description="The earlier version that the app's last app update kept, until an app rollback or its "
+                          "removal; null: none."
+    )
 
 
 class AppEarlierVersion(BaseModel):
-    """The earlier version of an app that its last update kept (ADR-0408): its containers, stopped
-    and named ``<name>.previous``, and the copies of its database made before the update."""
-    version: str | None = None
-    containers: list[str] = []
-    # The images of those containers, as Docker created them (name@sha256:...).
-    images: list[str] = []
-    # The copies of the app's database folders that are there.
-    copies: list[str] = []
+    """The earlier version of an app that its last update kept: its containers, stopped and named
+    <name>.previous, and the database copies made before the update."""
+    # ADR-0408.
+    version: str | None = Field(
+        None, description="The catalog's version of its main container; null when it names none or has no main one."
+    )
+    containers: list[str] = Field([], description="The names of its containers, each <name>.previous.")
+    images: list[str] = Field([], description="Their images, as Docker created them (name@sha256:...).")
+    copies: list[str] = Field(
+        [], description="The database copies (<folder>.previous) on mounted pools that are still there."
+    )
 
 
 InstalledApp.model_rebuild()
 
 
 class ContainerUpdate(BaseModel):
-    """One container of an app's update (ADR-0408)."""
-    name: str
-    companion: str | None = None
-    # The image its container was created from; None for a container that the update adds.
-    image_from: str | None = None
-    # The catalog's pinned image that the update creates it from; None for a container that the
-    # catalog no longer has, which the update leaves with the earlier version.
-    image_to: str | None = None
-    # Whether it runs another image afterwards.
-    changed: bool = False
-    # When the image that runs and the catalog's were built, for an image that changes.
-    built_from: UtcDatetime | None = None
-    built_to: UtcDatetime | None = None
+    """One container of an app update."""
+    # ADR-0408.
+    name: str = Field(description="The container's Docker name.")
+    companion: str | None = Field(None, description="The companion's name in the app; null: the main container.")
+    image_from: str | None = Field(
+        None, description="The image its container was created from; null for a container that the update adds."
+    )
+    image_to: str | None = Field(
+        None, description="The catalog's pinned image that the update creates it from; null for a container that the "
+                          "catalog no longer has, which stays with the earlier version."
+    )
+    changed: bool = Field(False, description="Whether it runs another image after the update.")
+    built_from: UtcDatetime | None = Field(
+        None, description="When the image that runs was built, in UTC; null when the catalog still pins it, for a "
+                          "container that the update adds, or when the image names no time."
+    )
+    built_to: UtcDatetime | None = Field(
+        None, description="When the catalog's image was built, in UTC, as its registry says; null as built_from."
+    )
 
 
 class DatabaseCopy(BaseModel):
-    """A data folder that an update copies on its pool before the new version starts (ADR-0408)."""
-    container: str
-    folder: str
-    copy_folder: str
-    # What the folder takes on its disk, and what its pool has free.
-    bytes: int
-    pool: str
-    pool_free_bytes: int
+    """A database copy: a data folder that an app update copies on its pool before the new version
+    starts."""
+    # ADR-0408.
+    container: str = Field(description="The Docker name of the container whose data folder it is.")
+    folder: str = Field(description="The data folder on the pool.")
+    copy_folder: str = Field(description="Where the copy goes: the folder's path with .previous.")
+    bytes: int = Field(description="What the folder takes on its disk, in bytes.")
+    pool: str = Field(description="The pool of the folder.")
+    pool_free_bytes: int = Field(description="The pool's free space now, in bytes.")
 
 
 class AppUpdatePlan(BaseModel):
-    """What an update of an installed app would do (GET /apps/installed/{id}/update, ADR-0408)."""
-    template_id: str
-    name: str
-    version_from: str | None = None
-    version_to: str
-    # The host's platform, whose images it pulls.
-    platform: str
-    containers: list[ContainerUpdate]
-    # The compressed layers that Docker lacks, which the pulls download, and what they take on
-    # the system disk once pulled (the blobs and the unpacked layers), with its free space now.
-    download_bytes: int
-    system_disk_bytes: int
-    system_disk_free_bytes: int | None = None
-    copies: list[DatabaseCopy] = []
+    """What an app update of an installed app would do."""
+    # GET /apps/installed/{id}/update, ADR-0408.
+
+    model_config = ConfigDict(json_schema_extra={"examples": [{
+        "template_id": "bookstack",
+        "name": "BookStack",
+        "version_from": "v26.09.3-ls299",
+        "version_to": "v26.10.1-ls301",
+        "platform": "linux/arm64",
+        "containers": [
+            {"name": "bookstack-database", "companion": "database", "image_from": f"mariadb@{_MARIADB_DIGEST}",
+             "image_to": f"mariadb:11.8.9@{_MARIADB_DIGEST}", "changed": False, "built_from": None, "built_to": None},
+            {"name": "bookstack", "companion": None, "image_from": f"{_BOOKSTACK}@{_BOOKSTACK_DIGEST}",
+             "image_to": f"{_BOOKSTACK}:v26.10.1-ls301@{_BOOKSTACK_NEWER_DIGEST}", "changed": True,
+             "built_from": "2026-09-28T04:12:55Z", "built_to": "2026-10-26T04:20:41Z"},
+        ],
+        "download_bytes": 95420416,
+        "system_disk_bytes": 241172480,
+        "system_disk_free_bytes": 21474836480,
+        "copies": [{
+            "container": "bookstack-database", "folder": f"{_BOOKSTACK_FOLDER}/database/data",
+            "copy_folder": f"{_BOOKSTACK_FOLDER}/database/data.previous", "bytes": 241172480, "pool": "data",
+            "pool_free_bytes": 1893792202752,
+        }],
+    }]})
+
+    template_id: str = Field(description="The app's id in the catalog.")
+    name: str = Field(description="The app's name.")
+    version_from: str | None = Field(
+        None, description="The catalog's version that the app was installed or updated to; null when its containers "
+                          "name none."
+    )
+    version_to: str = Field(description="The catalog's version now, which the update installs.")
+    platform: str = Field(description="The host's platform, whose images the update pulls.")
+    containers: list[ContainerUpdate] = Field(
+        description="Each container: the companions, the main container, then those that the catalog no longer has."
+    )
+    download_bytes: int = Field(description="The bytes of the compressed layers that Docker lacks, which the pulls "
+                                            "download.")
+    system_disk_bytes: int = Field(
+        description="About how many bytes the pulls write to the system disk: the downloads and the unpacked layers."
+    )
+    system_disk_free_bytes: int | None = Field(
+        None, description="The system disk's free space now, in bytes; null when UNOS cannot read it."
+    )
+    copies: list[DatabaseCopy] = Field([], description="The database copies that the update makes on the pool.")
 
 
 class AppPool(BaseModel):
     """A mounted storage pool that can hold app data."""
-    name: str
-    path: str
-    free_bytes: int
-    total_bytes: int
+
+    model_config = ConfigDict(json_schema_extra={"examples": [
+        {"name": "data", "path": "/mnt/pools/data", "free_bytes": 1893792202752, "total_bytes": 3999688294400},
+    ]})
+
+    name: str = Field(description="The pool's name.")
+    path: str = Field(description="Where the pool is mounted.")
+    free_bytes: int = Field(description="Its free space, in bytes.")
+    total_bytes: int = Field(description="Its size, in bytes.")
 
 
 class AppInstallRequest(BaseModel):
+    """What to install: an app of the catalog, once, with the overrides of its main container."""
     # One instance per template: its containers and data folders are named after the template id
     # (ADR-0381); a field the request does not know, such as a name, answers 422.
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", json_schema_extra={"examples": [{
+        "template_id": "bookstack",
+        "pool": "data",
+        "port_overrides": {"80": 6876},
+        "volume_overrides": {},
+        "env_overrides": {"APP_URL": "http://192.0.2.10:6876", "TZ": "Europe/Berlin"},
+        "run_in_unos_smb": False,
+    }]})
 
-    template_id: str
-    # Pool for the app's data; None selects the first mounted pool by name.
-    pool: str | None = None
+    template_id: str = Field(description="The app's id in the catalog.")
+    pool: str | None = Field(None, description="The pool for the app's data; null: the first mounted pool by name.")
     # The overrides change the main container only; companions take none (ADR-0381).
-    # Container port -> host port.
-    port_overrides: dict[int, int] = {}
-    # Container path -> host path; host paths must be inside a mounted pool.
-    volume_overrides: dict[str, str] = {}
-    # Values of the template's variables; PUID and PGID are not among them
-    # (ADR-0274).
-    env_overrides: dict[str, str] = {}
-    # Run the app in the group unos-smb (PUID 80000, PGID 70000, UMASK 007),
-    # the only way to give it a share's folder; only for templates with
-    # can_run_in_unos_smb (ADR-0274).
-    run_in_unos_smb: bool = False
+    port_overrides: dict[int, int] = Field(
+        {}, description="Host ports in place of the template's, by container port; of the main container only."
+    )
+    volume_overrides: dict[str, str] = Field(
+        {}, description="Host paths in place of the template's, by container path, each inside a mounted pool; of "
+                        "the main container only."
+    )
+    # ADR-0274.
+    env_overrides: dict[str, str] = Field(
+        {}, description="Values of the template's variables, by name; of the main container only. PUID, PGID and the "
+                        "variables that UNOS sets cannot be given."
+    )
+    # ADR-0274.
+    run_in_unos_smb: bool = Field(
+        False, description="Install it as an app in unos-smb (PUID 80000, PGID 70000, UMASK 007), the only way to give "
+                           "it a share's folder; only for an app whose can_run_in_unos_smb is true."
+    )
 
 
 class AppInstallResponse(BaseModel):
-    id: str
-    name: str
-    container_id: str
-    status: str
-    web_url: str | None = None
-    # Pool holding the app's data (None if the app stores nothing on a pool).
-    pool: str | None = None
-    volumes: list[AppVolume] = []
-    # The host's device nodes passed into the container (ADR-0382): none where no hardware
-    # profile of the container applies, or where the host could not be read.
-    devices: list[str] = []
-    # The main container's Docker State.Health.Status right after its start ("starting" for an
-    # image with a health check); None without a health check.
-    health: str | None = None
-    # The app's companion containers, in the order they were started.
-    companions: list[CompanionContainer] = []
+    """What an install job, an app update or an app rollback made of the app once it succeeded."""
+    id: str = Field(description="Docker's short id of the main container: 12 hex digits.")
+    name: str = Field(description="The main container's name, the app's id.")
+    container_id: str = Field(description="The same as id.")
+    status: str = Field(description="Docker's status of the main container right after its start, such as running.")
+    web_url: str | None = Field(
+        None, description="http://localhost:<host port> of the first port that the app publishes; null for an app "
+                          "without ports, and after an update or a rollback."
+    )
+    pool: str | None = Field(
+        None, description="The pool that holds the app's data; null when it keeps nothing on a pool, and after a "
+                          "rollback."
+    )
+    volumes: list[AppVolume] = Field(
+        [], description="The bind mounts of the main container, then of each companion; none after an update or a "
+                        "rollback."
+    )
+    # ADR-0382.
+    devices: list[str] = Field(
+        [], description="The host's device nodes passed into the main container: none where no hardware profile "
+                        "applies."
+    )
+    # Docker's State.Health.Status.
+    health: str | None = Field(
+        None, description="Docker's health of the main container right after its start (starting for an image with a "
+                          "health check); null without a health check."
+    )
+    companions: list[CompanionContainer] = Field([], description="Its companion containers, in their start order.")
 
 
 class ImagePull(BaseModel):
-    """The pull of one image of an install job, as Docker's pull stream reports it (ADR-0384)."""
-    # The reference as the install pulls it: name:tag@sha256:... for a pinned image.
-    image: str
-    # waiting: not pulled yet; present: a pinned image that Docker has, not pulled; pulling;
-    # pulled; failed.
-    state: Literal["waiting", "present", "pulling", "pulled", "failed"] = "waiting"
-    # The layers that Docker named so far, and those that it has (downloaded and extracted, or
-    # already there).
-    layers: int = 0
-    layers_done: int = 0
-    # The bytes of the layers whose download size Docker reported so far, and the bytes of them
-    # downloaded.
-    bytes_total: int = 0
-    bytes_done: int = 0
+    """The pull of one image of an install job, as Docker's pull stream reports it."""
+    # ADR-0384.
+    image: str = Field(description="The pinned image as the job pulls it: name:tag@sha256:...")
+    state: Literal["waiting", "present", "pulling", "pulled", "failed"] = Field(
+        "waiting", description="waiting: not pulled yet; present: Docker has it, so it is not pulled; pulling; "
+                               "pulled; failed."
+    )
+    layers: int = Field(0, description="The layers that Docker named so far.")
+    layers_done: int = Field(0, description="Those of them that Docker has: downloaded and extracted, or there before.")
+    bytes_total: int = Field(0, description="The bytes of the layers whose download size Docker reported so far.")
+    bytes_done: int = Field(0, description="The bytes of them downloaded.")
 
 
 class ContainerStart(BaseModel):
-    """One container of an install job (ADR-0384)."""
-    # Docker's name, and the companion's name in the app (None: the main container).
-    name: str
-    companion: str | None = None
-    # waiting: not created yet; created; starting: asked to start, and for a companion that the
-    # main container depends on, until it is ready; running; failed: the one whose create, start
-    # or readiness failed; removed: by the clean-up of a failed install.
-    state: Literal["waiting", "created", "starting", "running", "failed", "removed"] = "waiting"
+    """One container of an install job."""
+    # ADR-0384.
+    name: str = Field(description="The container's Docker name.")
+    companion: str | None = Field(None, description="The companion's name in the app; null: the main container.")
+    state: Literal["waiting", "created", "starting", "running", "failed", "removed"] = Field(
+        "waiting", description="waiting: not created yet; created; starting: asked to start, and for a companion that "
+                               "the main container depends on, until it is ready; running; failed: the one whose "
+                               "create, start or readiness failed; removed: by the clean-up of a failed install."
+    )
 
 
 class AppInstallJob(BaseModel):
-    """An install of an app that runs in the background (ADR-0384): its progress, then its end.
+    """An install job: an install, an app update or an app rollback that runs in the background,
+    its progress, then its end. Kept in memory only: the running job and the last one of each app
+    since the supervisor started."""
+    # ADR-0384, ADR-0408.
 
-    Kept in memory only: the running job and the last one of each app since the supervisor
-    started. ``step`` is the step reached: checking (the checks before any pull), pulling,
-    creating (the pool's folders, the network and the containers), starting, and cleaning (the
-    removal of what a failed or cancelled install made). ``state`` cancelled: an administrator
-    cancelled it (DELETE on the running job).
-    """
-    id: str
-    template_id: str
-    # The app's name in the catalog.
-    name: str
-    # An install, an update to the catalog's newer images or a rollback to the earlier version
-    # that an update kept (ADR-0408).
-    kind: Literal["install", "update", "rollback"] = "install"
-    state: Literal["running", "succeeded", "failed", "cancelled"] = "running"
-    # An update also stops the app, copies its database and, after a failure, restores it; a
-    # rollback stops the newer containers and restores the earlier ones (ADR-0408).
+    model_config = ConfigDict(json_schema_extra={"examples": [{
+        "id": "fa10f920f8d19a15a36e00ce43289550",
+        "template_id": "bookstack",
+        "name": "BookStack",
+        "kind": "install",
+        "state": "running",
+        "step": "pulling",
+        "started_at": "2026-11-18T10:02:11.482113Z",
+        "finished_at": None,
+        "images": [
+            {"image": f"mariadb:11.8.9@{_MARIADB_DIGEST}", "state": "pulled", "layers": 9, "layers_done": 9,
+             "bytes_total": 104857600, "bytes_done": 104857600},
+            {"image": f"{_BOOKSTACK}:v26.09.3-ls299@{_BOOKSTACK_DIGEST}", "state": "pulling", "layers": 12,
+             "layers_done": 5, "bytes_total": 128974848, "bytes_done": 64487424},
+        ],
+        "containers": [
+            {"name": "bookstack-database", "companion": "database", "state": "waiting"},
+            {"name": "bookstack", "companion": None, "state": "waiting"},
+        ],
+        "result": None,
+        "error": None,
+        "error_status": None,
+    }]})
+
+    id: str = Field(description="The job's id: 32 hex digits.")
+    template_id: str = Field(description="The app's id in the catalog.")
+    name: str = Field(description="The app's name in the catalog.")
+    kind: Literal["install", "update", "rollback"] = Field(
+        "install", description="install, update (an app update) or rollback (an app rollback)."
+    )
+    state: Literal["running", "succeeded", "failed", "cancelled"] = Field(
+        "running", description="running, succeeded, failed, or cancelled: an administrator cancelled it."
+    )
     step: Literal[
         "checking", "pulling", "stopping", "copying", "creating", "starting", "cleaning", "restoring"
-    ] = "checking"
-    started_at: UtcDatetime
-    finished_at: UtcDatetime | None = None
-    # Each image once, in the order of the containers that run it; listed once the checks passed.
-    images: list[ImagePull] = []
-    # In their start order: the companions, then the main container.
-    containers: list[ContainerStart] = []
-    # What the install made, once it succeeded.
-    result: AppInstallResponse | None = None
-    # Why it failed or what its cancel did, and for a failure the HTTP status that its request
-    # would have answered (400, 404, 409, 500, 503).
-    error: str | None = None
-    error_status: int | None = None
+    ] = Field(
+        "checking",
+        description="The step it reached: checking (the checks before any pull), pulling, stopping (the app, for an "
+                    "update or a rollback), copying (the database copy), creating (the pool's folders, the network "
+                    "and the containers), starting, cleaning (the removal of what a failed or cancelled install made) "
+                    "or restoring (the earlier containers, for a rollback or a failed update).",
+    )
+    started_at: UtcDatetime = Field(description="When it started, in UTC.")
+    finished_at: UtcDatetime | None = Field(None, description="When it ended, in UTC; null while it runs.")
+    images: list[ImagePull] = Field(
+        [], description="Each image once, in the order of the containers that run it; listed once the checks passed."
+    )
+    containers: list[ContainerStart] = Field(
+        [], description="Its containers in their start order: the companions, then the main container."
+    )
+    result: AppInstallResponse | None = Field(None, description="What it made once it succeeded; null otherwise.")
+    error: str | None = Field(None, description="Why it failed, or what its cancel did; null otherwise.")
+    error_status: int | None = Field(
+        None, description="For a failure, the HTTP status that its request would have answered, such as 400, 409, 500 "
+                          "or 503; null otherwise."
+    )

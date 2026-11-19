@@ -57,19 +57,21 @@ import time
 from collections.abc import Callable, Iterator
 from contextlib import closing, contextmanager
 from datetime import datetime, timedelta, timezone
-from typing import BinaryIO
+from typing import Annotated, BinaryIO
 from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 
 from ..auth.utils import verify_token
 from ..config import get_settings
-from ..request_limits import UPLOAD_OPENAPI, UploadSink, receive_upload
+from ..openapi import ADMIN, BODY, answer, errors, file_answer
+from ..request_limits import UPLOAD_IDLE_TIMEOUT, UPLOAD_OPENAPI, UploadSink, receive_upload
 from ..security.validators import open_dir_nofollow, open_subdirs_nofollow
 from ..shares import constants as smb_constants
 from ..storage import spindown
 from .schemas import (
+    FILE_EXAMPLE,
     CreateDirectoryRequest,
     DirectoryListing,
     FileInfo,
@@ -2521,22 +2523,83 @@ async def stop_upload_leftover_check() -> None:
 
 # --- endpoints -------------------------------------------------------------
 
+# The texts of the API documentation (ADR-0417). Every route is for administrators (main.py): a
+# 403 of its own says that as well.
+_FILESYSTEM_ERROR = "Another error of the filesystem, such as an I/O error."
+_NO_SPACE = "No space is left on the pool, or the volume is over its quota."
+_OUTSIDE = "the path leads outside the pools directory or into a trash, or a folder on it is a symbolic link"
+_DENIED_READ = f"{ADMIN[403]} Or {_OUTSIDE}."
+_DENIED_WRITE = f"{ADMIN[403]} Or {_OUTSIDE}, or the filesystem refuses the change, as a read-only snapshot does."
+_DENIED_PROTECTED = (
+    f"{ADMIN[403]} Or a path is the pools directory or the top folder of a pool, or leads outside the pools "
+    "directory or into a trash; a folder on it is a symbolic link; or the filesystem refuses the change, as a "
+    "read-only snapshot does."
+)
+_TRASH_PATH = "A path is not of an item of the trash as GET /files/trash lists it."
+_DELETE_EXAMPLE = "/mnt/pools/data/documents/old-report.pdf"
+_TRASH_ENTRY_EXAMPLE = "/mnt/pools/data/.unos-trash/20261118T094107Z-3f9c2a7b1d4e8f60"
+_LEFTOVER_EXAMPLE = "/mnt/pools/data/documents/.unos-upload-5e0c9b2a7f3d1e84"
 
-@router.get("/list", response_model=DirectoryListing)
-async def list_directory(path: str | None = None, _: dict = Depends(verify_token)):
-    """List directory contents (the pools directory if no path is given)."""
+
+@router.get(
+    "/list", response_model=DirectoryListing, summary="List a folder",
+    responses=errors({
+        400: "The path is not absolute or not a valid path, or it names a file.",
+        403: _DENIED_READ,
+        404: "No folder has that path.",
+        500: _FILESYSTEM_ERROR,
+    }),
+)
+async def list_directory(
+    path: Annotated[str | None, Query(
+        description="The folder's full path, such as /mnt/pools/data; none for the pools directory, whose "
+                    "entries are the pools."
+    )] = None,
+    _: dict = Depends(verify_token),
+):
+    """The entries of a folder below the pools directory, folders first; without a path, the pools.
+    The trash is not among them: GET /files/trash lists it."""
     return await _run(_list_directory, path)
 
 
-@router.get("/info", response_model=FileInfo)
-async def get_file(path: str, _: dict = Depends(verify_token)):
-    """Get file or directory info. Symlinks are described, not followed."""
+@router.get(
+    "/info", response_model=FileInfo, summary="Read a file's or folder's details",
+    responses=errors({
+        400: "The path is not absolute or not a valid path, or a folder on it is a file.",
+        403: _DENIED_READ,
+        404: "Nothing has that path.",
+        500: _FILESYSTEM_ERROR,
+    }),
+)
+async def get_file(
+    path: Annotated[str, Query(
+        description="The full path of a file, folder or symbolic link; /mnt/pools for the pools directory."
+    )],
+    _: dict = Depends(verify_token),
+):
+    """The name, type, size, time, mode and owner of a file, folder or symbolic link. Symlinks are
+    described, not followed."""
     return await _run(_file_info, path)
 
 
-@router.get("/download")
-async def download_file(path: str, _: dict = Depends(verify_token)):
-    """Download a regular file."""
+@router.get(
+    "/download", summary="Download a file", response_class=StreamingResponse,
+    responses={
+        **file_answer("application/octet-stream", "The file's content, as an attachment under its name."),
+        **errors({
+            400: "The path is not absolute or not a valid path, or it names a folder or anything else that is "
+                 "not a regular file.",
+            403: f"{_DENIED_READ[:-1]}, or the file itself is one.",
+            404: "Nothing has that path.",
+            500: _FILESYSTEM_ERROR,
+        }),
+    },
+)
+async def download_file(
+    path: Annotated[str, Query(description="The full path of a regular file below the pools directory.")],
+    _: dict = Depends(verify_token),
+):
+    """Download a regular file; a symbolic link is not followed."""
     handle, name, size = await _run(_open_download, path)
     return StreamingResponse(
         _iter_file(handle),
@@ -2548,10 +2611,36 @@ async def download_file(path: str, _: dict = Depends(verify_token)):
     )
 
 
-@router.post("/upload", openapi_extra=UPLOAD_OPENAPI)
-async def upload_file(path: str, request: Request, _: dict = Depends(verify_token)):
-    """Upload a file (form field "file") into a directory. Only the base name of the upload is used.
-
+@router.post(
+    "/upload", openapi_extra=UPLOAD_OPENAPI, summary="Upload a file into a folder",
+    responses={
+        **answer(FILE_EXAMPLE, "The uploaded file, as GET /files/info describes it."),
+        **errors({
+            400: "The folder is not inside a pool, not a valid path or a file; the form is malformed, has a second "
+                 "file, or too many or too large other fields; the file name is missing or not allowed; a folder "
+                 "has that name; or the client went away during the upload.",
+            403: _DENIED_WRITE,
+            404: "No folder has that path, or it was removed during the upload.",
+            408: f"The client sent nothing for {UPLOAD_IDLE_TIMEOUT} seconds before the upload ended.",
+            409: "The file's name is in use by the system, for example as a mount point.",
+            422: "The body is not multipart/form-data or holds no complete file in the field file, or the query "
+                 "has no path.",
+            500: _FILESYSTEM_ERROR,
+            507: _NO_SPACE,
+        }),
+    },
+)
+async def upload_file(
+    path: Annotated[str, Query(description="The folder to put the file in, inside a pool.")],
+    request: Request,
+    _: dict = Depends(verify_token),
+):
+    """Upload a file, sent as multipart/form-data in the field "file", into a folder of a pool, without a
+    size limit. Only the base name of the client's file name is used: a file or a symbolic link of that
+    name is replaced, a folder of that name refused. The file gets its name only once all of it has
+    arrived. In a share folder it gets the mode 0660, which lets the share's SMB users change it. A form
+    without a file in that field answers 422.
+    \f
     The form is read only here, after the credentials were checked, and only
     once the folder ``path`` was found; the file name is checked as soon as
     it arrives. The file then goes straight into that folder as it arrives,
@@ -2572,13 +2661,33 @@ async def upload_file(path: str, request: Request, _: dict = Depends(verify_toke
         raise HTTPException(400, "Invalid path") from exc
 
 
-@router.post("/mkdir", response_model=FileInfo)
+@router.post(
+    "/mkdir", response_model=FileInfo, summary="Create a folder",
+    responses=errors(BODY, {
+        400: "The folder is not inside a pool, not a valid path or a file, or the name is not allowed or taken "
+             "there.",
+        403: _DENIED_WRITE,
+        404: "No folder has that path.",
+        500: _FILESYSTEM_ERROR,
+        507: _NO_SPACE,
+    }),
+)
 async def create_directory(req: CreateDirectoryRequest, _: dict = Depends(verify_token)):
     """Create a new directory; in a share folder with the mode 2770, which lets the share's SMB users fill it."""
     return await _run(_create_directory, req.path, req.name)
 
 
-@router.post("/rename", response_model=FileInfo)
+@router.post(
+    "/rename", response_model=FileInfo, summary="Rename a file or folder",
+    responses=errors(BODY, {
+        400: "A path is not valid, or a folder on it is a file; the new name is not allowed, or an entry of "
+             "that name is in the folder.",
+        403: _DENIED_PROTECTED,
+        404: "Nothing has that path.",
+        409: "It is a volume, another subvolume such as a snapshot, or a mount point.",
+        500: _FILESYSTEM_ERROR,
+    }),
+)
 async def rename_item(req: RenameRequest, _: dict = Depends(verify_token)):
     """Rename a file or directory in its folder (a symlink is renamed, not its target).
 
@@ -2587,90 +2696,234 @@ async def rename_item(req: RenameRequest, _: dict = Depends(verify_token)):
     return await _run(_rename, req.path, req.new_name)
 
 
-@router.post("/copy")
+_TRANSFER_400 = (
+    "A path is not valid or a folder on it is a file, the destination is not inside a pool, a folder would go "
+    "into itself, two items have one name, or an entry of an item's name is in the destination."
+)
+
+
+# The JSON arrays of paths that copy, move, delete and the trash take as their body.
+_ItemPaths = Annotated[list[str], Body(description="The full paths of the files and folders.", examples=[["/mnt/pools/data/documents/report.pdf", "/mnt/pools/data/photos"]])]
+_TrashPaths = Annotated[list[str], Body(description="Their paths as GET /files/trash lists them.", examples=[["/mnt/pools/data/.unos-trash/20261118T094107Z-3f9c2a7b1d4e8f60"]])]
+_LeftoverPaths = Annotated[list[str], Body(description="Their paths as GET /files/upload-leftovers lists them.",
+                                           examples=[["/mnt/pools/data/documents/.unos-upload-0123456789abcdef"]])]
+
+
+@router.post(
+    "/copy", summary="Copy files and folders into a folder",
+    responses={
+        **answer({"copied": ["/mnt/pools/backup/documents/report.pdf"]},
+                 "copied: the paths of the copies; an item that does not exist is left out."),
+        **errors(BODY, {
+            400: _TRANSFER_400,
+            403: f"{_DENIED_WRITE[:-1]}, or an item is the pools directory.",
+            404: "No folder has the destination's path.",
+            409: "Another folder took the place of a folder being copied into a share folder: the copy stopped "
+                 "there.",
+            500: _FILESYSTEM_ERROR,
+            507: _NO_SPACE,
+        }),
+    },
+)
 async def copy_items(
-    sources: list[str],
-    destination: str,
+    sources: _ItemPaths,
+    destination: Annotated[str, Query(description="The folder to copy them into, inside a pool.")],
     _: dict = Depends(verify_token)
 ):
-    """Copy files/directories. Symlinks are copied as links."""
+    """Copy files and folders (the body: a JSON array of their paths) into a folder. Every item is
+    checked before any is copied, and nothing is replaced. Symlinks are copied as links; devices, FIFOs,
+    sockets and the trash of a copied pool or volume are left out. Copies in a share folder get the
+    modes of the share's files and folders, elsewhere those of their source."""
     return {"copied": await _run(lambda: _transfer(sources, destination, moving=False))}
 
 
-@router.post("/move")
+@router.post(
+    "/move", summary="Move files and folders into a folder",
+    responses={
+        **answer({"moved": ["/mnt/pools/data/archive/report.pdf"]},
+                 "moved: the new paths of the items; an item that does not exist is left out."),
+        **errors(BODY, {
+            400: _TRANSFER_400,
+            403: _DENIED_PROTECTED,
+            404: "No folder has the destination's path.",
+            409: "An item is a volume, another subvolume or a mount point, holds one while it moves to another "
+                 "pool or volume, or was replaced in the meantime.",
+            500: f"The mount table cannot be read. {_FILESYSTEM_ERROR}",
+            507: _NO_SPACE,
+        }),
+    },
+)
 async def move_items(
-    sources: list[str],
-    destination: str,
+    sources: _ItemPaths,
+    destination: Annotated[str, Query(description="The folder to move them into, inside a pool.")],
     _: dict = Depends(verify_token)
 ):
-    """Move files/directories."""
+    """Move files and folders (the body: a JSON array of their paths) into a folder: a rename within a
+    pool or volume, a copy and a delete to another one, whose copies in a share folder get the modes of
+    the share's files and folders. Every item is checked before any moves, and an item whose name is
+    taken in the folder is refused; a file of its name that appears after that check can be replaced.
+    A failure after some items moved says how many."""
     return {"moved": await _run(lambda: _transfer(sources, destination, moving=True))}
 
 
-@router.delete("/delete")
-async def delete_items(paths: list[str], permanent: bool = False, _: dict = Depends(verify_token)):
-    """Move files/directories into the trash of their pool or volume (ADR-0259); with permanent=true, delete them
-    for good. Symlinks are moved or removed, never their targets.
+@router.delete(
+    "/delete", summary="Delete files and folders",
+    responses={
+        **answer({"deleted": [_DELETE_EXAMPLE]},
+                 "deleted: the paths of the items deleted; an item that does not exist is left out."),
+        **errors(BODY, {
+            400: "A path is not valid, or a folder on it is a file.",
+            403: _DENIED_PROTECTED,
+            409: "An item is a volume, another subvolume or a mount point, or holds one; it lies in a deeper "
+                 "subvolume or below a mount point, which has no trash; its trash is not a folder or cannot be "
+                 "made private; or it was replaced in the meantime.",
+            500: f"The mount table cannot be read for a folder. {_FILESYSTEM_ERROR}",
+            507: f"{_NO_SPACE[:-1]}, for the item's entry in the trash.",
+        }),
+    },
+)
+async def delete_items(
+    paths: _ItemPaths,
+    permanent: Annotated[bool, Query(
+        description="true: delete them for good; false: move them into the trash of their pool or volume."
+    )] = False,
+    _: dict = Depends(verify_token),
+):
+    """Move files/directories (the body: a JSON array of their paths) into the trash of their pool or
+    volume; with permanent=true, delete them for good. Symlinks are moved or removed, never their targets.
 
     An item that one rename cannot take into a trash (in a deeper subvolume,
     or below a mount point) is refused with 409 and can be deleted for good;
     so is every item while its trash is not a folder or cannot be made
     private. Every item is checked before any is changed; one that fails
     after others went answers with how many went before it.
+    \f
+    ADR-0259.
     """
     return {"deleted": await _run(_delete, paths, permanent)}
 
 
-@router.get("/trash", response_model=TrashListing)
+@router.get(
+    "/trash", response_model=TrashListing, summary="List the trash",
+    responses=errors({
+        404: "The pools directory does not exist.",
+        500: "The pools directory cannot be read.",
+    }),
+)
 async def list_trash(_: dict = Depends(verify_token)):
     """The items in the trash of every pool and volume, newest first, and the trashes that could not be read."""
     return await _run(_list_trash)
 
 
-@router.post("/trash/restore")
-async def restore_from_trash(paths: list[str], _: dict = Depends(verify_token)):
-    """Put items of the trash (their paths as GET /files/trash lists them) back where they were deleted from.
+@router.post(
+    "/trash/restore", summary="Restore items from the trash",
+    responses={
+        **answer({"restored": [_DELETE_EXAMPLE]}, "restored: where the items are now, the paths they were "
+                                                   "deleted from."),
+        **errors(BODY, {
+            400: f"{_TRASH_PATH[:-1]}, two items would go back to one path, or an entry has the name where an "
+                 "item goes back.",
+            403: f"{ADMIN[403]} Or a path leads outside the pools directory, or a folder on an item's way back is "
+                 "a symbolic link.",
+            404: "An item is not in the trash (any more).",
+            409: "Where an item was deleted from is not known, that folder is gone or on another subvolume or "
+                 "filesystem now, or the trash is not a folder or cannot be made private.",
+            500: _FILESYSTEM_ERROR,
+        }),
+    },
+)
+async def restore_from_trash(paths: _TrashPaths, _: dict = Depends(verify_token)):
+    """Put items of the trash (the body: a JSON array of their paths as GET /files/trash lists them) back
+    where they were deleted from.
 
     Nothing is replaced: a name that is taken there answers 400 "Already
     exists: <name>", and a folder that is gone, or on another subvolume or
-    filesystem now, 409. Every item is checked before any is restored.
+    filesystem now, 409. Every item is checked before any is restored; a
+    failure after some items went back says how many.
     """
     return {"restored": await _run(_restore_from_trash, paths)}
 
 
-@router.delete("/trash")
-async def delete_from_trash(paths: list[str], _: dict = Depends(verify_token)):
-    """Delete items of the trash for good (their paths as GET /files/trash lists them)."""
+@router.delete(
+    "/trash", summary="Delete items of the trash for good",
+    responses={
+        **answer({"deleted": [_TRASH_ENTRY_EXAMPLE]},
+                 "deleted: the items deleted for good; one that is gone already is left out."),
+        **errors(BODY, {
+            400: _TRASH_PATH,
+            403: f"{ADMIN[403]} Or a path leads outside the pools directory, or a folder on it is a symbolic link.",
+            409: "An item holds a subvolume or a mount point, or was replaced in the meantime, or the trash is not "
+                 "a folder or cannot be made private.",
+            500: f"The mount table cannot be read. {_FILESYSTEM_ERROR}",
+        }),
+    },
+)
+async def delete_from_trash(paths: _TrashPaths, _: dict = Depends(verify_token)):
+    """Delete items of the trash for good (the body: a JSON array of their paths as GET /files/trash
+    lists them)."""
     return {"deleted": await _run(_delete_from_trash, paths)}
 
 
-@router.post("/trash/empty")
+@router.post(
+    "/trash/empty", summary="Empty the trash",
+    responses={
+        **answer({"deleted": 3}, "deleted: how many items were deleted for good."),
+        **errors({
+            409: "An item holds a subvolume or a mount point, or was replaced in the meantime: the emptying "
+                 "stopped there.",
+            500: "A trash could not be read (the others are empty then), the mount table cannot be read, or "
+                 "another error of the filesystem.",
+        }),
+    },
+)
 async def empty_trash(_: dict = Depends(verify_token)):
-    """Delete everything in the trash of every pool and volume for good; answers how many items."""
+    """Delete everything in the trash of every pool and volume for good; answers how many items. It
+    stops at the first item that cannot be deleted."""
     return {"deleted": await _run(_empty_trash)}
 
 
-@router.get("/upload-leftovers", response_model=UploadLeftovers)
+@router.get("/upload-leftovers", response_model=UploadLeftovers, summary="List the upload leftovers")
 async def list_upload_leftovers(_: dict = Depends(verify_token)):
-    """The hidden files that uploads left when the supervisor stopped, as the last check found them (ADR-0354).
+    """The hidden files that uploads left when the supervisor stopped, as the last check found them.
+    The supervisor checks once, 10 minutes after it started, and when POST
+    /files/upload-leftovers/check asks.
 
     Without looking at the disks again: a removal does, and drops from the
     list the files that are gone or changed since.
+    \f
+    ADR-0354.
     """
     task = _leftovers.task
     return _list_upload_leftovers(task is not None and not task.done())
 
 
-@router.post("/upload-leftovers/check", response_model=UploadLeftovers)
+@router.post("/upload-leftovers/check", response_model=UploadLeftovers, summary="Look for upload leftovers now")
 async def check_for_upload_leftovers(_: dict = Depends(verify_token)):
-    """Look for them in every folder below the pools directory now, then answer as GET does."""
+    """Look for them below the pools directory now, then answer as GET does: every folder but the
+    trash, the snapshots and Docker's data root, at most a fixed depth down. A check that runs already
+    is waited for."""
     await check_upload_leftovers()
     return await list_upload_leftovers(_)
 
 
-@router.delete("/upload-leftovers")
-async def remove_upload_leftovers(paths: list[str], _: dict = Depends(verify_token)):
-    """Remove such files for good (their paths as GET lists them); answers the ones that were there.
+@router.delete(
+    "/upload-leftovers", summary="Remove upload leftovers",
+    responses={
+        **answer({"removed": [_LEFTOVER_EXAMPLE]},
+                 "removed: the files removed; one that is gone, or was replaced or written meanwhile, is left out."),
+        **errors(BODY, {
+            400: "A path is not valid, or not of a hidden upload file (.unos-upload- and 16 hexadecimal digits).",
+            403: f"{ADMIN[403]} Or a path leads outside the pools directory or into a trash, or the filesystem "
+                 "refuses the removal.",
+            409: "A file is not an upload leftover: not a regular file, the file of an upload in progress, or "
+                 f"changed in the last {UPLOAD_LEFTOVER_AGE // 60} minutes. Nothing was removed.",
+            500: _FILESYSTEM_ERROR,
+        }),
+    },
+)
+async def remove_upload_leftovers(paths: _LeftoverPaths, _: dict = Depends(verify_token)):
+    """Remove such files for good (the body: a JSON array of their paths as GET lists them); answers the
+    ones that were there.
 
     Every path is checked before any file is removed: a path that is not of
     a hidden upload file answers 400, and a file that is not a leftover

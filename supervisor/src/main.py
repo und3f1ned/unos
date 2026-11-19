@@ -33,7 +33,7 @@ from fastapi import Depends, FastAPI, Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, PlainTextResponse
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
@@ -42,6 +42,7 @@ from .times import utc_now
 from .database import checkpoint_db, init_db
 from .config import get_settings
 from .auth.utils import require_admin
+from .openapi import ADMIN, answer, errors, file_answer
 from .request_limits import MAX_REQUEST_BODY, RequestBodyLimitMiddleware
 
 logger = logging.getLogger(__name__)
@@ -315,7 +316,8 @@ for _router in (
     offsite_router,
     updates_router,
 ):
-    app.include_router(_router, prefix="/api/v1", dependencies=_ADMIN_ONLY)
+    # Their 401 and 403 in the API documentation (ADR-0417).
+    app.include_router(_router, prefix="/api/v1", dependencies=_ADMIN_ONLY, responses=errors(ADMIN))
 
 
 HEALTH_PATH = "/api/v1/health"
@@ -349,18 +351,56 @@ class _RefusedOrFailedRequestFilter(logging.Filter):
 logging.getLogger("uvicorn.access").addFilter(_RefusedOrFailedRequestFilter())
 
 
-@app.get(HEALTH_PATH)
+@app.get(
+    HEALTH_PATH,
+    summary="Check that the supervisor answers",
+    responses=answer({"status": "ok"}, "Always ok: the supervisor serves requests."),
+)
 async def health_check():
-    """Basic health check for load balancers."""
+    """Whether the supervisor serves requests, for the Docker health checks and load balancers.
+    Public: it needs no credential."""
     return {"status": "ok"}
 
 
-@app.get("/api/v1/health/full", dependencies=[Depends(require_admin)])
+_FULL_HEALTH_EXAMPLE = {
+    "status": "degraded",
+    "timestamp": "2026-11-18T10:00:00.123456+00:00",
+    "version": "0.1.0",
+    "components": {
+        "database": {"status": "ok", "size_mb": 1.25},
+        "docker": {"status": "ok", "containers_running": 4},
+        "storage": {"status": "ok", "pools": 1},
+        "raid": {"status": "degraded", "pools": ["data"]},
+        "ups": {"status": "not_configured"},
+    },
+    "metrics": {
+        "cpu_percent": 3.5,
+        "memory_percent": 41.2,
+        "disk_percent": 27.0,
+        "load_average": [0.21, 0.3, 0.28],
+        "uptime_seconds": 86400,
+    },
+    "issues": ["raid"],
+}
+
+
+@app.get(
+    "/api/v1/health/full",
+    dependencies=[Depends(require_admin)],
+    summary="Check every component of UNOS",
+    responses={
+        **answer(
+            _FULL_HEALTH_EXAMPLE,
+            "The overall status (healthy, degraded or critical) and the status of the database, Docker, "
+            "the pools, RAID and the UPS, the host's CPU, memory, root disk and load, and the issues found.",
+        ),
+        **errors(ADMIN),
+    },
+)
 async def full_health_check():
-    """
-    Comprehensive health check aggregating all system components.
-    Suitable for monitoring systems like Prometheus, Uptime Robot, etc.
-    """
+    """The state of every component, for monitoring tools: degraded when a component has an issue,
+    critical when memory or the root disk is over 95 % full. A component that cannot be read
+    is reported in the answer, not as an error."""
     import psutil
     from pathlib import Path
     health = {
@@ -465,12 +505,19 @@ async def full_health_check():
     return health
 
 
-@app.get("/api/v1/health/prometheus", dependencies=[Depends(require_admin)])
+@app.get(
+    "/api/v1/health/prometheus",
+    dependencies=[Depends(require_admin)],
+    summary="Read the metrics for Prometheus",
+    response_class=PlainTextResponse,
+    responses={
+        **file_answer("text/plain", "The metrics in Prometheus's text format: unos_up, CPU, memory, root disk, "
+                                    "load, the number of pools and of healthy and degraded RAID pools."),
+        **errors(ADMIN),
+    },
+)
 async def prometheus_metrics():
-    """
-    Prometheus-compatible metrics endpoint.
-    Returns metrics in Prometheus text format.
-    """
+    """The host's and UNOS's metrics in Prometheus's text format, for a Prometheus scrape."""
     import psutil
 
     lines = []
@@ -532,5 +579,4 @@ async def prometheus_metrics():
     except Exception:
         pass
 
-    from fastapi.responses import PlainTextResponse
     return PlainTextResponse("\n".join(lines) + "\n", media_type="text/plain")

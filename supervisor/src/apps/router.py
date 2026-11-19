@@ -8,11 +8,12 @@ import shutil
 import stat
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, NoReturn
+from typing import Annotated, Any, NoReturn
 
 from docker.errors import APIError, DockerException, NotFound
 from docker.types import Mount
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
+from fastapi import Path as ApiPath
 from fastapi.responses import JSONResponse
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
@@ -26,6 +27,7 @@ from ..config import get_settings
 from ..containers.docker import CAPPED_LOG, NO_ANSWER, RUNNING_STATES, get_client, no_answer_detail
 from ..database import get_db
 from ..files.router import TRASH
+from ..openapi import BODY, ErrorDetail, answer, errors
 from ..security.validators import open_dir_nofollow, pools_base, validate_pools_path
 from ..shares.constants import SMB_APP_UID, SMB_GROUP_GID, SMB_GROUP_NAME
 from ..shares.models import SmbShare
@@ -63,6 +65,25 @@ logger = logging.getLogger(__name__)
 _DOCKER_ERRORS = stacks.DOCKER_ERRORS
 _docker_error = stacks.docker_error
 
+# The API documentation of the routes here and in updates.py (ADR-0417): the path parameter of an
+# installed app and the errors of _get_app, stacks.docker_error, stacks.acquire and install_jobs.start.
+AppContainerId = Annotated[str, ApiPath(
+    description="The id, a prefix of the id, or the name of any container of the app, such as bookstack."
+)]
+NO_DOCKER = {503: "Docker does not answer: its socket is missing or refuses the connection, or the connection broke."}
+APP_LOOKUP = {
+    400: "The container is no app's: it lacks the unos.app label, as UNOS's own containers do.",
+    404: "Docker has no container of that id or name.",
+    500: "Docker failed, with its error as the detail.",
+    **NO_DOCKER,
+}
+CHANGE_UNDER_WAY = "another change of the app (an install, an update, a start, a stop, an uninstall) is under way"
+JOB_STARTS = {
+    409: "An install, an update or a rollback runs already (one at a time on the NAS), or " + CHANGE_UNDER_WAY + ".",
+    500: "The job could not be started.",
+}
+JOB_ANSWER = "The job, running: GET /apps/install/jobs/{job_id} and the events socket report its progress and its end."
+
 # Defaults that templates and tutorials commonly ship. A secret set to one of
 # these protects nothing, so installs that use them are refused.
 PLACEHOLDER_SECRETS = frozenset(
@@ -86,13 +107,20 @@ _COPIES_OF_SHARES = {
 }
 
 
-@router.get("/catalog", response_model=list[AppTemplate])
+@router.get("/catalog", response_model=list[AppTemplate], summary="List the apps of the catalog")
 async def list_apps(
-    category: AppCategory | None = None,
-    query: str | None = None,
+    category: Annotated[AppCategory | None, Query(description="Only the apps of this category.")] = None,
+    query: Annotated[str | None, Query(
+        description="Only the apps whose name or description holds this text, in any case; category is then ignored."
+    )] = None,
     _: dict = Depends(verify_token)
 ):
-    """List available apps from catalog, with the hardware they get on this host (ADR-0382)."""
+    """The apps of the catalog as this host would install them: each container with the hardware
+    profiles that apply here and the image its install pulls here, whether the app is available
+    for the host's platform, and what its images take on the system disk.
+    \f
+    ADR-0382, ADR-0403, ADR-0415.
+    """
     if query:
         apps = search_apps(query)
     elif category:
@@ -102,9 +130,18 @@ async def list_apps(
     return await _for_this_host(apps)
 
 
-@router.get("/catalog/{app_id}", response_model=AppTemplate)
-async def get_app(app_id: str, _: dict = Depends(verify_token)):
-    """Get app template by ID, with the hardware it gets on this host (ADR-0382)."""
+@router.get(
+    "/catalog/{app_id}", response_model=AppTemplate, summary="Read an app of the catalog",
+    responses=errors({404: "The catalog has no app of that id."}),
+)
+async def get_app(
+    app_id: Annotated[str, ApiPath(description="The app's id in the catalog, such as jellyfin.")],
+    _: dict = Depends(verify_token),
+):
+    """One app of the catalog as this host would install it, as the list of the catalog gives it.
+    \f
+    ADR-0382.
+    """
     app = get_app_by_id(app_id)
     if not app:
         raise HTTPException(404, f"App {app_id} not found")
@@ -138,9 +175,13 @@ def _images_size(app: AppTemplate) -> int:
     return sum(PINNED_IMAGES[image].disk_bytes for image in images if image in PINNED_IMAGES)
 
 
-@router.get("/installed", response_model=list[InstalledApp])
+@router.get(
+    "/installed", response_model=list[InstalledApp], summary="List the installed apps",
+    responses=errors({500: "Docker failed, with its error as the detail."}, NO_DOCKER),
+)
 async def list_installed(_: dict = Depends(verify_token)) -> list[InstalledApp]:
-    """List installed apps with the host folders they really use."""
+    """The installed apps, each with its companion containers, the host folders that they really
+    use, their container limits and use, the app update on offer and the earlier version kept."""
     # Docker calls block, and statvfs on a failing disk can hang.
     return await asyncio.to_thread(_list_installed)
 
@@ -328,9 +369,10 @@ def list_mounted_pools() -> list[AppPool]:
     return pools
 
 
-@router.get("/pools", response_model=list[AppPool])
+@router.get("/pools", response_model=list[AppPool], summary="List the pools for app data")
 async def list_app_pools(_: User = Depends(require_admin)) -> list[AppPool]:
-    """Mounted storage pools that can hold app data; the first is the default."""
+    """The mounted pools that can hold app data, by name: an install that names no pool takes the
+    first. A pool that is not mounted is not listed."""
     # statvfs on a failing disk can hang, so keep it off the event loop.
     return await asyncio.to_thread(list_mounted_pools)
 
@@ -1611,23 +1653,32 @@ def _installed_details(template: AppTemplate, installed: _Installed) -> str:
     return text + limits.install_text(installed.kept_limits)
 
 
-@router.post("/install", response_model=AppInstallJob, status_code=202)
+@router.post(
+    "/install", response_model=AppInstallJob, status_code=202, summary="Install an app",
+    responses={202: {"description": JOB_ANSWER}, **errors(BODY, {
+        400: "The app's template refuses the request: the group option, a host port (out of range, given twice, or "
+             "moved in the host's network), or a variable (a required one left empty, a placeholder secret, PUID, "
+             "PGID, or one that UNOS sets).",
+        404: "The catalog has no app of that id.",
+        409: "An image of the app publishes no build for the host's platform, an install, an update or a rollback "
+             "runs already, or " + CHANGE_UNDER_WAY + ".",
+        500: "The job could not be started.",
+    })},
+)
 async def install_app(
     req: AppInstallRequest,
     request: Request,
     user: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ) -> AppInstallJob:
-    """Install an app from the catalog with its data on a mounted pool, as a background job: 202
-    at once with the job running (ADR-0384).
-
-    Answered at once: 404 for an app the catalog lacks, 409 for one that has no image for the host's
-    platform (ADR-0403), 400 for a request that its template
-    refuses (the group option, the host ports, the variables), 409 while an install runs or
-    another change of the app is under way. Everything else is checked in the job, before any
-    pull, and a refusal ends the job failed with the status and detail of the refusal. The job
-    writes the audit entry app_installed at its end (ADR-0350); an install that failed and left a
-    container or its network behind writes it as failed (ADR-0381).
+    """Install an app from the catalog with its data on a mounted pool, as an install job: 202 at
+    once with the job running. Only what needs neither Docker, the host nor the pools is checked
+    before the answer; the job checks the rest before any pull, and a refusal ends it failed with
+    the status and detail that the request would have answered. The job writes the audit entry
+    app_installed at its end, as failed when the install failed and left a container or its
+    network behind.
+    \f
+    ADR-0350, ADR-0381, ADR-0384, ADR-0403.
     """
     template = get_app_by_id(req.template_id)
     if not template:
@@ -1673,21 +1724,36 @@ def _audit_from_the_job(request: Request, username: str, app_id: str, details: s
     ))
 
 
-@router.get("/install/jobs", response_model=list[AppInstallJob])
+@router.get("/install/jobs", response_model=list[AppInstallJob], summary="List the install jobs")
 async def list_install_jobs(_: User = Depends(require_admin)) -> list[AppInstallJob]:
-    """The running install and the last one of each app since UNOS started, the oldest first."""
+    """The running install job and the last one of each app since the supervisor started, the
+    oldest first; updates and rollbacks among them."""
     return install_jobs.current()
 
 
-@router.get("/install/jobs/{job_id}", response_model=AppInstallJob)
+@router.get(
+    "/install/jobs/{job_id}", response_model=AppInstallJob, summary="Read an install job",
+    responses={
+        **errors({404: "No job of that id is kept: there was none, it was dismissed, or the supervisor restarted."}),
+        429: {"model": ErrorDetail,
+              "description": f"With wait: {install_jobs.MAX_WAITERS} other requests wait for jobs already; try "
+                             "again in a moment."},
+    },
+)
 async def get_install_job(
-    job_id: str,
-    wait: int = Query(0, ge=0, le=install_jobs.MAX_WAIT_SECONDS),
+    job_id: Annotated[str, ApiPath(description="The job's id, as its start answered it.")],
+    wait: int = Query(0, ge=0, le=install_jobs.MAX_WAIT_SECONDS, description=(
+        f"Seconds to wait for the job's end, at most {install_jobs.MAX_WAIT_SECONDS}: the job is answered once it "
+        "has ended or the time has passed; 0: at once."
+    )),
     _: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ) -> AppInstallJob:
-    """An install job; with ``wait``, once it has ended or ``wait`` seconds have passed, for scripts
-    that wait for an install (ADR-0384). 404 for a job that is not kept."""
+    """An install job; with wait, once it has ended or wait seconds have passed, for scripts that
+    wait for an install, an update or a rollback.
+    \f
+    ADR-0384.
+    """
     # The credentials were checked with this session: no database connection, nor a read
     # transaction that would hold back the checkpoints of the database's log, is kept while it
     # waits (ADR-0306).
@@ -1695,11 +1761,28 @@ async def get_install_job(
     return await install_jobs.wait_for_end(job_id, wait)
 
 
-@router.delete("/install/jobs/{job_id}", status_code=204, responses={202: {"model": AppInstallJob}})
-async def dismiss_or_cancel_install_job(job_id: str, user: User = Depends(require_admin)) -> Response:
+@router.delete(
+    "/install/jobs/{job_id}", status_code=204, summary="Dismiss or cancel an install job",
+    responses={
+        202: {"model": AppInstallJob, "description": "The running job, cancelled, as it is now: it ends at its next "
+                                                     "step."},
+        204: {"description": "The ended job is forgotten."},
+        **errors({
+            404: "No job of that id is kept, or the running one ended meanwhile.",
+            409: "The job is a rollback, which cannot be cancelled.",
+        }),
+    },
+)
+async def dismiss_or_cancel_install_job(
+    job_id: Annotated[str, ApiPath(description="The job's id, as its start answered it.")],
+    user: User = Depends(require_admin),
+) -> Response:
     """Forget an ended install job, as the App Store's Dismiss does (204), or cancel the running one
-    (202 with the job as it is): the install stops at its next step, also during a pull, and what
-    it made is removed, as after a failure (ADR-0384). 404 for a job that is not kept."""
+    (202 with the job as it is): the install or update stops at its next step, also during a pull,
+    and what it made is removed or the app returned to its earlier version, as after a failure.
+    \f
+    ADR-0384, ADR-0408.
+    """
     job = install_jobs.dismiss_or_cancel(job_id, user.username)
     if job is None:
         return Response(status_code=204)
@@ -1898,12 +1981,30 @@ async def _start_app(container_id: str, request: Request, user: User, *, restart
     return {"status": _status(app), "id": container_id}
 
 
-@router.post("/installed/{container_id}/start")
-async def start_app(container_id: str, request: Request, user: User = Depends(verify_token)):
-    """Start an installed app, all of its containers in order (409 if its data folders are not
-    usable or a container is missing).
+_STARTS = {
+    409: "The app must not start: " + CHANGE_UNDER_WAY + ", a container of it is missing, or its data folders are "
+         "not usable (a pool not mounted, a symbolic link on the way, a missing password file).",
+    500: "Docker failed, a companion did not become ready, or a data folder could not be checked or created; the "
+         "containers changed so far stay as they are.",
+}
 
-    The audit log gets container_started when it started a container (ADR-0350).
+
+@router.post(
+    "/installed/{container_id}/start", summary="Start an installed app",
+    responses={
+        **answer({"status": "running", "id": "bookstack"},
+                 "status: Docker's status of the app's main container now; id: the container as the request named "
+                 "it."),
+        **errors(APP_LOOKUP, _STARTS),
+    },
+)
+async def start_app(container_id: AppContainerId, request: Request, user: User = Depends(verify_token)):
+    """Start an installed app: those of its containers that do not run, in order; when the main
+    container starts, each companion that it depends on is ready first. Every container's data
+    folders are checked before any of them starts. The audit log gets container_started when it
+    started a container.
+    \f
+    ADR-0350, ADR-0381.
     """
     return await _start_app(container_id, request, user, restart=False)
 
@@ -1922,9 +2023,24 @@ def _stop_installed_app(container_id: str) -> tuple[stacks.InstalledContainers, 
     return app, done
 
 
-@router.post("/installed/{container_id}/stop")
-async def stop_app(container_id: str, request: Request, user: User = Depends(verify_token)):
-    """Stop an installed app; the audit log gets container_stopped when a container ran (ADR-0350)."""
+@router.post(
+    "/installed/{container_id}/stop", summary="Stop an installed app",
+    responses={
+        **answer({"status": "exited", "id": "bookstack"},
+                 "status: Docker's status of the app's main container now, or missing when Docker has none; id: the "
+                 "container as the request named it."),
+        **errors(APP_LOOKUP, {
+            409: CHANGE_UNDER_WAY[:1].upper() + CHANGE_UNDER_WAY[1:] + ".",
+            500: "Docker failed, such as to stop a container; the containers stopped so far stay stopped.",
+        }),
+    },
+)
+async def stop_app(container_id: AppContainerId, request: Request, user: User = Depends(verify_token)):
+    """Stop an installed app: its containers in reverse order, each given its stop timeout. The
+    audit log gets container_stopped when a container ran.
+    \f
+    ADR-0350.
+    """
     # A stop waits up to the containers' stop timeouts for them to exit: keep it off the event loop.
     try:
         app, done = await asyncio.to_thread(_stop_installed_app, container_id)
@@ -1939,12 +2055,20 @@ async def stop_app(container_id: str, request: Request, user: User = Depends(ver
     return {"status": _status(app), "id": container_id}
 
 
-@router.post("/installed/{container_id}/restart")
-async def restart_app(container_id: str, request: Request, user: User = Depends(verify_token)):
-    """Restart an installed app: stop all its containers, then start all of them in order (409 if
-    its data folders are not usable or a container is missing).
-
-    It starts the app again: the audit log gets container_started (ADR-0350).
+@router.post(
+    "/installed/{container_id}/restart", summary="Restart an installed app",
+    responses={
+        **answer({"status": "running", "id": "bookstack"},
+                 "status: Docker's status of the app's main container now; id: the container as the request named "
+                 "it."),
+        **errors(APP_LOOKUP, _STARTS),
+    },
+)
+async def restart_app(container_id: AppContainerId, request: Request, user: User = Depends(verify_token)):
+    """Restart an installed app: stop all its containers, then start all of them in order, once
+    every container's data folders were checked. The audit log gets container_started.
+    \f
+    ADR-0350.
     """
     return await _start_app(container_id, request, user, restart=True)
 
@@ -2013,11 +2137,26 @@ def _uninstalled_details(app: stacks.InstalledContainers, removed: list[str], le
     )
 
 
-@router.delete("/installed/{container_id}")
-async def uninstall_app(container_id: str, request: Request, user: User = Depends(verify_token)):
-    """Uninstall an app: remove its containers and its network and keep its data; the audit log
+@router.delete(
+    "/installed/{container_id}", summary="Uninstall an app",
+    responses={
+        **answer({"status": "removed", "id": "bookstack"},
+                 "Always removed, with id: the container as the request named it."),
+        **errors(APP_LOOKUP, {
+            409: CHANGE_UNDER_WAY[:1].upper() + CHANGE_UNDER_WAY[1:] + ".",
+            500: "Docker failed, such as to stop or remove a container or the app's network; what was done so far "
+                 "stays.",
+        }),
+    },
+)
+async def uninstall_app(container_id: AppContainerId, request: Request, user: User = Depends(verify_token)):
+    """Uninstall an app: stop and remove its containers, those of its earlier version too, and its
+    network; its data folders, generated secrets, database copies and images stay. The audit log
     gets app_uninstalled, or what it did as failed when it changed the app and then failed: a
-    removal (app_uninstalled) or only a stop (container_stopped) (ADR-0350)."""
+    removal (app_uninstalled) or only a stop (container_stopped).
+    \f
+    ADR-0256, ADR-0350, ADR-0408.
+    """
     # A stop waits up to the containers' stop timeouts for them to exit: keep it off the event loop.
     try:
         app, removed, left = await asyncio.to_thread(_uninstall, container_id)
@@ -2036,9 +2175,10 @@ async def uninstall_app(container_id: str, request: Request, user: User = Depend
 # ---------------------------------------------------------------------------
 
 
-@router.get("/limits", response_model=LimitBounds)
+@router.get("/limits", response_model=LimitBounds, summary="Read the bounds of the container limits")
 async def limit_bounds(_: User = Depends(require_admin)) -> LimitBounds:
-    """What the limits of a container may be on this host."""
+    """What the container limits may be on this host: the least memory and CPU limits, and the
+    host's memory and CPUs."""
     return limits.bounds()
 
 
@@ -2122,21 +2262,30 @@ def _apply_limits(app: stacks.InstalledContainers, container: Any, wanted: limit
     return _Applied(before, limits.in_force(container.attrs), warnings)
 
 
-@router.put("/installed/{container_id}/limits", response_model=ContainerLimits)
+@router.put(
+    "/installed/{container_id}/limits", response_model=ContainerLimits, summary="Set a container's limits",
+    responses=errors(BODY, APP_LOOKUP, {
+        400: "A limit is out of the bounds of GET /apps/limits, or the container is no app's (no unos.app label).",
+        404: "Docker has no container of that id or name, or it belongs to the app's earlier version.",
+        409: "A running container uses more memory than the limit leaves room for, or its use cannot be read; the "
+             "CPU limit was set outside UNOS; Docker refused or did not apply a limit (what it applied is kept); or "
+             + CHANGE_UNDER_WAY + ".",
+        500: "Docker failed, or the limits are in force but the database could not keep them.",
+    }),
+)
 async def set_container_limits(
-    container_id: str,
+    container_id: Annotated[str, ApiPath(description="The id, a prefix of the id, or the name of the container.")],
     req: ContainerLimitsRequest,
     request: Request,
     user: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ) -> ContainerLimits:
-    """Set the memory and CPU limits of one container of an app (``container_id``: its id or name;
-    null removes a limit, and both fields are required): Docker gets them at once, running or not,
-    and the database keeps them for the app's next install (ADR-0390). 400 for a value out of
-    bounds; 409 for a memory limit that a running container needs more than (or whose use cannot
-    be read), for a CPU limit set with NanoCpus, for Docker's refusal, for a limit that Docker
-    discarded (what it applied is kept and audited) and while another change of the app is under
-    way. A change is audited as app_limits_changed."""
+    """Set the container limits of one container of an app (null removes a limit, and both fields
+    are required): Docker gets them at once, running or not, and the database keeps them for the
+    app's next install. A change is written to the audit log as app_limits_changed.
+    \f
+    ADR-0390.
+    """
     wanted = limits.requested(req)
     app, container = await asyncio.to_thread(_container_of_app, container_id)
     lock = stacks.acquire(app.key, app.name)

@@ -104,22 +104,48 @@ def validate_country(value: str) -> str:
 
 # Login History Schemas
 class LoginAttemptResponse(BaseModel):
-    id: int
-    username: str
-    ip_address: str | None
-    user_agent: str | None
-    success: bool
-    failure_reason: str | None
-    timestamp: UtcDatetime | None
+    """One sign-in attempt."""
+
+    id: int = Field(description="The attempt's number in the login history.")
+    username: str = Field(description="The username that the attempt gave, also one without an account.")
+    ip_address: str | None = Field(description="The address of the computer that tried; null when not known.")
+    user_agent: str | None = Field(
+        description="The browser's or program's User-Agent header, at most 500 characters; empty when it sent none."
+    )
+    success: bool = Field(description="Whether the attempt signed in.")
+    failure_reason: str | None = Field(
+        description="Why it failed, such as Incorrect username or password or Invalid 2FA code; null when it succeeded."
+    )
+    timestamp: UtcDatetime | None = Field(description="When it happened, in UTC, to the second.")
 
     model_config = ConfigDict(from_attributes=True)
 
 
 class LoginHistoryResponse(BaseModel):
-    attempts: list[LoginAttemptResponse]
-    total: int
-    failed_count: int
-    success_count: int
+    """A page of the login history and the counts of the attempts the caller may see."""
+
+    model_config = ConfigDict(json_schema_extra={"examples": [{
+        "attempts": [
+            {"id": 42, "username": "alice", "ip_address": "192.0.2.20",
+             "user_agent": "Mozilla/5.0 (X11; Linux x86_64; rv:132.0) Gecko/20100101 Firefox/132.0",
+             "success": True, "failure_reason": None, "timestamp": "2026-11-18T09:15:02Z"},
+            {"id": 41, "username": "alice", "ip_address": "192.0.2.20",
+             "user_agent": "Mozilla/5.0 (X11; Linux x86_64; rv:132.0) Gecko/20100101 Firefox/132.0",
+             "success": False, "failure_reason": "Incorrect username or password",
+             "timestamp": "2026-11-18T09:14:51Z"},
+        ],
+        "total": 2,
+        "failed_count": 1,
+        "success_count": 1,
+    }]})
+
+    attempts: list[LoginAttemptResponse] = Field(description="The attempts of the page, newest first.")
+    total: int = Field(
+        description="How many attempts the caller may see, with the username filter but without the success "
+                    "filter and the page."
+    )
+    failed_count: int = Field(description="How many of those failed.")
+    success_count: int = Field(description="How many of those signed in.")
 
 
 # Firewall Schemas: the host's ufw (ADR-0416)
@@ -137,41 +163,83 @@ class FirewallProtocol(str, Enum):
 
 class FirewallRule(BaseModel):
     """A rule of the host's ufw, as ufw records it (src/security/firewall.py)."""
-    id: str                          # made from the rule's record: it stays while the rule does
-    number: int                      # ufw's number of the rule, as `ufw status numbered` shows it
-    family: Literal["ipv4", "ipv6"]
-    action: str                      # allow, deny, reject or limit
-    direction: str                   # in or out
-    route: bool = False              # a rule of forwarded traffic (ufw route)
-    log: bool = False                # ufw logs what it matches
-    protocol: str                    # tcp, udp, any, or another that ufw takes (esp, gre, ...)
-    port: str | None = None          # None: every port
-    destination: str | None = None   # None: any address of the host
-    source_port: str | None = None
-    source: str | None = None        # None: anywhere
-    interface: str | None = None
-    app: str | None = None           # an application profile of ufw
-    comment: str | None = None
-    unos: bool = False               # one of UNOS's rules, which UNOS does not delete
+    id: str = Field(description="The rule's id, made from its record: it stays while the rule does.")
+    number: int = Field(description="ufw's number of the rule, as ufw status numbered shows it.")
+    family: Literal["ipv4", "ipv6"] = Field(description="The address family that the rule filters.")
+    action: str = Field(description="allow, deny, reject or limit.")
+    direction: str = Field(description="in or out.")
+    route: bool = Field(False, description="Whether it is a rule of forwarded traffic (ufw route).")
+    log: bool = Field(False, description="Whether ufw logs what it matches.")
+    protocol: str = Field(description="tcp, udp, any, or another protocol that ufw takes, such as esp or gre.")
+    port: str | None = Field(None, description="The destination ports, such as 22 or 6000:6007; null for every port.")
+    destination: str | None = Field(
+        None, description="The destination address or network; null for any address of the host."
+    )
+    source_port: str | None = Field(None, description="The source ports; null for any.")
+    source: str | None = Field(None, description="The source address or network; null for anywhere.")
+    interface: str | None = Field(None, description="The interface that the rule is limited to; null for every one.")
+    app: str | None = Field(None, description="The ufw application profile that the rule names; null for none.")
+    comment: str | None = Field(None, description="The rule's comment; null for none.")
+    unos: bool = Field(
+        False, description="Whether it is one of UNOS's rules, whose comment starts with UNOS: and which UNOS keeps."
+    )
 
 
 class FirewallStatus(BaseModel):
-    installed: bool                  # the host has ufw
-    enabled: bool
-    default_incoming: str
-    default_outgoing: str
-    ipv6: bool                       # ufw filters IPv6 too (IPV6=yes)
-    rules: list[FirewallRule]
-    revert_in: int | None = None     # seconds until a change that waits to be kept is undone
-    reverting: bool = False          # the host undoes a change now
-    revert_failed: bool = False      # the host's last undo could not put everything back
-    revert_seconds: int              # how long a change waits to be kept
-    client_local: bool | None = None  # the asking computer is in the local networks; None: not known
+    """The host's ufw and the change that waits to be kept."""
+
+    model_config = ConfigDict(json_schema_extra={"examples": [{
+        "installed": True,
+        "enabled": True,
+        "default_incoming": "deny",
+        "default_outgoing": "allow",
+        "ipv6": True,
+        "rules": [
+            {"id": "fw-3c9a1e07b2d4", "number": 1, "family": "ipv4", "action": "allow", "direction": "in",
+             "route": False, "log": False, "protocol": "tcp", "port": "8080", "destination": None,
+             "source_port": None, "source": "192.0.2.0/24", "interface": None, "app": None,
+             "comment": "Web server", "unos": False},
+            {"id": "fw-81f0d5a6c3e2", "number": 2, "family": "ipv6", "action": "allow", "direction": "in",
+             "route": False, "log": False, "protocol": "udp", "port": "3702,5355", "destination": None,
+             "source_port": None, "source": "fe80::/10", "interface": None, "app": None,
+             "comment": "UNOS: network discovery", "unos": True},
+        ],
+        "revert_in": 87,
+        "reverting": False,
+        "revert_failed": False,
+        "revert_seconds": 120,
+        "client_local": True,
+    }]})
+
+    installed: bool = Field(description="Whether the host has ufw.")
+    enabled: bool = Field(description="Whether ufw is on; false when it is not installed.")
+    default_incoming: str = Field(description="The default policy of incoming traffic: allow, deny or reject.")
+    default_outgoing: str = Field(description="The default policy of outgoing traffic: allow, deny or reject.")
+    ipv6: bool = Field(description="Whether ufw filters IPv6 too (IPV6=yes in /etc/default/ufw).")
+    rules: list[FirewallRule] = Field(description="The host's rules in the order of ufw's numbers; none without ufw.")
+    revert_in: int | None = Field(
+        None, description="Seconds until the automatic revert undoes the change that waits to be kept; null when "
+                          "none waits."
+    )
+    reverting: bool = Field(False, description="Whether the automatic revert undoes a change now.")
+    revert_failed: bool = Field(False, description="Whether the last automatic revert could not put everything back.")
+    revert_seconds: int = Field(description="How long a change waits to be kept, in seconds.")
+    client_local: bool | None = Field(
+        None, description="Whether the asking computer is in the local networks that UNOS's rules let in; null when "
+                          "its address is not known."
+    )
 
 
 class FirewallChange(BaseModel):
-    changed: bool
-    revert_in: int | None = None
+    """What a change of the firewall did."""
+
+    model_config = ConfigDict(json_schema_extra={"examples": [{"changed": True, "revert_in": 120}]})
+
+    changed: bool = Field(description="Whether the host's ufw changed.")
+    revert_in: int | None = Field(
+        None, description="Seconds until the automatic revert undoes the change unless it is kept; null when the "
+                          "change armed none: a rule change while ufw is off, a turning off, a reset or no change."
+    )
 
 
 # ufw takes at most 15 ports in a rule, a range counting as two; a comment of UNOS's rules
@@ -222,13 +290,25 @@ def validate_firewall_comment(value: str | None) -> str | None:
 
 
 class FirewallRuleCreate(BaseModel):
-    """An incoming rule made in UNOS (ADR-0416)."""
-    model_config = ConfigDict(extra="forbid")
-    action: FirewallAction
-    protocol: FirewallProtocol = FirewallProtocol.TCP
-    port: Annotated[str, AfterValidator(validate_firewall_port)]
-    source: Annotated[str | None, AfterValidator(validate_firewall_source)] = None
-    comment: Annotated[str | None, AfterValidator(validate_firewall_comment)] = None
+    """An incoming rule made in UNOS."""
+    # ADR-0416.
+    model_config = ConfigDict(extra="forbid", json_schema_extra={"examples": [{
+        "action": "allow", "protocol": "tcp", "port": "8080", "source": "192.0.2.0/24", "comment": "Web server",
+    }]})
+    action: FirewallAction = Field(description="What the rule does with the traffic it matches.")
+    protocol: FirewallProtocol = Field(
+        FirewallProtocol.TCP, description="The protocol it matches; any takes one port only, not a range or a list."
+    )
+    port: Annotated[str, AfterValidator(validate_firewall_port)] = Field(
+        description="The ports from 1 to 65535: one, a range such as 6000:6007 or a list such as 80,443, at most 15 "
+                    "ports with a range counting as two."
+    )
+    source: Annotated[str | None, AfterValidator(validate_firewall_source)] = Field(
+        None, description="The IPv4 or IPv6 address or network that the rule matches; null or empty for anywhere."
+    )
+    comment: Annotated[str | None, AfterValidator(validate_firewall_comment)] = Field(
+        None, description="At most 64 printable characters, starting with neither - nor UNOS:; null or empty for none."
+    )
 
     @model_validator(mode="after")
     def _one_port_for_any_protocol(self):
@@ -244,9 +324,9 @@ class CertificateType(str, Enum):
 
 
 class ServedCertificate(str, Enum):
-    """What browsers get from https://<host>/, as a TLS handshake with the web UI's Caddy shows it
-    (ADR-0404): the certificate of its local CA (ADR-0025), a stored certificate, or unknown when
+    """What browsers get from https://<host>/, as a TLS handshake with the web UI's Caddy shows it: the certificate of its local CA, a stored certificate, or unknown when
     Caddy did not answer the handshake."""
+    # ADR-0404, ADR-0025.
     CADDY_LOCAL_CA = "caddy_local_ca"
     STORED_CERTIFICATE = "stored_certificate"
     UNKNOWN = "unknown"
@@ -254,55 +334,131 @@ class ServedCertificate(str, Enum):
 
 class Certificate(BaseModel):
     """A certificate stored by an upload or a self-signed generation."""
-    id: str
-    type: CertificateType
-    domain: str
-    issuer: str | None = None
-    valid_from: UtcDatetime | None = None
-    valid_until: UtcDatetime | None = None
-    is_valid: bool = True
+    id: str = Field(description="The stored certificate's id: custom_ and its name, the subject CN.")
+    type: CertificateType = Field(description="self_signed when its issuer is its subject, else custom.")
+    domain: str = Field(description="Its subject CN, or its name when openssl prints none.")
+    issuer: str | None = Field(None, description="The issuer's organization, else its CN; Unknown when it has neither.")
+    valid_from: UtcDatetime | None = Field(None, description="When it becomes valid, in UTC; null when not readable.")
+    valid_until: UtcDatetime | None = Field(None, description="When it expires, in UTC; null when not readable.")
+    is_valid: bool = Field(True, description="Whether it has not expired.")
     # Valid, and expires within EXPIRY_WARNING_DAYS of src/security/serving.py.
-    expires_soon: bool = False
+    expires_soon: bool = Field(False, description="Whether it is valid and expires within 30 days.")
     # Browsers get it: the web UI's Caddy serves it (ADR-0404).
-    served: bool = False
+    served: bool = Field(False, description="Whether browsers get it: the web UI's Caddy serves it.")
     # An administrator chose it: the served file holds it, whether Caddy loaded it or not.
-    chosen: bool = False
+    chosen: bool = Field(
+        False, description="Whether an administrator chose it as the served certificate, whether Caddy loaded it or not."
+    )
     # SHA-256, as a TLS handshake shows the certificate and openssl prints it.
-    fingerprint: str | None = None
+    fingerprint: str | None = Field(
+        None, description="Its SHA-256 fingerprint as openssl prints it: pairs of hexadecimal digits with colons."
+    )
 
 
 class CertificateStatus(BaseModel):
     """What browsers get from https://<host>/, and the stored certificate an administrator chose
-    to serve (ADR-0404)."""
-    served_by: ServedCertificate
-    served_id: str | None = None     # the stored certificate browsers get
-    chosen_id: str | None = None     # the stored certificate chosen; None: Caddy's local CA
-    fingerprint: str | None = None   # SHA-256 of the certificate browsers get
+    to serve."""
+    # ADR-0404.
+    model_config = ConfigDict(json_schema_extra={"examples": [{
+        "served_by": "stored_certificate",
+        "served_id": "custom_nas.example.com",
+        "chosen_id": "custom_nas.example.com",
+        "fingerprint": "5B:1E:0C:7D:93:A2:4F:68:E1:3C:B9:57:0A:D4:82:F6:2E:91:C8:73:4D:A0:6B:15:F9:38:C2:E7:5A:0D:B4:61",
+    }]})
+    served_by: ServedCertificate = Field(
+        description="What browsers get: a stored certificate, the certificate of Caddy's local CA, or unknown when "
+                    "Caddy did not answer a TLS handshake."
+    )
+    served_id: str | None = Field(
+        None, description="The id of the stored certificate that browsers get; null when they get none of them."
+    )
+    chosen_id: str | None = Field(
+        None, description="The id of the stored certificate an administrator chose; null when none is chosen and "
+                          "Caddy's local CA is."
+    )
+    fingerprint: str | None = Field(
+        None, description="The SHA-256 fingerprint of the certificate browsers get; null when it is unknown."
+    )
 
 
 class CertificateListResponse(BaseModel):
-    certificates: list[Certificate]
-    status: CertificateStatus
+    """The stored certificates and what is served."""
+
+    model_config = ConfigDict(json_schema_extra={"examples": [{
+        "certificates": [{
+            "id": "custom_nas.example.com", "type": "self_signed", "domain": "nas.example.com",
+            "issuer": "Example", "valid_from": "2026-11-18T09:00:00Z", "valid_until": "2027-11-18T09:00:00Z",
+            "is_valid": True, "expires_soon": False, "served": True, "chosen": True,
+            "fingerprint": "5B:1E:0C:7D:93:A2:4F:68:E1:3C:B9:57:0A:D4:82:F6:2E:91:C8:73:4D:A0:6B:15:F9:38:C2:E7:5A:0D:B4:61",
+        }],
+        "status": {
+            "served_by": "stored_certificate", "served_id": "custom_nas.example.com",
+            "chosen_id": "custom_nas.example.com",
+            "fingerprint": "5B:1E:0C:7D:93:A2:4F:68:E1:3C:B9:57:0A:D4:82:F6:2E:91:C8:73:4D:A0:6B:15:F9:38:C2:E7:5A:0D:B4:61",
+        },
+    }]})
+
+    certificates: list[Certificate] = Field(description="The stored certificates; none when none is stored.")
+    status: CertificateStatus = Field(description="What browsers get and which stored certificate was chosen.")
 
 
 class ServeCertificateResponse(BaseModel):
     """The answer of POST /security/certificates/{cert_id}/serve."""
-    changed: bool                    # the served file or what Caddy serves changed
-    expires_soon: bool = False       # the served certificate expires within EXPIRY_WARNING_DAYS
-    status: CertificateStatus
+    model_config = ConfigDict(json_schema_extra={"examples": [{
+        "changed": True,
+        "expires_soon": False,
+        "status": {
+            "served_by": "stored_certificate", "served_id": "custom_nas.example.com",
+            "chosen_id": "custom_nas.example.com",
+            "fingerprint": "5B:1E:0C:7D:93:A2:4F:68:E1:3C:B9:57:0A:D4:82:F6:2E:91:C8:73:4D:A0:6B:15:F9:38:C2:E7:5A:0D:B4:61",
+        },
+    }]})
+    changed: bool = Field(description="Whether the served certificate or what Caddy serves changed.")
+    expires_soon: bool = Field(
+        False, description="Whether the stored certificate now served expires within 30 days; false for Caddy's local CA."
+    )
+    status: CertificateStatus = Field(description="What browsers get now and which stored certificate was chosen.")
 
 
 class CertificateUpload(BaseModel):
-    certificate: str  # PEM-encoded certificate
-    private_key: str  # PEM-encoded private key
-    chain: str | None = None  # PEM-encoded certificate chain
+    """A certificate to store, with its private key and its chain."""
+
+    model_config = ConfigDict(json_schema_extra={"examples": [{
+        "certificate": "-----BEGIN CERTIFICATE-----\n(example certificate)\n-----END CERTIFICATE-----\n",
+        "private_key": "(the example certificate's private key in PEM)",
+        "chain": None,
+    }]})
+
+    certificate: str = Field(
+        description="The certificate in PEM; its subject CN, a host name, a wildcard host name or an IP address, "
+                    "names it, and a stored certificate of that name is replaced."
+    )
+    private_key: str = Field(
+        description="The certificate's private key in PEM; one protected by a passphrase is stored but cannot be served."
+    )
+    chain: str | None = Field(
+        None, description="The intermediate certificates in PEM, the certificate's issuer first; null for none."
+    )
 
 
 class SelfSignedCertRequest(BaseModel):
-    domain: CertificateDomain
-    validity_days: int = 365
-    organization: Annotated[str, AfterValidator(validate_organization)] | None = None
-    country: Annotated[str, AfterValidator(validate_country)] | None = None
+    """A self-signed certificate to generate, with a new 2048-bit RSA key."""
+
+    model_config = ConfigDict(json_schema_extra={"examples": [{
+        "domain": "nas.example.com", "validity_days": 365, "organization": "Example", "country": "DE",
+    }]})
+
+    domain: CertificateDomain = Field(
+        description="A host name or an IP address of at most 64 characters: the subject CN, the subject alternative "
+                    "name and the stored certificate's name; a stored certificate of that name is replaced."
+    )
+    validity_days: int = Field(365, description="How many days the certificate is valid, from now.")
+    organization: Annotated[str, AfterValidator(validate_organization)] | None = Field(
+        None, description="The subject's organization, at most 64 printable characters; null for none."
+    )
+    country: Annotated[str, AfterValidator(validate_country)] | None = Field(
+        None, description="The subject's country, two letters such as DE; null for none."
+    )
 
 
 # Every account must have two-factor authentication. The grace periods are
@@ -311,18 +467,42 @@ GraceDays = Literal[0, 1, 3, 7, 14, 30]
 
 
 class TwoFactorRequirementStatus(BaseModel):
-    enabled: bool
-    grace_days: int | None = None
-    enabled_at: UtcDatetime | None = None   # when it was turned on
-    enabled_by: str | None = None           # the administrator who turned it on
+    """Whether every account must have two-factor authentication."""
+
+    model_config = ConfigDict(json_schema_extra={"examples": [{
+        "enabled": True, "grace_days": 7, "enabled_at": "2026-11-18T09:20:00Z", "enabled_by": "admin",
+    }]})
+
+    enabled: bool = Field(description="Whether the two-factor requirement is on.")
+    grace_days: int | None = Field(
+        None, description="The grace period in days, from when it was turned on or the account was created, "
+                          "whichever is later; null when it is off."
+    )
+    enabled_at: UtcDatetime | None = Field(  # when it was turned on
+        None, description="When it was turned on, in UTC; null when it is off or the stored time cannot be read."
+    )
+    enabled_by: str | None = Field(  # the administrator who turned it on
+        None, description="The administrator who turned it on; null when it is off."
+    )
 
 
 class TwoFactorRequirementEnable(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    grace_days: GraceDays = 7
-    code: str = Field(max_length=16)        # a current code of the administrator's own authenticator
+    """Turn the two-factor requirement on."""
+
+    model_config = ConfigDict(extra="forbid", json_schema_extra={"examples": [{"grace_days": 7, "code": "123456"}]})
+    grace_days: GraceDays = Field(
+        7, description="The grace period in days: 0, 1, 3, 7, 14 or 30. An account without two-factor authentication "
+                       "reaches only its setup after it."
+    )
+    code: str = Field(  # a current code of the administrator's own authenticator
+        max_length=16, description="A current code of the administrator's own authenticator app; it is used up."
+    )
 
 
 class TwoFactorRequirementDisable(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    code: str = Field(max_length=16)
+    """Turn the two-factor requirement off."""
+
+    model_config = ConfigDict(extra="forbid", json_schema_extra={"examples": [{"code": "123456"}]})
+    code: str = Field(
+        max_length=16, description="A current code of the administrator's own authenticator app; it is used up."
+    )

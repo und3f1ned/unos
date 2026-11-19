@@ -13,6 +13,7 @@ import time
 import uuid
 import httpx
 from collections.abc import Callable, Iterable
+from typing import Annotated
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from email.mime.text import MIMEText
@@ -20,6 +21,7 @@ from email.mime.multipart import MIMEMultipart
 from datetime import datetime, timezone
 from pathlib import Path
 from fastapi import APIRouter, HTTPException, Depends, Request
+from fastapi import Path as PathParameter
 from pydantic import TypeAdapter, ValidationError
 
 from .. import host, state_files
@@ -28,6 +30,7 @@ from ..audit.changes import audit_change, changed_fields
 from ..audit.schemas import AuditAction, AuditSeverity
 from ..auth.models import User
 from ..auth.utils import verify_token
+from ..openapi import BODY, answer, errors
 from .schemas import (
     NotificationConfig, NotificationEvent, NotificationLog,
     NotificationType, NotificationChannel, EmailConfig, TelegramConfig,
@@ -629,9 +632,17 @@ async def send_through(config: NotificationConfig, event: NotificationEvent) -> 
     return False, f"The channel has no {config.channel.value} settings"
 
 
-@router.get("/configs", response_model=list[NotificationConfig])
+# The channel of a route's path (ADR-0417).
+ConfigId = Annotated[str, PathParameter(description="The channel's id, as GET /notifications/configs lists it.")]
+_NO_CHANNEL = "No channel has that id."
+_NOT_SAVED = "The notification channels could not be saved."
+_CHANNEL_ID_EXAMPLE = "notif_3f9c2a7b1e04"
+
+
+@router.get("/configs", response_model=list[NotificationConfig], summary="List the notification channels")
 async def list_configs(_: dict = Depends(verify_token)):
-    """List all notification configurations."""
+    """Every notification channel with its settings, their passwords, bot tokens and webhook URLs as
+    stored. A read-only API token does not reach it."""
     return load_configs()
 
 
@@ -640,12 +651,18 @@ def _channel_name(config: NotificationConfig) -> str:
     return config.name or config.id or config.channel.value
 
 
-@router.post("/configs", response_model=NotificationConfig)
+@router.post(
+    "/configs", response_model=NotificationConfig, summary="Add a notification channel",
+    responses=errors(BODY, {500: _NOT_SAVED}),
+)
 async def create_config(
     config: NotificationConfig, request: Request, user: User = Depends(verify_token)
 ):
-    """Create a new notification configuration, with an id of its own. The audit log gets
-    settings_changed for the channel, never its secrets (ADR-0402)."""
+    """Add a notification channel, with an id that the server gives it. The audit log gets
+    settings_changed for the channel, never its secrets.
+    \f
+    ADR-0402.
+    """
     config.id = f"notif_{uuid.uuid4().hex[:12]}"
     await asyncio.to_thread(_change_configs, lambda configs: [*configs, config])
     await audit_change(
@@ -655,13 +672,20 @@ async def create_config(
     return config
 
 
-@router.put("/configs/{config_id}", response_model=NotificationConfig)
+@router.put(
+    "/configs/{config_id}", response_model=NotificationConfig, summary="Change a notification channel",
+    responses=errors(BODY, {404: _NO_CHANNEL, 500: _NOT_SAVED}),
+)
 async def update_config(
-    config_id: str, config: NotificationConfig, request: Request, user: User = Depends(verify_token)
+    config_id: ConfigId, config: NotificationConfig, request: Request, user: User = Depends(verify_token)
 ):
-    """Update a notification configuration. The audit log gets settings_changed, naming the fields that
-    changed and showing the values of the channel's name and switch alone, when the channel differs from
-    the stored one (ADR-0402)."""
+    """Replace a notification channel's settings with the ones sent. The audit log gets
+    settings_changed, naming the fields that changed and showing the values of the channel's name
+    and switch alone, when the channel differs from the stored one; an unchanged channel is not
+    written again.
+    \f
+    ADR-0214, ADR-0402.
+    """
     config.id = config_id
     before: list[NotificationConfig] = []
 
@@ -683,9 +707,20 @@ async def update_config(
     return config
 
 
-@router.delete("/configs/{config_id}")
-async def delete_config(config_id: str, request: Request, user: User = Depends(verify_token)):
-    """Delete a notification configuration. The audit log gets settings_changed (ADR-0402)."""
+@router.delete(
+    "/configs/{config_id}",
+    summary="Delete a notification channel",
+    responses={
+        **answer({"status": "deleted", "id": _CHANNEL_ID_EXAMPLE}, 'Status "deleted" and the channel\'s id.'),
+        **errors({404: _NO_CHANNEL, 500: _NOT_SAVED}),
+    },
+)
+async def delete_config(config_id: ConfigId, request: Request, user: User = Depends(verify_token)):
+    """Delete a notification channel; its entries in the notification history stay. The audit log
+    gets settings_changed.
+    \f
+    ADR-0402.
+    """
     removed: list[NotificationConfig] = []
 
     def remove(configs: list[NotificationConfig]) -> list[NotificationConfig]:
@@ -705,9 +740,18 @@ async def delete_config(config_id: str, request: Request, user: User = Depends(v
     return {"status": "deleted", "id": config_id}
 
 
-@router.post("/test/{config_id}")
-async def test_notification(config_id: str, _: dict = Depends(verify_token)):
-    """Send a test notification through one channel, enabled or not; the history records it."""
+@router.post(
+    "/test/{config_id}",
+    summary="Send a test notification",
+    responses={
+        **answer({"status": "sent", "channel": "telegram"},
+                 'Status "sent" and the channel\'s kind: the channel took it.'),
+        **errors({404: _NO_CHANNEL, 500: "The channel did not take the test notification: the detail says why."}),
+    },
+)
+async def test_notification(config_id: ConfigId, _: dict = Depends(verify_token)):
+    """Send a test notification through one channel, enabled or not, and wait for the channel's
+    answer; the notification history records it, sent or not."""
     config = next((c for c in load_configs() if c.id == config_id), None)
     if not config:
         raise HTTPException(404, NOT_FOUND.format(id=config_id))
@@ -726,15 +770,30 @@ async def test_notification(config_id: str, _: dict = Depends(verify_token)):
     return {"status": "sent", "channel": config.channel}
 
 
-@router.get("/logs", response_model=list[NotificationLog])
+@router.get("/logs", response_model=list[NotificationLog], summary="Read the notification history")
 async def list_logs(_: dict = Depends(verify_token)):
-    """The history: the latest notifications sent, newest first."""
+    """The notification history: the latest 100 notifications sent, tests and alerts included,
+    newest first."""
     return load_logs()[::-1]
 
 
-@router.post("/send")
+@router.post(
+    "/send",
+    summary="Send a notification to every enabled channel",
+    responses={
+        **answer(
+            {"results": [{"channel": "email", "success": True, "error": None},
+                         {"channel": "slack", "success": False, "error": "HTTP 404: no_service"}]},
+            "One result for each enabled channel, in the channels' order: its kind, whether it took the "
+            "notification, and why not (null for a success). No result without an enabled channel.",
+        ),
+        **errors(BODY),
+    },
+)
 async def send_notification(event: NotificationEvent, _: dict = Depends(verify_token)):
-    """Send notification to all enabled channels; the history records each in one write."""
+    """Send a notification to every enabled channel, one after the other, and answer the result of
+    each: a channel that did not take it is a result, not an error. The notification history records
+    each in one write."""
     results = []
     entries = []
     for config in load_configs():
@@ -752,9 +811,18 @@ async def send_notification(event: NotificationEvent, _: dict = Depends(verify_t
     return {"results": results}
 
 
-@router.get("/events")
+@router.get(
+    "/events",
+    summary="List the event types of the channels",
+    responses=answer(
+        [{"id": "disk_warning", "name": "Disk Space Warning", "description": "When disk space is low"},
+         {"id": "pool_degraded", "name": "Pool Degraded", "description": "When a storage pool is degraded"}],
+        "The event types, a fixed list: the id that a channel's events names, a name and a description of each.",
+    ),
+)
 async def list_event_types(_: dict = Depends(verify_token)):
-    """List available event types for notifications."""
+    """The event types that a channel's events may name. Alerts do not depend on them: each goes to
+    every enabled channel."""
     return [
         {"id": "disk_warning", "name": "Disk Space Warning", "description": "When disk space is low"},
         {"id": "smart_error", "name": "SMART Error", "description": "When disk SMART reports errors"},

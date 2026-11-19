@@ -464,6 +464,11 @@ manager, encrypted backup uploads, health checks, CI checks).
   `ups_name`, `host` and `port` are checked before they reach `upsc`.
 
 ### Added
+- The API's OpenAPI schema (`/openapi.json` of the supervisor, see the user guide's API Tokens)
+  describes every route: a summary and a description, every parameter and every field of what it
+  takes and answers, examples of its JSON requests and answers, and the error statuses it answers,
+  with when. A test checks all of it and derives from each route's code the statuses that it must
+  list at the least (ADR-0417).
 - BookStack, Paperless-ngx and Linkwarden are back in the App Store, each with the container it needs
   beside it: BookStack with MariaDB 11.8, Paperless-ngx with Valkey and Linkwarden with PostgreSQL 16,
   every image pinned by its version and digest. UNOS generates their database passwords and keys as
