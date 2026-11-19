@@ -8,7 +8,9 @@ on:
 
 # The jobs only read the repository (ADR-0190). Their checkouts do not keep the token in the git
 # configuration (persist-credentials: false): no step needs it later, and the build or test code of
-# a dependency could read it there.
+# a dependency could read it there. Every action is pinned to the commit of a release, with its
+# version in a comment, which Dependabot moves together (ADR-0422): a tag can be moved to other
+# code. pip installs wheels only; supervisor/requirements.txt names nut2, which has none.
 permissions:
   contents: read
 
@@ -33,13 +35,13 @@ jobs:
       # The whole history with every branch: tests/test_feature_list.py compares the ledger with
       # the one at the merge base with origin/main and skips while main has no feature-list.json.
       # FEATURE_LIST_BASE stays unset until main has the ledger.
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
 
       - name: Set up Python
-        uses: actions/setup-python@v7
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: '3.11'
           cache: 'pip'
@@ -48,7 +50,7 @@ jobs:
             supervisor/requirements-dev.txt
 
       - name: Install dependencies
-        run: pip install -r supervisor/requirements-dev.txt
+        run: 'pip install --only-binary=:all: -r supervisor/requirements-dev.txt'
 
       - name: Run tests
         run: make test
@@ -67,12 +69,12 @@ jobs:
     timeout-minutes: 15
 
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
       - name: Set up Python
-        uses: actions/setup-python@v7
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: '3.11'
           cache: 'pip'
@@ -82,7 +84,7 @@ jobs:
 
       - name: Install ruff and pip-audit
         id: tools
-        run: pip install --require-hashes -r .github/lint-requirements.txt
+        run: 'pip install --require-hashes --only-binary=:all: -r .github/lint-requirements.txt'
 
       # Each check runs even if the other one failed.
       - name: Lint
@@ -90,13 +92,13 @@ jobs:
         run: make lint
 
       # Resolves requirements.txt, with the dependencies of its packages, in a
-      # temporary virtual environment. pip-audit first installs the latest pip,
-      # setuptools and wheel there: they are not pinned. The weekly audit
-      # workflow (audit.yml) runs it too, for advisories published between
-      # pull requests.
+      # temporary virtual environment of pip, setuptools and wheel pinned with
+      # their hashes (.github/audit-env-requirements.txt), then pip-audit checks
+      # what it resolved (ADR-0422). The weekly audit workflow (audit.yml) runs
+      # it too, for advisories published between pull requests.
       - name: Audit the runtime dependencies
         if: ${{ !cancelled() && steps.tools.outcome == 'success' }}
-        run: pip-audit -r supervisor/requirements.txt
+        run: scripts/audit-python.sh
 
   # The web UI: make frontend (svelte-check, the check of the web UI's texts
   # and the production build, each also when another one failed), and the
@@ -108,12 +110,12 @@ jobs:
     timeout-minutes: 15
 
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
       - name: Set up Node.js
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '22'
           cache: 'npm'
@@ -148,7 +150,7 @@ jobs:
     timeout-minutes: 5
 
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # The whole history: the range from the base to the head of the pull request.
           fetch-depth: 0
@@ -169,12 +171,12 @@ jobs:
     timeout-minutes: 30
 
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
       - name: Build images
         run: |

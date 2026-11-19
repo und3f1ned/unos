@@ -1,13 +1,16 @@
 ---
-status: accepted
+status: superseded
 date: 2026-11-07
 area: ci
 decided-by: agent
+superseded-by: ADR-0422
 ---
 
 # ADR-0216: One quality gate: make check runs what CI runs
 
 ## Context
+
+Superseded by ADR-0422: only in part, the command of `make audit`, whose Python part is now `scripts/audit-python.sh` in place of `pip-audit -r supervisor/requirements.txt`; every other rule here stays in force.
 
 CI's jobs (ADR-0190) had no single local equivalent: the commands were spread over `docs/TESTING.md`, `scripts/test-cycle.sh` and the session notes of each agent, so local runs and CI could drift apart and an agent could not tell which command proves a change done (the book's Quality Gates pattern). The book's repository uses mise and hk for this, but neither can be installed here, while make exists everywhere. Agents also commit only when the owner asks (ADR-0208), so the pre-commit hook alone does not run the checks before an agent reports a change as done.
 

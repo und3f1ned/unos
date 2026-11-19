@@ -1,0 +1,16 @@
+# The tools of the environment in which scripts/audit-python.sh resolves the supervisor's runtime
+# dependencies for pip-audit (ADR-0422), installed with
+#    python -m pip install --require-hashes --only-binary=:all: -r .github/audit-env-requirements.txt
+# Written by hand: the sha256 of each release's wheel, as PyPI's JSON API lists it
+# (https://pypi.org/pypi/<name>/<version>/json). pip and packaging are the versions of
+# .github/lint-requirements.txt, whose hashes the tests compare. Dependabot leaves this file alone;
+# docs/TESTING.md ("Updating the audit environment") says how to move it.
+packaging==26.3 \
+    --hash=sha256:d7193f7c8e4e93f444fde0262bf90af30e16fa0ad0ad44cb553c87339b23cd1c
+    # via wheel
+pip==26.3 \
+    --hash=sha256:f3b60b20ffaadd4415ed7957212a38ac63fa4c5fa375bd0f4a797777940fad13
+setuptools==84.2.1 \
+    --hash=sha256:ca140b45d5325a9478f880e351484f62fef15f336462e449ca0c03c873d589c2
+wheel==0.48.0 \
+    --hash=sha256:3217dcc807155e45db462d7ef2431f5ddda0d7273b700d05a67b271ceb1287ab

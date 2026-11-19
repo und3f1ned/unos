@@ -41,7 +41,7 @@ stops before changing anything when one is missing, then sets up what is missing
 1. `supervisor/.venv`: Python 3.11 with `supervisor/requirements-dev.txt` (the runtime
    dependencies, pytest and the other test tools).
 2. `.venv-lint`: ruff and pip-audit from `.github/lint-requirements.txt`, with their hashes
-   (`pip install --require-hashes -r .github/lint-requirements.txt`).
+   (`pip install --require-hashes --only-binary=:all: -r .github/lint-requirements.txt`).
 3. `webui/node_modules`: `npm ci` from `webui/package-lock.json` (a symbolic link there is left
    as it is).
 4. Playwright's Chromium, the version that `webui/package-lock.json` pins.
@@ -51,6 +51,12 @@ stops before changing anything when one is missing, then sets up what is missing
    existing `dev.env` is never replaced or shown; only its mode is set to 600.
 7. The baseline: `make check-fast`, then `make smoke`. It ends with "baseline green", or names
    the target that failed before any work started.
+
+Steps 1 and 2 take wheels only (`--only-binary=:all:`): pip runs the build code of no package
+but nut2, which publishes only its source and which `supervisor/requirements.txt` names
+(`--no-binary nut2`, ADR-0422); pip builds it with the newest setuptools from the index. A
+machine for which a pinned package has no wheel cannot be set up: an Intel Mac, since
+cryptography 50 publishes none for macOS x86_64.
 
 A step that is up to date is skipped: each environment remembers the SHA-256 of the files it was
 installed from, so a rerun installs only what changed. Steps 1-4 need the network.
@@ -74,7 +80,7 @@ The make targets use these environments when they exist, and `python3`, `ruff`, 
 | `make e2e-local` | the Playwright specs against the local stand-in (`scripts/standin/e2e.sh`); `E2E_ARGS='tests/auth.spec.ts'` for a part |
 | `make catalog-platforms` | `scripts/catalog-platforms.py check`: the platforms recorded for the catalog's images (`supervisor/src/apps/image_platforms.json`) are those the registries publish now; `record` rewrites the file (needs the network, ADR-0403) |
 | `make catalog-tags` | `scripts/catalog-platforms.py tags`: the tag of every pinned image of the catalog still names the index it is pinned to, asked with HEAD requests only (needs the network, ADR-0410) |
-| `make audit` | `pip-audit -r supervisor/requirements.txt` and `npm audit --omit=dev --audit-level=high` in `webui/` (needs the network) |
+| `make audit` | `scripts/audit-python.sh` (pip-audit of `supervisor/requirements.txt` as resolved in the audit environment, below) and `npm audit --omit=dev --audit-level=high` in `webui/` (needs the network) |
 | `make setup` | `scripts/setup.sh` (needs the network) |
 
 `make check`, `make check-fast`, `make lint` and `make frontend` run every part, also after one
@@ -481,13 +487,14 @@ request against `main`; a new push to a pull request cancels the run for the pre
 1. **Unit Tests** (`test`): a checkout with the whole history (`fetch-depth: 0`), so that
    `tests/test_feature_list.py` can compare the ledger with the one at the merge base with
    `origin/main` (it skips while main has no `feature-list.json`), then
-   `pip install -r supervisor/requirements-dev.txt` on Python 3.11 and `make test`.
+   `pip install --only-binary=:all: -r supervisor/requirements-dev.txt` on Python 3.11 and
+   `make test`.
 2. **Lint and Audit (Python)** (`lint`):
-   - `pip install --require-hashes -r .github/lint-requirements.txt`: ruff and pip-audit, and
-     every package they depend on, with their hashes
+   - `pip install --require-hashes --only-binary=:all: -r .github/lint-requirements.txt`: ruff
+     and pip-audit, and every package they depend on, with their hashes
    - `make lint`: ruff, `bash -n` and the JSON check, each also when another one failed
-   - `pip-audit -r supervisor/requirements.txt`: known vulnerabilities in the runtime
-     dependencies of the supervisor, and in their dependencies
+   - `scripts/audit-python.sh`: known vulnerabilities in the runtime dependencies of the
+     supervisor, and in their dependencies, resolved in the audit environment (below)
 3. **Frontend Checks** (`frontend`), on Node.js 22:
    - `npm ci` in `webui/`
    - `make frontend`: `npm run check` (`svelte-kit sync`, then `svelte-check --threshold
@@ -510,6 +517,16 @@ part runs, so one run reports all problems. The jobs only read the repository
 the job's GitHub token afterwards, so it is not left in the git configuration of the checkout,
 where the build or test code of a dependency could read it.
 
+Every `uses:` line of both workflows names the commit of an action's release, with the release's
+version in a comment, `actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1`
+(ADR-0422): the owner of an action's repository can move a tag such as `v7` to other code, which
+the next run would take with the job's token, but not a commit. Dependabot proposes the next
+release's commit and rewrites the comment, for all actions in one pull request; an action has the
+same pin in every workflow. To move a pin by hand, take the commit of the release's tag
+(`gh api repos/<owner>/<repo>/git/ref/tags/<tag>`; an annotated tag's object is a tag that names
+the commit) and change every line of that action. `supervisor/tests/test_deploy_scripts.py` fails
+for a `uses:` line without a full 40-digit SHA or without the version in its comment.
+
 svelte-check is a dev dependency of the web UI: `npm ci` installs
 exactly the version in `webui/package-lock.json`, with every package it
 depends on, so a new release cannot change the type check (to bump it, run
@@ -523,16 +540,16 @@ that this page has the commands of the lint and frontend jobs).
 
 ### Scheduled Maintenance
 
-- `.github/workflows/audit.yml` runs `pip-audit -r supervisor/requirements.txt` and
+- `.github/workflows/audit.yml` runs `scripts/audit-python.sh` and
   `npm audit --omit=dev --audit-level=high` every Monday, and on demand (`workflow_dispatch`),
   because advisories are published without any change here (ADR-0218). The audits of the
   pull-request jobs can fail a commit that passed before for the same reason. Update the
   affected package then (`supervisor/requirements.txt`, or `webui/package-lock.json`, e.g. with
   `npm update <package>`) rather than weakening the check.
-- `.github/dependabot.yml` proposes grouped updates every week for pip, npm, GitHub Actions and
-  the Docker base images (a newer digest of each pinned tag, ADR-0305), with a cooldown of a week
-  and Conventional Commit prefixes. Nothing is merged automatically. New major npm versions and
-  Playwright are left out (ADR-0231).
+- `.github/dependabot.yml` proposes grouped updates every week for pip, npm, GitHub Actions (the
+  commit of a newer release, ADR-0422) and the Docker base images (a newer digest of each pinned
+  tag, ADR-0305), with a cooldown of a week and Conventional Commit prefixes. Nothing is merged
+  automatically. New major npm versions and Playwright are left out (ADR-0231).
 - The monthly local passes are listed in [maintenance.md](maintenance.md).
 
 ### Running the CI Checks Locally
@@ -548,9 +565,9 @@ Without `make setup`, the same commands run with the tools of your own environme
 example:
 
 ```bash
-pip install -r supervisor/requirements-dev.txt                   # Python 3.11
+pip install --only-binary=:all: -r supervisor/requirements-dev.txt   # Python 3.11
 python3.11 -m venv ~/.venvs/unos-lint
-~/.venvs/unos-lint/bin/pip install --require-hashes -r .github/lint-requirements.txt
+~/.venvs/unos-lint/bin/pip install --require-hashes --only-binary=:all: -r .github/lint-requirements.txt
 make lint RUFF=~/.venvs/unos-lint/bin/ruff
 (cd webui && npm ci)
 make frontend
@@ -559,9 +576,15 @@ make frontend
 - `ruff check --fix --select F,E9 supervisor scripts .claude/hooks` removes unused imports. Unused
   variables (F841) need a manual fix: their assignment may hold a call that
   must stay.
-- pip-audit resolves `requirements.txt` in a temporary virtual environment
-  (`pip install --dry-run`), after it has installed the latest pip, setuptools
-  and wheel there: those three are not pinned. `npm audit` asks the npm
+- `scripts/audit-python.sh` resolves `requirements.txt` in the audit environment, a temporary
+  virtual environment of Python 3.11 (`PYTHON`, `python3` by default) that it removes at the end:
+  pip, setuptools and wheel (and packaging, which wheel needs) from
+  `.github/audit-env-requirements.txt`, pinned with their hashes. That pip resolves the
+  requirements without installing them, with wheels only and every package listed (the flags
+  `--dry-run --ignore-installed --only-binary=:all:`), and builds nut2's sdist with the pinned
+  setuptools (`--no-build-isolation`); then pip-audit (`PIP_AUDIT`) checks the resolved versions
+  without pip (`--disable-pip --no-deps --strict`). `pip-audit -r` resolved them itself, after it had
+  installed the latest pip, setuptools and wheel, unpinned (ADR-0422). `npm audit` asks the npm
   registry. Both need network access.
 - `npm run check` first runs `svelte-kit sync`, which writes
   `.svelte-kit/tsconfig.json`: `tsconfig.json` extends it (`npm run build`
@@ -589,6 +612,17 @@ two files alone.
 The file pins pip too (pip-audit depends on it through pip-api), so the
 install replaces the pip of the environment with that version.
 
+### Updating the audit environment
+
+`.github/audit-env-requirements.txt` is written by hand, one line per package with the sha256 of
+the release's wheel. Take the version and the `digests.sha256` of its `bdist_wheel` file from
+PyPI's JSON API, `https://pypi.org/pypi/<name>/<version>/json` (`https://pypi.org/pypi/<name>/json`
+for the newest release), and give a release a week before you take it, as Dependabot's cooldown
+does. pip and packaging keep the versions of `.github/lint-requirements.txt`, and
+`supervisor/tests/test_deploy_scripts.py` checks their hashes against those uv wrote there; pip
+checks every hash when the audit installs the file. Dependabot leaves this file alone: the monthly
+pass of [maintenance.md](maintenance.md) moves it.
+
 ## The Container-Level Route (Linux with Docker)
 
 The deviceless test stack runs the supervisor and the web UI in containers on a Linux machine
@@ -606,8 +640,9 @@ this guide does.
 ```
 
 The E2E part starts the test containers (supervisor and web UI), creates the test account, runs
-Playwright against `https://localhost:3443` (`npx playwright test`, with `E2E_STAND_IN=1`: the
-stack takes the stand-in's skips) and removes the containers again.
+Playwright against `https://localhost:3443` (`./node_modules/.bin/playwright test` in `webui/`,
+the version of `webui/package-lock.json`, never through npx; with `E2E_STAND_IN=1`: the stack takes
+the stand-in's skips) and removes the containers again.
 
 ### Test Environment
 

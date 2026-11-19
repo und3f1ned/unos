@@ -9,13 +9,14 @@ nothing is not a result.
 
 | Pass | Who runs it | What it checks | What follows |
 | --- | --- | --- | --- |
-| Dependency audit | GitHub Actions: `.github/workflows/audit.yml`, every week and on demand (`workflow_dispatch`) | `pip-audit -r supervisor/requirements.txt`, and `npm audit --omit=dev --audit-level=high` in `webui/` | A failed run: the owner updates the dependency, or a feature-list entry when the update needs work |
-| Dependency updates | Dependabot: `.github/dependabot.yml` | New versions for pip, npm, GitHub Actions and the Docker base images, grouped, after a cooldown, with Conventional Commit prefixes; no new major npm versions and no Playwright (ADR-0231) | Pull requests that the owner reviews and merges by hand after `make check` passes in a checkout set up from the pull request's branch, since CI is off (ADR-0230): never automatically, because the supervisor runs privileged with the Docker socket |
+| Dependency audit | GitHub Actions: `.github/workflows/audit.yml`, every week and on demand (`workflow_dispatch`) | `scripts/audit-python.sh` (pip-audit of `supervisor/requirements.txt`, resolved in the audit environment, ADR-0422), and `npm audit --omit=dev --audit-level=high` in `webui/` | A failed run: the owner updates the dependency, or a feature-list entry when the update needs work |
+| Dependency updates | Dependabot: `.github/dependabot.yml` | New versions for pip, npm, GitHub Actions (the commit of a newer release and its version comment, ADR-0422) and the Docker base images, grouped, after a cooldown, with Conventional Commit prefixes; no new major npm versions and no Playwright (ADR-0231) | Pull requests that the owner reviews and merges by hand after `make check` passes in a checkout set up from the pull request's branch, since CI is off (ADR-0230): never automatically, because the supervisor runs privileged with the Docker socket |
 | Catalog image platforms | GitHub Actions: the `platforms` job of `audit.yml` | `scripts/catalog-platforms.py check`: the platforms recorded for every pinned image of the app catalog against the registries' manifests of its index (ADR-0403, ADR-0410) | A failed run: a pin whose record was not rewritten, or an index that its registry no longer serves; the owner runs `make catalog-platforms`, then `scripts/catalog-platforms.py record` and reviews the diff |
 | Catalog image tags | GitHub Actions: the `tags` job of `audit.yml` | `scripts/catalog-platforms.py tags`: the tag of every pinned image of the app catalog against the index its registry names now (ADR-0410) | A failed run: a publisher pushed a pinned version again or a line tag (Traefik's `v3.7`) moved on (`MOVED`, with the templates and both digests), or a pinned index is gone; the owner reviews the new index and pins it in `supervisor/src/apps/catalog.py` with its `VOLUME`s and size, then runs `scripts/catalog-platforms.py record`, or keeps the pin. Immich's five pins move only together with an Immich release: a re-pin offers the dev device's Immich an update |
 
 `make audit` runs the same audit locally; it needs the network. The hashed lint tools of
-`.github/lint-requirements.txt` are regenerated as `docs/TESTING.md` describes.
+`.github/lint-requirements.txt` are regenerated as `docs/TESTING.md` describes; the monthly pass
+"The pinned check tools" moves them with the tools of the audit environment.
 
 ## Monthly, local
 
@@ -76,6 +77,13 @@ and proposes the changes, and the owner reviews them.
     open Dependabot pull request moves gets a pull request of its own. When the new digest's
     linux/arm64 image differs, the dev device's next supervisor build pulls the base and runs
     apt-get and pip again: say so in the pull request.
+12. **The pinned check tools.** Dependabot leaves `.github/lint-requirements.txt` and
+    `.github/audit-env-requirements.txt` alone (ADR-0422). Regenerate the first with `--upgrade`
+    (docs/TESTING.md, "Updating ruff and pip-audit"), then move the second to the same pip and
+    packaging and to the newest setuptools and wheel that are a week old ("Updating the audit
+    environment"); `make test` compares pip's and packaging's hashes with those of the first,
+    `make setup` installs the first and `make audit` the second on the owner's machine, and pip
+    checks every hash there.
 
 ## After a session that went badly
 

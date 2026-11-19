@@ -19,13 +19,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 COPY requirements.txt .
 # pip 26.3 first: the base's pip 24.0 takes no wheel built for linux/riscv64 (pip 24.1 added the
-# platform's manylinux tags). On riscv64, cryptography, bcrypt, cffi, psutil and uvloop publish no
-# wheel, so this layer also installs what compiles them (Rust, the headers of OpenSSL and libffi,
-# make), builds them and removes it again: the image keeps no Rust toolchain. Elsewhere nothing
-# is compiled (ADR-0370).
-RUN pip install --no-cache-dir pip==26.3 \
+# platform's manylinux tags). On riscv64, cryptography, bcrypt, cffi, psutil, uvloop and PyYAML
+# publish no wheel, so this layer also installs what compiles them (Rust, the headers of OpenSSL
+# and libffi, make), builds them and removes it again: the image keeps no Rust toolchain. Elsewhere
+# nothing is compiled (ADR-0370): pip takes wheels only, and requirements.txt names nut2, which
+# publishes none (ADR-0422).
+RUN pip install --no-cache-dir --only-binary=:all: pip==26.3 \
     && if [ "$(dpkg --print-architecture)" != riscv64 ]; then \
-        pip install --no-cache-dir -r requirements.txt; \
+        pip install --no-cache-dir --only-binary=:all: -r requirements.txt; \
     else \
         apt-get update \
         && apt-get install -y --no-install-recommends cargo rustc pkg-config libssl-dev libffi-dev make \
