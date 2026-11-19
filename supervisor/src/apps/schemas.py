@@ -53,7 +53,7 @@ class AppSource(str, Enum):
 
 # Made-up digests and ids of the examples of the API documentation (ADR-0417); the image names
 # are the catalog's.
-_BOOKSTACK = "lscr.io/linuxserver/bookstack"
+_BOOKSTACK = "ghcr.io/linuxserver/bookstack"
 _BOOKSTACK_DIGEST = "sha256:b24437fdf9955d4dc60c69f6cfff2947e19398dafb292c57e00af453796531f9"
 _BOOKSTACK_NEWER_DIGEST = "sha256:d198e813699c5df38de4e7cf215ba4183ac6385b6ff36bb1fa20db41e598194d"
 _MARIADB_DIGEST = "sha256:2b6d9296f58f8913554dc0e9db53e4c4317472b97f53ea75d03018b4f49fe637"

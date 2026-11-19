@@ -82,6 +82,10 @@ size on the system disk and the VOLUMEs it declares, listed in PINNED_IMAGES
 (ADR-0381, ADR-0410); an app of one container takes its image from
 APP_IMAGES and its version from the pin's tag. A test fails for an image
 that is not pinned; no install, space check or update has a path for one.
+LinuxServer's images are named ghcr.io/linuxserver/<name>, where its registry
+serves them, never lscr.io/linuxserver/<name>, its redirector to the same
+indexes, whose blobs Docker failed to pull on the dev device's network
+(tests/test_linuxserver_ghcr.py; ADR-0426).
 
 Nothing an app writes may land on the system disk, where Docker's data root
 is (ADR-0381): every VOLUME that its image declares lies at or under a bind on
@@ -216,7 +220,7 @@ VALKEY = PinnedImage(
 # Linkwarden's are the sizes that their pulls took on the dev device on 2026-11-19 with their
 # companions (3308 and 2858 MiB), plus about 5%: four times their compressed layers fell short.
 BOOKSTACK = PinnedImage(
-    "lscr.io/linuxserver/bookstack", "v26.09.3-ls299",
+    "ghcr.io/linuxserver/bookstack", "v26.09.3-ls299",
     "sha256:c741211356966fd38f8fea10483f341ca29c41cdd1b96b5cfcdd4312f26d7f97", 385_000_000, ("/config",),
 )
 BOOKSTACK_MARIADB = PinnedImage(
@@ -252,9 +256,11 @@ LINKWARDEN_POSTGRES = PinnedImage(
 # for the build (a version, LinuxServer's <version>-ls<build>; never latest, a channel or a branch)
 # and the digest of the index that it named on 2026-11-18, with its estimate on the system disk
 # (four times the compressed layers of its larger image of linux/arm64 and linux/amd64) and the
-# VOLUMEs that its configuration declares. Traefik's tag is its line v3.7: the index of v3.7.19
-# lacks the linux/riscv64 image that v3.7 names beside the same images. Trilium's image is
-# triliumnext/trilium, whose version tag names the index that zadam/trilium:latest mirrors.
+# VOLUMEs that its configuration declares. LinuxServer's pins name ghcr.io, which served the same
+# index for each tag on 2026-11-19 as lscr.io did on 2026-11-18 (ADR-0426). Traefik's tag is its
+# line v3.7: the index of v3.7.19 lacks the linux/riscv64 image that v3.7 names beside the same
+# images. Trilium's image is triliumnext/trilium, whose version tag names the index that
+# zadam/trilium:latest mirrors.
 # scripts/catalog-platforms.py tags finds a tag that moved.
 APP_IMAGES: dict[str, PinnedImage] = {
     "plex": PinnedImage(
@@ -266,7 +272,7 @@ APP_IMAGES: dict[str, PinnedImage] = {
         "sha256:fea863d0cd9ec445985d9c75fc6ed64e38a1d2766cf0c250a33d553f4fc1b771", 3_005_000_000, ("/cache", "/config"),
     ),
     "emby": PinnedImage(
-        "lscr.io/linuxserver/emby", "4.10.2.0-ls307",
+        "ghcr.io/linuxserver/emby", "4.10.2.0-ls307",
         "sha256:6149cec5ced1b071e9ed6dcce1e2690b679146a982ad311f7f9604be83eb859a", 1_752_000_000, ("/config",),
     ),
     "navidrome": PinnedImage(
@@ -282,7 +288,7 @@ APP_IMAGES: dict[str, PinnedImage] = {
         "sha256:60064c23f32fd9099fd39e82c5132c51701d1221135bbca04cd099b589e1edc3", 525_000_000, (),
     ),
     "calibre-web": PinnedImage(
-        "lscr.io/linuxserver/calibre-web", "0.6.27-ls410",
+        "ghcr.io/linuxserver/calibre-web", "0.6.27-ls410",
         "sha256:adb69d75b9c252e580fc691096f858833b901b5d106ae4080fb476bab104d946", 1_100_000_000, ("/config",),
     ),
     "kavita": PinnedImage(
@@ -290,51 +296,51 @@ APP_IMAGES: dict[str, PinnedImage] = {
         "sha256:31181a32f0dda73cae68721867028a7253d57881b58bea5754cd9e578e75421a", 1_014_000_000, (),
     ),
     "sonarr": PinnedImage(
-        "lscr.io/linuxserver/sonarr", "4.0.20.3014-ls5",
+        "ghcr.io/linuxserver/sonarr", "4.0.20.3014-ls5",
         "sha256:c7d1df25e428da6c9ace05daea0d34e59522978a3843ea1944812f855af4086c", 352_000_000, ("/config",),
     ),
     "radarr": PinnedImage(
-        "lscr.io/linuxserver/radarr", "7.0.3.10918-ls328",
+        "ghcr.io/linuxserver/radarr", "7.0.3.10918-ls328",
         "sha256:044788f5508b7f67a3e0368cdd142c77c4d4cd5aec2efaba53e1a68b6b6231e7", 389_000_000, ("/config",),
     ),
     "lidarr": PinnedImage(
-        "lscr.io/linuxserver/lidarr", "3.1.6.5079-ls49",
+        "ghcr.io/linuxserver/lidarr", "3.1.6.5079-ls49",
         "sha256:8fb40ada166dd1880cb1b166df5bcbb081107523f20ab60df05c313e2052a467", 486_000_000, ("/config",),
     ),
     "prowlarr": PinnedImage(
-        "lscr.io/linuxserver/prowlarr", "3.0.2.5780-ls169",
+        "ghcr.io/linuxserver/prowlarr", "3.0.2.5780-ls169",
         "sha256:45117ba8439e2337a92ffe38a451a4dafc0be771754d05d88cdf102419d09646", 341_000_000, ("/config",),
     ),
     "bazarr": PinnedImage(
-        "lscr.io/linuxserver/bazarr", "v1.6.2-ls373",
+        "ghcr.io/linuxserver/bazarr", "v1.6.2-ls373",
         "sha256:e0c5d45965242830c5eeddaafe9ae2b5e8ca3f6c01ecda9ee9364f550921dc50", 626_000_000, ("/config",),
     ),
     "overseerr": PinnedImage(
-        "lscr.io/linuxserver/overseerr", "v1.35.0-ls158",
+        "ghcr.io/linuxserver/overseerr", "v1.35.0-ls158",
         "sha256:53a1b839ffa81f139e1552840772bff8a5d13f5c78a69cce22458b9a6cd0844d", 724_000_000, ("/config",),
     ),
     "tautulli": PinnedImage(
-        "lscr.io/linuxserver/tautulli", "v2.19.1-ls252",
+        "ghcr.io/linuxserver/tautulli", "v2.19.1-ls252",
         "sha256:5e8f80cc18f03c606a3567c8a9b37d80812ed8017d2e2f8ff2e2a91b54a3aef1", 240_000_000, ("/config",),
     ),
     "transmission": PinnedImage(
-        "lscr.io/linuxserver/transmission", "4.1.4-r0-ls370",
+        "ghcr.io/linuxserver/transmission", "4.1.4-r0-ls370",
         "sha256:5baf08cd73a566699f35baad3c4a84ba7d7057220566c5fb29969bf2292dc2ff", 141_000_000, ("/config",),
     ),
     "qbittorrent": PinnedImage(
-        "lscr.io/linuxserver/qbittorrent", "5.3.0_v2.1.2-ls487",
+        "ghcr.io/linuxserver/qbittorrent", "5.3.0_v2.1.2-ls487",
         "sha256:3d4c4545d51a690a0df15a2ff99038823a88a9822df8e794526447b9afbd7384", 411_000_000, ("/config",),
     ),
     "deluge": PinnedImage(
-        "lscr.io/linuxserver/deluge", "2.2.0-ls387",
+        "ghcr.io/linuxserver/deluge", "2.2.0-ls387",
         "sha256:e2a537991884a514b64d7adf857e39b5e9239a1c76e52114e52bf10707dde772", 320_000_000, ("/config",),
     ),
     "sabnzbd": PinnedImage(
-        "lscr.io/linuxserver/sabnzbd", "5.1.3-ls281",
+        "ghcr.io/linuxserver/sabnzbd", "5.1.3-ls281",
         "sha256:b356d0a9b22db584e9005364ec4e752dfc081ce501b7145e9a5c0bb38e4d1ba4", 279_000_000, ("/config",),
     ),
     "nzbget": PinnedImage(
-        "lscr.io/linuxserver/nzbget", "v26.3-ls272",
+        "ghcr.io/linuxserver/nzbget", "v26.3-ls272",
         "sha256:17e13511d47b1439af19b7ef17d08c8643eb2a5f009b1d3f800b704ebe590218", 218_000_000, ("/config",),
     ),
     "jdownloader2": PinnedImage(
@@ -346,11 +352,11 @@ APP_IMAGES: dict[str, PinnedImage] = {
         "sha256:086d1a37c586edb07ec0fb956bf9edd89d1d38d138ad5309ff96d510c8c9a011", 51_000_000, ("/config", "/downloads"),
     ),
     "nextcloud": PinnedImage(
-        "lscr.io/linuxserver/nextcloud", "35.0.3-ls2",
+        "ghcr.io/linuxserver/nextcloud", "35.0.3-ls2",
         "sha256:cc5a5cf7385e1a958fd4645aad76d0557ed0f58c8267825329ac7f7980fe0265", 1_632_000_000, ("/config",),
     ),
     "syncthing": PinnedImage(
-        "lscr.io/linuxserver/syncthing", "v2.1.7-ls237",
+        "ghcr.io/linuxserver/syncthing", "v2.1.7-ls237",
         "sha256:c4207d8f5b66d5f67eedb636b75500b5a04898e9f33299d252f4b966c41a4128", 113_000_000, ("/config",),
     ),
     "filebrowser": PinnedImage(
@@ -362,7 +368,7 @@ APP_IMAGES: dict[str, PinnedImage] = {
         "sha256:739ba0f0488f506549f7c21dc9e792decd99382cc759f01d5ec1abba32e87da8", 627_000_000, (),
     ),
     "wikijs": PinnedImage(
-        "lscr.io/linuxserver/wikijs", "v2.5.317-ls232",
+        "ghcr.io/linuxserver/wikijs", "v2.5.317-ls232",
         "sha256:cc4d796a746304d2189de7f815f86462e9762164347972f47fdd67a6b743413e", 574_000_000, ("/config",),
     ),
     "stirling-pdf": PinnedImage(
@@ -386,7 +392,7 @@ APP_IMAGES: dict[str, PinnedImage] = {
         "sha256:e103abadfb527186af5b4bd43df4eff7c67afa5cd4df8e65fa97910c8840b2a9", 1_570_000_000, ("/app/data/configs", "/data"),
     ),
     "heimdall": PinnedImage(
-        "lscr.io/linuxserver/heimdall", "v2.8.4-ls373",
+        "ghcr.io/linuxserver/heimdall", "v2.8.4-ls373",
         "sha256:47f70751f900be4499017a48c01206c02ab9d18f34a580c6213a13d24cdc1a4a", 217_000_000, ("/config",),
     ),
     "grafana": PinnedImage(
@@ -450,7 +456,7 @@ APP_IMAGES: dict[str, PinnedImage] = {
         "sha256:72c1e19e0aedca96b8533bbb0b4368564410ff20b17e53b804eb6c1f04a31be4", 256_000_000, (),
     ),
     "wireguard": PinnedImage(
-        "lscr.io/linuxserver/wireguard", "1.0.20260223-r0-ls130",
+        "ghcr.io/linuxserver/wireguard", "1.0.20260223-r0-ls130",
         "sha256:10db56ad834f94541307d5dfdbe87370e26d155bb341a5bf65789f970f24ab5c", 163_000_000, (),
     ),
     "nginx-proxy-manager": PinnedImage(
@@ -474,7 +480,7 @@ APP_IMAGES: dict[str, PinnedImage] = {
         "sha256:4cbc20c59558ed6c1cae9bc3f6ae34d75d390b370aa8ac62a59327089fa56cec", 1_227_000_000, ("/backends", "/configuration", "/models"),
     ),
     "duplicati": PinnedImage(
-        "lscr.io/linuxserver/duplicati", "v2.4.1.0_stable_2026-10-29-ls318",
+        "ghcr.io/linuxserver/duplicati", "v2.4.1.0_stable_2026-10-29-ls318",
         "sha256:ea137d806f2c0556468f2c620bcac963f0825bf45876de274988b42ff13b453a", 747_000_000, ("/backups", "/config", "/source"),
     ),
     "restic-rest-server": PinnedImage(
@@ -502,7 +508,7 @@ APP_IMAGES: dict[str, PinnedImage] = {
         "sha256:aa90e8f00b755b0d665214ab9c14447ea44d3190dbe6b6d0cb46cd9c4f55d309", 289_000_000, ("/data",),
     ),
     "code-server": PinnedImage(
-        "lscr.io/linuxserver/code-server", "4.145.2-ls377",
+        "ghcr.io/linuxserver/code-server", "4.145.2-ls377",
         "sha256:20ffca4512fcfc85dcd5612fb769233c1553192392d2ec417f0859135805f40c", 1_255_000_000, (),
     ),
     "vaultwarden": PinnedImage(

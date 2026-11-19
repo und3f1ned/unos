@@ -324,6 +324,7 @@ and this index, and `make check-fast` runs it.
 | [0408](0408-an-installed-app-updates-to-the-catalogs-newer-pinned-images-with-a-copy-of-its-database-and-can-be-rolled-back.md) | An installed app updates to the catalog's newer pinned images with a copy of its database, and can be rolled back | accepted | 2026-11-18 |
 | [0410](0410-every-catalog-image-is-pinned-by-a-version-tag-and-digest-and-a-weekly-audit-reports-moved-tags.md) | Every image of the catalog is pinned by a version tag and its index digest, and a weekly audit reports the tags that moved | accepted | 2026-11-18 |
 | [0415](0415-bookstack-paperless-ngx-and-linkwarden-install-with-their-database-or-broker-as-companions.md) | BookStack, Paperless-ngx and Linkwarden install with their database or broker as companions, their secrets as generated files and their databases awaited by a command | accepted | 2026-11-18 |
+| [0426](0426-the-catalogs-linuxserver-images-are-pinned-and-pulled-from-ghcr-io-not-lscr-io.md) | The catalog's LinuxServer images are pinned and pulled from ghcr.io, not lscr.io | accepted | 2026-11-19 |
 
 ## Backup
 

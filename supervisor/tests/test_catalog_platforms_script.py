@@ -19,8 +19,8 @@ spec.loader.exec_module(tool)
 
 MANIFESTS = json.loads((Path(__file__).parent / "fixtures" / "registry_manifests.json").read_text())
 TRAEFIK = "traefik:v3.0"
-SONARR = "lscr.io/linuxserver/sonarr:latest"
-READARR = "lscr.io/linuxserver/readarr:develop"
+SONARR = "ghcr.io/linuxserver/sonarr:latest"
+READARR = "ghcr.io/linuxserver/readarr:develop"
 IMMICH = "ghcr.io/immich-app/immich-server:v3.4.1@sha256:7c489add298fc2f92cda4c777de6462aa206877e04087b815f62c7664af0b53b"
 VALKEY = "docker.io/valkey/valkey:9@sha256:418652cfb58ef879d4978c33553735d7147016032d5aefaa14c828e611eb9dfd"
 
@@ -69,7 +69,7 @@ class TestReferences:
         [
             ("traefik:v3.0", ("registry-1.docker.io", "library/traefik", "v3.0")),
             ("jellyfin/jellyfin:latest", ("registry-1.docker.io", "jellyfin/jellyfin", "latest")),
-            ("lscr.io/linuxserver/sonarr:latest", ("ghcr.io", "linuxserver/sonarr", "latest")),
+            ("ghcr.io/linuxserver/sonarr:latest", ("ghcr.io", "linuxserver/sonarr", "latest")),
             ("ghcr.io/advplyr/audiobookshelf:latest", ("ghcr.io", "advplyr/audiobookshelf", "latest")),
             ("docker.io/valkey/valkey:9@sha256:" + "a" * 64, ("registry-1.docker.io", "valkey/valkey", "sha256:" + "a" * 64)),
         ],
@@ -332,7 +332,7 @@ class TestMovedTags:
         assert "ERROR" in err and "HTTP 503" in err and "gone" not in err and "MOVED" not in err
 
     def test_a_digest_without_a_tag_is_an_error_not_a_check_of_latest(self, capsys):
-        ref = f"lscr.io/linuxserver/sonarr@{SONARR_NOW}"
+        ref = f"ghcr.io/linuxserver/sonarr@{SONARR_NOW}"
 
         assert tool.main(["tags"], Registries(), users={ref: ["sonarr"]}) == 1
         assert f"ERROR {ref}: not pinned by tag and digest" in capsys.readouterr().err

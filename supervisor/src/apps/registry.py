@@ -8,7 +8,7 @@ configuration (when it was built, ``created``, and the digests of its unpacked l
 that runs, which of its layers Docker lacks and so what the pull writes to the system disk.
 
 The reads are anonymous and read-only, over HTTPS only, through the registry's token handshake for
-public images (Docker Hub, GHCR; lscr.io is LinuxServer.io's name for its images on GHCR), as
+public images (Docker Hub, GHCR, where the catalog names LinuxServer's images, ADR-0426), as
 ``scripts/catalog-platforms.py`` reads the manifest lists (ADR-0403). Every answer read by its
 digest is checked against that digest, a blob that the registry redirects to a CDN is fetched there
 without the registry's token, and an answer larger than MAX_BYTES is refused. Nothing is pulled and
@@ -38,7 +38,7 @@ MANIFEST_TYPES = ", ".join([
     "application/vnd.oci.image.manifest.v1+json",
     "application/vnd.docker.distribution.manifest.v2+json",
 ])
-_REGISTRY_ALIASES = {"lscr.io": "ghcr.io", "docker.io": "registry-1.docker.io", "index.docker.io": "registry-1.docker.io"}
+_REGISTRY_ALIASES = {"docker.io": "registry-1.docker.io", "index.docker.io": "registry-1.docker.io"}
 _PINNED = re.compile(r"(?P<name>[^@\s]+):(?P<tag>[^@:/\s]+)@(?P<digest>sha256:[0-9a-f]{64})")
 _DIGEST = re.compile(r"sha256:[0-9a-f]{64}")
 
@@ -110,8 +110,6 @@ def parse_reference(ref: str) -> tuple[str, str, str]:
         host, repo = "docker.io", match["name"]
     if host == "docker.io" and "/" not in repo:
         repo = f"library/{repo}"
-    if host == "lscr.io" and not repo.startswith("linuxserver/"):
-        repo = f"linuxserver/{repo}"
     return _REGISTRY_ALIASES.get(host, host), repo, match["digest"]
 
 
