@@ -61,6 +61,12 @@ unos-supervisor`): one JSON object per line with `time`, `level`, `logger` and `
 while UNOS idles (ADR-0398). Avoid: log file (the Logs tab's files are the container's `/var/log`),
 audit log (the record of who changed what).
 
+**Data directory**: The folder where the supervisor keeps its database (unless `UNOS_DB_PATH` names
+another file), JWT secret, audit log, state files, stored certificates and backups: `UNOS_DATA_DIR`, `/data` in its container (the `unos-data`
+volume), whose paths `supervisor/src/paths.py` alone names (ADR-0417). Host paths such as
+`/etc/fstab` have settings of their own. Avoid: state directory (the local stand-in's folder, which
+holds its data directory), data volume (the Docker volume).
+
 **Write-ahead log**: `unos.db-wal` beside the database `unos.db` in `/data`, to which SQLite appends
 the pages of each commit; a checkpoint, when the log reaches 1000 pages and when the supervisor
 stops, copies them into `unos.db` (ADR-0306). Avoid: journal (SQLite's rollback journal, which

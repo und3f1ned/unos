@@ -69,6 +69,7 @@ and this index, and `make check-fast` runs it.
 | [0398](0398-the-supervisor-logs-one-json-object-per-line-from-one-setup-and-writes-nothing-while-it-idles.md) | The supervisor logs one JSON object per line from one setup, and writes nothing while it idles | accepted | 2026-11-18 |
 | [0401](0401-every-time-of-the-api-carries-its-offset-and-stored-times-without-one-are-utc.md) | Every time of the API carries its offset, a stored time without one is UTC, and the web UI shows times in the browser's time zone | accepted | 2026-11-18 |
 | [0416](0416-the-system-security-logs-and-nfs-routers-reach-the-host-only-through-host-py-and-the-firewall-is-the-hosts-ufw-turned-on-only-with-a-revert-armed.md) | The system, security, logs and NFS routers reach the host only through host.py, and the firewall is the host's ufw, changed only with the local networks let in and a revert armed | accepted | 2026-11-18 |
+| [0417](0417-every-data-path-of-the-supervisor-follows-unos-data-dir-read-once-at-its-start.md) | Every data path of the supervisor follows UNOS_DATA_DIR, read once at its start, and the stand-in patches no constant | accepted | 2026-11-19 |
 
 ## Security
 

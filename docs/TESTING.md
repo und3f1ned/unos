@@ -191,6 +191,10 @@ os.environ["UNOS_JWT_SECRET"] = secrets.token_hex(32)
 # A temporary folder of this pytest process alone, removed at its end (ADR-0383).
 _RUN_DIR = tempfile.mkdtemp(prefix="unos-tests-")
 os.environ["UNOS_POOLS_BASE_PATH"] = os.path.join(_RUN_DIR, "pools")
+# The supervisor's data directory, read once at its first import (ADR-0417): no test reaches /data,
+# and none writes into it (read-only): a test moves the paths it writes with monkeypatch.
+os.environ["UNOS_DATA_DIR"] = os.path.join(_RUN_DIR, "data")
+os.mkdir(os.environ["UNOS_DATA_DIR"], 0o555)
 ```
 
 ### Faking the Host
