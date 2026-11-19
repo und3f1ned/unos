@@ -31,9 +31,10 @@ server keeps the choice per user (ADR-0405). Avoid: skin, colour mode.
 Account page; the server's messages stay English (ADR-0287). Avoid: dictionary, locale file.
 
 **Command palette**: The dialog that Ctrl+K (Cmd+K on macOS), the sidebar's Search button from
-the md breakpoint, or the search button of a phone's header bar, opens over a signed-in page: typing narrows the pages and actions of the user's role,
-and Enter opens the chosen one. It runs only the actions that change nothing on the NAS; the
-others open their page's own dialog (ADR-0393). Avoid: quick switcher, command bar, search.
+the md breakpoint, or the search button of a phone's header bar, opens over a signed-in page:
+typing narrows the pages and actions of the user's role, and Enter opens the chosen one. It runs
+only the actions that change nothing on the NAS; the others open their page's own dialog
+(ADR-0393). Avoid: quick switcher, command bar, search.
 
 **Table frame**: The element of the class `table-frame` around a table that can be wider than a
 phone's screen: the table scrolls sideways inside it, while the page never does (ADR-0302).

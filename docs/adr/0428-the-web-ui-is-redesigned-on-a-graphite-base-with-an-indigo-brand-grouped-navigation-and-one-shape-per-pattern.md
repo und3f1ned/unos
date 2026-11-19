@@ -48,7 +48,8 @@ groups, the system's own fonts. The entry is `webui.redesign`.
   tabs (`rounded`), 10 px for cards and menus (`rounded-card`), 12 px for dialogs
   (`rounded-dialog`). Cards are set apart by a 1 px `border`, not by shadow. One focus style for
   every control: `:focus-visible` draws a 2 px `brand-ring` outline 2 px out, nothing on a mouse
-  click and no ring offset in the page colour; fields get a `brand-ring` border and a 3 px halo.
+  click and no ring offset in the page colour; a field gets a `brand-ring` border, a 1 px ring and
+  a halo.
   Transitions of 120, 180 and 240 ms stop under `prefers-reduced-motion: reduce`, and so does
   `animate-pulse`; spinners turn at half speed.
 - **Components of `ui`** keep their props; new ones are optional. `Button`: heights 32, 36 and
@@ -63,7 +64,8 @@ groups, the system's own fonts. The entry is `webui.redesign`.
 - **Patterns of `app.css`**: `.table` cells with side padding, `.num`, `.table-compact`,
   `.table-actions` (always visible, a touch screen has no hover) and `.card-flush`; page tabs are
   `.tab-underline`, `.tab-pill` is the segmented control of filters and views; `.nav-item` for the
-  sidebar and System's tabs, the active one a brand 20 % tint with a 3 px `brand-ring` bar; `.kv`
+  sidebar, and System's tabs in its look, the active one a brand 20 % tint with a 3 px `brand-ring`
+  bar; `.kv`
   (label over value, `div > span`, so that the specs' `div[span="Mount:"]` still finds a field),
   `.toolbar` with `.toolbar-group`, `.page-subtitle`, `.content-narrow` (960 px, for the System
   tabs that are forms). Every page header is `h1.page-title`, an optional subtitle and the actions,
