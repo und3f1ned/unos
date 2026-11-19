@@ -2,32 +2,42 @@
 	import { Cpu, HardDrive, MemoryStick, Network, Thermometer } from 'lucide-svelte';
 	import { Card, ProgressBar } from '$lib/components/ui';
 	import { t } from '$lib/i18n';
+	import { formatBytes } from './bytes';
 
-	export let cpuPercent: number = 0;
-	export let memoryPercent: number = 0;
-	export let memoryUsed: number = 0;
-	export let memoryTotal: number = 0;
-	export let networkUp: number = 0;
-	export let networkDown: number = 0;
-	// The bytes per second read from and written to the host's disks (ADR-0388).
-	export let diskRead: number = 0;
-	export let diskWrite: number = 0;
-	export let temperature: number | null = null;
-	export let compact: boolean = false;
-	// One card of the stats, by its widget id, for the dashboard's grid of widgets (ADR-0395); the dashboard lays the cards out itself.
-	export let only: 'cpu' | 'memory' | 'network' | 'disk-io' | 'temperature' = 'cpu';
-
-	// The units of a size, from bytes up: keys of the catalog (ADR-0297).
-	const UNITS = ['dashboard.unit.b', 'dashboard.unit.kb', 'dashboard.unit.mb', 'dashboard.unit.gb', 'dashboard.unit.tb'];
-
-	$: formatBytes = (bytes: number): string => {
-		if (bytes === 0) return `0 ${$t(UNITS[0])}`;
-		const k = 1024;
-		const i = Math.floor(Math.log(bytes) / Math.log(k));
-		return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + $t(UNITS[i]);
+	type Props = {
+		cpuPercent?: number;
+		memoryPercent?: number;
+		memoryUsed?: number;
+		memoryTotal?: number;
+		networkUp?: number;
+		networkDown?: number;
+		// The bytes per second read from and written to the host's disks (ADR-0388).
+		diskRead?: number;
+		diskWrite?: number;
+		temperature?: number | null;
+		compact?: boolean;
+		// One card of the stats, by its widget id, for the dashboard's grid of widgets (ADR-0395); the dashboard lays the cards out itself.
+		only?: 'cpu' | 'memory' | 'network' | 'disk-io' | 'temperature';
 	};
 
-	$: formatRate = (bytes: number): string => $t('dashboard.rate', { size: formatBytes(bytes) });
+	let {
+		cpuPercent = 0,
+		memoryPercent = 0,
+		memoryUsed = 0,
+		memoryTotal = 0,
+		networkUp = 0,
+		networkDown = 0,
+		diskRead = 0,
+		diskWrite = 0,
+		temperature = null,
+		compact = false,
+		only = 'cpu'
+	}: Props = $props();
+
+	// The functions that read $t do it where the markup calls them: the texts follow the language.
+	function formatRate(bytes: number): string {
+		return $t('dashboard.rate', { size: formatBytes(bytes, $t) });
+	}
 
 	function getPercentColor(percent: number): string {
 		if (percent < 70) return 'text-success';
@@ -81,7 +91,7 @@
 				<span class="stat-card-label">{$t('dashboard.stats.memory')}</span>
 			</div>
 			<p class="stat-card-value {getPercentColor(memoryPercent)}">{memoryPercent.toFixed(1)}%</p>
-			<p class="stat-card-sublabel">{formatBytes(memoryUsed)} / {formatBytes(memoryTotal)}</p>
+			<p class="stat-card-sublabel">{formatBytes(memoryUsed, $t)} / {formatBytes(memoryTotal, $t)}</p>
 			<ProgressBar value={memoryPercent} size="sm" class="mt-2" />
 		</Card>
 		{/if}

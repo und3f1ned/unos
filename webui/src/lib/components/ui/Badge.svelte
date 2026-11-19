@@ -1,5 +1,13 @@
 <script lang="ts">
-	export let variant: 'success' | 'warning' | 'error' | 'info' | 'neutral' | 'purple' | 'cyan' | 'orange' = 'neutral';
+	import type { Snippet } from 'svelte';
+
+	type Props = {
+		variant?: 'success' | 'warning' | 'error' | 'info' | 'neutral' | 'purple' | 'cyan' | 'orange';
+		class?: string;
+		children?: Snippet;
+	};
+
+	let { variant = 'neutral', class: className = '', children }: Props = $props();
 
 	const variantClasses = {
 		success: 'badge-success',
@@ -12,9 +20,9 @@
 		orange: 'badge-orange'
 	};
 
-	$: classes = `badge ${variantClasses[variant]} ${$$props.class || ''}`;
+	const classes = $derived(`badge ${variantClasses[variant]} ${className || ''}`);
 </script>
 
 <span class={classes}>
-	<slot />
+	{@render children?.()}
 </span>

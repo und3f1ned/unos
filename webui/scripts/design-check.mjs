@@ -23,7 +23,8 @@
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { parse, walk } from 'svelte/compiler';
+import { parse } from 'svelte/compiler';
+import { walk } from './svelte-walk.mjs';
 import ts from 'typescript';
 
 const EXEMPTION = /design-ignore:\s*\S/;

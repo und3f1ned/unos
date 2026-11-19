@@ -3,49 +3,34 @@
   // there, until it is restored, deleted for good, or deleted for good by the
   // daily expiry.
   import { onMount, tick } from "svelte";
-  import { ApiError } from "$lib/api/client";
-  import {
-    deleteFromTrash,
-    emptyTrash,
-    formatSize,
-    listTrash,
-    restoreFromTrash,
-    type TrashItem,
-  } from "$lib/api/files";
+  import { deleteFromTrash, emptyTrash, listTrash, restoreFromTrash, type TrashItem } from "$lib/api/files";
+  import { SelectionBar, TrashTable } from "$lib/components/files";
+  import { messageOf, signedOut } from "$lib/components/files/errors";
+  import { toggled } from "$lib/components/files/selection";
   import { Alert, Button, Card, EmptyState, Modal } from "$lib/components/ui";
-  import { intlLocale, t } from "$lib/i18n";
-  import { formatDate, formatDateTime } from "$lib/time";
-  import { ArrowLeft, File, Folder, Link, RefreshCw, RotateCcw, Trash, Trash2 } from "lucide-svelte";
+  import { t } from "$lib/i18n";
+  import { ArrowLeft, RefreshCw, RotateCcw, Trash, Trash2 } from "lucide-svelte";
 
-  let items: TrashItem[] = [];
-  let retentionDays: number | null = null;
+  let items = $state.raw<TrashItem[]>([]);
+  let retentionDays: number | null = $state(null);
   // The trashes that could not be read, each with the reason.
-  let problems: string[] = [];
-  let loading = true;
-  let loadError = "";
+  let problems = $state.raw<string[]>([]);
+  let loading = $state(true);
+  let loadError = $state("");
   // The refusal of a restore, and what the last action did.
-  let error = "";
-  let notice = "";
-  let selected: Set<string> = new Set();
+  let error = $state("");
+  let notice = $state("");
+  let selected = $state.raw<Set<string>>(new Set());
   // A restore, a deletion for good or the emptying is on its way.
-  let busy = false;
-  let restoring = false;
+  let busy = $state(false);
+  let restoring = $state(false);
   // The confirmation of a deletion for good: of the selected items, or of everything.
-  let confirming: "selected" | "everything" | null = null;
-  let dialogError = "";
+  let confirming: "selected" | "everything" | null = $state(null);
+  let dialogError = $state("");
   // Each dialog's Cancel, which takes the keyboard focus: what the dialogs do cannot be undone.
   let cancelSlot: HTMLSpanElement | null = null;
 
   onMount(load);
-
-  function messageOf(e: unknown): string {
-    return e instanceof Error ? e.message : String(e);
-  }
-
-  // A 401 has already ended the session and the sign-in page is on its way.
-  function signedOut(e: unknown): boolean {
-    return e instanceof ApiError && e.status === 401;
-  }
 
   async function load() {
     loading = true;
@@ -66,12 +51,7 @@
   }
 
   function toggle(path: string) {
-    if (selected.has(path)) {
-      selected.delete(path);
-    } else {
-      selected.add(path);
-    }
-    selected = selected;
+    selected = toggled(selected, path);
   }
 
   async function handleRestore() {
@@ -130,35 +110,8 @@
     await load();
   }
 
-  // The server gives UTC times with their offset; the browser shows them in its own time zone,
-  // in the language of the page.
-  $: formatTime = (value: string, dateOnly = false): string =>
-    dateOnly ? formatDate(value, $intlLocale) : formatDateTime(value, $intlLocale);
-
-  // The folder an item was deleted from.
-  $: folderOf = (item: TrashItem): string => {
-    if (item.original_path === null) return $t("files.trash.notKnown");
-    const cut = item.original_path.lastIndexOf("/");
-    return cut > 0 ? item.original_path.slice(0, cut) : "/";
-  };
-
-  // What a screen reader says for an item's checkbox: items of the same name
-  // differ in where and when they were deleted (ADR-0197).
-  $: checkboxLabel = (item: TrashItem): string => {
-    const time = formatTime(item.deleted);
-    return item.original_path === null
-      ? $t("files.trash.selectUnknown", { name: item.name, time })
-      : $t("files.trash.select", { name: item.name, folder: folderOf(item), time });
-  };
-
   // Sizes in the units of the page's language.
-  $: units = [$t("files.unit.b"), $t("files.unit.kb"), $t("files.unit.mb"), $t("files.unit.gb"), $t("files.unit.tb")];
-
-  function iconOf(item: TrashItem) {
-    if (item.type === "directory") return Folder;
-    if (item.type === "symlink") return Link;
-    return File;
-  }
+  let units = $derived([$t("files.unit.b"), $t("files.unit.kb"), $t("files.unit.mb"), $t("files.unit.gb"), $t("files.unit.tb")]);
 </script>
 
 <div class="page-container">
@@ -171,12 +124,12 @@
       <Button variant="secondary" icon={ArrowLeft} href="/files">{$t("files.trash.files")}</Button>
       <!-- The span shows the tooltip: Button does not pass a title on. -->
       <span class="flex" title={$t("common.refresh")}>
-        <Button variant="secondary" size="icon" disabled={loading} on:click={load}>
+        <Button variant="secondary" size="icon" disabled={loading} onclick={load}>
           <RefreshCw class="w-5 h-5 {loading ? 'animate-spin' : ''}" />
           <span class="sr-only">{$t("common.refresh")}</span>
         </Button>
       </span>
-      <Button variant="danger" icon={Trash2} disabled={busy || items.length === 0} on:click={() => ask("everything")}>
+      <Button variant="danger" icon={Trash2} disabled={busy || items.length === 0} onclick={() => ask("everything")}>
         {$t("files.trash.empty")}
       </Button>
     </div>
@@ -198,25 +151,24 @@
   {#if error}
     <!-- role="alert": screen readers announce the message when it appears. -->
     <div role="alert">
-      <Alert variant="error" dismissible on:dismiss={() => (error = "")}>{error}</Alert>
+      <Alert variant="error" dismissible ondismiss={() => (error = "")}>{error}</Alert>
     </div>
   {/if}
   {#if notice}
     <div role="status">
-      <Alert variant="success" dismissible on:dismiss={() => (notice = "")}>{notice}</Alert>
+      <Alert variant="success" dismissible ondismiss={() => (notice = "")}>{notice}</Alert>
     </div>
   {/if}
 
   <Card>
-    <div class="mb-4 flex flex-wrap items-center gap-2" role="toolbar" aria-label={$t("files.selectedItems")}>
-      <span class="text-sm text-content-secondary mr-2">{$t("files.selected", { n: selected.size })}</span>
+    <SelectionBar count={selected.size}>
       <Button
         variant="secondary"
         size="sm"
         icon={RotateCcw}
         loading={restoring}
         disabled={busy || selected.size === 0}
-        on:click={handleRestore}
+        onclick={handleRestore}
       >
         {$t("files.trash.restore")}
       </Button>
@@ -225,56 +177,18 @@
         size="sm"
         icon={Trash2}
         disabled={busy || selected.size === 0}
-        on:click={() => ask("selected")}
+        onclick={() => ask("selected")}
       >
         {$t("files.deleteForGood")}
       </Button>
-    </div>
+    </SelectionBar>
 
     {#if loading && items.length === 0}
       <p class="loading-text">{$t("common.loading")}</p>
     {:else if items.length === 0}
       <EmptyState icon={Trash} title={$t("files.trash.emptyTitle")} description={$t("files.trash.emptyHint")} />
     {:else}
-      <div class="table-frame">
-        <table class="table" aria-label={$t("files.trash.items")}>
-          <thead class="table-header">
-            <tr>
-              <th class="w-8"><span class="sr-only">{$t("files.trash.column.selected")}</span></th>
-              <th>{$t("files.column.name")}</th>
-              <th>{$t("files.trash.column.from")}</th>
-              <th>{$t("files.trash.column.deleted")}</th>
-              <th>{$t("files.trash.column.keptUntil")}</th>
-              <th>{$t("files.column.size")}</th>
-            </tr>
-          </thead>
-          <tbody>
-            {#each items as item (item.path)}
-              <tr class="table-row align-top">
-                <td>
-                  <input
-                    type="checkbox"
-                    aria-label={checkboxLabel(item)}
-                    checked={selected.has(item.path)}
-                    on:change={() => toggle(item.path)}
-                    class="w-4 h-4 rounded bg-surface-overlay border-border"
-                  />
-                </td>
-                <td>
-                  <div class="flex items-center gap-2 min-w-0">
-                    <svelte:component this={iconOf(item)} class="w-4 h-4 flex-shrink-0 text-content-secondary" />
-                    <span class="break-all">{item.name}</span>
-                  </div>
-                </td>
-                <td class="mono-xs break-all">{folderOf(item)}</td>
-                <td class="whitespace-nowrap">{formatTime(item.deleted)}</td>
-                <td class="whitespace-nowrap">{formatTime(item.expires, true)}</td>
-                <td class="whitespace-nowrap">{item.type === "directory" ? "-" : formatSize(item.size, units)}</td>
-              </tr>
-            {/each}
-          </tbody>
-        </table>
-      </div>
+      <TrashTable {items} {selected} {units} ontoggle={toggle} />
     {/if}
   </Card>
 </div>
@@ -284,7 +198,7 @@
   title={confirming === "everything" ? $t("files.trash.empty") : $t("files.deleteForGood")}
   danger
   closable={!busy}
-  on:close={closeDialog}
+  onclose={closeDialog}
 >
   <div class="space-y-3">
     <p class="text-sm">
@@ -301,12 +215,12 @@
     {/if}
   </div>
 
-  <svelte:fragment slot="footer">
+  {#snippet footer()}
     <span bind:this={cancelSlot} class="contents">
-      <Button variant="secondary" class="flex-1" disabled={busy} on:click={closeDialog}>{$t("common.cancel")}</Button>
+      <Button variant="secondary" class="flex-1" disabled={busy} onclick={closeDialog}>{$t("common.cancel")}</Button>
     </span>
-    <Button variant="danger" class="flex-1" icon={Trash2} loading={busy} on:click={handleDeleteForGood}>
+    <Button variant="danger" class="flex-1" icon={Trash2} loading={busy} onclick={handleDeleteForGood}>
       {confirming === "everything" ? $t("files.trash.empty") : $t("files.deleteForGood")}
     </Button>
-  </svelte:fragment>
+  {/snippet}
 </Modal>

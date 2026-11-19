@@ -4,17 +4,21 @@
 	import { t } from '$lib/i18n';
 	import { apiTime } from '$lib/time';
 
-	export let notifications: Array<{
-		id: string;
-		type: string;
-		title: string;
-		message: string;
-		created_at: string;
-		read: boolean;
-	}> = [];
-	export let limit: number = 5;
+	type Props = {
+		notifications?: Array<{
+			id: string;
+			type: string;
+			title: string;
+			message: string;
+			created_at: string;
+			read: boolean;
+		}>;
+		limit?: number;
+	};
 
-	$: displayNotifications = notifications.slice(0, limit);
+	let { notifications = [], limit = 5 }: Props = $props();
+
+	const displayNotifications = $derived(notifications.slice(0, limit));
 
 	function getTypeIcon(type: string) {
 		switch (type) {
@@ -43,7 +47,7 @@
 	}
 
 	// How long ago, in the language of the page.
-	$: formatTime = (iso: string): string => {
+	function formatTime(iso: string): string {
 		const date = apiTime(iso);
 		if (!date) return iso;
 		const now = new Date();
@@ -56,7 +60,7 @@
 		if (minutes < 60) return $t('dashboard.activity.minutesAgo', { n: minutes });
 		if (hours < 24) return $t('dashboard.activity.hoursAgo', { n: hours });
 		return $t('dashboard.activity.daysAgo', { n: days });
-	};
+	}
 </script>
 
 <Card>
@@ -76,15 +80,13 @@
 	{:else}
 		<div class="space-y-2">
 			{#each displayNotifications as notification}
+				{@const Icon = getTypeIcon(notification.type)}
 				<div
 					class="flex items-start gap-3 p-2 rounded-lg {notification.read
 						? ''
 						: 'bg-surface-muted'}"
 				>
-					<svelte:component
-						this={getTypeIcon(notification.type)}
-						class="w-4 h-4 mt-0.5 {getTypeColor(notification.type)}"
-					/>
+					<Icon class="w-4 h-4 mt-0.5 {getTypeColor(notification.type)}" />
 					<div class="flex-1 min-w-0">
 						<p class="text-sm font-medium truncate">{notification.title}</p>
 						<p class="text-xs text-secondary truncate">{notification.message}</p>

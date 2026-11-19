@@ -4,6 +4,14 @@ import { vitePreprocess } from '@sveltejs/vite-plugin-svelte';
 /** @type {import('@sveltejs/kit').Config} */
 const config = {
 	preprocess: vitePreprocess(),
+	// Every component of src/ is compiled in runes mode, so that one written for Svelte 4's legacy
+	// mode (export let, $:) fails the build (ADR-0427); scripts/runes-check.mjs fails for the
+	// syntax of Svelte 4 that runes mode still takes. A library under node_modules keeps the mode
+	// it was written in: lucide-svelte 0.x ships components of Svelte 4.
+	vitePlugin: {
+		dynamicCompileOptions: ({ filename }) =>
+			filename.split(/[/\\]/).includes('node_modules') ? undefined : { runes: true }
+	},
 	kit: {
 		adapter: adapter({
 			pages: 'build',

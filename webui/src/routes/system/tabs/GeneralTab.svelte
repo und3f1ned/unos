@@ -1,89 +1,27 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { getSystemInfo, getTimezone, getTimezones, setTimezone, type SystemInfo } from "$lib/api/system";
-  import { getHostname, setHostname } from "$lib/api/network";
+  import { getSystemInfo, type SystemInfo } from "$lib/api/system";
   import { getCurrentVersion, type CurrentVersion } from "$lib/api/updates";
   import { user } from "$lib/stores/auth";
-  import { Alert, Badge, Button, Card, Input, Select } from "$lib/components/ui";
+  import { Badge, Button, Card } from "$lib/components/ui";
+  import { HostSettings, HostSettingsCard } from "$lib/components/system/general";
   import { t } from "$lib/i18n";
   import { apiTime } from "$lib/time";
-  import { Server, User, Package, Globe } from "lucide-svelte";
+  import { Server, User, Package } from "lucide-svelte";
 
-  let systemInfo: SystemInfo | null = null;
-  let currentVersion: CurrentVersion | null = null;
-  let loading = true;
+  let systemInfo = $state<SystemInfo | null>(null);
+  let currentVersion = $state<CurrentVersion | null>(null);
+  let loading = $state(true);
 
-  // The name and time zone of the host (ADR-0331): each read and saved on its own.
-  let hostname = "";
-  let savedHostname = "";
-  let zone = "";
-  let savedZone = "";
-  let zones: string[] = [];
-  let hostLoading = true;
-  let hostLoadFailed = false;
-  let savingHostname = false;
-  let savingZone = false;
-  let hostNotice = "";
-  let hostError = "";
+  // The name and time zone of the host (ADR-0331).
+  const host = new HostSettings();
 
-  let hostnameLoaded = false;
-  let zoneLoaded = false;
-
-  // The host's zone first when the host does not list it, so that the page shows it.
-  $: zoneOptions = [
-    ...(savedZone && savedZone !== "Unknown" && !zones.includes(savedZone) ? [savedZone] : []),
-    ...zones,
-  ].map((name) => ({ value: name, label: name }));
-
-  async function loadHost() {
-    // Each row from its own answers: one that fails leaves the other usable.
-    const [name, current, listed] = await Promise.allSettled([getHostname(), getTimezone(), getTimezones()]);
-    if (name.status === "fulfilled") {
-      hostname = savedHostname = name.value.hostname;
-      hostnameLoaded = true;
-    }
-    if (current.status === "fulfilled") {
-      zone = savedZone = current.value.timezone;
-      zoneLoaded = true;
-    }
-    if (listed.status === "fulfilled") zones = listed.value.timezones;
-    hostLoadFailed = !hostnameLoaded && !zoneLoaded;
-    hostLoading = false;
-  }
-
-  async function saveHostname() {
-    const name = hostname.trim();
-    savingHostname = true;
-    hostNotice = hostError = "";
-    try {
-      const answer = await setHostname(name);
-      hostname = savedHostname = answer.hostname;
-      if (systemInfo) systemInfo = { ...systemInfo, hostname: answer.hostname };
-      hostNotice = $t("general.host.hostnameSaved", { name: answer.hostname });
-    } catch (e) {
-      hostError = e instanceof Error ? e.message : $t("general.host.saveFailed");
-    } finally {
-      savingHostname = false;
-    }
-  }
-
-  async function saveZone() {
-    savingZone = true;
-    hostNotice = hostError = "";
-    try {
-      const answer = await setTimezone(zone);
-      zone = savedZone = answer.timezone;
-      hostNotice = $t("general.host.zoneSaved", { zone: answer.timezone });
-    } catch (e) {
-      hostError = e instanceof Error ? e.message : $t("general.host.saveFailed");
-      zone = savedZone; // the host kept its zone
-    } finally {
-      savingZone = false;
-    }
+  function renamed(hostname: string) {
+    if (systemInfo) systemInfo = { ...systemInfo, hostname };
   }
 
   onMount(async () => {
-    loadHost();
+    host.load();
     try {
       const [info, version] = await Promise.all([
         getSystemInfo(),
@@ -99,7 +37,7 @@
   });
 
   // Reactive, so that the uptime follows a change of the language.
-  $: formatUptime = (bootTime: string): string => {
+  let formatUptime = $derived((bootTime: string): string => {
     const booted = apiTime(bootTime);
     if (!booted) return bootTime;
     const seconds = Math.floor((Date.now() - booted.getTime()) / 1000);
@@ -109,12 +47,19 @@
     if (days > 0) return $t("general.uptime.days", { days, hours, minutes });
     if (hours > 0) return $t("general.uptime.hours", { hours, minutes });
     return $t("general.uptime.minutes", { minutes });
-  };
+  });
 
   // A version in the language of the page: the server answers "unknown" when UNOS was built
   // without one (get_current_version of supervisor/src/updates/updater.py).
-  $: versionLabel = (version: string): string => (version === "unknown" ? $t("general.version.unknown") : version);
+  let versionLabel = $derived((version: string): string => (version === "unknown" ? $t("general.version.unknown") : version));
 </script>
+
+{#snippet info(label: string, value: string, valueClass: string)}
+  <div>
+    <span class="text-content-secondary">{label}</span>
+    <span class={valueClass}>{value}</span>
+  </div>
+{/snippet}
 
 <div class="space-y-6">
   <h2 class="text-xl font-semibold">{$t("general.title")}</h2>
@@ -130,96 +75,18 @@
       <p class="text-content-muted">{$t("common.loading")}</p>
     {:else if systemInfo}
       <div class="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
-        <div>
-          <span class="text-content-secondary">{$t("general.info.hostname")}</span>
-          <span class="ml-2 font-medium break-words">{systemInfo.hostname}</span>
-        </div>
-        <div>
-          <span class="text-content-secondary">{$t("general.info.os")}</span>
-          <span class="ml-2">{systemInfo.os}</span>
-        </div>
-        <div>
-          <span class="text-content-secondary">{$t("general.info.kernel")}</span>
-          <span class="ml-2 font-mono text-xs">{systemInfo.kernel}</span>
-        </div>
-        <div>
-          <span class="text-content-secondary">{$t("general.info.architecture")}</span>
-          <span class="ml-2">{systemInfo.architecture}</span>
-        </div>
-        <div>
-          <span class="text-content-secondary">{$t("general.info.uptime")}</span>
-          <span class="ml-2">{formatUptime(systemInfo.boot_time)}</span>
-        </div>
+        {@render info($t("general.info.hostname"), systemInfo.hostname, "ml-2 font-medium break-words")}
+        {@render info($t("general.info.os"), systemInfo.os, "ml-2")}
+        {@render info($t("general.info.kernel"), systemInfo.kernel, "ml-2 font-mono text-xs")}
+        {@render info($t("general.info.architecture"), systemInfo.architecture, "ml-2")}
+        {@render info($t("general.info.uptime"), formatUptime(systemInfo.boot_time), "ml-2")}
       </div>
     {:else}
       <p class="text-content-muted">{$t("general.info.loadFailed")}</p>
     {/if}
   </div>
 
-  <!-- The name and time zone of the host, set on the host (ADR-0331) -->
-  <Card>
-    <h3 class="section-title mb-4">
-      <Globe class="w-5 h-5" />
-      {$t("general.host.title")}
-    </h3>
-
-    {#if hostLoading}
-      <p class="text-sm text-muted">{$t("common.loading")}</p>
-    {:else if hostLoadFailed}
-      <p class="text-sm text-muted">{$t("general.host.loadFailed")}</p>
-    {:else}
-      <div class="space-y-4">
-        {#if hostnameLoaded}
-          <div>
-            <form class="flex flex-wrap items-end gap-3" on:submit|preventDefault={saveHostname}>
-              <div class="min-w-0 flex-1 basis-56">
-                <Input id="general-hostname" label={$t("general.host.hostname")} bind:value={hostname} maxlength={63} />
-              </div>
-              <Button
-                type="submit"
-                variant="secondary"
-                loading={savingHostname}
-                disabled={!hostname.trim() || hostname.trim() === savedHostname}
-              >
-                {$t("general.host.saveHostname")}
-              </Button>
-            </form>
-            <p class="form-hint">{$t("general.host.hostnameHint")}</p>
-          </div>
-        {/if}
-        {#if zoneLoaded}
-          <div>
-            <div class="flex flex-wrap items-end gap-3">
-              <div class="min-w-0 flex-1 basis-56">
-                <Select
-                  id="general-zone"
-                  label={$t("general.host.zone")}
-                  bind:value={zone}
-                  options={zoneOptions}
-                  placeholder={$t("general.host.unknownZone")}
-                  disabled={zones.length === 0}
-                />
-              </div>
-              <Button variant="secondary" loading={savingZone} disabled={!zone || zone === savedZone} on:click={saveZone}>
-                {$t("general.host.saveZone")}
-              </Button>
-            </div>
-            <p class="form-hint">{zones.length === 0 ? $t("general.host.noZones") : $t("general.host.zoneHint")}</p>
-          </div>
-        {/if}
-        <div role="status">
-          {#if hostNotice}
-            <Alert variant="success" dismissible on:dismiss={() => (hostNotice = "")}>{hostNotice}</Alert>
-          {/if}
-        </div>
-        <div role="alert">
-          {#if hostError}
-            <Alert variant="error" dismissible on:dismiss={() => (hostError = "")}>{hostError}</Alert>
-          {/if}
-        </div>
-      </div>
-    {/if}
-  </Card>
+  <HostSettingsCard {host} onrenamed={renamed} />
 
   <!-- UNOS Version: the version the supervisor image was built with (ADR-0234) -->
   <Card>

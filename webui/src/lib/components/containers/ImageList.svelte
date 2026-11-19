@@ -11,18 +11,18 @@
 	// name and the removal of an image that no container uses, with all its
 	// tags (ADR-0255).
 
-	let images: Image[] = [];
-	let loading = true;
-	let loadError = '';
+	let images = $state<Image[]>([]);
+	let loading = $state(true);
+	let loadError = $state('');
 
-	let imageName = '';
-	let pulling = '';
-	let pullError = '';
-	let notice = '';
+	let imageName = $state('');
+	let pulling = $state('');
+	let pullError = $state('');
+	let notice = $state('');
 
-	let imageToRemove: Image | null = null;
-	let removing = false;
-	let removeError = '';
+	let imageToRemove = $state<Image | null>(null);
+	let removing = $state(false);
+	let removeError = $state('');
 
 	onMount(refresh);
 
@@ -95,13 +95,21 @@
 		return image.tags[0] ?? image.id;
 	}
 
-	// Reactive, so that the list follows a change of the language.
-	$: formatDate = (value: string): string => formatDateTime(value, $intlLocale);
+	// It reads $intlLocale, so that the list follows a change of the language.
+	function formatDate(value: string): string {
+		return formatDateTime(value, $intlLocale);
+	}
 </script>
 
 <div class="space-y-6">
 	<Card>
-		<form on:submit|preventDefault={handlePull} class="flex flex-col sm:flex-row sm:items-end gap-3">
+		<form
+			onsubmit={(e) => {
+				e.preventDefault();
+				void handlePull();
+			}}
+			class="flex flex-col sm:flex-row sm:items-end gap-3"
+		>
 			<Input
 				label={$t('containers.images.image')}
 				bind:value={imageName}
@@ -133,7 +141,7 @@
 	</Card>
 
 	{#if notice}
-		<Alert variant="success" dismissible on:dismiss={() => (notice = '')}>{notice}</Alert>
+		<Alert variant="success" dismissible ondismiss={() => (notice = '')}>{notice}</Alert>
 	{/if}
 
 	{#if loading && images.length === 0}
@@ -176,7 +184,7 @@
 								<td class="whitespace-nowrap">{formatDate(image.created)}</td>
 								<td>
 									<div class="flex justify-end">
-										<Button variant="ghost" size="icon-sm" on:click={() => askRemove(image)}>
+										<Button variant="ghost" size="icon-sm" onclick={() => askRemove(image)}>
 											<Trash2 class="w-4 h-4 text-error" />
 											<span class="sr-only">
 												{$t('containers.images.removeOne', { name: nameOf(image) })}
@@ -198,7 +206,7 @@
 	title={$t('containers.images.removeTitle')}
 	danger
 	closable={!removing}
-	on:close={closeRemove}
+	onclose={closeRemove}
 >
 	{#if imageToRemove}
 		<div class="space-y-4">
@@ -218,12 +226,12 @@
 		</div>
 	{/if}
 
-	<svelte:fragment slot="footer">
-		<Button variant="secondary" class="flex-1" disabled={removing} on:click={closeRemove}>
+	{#snippet footer()}
+		<Button variant="secondary" class="flex-1" disabled={removing} onclick={closeRemove}>
 			{$t('common.cancel')}
 		</Button>
-		<Button variant="danger" class="flex-1" icon={Trash2} loading={removing} on:click={handleRemove}>
+		<Button variant="danger" class="flex-1" icon={Trash2} loading={removing} onclick={handleRemove}>
 			{$t('containers.images.remove')}
 		</Button>
-	</svelte:fragment>
+	{/snippet}
 </Modal>

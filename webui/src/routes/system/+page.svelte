@@ -1,6 +1,7 @@
 <script lang="ts">
+  import { untrack } from "svelte";
   import { Button } from '$lib/components/ui';
-  import { page } from "$app/stores";
+  import { page } from "$app/state";
   import { goto } from "$app/navigation";
   import { isAdmin } from "$lib/stores/auth";
   import { t } from "$lib/i18n";
@@ -23,7 +24,7 @@
   // Sub-navigation for System page. Only the Security tab (own password,
   // 2FA and login history) works for regular accounts; the APIs behind the
   // other tabs are administrator-only. Reactive: the labels follow the language of the page.
-  $: tabs = [
+  let tabs = $derived([
     { id: "general", icon: Settings, label: $t("system.tabs.general"), adminOnly: true },
     { id: "updates", icon: ArrowUpCircle, label: $t("system.tabs.updates"), adminOnly: true },
     { id: "security", icon: Shield, label: $t("system.tabs.security"), adminOnly: false },
@@ -36,19 +37,23 @@
     { id: "network", icon: Network, label: $t("system.tabs.network"), adminOnly: true },
     { id: "remote", icon: Globe, label: $t("remote.tab"), adminOnly: true },
     { id: "power", icon: Power, label: $t("system.tabs.power"), adminOnly: true },
-  ];
+  ]);
 
-  $: visibleTabs = $isAdmin ? tabs : tabs.filter(t => !t.adminOnly);
+  let visibleTabs = $derived($isAdmin ? tabs : tabs.filter(t => !t.adminOnly));
 
-  let activeTab = "general";
+  let activeTab = $state("general");
 
   // Follow the URL hash (links such as /system#notifications, /settings,
   // reloads, bookmarks) and never show a tab the user may not open (e.g.
-  // /system#logs typed by a regular user). The work is done in a function so
-  // that this statement depends only on the URL and the visible tabs. If it
-  // read activeTab itself, every tab click would re-run it and switch straight
-  // back to the tab named in the URL.
-  $: syncTabFromHash($page.url.hash, visibleTabs);
+  // /system#logs typed by a regular user). It runs before the page is drawn, also the first
+  // time, and depends only on the URL and the visible tabs: syncTabFromHash runs untracked. If it
+  // depended on activeTab, every tab click would re-run it and switch straight back to the tab
+  // named in the URL.
+  $effect.pre(() => {
+    const hash = page.url.hash;
+    const available = visibleTabs;
+    untrack(() => syncTabFromHash(hash, available));
+  });
 
   function syncTabFromHash(rawHash: string, available: typeof tabs) {
     const hash = rawHash.slice(1);
@@ -61,7 +66,7 @@
 
   function setTab(id: string) {
     activeTab = id;
-    // SvelteKit's goto, not history.replaceState: it updates $page.url and
+    // SvelteKit's goto, not history.replaceState: it updates page.url and
     // keeps the router's state in the history entry, which Back/Forward need.
     goto(`#${id}`, { replaceState: true, noScroll: true, keepFocus: true });
   }
@@ -76,10 +81,10 @@
     <nav class="flex flex-wrap gap-1 md:block md:space-y-1">
       {#each visibleTabs as tab}
         <Button variant="plain"
-          on:click={() => setTab(tab.id)}
+          onclick={() => setTab(tab.id)}
           class="md:w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm transition-colors {activeTab === tab.id ? 'bg-brand text-content-on-brand' : 'text-content-soft hover:bg-surface-overlay'}"
         >
-          <svelte:component this={tab.icon} class="w-4 h-4" />
+          <tab.icon class="w-4 h-4" />
           <span>{tab.label}</span>
           {#if activeTab === tab.id}
             <ChevronRight class="w-4 h-4 ml-auto hidden md:block" />

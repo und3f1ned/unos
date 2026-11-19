@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { messageOf } from '$lib/errors';
 	import { onMount } from 'svelte';
 	import {
 		DEFAULT_GRACE_DAYS,
@@ -19,31 +20,33 @@
 	// authenticator app, so an administrator without two-factor authentication is told to turn it on
 	// first.
 
-	/** Whether the administrator's own account has two-factor authentication. */
-	export let ownTwoFactor: boolean;
+	type Props = {
+		/** Whether the administrator's own account has two-factor authentication. */
+		ownTwoFactor: boolean;
+	};
 
-	let requirement: TwoFactorRequirement | null = null;
-	let loading = false;
-	let loadError = '';
-	let grace = String(DEFAULT_GRACE_DAYS);
-	let code = '';
-	let busy = false;
-	let error = '';
-	let success = '';
+	let { ownTwoFactor }: Props = $props();
 
-	$: graceOptions = GRACE_DAYS_CHOICES.map((n) => ({
-		value: String(n),
-		label: n === 0 ? $t('twofactor.requirement.graceNone') : $t('twofactor.requirement.graceDays', { n })
-	}));
-	$: since = formatDateTime(requirement?.enabled_at, $intlLocale);
+	let requirement = $state<TwoFactorRequirement | null>(null);
+	let loading = $state(false);
+	let loadError = $state('');
+	let grace = $state(String(DEFAULT_GRACE_DAYS));
+	let code = $state('');
+	let busy = $state(false);
+	let error = $state('');
+	let success = $state('');
+
+	const graceOptions = $derived(
+		GRACE_DAYS_CHOICES.map((n) => ({
+			value: String(n),
+			label: n === 0 ? $t('twofactor.requirement.graceNone') : $t('twofactor.requirement.graceDays', { n })
+		}))
+	);
+	const since = $derived(formatDateTime(requirement?.enabled_at, $intlLocale));
 
 	onMount(() => {
 		void load();
 	});
-
-	function messageOf(e: unknown): string {
-		return e instanceof Error ? e.message : String(e);
-	}
 
 	async function load() {
 		loading = true;
@@ -99,7 +102,7 @@
 	{#if loadError}
 		<Alert variant="error" title={$t('twofactor.requirement.loadError')} class="mb-4">
 			<p>{loadError}</p>
-			<Button variant="secondary" size="sm" class="mt-3" {loading} on:click={load}>{$t('common.retry')}</Button>
+			<Button variant="secondary" size="sm" class="mt-3" {loading} onclick={load}>{$t('common.retry')}</Button>
 		</Alert>
 	{/if}
 
@@ -126,7 +129,13 @@
 		{#if !ownTwoFactor}
 			<Alert variant="info" class="mt-4">{$t('twofactor.requirement.ownFirst')}</Alert>
 		{:else}
-			<form class="mt-4 flex flex-wrap items-end gap-3" on:submit|preventDefault={submit}>
+			<form
+				class="mt-4 flex flex-wrap items-end gap-3"
+				onsubmit={(event) => {
+					event.preventDefault();
+					submit();
+				}}
+			>
 				{#if !requirement.enabled}
 					<Select
 						id="two-factor-grace"

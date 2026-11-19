@@ -1,18 +1,24 @@
 <script lang="ts">
-	import { createEventDispatcher } from 'svelte';
 	import { Ban, X } from 'lucide-svelte';
 	import { Alert, Badge, Button, Card, ProgressBar } from '$lib/components/ui';
 	import { intlLocale, t } from '$lib/i18n';
+	import { formatSize as formatSizeIn } from './size';
 	import { missingHardware, type AppInstallJob, type AppTemplate, type ImagePull } from '$lib/api/apps';
 
-	/** The installs that /ws/v1/events sends (ADR-0384): the running one and the last of each app. */
-	export let jobs: AppInstallJob[] = [];
-	/** The catalog, for each app's icon and what its install's notice adds. */
-	export let catalog: AppTemplate[] = [];
-	/** The ids of the running jobs whose cancel was asked: they say so until they end. */
-	export let cancelling: ReadonlySet<string> = new Set();
+	type Props = {
+		/** The installs that /ws/v1/events sends (ADR-0384): the running one and the last of each app. */
+		jobs?: AppInstallJob[];
+		/** The catalog, for each app's icon and what its install's notice adds. */
+		catalog?: AppTemplate[];
+		/** The ids of the running jobs whose cancel was asked: they say so until they end. */
+		cancelling?: ReadonlySet<string>;
+		/** The ended job's card was dismissed. */
+		ondismiss?: (job: AppInstallJob) => void;
+		/** The running job's cancel was asked. */
+		oncancel?: (job: AppInstallJob) => void;
+	};
 
-	const dispatch = createEventDispatcher<{ dismiss: AppInstallJob; cancel: AppInstallJob }>();
+	let { jobs = [], catalog = [], cancelling = new Set(), ondismiss, oncancel }: Props = $props();
 
 	// The apps whose first account to register becomes their administrator: the notice of their
 	// install asks to create it at once, before anyone else on the network can (ADR-0415).
@@ -87,19 +93,14 @@
 		removed: { key: 'apps.job.container.removed', variant: 'neutral' }
 	};
 
-	// The units of a size, by powers of 1024, as the details of an app write them.
-	const SIZE_UNITS = ['apps.size.bytes', 'apps.size.kb', 'apps.size.mb', 'apps.size.gb', 'apps.size.tb'];
+	// A size with one decimal in the language of the page (formatSize of ./size).
+	function formatSize(bytes: number): string {
+		return formatSizeIn(bytes, $intlLocale, $t, 1);
+	}
 
-	/** A size in the language of the page: the number in its format with the unit of the catalog. */
-	$: formatSize = (bytes: number): string => {
-		const power = bytes > 0 ? Math.max(0, Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), SIZE_UNITS.length - 1)) : 0;
-		const size = new Intl.NumberFormat($intlLocale, { maximumFractionDigits: 1, useGrouping: false }).format(
-			bytes / 1024 ** power
-		);
-		return $t(SIZE_UNITS[power], { size });
-	};
-
-	$: templateOf = (job: AppInstallJob): AppTemplate | undefined => catalog.find((app) => app.id === job.template_id);
+	function templateOf(job: AppInstallJob): AppTemplate | undefined {
+		return catalog.find((app) => app.id === job.template_id);
+	}
 
 	/** The image's name without its digest: the tag tells the version; the digest is in the details. */
 	function shortName(image: string): string {
@@ -129,18 +130,18 @@
 					{/if}
 				</div>
 				{#if job.state !== 'running'}
-					<Button variant="ghost" size="sm" icon={X} on:click={() => dispatch('dismiss', job)}>
+					<Button variant="ghost" size="sm" icon={X} onclick={() => ondismiss?.(job)}>
 						{$t('apps.job.dismiss')}
 					</Button>
 				{:else if cancelling.has(job.id)}
 					<Button variant="secondary" size="sm" icon={Ban} disabled>{$t('apps.job.cancelling')}</Button>
 				{:else if job.kind === 'install'}
-					<Button variant="secondary" size="sm" icon={Ban} on:click={() => dispatch('cancel', job)}>
+					<Button variant="secondary" size="sm" icon={Ban} onclick={() => oncancel?.(job)}>
 						{$t('apps.job.cancel')}
 					</Button>
 				{:else if job.kind === 'update'}
 					<!-- A rollback cannot be cancelled: it ends on its own (ADR-0408). -->
-					<Button variant="secondary" size="sm" icon={Ban} on:click={() => dispatch('cancel', job)}>
+					<Button variant="secondary" size="sm" icon={Ban} onclick={() => oncancel?.(job)}>
 						{$t('appUpdates.cancelUpdate')}
 					</Button>
 				{/if}

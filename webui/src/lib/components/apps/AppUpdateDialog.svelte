@@ -1,11 +1,13 @@
 <script lang="ts">
+	import { messageOf } from '$lib/errors';
 	// The update of an installed app to the catalog's newer pinned images (ADR-0408): before it
 	// runs, the dialog shows what the server read for it (each container's image before and
 	// after, what the pulls write to the system disk, the copy of the database on the pool) or why
 	// it cannot run; Update now starts its job, whose progress the App Store's job cards show.
-	import { createEventDispatcher } from 'svelte';
+	import { untrack } from 'svelte';
 	import { Alert, Badge, Button, Modal } from '$lib/components/ui';
 	import { intlLocale, t } from '$lib/i18n';
+	import { formatSize as formatSizeIn } from './size';
 	import {
 		getUpdatePlan,
 		updateApp,
@@ -15,22 +17,37 @@
 		type InstalledApp
 	} from '$lib/api/apps';
 
-	export let open = false;
-	/** The installed app to update, as the installed list gave it, and its name in the catalog. */
-	export let app: InstalledApp | null = null;
-	export let name = '';
+	type Props = {
+		open?: boolean;
+		/** The installed app to update, as the installed list gave it, and its name in the catalog. */
+		app?: InstalledApp | null;
+		name?: string;
+		/** Cancel, Escape or the backdrop asked to close the dialog. */
+		onclose?: () => void;
+		/** Update now started the update's job. */
+		onstarted?: (job: AppInstallJob) => void;
+	};
 
-	const dispatch = createEventDispatcher<{ close: void; started: AppInstallJob }>();
+	let { open = false, app = null, name = '', onclose, onstarted }: Props = $props();
 
-	let plan: AppUpdatePlan | null = null;
-	let error = '';
-	let loading = false;
-	let starting = false;
-	// The app whose plan was asked for, while the dialog is open.
+	let plan = $state<AppUpdatePlan | null>(null);
+	let error = $state('');
+	let loading = $state(false);
+	let starting = $state(false);
+	// The app whose plan was asked for, while the dialog is open. Only the effect below reads it.
 	let readFor = '';
 
-	$: if (open && app && app.container_id !== readFor) void read(app);
-	$: if (!open) readFor = '';
+	// The plan is asked for when the dialog opens or shows another app, before the dialog's markup
+	// updates, as Svelte 4's statements did; only `open` and `app` make it run again.
+	$effect.pre(() => {
+		const isOpen = open;
+		const target = app;
+		const id = target?.container_id;
+		untrack(() => {
+			if (!isOpen) readFor = '';
+			else if (target && id !== readFor) void read(target);
+		});
+	});
 
 	async function read(target: InstalledApp) {
 		readFor = target.container_id;
@@ -40,7 +57,7 @@
 		try {
 			plan = await getUpdatePlan(target.container_id);
 		} catch (e) {
-			error = $t('appUpdates.loadFailed', { error: e instanceof Error ? e.message : String(e) });
+			error = $t('appUpdates.loadFailed', { error: messageOf(e) });
 		} finally {
 			loading = false;
 		}
@@ -52,25 +69,18 @@
 		error = '';
 		try {
 			const job = await updateApp(app.container_id);
-			dispatch('started', job);
+			onstarted?.(job);
 		} catch (e) {
-			error = $t('appUpdates.startFailed', { error: e instanceof Error ? e.message : String(e) });
+			error = $t('appUpdates.startFailed', { error: messageOf(e) });
 		} finally {
 			starting = false;
 		}
 	}
 
-	// The units of a size, by powers of 1024, as the App Store writes them.
-	const SIZE_UNITS = ['apps.size.bytes', 'apps.size.kb', 'apps.size.mb', 'apps.size.gb', 'apps.size.tb'];
-
-	$: formatSize = (bytes: number): string => {
-		const power =
-			bytes > 0 ? Math.max(0, Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), SIZE_UNITS.length - 1)) : 0;
-		const size = new Intl.NumberFormat($intlLocale, { maximumFractionDigits: 1, useGrouping: false }).format(
-			bytes / 1024 ** power
-		);
-		return $t(SIZE_UNITS[power], { size });
-	};
+	// A size with one decimal in the language of the page (formatSize of ./size).
+	function formatSize(bytes: number): string {
+		return formatSizeIn(bytes, $intlLocale, $t, 1);
+	}
 
 	/** The image as its tag names it; one created by its digest alone with the start of the digest. */
 	function shortName(image: string | null): string {
@@ -93,7 +103,7 @@
 	size="lg"
 	title={$t('appUpdates.title', { name: name || app?.name || '' })}
 	closable={!starting}
-	on:close={() => dispatch('close')}
+	onclose={() => onclose?.()}
 >
 	<div class="space-y-4">
 		{#if loading}
@@ -166,12 +176,12 @@
 			</Alert>
 		{/if}
 	</div>
-	<svelte:fragment slot="footer">
-		<Button variant="secondary" disabled={starting} on:click={() => dispatch('close')}>
+	{#snippet footer()}
+		<Button variant="secondary" disabled={starting} onclick={() => onclose?.()}>
 			{$t('common.cancel')}
 		</Button>
-		<Button variant="primary" loading={starting} disabled={!plan} on:click={start}>
+		<Button variant="primary" loading={starting} disabled={!plan} onclick={start}>
 			{$t('appUpdates.start')}
 		</Button>
-	</svelte:fragment>
+	{/snippet}
 </Modal>

@@ -1,40 +1,38 @@
 <script lang="ts">
+	import { messageOf } from '$lib/errors';
 	import { onMount } from 'svelte';
-	import { FolderOpen, Share2 } from 'lucide-svelte';
+	import { Share2 } from 'lucide-svelte';
 	import { disableMySmb, enableMySmb, getMySmb, type MySmbStatus } from '$lib/api/auth';
 	import { user } from '$lib/stores/auth';
-	import { Alert, Badge, Button, Card, EmptyState, Input, Modal } from '$lib/components/ui';
-	import { smbUrl, windowsAddress } from '$lib/components/shares/texts';
+	import { Alert, Badge, Button, Card, Input, Modal } from '$lib/components/ui';
 	import { t } from '$lib/i18n';
+	import SmbConnectHelp from './SmbConnectHelp.svelte';
+	import SmbSharesTable from './SmbSharesTable.svelte';
 
 	// SMB (network file) access of the signed-in account. An administrator
 	// allows it; the user turns it on with the current password.
 
-	let status: MySmbStatus | null = null;
-	let loading = true;
-	let loadError = '';
+	let status = $state<MySmbStatus | null>(null);
+	let loading = $state(true);
+	let loadError = $state('');
 
-	let password = '';
-	let totpCode = '';
-	let busy = false;
-	let actionError = '';
-	let notice = '';
-	let warnings: string[] = [];
+	let password = $state('');
+	let totpCode = $state('');
+	let busy = $state(false);
+	let actionError = $state('');
+	let notice = $state('');
+	let warnings = $state<string[]>([]);
 
-	let confirmOff = false;
-	let offError = '';
+	let confirmOff = $state(false);
+	let offError = $state('');
 
 	// The NAS's address as this browser reaches it (an IP address or a name).
-	let host = '';
+	let host = $state('');
 
 	onMount(() => {
 		host = window.location.hostname;
 		void load();
 	});
-
-	function messageOf(e: unknown): string {
-		return e instanceof Error ? e.message : String(e);
-	}
 
 	async function load() {
 		try {
@@ -110,18 +108,15 @@
 		}
 	}
 
-	$: account = status?.account;
-	$: allowed = account?.state === 'active' || account?.state === 'password_needed';
+	const account = $derived(status?.account);
+	const allowed = $derived(account?.state === 'active' || account?.state === 'password_needed');
 	// The SMB name is the UNOS username (set once SMB is allowed).
-	$: signInName = account?.linux_name ?? $user?.username ?? '';
+	const signInName = $derived(account?.linux_name ?? $user?.username ?? '');
 	// Without SMB of its own, an account can still use guest shares.
-	$: usableShares = status?.shares.filter((share) => share.usable) ?? [];
-	$: showConnect = allowed || usableShares.length > 0;
-	$: example = (allowed ? status?.shares[0] : usableShares[0])?.name ?? 'share';
-	// i18n-ignore: an option of the command below, the same in every language
-	$: mountOption = allowed ? `username=${signInName}` : 'guest';
-	// i18n-ignore: a command, the same in every language
-	$: mountCommand = `sudo mount -t cifs //${host}/${example} /mnt/${example} -o ${mountOption}`;
+	const usableShares = $derived(status?.shares.filter((share) => share.usable) ?? []);
+	const showConnect = $derived(allowed || usableShares.length > 0);
+	// The share of the examples of how to connect.
+	const example = $derived((allowed ? status?.shares[0] : usableShares[0])?.name ?? 'share');
 </script>
 
 <Card>
@@ -137,10 +132,10 @@
 	{:else}
 		<div class="space-y-4">
 			{#if notice}
-				<Alert variant="success" dismissible on:dismiss={() => (notice = '')}>{notice}</Alert>
+				<Alert variant="success" dismissible ondismiss={() => (notice = '')}>{notice}</Alert>
 			{/if}
 			{#if warnings.length > 0}
-				<Alert variant="warning" dismissible on:dismiss={() => (warnings = [])}>
+				<Alert variant="warning" dismissible ondismiss={() => (warnings = [])}>
 					{#each warnings as warning}
 						<p>{warning}</p>
 					{/each}
@@ -153,7 +148,13 @@
 				<p class="text-sm">{$t('account.smb.off')}</p>
 			{:else if account.state === 'password_needed'}
 				<p class="text-sm">{$t('account.smb.passwordNeeded')}</p>
-				<form on:submit|preventDefault={turnOn} class="space-y-3 max-w-md">
+				<form
+					onsubmit={(event) => {
+						event.preventDefault();
+						turnOn();
+					}}
+					class="space-y-3 max-w-md"
+				>
 					<Input
 						id="smb-password"
 						type="password"
@@ -181,7 +182,7 @@
 			{:else if account.state === 'active'}
 				<div class="flex flex-wrap items-center gap-3">
 					<Badge variant="success">{$t('account.smb.active')}</Badge>
-					<Button variant="ghost" size="sm" on:click={() => (confirmOff = true)}>
+					<Button variant="ghost" size="sm" onclick={() => (confirmOff = true)}>
 						{$t('account.smb.turnOff')}
 					</Button>
 				</div>
@@ -203,65 +204,10 @@
 				</Alert>
 			{/if}
 
-			<div>
-				<h4 class="card-title mb-2">{$t('account.smb.shares')}</h4>
-				{#if status.shares.length === 0}
-					<EmptyState icon={FolderOpen} title={$t('account.smb.noShares')} />
-				{:else}
-					<div class="table-frame">
-						<table class="table">
-							<thead class="table-header">
-								<tr>
-									<th>{$t('account.smb.name')}</th>
-									<th>{$t('account.smb.access')}</th>
-									<th>{$t('account.smb.comment')}</th>
-								</tr>
-							</thead>
-							<tbody>
-								{#each status.shares as share (share.name)}
-									<tr class="table-row align-top">
-										<td>
-											<span class="mono">{share.name}</span>
-											{#if share.guest_ok}
-												<Badge variant="neutral" class="ml-1">{$t('account.smb.guest')}</Badge>
-											{/if}
-											{#if !share.usable}
-												<p class="text-xs text-muted">{$t('account.smb.notUsable')}</p>
-											{/if}
-										</td>
-										<td>{share.level === 'write' ? $t('account.smb.readWrite') : $t('account.smb.readOnly')}</td>
-										<td class="text-secondary">{share.comment}</td>
-									</tr>
-								{/each}
-							</tbody>
-						</table>
-					</div>
-				{/if}
-			</div>
+			<SmbSharesTable shares={status.shares} />
 
 			{#if showConnect}
-				<div class="space-y-2">
-					<h4 class="card-title">{$t('account.smb.connect')}</h4>
-					<ul class="space-y-1 text-sm">
-						<li>
-							<span class="text-secondary">{$t('account.smb.windows')}</span>
-							<span class="mono">{windowsAddress(host, example)}</span>
-						</li>
-						<li>
-							<span class="text-secondary">{$t('account.smb.macos')}</span>
-							{$t('account.smb.finder')}
-							<span class="mono">{smbUrl(host, example)}</span>
-						</li>
-						<li>
-							<span class="text-secondary">{$t('account.smb.linux')}</span>
-							<span class="mono">{smbUrl(host, example)}</span>
-							{$t('account.smb.or')}
-							<span class="mono break-all">{mountCommand}</span>
-						</li>
-					</ul>
-					<p class="text-sm text-muted">{$t('account.smb.noTwoFactor')}</p>
-					<p class="text-sm text-muted">{$t('account.smb.localAddress')}</p>
-				</div>
+				<SmbConnectHelp {host} share={example} username={allowed ? signInName : null} />
 			{/if}
 		</div>
 	{/if}
@@ -272,17 +218,17 @@
 	title={$t('account.smb.offTitle')}
 	size="md"
 	closable={!busy}
-	on:close={closeConfirm}
+	onclose={closeConfirm}
 >
 	<p>{$t('account.smb.offConfirm')}</p>
 	{#if offError}
 		<Alert variant="error" title={$t('account.smb.notOff')}>{offError}</Alert>
 	{/if}
 
-	<svelte:fragment slot="footer">
-		<Button variant="secondary" class="flex-1" disabled={busy} on:click={closeConfirm}>
+	{#snippet footer()}
+		<Button variant="secondary" class="flex-1" disabled={busy} onclick={closeConfirm}>
 			{$t('common.cancel')}
 		</Button>
-		<Button variant="danger" class="flex-1" loading={busy} on:click={turnOff}>{$t('account.smb.turnOff')}</Button>
-	</svelte:fragment>
+		<Button variant="danger" class="flex-1" loading={busy} onclick={turnOff}>{$t('account.smb.turnOff')}</Button>
+	{/snippet}
 </Modal>

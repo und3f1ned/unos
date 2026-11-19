@@ -1,30 +1,49 @@
 <script lang="ts">
 	import { ChevronDown, Check } from 'lucide-svelte';
-	import { createEventDispatcher, onMount, onDestroy } from 'svelte';
+	import { onMount, onDestroy } from 'svelte';
 	import { fly } from 'svelte/transition';
 	import { t } from '$lib/i18n';
 
-	export let id: string = '';
-	export let value: string = '';
-	export let label: string = '';
-	export let hint: string = '';
-	export let error: string = '';
-	export let required: boolean = false;
-	export let disabled: boolean = false;
-	// Without a placeholder: "Select an option" in the language of the page.
-	export let placeholder: string | undefined = undefined;
-	export let options: Array<{ value: string; label: string; disabled?: boolean }> = [];
+	type Option = { value: string; label: string; disabled?: boolean };
 
-	const dispatch = createEventDispatcher();
+	type Props = {
+		id?: string;
+		value?: string;
+		label?: string;
+		hint?: string;
+		error?: string;
+		required?: boolean;
+		disabled?: boolean;
+		// Without a placeholder: "Select an option" in the language of the page.
+		placeholder?: string | undefined;
+		options?: Option[];
+		class?: string;
+		// An option was chosen, after `value` took it.
+		onchange?: (value: string) => void;
+	};
 
-	let open = false;
+	let {
+		id = '',
+		value = $bindable(''),
+		label = '',
+		hint = '',
+		error = '',
+		required = false,
+		disabled = false,
+		placeholder = undefined,
+		options = [],
+		class: className = '',
+		onchange
+	}: Props = $props();
+
+	let open = $state(false);
 	let container: HTMLDivElement;
-	let listbox: HTMLUListElement;
-	let highlightedIndex = -1;
+	let listbox: HTMLUListElement | undefined = $state();
+	let highlightedIndex = $state(-1);
 
-	$: inputId = id || `select-${Math.random().toString(36).slice(2, 9)}`;
-	$: selectedOption = options.find((opt) => opt.value === value);
-	$: displayValue = selectedOption?.label || (placeholder ?? $t('ui.select.placeholder'));
+	const inputId = $derived(id || `select-${Math.random().toString(36).slice(2, 9)}`);
+	const selectedOption = $derived(options.find((opt) => opt.value === value));
+	const displayValue = $derived(selectedOption?.label || (placeholder ?? $t('ui.select.placeholder')));
 
 	function toggle() {
 		if (disabled) return;
@@ -35,11 +54,11 @@
 		}
 	}
 
-	function selectOption(option: { value: string; label: string; disabled?: boolean }) {
+	function selectOption(option: Option) {
 		if (option.disabled) return;
 		value = option.value;
 		open = false;
-		dispatch('change', { value: option.value });
+		onchange?.(option.value);
 	}
 
 	function handleKeydown(e: KeyboardEvent) {
@@ -183,7 +202,7 @@
 	});
 </script>
 
-<div class="relative {$$props.class || ''}" bind:this={container}>
+<div class="relative {className || ''}" bind:this={container}>
 	{#if label}
 		<label id="{inputId}-label" for={inputId} class="form-label">
 			{label}
@@ -205,8 +224,8 @@
 		class:select-trigger-error={error}
 		class:select-trigger-open={open}
 		class:select-trigger-disabled={disabled}
-		on:click={toggle}
-		on:keydown={handleKeydown}
+		onclick={toggle}
+		onkeydown={handleKeydown}
 	>
 		<span class="select-value" class:select-placeholder={!selectedOption}>
 			{displayValue}
@@ -233,8 +252,8 @@
 					class:select-option-selected={option.value === value}
 					class:select-option-highlighted={index === highlightedIndex}
 					class:select-option-disabled={option.disabled}
-					on:click={() => selectOption(option)}
-					on:mouseenter={() => {
+					onclick={() => selectOption(option)}
+					onmouseenter={() => {
 						if (!option.disabled) highlightedIndex = index;
 					}}
 				>

@@ -1,6 +1,11 @@
 <script lang="ts">
-	export let status: 'success' | 'warning' | 'error' | 'neutral' = 'neutral';
-	export let pulse: boolean = false;
+	type Props = {
+		status?: 'success' | 'warning' | 'error' | 'neutral';
+		pulse?: boolean;
+		class?: string;
+	};
+
+	let { status = 'neutral', pulse = false, class: className = '' }: Props = $props();
 
 	const statusClasses = {
 		success: 'status-dot-success',
@@ -11,5 +16,5 @@
 </script>
 
 <span
-	class="status-dot {statusClasses[status]} {pulse ? 'animate-pulse' : ''} {$$props.class || ''}"
-/>
+	class="status-dot {statusClasses[status]} {pulse ? 'animate-pulse' : ''} {className || ''}"
+></span>

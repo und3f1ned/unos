@@ -1,40 +1,43 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { messageOf } from "$lib/errors";
+  import { onMount, untrack } from "svelte";
   import { get } from "svelte/store";
   import { Cpu, MemoryStick, Network, HardDrive, Activity, Wifi, WifiOff } from "lucide-svelte";
   import { Alert, Badge, Button, Card } from "$lib/components/ui";
   import { stats, wsConnected, type WebSocketStats } from "$lib/stores/stats";
   import { getMonitorHistory } from "$lib/api/monitor";
+  import {
+    cpuOf,
+    memoryOf,
+    path,
+    peak,
+    readOf,
+    recvOf,
+    sentOf,
+    writeOf,
+    type Point,
+    type Series
+  } from "$lib/components/system/monitor/chart";
+  import { formatNumber, scaleBytes } from "$lib/format";
   import { intlLocale, t } from "$lib/i18n";
 
   // System > Resource Monitor (ADR-0399): the history that the supervisor keeps for an hour, read
   // once when the tab opens, and each stats message of /ws/v1/events added to it as it arrives. No
   // timer asks the API again (ADR-0365).
 
-  interface Point {
-    // The browser's time of the point, in milliseconds.
-    at: number;
-    cpu: number;
-    memory: number;
-    netRecv: number;
-    netSent: number;
-    diskRead: number;
-    diskWrite: number;
-  }
-
   const KEPT_MS = 3600 * 1000;
-  // Two points further apart than this have no data between them: the chart's line breaks there.
-  const GAP_MS = 30 * 1000;
   const RANGES = [
     { seconds: 300, key: "monitor.range.5m", span: "monitor.range.5m.span" },
     { seconds: 900, key: "monitor.range.15m", span: "monitor.range.15m.span" },
     { seconds: 3600, key: "monitor.range.1h", span: "monitor.range.1h.span" }
   ];
-  let range = RANGES[0];
+  // Raw: the buttons compare it with the option itself (a proxy would be another object).
+  let range = $state.raw(RANGES[0]);
 
-  let history: Point[] = [];
-  let live: Point[] = [];
-  let historyError = "";
+  // Replaced whole, never changed in place: up to an hour of points need no deep proxy.
+  let history = $state.raw<Point[]>([]);
+  let live = $state.raw<Point[]>([]);
+  let historyError = $state("");
 
   onMount(async () => {
     const opened = Date.now();
@@ -50,7 +53,7 @@
         diskWrite: point.disk_write_rate
       }));
     } catch (error) {
-      historyError = error instanceof Error ? error.message : String(error);
+      historyError = messageOf(error);
     }
   });
 
@@ -77,52 +80,28 @@
     ];
   }
 
-  $: currentStats = $stats;
-  $: addLive($stats);
+  let currentStats = $derived($stats);
+  // Each message of the store, before the page is drawn, as the statement of Svelte 4 did.
+  $effect.pre(() => {
+    const message = $stats;
+    untrack(() => addLive(message));
+  });
   // The history up to the first message that arrived since the tab opened, then the messages.
-  $: points = [...history.filter((point) => live.length === 0 || point.at < live[0].at), ...live];
+  let points = $derived([...history.filter((point) => live.length === 0 || point.at < live[0].at), ...live]);
   // The range ends at the newest point: what the charts show changes only with a new message.
-  $: end = points.length > 0 ? points[points.length - 1].at : 0;
-  $: start = end - range.seconds * 1000;
-  $: shown = points.filter((point) => point.at >= start);
+  let end = $derived(points.length > 0 ? points[points.length - 1].at : 0);
+  let start = $derived(end - range.seconds * 1000);
+  let shown = $derived(points.filter((point) => point.at >= start));
 
-  function peak(series: Point[], value: (point: Point) => number): number {
-    return series.reduce((highest, point) => Math.max(highest, value(point)), 0);
-  }
-
-  // The commands of an SVG path over a chart of 100 x 40, from start to end, with values from 0 to
-  // max; a gap breaks the line.
-  function path(series: Point[], value: (point: Point) => number, max: number, from: number): string {
-    const span = range.seconds * 1000;
-    let previous: number | null = null;
-    const commands: string[] = [];
-    for (const point of series) {
-      const x = (((point.at - from) / span) * 100).toFixed(2);
-      const y = (40 - (Math.min(value(point), max) / Math.max(max, 1e-9)) * 40).toFixed(2);
-      const move = previous === null || point.at - previous > GAP_MS;
-      // i18n-ignore: the commands of an SVG path
-      commands.push((move ? "M " : "L ") + x + " " + y);
-      previous = point.at;
-    }
-    return commands.join(" ");
-  }
-
-  const cpuOf = (point: Point) => point.cpu;
-  const memoryOf = (point: Point) => point.memory;
-  const recvOf = (point: Point) => point.netRecv;
-  const sentOf = (point: Point) => point.netSent;
-  const readOf = (point: Point) => point.diskRead;
-  const writeOf = (point: Point) => point.diskWrite;
-
-  $: cpuPeak = peak(shown, cpuOf);
-  $: memoryPeak = peak(shown, memoryOf);
-  $: recvPeak = peak(shown, recvOf);
-  $: sentPeak = peak(shown, sentOf);
-  $: readPeak = peak(shown, readOf);
-  $: writePeak = peak(shown, writeOf);
+  let cpuPeak = $derived(peak(shown, cpuOf));
+  let memoryPeak = $derived(peak(shown, memoryOf));
+  let recvPeak = $derived(peak(shown, recvOf));
+  let sentPeak = $derived(peak(shown, sentOf));
+  let readPeak = $derived(peak(shown, readOf));
+  let writePeak = $derived(peak(shown, writeOf));
   // The rates' charts scale to the peak of the range; percentages to 100.
-  $: networkMax = Math.max(recvPeak, sentPeak);
-  $: diskMax = Math.max(readPeak, writePeak);
+  let networkMax = $derived(Math.max(recvPeak, sentPeak));
+  let diskMax = $derived(Math.max(readPeak, writePeak));
 
   // The units of a size and of a rate, one for each power of 1024: keys of the catalog.
   const SIZE_UNITS = ["monitor.size.b", "monitor.size.kb", "monitor.size.mb", "monitor.size.gb", "monitor.size.tb"];
@@ -131,22 +110,22 @@
   // The numbers in the format of the page and the units of the catalog (webui/AGENTS.md, Data):
   // a size or a rate in the largest unit that keeps it at 1 or more, with up to two decimals; a
   // percentage with one decimal.
-  $: amount = (bytes: number, units: string[]): string => {
-    const power = bytes >= 1 ? Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1) : 0;
-    const value = Number((bytes / 1024 ** power).toFixed(2));
-    return $t(units[power], {
-      value: value.toLocaleString($intlLocale, { maximumFractionDigits: 2, useGrouping: false })
-    });
-  };
-  $: percent = (value: number): string =>
-    $t("monitor.percent", {
+  function amount(bytes: number, units: string[]): string {
+    const { value, power } = scaleBytes(bytes, units.length);
+    return $t(units[power], { value: formatNumber(value, $intlLocale, 2) });
+  }
+  function percent(value: number): string {
+    return $t("monitor.percent", {
       value: value.toLocaleString($intlLocale, {
         minimumFractionDigits: 1,
         maximumFractionDigits: 1,
         useGrouping: false
       })
     });
-  $: chartName = (metric: string): string => $t("monitor.chart", { metric: $t(metric), span: $t(range.span) });
+  }
+  function chartName(metric: string): string {
+    return $t("monitor.chart", { metric: $t(metric), span: $t(range.span) });
+  }
 
   function percentClass(p: number): string {
     return p < 70 ? "text-success" : p < 90 ? "text-warning" : "text-error";
@@ -156,6 +135,15 @@
     return p < 70 ? "bg-status-success" : p < 90 ? "bg-status-warning" : "bg-status-error";
   }
 </script>
+
+<!-- A chart of the range: one line for each series, scaled from 0 to max. -->
+{#snippet chart(metric: string, svgClass: string, max: number, lines: { cls?: string; value: Series }[])}
+  <svg viewBox="0 0 100 40" preserveAspectRatio="none" class={svgClass} role="img" aria-label={chartName(metric)}>
+    {#each lines as line}
+      <path class={line.cls} d={path(shown, line.value, max, start, range.seconds * 1000)} fill="none" stroke="currentColor" stroke-width="1.5" vector-effect="non-scaling-stroke" />
+    {/each}
+  </svg>
+{/snippet}
 
 <div class="space-y-6">
   <div class="flex flex-wrap items-center justify-between gap-3">
@@ -167,7 +155,7 @@
             size="sm"
             variant={range === option ? "primary" : "secondary"}
             pressed={range === option}
-            on:click={() => (range = option)}
+            onclick={() => (range = option)}
           >
             {$t(option.key)}
           </Button>
@@ -201,9 +189,7 @@
           <h3 class="stat-card-label">{$t("monitor.cpu")}</h3>
         </div>
         <p class="stat-card-value {percentClass(currentStats.cpu.percent)}">{percent(currentStats.cpu.percent)}</p>
-        <svg viewBox="0 0 100 40" preserveAspectRatio="none" class="w-full h-16 mt-2 icon-cpu" role="img" aria-label={chartName("monitor.cpu")}>
-          <path d={path(shown, cpuOf, 100, start)} fill="none" stroke="currentColor" stroke-width="1.5" vector-effect="non-scaling-stroke" />
-        </svg>
+        {@render chart("monitor.cpu", "w-full h-16 mt-2 icon-cpu", 100, [{ value: cpuOf }])}
         <p class="stat-card-sublabel">{$t("monitor.peak", { value: percent(cpuPeak) })}</p>
       </Card>
 
@@ -214,9 +200,7 @@
         </div>
         <p class="stat-card-value {percentClass(currentStats.memory.percent)}">{percent(currentStats.memory.percent)}</p>
         <p class="stat-card-sublabel">{amount(currentStats.memory.used, SIZE_UNITS)} / {amount(currentStats.memory.total, SIZE_UNITS)}</p>
-        <svg viewBox="0 0 100 40" preserveAspectRatio="none" class="w-full h-16 mt-2 icon-memory" role="img" aria-label={chartName("monitor.memory")}>
-          <path d={path(shown, memoryOf, 100, start)} fill="none" stroke="currentColor" stroke-width="1.5" vector-effect="non-scaling-stroke" />
-        </svg>
+        {@render chart("monitor.memory", "w-full h-16 mt-2 icon-memory", 100, [{ value: memoryOf }])}
         <p class="stat-card-sublabel">{$t("monitor.peak", { value: percent(memoryPeak) })}</p>
       </Card>
 
@@ -227,10 +211,10 @@
         </div>
         <p class="text-sm">↓ <span class="text-success font-semibold">{amount(currentStats.network.bytes_recv_rate, RATE_UNITS)}</span></p>
         <p class="text-sm">↑ <span class="icon-temperature font-semibold">{amount(currentStats.network.bytes_sent_rate, RATE_UNITS)}</span></p>
-        <svg viewBox="0 0 100 40" preserveAspectRatio="none" class="w-full h-16 mt-2" role="img" aria-label={chartName("monitor.network")}>
-          <path class="text-success" d={path(shown, recvOf, networkMax, start)} fill="none" stroke="currentColor" stroke-width="1.5" vector-effect="non-scaling-stroke" />
-          <path class="icon-temperature" d={path(shown, sentOf, networkMax, start)} fill="none" stroke="currentColor" stroke-width="1.5" vector-effect="non-scaling-stroke" />
-        </svg>
+        {@render chart("monitor.network", "w-full h-16 mt-2", networkMax, [
+          { cls: "text-success", value: recvOf },
+          { cls: "icon-temperature", value: sentOf }
+        ])}
         <p class="stat-card-sublabel">{$t("monitor.peak.network", { recv: amount(recvPeak, RATE_UNITS), sent: amount(sentPeak, RATE_UNITS) })}</p>
       </Card>
 
@@ -241,10 +225,10 @@
         </div>
         <p class="text-sm">{$t("monitor.read")} <span class="text-success font-semibold">{amount(currentStats.disk_io.read_rate, RATE_UNITS)}</span></p>
         <p class="text-sm">{$t("monitor.write")} <span class="text-error font-semibold">{amount(currentStats.disk_io.write_rate, RATE_UNITS)}</span></p>
-        <svg viewBox="0 0 100 40" preserveAspectRatio="none" class="w-full h-16 mt-2" role="img" aria-label={chartName("monitor.diskIo")}>
-          <path class="text-success" d={path(shown, readOf, diskMax, start)} fill="none" stroke="currentColor" stroke-width="1.5" vector-effect="non-scaling-stroke" />
-          <path class="text-error" d={path(shown, writeOf, diskMax, start)} fill="none" stroke="currentColor" stroke-width="1.5" vector-effect="non-scaling-stroke" />
-        </svg>
+        {@render chart("monitor.diskIo", "w-full h-16 mt-2", diskMax, [
+          { cls: "text-success", value: readOf },
+          { cls: "text-error", value: writeOf }
+        ])}
         <p class="stat-card-sublabel">{$t("monitor.peak.disk", { read: amount(readPeak, RATE_UNITS), write: amount(writePeak, RATE_UNITS) })}</p>
       </Card>
     </div>

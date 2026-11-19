@@ -1312,7 +1312,8 @@ class TestTheWebUI:
         # Names on the disk are the same in every language (ADR-0296): the Snapshots page has
         # them as constants, the server's, and no text of its catalog holds one, so that no
         # translation can change what the page says a folder or a copy is called.
-        page = (REPO / "webui" / "src" / "routes" / "snapshots" / "+page.svelte").read_text(encoding="utf-8")
+        # The Snapshots page's names are in its module (ADR-0427).
+        page = (REPO / "webui" / "src" / "lib" / "components" / "snapshots" / "names.ts").read_text(encoding="utf-8")
         catalog = REPO / "webui" / "src" / "lib" / "i18n" / "catalog" / "snapshots.ts"
         names = {
             "SNAPSHOTS_FOLDER": SNAPSHOT_DIR_NAME,
@@ -1322,7 +1323,7 @@ class TestTheWebUI:
         }
 
         for constant, name in names.items():
-            assert f"const {constant} = '{name}';" in page
+            assert f"export const {constant} = '{name}';" in page
         texts = catalog_strings(catalog)
         assert {"Restore Snapshot", "Восстановление снимка"} <= set(texts)
         assert [text for text in texts if any(name in text for name in names.values())] == []

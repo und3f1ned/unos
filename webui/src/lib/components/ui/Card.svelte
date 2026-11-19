@@ -1,6 +1,14 @@
 <script lang="ts">
-	export let nested: boolean = false;
-	export let padding: 'none' | 'sm' | 'md' | 'lg' = 'md';
+	import type { Snippet } from 'svelte';
+
+	type Props = {
+		nested?: boolean;
+		padding?: 'none' | 'sm' | 'md' | 'lg';
+		class?: string;
+		children?: Snippet;
+	};
+
+	let { nested = false, padding = 'md', class: className = '', children }: Props = $props();
 
 	const paddingClasses = {
 		none: 'p-0',
@@ -9,12 +17,14 @@
 		lg: 'p-6'
 	};
 
-	$: baseClass = nested ? 'card-nested' : 'card';
-	$: classes = `${baseClass} ${paddingClasses[padding]} ${$$props.class || ''}`.replace('p-4', paddingClasses[padding]);
+	const baseClass = $derived(nested ? 'card-nested' : 'card');
+	const classes = $derived(
+		`${baseClass} ${paddingClasses[padding]} ${className || ''}`.replace('p-4', paddingClasses[padding])
+	);
 </script>
 
 <div class={classes}>
-	<slot />
+	{@render children?.()}
 </div>
 
 <style>

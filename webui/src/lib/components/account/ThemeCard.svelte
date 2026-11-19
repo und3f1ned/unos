@@ -20,7 +20,7 @@
 	const icons = { dark: Moon, light: Sun, system: Monitor };
 	const names = { dark: 'theme.dark', light: 'theme.light', system: 'theme.system' };
 
-	let error = '';
+	let error = $state('');
 
 	// The user's theme as the server keeps it: asked again when the first read failed.
 	onMount(() => void loadAccountTheme());
@@ -45,6 +45,7 @@
 		<legend class="form-label">{$t('theme.label')}</legend>
 		<div class="flex flex-wrap gap-2">
 			{#each THEME_CHOICES as choice (choice)}
+				{@const Icon = icons[choice]}
 				<label
 					class="flex items-center gap-2 px-3 py-2 rounded-lg border cursor-pointer text-sm transition-colors
 						{$themeChoice === choice
@@ -56,9 +57,9 @@
 						name="theme"
 						value={choice}
 						checked={$themeChoice === choice}
-						on:change={() => choose(choice)}
+						onchange={() => choose(choice)}
 					/>
-					<svelte:component this={icons[choice]} class="w-4 h-4" aria-hidden="true" />
+					<Icon class="w-4 h-4" aria-hidden="true" />
 					{$t(names[choice])}
 				</label>
 			{/each}

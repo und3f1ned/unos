@@ -4651,24 +4651,35 @@
       ],
       "passes": false,
       "adr": [
-        "ADR-0231"
+        "ADR-0231",
+        "ADR-0427"
       ],
-      "notes": "SvelteKit 3 and @sveltejs/vite-plugin-svelte 7 come with it: they need Svelte 5. Dependabot proposes no major npm versions (ADR-0231)."
+      "notes": "Built 2026-11-19 (ADR-0427, which supersedes ADR-0231): Svelte 5.58 with SvelteKit 2.70, @sveltejs/vite-plugin-svelte 4 (the last for Vite 5), svelte-check 4.7.8 and lucide-svelte 0.321 (the lowest whose peer range takes Svelte 5; 0.300 to 0.320 take <5); SvelteKit 3 stays with webui.toolchain-major-versions, as it accepts TypeScript ^6 only. webui/node_modules shrinks from 129 to 107 MiB. Step 2: svelte.config.js compiles every file of webui/src with runes: true (export let and $: fail the build), and webui/scripts/runes-check.mjs (make frontend-runes) fails for <svelte:options runes={false} /> and every other syntax of Svelte 4; the icons of lucide-svelte 0.x, a library's, are the one part compiled in legacy mode until @lucide/svelte (a new dependency, for webui.toolchain-major-versions; lucide-svelte 1 is deprecated). The owner's refactor: every route file and component above about 400 lines is composed of area components of webui/src/lib/components/<area>/ with their state in .svelte.ts modules; no file of src is above 400 lines; messageOf (lib/errors.ts), Translate (lib/i18n) and the size formatter (lib/format.ts) are shared. The text, design and polling checks read Svelte 5 (svelte-walk.mjs); the polling check follows $effect, $derived and the methods of classes, and the text check the keys of .ts modules. The stand-in's front serves HTTP/2 as Caddy does: over HTTP/1.1, SvelteKit 2.70's fallback page with its 40-odd preloads made navigations fail with ERR_TOO_MANY_RETRIES. Specs unchanged; two markup details keep the text that specs read (a space between a disk's partitions, one line for an off-device copy's failure). Review (four fresh reviewers): fixed the runes={false} bypass, the polling check's blind spots (effects that assign what they read, $derived reaching the API, effects given by name or nested, class methods), unchecked keys in .ts modules, {@attach} in the text check, four backend tests that read constants which moved into modules, the container drawer's backdrop (a delegated onclick), stale comments and copies of messageOf. Left, with reasons: the polling check cannot see a $state field of a class that a timer changes and takes methods by name (no types); the texts (not keys) of .ts modules are for review; six confirmation dialogs of different areas (remote/ConfirmDialog, users/ConfirmDialog, shares/DangerDialog, power/PowerConfirmDialog, account/DeleteApiTokenDialog, snapshots/DeleteDialog) differ in small ways and stay as their pages had them, for the redesign; SpindownDialog and ImportDialog seed the user's choice from the target with a writable $derived, which a new target while open would reset (the page sets it only on open); Button passes handlers to a link too (no caller passes both); visible fixes: a dashboard size below 1 B or from 1 PiB no longer reads undefined, and a tap beside the phone menu or a container's drawer closes it on iOS Safari.",
+      "verified_by": [
+        "supervisor/tests/test_webui_runes.py",
+        "supervisor/tests/test_webui_polling.py",
+        "supervisor/tests/test_i18n.py",
+        "supervisor/tests/test_webui_design_system.py",
+        "webui/tests/mobile-layout.spec.ts",
+        "webui/tests/roles.spec.ts",
+        "webui/tests/language.spec.ts"
+      ]
     },
     {
       "id": "webui.toolchain-major-versions",
       "category": "webui",
       "description": "The web UI builds with the current major versions of its toolchain",
       "steps": [
-        "Vite, Tailwind CSS, TypeScript, svelte-check, @sveltejs/adapter-static and lucide-svelte are at their current major versions",
+        "SvelteKit, @sveltejs/vite-plugin-svelte, Vite, Tailwind CSS, TypeScript, svelte-check, @sveltejs/adapter-static and lucide-svelte are at their current major versions",
         "npm ci passes without --force or --legacy-peer-deps",
         "make check and make e2e-local pass"
       ],
       "passes": false,
       "adr": [
-        "ADR-0231"
+        "ADR-0231",
+        "ADR-0427"
       ],
-      "notes": "After webui.svelte-5. Dependabot's npm group of 2026-11-07 (pull request 26, closed) proposed SvelteKit 3.1.1, @sveltejs/adapter-static 4, @sveltejs/vite-plugin-svelte 7, Vite 8, Tailwind CSS 4, TypeScript 7, svelte-check 4 and lucide-svelte 1 at once, and npm ci failed on it: SvelteKit 3.1.1 accepts TypeScript ^6 only. Tailwind CSS 4 replaces tailwind.config.js and the PostCSS setup."
+      "notes": "After webui.svelte-5, which moved to Svelte 5 with SvelteKit 2.70, @sveltejs/vite-plugin-svelte 4 (the last for Vite 5), svelte-check 4 and lucide-svelte 0.321 and left SvelteKit 3 here: it accepts TypeScript ^6 only (ADR-0427). lucide-svelte 1 replaces the type IconComponent of webui/src/lib/components/ui/types.ts. Dependabot's npm group of 2026-11-07 (pull request 26, closed) proposed SvelteKit 3.1.1, @sveltejs/adapter-static 4, @sveltejs/vite-plugin-svelte 7, Vite 8, Tailwind CSS 4, TypeScript 7, svelte-check 4 and lucide-svelte 1 at once, and npm ci failed on it: SvelteKit 3.1.1 accepts TypeScript ^6 only. Tailwind CSS 4 replaces tailwind.config.js and the PostCSS setup."
     },
     {
       "id": "ci.btrfs-loop-device-tests",

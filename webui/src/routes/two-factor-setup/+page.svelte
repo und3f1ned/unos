@@ -1,4 +1,6 @@
 <script lang="ts">
+	import { messageOf } from '$lib/errors';
+	import { untrack } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { toDataURL } from 'qrcode';
 	import { enableTOTP, setupTOTP, type TOTPSetupResponse } from '$lib/api/auth';
@@ -14,23 +16,24 @@
 	// dashboard; after it, this is the one page the account gets, and the server refuses it
 	// everything but the setup, its status and the sign-out.
 
-	let setup: TOTPSetupResponse | null = null;
+	let setup = $state<TOTPSetupResponse | null>(null);
 	// The otpauth:// URI holds the secret: the QR code is drawn in the browser (ADR-0027).
-	let qrDataUrl = '';
-	let code = '';
-	let error = '';
-	let busy = false;
-	let done = false;
+	let qrDataUrl = $state('');
+	let code = $state('');
+	let error = $state('');
+	let busy = $state(false);
+	let done = $state(false);
 
-	$: required = $user?.two_factor_required ?? null;
-	$: setupOnly = isSetupOnly($user);
-	$: deadline = required ? formatDateTime(required.by, $intlLocale, { dateStyle: 'long', timeStyle: 'short' }) : '';
-	// Nothing to set up: no requirement applies to this account, or no longer.
-	$: if ($user && !required && !done) goto('/', { replaceState: true });
-
-	function messageOf(e: unknown): string {
-		return e instanceof Error ? e.message : String(e);
-	}
+	const required = $derived($user?.two_factor_required ?? null);
+	const setupOnly = $derived(isSetupOnly($user));
+	const deadline = $derived(
+		required ? formatDateTime(required.by, $intlLocale, { dateStyle: 'long', timeStyle: 'short' }) : ''
+	);
+	// Nothing to set up: no requirement applies to this account, or no longer. Before the markup
+	// is drawn, also the first time; whoever changes the account ($user) tells it.
+	$effect.pre(() => {
+		if ($user && !required && !done) untrack(() => goto('/', { replaceState: true }));
+	});
 
 	async function start() {
 		busy = true;
@@ -127,7 +130,13 @@
 					<p class="text-xs text-content-muted mb-2">{$t('account.totp.manual')}</p>
 					<code class="bg-surface-muted px-3 py-1 rounded font-mono text-sm break-all">{setup.secret}</code>
 				</div>
-				<form class="space-y-4" on:submit|preventDefault={confirm}>
+				<form
+					class="space-y-4"
+					onsubmit={(event) => {
+						event.preventDefault();
+						confirm();
+					}}
+				>
 					<Input
 						id="two-factor-code"
 						label={$t('account.totp.verifyLabel')}
@@ -141,7 +150,7 @@
 							>{$t('account.totp.enable2fa')}</Button
 						>
 						{#if setupOnly}
-							<Button variant="secondary" on:click={signOut}>{$t('twofactor.signOut')}</Button>
+							<Button variant="secondary" onclick={signOut}>{$t('twofactor.signOut')}</Button>
 						{:else}
 							<Button variant="secondary" href="/">{$t('twofactor.later')}</Button>
 						{/if}
@@ -149,9 +158,9 @@
 				</form>
 			{:else}
 				<div class="flex flex-wrap gap-3">
-					<Button loading={busy} disabled={busy} on:click={start}>{$t('twofactor.start')}</Button>
+					<Button loading={busy} disabled={busy} onclick={start}>{$t('twofactor.start')}</Button>
 					{#if setupOnly}
-						<Button variant="secondary" on:click={signOut}>{$t('twofactor.signOut')}</Button>
+						<Button variant="secondary" onclick={signOut}>{$t('twofactor.signOut')}</Button>
 					{:else}
 						<Button variant="secondary" href="/">{$t('twofactor.later')}</Button>
 					{/if}
