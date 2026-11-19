@@ -2,6 +2,7 @@
 	import { Ban, X } from 'lucide-svelte';
 	import { Alert, Badge, Button, Card, ProgressBar } from '$lib/components/ui';
 	import { intlLocale, t } from '$lib/i18n';
+	import { formatSize as formatSizeIn } from './size';
 	import { missingHardware, type AppInstallJob, type AppTemplate, type ImagePull } from '$lib/api/apps';
 
 	type Props = {
@@ -92,16 +93,9 @@
 		removed: { key: 'apps.job.container.removed', variant: 'neutral' }
 	};
 
-	// The units of a size, by powers of 1024, as the details of an app write them.
-	const SIZE_UNITS = ['apps.size.bytes', 'apps.size.kb', 'apps.size.mb', 'apps.size.gb', 'apps.size.tb'];
-
-	/** A size in the language of the page: the number in its format with the unit of the catalog. */
+	// A size with one decimal in the language of the page (formatSize of ./size).
 	function formatSize(bytes: number): string {
-		const power = bytes > 0 ? Math.max(0, Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), SIZE_UNITS.length - 1)) : 0;
-		const size = new Intl.NumberFormat($intlLocale, { maximumFractionDigits: 1, useGrouping: false }).format(
-			bytes / 1024 ** power
-		);
-		return $t(SIZE_UNITS[power], { size });
+		return formatSizeIn(bytes, $intlLocale, $t, 1);
 	}
 
 	function templateOf(job: AppInstallJob): AppTemplate | undefined {
