@@ -9,31 +9,31 @@
   import { apiTime } from "$lib/time";
   import { Server, User, Package, Globe } from "lucide-svelte";
 
-  let systemInfo: SystemInfo | null = null;
-  let currentVersion: CurrentVersion | null = null;
-  let loading = true;
+  let systemInfo = $state<SystemInfo | null>(null);
+  let currentVersion = $state<CurrentVersion | null>(null);
+  let loading = $state(true);
 
   // The name and time zone of the host (ADR-0331): each read and saved on its own.
-  let hostname = "";
-  let savedHostname = "";
-  let zone = "";
-  let savedZone = "";
-  let zones: string[] = [];
-  let hostLoading = true;
-  let hostLoadFailed = false;
-  let savingHostname = false;
-  let savingZone = false;
-  let hostNotice = "";
-  let hostError = "";
+  let hostname = $state("");
+  let savedHostname = $state("");
+  let zone = $state("");
+  let savedZone = $state("");
+  let zones = $state<string[]>([]);
+  let hostLoading = $state(true);
+  let hostLoadFailed = $state(false);
+  let savingHostname = $state(false);
+  let savingZone = $state(false);
+  let hostNotice = $state("");
+  let hostError = $state("");
 
-  let hostnameLoaded = false;
-  let zoneLoaded = false;
+  let hostnameLoaded = $state(false);
+  let zoneLoaded = $state(false);
 
   // The host's zone first when the host does not list it, so that the page shows it.
-  $: zoneOptions = [
+  let zoneOptions = $derived([
     ...(savedZone && savedZone !== "Unknown" && !zones.includes(savedZone) ? [savedZone] : []),
     ...zones,
-  ].map((name) => ({ value: name, label: name }));
+  ].map((name) => ({ value: name, label: name })));
 
   async function loadHost() {
     // Each row from its own answers: one that fails leaves the other usable.
@@ -99,7 +99,7 @@
   });
 
   // Reactive, so that the uptime follows a change of the language.
-  $: formatUptime = (bootTime: string): string => {
+  let formatUptime = $derived((bootTime: string): string => {
     const booted = apiTime(bootTime);
     if (!booted) return bootTime;
     const seconds = Math.floor((Date.now() - booted.getTime()) / 1000);
@@ -109,11 +109,11 @@
     if (days > 0) return $t("general.uptime.days", { days, hours, minutes });
     if (hours > 0) return $t("general.uptime.hours", { hours, minutes });
     return $t("general.uptime.minutes", { minutes });
-  };
+  });
 
   // A version in the language of the page: the server answers "unknown" when UNOS was built
   // without one (get_current_version of supervisor/src/updates/updater.py).
-  $: versionLabel = (version: string): string => (version === "unknown" ? $t("general.version.unknown") : version);
+  let versionLabel = $derived((version: string): string => (version === "unknown" ? $t("general.version.unknown") : version));
 </script>
 
 <div class="space-y-6">
@@ -171,7 +171,7 @@
       <div class="space-y-4">
         {#if hostnameLoaded}
           <div>
-            <form class="flex flex-wrap items-end gap-3" on:submit|preventDefault={saveHostname}>
+            <form class="flex flex-wrap items-end gap-3" onsubmit={(e) => { e.preventDefault(); saveHostname(); }}>
               <div class="min-w-0 flex-1 basis-56">
                 <Input id="general-hostname" label={$t("general.host.hostname")} bind:value={hostname} maxlength={63} />
               </div>
@@ -200,7 +200,7 @@
                   disabled={zones.length === 0}
                 />
               </div>
-              <Button variant="secondary" loading={savingZone} disabled={!zone || zone === savedZone} on:click={saveZone}>
+              <Button variant="secondary" loading={savingZone} disabled={!zone || zone === savedZone} onclick={saveZone}>
                 {$t("general.host.saveZone")}
               </Button>
             </div>
@@ -209,12 +209,12 @@
         {/if}
         <div role="status">
           {#if hostNotice}
-            <Alert variant="success" dismissible on:dismiss={() => (hostNotice = "")}>{hostNotice}</Alert>
+            <Alert variant="success" dismissible ondismiss={() => (hostNotice = "")}>{hostNotice}</Alert>
           {/if}
         </div>
         <div role="alert">
           {#if hostError}
-            <Alert variant="error" dismissible on:dismiss={() => (hostError = "")}>{hostError}</Alert>
+            <Alert variant="error" dismissible ondismiss={() => (hostError = "")}>{hostError}</Alert>
           {/if}
         </div>
       </div>

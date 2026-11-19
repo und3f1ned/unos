@@ -13,8 +13,9 @@
 //      alt, aria-label, label, hint, description, error, a prop named ...Label, ...Hint, ...Text
 //      and the like) or in any prop of a component whose value does not look like code;
 //    - no string literal in the <script> or in an expression of the markup (blocks, {@const},
-//      directives, props), wherever it goes: to a variable, a property, an argument, a return
-//      value, a thrown error or a placeholder of $t. A literal is not a text where it is compared
+//      {@render}, the defaults of a {#snippet}'s parameters, directives, props), wherever it
+//      goes: to a variable, a property, an argument, a return value, a thrown error or a
+//      placeholder of $t. A literal is not a text where it is compared
 //      or looked up (x === 'Escape', ua.includes('Chrome'), case 'tcp':), where it names a module,
 //      a type, a key of an object, an argument of console.* or the key of $t, where it goes to a
 //      class or a style, and where it looks like code: a name (primary, self_signed), an id or a
@@ -38,7 +39,8 @@
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { parse, walk } from 'svelte/compiler';
+import { parse } from 'svelte/compiler';
+import { walk } from './svelte-walk.mjs';
 import ts from 'typescript';
 
 const LOCALES = ['en', 'ru'];
@@ -497,6 +499,14 @@ function readMarkup(html, markup, into) {
 		const root = statement && ts.isExpressionStatement(statement) ? statement.expression : file;
 		readLiterals(root, root === file ? 'code' : context, file, node.start - 1, into);
 	};
+	// The parameters of a {#snippet}, read as those of an arrow function: their defaults.
+	const parameters = (list) => {
+		if (!Array.isArray(list) || list.length === 0) return;
+		const start = list[0].start;
+		const file = ts.createSourceFile('parameters.ts', `((${markup.slice(start, list.at(-1).end)}) => 0)`,
+			ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+		readLiterals(file, 'code', file, start - 2, into);
+	};
 	walk(html, {
 		enter(node, parent) {
 			switch (node.type) {
@@ -528,16 +538,21 @@ function readMarkup(html, markup, into) {
 					break;
 				}
 				case 'Spread':
-				case 'EventHandler':
 				case 'Binding':
 				case 'Action':
 				case 'Transition':
 				case 'Animation':
 				case 'Class':
-				case 'Let':
 				case 'ConstTag':
 					expression(node.expression, 'code');
 					this.skip();
+					break;
+				case 'RenderTag':
+					expression(node.expression, 'code');
+					this.skip();
+					break;
+				case 'SnippetBlock':
+					parameters(node.parameters);
 					break;
 				case 'IfBlock':
 				case 'AwaitBlock':

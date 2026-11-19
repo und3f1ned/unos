@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onDestroy, onMount } from 'svelte';
+	import { onDestroy, onMount, untrack } from 'svelte';
 	import {
 		getContainers,
 		startContainer,
@@ -40,44 +40,43 @@
 	] as const;
 	type TabId = (typeof tabs)[number]['id'];
 
-	let activeTab: TabId = 'containers';
+	let activeTab = $state<TabId>('containers');
 	// The Images tab loads its list when it is first shown, and keeps it (and a
-	// pull in progress) while the other tab is shown.
-	let imagesShown = false;
-	let imageList: ImageList | undefined;
-	$: if (activeTab === 'images') imagesShown = true;
+	// pull in progress) while the other tab is shown: showTab marks it shown.
+	let imagesShown = $state(false);
+	let imageList = $state<ImageList>();
 
-	let containers: Container[] = [];
-	let loading = true;
-	let error = '';
+	let containers = $state<Container[]>([]);
+	let loading = $state(true);
+	let error = $state('');
 	// Why the list could not be loaded (Docker did not answer: 503, ADR-0323). The tab then shows
 	// this error alone: no counts, search or empty list, and no Create button. The actions' and the
 	// Create dialog's errors are `error`.
-	let loadError = '';
-	let showCreateModal = false;
-	let submitting = false;
+	let loadError = $state('');
+	let showCreateModal = $state(false);
+	let submitting = $state(false);
 
 	// Search & Filter
-	let searchQuery = '';
-	let stateFilter = '';
-	let viewMode: 'table' | 'cards' = 'table';
+	let searchQuery = $state('');
+	let stateFilter = $state('');
+	let viewMode = $state<'table' | 'cards'>('table');
 
 	// Drawer state
-	let selectedContainer: Container | null = null;
-	let showDrawer = false;
+	let selectedContainer = $state<Container | null>(null);
+	let showDrawer = $state(false);
 
 	// Form state for create modal
-	let formData: ContainerCreate = {
+	let formData = $state<ContainerCreate>({
 		name: '',
 		image: '',
 		ports: [],
 		environment: {},
 		restart_policy: 'unless-stopped'
-	};
-	let portMapping = { host: '', container: '', protocol: 'tcp' };
-	let envVar = { key: '', value: '' };
-	let portsList: Array<{ host: string; container: string; protocol: string }> = [];
-	let envList: Array<{ key: string; value: string }> = [];
+	});
+	let portMapping = $state({ host: '', container: '', protocol: 'tcp' });
+	let envVar = $state({ key: '', value: '' });
+	let portsList = $state<Array<{ host: string; container: string; protocol: string }>>([]);
+	let envList = $state<Array<{ key: string; value: string }>>([]);
 
 	// Several containers at once (ADR-0389): the ids of the selected containers. Only what the list
 	// shows can be selected: a container that a search or a filter hides, or that the list no longer
@@ -87,10 +86,11 @@
 	// A container gets a state (done), a reason (failed) or `skipped` (not running, so not
 	// restarted: as on its own row, Restart is for a running container).
 	type BulkItem = { id: string; name: string; state?: string; reason?: string; skipped?: boolean };
-	let selected = new Set<string>();
-	let bulkRunning = false;
-	let bulkProgress: { action: BulkAction; name: string; i: number; n: number } | null = null;
-	let bulkResult: { action: BulkAction; items: BulkItem[] } | null = null;
+	// A Set is not made reactive by $state: every change assigns a new one.
+	let selected = $state<ReadonlySet<string>>(new Set());
+	let bulkRunning = $state(false);
+	let bulkProgress = $state<{ action: BulkAction; name: string; i: number; n: number } | null>(null);
+	let bulkResult = $state<{ action: BulkAction; items: BulkItem[] } | null>(null);
 	// The page was left: a run ends after the container it is at.
 	let left = false;
 	onDestroy(() => (left = true));
@@ -112,25 +112,32 @@
 	};
 
 	// Computed stats
-	$: runningCount = containers.filter((c) => c.state === 'running').length;
-	$: stoppedCount = containers.filter((c) => c.state === 'exited').length;
-	$: otherCount = containers.filter((c) => c.state !== 'running' && c.state !== 'exited').length;
+	const runningCount = $derived(containers.filter((c) => c.state === 'running').length);
+	const stoppedCount = $derived(containers.filter((c) => c.state === 'exited').length);
+	const otherCount = $derived(containers.filter((c) => c.state !== 'running' && c.state !== 'exited').length);
 
 	// Filtered containers
-	$: filteredContainers = containers.filter((c) => {
-		const matchesSearch =
-			searchQuery === '' ||
-			c.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-			c.image.toLowerCase().includes(searchQuery.toLowerCase());
-		const matchesState = stateFilter === '' || c.state === stateFilter;
-		return matchesSearch && matchesState;
-	});
+	const filteredContainers = $derived(
+		containers.filter((c) => {
+			const matchesSearch =
+				searchQuery === '' ||
+				c.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+				c.image.toLowerCase().includes(searchQuery.toLowerCase());
+			const matchesState = stateFilter === '' || c.state === stateFilter;
+			return matchesSearch && matchesState;
+		})
+	);
 
-	// What the list does not show leaves the selection.
-	$: keepShown(filteredContainers);
-	$: allShownSelected =
-		filteredContainers.length > 0 && filteredContainers.every((c) => selected.has(c.id));
-	$: bulkOk = bulkResult ? bulkResult.items.filter((item) => item.state !== undefined).length : 0;
+	// What the list does not show leaves the selection: after a search, a filter or a load, before
+	// the markup updates, as Svelte 4's statement did. Only the list shown makes it run again.
+	$effect.pre(() => {
+		const shown = filteredContainers;
+		untrack(() => keepShown(shown));
+	});
+	const allShownSelected = $derived(
+		filteredContainers.length > 0 && filteredContainers.every((c) => selected.has(c.id))
+	);
+	const bulkOk = $derived(bulkResult ? bulkResult.items.filter((item) => item.state !== undefined).length : 0);
 
 	function keepShown(shown: Container[]) {
 		const ids = new Set(shown.map((c) => c.id));
@@ -139,9 +146,10 @@
 	}
 
 	function toggleSelected(id: string, on: boolean) {
-		if (on) selected.add(id);
-		else selected.delete(id);
-		selected = selected;
+		const next = new Set(selected);
+		if (on) next.add(id);
+		else next.delete(id);
+		selected = next;
 	}
 
 	function toggleAllShown(event: Event) {
@@ -216,6 +224,11 @@
 		else loadData();
 	}
 
+	function showTab(id: TabId) {
+		activeTab = id;
+		if (id === 'images') imagesShown = true;
+	}
+
 	/**
 	 * Keyboard of the Containers / Images tabs: the arrow keys move to the
 	 * previous or next tab (wrapping around), Home and End to the first or
@@ -230,7 +243,7 @@
 		else if (event.key === 'End') next = tabs.length - 1;
 		else return;
 		event.preventDefault();
-		activeTab = tabs[next].id;
+		showTab(tabs[next].id);
 		document.getElementById(`docker-tab-${activeTab}`)?.focus();
 	}
 
@@ -376,8 +389,9 @@
 	};
 
 	/** A state in the language of the page; a state without a key as it comes. */
-	$: stateLabel = (state: string): string =>
-		Object.prototype.hasOwnProperty.call(STATES, state) ? $t(STATES[state]) : state;
+	function stateLabel(state: string): string {
+		return Object.prototype.hasOwnProperty.call(STATES, state) ? $t(STATES[state]) : state;
+	}
 
 	function getStateVariant(
 		state: string
@@ -429,14 +443,14 @@
 			<Button
 				variant="secondary"
 				size="icon"
-				on:click={refresh}
+				onclick={refresh}
 				disabled={activeTab === 'containers' && loading}
 			>
 				<RefreshCw class="w-4 h-4 {activeTab === 'containers' && loading ? 'animate-spin' : ''}" />
 				<span class="sr-only">{$t('common.refresh')}</span>
 			</Button>
 			{#if activeTab === 'containers' && !loadError}
-				<Button variant="primary" icon={Plus} on:click={openCreateModal}
+				<Button variant="primary" icon={Plus} onclick={openCreateModal}
 					>{$t('containers.create.button')}</Button
 				>
 			{/if}
@@ -457,8 +471,8 @@
 				aria-controls="docker-panel-{tab.id}"
 				tabindex={activeTab === tab.id ? 0 : -1}
 			 class="tab-pill {activeTab === tab.id ? 'tab-pill-active' : ''}"
-				on:click={() => (activeTab = tab.id)}
-				on:keydown={(event) => tabKeydown(event, tab.id)}
+				onclick={() => showTab(tab.id)}
+				onkeydown={(event) => tabKeydown(event, tab.id)}
 			>
 				{$t(tab.key)}
 			</Button>
@@ -482,7 +496,7 @@
 				'running'
 					? 'ring-2 ring-status-success'
 					: ''}"
-				on:click={() => (stateFilter = stateFilter === 'running' ? '' : 'running')}
+				onclick={() => (stateFilter = stateFilter === 'running' ? '' : 'running')}
 			>
 				<div class="flex items-center justify-between">
 					<div>
@@ -500,7 +514,7 @@
 				'exited'
 					? 'ring-2 ring-status-error'
 					: ''}"
-				on:click={() => (stateFilter = stateFilter === 'exited' ? '' : 'exited')}
+				onclick={() => (stateFilter = stateFilter === 'exited' ? '' : 'exited')}
 			>
 				<div class="flex items-center justify-between">
 					<div>
@@ -518,7 +532,7 @@
 				''
 					? 'ring-2 ring-brand-ring'
 					: ''}"
-				on:click={() => (stateFilter = '')}
+				onclick={() => (stateFilter = '')}
 			>
 				<div class="flex items-center justify-between">
 					<div>
@@ -551,7 +565,7 @@
 				variant={bulkOk === bulkResult.items.length ? 'success' : bulkOk === 0 ? 'error' : 'warning'}
 				{title}
 				dismissible
-				on:dismiss={() => (bulkResult = null)}
+				ondismiss={() => (bulkResult = null)}
 			>
 				<ul class="space-y-1 text-sm" aria-label={title}>
 					{#each bulkResult.items as item (item.id)}
@@ -594,14 +608,14 @@
 					<div class="flex border border-border rounded-lg overflow-hidden">
 						<Button variant="plain"
 						 class="p-2 {viewMode === 'table' ? 'bg-surface-overlay' : 'bg-transparent'}"
-							on:click={() => (viewMode = 'table')}
+							onclick={() => (viewMode = 'table')}
 							title={$t('containers.view.table')}
 						>
 							<List class="w-4 h-4" />
 						</Button>
 						<Button variant="plain"
 						 class="p-2 {viewMode === 'cards' ? 'bg-surface-overlay' : 'bg-transparent'}"
-							on:click={() => (viewMode = 'cards')}
+							onclick={() => (viewMode = 'cards')}
 							title={$t('containers.view.cards')}
 						>
 							<LayoutGrid class="w-4 h-4" />
@@ -624,7 +638,7 @@
 						class="form-checkbox"
 						checked={allShownSelected}
 						disabled={bulkRunning || filteredContainers.length === 0}
-						on:change={toggleAllShown}
+						onchange={toggleAllShown}
 					/>
 					{$t('containers.bulk.selectAll')}
 				</label>
@@ -637,21 +651,21 @@
 						size="sm"
 						icon={Play}
 						disabled={bulkRunning || selected.size === 0}
-						on:click={() => runBulk('start')}>{$t('containers.bulk.start')}</Button
+						onclick={() => runBulk('start')}>{$t('containers.bulk.start')}</Button
 					>
 					<Button
 						variant="secondary"
 						size="sm"
 						icon={Square}
 						disabled={bulkRunning || selected.size === 0}
-						on:click={() => runBulk('stop')}>{$t('containers.bulk.stop')}</Button
+						onclick={() => runBulk('stop')}>{$t('containers.bulk.stop')}</Button
 					>
 					<Button
 						variant="secondary"
 						size="sm"
 						icon={RotateCw}
 						disabled={bulkRunning || selected.size === 0}
-						on:click={() => runBulk('restart')}>{$t('containers.bulk.restart')}</Button
+						onclick={() => runBulk('restart')}>{$t('containers.bulk.restart')}</Button
 					>
 				</div>
 			</div>
@@ -669,13 +683,13 @@
 					: $t('containers.empty.none')}
 			>
 				{#if !searchQuery && !stateFilter}
-					<Button variant="primary" icon={Plus} on:click={openCreateModal}
+					<Button variant="primary" icon={Plus} onclick={openCreateModal}
 						>{$t('containers.create.button')}</Button
 					>
 				{:else}
 					<Button
 						variant="secondary"
-						on:click={() => {
+						onclick={() => {
 							searchQuery = '';
 							stateFilter = '';
 						}}>{$t('containers.empty.clear')}</Button
@@ -701,7 +715,7 @@
 							{#each filteredContainers as container}
 								<tr
 									class="table-row hover:bg-surface-overlay cursor-pointer transition-colors"
-									on:click={() => openDrawer(container)}
+									onclick={() => openDrawer(container)}
 								>
 									<td>
 										<!-- Selecting does not open the drawer. -->
@@ -711,8 +725,8 @@
 											checked={selected.has(container.id)}
 											disabled={bulkRunning}
 											aria-label={$t('containers.bulk.selectOne', { name: container.name })}
-											on:click|stopPropagation
-											on:change={(event) => toggleSelected(container.id, event.currentTarget.checked)}
+											onclick={(e) => e.stopPropagation()}
+											onchange={(event) => toggleSelected(container.id, event.currentTarget.checked)}
 										/>
 									</td>
 									<td>
@@ -735,7 +749,7 @@
 													href={getWebUrl(container)}
 													target="_blank"
 													rel="noopener"
-													on:click|stopPropagation
+													onclick={(e) => e.stopPropagation()}
 													class="text-info hover:text-status-info"
 													title={$t('containers.openInBrowser')}
 												>
@@ -749,14 +763,14 @@
 											{#if container.state === 'running'}
 												<Button variant="ghost" size="icon-sm" class="text-secondary hover:text-status-warning"
 													disabled={bulkRunning}
-													on:click={(e) => handleQuickAction(e, container.id, 'stop')}
+													onclick={(e) => handleQuickAction(e, container.id, 'stop')}
 													title={$t('containers.action.stop')}
 												>
 													<Square class="w-4 h-4" />
 												</Button>
 												<Button variant="ghost" size="icon-sm" class="text-secondary hover:text-status-info"
 													disabled={bulkRunning}
-													on:click={(e) => handleQuickAction(e, container.id, 'restart')}
+													onclick={(e) => handleQuickAction(e, container.id, 'restart')}
 													title={$t('containers.action.restart')}
 												>
 													<RotateCw class="w-4 h-4" />
@@ -764,7 +778,7 @@
 											{:else}
 												<Button variant="ghost" size="icon-sm" class="text-secondary hover:text-status-success"
 													disabled={bulkRunning}
-													on:click={(e) => handleQuickAction(e, container.id, 'start')}
+													onclick={(e) => handleQuickAction(e, container.id, 'start')}
 													title={$t('containers.action.start')}
 												>
 													<Play class="w-4 h-4" />
@@ -772,7 +786,7 @@
 											{/if}
 											<Button variant="ghost" size="icon-sm" class="text-secondary hover:text-status-error"
 												disabled={bulkRunning}
-												on:click={(e) => handleQuickAction(e, container.id, 'remove')}
+												onclick={(e) => handleQuickAction(e, container.id, 'remove')}
 												title={$t('containers.action.remove')}
 											>
 												<Trash2 class="w-4 h-4" />
@@ -791,10 +805,10 @@
 				{#each filteredContainers as container}
 					<div
 						class="card hover:bg-surface-overlay cursor-pointer transition-colors"
-						on:click={() => openDrawer(container)}
+						onclick={() => openDrawer(container)}
 						role="button"
 						tabindex="0"
-						on:keypress={(e) => e.key === 'Enter' && openDrawer(container)}
+						onkeypress={(e) => e.key === 'Enter' && openDrawer(container)}
 					>
 						<div class="flex items-start justify-between mb-3">
 							<div class="flex items-center gap-3 min-w-0">
@@ -804,9 +818,9 @@
 									checked={selected.has(container.id)}
 									disabled={bulkRunning}
 									aria-label={$t('containers.bulk.selectOne', { name: container.name })}
-									on:click|stopPropagation
-									on:keypress|stopPropagation
-									on:change={(event) => toggleSelected(container.id, event.currentTarget.checked)}
+									onclick={(e) => e.stopPropagation()}
+									onkeypress={(e) => e.stopPropagation()}
+									onchange={(event) => toggleSelected(container.id, event.currentTarget.checked)}
 								/>
 								<div
 									class="w-10 h-10 rounded-lg bg-surface-muted flex items-center justify-center flex-shrink-0"
@@ -842,7 +856,7 @@
 										href={getWebUrl(container)}
 										target="_blank"
 										rel="noopener"
-										on:click|stopPropagation
+										onclick={(e) => e.stopPropagation()}
 										class="p-1.5 rounded hover:bg-surface-muted text-info transition-colors"
 										title={$t('containers.openInBrowser')}
 									>
@@ -852,7 +866,7 @@
 								{#if container.state === 'running'}
 									<Button variant="ghost" size="icon-sm" class="text-secondary hover:text-status-warning"
 										disabled={bulkRunning}
-										on:click={(e) => handleQuickAction(e, container.id, 'stop')}
+										onclick={(e) => handleQuickAction(e, container.id, 'stop')}
 										title={$t('containers.action.stop')}
 									>
 										<Square class="w-4 h-4" />
@@ -860,7 +874,7 @@
 								{:else}
 									<Button variant="ghost" size="icon-sm" class="text-secondary hover:text-status-success"
 										disabled={bulkRunning}
-										on:click={(e) => handleQuickAction(e, container.id, 'start')}
+										onclick={(e) => handleQuickAction(e, container.id, 'start')}
 										title={$t('containers.action.start')}
 									>
 										<Play class="w-4 h-4" />
@@ -868,7 +882,7 @@
 								{/if}
 								<Button variant="ghost" size="icon-sm" class="text-secondary hover:text-status-error"
 									disabled={bulkRunning}
-									on:click={(e) => handleQuickAction(e, container.id, 'remove')}
+									onclick={(e) => handleQuickAction(e, container.id, 'remove')}
 									title={$t('containers.action.remove')}
 								>
 									<Trash2 class="w-4 h-4" />
@@ -896,12 +910,18 @@
 
 <!-- Create Container Modal -->
 <Modal
-	bind:open={showCreateModal}
+	open={showCreateModal}
 	title={$t('containers.create.title')}
 	size="lg"
-	on:close={closeCreateModal}
+	onclose={closeCreateModal}
 >
-	<form on:submit|preventDefault={handleCreate} class="space-y-4">
+	<form
+		onsubmit={(e) => {
+			e.preventDefault();
+			void handleCreate();
+		}}
+		class="space-y-4"
+	>
 		<Input
 			label={$t('containers.create.name')}
 			bind:value={formData.name}
@@ -950,7 +970,7 @@
 					<option value="tcp">{$t('containers.protocol.tcp')}</option>
 					<option value="udp">{$t('containers.protocol.udp')}</option>
 				</select>
-				<Button variant="secondary" size="sm" on:click={addPort} type="button"
+				<Button variant="secondary" size="sm" onclick={addPort} type="button"
 					>{$t('containers.create.add')}</Button
 				>
 			</div>
@@ -963,7 +983,7 @@
 							<span class="mono">{port.host}:{port.container}/{port.protocol}</span>
 							<Button variant="plain"
 								type="button"
-								on:click={() => removePort(i)}
+								onclick={() => removePort(i)}
 							 class="text-error hover:text-status-error"
 							>
 								<Trash2 class="w-4 h-4" />
@@ -991,7 +1011,7 @@
 					placeholder={$t('containers.create.envValue')}
 					class="form-input flex-1 min-w-[7rem]"
 				/>
-				<Button variant="secondary" size="sm" on:click={addEnvVar} type="button"
+				<Button variant="secondary" size="sm" onclick={addEnvVar} type="button"
 					>{$t('containers.create.add')}</Button
 				>
 			</div>
@@ -1004,7 +1024,7 @@
 							<span class="mono">{env.key}={env.value}</span>
 							<Button variant="plain"
 								type="button"
-								on:click={() => removeEnvVar(i)}
+								onclick={() => removeEnvVar(i)}
 							 class="text-error hover:text-status-error"
 							>
 								<Trash2 class="w-4 h-4" />
@@ -1020,20 +1040,20 @@
 		{/if}
 	</form>
 
-	<svelte:fragment slot="footer">
-		<Button variant="secondary" class="flex-1" on:click={closeCreateModal}
+	{#snippet footer()}
+		<Button variant="secondary" class="flex-1" onclick={closeCreateModal}
 			>{$t('common.cancel')}</Button
 		>
 		<Button
 			variant="primary"
 			class="flex-1"
 			loading={submitting}
-			on:click={handleCreate}
+			onclick={handleCreate}
 			icon={Plus}
 		>
 			{$t('containers.create.button')}
 		</Button>
-	</svelte:fragment>
+	{/snippet}
 </Modal>
 
 <!-- Container Detail Drawer -->
@@ -1041,6 +1061,6 @@
 	bind:open={showDrawer}
 	container={selectedContainer}
 	busy={bulkRunning}
-	on:close={closeDrawer}
-	on:action={handleDrawerAction}
+	onclose={closeDrawer}
+	onaction={handleDrawerAction}
 />

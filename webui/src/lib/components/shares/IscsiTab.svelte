@@ -14,16 +14,20 @@
 	import { Alert, Badge, Button, Card, EmptyState, Input, Modal, Select } from '$lib/components/ui';
 	import { t } from '$lib/i18n';
 
-	/** Pools and volumes (GET /shares/paths): a target takes a volume of a pool that UNOS manages. */
-	export let paths: SharePath[] = [];
+	type Props = {
+		/** Pools and volumes (GET /shares/paths): a target takes a volume of a pool that UNOS manages. */
+		paths?: SharePath[];
+	};
 
-	let state: IscsiState | null = null;
-	let loadError = '';
-	let notice = '';
+	let { paths = [] }: Props = $props();
+
+	let iscsiState: IscsiState | null = $state(null);
+	let loadError = $state('');
+	let notice = $state('');
 
 	// The volumes that can hold a LUN, by "pool/volume".
-	$: volumes = paths.filter((p) => p.type === 'volume' && p.managed);
-	$: volumeOptions = volumes.map((p) => ({ value: p.name, label: p.name }));
+	const volumes = $derived(paths.filter((p) => p.type === 'volume' && p.managed));
+	const volumeOptions = $derived(volumes.map((p) => ({ value: p.name, label: p.name })));
 
 	function messageOf(e: unknown): string {
 		return e instanceof Error ? e.message : String(e);
@@ -38,7 +42,7 @@
 
 	async function load() {
 		try {
-			state = await getIscsi();
+			iscsiState = await getIscsi();
 			loadError = '';
 		} catch (e) {
 			loadError = messageOf(e);
@@ -48,9 +52,9 @@
 	onMount(load);
 
 	// ---- the secrets, shown once ----
-	let shown: IscsiSecrets | null = null;
-	let copied = false;
-	let copyFailed = false;
+	let shown: IscsiSecrets | null = $state(null);
+	let copied = $state(false);
+	let copyFailed = $state(false);
 
 	async function copy(text: string | null) {
 		if (!text) return;
@@ -71,25 +75,28 @@
 	}
 
 	// ---- create ----
-	let creating = false;
-	let saving = false;
-	let attempted = false;
-	let formError = '';
-	let name = '';
-	let volume = '';
-	let size = '';
-	let initiators = '';
-	let chapUser = '';
-	let chapSecret = '';
-	let mutual = false;
-	let mutualSecret = '';
+	let creating = $state(false);
+	let saving = $state(false);
+	let attempted = $state(false);
+	let formError = $state('');
+	let name = $state('');
+	let volume = $state('');
+	let size = $state('');
+	let initiators = $state('');
+	let chapUser = $state('');
+	let chapSecret = $state('');
+	let mutual = $state(false);
+	let mutualSecret = $state('');
 
-	$: sizeNumber = Number(size);
-	$: nameError = attempted && !name.trim() ? $t('iscsi.form.nameRequired') : '';
-	$: volumeError = attempted && !volume ? $t('iscsi.form.volumeRequired') : '';
-	$: sizeError =
-		attempted && !(Number.isInteger(sizeNumber) && sizeNumber > 0) ? $t('iscsi.form.sizeRequired') : '';
-	$: initiatorsError = attempted && lines(initiators).length === 0 ? $t('iscsi.form.initiatorsRequired') : '';
+	const sizeNumber = $derived(Number(size));
+	const nameError = $derived(attempted && !name.trim() ? $t('iscsi.form.nameRequired') : '');
+	const volumeError = $derived(attempted && !volume ? $t('iscsi.form.volumeRequired') : '');
+	const sizeError = $derived(
+		attempted && !(Number.isInteger(sizeNumber) && sizeNumber > 0) ? $t('iscsi.form.sizeRequired') : ''
+	);
+	const initiatorsError = $derived(
+		attempted && lines(initiators).length === 0 ? $t('iscsi.form.initiatorsRequired') : ''
+	);
 
 	function openCreate() {
 		name = '';
@@ -137,14 +144,14 @@
 	}
 
 	// ---- change ----
-	let editing: IscsiTarget | null = null;
-	let editInitiators = '';
-	let newSecret = false;
-	let editSecret = '';
-	let editMutual = false;
-	let newMutualSecret = false;
-	let editMutualSecret = '';
-	let editError = '';
+	let editing: IscsiTarget | null = $state(null);
+	let editInitiators = $state('');
+	let newSecret = $state(false);
+	let editSecret = $state('');
+	let editMutual = $state(false);
+	let newMutualSecret = $state(false);
+	let editMutualSecret = $state('');
+	let editError = $state('');
 
 	function openEdit(target: IscsiTarget) {
 		editing = target;
@@ -184,9 +191,9 @@
 	}
 
 	// ---- delete ----
-	let deleting: IscsiTarget | null = null;
-	let typed = '';
-	let deleteError = '';
+	let deleting: IscsiTarget | null = $state(null);
+	let typed = $state('');
+	let deleteError = $state('');
 
 	function openDelete(target: IscsiTarget) {
 		deleting = target;
@@ -214,7 +221,7 @@
 
 <div class="space-y-6">
 	{#if notice}
-		<Alert variant="success" dismissible on:dismiss={() => (notice = '')}>{notice}</Alert>
+		<Alert variant="success" dismissible ondismiss={() => (notice = '')}>{notice}</Alert>
 	{/if}
 
 	<Card>
@@ -222,8 +229,8 @@
 			<h2 class="card-title">{$t('iscsi.title')}</h2>
 			<Button
 				icon={Plus}
-				disabled={!state || !state.kernel_support || volumes.length === 0}
-				on:click={openCreate}
+				disabled={!iscsiState || !iscsiState.kernel_support || volumes.length === 0}
+				onclick={openCreate}
 			>
 				{$t('iscsi.add')}
 			</Button>
@@ -232,31 +239,31 @@
 
 		{#if loadError}
 			<Alert variant="error" title={$t('iscsi.loadError')}>{loadError}</Alert>
-		{:else if !state}
+		{:else if !iscsiState}
 			<p class="loading-text">{$t('common.loading')}</p>
 		{:else}
 			<div class="space-y-4">
-				{#if !state.kernel_support}
+				{#if !iscsiState.kernel_support}
 					<Alert variant="warning">{$t('iscsi.noKernel')}</Alert>
 				{/if}
 				{#if volumes.length === 0}
 					<Alert variant="info">{$t('iscsi.noVolumes')}</Alert>
 				{/if}
-				{#if state.portals_problem}
-					<Alert variant="warning" title={$t('iscsi.portalsProblem')}>{state.portals_problem}</Alert>
-				{:else if state.portals.length > 0}
+				{#if iscsiState.portals_problem}
+					<Alert variant="warning" title={$t('iscsi.portalsProblem')}>{iscsiState.portals_problem}</Alert>
+				{:else if iscsiState.portals.length > 0}
 					<p class="text-sm break-words">
-						{$t('iscsi.portals', { portals: state.portals.join(', ') })}
+						{$t('iscsi.portals', { portals: iscsiState.portals.join(', ') })}
 					</p>
 				{:else}
 					<Alert variant="warning">{$t('iscsi.noPortals')}</Alert>
 				{/if}
 
-				{#if state.targets.length === 0}
+				{#if iscsiState.targets.length === 0}
 					<EmptyState icon={HardDrive} title={$t('iscsi.empty')} description={$t('iscsi.emptyHint')} />
 				{:else}
 					<ul class="space-y-3" aria-label={$t('iscsi.title')}>
-						{#each state.targets as target (target.name)}
+						{#each iscsiState.targets as target (target.name)}
 							<li class="card-nested space-y-2" data-target={target.name}>
 								<div class="flex flex-wrap items-center gap-2 justify-between">
 									<div class="flex flex-wrap items-center gap-2 min-w-0">
@@ -268,10 +275,10 @@
 										{/if}
 									</div>
 									<div class="flex flex-wrap gap-2">
-										<Button variant="secondary" size="sm" on:click={() => openEdit(target)}>
+										<Button variant="secondary" size="sm" onclick={() => openEdit(target)}>
 											{$t('iscsi.change')}
 										</Button>
-										<Button variant="danger" size="sm" on:click={() => openDelete(target)}>
+										<Button variant="danger" size="sm" onclick={() => openDelete(target)}>
 											{$t('iscsi.delete')}
 										</Button>
 									</div>
@@ -317,8 +324,14 @@
 </div>
 
 {#if creating}
-	<Modal open title={$t('iscsi.form.title')} size="md" closable={!saving} on:close={() => (creating = false)}>
-		<form on:submit|preventDefault={create} class="space-y-4">
+	<Modal open title={$t('iscsi.form.title')} size="md" closable={!saving} onclose={() => (creating = false)}>
+		<form
+			onsubmit={(event) => {
+				event.preventDefault();
+				create();
+			}}
+			class="space-y-4"
+		>
 			<Input
 				id="iscsi-name"
 				label={$t('iscsi.form.name')}
@@ -356,7 +369,7 @@
 					placeholder={$t('iscsi.form.initiatorsPlaceholder')}
 					aria-describedby="iscsi-initiators-hint"
 					bind:value={initiators}
-				/>
+				></textarea>
 				{#if initiatorsError}
 					<p class="form-error">{initiatorsError}</p>
 				{/if}
@@ -400,12 +413,12 @@
 		{#if formError}
 			<Alert variant="error" title={$t('iscsi.form.notCreated')}>{formError}</Alert>
 		{/if}
-		<svelte:fragment slot="footer">
-			<Button variant="secondary" class="flex-1" disabled={saving} on:click={() => (creating = false)}>
+		{#snippet footer()}
+			<Button variant="secondary" class="flex-1" disabled={saving} onclick={() => (creating = false)}>
 				{$t('common.cancel')}
 			</Button>
-			<Button class="flex-1" loading={saving} on:click={create}>{$t('iscsi.form.create')}</Button>
-		</svelte:fragment>
+			<Button class="flex-1" loading={saving} onclick={create}>{$t('iscsi.form.create')}</Button>
+		{/snippet}
 	</Modal>
 {/if}
 
@@ -415,9 +428,15 @@
 		title={$t('iscsi.edit.title', { name: editing.name })}
 		size="md"
 		closable={!saving}
-		on:close={() => (editing = null)}
+		onclose={() => (editing = null)}
 	>
-		<form on:submit|preventDefault={saveEdit} class="space-y-4">
+		<form
+			onsubmit={(event) => {
+				event.preventDefault();
+				saveEdit();
+			}}
+			class="space-y-4"
+		>
 			<div>
 				<label for="iscsi-edit-initiators" class="form-label">{$t('iscsi.form.initiators')}</label>
 				<textarea
@@ -428,7 +447,7 @@
 					autocomplete="off"
 					aria-describedby="iscsi-edit-initiators-hint"
 					bind:value={editInitiators}
-				/>
+				></textarea>
 				<p id="iscsi-edit-initiators-hint" class="form-hint">{$t('iscsi.form.initiatorsHint')}</p>
 			</div>
 			<label class="flex items-center gap-2 cursor-pointer">
@@ -471,17 +490,17 @@
 		{#if editError}
 			<Alert variant="error" title={$t('iscsi.edit.notChanged')}>{editError}</Alert>
 		{/if}
-		<svelte:fragment slot="footer">
-			<Button variant="secondary" class="flex-1" disabled={saving} on:click={() => (editing = null)}>
+		{#snippet footer()}
+			<Button variant="secondary" class="flex-1" disabled={saving} onclick={() => (editing = null)}>
 				{$t('common.cancel')}
 			</Button>
-			<Button class="flex-1" loading={saving} on:click={saveEdit}>{$t('iscsi.edit.save')}</Button>
-		</svelte:fragment>
+			<Button class="flex-1" loading={saving} onclick={saveEdit}>{$t('iscsi.edit.save')}</Button>
+		{/snippet}
 	</Modal>
 {/if}
 
 {#if shown}
-	<Modal open title={$t('iscsi.secret.title', { name: shown.target.name })} size="md" on:close={closeSecrets}>
+	<Modal open title={$t('iscsi.secret.title', { name: shown.target.name })} size="md" onclose={closeSecrets}>
 		<div class="space-y-4">
 			<Alert variant="warning">{$t('iscsi.secret.once')}</Alert>
 			<dl class="grid grid-cols-1 gap-y-1 text-sm">
@@ -495,7 +514,7 @@
 					<label for="iscsi-shown-secret" class="form-label">{$t('iscsi.secret.chap')}</label>
 					<div class="flex flex-wrap items-center gap-2">
 						<input id="iscsi-shown-secret" class="form-input mono flex-1 min-w-0" readonly value={shown.chap_secret} />
-						<Button variant="secondary" size="sm" on:click={() => copy(shown?.chap_secret ?? null)}>
+						<Button variant="secondary" size="sm" onclick={() => copy(shown?.chap_secret ?? null)}>
 							{$t('iscsi.secret.copy')}
 						</Button>
 					</div>
@@ -506,7 +525,7 @@
 					<label for="iscsi-shown-mutual" class="form-label">{$t('iscsi.secret.mutual')}</label>
 					<div class="flex flex-wrap items-center gap-2">
 						<input id="iscsi-shown-mutual" class="form-input mono flex-1 min-w-0" readonly value={shown.mutual_secret} />
-						<Button variant="secondary" size="sm" on:click={() => copy(shown?.mutual_secret ?? null)}>
+						<Button variant="secondary" size="sm" onclick={() => copy(shown?.mutual_secret ?? null)}>
 							{$t('iscsi.secret.copy')}
 						</Button>
 					</div>
@@ -515,9 +534,9 @@
 			{#if copied}<p class="text-sm text-status-success">{$t('iscsi.secret.copied')}</p>{/if}
 			{#if copyFailed}<p class="text-sm text-status-error">{$t('iscsi.secret.copyFailed')}</p>{/if}
 		</div>
-		<svelte:fragment slot="footer">
-			<Button class="flex-1" on:click={closeSecrets}>{$t('iscsi.secret.done')}</Button>
-		</svelte:fragment>
+		{#snippet footer()}
+			<Button class="flex-1" onclick={closeSecrets}>{$t('iscsi.secret.done')}</Button>
+		{/snippet}
 	</Modal>
 {/if}
 
@@ -528,9 +547,15 @@
 		title={$t('iscsi.remove.title', { name: deleting.name })}
 		size="md"
 		closable={!saving}
-		on:close={() => (deleting = null)}
+		onclose={() => (deleting = null)}
 	>
-		<form on:submit|preventDefault={remove} class="space-y-4">
+		<form
+			onsubmit={(event) => {
+				event.preventDefault();
+				remove();
+			}}
+			class="space-y-4"
+		>
 			<p class="text-sm break-words">{$t('iscsi.remove.warning', { path: deleting.path })}</p>
 			{#if deleting.sessions.length > 0}
 				<Alert variant="warning">
@@ -548,19 +573,19 @@
 		{#if deleteError}
 			<Alert variant="error" title={$t('iscsi.remove.notDeleted')}>{deleteError}</Alert>
 		{/if}
-		<svelte:fragment slot="footer">
-			<Button variant="secondary" class="flex-1" disabled={saving} on:click={() => (deleting = null)}>
+		{#snippet footer()}
+			<Button variant="secondary" class="flex-1" disabled={saving} onclick={() => (deleting = null)}>
 				{$t('common.cancel')}
 			</Button>
 			<Button
 				variant="danger"
 				class="flex-1"
 				loading={saving}
-				disabled={typed !== deleting.name}
-				on:click={remove}
+				disabled={typed !== deleting?.name}
+				onclick={remove}
 			>
 				{$t('iscsi.remove.confirm')}
 			</Button>
-		</svelte:fragment>
+		{/snippet}
 	</Modal>
 {/if}

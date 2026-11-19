@@ -1,11 +1,10 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import type { ComponentType } from "svelte";
   import {
     AlertTriangle, Bell, CheckCircle, ChevronDown, ChevronUp, Clock, Info, Mail, MessageCircle,
     MessageSquare, Pencil, RefreshCw, Send, Settings, Slack, Trash2, Webhook, Zap
   } from "lucide-svelte";
-  import { Alert, Badge, Button, Card, EmptyState, Input, Modal, Select } from "$lib/components/ui";
+  import { Alert, Badge, Button, Card, EmptyState, Input, Modal, Select, type IconComponent } from "$lib/components/ui";
   import { intlLocale, t } from "$lib/i18n";
   import { apiTime, formatDateTime } from "$lib/time";
   import {
@@ -17,7 +16,7 @@
   // delivered it, or why not, and the history lists every notification sent, newest first.
 
   // Each kind's name and the text of the button that adds one: keys of the catalog.
-  const KINDS: Record<ChannelKind, { name: string; add: string; icon: ComponentType }> = {
+  const KINDS: Record<ChannelKind, { name: string; add: string; icon: IconComponent }> = {
     email: { name: "notifications.kinds.email", add: "notifications.add.email", icon: Mail },
     telegram: { name: "notifications.kinds.telegram", add: "notifications.add.telegram", icon: MessageCircle },
     webhook: { name: "notifications.kinds.webhook", add: "notifications.add.webhook", icon: Webhook },
@@ -84,101 +83,102 @@
 
   const own = (object: object, key: string) => Object.prototype.hasOwnProperty.call(object, key);
 
-  let logs: NotificationLog[] = [];
-  let configs: NotificationConfig[] = [];
-  let eventTypes: EventType[] = [];
-  let loading = true;
-  let loadError = "";
-  let activeView: "channels" | "history" = "channels";
+  let logs = $state<NotificationLog[]>([]);
+  let configs = $state<NotificationConfig[]>([]);
+  let eventTypes = $state<EventType[]>([]);
+  let loading = $state(true);
+  let loadError = $state("");
+  let activeView = $state<"channels" | "history">("channels");
 
   // The outcome of each channel's last test, by channel id: shown under the channel.
-  let results: Record<string, { success: boolean; message: string }> = {};
-  let testing: string | null = null;
-  let actionError = "";
+  let results = $state<Record<string, { success: boolean; message: string }>>({});
+  let testing = $state<string | null>(null);
+  let actionError = $state("");
 
   // The dialog that adds or edits a channel.
-  let showModal = false;
-  let editing: NotificationConfig | null = null;
-  let formKind: ChannelKind = "email";
-  let formName = "";
-  let formEnabled = true;
-  let formEvents: string[] = [];
-  let saving = false;
-  let saveError = "";
+  let showModal = $state(false);
+  let editing = $state<NotificationConfig | null>(null);
+  let formKind = $state<ChannelKind>("email");
+  let formName = $state("");
+  let formEnabled = $state(true);
+  let formEvents = $state<string[]>([]);
+  let saving = $state(false);
+  let saveError = $state("");
 
-  let emailHost = "";
-  let emailPort = "587";
-  let emailUser = "";
-  let emailPassword = "";
-  let emailTls = true;
-  let emailVerifyTls = true;
-  let emailFrom = "";
-  let emailTo = "";
-  let telegramToken = "";
-  let telegramChatId = "";
+  let emailHost = $state("");
+  let emailPort = $state("587");
+  let emailUser = $state("");
+  let emailPassword = $state("");
+  let emailTls = $state(true);
+  let emailVerifyTls = $state(true);
+  let emailFrom = $state("");
+  let emailTo = $state("");
+  let telegramToken = $state("");
+  let telegramChatId = $state("");
   // The URL of a webhook, Discord or Slack channel, and a webhook's method.
-  let hookUrl = "";
-  let hookMethod = "POST";
+  let hookUrl = $state("");
+  let hookMethod = $state("POST");
 
-  let deleting: NotificationConfig | null = null;
-  let deleteBusy = false;
-  let deleteError = "";
+  let deleting = $state<NotificationConfig | null>(null);
+  let deleteBusy = $state(false);
+  let deleteError = $state("");
 
-  let filterChannel = "all";
-  let filterStatus: "all" | "success" | "failed" = "all";
-  let expandedLog: string | null = null;
+  let filterChannel = $state("all");
+  let filterStatus = $state<"all" | "success" | "failed">("all");
+  let expandedLog = $state<string | null>(null);
 
-  $: totalSent = logs.length;
-  $: successCount = logs.filter((l) => l.success).length;
-  $: failedCount = logs.filter((l) => !l.success).length;
-  $: activeChannels = configs.filter((c) => c.enabled).length;
-  $: recipients = emailTo.split(",").map((e) => e.trim()).filter((e) => e);
-  $: port = Number(emailPort);
+  let totalSent = $derived(logs.length);
+  let successCount = $derived(logs.filter((l) => l.success).length);
+  let failedCount = $derived(logs.filter((l) => !l.success).length);
+  let activeChannels = $derived(configs.filter((c) => c.enabled).length);
+  let recipients = $derived(emailTo.split(",").map((e) => e.trim()).filter((e) => e));
+  let port = $derived(Number(emailPort));
   // Plain SMTP: no TLS, so no certificate to check, and the password crosses the network as it is.
-  $: plainSmtp = !emailTls && port !== 465;
-  $: formComplete =
+  let plainSmtp = $derived(!emailTls && port !== 465);
+  let formComplete = $derived(
     formKind === "email"
       ? emailHost.trim() !== "" && Number.isInteger(port) && port > 0 && port < 65536 &&
         emailFrom.trim() !== "" && recipients.length > 0
       : formKind === "telegram"
         ? telegramToken.trim() !== "" && telegramChatId.trim() !== ""
-        : hookUrl.trim() !== "";
-  $: filteredLogs = logs.filter((log) => {
+        : hookUrl.trim() !== ""
+  );
+  let filteredLogs = $derived(logs.filter((log) => {
     if (filterChannel !== "all" && log.channel !== filterChannel) return false;
     if (filterStatus === "success" && !log.success) return false;
     if (filterStatus === "failed" && log.success) return false;
     return true;
-  });
-  $: hookField = HOOK_FIELDS[formKind === "discord" || formKind === "slack" ? formKind : "webhook"];
-  $: channelOptions = [
+  }));
+  let hookField = $derived(HOOK_FIELDS[formKind === "discord" || formKind === "slack" ? formKind : "webhook"]);
+  let channelOptions = $derived([
     { value: "all", label: $t("notifications.history.allChannels") },
     ...KIND_ORDER.map((kind) => ({ value: kind, label: kindName(kind) })),
-  ];
+  ]);
 
   // The texts that the markup gets from functions are reactive, so that they follow a change of the
   // language.
 
   /** The text of `value`'s key in `keys`, in the language of the page; a value without one as it comes. */
-  $: labelOf = (keys: Record<string, string>, value: string): string => (own(keys, value) ? $t(keys[value]) : value);
+  let labelOf = $derived((keys: Record<string, string>, value: string): string => (own(keys, value) ? $t(keys[value]) : value));
 
   /** The name of a kind of channel in the language of the page; a kind without one as it comes. */
-  $: kindName = (kind: string): string => (own(KINDS, kind) ? $t(KINDS[kind as ChannelKind].name) : kind);
+  let kindName = $derived((kind: string): string => (own(KINDS, kind) ? $t(KINDS[kind as ChannelKind].name) : kind));
 
-  $: nameOf = (config: NotificationConfig): string => config.name || kindName(config.channel);
+  let nameOf = $derived((config: NotificationConfig): string => config.name || kindName(config.channel));
 
   /** The name of an event of a channel in the language of the page; an id without one as it comes. */
-  $: eventName = (id: string): string => (own(EVENTS, id) ? $t(EVENTS[id].name) : id);
+  let eventName = $derived((id: string): string => (own(EVENTS, id) ? $t(EVENTS[id].name) : id));
 
-  $: hostOf = (url: string): string => {
+  let hostOf = $derived((url: string): string => {
     try {
       return new URL(url).host;
     } catch {
       return $t("notifications.summary.invalidUrl");
     }
-  };
+  });
 
   // What the list shows of a channel; webhook URLs carry their secret in the path, so only the host.
-  $: summaryOf = (config: NotificationConfig): string => {
+  let summaryOf = $derived((config: NotificationConfig): string => {
     const email = config.email_config;
     if (config.channel === "email" && email) {
       return $t("notifications.summary.email", {
@@ -198,10 +198,10 @@
     }
     const hook = config.channel === "discord" ? config.discord_config : config.slack_config;
     return hook ? $t("notifications.summary.hook", { host: hostOf(hook.webhook_url) }) : "";
-  };
+  });
 
   // The time of a notification sent: how long ago, within a day; else its date in the language of the page.
-  $: formatDate = (sentAt: string): string => {
+  let formatDate = $derived((sentAt: string): string => {
     const date = apiTime(sentAt);
     if (!date) return sentAt;
     const diff = Date.now() - date.getTime();
@@ -209,7 +209,7 @@
     if (diff < 3600000) return $t("notifications.history.minutesAgo", { minutes: Math.floor(diff / 60000) });
     if (diff < 86400000) return $t("notifications.history.hoursAgo", { hours: Math.floor(diff / 3600000) });
     return date.toLocaleDateString($intlLocale);
-  };
+  });
 
   onMount(() => loadData());
 
@@ -411,7 +411,7 @@
     formEvents = formEvents.includes(eventId) ? formEvents.filter((e) => e !== eventId) : [...formEvents, eventId];
   }
 
-  function iconOf(type: string): ComponentType {
+  function iconOf(type: string): IconComponent {
     if (type === "error" || type === "warning") return AlertTriangle;
     if (type === "success") return CheckCircle;
     return Info;
@@ -471,7 +471,7 @@
         variant={activeView === "channels" ? "primary" : "secondary"}
         icon={Settings}
         pressed={activeView === "channels"}
-        on:click={() => (activeView = "channels")}
+        onclick={() => (activeView = "channels")}
       >
         {$t("notifications.views.channels")}
       </Button>
@@ -479,12 +479,12 @@
         variant={activeView === "history" ? "primary" : "secondary"}
         icon={Clock}
         pressed={activeView === "history"}
-        on:click={() => (activeView = "history")}
+        onclick={() => (activeView = "history")}
       >
         {$t("notifications.views.history")}
       </Button>
     </div>
-    <Button variant="ghost" size="icon" icon={RefreshCw} loading={loading} on:click={loadData}>
+    <Button variant="ghost" size="icon" icon={RefreshCw} loading={loading} onclick={loadData}>
       <span class="sr-only">{$t("common.refresh")}</span>
     </Button>
   </div>
@@ -496,7 +496,7 @@
   {/if}
   {#if actionError}
     <div role="alert">
-      <Alert variant="error" dismissible on:dismiss={() => (actionError = "")}>{actionError}</Alert>
+      <Alert variant="error" dismissible ondismiss={() => (actionError = "")}>{actionError}</Alert>
     </div>
   {/if}
 
@@ -504,7 +504,7 @@
     <div class="space-y-4">
       <div class="flex flex-wrap gap-3">
         {#each KIND_ORDER as kind}
-          <Button variant="secondary" icon={KINDS[kind].icon} on:click={() => openCreate(kind)}>
+          <Button variant="secondary" icon={KINDS[kind].icon} onclick={() => openCreate(kind)}>
             {$t(KINDS[kind].add)}
           </Button>
         {/each}
@@ -526,12 +526,12 @@
             {@const id = config.id ?? ""}
             {@const result = results[id]}
             {@const name = nameOf(config)}
+            {@const Icon = KINDS[config.channel].icon}
             <li>
               <Card>
                 <div class="flex flex-wrap items-center justify-between gap-3">
                   <div class="flex items-center gap-4 min-w-0">
-                    <svelte:component
-                      this={KINDS[config.channel].icon}
+                    <Icon
                       class="w-6 h-6 flex-shrink-0 {config.enabled ? 'text-info' : 'text-muted'}"
                     />
                     <div class="min-w-0">
@@ -562,12 +562,12 @@
                       icon={Zap}
                       loading={testing === id}
                       disabled={testing !== null && testing !== id}
-                      on:click={() => handleTest(config)}
+                      onclick={() => handleTest(config)}
                     >
                       {$t("notifications.channels.sendTest")}<span class="sr-only"> {$t("notifications.channels.sendTestTo", { name })}</span>
                     </Button>
                     <!-- Not while the channel's test runs: its outcome would show under the new settings. -->
-                    <Button variant="ghost" size="sm" disabled={testing === id} on:click={() => toggleEnabled(config)}>
+                    <Button variant="ghost" size="sm" disabled={testing === id} onclick={() => toggleEnabled(config)}>
                       {$t(config.enabled ? "notifications.channels.disable" : "notifications.channels.enable")}<span class="sr-only"> {$t("notifications.channels.named", { name })}</span>
                     </Button>
                     <Button
@@ -575,11 +575,11 @@
                       size="icon-sm"
                       icon={Pencil}
                       disabled={testing === id}
-                      on:click={() => openEdit(config)}
+                      onclick={() => openEdit(config)}
                     >
                       <span class="sr-only">{$t("notifications.channels.edit", { name })}</span>
                     </Button>
-                    <Button variant="ghost" size="icon-sm" icon={Trash2} on:click={() => askDelete(config)}>
+                    <Button variant="ghost" size="icon-sm" icon={Trash2} onclick={() => askDelete(config)}>
                       <span class="sr-only">{$t("notifications.channels.delete", { name })}</span>
                     </Button>
                   </div>
@@ -590,7 +590,7 @@
                       variant={result.success ? "success" : "error"}
                       title={result.success ? "" : $t("notifications.test.notSent")}
                       dismissible
-                      on:dismiss={() => dismissResult(id)}
+                      ondismiss={() => dismissResult(id)}
                     >
                       <span class="break-words">{result.message}</span>
                     </Alert>
@@ -618,7 +618,7 @@
             variant={filterStatus === "all" ? "primary" : "secondary"}
             size="sm"
             pressed={filterStatus === "all"}
-            on:click={() => (filterStatus = "all")}
+            onclick={() => (filterStatus = "all")}
           >
             {$t("notifications.history.all")}
           </Button>
@@ -626,7 +626,7 @@
             variant={filterStatus === "success" ? "primary" : "secondary"}
             size="sm"
             pressed={filterStatus === "success"}
-            on:click={() => (filterStatus = "success")}
+            onclick={() => (filterStatus = "success")}
           >
             {$t("notifications.delivered")}
           </Button>
@@ -634,7 +634,7 @@
             variant={filterStatus === "failed" ? "primary" : "secondary"}
             size="sm"
             pressed={filterStatus === "failed"}
-            on:click={() => (filterStatus = "failed")}
+            onclick={() => (filterStatus = "failed")}
           >
             {$t("notifications.failed")}
           </Button>
@@ -654,16 +654,16 @@
           <ul class="divide-y divide-border" aria-label={$t("notifications.history.list")}>
             {#each filteredLogs as log (log.id)}
               {@const expanded = expandedLog === log.id}
+              {@const Icon = iconOf(log.event.type)}
               <li class="py-3">
                 <Button variant="plain"
                   type="button"
                   class="w-full text-left"
                   aria-expanded={expanded}
-                  on:click={() => (expandedLog = expanded ? null : log.id)}
+                  onclick={() => (expandedLog = expanded ? null : log.id)}
                 >
                   <span class="flex items-start gap-3">
-                    <svelte:component
-                      this={iconOf(log.event.type)}
+                    <Icon
                       class="w-5 h-5 mt-0.5 flex-shrink-0 {colorOf(log.event.type)}"
                     />
                     <span class="flex-1 min-w-0">
@@ -731,7 +731,7 @@
   title={$t(editing ? "notifications.form.editTitle" : "notifications.form.addTitle", { kind: kindName(formKind) })}
   size="lg"
   closable={!saving}
-  on:close={closeModal}
+  onclose={closeModal}
 >
   <div class="space-y-4">
     <Input
@@ -840,7 +840,7 @@
                 type="checkbox"
                 class="form-checkbox mt-1"
                 checked={formEvents.includes(event.id)}
-                on:change={() => toggleEvent(event.id)}
+                onchange={() => toggleEvent(event.id)}
               />
               <span>
                 <span class="block text-sm font-medium">{keys ? $t(keys.name) : event.name}</span>
@@ -867,12 +867,12 @@
     {/if}
   </div>
 
-  <svelte:fragment slot="footer">
-    <Button variant="secondary" class="flex-1" disabled={saving} on:click={closeModal}>{$t("common.cancel")}</Button>
-    <Button class="flex-1" loading={saving} disabled={!formComplete} on:click={handleSave}>
+  {#snippet footer()}
+    <Button variant="secondary" class="flex-1" disabled={saving} onclick={closeModal}>{$t("common.cancel")}</Button>
+    <Button class="flex-1" loading={saving} disabled={!formComplete} onclick={handleSave}>
       {$t(editing ? "notifications.form.save" : "notifications.form.add")}
     </Button>
-  </svelte:fragment>
+  {/snippet}
 </Modal>
 
 <Modal
@@ -881,7 +881,7 @@
   size="sm"
   danger
   closable={!deleteBusy}
-  on:close={closeDelete}
+  onclose={closeDelete}
 >
   {#if deleting}
     <p>{$t("notifications.delete.text", { name: nameOf(deleting) })}</p>
@@ -892,12 +892,12 @@
     </div>
   {/if}
 
-  <svelte:fragment slot="footer">
-    <Button variant="secondary" class="flex-1" disabled={deleteBusy} on:click={closeDelete}>
+  {#snippet footer()}
+    <Button variant="secondary" class="flex-1" disabled={deleteBusy} onclick={closeDelete}>
       {$t("common.cancel")}
     </Button>
-    <Button variant="danger" class="flex-1" loading={deleteBusy} on:click={confirmDelete}>
+    <Button variant="danger" class="flex-1" loading={deleteBusy} onclick={confirmDelete}>
       {$t("notifications.delete.confirm")}
     </Button>
-  </svelte:fragment>
+  {/snippet}
 </Modal>

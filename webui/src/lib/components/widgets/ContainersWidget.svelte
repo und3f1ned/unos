@@ -11,15 +11,19 @@
 	import { Card, StatusDot, Badge } from '$lib/components/ui';
 	import { t } from '$lib/i18n';
 
-	export let containers: Array<{
-		id: string;
-		name: string;
-		state: string;
-		image: string;
-		ports?: Array<{ host_port: number | null; container_port: number; protocol: string }>;
-	}> = [];
-	export let compact: boolean = false;
-	export let limit: number = 5;
+	type Props = {
+		containers?: Array<{
+			id: string;
+			name: string;
+			state: string;
+			image: string;
+			ports?: Array<{ host_port: number | null; container_port: number; protocol: string }>;
+		}>;
+		compact?: boolean;
+		limit?: number;
+	};
+
+	let { containers = [], compact = false, limit = 5 }: Props = $props();
 
 	// Docker's states, as GET /containers reports them: keys of the catalog, by state.
 	const STATES: Record<string, string> = {
@@ -33,12 +37,13 @@
 	};
 
 	/** The label of a state in the language of the page; a state without one as it comes. */
-	$: stateLabel = (state: string): string =>
-		Object.prototype.hasOwnProperty.call(STATES, state) ? $t(STATES[state]) : state;
+	function stateLabel(state: string): string {
+		return Object.prototype.hasOwnProperty.call(STATES, state) ? $t(STATES[state]) : state;
+	}
 
-	$: running = containers.filter((c) => c.state === 'running').length;
-	$: stopped = containers.filter((c) => c.state !== 'running').length;
-	$: displayContainers = containers.slice(0, limit);
+	const running = $derived(containers.filter((c) => c.state === 'running').length);
+	const stopped = $derived(containers.filter((c) => c.state !== 'running').length);
+	const displayContainers = $derived(containers.slice(0, limit));
 
 	function getStateColor(state: string): string {
 		switch (state) {
@@ -142,6 +147,7 @@
 			<div class="space-y-2">
 				{#each displayContainers as container}
 					{@const webUrl = getWebUrl(container)}
+					{@const Icon = getStateIcon(container.state)}
 					<a
 						href="/containers"
 						class="flex items-center justify-between p-2.5 bg-surface-muted rounded-lg hover:bg-surface-overlay transition-colors group"
@@ -150,10 +156,7 @@
 							<div
 								class="w-8 h-8 rounded bg-surface-overlay flex items-center justify-center flex-shrink-0"
 							>
-								<svelte:component
-									this={getStateIcon(container.state)}
-									class="w-4 h-4 {getStateColor(container.state)}"
-								/>
+								<Icon class="w-4 h-4 {getStateColor(container.state)}" />
 							</div>
 							<div class="min-w-0">
 								<p class="font-medium text-sm truncate">{container.name}</p>
@@ -162,11 +165,14 @@
 						</div>
 						<div class="flex items-center gap-2">
 							{#if webUrl}
+								<!-- A link in the row's link: the widget is drawn in the browser only (the layout shows
+								     a page once it knows the account), where no HTML parser moves it out. -->
+								<!-- svelte-ignore node_invalid_placement_ssr -->
 								<a
 									href={webUrl}
 									target="_blank"
 									rel="noopener"
-									on:click|stopPropagation
+									onclick={(event) => event.stopPropagation()}
 									class="p-1 rounded hover:bg-surface-elevated text-info opacity-0 group-hover:opacity-100 transition-opacity"
 									title={$t('dashboard.containers.open')}
 								>

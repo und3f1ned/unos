@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onDestroy, onMount } from 'svelte';
+	import { onDestroy, onMount, untrack } from 'svelte';
 	import { Download, ScrollText, X } from 'lucide-svelte';
 	import {
 		exportAuditLog,
@@ -25,42 +25,48 @@
 	const TYPING_DELAY_MS = 300;
 	const SEARCH_MAX_CHARS = 256; // MAX_SEARCH_CHARS of supervisor/src/audit/router.py
 
-	let search = '';
-	let username = '';
-	let action = '';
-	let startDate = '';
-	let endDate = '';
+	let search = $state('');
+	let username = $state('');
+	let action = $state('');
+	let startDate = $state('');
+	let endDate = $state('');
 
-	let actions: AuditAction[] = [];
-	let actionsError = '';
-	let entries: AuditEntry[] = [];
-	let total = 0;
+	// The server's answers, each only ever replaced whole.
+	let actions = $state.raw<AuditAction[]>([]);
+	let actionsError = $state('');
+	let entries = $state.raw<AuditEntry[]>([]);
+	let total = $state(0);
 	let limit = PAGE_SIZE;
 	// loaded: an answer has arrived; loading: a request is out.
-	let loaded = false;
-	let loading = false;
-	let error = '';
-	let exporting: AuditExportFormat | null = null;
-	let exportError = '';
+	let loaded = $state(false);
+	let loading = $state(false);
+	let error = $state('');
+	let exporting = $state<AuditExportFormat | null>(null);
+	let exportError = $state('');
 
-	let mounted = false;
+	let mounted = $state(false);
 	let timer: ReturnType<typeof setTimeout> | undefined;
 	// The filters of the last scheduled load: spaces added around a value change nothing.
 	let scheduled = '';
 	// Each load gets a number: an answer that is not the newest request's is dropped.
 	let latest = 0;
 
-	let filters: AuditFilters;
-	$: filters = {
+	const filters: AuditFilters = $derived({
 		search: search.trim(),
 		username: username.trim(),
 		action,
 		start_date: dayBound(startDate, false),
 		end_date: dayBound(endDate, true)
-	};
-	$: filtered = Object.values(filters).some(Boolean);
-	// A change of the filters shows the newest entries that match, from the first page.
-	$: if (mounted) schedule(filters);
+	});
+	const filtered = $derived(Object.values(filters).some(Boolean));
+	// A change of the filters shows the newest entries that match, from the first page; the first
+	// load once the page is mounted. Only those make it run again: what schedule reads and writes
+	// is its own business.
+	$effect(() => {
+		if (!mounted) return;
+		const current = filters;
+		untrack(() => schedule(current));
+	});
 
 	// The server's values, shown by the keys of their texts in the catalog (ADR-0287); a value
 	// without a key shows as it comes, such as the action of an older entry that AuditAction no
@@ -205,21 +211,26 @@
 		app_name: 'audit.resource.appName'
 	};
 
-	/** The text of `value` by its key in `keys`, in the language of the page; else `value`. */
-	$: textOf = (keys: Record<string, string>, value: string): string =>
-		Object.prototype.hasOwnProperty.call(keys, value) ? $t(keys[value]) : value;
+	/**
+	 * The text of `value` by its key in `keys`, in the language of the page; else `value`. It reads
+	 * $t where it is called: what calls it in the markup follows the language.
+	 */
+	function textOf(keys: Record<string, string>, value: string): string {
+		return Object.prototype.hasOwnProperty.call(keys, value) ? $t(keys[value]) : value;
+	}
 
-	$: actionOptions = [
+	const actionOptions = $derived([
 		{ value: '', label: $t('audit.filter.allActions') },
 		...actions
 			.map((a) => ({ value: a.value, label: textOf(ACTION_NAMES, a.value) }))
 			.sort((a, b) => a.label.localeCompare(b.label, $intlLocale))
-	];
-	$: days = byDay(entries);
-	$: countText =
+	]);
+	const days = $derived(byDay(entries));
+	const countText = $derived(
 		entries.length < total
 			? $t('audit.showing', { shown: entries.length, n: total })
-			: $t('audit.count', { n: total });
+			: $t('audit.count', { n: total })
+	);
 
 	onMount(() => {
 		mounted = true;
@@ -346,8 +357,9 @@
 		return groups;
 	}
 
-	// In the language of the page; reactive, so that the timeline follows a change of the language.
-	$: dayLabel = (day: string): string => {
+	// In the language of the page: it reads $intlLocale where the markup calls it, so that the
+	// timeline follows a change of the language.
+	function dayLabel(day: string): string {
 		const [year, month, date] = day.split('-').map(Number);
 		const moment = new Date(year, month - 1, date);
 		if (Number.isNaN(moment.getTime())) return day;
@@ -357,7 +369,7 @@
 			month: 'long',
 			day: 'numeric'
 		});
-	};
+	}
 
 	function markerClass(entry: AuditEntry): string {
 		if (!entry.success || entry.severity === 'critical') return 'bg-status-error';
@@ -365,10 +377,11 @@
 		return 'bg-status-info';
 	}
 
-	$: resourceOf = (entry: AuditEntry): string =>
-		[entry.resource_type && textOf(RESOURCE_TYPES, entry.resource_type), entry.resource_id]
+	function resourceOf(entry: AuditEntry): string {
+		return [entry.resource_type && textOf(RESOURCE_TYPES, entry.resource_type), entry.resource_id]
 			.filter(Boolean)
 			.join(' ');
+	}
 </script>
 
 <div class="page-container">
@@ -380,14 +393,14 @@
 				icon={Download}
 				loading={exporting === 'csv'}
 				disabled={exporting !== null}
-				on:click={() => exportAs('csv')}>{$t('audit.exportCsv')}</Button
+				onclick={() => exportAs('csv')}>{$t('audit.exportCsv')}</Button
 			>
 			<Button
 				variant="secondary"
 				icon={Download}
 				loading={exporting === 'json'}
 				disabled={exporting !== null}
-				on:click={() => exportAs('json')}>{$t('audit.exportJson')}</Button
+				onclick={() => exportAs('json')}>{$t('audit.exportJson')}</Button
 			>
 		</div>
 	</div>
@@ -397,7 +410,7 @@
 			variant="error"
 			title={$t('audit.exportError')}
 			dismissible
-			on:dismiss={() => (exportError = '')}>{exportError}</Alert
+			ondismiss={() => (exportError = '')}>{exportError}</Alert
 		>
 	{/if}
 
@@ -432,7 +445,7 @@
 		<div class="mt-3 flex min-h-8 items-center justify-between gap-2">
 			<p class="text-sm text-content-secondary" role="status">{loaded && !error ? countText : ''}</p>
 			{#if filtered}
-				<Button variant="ghost" size="sm" icon={X} on:click={clearFilters}>{$t('audit.filter.clear')}</Button>
+				<Button variant="ghost" size="sm" icon={X} onclick={clearFilters}>{$t('audit.filter.clear')}</Button>
 			{/if}
 		</div>
 	</Card>
@@ -440,7 +453,7 @@
 	{#if error}
 		<Alert variant="error" title={$t('audit.loadError')}>
 			<p>{error}</p>
-			<Button variant="secondary" size="sm" class="mt-3" loading={loading} on:click={retry}
+			<Button variant="secondary" size="sm" class="mt-3" loading={loading} onclick={retry}
 				>{$t('common.retry')}</Button
 			>
 		</Alert>
@@ -538,7 +551,7 @@
 			</section>
 			{#if entries.length < total}
 				<div class="mt-4 flex justify-center">
-					<Button variant="secondary" loading={loading} on:click={showMore}>{$t('audit.showMore')}</Button>
+					<Button variant="secondary" loading={loading} onclick={showMore}>{$t('audit.showMore')}</Button>
 				</div>
 			{/if}
 		</Card>

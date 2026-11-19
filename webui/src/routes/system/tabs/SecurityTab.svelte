@@ -26,80 +26,80 @@
   } from "lucide-svelte";
 
   // Password change state
-  let currentPassword = "";
-  let newPassword = "";
-  let confirmPassword = "";
-  let passwordError = "";
-  let passwordSuccess = "";
+  let currentPassword = $state("");
+  let newPassword = $state("");
+  let confirmPassword = $state("");
+  let passwordError = $state("");
+  let passwordSuccess = $state("");
   // E.g. open SMB connections that could not be ended: shown until dismissed.
-  let passwordWarnings: string[] = [];
-  let changingPassword = false;
-  let showCurrentPassword = false;
-  let showNewPassword = false;
+  let passwordWarnings = $state<string[]>([]);
+  let changingPassword = $state(false);
+  let showCurrentPassword = $state(false);
+  let showNewPassword = $state(false);
 
   // 2FA state. Until the status has loaded, the card offers neither Enable nor Disable: a
   // status that could not be loaded is reported, not shown as off.
-  let totpEnabled = false;
+  let totpEnabled = $state(false);
   // Every account must have two-factor authentication: turning it off says what follows.
-  let totpRequired = false;
-  let totpStatusLoaded = false;
-  let totpStatusLoading = false;
-  let totpStatusError = "";
-  let totpLoading = false;
-  let totpSetupData: TOTPSetupResponse | null = null;
-  let totpCode = "";
-  let totpError = "";
-  let totpSuccess = "";
-  let showSetupModal = false;
-  let showDisableModal = false;
-  let disableCode = "";
-  let secretCopied = false;
+  let totpRequired = $state(false);
+  let totpStatusLoaded = $state(false);
+  let totpStatusLoading = $state(false);
+  let totpStatusError = $state("");
+  let totpLoading = $state(false);
+  let totpSetupData = $state<TOTPSetupResponse | null>(null);
+  let totpCode = $state("");
+  let totpError = $state("");
+  let totpSuccess = $state("");
+  let showSetupModal = $state(false);
+  let showDisableModal = $state(false);
+  let disableCode = $state("");
+  let secretCopied = $state(false);
   // The otpauth:// URI contains the TOTP secret, so the QR code is rendered in
   // the browser and never sent to a third-party service.
-  let qrDataUrl = "";
+  let qrDataUrl = $state("");
   // Turning SMB on needs the two-factor code exactly while 2FA is on: the
   // SMB card reloads its status when 2FA changes here.
   let smbCard: SmbAccessCard | undefined;
 
   // Login History state
-  let loginHistory: LoginAttempt[] = [];
-  let loginHistoryTotal = 0;
-  let loginHistoryFailed = 0;
-  let loginHistorySuccess = 0;
-  let loginHistoryLoading = false;
+  let loginHistory = $state<LoginAttempt[]>([]);
+  let loginHistoryTotal = $state(0);
+  let loginHistoryFailed = $state(0);
+  let loginHistorySuccess = $state(0);
+  let loginHistoryLoading = $state(false);
   // Why the last load failed: shown in place of the counts and the list.
-  let loginHistoryError = "";
-  let showLoginHistory = false;
+  let loginHistoryError = $state("");
+  let showLoginHistory = $state(false);
 
   // Certificate state
-  let certStatus: CertificateStatus | null = null;
-  let certificates: Certificate[] = [];
+  let certStatus = $state<CertificateStatus | null>(null);
+  let certificates = $state<Certificate[]>([]);
   // Until the stored certificates have loaded, the card does not say that there are none.
-  let certificatesLoaded = false;
-  let certLoading = false;
+  let certificatesLoaded = $state(false);
+  let certLoading = $state(false);
   // Why the last load of the certificates failed: reset by every load.
-  let certLoadError = "";
+  let certLoadError = $state("");
   // Why a delete failed; why a generation failed, shown in its dialog.
-  let certError = "";
-  let genCertError = "";
-  let certSuccess = "";
+  let certError = $state("");
+  let genCertError = $state("");
+  let certSuccess = $state("");
   // The certificate whose serving waits for its confirmation: a stored one, or null for Caddy's
   // local CA (ADR-0404); why the server refused it, shown in the dialog.
-  let serveTarget: { cert: Certificate | null } | null = null;
-  let serveBusy = false;
-  let serveError = "";
-  let showCertModal = false;
-  let showGenCertModal = false;
-  let newCert = {
+  let serveTarget = $state<{ cert: Certificate | null } | null>(null);
+  let serveBusy = $state(false);
+  let serveError = $state("");
+  let showCertModal = $state(false);
+  let showGenCertModal = $state(false);
+  let newCert = $state({
     domain: "",
     validity_days: 365,
     organization: "",
     country: ""
-  };
+  });
 
   // The firewall and the certificates are administrator-only APIs; every account can
   // manage its own password, 2FA and see its own login history.
-  $: isAdmin = $user?.is_admin === true;
+  let isAdmin = $derived($user?.is_admin === true);
 
   // The labels of the values that the server answers as words (Certificate of $lib/api/security):
   // keys of the catalog, by value.
@@ -120,29 +120,32 @@
   };
 
   /** The label of `value` in the language of the page; a value without one as it comes. */
-  $: labelOf = (labels: Record<string, string>, value: string): string =>
-    Object.prototype.hasOwnProperty.call(labels, value) ? $t(labels[value]) : value;
+  let labelOf = $derived((labels: Record<string, string>, value: string): string =>
+    Object.prototype.hasOwnProperty.call(labels, value) ? $t(labels[value]) : value);
 
   /** A certificate's date (UTC with its offset, ADR-0401) in the language of the page and the browser's time zone. */
-  $: formatCertificateDate = (value: string): string => formatDateTime(value, $intlLocale);
+  let formatCertificateDate = $derived((value: string): string => formatDateTime(value, $intlLocale));
 
   /** The stored certificate of `id` among `listed`. */
   function storedCertificate(listed: Certificate[], id: string | null | undefined): Certificate | undefined {
     return id ? listed.find((cert) => cert.id === id) : undefined;
   }
   // What browsers get, in words: the served certificate's name, or what serves theirs.
-  $: servedCert = storedCertificate(certificates, certStatus?.served_id);
-  $: chosenCert = storedCertificate(certificates, certStatus?.chosen_id);
-  $: servedSource = !certStatus
-    ? ""
-    : certStatus.served_by === "stored_certificate" && servedCert
-      ? servedCert.domain
-      : labelOf(SERVED_BY, certStatus.served_by);
+  let servedCert = $derived(storedCertificate(certificates, certStatus?.served_id));
+  let chosenCert = $derived(storedCertificate(certificates, certStatus?.chosen_id));
+  let servedSource = $derived(
+    !certStatus
+      ? ""
+      : certStatus.served_by === "stored_certificate" && servedCert
+        ? servedCert.domain
+        : labelOf(SERVED_BY, certStatus.served_by)
+  );
   // A stored certificate was chosen, and the web server answered with another.
-  $: chosenNotServed =
+  let chosenNotServed = $derived(
     !!certStatus?.chosen_id &&
     certStatus.served_by !== "unknown" &&
-    certStatus.served_id !== certStatus.chosen_id;
+    certStatus.served_id !== certStatus.chosen_id
+  );
 
   onMount(async () => {
     await Promise.all([
@@ -328,19 +331,19 @@
 
   // Reactive, so that an open list follows a change of the language. The times are in the
   // language of the page, in the browser's own format when it is of that language.
-  $: formatTimestamp = (ts: string | null): string => {
+  let formatTimestamp = $derived((ts: string | null): string => {
     if (!ts) return $t("common.unknown");
     return formatDateTime(ts, $intlLocale);
-  };
+  });
 
   // i18n-ignore: the names of browsers, the same in every language
   const BROWSERS = ["Chrome", "Firefox", "Safari", "Edge"];
 
   // The first of BROWSERS that the user agent names: Chrome's also names Safari.
-  $: parseUserAgent = (ua: string | null): string => {
+  let parseUserAgent = $derived((ua: string | null): string => {
     if (!ua) return $t("common.unknown");
     return BROWSERS.find((name) => ua.includes(name)) ?? $t("account.history.browser");
-  };
+  });
 
   // Certificate functions
   async function loadCertificateStatus() {
@@ -492,7 +495,7 @@
             {$t("account.totp.on")}
           </span>
           <Button variant="danger"
-            on:click={() => { showDisableModal = true; totpError = ""; }}
+            onclick={() => { showDisableModal = true; totpError = ""; }}
            
           >
             {$t("account.totp.disable")}
@@ -502,7 +505,7 @@
             {$t("account.totp.off")}
           </span>
           <Button variant="primary"
-            on:click={startTOTPSetup}
+            onclick={startTOTPSetup}
             disabled={totpLoading}
            
           >
@@ -515,7 +518,7 @@
     {#if totpStatusError}
       <Alert variant="error" title={$t("account.totp.statusError")} class="mt-4">
         <p>{totpStatusError}</p>
-        <Button variant="secondary" size="sm" class="mt-3" loading={totpStatusLoading} on:click={loadTOTPStatus}
+        <Button variant="secondary" size="sm" class="mt-3" loading={totpStatusLoading} onclick={loadTOTPStatus}
           >{$t("common.retry")}</Button
         >
       </Alert>
@@ -546,7 +549,7 @@
     {/if}
 
     {#if passwordWarnings.length > 0}
-      <Alert variant="warning" class="mb-4" dismissible on:dismiss={() => (passwordWarnings = [])}>
+      <Alert variant="warning" class="mb-4" dismissible ondismiss={() => (passwordWarnings = [])}>
         {#each passwordWarnings as warning}
           <p>{warning}</p>
         {/each}
@@ -560,7 +563,7 @@
       </div>
     {/if}
 
-    <form on:submit|preventDefault={handlePasswordChange} class="space-y-4 max-w-md">
+    <form onsubmit={(e) => { e.preventDefault(); handlePasswordChange(); }} class="space-y-4 max-w-md">
       <div>
         <label for="currentPassword" class="block text-sm font-medium text-content-secondary mb-1">
           {$t("account.password.current")}
@@ -585,7 +588,7 @@
           {/if}
           <Button variant="plain" class="absolute right-3 top-1/2 -translate-y-1/2 text-content-secondary hover:text-content-soft"
             type="button"
-            on:click={() => showCurrentPassword = !showCurrentPassword}
+            onclick={() => showCurrentPassword = !showCurrentPassword}
            
           >
             {#if showCurrentPassword}
@@ -623,7 +626,7 @@
           {/if}
           <Button variant="plain" class="absolute right-3 top-1/2 -translate-y-1/2 text-content-secondary hover:text-content-soft"
             type="button"
-            on:click={() => showNewPassword = !showNewPassword}
+            onclick={() => showNewPassword = !showNewPassword}
            
           >
             {#if showNewPassword}
@@ -682,7 +685,7 @@
           <Badge variant={SERVED_BADGES[certStatus.served_by] ?? "info"}>{servedSource}</Badge>
         {/if}
         <Button variant="primary"
-          on:click={() => showCertModal = !showCertModal}
+          onclick={() => showCertModal = !showCertModal}
          
         >
           {$t("account.certs.manage")}
@@ -701,7 +704,7 @@
     {#if certLoadError}
       <Alert variant="error" class="mb-4">
         <p>{certLoadError}</p>
-        <Button variant="secondary" size="sm" class="mt-3" loading={certLoading} on:click={loadCertificateStatus}
+        <Button variant="secondary" size="sm" class="mt-3" loading={certLoading} onclick={loadCertificateStatus}
           >{$t("common.retry")}</Button
         >
       </Alert>
@@ -731,7 +734,7 @@
               </Alert>
             {/if}
             {#if certStatus.chosen_id || certStatus.served_by === "stored_certificate"}
-              <Button variant="secondary" size="sm" class="mt-3" on:click={() => askServe(null)}>
+              <Button variant="secondary" size="sm" class="mt-3" onclick={() => askServe(null)}>
                 {$t("account.certs.useLocalCa")}
               </Button>
             {/if}
@@ -741,7 +744,7 @@
         <div class="flex flex-wrap justify-between items-center gap-2">
           <h4 class="font-medium">{$t("account.certs.stored")}</h4>
           <Button variant="primary" size="sm"
-            on:click={openGenerateDialog}
+            onclick={openGenerateDialog}
            
           >
             <Plus class="w-4 h-4" />
@@ -784,7 +787,7 @@
                 </div>
                 <div class="flex flex-wrap items-center gap-2">
                   {#if cert.is_valid && !cert.served}
-                    <Button variant="secondary" size="sm" on:click={() => askServe(cert)}
+                    <Button variant="secondary" size="sm" onclick={() => askServe(cert)}
                       aria-label={$t("account.certs.serveLabel", { domain: cert.domain })}
                     >
                       {$t("account.certs.serve")}
@@ -792,7 +795,7 @@
                   {/if}
                   {#if cert.id.startsWith('custom_')}
                     <Button variant="ghost" size="icon" class="text-status-error hover:text-status-error"
-                      on:click={() => handleDeleteCert(cert)}
+                      onclick={() => handleDeleteCert(cert)}
                       aria-label={$t("account.certs.delete", { domain: cert.domain })}
                     >
                       <Trash2 class="w-4 h-4" />
@@ -817,7 +820,7 @@
         {$t("account.history.title")}
       </h3>
       <Button variant="primary"
-        on:click={toggleLoginHistory}
+        onclick={toggleLoginHistory}
        
       >
         {showLoginHistory ? $t("account.history.hide") : $t("account.history.show")}
@@ -835,7 +838,7 @@
         {:else if loginHistoryError}
           <Alert variant="error" title={$t("account.history.loadError")}>
             <p>{loginHistoryError}</p>
-            <Button variant="secondary" size="sm" class="mt-3" on:click={loadLoginHistory}>{$t("common.retry")}</Button>
+            <Button variant="secondary" size="sm" class="mt-3" onclick={loadLoginHistory}>{$t("common.retry")}</Button>
           </Alert>
         {:else}
           <!-- Stats -->
@@ -897,7 +900,7 @@
               {/each}
             </ul>
             <Button variant="secondary" class="w-full"
-              on:click={loadLoginHistory}
+              onclick={loadLoginHistory}
              
             >
               <RefreshCw class="w-4 h-4" />
@@ -943,7 +946,7 @@
             </code>
             <Button variant="ghost" size="icon-sm"
               type="button"
-              on:click={copySecret}
+              onclick={copySecret}
               title={$t("account.totp.copy")}
             >
               <Copy class="w-4 h-4" />
@@ -979,14 +982,14 @@
         <div class="flex gap-3">
           <Button variant="secondary" class="flex-1"
             type="button"
-            on:click={cancelSetup}
+            onclick={cancelSetup}
            
           >
             {$t("common.cancel")}
           </Button>
           <Button variant="primary" class="flex-1"
             type="button"
-            on:click={confirmTOTPEnable}
+            onclick={confirmTOTPEnable}
             disabled={totpLoading || totpCode.length !== 6}
            
           >
@@ -1040,14 +1043,14 @@
         <div class="flex gap-3">
           <Button variant="secondary" class="flex-1"
             type="button"
-            on:click={cancelDisable}
+            onclick={cancelDisable}
            
           >
             {$t("common.cancel")}
           </Button>
           <Button variant="danger" class="flex-1"
             type="button"
-            on:click={confirmTOTPDisable}
+            onclick={confirmTOTPDisable}
             disabled={totpLoading || disableCode.length !== 6}
            
           >
@@ -1065,7 +1068,7 @@
   title={serveTarget?.cert ? $t("account.certs.serveTitle") : $t("account.certs.localCaTitle")}
   size="md"
   closable={!serveBusy}
-  on:close={closeServe}
+  onclose={closeServe}
 >
   {#if serveTarget}
     <p class="break-words">
@@ -1083,14 +1086,14 @@
       <Alert variant="error" class="mt-3 break-words">{serveError}</Alert>
     {/if}
   {/if}
-  <svelte:fragment slot="footer">
-    <Button variant="secondary" class="flex-1" disabled={serveBusy} on:click={closeServe}>
+  {#snippet footer()}
+    <Button variant="secondary" class="flex-1" disabled={serveBusy} onclick={closeServe}>
       {$t("common.cancel")}
     </Button>
-    <Button variant="primary" class="flex-1" loading={serveBusy} on:click={confirmServe}>
+    <Button variant="primary" class="flex-1" loading={serveBusy} onclick={confirmServe}>
       {serveTarget?.cert ? $t("account.certs.serveConfirm") : $t("account.certs.useLocalCa")}
     </Button>
-  </svelte:fragment>
+  {/snippet}
 </Modal>
 
 <!-- Generate Self-Signed Certificate Modal -->
@@ -1102,7 +1105,7 @@
         {$t("account.certs.generateTitle")}
       </h3>
 
-      <form on:submit|preventDefault={handleGenerateCert} class="space-y-4">
+      <form onsubmit={(e) => { e.preventDefault(); handleGenerateCert(); }} class="space-y-4">
         <!-- In the dialog: behind its overlay a refusal could not be read. -->
         {#if genCertError}
           <Alert variant="error">{genCertError}</Alert>
@@ -1158,7 +1161,7 @@
         <div class="flex gap-3">
           <Button variant="secondary" class="flex-1"
             type="button"
-            on:click={() => showGenCertModal = false}
+            onclick={() => showGenCertModal = false}
            
           >
             {$t("common.cancel")}

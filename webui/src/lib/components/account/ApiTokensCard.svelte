@@ -47,30 +47,30 @@
 	const LIFETIMES = [30, 90, 365];
 	const NAME_CHARS = 64;
 
-	let tokens: ApiToken[] = [];
-	let loading = true;
-	let loadError = '';
-	let notice = '';
-	let actionError = '';
-	let busyId: number | null = null;
+	let tokens = $state<ApiToken[]>([]);
+	let loading = $state(true);
+	let loadError = $state('');
+	let notice = $state('');
+	let actionError = $state('');
+	let busyId = $state<number | null>(null);
 
 	// The dialog of a new token. It starts at the least that a person can choose: read only.
-	let creating = false;
-	let name = '';
-	let lifetime = '';
-	let readOnly = true;
-	let everyArea = true;
-	let chosen: Partial<Record<TokenArea, boolean>> = {};
-	let saving = false;
-	let createError = '';
+	let creating = $state(false);
+	let name = $state('');
+	let lifetime = $state('');
+	let readOnly = $state(true);
+	let everyArea = $state(true);
+	let chosen = $state<Partial<Record<TokenArea, boolean>>>({});
+	let saving = $state(false);
+	let createError = $state('');
 
 	// The token just made, shown only now.
-	let created: CreatedApiToken | null = null;
-	let copied = false;
-	let copyFailed = false;
+	let created = $state<CreatedApiToken | null>(null);
+	let copied = $state(false);
+	let copyFailed = $state(false);
 
-	let deleting: ApiToken | null = null;
-	let deleteError = '';
+	let deleting = $state<ApiToken | null>(null);
+	let deleteError = $state('');
 
 	onMount(() => {
 		void load();
@@ -201,15 +201,15 @@
 		}
 	}
 
-	$: chosenAreas = TOKEN_AREAS.filter((area) => chosen[area]);
-	$: canCreate = name.trim().length > 0 && (everyArea || chosenAreas.length > 0);
+	const chosenAreas = $derived(TOKEN_AREAS.filter((area) => chosen[area]));
+	const canCreate = $derived(name.trim().length > 0 && (everyArea || chosenAreas.length > 0));
 	// Change access to chosen areas whose changes reach beyond them (WARNED_AREAS). Change access to
 	// every area is a full token, as the choice says.
-	$: warned = !readOnly && !everyArea && chosenAreas.some((area) => WARNED_AREAS.includes(area));
-	$: lifetimeOptions = [
+	const warned = $derived(!readOnly && !everyArea && chosenAreas.some((area) => WARNED_AREAS.includes(area)));
+	const lifetimeOptions = $derived([
 		{ value: '', label: $t('tokens.form.never') },
 		...LIFETIMES.map((days) => ({ value: String(days), label: $t('tokens.form.afterDays', { n: days }) }))
-	];
+	]);
 </script>
 
 <Card>
@@ -219,12 +219,12 @@
 				<KeyRound class="w-5 h-5" />
 				{$t('tokens.title')}
 			</h3>
-			<Button size="sm" on:click={openCreate}>{$t('tokens.new')}</Button>
+			<Button size="sm" onclick={openCreate}>{$t('tokens.new')}</Button>
 		</div>
 		<p class="text-sm text-secondary mb-4">{$t('tokens.description')}</p>
 
 		{#if notice}
-			<Alert variant="success" dismissible class="mb-4" on:dismiss={() => (notice = '')}>{notice}</Alert>
+			<Alert variant="success" dismissible class="mb-4" ondismiss={() => (notice = '')}>{notice}</Alert>
 		{/if}
 		{#if actionError}
 			<Alert variant="error" title={$t('tokens.toggleFailed')} class="mb-4">{actionError}</Alert>
@@ -235,7 +235,7 @@
 		{:else if loadError}
 			<Alert variant="error" title={$t('tokens.loadError')}>
 				{loadError}
-				<Button variant="secondary" size="sm" class="mt-3" on:click={load}>{$t('common.retry')}</Button>
+				<Button variant="secondary" size="sm" class="mt-3" onclick={load}>{$t('common.retry')}</Button>
 			</Alert>
 		{:else if tokens.length === 0}
 			<EmptyState icon={KeyRound} title={$t('tokens.none')} />
@@ -290,11 +290,11 @@
 								size="sm"
 								loading={busyId === token.id && deleting === null}
 								disabled={busyId !== null}
-								on:click={() => toggle(token)}
+								onclick={() => toggle(token)}
 							>
 								{token.is_active ? $t('tokens.disable') : $t('tokens.enable')}
 							</Button>
-							<Button variant="ghost" size="sm" disabled={busyId !== null} on:click={() => askDelete(token)}>
+							<Button variant="ghost" size="sm" disabled={busyId !== null} onclick={() => askDelete(token)}>
 								{$t('tokens.delete')}
 							</Button>
 						</div>
@@ -305,8 +305,15 @@
 	</section>
 </Card>
 
-<Modal open={creating} title={$t('tokens.form.title')} size="lg" closable={!saving} on:close={closeCreate}>
-	<form id="new-api-token" class="space-y-4" on:submit|preventDefault={create}>
+<Modal open={creating} title={$t('tokens.form.title')} size="lg" closable={!saving} onclose={closeCreate}>
+	<form
+		id="new-api-token"
+		class="space-y-4"
+		onsubmit={(event) => {
+			event.preventDefault();
+			create();
+		}}
+	>
 		<Input
 			id="api-token-name"
 			label={$t('tokens.form.name')}
@@ -387,7 +394,7 @@
 									class="form-checkbox"
 									checked={chosen[area] === true}
 									disabled={saving}
-									on:change={(event) => (chosen = { ...chosen, [area]: event.currentTarget.checked })}
+									onchange={(event) => (chosen = { ...chosen, [area]: event.currentTarget.checked })}
 								/>
 								<span>{$t(AREA_LABELS[area])}</span>
 								<span class="mono text-xs text-muted break-all">{pathOf(area)}</span>
@@ -412,14 +419,14 @@
 		{/if}
 	</form>
 
-	<svelte:fragment slot="footer">
-		<Button variant="secondary" class="flex-1" disabled={saving} on:click={closeCreate}>
+	{#snippet footer()}
+		<Button variant="secondary" class="flex-1" disabled={saving} onclick={closeCreate}>
 			{$t('common.cancel')}
 		</Button>
-		<Button class="flex-1" loading={saving} disabled={!canCreate} on:click={create}>
+		<Button class="flex-1" loading={saving} disabled={!canCreate} onclick={create}>
 			{$t('tokens.form.create')}
 		</Button>
-	</svelte:fragment>
+	{/snippet}
 </Modal>
 
 <!-- Closed only by Done: the token is shown only now. -->
@@ -445,10 +452,10 @@
 					rows="2"
 					readonly
 					value={created.token}
-				/>
+				></textarea>
 			</div>
 			<div class="flex flex-wrap items-center gap-2">
-				<Button variant="secondary" size="sm" on:click={copy}>{$t('tokens.shown.copy')}</Button>
+				<Button variant="secondary" size="sm" onclick={copy}>{$t('tokens.shown.copy')}</Button>
 				{#if copied}<span class="text-sm text-success">{$t('tokens.shown.copied')}</span>{/if}
 			</div>
 			{#if copyFailed}
@@ -456,9 +463,9 @@
 			{/if}
 		</div>
 	{/if}
-	<svelte:fragment slot="footer">
-		<Button class="flex-1" on:click={() => (created = null)}>{$t('common.done')}</Button>
-	</svelte:fragment>
+	{#snippet footer()}
+		<Button class="flex-1" onclick={() => (created = null)}>{$t('common.done')}</Button>
+	{/snippet}
 </Modal>
 
 <Modal
@@ -467,7 +474,7 @@
 	size="md"
 	danger
 	closable={busyId === null}
-	on:close={closeDelete}
+	onclose={closeDelete}
 >
 	{#if deleting}
 		<p class="break-words">{$t('tokens.deleteDialog.text', { name: deleting.name })}</p>
@@ -475,10 +482,10 @@
 			<Alert variant="error" title={$t('tokens.deleteDialog.failed')} class="mt-3">{deleteError}</Alert>
 		{/if}
 	{/if}
-	<svelte:fragment slot="footer">
-		<Button variant="secondary" class="flex-1" disabled={busyId !== null} on:click={closeDelete}>
+	{#snippet footer()}
+		<Button variant="secondary" class="flex-1" disabled={busyId !== null} onclick={closeDelete}>
 			{$t('common.cancel')}
 		</Button>
-		<Button variant="danger" class="flex-1" loading={busyId !== null} on:click={remove}>{$t('tokens.delete')}</Button>
-	</svelte:fragment>
+		<Button variant="danger" class="flex-1" loading={busyId !== null} onclick={remove}>{$t('tokens.delete')}</Button>
+	{/snippet}
 </Modal>

@@ -5,8 +5,7 @@
 	// browser, Logout); every other action opens its page's own dialog, which asks first. It asks
 	// the server for nothing: its choices come from the role the layout has already loaded and from
 	// the catalogs.
-	import type { ComponentType } from 'svelte';
-	import { createEventDispatcher, tick } from 'svelte';
+	import { tick, untrack } from 'svelte';
 	import { get } from 'svelte/store';
 	import { afterNavigate, goto } from '$app/navigation';
 	import {
@@ -40,17 +39,21 @@
 		Users,
 		Wrench
 	} from 'lucide-svelte';
-	import { Input, Modal } from '$lib/components/ui';
+	import { Input, Modal, type IconComponent } from '$lib/components/ui';
 	import { LANGUAGES, locale, t, translateIn, type Locale } from '$lib/i18n';
 	import { paletteRequest, type PaletteDialog } from '$lib/stores/palette';
 	import { narrow, type Findable } from './match';
 
-	/** Whether the palette may open: a signed-in page of an account that has its rights. */
-	export let enabled = false;
-	/** An administrator gets every page and action; a regular user the Dashboard and Account (ADR-0030). */
-	export let admin = false;
+	type Props = {
+		/** Whether the palette may open: a signed-in page of an account that has its rights. */
+		enabled?: boolean;
+		/** An administrator gets every page and action; a regular user the Dashboard and Account (ADR-0030). */
+		admin?: boolean;
+		/** Logout was chosen: the layout signs out. */
+		onlogout?: () => void;
+	};
 
-	const dispatch = createEventDispatcher<{ logout: void }>();
+	let { enabled = false, admin = false, onlogout }: Props = $props();
 
 	/** What a choice does: open a page, open a page's dialog, set the language, or log out. */
 	type Run =
@@ -64,7 +67,7 @@
 		/** The other words the choice is known by, in the catalog of the palette. */
 		keywordsKey?: string;
 		kindKey: string;
-		icon: ComponentType;
+		icon: IconComponent;
 		run: Run;
 	}
 
@@ -280,7 +283,7 @@
 		id: string;
 		name: string;
 		kind: string;
-		icon: ComponentType;
+		icon: IconComponent;
 		run: Run;
 	}
 
@@ -289,51 +292,54 @@
 		return key ? LANGUAGES.map((language) => translateIn(language.code, key)) : [];
 	}
 
-	$: choices = [...(admin ? [...ADMIN_PAGES, ...ADMIN_ACTIONS] : USER_PAGES), ...ownActions($locale)];
+	const choices = $derived([...(admin ? [...ADMIN_PAGES, ...ADMIN_ACTIONS] : USER_PAGES), ...ownActions($locale)]);
 	// Reactive: the names follow the language of the page; the search also finds the other's.
-	$: shown = choices.map(
-		(choice): Shown => ({
-			id: choice.id,
-			name: $t(choice.nameKey),
-			kind: $t(choice.kindKey),
-			icon: choice.icon,
-			run: choice.run,
-			names: inEveryLanguage(choice.nameKey),
-			keywords: inEveryLanguage(choice.keywordsKey)
-		})
+	const shown = $derived(
+		choices.map(
+			(choice): Shown => ({
+				id: choice.id,
+				name: $t(choice.nameKey),
+				kind: $t(choice.kindKey),
+				icon: choice.icon,
+				run: choice.run,
+				names: inEveryLanguage(choice.nameKey),
+				keywords: inEveryLanguage(choice.keywordsKey)
+			})
+		)
 	);
 
-	let open = false;
-	let query = '';
-	// The chosen option: its index in matches.
-	let active = 0;
+	let open = $state(false);
+	let query = $state('');
+	// The option that the arrow keys or the mouse chose: its index in matches. Typing chooses the
+	// first one again (the field's oninput), and so does a list that has become shorter than it.
+	let picked = $state(0);
+	// The elements of the palette, for the keys' handlers.
 	let body: HTMLDivElement | null = null;
 	let list: HTMLUListElement | null = null;
 
 	const LIST_ID = 'command-palette-list';
 	const optionId = (entry: Shown) => `command-palette-option-${entry.id}`;
 
-	$: matches = narrow(shown, query);
-	// Typing chooses the first option again.
-	$: chooseFirst(query);
-	$: if (active >= matches.length) active = 0;
-	$: activeId = matches[active] ? optionId(matches[active]) : null;
+	const matches = $derived(narrow(shown, query));
+	// The chosen option: its index in matches.
+	const active = $derived(picked < matches.length ? picked : 0);
+	const activeId = $derived(matches[active] ? optionId(matches[active]) : null);
 	// A page that may no longer have the palette, such as after a logout or another account's sign-in
-	// in another tab, closes it and forgets a request that no page has taken.
-	$: if (!enabled) {
-		open = false;
-		paletteRequest.set(null);
-	}
-
-	function chooseFirst(_query: string) {
-		active = 0;
-	}
+	// in another tab, closes it and forgets a request that no page has taken. Before the markup
+	// updates, so that the palette goes in the same update; only `enabled` makes it run again.
+	$effect.pre(() => {
+		if (enabled) return;
+		untrack(() => {
+			open = false;
+			paletteRequest.set(null);
+		});
+	});
 
 	/** Open the palette with an empty field: Ctrl+K, or the button of a phone's header bar. */
 	export function show() {
 		if (!enabled || open) return;
 		query = '';
-		active = 0;
+		picked = 0;
 		open = true;
 	}
 
@@ -355,7 +361,7 @@
 		// The palette has gone and the focus is back where it was before anything happens.
 		await tick();
 		if ('logout' in run) {
-			dispatch('logout');
+			onlogout?.();
 		} else if ('language' in run) {
 			locale.set(run.language);
 		} else {
@@ -370,7 +376,7 @@
 			event.preventDefault();
 			const count = matches.length;
 			if (count === 0) return;
-			active = (active + (event.key === 'ArrowDown' ? 1 : -1) + count) % count;
+			picked = (active + (event.key === 'ArrowDown' ? 1 : -1) + count) % count;
 			void tick().then(() => list?.children[active]?.scrollIntoView({ block: 'nearest' }));
 		} else if (event.key === 'Enter') {
 			event.preventDefault();
@@ -449,9 +455,9 @@
 	}
 </script>
 
-<svelte:window on:keydown={handleWindowKeydown} />
+<svelte:window onkeydown={handleWindowKeydown} />
 
-<Modal {open} title={$t('palette.title')} size="lg" on:close={close}>
+<Modal {open} title={$t('palette.title')} size="lg" onclose={close}>
 	<div bind:this={body}>
 		<Input
 			id="command-palette-field"
@@ -462,7 +468,8 @@
 			spellcheck={false}
 			selectOnMount
 			listbox={{ id: LIST_ID, activeId, expanded: matches.length > 0 }}
-			on:keydown={handleFieldKeydown}
+			oninput={() => (picked = 0)}
+			onkeydown={handleFieldKeydown}
 		/>
 		<!-- How many choices are left, for screen readers; positioned, as the overlay scrolls. -->
 		<div class="relative">
@@ -486,10 +493,10 @@
 					class="flex cursor-pointer items-center gap-3 rounded-lg px-3 py-2 {index === active
 						? 'bg-surface-overlay text-content'
 						: 'text-content-secondary'}"
-					on:click={() => choose(entry)}
-					on:mousemove={() => (active = index)}
+					onclick={() => choose(entry)}
+					onmousemove={() => (picked = index)}
 				>
-					<svelte:component this={entry.icon} class="h-4 w-4 shrink-0" aria-hidden="true" />
+					<entry.icon class="h-4 w-4 shrink-0" aria-hidden="true" />
 					<span class="min-w-0 flex-1 break-words">{entry.name}</span>
 					<span id="{optionId(entry)}-kind" class="shrink-0 text-xs text-content-muted" aria-hidden="true"
 						>{entry.kind}</span

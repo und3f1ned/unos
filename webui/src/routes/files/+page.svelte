@@ -44,39 +44,40 @@
 
   type Transfer = "copy" | "move";
 
-  let listing: DirectoryListing | null = null;
-  let loading = true;
+  let listing = $state.raw<DirectoryListing | null>(null);
+  let loading = $state(true);
   // The pools directory, the top of the file manager. The server decides
   // where it is (UNOS_POOLS_BASE_PATH): it lists it when asked for no path.
-  let rootPath: string | null = null;
+  let rootPath: string | null = $state(null);
   // Directory shown; null until the first listing has arrived.
-  let currentPath: string | null = null;
-  let selected: Set<string> = new Set();
-  let showNewFolder = false;
-  let newFolderName = "";
+  let currentPath: string | null = $state(null);
+  let selected = $state.raw<Set<string>>(new Set());
+  let showNewFolder = $state(false);
+  let newFolderName = $state("");
   // The path of the item whose name is a field in its row, and the field's text.
-  let renaming: string | null = null;
-  let renamingValue = "";
+  let renaming: string | null = $state(null);
+  let renamingValue = $state("");
   // A rename is on its way, until the list shows the new name: neither Enter
   // nor leaving the field sends another.
-  let renameSent = false;
-  let error = "";
+  let renameSent = $state(false);
+  let error = $state("");
   // An upload, copy, move or delete is on its way.
-  let busy = false;
-  let downloading = false;
+  let busy = $state(false);
+  let downloading = $state(false);
   // Items chosen with Copy or Move; they go to the folder that is open when
   // "Copy here" / "Move here" is chosen.
-  let pending: { mode: Transfer; paths: string[] } | null = null;
+  let pending = $state.raw<{ mode: Transfer; paths: string[] } | null>(null);
 
   // The hidden files that uploads left when the supervisor stopped in the middle of them, as its
   // last check found them (ADR-0354): the notice above the list offers to remove them.
-  let leftovers: UploadLeftover[] = [];
+  let leftovers = $state.raw<UploadLeftover[]>([]);
   // The Remove dialog: the files it is about while it is open, whether the removal is on its way,
-  // and the server's refusal. The notice's Remove button and the dialog's Cancel, for the focus.
-  let removingLeftovers: UploadLeftover[] | null = null;
-  let leftoversSending = false;
-  let leftoversError = "";
-  let leftoversButtonSlot: HTMLSpanElement | null = null;
+  // and the server's refusal. The notice's Remove button and the dialog's Cancel, for the focus
+  // (state: the notice's comes and goes with it, and the compiler wants it reactive there).
+  let removingLeftovers = $state.raw<UploadLeftover[] | null>(null);
+  let leftoversSending = $state(false);
+  let leftoversError = $state("");
+  let leftoversButtonSlot: HTMLSpanElement | null = $state(null);
   let leftoversCancelSlot: HTMLSpanElement | null = null;
 
   onMount(() => {
@@ -179,8 +180,9 @@
     }
   }
 
-  // The ".." entry, the first one of the list of a folder.
-  let upButton: HTMLButtonElement | null = null;
+  // The ".." entry, the first one of the list of a folder (state: it comes and goes with the
+  // folder's parent, and a component's binding needs it).
+  let upButton: HTMLButtonElement | null = $state(null);
 
   // An item's name is a button for the keyboard and screen readers: Enter,
   // Space or a screen reader's click opens the item, like a double-click.
@@ -271,11 +273,11 @@
   // because they have none there, or it cannot be used (409), or their pool
   // has no space left (507): Delete in Files is never one click away from
   // deleting for good.
-  let deleting: string[] | null = null;
-  let deleteSending: "trash" | "permanent" | null = null;
-  let deleteError = "";
-  let deleteErrorTitle = "";
-  let offerForGood = false;
+  let deleting = $state.raw<string[] | null>(null);
+  let deleteSending: "trash" | "permanent" | null = $state(null);
+  let deleteError = $state("");
+  let deleteErrorTitle = $state("");
+  let offerForGood = $state(false);
   // The toolbar's Delete button and the dialog's Cancel and Move to trash, for the keyboard focus.
   let deleteButtonSlot: HTMLSpanElement | null = null;
   let deleteCancelSlot: HTMLSpanElement | null = null;
@@ -473,23 +475,25 @@
     await refresh();
   }
 
+  // A new set: the state holds the set itself, and only a new value updates the page.
   function toggleSelect(path: string) {
-    if (selected.has(path)) {
-      selected.delete(path);
+    const next = new Set(selected);
+    if (next.has(path)) {
+      next.delete(path);
     } else {
-      selected.add(path);
+      next.add(path);
     }
-    selected = selected;
+    selected = next;
   }
 
   // While an upload, copy, move, delete or rename is on its way, the toolbar's
   // actions and Copy here / Move here wait: they would start with paths that
   // are changing.
-  $: working = busy || renameSent;
-  $: selectedItems = listing ? listing.items.filter((item) => selected.has(item.path)) : [];
+  let working = $derived(busy || renameSent);
+  let selectedItems = $derived(listing ? listing.items.filter((item) => selected.has(item.path)) : []);
   // Rename works on one item at a time, Download on one regular file.
-  $: selectedItem = selectedItems.length === 1 ? selectedItems[0] : null;
-  $: selectedFile = selectedItem?.type === "file" ? selectedItem : null;
+  let selectedItem = $derived(selectedItems.length === 1 ? selectedItems[0] : null);
+  let selectedFile = $derived(selectedItem?.type === "file" ? selectedItem : null);
 
   function getIcon(item: FileInfo) {
     if (item.type === "directory") return Folder;
@@ -519,16 +523,16 @@
     return crumbs;
   }
 
-  $: breadcrumbs = getBreadcrumbs(currentPath, rootPath, $t("files.pools"));
+  let breadcrumbs = $derived(getBreadcrumbs(currentPath, rootPath, $t("files.pools")));
 
   // The columns of the list and its header: the check box, the name, the size and, from sm up,
   // the day of the last change. Fixed widths, so that the rows, each a grid, line up.
   const columnsClass = "grid-cols-[auto_minmax(0,1fr)_5rem] sm:grid-cols-[auto_1fr_100px_150px]";
 
-  $: leftoversSize = leftovers.reduce((sum, file) => sum + file.size, 0);
+  let leftoversSize = $derived(leftovers.reduce((sum, file) => sum + file.size, 0));
 
   // Sizes in the units of the page's language.
-  $: units = [$t("files.unit.b"), $t("files.unit.kb"), $t("files.unit.mb"), $t("files.unit.gb"), $t("files.unit.tb")];
+  let units = $derived([$t("files.unit.b"), $t("files.unit.kb"), $t("files.unit.mb"), $t("files.unit.gb"), $t("files.unit.tb")]);
 </script>
 
 <!-- On a narrow screen the page has no padding of its own beside main's, its buttons wrap, the
@@ -541,22 +545,22 @@
       {$t("files.title")}
     </h1>
     <div class="flex flex-wrap items-center gap-2">
-      <input bind:this={uploadInput} type="file" multiple class="hidden" on:change={handleUpload} />
+      <input bind:this={uploadInput} type="file" multiple class="hidden" onchange={handleUpload} />
       <!-- The span shows the tooltip: Button does not pass a title on. -->
       <span class="flex" title={$t("files.upload")}>
-        <Button variant="secondary" size="icon" on:click={() => uploadInput?.click()}>
+        <Button variant="secondary" size="icon" onclick={() => uploadInput?.click()}>
           <Upload class="w-5 h-5" />
           <span class="sr-only">{$t("files.upload")}</span>
         </Button>
       </span>
       <Button variant="secondary" size="icon"
-        on:click={() => (showNewFolder = true)}
+        onclick={() => (showNewFolder = true)}
         title={$t("files.newFolder")}
       >
         <Plus class="w-5 h-5" />
       </Button>
       <Button variant="secondary" size="icon"
-        on:click={refresh}
+        onclick={refresh}
         title={$t("common.refresh")}
         disabled={loading}
       >
@@ -569,7 +573,7 @@
   {#if error}
     <!-- role="alert": screen readers announce the message when it appears. -->
     <div role="alert">
-      <Alert variant="error" dismissible class="mb-4" on:dismiss={() => (error = "")}>{error}</Alert>
+      <Alert variant="error" dismissible class="mb-4" ondismiss={() => (error = "")}>{error}</Alert>
     </div>
   {/if}
 
@@ -581,7 +585,7 @@
         <p class="mt-1">{$t("files.leftovers.hint")}</p>
         <div class="mt-2 flex flex-wrap gap-2">
           <span bind:this={leftoversButtonSlot} class="contents">
-            <Button variant="secondary" size="sm" icon={Trash2} on:click={askRemoveLeftovers}>
+            <Button variant="secondary" size="sm" icon={Trash2} onclick={askRemoveLeftovers}>
               {$t("files.leftovers.remove")}
             </Button>
           </span>
@@ -597,7 +601,7 @@
         <ChevronRight class="w-4 h-4 text-content-muted flex-shrink-0" />
       {/if}
       <Button variant="plain"
-        on:click={() => navigate(crumb.path)}
+        onclick={() => navigate(crumb.path)}
         class="px-2 py-1 rounded hover:bg-surface-overlay truncate {i === breadcrumbs.length - 1 ? 'text-status-info' : 'text-content-soft'}"
       >
         {crumb.name}
@@ -615,7 +619,7 @@
       icon={Download}
       loading={downloading}
       disabled={working || !selectedFile}
-      on:click={() => selectedFile && handleDownload(selectedFile)}
+      onclick={() => selectedFile && handleDownload(selectedFile)}
     >
       {$t("files.download")}
     </Button>
@@ -624,7 +628,7 @@
       size="sm"
       icon={Copy}
       disabled={working || selected.size === 0}
-      on:click={() => startTransfer("copy")}
+      onclick={() => startTransfer("copy")}
     >
       {$t("files.copy")}
     </Button>
@@ -633,7 +637,7 @@
       size="sm"
       icon={FolderInput}
       disabled={working || selected.size === 0}
-      on:click={() => startTransfer("move")}
+      onclick={() => startTransfer("move")}
     >
       {$t("files.move")}
     </Button>
@@ -642,7 +646,7 @@
       size="sm"
       icon={Pencil}
       disabled={working || !selectedItem}
-      on:click={() => selectedItem && startRename(selectedItem)}
+      onclick={() => selectedItem && startRename(selectedItem)}
     >
       {$t("files.rename")}
     </Button>
@@ -652,7 +656,7 @@
         size="sm"
         icon={Trash2}
         disabled={working || selected.size === 0}
-        on:click={askDelete}
+        onclick={askDelete}
       >
         {$t("files.delete")}
       </Button>
@@ -671,11 +675,11 @@
         icon={ClipboardPaste}
         loading={busy}
         disabled={renameSent}
-        on:click={finishTransfer}
+        onclick={finishTransfer}
       >
         {pending.mode === "copy" ? $t("files.copyHere") : $t("files.moveHere")}
       </Button>
-      <Button variant="ghost" size="sm" disabled={working} on:click={() => (pending = null)}>{$t("common.cancel")}</Button>
+      <Button variant="ghost" size="sm" disabled={working} onclick={() => (pending = null)}>{$t("common.cancel")}</Button>
     </div>
   {/if}
 
@@ -686,11 +690,11 @@
         bind:value={newFolderName}
         placeholder={$t("files.folderName")}
         class="flex-1 min-w-[10rem]"
-        on:keydown={(e) => e.key === "Enter" && handleCreateFolder()}
+        onkeydown={(e) => e.key === "Enter" && handleCreateFolder()}
       />
       <div class="flex gap-2">
-        <Button on:click={handleCreateFolder}>{$t("files.create")}</Button>
-        <Button variant="secondary" on:click={() => { showNewFolder = false; newFolderName = ""; }}>
+        <Button onclick={handleCreateFolder}>{$t("files.create")}</Button>
+        <Button variant="secondary" onclick={() => { showNewFolder = false; newFolderName = ""; }}>
           {$t("common.cancel")}
         </Button>
       </div>
@@ -715,7 +719,7 @@
       {#if listing?.parent}
         <Button variant="plain"
           bind:el={upButton}
-          on:click={goUp}
+          onclick={goUp}
           class="w-full grid {columnsClass} gap-4 px-4 py-3 hover:bg-surface-muted items-center text-left border-b border-border-muted"
           title={$t("files.up")}
         >
@@ -728,25 +732,28 @@
 
       {#if listing?.items}
         {#each listing.items as item (item.path)}
+          {@const Icon = getIcon(item)}
           <!-- Mouse shortcuts: a click on the row selects the item, a double-click
                opens it. From the keyboard, the checkbox selects and the name opens. -->
-          <!-- svelte-ignore a11y-click-events-have-key-events a11y-no-static-element-interactions -->
+          <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
           <div
             class="grid {columnsClass} gap-4 px-4 py-3 hover:bg-surface-muted items-center border-b border-border-muted cursor-pointer {selected.has(item.path) ? 'bg-brand/20' : ''}"
-            on:click={() => toggleSelect(item.path)}
-            on:dblclick={() => handleOpen(item)}
+            onclick={() => toggleSelect(item.path)}
+            ondblclick={() => handleOpen(item)}
           >
             <input
               type="checkbox"
               aria-label={$t("files.select", { name: item.name })}
               data-path={item.path}
               checked={selected.has(item.path)}
-              on:click|stopPropagation={() => toggleSelect(item.path)}
+              onclick={(e) => {
+                e.stopPropagation();
+                toggleSelect(item.path);
+              }}
               class="w-4 h-4 rounded bg-surface-overlay border-border-strong"
             />
             <div class="flex items-center gap-3 min-w-0">
-              <svelte:component
-                this={getIcon(item)}
+              <Icon
                 class="w-5 h-5 flex-shrink-0 {item.type === 'directory' ? 'text-status-warning' : 'text-content-secondary'}"
               />
               {#if renaming === item.path}
@@ -759,17 +766,17 @@
                   size="sm"
                   selectOnMount
                   class="min-w-0 flex-1"
-                  on:keydown={(e) => nameFieldKey(e, item)}
-                  on:blur={() => nameFieldBlur(item)}
-                  on:click={(e) => e.stopPropagation()}
-                  on:dblclick={(e) => e.stopPropagation()}
+                  onkeydown={(e) => nameFieldKey(e, item)}
+                  onblur={() => nameFieldBlur(item)}
+                  onclick={(e) => e.stopPropagation()}
+                  ondblclick={(e) => e.stopPropagation()}
                 />
               {:else if item.type === "directory" || item.type === "file"}
                 <Button
                   variant="ghost"
                   size="sm"
                   class="pointer-events-none min-w-0 max-w-full justify-start -mx-1 px-1 py-0.5 text-base font-normal text-content hover:bg-transparent"
-                  on:click={(e) => openFromName(e, item)}
+                  onclick={(e) => openFromName(e, item)}
                 >
                   <span class="sr-only">{$t(item.type === "directory" ? "files.openItem" : "files.downloadItem", { name: item.name })}</span>
                   <span class="truncate" aria-hidden="true">{item.name}</span>
@@ -803,7 +810,7 @@
   open={deleting !== null}
   title={$t("files.delete.title", { n: deleting?.length ?? 0 })}
   closable={deleteSending === null}
-  on:close={closeDelete}
+  onclose={closeDelete}
 >
   {#if deleting}
     <div class="space-y-3">
@@ -830,9 +837,9 @@
     </div>
   {/if}
 
-  <svelte:fragment slot="footer">
+  {#snippet footer()}
     <span bind:this={deleteCancelSlot} class="contents">
-      <Button variant="secondary" class="flex-1" disabled={deleteSending !== null} on:click={closeDelete}>
+      <Button variant="secondary" class="flex-1" disabled={deleteSending !== null} onclick={closeDelete}>
         {$t("common.cancel")}
       </Button>
     </span>
@@ -843,7 +850,7 @@
         icon={Trash2}
         loading={deleteSending === "permanent"}
         disabled={deleteSending !== null}
-        on:click={() => handleDelete(true)}
+        onclick={() => handleDelete(true)}
       >
         {$t("files.deleteForGood")}
       </Button>
@@ -854,19 +861,19 @@
         icon={Trash}
         loading={deleteSending === "trash"}
         disabled={deleteSending !== null}
-        on:click={() => handleDelete(false)}
+        onclick={() => handleDelete(false)}
       >
         {$t("files.moveToTrash")}
       </Button>
     </span>
-  </svelte:fragment>
+  {/snippet}
 </Modal>
 
 <Modal
   open={removingLeftovers !== null}
   title={$t("files.leftovers.dialogTitle", { n: removingLeftovers?.length ?? 0 })}
   closable={!leftoversSending}
-  on:close={closeLeftovers}
+  onclose={closeLeftovers}
 >
   {#if removingLeftovers}
     <div class="space-y-3">
@@ -893,9 +900,9 @@
     </div>
   {/if}
 
-  <svelte:fragment slot="footer">
+  {#snippet footer()}
     <span bind:this={leftoversCancelSlot} class="contents">
-      <Button variant="secondary" class="flex-1" disabled={leftoversSending} on:click={closeLeftovers}>
+      <Button variant="secondary" class="flex-1" disabled={leftoversSending} onclick={closeLeftovers}>
         {$t("common.cancel")}
       </Button>
     </span>
@@ -905,9 +912,9 @@
       icon={Trash2}
       loading={leftoversSending}
       disabled={leftoversSending}
-      on:click={handleRemoveLeftovers}
+      onclick={handleRemoveLeftovers}
     >
       {$t("files.leftovers.removeForGood")}
     </Button>
-  </svelte:fragment>
+  {/snippet}
 </Modal>

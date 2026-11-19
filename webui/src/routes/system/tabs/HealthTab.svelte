@@ -12,15 +12,15 @@
   import { intlLocale, t } from "$lib/i18n";
   import { HardDrive, Thermometer, Check, X, AlertTriangle, RefreshCw, Moon } from "lucide-svelte";
 
-  let disks: SmartInfo[] = [];
+  let disks = $state<SmartInfo[]>([]);
   // The predictions that say replace soon (ADR-0235).
-  let toReplace: DiskPrediction[] = [];
-  let loading = true;
-  let error = "";
-  let predictionsError = "";
+  let toReplace = $state<DiskPrediction[]>([]);
+  let loading = $state(true);
+  let error = $state("");
+  let predictionsError = $state("");
   // The disk whose SMART data the dialog shows: the data of GET /health/disks,
   // so that opening a disk runs no smartctl.
-  let openDisk: SmartInfo | null = null;
+  let openDisk = $state<SmartInfo | null>(null);
 
   onMount(() => loadHealth());
 
@@ -61,7 +61,7 @@
   // The predictions to replace soon that match no listed disk: smartctl could
   // not read the disk on this load (its serial shows as Unknown), or another
   // disk took its place. They are listed apart, as on the dashboard.
-  $: unmatched = toReplace.filter((prediction) => !disks.some((disk) => disk.serial === prediction.serial));
+  let unmatched = $derived(toReplace.filter((prediction) => !disks.some((disk) => disk.serial === prediction.serial)));
 
   function healthIcon(status: string) {
     if (status === "PASSED") return Check;
@@ -119,13 +119,13 @@
   // the language.
 
   /** The text of `value` by its key in `keys`, in the language of the page; else `value`. */
-  $: textOf = (keys: Record<string, string>, value: string): string =>
-    Object.prototype.hasOwnProperty.call(keys, value) ? $t(keys[value]) : value;
+  let textOf = $derived((keys: Record<string, string>, value: string): string =>
+    Object.prototype.hasOwnProperty.call(keys, value) ? $t(keys[value]) : value);
 
-  $: attributeStatus = (status: string): { variant: BadgeVariant; label: string } => {
+  let attributeStatus = $derived((status: string): { variant: BadgeVariant; label: string } => {
     const known = ATTRIBUTE_STATUS[status as SmartAttribute["status"]];
     return known ? { variant: known.variant, label: $t(known.key) } : { variant: "neutral", label: status };
-  };
+  });
 
   /** smartctl's "available_spare_threshold" as "Available spare threshold". */
   function nvmeLabel(key: string): string {
@@ -133,12 +133,12 @@
     return words.charAt(0).toUpperCase() + words.slice(1);
   }
 
-  $: nvmeField = (key: string): string =>
-    Object.prototype.hasOwnProperty.call(NVME_FIELDS, key) ? $t(NVME_FIELDS[key]) : nvmeLabel(key);
+  let nvmeField = $derived((key: string): string =>
+    Object.prototype.hasOwnProperty.call(NVME_FIELDS, key) ? $t(NVME_FIELDS[key]) : nvmeLabel(key));
 
   // The server's word for what neither smartctl nor lsblk reported (_disk_health of
   // supervisor/src/health/router.py).
-  $: orUnknown = (value: string): string => (value === "Unknown" ? $t("common.unknown") : value);
+  let orUnknown = $derived((value: string): string => (value === "Unknown" ? $t("common.unknown") : value));
 
   // A disk's capacity as the server writes it, "3.64 TB" or "931.51 GB" (_format_capacity of
   // supervisor/src/health/router.py), by the unit: keys of the catalog.
@@ -149,7 +149,7 @@
 
   /** A capacity with its number in the format of the page and the unit of the catalog; another
    *  text as it comes. */
-  $: capacityText = (capacity: string): string => {
+  let capacityText = $derived((capacity: string): string => {
     const [number, unit, ...rest] = capacity.split(" ");
     const known = Object.prototype.hasOwnProperty.call(CAPACITY_UNITS, unit);
     if (rest.length > 0 || !known || !/^\d+(\.\d+)?$/.test(number)) return orUnknown(capacity);
@@ -160,33 +160,33 @@
       useGrouping: false
     });
     return $t(CAPACITY_UNITS[unit], { size });
-  };
+  });
 
-  $: orNotReported = (value: number | null, format: (value: number) => string = String): string =>
-    value === null ? $t("health.notReported") : format(value);
+  let orNotReported = $derived((value: number | null, format: (value: number) => string = String): string =>
+    value === null ? $t("health.notReported") : format(value));
 
   /** 51775 power-on hours as 5 years, 332 days; 1200 as 50 days, 0 hours. */
-  $: powerOnTime = (hours: number): string => {
+  let powerOnTime = $derived((hours: number): string => {
     const days = Math.floor(hours / 24);
     const years = Math.floor(days / 365);
     return years > 0
       ? `${$t("health.years", { n: years })}, ${$t("health.days", { n: days % 365 })}`
       : `${$t("health.days", { n: days })}, ${$t("health.hours", { n: hours % 24 })}`;
-  };
+  });
 
-  $: lastSelfTest = (disk: SmartInfo): string => {
+  let lastSelfTest = $derived((disk: SmartInfo): string => {
     if (!disk.self_test_status && !disk.last_test_result) return $t("health.noSelfTest");
     return [disk.self_test_status, disk.last_test_result]
       .filter((part): part is string => Boolean(part))
       .map(orUnknown)
       .join(": ");
-  };
+  });
 </script>
 
 <div class="space-y-4">
   <div class="flex items-center justify-between">
     <h2 class="text-xl font-bold">{$t("health.title")}</h2>
-    <Button variant="secondary" size="icon" on:click={loadHealth} disabled={loading}>
+    <Button variant="secondary" size="icon" onclick={loadHealth} disabled={loading}>
       <RefreshCw class="w-4 h-4 {loading ? 'animate-spin' : ''}" />
       <span class="sr-only">{$t("health.refresh")}</span>
     </Button>
@@ -218,6 +218,7 @@
     <ul class="space-y-3" aria-label={$t("health.disks")}>
       {#each disks as disk}
         {@const prediction = predictionOf(disk, toReplace)}
+        {@const Icon = healthIcon(disk.health_status)}
         <li class="card">
           <div class="flex flex-wrap items-center justify-between gap-3">
             <div class="flex items-center gap-3">
@@ -238,10 +239,10 @@
                 </span>
               {/if}
               <span class="flex items-center gap-1 font-medium {healthClass(disk.health_status)}">
-                <svelte:component this={healthIcon(disk.health_status)} class="w-5 h-5" />
+                <Icon class="w-5 h-5" />
                 {textOf(HEALTH_STATUS, disk.health_status)}
               </span>
-              <Button variant="secondary" size="sm" on:click={() => (openDisk = disk)}>
+              <Button variant="secondary" size="sm" onclick={() => (openDisk = disk)}>
                 {$t("health.smartData")}<span class="sr-only">{$t("health.smartDataOf", { device: disk.device })}</span>
               </Button>
             </div>
@@ -262,7 +263,7 @@
   open={openDisk !== null}
   title={openDisk ? `${orUnknown(openDisk.model)} (${openDisk.device})` : ""}
   size="xl"
-  on:close={() => (openDisk = null)}
+  onclose={() => (openDisk = null)}
 >
   {#if openDisk}
     <dl class="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-3 text-sm">

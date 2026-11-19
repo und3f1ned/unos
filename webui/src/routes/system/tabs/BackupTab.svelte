@@ -8,22 +8,22 @@
   import { Archive, Plus, Trash2, RefreshCw, Clock, Download, Upload, RotateCcw, AlertTriangle, CheckCircle, Lock } from "lucide-svelte";
   import OffsiteCopy from "./OffsiteCopy.svelte";
 
-  let backups: BackupInfo[] = [];
-  let loading = true;
-  let creating = false;
-  let uploading = false;
-  let restoring: string | null = null;
+  let backups = $state<BackupInfo[]>([]);
+  let loading = $state(true);
+  let creating = $state(false);
+  let uploading = $state(false);
+  let restoring = $state<string | null>(null);
 
   // Restore confirmation modal
-  let showRestoreModal = false;
-  let restoreTarget: BackupInfo | null = null;
-  let restoreConfirmName = "";
+  let showRestoreModal = $state(false);
+  let restoreTarget = $state<BackupInfo | null>(null);
+  let restoreConfirmName = $state("");
   // Encrypted backups (.tar.gz.enc) are restored with their passphrase.
-  let restorePassphrase = "";
-  let restoreResult: { success: boolean; message: string; restored?: string[] } | null = null;
+  let restorePassphrase = $state("");
+  let restoreResult = $state<{ success: boolean; message: string; restored?: string[] } | null>(null);
   // The last failed action, shown above the list until it is dismissed.
-  let error: { title: string; message: string } | null = null;
-  let errorBox: HTMLDivElement | undefined;
+  let error = $state<{ title: string; message: string } | null>(null);
+  let errorBox = $state<HTMLDivElement>();
 
   // The items of a restore that the server names ("restored" of POST /backup/restore): keys of
   // the catalog, by item.
@@ -33,16 +33,17 @@
   };
 
   /** The label of a restored item in the language of the page; an item without one as it comes. */
-  $: itemLabel = (item: string): string =>
-    Object.prototype.hasOwnProperty.call(RESTORED_ITEMS, item) ? $t(RESTORED_ITEMS[item]) : item;
+  function itemLabel(item: string): string {
+    return Object.prototype.hasOwnProperty.call(RESTORED_ITEMS, item) ? $t(RESTORED_ITEMS[item]) : item;
+  }
 
   // The units of a backup's size in the language of the page, from bytes to gigabytes (formatBytes).
-  $: sizeUnits = [
+  let sizeUnits = $derived([
     $t("backup.size.bytes"),
     $t("backup.size.kilobytes"),
     $t("backup.size.megabytes"),
     $t("backup.size.gigabytes")
-  ];
+  ]);
 
   // A 401 has already ended the session and the sign-in page is on its way.
   function sessionEnded(e: unknown): boolean {
@@ -63,7 +64,7 @@
   }
 
   // Upload input ref
-  let fileInput: HTMLInputElement;
+  let fileInput: HTMLInputElement | undefined;
 
   onMount(() => loadBackups());
 
@@ -181,10 +182,10 @@
         accept=".tar.gz,.tar.gz.enc"
         class="hidden"
         bind:this={fileInput}
-        on:change={handleFileSelected}
+        onchange={handleFileSelected}
       />
       <Button variant="secondary" size="sm"
-        on:click={handleUploadClick}
+        onclick={handleUploadClick}
         disabled={uploading}
       >
         {#if uploading}
@@ -195,7 +196,7 @@
         {$t("backup.upload")}
       </Button>
       <Button variant="primary" size="sm"
-        on:click={handleCreate}
+        onclick={handleCreate}
         disabled={creating}
       >
         {#if creating}
@@ -211,7 +212,7 @@
   {#if error}
     <!-- role="alert": screen readers announce the message when it appears. -->
     <div bind:this={errorBox} role="alert">
-      <Alert variant="error" title={error.title} dismissible on:dismiss={() => (error = null)}>
+      <Alert variant="error" title={error.title} dismissible ondismiss={() => (error = null)}>
         {error.message}
       </Alert>
     </div>
@@ -254,21 +255,21 @@
             </div>
             <div class="flex shrink-0 items-center gap-1">
               <Button variant="ghost" size="icon" class="text-status-success hover:text-status-success"
-                on:click={() => openRestoreModal(backup)}
+                onclick={() => openRestoreModal(backup)}
                 title={$t("backup.restore")}
                 aria-label={$t("backup.restoreOne", { name: backup.filename })}
               >
                 <RotateCcw class="w-4 h-4" />
               </Button>
               <Button variant="ghost" size="icon" class="text-status-info hover:text-status-info"
-                on:click={() => handleDownload(backup.filename)}
+                onclick={() => handleDownload(backup.filename)}
                 title={$t("backup.download")}
                 aria-label={$t("backup.downloadOne", { name: backup.filename })}
               >
                 <Download class="w-4 h-4" />
               </Button>
               <Button variant="ghost" size="icon" class="text-status-error hover:text-status-error"
-                on:click={() => handleDelete(backup.filename)}
+                onclick={() => handleDelete(backup.filename)}
                 title={$t("backup.delete")}
                 aria-label={$t("backup.deleteOne", { name: backup.filename })}
               >
@@ -282,7 +283,7 @@
   </div>
 
   <!-- The off-device copy (ADR-0337): a configuration it restores lands in the list above. -->
-  <OffsiteCopy on:restored={loadBackups} />
+  <OffsiteCopy onrestored={loadBackups} />
 </div>
 
 <!-- Restore Confirmation Modal. Modal's overlay (ADR-0302): taller than the window, the dialog
@@ -313,7 +314,7 @@
             <p class="text-status-error text-sm mb-4">{restoreResult.message}</p>
           {/if}
           <Button variant="secondary"
-            on:click={closeRestoreModal}
+            onclick={closeRestoreModal}
            
           >
             {$t("backup.dialog.close")}
@@ -366,13 +367,13 @@
 
         <div class="flex gap-3">
           <Button variant="secondary" class="flex-1"
-            on:click={closeRestoreModal}
+            onclick={closeRestoreModal}
            
           >
             {$t("common.cancel")}
           </Button>
           <Button variant="warning" class="flex-1"
-            on:click={handleRestore}
+            onclick={handleRestore}
             disabled={restoreConfirmName !== restoreTarget.filename ||
               (restoreTarget.encrypted && !restorePassphrase) ||
               restoring !== null}

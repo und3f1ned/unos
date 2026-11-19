@@ -31,31 +31,31 @@
 	const REVERT_GRACE_MS = 5000;
 	const REVERT_CHECKS = 3;
 
-	let status: FirewallStatus | null = null;
-	let loading = false;
-	let loadError = '';
-	let busy = false;
-	let error = '';
-	let success = '';
-	let notice = '';
-	let showDetails = false;
-	let enabling = false;
-	let showEnable = false;
-	let showAdd = false;
-	let addError = '';
-	let newRule: { action: FirewallAction; protocol: FirewallProtocol; port: string; source: string; comment: string } =
-		emptyRule();
+	let status = $state<FirewallStatus | null>(null);
+	let loading = $state(false);
+	let loadError = $state('');
+	let busy = $state(false);
+	let error = $state('');
+	let success = $state('');
+	let notice = $state('');
+	let showDetails = $state(false);
+	let enabling = $state(false);
+	let showEnable = $state(false);
+	let showAdd = $state(false);
+	let addError = $state('');
+	type NewRule = { action: FirewallAction; protocol: FirewallProtocol; port: string; source: string; comment: string };
+	let newRule = $state<NewRule>(emptyRule());
 
 	// The countdown of a change that waits to be kept: when the host undoes it, in the page's clock.
-	let deadline: number | null = null;
-	let now = Date.now();
+	let deadline = $state<number | null>(null);
+	let now = $state(Date.now());
 	let ticker: ReturnType<typeof setInterval> | null = null;
 	let check: ReturnType<typeof setTimeout> | null = null;
 	let checksLeft = 0;
-	let keepButton: HTMLButtonElement | null = null;
+	let keepButton = $state<HTMLButtonElement | null>(null);
 
-	$: revertSeconds = status?.revert_seconds ?? 120;
-	$: secondsLeft = deadline === null ? null : Math.max(0, Math.ceil((deadline - now) / 1000));
+	const revertSeconds = $derived(status?.revert_seconds ?? 120);
+	const secondsLeft = $derived(deadline === null ? null : Math.max(0, Math.ceil((deadline - now) / 1000)));
 
 	// The labels of the values that the server answers as words (FirewallRule and FirewallStatus of
 	// $lib/api/security): keys of the catalog, by value.
@@ -77,12 +77,15 @@
 		reject: 'firewall.policyReject'
 	};
 
+	// The functions that read $t do it where the markup calls them: the texts follow the language.
+
 	/** The label of `value` in the language of the page; a value without one as it comes. */
-	$: labelOf = (labels: Record<string, string>, value: string): string =>
-		Object.prototype.hasOwnProperty.call(labels, value) ? $t(labels[value]) : value;
+	function labelOf(labels: Record<string, string>, value: string): string {
+		return Object.prototype.hasOwnProperty.call(labels, value) ? $t(labels[value]) : value;
+	}
 
 	/** A rule's direction, protocol, port and addresses: "IN | TCP | Port: 22 | From: 192.168.1.0/24". */
-	$: ruleLine = (rule: FirewallRule): string => {
+	function ruleLine(rule: FirewallRule): string {
 		const parts = [
 			labelOf(RULE_DIRECTIONS, rule.direction),
 			labelOf(RULE_PROTOCOLS, rule.protocol),
@@ -93,18 +96,18 @@
 		if (rule.interface) parts.push($t('firewall.on', { interface: rule.interface }));
 		// i18n-ignore: a separator
 		return parts.join(' | ');
-	};
+	}
 
-	$: actionOptions = [
+	const actionOptions = $derived([
 		{ value: 'allow', label: $t('firewall.allow') },
 		{ value: 'deny', label: $t('firewall.deny') },
 		{ value: 'reject', label: $t('firewall.reject') }
-	];
-	$: protocolOptions = [
+	]);
+	const protocolOptions = $derived([
 		{ value: 'tcp', label: $t('firewall.tcp') },
 		{ value: 'udp', label: $t('firewall.udp') },
 		{ value: 'any', label: $t('firewall.any') }
-	];
+	]);
 
 	onMount(() => {
 		void load();
@@ -115,7 +118,7 @@
 		if (check) clearTimeout(check);
 	});
 
-	function emptyRule(): typeof newRule {
+	function emptyRule(): NewRule {
 		return { action: 'allow', protocol: 'tcp', port: '', source: '', comment: '' };
 	}
 
@@ -323,7 +326,7 @@
 			{:else if status}
 				<Badge variant="warning"><ShieldX class="w-4 h-4 inline" /> {$t('firewall.inactive')}</Badge>
 			{/if}
-			<Button variant="primary" aria-expanded={showDetails} on:click={() => (showDetails = !showDetails)}
+			<Button variant="primary" aria-expanded={showDetails} onclick={() => (showDetails = !showDetails)}
 				>{$t('firewall.configure')}</Button
 			>
 		</div>
@@ -347,7 +350,7 @@
 	{#if loadError}
 		<Alert variant="error" title={$t('firewall.loadFailed')} class="mb-4">
 			<p class="break-words">{loadError}</p>
-			<Button variant="secondary" size="sm" class="mt-3" {loading} on:click={load}>{$t('common.retry')}</Button>
+			<Button variant="secondary" size="sm" class="mt-3" {loading} onclick={load}>{$t('common.retry')}</Button>
 		</Alert>
 	{/if}
 
@@ -361,7 +364,7 @@
 					disabled={busy}
 					aria-describedby="firewall-countdown"
 					bind:el={keepButton}
-					on:click={keep}>{$t('firewall.keep')}</Button
+					onclick={keep}>{$t('firewall.keep')}</Button
 				>
 			</div>
 		</Alert>
@@ -387,11 +390,11 @@
 				</div>
 				<div class="flex flex-wrap gap-2">
 					{#if status.enabled}
-						<Button variant="danger" disabled={busy} on:click={turnOff}>{$t('firewall.disable')}</Button>
+						<Button variant="danger" disabled={busy} onclick={turnOff}>{$t('firewall.disable')}</Button>
 					{:else}
-						<Button variant="success" disabled={busy} on:click={() => (showEnable = true)}>{$t('firewall.enable')}</Button>
+						<Button variant="success" disabled={busy} onclick={() => (showEnable = true)}>{$t('firewall.enable')}</Button>
 					{/if}
-					<Button variant="secondary" disabled={busy} on:click={reset}>
+					<Button variant="secondary" disabled={busy} onclick={reset}>
 						<RefreshCw class="w-4 h-4" />
 						{$t('firewall.reset')}
 					</Button>
@@ -402,7 +405,7 @@
 
 			<div class="flex flex-wrap justify-between items-center gap-2">
 				<h4 class="font-medium">{$t('firewall.rules')}</h4>
-				<Button variant="primary" size="sm" disabled={busy} on:click={openAdd}>
+				<Button variant="primary" size="sm" disabled={busy} onclick={openAdd}>
 					<Plus class="w-4 h-4" />
 					{$t('firewall.addRule')}
 				</Button>
@@ -448,7 +451,7 @@
 										class="text-status-error hover:text-status-error"
 										disabled={busy}
 										aria-label={$t('firewall.deleteRule', { n: rule.number })}
-										on:click={() => deleteRule(rule)}
+										onclick={() => deleteRule(rule)}
 									>
 										<Trash2 class="w-4 h-4" />
 									</Button>
@@ -462,7 +465,7 @@
 	{/if}
 </Card>
 
-<Modal open={showEnable} title={$t('firewall.enableTitle')} on:close={() => (showEnable = false)}>
+<Modal open={showEnable} title={$t('firewall.enableTitle')} onclose={() => (showEnable = false)}>
 	<div class="space-y-3 text-sm break-words">
 		<p>{$t('firewall.enableRules', { networks: LOCAL_NETWORKS.join(', ') })}</p>
 		<p>{$t('firewall.enableRevert', { n: revertSeconds })}</p>
@@ -472,14 +475,21 @@
 		<p>{$t('firewall.enableOthers')}</p>
 		<p>{$t('firewall.docker')}</p>
 	</div>
-	<svelte:fragment slot="footer">
-		<Button variant="secondary" on:click={() => (showEnable = false)}>{$t('common.cancel')}</Button>
-		<Button variant="primary" disabled={busy} on:click={turnOn}>{$t('firewall.turnOn')}</Button>
-	</svelte:fragment>
+	{#snippet footer()}
+		<Button variant="secondary" onclick={() => (showEnable = false)}>{$t('common.cancel')}</Button>
+		<Button variant="primary" disabled={busy} onclick={turnOn}>{$t('firewall.turnOn')}</Button>
+	{/snippet}
 </Modal>
 
-<Modal open={showAdd} title={$t('firewall.addTitle')} closable={!busy} on:close={() => (showAdd = false)}>
-	<form id="firewall-add-rule" class="space-y-4" on:submit|preventDefault={addRule}>
+<Modal open={showAdd} title={$t('firewall.addTitle')} closable={!busy} onclose={() => (showAdd = false)}>
+	<form
+		id="firewall-add-rule"
+		class="space-y-4"
+		onsubmit={(event) => {
+			event.preventDefault();
+			addRule();
+		}}
+	>
 		<div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
 			<Select label={$t('firewall.action')} options={actionOptions} bind:value={newRule.action} />
 			<Select label={$t('firewall.protocol')} options={protocolOptions} bind:value={newRule.protocol} />
@@ -501,10 +511,10 @@
 			<Alert variant="error">{addError}</Alert>
 		{/if}
 	</form>
-	<svelte:fragment slot="footer">
-		<Button variant="secondary" type="button" disabled={busy} on:click={() => (showAdd = false)}>{$t('common.cancel')}</Button>
+	{#snippet footer()}
+		<Button variant="secondary" type="button" disabled={busy} onclick={() => (showAdd = false)}>{$t('common.cancel')}</Button>
 		<Button variant="primary" type="submit" form="firewall-add-rule" disabled={busy}>
 			{busy ? $t('firewall.adding') : $t('firewall.addRule')}
 		</Button>
-	</svelte:fragment>
+	{/snippet}
 </Modal>

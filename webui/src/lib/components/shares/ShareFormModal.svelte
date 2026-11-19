@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { createEventDispatcher, onMount } from 'svelte';
+	import { onMount, untrack } from 'svelte';
 	import { getUsers, type User } from '$lib/api/auth';
 	import { ApiError } from '$lib/api/client';
 	import { getGroups, type Group } from '$lib/api/groups';
@@ -28,50 +28,58 @@
 	} from './access';
 	import { folderParts, folderProblem, joinSharePath, splitSharePath } from './paths';
 
-	/** The share to edit; null to create one. The dialog is open while mounted. */
-	export let share: SmbShare | null = null;
-	/** Pools and volumes (GET /shares/paths); only those of pools that UNOS manages are offered. */
-	export let paths: SharePath[] = [];
+	type Props = {
+		/** The share to edit; null to create one. The dialog is open while mounted. */
+		share?: SmbShare | null;
+		/** Pools and volumes (GET /shares/paths); only those of pools that UNOS manages are offered. */
+		paths?: SharePath[];
+		/**
+		 * The user closed the dialog (not while saving), or a save changed nothing. `stale`: the
+		 * server refused a change (409, 404), so the page's list may be out of date.
+		 */
+		onclose?: (closed: { stale: boolean }) => void;
+		/** The server took the share: the one it created (`created`) or changed. */
+		onsaved?: (saved: { share: SmbShare; created: boolean }) => void;
+	};
 
-	const dispatch = createEventDispatcher<{
-		/** `stale`: the server refused a change (409, 404), so the page's list may be out of date. */
-		close: { stale: boolean };
-		saved: { share: SmbShare; created: boolean };
-	}>();
+	let { share = null, paths = [], onclose, onsaved }: Props = $props();
 
 	/** The locations an SMB share can use: the server refuses pools that UNOS does not manage. */
 	function smbLocations(all: SharePath[]): SharePath[] {
 		return all.filter((location) => location.managed);
 	}
 
-	const editing = share !== null;
+	// The share the dialog was opened with: the dialog is mounted for one share, or none.
+	const opened = untrack(() => share);
+	const editing = opened !== null;
 	// The share as last loaded: an edit sends only what differs from it.
-	let loaded: SmbShare | null = share;
+	let loaded: SmbShare | null = $state(opened);
 
-	let name = '';
-	let base = '';
-	let folder = '';
-	let comment = '';
-	let browseable = true;
-	let guestOk = false;
-	let levels: Record<string, AccessChoice> = {};
-	let groupLevels: Record<string, AccessChoice> = {};
+	let name = $state('');
+	let base = $state('');
+	let folder = $state('');
+	let comment = $state('');
+	let browseable = $state(true);
+	let guestOk = $state(false);
+	let levels: Record<string, AccessChoice> = $state({});
+	let groupLevels: Record<string, AccessChoice> = $state({});
 	// The protocol options (ADR-0380), each off by default.
-	let options: Record<ShareOption, boolean> = noOptions();
+	let options: Record<ShareOption, boolean> = $state(noOptions());
 
 	function noOptions(): Record<ShareOption, boolean> {
 		return { encryption_required: false, time_machine: false, previous_versions: false };
 	}
 
-	let users: User[] = [];
-	let groups: Group[] = [];
-	let usersLoading = true;
-	let usersError = '';
+	let users: User[] = $state([]);
+	let groups: Group[] = $state([]);
+	let usersLoading = $state(true);
+	let usersError = $state('');
 
-	let saving = false;
-	let attempted = false;
-	let error = '';
-	let reloadedNotice = '';
+	let saving = $state(false);
+	let attempted = $state(false);
+	let error = $state('');
+	let reloadedNotice = $state('');
+	// Only the handlers read it, when the dialog closes.
 	let stale = false;
 
 	function fillForm(from: SmbShare | null) {
@@ -105,7 +113,7 @@
 		attempted = false;
 	}
 
-	fillForm(share);
+	fillForm(opened);
 
 	onMount(() => {
 		void loadUsers();
@@ -130,47 +138,52 @@
 		}
 	}
 
-	$: locations = smbLocations(paths);
+	const locations = $derived(smbLocations(paths));
 	// A pool's or a volume's name, and its kind in the page's language.
-	$: locationOptions = locations.map((p) => ({
-		value: p.path,
-		label: $t(p.type === 'volume' ? 'shares.location.volume' : 'shares.location.pool', { name: p.name })
-	}));
-	$: location = locations.find((p) => p.path === base);
-	$: parts = folderParts(folder);
-	$: finalPath = base ? joinSharePath(base, parts) : '';
+	const locationOptions = $derived(
+		locations.map((p) => ({
+			value: p.path,
+			label: $t(p.type === 'volume' ? 'shares.location.volume' : 'shares.location.pool', { name: p.name })
+		}))
+	);
+	const location = $derived(locations.find((p) => p.path === base));
+	const parts = $derived(folderParts(folder));
+	const finalPath = $derived(base ? joinSharePath(base, parts) : '');
 	// The folder of a served share is fixed; one that is not served can be moved.
-	$: locationEditable = !editing || loaded?.served === false;
-	$: pathChanged = editing && locationEditable && base !== '' && finalPath !== loaded?.path;
+	const locationEditable = $derived(!editing || loaded?.served === false);
+	const pathChanged = $derived(editing && locationEditable && base !== '' && finalPath !== loaded?.path);
 	// Checked when creating, when the folder of a share that is not served
 	// changes, and when a folder is typed without a location for it. The folder
 	// a share was loaded with is the server's to judge: its comment, for
 	// example, can change without a new folder.
-	$: checkPath = !editing || pathChanged || (locationEditable && base === '' && parts.length > 0);
+	const checkPath = $derived(!editing || pathChanged || (locationEditable && base === '' && parts.length > 0));
 	// The folders that are never shared, as the server words them (supervisor/src/shares/service.py).
-	$: folderMessages = {
+	const folderMessages = $derived({
 		poolRoot: $t('shares.form.poolRoot'),
 		apps: (pool: string) => $t('shares.form.appsFolder', { pool })
-	};
-	$: problem = !base ? $t('shares.location.choose') : folderProblem(location, parts, folderMessages);
+	});
+	const problem = $derived(!base ? $t('shares.location.choose') : folderProblem(location, parts, folderMessages));
 	// A missing folder is shown once the user tried to save; "apps" at once.
-	$: folderError =
-		locationEditable && checkPath && problem && (attempted || parts.length > 0) ? problem : '';
-	$: nameError = !editing && attempted && !name.trim() ? $t('shares.form.nameRequired') : '';
+	const folderError = $derived(
+		locationEditable && checkPath && problem && (attempted || parts.length > 0) ? problem : ''
+	);
+	const nameError = $derived(!editing && attempted && !name.trim() ? $t('shares.form.nameRequired') : '');
 	// A share that is not served cannot be given access (the server answers 400)
 	// until its folder is changed to one that can be served. Access it still has
 	// can only be removed: the server saves such a share once it grants nothing.
-	$: accessLocked = editing && loaded?.served === false && (!pathChanged || problem !== '');
-	$: loadedGrants =
+	const accessLocked = $derived(editing && loaded?.served === false && (!pathChanged || problem !== ''));
+	const loadedGrants = $derived(
 		(loaded?.access.length ?? 0) > 0 ||
-		(loaded?.group_access?.length ?? 0) > 0 ||
-		loaded?.guest_ok === true;
+			(loaded?.group_access?.length ?? 0) > 0 ||
+			loaded?.guest_ok === true
+	);
 	// While access is locked, guest access can be turned off, and on again
 	// only when the loaded share has it. Guests' connections are never encrypted:
 	// a share that requires encryption has no guests (the server refuses both).
-	$: guestLocked =
-		(accessLocked && !guestOk && loaded?.guest_ok !== true) || (options.encryption_required && !guestOk);
-	$: encryptionLocked = guestOk && !options.encryption_required;
+	const guestLocked = $derived(
+		(accessLocked && !guestOk && loaded?.guest_ok !== true) || (options.encryption_required && !guestOk)
+	);
+	const encryptionLocked = $derived(guestOk && !options.encryption_required);
 	// The options in the form's order, with the catalog keys of their names and of their hints.
 	const OPTION_KEYS: Record<ShareOption, string> = {
 		encryption_required: 'shares.form.option.encryption',
@@ -182,20 +195,22 @@
 		time_machine: 'shares.form.option.timeMachineHint',
 		previous_versions: 'shares.form.option.previousVersionsHint'
 	};
-	$: optionChoices = SHARE_OPTIONS.map((name) => ({
-		name,
-		label: $t(OPTION_KEYS[name]),
-		hint: $t(OPTION_HINT_KEYS[name]),
-		locked: name === 'encryption_required' && encryptionLocked
-	}));
+	const optionChoices = $derived(
+		SHARE_OPTIONS.map((name) => ({
+			name,
+			label: $t(OPTION_KEYS[name]),
+			hint: $t(OPTION_HINT_KEYS[name]),
+			locked: name === 'encryption_required' && encryptionLocked
+		}))
+	);
 
-	$: listedUsers = pickableUsers(users);
-	$: loadedLevels = levelsFromAccess(loaded?.access ?? []);
-	$: currentAccess = accessEntries(listedUsers, levels);
-	$: loadedAccess = accessEntries(listedUsers, loadedLevels);
-	$: loadedGroupLevels = groupLevelsFromAccess(loaded?.group_access ?? []);
-	$: currentGroupAccess = groupAccessEntries(groups, groupLevels);
-	$: loadedGroupAccess = groupAccessEntries(groups, loadedGroupLevels);
+	const listedUsers = $derived(pickableUsers(users));
+	const loadedLevels = $derived(levelsFromAccess(loaded?.access ?? []));
+	const currentAccess = $derived(accessEntries(listedUsers, levels));
+	const loadedAccess = $derived(accessEntries(listedUsers, loadedLevels));
+	const loadedGroupLevels = $derived(groupLevelsFromAccess(loaded?.group_access ?? []));
+	const currentGroupAccess = $derived(groupAccessEntries(groups, groupLevels));
+	const loadedGroupAccess = $derived(groupAccessEntries(groups, loadedGroupLevels));
 
 	// A changed access list or guest setting is always sent: while access is
 	// locked, the picker and the guest checkbox can only remove access, or give
@@ -219,7 +234,7 @@
 		attempted = true;
 		error = '';
 		reloadedNotice = '';
-		// Reactive values that depend on `attempted` are only updated after this function.
+		// The conditions of the errors shown under the fields, now that `attempted` is set.
 		if ((!editing && !name.trim()) || (locationEditable && checkPath && problem)) return;
 
 		saving = true;
@@ -235,12 +250,12 @@
 					group_access: currentGroupAccess,
 					...options
 				});
-				dispatch('saved', { share: created, created: true });
+				onsaved?.({ share: created, created: true });
 				return;
 			}
 			const patch = buildPatch(loaded);
 			if (Object.keys(patch).length === 0) {
-				dispatch('close', { stale });
+				onclose?.({ stale });
 				return;
 			}
 			// The version makes the server refuse (409) a share changed since it was loaded.
@@ -248,7 +263,7 @@
 				expected_version: loaded.version,
 				...patch
 			});
-			dispatch('saved', { share: updated, created: false });
+			onsaved?.({ share: updated, created: false });
 		} catch (e) {
 			error = messageOf(e);
 			if (e instanceof ApiError && (e.status === 409 || e.status === 404)) stale = true;
@@ -285,7 +300,7 @@
 	}
 
 	function close() {
-		if (!saving) dispatch('close', { stale });
+		if (!saving) onclose?.({ stale });
 	}
 </script>
 
@@ -294,10 +309,13 @@
 	title={editing ? $t('shares.form.editTitle', { name: share?.name ?? '' }) : $t('shares.form.addTitle')}
 	size="xl"
 	closable={!saving}
-	on:close={close}
+	onclose={close}
 >
 	<form
-		on:submit|preventDefault={submit}
+		onsubmit={(event) => {
+			event.preventDefault();
+			submit();
+		}}
 		class="space-y-4 max-h-[60vh] overflow-y-auto scrollbar-thin pr-1"
 	>
 		<Input
@@ -445,12 +463,12 @@
 		</Alert>
 	{/if}
 
-	<svelte:fragment slot="footer">
-		<Button variant="secondary" class="flex-1" disabled={saving} on:click={close}>
+	{#snippet footer()}
+		<Button variant="secondary" class="flex-1" disabled={saving} onclick={close}>
 			{$t('common.cancel')}
 		</Button>
-		<Button class="flex-1" loading={saving} on:click={submit}>
+		<Button class="flex-1" loading={saving} onclick={submit}>
 			{editing ? $t('shares.form.save') : $t('shares.form.create')}
 		</Button>
-	</svelte:fragment>
+	{/snippet}
 </Modal>

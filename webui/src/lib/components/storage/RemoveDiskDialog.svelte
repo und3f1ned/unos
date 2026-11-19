@@ -2,7 +2,7 @@
 	// Remove a disk from a mounted pool (ADR-0411): its data moves to the other disks first, in a
 	// unit of the host. The server says why a disk cannot leave (the only disk, the profile, the
 	// space); the removal starts once the disk's path is typed again.
-	import { createEventDispatcher } from 'svelte';
+	import { untrack } from 'svelte';
 	import { Alert, Badge, Button, Input, Modal } from '$lib/components/ui';
 	import {
 		getPoolDevices,
@@ -13,26 +13,40 @@
 	} from '$lib/api/storage';
 	import { t } from '$lib/i18n';
 
-	/** The pool to remove a disk from; the dialog is open while it is set. */
-	export let pool: Pool | null = null;
-	/** A size in the language of the page. */
-	export let formatBytes: (bytes: number) => string;
+	type Props = {
+		/** The pool to remove a disk from; the dialog is open while it is set. */
+		pool?: Pool | null;
+		/** A size in the language of the page. */
+		formatBytes: (bytes: number) => string;
+		onclose?: () => void;
+		/** The removal started: its status. */
+		onstarted?: (status: DiskRemovalStatus) => void;
+	};
 
-	const dispatch = createEventDispatcher<{ close: void; started: DiskRemovalStatus }>();
+	let { pool = null, formatBytes, onclose, onstarted }: Props = $props();
 
+	// The pool whose disks were asked for last: no state, as only the code compares it.
 	let loadedFor: Pool | null = null;
-	let loading = false;
-	let loadError = '';
-	let members: PoolMember[] = [];
-	let selectedDevid: number | null = null;
-	let confirm = '';
-	let busy = false;
-	let error = '';
+	let loading = $state(false);
+	let loadError = $state('');
+	let members: PoolMember[] = $state.raw([]);
+	let selectedDevid: number | null = $state(null);
+	let confirm = $state('');
+	let busy = $state(false);
+	let error = $state('');
 
-	$: if (pool !== loadedFor) load(pool);
-	$: selected = members.find((member) => member.devid === selectedDevid && member.problem === null) ?? null;
-	$: confirmed = selected !== null && confirm.trim() === selected.path;
-	$: canRemove = confirmed && !busy;
+	// A new pool asks for its disks, before the dialog draws, so that it opens on the loading text.
+	$effect.pre(() => {
+		const target = pool;
+		untrack(() => {
+			if (target !== loadedFor) load(target);
+		});
+	});
+	let selected = $derived(
+		members.find((member) => member.devid === selectedDevid && member.problem === null) ?? null
+	);
+	let confirmed = $derived(selected !== null && confirm.trim() === selected.path);
+	let canRemove = $derived(confirmed && !busy);
 
 	async function load(target: Pool | null) {
 		loadedFor = target;
@@ -55,7 +69,7 @@
 	}
 
 	function close() {
-		if (!busy) dispatch('close');
+		if (!busy) onclose?.();
 	}
 
 	async function remove() {
@@ -65,7 +79,7 @@
 		try {
 			const started = await removePoolDisk(pool.name, selected, confirm.trim());
 			busy = false;
-			dispatch('started', started);
+			onstarted?.(started);
 		} catch (e) {
 			error = e instanceof Error ? e.message : String(e);
 			busy = false;
@@ -78,7 +92,7 @@
 	title={$t('storage.removeDisk.title', { name: pool?.name ?? '' })}
 	size="md"
 	closable={!busy}
-	on:close={close}
+	onclose={close}
 >
 	{#if pool}
 		<p class="text-sm text-secondary">{$t('storage.removeDisk.intro')}</p>
@@ -138,12 +152,12 @@
 		{/if}
 	{/if}
 
-	<svelte:fragment slot="footer">
-		<Button variant="secondary" class="flex-1" disabled={busy} on:click={close}>
+	{#snippet footer()}
+		<Button variant="secondary" class="flex-1" disabled={busy} onclick={close}>
 			{$t('common.cancel')}
 		</Button>
-		<Button variant="danger" class="flex-1" loading={busy} disabled={!canRemove} on:click={remove}>
+		<Button variant="danger" class="flex-1" loading={busy} disabled={!canRemove} onclick={remove}>
 			{$t('storage.removeDisk.submit')}
 		</Button>
-	</svelte:fragment>
+	{/snippet}
 </Modal>

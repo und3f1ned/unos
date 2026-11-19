@@ -15,21 +15,21 @@
 	import { Alert, Badge, Button, Card, Modal } from '$lib/components/ui';
 	import { t } from '$lib/i18n';
 
-	let current: SmbInterfaces | null = null;
-	let loadError = '';
-	let notice = '';
-	let warnings: string[] = [];
+	let current = $state<SmbInterfaces | null>(null);
+	let loadError = $state('');
+	let notice = $state('');
+	let warnings: string[] = $state([]);
 
 	// The dialog of the choice: mounted while open.
-	let editing = false;
-	let mode: 'every' | 'chosen' = 'every';
-	let picked: Record<string, boolean> = {};
-	let saving = false;
-	let saveError = '';
+	let editing = $state(false);
+	let mode = $state<'every' | 'chosen'>('every');
+	let picked: Record<string, boolean> = $state({});
+	let saving = $state(false);
+	let saveError = $state('');
 
-	let restartOpen = false;
-	let restarting = false;
-	let restartError = '';
+	let restartOpen = $state(false);
+	let restarting = $state(false);
+	let restartError = $state('');
 
 	onMount(load);
 
@@ -76,18 +76,20 @@
 		return entry.offered || !entry.present || entry.chosen;
 	}
 
-	$: selection =
+	const selection = $derived(
 		mode === 'every'
 			? []
 			: (current?.interfaces ?? [])
 					.filter((entry) => picked[entry.name])
 					.map((entry) => entry.name)
-					.sort();
-	$: unchanged =
+					.sort()
+	);
+	const unchanged = $derived(
 		current !== null &&
-		(mode === 'chosen') === current.bound &&
-		selection.join(' ') === [...current.chosen].sort().join(' ');
-	$: nothingPicked = mode === 'chosen' && selection.length === 0;
+			(mode === 'chosen') === current.bound &&
+			selection.join(' ') === [...current.chosen].sort().join(' ')
+	);
+	const nothingPicked = $derived(mode === 'chosen' && selection.length === 0);
 
 	function sessionsWarning(state: SmbInterfaces): string {
 		if (state.sessions === null) return $t('shares.interfaces.restartWarningAny');
@@ -180,21 +182,21 @@
 				</Alert>
 			{/if}
 			{#if notice}
-				<Alert variant="success" dismissible on:dismiss={() => (notice = '')}>{notice}</Alert>
+				<Alert variant="success" dismissible ondismiss={() => (notice = '')}>{notice}</Alert>
 			{/if}
 			{#if warnings.length > 0}
-				<Alert variant="warning" dismissible on:dismiss={() => (warnings = [])}>
+				<Alert variant="warning" dismissible ondismiss={() => (warnings = [])}>
 					{#each warnings as warning}
 						<p class="break-words">{warning}</p>
 					{/each}
 				</Alert>
 			{/if}
 			<div class="flex flex-wrap gap-2">
-				<Button variant="secondary" icon={Network} on:click={openEdit}>
+				<Button variant="secondary" icon={Network} onclick={openEdit}>
 					{$t('shares.interfaces.choose')}
 				</Button>
 				{#if current.restart_needed}
-					<Button variant="warning" icon={RotateCw} on:click={openRestart}>
+					<Button variant="warning" icon={RotateCw} onclick={openRestart}>
 						{$t('shares.interfaces.restart')}
 					</Button>
 				{/if}
@@ -206,7 +208,7 @@
 </Card>
 
 {#if editing && current}
-	<Modal open title={$t('shares.interfaces.dialogTitle')} size="lg" closable={!saving} on:close={closeEdit}>
+	<Modal open title={$t('shares.interfaces.dialogTitle')} size="lg" closable={!saving} onclose={closeEdit}>
 		<div class="space-y-4">
 			<fieldset class="space-y-2">
 				<legend class="form-label">{$t('shares.interfaces.listenOn')}</legend>
@@ -284,14 +286,14 @@
 			<Alert variant="error" title={$t('shares.interfaces.notSaved')}>{saveError}</Alert>
 		{/if}
 
-		<svelte:fragment slot="footer">
-			<Button variant="secondary" class="flex-1" disabled={saving} on:click={closeEdit}>
+		{#snippet footer()}
+			<Button variant="secondary" class="flex-1" disabled={saving} onclick={closeEdit}>
 				{$t('common.cancel')}
 			</Button>
-			<Button class="flex-1" loading={saving} disabled={nothingPicked || unchanged} on:click={save}>
+			<Button class="flex-1" loading={saving} disabled={nothingPicked || unchanged} onclick={save}>
 				{$t('shares.interfaces.save')}
 			</Button>
-		</svelte:fragment>
+		{/snippet}
 	</Modal>
 {/if}
 
@@ -301,7 +303,7 @@
 	size="md"
 	danger
 	closable={!restarting}
-	on:close={closeRestart}
+	onclose={closeRestart}
 >
 	{#if current}
 		<p>{$t('shares.interfaces.restartText')}</p>
@@ -311,12 +313,12 @@
 		<Alert variant="error" title={$t('shares.interfaces.notRestarted')}>{restartError}</Alert>
 	{/if}
 
-	<svelte:fragment slot="footer">
-		<Button variant="secondary" class="flex-1" disabled={restarting} on:click={closeRestart}>
+	{#snippet footer()}
+		<Button variant="secondary" class="flex-1" disabled={restarting} onclick={closeRestart}>
 			{$t('common.cancel')}
 		</Button>
-		<Button variant="danger" class="flex-1" loading={restarting} on:click={restart}>
+		<Button variant="danger" class="flex-1" loading={restarting} onclick={restart}>
 			{$t('shares.interfaces.restartNow')}
 		</Button>
-	</svelte:fragment>
+	{/snippet}
 </Modal>

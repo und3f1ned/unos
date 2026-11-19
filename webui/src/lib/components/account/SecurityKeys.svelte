@@ -16,25 +16,25 @@
 	// (ADR-0409). Each signs in at the code step in place of a code of the authenticator app.
 	// Adding and removing one take the current password; adding one also a touch of the key.
 
-	let keys: SecurityKey[] = [];
-	let loading = true;
-	let loadError = '';
-	let notice = '';
+	let keys = $state<SecurityKey[]>([]);
+	let loading = $state(true);
+	let loadError = $state('');
+	let notice = $state('');
 
 	// WebAuthn needs a host name, and a browser that has it.
-	let supported = true;
-	let byIpAddress = false;
+	let supported = $state(true);
+	let byIpAddress = $state(false);
 
-	let adding = false;
-	let name = '';
-	let password = '';
-	let busy = false;
-	let touching = false;
-	let addError = '';
+	let adding = $state(false);
+	let name = $state('');
+	let password = $state('');
+	let busy = $state(false);
+	let touching = $state(false);
+	let addError = $state('');
 
-	let removing: SecurityKey | null = null;
-	let removePassword = '';
-	let removeError = '';
+	let removing = $state<SecurityKey | null>(null);
+	let removePassword = $state('');
+	let removeError = $state('');
 
 	onMount(() => {
 		supported = securityKeysSupported();
@@ -129,7 +129,10 @@
 		}
 	}
 
-	$: when = (value: string | null): string => formatDateTime(value, $intlLocale);
+	// Reads $intlLocale where the markup calls it: the dates follow the language.
+	function when(value: string | null): string {
+		return formatDateTime(value, $intlLocale);
+	}
 </script>
 
 <section aria-labelledby="security-keys-title" class="mt-4 pt-4 border-t border-border space-y-3">
@@ -137,7 +140,7 @@
 	<p class="text-sm text-content-secondary">{$t('securitykeys.hint')}</p>
 
 	{#if notice}
-		<Alert variant="success" dismissible on:dismiss={() => (notice = '')}>
+		<Alert variant="success" dismissible ondismiss={() => (notice = '')}>
 			<span class="break-words">{notice}</span>
 		</Alert>
 	{/if}
@@ -178,7 +181,7 @@
 						variant="danger"
 						size="sm"
 						aria-label={$t('securitykeys.removeLabel', { name: key.name })}
-						on:click={() => askRemove(key)}
+						onclick={() => askRemove(key)}
 					>
 						{$t('securitykeys.remove')}
 					</Button>
@@ -188,12 +191,19 @@
 	{/if}
 
 	{#if !byIpAddress && supported}
-		<Button variant="secondary" on:click={openAdd}>{$t('securitykeys.add')}</Button>
+		<Button variant="secondary" onclick={openAdd}>{$t('securitykeys.add')}</Button>
 	{/if}
 </section>
 
-<Modal open={adding} title={$t('securitykeys.addTitle')} size="md" closable={!busy} on:close={closeAdd}>
-	<form id="security-key-add" class="space-y-4" on:submit|preventDefault={add}>
+<Modal open={adding} title={$t('securitykeys.addTitle')} size="md" closable={!busy} onclose={closeAdd}>
+	<form
+		id="security-key-add"
+		class="space-y-4"
+		onsubmit={(event) => {
+			event.preventDefault();
+			add();
+		}}
+	>
 		<p class="text-sm text-content-secondary">{$t('securitykeys.addText')}</p>
 		<Input
 			id="security-key-name"
@@ -222,8 +232,8 @@
 		{/if}
 	</form>
 
-	<svelte:fragment slot="footer">
-		<Button variant="secondary" class="flex-1" disabled={busy} on:click={closeAdd}>{$t('common.cancel')}</Button>
+	{#snippet footer()}
+		<Button variant="secondary" class="flex-1" disabled={busy} onclick={closeAdd}>{$t('common.cancel')}</Button>
 		<Button
 			type="submit"
 			form="security-key-add"
@@ -233,11 +243,18 @@
 		>
 			{$t('securitykeys.addButton')}
 		</Button>
-	</svelte:fragment>
+	{/snippet}
 </Modal>
 
-<Modal open={removing !== null} title={$t('securitykeys.removeTitle')} size="md" closable={!busy} danger on:close={closeRemove}>
-	<form id="security-key-remove" class="space-y-4" on:submit|preventDefault={remove}>
+<Modal open={removing !== null} title={$t('securitykeys.removeTitle')} size="md" closable={!busy} danger onclose={closeRemove}>
+	<form
+		id="security-key-remove"
+		class="space-y-4"
+		onsubmit={(event) => {
+			event.preventDefault();
+			remove();
+		}}
+	>
 		<p class="break-words">{$t('securitykeys.removeText', { name: removing?.name ?? '' })}</p>
 		<Input
 			id="security-key-remove-password"
@@ -253,8 +270,8 @@
 		{/if}
 	</form>
 
-	<svelte:fragment slot="footer">
-		<Button variant="secondary" class="flex-1" disabled={busy} on:click={closeRemove}>{$t('common.cancel')}</Button>
+	{#snippet footer()}
+		<Button variant="secondary" class="flex-1" disabled={busy} onclick={closeRemove}>{$t('common.cancel')}</Button>
 		<Button
 			type="submit"
 			form="security-key-remove"
@@ -265,5 +282,5 @@
 		>
 			{$t('securitykeys.removeButton')}
 		</Button>
-	</svelte:fragment>
+	{/snippet}
 </Modal>

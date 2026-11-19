@@ -18,22 +18,22 @@
   import { browserErrorKey, getAssertion, securityKeysSupported } from "$lib/webauthn";
   import { KeyRound, Server, ShieldCheck, Usb } from "lucide-svelte";
 
-  let username = "";
-  let password = "";
-  let totpCode = "";
-  let error = "";
-  let loading = false;
-  let requiresTOTP = false;
+  let username = $state("");
+  let password = $state("");
+  let totpCode = $state("");
+  let error = $state("");
+  let loading = $state(false);
+  let requiresTOTP = $state(false);
   // At the code step: a recovery code in place of the authenticator app's code.
-  let useRecoveryCode = false;
-  let recoveryCode = "";
+  let useRecoveryCode = $state(false);
+  let recoveryCode = $state("");
   // At the code step (ADR-0409): the account has security keys that work at this address, the
   // challenge of the password step while it is unused and fresh, and where its keys work.
-  let keysHere = false;
+  let keysHere = $state(false);
   let keyRequest: SecurityKeyRequest | null = null;
   let keyRequestAt = 0;
-  let keyOrigins: string[] = [];
-  let usingKey = false;
+  let keyOrigins = $state<string[]>([]);
+  let usingKey = $state(false);
   // A challenge lives two minutes on the server and is used up by the answer it gets: an older one,
   // or a try after an answer, takes a new password step. 50 s and the browser's 60 s for the touch
   // stay within the two minutes.
@@ -152,7 +152,7 @@
     error = "";
   }
 
-  let signingOut = false;
+  let signingOut = $state(false);
 
   async function signOutAgain() {
     signingOut = true;
@@ -183,13 +183,19 @@
            (ADR-0397). -->
       <Alert variant="warning" class="mb-4">
         <p>{$t("login.signOutFailed")}</p>
-        <Button variant="secondary" size="sm" class="mt-2" loading={signingOut} on:click={signOutAgain}>
+        <Button variant="secondary" size="sm" class="mt-2" loading={signingOut} onclick={signOutAgain}>
           {$t("login.signOutAgain")}
         </Button>
       </Alert>
     {/if}
 
-    <form on:submit|preventDefault={handleSubmit} class="space-y-4">
+    <form
+      onsubmit={(event) => {
+        event.preventDefault();
+        handleSubmit();
+      }}
+      class="space-y-4"
+    >
       {#if error}
         <div
           class="bg-status-error/20 border border-status-error text-status-error px-4 py-2 rounded"
@@ -261,7 +267,7 @@
         <!-- A security key in place of the code (ADR-0409), where the account's keys work. -->
         {#if keysHere && securityKeysSupported()}
           <Button variant="secondary" class="w-full" icon={Usb} loading={usingKey} disabled={loading}
-            on:click={useSecurityKey}>
+            onclick={useSecurityKey}>
             {usingKey ? $t("securitykeys.login.touch") : $t("securitykeys.login.use")}
           </Button>
           <p class="text-center text-sm text-content-muted">{$t("securitykeys.login.or")}</p>
@@ -294,13 +300,13 @@
       {/if}
 
       {#if requiresTOTP}
-        <Button variant="ghost" class="w-full" on:click={switchCode}>
+        <Button variant="ghost" class="w-full" onclick={switchCode}>
           {useRecoveryCode ? $t("login.useAppCode") : $t("login.useRecoveryCode")}
         </Button>
 
         <Button variant="plain"
           type="button"
-          on:click={resetForm}
+          onclick={resetForm}
           class="w-full text-sm text-content-secondary hover:text-content-soft"
         >
           {$t("login.back")}

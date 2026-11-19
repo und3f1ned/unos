@@ -4,7 +4,12 @@
 	import { Card, Button } from '$lib/components/ui';
 	import { t } from '$lib/i18n';
 
-	export let onAction: ((action: string) => void) | undefined = undefined;
+	type Props = {
+		// An action was chosen, by its id; without it, the action's page opens.
+		onAction?: (action: string) => void;
+	};
+
+	let { onAction }: Props = $props();
 
 	// Each action's label is a key of the catalog.
 	const actions = [
@@ -52,10 +57,10 @@
 	<div class="grid grid-cols-2 md:grid-cols-4 gap-2">
 		{#each actions as action}
 			<Button variant="plain"
-				on:click={() => handleClick(action)}
+				onclick={() => handleClick(action)}
 			 class="flex flex-col items-center gap-2 p-3 bg-surface-overlay hover:bg-surface-hover rounded-lg transition-colors"
 			>
-				<svelte:component this={action.icon} class="w-6 h-6 {action.color}" />
+				<action.icon class="w-6 h-6 {action.color}" />
 				<span class="text-xs text-center">{$t(action.key)}</span>
 			</Button>
 		{/each}

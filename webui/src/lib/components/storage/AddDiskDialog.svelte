@@ -2,37 +2,47 @@
 	// Add a free disk to a mounted pool (ADR-0411): the server offers the whole disks that hold
 	// neither the system, nor a btrfs filesystem, nor a mount; the add erases the disk, once its path
 	// is typed again and, for a disk with data, the erase is confirmed.
-	import { createEventDispatcher } from 'svelte';
+	import { untrack } from 'svelte';
 	import { Alert, Badge, Button, Input, Modal } from '$lib/components/ui';
 	import { addPoolDisk, getPoolDevices, type DiskCandidate, type Pool } from '$lib/api/storage';
 	import { t } from '$lib/i18n';
 
-	/** The pool to add a disk to; the dialog is open while it is set. */
-	export let pool: Pool | null = null;
-	/** A size in the language of the page. */
-	export let formatBytes: (bytes: number) => string;
-	/** A profile in the language of the page. */
-	export let profileLabel: (profile: string) => string;
+	type Props = {
+		/** The pool to add a disk to; the dialog is open while it is set. */
+		pool?: Pool | null;
+		/** A size in the language of the page. */
+		formatBytes: (bytes: number) => string;
+		/** A profile in the language of the page. */
+		profileLabel: (profile: string) => string;
+		onclose?: () => void;
+		/** The disk was added: the pool as it is now. */
+		onadded?: (pool: Pool) => void;
+	};
 
-	const dispatch = createEventDispatcher<{ close: void; added: Pool }>();
+	let { pool = null, formatBytes, profileLabel, onclose, onadded }: Props = $props();
 
+	// The pool whose disks were asked for last: no state, as only the code compares it.
 	let loadedFor: Pool | null = null;
-	let loading = false;
-	let loadError = '';
-	let candidates: DiskCandidate[] = [];
-	let profiles: string[] = [];
-	let selectedPath = '';
-	let confirm = '';
-	let erase = false;
-	let busy = false;
-	let error = '';
+	let loading = $state(false);
+	let loadError = $state('');
+	let candidates: DiskCandidate[] = $state.raw([]);
+	let profiles: string[] = $state.raw([]);
+	let selectedPath = $state('');
+	let confirm = $state('');
+	let erase = $state(false);
+	let busy = $state(false);
+	let error = $state('');
 
-	$: if (pool !== loadedFor) load(pool);
-	$: selected = candidates.find((disk) => disk.path === selectedPath) ?? null;
-	// Each disk's erase is confirmed on its own.
-	$: forgetErase(selectedPath);
-	$: confirmed = selected !== null && confirm.trim() === selected.path;
-	$: canAdd = confirmed && (!selected?.has_data || erase) && !busy;
+	// A new pool asks for its disks, before the dialog draws, so that it opens on the loading text.
+	$effect.pre(() => {
+		const target = pool;
+		untrack(() => {
+			if (target !== loadedFor) load(target);
+		});
+	});
+	let selected = $derived(candidates.find((disk) => disk.path === selectedPath) ?? null);
+	let confirmed = $derived(selected !== null && confirm.trim() === selected.path);
+	let canAdd = $derived(confirmed && (!selected?.has_data || erase) && !busy);
 
 	async function load(target: Pool | null) {
 		loadedFor = target;
@@ -57,12 +67,13 @@
 		}
 	}
 
-	function forgetErase(_path: string) {
+	// Each disk's erase is confirmed on its own: choosing another disk takes it back.
+	function forgetErase() {
 		erase = false;
 	}
 
 	function close() {
-		if (!busy) dispatch('close');
+		if (!busy) onclose?.();
 	}
 
 	async function add() {
@@ -72,7 +83,7 @@
 		try {
 			const grown = await addPoolDisk(pool.name, selected, confirm.trim(), erase);
 			busy = false;
-			dispatch('added', grown);
+			onadded?.(grown);
 		} catch (e) {
 			error = e instanceof Error ? e.message : String(e);
 			busy = false;
@@ -85,7 +96,7 @@
 	title={$t('storage.addDisk.title', { name: pool?.name ?? '' })}
 	size="md"
 	closable={!busy}
-	on:close={close}
+	onclose={close}
 >
 	{#if pool}
 		<p class="text-sm text-secondary">
@@ -110,6 +121,7 @@
 							class="mt-1 border-border bg-surface-overlay text-brand focus:ring-brand-ring"
 							value={disk.path}
 							bind:group={selectedPath}
+							onchange={forgetErase}
 							disabled={busy}
 						/>
 						<span class="flex-1 min-w-0">
@@ -157,12 +169,12 @@
 		{/if}
 	{/if}
 
-	<svelte:fragment slot="footer">
-		<Button variant="secondary" class="flex-1" disabled={busy} on:click={close}>
+	{#snippet footer()}
+		<Button variant="secondary" class="flex-1" disabled={busy} onclick={close}>
 			{$t('common.cancel')}
 		</Button>
-		<Button variant="danger" class="flex-1" loading={busy} disabled={!canAdd} on:click={add}>
+		<Button variant="danger" class="flex-1" loading={busy} disabled={!canAdd} onclick={add}>
 			{$t('storage.addDisk.submit')}
 		</Button>
-	</svelte:fragment>
+	{/snippet}
 </Modal>

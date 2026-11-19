@@ -1,10 +1,10 @@
 <script lang="ts">
 	import '../app.css';
-	import { onMount } from 'svelte';
+	import { onMount, untrack, type Snippet } from 'svelte';
 	import { readable } from 'svelte/store';
 	import { browser } from '$app/environment';
 	import { afterNavigate, goto } from '$app/navigation';
-	import { navigating, page } from '$app/stores';
+	import { navigating, page } from '$app/state';
 	import {
 		user,
 		isAdmin,
@@ -51,8 +51,14 @@
 		X
 	} from 'lucide-svelte';
 
+	type Props = {
+		children?: Snippet;
+	};
+
+	let { children }: Props = $props();
+
 	// Reactive: the labels follow the language of the page.
-	$: adminNavItems = [
+	const adminNavItems = $derived([
 		{ href: '/', icon: LayoutDashboard, label: $t('layout.nav.dashboard') },
 		{ href: '/storage', icon: HardDrive, label: $t('layout.nav.storage') },
 		{ href: '/snapshots', icon: Archive, label: $t('layout.nav.snapshots') },
@@ -63,43 +69,53 @@
 		{ href: '/users', icon: Users, label: $t('layout.nav.users') },
 		{ href: '/audit', icon: ScrollText, label: $t('layout.nav.audit') },
 		{ href: '/system', icon: Wrench, label: $t('layout.nav.system') }
-	];
+	]);
 
 	// Regular accounts only get live system stats and their own account settings;
 	// every other API is administrator-only.
-	$: userNavItems = [
+	const userNavItems = $derived([
 		{ href: '/', icon: LayoutDashboard, label: $t('layout.nav.dashboard') },
 		{ href: '/system#security', icon: UserCog, label: $t('layout.nav.account') }
-	];
+	]);
 
 	// An account that can only set up two-factor authentication gets its setup page alone.
-	$: setupOnly = isSetupOnly($user);
+	const setupOnly = $derived(isSetupOnly($user));
 	// The theme that the signed-in user chose (ADR-0405), once per session; an account that can only
-	// set up two-factor authentication cannot ask, and keeps the theme of this browser.
-	$: if (browser && $user && !setupOnly) void loadAccountTheme();
-	$: navItems = !$user || setupOnly ? [] : $user.is_admin ? adminNavItems : userNavItems;
+	// set up two-factor authentication cannot ask, and keeps the theme of this browser. Whoever
+	// signs in (this layout, the sign-in page, another tab), $user tells it.
+	$effect(() => {
+		if (browser && $user && !setupOnly) untrack(() => void loadAccountTheme());
+	});
+	const navItems = $derived(!$user || setupOnly ? [] : $user.is_admin ? adminNavItems : userNavItems);
 
-	let mounted = false;
-	let userLoadError = '';
+	let mounted = $state(false);
+	let userLoadError = $state('');
 
 	type Gate = 'public' | 'allowed' | 'blocked';
 
-	$: pathname = $page.url.pathname;
+	const pathname = $derived(page.url.pathname);
 	// A page renders only once we know who is asking and that they may see it,
 	// so admin pages never fire requests on behalf of a regular account.
-	$: gate = gateFor(pathname, $user);
-	// SvelteKit creates the next page inside the slot shown at that moment and
-	// updates $page only afterwards. While navigating to a page with another
-	// gate (e.g. from /login to an admin page), show no slot, so the next page
-	// is created only once the layout shows the branch and gate for it.
-	$: nextPath =
-		$navigating && !$navigating.willUnload ? ($navigating.to?.url.pathname ?? null) : null;
-	$: showSlot = nextPath === null || gateFor(nextPath, $user) === gate;
-	$: if (mounted) guardRoute(pathname, $user);
+	const gate = $derived(gateFor(pathname, $user));
+	// SvelteKit gives the layout the next page and updates page.url in the same update, once the
+	// page has loaded. While navigating to a page with another gate (e.g. from /login to an admin
+	// page), show no page, so that the old one goes and the next one is created only once the
+	// layout shows the branch and gate for it.
+	const nextPath = $derived(navigating.to && !navigating.willUnload ? navigating.to.url.pathname : null);
+	const showSlot = $derived(nextPath === null || gateFor(nextPath, $user) === gate);
+	// Once mounted, on every change of the path or of the account: the handlers of the session are
+	// set by then. Only those make it run again: what guardRoute reads and writes is its own business.
+	$effect(() => {
+		if (!mounted) return;
+		const path = pathname;
+		const currentUser = $user;
+		untrack(() => guardRoute(path, currentUser));
+	});
 	// The command palette (ADR-0393) is a signed-in page's, as the navigation is: not the sign-in
 	// and first-run pages', nor that of an account that can only set up two-factor authentication.
-	let commandPalette: CommandPalette;
-	$: paletteEnabled = gate === 'allowed' && $user !== null && !setupOnly;
+	// Its exports (show), kept as they come.
+	let commandPalette = $state.raw<CommandPalette>();
+	const paletteEnabled = $derived(gate === 'allowed' && $user !== null && !setupOnly);
 
 	function gateFor(path: string, currentUser: User | null): Gate {
 		if (isPublicRoute(path)) return 'public';
@@ -227,12 +243,16 @@
 		query.addEventListener('change', update);
 		return () => query.removeEventListener('change', update);
 	});
-	let menuOpen = false;
-	let menuButton: HTMLButtonElement | null = null;
-	let sidebar: HTMLElement;
+	let menuOpen = $state(false);
+	// The menu button and the drawer, for the handlers; state, as both come and go with a branch
+	// of the markup.
+	let menuButton = $state<HTMLButtonElement | null>(null);
+	let sidebar = $state<HTMLElement>();
 
-	// A window that grows past md leaves the drawer closed.
-	$: if (!$narrow) menuOpen = false;
+	// A window that grows past md leaves the drawer closed, in the same update.
+	$effect.pre(() => {
+		if (!$narrow) menuOpen = false;
+	});
 
 	function closeMenu(focusButton: boolean) {
 		menuOpen = false;
@@ -257,7 +277,7 @@
 		// The path as it was when the click happened: the button's icon that was clicked has been
 		// replaced by the time the click reaches the window.
 		const path = event.composedPath();
-		if (path.includes(sidebar) || (menuButton && path.includes(menuButton))) return;
+		if ((sidebar && path.includes(sidebar)) || (menuButton && path.includes(menuButton))) return;
 		// A click in a dialog over the drawer, the command palette's (ADR-0393), is the dialog's.
 		if (path.some((target) => target instanceof Element && target.getAttribute('aria-modal') === 'true')) return;
 		closeMenu(true);
@@ -269,7 +289,7 @@
 	function handleSidebarFocusOut(event: FocusEvent) {
 		const next = event.relatedTarget;
 		if (!menuOpen || !(next instanceof Element)) return;
-		if (sidebar.contains(next) || menuButton?.contains(next) || next.closest('[aria-modal="true"]')) return;
+		if (sidebar?.contains(next) || menuButton?.contains(next) || next.closest('[aria-modal="true"]')) return;
 		closeMenu(false);
 	}
 
@@ -286,15 +306,15 @@
 	// change the URL without a navigation of SvelteKit, so afterNavigate misses them. A closed
 	// drawer keeps no focus: it goes back to the button.
 	function handlePopState() {
-		if (menuOpen) closeMenu(sidebar.contains(document.activeElement));
+		if (menuOpen) closeMenu(sidebar?.contains(document.activeElement) ?? false);
 	}
 </script>
 
-<svelte:window on:keydown={handleMenuKeydown} on:click={handleOutsideClick} on:popstate={handlePopState} />
+<svelte:window onkeydown={handleMenuKeydown} onclick={handleOutsideClick} onpopstate={handlePopState} />
 
 {#if gate === 'public'}
 	{#if showSlot}
-		<slot />
+		{@render children?.()}
 	{/if}
 {:else}
 	<div class="flex flex-col md:flex-row h-dvh bg-surface">
@@ -310,7 +330,7 @@
 						aria-label={$t('layout.menu')}
 						aria-expanded={menuOpen}
 						aria-controls="layout-sidebar"
-						on:click={() => (menuOpen = !menuOpen)}
+						onclick={() => (menuOpen = !menuOpen)}
 					>
 						{#if menuOpen}
 							<X class="w-5 h-5" />
@@ -329,14 +349,14 @@
 				<div
 					class="md:hidden fixed inset-x-0 top-14 bottom-0 z-30 scrim"
 					role="presentation"
-					on:click={() => closeMenu(true)}
+					onclick={() => closeMenu(true)}
 				></div>
 			{/if}
 
 			<div
 				id="layout-sidebar"
 				bind:this={sidebar}
-				on:focusout={handleSidebarFocusOut}
+				onfocusout={handleSidebarFocusOut}
 				class="{menuOpen
 					? 'flex'
 					: 'hidden'} md:flex flex-1 min-h-0 flex-col fixed md:static top-14 bottom-0 left-0 z-40 w-64 md:w-auto bg-surface-elevated border-r md:border-r-0 border-border"
@@ -348,12 +368,12 @@
 							<li>
 								<a
 									href={item.href}
-									on:click={() => closeMenu(false)}
+									onclick={() => closeMenu(false)}
 									class="nav-item {isActive(item.href, pathname)
 										? 'nav-item-active'
 										: 'nav-item-inactive'}"
 								>
-									<svelte:component this={item.icon} class="w-5 h-5" />
+									<item.icon class="w-5 h-5" />
 									{item.label}
 								</a>
 							</li>
@@ -377,7 +397,7 @@
 								</div>
 							</div>
 							<Button variant="ghost" size="icon-sm"
-								on:click={handleLogout}
+								onclick={handleLogout}
 								title={$t('layout.logout')}
 							>
 								<LogOut class="w-4 h-4" />
@@ -395,10 +415,10 @@
 					<Button variant="ghost" size="icon"
 						type="button"
 						aria-label={$t('palette.open')}
-						on:click={() => {
+						onclick={() => {
 							// The drawer closes first: else its click outside would take the focus back.
 							menuOpen = false;
-							commandPalette.show();
+							commandPalette?.show();
 						}}
 					>
 						<Search class="w-5 h-5" />
@@ -414,11 +434,11 @@
 				<ProblemsBanner />
 			{/if}
 			{#if gate === 'allowed' && showSlot}
-				<slot />
+				{@render children?.()}
 			{:else if userLoadError}
 				<Alert variant="error" title={$t('layout.accountError')}>
 					<p>{userLoadError}</p>
-					<Button variant="secondary" size="sm" class="mt-3" on:click={ensureUser}>{$t('common.retry')}</Button>
+					<Button variant="secondary" size="sm" class="mt-3" onclick={ensureUser}>{$t('common.retry')}</Button>
 				</Alert>
 			{:else}
 				<p class="loading-text">{$t('common.loading')}</p>
@@ -429,6 +449,6 @@
 		bind:this={commandPalette}
 		enabled={paletteEnabled}
 		admin={$user?.is_admin === true}
-		on:logout={handleLogout}
+		onlogout={handleLogout}
 	/>
 {/if}

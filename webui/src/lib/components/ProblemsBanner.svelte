@@ -27,11 +27,13 @@
 		shutdown_idle: 'problems.kind.shutdown_idle'
 	};
 
-	$: text = (problem: Problem): string =>
-		$t(Object.prototype.hasOwnProperty.call(KINDS, problem.kind) ? KINDS[problem.kind] : 'problems.kind.other', {
+	// Reads $t where the markup calls it: the text follows the language.
+	function text(problem: Problem): string {
+		return $t(Object.prototype.hasOwnProperty.call(KINDS, problem.kind) ? KINDS[problem.kind] : 'problems.kind.other', {
 			subject: problem.subject
 		});
-	$: anyError = $problems.some((problem) => problem.severity === 'error');
+	}
+	const anyError = $derived($problems.some((problem) => problem.severity === 'error'));
 </script>
 
 {#if $problems.length}

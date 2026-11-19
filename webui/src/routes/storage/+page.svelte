@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
+	import { onMount, untrack } from 'svelte';
 	import {
 		getDisks,
 		getPools,
@@ -88,91 +88,93 @@
 
 	type BadgeVariant = 'success' | 'warning' | 'error' | 'info' | 'neutral' | 'orange';
 
-	let disks: Disk[] = [];
-	let pools: Pool[] = [];
-	let loading = true;
-	let error = '';
+	let disks: Disk[] = $state.raw([]);
+	let pools: Pool[] = $state.raw([]);
+	let loading = $state(true);
+	let error = $state('');
 	// Why the disk list or the pool list could not be loaded (ADR-0271). A disk list
 	// that could not be loaded again is not offered either: it may no longer match the host.
-	let disksError = '';
-	let poolsError = '';
+	let disksError = $state('');
+	let poolsError = $state('');
 	// btrfs filesystems on the host's disks that are not pools yet (ADR-0283), with the
 	// reason when they could not be searched.
-	let importable: ImportableFilesystem[] = [];
-	let importableError = '';
+	let importable: ImportableFilesystem[] = $state.raw([]);
+	let importableError = $state('');
 
 	// Create Pool Modal state
-	let showCreateModal = false;
-	let saving = false;
-	let disksLoading = false;
-	let createError = '';
-	let poolForm = {
+	let showCreateModal = $state(false);
+	let saving = $state(false);
+	let disksLoading = $state(false);
+	let createError = $state('');
+	let poolForm = $state({
 		name: '',
 		devices: [] as string[],
 		raid_level: 'single',
 		confirm_name: '',
 		force: false
-	};
+	});
 	// Each selected disk as the list showed it when the user selected it.
 	let selectedIdentities: Record<string, DeviceIdentity> = {};
 	// Set after a 409 because a selected path now holds another disk.
-	let selectionCleared = false;
+	let selectionCleared = $state(false);
 
 	// The idle timeout of a disk (ADR-0378): the disk whose dialog is open, the choice as text.
-	let spindownDisk: Disk | null = null;
-	let spindownChoice = '0';
-	let spindownBusy = false;
-	let spindownError = '';
+	let spindownDisk: Disk | null = $state.raw(null);
+	let spindownChoice = $state('0');
+	let spindownBusy = $state(false);
+	let spindownError = $state('');
 	// The server's warning after a Save: the disk's own automatic offline scans could not be turned
 	// off for its timeout, or on again (ADR-0378); the timeout was set all the same.
-	let spindownWarning = '';
+	let spindownWarning = $state('');
 
 	// Mount / unmount confirmation
-	let poolAction: { kind: 'mount' | 'unmount'; pool: Pool } | null = null;
-	let poolActionBusy = false;
-	let poolActionError = '';
+	let poolAction: { kind: 'mount' | 'unmount'; pool: Pool } | null = $state.raw(null);
+	let poolActionBusy = $state(false);
+	let poolActionError = $state('');
 
 	// Delete Pool Modal state
-	let showDeleteModal = false;
-	let deleteStep: 1 | 2 = 1;
-	let poolToDelete: Pool | null = null;
-	let deleteConfirmName = '';
-	let deleting = false;
-	let deleteError = '';
+	let showDeleteModal = $state(false);
+	let deleteStep: 1 | 2 = $state(1);
+	let poolToDelete: Pool | null = $state.raw(null);
+	let deleteConfirmName = $state('');
+	let deleting = $state(false);
+	let deleteError = $state('');
 
 	// Scrub state
-	let scrubStatuses: Record<string, ScrubStatus> = {};
+	let scrubStatuses: Record<string, ScrubStatus> = $state({});
 	// Why a pool's scrub status could not be read: shown instead of the last one (ADR-0313).
-	let scrubErrors: Record<string, string> = {};
-	let startingScrub: Record<string, boolean> = {};
+	let scrubErrors: Record<string, string> = $state({});
+	let startingScrub: Record<string, boolean> = $state({});
 
 	// Disk removals (ADR-0411): each mounted pool's removal and why it could not be read, and the
 	// pool of the Add Disk or the Remove Disk dialog.
-	let removalStatuses: Record<string, DiskRemovalStatus> = {};
-	let removalErrors: Record<string, string> = {};
-	let addDiskPool: Pool | null = null;
-	let removeDiskPool: Pool | null = null;
+	let removalStatuses: Record<string, DiskRemovalStatus> = $state({});
+	let removalErrors: Record<string, string> = $state({});
+	let addDiskPool: Pool | null = $state.raw(null);
+	let removeDiskPool: Pool | null = $state.raw(null);
 	const removalRuns = (status: DiskRemovalStatus | undefined): boolean => status?.status === 'running';
 
 	// Balance state (ADR-0379): each mounted pool's balance, why it could not be read, and the pools
 	// whose pause, resume or cancel is on its way.
-	let balanceStatuses: Record<string, BalanceStatus> = {};
-	let balanceErrors: Record<string, string> = {};
-	let balanceBusy: Record<string, boolean> = {};
+	let balanceStatuses: Record<string, BalanceStatus> = $state({});
+	let balanceErrors: Record<string, string> = $state({});
+	let balanceBusy: Record<string, boolean> = $state({});
 	// The Balance dialog: its pool, a usage limit or every chunk, and the confirmation of the latter.
-	let balanceTarget: Pool | null = null;
-	let balanceKind = 'usage';
-	let balanceUsage = String(BALANCE_DEFAULT_USAGE);
-	let balanceConfirmed = false;
-	let balanceStarting = false;
-	let balanceError = '';
+	let balanceTarget: Pool | null = $state.raw(null);
+	let balanceKind = $state('usage');
+	let balanceUsage = $state(String(BALANCE_DEFAULT_USAGE));
+	let balanceConfirmed = $state(false);
+	let balanceStarting = $state(false);
+	let balanceError = $state('');
 	// The statuses of a balance that runs: a pause or a cancel may still wait for its chunk.
 	const BALANCE_RUNS = ['running', 'pausing', 'cancelling'];
 	const balanceRuns = (status: BalanceStatus | undefined): boolean =>
 		status !== undefined && BALANCE_RUNS.includes(status.status);
-	$: balanceFull = balanceKind === 'full';
+	let balanceFull = $derived(balanceKind === 'full');
 	// Every chunk needs its confirmation again after the user chose the usage limit.
-	$: if (!balanceFull) balanceConfirmed = false;
+	function chooseBalanceKind(kind: string) {
+		if (kind !== 'full') balanceConfirmed = false;
+	}
 
 	onMount(async () => {
 		await loadData();
@@ -190,19 +192,29 @@
 	let devicesLoaded: string | null = null; // devicesHeld when the lists were last loaded
 	// The reload for the devices in flight: the number of its load, and devicesLoaded before it.
 	let deviceReload: { load: number; devices: string | null } | null = null;
-	$: dialogOpen =
-		showCreateModal ||
-		poolAction !== null ||
-		importTarget !== null ||
-		showDeleteModal ||
-		volumesPool !== null ||
-		spindownDisk !== null ||
-		balanceTarget !== null ||
-		addDiskPool !== null ||
-		removeDiskPool !== null;
-	$: followBlockDevices($stats);
-	$: if (!dialogOpen) reloadForDevices();
-	$: if (dialogOpen) dropDeviceReload();
+	// In a function: the state of the Import and the Volumes dialogs is declared further down.
+	let dialogOpen = $derived.by(
+		() =>
+			showCreateModal ||
+			poolAction !== null ||
+			importTarget !== null ||
+			showDeleteModal ||
+			volumesPool !== null ||
+			spindownDisk !== null ||
+			balanceTarget !== null ||
+			addDiskPool !== null ||
+			removeDiskPool !== null
+	);
+	// Each message of the stats stream, and nothing else: what the reload reads is its own business.
+	$effect(() => {
+		const message = $stats;
+		untrack(() => followBlockDevices(message));
+	});
+	// A dialog that opens drops the reload in flight; once it closes, the reload that waited runs.
+	$effect(() => {
+		const open = dialogOpen;
+		untrack(() => (open ? dropDeviceReload() : reloadForDevices()));
+	});
 
 	function followBlockDevices(message: WebSocketStats | null) {
 		const names = message?.disk_io?.disks?.map((disk) => disk.name);
@@ -355,20 +367,20 @@
 	function showRemovalStatus(poolName: string, status: DiskRemovalStatus) {
 		const ended = removalRuns(removalStatuses[poolName]) && !removalRuns(status);
 		delete removalErrors[poolName];
-		removalErrors = removalErrors;
 		removalStatuses[poolName] = status;
-		removalStatuses = removalStatuses;
 		if (ended) loadData(false, false);
 	}
 
 	/** As showBalanceError: the last status still decides the buttons. */
 	function showRemovalError(poolName: string, e: unknown) {
 		removalErrors[poolName] = messageOf(e);
-		removalErrors = removalErrors;
 	}
 
 	// A removal that runs is followed over /ws/v1/events as a balance is (ADR-0411).
-	$: followRemovals($diskRemovals);
+	$effect(() => {
+		const updates = $diskRemovals;
+		untrack(() => followRemovals(updates));
+	});
 
 	function followRemovals(updates: DiskRemovalUpdate[]) {
 		for (const update of updates) {
@@ -391,7 +403,7 @@
 	}
 
 	/** Neither an add nor a removal beside a scrub, a balance or a removal, nor on a pool that cannot change. */
-	$: diskChangeBlocked = (pool: Pool): boolean =>
+	const diskChangeBlocked = (pool: Pool): boolean =>
 		pool.read_only ||
 		pool.missing_devices > 0 ||
 		scrubStatuses[pool.name]?.status === 'running' ||
@@ -403,12 +415,12 @@
 		loadData(false);
 	}
 
-	function removalStarted(event: CustomEvent<DiskRemovalStatus>) {
+	function removalStarted(status: DiskRemovalStatus) {
 		const poolName = removeDiskPool?.name;
 		removeDiskPool = null;
-		if (poolName) showRemovalStatus(poolName, event.detail);
+		if (poolName) showRemovalStatus(poolName, status);
 		// A disk without data leaves at once: the pool's disks changed.
-		if (event.detail.status !== 'running') loadData(false);
+		if (status.status !== 'running') loadData(false);
 	}
 
 	function removalProgress(status: DiskRemovalStatus): number {
@@ -419,19 +431,19 @@
 	/** Show a pool's balance as btrfs reports it (ADR-0379). */
 	function showBalanceStatus(poolName: string, status: BalanceStatus) {
 		delete balanceErrors[poolName];
-		balanceErrors = balanceErrors;
 		balanceStatuses[poolName] = status;
-		balanceStatuses = balanceStatuses;
 	}
 
 	/** As showScrubError: the last status still decides the buttons. */
 	function showBalanceError(poolName: string, e: unknown) {
 		balanceErrors[poolName] = messageOf(e);
-		balanceErrors = balanceErrors;
 	}
 
 	// A balance that runs is followed over /ws/v1/events as a scrub is (ADR-0379).
-	$: followBalances($balances);
+	$effect(() => {
+		const updates = $balances;
+		untrack(() => followBalances(updates));
+	});
 
 	function followBalances(updates: BalanceUpdate[]) {
 		for (const update of updates) {
@@ -444,9 +456,7 @@
 	/** Show a pool's scrub as btrfs reports it. */
 	function showScrubStatus(poolName: string, status: ScrubStatus) {
 		delete scrubErrors[poolName];
-		scrubErrors = scrubErrors;
 		scrubStatuses[poolName] = status;
-		scrubStatuses = scrubStatuses;
 	}
 
 	/**
@@ -456,13 +466,15 @@
 	 */
 	function showScrubError(poolName: string, e: unknown) {
 		scrubErrors[poolName] = messageOf(e);
-		scrubErrors = scrubErrors;
 	}
 
 	// A scrub that runs is followed over /ws/v1/events, which sends the status of each one whenever
 	// it changed, until the scrub ended or its status could not be read (ADR-0367): the page asks
 	// for the status only when it loads its lists and when the socket connected again (below).
-	$: followScrubs($scrubs);
+	$effect(() => {
+		const updates = $scrubs;
+		untrack(() => followScrubs(updates));
+	});
 
 	function followScrubs(updates: ScrubUpdate[]) {
 		for (const update of updates) {
@@ -476,7 +488,10 @@
 	// running or could not read, and that read makes the server follow it again.
 	let socketWasUp = false;
 	let socketDropped = false;
-	$: followSocket($wsConnected);
+	$effect(() => {
+		const connected = $wsConnected;
+		untrack(() => followSocket(connected));
+	});
 
 	function followSocket(connected: boolean) {
 		if (!connected) {
@@ -518,8 +533,8 @@
 		if (!balanceStarting) balanceTarget = null;
 	}
 
-	$: balanceLimit = /^\d{1,2}$/.test(balanceUsage.trim()) ? Number(balanceUsage.trim()) : 0;
-	$: canStartBalance = balanceFull ? balanceConfirmed : balanceLimit >= 1 && balanceLimit <= 99;
+	let balanceLimit = $derived(/^\d{1,2}$/.test(balanceUsage.trim()) ? Number(balanceUsage.trim()) : 0);
+	let canStartBalance = $derived(balanceFull ? balanceConfirmed : balanceLimit >= 1 && balanceLimit <= 99);
 
 	async function handleStartBalance() {
 		if (!balanceTarget || !canStartBalance) return;
@@ -565,7 +580,7 @@
 	};
 
 	/** The estimate of the time a balance needs still, in hours and minutes. */
-	$: timeLeft = (seconds: number): string => {
+	const timeLeft = (seconds: number): string => {
 		const minutes = Math.ceil(seconds / 60);
 		if (seconds < 60) return $t('storage.balance.leftSeconds');
 		if (minutes < 60) return $t('storage.balance.leftMinutes', { minutes });
@@ -592,7 +607,6 @@
 
 	async function handleStartScrub(poolName: string) {
 		startingScrub[poolName] = true;
-		startingScrub = startingScrub;
 		error = '';
 		try {
 			showScrubStatus(poolName, await startScrub(poolName));
@@ -600,7 +614,6 @@
 			error = messageOf(e);
 		} finally {
 			startingScrub[poolName] = false;
-			startingScrub = startingScrub;
 		}
 	}
 
@@ -621,7 +634,7 @@
 	};
 
 	/** The result of a pool's last scrub, as btrfs reports it (ADR-0313). */
-	$: scrubResult = (status: ScrubStatus): { text: string; tone: 'success' | 'warning' | 'error' } => {
+	const scrubResult = (status: ScrubStatus): { text: string; tone: 'success' | 'warning' | 'error' } => {
 		if (status.status === 'finished') {
 			return status.errors > 0
 				? { text: $t('storage.scrub.errors', { n: status.errors }), tone: 'error' }
@@ -639,7 +652,7 @@
 
 	// When the last scrub started: the server answers it in UTC with its offset, the page shows it
 	// in the browser's time zone and the date format of the page's language (ADR-0401).
-	$: scrubStarted = (value: string): string => formatDateTime(value, $intlLocale);
+	const scrubStarted = (value: string): string => formatDateTime(value, $intlLocale);
 
 	const scrubResultStyles = {
 		success: { icon: CheckCircle, class: 'text-success' },
@@ -664,19 +677,23 @@
 	// The units of the sizes the page writes, by powers of 1024 (ADR-0401).
 	const SIZE_UNITS = ['storage.size.bytes', 'storage.size.kb', 'storage.size.mb', 'storage.size.gb', 'storage.size.tb'];
 	// One decimal, without grouping, as the page has always written its sizes and percentages.
-	$: oneDecimal = new Intl.NumberFormat($intlLocale, {
-		minimumFractionDigits: 1,
-		maximumFractionDigits: 1,
-		useGrouping: false
-	});
-	$: percentFormat = new Intl.NumberFormat($intlLocale, {
-		style: 'percent',
-		minimumFractionDigits: 1,
-		maximumFractionDigits: 1
-	});
+	let oneDecimal = $derived(
+		new Intl.NumberFormat($intlLocale, {
+			minimumFractionDigits: 1,
+			maximumFractionDigits: 1,
+			useGrouping: false
+		})
+	);
+	let percentFormat = $derived(
+		new Intl.NumberFormat($intlLocale, {
+			style: 'percent',
+			minimumFractionDigits: 1,
+			maximumFractionDigits: 1
+		})
+	);
 
 	/** A size in the language of the page: the number in its format, with the unit of the catalog. */
-	$: formatBytes = (bytes: number): string => {
+	const formatBytes = (bytes: number): string => {
 		let size = bytes;
 		let unit = 0;
 		while (size >= 1024 && unit < SIZE_UNITS.length - 1) {
@@ -687,7 +704,7 @@
 	};
 
 	/** A label or a name shown on its own, in the quotes of the page's language. */
-	$: quoted = (name: string): string => $t('storage.quoted', { name });
+	const quoted = (name: string): string => $t('storage.quoted', { name });
 
 	/** Where UNOS mounts the pool of this name. */
 	function poolMountpoint(name: string): string {
@@ -700,13 +717,13 @@
 	// ---- Disks ----
 
 	/** Why a disk cannot be used for a new pool, or null if it can. */
-	$: unavailableReason = (disk: Disk): string | null => {
+	const unavailableReason = (disk: Disk): string | null => {
 		if (disk.is_system) return disk.in_use_reason || $t('storage.create.systemDisk');
 		if (disk.in_use) return disk.in_use_reason || $t('storage.create.inUse');
 		return null;
 	};
 
-	$: describeContents = (disk: Disk): string => {
+	const describeContents = (disk: Disk): string => {
 		const parts: string[] = [];
 		if (disk.fstype) parts.push(disk.label ? `${disk.fstype} ${quoted(disk.label)}` : disk.fstype);
 		if (disk.pttype) {
@@ -722,7 +739,7 @@
 		return $t(disk.has_data ? 'storage.disks.unrecognized' : 'storage.disks.empty');
 	};
 
-	$: diskStatus = (disk: Disk): { variant: BadgeVariant; label: string } => {
+	const diskStatus = (disk: Disk): { variant: BadgeVariant; label: string } => {
 		if (disk.is_system) return { variant: 'error', label: $t('storage.disks.status.system') };
 		if (disk.in_use) return { variant: 'warning', label: $t('storage.disks.status.inUse') };
 		if (disk.pool) return { variant: 'info', label: $t('storage.disks.status.pool', { pool: disk.pool }) };
@@ -737,13 +754,15 @@
 	};
 
 	/** An idle timeout in minutes in words: Off, "20 minutes", "2 hours". */
-	$: timeoutLabel = (minutes: number): string => {
+	const timeoutLabel = (minutes: number): string => {
 		if (minutes === 0) return $t('storage.spindown.off');
 		if (minutes % 60 === 0) return $t('storage.spindown.hours', { n: minutes / 60 });
 		return $t('storage.spindown.minutes', { n: minutes });
 	};
 
-	$: spindownOptions = SPINDOWN_MINUTES.map((minutes) => ({ value: String(minutes), label: timeoutLabel(minutes) }));
+	let spindownOptions = $derived(
+		SPINDOWN_MINUTES.map((minutes) => ({ value: String(minutes), label: timeoutLabel(minutes) }))
+	);
 
 	function openSpindown(disk: Disk) {
 		spindownDisk = disk;
@@ -793,7 +812,7 @@
 	};
 
 	/** A pool's health badge; a value without a key is shown as it comes. */
-	$: healthBadge = (pool: Pool): { variant: BadgeVariant; label: string } => {
+	const healthBadge = (pool: Pool): { variant: BadgeVariant; label: string } => {
 		const badge = HEALTH_BADGES[pool.health];
 		return badge
 			? { variant: badge.variant, label: $t(badge.key) }
@@ -814,7 +833,7 @@
 	};
 
 	/** A pool's RAID profile in the language of the page; one without a key as it comes. */
-	$: profileLabel = (profile: string): string => (PROFILES[profile] ? $t(PROFILES[profile]) : profile);
+	const profileLabel = (profile: string): string => (PROFILES[profile] ? $t(PROFILES[profile]) : profile);
 
 	function openPoolAction(kind: 'mount' | 'unmount', pool: Pool) {
 		poolAction = { kind, pool };
@@ -977,39 +996,44 @@
 	// ---- Import a pool found on the disks (ADR-0283) ----
 
 	// The filesystem the Import dialog is open for.
-	let importTarget: ImportableFilesystem | null = null;
-	let importName = '';
-	let importing = false;
-	let importError = '';
+	let importTarget = $state.raw<ImportableFilesystem | null>(null);
+	let importName = $state('');
+	let importing = $state(false);
+	let importError = $state('');
 
-	$: importNameValid = POOL_NAME_PATTERN.test(importName);
-	$: importNameTaken = pools.some((p) => p.name === importName);
+	let importNameValid = $derived(POOL_NAME_PATTERN.test(importName));
+	let importNameTaken = $derived(pools.some((p) => p.name === importName));
 	// The label of another filesystem found on the disks: the server refuses a name that another
 	// filesystem has as its label (409), and of two with one label, neither is a pool.
-	$: importLabelTaken = importable.some((fs) => fs.uuid !== importTarget?.uuid && fs.label === importName);
-	$: importNameError = !importName
-		? ''
-		: !importNameValid
-			? $t('storage.nameRule')
-			: importNameTaken
-				? $t('storage.import.nameTaken', { name: importName })
-				: importLabelTaken
-					? $t('storage.import.labelTaken', { name: importName })
-					: '';
-	$: canImport =
-		importTarget !== null && importNameValid && !importNameTaken && !importLabelTaken && !importing;
+	let importLabelTaken = $derived(
+		importable.some((fs) => fs.uuid !== importTarget?.uuid && fs.label === importName)
+	);
+	let importNameError = $derived(
+		!importName
+			? ''
+			: !importNameValid
+				? $t('storage.nameRule')
+				: importNameTaken
+					? $t('storage.import.nameTaken', { name: importName })
+					: importLabelTaken
+						? $t('storage.import.labelTaken', { name: importName })
+						: ''
+	);
+	let canImport = $derived(
+		importTarget !== null && importNameValid && !importNameTaken && !importLabelTaken && !importing
+	);
 
-	$: describeFilesystem = (fs: ImportableFilesystem): string =>
+	const describeFilesystem = (fs: ImportableFilesystem): string =>
 		fs.label === null ? $t('storage.found.noLabel') : $t('storage.found.label', { label: fs.label });
 
 	/** Why the filesystem is not a pool yet: the API mounts a pool under its label. */
-	$: labelHint = (fs: ImportableFilesystem): string => {
+	const labelHint = (fs: ImportableFilesystem): string => {
 		if (fs.label_problem === 'duplicate') return $t('storage.found.duplicate', { label: fs.label ?? '' });
 		if (fs.label_problem === 'invalid') return $t('storage.found.invalid');
 		return $t('storage.found.missing');
 	};
 
-	$: missingDevicesText = (fs: ImportableFilesystem): string =>
+	const missingDevicesText = (fs: ImportableFilesystem): string =>
 		$t('storage.found.missingDevices', { n: fs.missing_devices, total: fs.total_devices });
 
 	function openImport(fs: ImportableFilesystem) {
@@ -1046,37 +1070,38 @@
 	// ---- Volumes ----
 
 	// The mounted pool whose volumes (btrfs subvolumes) the dialog shows.
-	let volumesPool: Pool | null = null;
-	let volumes: Volume[] = [];
-	let volumesLoading = false;
-	let volumesError = '';
-	let newVolumeName = '';
+	let volumesPool = $state.raw<Pool | null>(null);
+	let volumes: Volume[] = $state.raw([]);
+	let volumesLoading = $state(false);
+	let volumesError = $state('');
+	let newVolumeName = $state('');
 	// In GiB, as typed; empty for no limit (ADR-0243).
-	let newVolumeQuota = '';
-	let creatingVolume = false;
-	let createVolumeError = '';
-	let volumeToDelete: Volume | null = null;
-	let deleteVolumeConfirm = '';
-	let deletingVolume = false;
-	let deleteVolumeError = '';
+	let newVolumeQuota = $state('');
+	let creatingVolume = $state(false);
+	let createVolumeError = $state('');
+	let volumeToDelete: Volume | null = $state.raw(null);
+	let deleteVolumeConfirm = $state('');
+	let deletingVolume = $state(false);
+	let deleteVolumeError = $state('');
 
-	$: volumeBusy = creatingVolume || deletingVolume;
+	let volumeBusy = $derived(creatingVolume || deletingVolume);
 	// btrfs cannot create or delete subvolumes on a read-only pool (the API answers 409).
-	$: volumesReadOnly = volumesPool?.read_only ?? false;
-	$: newVolumeNameValid = VOLUME_NAME_PATTERN.test(newVolumeName);
-	$: newVolumeNameError = newVolumeName && !newVolumeNameValid ? $t('storage.nameRule') : '';
+	let volumesReadOnly = $derived(volumesPool?.read_only ?? false);
+	let newVolumeNameValid = $derived(VOLUME_NAME_PATTERN.test(newVolumeName));
+	let newVolumeNameError = $derived(newVolumeName && !newVolumeNameValid ? $t('storage.nameRule') : '');
 	// null: no quota; NaN: one that cannot be sent.
-	$: newVolumeQuotaBytes =
-		newVolumeQuota.trim() === '' ? null : (quotaBytes(newVolumeQuota.trim()) ?? Number.NaN);
-	$: newVolumeQuotaError = Number.isNaN(newVolumeQuotaBytes)
-		? $t('storage.volumes.quotaError', { max: MAX_QUOTA_GIB })
-		: '';
+	let newVolumeQuotaBytes = $derived(
+		newVolumeQuota.trim() === '' ? null : (quotaBytes(newVolumeQuota.trim()) ?? Number.NaN)
+	);
+	let newVolumeQuotaError = $derived(
+		Number.isNaN(newVolumeQuotaBytes) ? $t('storage.volumes.quotaError', { max: MAX_QUOTA_GIB }) : ''
+	);
 
 	// The volume whose use over time the dialog shows, loaded when it is opened.
-	let usageOf: string | null = null;
-	let usagePoints: VolumeUsagePoint[] = [];
-	let usageLoading = false;
-	let usageError = '';
+	let usageOf: string | null = $state(null);
+	let usagePoints: VolumeUsagePoint[] = $state.raw([]);
+	let usageLoading = $state(false);
+	let usageError = $state('');
 	let usageRequest = 0;
 
 	async function toggleUsage(volume: Volume) {
@@ -1102,13 +1127,15 @@
 	}
 
 	// The commands that the notes of the dialog name, run on the host: the same in every language.
-	$: volumesMountpoint = volumesPool ? volumesPool.mountpoint || poolMountpoint(volumesPool.name) : '';
+	let volumesMountpoint = $derived(
+		volumesPool ? volumesPool.mountpoint || poolMountpoint(volumesPool.name) : ''
+	);
 	// i18n-ignore: a command
-	$: quotaEnableCommand = 'btrfs quota enable ' + volumesMountpoint;
+	let quotaEnableCommand = $derived('btrfs quota enable ' + volumesMountpoint);
 	// i18n-ignore: a command
-	$: quotaRescanCommand = 'btrfs quota rescan ' + volumesMountpoint;
-	$: quotasOff = volumes.some((volume) => volume.usage === 'quotas_off');
-	$: needsRescan = volumes.some((volume) => volume.usage === 'inconsistent');
+	let quotaRescanCommand = $derived('btrfs quota rescan ' + volumesMountpoint);
+	let quotasOff = $derived(volumes.some((volume) => volume.usage === 'quotas_off'));
+	let needsRescan = $derived(volumes.some((volume) => volume.usage === 'inconsistent'));
 	// The bar's colour follows the alerts' levels (supervisor/src/storage/volume_usage.py): a warning from 80% of
 	// the quota, an error from 95%. A quota of 0 bytes is full.
 	function quotaVariant(volume: Volume): 'success' | 'warning' | 'error' {
@@ -1118,7 +1145,7 @@
 		return used * 100 >= 80 * quota ? 'warning' : 'success';
 	}
 
-	$: usedOfQuota = (volume: Volume): string =>
+	const usedOfQuota = (volume: Volume): string =>
 		volume.used === null || volume.quota === null
 			? ''
 			: $t('storage.volumes.usedOfQuota', {
@@ -1234,27 +1261,28 @@
 		{ value: 'raid10', labelKey: 'storage.raid.raid10', hintKey: 'storage.raid.raid10Hint', minDevices: 4 }
 	];
 
-	$: raidOptions = RAID_LEVELS.map((level) => ({ value: level.value, label: $t(level.labelKey) }));
+	let raidOptions = $derived(RAID_LEVELS.map((level) => ({ value: level.value, label: $t(level.labelKey) })));
 
-	$: selectedRaidLevel = RAID_LEVELS.find((level) => level.value === poolForm.raid_level);
-	$: selectedRaidDescription = selectedRaidLevel ? $t(selectedRaidLevel.hintKey) : '';
-	$: requiredDevices = selectedRaidLevel?.minDevices ?? 1;
-	$: hasEnoughDevices = poolForm.devices.length >= requiredDevices;
-	$: selectedDisks = disks.filter((d) => poolForm.devices.includes(d.path));
-	$: selectedWithData = selectedDisks.filter((d) => d.has_data);
-	$: confirmNameMatches = poolForm.name !== '' && poolForm.confirm_name === poolForm.name;
-	$: canCreate =
+	let selectedRaidLevel = $derived(RAID_LEVELS.find((level) => level.value === poolForm.raid_level));
+	let selectedRaidDescription = $derived(selectedRaidLevel ? $t(selectedRaidLevel.hintKey) : '');
+	let requiredDevices = $derived(selectedRaidLevel?.minDevices ?? 1);
+	let hasEnoughDevices = $derived(poolForm.devices.length >= requiredDevices);
+	let selectedDisks = $derived(disks.filter((d) => poolForm.devices.includes(d.path)));
+	let selectedWithData = $derived(selectedDisks.filter((d) => d.has_data));
+	let confirmNameMatches = $derived(poolForm.name !== '' && poolForm.confirm_name === poolForm.name);
+	let canCreate = $derived(
 		!!poolForm.name &&
-		hasEnoughDevices &&
-		selectedDisks.every((d) => unavailableReason(d) === null) &&
-		confirmNameMatches &&
-		(selectedWithData.length === 0 || poolForm.force);
+			hasEnoughDevices &&
+			selectedDisks.every((d) => unavailableReason(d) === null) &&
+			confirmNameMatches &&
+			(selectedWithData.length === 0 || poolForm.force)
+	);
 </script>
 
 <div class="page-container">
 	<div class="page-header">
 		<h1 class="page-title">{$t('storage.title')}</h1>
-		<Button icon={Plus} on:click={openCreateModal}>{$t('storage.createPool')}</Button>
+		<Button icon={Plus} onclick={openCreateModal}>{$t('storage.createPool')}</Button>
 	</div>
 
 	{#if error}
@@ -1277,7 +1305,7 @@
 					title={$t('storage.spindown.saved')}
 					dismissible
 					class="mb-4"
-					on:dismiss={() => (spindownWarning = '')}
+					ondismiss={() => (spindownWarning = '')}
 				>
 					{spindownWarning}
 				</Alert>
@@ -1345,7 +1373,7 @@
 												size="sm"
 												icon={Timer}
 												disabled={disk.spindown_problem !== null}
-												on:click={() => openSpindown(disk)}
+												onclick={() => openSpindown(disk)}
 											>
 												<span class="sr-only">{$t('storage.spindown.of', { disk: disk.path })}</span>
 												{timeoutLabel(disk.spindown)}
@@ -1399,7 +1427,7 @@
 										size="sm"
 										icon={HardDriveDownload}
 										disabled={fs.missing_devices > 0}
-										on:click={() => openImport(fs)}
+										onclick={() => openImport(fs)}
 									>
 										{$t('storage.found.import')}<span class="sr-only"
 											> {$t('storage.found.importOne', { uuid: fs.uuid })}</span
@@ -1455,7 +1483,7 @@
 												variant="warning"
 												size="sm"
 												icon={XCircle}
-												on:click={() => handleCancelScrub(pool.name)}
+												onclick={() => handleCancelScrub(pool.name)}
 											>
 												{$t('storage.pool.cancelScrub')}
 											</Button>
@@ -1468,7 +1496,7 @@
 												disabled={startingScrub[pool.name] ||
 													balanceRuns(balanceStatus) ||
 													removalRuns(removalStatus)}
-												on:click={() => handleStartScrub(pool.name)}
+												onclick={() => handleStartScrub(pool.name)}
 											>
 												{$t('storage.pool.scrub')}
 											</Button>
@@ -1482,7 +1510,7 @@
 												icon={paused ? Play : Pause}
 												disabled={balanceBusy[pool.name] ||
 													(paused && (pool.read_only || scrubStatus?.status === 'running'))}
-												on:click={() => handleBalanceAction(pool.name, paused ? 'resume' : 'pause')}
+												onclick={() => handleBalanceAction(pool.name, paused ? 'resume' : 'pause')}
 											>
 												{$t(paused ? 'storage.pool.resumeBalance' : 'storage.pool.pauseBalance')}
 											</Button>
@@ -1499,7 +1527,7 @@
 													balanceStatus.status === 'cancelling' ||
 													balanceStatus.status === 'pausing' ||
 													(balanceStatus.status === 'paused' && pool.read_only)}
-												on:click={() => handleBalanceAction(pool.name, 'cancel')}
+												onclick={() => handleBalanceAction(pool.name, 'cancel')}
 											>
 												{$t('storage.pool.cancelBalance')}
 											</Button>
@@ -1513,7 +1541,7 @@
 												disabled={pool.read_only ||
 													scrubStatus?.status === 'running' ||
 													removalRuns(removalStatus)}
-												on:click={() => openBalance(pool)}
+												onclick={() => openBalance(pool)}
 											>
 												{$t('storage.pool.balance')}
 											</Button>
@@ -1524,7 +1552,7 @@
 											size="sm"
 											icon={Plus}
 											disabled={diskChangeBlocked(pool)}
-											on:click={() => (addDiskPool = pool)}
+											onclick={() => (addDiskPool = pool)}
 										>
 											{$t('storage.pool.addDisk')}
 										</Button>
@@ -1533,7 +1561,7 @@
 											size="sm"
 											icon={MinusCircle}
 											disabled={diskChangeBlocked(pool)}
-											on:click={() => (removeDiskPool = pool)}
+											onclick={() => (removeDiskPool = pool)}
 										>
 											{$t('storage.pool.removeDisk')}
 										</Button>
@@ -1541,7 +1569,7 @@
 											variant="secondary"
 											size="sm"
 											icon={Layers}
-											on:click={() => openVolumes(pool)}
+											onclick={() => openVolumes(pool)}
 										>
 											{$t('storage.pool.volumes')}
 										</Button>
@@ -1549,7 +1577,7 @@
 											variant="secondary"
 											size="sm"
 											icon={Unplug}
-											on:click={() => openPoolAction('unmount', pool)}
+											onclick={() => openPoolAction('unmount', pool)}
 										>
 											{$t('storage.pool.unmount')}
 										</Button>
@@ -1558,7 +1586,7 @@
 											variant="primary"
 											size="sm"
 											icon={Plug}
-											on:click={() => openPoolAction('mount', pool)}
+											onclick={() => openPoolAction('mount', pool)}
 										>
 											{$t('storage.pool.mount')}
 										</Button>
@@ -1566,7 +1594,7 @@
 									<Button
 										variant="ghost"
 										size="icon-sm"
-										on:click={() => openDeleteModal(pool)}
+										onclick={() => openDeleteModal(pool)}
 									>
 										<Trash2 class="w-4 h-4 text-error" />
 										<span class="sr-only">{$t('storage.pool.remove', { name: pool.name })}</span>
@@ -1689,9 +1717,10 @@
 									{:else}
 										{@const result = scrubResult(scrubStatus)}
 										{@const style = scrubResultStyles[result.tone]}
+										{@const Icon = style.icon}
 										<div class="flex items-center justify-between text-sm">
 											<span class="flex items-center gap-2 {style.class}">
-												<svelte:component this={style.icon} class="w-4 h-4" />
+												<Icon class="w-4 h-4" />
 												{result.text}
 											</span>
 											<span class="text-xs text-muted">
@@ -1829,11 +1858,11 @@
 	title={$t('storage.create.title')}
 	size="lg"
 	closable={!saving}
-	on:close={closeCreateModal}
+	onclose={closeCreateModal}
 >
 	<!-- Scrolls inside the dialog so the buttons stay reachable on small screens. -->
 	<form
-		on:submit|preventDefault={handleCreatePool}
+		onsubmit={(e) => { e.preventDefault(); handleCreatePool(); }}
 		class="space-y-4 max-h-[60vh] overflow-y-auto scrollbar-thin pr-1"
 	>
 		<Alert variant="error" title={$t('storage.create.eraseTitle')}>
@@ -1874,7 +1903,7 @@
 								type="checkbox"
 								checked={poolForm.devices.includes(disk.path)}
 								disabled={reason !== null}
-								on:change={() => toggleDevice(disk)}
+								onchange={() => toggleDevice(disk)}
 								class="form-checkbox mt-1"
 							/>
 							<div class="flex-1 min-w-0">
@@ -1958,8 +1987,8 @@
 		{/if}
 	</form>
 
-	<svelte:fragment slot="footer">
-		<Button variant="secondary" class="flex-1" disabled={saving} on:click={closeCreateModal}>
+	{#snippet footer()}
+		<Button variant="secondary" class="flex-1" disabled={saving} onclick={closeCreateModal}>
 			{$t('common.cancel')}
 		</Button>
 		<Button
@@ -1967,11 +1996,11 @@
 			class="flex-1"
 			loading={saving}
 			disabled={!canCreate}
-			on:click={handleCreatePool}
+			onclick={handleCreatePool}
 		>
 			{$t('storage.create.submit')}
 		</Button>
-	</svelte:fragment>
+	{/snippet}
 </Modal>
 
 <!-- Balance Modal (ADR-0379) -->
@@ -1980,13 +2009,14 @@
 	title={$t('storage.balance.title', { name: balanceTarget?.name ?? '' })}
 	size="md"
 	closable={!balanceStarting}
-	on:close={closeBalance}
+	onclose={closeBalance}
 >
 	{#if balanceTarget}
 		<p class="text-sm text-secondary">{$t('storage.balance.intro')}</p>
 		<Select
 			label={$t('storage.balance.what')}
 			bind:value={balanceKind}
+			onchange={chooseBalanceKind}
 			options={[
 				{ value: 'usage', label: $t('storage.balance.usageOption') },
 				{ value: 'full', label: $t('storage.balance.fullOption') }
@@ -2014,8 +2044,8 @@
 		{/if}
 	{/if}
 
-	<svelte:fragment slot="footer">
-		<Button variant="secondary" class="flex-1" disabled={balanceStarting} on:click={closeBalance}>
+	{#snippet footer()}
+		<Button variant="secondary" class="flex-1" disabled={balanceStarting} onclick={closeBalance}>
 			{$t('common.cancel')}
 		</Button>
 		<Button
@@ -2023,11 +2053,11 @@
 			class="flex-1"
 			loading={balanceStarting}
 			disabled={!canStartBalance}
-			on:click={handleStartBalance}
+			onclick={handleStartBalance}
 		>
 			{$t('storage.balance.start')}
 		</Button>
-	</svelte:fragment>
+	{/snippet}
 </Modal>
 
 <!-- Add Disk and Remove Disk (ADR-0411) -->
@@ -2035,14 +2065,14 @@
 	pool={addDiskPool}
 	{formatBytes}
 	{profileLabel}
-	on:close={() => (addDiskPool = null)}
-	on:added={diskAdded}
+	onclose={() => (addDiskPool = null)}
+	onadded={diskAdded}
 />
 <RemoveDiskDialog
 	pool={removeDiskPool}
 	{formatBytes}
-	on:close={() => (removeDiskPool = null)}
-	on:started={removalStarted}
+	onclose={() => (removeDiskPool = null)}
+	onstarted={removalStarted}
 />
 
 <!-- Mount / Unmount Modal -->
@@ -2051,7 +2081,7 @@
 	title={$t(poolAction?.kind === 'mount' ? 'storage.mount.title' : 'storage.unmount.title')}
 	size="md"
 	closable={!poolActionBusy}
-	on:close={closePoolAction}
+	onclose={closePoolAction}
 >
 	{#if poolAction}
 		{#if poolAction.kind === 'mount'}
@@ -2084,25 +2114,25 @@
 		{/if}
 	{/if}
 
-	<svelte:fragment slot="footer">
-		<Button variant="secondary" class="flex-1" disabled={poolActionBusy} on:click={closePoolAction}>
+	{#snippet footer()}
+		<Button variant="secondary" class="flex-1" disabled={poolActionBusy} onclick={closePoolAction}>
 			{$t('common.cancel')}
 		</Button>
 		<Button
 			variant={poolAction?.kind === 'unmount' ? 'warning' : 'primary'}
 			class="flex-1"
 			loading={poolActionBusy}
-			on:click={confirmPoolAction}
+			onclick={confirmPoolAction}
 		>
 			{$t(poolAction?.kind === 'mount' ? 'storage.pool.mount' : 'storage.pool.unmount')}
 		</Button>
-	</svelte:fragment>
+	{/snippet}
 </Modal>
 
 <!-- The idle timeout of a disk (ADR-0378) -->
-<Modal open={spindownDisk !== null} title={$t('storage.spindown.title')} size="md" closable={!spindownBusy} on:close={closeSpindown}>
+<Modal open={spindownDisk !== null} title={$t('storage.spindown.title')} size="md" closable={!spindownBusy} onclose={closeSpindown}>
 	{#if spindownDisk}
-		<form on:submit|preventDefault={saveSpindown} class="space-y-4">
+		<form onsubmit={(e) => { e.preventDefault(); saveSpindown(); }} class="space-y-4">
 			<p>
 				{$t('storage.spindown.disk')}
 				<span class="mono break-all">{spindownDisk.path}</span>{spindownDisk.model ? ` (${spindownDisk.model})` : ''}
@@ -2122,12 +2152,12 @@
 		</form>
 	{/if}
 
-	<svelte:fragment slot="footer">
-		<Button variant="secondary" class="flex-1" disabled={spindownBusy} on:click={closeSpindown}>
+	{#snippet footer()}
+		<Button variant="secondary" class="flex-1" disabled={spindownBusy} onclick={closeSpindown}>
 			{$t('common.cancel')}
 		</Button>
-		<Button class="flex-1" loading={spindownBusy} on:click={saveSpindown}>{$t('storage.spindown.save')}</Button>
-	</svelte:fragment>
+		<Button class="flex-1" loading={spindownBusy} onclick={saveSpindown}>{$t('storage.spindown.save')}</Button>
+	{/snippet}
 </Modal>
 
 <!-- Import Pool Modal (ADR-0283) -->
@@ -2136,10 +2166,10 @@
 	title={$t('storage.import.title')}
 	size="md"
 	closable={!importing}
-	on:close={closeImport}
+	onclose={closeImport}
 >
 	{#if importTarget}
-		<form on:submit|preventDefault={handleImport} class="space-y-4">
+		<form onsubmit={(e) => { e.preventDefault(); handleImport(); }} class="space-y-4">
 			<p>
 				{$t('storage.import.filesystem')}
 				<span class="mono-xs break-all">{importTarget.uuid}</span>
@@ -2168,8 +2198,8 @@
 		</form>
 	{/if}
 
-	<svelte:fragment slot="footer">
-		<Button variant="secondary" class="flex-1" disabled={importing} on:click={closeImport}>
+	{#snippet footer()}
+		<Button variant="secondary" class="flex-1" disabled={importing} onclick={closeImport}>
 			{$t('common.cancel')}
 		</Button>
 		<Button
@@ -2177,11 +2207,11 @@
 			icon={HardDriveDownload}
 			loading={importing}
 			disabled={!canImport}
-			on:click={handleImport}
+			onclick={handleImport}
 		>
 			{$t('storage.found.import')}
 		</Button>
-	</svelte:fragment>
+	{/snippet}
 </Modal>
 
 <!-- Delete Pool Modal -->
@@ -2191,11 +2221,11 @@
 	size="md"
 	danger
 	closable={!deleting}
-	on:close={closeDeleteModal}
+	onclose={closeDeleteModal}
 >
-	<svelte:fragment slot="title-icon">
+	{#snippet titleIcon()}
 		<AlertTriangle class="w-6 h-6" />
-	</svelte:fragment>
+	{/snippet}
 
 	{#if poolToDelete}
 		{#if deleteStep === 1}
@@ -2248,13 +2278,13 @@
 		{/if}
 	{/if}
 
-	<svelte:fragment slot="footer">
+	{#snippet footer()}
 		{#if poolToDelete}
 			{#if deleteStep === 1}
-				<Button variant="secondary" class="flex-1" on:click={closeDeleteModal}
+				<Button variant="secondary" class="flex-1" onclick={closeDeleteModal}
 					>{$t('common.cancel')}</Button
 				>
-				<Button variant="danger" class="flex-1" on:click={proceedToStep2}
+				<Button variant="danger" class="flex-1" onclick={proceedToStep2}
 					>{$t('storage.remove.continue')}</Button
 				>
 			{:else}
@@ -2262,7 +2292,7 @@
 					variant="secondary"
 					class="flex-1"
 					disabled={deleting}
-					on:click={() => (deleteStep = 1)}
+					onclick={() => (deleteStep = 1)}
 				>
 					{$t('storage.remove.back')}
 				</Button>
@@ -2271,13 +2301,13 @@
 					class="flex-1"
 					loading={deleting}
 					disabled={deleteConfirmName !== poolToDelete.name}
-					on:click={handleDeletePool}
+					onclick={handleDeletePool}
 				>
 					{$t('storage.remove.submit')}
 				</Button>
 			{/if}
 		{/if}
-	</svelte:fragment>
+	{/snippet}
 </Modal>
 
 <!-- Volumes Modal -->
@@ -2288,7 +2318,7 @@
 		: $t('storage.volumes.titleNone')}
 	size="lg"
 	closable={!volumeBusy}
-	on:close={closeVolumes}
+	onclose={closeVolumes}
 >
 	{#if volumesPool}
 		<div class="space-y-4">
@@ -2343,7 +2373,7 @@
 											variant="ghost"
 											size="icon-sm"
 											pressed={usageOf === volume.name}
-											on:click={() => toggleUsage(volume)}
+											onclick={() => toggleUsage(volume)}
 										>
 											<LineChart class="w-4 h-4" />
 											<span class="sr-only">{$t('storage.volumes.chartShow', { name: volume.name })}</span>
@@ -2353,7 +2383,7 @@
 										variant="ghost"
 										size="icon-sm"
 										disabled={volumeBusy || volumesReadOnly}
-										on:click={() => askDeleteVolume(volume)}
+										onclick={() => askDeleteVolume(volume)}
 									>
 										<Trash2 class="w-4 h-4 text-error" />
 										<span class="sr-only">{$t('storage.volumes.deleteOne', { name: volume.name })}</span>
@@ -2413,7 +2443,7 @@
 						variant="secondary"
 						class="flex-1"
 						disabled={deletingVolume}
-						on:click={cancelDeleteVolume}
+						onclick={cancelDeleteVolume}
 					>
 						{$t('common.cancel')}
 					</Button>
@@ -2422,13 +2452,13 @@
 						class="flex-1"
 						loading={deletingVolume}
 						disabled={deleteVolumeConfirm !== volumeToDelete.name}
-						on:click={handleDeleteVolume}
+						onclick={handleDeleteVolume}
 					>
 						{$t('storage.volumes.delete')}
 					</Button>
 				</div>
 			{:else}
-				<form on:submit|preventDefault={handleCreateVolume} class="space-y-2">
+				<form onsubmit={(e) => { e.preventDefault(); handleCreateVolume(); }} class="space-y-2">
 					<Input
 						label={$t('storage.volumes.name')}
 						bind:value={newVolumeName}
@@ -2465,9 +2495,9 @@
 		</div>
 	{/if}
 
-	<svelte:fragment slot="footer">
-		<Button variant="secondary" class="flex-1" disabled={volumeBusy} on:click={closeVolumes}>
+	{#snippet footer()}
+		<Button variant="secondary" class="flex-1" disabled={volumeBusy} onclick={closeVolumes}>
 			{$t('storage.volumes.close')}
 		</Button>
-	</svelte:fragment>
+	{/snippet}
 </Modal>

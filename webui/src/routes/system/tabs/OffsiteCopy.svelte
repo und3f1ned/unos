@@ -4,7 +4,7 @@
   // key pinned at its first test, ADR-0422), the folders to copy, the state of the last copy and restore with Run now, a daily task
   // of the Scheduler, and the snapshots with their restores. The state is read when the section
   // opens and on Refresh: copies and restores run in the background, and nothing polls (ADR-0006).
-  import { createEventDispatcher, onMount, tick } from "svelte";
+  import { onMount, tick } from "svelte";
   import { ApiError } from "$lib/api/client";
   import { formatBytes } from "$lib/api/backup";
   import {
@@ -30,7 +30,12 @@
   import { formatDateTime } from "$lib/time";
   import { Key, Play, Plus, RefreshCw, RotateCcw, Trash2, UploadCloud, X } from "lucide-svelte";
 
-  const dispatch = createEventDispatcher<{ restored: string }>();
+  type Props = {
+    /** A configuration restored from a snapshot, with the file name it has in the backup list. */
+    onrestored?: (filename: string) => void;
+  };
+
+  let { onrestored }: Props = $props();
 
   // At least as long as the server asks (MIN_PASSWORD_LENGTH of supervisor/src/offsite/service.py).
   const MIN_PASSWORD_LENGTH = 12;
@@ -53,93 +58,97 @@
     other: "offsite.snapshots.other",
   };
 
-  let loading = true;
-  let answer: OffsiteSettingsAnswer | null = null;
-  let status: OffsiteStatus | null = null;
-  let snapshots: OffsiteSnapshot[] = [];
-  let snapshotsError = "";
-  let tasks: ScheduledTask[] = [];
+  let loading = $state(true);
+  let answer = $state<OffsiteSettingsAnswer | null>(null);
+  let status = $state<OffsiteStatus | null>(null);
+  let snapshots = $state<OffsiteSnapshot[]>([]);
+  let snapshotsError = $state("");
+  let tasks = $state<ScheduledTask[]>([]);
   // The last failed action, until it is dismissed; and what the last action did.
-  let error: { title: string; message: string } | null = null;
-  let errorBox: HTMLDivElement | undefined;
-  let notice = "";
+  let error = $state<{ title: string; message: string } | null>(null);
+  let errorBox = $state<HTMLDivElement>();
+  let notice = $state("");
 
   // The form.
-  let kind: OffsiteKind = "disk";
-  let path = "";
-  let endpoint = "";
-  let bucket = "";
-  let prefix = "";
-  let region = "";
-  let accessKeyId = "";
-  let secretKey = "";
+  let kind = $state<OffsiteKind>("disk");
+  let path = $state("");
+  let endpoint = $state("");
+  let bucket = $state("");
+  let prefix = $state("");
+  let region = $state("");
+  let accessKeyId = $state("");
+  let secretKey = $state("");
   // A REST server (endpoint and prefix are the S3 fields') and an SFTP server.
-  let username = "";
-  let restPassword = "";
-  let tls: OffsiteTls = "system";
-  let certificate = "";
-  let certificateSha256 = "";
-  let sftpHost = "";
-  let sftpPort = "22";
-  let remotePath = "";
-  let hostKeyFingerprint = "";
-  let trustNewHostKey = false;
-  let makingKey = false;
-  let poolSources: string[] = [];
-  let extraSources: string[] = [];
-  let newSource = "";
-  let password = "";
-  let passwordAgain = "";
-  let limitUpload = "0";
-  let limitDownload = "0";
-  let keepDaily = "7";
-  let keepWeekly = "4";
-  let keepMonthly = "12";
-  let checkPercent = "2";
-  let saving = false;
-  let starting = false;
-  let addingTask = false;
-  let restoring: string | null = null;
+  let username = $state("");
+  let restPassword = $state("");
+  let tls = $state<OffsiteTls>("system");
+  let certificate = $state("");
+  let certificateSha256 = $state("");
+  let sftpHost = $state("");
+  let sftpPort = $state("22");
+  let remotePath = $state("");
+  let hostKeyFingerprint = $state("");
+  let trustNewHostKey = $state(false);
+  let makingKey = $state(false);
+  let poolSources = $state<string[]>([]);
+  let extraSources = $state<string[]>([]);
+  let newSource = $state("");
+  let password = $state("");
+  let passwordAgain = $state("");
+  let limitUpload = $state("0");
+  let limitDownload = $state("0");
+  let keepDaily = $state("7");
+  let keepWeekly = $state("4");
+  let keepMonthly = $state("12");
+  let checkPercent = $state("2");
+  let saving = $state(false);
+  let starting = $state(false);
+  let addingTask = $state(false);
+  let restoring = $state<string | null>(null);
   // The snapshot whose Restore files form is open, with its pool and folder.
-  let filesOf: string | null = null;
-  let restorePool = "";
-  let restorePath = "";
+  let filesOf = $state<string | null>(null);
+  let restorePool = $state("");
+  let restorePath = $state("");
 
-  $: stored = answer?.settings ?? null;
-  $: sources = [...poolSources, ...extraSources];
-  // An edit of the same target keeps the stored password and key (the server's rule).
-  $: sameTarget =
-    stored !== null &&
-    stored.kind === kind &&
-    (kind === "disk"
-      ? normalized(path) === stored.path
-      : kind === "sftp"
-        ? sameSftpServer && username.trim() === stored.username && remotePath.trim() === stored.path
-        : endpoint.trim() === stored.endpoint &&
-          (kind === "rest" || bucket.trim() === stored.bucket) &&
-          (prefix.trim() || null) === (stored.prefix ?? null));
+  let stored = $derived(answer?.settings ?? null);
+  let sources = $derived([...poolSources, ...extraSources]);
   // The same SFTP server keeps its pinned host key (the server's rule).
-  $: sameSftpServer =
-    stored?.kind === "sftp" && kind === "sftp" && sftpHost.trim() === stored.host && Number(sftpPort) === stored.port;
+  let sameSftpServer = $derived(
+    stored?.kind === "sftp" && kind === "sftp" && sftpHost.trim() === stored.host && Number(sftpPort) === stored.port
+  );
+  // An edit of the same target keeps the stored password and key (the server's rule).
+  let sameTarget = $derived(
+    stored !== null &&
+      stored.kind === kind &&
+      (kind === "disk"
+        ? normalized(path) === stored.path
+        : kind === "sftp"
+          ? sameSftpServer && username.trim() === stored.username && remotePath.trim() === stored.path
+          : endpoint.trim() === stored.endpoint &&
+            (kind === "rest" || bucket.trim() === stored.bucket) &&
+            (prefix.trim() || null) === (stored.prefix ?? null))
+  );
   // The pin of the same server is kept; trusting a new key needs its fingerprint (the server's rule).
-  $: pinShown = sameSftpServer && !!answer?.host_key_fingerprint;
-  $: fingerprintShown = !pinShown || trustNewHostKey;
-  $: keepsRestPassword =
+  let pinShown = $derived(sameSftpServer && !!answer?.host_key_fingerprint);
+  let fingerprintShown = $derived(!pinShown || trustNewHostKey);
+  let keepsRestPassword = $derived(
     !!answer?.has_rest_password &&
-    stored?.kind === "rest" &&
-    kind === "rest" &&
-    endpoint.trim() === stored.endpoint &&
-    username.trim() === stored.username;
-  $: keepsPassword = !!answer?.has_password && sameTarget;
-  $: keepsSecret =
+      stored?.kind === "rest" &&
+      kind === "rest" &&
+      endpoint.trim() === stored.endpoint &&
+      username.trim() === stored.username
+  );
+  let keepsPassword = $derived(!!answer?.has_password && sameTarget);
+  let keepsSecret = $derived(
     !!answer?.has_s3_secret_access_key &&
-    stored?.kind === "s3" &&
-    kind === "s3" &&
-    endpoint.trim() === stored.endpoint &&
-    accessKeyId.trim() === stored.access_key_id;
-  $: passwordTooShort = password !== "" && password.length < MIN_PASSWORD_LENGTH;
-  $: passwordsDiffer = passwordAgain !== password;
-  $: targetGiven =
+      stored?.kind === "s3" &&
+      kind === "s3" &&
+      endpoint.trim() === stored.endpoint &&
+      accessKeyId.trim() === stored.access_key_id
+  );
+  let passwordTooShort = $derived(password !== "" && password.length < MIN_PASSWORD_LENGTH);
+  let passwordsDiffer = $derived(passwordAgain !== password);
+  let targetGiven = $derived(
     kind === "disk"
       ? path.trim() !== ""
       : kind === "s3"
@@ -158,31 +167,35 @@
               remotePath.trim() &&
               answer?.sftp_public_key &&
               (!pinShown || !trustNewHostKey || hostKeyFingerprint.trim())
-            );
-  $: canSave =
+            )
+  );
+  let canSave = $derived(
     !saving &&
-    targetGiven &&
-    sources.length > 0 &&
-    !passwordTooShort &&
-    !passwordsDiffer &&
-    (password !== "" || keepsPassword);
+      targetGiven &&
+      sources.length > 0 &&
+      !passwordTooShort &&
+      !passwordsDiffer &&
+      (password !== "" || keepsPassword)
+  );
   // The pools a restore of files may go into: the managed ones and those of the folders copied.
-  $: restorePools = [
-    ...new Set([
-      ...(answer?.pools ?? []).map((pool) => pool.name),
-      ...sources.map((source) => poolOf(source)).filter((name): name is string => !!name),
-    ]),
-  ].sort();
-  $: running = status?.running ?? null;
-  $: lastCopy = status?.last_copy ?? null;
-  $: lastRestore = status?.last_restore ?? null;
+  let restorePools = $derived(
+    [
+      ...new Set([
+        ...(answer?.pools ?? []).map((pool) => pool.name),
+        ...sources.map((source) => poolOf(source)).filter((name): name is string => !!name),
+      ]),
+    ].sort()
+  );
+  let running = $derived(status?.running ?? null);
+  let lastCopy = $derived(status?.last_copy ?? null);
+  let lastRestore = $derived(status?.last_restore ?? null);
   // The units of sizes in the language of the page (formatBytes).
-  $: sizeUnits = [
+  let sizeUnits = $derived([
     $t("backup.size.bytes"),
     $t("backup.size.kilobytes"),
     $t("backup.size.megabytes"),
     $t("backup.size.gigabytes"),
-  ];
+  ]);
 
   function normalized(value: string): string {
     return "/" + value.split("/").filter((part) => part !== "" && part !== ".").join("/");
@@ -195,20 +208,31 @@
     return source.slice(base.length + 1).split("/")[0] || null;
   }
 
-  $: when = (iso: string | null | undefined): string => formatDateTime(iso, $intlLocale);
-  $: stepText = (step: string | null): string =>
-    step && Object.prototype.hasOwnProperty.call(STEPS, step) ? $t(STEPS[step]) : (step ?? "");
-  $: warningText = (warning: { kind: string; message: string }): string =>
-    Object.prototype.hasOwnProperty.call(WARNINGS, warning.kind) ? $t(WARNINGS[warning.kind]) : warning.message;
-  $: kindText = (snapshotKind: string): string =>
-    Object.prototype.hasOwnProperty.call(SNAPSHOT_KINDS, snapshotKind) ? $t(SNAPSHOT_KINDS[snapshotKind]) : snapshotKind;
-  $: runningText = (activity: NonNullable<OffsiteStatus["running"]>): string => {
+  function when(iso: string | null | undefined): string {
+    return formatDateTime(iso, $intlLocale);
+  }
+
+  function stepText(step: string | null): string {
+    return step && Object.prototype.hasOwnProperty.call(STEPS, step) ? $t(STEPS[step]) : (step ?? "");
+  }
+
+  function warningText(warning: { kind: string; message: string }): string {
+    return Object.prototype.hasOwnProperty.call(WARNINGS, warning.kind) ? $t(WARNINGS[warning.kind]) : warning.message;
+  }
+
+  function kindText(snapshotKind: string): string {
+    return Object.prototype.hasOwnProperty.call(SNAPSHOT_KINDS, snapshotKind)
+      ? $t(SNAPSHOT_KINDS[snapshotKind])
+      : snapshotKind;
+  }
+
+  function runningText(activity: NonNullable<OffsiteStatus["running"]>): string {
     const time = when(activity.started);
     if (activity.kind === "copy") return $t("offsite.running.copy", { time });
     if (activity.kind === "restore-files") return $t("offsite.running.restoreFiles", { folder: activity.folder ?? "", time });
     if (activity.kind === "restore-configuration") return $t("offsite.running.restoreConfiguration", { time });
     return $t("offsite.running.settings");
-  };
+  }
 
   function sessionEnded(e: unknown): boolean {
     return e instanceof ApiError && e.status === 401;
@@ -419,7 +443,7 @@
     try {
       const result = await restoreOffsiteConfiguration(snapshot.id);
       notice = $t("offsite.snapshots.inBackupList", { name: result.backup.filename });
-      dispatch("restored", result.backup.filename);
+      onrestored?.(result.backup.filename);
     } catch (e) {
       showError($t("offsite.snapshots.restoreConfigurationFailed"), e);
     }
@@ -459,14 +483,14 @@
     {#if error}
       <!-- role="alert": screen readers announce the message when it appears. -->
       <div bind:this={errorBox} role="alert" class="mb-4">
-        <Alert variant="error" title={error.title} dismissible on:dismiss={() => (error = null)}>
+        <Alert variant="error" title={error.title} dismissible ondismiss={() => (error = null)}>
           {error.message}
         </Alert>
       </div>
     {/if}
     {#if notice}
       <div role="status" class="mb-4">
-        <Alert variant="success" dismissible on:dismiss={() => (notice = "")}>{notice}</Alert>
+        <Alert variant="success" dismissible ondismiss={() => (notice = "")}>{notice}</Alert>
       </div>
     {/if}
 
@@ -485,8 +509,8 @@
           <div class="flex flex-wrap items-center justify-between gap-2">
             <h4 class="font-medium">{$t("offsite.state.title")}</h4>
             <div class="flex flex-wrap gap-2">
-              <Button size="sm" variant="secondary" icon={RefreshCw} on:click={refresh}>{$t("offsite.refresh")}</Button>
-              <Button size="sm" icon={Play} loading={starting} disabled={running !== null} on:click={runNow}>
+              <Button size="sm" variant="secondary" icon={RefreshCw} onclick={refresh}>{$t("offsite.refresh")}</Button>
+              <Button size="sm" icon={Play} loading={starting} disabled={running !== null} onclick={runNow}>
                 {$t("offsite.state.runNow")}
               </Button>
             </div>
@@ -558,7 +582,7 @@
           {#if tasks.length === 0}
             <div class="flex flex-wrap items-center gap-2 pt-1">
               <span class="text-status-warning">{$t("offsite.task.none")}</span>
-              <Button size="sm" variant="secondary" icon={Plus} loading={addingTask} on:click={addDailyTask}>
+              <Button size="sm" variant="secondary" icon={Plus} loading={addingTask} onclick={addDailyTask}>
                 {$t("offsite.task.add")}
               </Button>
             </div>
@@ -602,7 +626,7 @@
                         icon={RotateCcw}
                         loading={restoring === snapshot.id}
                         disabled={restoring !== null || running !== null}
-                        on:click={() => restoreConfiguration(snapshot)}
+                        onclick={() => restoreConfiguration(snapshot)}
                       >
                         {$t("offsite.snapshots.restoreConfiguration")}
                       </Button>
@@ -612,7 +636,7 @@
                         variant="secondary"
                         icon={RotateCcw}
                         disabled={restoring !== null || running !== null}
-                        on:click={() => openFilesForm(snapshot)}
+                        onclick={() => openFilesForm(snapshot)}
                       >
                         {$t("offsite.snapshots.restoreFiles")}
                       </Button>
@@ -621,7 +645,13 @@
                 </div>
                 <p class="mt-1 font-mono text-xs text-content-secondary break-all">{snapshot.paths.join(", ")}</p>
                 {#if filesOf === snapshot.id}
-                  <form class="mt-3 space-y-3" on:submit|preventDefault={() => restoreFiles(snapshot)}>
+                  <form
+                    class="mt-3 space-y-3"
+                    onsubmit={(e) => {
+                      e.preventDefault();
+                      restoreFiles(snapshot);
+                    }}
+                  >
                     <div>
                       <label for="offsite-restore-pool-{snapshot.short_id}" class="form-label">{$t("offsite.snapshots.pool")}</label>
                       <select id="offsite-restore-pool-{snapshot.short_id}" class="form-input" bind:value={restorePool}>
@@ -641,7 +671,7 @@
                       <Button type="submit" size="sm" loading={restoring === snapshot.id} disabled={!restorePool || restoring !== null}>
                         {$t("offsite.snapshots.restore")}
                       </Button>
-                      <Button size="sm" variant="secondary" icon={X} on:click={() => (filesOf = null)}>
+                      <Button size="sm" variant="secondary" icon={X} onclick={() => (filesOf = null)}>
                         {$t("common.cancel")}
                       </Button>
                     </div>
@@ -654,7 +684,13 @@
       {/if}
 
       <!-- The target and what is copied: saving tests the target. -->
-      <form class="space-y-4" on:submit|preventDefault={save}>
+      <form
+        class="space-y-4"
+        onsubmit={(e) => {
+          e.preventDefault();
+          save();
+        }}
+      >
         <h4 class="font-medium text-sm">{$t("offsite.form.title")}</h4>
         <fieldset class="flex flex-wrap gap-x-6 gap-y-2 text-sm">
           <legend class="sr-only">{$t("offsite.form.kind")}</legend>
@@ -736,7 +772,7 @@
             {:else}
               <p class="text-status-warning">{$t("offsite.sftp.noKey")}</p>
             {/if}
-            <Button size="sm" variant="secondary" icon={Key} loading={makingKey} disabled={running !== null} on:click={makeKeyPair}>
+            <Button size="sm" variant="secondary" icon={Key} loading={makingKey} disabled={running !== null} onclick={makeKeyPair}>
               {answer.sftp_public_key ? $t("offsite.sftp.newKey") : $t("offsite.sftp.makeKey")}
             </Button>
           </div>
@@ -798,7 +834,7 @@
           {#each extraSources as source}
             <div class="flex items-center gap-2">
               <span class="font-mono text-xs break-all flex-1 min-w-0">{source}</span>
-              <Button size="icon-sm" variant="ghost" icon={Trash2} on:click={() => removeSource(source)}>
+              <Button size="icon-sm" variant="ghost" icon={Trash2} onclick={() => removeSource(source)}>
                 <span class="sr-only">{$t("offsite.form.removeSource", { path: source })}</span>
               </Button>
             </div>
@@ -807,7 +843,7 @@
             <div class="min-w-0 flex-1 basis-56">
               <Input id="offsite-new-source" label={$t("offsite.form.newSource")} bind:value={newSource} spellcheck={false} />
             </div>
-            <Button variant="secondary" icon={Plus} disabled={!newSource.trim()} on:click={addSource}>{$t("offsite.form.addSource")}</Button>
+            <Button variant="secondary" icon={Plus} disabled={!newSource.trim()} onclick={addSource}>{$t("offsite.form.addSource")}</Button>
           </div>
           <p class="form-hint">{sources.length ? $t("offsite.form.sourcesHint") : $t("offsite.form.noSources")}</p>
         </fieldset>
@@ -845,7 +881,7 @@
             {saving ? $t("offsite.form.saving") : $t("offsite.form.save")}
           </Button>
           {#if answer.configured}
-            <Button variant="danger" icon={Trash2} disabled={running !== null} on:click={forget}>{$t("offsite.form.forget")}</Button>
+            <Button variant="danger" icon={Trash2} disabled={running !== null} onclick={forget}>{$t("offsite.form.forget")}</Button>
           {/if}
         </div>
       </form>

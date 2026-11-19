@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
+	import { untrack } from 'svelte';
 	import { Edit, Plus, Trash2, UsersRound } from 'lucide-svelte';
 	import { getUsers, type User } from '$lib/api/auth';
 	import { ApiError } from '$lib/api/client';
@@ -18,28 +18,27 @@
 	import { accessKey, canBeGivenAccess, pickableUsers } from '$lib/components/shares/access';
 	import { t } from '$lib/i18n';
 
-	/**
-	 * Groups of users (ADR-0385): a group gets access on the Shares page, and each member whose SMB
-	 * is on gets it. The page's users: when it loads them again (a user deleted, renamed or made an
-	 * administrator leaves or changes their groups), the card loads its groups and users again. The
-	 * card lists the users it loaded with the groups, so that a dialog never sends a member list
-	 * older than the group.
-	 */
-	export let users: User[] = [];
+	type Props = {
+		/**
+		 * Groups of users (ADR-0385): a group gets access on the Shares page, and each member whose
+		 * SMB is on gets it. The page's users: when it loads them again (a user deleted, renamed or
+		 * made an administrator leaves or changes their groups), the card loads its groups and users
+		 * again. The card lists the users it loaded with the groups, so that a dialog never sends a
+		 * member list older than the group.
+		 */
+		users?: User[];
+	};
 
-	let groups: Group[] = [];
-	let known: User[] = [];
-	let loading = true;
-	let loadError = '';
-	let notice = '';
-	let warnings: string[] = [];
-	let actionError = '';
-	let mounted = false;
+	let { users = [] }: Props = $props();
+
+	let groups = $state.raw<Group[]>([]);
+	let known = $state.raw<User[]>([]);
+	let loading = $state(true);
+	let loadError = $state('');
+	let notice = $state('');
+	let warnings = $state.raw<string[]>([]);
+	let actionError = $state('');
 	let request = 0;
-
-	onMount(() => {
-		mounted = true;
-	});
 
 	function messageOf(e: unknown): string {
 		return e instanceof Error ? e.message : String(e);
@@ -60,12 +59,12 @@
 		}
 	}
 
-	// Each new list of users loads the groups again (no polling: only after a load of the page's own).
-	$: if (mounted) reloadFor(users);
-
-	function reloadFor(_users: User[]) {
-		void loadGroups();
-	}
+	// Once mounted, and again with each new list of users (no polling: only after a load of the
+	// page's own).
+	$effect(() => {
+		void users;
+		untrack(() => void loadGroups());
+	});
 
 	function showOutcome(message: string, newWarnings: string[] | undefined) {
 		notice = message;
@@ -73,27 +72,30 @@
 		actionError = '';
 	}
 
-	$: levelText = (level: string): string =>
-		level === 'write' ? $t('groups.level.write') : $t('groups.level.read');
+	// The markup that calls it reads $t through it: the text follows a change of the language.
+	function levelText(level: string): string {
+		return level === 'write' ? $t('groups.level.write') : $t('groups.level.read');
+	}
 
 	// ---- The dialog: a new group, or a group's name and members ----
 
-	let editing: Group | null = null;
-	let dialogOpen = false;
-	let name = '';
-	let chosen: Record<string, boolean> = {};
-	let saving = false;
-	let attempted = false;
-	let formError = '';
-	let reloadedNotice = '';
+	let editing = $state.raw<Group | null>(null);
+	let dialogOpen = $state(false);
+	let name = $state('');
+	let chosen = $state.raw<Record<string, boolean>>({});
+	let saving = $state(false);
+	let attempted = $state(false);
+	let formError = $state('');
+	let reloadedNotice = $state('');
 
-	$: listedUsers = pickableUsers(known);
-	$: nameError =
+	let listedUsers = $derived(pickableUsers(known));
+	let nameError = $derived(
 		name !== '' && !GROUP_NAME_PATTERN.test(name)
 			? $t('groups.form.nameInvalid')
 			: attempted && name === ''
 				? $t('groups.form.nameRequired')
-				: '';
+				: ''
+	);
 
 	function chosenFrom(group: Group | null): Record<string, boolean> {
 		const result: Record<string, boolean> = {};
@@ -201,9 +203,9 @@
 
 	// ---- Delete ----
 
-	let toDelete: Group | null = null;
-	let deleting = false;
-	let deleteError = '';
+	let toDelete = $state.raw<Group | null>(null);
+	let deleting = $state(false);
+	let deleteError = $state('');
 
 	function openDelete(group: Group) {
 		toDelete = group;
@@ -246,7 +248,7 @@
 			<UsersRound class="w-5 h-5" />
 			{$t('groups.title', { count: groups.length })}
 		</h2>
-		<Button icon={Plus} variant="secondary" on:click={openCreate}>{$t('groups.add')}</Button>
+		<Button icon={Plus} variant="secondary" onclick={openCreate}>{$t('groups.add')}</Button>
 	</div>
 	<p class="text-sm text-secondary mb-4">{$t('groups.about')}</p>
 
@@ -254,17 +256,17 @@
 		<Alert variant="error" title={$t('groups.loadFailed')}>{loadError}</Alert>
 	{/if}
 	{#if notice}
-		<Alert variant="success" dismissible on:dismiss={() => (notice = '')}>{notice}</Alert>
+		<Alert variant="success" dismissible ondismiss={() => (notice = '')}>{notice}</Alert>
 	{/if}
 	{#if warnings.length > 0}
-		<Alert variant="warning" dismissible on:dismiss={() => (warnings = [])}>
+		<Alert variant="warning" dismissible ondismiss={() => (warnings = [])}>
 			{#each warnings as warning}
 				<p>{warning}</p>
 			{/each}
 		</Alert>
 	{/if}
 	{#if actionError}
-		<Alert variant="error" title={$t('groups.actionFailed')} dismissible on:dismiss={() => (actionError = '')}
+		<Alert variant="error" title={$t('groups.actionFailed')} dismissible ondismiss={() => (actionError = '')}
 			>{actionError}</Alert
 		>
 	{/if}
@@ -306,10 +308,10 @@
 							{/if}
 						</div>
 						<div class="flex flex-wrap items-center gap-2">
-							<Button variant="secondary" size="sm" icon={Edit} on:click={() => openEdit(group)}>
+							<Button variant="secondary" size="sm" icon={Edit} onclick={() => openEdit(group)}>
 								{$t('groups.edit')}<span class="sr-only">{` ${$t('groups.editOf', { name: group.name })}`}</span>
 							</Button>
-							<Button variant="ghost" size="icon-sm" on:click={() => openDelete(group)}>
+							<Button variant="ghost" size="icon-sm" onclick={() => openDelete(group)}>
 								<Trash2 class="w-4 h-4 text-error" />
 								<span class="sr-only">{$t('groups.deleteGroup', { name: group.name })}</span>
 							</Button>
@@ -326,9 +328,15 @@
 	title={editing ? $t('groups.form.editTitle', { name: editing.name }) : $t('groups.form.addTitle')}
 	size="lg"
 	closable={!saving}
-	on:close={closeDialog}
+	onclose={closeDialog}
 >
-	<form on:submit|preventDefault={save} class="space-y-4">
+	<form
+		onsubmit={(e) => {
+			e.preventDefault();
+			save();
+		}}
+		class="space-y-4"
+	>
 		<Input
 			id="group-name"
 			label={$t('groups.form.name')}
@@ -355,7 +363,7 @@
 									class="form-checkbox"
 									checked={usable && chosen[accessKey(user.id, user.username)] === true}
 									disabled={!usable || saving}
-									on:change={(event) =>
+									onchange={(event) =>
 										(chosen = {
 											...chosen,
 											[accessKey(user.id, user.username)]: event.currentTarget.checked
@@ -384,14 +392,14 @@
 		</Alert>
 	{/if}
 
-	<svelte:fragment slot="footer">
-		<Button variant="secondary" class="flex-1" disabled={saving} on:click={closeDialog}>
+	{#snippet footer()}
+		<Button variant="secondary" class="flex-1" disabled={saving} onclick={closeDialog}>
 			{$t('common.cancel')}
 		</Button>
-		<Button class="flex-1" loading={saving} on:click={save}>
+		<Button class="flex-1" loading={saving} onclick={save}>
 			{editing ? $t('groups.form.save') : $t('groups.form.create')}
 		</Button>
-	</svelte:fragment>
+	{/snippet}
 </Modal>
 
 <Modal
@@ -400,7 +408,7 @@
 	size="md"
 	danger
 	closable={!deleting}
-	on:close={closeDelete}
+	onclose={closeDelete}
 >
 	{#if toDelete}
 		<!-- In parts around the name: ADR-0296. -->
@@ -413,12 +421,12 @@
 		{/if}
 	{/if}
 
-	<svelte:fragment slot="footer">
-		<Button variant="secondary" class="flex-1" disabled={deleting} on:click={closeDelete}>
+	{#snippet footer()}
+		<Button variant="secondary" class="flex-1" disabled={deleting} onclick={closeDelete}>
 			{$t('common.cancel')}
 		</Button>
-		<Button variant="danger" class="flex-1" loading={deleting} on:click={confirmDelete}>
+		<Button variant="danger" class="flex-1" loading={deleting} onclick={confirmDelete}>
 			{$t('groups.delete.submit')}
 		</Button>
-	</svelte:fragment>
+	{/snippet}
 </Modal>

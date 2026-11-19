@@ -32,15 +32,16 @@
     Play
   } from "lucide-svelte";
 
-  let entries: LogEntry[] = [];
-  let sources: LogSource[] = [];
-  let loading = true;
-  let error = "";
-  let search = "";
-  let source = "journal";
-  let priority = "";
-  let since = "";
-  let limitStr = "200";
+  // Replaced whole, never changed in place: up to 1000 entries need no deep proxy.
+  let entries = $state.raw<LogEntry[]>([]);
+  let sources = $state<LogSource[]>([]);
+  let loading = $state(true);
+  let error = $state("");
+  let search = $state("");
+  let source = $state("journal");
+  let priority = $state("");
+  let since = $state("");
+  let limitStr = $state("200");
 
   // The server's values, shown by the keys of their texts in the catalog (ADR-0287). The sources
   // of GET /logs/sources by name: one without keys shows the server's label and description.
@@ -95,16 +96,17 @@
   };
 
   /** The text of `value` by its key in `keys`, in the language of the page; else `fallback`. */
-  $: textOf = (keys: Record<string, string>, value: string, fallback: string = value): string =>
-    Object.prototype.hasOwnProperty.call(keys, value) ? $t(keys[value]) : fallback;
+  function textOf(keys: Record<string, string>, value: string, fallback: string = value): string {
+    return Object.prototype.hasOwnProperty.call(keys, value) ? $t(keys[value]) : fallback;
+  }
 
   // Options for Select components, in the language of the page.
-  $: priorityOptions = [
+  let priorityOptions = $derived([
     { value: "", label: $t("logs.filter.allPriorities") },
     ...Object.entries(PRIORITIES).map(([value, key]) => ({ value, label: $t(key) }))
-  ];
+  ]);
 
-  $: timeRangeOptions = Object.entries(TIME_RANGES).map(([value, key]) => ({ value, label: $t(key) }));
+  let timeRangeOptions = $derived(Object.entries(TIME_RANGES).map(([value, key]) => ({ value, label: $t(key) })));
 
   const limitOptions = [
     { value: "50", label: "50" },
@@ -116,11 +118,11 @@
 
   // Auto: the entries come from the journal socket, the newest ones of the filters and then each
   // new one as the journal gets it (ADR-0366); nothing asks GET /entries again.
-  let autoRefresh = false;
+  let autoRefresh = $state(false);
   let stream: JournalStream | null = null;
   // Why Auto stopped by itself: the connection was lost, or the server refused it (4403).
-  let autoStopped: "" | "lost" | "forbidden" = "";
-  let showFilters = true;
+  let autoStopped = $state<"" | "lost" | "forbidden">("");
+  let showFilters = $state(true);
   // The number of the newest request: the answer of an older one (a source picked
   // before, an earlier refresh) arrives too late to be shown.
   let latestRequest = 0;
@@ -153,8 +155,8 @@
     }
   }
 
-  // The filters of a request. The limit is read here, not from a $: statement, which would update
-  // only after the call that changed it.
+  // The filters of a request, read from the fields when it is sent, also right after a handler
+  // changed one of them.
   function query(): LogQueryParams {
     return {
       source,
@@ -280,19 +282,21 @@
   // The server gives UTC times with their offset; the browser shows them in its own time zone,
   // in the language of the page, as toLocaleString writes them. One formatter per language for
   // every row (reactive, so that the list follows a change of the language).
-  $: dateFormat = new Intl.DateTimeFormat($intlLocale, {
-    year: "numeric",
-    month: "numeric",
-    day: "numeric",
-    hour: "numeric",
-    minute: "numeric",
-    second: "numeric"
-  });
-  $: formatTimestamp = (ts: string): string => {
+  let dateFormat = $derived(
+    new Intl.DateTimeFormat($intlLocale, {
+      year: "numeric",
+      month: "numeric",
+      day: "numeric",
+      hour: "numeric",
+      minute: "numeric",
+      second: "numeric"
+    })
+  );
+  function formatTimestamp(ts: string): string {
     if (!ts) return "";
     const date = apiTime(ts);
     return date ? dateFormat.format(date) : ts;
-  };
+  }
 
   // Split a log message around case-insensitive matches of the search term.
   // The parts are rendered as text, never as HTML: log lines are attacker-
@@ -307,8 +311,8 @@
       .filter((part) => part.text !== "");
   }
 
-  $: hasActiveFilters = priority || since || search;
-  $: currentSource = sources.find(s => s.name === source);
+  let hasActiveFilters = $derived(priority || since || search);
+  let currentSource = $derived(sources.find(s => s.name === source));
 </script>
 
 <div class="space-y-4">
@@ -329,7 +333,7 @@
       <Button
         variant={autoRefresh ? "primary" : "secondary"}
         size="sm"
-        on:click={toggleAutoRefresh}
+        onclick={toggleAutoRefresh}
         title={autoRefresh ? $t("logs.autoStop") : $t("logs.autoStart")}
       >
         {#if autoRefresh}
@@ -342,7 +346,7 @@
       <Button
         variant="secondary"
         size="sm"
-        on:click={() => showFilters = !showFilters}
+        onclick={() => showFilters = !showFilters}
       >
         <Filter class="w-4 h-4" />
         <span class="ml-1">{$t("logs.filters")}</span>
@@ -355,7 +359,7 @@
       <Button
         variant="secondary"
         size="sm"
-        on:click={loadLogs}
+        onclick={loadLogs}
         disabled={loading}
       >
         <RefreshCw class="w-4 h-4 {loading ? 'animate-spin' : ''}" />
@@ -372,7 +376,7 @@
           {source === s.name
             ? 'bg-brand text-content-on-brand'
             : 'bg-surface-overlay text-secondary hover:text-content hover:bg-surface-muted'}"
-        on:click={() => { source = s.name; handleSourceChange(); }}
+        onclick={() => { source = s.name; handleSourceChange(); }}
       >
         <Icon class="w-4 h-4" />
         {textOf(SOURCE_LABELS, s.name, s.label)}
@@ -391,19 +395,19 @@
             <input
               type="text"
               bind:value={search}
-              on:keydown={(e) => e.key === 'Enter' && handleSearch()}
+              onkeydown={(e) => e.key === 'Enter' && handleSearch()}
               placeholder={$t("logs.searchPlaceholder")}
               class="form-input pl-10 pr-10 text-sm"
             />
             {#if search}
               <Button variant="plain" class="absolute right-3 top-1/2 -translate-y-1/2 text-secondary hover:text-content"
-                on:click={clearSearch}
+                onclick={clearSearch}
               >
                 <X class="w-4 h-4" />
               </Button>
             {/if}
           </div>
-          <Button variant="primary" size="sm" on:click={handleSearch} disabled={loading}>
+          <Button variant="primary" size="sm" onclick={handleSearch} disabled={loading}>
             {$t("logs.search")}
           </Button>
         </div>
@@ -417,7 +421,7 @@
             bind:value={priority}
             options={priorityOptions}
             placeholder={$t("logs.filter.allPriorities")}
-            on:change={handleFilterChange}
+            onchange={handleFilterChange}
           />
 
           <!-- Time Range Filter -->
@@ -427,7 +431,7 @@
             bind:value={since}
             options={timeRangeOptions}
             placeholder={$t("logs.time.all")}
-            on:change={handleFilterChange}
+            onchange={handleFilterChange}
           />
 
           <!-- Limit -->
@@ -436,12 +440,12 @@
             label={$t("logs.filter.limit")}
             bind:value={limitStr}
             options={limitOptions}
-            on:change={handleFilterChange}
+            onchange={handleFilterChange}
           />
 
           <!-- Clear Filters -->
           {#if hasActiveFilters}
-            <Button variant="ghost" size="sm" on:click={clearFilters}>
+            <Button variant="ghost" size="sm" onclick={clearFilters}>
               <X class="w-4 h-4 mr-1" />
               {$t("logs.filter.clear")}
             </Button>

@@ -6,11 +6,11 @@
   import { Server } from 'lucide-svelte';
   import { t } from '$lib/i18n';
 
-  let username = '';
-  let password = '';
-  let confirmPassword = '';
-  let error = '';
-  let loading = false;
+  let username = $state('');
+  let password = $state('');
+  let confirmPassword = $state('');
+  let error = $state('');
+  let loading = $state(false);
 
   async function handleSubmit() {
     if (password !== confirmPassword) {
@@ -45,7 +45,13 @@
       {$t('setup.intro')}
     </p>
 
-    <form on:submit|preventDefault={handleSubmit} class="space-y-4">
+    <form
+      onsubmit={(event) => {
+        event.preventDefault();
+        handleSubmit();
+      }}
+      class="space-y-4"
+    >
       {#if error}
         <div class="bg-status-error/20 border border-status-error text-status-error px-4 py-2 rounded">
           {error}

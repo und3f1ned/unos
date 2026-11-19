@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { createEventDispatcher, onDestroy, tick } from 'svelte';
+	import { onDestroy, tick, untrack } from 'svelte';
 	import {
 		X,
 		Play,
@@ -28,12 +28,20 @@
 	import { intlLocale, t } from '$lib/i18n';
 	import { formatDateTime } from '$lib/time';
 
-	export let container: Container | null = null;
-	export let open = false;
-	/** An action on several containers runs (ADR-0389): the drawer's own actions wait for its end. */
-	export let busy = false;
+	type Action = 'start' | 'stop' | 'restart' | 'remove';
 
-	const dispatch = createEventDispatcher();
+	type Props = {
+		container?: Container | null;
+		open?: boolean;
+		/** An action on several containers runs (ADR-0389): the drawer's own actions wait for its end. */
+		busy?: boolean;
+		/** Escape, the backdrop, the close button or the container's removal asked to close it. */
+		onclose?: () => void;
+		/** An action on the container succeeded. */
+		onaction?: (done: { action: Action; containerId: string }) => void;
+	};
+
+	let { container = null, open = $bindable(false), busy = false, onclose, onaction }: Props = $props();
 
 	// The log view keeps this much of the newest text, cut at a line break (ADR-0255).
 	const MAX_LOG_CHARS = 500_000;
@@ -50,7 +58,6 @@
 		forbidden: 'containers.drawer.log.forbidden'
 	};
 
-	type Action = 'start' | 'stop' | 'restart' | 'remove';
 	// What an action that failed without a message from the server says.
 	const ACTION_FAILED_KEYS: Record<Action, string> = {
 		start: 'containers.drawer.startFailed',
@@ -78,29 +85,35 @@
 	};
 
 	/** The label of `value` in the language of the page; a value without one as it comes. */
-	$: labelOf = (labels: Record<string, string>, value: string): string =>
-		Object.prototype.hasOwnProperty.call(labels, value) ? $t(labels[value]) : value;
+	function labelOf(labels: Record<string, string>, value: string): string {
+		return Object.prototype.hasOwnProperty.call(labels, value) ? $t(labels[value]) : value;
+	}
 
-	let activeTab: 'overview' | 'logs' | 'network' = 'overview';
-	let logs = '';
-	let logsError = '';
-	let logState: LogState = 'idle';
+	let activeTab = $state<'overview' | 'logs' | 'network'>('overview');
+	let logs = $state('');
+	let logsError = $state('');
+	let logState = $state<LogState>('idle');
 	let logStream: ContainerLogStream | null = null;
 	let streamedId: string | null = null;
-	let logView: HTMLPreElement | undefined;
-	let actionLoading = '';
-	let copiedId = false;
+	let logView = $state<HTMLPreElement>();
+	let actionLoading = $state('');
+	let copiedId = $state(false);
 
 	// The log streams while the Logs tab of an open drawer shows it, and only then.
-	$: logsOf = open && activeTab === 'logs' && container ? container.id : null;
-	$: followLogs(logsOf);
+	const logsOf = $derived(open && activeTab === 'logs' && container ? container.id : null);
+	// Before the markup updates, as Svelte 4's statement did: the Logs tab first shows the new
+	// stream's state, not the last one's text. Only `logsOf` makes it run again.
+	$effect.pre(() => {
+		const id = logsOf;
+		untrack(() => followLogs(id));
+	});
 
 	onDestroy(() => {
 		stopLogs();
 	});
 
 	function close() {
-		dispatch('close');
+		onclose?.();
 	}
 
 	function followLogs(id: string | null) {
@@ -156,30 +169,33 @@
 	}
 
 	async function handleAction(action: Action) {
-		if (!container) return;
+		// The container the action is for: a prop reads the page's value at once, and close()
+		// makes the page drop it before the action is reported.
+		const target = container;
+		if (!target) return;
 
 		if (action === 'remove') {
-			if (!confirm($t('containers.drawer.confirmRemove', { name: container.name }))) return;
+			if (!confirm($t('containers.drawer.confirmRemove', { name: target.name }))) return;
 		}
 
 		actionLoading = action;
 		try {
 			switch (action) {
 				case 'start':
-					await startContainer(container.id);
+					await startContainer(target.id);
 					break;
 				case 'stop':
-					await stopContainer(container.id);
+					await stopContainer(target.id);
 					break;
 				case 'restart':
-					await restartContainer(container.id);
+					await restartContainer(target.id);
 					break;
 				case 'remove':
-					await removeContainer(container.id, true);
+					await removeContainer(target.id, true);
 					close();
 					break;
 			}
-			dispatch('action', { action, containerId: container.id });
+			onaction?.({ action, containerId: target.id });
 		} catch (e: any) {
 			alert(e.message || $t(ACTION_FAILED_KEYS[action]));
 		} finally {
@@ -212,8 +228,10 @@
 		}
 	}
 
-	// Reactive, so that an open drawer follows a change of the language.
-	$: formatDate = (dateStr: string): string => formatDateTime(dateStr, $intlLocale);
+	// It reads $intlLocale, so that an open drawer follows a change of the language.
+	function formatDate(dateStr: string): string {
+		return formatDateTime(dateStr, $intlLocale);
+	}
 
 	function getWebUrl(container: Container): string | null {
 		const webPort = container.ports.find((p) => p.host_port);
@@ -225,14 +243,14 @@
 </script>
 
 <svelte:window
-	on:keydown={(e) => {
+	onkeydown={(e) => {
 		if (e.key === 'Escape' && open) close();
 	}}
 />
 
 {#if open && container}
 	<!-- Backdrop -->
-	<div class="fixed inset-0 scrim z-40" on:click={close} role="presentation"></div>
+	<div class="fixed inset-0 scrim z-40" onclick={close} role="presentation"></div>
 
 	<!-- Drawer -->
 	<div
@@ -270,7 +288,7 @@
 						<ExternalLink class="w-4 h-4" />
 					</Button>
 				{/if}
-				<Button variant="ghost" size="icon" on:click={close}>
+				<Button variant="ghost" size="icon" onclick={close}>
 					<X class="w-5 h-5" />
 				</Button>
 			</div>
@@ -285,7 +303,7 @@
 					icon={Square}
 					loading={actionLoading === 'stop'}
 					disabled={busy}
-					on:click={() => handleAction('stop')}
+					onclick={() => handleAction('stop')}
 				>
 					{$t('containers.action.stop')}
 				</Button>
@@ -295,7 +313,7 @@
 					icon={RotateCw}
 					loading={actionLoading === 'restart'}
 					disabled={busy}
-					on:click={() => handleAction('restart')}
+					onclick={() => handleAction('restart')}
 				>
 					{$t('containers.action.restart')}
 				</Button>
@@ -306,7 +324,7 @@
 					icon={Play}
 					loading={actionLoading === 'start'}
 					disabled={busy}
-					on:click={() => handleAction('start')}
+					onclick={() => handleAction('start')}
 				>
 					{$t('containers.action.start')}
 				</Button>
@@ -318,7 +336,7 @@
 				icon={Trash2}
 				loading={actionLoading === 'remove'}
 				disabled={busy}
-				on:click={() => handleAction('remove')}
+				onclick={() => handleAction('remove')}
 			>
 				{$t('containers.action.remove')}
 			</Button>
@@ -328,21 +346,21 @@
 		<div class="flex border-b border-border px-2">
 			<Button variant="plain"
 			 class="tab-underline py-3 {activeTab === 'overview' ? 'tab-underline-active' : ''}"
-				on:click={() => (activeTab = 'overview')}
+				onclick={() => (activeTab = 'overview')}
 			>
 				<Info class="w-4 h-4" />
 				{$t('containers.drawer.overview')}
 			</Button>
 			<Button variant="plain"
 			 class="tab-underline py-3 {activeTab === 'logs' ? 'tab-underline-active' : ''}"
-				on:click={() => (activeTab = 'logs')}
+				onclick={() => (activeTab = 'logs')}
 			>
 				<Terminal class="w-4 h-4" />
 				{$t('containers.drawer.logs')}
 			</Button>
 			<Button variant="plain"
 			 class="tab-underline py-3 {activeTab === 'network' ? 'tab-underline-active' : ''}"
-				on:click={() => (activeTab = 'network')}
+				onclick={() => (activeTab = 'network')}
 			>
 				<Network class="w-4 h-4" />
 				{$t('containers.drawer.network')}
@@ -358,7 +376,7 @@
 						<div class="flex items-center justify-between mb-2">
 							<span class="text-secondary text-sm font-medium">{$t('containers.drawer.id')}</span>
 							<Button variant="ghost" size="icon-sm" class="text-secondary"
-								on:click={copyId}
+								onclick={copyId}
 								title={$t('containers.drawer.copyId')}
 							>
 								{#if copiedId}
@@ -425,7 +443,7 @@
 							{logState === 'idle' ? '' : $t(LOG_STATE_KEYS[logState])}
 						</p>
 						{#if logState === 'ended' || logState === 'lost'}
-							<Button variant="secondary" size="sm" icon={RotateCw} on:click={reconnectLogs}>
+							<Button variant="secondary" size="sm" icon={RotateCw} onclick={reconnectLogs}>
 								{$t('containers.drawer.reconnect')}
 							</Button>
 						{/if}

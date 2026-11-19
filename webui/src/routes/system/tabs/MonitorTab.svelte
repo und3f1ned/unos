@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { onMount, untrack } from "svelte";
   import { get } from "svelte/store";
   import { Cpu, MemoryStick, Network, HardDrive, Activity, Wifi, WifiOff } from "lucide-svelte";
   import { Alert, Badge, Button, Card } from "$lib/components/ui";
@@ -30,11 +30,13 @@
     { seconds: 900, key: "monitor.range.15m", span: "monitor.range.15m.span" },
     { seconds: 3600, key: "monitor.range.1h", span: "monitor.range.1h.span" }
   ];
-  let range = RANGES[0];
+  // Raw: the buttons compare it with the option itself (a proxy would be another object).
+  let range = $state.raw(RANGES[0]);
 
-  let history: Point[] = [];
-  let live: Point[] = [];
-  let historyError = "";
+  // Replaced whole, never changed in place: up to an hour of points need no deep proxy.
+  let history = $state.raw<Point[]>([]);
+  let live = $state.raw<Point[]>([]);
+  let historyError = $state("");
 
   onMount(async () => {
     const opened = Date.now();
@@ -77,14 +79,18 @@
     ];
   }
 
-  $: currentStats = $stats;
-  $: addLive($stats);
+  let currentStats = $derived($stats);
+  // Each message of the store, before the page is drawn, as the statement of Svelte 4 did.
+  $effect.pre(() => {
+    const message = $stats;
+    untrack(() => addLive(message));
+  });
   // The history up to the first message that arrived since the tab opened, then the messages.
-  $: points = [...history.filter((point) => live.length === 0 || point.at < live[0].at), ...live];
+  let points = $derived([...history.filter((point) => live.length === 0 || point.at < live[0].at), ...live]);
   // The range ends at the newest point: what the charts show changes only with a new message.
-  $: end = points.length > 0 ? points[points.length - 1].at : 0;
-  $: start = end - range.seconds * 1000;
-  $: shown = points.filter((point) => point.at >= start);
+  let end = $derived(points.length > 0 ? points[points.length - 1].at : 0);
+  let start = $derived(end - range.seconds * 1000);
+  let shown = $derived(points.filter((point) => point.at >= start));
 
   function peak(series: Point[], value: (point: Point) => number): number {
     return series.reduce((highest, point) => Math.max(highest, value(point)), 0);
@@ -114,15 +120,15 @@
   const readOf = (point: Point) => point.diskRead;
   const writeOf = (point: Point) => point.diskWrite;
 
-  $: cpuPeak = peak(shown, cpuOf);
-  $: memoryPeak = peak(shown, memoryOf);
-  $: recvPeak = peak(shown, recvOf);
-  $: sentPeak = peak(shown, sentOf);
-  $: readPeak = peak(shown, readOf);
-  $: writePeak = peak(shown, writeOf);
+  let cpuPeak = $derived(peak(shown, cpuOf));
+  let memoryPeak = $derived(peak(shown, memoryOf));
+  let recvPeak = $derived(peak(shown, recvOf));
+  let sentPeak = $derived(peak(shown, sentOf));
+  let readPeak = $derived(peak(shown, readOf));
+  let writePeak = $derived(peak(shown, writeOf));
   // The rates' charts scale to the peak of the range; percentages to 100.
-  $: networkMax = Math.max(recvPeak, sentPeak);
-  $: diskMax = Math.max(readPeak, writePeak);
+  let networkMax = $derived(Math.max(recvPeak, sentPeak));
+  let diskMax = $derived(Math.max(readPeak, writePeak));
 
   // The units of a size and of a rate, one for each power of 1024: keys of the catalog.
   const SIZE_UNITS = ["monitor.size.b", "monitor.size.kb", "monitor.size.mb", "monitor.size.gb", "monitor.size.tb"];
@@ -131,22 +137,25 @@
   // The numbers in the format of the page and the units of the catalog (webui/AGENTS.md, Data):
   // a size or a rate in the largest unit that keeps it at 1 or more, with up to two decimals; a
   // percentage with one decimal.
-  $: amount = (bytes: number, units: string[]): string => {
+  function amount(bytes: number, units: string[]): string {
     const power = bytes >= 1 ? Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1) : 0;
     const value = Number((bytes / 1024 ** power).toFixed(2));
     return $t(units[power], {
       value: value.toLocaleString($intlLocale, { maximumFractionDigits: 2, useGrouping: false })
     });
-  };
-  $: percent = (value: number): string =>
-    $t("monitor.percent", {
+  }
+  function percent(value: number): string {
+    return $t("monitor.percent", {
       value: value.toLocaleString($intlLocale, {
         minimumFractionDigits: 1,
         maximumFractionDigits: 1,
         useGrouping: false
       })
     });
-  $: chartName = (metric: string): string => $t("monitor.chart", { metric: $t(metric), span: $t(range.span) });
+  }
+  function chartName(metric: string): string {
+    return $t("monitor.chart", { metric: $t(metric), span: $t(range.span) });
+  }
 
   function percentClass(p: number): string {
     return p < 70 ? "text-success" : p < 90 ? "text-warning" : "text-error";
@@ -167,7 +176,7 @@
             size="sm"
             variant={range === option ? "primary" : "secondary"}
             pressed={range === option}
-            on:click={() => (range = option)}
+            onclick={() => (range = option)}
           >
             {$t(option.key)}
           </Button>

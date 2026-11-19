@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { createEventDispatcher, onDestroy, onMount, tick } from 'svelte';
+	import { onDestroy, onMount, tick } from 'svelte';
 	import {
 		createBond,
 		createBridge,
@@ -24,45 +24,51 @@
 	// of the connection to UNOS waits to be kept: the card counts down and offers Keep, and the host
 	// undoes the change by itself when the time runs out, also when this page cannot reach UNOS.
 
-	const dispatch = createEventDispatcher<{ changed: void }>();
+	type Props = {
+		// A bond, VLAN or bridge was made or deleted, or a change was undone: the host's interfaces
+		// changed.
+		onchanged?: () => void;
+	};
+
+	let { onchanged }: Props = $props();
 
 	// Seconds the host's revert may take after its time before the card reads the state again, and
 	// how often it reads again while the host still undoes the change.
 	const REVERT_GRACE_MS = 5000;
 	const REVERT_CHECKS = 3;
 
-	let status: VirtualStatus | null = null;
-	let loading = false;
-	let loadError = '';
-	let busy = false;
-	let error = '';
-	let success = '';
-	let notice = '';
+	let status = $state<VirtualStatus | null>(null);
+	let loading = $state(false);
+	let loadError = $state('');
+	let busy = $state(false);
+	let error = $state('');
+	let success = $state('');
+	let notice = $state('');
 
 	// The dialog of a new interface, and its fields.
-	let creating: VirtualKind | null = null;
-	let formError = '';
-	let name = '';
-	let mode: '802.3ad' | 'balance-rr' = '802.3ad';
-	let ports: string[] = [];
-	let parent = '';
-	let vlanId = '';
-	let mtu = '';
-	let addressing: Addressing = 'none';
-	let addressesText = '';
-	let deleting: VirtualInterface | null = null;
+	let creating = $state<VirtualKind | null>(null);
+	let formError = $state('');
+	let name = $state('');
+	let mode = $state<'802.3ad' | 'balance-rr'>('802.3ad');
+	let ports = $state<string[]>([]);
+	let parent = $state('');
+	let vlanId = $state('');
+	let mtu = $state('');
+	let addressing = $state<Addressing>('none');
+	let addressesText = $state('');
+	let deleting = $state<VirtualInterface | null>(null);
 
 	// The countdown of a change that waits to be kept, in the page's clock.
-	let deadline: number | null = null;
-	let now = Date.now();
+	let deadline = $state<number | null>(null);
+	let now = $state(Date.now());
 	let ticker: ReturnType<typeof setInterval> | null = null;
 	let check: ReturnType<typeof setTimeout> | null = null;
 	let checksLeft = 0;
-	let keepButton: HTMLButtonElement | null = null;
+	let keepButton = $state<HTMLButtonElement | null>(null);
 
-	$: revertSeconds = status?.revert_seconds ?? 120;
-	$: secondsLeft = deadline === null ? null : Math.max(0, Math.ceil((deadline - now) / 1000));
-	$: waits = secondsLeft !== null || (status?.revert_in ?? null) !== null || !!status?.reverting;
+	let revertSeconds = $derived(status?.revert_seconds ?? 120);
+	let secondsLeft = $derived(deadline === null ? null : Math.max(0, Math.ceil((deadline - now) / 1000)));
+	let waits = $derived(secondsLeft !== null || (status?.revert_in ?? null) !== null || !!status?.reverting);
 
 	const KINDS: Record<string, string> = {
 		bond: 'virtual.kind.bond',
@@ -87,46 +93,54 @@
 		bridge: 'virtual.dialog.bridge'
 	};
 
-	$: modeOptions = [
+	let modeOptions = $derived([
 		{ value: '802.3ad', label: $t('virtual.mode.lacp') },
 		{ value: 'balance-rr', label: $t('virtual.mode.roundRobin') }
-	];
-	$: addressingOptions = [
+	]);
+	let addressingOptions = $derived([
 		{ value: 'none', label: $t('virtual.addressing.none') },
 		{ value: 'dhcp', label: $t('virtual.addressing.dhcp') },
 		{ value: 'static', label: $t('virtual.addressing.static') }
-	];
+	]);
 
-	$: labelOf = (labels: Record<string, string>, value: string | null): string =>
-		value !== null && Object.prototype.hasOwnProperty.call(labels, value) ? $t(labels[value]) : value ?? '';
+	function labelOf(labels: Record<string, string>, value: string | null): string {
+		return value !== null && Object.prototype.hasOwnProperty.call(labels, value) ? $t(labels[value]) : value ?? '';
+	}
 
-	$: hosts = status?.host_interfaces ?? [];
-	$: carriesVlans = (iface: HostInterface): boolean =>
-		hosts.some((other) => other.parent === iface.name) ||
-		(status?.interfaces ?? []).some((item) => item.parent === iface.name);
+	let hosts = $derived(status?.host_interfaces ?? []);
+	function carriesVlans(iface: HostInterface): boolean {
+		return (
+			hosts.some((other) => other.parent === iface.name) ||
+			(status?.interfaces ?? []).some((item) => item.parent === iface.name)
+		);
+	}
 	// A port loses its own addresses: only the one that carries the connection, whose settings the
 	// bond or bridge takes over, may have any (the server refuses the others).
-	$: free = (iface: HostInterface): boolean =>
-		!iface.wireless && !iface.master && !carriesVlans(iface) && (iface.protected || iface.addresses.length === 0);
-	$: bondPorts = hosts.filter((iface) => iface.kind === 'physical' && free(iface));
-	$: bridgePorts = hosts.filter((iface) => ['physical', 'bond', 'vlan'].includes(iface.kind) && free(iface));
-	$: vlanParents = hosts.filter((iface) => ['physical', 'bond'].includes(iface.kind) && !iface.wireless && !iface.master);
-	$: candidates = creating === 'bond' ? bondPorts : bridgePorts;
-	$: parentOptions = vlanParents.map((iface) => ({ value: iface.name, label: iface.name }));
-	$: protectedNames = new Set(hosts.filter((iface) => iface.protected).map((iface) => iface.name));
+	function free(iface: HostInterface): boolean {
+		return !iface.wireless && !iface.master && !carriesVlans(iface) && (iface.protected || iface.addresses.length === 0);
+	}
+	let bondPorts = $derived(hosts.filter((iface) => iface.kind === 'physical' && free(iface)));
+	let bridgePorts = $derived(hosts.filter((iface) => ['physical', 'bond', 'vlan'].includes(iface.kind) && free(iface)));
+	let vlanParents = $derived(hosts.filter((iface) => ['physical', 'bond'].includes(iface.kind) && !iface.wireless && !iface.master));
+	let candidates = $derived(creating === 'bond' ? bondPorts : bridgePorts);
+	let parentOptions = $derived(vlanParents.map((iface) => ({ value: iface.name, label: iface.name })));
+	let protectedNames = $derived(new Set(hosts.filter((iface) => iface.protected).map((iface) => iface.name)));
 	// The interfaces of the change in the dialog that carry the connection to UNOS or the default route.
-	$: touched =
+	let touched = $derived(
 		creating === 'vlan'
 			? parent && protectedNames.has(parent)
 				? [parent]
 				: []
-			: ports.filter((port) => protectedNames.has(port));
-	$: vlanDefault = parent && vlanId ? `${parent}.${vlanId}` : '';
-	$: deletionTouches = deleting
-		? [deleting.name, ...deleting.ports, ...(deleting.parent ? [deleting.parent] : [])].filter((n) =>
-				protectedNames.has(n)
-			)
-		: [];
+			: ports.filter((port) => protectedNames.has(port))
+	);
+	let vlanDefault = $derived(parent && vlanId ? `${parent}.${vlanId}` : '');
+	let deletionTouches = $derived(
+		deleting
+			? [deleting.name, ...deleting.ports, ...(deleting.parent ? [deleting.parent] : [])].filter((n) =>
+					protectedNames.has(n)
+				)
+			: []
+	);
 
 	onMount(() => {
 		void load();
@@ -207,7 +221,7 @@
 		else if (status.revert_in === null && !status.reverting) notice = $t('virtual.undone');
 		else if (status.revert_in !== null && status.revert_in > 0) startCountdown(status.revert_in);
 		else error = $t('virtual.notYet');
-		dispatch('changed');
+		onchanged?.();
 	}
 
 	function startCountdown(revertIn: number) {
@@ -256,7 +270,7 @@
 		success = $t(done, { name: result.name });
 		if (result.revert_in !== null) startCountdown(result.revert_in);
 		await load();
-		dispatch('changed');
+		onchanged?.();
 		await focusKeep();
 	}
 
@@ -309,7 +323,7 @@
 			formError = messageOf(e) || $t('virtual.createFailed');
 			// A change that failed may wait for the host to undo it.
 			await load();
-			dispatch('changed');
+			onchanged?.();
 		} finally {
 			busy = false;
 		}
@@ -353,21 +367,24 @@
 		await load();
 	}
 
-	$: changeText = (change: WaitingChange | null): string =>
-		change
+	function changeText(change: WaitingChange | null): string {
+		return change
 			? $t(CHANGES[change.action] ?? 'virtual.change.create', { kind: labelOf(KIND_WORDS, change.kind), name: change.name })
 			: $t('virtual.change.unknown');
-	$: describe = (item: VirtualInterface): string => {
+	}
+
+	function describe(item: VirtualInterface): string {
 		if (item.kind === 'bond')
 			return $t('virtual.bondOf', { mode: labelOf(MODES, item.mode), ports: item.ports.join(', ') });
 		if (item.kind === 'vlan') return $t('virtual.vlanOn', { id: String(item.vlan_id), parent: item.parent ?? '' });
 		return $t('virtual.bridgeOf', { ports: item.ports.length ? item.ports.join(', ') : $t('virtual.noPorts') });
-	};
-	$: addressingLine = (item: VirtualInterface): string => {
+	}
+
+	function addressingLine(item: VirtualInterface): string {
 		if (item.addressing === 'copied') return $t('virtual.copiedFrom', { name: item.copied_from ?? '' });
 		if (item.addressing === 'static') return item.addresses.join(', ');
 		return labelOf(ADDRESSING, item.addressing);
-	};
+	}
 </script>
 
 <section class="card" aria-labelledby="virtual-title">
@@ -378,13 +395,13 @@
 		</h3>
 		{#if status?.supported}
 			<div class="flex flex-wrap gap-2">
-				<Button size="sm" variant="secondary" icon={Plus} disabled={busy || waits} on:click={() => openCreate('bond')}>
+				<Button size="sm" variant="secondary" icon={Plus} disabled={busy || waits} onclick={() => openCreate('bond')}>
 					{$t('virtual.createBond')}
 				</Button>
-				<Button size="sm" variant="secondary" icon={Plus} disabled={busy || waits} on:click={() => openCreate('vlan')}>
+				<Button size="sm" variant="secondary" icon={Plus} disabled={busy || waits} onclick={() => openCreate('vlan')}>
 					{$t('virtual.createVlan')}
 				</Button>
-				<Button size="sm" variant="secondary" icon={Plus} disabled={busy || waits} on:click={() => openCreate('bridge')}>
+				<Button size="sm" variant="secondary" icon={Plus} disabled={busy || waits} onclick={() => openCreate('bridge')}>
 					{$t('virtual.createBridge')}
 				</Button>
 			</div>
@@ -411,7 +428,7 @@
 	{#if loadError}
 		<Alert variant="error" title={$t('virtual.loadFailed')} class="mb-3">
 			<p class="break-words">{loadError}</p>
-			<Button variant="secondary" size="sm" class="mt-3" {loading} on:click={load}>{$t('common.retry')}</Button>
+			<Button variant="secondary" size="sm" class="mt-3" {loading} onclick={load}>{$t('common.retry')}</Button>
 		</Alert>
 	{/if}
 
@@ -427,7 +444,7 @@
 					disabled={busy}
 					aria-describedby="virtual-countdown"
 					bind:el={keepButton}
-					on:click={keep}>{$t('virtual.keep')}</Button
+					onclick={keep}>{$t('virtual.keep')}</Button
 				>
 			</div>
 		</Alert>
@@ -471,7 +488,7 @@
 							icon={Trash2}
 							disabled={busy || waits}
 							aria-label={$t('virtual.deleteLabel', { name: item.name })}
-							on:click={() => (deleting = item)}>{$t('virtual.delete')}</Button
+							onclick={() => (deleting = item)}>{$t('virtual.delete')}</Button
 						>
 					</li>
 				{/each}
@@ -485,10 +502,16 @@
 	title={creating ? $t(TITLES[creating]) : ''}
 	size="md"
 	closable={!busy}
-	on:close={() => (creating = null)}
+	onclose={() => (creating = null)}
 >
 	{#if creating}
-		<form class="space-y-4" on:submit|preventDefault={submitCreate}>
+		<form
+			class="space-y-4"
+			onsubmit={(e) => {
+				e.preventDefault();
+				submitCreate();
+			}}
+		>
 			{#if creating === 'vlan'}
 				<Select label={$t('virtual.parent')} options={parentOptions} bind:value={parent} />
 				<Input label={$t('virtual.vlanId')} type="number" hint={$t('virtual.vlanIdHint')} bind:value={vlanId} />
@@ -518,7 +541,7 @@
 										type="checkbox"
 										class="form-checkbox"
 										checked={ports.includes(iface.name)}
-										on:change={(e) => togglePort(iface.name, e.currentTarget.checked)}
+										onchange={(e) => togglePort(iface.name, e.currentTarget.checked)}
 									/>
 									<span class="break-all">{iface.name}</span>
 								</label>
@@ -550,12 +573,12 @@
 			{/if}
 		</form>
 	{/if}
-	<svelte:fragment slot="footer">
-		<Button variant="secondary" class="flex-1" disabled={busy} on:click={() => (creating = null)}>
+	{#snippet footer()}
+		<Button variant="secondary" class="flex-1" disabled={busy} onclick={() => (creating = null)}>
 			{$t('common.cancel')}
 		</Button>
-		<Button variant="primary" class="flex-1" loading={busy} on:click={submitCreate}>{$t('virtual.create')}</Button>
-	</svelte:fragment>
+		<Button variant="primary" class="flex-1" loading={busy} onclick={submitCreate}>{$t('virtual.create')}</Button>
+	{/snippet}
 </Modal>
 
 <Modal
@@ -564,7 +587,7 @@
 	size="md"
 	danger
 	closable={!busy}
-	on:close={() => (deleting = null)}
+	onclose={() => (deleting = null)}
 >
 	{#if deleting}
 		<p>{$t('virtual.deleteText', { name: deleting.name })}</p>
@@ -574,10 +597,10 @@
 			</Alert>
 		{/if}
 	{/if}
-	<svelte:fragment slot="footer">
-		<Button variant="secondary" class="flex-1" disabled={busy} on:click={() => (deleting = null)}>
+	{#snippet footer()}
+		<Button variant="secondary" class="flex-1" disabled={busy} onclick={() => (deleting = null)}>
 			{$t('common.cancel')}
 		</Button>
-		<Button variant="danger" class="flex-1" loading={busy} on:click={confirmDelete}>{$t('virtual.delete')}</Button>
-	</svelte:fragment>
+		<Button variant="danger" class="flex-1" loading={busy} onclick={confirmDelete}>{$t('virtual.delete')}</Button>
+	{/snippet}
 </Modal>

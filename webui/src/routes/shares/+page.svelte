@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
+	import { onMount, untrack } from 'svelte';
 	import { FolderOpen, Network, Plus, Trash2 } from 'lucide-svelte';
 	import {
 		clearImportReport,
@@ -42,60 +42,60 @@
 	] as const;
 	type TabId = (typeof tabs)[number]['id'];
 
-	let activeTab: TabId = 'smb';
+	let activeTab: TabId = $state('smb');
 	// The NAS's address as this browser reaches it, for the connection hints.
-	let host = '';
+	let host = $state('');
 
-	let loading = true;
-	let paths: SharePath[] = [];
-	let pathsError = '';
+	let loading = $state(true);
+	let paths: SharePath[] = $state([]);
+	let pathsError = $state('');
 
 	// ---- SMB ----
-	let shares: SmbShare[] = [];
-	let sharesError = '';
-	let status: SmbServiceStatus | null = null;
-	let statusError = '';
+	let shares: SmbShare[] = $state([]);
+	let sharesError = $state('');
+	let status: SmbServiceStatus | null = $state(null);
+	let statusError = $state('');
 
 	// Outcome of the last change: shown until dismissed.
-	let notice = '';
-	let warnings: string[] = [];
-	let actionError = '';
+	let notice = $state('');
+	let warnings: string[] = $state([]);
+	let actionError = $state('');
 
 	// Create / edit dialog: mounted while open.
-	let form: { share: SmbShare | null } | null = null;
-	let repairing: string | null = null;
-	let shareToDelete: SmbShare | null = null;
-	let deleting = false;
-	let deleteError = '';
-	let dismissing: Record<string, boolean> = {};
+	let form: { share: SmbShare | null } | null = $state(null);
+	let repairing: string | null = $state(null);
+	let shareToDelete: SmbShare | null = $state(null);
+	let deleting = $state(false);
+	let deleteError = $state('');
+	let dismissing: Record<string, boolean> = $state({});
 
 	// Several shares at once (ADR-0389): the selected shares, each by its name and its folder
 	// (keyOf). A share the list no longer has with both leaves the selection whenever the list is
 	// loaded again: a selection never moves to a share made again under the same name in another
 	// folder.
-	let selected = new Set<string>();
+	let selected = $state(new Set<string>());
 	// The most shares one deletion takes (BULK_DELETE_MAX of supervisor/src/shares/schemas.py).
 	const BULK_DELETE_MAX = 200;
 	// The one question of a deletion of several: the shares as the page had them when it was asked,
 	// each with the version and the folder that the request sends (a share changed since is not
 	// deleted).
-	let bulkToDelete: SmbShare[] | null = null;
-	let bulkDeleting = false;
-	let bulkError = '';
-	let bulkErrorTitle = '';
+	let bulkToDelete: SmbShare[] | null = $state(null);
+	let bulkDeleting = $state(false);
+	let bulkError = $state('');
+	let bulkErrorTitle = $state('');
 	// The shares of the last deletion of several that were not deleted, each with the reason.
-	let bulkNotDeleted: SmbShareDeleteResult[] = [];
+	let bulkNotDeleted: SmbShareDeleteResult[] = $state([]);
 
 	// ---- NFS ----
-	let nfsExports: NfsExport[] = [];
-	let nfsError = '';
-	let nfsStatus: NfsServiceStatus | null = null;
-	let nfsStatusError = '';
+	let nfsExports: NfsExport[] = $state([]);
+	let nfsError = $state('');
+	let nfsStatus: NfsServiceStatus | null = $state(null);
+	let nfsStatusError = $state('');
 	// The Add NFS export dialog: mounted while open.
-	let nfsFormOpen = false;
-	let exportToDelete: NfsExport | null = null;
-	let nfsDeleting = false;
-	let nfsDeleteError = '';
+	let nfsFormOpen = $state(false);
+	let exportToDelete: NfsExport | null = $state(null);
+	let nfsDeleting = $state(false);
+	let nfsDeleteError = $state('');
 
 	onMount(() => {
 		host = window.location.hostname;
@@ -104,8 +104,14 @@
 
 	// A repair of a share's permissions runs in the background (ADR-0363): its card says so, and
 	// when the events socket says that it ended, the shares are read again (their permissions).
+	// The repair seen last, which only followRepair reads.
 	let followedRepair: RepairResult | null = null;
-	$: followRepair($repairJob);
+	// Runs for each new value of the store; what followRepair reads and writes does not make it
+	// run again.
+	$effect(() => {
+		const job = $repairJob;
+		untrack(() => followRepair(job));
+	});
 
 	function followRepair(job: RepairResult | null) {
 		const ended =
@@ -227,15 +233,14 @@
 		form = { share };
 	}
 
-	function closeForm(event: CustomEvent<{ stale: boolean }>) {
+	function closeForm({ stale }: { stale: boolean }) {
 		form = null;
 		// The server refused a change (e.g. the share was changed meanwhile):
 		// show the shares as they are now, so that the next edit starts from them.
-		if (event.detail.stale) void reloadSmb();
+		if (stale) void reloadSmb();
 	}
 
-	async function handleSaved(event: CustomEvent<{ share: SmbShare; created: boolean }>) {
-		const { share, created } = event.detail;
+	async function handleSaved({ share, created }: { share: SmbShare; created: boolean }) {
 		form = null;
 		showOutcome(
 			created
@@ -277,13 +282,14 @@
 
 	// ---- Several shares at once (ADR-0389) ----
 
-	$: allSelected = shares.length > 0 && shares.every((share) => selected.has(keyOf(share)));
+	const allSelected = $derived(shares.length > 0 && shares.every((share) => selected.has(keyOf(share))));
 
-	function selectShare(event: CustomEvent<{ share: SmbShare; selected: boolean }>) {
-		const { share, selected: on } = event.detail;
-		if (on) selected.add(keyOf(share));
-		else selected.delete(keyOf(share));
-		selected = selected;
+	function selectShare({ share, selected: on }: { share: SmbShare; selected: boolean }) {
+		// A new set: the page reacts to `selected` being replaced, not to a change inside it.
+		const next = new Set(selected);
+		if (on) next.add(keyOf(share));
+		else next.delete(keyOf(share));
+		selected = next;
 	}
 
 	function selectAll(event: Event) {
@@ -312,10 +318,11 @@
 	};
 
 	/** Why a share was not deleted, in the page's language; a status without a key as the server words it. */
-	$: notDeletedReason = (result: SmbShareDeleteResult): string =>
-		Object.prototype.hasOwnProperty.call(NOT_DELETED, result.status)
+	function notDeletedReason(result: SmbShareDeleteResult): string {
+		return Object.prototype.hasOwnProperty.call(NOT_DELETED, result.status)
 			? $t(NOT_DELETED[result.status])
 			: (result.detail ?? result.status);
+	}
 
 	async function confirmBulkDelete() {
 		const asked = bulkToDelete;
@@ -404,8 +411,7 @@
 		return $t('shares.nfs.perFlavor');
 	}
 
-	async function handleNfsSaved(event: CustomEvent<{ exp: NfsExport }>) {
-		const { exp } = event.detail;
+	async function handleNfsSaved({ exp }: { exp: NfsExport }) {
 		nfsFormOpen = false;
 		showOutcome($t('shares.nfs.created', { path: exp.path }), exp.warnings);
 		await loadNfs();
@@ -443,11 +449,11 @@
 	<div class="page-header">
 		<h1 class="page-title">{$t('shares.title')}</h1>
 		{#if activeTab === 'smb'}
-			<Button icon={Plus} disabled={loading || paths.length === 0} on:click={openCreate}>
+			<Button icon={Plus} disabled={loading || paths.length === 0} onclick={openCreate}>
 				{$t('shares.smb.add')}
 			</Button>
 		{:else if activeTab === 'nfs'}
-			<Button icon={Plus} disabled={loading || paths.length === 0} on:click={() => (nfsFormOpen = true)}>
+			<Button icon={Plus} disabled={loading || paths.length === 0} onclick={() => (nfsFormOpen = true)}>
 				{$t('shares.nfs.add')}
 			</Button>
 		{/if}
@@ -467,8 +473,8 @@
 				aria-controls="shares-panel"
 				tabindex={activeTab === tab.id ? 0 : -1}
 			 class="tab-pill {activeTab === tab.id ? 'tab-pill-active' : ''}"
-				on:click={() => (activeTab = tab.id)}
-				on:keydown={(event) => tabKeydown(event, tab.id)}
+				onclick={() => (activeTab = tab.id)}
+				onkeydown={(event) => tabKeydown(event, tab.id)}
 			>
 				{tab.label}
 			</Button>
@@ -490,21 +496,21 @@
 		{/if}
 
 		{#if notice}
-			<Alert variant="success" dismissible on:dismiss={() => (notice = '')}>{notice}</Alert>
+			<Alert variant="success" dismissible ondismiss={() => (notice = '')}>{notice}</Alert>
 		{/if}
 		{#if warnings.length > 0}
-			<Alert variant="warning" dismissible on:dismiss={() => (warnings = [])}>
+			<Alert variant="warning" dismissible ondismiss={() => (warnings = [])}>
 				{#each warnings as warning}
 					<p>{warning}</p>
 				{/each}
 			</Alert>
 		{/if}
 		{#if actionError}
-			<Alert variant="error" dismissible on:dismiss={() => (actionError = '')}>{actionError}</Alert>
+			<Alert variant="error" dismissible ondismiss={() => (actionError = '')}>{actionError}</Alert>
 		{/if}
 		{#if bulkNotDeleted.length > 0}
 			{@const title = $t('shares.bulk.notDeleted', { n: bulkNotDeleted.length })}
-			<Alert variant="warning" {title} dismissible on:dismiss={() => (bulkNotDeleted = [])}>
+			<Alert variant="warning" {title} dismissible ondismiss={() => (bulkNotDeleted = [])}>
 				<ul class="space-y-1" aria-label={title}>
 					{#each bulkNotDeleted as result (result.name)}
 						<li class="break-words">
@@ -544,7 +550,7 @@
 						variant="info"
 						title={$t('shares.status.imported')}
 						dismissible
-						on:dismiss={dismissImportReport}
+						ondismiss={dismissImportReport}
 					>
 						{#each status.import_report as line}
 							<p>{line}</p>
@@ -590,7 +596,7 @@
 								class="form-checkbox"
 								checked={allSelected}
 								disabled={bulkDeleting}
-								on:change={selectAll}
+								onchange={selectAll}
 							/>
 							{$t('shares.bulk.selectAll')}
 						</label>
@@ -602,7 +608,7 @@
 							size="sm"
 							icon={Trash2}
 							disabled={selected.size === 0 || selected.size > BULK_DELETE_MAX || bulkDeleting}
-							on:click={openBulkDelete}
+							onclick={openBulkDelete}
 						>
 							{$t('shares.bulk.delete')}
 						</Button>
@@ -619,13 +625,13 @@
 								{host}
 								selected={selected.has(keyOf(share))}
 								selectDisabled={bulkDeleting}
-								on:select={selectShare}
+								onselect={selectShare}
 								dismissing={dismissing[share.name] ?? false}
 								repairing={$repairJob?.state === 'running' && isRepairOf($repairJob, share.name)}
-								on:edit={(event) => openEdit(event.detail)}
-								on:repair={(event) => (repairing = event.detail.name)}
-								on:delete={(event) => openDelete(event.detail)}
-								on:dismissNotes={(event) => dismissNotes(event.detail)}
+								onedit={openEdit}
+								onrepair={(share) => (repairing = share.name)}
+								ondelete={openDelete}
+								ondismissnotes={dismissNotes}
 							/>
 						{/each}
 					</div>
@@ -698,7 +704,7 @@
 									{/if}
 								</div>
 								{#if exp.managed}
-									<Button variant="ghost" size="icon-sm" on:click={() => openNfsDelete(exp)}>
+									<Button variant="ghost" size="icon-sm" onclick={() => openNfsDelete(exp)}>
 										<Trash2 class="w-4 h-4 text-error" />
 										<span class="sr-only">{$t('shares.nfs.deleteOne', { path: exp.path })}</span>
 									</Button>
@@ -718,13 +724,13 @@
 	<ShareFormModal
 		share={form.share}
 		{paths}
-		on:close={closeForm}
-		on:saved={handleSaved}
+		onclose={closeForm}
+		onsaved={handleSaved}
 	/>
 {/if}
 
 {#if repairing}
-	<RepairPermissionsModal name={repairing} on:close={() => (repairing = null)} />
+	<RepairPermissionsModal name={repairing} onclose={() => (repairing = null)} />
 {/if}
 
 <Modal
@@ -733,7 +739,7 @@
 	size="md"
 	danger
 	closable={!deleting}
-	on:close={closeDelete}
+	onclose={closeDelete}
 >
 	{#if shareToDelete}
 		<!-- In parts around the share's name: ADR-0296. -->
@@ -746,14 +752,14 @@
 		{/if}
 	{/if}
 
-	<svelte:fragment slot="footer">
-		<Button variant="secondary" class="flex-1" disabled={deleting} on:click={closeDelete}>
+	{#snippet footer()}
+		<Button variant="secondary" class="flex-1" disabled={deleting} onclick={closeDelete}>
 			{$t('common.cancel')}
 		</Button>
-		<Button variant="danger" class="flex-1" loading={deleting} on:click={confirmDelete}>
+		<Button variant="danger" class="flex-1" loading={deleting} onclick={confirmDelete}>
 			{$t('shares.smb.delete')}
 		</Button>
-	</svelte:fragment>
+	{/snippet}
 </Modal>
 
 <Modal
@@ -762,7 +768,7 @@
 	size="md"
 	danger
 	closable={!bulkDeleting}
-	on:close={closeBulkDelete}
+	onclose={closeBulkDelete}
 >
 	{#if bulkToDelete}
 		<!-- One question that names every share and its folder (ADR-0389). -->
@@ -784,18 +790,18 @@
 		</div>
 	{/if}
 
-	<svelte:fragment slot="footer">
-		<Button variant="secondary" class="flex-1" disabled={bulkDeleting} on:click={closeBulkDelete}>
+	{#snippet footer()}
+		<Button variant="secondary" class="flex-1" disabled={bulkDeleting} onclick={closeBulkDelete}>
 			{$t('common.cancel')}
 		</Button>
-		<Button variant="danger" class="flex-1" loading={bulkDeleting} on:click={confirmBulkDelete}>
+		<Button variant="danger" class="flex-1" loading={bulkDeleting} onclick={confirmBulkDelete}>
 			{$t('shares.bulk.confirm', { n: bulkToDelete?.length ?? 0 })}
 		</Button>
-	</svelte:fragment>
+	{/snippet}
 </Modal>
 
 {#if nfsFormOpen}
-	<NfsExportFormModal {paths} on:close={() => (nfsFormOpen = false)} on:saved={handleNfsSaved} />
+	<NfsExportFormModal {paths} onclose={() => (nfsFormOpen = false)} onsaved={handleNfsSaved} />
 {/if}
 
 <Modal
@@ -804,7 +810,7 @@
 	size="md"
 	danger
 	closable={!nfsDeleting}
-	on:close={closeNfsDelete}
+	onclose={closeNfsDelete}
 >
 	{#if exportToDelete}
 		<!-- In parts around the folder's path: ADR-0296. -->
@@ -817,12 +823,12 @@
 		{/if}
 	{/if}
 
-	<svelte:fragment slot="footer">
-		<Button variant="secondary" class="flex-1" disabled={nfsDeleting} on:click={closeNfsDelete}>
+	{#snippet footer()}
+		<Button variant="secondary" class="flex-1" disabled={nfsDeleting} onclick={closeNfsDelete}>
 			{$t('common.cancel')}
 		</Button>
-		<Button variant="danger" class="flex-1" loading={nfsDeleting} on:click={confirmNfsDelete}>
+		<Button variant="danger" class="flex-1" loading={nfsDeleting} onclick={confirmNfsDelete}>
 			{$t('shares.nfs.delete')}
 		</Button>
-	</svelte:fragment>
+	{/snippet}
 </Modal>

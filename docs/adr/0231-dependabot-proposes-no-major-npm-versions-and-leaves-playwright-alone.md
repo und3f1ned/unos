@@ -1,13 +1,16 @@
 ---
-status: accepted
+status: superseded
 date: 2026-11-07
 area: ci
 decided-by: agent
+superseded-by: ADR-0425
 ---
 
 # ADR-0231: Dependabot proposes no major npm versions and leaves Playwright alone
 
 ## Context
+
+Superseded by ADR-0425: Svelte 5 comes with SvelteKit 2, and SvelteKit 3 goes with the other majors of `webui.toolchain-major-versions`; the Dependabot rules stay.
 
 On 2026-11-07 Dependabot's npm group (pull request 26) carried new major versions of the web UI's toolchain: Svelte 5, SvelteKit 3, Vite 8, Tailwind CSS 4, TypeScript 7, svelte-check 4 and lucide-svelte 1. They need a migration of the web UI, and `npm ci` failed on the group as it was (SvelteKit 3.1.1 accepts TypeScript ^6 only). Its Docker group (pull request 24) moved the Playwright image of `webui/Dockerfile.test` to 1.65.0 while `webui/package-lock.json` holds @playwright/test 1.57.0, which `test_image_has_the_playwright_version_of_package_lock` refuses: the ignore rule named the image `mcr.microsoft.com/playwright`, and Dependabot names it `playwright`. Both pull requests were closed without a merge.
 

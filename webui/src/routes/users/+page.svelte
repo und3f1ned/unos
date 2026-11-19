@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
+	import { onMount, untrack } from 'svelte';
 	import { goto } from '$app/navigation';
 	import {
 		createUser,
@@ -27,14 +27,14 @@
 
 	const MIN_PASSWORD_LENGTH = 8;
 
-	let users: User[] = [];
-	let loading = true;
-	let error = '';
+	let users = $state.raw<User[]>([]);
+	let loading = $state(true);
+	let error = $state('');
 	// Outcome of the last change: shown until dismissed.
-	let notice = '';
-	let warnings: string[] = [];
+	let notice = $state('');
+	let warnings = $state.raw<string[]>([]);
 	// A change refused after its dialog closed (the user's id names someone else now).
-	let actionError: { title: string; message: string } | null = null;
+	let actionError = $state.raw<{ title: string; message: string } | null>(null);
 
 	onMount(async () => {
 		// Redirect non-admin users
@@ -45,10 +45,12 @@
 		await loadUsers();
 	});
 
-	// Also watch for user changes (in case they navigate here before user loads)
-	$: if ($currentUser !== null && !$currentUser.is_admin) {
-		goto('/');
-	}
+	// Also watch for user changes (in case they navigate here before user loads). Before the
+	// first render too, as before.
+	$effect.pre(() => {
+		const current = $currentUser;
+		if (current !== null && !current.is_admin) untrack(() => goto('/'));
+	});
 
 	function messageOf(e: unknown): string {
 		return e instanceof Error ? e.message : String(e);
@@ -86,42 +88,48 @@
 		return now !== undefined && now.username === target.username ? now : null;
 	}
 
-	// The texts that the functions below make are reactive, so that they follow a change of the
-	// language. Dates are in the language of the page (ADR-0287).
-	$: formatDate = (date: string | null): string =>
-		date ? formatDateTime(date, $intlLocale) : $t('common.unknown');
+	// The texts that the functions below make follow a change of the language: the markup that
+	// calls them reads $t and $intlLocale through them. Dates are in the language of the page
+	// (ADR-0287).
+	function formatDate(date: string | null): string {
+		return date ? formatDateTime(date, $intlLocale) : $t('common.unknown');
+	}
 
-	$: smbHint = (user: User): string => {
+	function smbHint(user: User): string {
 		if (user.smb?.state === 'password_needed') return $t('users.smbPasswordNeeded');
 		if (user.smb?.state === 'unavailable') return user.smb.reason ?? '';
 		return '';
-	};
+	}
 
-	$: passwordError = (password: string): string =>
-		password && password.length < MIN_PASSWORD_LENGTH
+	function passwordError(password: string): string {
+		return password && password.length < MIN_PASSWORD_LENGTH
 			? $t('users.password.short', { n: MIN_PASSWORD_LENGTH })
 			: '';
+	}
 
-	$: confirmError = (password: string, confirmation: string): string =>
-		confirmation && confirmation !== password ? $t('users.password.mismatch') : '';
+	function confirmError(password: string, confirmation: string): string {
+		return confirmation && confirmation !== password ? $t('users.password.mismatch') : '';
+	}
 
 	// ---- Create ----
 
-	let createOpen = false;
-	let newUsername = '';
-	let newPassword = '';
-	let newConfirm = '';
-	let newSmb = false;
-	let creating = false;
-	let createError = '';
+	let createOpen = $state(false);
+	let newUsername = $state('');
+	let newPassword = $state('');
+	let newConfirm = $state('');
+	let newSmb = $state(false);
+	let creating = $state(false);
+	let createError = $state('');
 
-	$: newUsernameError =
-		newUsername && !USERNAME_PATTERN.test(newUsername) ? $t('users.username.invalid') : '';
-	$: canCreate =
+	let newUsernameError = $derived(
+		newUsername && !USERNAME_PATTERN.test(newUsername) ? $t('users.username.invalid') : ''
+	);
+	let canCreate = $derived(
 		USERNAME_PATTERN.test(newUsername) &&
-		newPassword.length >= MIN_PASSWORD_LENGTH &&
-		newConfirm === newPassword &&
-		!creating;
+			newPassword.length >= MIN_PASSWORD_LENGTH &&
+			newConfirm === newPassword &&
+			!creating
+	);
 
 	function openCreate() {
 		newUsername = '';
@@ -133,8 +141,12 @@
 	}
 
 	// The command palette's Add a user opens this dialog, which adds the user only once it is
-	// submitted (ADR-0393). A function, so that the statement depends on the request alone.
-	$: openRequested($paletteRequest);
+	// submitted (ADR-0393). The effect depends on the request alone; before the first render too,
+	// as before, so that a request made on another page opens the dialog at once.
+	$effect.pre(() => {
+		const request = $paletteRequest;
+		untrack(() => openRequested(request));
+	});
 
 	function openRequested(request: PaletteRequest | null) {
 		if (request?.dialog !== 'add-user') return;
@@ -172,53 +184,59 @@
 
 	// The user as the dialog was opened: every request carries this username,
 	// so a change never reaches another user who got the same id meanwhile.
-	let editing: User | null = null;
-	let editUsername = '';
-	let editIsAdmin = false;
-	let editPassword = '';
-	let editConfirm = '';
-	let alsoTurnOnSmb = true;
-	let saving = false;
-	let smbBusy = false;
-	let editError = '';
-	let editWarnings: string[] = [];
-	let confirmSmbOff = false;
+	let editing = $state.raw<User | null>(null);
+	let editUsername = $state('');
+	let editIsAdmin = $state(false);
+	let editPassword = $state('');
+	let editConfirm = $state('');
+	let alsoTurnOnSmb = $state(true);
+	let saving = $state(false);
+	let smbBusy = $state(false);
+	let editError = $state('');
+	let editWarnings = $state.raw<string[]>([]);
+	let confirmSmbOff = $state(false);
 	// Whether the user has access to a share; null while unknown.
-	let editHasShareAccess: boolean | null = null;
+	let editHasShareAccess: boolean | null = $state(null);
 	let shareAccessRequest = 0;
 
-	$: editState = editing?.smb?.state;
+	let editState = $derived(editing?.smb?.state);
 	// A new name (ADR-0368): the role changes in another save, and a user with SMB on needs a new
 	// password, which Samba's account of the new name gets.
-	$: renaming = editing !== null && editUsername !== editing.username;
-	$: editUsernameError =
-		renaming && !USERNAME_PATTERN.test(editUsername) ? $t('users.username.invalid') : '';
-	$: renameWithRole = renaming && editing !== null && editIsAdmin !== editing.is_admin;
-	$: renameNeedsPassword = renaming && editState === 'active';
-	$: promoting = editing !== null && !editing.is_admin && editIsAdmin;
-	$: adminWarning =
+	let renaming = $derived(editing !== null && editUsername !== editing.username);
+	let editUsernameError = $derived(
+		renaming && !USERNAME_PATTERN.test(editUsername) ? $t('users.username.invalid') : ''
+	);
+	let renameWithRole = $derived(renaming && editing !== null && editIsAdmin !== editing.is_admin);
+	let renameNeedsPassword = $derived(renaming && editState === 'active');
+	let promoting = $derived(editing !== null && !editing.is_admin && editIsAdmin);
+	let adminWarning = $derived(
 		promoting &&
-		(editState === 'active' || editState === 'password_needed' || editHasShareAccess !== false);
-	$: turnOnWithPassword =
+			(editState === 'active' || editState === 'password_needed' || editHasShareAccess !== false)
+	);
+	let turnOnWithPassword = $derived(
 		editState === 'password_needed' &&
-		!editIsAdmin &&
-		alsoTurnOnSmb &&
-		editPassword !== '' &&
-		!renaming;
-	$: editPasswordReady =
+			!editIsAdmin &&
+			alsoTurnOnSmb &&
+			editPassword !== '' &&
+			!renaming
+	);
+	let editPasswordReady = $derived(
 		editPassword === '' ||
-		(editPassword.length >= MIN_PASSWORD_LENGTH && editConfirm === editPassword);
-	$: editChanged =
-		editing !== null && (editIsAdmin !== editing.is_admin || editPassword !== '' || renaming);
-	$: canSave =
+			(editPassword.length >= MIN_PASSWORD_LENGTH && editConfirm === editPassword)
+	);
+	let editChanged = $derived(
+		editing !== null && (editIsAdmin !== editing.is_admin || editPassword !== '' || renaming)
+	);
+	let canSave = $derived(
 		editChanged &&
-		editPasswordReady &&
-		!editUsernameError &&
-		!renameWithRole &&
-		!(renameNeedsPassword && editPassword === '') &&
-		!saving &&
-		!smbBusy;
-	$: smbToggleDisabled = saving || smbBusy || promoting;
+			editPasswordReady &&
+			!editUsernameError &&
+			!renameWithRole &&
+			!(renameNeedsPassword && editPassword === '') &&
+			!saving &&
+			!smbBusy
+	);
+	let smbToggleDisabled = $derived(saving || smbBusy || promoting);
 
 	function openEdit(user: User) {
 		editing = user;
@@ -273,7 +291,7 @@
 		editError = message;
 	}
 
-	$: smbStateText = (user: User): string => {
+	function smbStateText(user: User): string {
 		switch (user.smb?.state) {
 			case 'active':
 				return $t('users.edit.smbOn', {
@@ -287,7 +305,7 @@
 			default:
 				return '';
 		}
-	};
+	}
 
 	async function saveEdit() {
 		if (!editing || !canSave) return;
@@ -388,9 +406,9 @@
 
 	// ---- Delete ----
 
-	let userToDelete: User | null = null;
-	let deleting = false;
-	let deleteError = '';
+	let userToDelete = $state.raw<User | null>(null);
+	let deleting = $state(false);
+	let deleteError = $state('');
 
 	function openDelete(user: User) {
 		userToDelete = user;
@@ -433,17 +451,17 @@
 	<div class="page-container">
 		<div class="page-header">
 			<h1 class="page-title">{$t('users.title')}</h1>
-			<Button icon={UserPlus} on:click={openCreate}>{$t('users.add')}</Button>
+			<Button icon={UserPlus} onclick={openCreate}>{$t('users.add')}</Button>
 		</div>
 
 		{#if error}
 			<Alert variant="error">{error}</Alert>
 		{/if}
 		{#if notice}
-			<Alert variant="success" dismissible on:dismiss={() => (notice = '')}>{notice}</Alert>
+			<Alert variant="success" dismissible ondismiss={() => (notice = '')}>{notice}</Alert>
 		{/if}
 		{#if warnings.length > 0}
-			<Alert variant="warning" dismissible on:dismiss={() => (warnings = [])}>
+			<Alert variant="warning" dismissible ondismiss={() => (warnings = [])}>
 				{#each warnings as warning}
 					<p>{warning}</p>
 				{/each}
@@ -454,7 +472,7 @@
 				variant="error"
 				title={actionError.title}
 				dismissible
-				on:dismiss={() => (actionError = null)}>{actionError.message}</Alert
+				ondismiss={() => (actionError = null)}>{actionError.message}</Alert
 			>
 		{/if}
 
@@ -523,16 +541,16 @@
 										<td class="text-secondary">{formatDate(user.created_at)}</td>
 										<td>
 											<div class="flex items-center justify-end gap-2">
-												<Button variant="secondary" size="icon-sm" on:click={() => openEdit(user)}>
+												<Button variant="secondary" size="icon-sm" onclick={() => openEdit(user)}>
 													<Edit class="w-4 h-4" />
 													<span class="sr-only">{$t('users.editUser', { name: user.username })}</span>
 												</Button>
 												{#if $currentUser?.id !== user.id}
-													<Button variant="ghost" size="icon-sm" on:click={() => endUserSessions(user)}>
+													<Button variant="ghost" size="icon-sm" onclick={() => endUserSessions(user)}>
 														<LogOut class="w-4 h-4" />
 														<span class="sr-only">{$t('users.endSessionsOf', { name: user.username })}</span>
 													</Button>
-													<Button variant="ghost" size="icon-sm" on:click={() => openDelete(user)}>
+													<Button variant="ghost" size="icon-sm" onclick={() => openDelete(user)}>
 														<Trash2 class="w-4 h-4 text-error" />
 														<span class="sr-only">{$t('users.deleteUser', { name: user.username })}</span>
 													</Button>
@@ -569,9 +587,15 @@
 		title={$t('users.new.title')}
 		size="md"
 		closable={!creating}
-		on:close={closeCreate}
+		onclose={closeCreate}
 	>
-		<form on:submit|preventDefault={handleCreate} class="space-y-4">
+		<form
+			onsubmit={(e) => {
+				e.preventDefault();
+				handleCreate();
+			}}
+			class="space-y-4"
+		>
 			<Input
 				id="new-username"
 				label={$t('common.username')}
@@ -609,14 +633,14 @@
 			{/if}
 		</form>
 
-		<svelte:fragment slot="footer">
-			<Button variant="secondary" class="flex-1" disabled={creating} on:click={closeCreate}>
+		{#snippet footer()}
+			<Button variant="secondary" class="flex-1" disabled={creating} onclick={closeCreate}>
 				{$t('common.cancel')}
 			</Button>
-			<Button class="flex-1" loading={creating} disabled={!canCreate} on:click={handleCreate}>
+			<Button class="flex-1" loading={creating} disabled={!canCreate} onclick={handleCreate}>
 				{$t('users.new.submit')}
 			</Button>
-		</svelte:fragment>
+		{/snippet}
 	</Modal>
 
 	<!-- Edit user. -->
@@ -627,11 +651,14 @@
 			: $t('users.edit.titleWithoutName')}
 		size="lg"
 		closable={!saving && !smbBusy}
-		on:close={() => closeEdit()}
+		onclose={() => closeEdit()}
 	>
 		{#if editing}
 			<form
-				on:submit|preventDefault={saveEdit}
+				onsubmit={(e) => {
+					e.preventDefault();
+					saveEdit();
+				}}
 				class="space-y-5 max-h-[60vh] overflow-y-auto scrollbar-thin pr-1"
 			>
 				<section class="space-y-2">
@@ -728,7 +755,7 @@
 								class="form-checkbox"
 								checked={editing.smb.allowed}
 								disabled={smbToggleDisabled}
-								on:change={onSmbToggle}
+								onchange={onSmbToggle}
 							/>
 							{$t('users.edit.allowSmb')}
 						</label>
@@ -752,19 +779,19 @@
 			{/if}
 		{/if}
 
-		<svelte:fragment slot="footer">
+		{#snippet footer()}
 			<Button
 				variant="secondary"
 				class="flex-1"
 				disabled={saving || smbBusy}
-				on:click={() => closeEdit()}
+				onclick={() => closeEdit()}
 			>
 				{$t('users.edit.close')}
 			</Button>
-			<Button class="flex-1" loading={saving} disabled={!canSave} on:click={saveEdit}>
+			<Button class="flex-1" loading={saving} disabled={!canSave} onclick={saveEdit}>
 				{$t('users.edit.save')}
 			</Button>
-		</svelte:fragment>
+		{/snippet}
 	</Modal>
 
 	<!-- Turn off SMB, asked from the edit dialog, which stays open and inert under it: Escape
@@ -774,7 +801,7 @@
 		title={$t('users.smbOff.title')}
 		size="md"
 		closable={!smbBusy}
-		on:close={cancelSmbOff}
+		onclose={cancelSmbOff}
 	>
 		{#if editing}
 			<!-- In parts around the name: ADR-0296. -->
@@ -784,14 +811,14 @@
 			</p>
 		{/if}
 
-		<svelte:fragment slot="footer">
-			<Button variant="secondary" class="flex-1" disabled={smbBusy} on:click={cancelSmbOff}>
+		{#snippet footer()}
+			<Button variant="secondary" class="flex-1" disabled={smbBusy} onclick={cancelSmbOff}>
 				{$t('common.cancel')}
 			</Button>
-			<Button variant="danger" class="flex-1" loading={smbBusy} on:click={confirmTurnOffSmb}>
+			<Button variant="danger" class="flex-1" loading={smbBusy} onclick={confirmTurnOffSmb}>
 				{$t('users.smbOff.submit')}
 			</Button>
-		</svelte:fragment>
+		{/snippet}
 	</Modal>
 
 	<Modal
@@ -800,7 +827,7 @@
 		size="md"
 		danger
 		closable={!deleting}
-		on:close={closeDelete}
+		onclose={closeDelete}
 	>
 		{#if userToDelete}
 			<!-- In parts around the name: ADR-0296. -->
@@ -813,13 +840,13 @@
 			{/if}
 		{/if}
 
-		<svelte:fragment slot="footer">
-			<Button variant="secondary" class="flex-1" disabled={deleting} on:click={closeDelete}>
+		{#snippet footer()}
+			<Button variant="secondary" class="flex-1" disabled={deleting} onclick={closeDelete}>
 				{$t('common.cancel')}
 			</Button>
-			<Button variant="danger" class="flex-1" loading={deleting} on:click={confirmDelete}>
+			<Button variant="danger" class="flex-1" loading={deleting} onclick={confirmDelete}>
 				{$t('users.delete.submit')}
 			</Button>
-		</svelte:fragment>
+		{/snippet}
 	</Modal>
 {/if}

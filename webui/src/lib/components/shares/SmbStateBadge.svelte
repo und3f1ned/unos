@@ -3,10 +3,14 @@
 	import { Badge } from '$lib/components/ui';
 	import { t } from '$lib/i18n';
 
-	/** The SMB state of a UNOS user. */
-	export let state: SmbAccountState;
-	/** Why the state is what it is, e.g. why SMB is not available: hover text, and read by screen readers. */
-	export let hint = '';
+	type Props = {
+		/** The SMB state of a UNOS user. */
+		state: SmbAccountState;
+		/** Why the state is what it is, e.g. why SMB is not available: hover text, and read by screen readers. */
+		hint?: string;
+	};
+
+	let { state, hint = '' }: Props = $props();
 
 	type Variant = 'success' | 'warning' | 'neutral';
 
@@ -18,7 +22,7 @@
 		unavailable: { variant: 'neutral', key: 'shares.smbState.unavailable' }
 	};
 
-	$: badge = badges[state] as { variant: Variant; key: string } | undefined;
+	const badge = $derived(badges[state] as { variant: Variant; key: string } | undefined);
 </script>
 
 <!-- The hint is also in the text (sr-only): a title alone is out of reach of keyboard, touch and screen-reader users.

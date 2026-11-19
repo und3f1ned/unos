@@ -12,12 +12,15 @@
 //   through the modules that module imports in turn; so is a namespace import of a module that
 //   exports one.
 // - The callback reaches what its body names, and the bodies of the functions of its file that it
-//   names, again and again: a function declared with `function`, a variable or a `$:` statement
-//   whose value is a function. A function literal inside a body counts as run (a .map() or a
-//   .forEach() runs it at once, and the check cannot tell one that runs later).
-// - A callback that assigns a variable (also `name.field = ...`, `name++`) that a `$:` statement
-//   reaching the API reads fails: Svelte runs that statement again. So does one that assigns a
-//   variable read by a `$:` statement that assigns what such a statement reads, and so on.
+//   names, again and again: a function declared with `function`, or a variable whose value is a
+//   function. A function literal inside a body counts as run (a .map() or a .forEach() runs it at
+//   once, and the check cannot tell one that runs later).
+// - A callback that assigns a variable of a component's state (`$state`, `$state.raw`, `$derived`,
+//   a prop of `$props()`; also `name.field = ...`, `name++`) that an `$effect` or `$effect.pre`
+//   reaching the API reads fails: Svelte runs that effect again (ADR-0425). An effect reads what
+//   its function reads and what the functions of its file that it calls read, again and again, but
+//   not inside untrack(...). So does a callback that assigns a variable that a `$derived` reads
+//   whose value such an effect reads, and so on.
 // - A callback that changes a store fails: `name.set(...)`, `name.update(...)` or `$name = ...`,
 //   where name is declared with writable, readable or derived in its file or in the .ts module it
 //   comes from, or read as `$name` in its file. What reads a store can be in any file.
@@ -41,6 +44,8 @@ const SRC = path.join(WEBUI, 'src');
 const API_DIR = path.join(SRC, 'lib', 'api');
 const EXEMPTION = /polling-ignore:\s*\S/;
 const STORE_FACTORIES = new Set(['writable', 'readable', 'derived']);
+// Svelte's runes: a `$` name that is not a store.
+const RUNES = new Set(['$state', '$derived', '$effect', '$props', '$bindable', '$inspect', '$host']);
 const SCRIPT = /(<script\b[^>]*>)([\s\S]*?)<\/script>/g;
 const relative = (file) => path.relative(WEBUI, file).split(path.sep).join('/');
 const parse = (text) => ts.createSourceFile('script.ts', text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
@@ -83,11 +88,6 @@ function localFunctions(sourceFile) {
 		if (ts.isFunctionDeclaration(node) && node.name && node.body) functions.set(node.name.text, node);
 		if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && isFunction(node.initializer)) {
 			functions.set(node.name.text, node.initializer);
-		}
-		// $: name = (...) => ...
-		if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
-			ts.isIdentifier(node.left) && isFunction(node.right)) {
-			functions.set(node.left.text, node.right);
 		}
 		ts.forEachChild(node, visit);
 	};
@@ -292,48 +292,112 @@ function scriptContext(sourceFile, file, markup = '') {
 		if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer &&
 			ts.isCallExpression(node.initializer) && ts.isIdentifier(node.initializer.expression) &&
 			STORE_FACTORIES.has(node.initializer.expression.text)) stores.add(node.name.text);
-		if (ts.isIdentifier(node) && node.text.length > 1 && node.text.startsWith('$')) stores.add(node.text.slice(1));
+		if (ts.isIdentifier(node) && node.text.length > 1 && node.text.startsWith('$') && !RUNES.has(node.text)) {
+			stores.add(node.text.slice(1));
+		}
 		ts.forEachChild(node, visit);
 	};
 	visit(sourceFile);
-	for (const match of markup.matchAll(/\$([A-Za-z_]\w*)/g)) stores.add(match[1]);
+	for (const match of markup.matchAll(/\$([A-Za-z_]\w*)/g)) if (!RUNES.has(match[0])) stores.add(match[1]);
 	return { imports, functions: localFunctions(sourceFile), stores };
 }
 
-/** The names a `$:` statement reads: Svelte runs it again when one changes, except those it assigns. */
-function reads(statement) {
+/** The rune that `node` calls (`$effect`, `$derived.by`), or null. */
+function runeOf(node) {
+	if (!node || !ts.isCallExpression(node)) return null;
+	const callee = node.expression;
+	if (ts.isIdentifier(callee) && RUNES.has(callee.text)) return callee.text;
+	if (ts.isPropertyAccessExpression(callee) && ts.isIdentifier(callee.expression) && RUNES.has(callee.expression.text)) {
+		return `${callee.expression.text}.${callee.name.text}`;
+	}
+	return null;
+}
+
+/** The names that a binding (`a`, `{ a, b: c = 1, ...rest }`, `[a, b]`) declares. */
+function boundNames(name) {
+	if (ts.isIdentifier(name)) return [name.text];
+	return name.elements.flatMap((element) => (ts.isOmittedExpression(element) ? [] : boundNames(element.name)));
+}
+
+/** The variables of the component's state: declared with $state, $state.raw, $derived or $props(). */
+function stateVariables(sourceFile) {
+	const names = new Set();
+	for (const statement of sourceFile.statements) {
+		if (!ts.isVariableStatement(statement)) continue;
+		for (const declaration of statement.declarationList.declarations) {
+			const rune = runeOf(declaration.initializer);
+			if (rune && /^\$(state|derived|props)\b/.test(rune)) for (const name of boundNames(declaration.name)) names.add(name);
+		}
+	}
+	return names;
+}
+
+const isUntrack = (node) => ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === 'untrack';
+
+/**
+ * The variables of `state` that running `start` reads, as Svelte tracks them: in its body and in
+ * the functions of its file that it names, again and again, but not inside untrack(...); and the
+ * variables it assigns.
+ */
+function reads(start, { functions }, state) {
 	const names = new Set();
 	const writes = new Set();
-	const visit = (node) => {
-		if (ts.isIdentifier(node) && isReference(node)) names.add(node.text);
-		for (const name of assigned(node)) writes.add(name);
-		ts.forEachChild(node, visit);
-	};
-	ts.forEachChild(statement, visit);
+	const seen = new Set([start]);
+	const queue = [start];
+	while (queue.length > 0) {
+		const visit = (node) => {
+			if (isUntrack(node)) return;
+			if (ts.isIdentifier(node) && isReference(node)) {
+				if (state.has(node.text)) names.add(node.text);
+				const local = functions.get(node.text);
+				if (local && !seen.has(local)) {
+					seen.add(local);
+					queue.push(local);
+				}
+			}
+			for (const name of assigned(node)) writes.add(name);
+			ts.forEachChild(node, visit);
+		};
+		ts.forEachChild(queue.shift(), visit);
+	}
 	return { names: [...names].filter((name) => !writes.has(name)), writes };
 }
 
 /**
- * The variables whose change makes a `$:` statement of the script reach the API, each with that
- * statement's line, its use of the API and the variables between them (chain).
+ * The variables whose change makes an `$effect` of the script reach the API, each with that
+ * effect's line and rune, its use of the API and the `$derived` variables between them (chain).
  */
 function reactiveTriggers(sourceFile, context, lineOf) {
-	const statements = sourceFile.statements
-		.filter((statement) => ts.isLabeledStatement(statement) && statement.label.text === '$')
-		.map((statement) => ({ statement, line: lineOf(statement), ...reads(statement.statement) }));
+	const state = stateVariables(sourceFile);
+	const effects = [];
+	const derived = [];
+	for (const statement of sourceFile.statements) {
+		if (ts.isExpressionStatement(statement)) {
+			const rune = runeOf(statement.expression);
+			const [run] = statement.expression.arguments ?? [];
+			if ((rune === '$effect' || rune === '$effect.pre') && run) {
+				effects.push({ rune, run, line: lineOf(statement), ...reads(run, context, state) });
+			}
+		} else if (ts.isVariableStatement(statement)) {
+			for (const declaration of statement.declarationList.declarations) {
+				const rune = runeOf(declaration.initializer);
+				const [value] = declaration.initializer?.arguments ?? [];
+				if ((rune === '$derived' || rune === '$derived.by') && value && ts.isIdentifier(declaration.name)) {
+					const { names } = reads(declaration.initializer, context, state);
+					derived.push({ names, writes: new Set([declaration.name.text]) });
+				}
+			}
+		}
+	}
 	const triggers = new Map();
-	for (const { statement, line, names } of statements) {
-		const body = statement.statement;
-		// $: name = (...) => ...: defines a function, which runs only where it is called.
-		if (ts.isExpressionStatement(body) && ts.isBinaryExpression(body.expression) &&
-			body.expression.operatorToken.kind === ts.SyntaxKind.EqualsToken && isFunction(body.expression.right)) continue;
-		const found = walk(body, context).api;
+	for (const { rune, run, line, names } of effects) {
+		const found = walk(run, context).api;
 		if (!found) continue;
-		for (const name of names) if (!triggers.has(name)) triggers.set(name, { line, found, chain: [] });
+		for (const name of names) if (!triggers.has(name)) triggers.set(name, { rune, line, found, chain: [] });
 	}
 	for (let grown = true; grown;) {
 		grown = false;
-		for (const { names, writes } of statements) {
+		for (const { names, writes } of derived) {
 			const hit = [...writes].find((name) => triggers.has(name));
 			if (hit === undefined) continue;
 			const trigger = triggers.get(hit);
@@ -393,8 +457,8 @@ function problemOf(callback, context, triggers) {
 		const trigger = triggers.get(name);
 		if (!trigger) continue;
 		const chain = trigger.chain.length > 0 ? ` through ${trigger.chain.join(' -> ')}` : '';
-		return `setInterval changes ${name}${through(via)}, which the $: statement of line ${trigger.line} reads${chain}; ` +
-			`that statement reaches the API: ${describe(trigger.found)}`;
+		return `setInterval changes ${name}${through(via)}, which the ${trigger.rune} of line ${trigger.line} reads${chain}; ` +
+			`it reaches the API: ${describe(trigger.found)}`;
 	}
 	return null;
 }
@@ -417,7 +481,9 @@ for (const file of files) {
 		const sourceFile = parse(script.body);
 		const lineOf = (node) => source.slice(0, script.offset + node.getStart(sourceFile)).split('\n').length;
 		const context = scriptContext(sourceFile, file, markup);
-		const triggers = file.endsWith('.svelte') ? reactiveTriggers(sourceFile, context, lineOf) : new Map();
+		const triggers = file.endsWith('.svelte') || file.endsWith('.svelte.ts')
+			? reactiveTriggers(sourceFile, context, lineOf)
+			: new Map();
 		const visit = (node) => {
 			if (isSetInterval(node)) {
 				timers += 1;

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { onMount, untrack } from "svelte";
   import { CalendarClock, Moon, Network, Power, RotateCcw } from "lucide-svelte";
   import {
     cancelShutdown,
@@ -62,29 +62,29 @@
     },
   };
 
-  let pending: PendingAction | null = null;
-  let pendingError = "";
-  let interfaces: WolInterface[] = [];
-  let wolLoading = true;
-  let wolError = "";
+  let pending = $state<PendingAction | null>(null);
+  let pendingError = $state("");
+  let interfaces = $state<WolInterface[]>([]);
+  let wolLoading = $state(true);
+  let wolError = $state("");
 
-  let asking: Action | null = null;
-  let busy = false;
-  let confirmError = "";
-  let cancelling = false;
-  let wolBusy: string | null = null;
-  let notice = "";
-  let actionError = "";
+  let asking = $state<Action | null>(null);
+  let busy = $state(false);
+  let confirmError = $state("");
+  let cancelling = $state(false);
+  let wolBusy = $state<string | null>(null);
+  let notice = $state("");
+  let actionError = $state("");
 
   // The scheduled shutdown, the wake by the RTC and the idle shutdown of the power settings
   // (ADR-0407): their times are on the host's clock, and the server acts on them.
-  let config: PowerConfig | null = null;
-  let configError = "";
-  let schedule: PowerSchedule | null = null;
-  let scheduleError = "";
-  let form = { autoShutdown: false, shutdownTime: "23:00", autoWakeup: false, wakeTime: "07:00", idleShutdown: false, idleMinutes: 30 };
-  let saving = false;
-  let saveError = "";
+  let config = $state<PowerConfig | null>(null);
+  let configError = $state("");
+  let schedule = $state<PowerSchedule | null>(null);
+  let scheduleError = $state("");
+  let form = $state({ autoShutdown: false, shutdownTime: "23:00", autoWakeup: false, wakeTime: "07:00", idleShutdown: false, idleMinutes: 30 });
+  let saving = $state(false);
+  let saveError = $state("");
 
   onMount(() => {
     void loadPending();
@@ -206,13 +206,13 @@
     issued: "power.schedule.state.issued",
   };
 
-  $: describe = (finding: PowerFinding): string => {
+  let describe = $derived((finding: PowerFinding): string => {
     const key = (finding.subject === null && FOUND_WITHOUT_SUBJECT[finding.kind]) || FOUND[finding.kind] || FOUND.unreadable;
     const mib = ((finding.amount ?? 0) / 1048576).toLocaleString($intlLocale, { maximumFractionDigits: 1 });
     return $t(key, { subject: finding.subject ?? "", detail: finding.detail ?? "", n: finding.amount ?? 0, mib });
-  };
-  $: when = (at: string | null): string =>
-    formatDateTime(at, $intlLocale, { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+  });
+  let when = $derived((at: string | null): string =>
+    formatDateTime(at, $intlLocale, { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }));
 
   function messageOf(e: unknown): string {
     return e instanceof Error ? e.message : String(e);
@@ -244,9 +244,13 @@
   }
 
   // The command palette's Reboot, Shut down and Suspend open their confirmation here, which acts
-  // only once confirmed (ADR-0393). A function, so that the statement depends on the request alone.
+  // only once confirmed (ADR-0393). Before the render, as the request may be there when the tab
+  // mounts; untracked, so that the effect depends on the request alone.
   const REQUESTED: Partial<Record<PaletteDialog, Action>> = { reboot: "reboot", shutdown: "shutdown", suspend: "suspend" };
-  $: openRequested($paletteRequest);
+  $effect.pre(() => {
+    const request = $paletteRequest;
+    untrack(() => openRequested(request));
+  });
 
   function openRequested(request: PaletteRequest | null) {
     const action = request ? REQUESTED[request.dialog] : undefined;
@@ -320,9 +324,9 @@
   }
 
   // In the language of the page; reactive, so that a pending action follows a change of the language.
-  $: timeOf = (at: string): string => formatTimeOfDay(at, $intlLocale, { hour: "2-digit", minute: "2-digit" });
+  let timeOf = $derived((at: string): string => formatTimeOfDay(at, $intlLocale, { hour: "2-digit", minute: "2-digit" }));
 
-  $: confirmation = asking ? ACTIONS[asking] : null;
+  let confirmation = $derived(asking ? ACTIONS[asking] : null);
 </script>
 
 <div class="space-y-6">
@@ -330,12 +334,12 @@
 
   {#if notice}
     <div role="status">
-      <Alert variant="success" dismissible on:dismiss={() => (notice = "")}>{notice}</Alert>
+      <Alert variant="success" dismissible ondismiss={() => (notice = "")}>{notice}</Alert>
     </div>
   {/if}
   {#if actionError}
     <div role="alert">
-      <Alert variant="error" dismissible on:dismiss={() => (actionError = "")}>{actionError}</Alert>
+      <Alert variant="error" dismissible ondismiss={() => (actionError = "")}>{actionError}</Alert>
     </div>
   {/if}
 
@@ -358,7 +362,7 @@
                 {reboot ? $t("power.pending.rebootSoon") : $t("power.pending.shutdownSoon")}
               {/if}
             </p>
-            <Button variant="secondary" size="sm" loading={cancelling} on:click={cancelPending}>
+            <Button variant="secondary" size="sm" loading={cancelling} onclick={cancelPending}>
               {reboot ? $t("power.pending.cancelReboot") : $t("power.pending.cancelShutdown")}
             </Button>
           </div>
@@ -366,9 +370,9 @@
       {/if}
       <p class="text-sm text-secondary">{$t("power.actions.hint")}</p>
       <div class="flex flex-wrap gap-3">
-        <Button variant="warning" icon={RotateCcw} on:click={() => ask("reboot")}>{$t("power.reboot.button")}</Button>
-        <Button variant="danger" icon={Power} on:click={() => ask("shutdown")}>{$t("power.shutdown.button")}</Button>
-        <Button variant="secondary" icon={Moon} on:click={() => ask("suspend")}>{$t("power.suspend.button")}</Button>
+        <Button variant="warning" icon={RotateCcw} onclick={() => ask("reboot")}>{$t("power.reboot.button")}</Button>
+        <Button variant="danger" icon={Power} onclick={() => ask("shutdown")}>{$t("power.shutdown.button")}</Button>
+        <Button variant="secondary" icon={Moon} onclick={() => ask("suspend")}>{$t("power.suspend.button")}</Button>
       </div>
     </div>
   </Card>
@@ -385,7 +389,7 @@
       {:else if !config}
         <p class="text-sm text-muted">{$t("common.loading")}</p>
       {:else}
-        <form class="space-y-3" novalidate on:submit|preventDefault={saveSchedule}>
+        <form class="space-y-3" novalidate onsubmit={(e) => { e.preventDefault(); saveSchedule(); }}>
           {#if schedule}
             <p class="text-sm text-muted">{$t("power.schedule.zone", { zone: schedule.timezone })}</p>
           {/if}
@@ -549,7 +553,7 @@
                       size="sm"
                       loading={wolBusy === iface.name}
                       disabled={wolBusy !== null && wolBusy !== iface.name}
-                      on:click={() => setWol(iface, !iface.enabled)}
+                      onclick={() => setWol(iface, !iface.enabled)}
                     >
                       {iface.enabled ? $t("power.wol.turnOff") : $t("power.wol.turnOn")}<span class="sr-only"
                         >{$t("power.wol.forInterface", { name: iface.name })}</span
@@ -576,7 +580,7 @@
   size="md"
   danger
   closable={!busy}
-  on:close={closeConfirm}
+  onclose={closeConfirm}
 >
   <p>{confirmation ? $t(confirmation.textKey) : ""}</p>
   {#if confirmError && confirmation}
@@ -585,10 +589,10 @@
     </div>
   {/if}
 
-  <svelte:fragment slot="footer">
-    <Button variant="secondary" class="flex-1" disabled={busy} on:click={closeConfirm}>{$t("common.cancel")}</Button>
-    <Button variant={confirmation?.variant ?? "danger"} class="flex-1" loading={busy} on:click={confirmAction}>
+  {#snippet footer()}
+    <Button variant="secondary" class="flex-1" disabled={busy} onclick={closeConfirm}>{$t("common.cancel")}</Button>
+    <Button variant={confirmation?.variant ?? "danger"} class="flex-1" loading={busy} onclick={confirmAction}>
       {confirmation ? $t(confirmation.confirmKey) : ""}
     </Button>
-  </svelte:fragment>
+  {/snippet}
 </Modal>

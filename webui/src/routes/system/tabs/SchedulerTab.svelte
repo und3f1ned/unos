@@ -43,30 +43,30 @@
   } from "lucide-svelte";
 
   // State
-  let tasks: ScheduledTask[] = [];
-  let runs: TaskRun[] = [];
-  let pools: Pool[] = [];
-  let disks: Disk[] = [];
-  let disksLoaded = false;
+  let tasks = $state<ScheduledTask[]>([]);
+  let runs = $state<TaskRun[]>([]);
+  let pools = $state<Pool[]>([]);
+  let disks = $state<Disk[]>([]);
+  let disksLoaded = $state(false);
   // The time zone whose clock the schedules follow (the NAS's); empty until it is known.
-  let timeZone = "";
-  let loading = true;
-  let saving = false;
-  let runningTaskId: string | null = null;
+  let timeZone = $state("");
+  let loading = $state(true);
+  let saving = $state(false);
+  let runningTaskId = $state<string | null>(null);
 
   // Modal state
-  let showTaskModal = false;
-  let showHistoryModal = false;
-  let editingTask: ScheduledTask | null = null;
-  let historyTaskId: string | null = null;
-  let historyTaskName: string = "";
+  let showTaskModal = $state(false);
+  let showHistoryModal = $state(false);
+  let editingTask = $state<ScheduledTask | null>(null);
+  let historyTaskId = $state<string | null>(null);
+  let historyTaskName = $state("");
 
   // Form state
-  let formData: Partial<ScheduledTask> = getDefaultFormData();
+  let formData = $state<Partial<ScheduledTask>>(getDefaultFormData());
   // The passphrase of a backup task, typed twice. The API never returns it:
   // the form starts empty, and an edit that leaves it empty keeps the stored one.
-  let passphrase = "";
-  let passphraseConfirm = "";
+  let passphrase = $state("");
+  let passphraseConfirm = $state("");
 
   // At least as long as the server asks (MIN_PASSPHRASE_LENGTH in scheduler/router.py).
   const MIN_PASSPHRASE_LENGTH = 8;
@@ -76,14 +76,15 @@
   // A backup task being edited keeps its passphrase when the device has its
   // key. A new one, a task made a backup task, and a backup task without a key
   // (made before backups were encrypted, or its key was lost) need one.
-  $: keepsPassphrase = editingTask?.task_type === "backup" && editingTask.has_backup_key === true;
-  $: passphraseTooShort = passphrase !== "" && passphrase.length < MIN_PASSPHRASE_LENGTH;
-  $: passphraseMismatch = passphraseConfirm !== passphrase;
+  let keepsPassphrase = $derived(editingTask?.task_type === "backup" && editingTask.has_backup_key === true);
+  let passphraseTooShort = $derived(passphrase !== "" && passphrase.length < MIN_PASSPHRASE_LENGTH);
+  let passphraseMismatch = $derived(passphraseConfirm !== passphrase);
   // The hint that names the time zone of the schedule's times, once it is shown.
-  $: timeZoneHint = timeZone ? "task-time-zone-hint" : undefined;
-  $: waitsForPassphrase =
+  let timeZoneHint = $derived(timeZone ? "task-time-zone-hint" : undefined);
+  let waitsForPassphrase = $derived(
     formData.task_type === "backup" &&
-    (passphraseTooShort || passphraseMismatch || (!passphrase && !keepsPassphrase));
+    (passphraseTooShort || passphraseMismatch || (!passphrase && !keepsPassphrase))
+  );
 
   // The task types, frequencies and days of the week, as the server names them, with the keys of
   // their labels in the catalog.
@@ -204,12 +205,13 @@
   // The disk of the SMART task being edited when the disk list does not have
   // it (not connected, or the list is not loaded): it stays a choice, so
   // saving keeps it. The backend checks the disk again when the task runs.
-  $: storedDisk =
+  let storedDisk = $derived(
     editingTask?.task_type === "smart_test" &&
     editingTask.target_disk &&
     !disks.some((d) => d.path === editingTask?.target_disk)
       ? editingTask.target_disk
-      : null;
+      : null
+  );
 
   function openEditModal(task: ScheduledTask) {
     editingTask = task;
@@ -321,10 +323,10 @@
   // change of the language.
 
   // A type without a label as it comes.
-  $: getTaskTypeLabel = (type: TaskType): string => {
+  let getTaskTypeLabel = $derived((type: TaskType): string => {
     const known = TASK_TYPES.find((option) => option.value === type);
     return known ? $t(known.key) : type;
-  };
+  });
 
   function getTaskTypeIcon(type: TaskType) {
     return TASK_TYPES.find((option) => option.value === type)?.icon || Terminal;
@@ -332,7 +334,7 @@
 
   // On the clock of the NAS's time zone. A weekly or monthly task without its day runs on the
   // server's default, Sunday or the 1st (get_cron_expression of scheduler/router.py).
-  $: formatSchedule = (task: ScheduledTask): string => {
+  let formatSchedule = $derived((task: ScheduledTask): string => {
     if (task.frequency === "custom" && task.cron_expression) {
       return task.cron_expression;
     }
@@ -346,11 +348,11 @@
     if (task.frequency === "weekly" && weekday) return $t(weekday.schedule, { time });
     if (task.frequency === "monthly") return $t("scheduler.schedule.monthly", { day: task.day_of_month ?? 1, time });
     return task.frequency;
-  };
+  });
 
   // A status without a label as it comes.
-  $: getStatusLabel = (status: string): string =>
-    Object.prototype.hasOwnProperty.call(RUN_STATUSES, status) ? $t(RUN_STATUSES[status]) : status;
+  let getStatusLabel = $derived((status: string): string =>
+    Object.prototype.hasOwnProperty.call(RUN_STATUSES, status) ? $t(RUN_STATUSES[status]) : status);
 
   function getStatusColor(status?: string): string {
     switch (status) {
@@ -365,7 +367,7 @@
     }
   }
 
-  $: formatDuration = (start: string, end?: string): string => {
+  let formatDuration = $derived((start: string, end?: string): string => {
     if (!end) return $t("scheduler.runs.inProgress");
     const ms = (apiTime(end)?.getTime() ?? NaN) - (apiTime(start)?.getTime() ?? NaN);
     if (Number.isNaN(ms)) return "";
@@ -376,7 +378,7 @@
       return $t("scheduler.runs.seconds", { seconds });
     }
     return $t("scheduler.runs.minutes", { minutes: Math.floor(ms / 60000), seconds: Math.floor((ms % 60000) / 1000) });
-  };
+  });
 </script>
 
 <div class="space-y-4">
@@ -385,17 +387,17 @@
     <h2 class="text-xl font-bold">{$t("scheduler.title")}</h2>
     <div class="flex flex-wrap gap-2">
       <Button variant="secondary" size="sm"
-        on:click={() => openHistoryModal()}
+        onclick={() => openHistoryModal()}
        
       >
         <History class="w-4 h-4" />
         {$t("scheduler.history")}
       </Button>
-      <Button variant="secondary" size="icon" on:click={loadTasks} title={$t("common.refresh")}>
+      <Button variant="secondary" size="icon" onclick={loadTasks} title={$t("common.refresh")}>
         <RefreshCw class="w-4 h-4 {loading ? 'animate-spin' : ''}" />
       </Button>
       <Button variant="primary" size="sm"
-        on:click={openCreateModal}
+        onclick={openCreateModal}
        
       >
         <Plus class="w-4 h-4" />
@@ -428,7 +430,7 @@
             <div class="flex items-center gap-3 flex-1 max-sm:basis-full min-w-0">
               <!-- Enable/Disable Toggle -->
               <Button variant="plain"
-                on:click={() => handleToggleTask(task)}
+                onclick={() => handleToggleTask(task)}
                 class="p-1.5 rounded hover:bg-surface-hover transition-colors {task.enabled
                   ? 'text-status-success'
                   : 'text-content-muted'}"
@@ -482,7 +484,7 @@
             <!-- Actions -->
             <div class="flex items-center gap-1 ml-2 max-sm:ml-auto">
               <Button variant="ghost" size="icon" class="text-status-warning hover:text-status-warning"
-                on:click={() => handleRunNow(task)}
+                onclick={() => handleRunNow(task)}
                 disabled={runningTaskId === task.id}
                 title={$t("scheduler.task.runNow")}
               >
@@ -493,19 +495,19 @@
                 {/if}
               </Button>
               <Button variant="ghost" size="icon" class="text-content-secondary"
-                on:click={() => openHistoryModal(task.id, task.name)}
+                onclick={() => openHistoryModal(task.id, task.name)}
                 title={$t("scheduler.task.viewHistory")}
               >
                 <History class="w-4 h-4" />
               </Button>
               <Button variant="ghost" size="icon" class="text-status-info hover:text-status-info"
-                on:click={() => openEditModal(task)}
+                onclick={() => openEditModal(task)}
                 title={$t("scheduler.task.edit")}
               >
                 <Edit3 class="w-4 h-4" />
               </Button>
               <Button variant="ghost" size="icon" class="text-status-error hover:text-status-error"
-                on:click={() => handleDeleteTask(task)}
+                onclick={() => handleDeleteTask(task)}
                 title={$t("scheduler.task.delete")}
               >
                 <Trash2 class="w-4 h-4" />
@@ -525,7 +527,7 @@
       <!-- Modal Header -->
       <div class="flex items-center justify-between p-4 border-b border-border">
         <h3 class="text-lg font-bold">{editingTask ? $t("scheduler.form.editTitle") : $t("scheduler.form.createTitle")}</h3>
-        <Button variant="ghost" size="icon-sm" on:click={closeTaskModal}>
+        <Button variant="ghost" size="icon-sm" onclick={closeTaskModal}>
           <X class="w-5 h-5" />
         </Button>
       </div>
@@ -783,11 +785,11 @@
 
       <!-- Modal Footer -->
       <div class="flex gap-3 p-4 border-t border-border">
-        <Button variant="secondary" class="flex-1" on:click={closeTaskModal}>
+        <Button variant="secondary" class="flex-1" onclick={closeTaskModal}>
           {$t("common.cancel")}
         </Button>
         <Button variant="primary" class="flex-1"
-          on:click={handleSaveTask}
+          onclick={handleSaveTask}
           disabled={saving || waitsForPassphrase}
          
         >
@@ -814,7 +816,7 @@
             name: historyTaskId ? historyTaskName || $t("scheduler.runs.task") : $t("scheduler.runs.allTasks"),
           })}
         </h3>
-        <Button variant="ghost" size="icon-sm" on:click={closeHistoryModal}>
+        <Button variant="ghost" size="icon-sm" onclick={closeHistoryModal}>
           <X class="w-5 h-5" />
         </Button>
       </div>
@@ -877,7 +879,7 @@
 
       <!-- Modal Footer -->
       <div class="p-4 border-t border-border">
-        <Button variant="secondary" class="w-full" on:click={closeHistoryModal}>
+        <Button variant="secondary" class="w-full" onclick={closeHistoryModal}>
           {$t("scheduler.runs.close")}
         </Button>
       </div>

@@ -1,6 +1,5 @@
 <script lang="ts">
-  import { onDestroy, onMount, tick } from "svelte";
-  import type { ComponentType } from "svelte";
+  import { onDestroy, onMount, tick, untrack } from "svelte";
   import {
     getInterfaces,
     getDNSConfig,
@@ -17,7 +16,7 @@
     type Connection,
   } from "$lib/api/network";
   import { ApiError } from "$lib/api/client";
-  import { Alert, Badge, Button, EmptyState, Modal } from "$lib/components/ui";
+  import { Alert, Badge, Button, EmptyState, Modal, type IconComponent } from "$lib/components/ui";
   import VirtualInterfacesCard from "$lib/components/network/VirtualInterfacesCard.svelte";
   import { intlLocale, t } from "$lib/i18n";
   import { stats, wsConnected, type NetworkInterface as WSNetworkInterface } from "$lib/stores/stats";
@@ -44,7 +43,7 @@
   const REVERT_GRACE_MS = 5000;
 
   type View = "interfaces" | "routes" | "connections";
-  const VIEWS: { id: View; icon: ComponentType }[] = [
+  const VIEWS: { id: View; icon: IconComponent }[] = [
     { id: "interfaces", icon: Cable },
     { id: "routes", icon: Router },
     { id: "connections", icon: Activity },
@@ -72,60 +71,67 @@
   // The units of a count of bytes, one for each power of 1024: keys of the catalog.
   const BYTE_UNITS = ["network.bytes.b", "network.bytes.kb", "network.bytes.mb", "network.bytes.gb", "network.bytes.tb"];
 
-  let interfaces: NetworkInterface[] = [];
-  let dnsConfig: DNSConfig | null = null;
-  let gateway: GatewayInfo | null = null;
-  let routes: Route[] = [];
-  let connections: Connection[] = [];
+  let interfaces = $state<NetworkInterface[]>([]);
+  let dnsConfig = $state<DNSConfig | null>(null);
+  let gateway = $state<GatewayInfo | null>(null);
+  let routes = $state<Route[]>([]);
+  let connections = $state<Connection[]>([]);
   // What could not be loaded: part of the page (a key of PARTS) -> the server's message.
-  let loadErrors: Record<string, string> = {};
+  let loadErrors = $state<Record<string, string>>({});
 
-  let loading = true;
-  let activeTab: View = "interfaces";
-  let expandedInterface: string | null = null;
+  let loading = $state(true);
+  let activeTab = $state<View>("interfaces");
+  let expandedInterface = $state<string | null>(null);
 
   // How long a disable waits to be kept (the server's value).
-  let revertSeconds = 60;
+  let revertSeconds = $state(60);
   // Disables that wait to be kept: interface -> when it comes back on by itself (Date.now()).
-  let deadlines: Record<string, number> = {};
+  let deadlines = $state<Record<string, number>>({});
   // Disables whose time has run out, until the page has read the interfaces again.
   let expiring: string[] = [];
-  let now = Date.now();
+  let now = $state(Date.now());
   let ticker: ReturnType<typeof setInterval> | null = null;
   const timeouts = new Set<ReturnType<typeof setTimeout>>();
   // The countdowns: the focus goes there after a Disable, one Tab away from its Keep.
-  let pendingRegion: HTMLElement | null = null;
+  let pendingRegion = $state<HTMLElement | null>(null);
 
   // The interface the Disable dialog asks about, and the one being changed.
-  let confirming: string | null = null;
-  let busy: string | null = null;
-  let actionError: string | null = null;
-  let notice: { variant: "success" | "info"; text: string } | null = null;
+  let confirming = $state<string | null>(null);
+  let busy = $state<string | null>(null);
+  let actionError = $state<string | null>(null);
+  let notice = $state<{ variant: "success" | "info"; text: string } | null>(null);
 
   // Get WebSocket interface stats for rates
-  $: wsInterfaces = $stats?.network?.interfaces ?? [];
-  $: syncTicker(Object.keys(deadlines).length > 0);
+  let wsInterfaces = $derived($stats?.network?.interfaces ?? []);
+  // Runs whenever the deadlines are set, before the page is drawn (as the statement of Svelte 4
+  // did), so that a countdown shows the seconds counted from this moment.
+  $effect.pre(() => {
+    const active = Object.keys(deadlines).length > 0;
+    untrack(() => syncTicker(active));
+  });
   // The newest countdown first: after a Disable, one Tab from the focus reaches the
   // Keep of the interface just disabled (ADR-0246).
-  $: countdowns = Object.entries(deadlines).sort(([, a], [, b]) => b - a);
+  let countdowns = $derived(Object.entries(deadlines).sort(([, a], [, b]) => b - a));
 
-  // The texts that the markup gets from functions are reactive, so that they follow a change of
-  // the language.
+  // The texts that the markup gets from functions follow a change of the language: the markup
+  // reads the stores of the language when it calls them.
 
   /** The text of `value`'s key in `keys`, in the language of the page; a value without one as it comes. */
-  $: labelOf = (keys: Record<string, string>, value: string): string =>
-    Object.prototype.hasOwnProperty.call(keys, value) ? $t(keys[value]) : value;
+  function labelOf(keys: Record<string, string>, value: string): string {
+    return Object.prototype.hasOwnProperty.call(keys, value) ? $t(keys[value]) : value;
+  }
 
   // The speed of a link in the units and the number format of the page.
-  $: formatSpeed = (mbps: number): string =>
-    mbps >= 1000
+  function formatSpeed(mbps: number): string {
+    return mbps >= 1000
       ? $t("network.speed.gbps", { speed: (mbps / 1000).toLocaleString($intlLocale) })
       : $t("network.speed.mbps", { speed: mbps.toLocaleString($intlLocale) });
+  }
 
   // The traffic of the stats stream in the units and the number format of the page: a count of
   // bytes in the largest unit that keeps it at 1 or more, with up to two decimals, as formatBytes
   // of $lib/stores/stats writes it in English.
-  $: formatSize = (bytes: number): string => {
+  function formatSize(bytes: number): string {
     const power =
       bytes >= 1 ? Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), BYTE_UNITS.length - 1) : 0;
     const value = Number((bytes / 1024 ** power).toFixed(2));
@@ -133,9 +139,11 @@
       value: value.toLocaleString($intlLocale, { maximumFractionDigits: 2, useGrouping: false }),
       unit: $t(BYTE_UNITS[power]),
     });
-  };
-  $: formatRate = (bytesPerSecond: number): string =>
-    $t("network.bytes.perSecond", { size: formatSize(bytesPerSecond) });
+  }
+
+  function formatRate(bytesPerSecond: number): string {
+    return $t("network.bytes.perSecond", { size: formatSize(bytesPerSecond) });
+  }
 
   onMount(() => {
     loadAll();
@@ -378,17 +386,17 @@
       {#if $wsConnected}
         <span class="text-xs text-status-success">{$t("network.live")}</span>
       {/if}
-      <Button variant="secondary" size="icon" icon={RefreshCw} {loading} on:click={loadAll}>
+      <Button variant="secondary" size="icon" icon={RefreshCw} {loading} onclick={loadAll}>
         <span class="sr-only">{$t("common.refresh")}</span>
       </Button>
     </div>
   </div>
 
   {#if actionError}
-    <Alert variant="error" dismissible on:dismiss={() => (actionError = null)}>{actionError}</Alert>
+    <Alert variant="error" dismissible ondismiss={() => (actionError = null)}>{actionError}</Alert>
   {/if}
   {#if notice}
-    <Alert variant={notice.variant} dismissible on:dismiss={() => (notice = null)}>{notice.text}</Alert>
+    <Alert variant={notice.variant} dismissible ondismiss={() => (notice = null)}>{notice.text}</Alert>
   {/if}
   {#if Object.keys(loadErrors).length > 0}
     <Alert variant="error" title={$t("network.loadError")}>
@@ -417,7 +425,7 @@
               class="mt-3"
               loading={busy === name}
               disabled={busy !== null && busy !== name}
-              on:click={() => keep(name)}
+              onclick={() => keep(name)}
             >
               {$t("network.pending.keep", { name })}
             </Button>
@@ -474,7 +482,7 @@
         variant={activeTab === view.id ? "secondary" : "ghost"}
         size="sm"
         icon={view.icon}
-        on:click={() => (activeTab = view.id)}
+        onclick={() => (activeTab = view.id)}
       >
         {$t(PARTS[view.id])}
       </Button>
@@ -492,7 +500,7 @@
           <Button variant="plain"
             class="w-full p-4 flex items-center justify-between hover:bg-surface-overlay transition-colors"
             aria-expanded={expandedInterface === iface.name}
-            on:click={() => toggleExpand(iface.name)}
+            onclick={() => toggleExpand(iface.name)}
           >
             <div class="flex items-center gap-4">
               <div class="p-2 rounded-lg {ifaceIsUp ? 'bg-status-success/20' : 'bg-surface-overlay'}">
@@ -609,7 +617,7 @@
                     size="sm"
                     icon={PowerOff}
                     disabled={busy !== null}
-                    on:click={() => (confirming = iface.name)}
+                    onclick={() => (confirming = iface.name)}
                   >
                     {$t("network.interface.disable")}
                   </Button>
@@ -620,7 +628,7 @@
                     icon={Power}
                     loading={busy === iface.name}
                     disabled={busy !== null}
-                    on:click={() => enable(iface.name)}
+                    onclick={() => enable(iface.name)}
                   >
                     {$t("network.interface.enable")}
                   </Button>
@@ -637,7 +645,7 @@
     </div>
 
     <!-- Bonds, VLANs and bridges (ADR-0424): a change lists the interfaces again -->
-    <VirtualInterfacesCard on:changed={() => loadInterfaces()} />
+    <VirtualInterfacesCard onchanged={() => loadInterfaces()} />
   {/if}
 
   <!-- Routes -->
@@ -675,7 +683,7 @@
     <div class="card p-0 overflow-hidden">
       <div class="p-3 bg-surface-overlay flex justify-between items-center">
         <span class="text-sm text-content-secondary">{$t("network.connections.count", { n: connections.length })}</span>
-        <Button variant="ghost" size="sm" on:click={loadConnections}>{$t("network.connections.refresh")}</Button>
+        <Button variant="ghost" size="sm" onclick={loadConnections}>{$t("network.connections.refresh")}</Button>
       </div>
       <div class="table-frame max-h-96 overflow-y-auto px-3">
         <table class="table">
@@ -746,7 +754,7 @@
   size="md"
   danger
   closable={busy === null}
-  on:close={() => (confirming = null)}
+  onclose={() => (confirming = null)}
 >
   {#if confirming}
     <p>
@@ -756,12 +764,12 @@
     <p class="mt-3">{$t("network.disable.revert", { n: revertSeconds, name: confirming })}</p>
   {/if}
 
-  <svelte:fragment slot="footer">
-    <Button variant="secondary" class="flex-1" disabled={busy !== null} on:click={() => (confirming = null)}>
+  {#snippet footer()}
+    <Button variant="secondary" class="flex-1" disabled={busy !== null} onclick={() => (confirming = null)}>
       {$t("common.cancel")}
     </Button>
-    <Button variant="danger" class="flex-1" loading={busy !== null} on:click={disable}>
+    <Button variant="danger" class="flex-1" loading={busy !== null} onclick={disable}>
       {$t("network.disable.confirm", { name: confirming ?? "" })}
     </Button>
-  </svelte:fragment>
+  {/snippet}
 </Modal>

@@ -1,5 +1,4 @@
 <script lang="ts">
-	import { createEventDispatcher } from 'svelte';
 	import { Edit, Trash2, Wrench } from 'lucide-svelte';
 	import type { ShareAccess, ShareGroupMember, SmbShare } from '$lib/api/shares';
 	import { Alert, Badge, Button } from '$lib/components/ui';
@@ -15,45 +14,66 @@
 		previous_versions: 'shares.card.off.previousVersions'
 	};
 
-	export let share: SmbShare;
-	/** The NAS's address as the browser reached it. */
-	export let host = '';
-	/** The import notes are being dismissed. */
-	export let dismissing = false;
-	/** A repair of the share's permissions runs (ADR-0363). */
-	export let repairing = false;
-	/** Selected for an action on several shares (ADR-0389); `select` says when its box changes. */
-	export let selected = false;
-	export let selectDisabled = false;
+	type Props = {
+		share: SmbShare;
+		/** The NAS's address as the browser reached it. */
+		host?: string;
+		/** The import notes are being dismissed. */
+		dismissing?: boolean;
+		/** A repair of the share's permissions runs (ADR-0363). */
+		repairing?: boolean;
+		/** Selected for an action on several shares (ADR-0389); `onselect` says when its box changes. */
+		selected?: boolean;
+		selectDisabled?: boolean;
+		// The buttons of the card, each with the share.
+		onedit?: (share: SmbShare) => void;
+		onrepair?: (share: SmbShare) => void;
+		ondelete?: (share: SmbShare) => void;
+		ondismissnotes?: (share: SmbShare) => void;
+		// The box of the selection changed.
+		onselect?: (change: { share: SmbShare; selected: boolean }) => void;
+	};
 
-	const dispatch = createEventDispatcher<{
-		edit: SmbShare;
-		repair: SmbShare;
-		delete: SmbShare;
-		dismissNotes: SmbShare;
-		select: { share: SmbShare; selected: boolean };
-	}>();
+	let {
+		share,
+		host = '',
+		dismissing = false,
+		repairing = false,
+		selected = false,
+		selectDisabled = false,
+		onedit,
+		onrepair,
+		ondelete,
+		ondismissnotes,
+		onselect
+	}: Props = $props();
 
-	$: writers = share.access.filter((entry) => entry.level === 'write');
-	$: readers = share.access.filter((entry) => entry.level === 'read');
-	$: groups = [
-		{ label: $t('shares.level.write'), entries: writers },
-		{ label: $t('shares.card.read'), entries: readers }
-	].filter((group) => group.entries.length > 0);
+	const writers = $derived(share.access.filter((entry) => entry.level === 'write'));
+	const readers = $derived(share.access.filter((entry) => entry.level === 'read'));
+	const groups = $derived(
+		[
+			{ label: $t('shares.level.write'), entries: writers },
+			{ label: $t('shares.card.read'), entries: readers }
+		].filter((group) => group.entries.length > 0)
+	);
 	// Groups: each member gets the group's level, or the higher level of their own.
-	$: groupAccess = share.group_access ?? [];
-	$: someNotEffective =
+	const groupAccess = $derived(share.group_access ?? []);
+	const someNotEffective = $derived(
 		share.access.some((entry) => !entry.effective) ||
-		groupAccess.some((entry) => entry.members.some((member) => !member.effective));
+			groupAccess.some((entry) => entry.members.some((member) => !member.effective))
+	);
 	// Users whose own level is Read but who write through a group: the higher level counts.
-	$: raised = share.access.filter(
-		(entry) => entry.level === 'read' && effectiveLevel(entry.username, share.access, groupAccess) === 'write'
+	const raised = $derived(
+		share.access.filter(
+			(entry) => entry.level === 'read' && effectiveLevel(entry.username, share.access, groupAccess) === 'write'
+		)
 	);
 	// The stored settings that smb.conf leaves out, with the server's reason (ADR-0380).
-	let off: SmbShare['not_rendered'] = {};
-	$: off = share.not_rendered ?? {};
-	$: offReasons = OFF_SETTINGS.filter((setting) => off[setting]).map((setting) =>
-		$t(OFF_KEYS[setting], { reason: off[setting] ?? '' })
+	const off: SmbShare['not_rendered'] = $derived(share.not_rendered ?? {});
+	const offReasons = $derived(
+		OFF_SETTINGS.filter((setting) => off[setting]).map((setting) =>
+			$t(OFF_KEYS[setting], { reason: off[setting] ?? '' })
+		)
 	);
 
 	/** Why an access entry does not count yet (it is not in smb.conf). */
@@ -83,7 +103,7 @@
 					checked={selected}
 					disabled={selectDisabled}
 					aria-label={$t('shares.card.select', { name: share.name })}
-					on:change={(event) => dispatch('select', { share, selected: event.currentTarget.checked })}
+					onchange={(event) => onselect?.({ share, selected: event.currentTarget.checked })}
 				/>
 				<h3 class="font-semibold break-all">{share.name}</h3>
 				{#if !share.served}
@@ -131,7 +151,7 @@
 			{/if}
 		</div>
 		<div class="flex flex-wrap items-center gap-2">
-			<Button variant="secondary" size="sm" icon={Edit} on:click={() => dispatch('edit', share)}>
+			<Button variant="secondary" size="sm" icon={Edit} onclick={() => onedit?.(share)}>
 				{$t('shares.card.edit')}<span class="sr-only"
 					>{` ${$t('shares.card.editOf', { name: share.name })}`}</span
 				>
@@ -141,14 +161,14 @@
 					variant="secondary"
 					size="sm"
 					icon={Wrench}
-					on:click={() => dispatch('repair', share)}
+					onclick={() => onrepair?.(share)}
 				>
 					{$t('shares.card.repair')}<span class="sr-only"
 						>{` ${$t('shares.card.repairOf', { name: share.name })}`}</span
 					>
 				</Button>
 			{/if}
-			<Button variant="ghost" size="icon-sm" on:click={() => dispatch('delete', share)}>
+			<Button variant="ghost" size="icon-sm" onclick={() => ondelete?.(share)}>
 				<Trash2 class="w-4 h-4 text-error" />
 				<span class="sr-only">{$t('shares.card.delete', { name: share.name })}</span>
 			</Button>
@@ -222,7 +242,7 @@
 					variant="secondary"
 					size="sm"
 					loading={dismissing}
-					on:click={() => dispatch('dismissNotes', share)}
+					onclick={() => ondismissnotes?.(share)}
 				>
 					{$t('shares.card.dismiss')}<span class="sr-only"
 						>{` ${$t('shares.card.dismissOf', { name: share.name })}`}</span

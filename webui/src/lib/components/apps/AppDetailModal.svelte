@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { createEventDispatcher } from 'svelte';
+	import { untrack } from 'svelte';
 	import {
 		Globe,
 		Github,
@@ -45,32 +45,52 @@
 		UNOS_SMB_IDS
 	} from '$lib/api/apps';
 
-	export let app: AppTemplate | null = null;
-	export let open = false;
-	export let isInstalled = false;
-	/** The installed instance of the app, if any: its real host folders are shown. */
-	export let installedApp: InstalledApp | null = null;
+	type Props = {
+		app?: AppTemplate | null;
+		open?: boolean;
+		isInstalled?: boolean;
+		/** The installed instance of the app, if any: its real host folders are shown. */
+		installedApp?: InstalledApp | null;
+		/** Cancel, Escape or the backdrop asked to close the dialog, or its install was handed on. */
+		onclose?: () => void;
+		/** The install's checks have passed (or it ended): the App Store's card follows its job. */
+		onstarted?: (started: { app: AppTemplate; job: AppInstallJob }) => void;
+	};
 
-	const dispatch = createEventDispatcher<{
-		close: null;
-		started: { app: AppTemplate; job: AppInstallJob };
-	}>();
+	let {
+		app = null,
+		open = $bindable(false),
+		isInstalled = false,
+		installedApp = null,
+		onclose,
+		onstarted
+	}: Props = $props();
 
-	let installing = false;
-	let error = '';
+	let installing = $state(false);
+	let error = $state('');
 	// The install that this dialog started, while its job checks (ADR-0384): the dialog stays open
 	// until the checks have passed, so that a refusal (a port in use, too little space, a share's
 	// folder) shows here, where the settings can be changed; then the App Store's card follows it.
-	let pending: AppInstallJob | null = null;
+	let pending = $state<AppInstallJob | null>(null);
 	// Counts the installs asked and the closes: an answer that comes after the dialog was closed
 	// belongs to no dialog any more.
 	let installRequest = 0;
-	$: watched = pending ? ($appInstalls.find((job) => job.id === pending?.id) ?? pending) : null;
-	$: if (watched) follow(watched);
+	const watched = $derived(pending ? ($appInstalls.find((job) => job.id === pending?.id) ?? pending) : null);
+	// Each news of the job; only `watched` makes it run again. When follow drops the job, it runs
+	// once more and finds none.
+	$effect.pre(() => {
+		const job = watched;
+		untrack(() => {
+			if (job) follow(job);
+		});
+	});
 	// The events socket signed in again while the job checked: maybe to a supervisor that restarted
 	// and forgot the job, whose end then never comes. The job is asked for once (ADR-0384).
 	let wasConnected = false;
-	$: noteConnection($wsConnected);
+	$effect.pre(() => {
+		const connected = $wsConnected;
+		untrack(() => noteConnection(connected));
+	});
 
 	function noteConnection(connected: boolean) {
 		if (connected && !wasConnected && pending) void askAgain(pending.id);
@@ -92,71 +112,93 @@
 		}
 	}
 	// Another install that runs: one install at a time (ADR-0384).
-	$: otherInstall = $appInstalls.find((job) => job.state === 'running' && job.id !== pending?.id) ?? null;
-	let activeTab: 'overview' | 'ports' | 'volumes' | 'environment' = 'overview';
+	const otherInstall = $derived(
+		$appInstalls.find((job) => job.state === 'running' && job.id !== pending?.id) ?? null
+	);
+	let activeTab = $state<'overview' | 'ports' | 'volumes' | 'environment'>('overview');
 
 	// Form state, reset whenever an app is shown
-	let portValues: Record<number, string> = {};
-	let volumeOverrides: Record<string, string> = {};
-	let envValues: Record<string, string> = {};
+	let portValues = $state<Record<number, string>>({});
+	let volumeOverrides = $state<Record<string, string>>({});
+	let envValues = $state<Record<string, string>>({});
 	// Run the app in the group unos-smb, the only way to give it a share's folder (ADR-0274).
-	let runInUnosSmb = false;
+	let runInUnosSmb = $state(false);
 
 	// Storage pools, reloaded every time the modal opens
-	let pools: AppPool[] = [];
-	let poolsLoading = false;
-	let poolsError = '';
-	let selectedPoolName = '';
+	let pools = $state<AppPool[]>([]);
+	let poolsLoading = $state(false);
+	let poolsError = $state('');
+	let selectedPoolName = $state('');
 	let poolsRequest = 0;
 	let wasOpen = false;
 
-	$: sourceBadge = getSourceBadge(app?.source);
-	$: if (app) resetForm(app);
-	$: handleOpenChange(open);
+	const sourceBadge = $derived(getSourceBadge(app?.source));
+	// Another app shown: the form starts again. Before the markup updates, as Svelte 4's statement
+	// did, so that the dialog never shows the last app's values; only `app` makes it run again.
+	$effect.pre(() => {
+		const template = app;
+		untrack(() => {
+			if (template) resetForm(template);
+		});
+	});
+	// Opened or closed, before the markup updates; only `open` makes it run again.
+	$effect.pre(() => {
+		const isOpen = open;
+		untrack(() => handleOpenChange(isOpen));
+	});
 	// Whether the app runs (installed) or is to run (the form) in the group unos-smb.
-	$: inUnosSmb = isInstalled ? (installedApp?.runs_in_unos_smb ?? false) : runInUnosSmb;
+	const inUnosSmb = $derived(isInstalled ? (installedApp?.runs_in_unos_smb ?? false) : runInUnosSmb);
 
 	// An app in the host's network binds its container ports on the host: they cannot be moved (ADR-0381).
-	$: inHostNetwork = app ? isInHostNetwork(app) : false;
+	const inHostNetwork = $derived(app ? isInHostNetwork(app) : false);
 
 	// The app's containers, its main container first (ADR-0381): an app of several lists each.
-	$: containers = app ? appContainers(app) : [];
-	$: several = containers.length > 1;
+	const containers = $derived(app ? appContainers(app) : []);
+	const several = $derived(containers.length > 1);
 
-	$: selectedPool = pools.find((pool) => pool.name === selectedPoolName) ?? null;
-	$: poolOptions = pools.map((pool) => ({
-		value: pool.name,
-		label: $t('apps.detail.poolOption', {
-			name: pool.name,
-			free: formatSize(pool.free_bytes),
-			total: formatSize(pool.total_bytes)
-		})
-	}));
-	$: needsPool = containers.some((container) => container.spec.volumes.some((volume) => volume.on_pool));
-	$: dataLocations = selectedPool ? locationsOf(containers, selectedPool, volumeOverrides) : [];
+	const selectedPool = $derived(pools.find((pool) => pool.name === selectedPoolName) ?? null);
+	const poolOptions = $derived(
+		pools.map((pool) => ({
+			value: pool.name,
+			label: $t('apps.detail.poolOption', {
+				name: pool.name,
+				free: formatSize(pool.free_bytes),
+				total: formatSize(pool.total_bytes)
+			})
+		}))
+	);
+	const needsPool = $derived(containers.some((container) => container.spec.volumes.some((volume) => volume.on_pool)));
+	const dataLocations = $derived(selectedPool ? locationsOf(containers, selectedPool, volumeOverrides) : []);
 	// An installed app lists the folders its containers really use.
-	$: volumeCount =
+	const volumeCount = $derived(
 		isInstalled && installedApp
 			? installedApp.volumes.length
-			: containers.reduce((sum, container) => sum + container.spec.volumes.length, 0);
-	$: variableCount = containers.reduce((sum, container) => sum + container.spec.environment.length, 0);
-	$: installedVolumes = isInstalled && installedApp ? volumesPerContainer(installedApp) : [];
+			: containers.reduce((sum, container) => sum + container.spec.volumes.length, 0)
+	);
+	const variableCount = $derived(containers.reduce((sum, container) => sum + container.spec.environment.length, 0));
+	const installedVolumes = $derived(isInstalled && installedApp ? volumesPerContainer(installedApp) : []);
 
 	// Client-side checks for a clear form; the server validates everything again.
-	$: missingRequired = app
-		? app.environment
-				.filter((env) => env.required && !(envValues[env.name] ?? '').trim())
-				.map((env) => env.name)
-		: [];
-	$: invalidPorts = app
-		? app.ports
-				.filter((port) => !isValidPort(portValues[port.container]))
-				.map((port) => port.container)
-		: [];
-	$: invalidVolumes = Object.entries(volumeOverrides)
-		.filter(([, path]) => !isInsidePools(path, pools))
-		.map(([container]) => container);
-	$: blockers = [
+	const missingRequired = $derived(
+		app
+			? app.environment
+					.filter((env) => env.required && !(envValues[env.name] ?? '').trim())
+					.map((env) => env.name)
+			: []
+	);
+	const invalidPorts = $derived(
+		app
+			? app.ports
+					.filter((port) => !isValidPort(portValues[port.container]))
+					.map((port) => port.container)
+			: []
+	);
+	const invalidVolumes = $derived(
+		Object.entries(volumeOverrides)
+			.filter(([, path]) => !isInsidePools(path, pools))
+			.map(([container]) => container)
+	);
+	const blockers = $derived([
 		...(missingRequired.length > 0
 			? [
 					$t(missingRequired.length > 1 ? 'apps.detail.missingVariables' : 'apps.detail.missingVariable', {
@@ -170,14 +212,15 @@
 			: []),
 		...(app && !app.available ? [$t('apps.detail.notAvailable', { name: app.name, platform: app.host_platform ?? '' })] : []),
 		...(otherInstall ? [$t('apps.detail.installRunning', { name: otherInstall.name })] : [])
-	];
-	$: canInstall =
+	]);
+	const canInstall = $derived(
 		!!app &&
-		!isInstalled &&
-		!installing &&
-		!poolsLoading &&
-		(!needsPool || selectedPool !== null) &&
-		blockers.length === 0;
+			!isInstalled &&
+			!installing &&
+			!poolsLoading &&
+			(!needsPool || selectedPool !== null) &&
+			blockers.length === 0
+	);
 
 	// The apps whose database and jobs keep the pool's hard disks awake while they run (ADR-0381, ADR-0415).
 	const DISK_AWAKE: ReadonlySet<string> = new Set(['immich', 'bookstack', 'paperless-ngx', 'linkwarden']);
@@ -186,13 +229,13 @@
 	const SIZE_UNITS = ['apps.size.bytes', 'apps.size.kb', 'apps.size.mb', 'apps.size.gb', 'apps.size.tb'];
 
 	/** A size in the language of the page: the number in its format with the unit of the catalog. */
-	$: formatSize = (bytes: number): string => {
+	function formatSize(bytes: number): string {
 		const power = Math.max(0, Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), SIZE_UNITS.length - 1));
 		const size = new Intl.NumberFormat($intlLocale, { maximumFractionDigits: 2, useGrouping: false }).format(
 			bytes / 1024 ** power
 		);
 		return $t(SIZE_UNITS[power], { size });
-	};
+	}
 
 	/** Whether `template` runs in the host's network, where Docker discards its port bindings. */
 	function isInHostNetwork(template: AppTemplate): boolean {
@@ -375,8 +418,8 @@
 		return inGroup && isUserOrGroup(env.name) ? String(UNOS_SMB_IDS[env.name]) : env.value;
 	}
 
-	// Reactive: the hint follows the language of the page.
-	$: setByUnosHint = (template: AppTemplate, env: EnvVar, installed: boolean, inGroup: boolean): string => {
+	// It reads $t: the hint follows the language of the page.
+	function setByUnosHint(template: AppTemplate, env: EnvVar, installed: boolean, inGroup: boolean): string {
 		// The wiring between an app's containers, and every variable of a companion.
 		if (!isUserOrGroup(env.name)) return $t('apps.detail.setByUnos');
 		if (installed) {
@@ -387,10 +430,10 @@
 			id: UNOS_SMB_IDS[env.name],
 			value: env.value
 		});
-	};
+	}
 
 	function close() {
-		dispatch('close');
+		onclose?.();
 	}
 
 	async function handleInstall() {
@@ -434,7 +477,7 @@
 			const template = app;
 			pending = null;
 			installing = false;
-			if (template) dispatch('started', { app: template, job });
+			if (template) onstarted?.({ app: template, job });
 			close();
 		}
 	}
@@ -471,7 +514,7 @@
 	}
 </script>
 
-<Modal bind:open size="xl" title="" on:close={close}>
+<Modal {open} size="xl" title="" onclose={close}>
 	{#if app}
 		<!-- Custom Header -->
 		<div class="-mx-6 -mt-6 mb-6 p-6 bg-gradient-to-b from-surface-overlay to-transparent">
@@ -604,7 +647,7 @@
 		<div class="flex flex-wrap border-b border-border -mx-6 px-6 mb-4">
 			<Button variant="plain"
 			 class="tab-underline {activeTab === 'overview' ? 'tab-underline-active' : ''}"
-				on:click={() => (activeTab = 'overview')}
+				onclick={() => (activeTab = 'overview')}
 			>
 				<Package class="w-4 h-4" />
 				{$t('apps.detail.tabs.overview')}
@@ -612,7 +655,7 @@
 			{#if app.ports?.length > 0}
 				<Button variant="plain"
 				 class="tab-underline {activeTab === 'ports' ? 'tab-underline-active' : ''}"
-					on:click={() => (activeTab = 'ports')}
+					onclick={() => (activeTab = 'ports')}
 				>
 					<Network class="w-4 h-4" />
 					{$t('apps.detail.tabs.ports', { count: app.ports.length })}
@@ -621,7 +664,7 @@
 			{#if volumeCount > 0}
 				<Button variant="plain"
 				 class="tab-underline {activeTab === 'volumes' ? 'tab-underline-active' : ''}"
-					on:click={() => (activeTab = 'volumes')}
+					onclick={() => (activeTab = 'volumes')}
 				>
 					<HardDrive class="w-4 h-4" />
 					{$t('apps.detail.tabs.volumes', { count: volumeCount })}
@@ -630,7 +673,7 @@
 			{#if variableCount > 0}
 				<Button variant="plain"
 				 class="tab-underline {activeTab === 'environment' ? 'tab-underline-active' : ''}"
-					on:click={() => (activeTab = 'environment')}
+					onclick={() => (activeTab = 'environment')}
 				>
 					<Settings class="w-4 h-4" />
 					{$t('apps.detail.tabs.environment', { count: variableCount })}
@@ -873,7 +916,7 @@
 														class="font-mono text-sm"
 														label={$t('apps.detail.hostPath')}
 														value={effectiveHostPath(volume, selectedPool, volumeOverrides)}
-														on:input={(e) => setVolumePath(volume, inputValue(e))}
+														oninput={(e) => setVolumePath(volume, inputValue(e))}
 														disabled={isInstalled || selectedPool === null}
 														autocomplete="off"
 														error={invalidVolumes.includes(volume.container)
@@ -994,8 +1037,8 @@
 		{/if}
 	{/if}
 
-	<svelte:fragment slot="footer">
-		<Button variant="secondary" class="flex-1" on:click={close}>{$t('common.cancel')}</Button>
+	{#snippet footer()}
+		<Button variant="secondary" class="flex-1" onclick={close}>{$t('common.cancel')}</Button>
 		{#if isInstalled}
 			<Button variant="success" class="flex-1" disabled>
 				<Check class="w-4 h-4" />
@@ -1007,11 +1050,11 @@
 				class="flex-1"
 				loading={installing}
 				disabled={!canInstall}
-				on:click={handleInstall}
+				onclick={handleInstall}
 				icon={Download}
 			>
 				{$t('apps.detail.install', { name: app?.name ?? '' })}
 			</Button>
 		{/if}
-	</svelte:fragment>
+	{/snippet}
 </Modal>

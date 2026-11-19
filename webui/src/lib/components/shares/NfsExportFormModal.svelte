@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { createEventDispatcher } from 'svelte';
+	import { untrack } from 'svelte';
 	import {
 		createNfsExport,
 		type NfsExport,
@@ -10,46 +10,54 @@
 	import { t } from '$lib/i18n';
 	import { folderParts, folderProblem, joinSharePath } from './paths';
 
-	/** Pools and volumes (GET /shares/paths); only those of pools that UNOS manages are offered. */
-	export let paths: SharePath[] = [];
-
-	const dispatch = createEventDispatcher<{ close: void; saved: { exp: NfsExport } }>();
-
-	// Reactive: the labels follow the language of the page.
-	let accessOptions: { value: ShareAccessLevel; label: string }[];
-	$: accessOptions = [
-		{ value: 'read', label: $t('shares.level.read') },
-		{ value: 'write', label: $t('shares.level.write') }
-	];
-	// The folders that are never exported, as the server words them (supervisor/src/shares/nfs.py).
-	$: nfsMessages = {
-		poolRoot: $t('shares.nfs.form.poolRoot'),
-		apps: (pool: string) => $t('shares.nfs.form.appsFolder', { pool })
+	type Props = {
+		/** Pools and volumes (GET /shares/paths); only those of pools that UNOS manages are offered. */
+		paths?: SharePath[];
+		// The user closed the dialog (not while saving): the page unmounts it.
+		onclose?: () => void;
+		// The server created the export.
+		onsaved?: (saved: { exp: NfsExport }) => void;
 	};
 
-	// The server refuses a folder of a pool that UNOS does not manage (ADR-0293).
-	const locations = paths.filter((location) => location.managed);
-	let base = locations[0]?.path ?? '';
-	let folder = '';
-	let client = '';
-	let access: ShareAccessLevel = 'read';
+	let { paths = [], onclose, onsaved }: Props = $props();
 
-	let saving = false;
-	let attempted = false;
-	let error = '';
+	// Reactive: the labels follow the language of the page.
+	const accessOptions: { value: ShareAccessLevel; label: string }[] = $derived([
+		{ value: 'read', label: $t('shares.level.read') },
+		{ value: 'write', label: $t('shares.level.write') }
+	]);
+	// The folders that are never exported, as the server words them (supervisor/src/shares/nfs.py).
+	const nfsMessages = $derived({
+		poolRoot: $t('shares.nfs.form.poolRoot'),
+		apps: (pool: string) => $t('shares.nfs.form.appsFolder', { pool })
+	});
+
+	// The server refuses a folder of a pool that UNOS does not manage (ADR-0293). Taken from the
+	// paths the dialog opened with.
+	const locations = untrack(() => paths.filter((location) => location.managed));
+	let base = $state(locations[0]?.path ?? '');
+	let folder = $state('');
+	let client = $state('');
+	let access: ShareAccessLevel = $state('read');
+
+	let saving = $state(false);
+	let attempted = $state(false);
+	let error = $state('');
 
 	// A pool's or a volume's name, and its kind in the page's language.
-	$: locationOptions = locations.map((p) => ({
-		value: p.path,
-		label: $t(p.type === 'volume' ? 'shares.location.volume' : 'shares.location.pool', { name: p.name })
-	}));
-	$: location = locations.find((p) => p.path === base);
-	$: parts = folderParts(folder);
-	$: finalPath = base ? joinSharePath(base, parts) : '';
-	$: problem = !base ? $t('shares.location.choose') : folderProblem(location, parts, nfsMessages);
+	const locationOptions = $derived(
+		locations.map((p) => ({
+			value: p.path,
+			label: $t(p.type === 'volume' ? 'shares.location.volume' : 'shares.location.pool', { name: p.name })
+		}))
+	);
+	const location = $derived(locations.find((p) => p.path === base));
+	const parts = $derived(folderParts(folder));
+	const finalPath = $derived(base ? joinSharePath(base, parts) : '');
+	const problem = $derived(!base ? $t('shares.location.choose') : folderProblem(location, parts, nfsMessages));
 	// A missing folder is shown once the user tried to save; "apps" at once.
-	$: folderError = problem && (attempted || parts.length > 0) ? problem : '';
-	$: clientError = attempted && !client.trim() ? $t('shares.nfs.form.clientRequired') : '';
+	const folderError = $derived(problem && (attempted || parts.length > 0) ? problem : '');
+	const clientError = $derived(attempted && !client.trim() ? $t('shares.nfs.form.clientRequired') : '');
 
 	function messageOf(e: unknown): string {
 		return e instanceof Error ? e.message : String(e);
@@ -59,13 +67,13 @@
 		if (saving) return;
 		attempted = true;
 		error = '';
-		// Reactive values that depend on `attempted` are only updated after this function.
+		// The conditions of the errors shown under the fields, now that `attempted` is set.
 		if (problem || !client.trim()) return;
 
 		saving = true;
 		try {
 			const created = await createNfsExport({ path: finalPath, client: client.trim(), access });
-			dispatch('saved', { exp: created });
+			onsaved?.({ exp: created });
 		} catch (e) {
 			error = messageOf(e);
 		} finally {
@@ -74,12 +82,18 @@
 	}
 
 	function close() {
-		if (!saving) dispatch('close');
+		if (!saving) onclose?.();
 	}
 </script>
 
-<Modal open title={$t('shares.nfs.form.title')} size="md" closable={!saving} on:close={close}>
-	<form on:submit|preventDefault={submit} class="space-y-4">
+<Modal open title={$t('shares.nfs.form.title')} size="md" closable={!saving} onclose={close}>
+	<form
+		onsubmit={(event) => {
+			event.preventDefault();
+			submit();
+		}}
+		class="space-y-4"
+	>
 		<div class="space-y-3">
 			{#if paths.length === 0}
 				<Alert variant="warning">{$t('shares.location.noneMounted')}</Alert>
@@ -141,10 +155,10 @@
 		<Alert variant="error" title={$t('shares.nfs.form.notCreated')}>{error}</Alert>
 	{/if}
 
-	<svelte:fragment slot="footer">
-		<Button variant="secondary" class="flex-1" disabled={saving} on:click={close}>
+	{#snippet footer()}
+		<Button variant="secondary" class="flex-1" disabled={saving} onclick={close}>
 			{$t('common.cancel')}
 		</Button>
-		<Button class="flex-1" loading={saving} on:click={submit}>{$t('shares.nfs.form.create')}</Button>
-	</svelte:fragment>
+		<Button class="flex-1" loading={saving} onclick={submit}>{$t('shares.nfs.form.create')}</Button>
+	{/snippet}
 </Modal>

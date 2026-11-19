@@ -22,38 +22,38 @@
 	// new peer's configuration comes in the answer of its creation only: it is shown once, with a
 	// QR code that the browser draws, and the page keeps it only until its dialog closes.
 
-	let status: RemoteAccessStatus | null = null;
-	let loading = false;
-	let loadError = '';
-	let busy = false;
-	let error = '';
-	let success = '';
+	let status = $state<RemoteAccessStatus | null>(null);
+	let loading = $state(false);
+	let loadError = $state('');
+	let busy = $state(false);
+	let error = $state('');
+	let success = $state('');
 
-	let settings = { endpoint: '', port: '', network: '' };
-	let showEnable = false;
-	let showDisable = false;
-	let showEndpoint = false;
-	let endpointValue = '';
-	let endpointError = '';
-	let showAdd = false;
-	let peerName = '';
-	let peerKey = '';
-	let addError = '';
-	let revoking: RemotePeer | null = null;
-	let created: RemotePeerCreated | null = null;
-	let qrDataUrl = '';
+	let settings = $state({ endpoint: '', port: '', network: '' });
+	let showEnable = $state(false);
+	let showDisable = $state(false);
+	let showEndpoint = $state(false);
+	let endpointValue = $state('');
+	let endpointError = $state('');
+	let showAdd = $state(false);
+	let peerName = $state('');
+	let peerKey = $state('');
+	let addError = $state('');
+	let revoking = $state<RemotePeer | null>(null);
+	let created = $state<RemotePeerCreated | null>(null);
+	let qrDataUrl = $state('');
 
-	$: sizeUnits = [
+	let sizeUnits = $derived([
 		$t('remote.size.bytes'),
 		$t('remote.size.kilobytes'),
 		$t('remote.size.megabytes'),
 		$t('remote.size.gigabytes'),
 		$t('remote.size.terabytes')
-	];
-	$: on = !!status?.enabled;
+	]);
+	let on = $derived(!!status?.enabled);
 	// A configuration without a private key: the device gave its own public key.
 	// i18n-ignore: a line of WireGuard's configuration
-	$: ownKey = created !== null && !created.config.includes('PrivateKey =');
+	let ownKey = $derived(created !== null && !created.config.includes('PrivateKey ='));
 
 	onMount(() => {
 		void load();
@@ -221,7 +221,7 @@
 	{#if loadError}
 		<Alert variant="error" title={$t('remote.loadFailed')} class="mb-4">
 			<p class="break-words">{loadError}</p>
-			<Button variant="secondary" size="sm" class="mt-3" {loading} on:click={load}>{$t('common.retry')}</Button>
+			<Button variant="secondary" size="sm" class="mt-3" {loading} onclick={load}>{$t('common.retry')}</Button>
 		</Alert>
 	{/if}
 
@@ -238,7 +238,14 @@
 		{/if}
 
 		{#if !on}
-			<form id="remote-access-settings" class="mt-4 space-y-4" on:submit|preventDefault={() => (showEnable = true)}>
+			<form
+				id="remote-access-settings"
+				class="mt-4 space-y-4"
+				onsubmit={(e) => {
+					e.preventDefault();
+					showEnable = true;
+				}}
+			>
 				<Input
 					label={$t('remote.endpoint')}
 					hint={$t('remote.endpointHint')}
@@ -276,8 +283,8 @@
 				</div>
 			</dl>
 			<div class="mt-4 flex flex-wrap gap-2">
-				<Button variant="secondary" disabled={busy} on:click={openEndpoint}>{$t('remote.changeEndpoint')}</Button>
-				<Button variant="danger" disabled={busy} on:click={() => (showDisable = true)}>{$t('remote.turnOff')}</Button>
+				<Button variant="secondary" disabled={busy} onclick={openEndpoint}>{$t('remote.changeEndpoint')}</Button>
+				<Button variant="danger" disabled={busy} onclick={() => (showDisable = true)}>{$t('remote.turnOff')}</Button>
 			</div>
 			<p class="mt-4 text-sm text-content-secondary">{$t('remote.outside', { port: status.port ?? '' })}</p>
 		{/if}
@@ -285,7 +292,7 @@
 		{#if status.configured}
 			<div class="mt-6 flex flex-wrap justify-between items-center gap-2">
 				<h4 class="font-medium">{$t('remote.peers')}</h4>
-				<Button variant="primary" size="sm" disabled={busy} on:click={openAdd}>
+				<Button variant="primary" size="sm" disabled={busy} onclick={openAdd}>
 					<Plus class="w-4 h-4" />
 					{$t('remote.addPeer')}
 				</Button>
@@ -318,7 +325,7 @@
 								class="text-status-error hover:text-status-error"
 								disabled={busy}
 								aria-label={$t('remote.revokeLabel', { name: peer.name })}
-								on:click={() => (revoking = peer)}
+								onclick={() => (revoking = peer)}
 							>
 								<Trash2 class="w-4 h-4" />
 							</Button>
@@ -330,29 +337,36 @@
 	{/if}
 </Card>
 
-<Modal open={showEnable} title={$t('remote.enableTitle')} on:close={() => (showEnable = false)}>
+<Modal open={showEnable} title={$t('remote.enableTitle')} onclose={() => (showEnable = false)}>
 	<div class="space-y-3 text-sm break-words">
 		<p>{$t('remote.enableNasOnly')}</p>
 		<p>{$t('remote.enableRouter', { port: settings.port, endpoint: settings.endpoint.trim() })}</p>
 		<p>{$t('remote.enableFirewall', { port: settings.port })}</p>
 		<p>{$t('remote.enableLan')}</p>
 	</div>
-	<svelte:fragment slot="footer">
-		<Button variant="secondary" on:click={() => (showEnable = false)}>{$t('common.cancel')}</Button>
-		<Button variant="primary" disabled={busy} on:click={turnOn}>{$t('remote.turnOn')}</Button>
-	</svelte:fragment>
+	{#snippet footer()}
+		<Button variant="secondary" onclick={() => (showEnable = false)}>{$t('common.cancel')}</Button>
+		<Button variant="primary" disabled={busy} onclick={turnOn}>{$t('remote.turnOn')}</Button>
+	{/snippet}
 </Modal>
 
-<Modal open={showDisable} title={$t('remote.disableTitle')} danger on:close={() => (showDisable = false)}>
+<Modal open={showDisable} title={$t('remote.disableTitle')} danger onclose={() => (showDisable = false)}>
 	<p class="text-sm break-words">{$t('remote.disableText')}</p>
-	<svelte:fragment slot="footer">
-		<Button variant="secondary" on:click={() => (showDisable = false)}>{$t('common.cancel')}</Button>
-		<Button variant="danger" disabled={busy} on:click={turnOff}>{$t('remote.turnOff')}</Button>
-	</svelte:fragment>
+	{#snippet footer()}
+		<Button variant="secondary" onclick={() => (showDisable = false)}>{$t('common.cancel')}</Button>
+		<Button variant="danger" disabled={busy} onclick={turnOff}>{$t('remote.turnOff')}</Button>
+	{/snippet}
 </Modal>
 
-<Modal open={showEndpoint} title={$t('remote.endpointTitle')} closable={!busy} on:close={() => (showEndpoint = false)}>
-	<form id="remote-endpoint" class="space-y-4" on:submit|preventDefault={saveEndpoint}>
+<Modal open={showEndpoint} title={$t('remote.endpointTitle')} closable={!busy} onclose={() => (showEndpoint = false)}>
+	<form
+		id="remote-endpoint"
+		class="space-y-4"
+		onsubmit={(e) => {
+			e.preventDefault();
+			saveEndpoint();
+		}}
+	>
 		<Input
 			label={$t('remote.endpoint')}
 			hint={$t('remote.endpointHint')}
@@ -365,14 +379,21 @@
 			<Alert variant="error"><p class="break-words">{endpointError}</p></Alert>
 		{/if}
 	</form>
-	<svelte:fragment slot="footer">
-		<Button variant="secondary" type="button" disabled={busy} on:click={() => (showEndpoint = false)}>{$t('common.cancel')}</Button>
+	{#snippet footer()}
+		<Button variant="secondary" type="button" disabled={busy} onclick={() => (showEndpoint = false)}>{$t('common.cancel')}</Button>
 		<Button variant="primary" type="submit" form="remote-endpoint" disabled={busy || !endpointValue.trim()}>{$t('remote.save')}</Button>
-	</svelte:fragment>
+	{/snippet}
 </Modal>
 
-<Modal open={showAdd} title={$t('remote.addTitle')} closable={!busy} on:close={() => (showAdd = false)}>
-	<form id="remote-add-peer" class="space-y-4" on:submit|preventDefault={addPeer}>
+<Modal open={showAdd} title={$t('remote.addTitle')} closable={!busy} onclose={() => (showAdd = false)}>
+	<form
+		id="remote-add-peer"
+		class="space-y-4"
+		onsubmit={(e) => {
+			e.preventDefault();
+			addPeer();
+		}}
+	>
 		<Input
 			label={$t('remote.peerName')}
 			placeholder={$t('remote.peerNamePlaceholder')}
@@ -385,19 +406,19 @@
 			<Alert variant="error"><p class="break-words">{addError}</p></Alert>
 		{/if}
 	</form>
-	<svelte:fragment slot="footer">
-		<Button variant="secondary" type="button" disabled={busy} on:click={() => (showAdd = false)}>{$t('common.cancel')}</Button>
+	{#snippet footer()}
+		<Button variant="secondary" type="button" disabled={busy} onclick={() => (showAdd = false)}>{$t('common.cancel')}</Button>
 		<Button variant="primary" type="submit" form="remote-add-peer" disabled={busy || !peerName.trim()}>
 			{busy ? $t('remote.adding') : $t('remote.addPeer')}
 		</Button>
-	</svelte:fragment>
+	{/snippet}
 </Modal>
 
 <Modal
 	open={created !== null}
 	title={created ? $t('remote.configTitle', { name: created.peer.name }) : ''}
 	size="lg"
-	on:close={closeCreated}
+	onclose={closeCreated}
 >
 	{#if created}
 		<div class="space-y-4 text-sm">
@@ -413,19 +434,19 @@
 			<pre class="p-3 bg-surface-overlay rounded-lg text-xs whitespace-pre-wrap break-all" aria-label={$t('remote.configTitle', { name: created.peer.name })}>{created.config}</pre>
 		</div>
 	{/if}
-	<svelte:fragment slot="footer">
-		<Button variant="secondary" on:click={downloadConfig}>
+	{#snippet footer()}
+		<Button variant="secondary" onclick={downloadConfig}>
 			<Download class="w-4 h-4" />
 			{$t('remote.download')}
 		</Button>
-		<Button variant="primary" on:click={closeCreated}>{$t('remote.done')}</Button>
-	</svelte:fragment>
+		<Button variant="primary" onclick={closeCreated}>{$t('remote.done')}</Button>
+	{/snippet}
 </Modal>
 
-<Modal open={revoking !== null} title={$t('remote.revokeTitle')} danger on:close={() => (revoking = null)}>
+<Modal open={revoking !== null} title={$t('remote.revokeTitle')} danger onclose={() => (revoking = null)}>
 	<p class="text-sm break-words">{$t('remote.revokeText', { name: revoking?.name ?? '' })}</p>
-	<svelte:fragment slot="footer">
-		<Button variant="secondary" on:click={() => (revoking = null)}>{$t('common.cancel')}</Button>
-		<Button variant="danger" disabled={busy} on:click={revoke}>{$t('remote.revoke')}</Button>
-	</svelte:fragment>
+	{#snippet footer()}
+		<Button variant="secondary" onclick={() => (revoking = null)}>{$t('common.cancel')}</Button>
+		<Button variant="danger" disabled={busy} onclick={revoke}>{$t('remote.revoke')}</Button>
+	{/snippet}
 </Modal>

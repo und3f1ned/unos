@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
+	import { onMount, untrack } from 'svelte';
 	import {
 		getAppCatalog,
 		getInstalledApps,
@@ -59,34 +59,34 @@
 	import { ApiError } from '$lib/api/client';
 	import { appInstalls } from '$lib/stores/appInstalls';
 
-	let catalog: AppTemplate[] = [];
-	let installed: InstalledApp[] = [];
+	let catalog = $state<AppTemplate[]>([]);
+	let installed = $state<InstalledApp[]>([]);
 	// The apps of the catalog that have an image for this host's platform (ADR-0403).
-	$: availableCount = catalog.filter((app) => app.available).length;
+	const availableCount = $derived(catalog.filter((app) => app.available).length);
 	// The catalog and the installed apps load each on its own: the catalog needs no Docker, and is
 	// listed as soon as it came, while the installed apps wait for Docker's answer, or fail as when
 	// Docker cannot be reached (503, ADR-0323). A count is shown only from a load that succeeded,
 	// and each failed load says so (ADR-0327). `error` is for the actions on an app.
 	type LoadState = 'loading' | 'loaded' | 'failed';
-	let catalogState: LoadState = 'loading';
-	let installedState: LoadState = 'loading';
-	let catalogError = '';
-	let installedError = '';
-	let error = '';
-	$: loading = catalogState === 'loading' || installedState === 'loading';
-	let searchQuery = '';
-	let selectedCategory = '';
-	let activeTab: 'catalog' | 'installed' = 'catalog';
+	let catalogState = $state<LoadState>('loading');
+	let installedState = $state<LoadState>('loading');
+	let catalogError = $state('');
+	let installedError = $state('');
+	let error = $state('');
+	const loading = $derived(catalogState === 'loading' || installedState === 'loading');
+	let searchQuery = $state('');
+	let selectedCategory = $state('');
+	let activeTab = $state<'catalog' | 'installed'>('catalog');
 
 	// Detail modal state
-	let selectedApp: AppTemplate | null = null;
-	let showDetailModal = false;
+	let selectedApp = $state<AppTemplate | null>(null);
+	let showDetailModal = $state(false);
 
 	// The container whose limits the dialog changes (ADR-0390), with what the list said of it.
-	let limitsOf: { container: string; resources: ContainerResources } | null = null;
+	let limitsOf = $state<{ container: string; resources: ContainerResources } | null>(null);
 
-	function openLimits(event: CustomEvent<{ container: string; resources: ContainerResources }>) {
-		limitsOf = event.detail;
+	function openLimits(target: { container: string; resources: ContainerResources }) {
+		limitsOf = target;
 	}
 
 	async function limitsSaved() {
@@ -122,12 +122,23 @@
 	// a supervisor that restarted, and forgot it) may have left containers, so the installed apps
 	// are read again too.
 	const running = new Set($appInstalls.filter((job) => job.state === 'running').map((job) => job.id));
-	$: noteEnds($appInstalls);
 	// The app whose install runs: its card offers no Install.
-	$: installing = new Set($appInstalls.filter((job) => job.state === 'running').map((job) => job.template_id));
+	const installing = $derived(
+		new Set($appInstalls.filter((job) => job.state === 'running').map((job) => job.template_id))
+	);
 	// The running installs whose cancel was asked, until they end.
-	let cancelling: ReadonlySet<string> = new Set();
-	$: cancelling = new Set([...cancelling].filter((id) => $appInstalls.some((job) => job.id === id && job.state === 'running')));
+	let cancelling = $state<ReadonlySet<string>>(new Set());
+
+	// Each message of the events socket: an install that ended reads the installed apps again,
+	// and the cancels asked of installs that no longer run are dropped. Before the markup updates,
+	// as Svelte 4's statements did; only the store makes it run again.
+	$effect.pre(() => {
+		const jobs = $appInstalls;
+		untrack(() => {
+			noteEnds(jobs);
+			cancelling = new Set([...cancelling].filter((id) => jobs.some((job) => job.id === id && job.state === 'running')));
+		});
+	});
 
 	function noteEnds(jobs: AppInstallJob[]) {
 		let changed = false;
@@ -149,9 +160,9 @@
 		if (changed) void loadInstalled();
 	}
 
-	async function dismiss(event: CustomEvent<AppInstallJob>) {
+	async function dismiss(job: AppInstallJob) {
 		try {
-			await dismissInstallJob(event.detail.id);
+			await dismissInstallJob(job.id);
 		} catch (e) {
 			// Gone already (dismissed in another tab, or the supervisor restarted): done.
 			if (e instanceof ApiError && e.status === 404) return;
@@ -160,7 +171,7 @@
 	}
 
 	// The installed app whose update the dialog shows (ADR-0408).
-	let updating: InstalledApp | null = null;
+	let updating = $state<InstalledApp | null>(null);
 
 	/** The app's name in the catalog, or its own. */
 	function nameOf(app: InstalledApp): string {
@@ -188,8 +199,7 @@
 		await loadInstalled();
 	}
 
-	async function cancel(event: CustomEvent<AppInstallJob>) {
-		const job = event.detail;
+	async function cancel(job: AppInstallJob) {
 		const question = job.kind === 'update' ? 'appUpdates.confirmCancel' : 'apps.job.confirmCancel';
 		if (!confirm($t(question, { name: job.name }))) return;
 		cancelling = new Set([...cancelling, job.id]);
@@ -211,30 +221,36 @@
 	};
 
 	// Update category counts
-	$: categoriesWithCounts = categories.map((cat) => ({
-		...cat,
-		count:
-			cat.value === ''
-				? catalog.length
-				: catalog.filter((app) => app.category === cat.value).length
-	}));
+	const categoriesWithCounts = $derived(
+		categories.map((cat) => ({
+			...cat,
+			count:
+				cat.value === ''
+					? catalog.length
+					: catalog.filter((app) => app.category === cat.value).length
+		}))
+	);
 
 	// Filtered catalog
-	$: filteredCatalog = catalog.filter((app) => {
-		const matchesSearch =
-			searchQuery === '' ||
-			app.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-			app.description.toLowerCase().includes(searchQuery.toLowerCase());
-		const matchesCategory = selectedCategory === '' || app.category === selectedCategory;
-		return matchesSearch && matchesCategory;
-	});
+	const filteredCatalog = $derived(
+		catalog.filter((app) => {
+			const matchesSearch =
+				searchQuery === '' ||
+				app.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+				app.description.toLowerCase().includes(searchQuery.toLowerCase());
+			const matchesCategory = selectedCategory === '' || app.category === selectedCategory;
+			return matchesSearch && matchesCategory;
+		})
+	);
 
 	// Featured apps - popular apps that users actually use
-	$: featuredApps = catalog
-		.filter((app) =>
-			['homeassistant', 'frigate', 'jellyfin', 'nextcloud', 'immich', 'ollama'].includes(app.id)
-		)
-		.slice(0, 6);
+	const featuredApps = $derived(
+		catalog
+			.filter((app) =>
+				['homeassistant', 'frigate', 'jellyfin', 'nextcloud', 'immich', 'ollama'].includes(app.id)
+			)
+			.slice(0, 6)
+	);
 
 	onMount(async () => {
 		await refresh();
@@ -320,11 +336,14 @@
 		}
 	}
 
-	// Reactive, so that the markup that calls them follows the installed list, which can answer
-	// after the catalog.
-	$: isInstalled = (appId: string): boolean => installed.some((i) => i.template_id === appId);
-	$: getInstalledInfo = (appId: string): InstalledApp | undefined =>
-		installed.find((i) => i.template_id === appId);
+	// They read `installed`, so that the markup that calls them follows the installed list, which
+	// can answer after the catalog.
+	function isInstalled(appId: string): boolean {
+		return installed.some((i) => i.template_id === appId);
+	}
+	function getInstalledInfo(appId: string): InstalledApp | undefined {
+		return installed.find((i) => i.template_id === appId);
+	}
 
 	/** The badge of the source of an app's image (AppSource), with the key of its label. */
 	function getSourceBadge(
@@ -387,7 +406,7 @@
 				</p>
 			</div>
 		</div>
-		<Button variant="secondary" size="icon" on:click={refresh} disabled={loading}>
+		<Button variant="secondary" size="icon" onclick={refresh} disabled={loading}>
 			<RefreshCw class="w-4 h-4 {loading ? 'animate-spin' : ''}" />
 		</Button>
 	</div>
@@ -405,13 +424,13 @@
 	{/if}
 
 	<!-- The installs that run in the background and the last of each app, with their ends (ADR-0384). -->
-	<AppInstallJobs jobs={$appInstalls} {catalog} {cancelling} on:dismiss={dismiss} on:cancel={cancel} />
+	<AppInstallJobs jobs={$appInstalls} {catalog} {cancelling} ondismiss={dismiss} oncancel={cancel} />
 
 	<!-- Tabs -->
 	<div class="flex gap-1 p-1 bg-surface-elevated rounded-lg w-fit">
 		<Button variant="plain"
 		 class="tab-pill {activeTab === 'catalog' ? 'tab-pill-active' : ''}"
-			on:click={() => (activeTab = 'catalog')}
+			onclick={() => (activeTab = 'catalog')}
 		>
 			<span class="flex items-center gap-2">
 				<Grid3X3 class="w-4 h-4" />
@@ -420,7 +439,7 @@
 		</Button>
 		<Button variant="plain"
 		 class="tab-pill {activeTab === 'installed' ? 'tab-pill-active' : ''}"
-			on:click={() => (activeTab = 'installed')}
+			onclick={() => (activeTab = 'installed')}
 		>
 			<span class="flex items-center gap-2">
 				<CheckCircle2 class="w-4 h-4" />
@@ -448,7 +467,7 @@
 						{@const installedInfo = getInstalledInfo(app.id)}
 						<Button variant="plain"
 						 class="bg-surface-muted rounded-xl p-4 text-left hover:bg-surface-overlay transition-colors"
-							on:click={() => openDetail(app)}
+							onclick={() => openDetail(app)}
 						>
 							<div class="flex items-center gap-4 mb-3">
 								<div
@@ -492,10 +511,10 @@
 									{selectedCategory === cat.value
 										? 'bg-brand text-content-on-brand'
 										: 'text-secondary hover:text-content hover:bg-surface-overlay'}"
-									on:click={() => (selectedCategory = cat.value)}
+									onclick={() => (selectedCategory = cat.value)}
 								>
 									<span class="flex items-center gap-2.5">
-										<svelte:component this={cat.icon} class="w-4 h-4" />
+										<cat.icon class="w-4 h-4" />
 										<AppCategory category={cat.value} />
 									</span>
 									<span
@@ -537,7 +556,7 @@
 					>
 						<Button
 							variant="secondary"
-							on:click={() => {
+							onclick={() => {
 								searchQuery = '';
 								selectedCategory = '';
 							}}>{$t('apps.clearFilters')}</Button
@@ -550,10 +569,10 @@
 							{@const source = getSourceBadge(app.source)}
 							<div
 								class="card hover:bg-surface-overlay transition-colors cursor-pointer"
-								on:click={() => openDetail(app)}
+								onclick={() => openDetail(app)}
 								role="button"
 								tabindex="0"
-								on:keypress={(e) => e.key === 'Enter' && openDetail(app)}
+								onkeypress={(e) => e.key === 'Enter' && openDetail(app)}
 							>
 								<div class="flex items-start gap-3 mb-3">
 									<div
@@ -602,7 +621,7 @@
 													href={getWebUrl(installedInfo)}
 													target="_blank"
 													rel="noopener"
-													on:click|stopPropagation
+													onclick={(e) => e.stopPropagation()}
 													class="p-1.5 rounded hover:bg-surface-muted text-info transition-colors"
 													title={$t('apps.open')}
 												>
@@ -641,7 +660,7 @@
 				title={$t('apps.noneInstalled')}
 				description={$t('apps.noneInstalledHint')}
 			>
-				<Button variant="primary" on:click={() => (activeTab = 'catalog')} icon={Download}>
+				<Button variant="primary" onclick={() => (activeTab = 'catalog')} icon={Download}>
 					{$t('apps.browseCatalog')}
 				</Button>
 			</EmptyState>
@@ -698,7 +717,7 @@
 							<div class="flex flex-wrap items-center gap-2">
 								{#if app.update_to && !app.previous && !installing.has(app.template_id)}
 									<!-- The catalog pins newer images: the dialog shows what the update does (ADR-0408). -->
-									<Button variant="primary" size="sm" icon={ArrowUpCircle} on:click={() => (updating = app)}>
+									<Button variant="primary" size="sm" icon={ArrowUpCircle} onclick={() => (updating = app)}>
 										{$t('appUpdates.available', { version: app.update_to })}
 									</Button>
 								{/if}
@@ -714,7 +733,7 @@
 										variant="warning"
 										size="sm"
 										icon={Square}
-										on:click={() => handleStop(app)}
+										onclick={() => handleStop(app)}
 									>
 										{$t('apps.installed.stop')}
 									</Button>
@@ -723,7 +742,7 @@
 											variant="secondary"
 											size="sm"
 											icon={RotateCw}
-											on:click={() => handleRestart(app)}
+											onclick={() => handleRestart(app)}
 										>
 											{$t('apps.installed.restart')}
 										</Button>
@@ -733,7 +752,7 @@
 										variant="success"
 										size="sm"
 										icon={Play}
-										on:click={() => handleStart(app)}
+										onclick={() => handleStart(app)}
 									>
 										{$t('apps.installed.start')}
 									</Button>
@@ -742,7 +761,7 @@
 									variant="danger"
 									size="sm"
 									icon={Trash2}
-									on:click={() => handleUninstall(app)}
+									onclick={() => handleUninstall(app)}
 								>
 									{$t('apps.installed.uninstall')}
 								</Button>
@@ -788,7 +807,7 @@
 										size="sm"
 										icon={Undo2}
 										disabled={installing.has(app.template_id)}
-										on:click={() => handleRollback(app)}
+										onclick={() => handleRollback(app)}
 									>
 										{$t('appUpdates.rollback')}
 									</Button>
@@ -797,7 +816,7 @@
 										size="sm"
 										icon={Trash2}
 										disabled={installing.has(app.template_id)}
-										on:click={() => handleRemoveEarlier(app)}
+										onclick={() => handleRemoveEarlier(app)}
 									>
 										{$t('appUpdates.removeEarlier')}
 									</Button>
@@ -805,7 +824,7 @@
 							</Alert>
 						{/if}
 						<AppStorageWarning {app} class="mt-4" />
-						<AppResources {app} on:limits={openLimits} />
+						<AppResources {app} onlimits={openLimits} />
 					</Card>
 				{/each}
 			</div>
@@ -818,8 +837,8 @@
 	open={updating !== null}
 	app={updating}
 	name={updating ? nameOf(updating) : ''}
-	on:close={() => (updating = null)}
-	on:started={() => (updating = null)}
+	onclose={() => (updating = null)}
+	onstarted={() => (updating = null)}
 />
 
 <!-- The limits of one container of an installed app (ADR-0390) -->
@@ -827,8 +846,8 @@
 	open={limitsOf !== null}
 	container={limitsOf?.container ?? ''}
 	resources={limitsOf?.resources ?? null}
-	on:close={() => (limitsOf = null)}
-	on:saved={limitsSaved}
+	onclose={() => (limitsOf = null)}
+	onsaved={limitsSaved}
 />
 
 <!-- App Detail Modal -->
@@ -837,5 +856,5 @@
 	app={selectedApp}
 	isInstalled={selectedApp ? isInstalled(selectedApp.id) : false}
 	installedApp={selectedApp ? (getInstalledInfo(selectedApp.id) ?? null) : null}
-	on:close={closeDetail}
+	onclose={closeDetail}
 />

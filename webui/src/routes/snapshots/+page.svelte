@@ -28,64 +28,64 @@
 	const AUTO_PREFIX = 'auto_';
 
 	// The mounted pools and their volumes (ADR-0243), and the one whose snapshots are listed.
-	let subvolumes: Subvolume[] = [];
-	let subvolumesLoading = true;
-	let subvolumesError = '';
-	let selectedPath = '';
+	let subvolumes: Subvolume[] = $state.raw([]);
+	let subvolumesLoading = $state(true);
+	let subvolumesError = $state('');
+	let selectedPath = $state('');
 
-	let snapshots: SnapshotInfo[] = [];
-	let snapshotsLoading = false;
-	let snapshotsError = '';
+	let snapshots: SnapshotInfo[] = $state.raw([]);
+	let snapshotsLoading = $state(false);
+	let snapshotsError = $state('');
 	// Only the latest request updates the list: another pool or volume may have been chosen meanwhile.
 	let snapshotsRequest = 0;
 
 	// The copies that restores made right in the pool or volume chosen (ADR-0358); as for the
 	// snapshots, only the latest request updates the list.
-	let copies: RestoreCopy[] = [];
-	let copiesLoading = false;
-	let copiesError = '';
+	let copies: RestoreCopy[] = $state.raw([]);
+	let copiesLoading = $state(false);
+	let copiesError = $state('');
 	let copiesRequest = 0;
 
 	// Where the last restore put its copy.
-	let restoredTo = '';
+	let restoredTo = $state('');
 
-	let showCreate = false;
-	let newSnapshotName = '';
-	let creating = false;
-	let createError = '';
+	let showCreate = $state(false);
+	let newSnapshotName = $state('');
+	let creating = $state(false);
+	let createError = $state('');
 
-	let snapshotToRestore: SnapshotInfo | null = null;
-	let restoring = false;
-	let restoreError = '';
+	let snapshotToRestore = $state.raw<SnapshotInfo | null>(null);
+	let restoring = $state(false);
+	let restoreError = $state('');
 
-	let snapshotToDelete: SnapshotInfo | null = null;
-	let deleting = false;
-	let deleteError = '';
+	let snapshotToDelete: SnapshotInfo | null = $state.raw(null);
+	let deleting = $state(false);
+	let deleteError = $state('');
 
-	let copyToDelete: RestoreCopy | null = null;
-	let deletingCopy = false;
-	let deleteCopyError = '';
+	let copyToDelete: RestoreCopy | null = $state.raw(null);
+	let deletingCopy = $state(false);
+	let deleteCopyError = $state('');
 
-	// A pool or a volume as the picker and the list's heading name it; reactive, as are the dates
-	// below, so that they follow a change of the language.
-	$: label = (sv: Subvolume): string =>
+	// A pool or a volume as the picker and the list's heading name it. It reads the language where
+	// it is called, as the dates below do, so that what shows them follows a change of the language.
+	const label = (sv: Subvolume): string =>
 		sv.volume
 			? $t('snapshots.volume', { pool: sv.pool, volume: sv.volume })
 			: $t('snapshots.pool', { pool: sv.pool });
 
 	// The server gives UTC times with their offset; the browser shows them in its own time zone,
 	// in the language of the page (ADR-0287).
-	$: formatDate = (value: string): string => (value ? formatDateTime(value, $intlLocale) : '-');
+	const formatDate = (value: string): string => (value ? formatDateTime(value, $intlLocale) : '-');
 
-	$: options = subvolumes.map((sv) => ({ value: sv.path, label: label(sv) }));
+	let options = $derived(subvolumes.map((sv) => ({ value: sv.path, label: label(sv) })));
 	// Pools offered without their volumes, which could not be read (a disk that dropped off, say).
-	$: unreadVolumes = subvolumes.filter((sv) => sv.volumes_error);
-	$: selected = subvolumes.find((sv) => sv.path === selectedPath) ?? null;
-	$: busy = subvolumesLoading || snapshotsLoading || copiesLoading;
+	let unreadVolumes = $derived(subvolumes.filter((sv) => sv.volumes_error));
+	let selected = $derived(subvolumes.find((sv) => sv.path === selectedPath) ?? null);
+	let busy = $derived(subvolumesLoading || snapshotsLoading || copiesLoading);
 	// The pool or volume that a restore makes its copy in.
-	$: restoreInto = snapshotToRestore
-		? (subvolumes.find((sv) => sv.path === snapshotToRestore?.subvolume) ?? null)
-		: null;
+	let restoreInto = $derived(
+		snapshotToRestore ? (subvolumes.find((sv) => sv.path === snapshotToRestore?.subvolume) ?? null) : null
+	);
 
 	onMount(refresh);
 
@@ -281,8 +281,8 @@
 	<div class="page-header">
 		<h1 class="page-title">{$t('snapshots.title')}</h1>
 		<div class="flex flex-wrap items-center gap-2">
-			<Button icon={Plus} disabled={!selected} on:click={openCreate}>{$t('snapshots.create')}</Button>
-			<Button variant="secondary" size="icon" disabled={busy} on:click={refresh}>
+			<Button icon={Plus} disabled={!selected} onclick={openCreate}>{$t('snapshots.create')}</Button>
+			<Button variant="secondary" size="icon" disabled={busy} onclick={refresh}>
 				<RefreshCw class="w-4 h-4 {busy ? 'animate-spin' : ''}" />
 				<span class="sr-only">{$t('common.refresh')}</span>
 			</Button>
@@ -299,7 +299,7 @@
 				label={$t('snapshots.picker')}
 				{options}
 				bind:value={selectedPath}
-				on:change={(e) => choose(e.detail.value)}
+				onchange={choose}
 				class="max-w-md"
 			/>
 			{#each unreadVolumes as sv (sv.path)}
@@ -325,7 +325,7 @@
 			variant="success"
 			title={$t('snapshots.restored')}
 			dismissible
-			on:dismiss={() => (restoredTo = '')}
+			ondismiss={() => (restoredTo = '')}
 		>
 			{$t('snapshots.restoredAt')} <span class="mono-xs break-all">{restoredTo}</span>.
 		</Alert>
@@ -367,11 +367,11 @@
 									<td class="whitespace-nowrap">{formatDate(snap.created)}</td>
 									<td>
 										<div class="flex justify-end gap-1">
-											<Button variant="ghost" size="icon-sm" on:click={() => askRestore(snap)}>
+											<Button variant="ghost" size="icon-sm" onclick={() => askRestore(snap)}>
 												<RotateCcw class="w-4 h-4" />
 												<span class="sr-only">{$t('snapshots.restoreOne', { name: snap.name })}</span>
 											</Button>
-											<Button variant="ghost" size="icon-sm" on:click={() => askDelete(snap)}>
+											<Button variant="ghost" size="icon-sm" onclick={() => askDelete(snap)}>
 												<Trash2 class="w-4 h-4 text-error" />
 												<span class="sr-only">{$t('snapshots.deleteOne', { name: snap.name })}</span>
 											</Button>
@@ -419,7 +419,7 @@
 									<td class="whitespace-nowrap">{formatDate(copy.created)}</td>
 									<td>
 										<div class="flex justify-end gap-1">
-											<Button variant="ghost" size="icon-sm" on:click={() => askDeleteCopy(copy)}>
+											<Button variant="ghost" size="icon-sm" onclick={() => askDeleteCopy(copy)}>
 												<Trash2 class="w-4 h-4 text-error" />
 												<span class="sr-only">{$t('snapshots.copies.deleteOne', { name: copy.name })}</span>
 											</Button>
@@ -455,9 +455,9 @@
 	</Card>
 </div>
 
-<Modal open={showCreate} title={$t('snapshots.new.title')} closable={!creating} on:close={closeCreate}>
+<Modal open={showCreate} title={$t('snapshots.new.title')} closable={!creating} onclose={closeCreate}>
 	{#if selected}
-		<form on:submit|preventDefault={handleCreate} class="space-y-4">
+		<form onsubmit={(e) => { e.preventDefault(); handleCreate(); }} class="space-y-4">
 			<p class="text-sm text-secondary">
 				{$t('snapshots.new.of')}
 				<span class="mono-xs break-all">{selected.path}</span>{$t('snapshots.new.keptIn')}
@@ -479,21 +479,21 @@
 		</form>
 	{/if}
 
-	<svelte:fragment slot="footer">
-		<Button variant="secondary" class="flex-1" disabled={creating} on:click={closeCreate}>
+	{#snippet footer()}
+		<Button variant="secondary" class="flex-1" disabled={creating} onclick={closeCreate}>
 			{$t('common.cancel')}
 		</Button>
-		<Button class="flex-1" icon={Plus} loading={creating} on:click={handleCreate}>
+		<Button class="flex-1" icon={Plus} loading={creating} onclick={handleCreate}>
 			{$t('snapshots.new.submit')}
 		</Button>
-	</svelte:fragment>
+	{/snippet}
 </Modal>
 
 <Modal
 	open={snapshotToRestore !== null}
 	title={$t('snapshots.restore.title')}
 	closable={!restoring}
-	on:close={closeRestore}
+	onclose={closeRestore}
 >
 	{#if snapshotToRestore}
 		<div class="space-y-4">
@@ -515,14 +515,14 @@
 		</div>
 	{/if}
 
-	<svelte:fragment slot="footer">
-		<Button variant="secondary" class="flex-1" disabled={restoring} on:click={closeRestore}>
+	{#snippet footer()}
+		<Button variant="secondary" class="flex-1" disabled={restoring} onclick={closeRestore}>
 			{$t('common.cancel')}
 		</Button>
-		<Button class="flex-1" icon={RotateCcw} loading={restoring} on:click={handleRestore}>
+		<Button class="flex-1" icon={RotateCcw} loading={restoring} onclick={handleRestore}>
 			{$t('snapshots.restore.submit')}
 		</Button>
-	</svelte:fragment>
+	{/snippet}
 </Modal>
 
 <Modal
@@ -530,7 +530,7 @@
 	title={$t('snapshots.delete.title')}
 	danger
 	closable={!deleting}
-	on:close={closeDelete}
+	onclose={closeDelete}
 >
 	{#if snapshotToDelete}
 		<div class="space-y-4">
@@ -545,14 +545,14 @@
 		</div>
 	{/if}
 
-	<svelte:fragment slot="footer">
-		<Button variant="secondary" class="flex-1" disabled={deleting} on:click={closeDelete}>
+	{#snippet footer()}
+		<Button variant="secondary" class="flex-1" disabled={deleting} onclick={closeDelete}>
 			{$t('common.cancel')}
 		</Button>
-		<Button variant="danger" class="flex-1" icon={Trash2} loading={deleting} on:click={handleDelete}>
+		<Button variant="danger" class="flex-1" icon={Trash2} loading={deleting} onclick={handleDelete}>
 			{$t('snapshots.delete.submit')}
 		</Button>
-	</svelte:fragment>
+	{/snippet}
 </Modal>
 
 <Modal
@@ -560,7 +560,7 @@
 	title={$t('snapshots.copies.delete.title')}
 	danger
 	closable={!deletingCopy}
-	on:close={closeDeleteCopy}
+	onclose={closeDeleteCopy}
 >
 	{#if copyToDelete}
 		<div class="space-y-4">
@@ -576,12 +576,12 @@
 		</div>
 	{/if}
 
-	<svelte:fragment slot="footer">
-		<Button variant="secondary" class="flex-1" disabled={deletingCopy} on:click={closeDeleteCopy}>
+	{#snippet footer()}
+		<Button variant="secondary" class="flex-1" disabled={deletingCopy} onclick={closeDeleteCopy}>
 			{$t('common.cancel')}
 		</Button>
-		<Button variant="danger" class="flex-1" icon={Trash2} loading={deletingCopy} on:click={handleDeleteCopy}>
+		<Button variant="danger" class="flex-1" icon={Trash2} loading={deletingCopy} onclick={handleDeleteCopy}>
 			{$t('snapshots.copies.delete.submit')}
 		</Button>
-	</svelte:fragment>
+	{/snippet}
 </Modal>

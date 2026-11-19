@@ -426,6 +426,7 @@ and this index, and `make check-fast` runs it.
 | [0395](0395-each-user-arranges-hides-and-shows-the-dashboards-widgets-and-the-server-keeps-the-layout.md) | Each user arranges, hides and shows the dashboard's widgets, and the server keeps the layout | accepted | 2026-11-17 |
 | [0400](0400-a-check-fails-for-raw-controls-and-raw-colours-in-the-web-uis-pages.md) | A check fails for raw controls and raw colours in the web UI's pages | accepted | 2026-11-18 |
 | [0405](0405-each-user-chooses-a-dark-light-or-system-theme-and-the-colour-tokens-have-a-value-per-theme.md) | Each user chooses a dark, light or system theme, and the colour tokens have a value per theme | accepted | 2026-11-18 |
+| [0425](0425-the-web-ui-runs-on-svelte-5-in-runes-mode-only-and-its-pages-are-composed-of-area-components.md) | The web UI runs on Svelte 5 in runes mode only, and its pages are composed of area components | accepted | 2026-11-19 |
 
 ## Deploy
 
@@ -512,5 +513,5 @@ and this index, and `make check-fast` runs it.
 | [0218](0218-scheduled-dependency-audits-and-maintenance.md) | Dependencies are audited weekly, and maintenance passes run monthly | superseded by [0423](0423-actions-are-pinned-by-commit-the-audits-tools-by-hash-and-pip-takes-wheels.md) | 2026-11-07 |
 | [0229](0229-main-stays-without-branch-protection-on-the-free-plan.md) | The main branch stays without branch protection on GitHub's Free plan | accepted | 2026-11-07 |
 | [0230](0230-the-ci-workflow-is-off-on-github.md) | The CI workflow is off on GitHub, and make check on the workstation is the only gate | accepted | 2026-11-07 |
-| [0231](0231-dependabot-proposes-no-major-npm-versions-and-leaves-playwright-alone.md) | Dependabot proposes no major npm versions and leaves Playwright alone | accepted | 2026-11-07 |
+| [0231](0231-dependabot-proposes-no-major-npm-versions-and-leaves-playwright-alone.md) | Dependabot proposes no major npm versions and leaves Playwright alone | superseded by [0425](0425-the-web-ui-runs-on-svelte-5-in-runes-mode-only-and-its-pages-are-composed-of-area-components.md) | 2026-11-07 |
 | [0423](0423-actions-are-pinned-by-commit-the-audits-tools-by-hash-and-pip-takes-wheels.md) | Actions are pinned by commit, the audit's tools by hash, and pip takes wheels only | accepted | 2026-11-19 |

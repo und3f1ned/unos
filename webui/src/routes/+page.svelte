@@ -24,34 +24,37 @@
   import { intlLocale, t } from "$lib/i18n";
   import { apiTime } from "$lib/time";
 
-  let systemInfo: SystemInfo | null = null;
-  let pools: Pool[] = [];
-  let containers: Container[] = [];
-  let notificationLogs: NotificationLog[] = [];
+  // The answers of the API, each only ever replaced whole.
+  let systemInfo = $state.raw<SystemInfo | null>(null);
+  let pools = $state.raw<Pool[]>([]);
+  let containers = $state.raw<Container[]>([]);
+  let notificationLogs = $state.raw<NotificationLog[]>([]);
   // The disks whose SMART trend says replace soon (ADR-0235).
-  let toReplace: DiskPrediction[] = [];
-  let predictionsError = "";
-  let loading = true;
-  let lastUpdate: Date | null = null;
+  let toReplace = $state.raw<DiskPrediction[]>([]);
+  let predictionsError = $state("");
+  let loading = $state(true);
+  let lastUpdate = $state<Date | null>(null);
 
   // Subscribe to WebSocket stats
-  let currentStats: WebSocketStats | null = null;
-  $: currentStats = $stats;
-  $: if ($stats) {
-    lastUpdate = new Date();
-  }
+  const currentStats: WebSocketStats | null = $derived($stats);
+  // Every message of the socket, before the markup updates; the time of the last one stays while
+  // the store is empty.
+  $effect.pre(() => {
+    if ($stats) lastUpdate = new Date();
+  });
 
   // The user's layout of the widgets, kept on the server (ADR-0395). It is read with the rest of the
   // page's data, on opening and on Refresh, and written only when the user changes it: nothing polls.
-  let layout: LayoutEntry[] = defaultLayout(false);
-  let layoutFailed = false;
-  let layoutError = "";
-  let arranging = false;
-  let saving = false;
+  // Only ever replaced whole: apply compares the next layout with it.
+  let layout = $state.raw<LayoutEntry[]>(defaultLayout(false));
+  let layoutFailed = $state(false);
+  let layoutError = $state("");
+  let arranging = $state(false);
+  let saving = $state(false);
   // What a screen reader is told after a move, a hide or a show.
-  let announcement = "";
-  let draggedId: string | null = null;
-  let overId: string | null = null;
+  let announcement = $state("");
+  let draggedId = $state<string | null>(null);
+  let overId = $state<string | null>(null);
 
   onMount(async () => {
     await loadData();
@@ -60,7 +63,7 @@
   // The layout renders this page only after the user is known. Pools,
   // containers and notifications are administrator-only APIs; regular
   // accounts get the system overview and the live stats only.
-  $: isAdmin = $user?.is_admin === true;
+  const isAdmin = $derived($user?.is_admin === true);
 
   // The predictions read the stored SMART history only: no disk is woken. A
   // failure is shown, unlike those of the widgets, so that a disk to replace is
@@ -114,7 +117,9 @@
     await loadData();
   }
 
-  $: formatUptime = (bootTime: string): string => {
+  // The functions that read $t or $intlLocale do it where the markup calls them: the texts follow
+  // the language.
+  function formatUptime(bootTime: string): string {
     // bootTime is when the host booted, ISO 8601 with its offset (ADR-0401)
     const booted = apiTime(bootTime);
     if (!booted) return bootTime;
@@ -125,10 +130,12 @@
     if (days > 0) return $t("dashboard.uptime.days", { days, hours });
     if (hours > 0) return $t("dashboard.uptime.hours", { hours, minutes });
     return $t("dashboard.uptime.minutes", { minutes });
-  };
+  }
 
   // In the language of the page.
-  $: formatTime = (date: Date): string => date.toLocaleTimeString($intlLocale);
+  function formatTime(date: Date): string {
+    return date.toLocaleTimeString($intlLocale);
+  }
 
   // The CPU's temperature, which the server chooses among the host's sensors (ADR-0346), in whole
   // degrees; null on a host without sensors.
@@ -137,7 +144,7 @@
   }
 
   // Transform pools for widget
-  $: poolsForWidget = pools.map(p => ({
+  const poolsForWidget = $derived(pools.map(p => ({
     name: p.name,
     size: p.total_size || 0,
     used: p.used_size || 0,
@@ -148,32 +155,32 @@
     deviceErrors: p.device_errors ?? 0,
     readOnly: p.read_only ?? false,
     forcedReadOnly: p.forced_read_only ?? false
-  }));
+  })));
 
   // Transform containers for widget
-  $: containersForWidget = containers.map(c => ({
+  const containersForWidget = $derived(containers.map(c => ({
     id: c.id,
     name: c.name,
     state: c.state,
     image: c.image
-  }));
+  })));
 
   // Transform notification logs for widget
-  $: notificationsForWidget = notificationLogs.map(log => ({
+  const notificationsForWidget = $derived(notificationLogs.map(log => ({
     id: log.id,
     type: log.event?.type || "info",
     title: log.event?.title || $t("dashboard.notification"),
     message: log.event?.message || "",
     created_at: log.sent_at,
     read: log.success
-  }));
+  })));
   // A widget shows when it is not hidden and has its data: the stats cards come with the live stats.
-  $: shown = layout.filter((e) => !e.hidden && (currentStats !== null || widgetDef(e.id)?.adminOnly));
-  $: hiddenWidgets = layout.filter((e) => e.hidden);
-  $: nameOf = (id: string): string => {
+  const shown = $derived(layout.filter((e) => !e.hidden && (currentStats !== null || widgetDef(e.id)?.adminOnly)));
+  const hiddenWidgets = $derived(layout.filter((e) => e.hidden));
+  function nameOf(id: string): string {
     const def = widgetDef(id);
     return def ? $t(def.nameKey) : id;
-  };
+  }
 
   async function apply(next: LayoutEntry[], message: string, reset = false): Promise<boolean> {
     if (saving || next === layout) return false;
@@ -296,12 +303,12 @@
       {#if !layoutFailed && !loading}
         <span data-customize>
           <Button variant="secondary" size="sm" icon={arranging ? Check : SlidersHorizontal} pressed={arranging}
-            on:click={() => (arranging = !arranging)}>
+            onclick={() => (arranging = !arranging)}>
             {arranging ? $t("dashboard.layout.done") : $t("dashboard.layout.customize")}
           </Button>
         </span>
       {/if}
-      <Button variant="secondary" size="icon" on:click={handleRefresh} disabled={loading || saving}>
+      <Button variant="secondary" size="icon" onclick={handleRefresh} disabled={loading || saving}>
         <RefreshCw class="w-4 h-4 {loading ? 'animate-spin' : ''}" />
         <span class="sr-only">{$t("common.refresh")}</span>
       </Button>
@@ -338,7 +345,7 @@
       <Alert variant="warning">{$t("dashboard.layout.loadFailed")}</Alert>
     {/if}
     {#if layoutError}
-      <Alert variant="error" dismissible on:dismiss={() => (layoutError = "")}>{layoutError}</Alert>
+      <Alert variant="error" dismissible ondismiss={() => (layoutError = "")}>{layoutError}</Alert>
     {/if}
 
     <p class="sr-only" role="status" data-layout-status>{announcement}</p>
@@ -353,7 +360,7 @@
           {:else}
             <div class="flex flex-wrap gap-2">
               {#each hiddenWidgets as entry (entry.id)}
-                <Button variant="secondary" size="sm" icon={Eye} disabled={saving} on:click={() => show(entry.id)}>
+                <Button variant="secondary" size="sm" icon={Eye} disabled={saving} onclick={() => show(entry.id)}>
                   {$t("dashboard.layout.show", { name: nameOf(entry.id) })}
                 </Button>
               {/each}
@@ -361,7 +368,7 @@
           {/if}
         </section>
         <Button variant="ghost" size="sm" icon={RotateCcw} disabled={saving || isDefaultLayout(layout, isAdmin)}
-          on:click={resetLayout}>
+          onclick={resetLayout}>
           {$t("dashboard.layout.reset")}
         </Button>
       </Card>
@@ -377,8 +384,8 @@
             {arranging ? 'rounded-lg border border-dashed border-border p-1' : ''}
             {overId === entry.id && draggedId !== entry.id ? 'ring-2 ring-brand-ring' : ''}
             {draggedId === entry.id ? 'opacity-50' : ''}"
-          on:dragover={(e) => onDragOver(e, entry.id)}
-          on:drop={(e) => onDrop(e, entry.id)}
+          ondragover={(e) => onDragOver(e, entry.id)}
+          ondrop={(e) => onDrop(e, entry.id)}
         >
           {#if arranging}
             <div data-toolbar class="flex flex-wrap items-center gap-1 mb-1">
@@ -389,22 +396,22 @@
                 role="presentation"
                 title={$t("dashboard.layout.drag")}
                 class="p-1.5 cursor-grab text-secondary"
-                on:dragstart={(e) => onDragStart(e, entry.id)}
-                on:dragend={onDragEnd}
+                ondragstart={(e) => onDragStart(e, entry.id)}
+                ondragend={onDragEnd}
               >
                 <GripVertical class="w-4 h-4" />
               </span>
               <Button variant="secondary" size="icon-sm" disabled={saving || index === 0}
-                on:click={() => move(entry.id, -1)}>
+                onclick={() => move(entry.id, -1)}>
                 <ArrowUp class="w-4 h-4" />
                 <span class="sr-only">{$t("dashboard.layout.moveUp", { name: nameOf(entry.id) })}</span>
               </Button>
               <Button variant="secondary" size="icon-sm" disabled={saving || index === shown.length - 1}
-                on:click={() => move(entry.id, 1)}>
+                onclick={() => move(entry.id, 1)}>
                 <ArrowDown class="w-4 h-4" />
                 <span class="sr-only">{$t("dashboard.layout.moveDown", { name: nameOf(entry.id) })}</span>
               </Button>
-              <Button variant="secondary" size="icon-sm" disabled={saving} on:click={() => hide(entry.id)}>
+              <Button variant="secondary" size="icon-sm" disabled={saving} onclick={() => hide(entry.id)}>
                 <EyeOff class="w-4 h-4" />
                 <span class="sr-only">{$t("dashboard.layout.hide", { name: nameOf(entry.id) })}</span>
               </Button>
