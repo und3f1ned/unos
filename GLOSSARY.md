@@ -522,7 +522,9 @@ that data without the file is refused (ADR-0381, ADR-0415). Avoid: password vari
 **Pinned image**: An image of the catalog named by a version tag and the digest of its index
 (`name:tag@sha256:...`), pulled and run by that digest, with its size on the system disk
 estimated for the install's space check and the `VOLUME`s it declares (`PINNED_IMAGES`,
-`APP_IMAGES`, ADR-0381, ADR-0410). Every image of the catalog is one. Avoid: locked image.
+`APP_IMAGES`, ADR-0381, ADR-0410). Every image of the catalog is one; LinuxServer's are named on
+ghcr.io, where LinuxServer publishes them, never on lscr.io, its redirector (ADR-0425). Avoid:
+locked image.
 
 **Moved tag**: The tag of a pinned image that names another index at its registry than the one
 pinned, because the publisher pushed that version again or a line tag (Traefik's `v3.7`) moved on

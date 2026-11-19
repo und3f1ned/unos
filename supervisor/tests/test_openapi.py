@@ -453,7 +453,7 @@ DOCUMENTATION_DOMAINS = ("example.com", "example.net", "example.org", "example")
 DOCUMENTATION_HOST_NAMES = {"jellyfin-nas.local"}
 # Public hosts that UNOS itself talks to: a URL of theirs in an example names no one's NAS. A URL
 # of the chat services carries its secret in the path, which must then be a placeholder.
-PUBLIC_HOSTS = {"github.com", "api.github.com", "ghcr.io", "docker.io", "lscr.io", "host.docker.internal"}
+PUBLIC_HOSTS = {"github.com", "api.github.com", "ghcr.io", "docker.io", "host.docker.internal"}
 SECRET_PATH_HOSTS = {"hooks.slack.com", "discord.com", "discordapp.com", "api.telegram.org"}
 # RFC 7042's documentation block of MAC addresses.
 DOCUMENTATION_MAC = "00:00:5e:00:53:"
@@ -899,7 +899,7 @@ class TestTheChecks:
         assert value_problems({"target": "iqn.2003-01.org.linux-iscsi.unos:backup",
                                "initiator": "iqn.2026-11.com.example:client-1"}) == []
         assert value_problems({"address": "192.0.2.10/24", "netmask": "255.255.255.0", "v6": "2001:db8::10",
-                               "lan": "10.0.0.20", "ula": "fd00::20", "image": "lscr.io/linuxserver/x:1",
+                               "lan": "10.0.0.20", "ula": "fd00::20", "image": "ghcr.io/linuxserver/x:1",
                                "file": "backup_2026-11-18.tar.gz", "gateway": "host.docker.internal",
                                "slack": "https://hooks.slack.com/services/EXAMPLE/EXAMPLE/EXAMPLE",
                                "link": "fe80::1", "mac": "00:00:5e:00:53:01", "mail": "admin@example.com",

@@ -61,8 +61,8 @@ TIMEOUT = 30
 # A reference pinned by tag and digest, as the catalog writes it and the install reads it (ADR-0381):
 # a tag, which holds no slash, then the index digest.
 PINNED = re.compile(r"[^@\s]+:[^@:/\s]+@sha256:[0-9a-f]{64}")
-# lscr.io is LinuxServer.io's redirect to its images on GHCR.
-REGISTRY_ALIASES = {"lscr.io": "ghcr.io", "docker.io": "registry-1.docker.io", "index.docker.io": "registry-1.docker.io"}
+# Docker Hub's names. The catalog names LinuxServer's images on GHCR, never on lscr.io (ADR-0425).
+REGISTRY_ALIASES = {"docker.io": "registry-1.docker.io", "index.docker.io": "registry-1.docker.io"}
 
 # A transport answers one request: (method, url, headers) -> (status, headers, body). The
 # headers' names are lower case. It follows no redirect: the caller does, without credentials.
@@ -131,8 +131,6 @@ def parse_reference(ref: str) -> tuple[str, str, str]:
         registry, repo = "docker.io", name
     if registry == "docker.io" and "/" not in repo:
         repo = f"library/{repo}"
-    if registry == "lscr.io":
-        repo = repo if repo.startswith("linuxserver/") else f"linuxserver/{repo}"
     return REGISTRY_ALIASES.get(registry, registry), repo, digest or tag
 
 

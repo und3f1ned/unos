@@ -41,6 +41,11 @@ manager, encrypted backup uploads, health checks, CI checks).
   `app_names_changed` in the audit log, ADR-0420).
 
 ### Changed
+- The App Store's 22 LinuxServer.io apps (BookStack, transmission, Sonarr, Nextcloud and the others) are
+  pinned and pulled as `ghcr.io/linuxserver/<name>`, with the same tags and digests, instead of through
+  `lscr.io`, LinuxServer's redirector, whose image downloads did not complete on the dev device's network. An app
+  installed from `lscr.io` stays that app: one installed from a tag is offered the pinned GHCR image
+  as its update, and its rollback returns to the image it ran (ADR-0425).
 - The supervisor keeps its whole data directory (the database, unless `UNOS_DB_PATH` names another
   file, its JWT secret, the audit log, the state files, the stored certificates and the backups)
   where `UNOS_DATA_DIR` names, `/data` by default as before, and refuses to start when the value is

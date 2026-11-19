@@ -1509,7 +1509,8 @@ creation time.
 
 - **Pull**: enter an image name such as `nginx:latest` (without a tag, Docker
   pulls `latest`) and click **Pull**. A large image can take several minutes;
-  the image is listed once Docker has it.
+  the image is listed once Docker has it. Any registry is accepted, `lscr.io`
+  too; should its downloads stall, `ghcr.io/linuxserver/<name>` is the same image.
 - **Remove**: click the bin of an image and confirm. The image goes with all
   its tags, and only if no container uses it, running or stopped: otherwise the
   dialog names the containers that use it, and the image keeps its tags. Remove
@@ -1580,7 +1581,10 @@ reason and no **Install**: the server refuses its install before it downloads an
 Every app's image is pinned: UNOS installs the version that its catalog names
 (the version on the app's card and in its details), by its digest, whatever
 the publisher's tags name later. A newer UNOS that pins a newer version offers
-it as an update (see [Updating an App](#updating-an-app)).
+it as an update (see [Updating an App](#updating-an-app)). LinuxServer.io's
+images come from GitHub's registry, `ghcr.io/linuxserver/<name>`, where
+LinuxServer publishes them, not through `lscr.io`, its redirector to the same
+images, whose downloads did not complete on the network of UNOS's test device.
 
 Only one app installs at a time: while an install runs, the App Store offers
 no other install until it has ended.
@@ -1829,7 +1833,11 @@ An installed app can be updated in place when a newer UNOS brings a catalog
 that pins newer images for it: its card on the **Installed** tab then shows
 **Update to** and the version. Every app of the catalog pins its images by
 digest; an app installed from a floating tag (`latest`) before its catalog
-pinned it is offered the pinned version the same way.
+pinned it is offered the pinned version the same way. An app installed from
+`lscr.io/linuxserver/<name>` is still that app: with a tag it is offered the
+pinned `ghcr.io/linuxserver/<name>` image, and with the digest that the catalog
+pins it already runs that image and is offered nothing. **Roll back** returns it
+to the image it ran, under its `lscr.io` name, without a download.
 
 **Update to** opens a dialog that shows, before anything changes:
 
