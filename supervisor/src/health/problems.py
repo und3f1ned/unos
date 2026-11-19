@@ -37,24 +37,25 @@ def _utc_now() -> str:
 class Problem(BaseModel):
     """A problem that one pass of a check found."""
 
-    # One problem of a kind per pool, disk or task: "<kind>:<the pool, disk or task id>".
-    key: str
-    severity: Severity
-    # What the web UI says of it, in the language of the page, with the subject: pool_unmounted,
-    # pool_degraded, pool_read_only, pool_low_space, disk_failed, disk_test_failed, task_failed,
-    # task_missed, volume_quota_80, volume_quota_90, volume_quota_95, app_memory, app_cpu, app_oom,
-    # shutdown_scheduled, shutdown_postponed, shutdown_idle.
-    kind: str
-    # The pool's name, the disk's path, the task's name, <pool>/<volume>, a container's name, or a
-    # shutdown's time on the host's clock ("23:00 (Europe/Berlin)").
-    subject: str
-    title: str  # English: the title of the alert
-    detail: str  # English: the text of the alert
-    since: str = Field(default_factory=_utc_now)  # when it was found, in ISO 8601 with the UTC offset
+    # One problem of a kind per pool, disk, task, volume, container or shutdown.
+    key: str = Field(description="What tells it apart: its kind and what it is of, such as disk_failed:/dev/sda.")
+    severity: Severity = Field(description="error or warning.")
+    # What the web UI says of it, in the language of the page, with the subject.
+    kind: str = Field(description=(
+        "What it is: pool_unmounted, pool_degraded, pool_read_only, pool_low_space, disk_failed, disk_test_failed, "
+        "task_failed, task_missed, volume_quota_80, volume_quota_90, volume_quota_95, app_memory, app_cpu, app_oom, "
+        "shutdown_scheduled, shutdown_postponed or shutdown_idle."))
+    subject: str = Field(description=(
+        "The pool's name, the disk's path, the task's name, <pool>/<volume>, a container's name, or a shutdown's "
+        "time on the host's clock, such as 23:00 (Europe/Berlin)."))
+    title: str = Field(description="The title of its alert, in English.")
+    detail: str = Field(description="The text of its alert, in English.")
+    since: str = Field(default_factory=_utc_now, description="When it was found, in ISO 8601 with the UTC offset.")
     # How far a problem that grows in steps has gone, such as the level of its quota that a volume
     # has reached (80, 90, 95: ADR-0387); 0 for the others. A problem found again with a higher stage
     # is alerted again, one with a lower stage is not. The web UI says it through the kind.
-    stage: int = Field(default=0, exclude=True)
+    stage: int = Field(default=0, exclude=True, description=(
+        "How far a problem that grows in steps has gone, such as a volume's level of its quota; 0 for the others."))
 
 
 # The problems of each source, by key; replaced whole by each update, so that a reader needs no lock.

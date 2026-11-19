@@ -31,7 +31,7 @@ from typing import TYPE_CHECKING, Literal, Optional
 
 import psutil
 from fastapi import HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
 
 from .. import host
 from ..audit.router import log_action
@@ -116,54 +116,84 @@ FindingKind = Literal[
 
 class Finding(BaseModel):
     """One reason why the host is not idle, or why a scheduled shutdown waits."""
-    kind: FindingKind
-    # A task's or an app's name, a pool's path, a client's address, a user, a disk.
-    subject: Optional[str] = None
-    # The pages open (web_session), the bytes moved since the last pass (disk_activity).
-    amount: Optional[int] = None
-    # English: why something could not be read, or the RTC's problem (wake_alarm).
-    detail: Optional[str] = None
+    kind: FindingKind = Field(description=(
+        "What it is: an open page of the web UI (web_session), a login session on the host, an SMB or NFS client, "
+        "activity on a disk, a running job (task, task_due, backup, restore, scrub, balance, disk_replace, "
+        "app_install, app_update, app_rollback, offsite, share_repair, update), a wake alarm that the RTC does not "
+        "hold (wake_alarm), or something that could not be read (unreadable)."))
+    subject: Optional[str] = Field(None, description=(
+        "Whom or what it concerns, such as a task's, an app's or a share's name, a pool's path, a client's address, "
+        "a user or a disk; null for none."))
+    amount: Optional[int] = Field(None, description=(
+        "The pages open (web_session) or the bytes moved since the last pass (disk_activity); null for the others."))
+    detail: Optional[str] = Field(None, description=(
+        "In English: why something could not be read (unreadable), or the wake alarm's problem (wake_alarm); null "
+        "for the others."))
 
 
 class RtcState(BaseModel):
     """Whether the RTC can wake the host, why not, and the alarm it holds."""
-    available: bool
-    reason: Optional[str] = None
-    alarm: Optional[UtcDatetime] = None
+    available: bool = Field(description=(
+        "Whether the RTC rtc0 can wake the host: it exists, has a wake alarm, and its clock is within 5 minutes of "
+        "the system clock."))
+    reason: Optional[str] = Field(None, description="Why it cannot, in English; null when it can.")
+    alarm: Optional[UtcDatetime] = Field(None, description="The wake alarm it holds, in UTC; null when none is set.")
 
 
 class ShutdownSchedule(BaseModel):
-    enabled: bool
-    time: str  # HH:MM on the host's clock
-    next: Optional[UtcDatetime] = None
-    state: Literal["off", "planned", "announced", "postponed", "issued"]
-    held_by: list[Finding] = []
+    """The scheduled shutdown."""
+    enabled: bool = Field(description="Whether the scheduled shutdown is on.")
+    time: str = Field(description="Its time, HH:MM on the host's clock.")
+    next: Optional[UtcDatetime] = Field(None, description=(
+        "When the host shuts down next at the earliest, in UTC; null while the scheduled shutdown is off."))
+    state: Literal["off", "planned", "announced", "postponed", "issued"] = Field(description=(
+        "off; planned; announced: its problem is out, 10 minutes ahead; postponed: a running job holds it; issued: "
+        "the host shuts down at next."))
+    held_by: list[Finding] = Field([], description="What holds it while it is postponed; none otherwise.")
 
 
 class WakeSchedule(BaseModel):
-    enabled: bool
-    time: str
-    # None while the wake is off or the RTC cannot wake the host: no wake is promised.
-    next: Optional[UtcDatetime] = None
-    rtc: RtcState
+    """The wake by the RTC's wake alarm."""
+    enabled: bool = Field(description="Whether the wake is on.")
+    time: str = Field(description="Its time, HH:MM on the host's clock.")
+    next: Optional[UtcDatetime] = Field(None, description=(
+        "The next wake, in UTC; null while the wake is off or the RTC cannot wake the host: no wake is promised."))
+    rtc: RtcState = Field(description="The RTC and the wake alarm it holds.")
 
 
 class IdleState(BaseModel):
-    enabled: bool
-    minutes: int
-    idle: bool
-    # While the idle shutdown is on and the host idles: since when, and when it shuts down at the earliest.
-    since: Optional[UtcDatetime] = None
-    shutdown_at: Optional[UtcDatetime] = None
-    found: list[Finding] = []
+    """Whether the host is idle, and the idle shutdown."""
+    enabled: bool = Field(description="Whether the idle shutdown is on.")
+    minutes: int = Field(description="The idle minutes after which the idle shutdown shuts the host down.")
+    idle: bool = Field(description="Whether the host is idle now: found is empty; also while the idle shutdown is off.")
+    since: Optional[UtcDatetime] = Field(None, description=(
+        "Since when the host has been idle, in UTC; null while the idle shutdown is off or the host is not idle, "
+        "and until a pass of the power schedule has seen it idle."))
+    shutdown_at: Optional[UtcDatetime] = Field(None, description=(
+        "When the idle shutdown shuts the host down at the earliest, in UTC; null when since is null."))
+    found: list[Finding] = Field([], description="Why the host is not idle; none when it is.")
 
 
 class PowerSchedule(BaseModel):
-    """GET /power/schedule (ADR-0407)."""
-    timezone: str
-    shutdown: ShutdownSchedule
-    wake: WakeSchedule
-    idle: IdleState
+    """The scheduled shutdown, the wake and the idle shutdown of the power settings, as they stand now."""
+    # GET /power/schedule (ADR-0407).
+
+    model_config = ConfigDict(json_schema_extra={"examples": [{
+        "timezone": "Europe/Berlin",
+        "shutdown": {"enabled": True, "time": "23:00", "next": "2026-11-19T22:00:00Z", "state": "planned",
+                     "held_by": []},
+        "wake": {"enabled": True, "time": "07:00", "next": "2026-11-20T06:00:00Z",
+                 "rtc": {"available": True, "reason": None, "alarm": "2026-11-20T06:00:00Z"}},
+        "idle": {"enabled": False, "minutes": 30, "idle": False, "since": None, "shutdown_at": None, "found": [
+            {"kind": "web_session", "subject": None, "amount": 1, "detail": None},
+            {"kind": "smb_client", "subject": "192.0.2.15", "amount": None, "detail": None},
+        ]},
+    }]})
+
+    timezone: str = Field(description="The host's time zone, on whose clock the times are; UTC when it has no name.")
+    shutdown: ShutdownSchedule = Field(description="The scheduled shutdown: its time, its next instant and its state.")
+    wake: WakeSchedule = Field(description="The wake: its time, its next instant and the RTC.")
+    idle: IdleState = Field(description="The idle shutdown, and whether the host is idle now and why not.")
 
 
 class _Unreadable(Exception):
