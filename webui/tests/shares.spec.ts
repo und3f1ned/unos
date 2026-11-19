@@ -23,6 +23,7 @@ import {
   smbStatus,
   type FakeUser,
 } from './shares-fakes';
+import { fakeIscsiApi } from './iscsi-fakes';
 
 const POOL_ROOT_MESSAGE =
   'Share a folder inside the pool or a volume: the top level of a pool holds app data (apps/), volumes and snapshots';
@@ -684,13 +685,15 @@ test.describe('SMB shares page (fake data)', () => {
     });
   });
 
-  test('the SMB and NFS tabs work as tabs, also with the keyboard', async ({ authenticatedPage: page }) => {
+  test('the SMB, NFS and iSCSI tabs work as tabs, also with the keyboard', async ({ authenticatedPage: page }) => {
     await fakeSmbApi(page, { users: fakeUsers(), shares: [fakeShare('docs', { available: true })] });
+    await fakeIscsiApi(page);
     await page.goto('/shares');
 
     const tablist = page.getByRole('tablist', { name: 'Share types' });
     const smb = tablist.getByRole('tab', { name: 'SMB', exact: true });
     const nfs = tablist.getByRole('tab', { name: 'NFS', exact: true });
+    const iscsi = tablist.getByRole('tab', { name: 'iSCSI', exact: true });
     const panel = page.getByRole('tabpanel');
     await expect(smb).toHaveAttribute('aria-selected', 'true');
     await expect(panel).toHaveAccessibleName('SMB');
@@ -703,6 +706,8 @@ test.describe('SMB shares page (fake data)', () => {
     // Only the selected tab is in the Tab order.
     await expect(smb).toHaveAttribute('tabindex', '0');
     await expect(nfs).toHaveAttribute('tabindex', '-1');
+    await expect(iscsi).toHaveAttribute('aria-controls', panelId);
+    await expect(iscsi).toHaveAttribute('tabindex', '-1');
 
     // The arrow keys select the next tab and wrap around; Home and End select the first and last.
     await smb.focus();
@@ -715,16 +720,22 @@ test.describe('SMB shares page (fake data)', () => {
     await expect(panel).toHaveAccessibleName('NFS');
     await expect(panel.getByRole('heading', { name: 'NFS exports', exact: true })).toBeVisible();
     await page.keyboard.press('ArrowRight');
+    await expect(iscsi).toBeFocused();
+    await expect(panel).toHaveAccessibleName('iSCSI');
+    await expect(panel.getByRole('heading', { name: 'iSCSI targets', exact: true })).toBeVisible();
+    await page.keyboard.press('ArrowRight');
     await expect(smb).toBeFocused();
     await expect(panel).toHaveAccessibleName('SMB');
+    await page.keyboard.press('ArrowLeft');
+    await expect(iscsi).toBeFocused();
     await page.keyboard.press('ArrowLeft');
     await expect(nfs).toBeFocused();
     await page.keyboard.press('Home');
     await expect(smb).toBeFocused();
     await expect(smb).toHaveAttribute('aria-selected', 'true');
     await page.keyboard.press('End');
-    await expect(nfs).toBeFocused();
-    await expect(panel.getByRole('heading', { name: 'NFS exports', exact: true })).toBeVisible();
+    await expect(iscsi).toBeFocused();
+    await expect(panel.getByRole('heading', { name: 'iSCSI targets', exact: true })).toBeVisible();
   });
 
   test('share cards show the state, the access and how to connect', async ({ authenticatedPage: page }) => {
@@ -1429,7 +1440,7 @@ test.describe('In Russian', () => {
     await expect(page.locator('html')).toHaveAttribute('lang', 'ru');
     await expect(page.getByRole('heading', { level: 1 })).toHaveText('Общие папки');
     // The names of the protocols are the same in every language.
-    await expect(page.getByRole('tablist', { name: 'Виды общего доступа' }).getByRole('tab')).toHaveText(['SMB', 'NFS']);
+    await expect(page.getByRole('tablist', { name: 'Виды общего доступа' }).getByRole('tab')).toHaveText(['SMB', 'NFS', 'iSCSI']);
     await expect(page.getByRole('heading', { name: 'Общие папки SMB' })).toBeVisible();
     await expect(
       page.getByText(

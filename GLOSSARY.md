@@ -87,8 +87,8 @@ Avoid: iptables, the IPv6 inbound filter (the dev device's own nftables table, A
 
 **Local networks**: The private, link-local and unique-local networks of SMB's `hosts allow`
 (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 100.64.0.0/10, 169.254.0.0/16, fc00::/7, fe80::/10),
-which SMB answers, NFS exports may name and UNOS's firewall rules let reach the web UI, SSH and SMB
-(ADR-0095, ADR-0416). Avoid: LAN when the networks are meant (a LAN can also use global IPv6
+which SMB answers, NFS exports may name and UNOS's firewall rules let reach the web UI, SSH, SMB
+and iSCSI (ADR-0095, ADR-0416, ADR-0418). Avoid: LAN when the networks are meant (a LAN can also use global IPv6
 addresses).
 
 **Scheduled task**: A task of System > Scheduler that runs at the times of its schedule on the
@@ -310,6 +310,25 @@ and keeps every other line (ADR-0292, ADR-0293). Avoid: share (an SMB share), NF
 
 **Export file**: A file that exportfs reads: `/etc/exports`, then each `*.exports` file of
 `/etc/exports.d` (ADR-0292). Avoid: exports table (the kernel's), etab.
+
+**iSCSI target**: A disk that the host's kernel (LIO) offers over the network to the initiators an
+administrator allows, with CHAP: UNOS's targets are made on Shares > iSCSI, each with one LUN, and
+are named by an IQN that starts with `iqn.2003-01.org.linux-iscsi.unos:`. UNOS makes the kernel's
+state that of its database at every start and change (ADR-0418). Avoid: iSCSI share, volume (the
+pool's folder that holds the LUN), portal (one address and port where targets listen).
+
+**LUN**: The disk of an iSCSI target, its logical unit 0: a sparse file
+`<volume>/.unos-iscsi/<name>.lun` of the size the administrator chose, served by LIO's fileio
+backstore; its folder is root's and immutable while it holds one (ADR-0418). Avoid: image, zvol.
+
+**Initiator**: The iSCSI client of a computer, named by its own IQN (or an `eui.` or `naa.` name),
+which logs in to a target. Only the initiators allowed for a target log in, each with the target's
+CHAP user name and secret (ADR-0418). Avoid: client (an NFS client), iSCSI user.
+
+**CHAP secret**: The shared secret with which an initiator proves itself to a target (and, with
+mutual CHAP, a second one with which the target proves itself to the initiator): 12 to 16
+characters, kept in `/data/iscsi_secrets.json` and shown only once, when it is made (ADR-0418).
+Avoid: iSCSI password.
 
 ## Users and access
 
@@ -601,6 +620,6 @@ scripts (ADR-0212). Avoid: .env, secrets.env (`/etc/unos/secrets.env` belongs to
 milestone, release.
 
 **Host-level change**: A change whose effect reaches the host: disks, pools, Samba and SMB
-accounts, host files such as fstab, Docker apps and containers, the host's network, power or
-settings, whatever code path does it. It is done only after a check on the dev device and a
+accounts, the kernel's iSCSI targets, host files such as fstab, Docker apps and containers, the
+host's network, power or settings, whatever code path does it. It is done only after a check on the dev device and a
 reboot check (ADR-0018). Avoid: backend change.

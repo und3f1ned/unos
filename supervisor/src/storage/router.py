@@ -18,6 +18,7 @@ from ..security.validators import (
     validate_pool_name,
     validate_volume_name,
 )
+from ..shares import iscsi
 from ..shares import service as shares_service
 from . import balances, devices, disks, pools, scrubs, spindown, volume_usage
 from .schemas import (
@@ -394,11 +395,12 @@ async def mount_pool_endpoint(request: Request, name: PoolName, user: User = Dep
     This imports a pool found on the host's disks, too. A pool that is
     mounted and kept already is left as it is. The pool's apps that could
     not start without it are started in the background; the response does
-    not wait for them. Its SMB shares are served again before it answers.
+    not wait for them. Its SMB shares and iSCSI targets are served again before it
+    answers.
     The audit log gets pool_mounted when it mounted the pool or wrote its
     fstab entry.
     \f
-    ADR-0283, ADR-0248, ADR-0402. A mountpoint that holds files is refused: they would be hidden.
+    ADR-0283, ADR-0248, ADR-0418, ADR-0402. A mountpoint that holds files is refused: they would be hidden.
     """
     validated_name = validate_pool_name(name)
 
@@ -408,6 +410,9 @@ async def mount_pool_endpoint(request: Request, name: PoolName, user: User = Dep
             AuditAction.POOL_MOUNTED, request, user.username, resource_type="pool", resource_id=validated_name,
             details=f"Mounted the pool {validated_name}",
         )
+    # The iSCSI targets of the pool's volumes, not served while it was not mounted (ADR-0418).
+    if iscsi.pool_user(validated_name):
+        await iscsi.restore_targets()
     return info
 
 

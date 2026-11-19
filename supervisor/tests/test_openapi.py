@@ -471,6 +471,10 @@ _EMAIL = re.compile(r"[\w.+-]+@([\w-]+(?:\.[\w-]+)+)")
 # otpauth:// (a TOTP secret's URI) names an account, not a host.
 _URL_HOST = re.compile(r"(?i)\b(?!otpauth:)[a-z][a-z0-9+.-]*://(?:[^/@\s]*@)?(\[[^\]]+\]|[^/:?#\s]+)")
 _JWT = re.compile(r"eyJ[\w-]{8,}\.[\w-]{8,}")
+# An iSCSI name (RFC 3720): its naming authority is a domain, reversed. LIO's own authority names
+# the targets of UNOS (ADR-0418), as a public host names no one's NAS.
+_IQN = re.compile(r"(?i)(?<![\w.])iqn\.\d{4}-\d{2}\.([a-z0-9-]+(?:\.[a-z0-9-]+)*)(?::[\w.:-]*)?")
+IQN_AUTHORITIES = {"linux-iscsi.org"}
 
 
 def _documentation_address(text: str) -> bool:
@@ -522,7 +526,12 @@ def text_problems(text: str) -> list[str]:
                 problems.append(f"the URL of {host} carries a secret that is not a placeholder")
         elif not _documentation_host(host):
             problems.append(f"the host {match.group(1)} is not a documentation domain")
-    for match in _HOST_NAME.finditer(_URL_HOST.sub(" ", _EMAIL.sub(" ", text))):
+    for match in _IQN.finditer(text):
+        authority = ".".join(reversed(match.group(1).lower().split(".")))
+        if not any(authority == a or authority.endswith("." + a) for a in IQN_AUTHORITIES) \
+                and not _documentation_host(authority):
+            problems.append(f"the iSCSI name's naming authority {authority} is not a documentation domain")
+    for match in _HOST_NAME.finditer(_IQN.sub(" ", _URL_HOST.sub(" ", _EMAIL.sub(" ", text)))):
         if not _documentation_host(match.group(1)) and match.group(1).lower() not in SECRET_PATH_HOSTS:
             problems.append(f"the host name {match.group(1)} is not a documentation domain")
     for match in _QUERY_SECRET.finditer(text):
@@ -880,6 +889,11 @@ class TestTheChecks:
             "the URL of hooks.slack.com carries a secret that is not a placeholder",
             "the URL's secret= is not a placeholder",
         ]
+        assert value_problems({"initiator": "iqn.1993-08.org.debian:01:5f3c0a1b2c3d"}) == [
+            "the iSCSI name's naming authority debian.org is not a documentation domain",
+        ]
+        assert value_problems({"target": "iqn.2003-01.org.linux-iscsi.unos:backup",
+                               "initiator": "iqn.2026-11.com.example:client-1"}) == []
         assert value_problems({"address": "192.0.2.10/24", "netmask": "255.255.255.0", "v6": "2001:db8::10",
                                "lan": "10.0.0.20", "ula": "fd00::20", "image": "lscr.io/linuxserver/x:1",
                                "file": "backup_2026-11-18.tar.gz", "gateway": "host.docker.internal",

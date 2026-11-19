@@ -62,7 +62,9 @@ logger = logging.getLogger(__name__)
 # ADR-0331), security/firewall.py (ss: the ports that sshd listens on, ADR-0416) and
 # notifications/router.py (curl, which sends a notification channel's
 # request from the host's network when the container connects nowhere, and ends
-# itself at its --max-time: ADR-0336). cat, od (the export files: shares/nfs.py), test,
+# itself at its --max-time: ADR-0336) and shares/iscsi.py (modprobe, mount and mountpoint for LIO's
+# modules and configfs; lsattr and chattr, which keep the folder of the LUN files immutable: ADR-0418).
+# cat, od (the export files: shares/nfs.py), stat, truncate, grep and find (shares/iscsi.py), test,
 # mkdir, rmdir, rm, find, sync, sleep, timeout, hostname, readlink (the time zone:
 # scheduler/router.py, ADR-0266), df (apps/preflight.py) and sh (also
 # apps/hardware.py, with cat: the device
@@ -73,6 +75,9 @@ HOST_TOOLS: dict[str, str] = {
     "btrfs": "btrfs-progs",
     "mkfs.btrfs": "btrfs-progs",
     "chattr": "e2fsprogs",
+    "lsattr": "e2fsprogs",
+    "modprobe": "kmod",
+    "mountpoint": "util-linux",
     "findmnt": "util-linux",
     "lsns": "util-linux",
     "lsblk": "util-linux",

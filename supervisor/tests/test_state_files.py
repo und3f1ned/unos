@@ -36,6 +36,7 @@ from src.updates.schemas import UpdateConfig
 health = importlib.import_module("src.health.router")
 notifications = importlib.import_module("src.notifications.router")
 offsite = importlib.import_module("src.offsite.service")
+iscsi = importlib.import_module("src.shares.iscsi")
 volume_usage = importlib.import_module("src.storage.volume_usage")
 power = importlib.import_module("src.power.router")
 scheduler = importlib.import_module("src.scheduler.router")
@@ -275,6 +276,10 @@ STATE_FILES = [
     StateFile("offsite_secrets.json", offsite, "SECRETS_FILE",
               lambda: offsite.write_secrets(offsite.Secrets(password="a password of the copies")),
               offsite.load_secrets, offsite.Secrets()),
+    # The CHAP secrets of the iSCSI targets (ADR-0418).
+    StateFile("iscsi_secrets.json", iscsi, "SECRETS_FILE",
+              lambda: iscsi.write_secrets({"0123abcd" * 4: iscsi.Secret("Chap-secret-123", "Mutual-secret-4")}),
+              iscsi.load_secrets, {}),
     # The history of the volumes' use, written only at shutdown (storage.volume_usage).
     StateFile("volume_usage.json", volume_usage, "HISTORY_FILE", _save_volume_usage,
               lambda: volume_usage.history_of("3a1c9f6e-1234-4c3b-9b0a-8f3c2a1b4c5d", 256), []),

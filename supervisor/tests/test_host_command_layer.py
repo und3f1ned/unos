@@ -26,6 +26,9 @@ MODULES = sorted(
         *(SRC / "logs").glob("*.py"),
         SRC / "shares" / "nfs.py",
         SRC / "shares" / "exports.py",
+        # The iSCSI targets (ADR-0418).
+        SRC / "shares" / "iscsi.py",
+        SRC / "shares" / "iscsi_router.py",
         *(SRC / "network").glob("*.py"),
         *(SRC / "power").glob("*.py"),
     ]
@@ -86,7 +89,7 @@ def test_the_modules_are_there():
     """A module that moved would leave the test without its subject."""
     names = {str(path.relative_to(SRC)) for path in MODULES}
     assert {"system/router.py", "security/router.py", "security/firewall.py", "logs/router.py",
-            "shares/nfs.py", "shares/exports.py"} <= names
+            "shares/nfs.py", "shares/exports.py", "shares/iscsi.py", "shares/iscsi_router.py"} <= names
 
 
 class TestTheCheck:

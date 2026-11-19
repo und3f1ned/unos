@@ -11,7 +11,7 @@ export const en = {
 	'firewall.notInstalled': 'Not installed',
 	'firewall.configure': 'Configure',
 	'firewall.description':
-		"The host's ufw firewall decides which computers reach the services of the NAS. Before it turns the firewall on, UNOS lets the local networks reach the web UI, SSH and SMB.",
+		"The host's ufw firewall decides which computers reach the services of the NAS. Before it turns the firewall on, UNOS lets the local networks reach the web UI, SSH, SMB and iSCSI.",
 	'firewall.missing':
 		'ufw is not installed on the host. Install the package ufw on the host (sudo apt install ufw), then open this page again.',
 	'firewall.loadFailed': 'The firewall could not be read',
@@ -31,7 +31,7 @@ export const en = {
 	'firewall.ipv6': 'IPv6',
 	'firewall.route': 'Routed',
 	'firewall.unosHint':
-		'UNOS keeps its rules, which let the local networks reach the web UI, SSH, SMB and network discovery: they have no Delete.',
+		'UNOS keeps its rules, which let the local networks reach the web UI, SSH, SMB, iSCSI and network discovery: they have no Delete.',
 	'firewall.docker':
 		"Over IPv4, ufw does not filter the ports that Docker publishes, those of the web UI and of the apps on Docker's networks; over IPv6 it does, and so it does for apps on the host's network, such as Home Assistant: their ports need rules.",
 	'firewall.deleteRule': 'Delete rule {n}',
@@ -55,7 +55,7 @@ export const en = {
 	// Turning it on.
 	'firewall.enableTitle': 'Turn the firewall on?',
 	'firewall.enableRules':
-		'First UNOS adds rules that let the local networks reach the web UI (ports 80 and 443), SSH, SMB (445) and network discovery: {networks}.',
+		'First UNOS adds rules that let the local networks reach the web UI (ports 80 and 443), SSH, SMB (445), iSCSI (3260) and network discovery: {networks}.',
 	'firewall.enableRevert': {
 		one: 'Then the firewall goes on, and it is turned off again after {n} second unless you keep it. Before you keep it, check from another computer that SSH and your shares still answer.',
 		other:
@@ -124,7 +124,7 @@ export const ru: Translation<typeof en> = {
 	'firewall.notInstalled': 'Не установлен',
 	'firewall.configure': 'Настроить',
 	'firewall.description':
-		'Брандмауэр ufw хоста решает, какие компьютеры достучатся до служб NAS. Прежде чем включить его, UNOS разрешает локальным сетям доступ к веб-интерфейсу, SSH и SMB.',
+		'Брандмауэр ufw хоста решает, какие компьютеры достучатся до служб NAS. Прежде чем включить его, UNOS разрешает локальным сетям доступ к веб-интерфейсу, SSH, SMB и iSCSI.',
 	'firewall.missing':
 		'На хосте не установлен ufw. Установите на хосте пакет ufw (sudo apt install ufw) и откройте эту страницу снова.',
 	'firewall.loadFailed': 'Не удалось прочитать брандмауэр',
@@ -144,7 +144,7 @@ export const ru: Translation<typeof en> = {
 	'firewall.ipv6': 'IPv6',
 	'firewall.route': 'Маршрутизация',
 	'firewall.unosHint':
-		'Свои правила, которые открывают локальным сетям веб-интерфейс, SSH, SMB и обнаружение в сети, UNOS сохраняет: удалить их нельзя.',
+		'Свои правила, которые открывают локальным сетям веб-интерфейс, SSH, SMB, iSCSI и обнаружение в сети, UNOS сохраняет: удалить их нельзя.',
 	'firewall.docker':
 		'По IPv4 ufw не фильтрует порты, которые публикует Docker: порты веб-интерфейса и приложений в сетях Docker. По IPv6 фильтрует, как и порты приложений в сети хоста, например Home Assistant: для них нужны правила.',
 	'firewall.deleteRule': 'Удалить правило {n}',
@@ -167,7 +167,7 @@ export const ru: Translation<typeof en> = {
 
 	'firewall.enableTitle': 'Включить брандмауэр?',
 	'firewall.enableRules':
-		'Сначала UNOS добавит правила, которые открывают локальным сетям веб-интерфейс (порты 80 и 443), SSH, SMB (445) и обнаружение в сети: {networks}.',
+		'Сначала UNOS добавит правила, которые открывают локальным сетям веб-интерфейс (порты 80 и 443), SSH, SMB (445), iSCSI (3260) и обнаружение в сети: {networks}.',
 	'firewall.enableRevert': {
 		one: 'Затем брандмауэр включится и через {n} секунду снова выключится, если вы не сохраните изменение. Прежде чем сохранить, проверьте с другого компьютера, что SSH и общие папки по-прежнему отвечают.',
 		few: 'Затем брандмауэр включится и через {n} секунды снова выключится, если вы не сохраните изменение. Прежде чем сохранить, проверьте с другого компьютера, что SSH и общие папки по-прежнему отвечают.',
