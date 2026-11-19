@@ -17,6 +17,7 @@
 	import type { Snippet } from 'svelte';
 	import { X } from 'lucide-svelte';
 	import { onDestroy, untrack } from 'svelte';
+	import { on } from 'svelte/events';
 	import { t } from '$lib/i18n';
 
 	type Props = {
@@ -146,12 +147,15 @@
 
 {#if open}
 	<!-- A dialog taller than the window scrolls with the overlay, so that its buttons stay
-	     reachable; my-auto centers it while it fits (items-center would cut off its top). -->
+	     reachable; my-auto centers it while it fits (items-center would cut off its top). The
+	     overlay listens for the click itself, not through Svelte's delegated listener at the
+	     app's root, as the drawer's scrim of +layout.svelte does: iOS Safari makes a tap a click
+	     only where an element listens, and a click that does not bubble closes it too. -->
 	<div
 		bind:this={overlay}
 		use:inStack
 		class="modal-overlay items-start overflow-y-auto p-4 outline-none"
-		onclick={handleBackdropClick}
+		{@attach (node) => on(node, 'click', handleBackdropClick)}
 		role="dialog"
 		aria-modal="true"
 		aria-labelledby={titleId}
