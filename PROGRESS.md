@@ -158,6 +158,16 @@ significant step. Features and their state live in `feature-list.json`, decision
   mdadm and five other unused packages (`deploy.no-unused-mdadm`, ADR-0413). The pinned images
   pass; the others wait for a spare disk, the owner's BPI-F3 and a fresh install, and
   transmission's real update for a pull that completes on the device's network.
+- On 2026-11-18 to 19 (Log): the fourteenth batch on the branch `mvp.batch-14`, merged into `main`
+  with its record: SMART of a disk attached after the supervisor started, through a node the
+  supervisor makes in its own /dev (`storage.hot-plugged-disks-smart`, ADR-0414), BookStack,
+  Paperless-ngx and Linkwarden with their database or broker as companions
+  (`apps.catalog-companions`, ADR-0415), the code paths of floating images removed
+  (`apps.no-floating-image-paths`, after ADR-0410), and the system, security, logs and NFS
+  routers on the host only through host.py with the firewall as the host's ufw, turned on only
+  with a revert armed (`architecture.host-command-layer`, `security.host-firewall`, ADR-0416).
+  The host-command layer and the firewall pass; the others wait for a USB disk, the owner's
+  install of the three apps and a pull of transmission that completes.
 - On the device the NFS server runs (nfs-server, rpcbind.socket and rpcbind, enabled since
   2026-11-08, ADR-0303) and exports nothing for now; over IPv6 only LAN sources reach it
   (ADR-0301). avahi-daemon and wsdd2 run (network discovery), and nmbd is disabled since
@@ -208,7 +218,7 @@ significant step. Features and their state live in `feature-list.json`, decision
 
 ## Dev device
 
-State on 2026-11-18, 20:10 UTC. A Banana Pi BPI-W3 (ArmSoM W3, Rockchip RK3588, 8 GB), running
+State on 2026-11-19, 00:30 UTC. A Banana Pi BPI-W3 (ArmSoM W3, Rockchip RK3588, 8 GB), running
 Armbian's community image for `armsom-w3`, upgraded on 2026-11-15 from 26.2.0-trunk.151 to
 26.11.0-trunk.133 (Debian 13, kernel 6.1.172-vendor-rk35xx);
 its address and logins are in `dev.env` (ADR-0212). This journal called it a UGREEN board, after
@@ -219,13 +229,20 @@ the UGREEN firmware on its eMMC, until the owner set that right on 2026-11-15 (A
   since boot, its own wear estimate 0 to 10%. Nothing writes to it.
 - SSH by key only, root by the workstation's key `~/.ssh/unos_dev_ed25519`; root's and the UNOS
   administrator's passwords were rotated and live only in `dev.env` (ADR-0226).
-- Runs e5d531a of the branch `mvp.batch-13` (the thirteenth batch, ADR-0410 to ADR-0413), merged
-  into `main` with the record of its device check, whose commits on top of it change no runtime
-  file. Deployed on 2026-11-18 at 18:57 to 18:58 UTC (SD MiB sync 4.348, build-supervisor 14.379,
-  build-webui 20.816, up 5.883, check.sh 0.660). A reboot from the API at 19:12 UTC (all
-  containers healthy by 19:14). Transmission still runs its image of `latest`: its update to the
-  pinned 4.1.4-r0-ls370 failed twice at the pull. The device's users are `admin` and `test`
-  (since 2026-01-24).
+- Runs 977b364 of the branch `mvp.batch-14` (the fourteenth batch, ADR-0414 to ADR-0416, and the
+  fix of the firewall's FORWARD policies), merged into `main` with the record of its device check,
+  whose commits on top of it change no runtime file. cbe437c was deployed on 2026-11-18 at 22:11
+  to 22:13 UTC (SD MiB sync 4.234, build-supervisor 14.828, build-webui 20.387, up 5.898, check.sh
+  0.254), a reboot from the API at 22:38 UTC (all containers healthy by 22:41), and the fix on
+  2026-11-19 at 00:24 UTC (sync 0.457, build-supervisor 13.652, up 3.305). ufw 0.36.2-9 is
+  installed and inactive, its files holding UNOS's 14 rules, and LOGLEVEL off. Transmission still
+  runs its image of `latest`: its update to the pinned 4.1.4-r0-ls370 failed three times at the
+  pull. The device's users are `admin` and `test` (since 2026-01-24).
+- Before it, e5d531a of the branch `mvp.batch-13` (the thirteenth batch, ADR-0410 to ADR-0413),
+  merged into `main` with the record of its device check, whose commits on top of it change no
+  runtime file. Deployed on 2026-11-18 at 18:57 to 18:58 UTC (SD MiB sync 4.348, build-supervisor
+  14.379, build-webui 20.816, up 5.883, check.sh 0.660). A reboot from the API at 19:12 UTC (all
+  containers healthy by 19:14).
 - Before it, 09e792a of the branch `mvp.batch-12` (the twelfth batch, ADR-0406 to ADR-0409), merged
   into `main` with the record of its device check, whose commits on top of it change no runtime
   file. Deployed on 2026-11-18 at 14:55 to 14:56 UTC (SD MiB sync 4.902, build-supervisor 15.219,
@@ -622,6 +639,40 @@ Open owner actions:
     API, the SD MiB and the audit log meanwhile.
 
 ## Log
+
+### 2026-11-18: A fourteenth batch: hot-plugged SMART, companions, no floating images, host commands and firewall
+
+- Four builders in parallel worktrees from main 140adad, five entries, each reviewed in a fresh
+  context by its own builder, which fixed its findings. Recorded, not fixed: UNOS's firewall rules
+  come after the host's own; an address outside the LAN gets a warning before Enable, not a
+  refusal; Disable is not refused while a revert runs; the AST check does not look inside
+  run_in_container's argv; with ufw on, containers that reach the host's ports through
+  host-gateway (Open WebUI to Ollama, Zigbee2MQTT to Mosquitto) may be blocked
+  (`security.host-firewall`, `architecture.host-command-layer`); the companions' containers make
+  small writes into their layers at a start, and Mosquitto's template binds an empty folder over
+  its config (`apps.catalog-companions`); a ValueError at an install ends the job as a generic
+  failure, and ADR-0408's sentence on floating apps is stale (`apps.no-floating-image-paths`);
+  `scenario.sh smart` runs outside the wrapper (`storage.hot-plugged-disks-smart`); ADR-0002 still
+  names lm-sensors. Flaky: test_ws_stats's read of the listed processes, and a hang in a `make
+  check` run that a rerun passed.
+- Merged as ADR-0414 to ADR-0416 in that order. The host-command layer's SMART half is ADR-0414's:
+  smartctl stays in the container and makes the host's node. A disk removal already holds a
+  scheduled shutdown (ADR-0407's btrfs jobs). `make check` 10075 passed, 124 skipped, 1 xfailed;
+  the full E2E run 1029 passed, 14 skipped.
+- Device check of cbe437c (SD MiB per step in each entry's notes): before a reboot from the API at
+  22:38 UTC, the host's time zone, hostname, scheduled reboot and its cancel, journal and NFS
+  through the API; ufw installed by the check, Enable with its revert, Keep, a rule added and
+  deleted, the revert of an Enable that was not kept, and access from the LAN at every step;
+  SMART and a short self-test of sda; the companions in the catalog, read-only; transmission
+  offered its pinned version. Transmission's update failed at the pull a third time (lscr.io,
+  55.539 MiB of partial layers). After the reboot, with ufw on and a failsafe unit armed: ufw
+  active with its rules, access and check.sh OK, the failsafe removed, Disable; the same reads;
+  `scenario.sh all` (all 12 areas, 23.426 MiB); the audit chain unbroken over 2814 entries. One
+  fault of UNOS: Disable put back ufw's own FORWARD policies, so IPv6's stayed DROP where it had
+  been ACCEPT. Fixed with a test that failed first (977b364: off4 and off6, ADR-0416; `make check`
+  10085 passed) and rechecked on the device on 2026-11-19 after its deploy: Disable and the
+  revert both put back DROP and ACCEPT. Not run: a USB disk attached while UNOS runs, the install
+  of the three apps, a real update and rollback.
 
 ### 2026-11-18: A thirteenth batch: pinned catalog images, pool disks, load check, no mdadm
 
