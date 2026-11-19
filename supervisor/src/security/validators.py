@@ -14,7 +14,6 @@ import os
 import stat
 from collections.abc import Sequence
 from pathlib import Path
-from typing import Optional
 from fastapi import HTTPException
 
 from ..config import get_settings
@@ -64,7 +63,7 @@ TIMEZONE_PATTERN = re.compile(r'^[A-Za-z_][A-Za-z0-9_+-]*(/[A-Za-z_][A-Za-z0-9_+
 
 class ValidationError(Exception):
     """Custom validation error with user-friendly message."""
-    def __init__(self, message: str, field: str = None):
+    def __init__(self, message: str, field: str | None = None):
         self.message = message
         self.field = field
         super().__init__(message)
@@ -98,7 +97,7 @@ def validate_hostname(hostname: str) -> str:
     return hostname
 
 
-def validate_timezone(timezone: str, valid_timezones: Optional[set] = None) -> str:
+def validate_timezone(timezone: str, valid_timezones: set | None = None) -> str:
     """
     Validate a timezone string.
 

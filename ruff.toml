@@ -1,0 +1,89 @@
+# ruff's rules for make lint and the CI workflow's Lint job, which runs make lint (ADR-0425). Rules
+# that find bugs, not style: a finding left in the code carries `# noqa: <code>` with its reason.
+target-version = "py311"
+# The width of the code as it is written; no rule checks it (E501 is not selected), but ruff
+# offers no fix whose line would be wider.
+line-length = 120
+# The repository's tooling runs with the workstation's python3, Python 3.9 or later.
+per-file-target-version = { "scripts/**" = "py39", ".claude/hooks/**" = "py39" }
+
+[lint]
+select = [
+    "F",       # pyflakes: undefined names, unused imports and variables, ...
+    "E4",      # pycodestyle: imports
+    "E7",      # pycodestyle: statements (comparisons to None, True and False, bare except, ...)
+    "E9",      # syntax errors
+    "W605",    # invalid escape sequences, a SyntaxWarning since Python 3.12
+    "B",       # flake8-bugbear
+    "UP",      # pyupgrade, for each file's Python version
+    "S",       # flake8-bandit
+    "PLE",     # pylint's errors
+    "PLW",     # pylint's warnings
+    "RUF",     # ruff's own rules
+    "PGH004",  # a noqa names its codes
+    "T10",     # a debugger call left in the code
+    "LOG",     # the logging module used wrongly (ADR-0398)
+    "FA102",   # a PEP 604 or 585 annotation that Python 3.9 cannot evaluate
+    "PIE794",  # a class field defined twice
+    "PIE796",  # an enum with duplicate values
+    "SIM112",  # an environment variable in lowercase
+    "SIM115",  # a file opened without a context manager
+    "SIM220",  # `a and not a`
+    "SIM221",  # `a or not a`
+    "SIM222",  # `... or True`
+    "SIM223",  # `... and False`
+]
+ignore = [
+    "B904",    # raise ... from inside except: the traceback's wording, not a defect
+    "B905",    # zip() without strict=: the zips pair neighbours or lengths equal or checked before
+    "UP031",   # printf-style formatting: style, and no automatic fix
+    "UP042",   # (str, Enum) to StrEnum changes str() and format() of the members
+    "S101",    # assert: narrows types; Python never runs here with -O
+    "S105",    # hardcoded passwords: names and messages that contain the word
+    "S106",
+    "S107",
+    "S108",    # temporary paths: /tmp, the containers' tmpfs (ADR-0171); the device's /dev/shm (ADR-0016)
+    "S110",    # try-except-pass and -continue: each handler's own choice, not an attack surface
+    "S112",
+    "S603",    # subprocess: every command is an argv list (ADR-0293)
+    "S607",    # a program by name: the host's PATH and the image's
+    "PLW0108", # an unnecessary lambda: style
+    "PLW0603", # global: the modules' state
+    "PLW1510", # subprocess.run without check=: callers read returncode, but not five of
+               # src/updates/updater.py, two of its rollback among them: a fix of behaviour, open
+    "PLW2901", # a loop variable reassigned: the `line = line.strip()` idiom
+    "RUF001",  # ambiguous Unicode: the Russian texts of the web UI's tests
+    "RUF002",
+    "RUF003",
+    "RUF005",  # collection literal concatenation: style
+    "RUF007",  # itertools.pairwise: style
+    "RUF010",  # f-string conversion flags: style
+    "RUF012",  # mutable class attributes: constants of test classes, __table_args__
+    "RUF015",  # next(iter(...)) over [0]: style
+    "RUF022",  # sorted __all__ and __slots__: style
+    "RUF023",
+    "RUF036",  # None at the end of a union: style
+    "RUF043",  # pytest.raises(match=) with a dot that stands for itself
+    "RUF059",  # an unused unpacked variable: style; F841 checks plain assignments
+]
+
+[lint.per-file-ignores]
+# tempfile is pinned and logging configured before the other imports (ADR-0171, ADR-0398).
+"supervisor/src/main.py" = ["E402"]
+# Tests write fixed passwords, temporary files, modes and SQL of their own: bandit's findings there
+# are no attack surface.
+"supervisor/tests/**" = ["S"]
+
+[lint.flake8-bugbear]
+# FastAPI's parameter markers, evaluated once and never changed.
+extend-immutable-calls = [
+    "fastapi.Body",
+    "fastapi.Cookie",
+    "fastapi.Depends",
+    "fastapi.File",
+    "fastapi.Form",
+    "fastapi.Header",
+    "fastapi.Path",
+    "fastapi.Query",
+    "fastapi.Security",
+]

@@ -15,7 +15,7 @@ import shutil
 import sqlite3
 import subprocess
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, UTC
 from pathlib import Path
 from contextlib import closing
 
@@ -1139,7 +1139,7 @@ class TestTheDeviceProbe:
         module = _probe_module()
         from src.auth import utils as auth_utils
 
-        monkeypatch.setattr(auth_utils, "_totp_time", lambda: datetime.now(timezone.utc))
+        monkeypatch.setattr(auth_utils, "_totp_time", lambda: datetime.now(UTC))
 
         assert module.probe(_ProbeApi(world, "unoscheck.invalid"), "bob", BOB_PW, str(tmp_path), lines.append,
                             runner=_RUN), lines

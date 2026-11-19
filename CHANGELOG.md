@@ -41,6 +41,12 @@ manager, encrypted backup uploads, health checks, CI checks).
   `app_names_changed` in the audit log, ADR-0420).
 
 ### Changed
+- `make lint`, and with it `make check`, the pre-commit hook and the CI workflow's Lint job, checks
+  the rules of ruff that find bugs, set in `ruff.toml`, beyond pyflakes findings and syntax errors:
+  bugbear, pycodestyle's imports and statements, pyupgrade, bandit (not in the tests), pylint's
+  errors and warnings, ruff's own rules and a few single ones, less the rules of style and the
+  noisy ones that ADR-0425 lists. The supervisor, `scripts/` and `.claude/hooks/` were fixed first, without a change of
+  behaviour; a finding kept in the code carries `# noqa: <code>` with its reason.
 - The supervisor keeps its whole data directory (the database, unless `UNOS_DB_PATH` names another
   file, its JWT secret, the audit log, the state files, the stored certificates and the backups)
   where `UNOS_DATA_DIR` names, `/data` by default as before, and refuses to start when the value is

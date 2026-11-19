@@ -156,7 +156,7 @@ async def run(args: list[str], env: dict[str, str], *, timeout: float, stdin: by
     Timeout after killing its process group at the timeout, OSError when it cannot start; a
     cancellation kills the group too and goes on.
     """
-    out = open(stdout_path, "xb") if stdout_path is not None else None
+    out = open(stdout_path, "xb") if stdout_path is not None else None  # noqa: SIM115 - closed below
     try:
         process = await asyncio.create_subprocess_exec(
             *command(args, f"unos-{secrets.token_hex(6)}"),
@@ -171,7 +171,7 @@ async def run(args: list[str], env: dict[str, str], *, timeout: float, stdin: by
             out.close()  # restic has its own descriptor of the file
     try:
         return await asyncio.wait_for(_communicate(process, stdin, on_error_line), timeout)
-    except asyncio.TimeoutError:
+    except TimeoutError:
         await _kill(process)
         raise Timeout(timeout) from None
     except BaseException:

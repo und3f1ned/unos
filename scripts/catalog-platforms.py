@@ -257,7 +257,7 @@ def catalog_users() -> dict[str, list[str]]:
     os.environ.setdefault("UNOS_DB_PATH", ":memory:")
     os.environ.setdefault("UNOS_JWT_SECRET", secrets.token_hex(32))
     os.environ.setdefault("UNOS_DATA_DIR", tempfile.gettempdir())
-    from src.apps.catalog import APP_CATALOG  # noqa: E402
+    from src.apps.catalog import APP_CATALOG
 
     users: dict[str, list[str]] = {}
     for template in APP_CATALOG:

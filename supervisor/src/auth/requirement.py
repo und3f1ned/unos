@@ -23,9 +23,9 @@ import logging
 import sqlite3
 from contextlib import closing
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, UTC
 from pathlib import Path
-from typing import NamedTuple, Optional
+from typing import NamedTuple
 
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
@@ -63,7 +63,7 @@ _warned = False
 def _now() -> datetime:
     """The time the requirement is judged at: UTC without a zone, as the database keeps times
     (tests replace it)."""
-    return datetime.now(timezone.utc).replace(tzinfo=None)
+    return datetime.now(UTC).replace(tzinfo=None)
 
 
 @dataclass(frozen=True)
@@ -71,8 +71,8 @@ class Requirement:
     """The requirement as stored: ``enabled_at`` None when it cannot be read."""
 
     grace_days: int
-    enabled_at: Optional[datetime]
-    enabled_by: Optional[str]
+    enabled_at: datetime | None
+    enabled_by: str | None
 
 
 class AccountState(NamedTuple):
@@ -89,7 +89,7 @@ def _grace_days(value: object) -> int:
     return min(value, MAX_GRACE_DAYS)
 
 
-def _stored_time(value: object) -> Optional[datetime]:
+def _stored_time(value: object) -> datetime | None:
     """A stored time (SQLite's text, or a datetime) as UTC without a zone; None when it cannot be
     read, also an aware time at an end of the calendar, which has no UTC."""
     if isinstance(value, str):
@@ -101,13 +101,13 @@ def _stored_time(value: object) -> Optional[datetime]:
         return None
     if value.tzinfo is not None:
         try:
-            value = value.astimezone(timezone.utc).replace(tzinfo=None)
+            value = value.astimezone(UTC).replace(tzinfo=None)
         except (OverflowError, ValueError):
             return None
     return value
 
 
-async def current(db: AsyncSession) -> Optional[Requirement]:
+async def current(db: AsyncSession) -> Requirement | None:
     """The requirement, or None while it is off."""
     global _warned
     try:
@@ -150,7 +150,7 @@ async def storable(db: AsyncSession) -> bool:
     return True
 
 
-def required_in(path: Path) -> Optional[bool]:
+def required_in(path: Path) -> bool | None:
     """Whether the database file at ``path`` requires two-factor authentication for every account,
     by the rules of ``current``; None when it cannot be read. For a restore, which compares the live
     database with the one it brings back."""
@@ -177,7 +177,7 @@ def deadline(requirement: Requirement, user: User) -> datetime:
     return start + timedelta(days=requirement.grace_days)
 
 
-async def account_state(db: AsyncSession, user: User) -> Optional[AccountState]:
+async def account_state(db: AsyncSession, user: User) -> AccountState | None:
     """What the requirement asks of ``user``: None while it is off or the account has two-factor
     authentication (a NULL totp_enabled counts as off, ADR-0343)."""
     if user.totp_enabled:

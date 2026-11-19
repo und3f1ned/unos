@@ -23,7 +23,7 @@ def get_distro_name() -> str:
     # Try host's os-release first (mounted at /host/os-release)
     for path in ["/host/os-release", "/etc/os-release"]:
         try:
-            with open(path, "r") as f:
+            with open(path) as f:
                 for line in f:
                     if line.startswith("PRETTY_NAME="):
                         # Remove PRETTY_NAME=" and trailing "

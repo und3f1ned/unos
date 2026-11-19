@@ -16,7 +16,7 @@ import io
 import sqlite3
 import sys
 from contextlib import closing
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, UTC
 from pathlib import Path
 from unittest.mock import patch
 
@@ -143,7 +143,7 @@ def refused(answer) -> bool:
 
 def utc(value: datetime) -> str:
     """A time of the database as the API answers it: UTC, with its offset."""
-    return value.replace(tzinfo=timezone.utc).isoformat().replace("+00:00", "Z")
+    return value.replace(tzinfo=UTC).isoformat().replace("+00:00", "Z")
 
 
 class TestTurningItOn:

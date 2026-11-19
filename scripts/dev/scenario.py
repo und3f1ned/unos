@@ -239,7 +239,8 @@ import tempfile
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Iterator
+from typing import Any, Callable
+from collections.abc import Iterator
 
 HERE = Path(__file__).resolve().parent
 if str(HERE) not in sys.path:
@@ -1486,7 +1487,7 @@ class SmbSession:
         self.n = 0
         self.ended = False
         self.buffer = b""
-        self.errors = tempfile.TemporaryFile()  # the helper's standard error, for a failure's message
+        self.errors = tempfile.TemporaryFile()  # noqa: SIM115 - closed in close(); the helper's standard error, for a failure's message
         self.proc = subprocess.Popen(
             [str(device.ssh), device.command((mode, user, share, protection))],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=self.errors,
@@ -4086,8 +4087,8 @@ def balance_check(c: Check) -> None:
         s.text += f": {scrub.get('detail')!r}; {second.get('detail')!r}"
 
     with c.step(f"the status of {name}'s balance shows the chunks balanced growing, and the time left") as s:
-        moving = balance_until(c, name, lambda b: b.get("status") != "running" or (b.get("completed") or 0) >= 1
-                               and b.get("seconds_left") is not None, "the time left")
+        moving = balance_until(c, name, lambda b: b.get("status") != "running" or ((b.get("completed") or 0) >= 1
+                               and b.get("seconds_left") is not None), "the time left")
         c.expect(moving.get("status") == "running", f"it ended {moving.get('status')} ({moving.get('result')}) first")
         s.text += (f": {moving.get('completed')} of about {moving.get('expected')} chunks, "
                    f"{moving.get('seconds_left')} s left")

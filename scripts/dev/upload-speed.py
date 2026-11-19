@@ -26,7 +26,7 @@ import urllib.request
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-import api  # noqa: E402  (load_settings: dev.env through env.sh)
+import api  # load_settings: dev.env through env.sh
 
 POOL = "/mnt/pools/data"
 
@@ -35,7 +35,7 @@ def _request(base: str, method: str, path: str, token: str | None = None, body: 
              params: dict | None = None) -> tuple[int, object]:
     url = base + path + ("?" + urllib.parse.urlencode(params) if params else "")
     data = json.dumps(body).encode() if body is not None else None
-    request = urllib.request.Request(url, data=data, method=method)
+    request = urllib.request.Request(url, data=data, method=method)  # noqa: S310 - https://
     if data is not None:
         request.add_header("Content-Type", "application/json")
     if token:
@@ -44,7 +44,7 @@ def _request(base: str, method: str, path: str, token: str | None = None, body: 
     context.check_hostname = False
     context.verify_mode = ssl.CERT_NONE  # the device's local CA
     try:
-        with urllib.request.urlopen(request, context=context, timeout=60) as answer:
+        with urllib.request.urlopen(request, context=context, timeout=60) as answer:  # noqa: S310 - https://
             text = answer.read().decode()
             return answer.status, json.loads(text) if text else None
     except urllib.error.HTTPError as error:

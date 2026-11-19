@@ -776,9 +776,9 @@ STUB_SYSTEMCTL = textwrap.dedent(
     var=FAKE_$(printf "%s" "$unit" | tr "a-z-" "A-Z_")
     case $1 in
         is-active) default=active; [ "$unit" != nmbd ] || default=inactive
-                   eval "state=\${${var}_ACTIVE:-$default}"; echo "$state"; [ "$state" = active ] ;;
+                   eval "state=\\${${var}_ACTIVE:-$default}"; echo "$state"; [ "$state" = active ] ;;
         is-enabled) default=enabled; [ "$unit" != nmbd ] || default=disabled
-                    eval "state=\${${var}_ENABLED:-$default}"; [ "$state" != none ] || exit 1
+                    eval "state=\\${${var}_ENABLED:-$default}"; [ "$state" != none ] || exit 1
                     echo "$state"; [ "$state" = enabled ] ;;
         *) echo "the systemctl stub does not know: $*" >&2; exit 2 ;;
     esac

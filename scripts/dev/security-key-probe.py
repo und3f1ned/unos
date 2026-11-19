@@ -37,7 +37,6 @@ import tempfile
 import time
 import urllib.error
 import urllib.request
-from typing import Optional, Tuple
 
 EXPIRED = "The security key request expired or was already used: try again"
 
@@ -99,7 +98,7 @@ class OpensslKey:
         self.credential_id = secrets.token_bytes(32)
         self.counter = 0
 
-    def run(self, *args: str, data: Optional[bytes] = None) -> bytes:
+    def run(self, *args: str, data: bytes | None = None) -> bytes:
         return self.runner([self.openssl, *args], input=data, capture_output=True, check=True, timeout=30).stdout
 
     def sign(self, data: bytes) -> bytes:
@@ -139,13 +138,14 @@ class Api:
         self.opener = urllib.request.build_opener(
             urllib.request.ProxyHandler({}), urllib.request.HTTPSHandler(context=context))
 
-    def call(self, method: str, path: str, body: Optional[dict] = None,
-             token: Optional[str] = None) -> Tuple[int, object]:
+    def call(self, method: str, path: str, body: dict | None = None,
+             token: str | None = None) -> tuple[int, object]:
         headers = {"Host": self.host, "Origin": "https://" + self.host, "Content-Type": "application/json"}
         if token:
             headers["Authorization"] = "Bearer " + token
         data = None if body is None else json.dumps(body).encode()
-        request = urllib.request.Request(self.base + "/api/v1" + path, data=data, method=method, headers=headers)
+        request = urllib.request.Request(self.base + "/api/v1" + path, data=data, method=method,  # noqa: S310 - the caller's base, https://
+                                         headers=headers)
         try:
             with self.opener.open(request, timeout=60) as response:
                 status, raw = response.status, response.read()

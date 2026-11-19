@@ -41,7 +41,7 @@ import sys
 import tarfile
 import threading
 import time
-from datetime import datetime, timezone
+from datetime import datetime, UTC
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -125,7 +125,7 @@ def env(tmp_path, monkeypatch):
     monkeypatch.setattr(backup_router.settings, "db_path", str(data / "unos.db"))
     monkeypatch.setattr(scheduler, "TASKS_FILE", str(data / "scheduled_tasks.json"))
     monkeypatch.setattr(scheduler, "RUNS_FILE", str(data / "task_runs.json"))
-    monkeypatch.setattr(scheduler, "schedule_zone", lambda: timezone.utc)
+    monkeypatch.setattr(scheduler, "schedule_zone", lambda: UTC)
     return SimpleNamespace(tmp=tmp_path, data=data, mnt=mnt, pools=pools, pool=pool, usb=usb, backups=backups,
                            state=state, target=usb / "unos-copy")
 
@@ -771,8 +771,8 @@ async def test_a_failed_scheduled_copy_is_a_problem_of_its_task(env):
 
     run = scheduler.load_runs()[-1]
     assert run.status == "failed" and "repository contains errors" in run.error
-    found = scheduler.task_problems(scheduler.load_tasks(), scheduler.load_runs(), timezone.utc,
-                                    datetime.now(timezone.utc))
+    found = scheduler.task_problems(scheduler.load_tasks(), scheduler.load_runs(), UTC,
+                                    datetime.now(UTC))
     assert "task_failed:task_offsite" in found
 
 
@@ -799,7 +799,7 @@ def test_the_snapshots_are_listed_newest_first_with_their_kind(env, client):
 
 def test_restore_configuration_puts_the_archive_into_the_backup_list(env, client):
     config = _copied(env, client)["configuration"]
-    stamp = datetime.fromisoformat(config["time"]).astimezone(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    stamp = datetime.fromisoformat(config["time"]).astimezone(UTC).strftime("%Y%m%d_%H%M%S")
 
     answer = client.post(f"{API}/restore-configuration", json={"snapshot_id": config["id"]})
 
@@ -862,7 +862,7 @@ def test_restore_files_of_a_whole_snapshot_keeps_its_paths(env, client):
 
 def test_restore_files_never_writes_into_a_folder_that_exists(env, client, monkeypatch):
     data = _copied(env, client)["data"]
-    frozen = datetime(2026, 11, 11, 3, 4, 5, tzinfo=timezone.utc)
+    frozen = datetime(2026, 11, 11, 3, 4, 5, tzinfo=UTC)
     monkeypatch.setattr(offsite, "_utc_now", lambda: frozen)
     (env.pool / "restored-20261111-030405").mkdir()
     (env.pool / "restored-20261111-030405" / "mine.txt").write_text("mine")
@@ -993,7 +993,7 @@ def lock(path: Path, *, exclusive: bool, pid: int | None = None) -> Path:
     """A lock of another restic in the repository at PATH, taken now."""
     found = path / "locks" / f"other-{exclusive}"
     found.write_text(json.dumps({"exclusive": exclusive, "hostname": "unos-0123456789ab", "pid": pid or os.getpid(),
-                                 "time": datetime.now(timezone.utc).isoformat()}))
+                                 "time": datetime.now(UTC).isoformat()}))
     return found
 
 

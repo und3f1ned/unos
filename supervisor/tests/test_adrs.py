@@ -294,7 +294,7 @@ def check_front_matter(root: Path) -> list[str]:
             meta = adr.meta
 
             def at(key: str) -> str:
-                return f"{adr.rel}:{adr.meta_lines[key]}" if key in adr.meta_lines else adr.rel
+                return f"{adr.rel}:{adr.meta_lines[key]}" if key in adr.meta_lines else adr.rel  # noqa: B023 - called in this iteration
 
             for key in REQUIRED_KEYS:
                 if key not in meta:

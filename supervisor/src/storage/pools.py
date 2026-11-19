@@ -61,7 +61,7 @@ import threading
 from collections.abc import Callable, Iterable, Iterator
 from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, UTC
 from typing import Any, Literal
 
 import docker
@@ -1053,7 +1053,7 @@ def _finished_within(
     def run() -> None:
         try:
             func(*args)
-        except BaseException as exc:  # noqa: BLE001 - re-raised in the waiting thread
+        except BaseException as exc:  # re-raised in the waiting thread
             raised.append(exc)
 
     worker = threading.Thread(target=run, name=thread_name, daemon=True)
@@ -3083,7 +3083,7 @@ def btrfs_time(text: str) -> datetime | None:
     """A time as btrfs prints it, in C's ctime form, "Fri Nov  6 10:00:00 2026", in UTC: btrfs runs in
     the supervisor's container, whose clock is UTC (ADR-0401). None for another form."""
     try:
-        return datetime.strptime(" ".join(text.split()), "%a %b %d %H:%M:%S %Y").replace(tzinfo=timezone.utc)
+        return datetime.strptime(" ".join(text.split()), "%a %b %d %H:%M:%S %Y").replace(tzinfo=UTC)
     except ValueError:
         return None
 
@@ -3097,7 +3097,7 @@ def _copy_time(name: str) -> str | None:
         made = datetime.strptime(match.group("stamp"), "%Y%m%d_%H%M%S")
     except ValueError:  # restore_20261399_000000: no time
         return None
-    return made.replace(tzinfo=timezone.utc).isoformat()
+    return made.replace(tzinfo=UTC).isoformat()
 
 
 # The lines of `btrfs subvolume show` that tell a restored copy (_made_by_restore).

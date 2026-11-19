@@ -9,7 +9,7 @@ depends on where the 30-second steps fall.
 """
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, UTC
 from urllib.parse import parse_qs, unquote, urlsplit
 
 import pyotp
@@ -27,7 +27,7 @@ SECRET = pyotp.random_base32()
 
 class Clock:
     def __init__(self) -> None:
-        self.now = datetime(2026, 11, 7, 12, 0, 5, tzinfo=timezone.utc)
+        self.now = datetime(2026, 11, 7, 12, 0, 5, tzinfo=UTC)
 
     def code(self, secret: str = SECRET) -> str:
         return pyotp.TOTP(secret).at(self.now)

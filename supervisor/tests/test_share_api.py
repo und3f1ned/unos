@@ -1735,7 +1735,8 @@ class TestPoolRootMountCheck:
 
     @pytest.mark.skipif(not os.path.exists("/proc/self/fdinfo"), reason="needs Linux procfs (the Linux test runner)")
     def test_the_mount_id_of_the_descriptor(self, api, root, table, monkeypatch):
-        info = open(f"/proc/self/fdinfo/{root}").read()
+        with open(f"/proc/self/fdinfo/{root}") as fdinfo:
+            info = fdinfo.read()
         mount_id = int(re.search(r"^mnt_id:\s*(\d+)$", info, re.M).group(1))
         table.write_text(f"{mount_id} 1 0:40 / {api.pool} rw - btrfs /dev/sda rw\n")
         assert REAL_POOL_ROOT_MOUNT_PROBLEM(root, "data") is None

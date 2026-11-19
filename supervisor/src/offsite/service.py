@@ -50,10 +50,9 @@ import time
 import uuid
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, UTC
 from enum import Enum
 from pathlib import Path
-from typing import Optional
 from urllib.parse import urlsplit
 
 from fastapi import HTTPException
@@ -217,38 +216,38 @@ class OffsiteSettings(BaseModel):
                                    "that is not the system disk; s3, a bucket of an S3-compatible store; rest, a restic "
                                    "REST server over HTTPS; sftp, a folder of an SFTP server.")
     # disk: the folder of the repository, below MOUNTS_BASE; sftp: the folder on the server
-    path: Optional[str] = Field(None, description=f"disk: the folder of the copy repository, below {MOUNTS_BASE}, "
+    path: str | None = Field(None, description=f"disk: the folder of the copy repository, below {MOUNTS_BASE}, "
                                                   "made when it is missing; sftp: its folder on the server, absolute or "
                                                   "below the login's home folder; null for s3 and rest.")
     # s3: https://host[:port] or http://host[:port]; rest: https://host[:port]
-    endpoint: Optional[str] = Field(None, description="s3: the store's address, https:// or http://, its host and "
+    endpoint: str | None = Field(None, description="s3: the store's address, https:// or http://, its host and "
                                                       "an optional port; rest: the server's, https:// only; null "
                                                       "otherwise.")
-    bucket: Optional[str] = Field(None, description="s3: the bucket, 3 to 63 letters, digits, '.', '_' or '-'; "
+    bucket: str | None = Field(None, description="s3: the bucket, 3 to 63 letters, digits, '.', '_' or '-'; "
                                                     "null otherwise.")
-    prefix: Optional[str] = Field(None, description="s3: the folders of the copy repository in the bucket, rest: on "
+    prefix: str | None = Field(None, description="s3: the folders of the copy repository in the bucket, rest: on "
                                                     "the server, joined by /; null for the top.")
-    region: Optional[str] = Field(None, description="s3: the store's region, such as eu-central-1; null when it "
+    region: str | None = Field(None, description="s3: the store's region, such as eu-central-1; null when it "
                                                     "needs none.")
-    access_key_id: Optional[str] = Field(None, description="s3: the access key ID; null otherwise.")
+    access_key_id: str | None = Field(None, description="s3: the access key ID; null otherwise.")
     # rest: the user of basic authentication; sftp: the login on the server
-    username: Optional[str] = Field(None, description="rest: the server's user; sftp: the login on the server; null "
+    username: str | None = Field(None, description="rest: the server's user; sftp: the login on the server; null "
                                                       "otherwise.")
     # sftp
-    host: Optional[str] = Field(None, description="sftp: the server's host name or IP address; null otherwise.")
-    port: Optional[int] = Field(None, description="sftp: the server's SSH port, 22 by default; null otherwise.")
+    host: str | None = Field(None, description="sftp: the server's host name or IP address; null otherwise.")
+    port: int | None = Field(None, description="sftp: the server's SSH port, 22 by default; null otherwise.")
     # the server's key, "<type> <base64>", pinned at the first test of the server
-    host_key: Optional[str] = Field(None, description="sftp: the server's host key that the first test pinned, "
+    host_key: str | None = Field(None, description="sftp: the server's host key that the first test pinned, "
                                                       "'<type> <base64>'; a request cannot set it. null otherwise.")
     # rest: system, fingerprint or ca
-    tls: Optional[str] = Field(None, description="rest: how the server's certificate is checked: system, by the "
+    tls: str | None = Field(None, description="rest: how the server's certificate is checked: system, by the "
                                                  "system's roots; fingerprint, by the server's own certificate that a "
                                                  "save pinned by certificate_sha256; ca, by the CA certificate of "
                                                  "certificate. null otherwise.")
-    certificate: Optional[str] = Field(None, description="rest: the certificate in PEM that restic trusts alone: the "
+    certificate: str | None = Field(None, description="rest: the certificate in PEM that restic trusts alone: the "
                                                          "CA's (tls ca, given) or the server's own (tls fingerprint, "
                                                          "read from the server at the save); null otherwise.")
-    certificate_sha256: Optional[str] = Field(None, description="rest, tls fingerprint: the SHA-256 fingerprint of "
+    certificate_sha256: str | None = Field(None, description="rest, tls fingerprint: the SHA-256 fingerprint of "
                                                                 "the server's certificate, 64 hexadecimal digits, "
                                                                 "colons allowed in a request.")
     # folders of the pools
@@ -287,17 +286,17 @@ class SettingsRequest(OffsiteSettings):
          "sources": _SOURCES_EXAMPLE, **_RETENTION_EXAMPLE, "password": "example-repository-password"},
     ]})
 
-    password: Optional[str] = Field(
+    password: str | None = Field(
         default=None, exclude=True, repr=False,
         description=f"The copy repository's password, {MIN_PASSWORD_LENGTH} to {MAX_PASSWORD_LENGTH} characters; "
                     "write-only. Without it, an edit of the same repository keeps the stored one.",
     )
-    s3_secret_access_key: Optional[str] = Field(
+    s3_secret_access_key: str | None = Field(
         default=None, exclude=True, repr=False,
         description="s3: the secret access key; write-only. Without it, an edit with the same endpoint and access "
                     "key ID keeps the stored one.",
     )
-    rest_password: Optional[str] = Field(
+    rest_password: str | None = Field(
         default=None, exclude=True, repr=False,
         description="rest: the server's password; write-only. Without it, an edit with the same endpoint and user "
                     "keeps the stored one.",
@@ -307,7 +306,7 @@ class SettingsRequest(OffsiteSettings):
         description="sftp: pin the host key that the server shows at this test, also when another one is pinned "
                     "for its host and port: for a server whose key changed on purpose.",
     )
-    host_key_fingerprint: Optional[str] = Field(
+    host_key_fingerprint: str | None = Field(
         default=None, exclude=True,
         description="sftp: the fingerprint that the server's host key must have, SHA256:<base64> as ssh-keygen -l "
                     "prints it; checked before restic makes anything. Optional.",
@@ -318,10 +317,10 @@ class Secrets(BaseModel):
     """SECRETS_FILE: what restic needs to open the repository, and the private key of UNOS's SSH key
     pair (sftp)."""
 
-    password: Optional[str] = Field(default=None, repr=False)
-    s3_secret_access_key: Optional[str] = Field(default=None, repr=False)
-    rest_password: Optional[str] = Field(default=None, repr=False)
-    sftp_private_key: Optional[str] = Field(default=None, repr=False)
+    password: str | None = Field(default=None, repr=False)
+    s3_secret_access_key: str | None = Field(default=None, repr=False)
+    rest_password: str | None = Field(default=None, repr=False)
+    sftp_private_key: str | None = Field(default=None, repr=False)
 
 
 class CopySummary(BaseModel):
@@ -333,31 +332,31 @@ class CopySummary(BaseModel):
     # by both snapshots, before compression
     bytes_added: int = Field(0, description="The bytes that both snapshots added to the copy repository, before "
                                             "compression.")
-    configuration_snapshot: Optional[str] = Field(None, description="The ID of its configuration snapshot.")
-    data_snapshot: Optional[str] = Field(None, description="The ID of its data snapshot.")
+    configuration_snapshot: str | None = Field(None, description="The ID of its configuration snapshot.")
+    data_snapshot: str | None = Field(None, description="The ID of its data snapshot.")
 
 
 class CopyResult(BaseModel):
     """The last copy, in STATUS_FILE. Times are ISO 8601 in UTC."""
 
     started: str = Field(description="When it started, in UTC with +00:00.")
-    ended: Optional[str] = Field(None, description="When it ended, in UTC with +00:00.")
+    ended: str | None = Field(None, description="When it ended, in UTC with +00:00.")
     # task: a task of the Scheduler; manual: Run now on Backup & Restore
     trigger: str = Field(description="task: a task of the Scheduler; manual: Run now.")
     success: bool = Field(False, description="Whether it succeeded.")
     # the step that failed: settings, folders, unlock, configuration, data, ...
-    step: Optional[str] = Field(None, description="The step that failed: settings, folders, unlock, "
+    step: str | None = Field(None, description="The step that failed: settings, folders, unlock, "
                                                   "configuration, data, forget, check or restore_test.")
-    error: Optional[str] = Field(None, description="Why it failed; null after a success.")
-    summary: Optional[CopySummary] = Field(None, description="What it added; null when it did not get that far.")
+    error: str | None = Field(None, description="Why it failed; null after a success.")
+    summary: CopySummary | None = Field(None, description="What it added; null when it did not get that far.")
     # passed or failed; None when the run did not get there
-    check: Optional[str] = Field(None, description="The check of the copy repository: passed or failed; null when "
+    check: str | None = Field(None, description="The check of the copy repository: passed or failed; null when "
                                                    "the copy did not get there.")
-    restore_test: Optional[str] = Field(None, description="The restore test of the configuration: passed or "
+    restore_test: str | None = Field(None, description="The restore test of the configuration: passed or "
                                                           "failed; null when the copy did not get there.")
     # What the copy of the data could not read that is not the error: the files that vanished while
     # restic read the folders (no failure), and those that could not be read when a later step failed.
-    note: Optional[str] = Field(None, description="The files that vanished while restic read them, and those it "
+    note: str | None = Field(None, description="The files that vanished while restic read them, and those it "
                                                   "could not read when a later step failed; null when none.")
 
 
@@ -365,18 +364,18 @@ class RestoreResult(BaseModel):
     """The last restore of files, in STATUS_FILE."""
 
     snapshot_id: str = Field(description="The full ID of the snapshot.")
-    path: Optional[str] = Field(None, description="The folder of the snapshot that it restored; null for all of it.")
+    path: str | None = Field(None, description="The folder of the snapshot that it restored; null for all of it.")
     folder: str = Field(description="The new folder that it wrote, removed again when a failed restore wrote "
                                     "nothing into it.")
     started: str = Field(description="When it started, in UTC with +00:00.")
-    ended: Optional[str] = Field(None, description="When it ended, in UTC with +00:00.")
+    ended: str | None = Field(None, description="When it ended, in UTC with +00:00.")
     success: bool = Field(False, description="Whether it succeeded.")
-    error: Optional[str] = Field(None, description="Why it failed; null after a success.")
+    error: str | None = Field(None, description="Why it failed; null after a success.")
 
 
 class Status(BaseModel):
-    last_copy: Optional[CopyResult] = Field(None, description="The last copy; null before the first.")
-    last_restore: Optional[RestoreResult] = Field(None, description="The last restore of files; null before the "
+    last_copy: CopyResult | None = Field(None, description="The last copy; null before the first.")
+    last_restore: RestoreResult | None = Field(None, description="The last restore of files; null before the "
                                                                     "first.")
 
 
@@ -401,7 +400,7 @@ class RestoreFilesRequest(BaseModel):
     snapshot_id: str = Field(description=f"{_SNAPSHOT_ID_TEXT}.")
     pool: str = Field(description="The pool at whose top the new folder restored-<date>-<time in UTC> is made.")
     # a folder in the snapshot; none: all of it
-    path: Optional[str] = Field(None, description="A folder in the snapshot, as an absolute path such as "
+    path: str | None = Field(None, description="A folder in the snapshot, as an absolute path such as "
                                                   "/mnt/pools/data/photos; none for all of it.")
 
 
@@ -416,9 +415,9 @@ _WHAT = {"copy": "copy", "restore-files": "restore", "restore-configuration": "r
 class Activity:
     kind: str
     started: datetime
-    step: Optional[str] = None
-    snapshot_id: Optional[str] = None
-    folder: Optional[str] = None
+    step: str | None = None
+    snapshot_id: str | None = None
+    folder: str | None = None
     # The pools whose folders it reads or writes: the Storage page neither unmounts nor forgets them.
     pools: set[str] = field(default_factory=set)
     # The folders it reads or writes (the target, the folders it copies, a restore's folder): the
@@ -431,7 +430,7 @@ class Activity:
 
 
 # The one copy, restore or change of the settings that runs: taken and given back on the event loop.
-_activity: Optional[Activity] = None
+_activity: Activity | None = None
 # The copies and restores that run in the background (Run now, Restore files): stop() ends them.
 _tasks: set[asyncio.Task] = set()
 # Held while a copy, a restore or Save names its folders (_use) and opens them, and by the Storage
@@ -441,7 +440,7 @@ FOLDERS_LOCK = threading.Lock()
 
 
 def _utc_now() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def _running(activity: Activity) -> str:
@@ -452,7 +451,7 @@ def _busy() -> str:
     return _running(_activity)
 
 
-def _begin(kind: str) -> Optional[Activity]:
+def _begin(kind: str) -> Activity | None:
     """Take the lock for KIND; None when something runs."""
     global _activity
     if _activity is not None:
@@ -481,7 +480,7 @@ def pools_in_use() -> set[str]:
     return set(activity.pools) if activity is not None else set()
 
 
-def volume_user(volume_path: str) -> Optional[str]:
+def volume_user(volume_path: str) -> str | None:
     """What of the off-device copy uses the volume (or the restored copy of a snapshot) at VOLUME_PATH,
     as pool_user says it: a target, a folder that it copies or a restore's folder that is the volume
     or lies in it. A folder above it, such as the whole pool, does not count, as for the volume's
@@ -492,7 +491,7 @@ def volume_user(volume_path: str) -> Optional[str]:
     return _running(activity)
 
 
-def pool_user(pool: str) -> Optional[str]:
+def pool_user(pool: str) -> str | None:
     """What of the off-device copy uses POOL, as "the copy started at ... is still running", or None.
     The Storage page refuses to unmount or forget the pool meanwhile (storage/pools.py)."""
     activity = _activity
@@ -541,7 +540,7 @@ def _reader(model: type[BaseModel]):
     return read
 
 
-def load_settings() -> Optional[OffsiteSettings]:
+def load_settings() -> OffsiteSettings | None:
     """The settings; None without a file, or for one kept as .bad. Raises OSError for one that cannot
     be opened (ADR-0324: settings are never replaced unread)."""
     return state_files.load_json(Path(SETTINGS_FILE), _reader(OffsiteSettings), lambda: None,
@@ -584,7 +583,7 @@ def write_status(status: Status) -> None:
     state_files.write_json(Path(STATUS_FILE), status.model_dump(mode="json"), sync=False)
 
 
-def _stored() -> tuple[Optional[OffsiteSettings], Secrets]:
+def _stored() -> tuple[OffsiteSettings | None, Secrets]:
     """The settings and the secrets; HTTPException(500) when a file cannot be opened."""
     try:
         return load_settings(), load_secrets()
@@ -631,7 +630,7 @@ def on_system_disk(fd: int) -> bool:
     return bool(disks & system)
 
 
-def _read_dev(path: str) -> Optional[int]:
+def _read_dev(path: str) -> int | None:
     """The device number in a "major:minor" file of sysfs, or None."""
     try:
         with open(path) as f:
@@ -683,7 +682,7 @@ def whole_disks(devices: set[int]) -> set[str]:
     return found
 
 
-def _btrfs_fsid(fd: int) -> Optional[str]:
+def _btrfs_fsid(fd: int) -> str | None:
     """The UUID of the btrfs filesystem of FD, or None for another filesystem."""
     info = bytearray(1024)
     try:
@@ -708,7 +707,7 @@ def btrfs_devices(fsid: str) -> set[int]:
     return found
 
 
-def mount_source(fd: int) -> Optional[str]:
+def mount_source(fd: int) -> str | None:
     """The source of the mount that holds FD, as /proc/self/mountinfo names it, or None."""
     try:
         with open(f"{PROC_SELF}/fdinfo/{fd}") as f:
@@ -796,7 +795,7 @@ def _unverified() -> ssl.SSLContext:
     return context
 
 
-def certificate_problem(der: bytes, endpoint: str) -> Optional[str]:
+def certificate_problem(der: bytes, endpoint: str) -> str | None:
     """Why restic, with the certificate DER as its only root (tls fingerprint), would refuse it for
     ENDPOINT, as Go checks it: its validity period and a subject alternative name for the host (an IP
     address, or a DNS name with at most one wildcard label); None when it would take it."""
@@ -806,7 +805,7 @@ def certificate_problem(der: bytes, endpoint: str) -> Optional[str]:
         certificate = x509.load_der_x509_certificate(der)
     except ValueError:
         return f"The REST server at {endpoint} shows no certificate that can be read"
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     if now < certificate.not_valid_before_utc:
         return f"The certificate of the REST server at {endpoint} is valid only from {certificate.not_valid_before_utc:%Y-%m-%d %H:%M} UTC"
     if now > certificate.not_valid_after_utc:
@@ -844,8 +843,8 @@ def fetch_certificate(endpoint: str) -> bytes:
     return _handshake(endpoint, _unverified())
 
 
-def probe_store(endpoint: str, *, what: str = "The S3 store", cadata: Optional[str] = None,
-                fingerprint: Optional[str] = None) -> Optional[str]:
+def probe_store(endpoint: str, *, what: str = "The S3 store", cadata: str | None = None,
+                fingerprint: str | None = None) -> str | None:
     """Why the store (WHAT) at ENDPOINT cannot be reached, or None: a TCP connection to its host and
     port and, for https, a TLS handshake that verifies its certificate as restic does, within
     PROBE_TIMEOUT: with the system's roots, or only with CADATA (PEM); with FINGERPRINT, the server's
@@ -883,7 +882,7 @@ def _store_name(settings: OffsiteSettings) -> str:
     return "The REST server" if settings.kind == Kind.REST else "The S3 store"
 
 
-async def _unreachable(settings: OffsiteSettings) -> Optional[str]:
+async def _unreachable(settings: OffsiteSettings) -> str | None:
     """For an S3 store or a REST server, why it cannot be reached (probe_store); None when it answers,
     and for a disk and an SFTP server, whose ssh gives up after its ConnectTimeout (ssh.py)."""
     if settings.kind not in (Kind.S3, Kind.REST):
@@ -900,7 +899,7 @@ async def _unreachable(settings: OffsiteSettings) -> Optional[str]:
         # The name's lookup is not bounded by the socket's timeout.
         return await asyncio.wait_for(asyncio.to_thread(probe_store, settings.endpoint or "", **options),
                                       PROBE_TIMEOUT + 5)
-    except asyncio.TimeoutError:
+    except TimeoutError:
         return f"{what} does not answer at {settings.endpoint}: no answer within {PROBE_TIMEOUT:g} s"
 
 
@@ -911,7 +910,7 @@ async def _pin_certificate(settings: OffsiteSettings) -> None:
     endpoint = settings.endpoint or ""
     try:
         der = await asyncio.wait_for(asyncio.to_thread(fetch_certificate, endpoint), PROBE_TIMEOUT + 5)
-    except (asyncio.TimeoutError, TimeoutError):
+    except TimeoutError:
         raise _bad(f"The REST server does not answer at {endpoint}: no answer within {PROBE_TIMEOUT:g} s") from None
     except ssl.SSLError as e:
         raise _bad(f"The REST server does not answer at {endpoint}: its TLS handshake failed: {e.reason or e}") from None
@@ -936,7 +935,7 @@ def _close(fds: list[int]) -> None:
             pass
 
 
-def _system_disk_problem(fd: int, path: str) -> Optional[str]:
+def _system_disk_problem(fd: int, path: str) -> str | None:
     """Why PATH, open at FD, cannot hold the copy as a folder on the system disk (on_system_disk), or
     None. When the disks cannot be found it cannot either, and the reason is logged too."""
     try:
@@ -948,7 +947,7 @@ def _system_disk_problem(fd: int, path: str) -> Optional[str]:
         return problem
 
 
-def _pool_of(path: Optional[str]) -> Optional[str]:
+def _pool_of(path: str | None) -> str | None:
     """The pool that PATH lies in, or None for a path outside the pools' base."""
     base = str(pools_base())
     if not path or not _inside(path, base) or path == base:
@@ -1021,7 +1020,7 @@ def _on_system_disk_problem(path: str) -> str:
             f"the disk below {MOUNTS_BASE} and choose a folder on it")
 
 
-def _open_target(path: str, *, create: bool) -> tuple[int, Optional[str]]:
+def _open_target(path: str, *, create: bool) -> tuple[int, str | None]:
     """Open the folder of a disk target without following symbolic links, making it (mode 0700) when
     CREATE and its parent is not on the system disk: the open folder, which the caller closes, and its
     path when it was made here. 400 for a folder that cannot hold the copy or cannot be made (a run
@@ -1173,7 +1172,7 @@ def _url_host(host: str) -> str:
     return f"[{host}]" if ":" in host else host
 
 
-def _folders(value: object, what: str) -> Optional[str]:
+def _folders(value: object, what: str) -> str | None:
     """Folder names of letters, digits, '.', '_' or '-' joined by '/' (an S3 prefix, the folders on a
     REST server); None for none; 400 otherwise."""
     if not value:
@@ -1341,7 +1340,7 @@ def _remote_password(value: str) -> str:
     return value
 
 
-def _secrets_for(request: SettingsRequest, settings: OffsiteSettings, stored: Optional[OffsiteSettings],
+def _secrets_for(request: SettingsRequest, settings: OffsiteSettings, stored: OffsiteSettings | None,
                  kept: Secrets) -> Secrets:
     """The secrets of REQUEST, or the stored ones that an edit of the same target keeps; 400 otherwise.
     The key pair of SFTP is kept as it is: only POST /offsite/sftp-key makes one."""
@@ -1378,7 +1377,7 @@ def _secrets_for(request: SettingsRequest, settings: OffsiteSettings, stored: Op
                    sftp_private_key=kept.sftp_private_key)
 
 
-def _prepare_folders(settings: OffsiteSettings, activity: Activity) -> tuple[Optional[str], list[int]]:
+def _prepare_folders(settings: OffsiteSettings, activity: Activity) -> tuple[str | None, list[int]]:
     """Check the sources and a disk target on the filesystem, normalize the sources, and make the
     target's folder when it is missing: its path then, and the target held open for restic (_ready),
     which the caller closes; the target is named for ACTIVITY first, under FOLDERS_LOCK. 400 for what
@@ -1405,7 +1404,7 @@ def _warnings(settings: OffsiteSettings) -> list[dict]:
     """same_disk: a disk target on a disk of a folder that it copies."""
     if settings.kind != Kind.DISK:
         return []
-    target: Optional[int] = None
+    target: int | None = None
     sources: list[int] = []
     try:
         target = _open_target(settings.path, create=False)[0]
@@ -1455,7 +1454,7 @@ def _sftp_server(settings: OffsiteSettings) -> str:
     return f"{_url_host(settings.host or '')}:{settings.port}"
 
 
-async def _open_or_create(repo: _Repository, created: Optional[str], expected: Optional[str] = None) -> None:
+async def _open_or_create(repo: _Repository, created: str | None, expected: str | None = None) -> None:
     """Open the repository with its password, or make it when none is there; 400 with restic's message,
     or when restic does not end within SAVE_TIMEOUT. For sftp, the host key that ssh pinned at the
     first command must have the fingerprint EXPECTED when one was typed, before restic makes anything;
@@ -1501,8 +1500,8 @@ def _store(settings: OffsiteSettings, secrets: Secrets) -> None:
     write_settings(settings)
 
 
-def _change_made(stored: Optional[OffsiteSettings], kept: Secrets, settings: OffsiteSettings,
-                 secrets: Secrets) -> Optional[str]:
+def _change_made(stored: OffsiteSettings | None, kept: Secrets, settings: OffsiteSettings,
+                 secrets: Secrets) -> str | None:
     """What an entry of the audit log says about the settings that were just stored, or None when they
     and the secrets are as they were (ADR-0402). The secrets, and the access key ID, come by name
     only."""
@@ -1518,7 +1517,7 @@ def _change_made(stored: Optional[OffsiteSettings], kept: Secrets, settings: Off
     return f"Off-device copy settings changed: {both}" if both else None
 
 
-async def save_settings(request: SettingsRequest, changes: Optional[list[tuple[str, str]]] = None) -> dict:
+async def save_settings(request: SettingsRequest, changes: list[tuple[str, str]] | None = None) -> dict:
     """PUT /offsite/settings: check the settings, test the target with restic, then store them.
 
     CHANGES, when given, gets (the repository, what changed) once the settings were stored and
@@ -1582,7 +1581,7 @@ async def save_settings(request: SettingsRequest, changes: Optional[list[tuple[s
     return await settings_answer()
 
 
-async def make_key_pair(changes: Optional[list[tuple[str, str]]] = None) -> dict:
+async def make_key_pair(changes: list[tuple[str, str]] | None = None) -> dict:
     """POST /offsite/sftp-key: a new key pair of UNOS for SFTP, whose private key goes into the secrets
     file and never into an answer; the answer is GET /offsite/settings's, with the public key. It
     replaces the one before: the SFTP server must then take the new public key. CHANGES, when given,
@@ -1618,7 +1617,7 @@ def _remove_files() -> bool:
     return existed
 
 
-async def remove_settings(changes: Optional[list[tuple[str, str]]] = None) -> dict:
+async def remove_settings(changes: list[tuple[str, str]] | None = None) -> dict:
     """DELETE /offsite/settings: remove the settings, the secrets and the state. The copies stay where
     they are. CHANGES, when given, gets (the repository, what was done) if there was anything to
     remove (ADR-0402)."""
@@ -1643,7 +1642,7 @@ class _Failed(Exception):
     """A step failed: STEP, what went wrong, and restic's exit status when it ran. PREFIX replaces the
     step's text of STEP_TEXTS in the message of the run."""
 
-    def __init__(self, step: str, message: str, code: Optional[int] = None, *, prefix: Optional[str] = None,
+    def __init__(self, step: str, message: str, code: int | None = None, *, prefix: str | None = None,
                  timed_out: bool = False) -> None:
         super().__init__(message)
         self.step = step
@@ -1661,10 +1660,10 @@ class _Repository:
 
     settings: OffsiteSettings
     password: str = field(repr=False)
-    secret_key: Optional[str] = field(default=None, repr=False)
-    rest_password: Optional[str] = field(default=None, repr=False)
-    private_key: Optional[str] = field(default=None, repr=False)
-    host_key: Optional[str] = None
+    secret_key: str | None = field(default=None, repr=False)
+    rest_password: str | None = field(default=None, repr=False)
+    private_key: str | None = field(default=None, repr=False)
+    host_key: str | None = None
 
     def env(self) -> dict[str, str]:
         """restic's environment, built for it: never the supervisor's own, which holds UNOS_JWT_SECRET."""
@@ -1753,10 +1752,10 @@ def _message(text: str) -> str:
     return " ".join(text.split())[-1500:] or "no message"
 
 
-async def _restic(repo: _Repository, args: list[str], *, step: str, stdin: Optional[bytes] = None,
-                  stdout_path: Optional[Path] = None, partial: bool = False,
-                  on_error_line: Optional[Callable[[bytes], None]] = None,
-                  timeout: Optional[float] = None, cache: bool = True) -> restic.Result:
+async def _restic(repo: _Repository, args: list[str], *, step: str, stdin: bytes | None = None,
+                  stdout_path: Path | None = None, partial: bool = False,
+                  on_error_line: Callable[[bytes], None] | None = None,
+                  timeout: float | None = None, cache: bool = True) -> restic.Result:
     """Run the restic command ARGS on REPO within TIMEOUT, by default its TIMEOUTS; _Failed(STEP) when
     it cannot run, times out or fails. With PARTIAL, exit status 3 (a backup that saved its snapshot
     without some files) is no failure: the caller judges it by the errors that ON_ERROR_LINE gets."""
@@ -1778,8 +1777,8 @@ async def _restic(repo: _Repository, args: list[str], *, step: str, stdin: Optio
     return result
 
 
-def _ready(stored: Optional[OffsiteSettings], secrets: Secrets, *, sources: bool,
-           activity: Optional[Activity] = None) -> tuple[_Repository, list[int]]:
+def _ready(stored: OffsiteSettings | None, secrets: Secrets, *, sources: bool,
+           activity: Activity | None = None) -> tuple[_Repository, list[int]]:
     """The repository of the stored settings, with its target checked (and the sources) and held open
     while restic runs, which the caller closes (_close): a folder held open keeps its filesystem busy,
     so that a plain unmount of its disk fails, and restic's local back end, which makes the folders
@@ -1826,7 +1825,7 @@ def _repository_of(settings: OffsiteSettings, secrets: Secrets) -> _Repository:
                        secrets.sftp_private_key, settings.host_key if settings.kind == Kind.SFTP else None)
 
 
-async def _repository(activity: Optional[Activity] = None) -> tuple[_Repository, list[int]]:
+async def _repository(activity: Activity | None = None) -> tuple[_Repository, list[int]]:
     """The repository for the snapshots and the restores, with the target held open (_ready), which
     the caller closes: 409 when nothing is set up, 503 when the target cannot be used. ACTIVITY, the
     restore, names the target's pool."""
@@ -1918,7 +1917,7 @@ class _Unread:
         self.unreadable: list[str] = []
         self.unreadable_count = 0
         # Exit status 3 without an error that names a file: why, from the end of standard error.
-        self.unnamed: Optional[str] = None
+        self.unnamed: str | None = None
         self.redact: Callable[[str], str] = lambda text: text
 
     def add(self, line: bytes) -> None:
@@ -1945,14 +1944,14 @@ class _Unread:
             if len(self.unreadable) < NAMED_FILES:
                 self.unreadable.append(f"{item} ({reason})" if item else reason)
 
-    def problem(self) -> Optional[str]:
+    def problem(self) -> str | None:
         """Why the copy fails: the files that could not be read; None when every file was read or vanished."""
         if self.unreadable_count:
             return (f"{_files(self.unreadable_count)} could not be read: "
                     f"{_listed(self.unreadable, self.unreadable_count)}")
         return self.unnamed
 
-    def note(self, error: Optional[str]) -> Optional[str]:
+    def note(self, error: str | None) -> str | None:
         """The files that vanished, and the problem unless it is ERROR, the error of the copy."""
         parts = []
         if self.vanished_count:
@@ -2056,7 +2055,7 @@ def _finish_copy(result: CopyResult, unread: _Unread) -> None:
         logger.warning("Could not record the off-device copy in %s: %s", STATUS_FILE, e)
 
 
-async def run_copy(trigger: str, activity: Optional[Activity] = None) -> tuple[bool, str]:
+async def run_copy(trigger: str, activity: Activity | None = None) -> tuple[bool, str]:
     """A copy to the copy repository: whether it succeeded, and what it copied or why it failed.
 
     TRIGGER is task (the Scheduler) or manual (Run now, which took the lock as ACTIVITY). A copy that
@@ -2128,9 +2127,9 @@ def _snapshot_kind(tags: list[str]) -> str:
 
 def _when(snapshot: dict) -> datetime:
     try:
-        return datetime.fromisoformat(snapshot["time"]).astimezone(timezone.utc)
+        return datetime.fromisoformat(snapshot["time"]).astimezone(UTC)
     except (TypeError, ValueError):
-        return datetime.min.replace(tzinfo=timezone.utc)
+        return datetime.min.replace(tzinfo=UTC)
 
 
 async def _snapshots(repo: _Repository) -> list[dict]:
@@ -2225,7 +2224,7 @@ async def restore_configuration(snapshot_id: str) -> dict:
     return {"status": "success", "backup": backup.model_dump(mode="json")}
 
 
-def _snapshot_path(value: Optional[str]) -> Optional[str]:
+def _snapshot_path(value: str | None) -> str | None:
     """A folder in a snapshot, as an absolute path; None for all of it."""
     if value is None or value == "":
         return None
@@ -2300,7 +2299,7 @@ def _finish_restore(result: RestoreResult) -> None:
         logger.warning("Could not record the restore from the off-device copy in %s: %s", STATUS_FILE, e)
 
 
-async def _restore_files(activity: Activity, repo: _Repository, snapshot_id: str, path: Optional[str],
+async def _restore_files(activity: Activity, repo: _Repository, snapshot_id: str, path: str | None,
                          folder: str, held: list[int]) -> None:
     """The restore into FOLDER, with FOLDER and the target held open (HELD) while restic writes. A
     failed restore removes FOLDER when nothing came into it; one that a stop of the supervisor ends

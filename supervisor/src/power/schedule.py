@@ -25,9 +25,9 @@ import re
 import subprocess
 import time
 from dataclasses import dataclass, field
-from datetime import datetime, time as clock_time, timedelta, timezone, tzinfo
+from datetime import datetime, time as clock_time, timedelta, tzinfo, UTC
 from types import ModuleType
-from typing import TYPE_CHECKING, Literal, Optional
+from typing import TYPE_CHECKING, Literal
 
 import psutil
 from fastapi import HTTPException
@@ -121,12 +121,12 @@ class Finding(BaseModel):
         "activity on a disk, a running job (task, task_due, backup, restore, scrub, balance, disk_replace, "
         "app_install, app_update, app_rollback, offsite, share_repair, update), a wake alarm that the RTC does not "
         "hold (wake_alarm), or something that could not be read (unreadable)."))
-    subject: Optional[str] = Field(None, description=(
+    subject: str | None = Field(None, description=(
         "Whom or what it concerns, such as a task's, an app's or a share's name, a pool's path, a client's address, "
         "a user or a disk; null for none."))
-    amount: Optional[int] = Field(None, description=(
+    amount: int | None = Field(None, description=(
         "The pages open (web_session) or the bytes moved since the last pass (disk_activity); null for the others."))
-    detail: Optional[str] = Field(None, description=(
+    detail: str | None = Field(None, description=(
         "In English: why something could not be read (unreadable), or the wake alarm's problem (wake_alarm); null "
         "for the others."))
 
@@ -136,15 +136,15 @@ class RtcState(BaseModel):
     available: bool = Field(description=(
         "Whether the RTC rtc0 can wake the host: it exists, has a wake alarm, and its clock is within 5 minutes of "
         "the system clock."))
-    reason: Optional[str] = Field(None, description="Why it cannot, in English; null when it can.")
-    alarm: Optional[UtcDatetime] = Field(None, description="The wake alarm it holds, in UTC; null when none is set.")
+    reason: str | None = Field(None, description="Why it cannot, in English; null when it can.")
+    alarm: UtcDatetime | None = Field(None, description="The wake alarm it holds, in UTC; null when none is set.")
 
 
 class ShutdownSchedule(BaseModel):
     """The scheduled shutdown."""
     enabled: bool = Field(description="Whether the scheduled shutdown is on.")
     time: str = Field(description="Its time, HH:MM on the host's clock.")
-    next: Optional[UtcDatetime] = Field(None, description=(
+    next: UtcDatetime | None = Field(None, description=(
         "When the host shuts down next at the earliest, in UTC; null while the scheduled shutdown is off."))
     state: Literal["off", "planned", "announced", "postponed", "issued"] = Field(description=(
         "off; planned; announced: its problem is out, 10 minutes ahead; postponed: a running job holds it; issued: "
@@ -156,7 +156,7 @@ class WakeSchedule(BaseModel):
     """The wake by the RTC's wake alarm."""
     enabled: bool = Field(description="Whether the wake is on.")
     time: str = Field(description="Its time, HH:MM on the host's clock.")
-    next: Optional[UtcDatetime] = Field(None, description=(
+    next: UtcDatetime | None = Field(None, description=(
         "The next wake, in UTC; null while the wake is off or the RTC cannot wake the host: no wake is promised."))
     rtc: RtcState = Field(description="The RTC and the wake alarm it holds.")
 
@@ -166,10 +166,10 @@ class IdleState(BaseModel):
     enabled: bool = Field(description="Whether the idle shutdown is on.")
     minutes: int = Field(description="The idle minutes after which the idle shutdown shuts the host down.")
     idle: bool = Field(description="Whether the host is idle now: found is empty; also while the idle shutdown is off.")
-    since: Optional[UtcDatetime] = Field(None, description=(
+    since: UtcDatetime | None = Field(None, description=(
         "Since when the host has been idle, in UTC; null while the idle shutdown is off or the host is not idle, "
         "and until a pass of the power schedule has seen it idle."))
-    shutdown_at: Optional[UtcDatetime] = Field(None, description=(
+    shutdown_at: UtcDatetime | None = Field(None, description=(
         "When the idle shutdown shuts the host down at the earliest, in UTC; null when since is null."))
     found: list[Finding] = Field([], description="Why the host is not idle; none when it is.")
 
@@ -205,8 +205,8 @@ class _Planned:
     """The scheduled shutdown that the loop follows."""
     key: tuple[int, int, str]  # hour, minute and zone of the settings it comes from
     due: datetime  # its time, in UTC
-    announced: Optional[float] = None  # monotonic time of its announcement
-    announced_at: Optional[datetime] = None  # and its time in UTC
+    announced: float | None = None  # monotonic time of its announcement
+    announced_at: datetime | None = None  # and its time in UTC
     # How often it was announced again, after what held it ended.
     again: int = 0
     postponed: bool = False
@@ -227,29 +227,29 @@ _monotonic = time.monotonic
 _sleep = asyncio.sleep
 
 _running = False
-_loop_task: Optional[asyncio.Task] = None
-_planned: Optional[_Planned] = None
+_loop_task: asyncio.Task | None = None
+_planned: _Planned | None = None
 # The last scheduled shutdown that is over: its key, its time, and whether it was issued.
-_finished: Optional[tuple[tuple[int, int, str], datetime, bool]] = None
-_last_issue_at: Optional[datetime] = None
+_finished: tuple[tuple[int, int, str], datetime, bool] | None = None
+_last_issue_at: datetime | None = None
 # Since when the host is idle: the monotonic time and the time in UTC.
-_idle_since: Optional[tuple[float, datetime]] = None
-_idle_announced: Optional[float] = None
+_idle_since: tuple[float, datetime] | None = None
+_idle_announced: float | None = None
 # The monotonic time at which use withdrew the last idle announcement.
-_idle_withdrawn: Optional[float] = None
+_idle_withdrawn: float | None = None
 # The announcement of the idle shutdown, as made: it stays the same while it is out.
-_idle_problem: Optional[problems.Problem] = None
+_idle_problem: problems.Problem | None = None
 # The announcement of a shutdown that was issued, shown until the host goes down: until when, and it.
-_going_down: Optional[tuple[datetime, dict[str, problems.Problem]]] = None
+_going_down: tuple[datetime, dict[str, problems.Problem]] | None = None
 # The last disk counters (monotonic time, bytes by disk) and what the last pass found from them.
-_disk_sample: Optional[tuple[float, dict[str, int]]] = None
-_disk_found: Optional[list[Finding]] = None
+_disk_sample: tuple[float, dict[str, int]] | None = None
+_disk_found: list[Finding] | None = None
 # The wake time the RTC holds, as the last pass found or set it; None when it holds no wanted one.
-_armed: Optional[datetime] = None
-_alarm_problem: Optional[str] = None
-_issue_problem: Optional[str] = None
-_last_pass: Optional[datetime] = None
-_last_mono: Optional[float] = None
+_armed: datetime | None = None
+_alarm_problem: str | None = None
+_issue_problem: str | None = None
+_last_pass: datetime | None = None
+_last_mono: float | None = None
 
 
 def _reset() -> None:
@@ -306,7 +306,7 @@ def _on_the_clock(at: datetime, zone: tzinfo) -> str:
     return f"{at.astimezone(zone):%H:%M} ({zone_name(zone)})"
 
 
-def check_times(config: "PowerConfig") -> None:
+def check_times(config: PowerConfig) -> None:
     """400 for a wake time less than MIN_OFF after the shutdown time on the clock."""
     if not (config.auto_shutdown and config.auto_wakeup):
         return
@@ -348,7 +348,7 @@ def read_rtc() -> RtcState:
     return RtcState(available=True, alarm=held)
 
 
-def _write_rtc(value: int) -> Optional[str]:
+def _write_rtc(value: int) -> str | None:
     """Set the alarm to ``value`` seconds since the epoch, 0 to clear it; why it failed, or None. Blocking."""
     try:
         result = host.run_on_host(["sh", "-c", _RTC_WRITE, "sh", WAKEALARM, str(value)], timeout=HOST_TIMEOUT)
@@ -357,7 +357,7 @@ def _write_rtc(value: int) -> Optional[str]:
     return None if result.ok else _why(result)
 
 
-def arm_rtc(at: datetime) -> Optional[str]:
+def arm_rtc(at: datetime) -> str | None:
     """Set the alarm to ``at`` and read it back; None when the RTC holds it, else why not. Blocking."""
     error = _write_rtc(int(at.timestamp()))
     if error is not None:
@@ -369,7 +369,7 @@ def arm_rtc(at: datetime) -> Optional[str]:
     return None
 
 
-async def apply_wake(saved: "PowerConfig", new: "PowerConfig") -> bool:
+async def apply_wake(saved: PowerConfig, new: PowerConfig) -> bool:
     """For PUT /power/config, before the settings are stored: a wake turned on or moved sets the
     alarm (409 when the RTC cannot wake the host, 500 when it keeps no alarm); a wake turned off clears
     it, unless the host no longer has the RTC or its alarm. Whether it set the alarm."""
@@ -405,7 +405,7 @@ async def undo_wake() -> None:
         logger.warning("Could not clear the RTC's wake alarm: %s", error)
 
 
-def _report_alarm(problem: Optional[str]) -> None:
+def _report_alarm(problem: str | None) -> None:
     """Log a problem of the wake alarm when it is new, not at every pass while it lasts."""
     global _alarm_problem
     if problem != _alarm_problem and problem is not None:
@@ -449,7 +449,7 @@ def _host_command(cmd: list[str], what: str) -> str:
     return result.stdout
 
 
-def _session_class(path: str) -> Optional[str]:
+def _session_class(path: str) -> str | None:
     """The class of logind's session at ``path``; None when it cannot be read."""
     cmd = ["busctl", "--json=short", "get-property", "org.freedesktop.login1", path,
            "org.freedesktop.login1.Session", "Class"]
@@ -522,7 +522,7 @@ _BTRFS_JOBS = {("scrub", "start"): "scrub", ("scrub", "resume"): "scrub",
 _BTRFS_THREADS = {"btrfs-balance": "balance", "btrfs-devrepl": "disk_replace"}
 
 
-def _btrfs_command(cmdline: list[str]) -> Optional[Finding]:
+def _btrfs_command(cmdline: list[str]) -> Finding | None:
     """What a btrfs command line runs, when it is a job: after btrfs's own options, a subcommand of
     _BTRFS_JOBS, or ``balance <path>``; its last argument names the pool when it is a path."""
     args = cmdline[1:]
@@ -548,7 +548,7 @@ def _btrfs_jobs() -> list[Finding]:
         return [Finding(kind="unreadable", detail=f"Could not read the processes: {exc}")]
     for name, cmdline in processes:
         if name in _BTRFS_THREADS:
-            finding: Optional[Finding] = Finding(kind=_BTRFS_THREADS[name])
+            finding: Finding | None = Finding(kind=_BTRFS_THREADS[name])
         elif name == "btrfs":
             finding = _btrfs_command(cmdline)
         else:
@@ -676,7 +676,7 @@ def _describe(finding: Finding) -> str:
 # ==================== The shutdowns ====================
 
 
-def _report_issue(problem: Optional[str]) -> None:
+def _report_issue(problem: str | None) -> None:
     global _issue_problem
     if problem != _issue_problem and problem is not None:
         logger.warning("%s", problem)
@@ -754,7 +754,7 @@ def _keep_shown(found: dict[str, problems.Problem], now: datetime) -> None:
     _going_down = (now + DECIDE_AHEAD + timedelta(seconds=SLACK_SECONDS), found)
 
 
-async def _holds(config: "PowerConfig", now: datetime, zone: tzinfo, wake: Optional[datetime]) -> list[Finding]:
+async def _holds(config: PowerConfig, now: datetime, zone: tzinfo, wake: datetime | None) -> list[Finding]:
     """What holds a shutdown: running jobs, tasks due, and a wake alarm the RTC does not hold."""
     found = _jobs(now, zone) + await asyncio.to_thread(_btrfs_jobs)
     if config.auto_wakeup and (_armed is None or _armed != wake):
@@ -762,12 +762,12 @@ async def _holds(config: "PowerConfig", now: datetime, zone: tzinfo, wake: Optio
     return found
 
 
-def _wake_too_close(now: datetime, wake: Optional[datetime]) -> bool:
+def _wake_too_close(now: datetime, wake: datetime | None) -> bool:
     return wake is not None and wake - (now + DECIDE_AHEAD) < MIN_OFF
 
 
-async def _follow_shutdown(config: "PowerConfig", zone: tzinfo, now: datetime, mono: float,
-                           wake: Optional[datetime]) -> dict[str, problems.Problem]:
+async def _follow_shutdown(config: PowerConfig, zone: tzinfo, now: datetime, mono: float,
+                           wake: datetime | None) -> dict[str, problems.Problem]:
     """Announce, postpone or issue the scheduled shutdown."""
     global _planned
     if not config.auto_shutdown:
@@ -826,15 +826,15 @@ async def _follow_shutdown(config: "PowerConfig", zone: tzinfo, now: datetime, m
     return {}
 
 
-def _wake_passed(config: "PowerConfig", zone: tzinfo, now: datetime) -> bool:
+def _wake_passed(config: PowerConfig, zone: tzinfo, now: datetime) -> bool:
     """Whether a wake time passed since the last pass."""
     if not config.auto_wakeup or _last_pass is None or _last_pass >= now:
         return False
     return next_instant(config.wakeup_hour, config.wakeup_minute, zone, _last_pass) <= now
 
 
-async def _follow_idle(config: "PowerConfig", zone: tzinfo, now: datetime, mono: float,
-                       wake: Optional[datetime]) -> dict[str, problems.Problem]:
+async def _follow_idle(config: PowerConfig, zone: tzinfo, now: datetime, mono: float,
+                       wake: datetime | None) -> dict[str, problems.Problem]:
     """Count the idle time, announce and issue the idle shutdown."""
     global _idle_since, _idle_announced, _idle_withdrawn, _idle_problem
     if not config.idle_shutdown:
@@ -912,8 +912,8 @@ async def run_pass() -> None:
         found.update(await _follow_idle(config, zone, now, mono, wake))
     else:
         # Both are off: they forget what they followed, and read nothing.
-        await _follow_shutdown(config, timezone.utc, now, mono, None)
-        await _follow_idle(config, timezone.utc, now, mono, None)
+        await _follow_shutdown(config, UTC, now, mono, None)
+        await _follow_idle(config, UTC, now, mono, None)
     if _going_down is not None:
         if now < _going_down[0]:
             found.update(_going_down[1])
@@ -950,7 +950,7 @@ async def stop_power_schedule() -> None:
         _loop_task = None
 
 
-def _idle_shutdown_at(config: "PowerConfig", now: datetime) -> Optional[datetime]:
+def _idle_shutdown_at(config: PowerConfig, now: datetime) -> datetime | None:
     """When the idle host goes down at the earliest: at the end of its idle time, and its announcement
     out for WARNING (after one that use withdrew, IDLE_REANNOUNCE_SECONDS later)."""
     if _idle_since is None:

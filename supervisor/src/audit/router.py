@@ -24,9 +24,9 @@ import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, UTC
 from pathlib import Path
-from typing import Annotated, Literal, Optional
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -65,7 +65,7 @@ _lock = threading.Lock()
 _reported_damage: set[tuple[str, int]] = set()
 
 
-def _bounded(value: Optional[str], limit: int) -> Optional[str]:
+def _bounded(value: str | None, limit: int) -> str | None:
     return value[:limit] if isinstance(value, str) else value
 
 
@@ -124,7 +124,7 @@ def entry_hash(entry: AuditEntry) -> str:
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
-def _last_entry(path: Path) -> Optional[AuditEntry]:
+def _last_entry(path: Path) -> AuditEntry | None:
     """The last valid entry of one file, from its end; None for a file without one."""
     try:
         size = path.stat().st_size
@@ -148,7 +148,7 @@ def _last_entry(path: Path) -> Optional[AuditEntry]:
     return None
 
 
-def _last_of_log() -> Optional[AuditEntry]:
+def _last_of_log() -> AuditEntry | None:
     """The log's last valid entry, in the newest file that has one; None for an empty log."""
     for path in reversed(_files_oldest_first()):
         last = _last_entry(path)
@@ -161,17 +161,17 @@ def _last_of_log() -> Optional[AuditEntry]:
 # It must stay in the log: when it is gone or changed, its end was cut or rewritten in the file,
 # and an entry says so (ADR-0328). Kept in memory only, under the log's lock: a new process
 # takes the end of the log as it finds it.
-_heads: dict[str, tuple[str, Optional[str]]] = {}
+_heads: dict[str, tuple[str, str | None]] = {}
 
 
-def _see_end(last: Optional[AuditEntry]) -> None:
+def _see_end(last: AuditEntry | None) -> None:
     if last is None:
         _heads.pop(AUDIT_FILE, None)
     else:
         _heads[AUDIT_FILE] = (last.id, last.hash)
 
 
-def _lost_head(entries: list[AuditEntry]) -> Optional[tuple[str, Optional[str]]]:
+def _lost_head(entries: list[AuditEntry]) -> tuple[str, str | None] | None:
     """The head this process kept, when the log no longer holds it; None while it does."""
     head = _heads.get(AUDIT_FILE)
     if head is None or any((e.id, e.hash) == head for e in entries):
@@ -179,7 +179,7 @@ def _lost_head(entries: list[AuditEntry]) -> Optional[tuple[str, Optional[str]]]
     return head
 
 
-def _write_chained(fields: dict, prev_hash: Optional[str]) -> AuditEntry:
+def _write_chained(fields: dict, prev_hash: str | None) -> AuditEntry:
     """Append one entry's fields to the current file, after the entry whose hash is ``prev_hash``,
     rotating it first when the line would not fit (call it under the log's lock)."""
     entry = AuditEntry.model_validate(fields)
@@ -209,7 +209,7 @@ def _write_chained(fields: dict, prev_hash: Optional[str]) -> AuditEntry:
     return chained
 
 
-def _cut_entry(head: tuple[str, Optional[str]]) -> dict:
+def _cut_entry(head: tuple[str, str | None]) -> dict:
     """The fields of the entry that says the end of the log was cut or rewritten after ``head``."""
     now = utc_now()
     return {
@@ -227,7 +227,7 @@ def _cut_entry(head: tuple[str, Optional[str]]) -> dict:
     }
 
 
-def _record_a_lost_end(entries: list[AuditEntry]) -> Optional[AuditEntry]:
+def _record_a_lost_end(entries: list[AuditEntry]) -> AuditEntry | None:
     """When the log no longer holds the head this process kept, append the entry that says so after
     its last entry; returns that entry (call it under the log's lock)."""
     head = _lost_head(entries)
@@ -315,7 +315,7 @@ def _rewrite(path: Path, entries: list[AuditEntry]) -> None:
         raise
 
 
-def _clear(before_date: Optional[str]) -> int:
+def _clear(before_date: str | None) -> int:
     """Remove the entries older than before_date, or all of them; the number removed.
 
     File by file, oldest first: a file whose entries are all older is deleted, a file with
@@ -325,7 +325,7 @@ def _clear(before_date: Optional[str]) -> int:
     """
     # A bound as the filters read it (_bound); "" and a time before the calendar remove nothing.
     cutoff = None if before_date is None else (
-        _bound("before_date", before_date, last=False) or datetime.min.replace(tzinfo=timezone.utc))
+        _bound("before_date", before_date, last=False) or datetime.min.replace(tzinfo=UTC))
     removed = 0
     with _log_lock():
         for path in _files_oldest_first():
@@ -352,12 +352,12 @@ def _clear(before_date: Optional[str]) -> int:
 
 async def log_action(
     action: AuditAction,
-    request: Optional[Request] = None,
-    user: Optional[User] = None,
-    username: Optional[str] = None,
-    resource_type: Optional[str] = None,
-    resource_id: Optional[str] = None,
-    details: Optional[str] = None,
+    request: Request | None = None,
+    user: User | None = None,
+    username: str | None = None,
+    resource_type: str | None = None,
+    resource_id: str | None = None,
+    details: str | None = None,
     success: bool = True,
     severity: AuditSeverity = AuditSeverity.INFO
 ) -> AuditEntry:
@@ -419,7 +419,7 @@ _BOUND_FORM = re.compile(
 )
 
 
-def _bound(name: str, value: Optional[str], *, last: bool) -> Optional[datetime]:
+def _bound(name: str, value: str | None, *, last: bool) -> datetime | None:
     """The instant (UTC) that start_date (last=False) or end_date (last=True) stands for.
 
     A bound without an offset is UTC, the clock of the entries (ADR-0401). Both bounds include
@@ -466,12 +466,12 @@ def entry_time(entry: AuditEntry) -> datetime:
 class AuditFilter:
     """What GET /logs, /logs/count and /logs/export select: every condition that is set."""
 
-    action: Optional[str] = None  # any action name, also one that AuditAction no longer has
-    username: Optional[str] = None
-    severity: Optional[AuditSeverity] = None
-    first: Optional[datetime] = None  # times from this one on
-    after: Optional[datetime] = None  # times before this one
-    search: Optional[str] = None  # casefolded
+    action: str | None = None  # any action name, also one that AuditAction no longer has
+    username: str | None = None
+    severity: AuditSeverity | None = None
+    first: datetime | None = None  # times from this one on
+    after: datetime | None = None  # times before this one
+    search: str | None = None  # casefolded
 
     def matches(self, entry: AuditEntry) -> bool:
         if self.action is not None and entry.action != self.action:
@@ -501,22 +501,22 @@ _BOUND_FORMS = (
 
 
 def audit_filter(
-    action: Annotated[Optional[str], Query(
+    action: Annotated[str | None, Query(
         description="Only the entries of this action, by its value, such as login_failed; also an older "
                     "entry's action that GET /audit/actions no longer lists.",
     )] = None,
-    username: Annotated[Optional[str], Query(description="Only the entries of this user name, exactly.")] = None,
-    severity: Annotated[Optional[AuditSeverity], Query(
+    username: Annotated[str | None, Query(description="Only the entries of this user name, exactly.")] = None,
+    severity: Annotated[AuditSeverity | None, Query(
         description="Only the entries of this severity: info, warning or critical.",
     )] = None,
-    start_date: Annotated[Optional[str], Query(
+    start_date: Annotated[str | None, Query(
         description=f"Only the entries from this time on, the whole unit it names included: {_BOUND_FORMS}.",
     )] = None,
-    end_date: Annotated[Optional[str], Query(
+    end_date: Annotated[str | None, Query(
         description=f"Only the entries up to this time, the whole unit it names included (a date its day, "
                     f"12:00 up to 12:00:59.999999): {_BOUND_FORMS}.",
     )] = None,
-    search: Optional[str] = Query(
+    search: str | None = Query(
         None, max_length=MAX_SEARCH_CHARS,
         description="Only the entries that hold this text, in any letter case, in the user, the action, the "
                     "client's address, the User-Agent, the resource or the details; at most 256 characters.",
@@ -547,9 +547,9 @@ def chained(entries: list[AuditEntry]) -> list[AuditEntryView]:
     return [_view(entry, chain) for entry, chain in zip(entries, _chain_of(entries))]
 
 
-def _chain_of(entries: list[AuditEntry]) -> list[Optional[str]]:
+def _chain_of(entries: list[AuditEntry]) -> list[str | None]:
     """Where each entry stands in the hash chain (chained): over the fields as the lines hold them."""
-    verdicts: list[Optional[str]] = []
+    verdicts: list[str | None] = []
     chain_seen = False
     for i, entry in enumerate(entries):
         if entry.hash is None:
@@ -564,7 +564,7 @@ def _chain_of(entries: list[AuditEntry]) -> list[Optional[str]]:
     return verdicts
 
 
-def _view(entry: AuditEntry, chain: Optional[str]) -> AuditEntryView:
+def _view(entry: AuditEntry, chain: str | None) -> AuditEntryView:
     """``entry`` as the API answers it: its time in UTC with its offset (ADR-0401), and its place in
     the chain."""
     return AuditEntryView(**{**entry.model_dump(), "timestamp": entry_time(entry)}, chain=chain)
@@ -784,7 +784,7 @@ async def list_audit_actions(_: User = Depends(require_admin)):
 )
 async def clear_audit_logs(
     request: Request,
-    before_date: Annotated[Optional[str], Query(
+    before_date: Annotated[str | None, Query(
         description=f"Remove only the entries before this time: {_BOUND_FORMS}. Left out: every entry.",
     )] = None,
     current_user: User = Depends(require_admin)

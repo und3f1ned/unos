@@ -38,7 +38,7 @@ import subprocess
 import tempfile
 import threading
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, UTC
 from pathlib import Path
 
 from fastapi import HTTPException
@@ -370,7 +370,7 @@ def keep_copy(kind: str, data: bytes) -> KeptCopy:
         if _holds(copy, data):
             return KeptCopy(copy, tuple(other for other in reversed(copies) if other != copy))
     directory = _conf_directory()
-    name = f"{os.path.basename(settings.smb_conf_path)}.{kind}-{datetime.now(timezone.utc).strftime(_COPY_TIME)}"
+    name = f"{os.path.basename(settings.smb_conf_path)}.{kind}-{datetime.now(UTC).strftime(_COPY_TIME)}"
     path = os.path.join(directory, name)
     _write_new_file_durably(path, data)
     # A clock set back can name the new copy before the others: it is kept all the same.

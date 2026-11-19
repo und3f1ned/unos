@@ -21,7 +21,6 @@ import base64
 import binascii
 import hashlib
 import re
-from typing import Optional
 
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
@@ -61,7 +60,7 @@ def new_private_key() -> str:
     ).decode()
 
 
-def public_key(private: str) -> Optional[str]:
+def public_key(private: str) -> str | None:
     """The public key of PRIVATE as an authorized_keys line, with UNOS's comment; None for a key that
     cannot be read."""
     try:
@@ -72,7 +71,7 @@ def public_key(private: str) -> Optional[str]:
     return f"{line.decode()} {KEY_COMMENT}"
 
 
-def host_key(value: object) -> Optional[str]:
+def host_key(value: object) -> str | None:
     """VALUE as a host key to pin, "<type> <base64>", whose key blob names the same type; None
     otherwise."""
     if not isinstance(value, str):
@@ -97,14 +96,14 @@ def fingerprint(key: str) -> str:
     return "SHA256:" + base64.b64encode(hashlib.sha256(blob).digest()).decode().rstrip("=")
 
 
-def fingerprint_text(value: object) -> Optional[str]:
+def fingerprint_text(value: object) -> str | None:
     """VALUE as a typed SHA256 fingerprint, without the padding; None when it is not one."""
     if not isinstance(value, str) or not _FINGERPRINT.fullmatch(value.strip()):
         return None
     return value.strip().rstrip("=")
 
 
-def known_host(text: str) -> Optional[str]:
+def known_host(text: str) -> str | None:
     """The host key that ssh wrote under HOST_KEY_ALIAS into a known_hosts file, or None."""
     for line in text.splitlines():
         parts = line.split()
@@ -118,7 +117,7 @@ def known_hosts_line(key: str) -> str:
 
 
 def command(*, server: str, port: int, user: str, identity: str, known_hosts: str,
-            pinned: Optional[str]) -> list[str]:
+            pinned: str | None) -> list[str]:
     """The argv of the host's ssh that opens the SFTP subsystem of USER at SERVER:PORT with the key
     of the file IDENTITY, the host key in the file KNOWN_HOSTS: PINNED, which ssh holds to
     (StrictHostKeyChecking yes, its algorithms only), or, at a server's first test, none: then ssh

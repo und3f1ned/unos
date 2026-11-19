@@ -10,7 +10,7 @@ import re
 import stat
 import sys
 import threading
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, UTC
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -2070,7 +2070,7 @@ NOT_PRIVATE = "{} could not be made private (only UNOS may open it), so nothing 
 ELSEWHERE_NOW = "Could not restore '{}': the folder {} is on another subvolume or filesystem now."
 UNKNOWN_ORIGIN = "It is not known where {} was deleted from, so it cannot be restored. Delete it for good instead."
 GONE = "Could not restore '{}': the folder {} it was deleted from is gone. Restore or create that folder first."
-T0 = datetime(2026, 11, 7, 12, 0, 0, tzinfo=timezone.utc)
+T0 = datetime(2026, 11, 7, 12, 0, 0, tzinfo=UTC)
 
 
 def _untrashed_tree(path):

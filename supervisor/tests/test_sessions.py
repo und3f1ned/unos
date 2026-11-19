@@ -4,7 +4,7 @@ and an administrator's End sessions, a new password set by an administrator and 
 the user all of them."""
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, UTC
 from types import SimpleNamespace
 
 import bcrypt
@@ -96,7 +96,7 @@ class TestSignIn:
         """A token signed with the right secret but whose session is not stored: a token of an
         ended session, or one made before this check."""
         settings = get_settings()
-        expires = datetime.now(timezone.utc) + timedelta(minutes=5)
+        expires = datetime.now(UTC) + timedelta(minutes=5)
         no_row = jwt.encode({"sub": "alice", "jti": "never-stored", "exp": expires}, settings.jwt_secret,
                             algorithm=settings.jwt_algorithm)
         no_id = jwt.encode({"sub": "alice", "exp": expires}, settings.jwt_secret, algorithm=settings.jwt_algorithm)
@@ -108,7 +108,7 @@ class TestSignIn:
         owner_token = session_token(db.engine, "owner")
         owner_session = jwt.decode(owner_token, options={"verify_signature": False})["jti"]
         settings = get_settings()
-        forged = jwt.encode({"sub": "alice", "jti": owner_session, "exp": datetime.now(timezone.utc) + timedelta(minutes=5)},
+        forged = jwt.encode({"sub": "alice", "jti": owner_session, "exp": datetime.now(UTC) + timedelta(minutes=5)},
                             settings.jwt_secret, algorithm=settings.jwt_algorithm)
 
         assert me(db, {"Authorization": f"Bearer {forged}"}) == (401, "Session ended")

@@ -164,7 +164,7 @@ class FakeUfwHost:
             if path == f"{STATE}/pending":
                 return self._ok(f"{self.pending}\n") if self.pending is not None else self._failed(
                     f"cat: {path}: No such file or directory")
-            if not self.has_ufw and path.startswith(UFW) or path == "/etc/default/ufw" and not self.has_ufw:
+            if (not self.has_ufw and path.startswith(UFW)) or (path == "/etc/default/ufw" and not self.has_ufw):
                 return self._failed(f"cat: {path}: No such file or directory")
             if path in self.files():
                 return self._ok(self.files()[path])

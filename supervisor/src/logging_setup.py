@@ -22,7 +22,7 @@ import logging.config
 import os
 import re
 import time
-from datetime import datetime, timezone
+from datetime import datetime, UTC
 from typing import Any
 
 LOG_LEVEL_ENV = "UNOS_LOG_LEVEL"
@@ -61,7 +61,7 @@ class JsonFormatter(logging.Formatter):
     """One JSON object per record, on one line."""
 
     def format(self, record: logging.LogRecord) -> str:
-        moment = datetime.fromtimestamp(record.created, timezone.utc)
+        moment = datetime.fromtimestamp(record.created, UTC)
         entry: dict[str, Any] = {
             "time": moment.strftime("%Y-%m-%dT%H:%M:%S.") + f"{moment.microsecond // 1000:03d}Z",
             "level": record.levelname,

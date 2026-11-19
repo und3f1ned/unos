@@ -13,7 +13,7 @@ import stat
 import subprocess
 import sys
 import tarfile
-from datetime import datetime, timezone
+from datetime import datetime, UTC
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -984,15 +984,15 @@ async def test_snapshot_task_creates_snapshot_dir_and_snapshot(env):
 async def test_a_scheduled_snapshot_is_named_after_the_time_in_utc(env):
     """As the Snapshots page and the guide say: the container's clock could be set to another time zone."""
     _fake_btrfs(env)
-    before = datetime.now(timezone.utc).replace(microsecond=0)
+    before = datetime.now(UTC).replace(microsecond=0)
 
     with local_time_9_hours_ahead_of_utc():
         ok, message = await scheduler.execute_task(ScheduledTask(**_task(keep_count=None)))
 
     assert ok, message
     (name,) = os.listdir(env.pool / ".snapshots")
-    named = datetime.strptime(name, "auto_%Y%m%d_%H%M%S").replace(tzinfo=timezone.utc)
-    assert before <= named <= datetime.now(timezone.utc)
+    named = datetime.strptime(name, "auto_%Y%m%d_%H%M%S").replace(tzinfo=UTC)
+    assert before <= named <= datetime.now(UTC)
 
 
 async def test_snapshot_task_refuses_symlinked_snapshot_dir(env):

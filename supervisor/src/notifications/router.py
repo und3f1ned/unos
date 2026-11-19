@@ -18,7 +18,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
-from datetime import datetime, timezone
+from datetime import datetime, UTC
 from pathlib import Path
 from fastapi import APIRouter, HTTPException, Depends, Request
 from fastapi import Path as PathParameter
@@ -204,7 +204,7 @@ def _history(data: object) -> list[NotificationLog]:
 
 def _write_history(logs: list[NotificationLog]) -> None:
     """Replace the history file with ``logs`` (blocking: fsync)."""
-    _replace_file(Path(LOGS_FILE), json.dumps([l.model_dump(mode="json") for l in logs], indent=2))
+    _replace_file(Path(LOGS_FILE), json.dumps([log.model_dump(mode="json") for log in logs], indent=2))
 
 
 def save_logs(entries: list[NotificationLog]) -> None:
@@ -235,7 +235,7 @@ def history_entry(
         event=event,
         channel=config.channel,
         channel_name=config.name,
-        sent_at=datetime.now(timezone.utc).isoformat(),
+        sent_at=datetime.now(UTC).isoformat(),
         success=success,
         error=error,
     )

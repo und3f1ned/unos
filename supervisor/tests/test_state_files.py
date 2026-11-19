@@ -21,9 +21,10 @@ import subprocess
 import sys
 import textwrap
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, UTC
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
+from collections.abc import Callable
 
 import pytest
 
@@ -214,7 +215,7 @@ def _run(coroutine):
     return asyncio.run(coroutine)
 
 
-_NOW = datetime(2026, 11, 10, 12, 0, tzinfo=timezone.utc)
+_NOW = datetime(2026, 11, 10, 12, 0, tzinfo=UTC)
 _TASK = ScheduledTask(id="t1", name="Nightly scrub", task_type=TaskType.SCRUB, frequency=ScheduleFrequency.DAILY)
 _RUN = TaskRun(id="r1", task_id="t1", task_name="Nightly scrub", started_at=_NOW.isoformat(), status="success")
 _LOG = NotificationLog(

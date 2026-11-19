@@ -4290,7 +4290,17 @@
         "The ruff rule set grows beyond F and E9 (for example B, E, UP), with the findings fixed first",
         "CI fails on a finding"
       ],
-      "passes": false
+      "verified_by": [
+        "supervisor/tests/test_repo_tooling.py",
+        "supervisor/tests/test_deploy_scripts.py"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0190",
+        "ADR-0216",
+        "ADR-0425"
+      ],
+      "notes": "Built 2026-11-19 (ADR-0425). Step 1: ruff.toml at the root selects F, E4, E7, E9, W605, B, UP, S, PLE, PLW, RUF, PGH004, T10, LOG, FA102, PIE794, PIE796 and SIM112, SIM115, SIM220 to SIM223, without the rules of style and the noisy ones that the ADR lists with their reasons (B904, B905, UP031, UP042, S101, S105 to S108, S110, S112, S603, S607, PLW0108, PLW0603, PLW1510, PLW2901 and RUF's rules of style); target py311, py39 for scripts/ and .claude/hooks/, which the workstation's python3 runs; S not in supervisor/tests/, E402 not in supervisor/src/main.py. make lint runs `ruff check supervisor scripts .claude/hooks` without --select. The findings were fixed first: 670 by ruff's safe fixes in 102 files (commit refactor: apply ruff's safe fixes), the other 64 by hand in 37 files or kept with `# noqa: <code>` and the reason (commit refactor: fix by hand); no change of behaviour: the backend tests pass, their own code changed only where ruff found something. test_ruff_finds_bugs_beyond_pyflakes runs ruff with ruff.toml over one defect of each kind and failed before the change. Step 2: the CI workflow's Lint job runs make lint, so a finding fails it; not seen while the workflow is off on GitHub (ADR-0230): open. Open, each a fix of behaviour that needs its own entry and a test first: the rollback of supervisor/src/updates/updater.py ignores the results of docker compose build and up and reports \"Rollback completed\" (PLW1510, also git fetch --tags, git stash and docker image prune unchecked there); ASYNC's 51 findings in async functions, most of them blocking calls (updater.py runs subprocess.run in async functions, among others). Reviewed in a fresh context (ADR-0017): its finding of a false reason for PLW1510 was fixed (the reason now names updater.py, recorded here as open), and its notes on counts, wording, the reasons of S108, S110 and S310 and the test's gaps (another ruff version, .claude/hooks, main.py's E402) were fixed; kept as decided: UP, a family of style, is selected (the ADR says why), ADR-0190 and ADR-0216 keep their old text (as ADR-0383 did), and imports that the safe fixes added out of order stay (no import-order rule is selected). Not host-level."
     },
     {
       "id": "ci.webui-eslint",

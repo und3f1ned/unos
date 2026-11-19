@@ -320,7 +320,7 @@ def installed_apps() -> list[tuple[str, int]]:
 
         def order(spec: str) -> tuple[bool, int]:
             number = spec.partition("/")[0]
-            return spec != web, int(number) if number.isdigit() else 0
+            return spec != web, int(number) if number.isdigit() else 0  # noqa: B023 - sorted() below, in this iteration
 
         ports: list[int] = []
         for spec in sorted(published, key=order):

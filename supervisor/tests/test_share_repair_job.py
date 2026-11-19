@@ -11,7 +11,7 @@ import os
 import sqlite3
 import threading
 import time
-from datetime import datetime, timezone
+from datetime import datetime, UTC
 from types import SimpleNamespace
 
 import pytest
@@ -45,7 +45,7 @@ WALK_FOR_AT_MOST = 5.0
 
 def _result(state: str, *, visited: int = 0, changed: int = 0, message: str = "") -> repair.RepairResult:
     """A result as repair_tree answers it: share empty, finished_at None while it runs."""
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     return repair.RepairResult(
         share="", state=state, started_at=now, finished_at=None if state == "running" else now, visited=visited,
         changed=changed, skipped=dict.fromkeys(repair.SKIP_REASONS, 0), skipped_paths=[], errors=0,

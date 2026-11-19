@@ -156,8 +156,8 @@ class FakeWgHost(FakeUfwHost):
 
     def _script(self, name: str, args: list[str]) -> HostResult:
         if name == "sh":  # host.missing_host_binaries
-            missing = [tool for tool in args if tool == "ufw" and not self.has_ufw
-                       or tool in ("wg", "wg-quick") and not self.has_wg]
+            missing = [tool for tool in args if (tool == "ufw" and not self.has_ufw)
+                       or (tool in ("wg", "wg-quick") and not self.has_wg)]
             return self._ok("".join(f"{tool}\n" for tool in missing))
         if name == "unos-wg-key":
             assert args == ["/etc/wireguard", KEY], args
@@ -539,7 +539,7 @@ class TestDisable:
         turned_on(client)
         client.post(f"{API}/disable")
         touched = [cmd for cmd in wg_host.calls
-                   if cmd[:1] == ["systemctl"] and cmd[1] not in ("is-enabled", "is-active")
+                   if (cmd[:1] == ["systemctl"] and cmd[1] not in ("is-enabled", "is-active"))
                    or cmd[:2] in (["ip", "link"], ["ip", "route"], ["ip", "addr"], ["resolvectl", "dns"])
                    or cmd[:1] in (["nmcli"], ["iptables"], ["smbcontrol"])]
         assert touched == [["systemctl", "enable", "--now", UNIT], ["systemctl", "disable", "--now", UNIT]]

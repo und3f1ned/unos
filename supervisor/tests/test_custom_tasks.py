@@ -11,7 +11,7 @@ import os
 import shlex
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import datetime, UTC
 from pathlib import Path
 
 import pytest
@@ -23,7 +23,6 @@ from .test_scheduler_validation import _REAL_RUN, _task, make_env
 
 scheduler = importlib.import_module("src.scheduler.router")
 
-UTC = timezone.utc
 
 
 @pytest.fixture

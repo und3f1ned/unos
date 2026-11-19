@@ -1429,7 +1429,7 @@ class TestAuthoritative:
         env = smb_env
         db = _smb_db(env.tmp / "b.db", shares=[(1, "docs", f"{env.data}/docs", False)],
                      access=[(1, 2, "alice", "write")], smb_accounts=[(2, "alice", 70002, 1, "set")])
-        response = _restore_smb(env, db, "[evil]\n   path = /etc\n   guest ok = yes\n".encode())
+        response = _restore_smb(env, db, b"[evil]\n   path = /etc\n   guest ok = yes\n")
 
         assert response.status_code == 200, response.text
         assert response.json()["restored"] == ["database", "smb_config"]

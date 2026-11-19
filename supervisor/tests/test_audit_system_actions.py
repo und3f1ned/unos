@@ -25,7 +25,7 @@ import logging
 import os
 import subprocess
 import threading
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, UTC
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -285,7 +285,7 @@ class TestPower:
         [written] = audit_entries(audit_file)
         assert picked(written) == entry("system_reboot", "host", None, "The host reboots in 1 minute", "warning")
         acts_at = datetime.fromisoformat(response.json()["pending"]["at"].replace("Z", "+00:00"))
-        written_at = datetime.fromisoformat(written["timestamp"]).astimezone(timezone.utc)
+        written_at = datetime.fromisoformat(written["timestamp"]).astimezone(UTC)
         assert written_at < acts_at - timedelta(seconds=50)
 
     def test_a_shutdown_is_in_the_audit_log(self, power_host, audit_file):

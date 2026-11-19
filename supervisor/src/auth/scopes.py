@@ -20,7 +20,7 @@ import sqlite3
 from contextlib import closing
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal, NamedTuple, Optional
+from typing import Literal, NamedTuple
 
 from sqlalchemy import LargeBinary, cast, func
 
@@ -59,7 +59,7 @@ SECRET_ANSWER = "A read-only API token cannot read this: the answer holds secret
 @dataclass(frozen=True)
 class Scope:
     read_only: bool
-    areas: Optional[frozenset[str]]  # None: every area
+    areas: frozenset[str] | None  # None: every area
 
     @property
     def full(self) -> bool:
@@ -88,7 +88,7 @@ def stored_columns(column) -> tuple:
     return func.typeof(column), cast(column, LargeBinary)
 
 
-def stored_text(kind: object, raw: object) -> Optional[str]:
+def stored_text(kind: object, raw: object) -> str | None:
     """The value of ``stored_columns``: the text, or None when it is no UTF-8 text (NULL, a blob,
     bytes that are not UTF-8); ``parse`` reads None as no scope."""
     if kind != "text" or not isinstance(raw, bytes):
@@ -99,7 +99,7 @@ def stored_text(kind: object, raw: object) -> Optional[str]:
         return None
 
 
-def parse(value: object) -> Optional[Scope]:
+def parse(value: object) -> Scope | None:
     """The scope that a value of api_tokens.permissions holds; None for anything else: not text, an
     empty or repeated item, an unknown word, or "*" beside another item."""
     if not isinstance(value, str):
@@ -173,7 +173,7 @@ OPERATION_KINDS: dict[tuple[str, str], Kind] = {
 # The WebSockets only send: a read-only token opens them. Their areas; None: every area, for the
 # events socket, which carries the data of several (stats, problems, scrubs, balances, a share's
 # repair, the installs of apps).
-SOCKET_AREAS: dict[str, Optional[str]] = {
+SOCKET_AREAS: dict[str, str | None] = {
     "/ws/v1/events": None,
     "/ws/v1/logs/{container_id}": "containers",
     "/ws/v1/journal": "logs",
@@ -202,7 +202,7 @@ _OPERATION_PATTERNS = [(method, _pattern(template), kind) for (method, template)
 _SOCKET_PATTERNS = [(_pattern(template), area) for template, area in SOCKET_AREAS.items()]
 
 
-def area_of(path: str) -> Optional[str]:
+def area_of(path: str) -> str | None:
     """The area of an API path; None for a path outside the API's areas."""
     if not path.startswith(API_PREFIX):
         return None
@@ -230,7 +230,7 @@ def _socket_area(path: str) -> object:
     return _UNKNOWN_SOCKET
 
 
-def refusal(scope: Scope, method: str, path: str) -> Optional[str]:
+def refusal(scope: Scope, method: str, path: str) -> str | None:
     """The detail of the 403 that a token of ``scope`` gets for ``method`` (an HTTP method, or
     WEBSOCKET) on ``path`` as routed; None when its scope lets it through."""
     if scope.full:
@@ -253,7 +253,7 @@ def refusal(scope: Scope, method: str, path: str) -> Optional[str]:
     return None
 
 
-def stored_refusal(stored: object, operation: Operation) -> Optional[str]:
+def stored_refusal(stored: object, operation: Operation) -> str | None:
     """``refusal`` for a token whose api_tokens.permissions holds ``stored``."""
     scope = parse(stored)
     if scope is None:

@@ -20,7 +20,7 @@ import asyncio
 import logging
 import threading
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, UTC
 from pathlib import PurePosixPath
 from typing import Annotated
 
@@ -201,7 +201,7 @@ async def repair_share_permissions(
         raise HTTPException(status_code=409, detail=ALREADY_RUNNING)
     running = _Running(share_id=share.id, name=share.name)
     started = repair.RepairResult(
-        share=share.name, state="running", started_at=datetime.now(timezone.utc), finished_at=None, visited=0,
+        share=share.name, state="running", started_at=datetime.now(UTC), finished_at=None, visited=0,
         changed=0, skipped=dict.fromkeys(repair.SKIP_REASONS, 0), skipped_paths=[], errors=0, error_samples=[],
         message="",
     )
@@ -381,7 +381,7 @@ def _repair_and_record(
         logger.exception("Repair permissions of share %s stopped on an unexpected error", started.share)
         result = started.model_copy(update={
             "state": "failed",
-            "finished_at": datetime.now(timezone.utc),
+            "finished_at": datetime.now(UTC),
             "message": f"The repair stopped on an unexpected error: {sanitize_error_message(exc)}",
         })
     result = result.model_copy(update=mark)

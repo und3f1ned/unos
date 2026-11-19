@@ -12,7 +12,7 @@ import socket
 import ssl
 import stat
 import threading
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, UTC
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -34,7 +34,7 @@ from src.security import serving
 from .test_security import needs_openssl
 
 API = "/api/v1/security/certificates"
-NOW = datetime.now(timezone.utc)
+NOW = datetime.now(UTC)
 # What the fake Caddy serves while it serves its local CA: no stored certificate has it.
 LOCAL_CA = "LOCAL:CA"
 

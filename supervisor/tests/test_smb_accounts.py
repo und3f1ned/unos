@@ -374,7 +374,7 @@ def failing_commit(monkeypatch):
     return state
 
 
-def calls_at_commits(world: "World", monkeypatch) -> list[int]:
+def calls_at_commits(world: World, monkeypatch) -> list[int]:
     """The number of host calls made before each AsyncSession.commit, in order."""
     marks: list[int] = []
     real = AsyncSession.commit
@@ -387,7 +387,7 @@ def calls_at_commits(world: "World", monkeypatch) -> list[int]:
     return marks
 
 
-def smbpasswd_times_out_after_writing(world: "World", monkeypatch, times: int = 1) -> None:
+def smbpasswd_times_out_after_writing(world: World, monkeypatch, times: int = 1) -> None:
     """The next ``times`` smbpasswd calls store the password, then do not answer in time
     (only nsenter is killed at the timeout: smbpasswd may finish its write)."""
     real_run = world.fake.run
@@ -403,7 +403,7 @@ def smbpasswd_times_out_after_writing(world: "World", monkeypatch, times: int = 
     monkeypatch.setattr("src.host.run_on_host", run)
 
 
-def times_out_once(world: "World", monkeypatch, *prefix: str) -> None:
+def times_out_once(world: World, monkeypatch, *prefix: str) -> None:
     """The next command starting with ``prefix`` does not answer in time (recorded, not run)."""
     real_run = world.fake.run
     left = {"n": 1}
@@ -422,7 +422,7 @@ def _disk_full(statement: str) -> OperationalError:
     return OperationalError(statement, {}, Exception("database or disk is full"))
 
 
-def flush_fails_after_the_revocation(world: "World", monkeypatch, name: str) -> list[list[str]]:
+def flush_fails_after_the_revocation(world: World, monkeypatch, name: str) -> list[list[str]]:
     """Session.flush raises (a full disk) at the first flush with pending changes after the
     revoke step removed the passdb entry of ``name``, before the commit: a full disk fails a
     statement once SQLite's page cache spills into unos.db-wal (ADR-0306), and a lock held past
@@ -771,7 +771,7 @@ class TestCreateUserWithSmb:
         assert world.fake.calls == []
 
 
-def orphan_rows_of(world: "World", name: str) -> int:
+def orphan_rows_of(world: World, name: str) -> int:
     """A restored or hand-edited database lost the user ``name`` (the highest id) but kept its SMB
     rows, its Samba entry and its host account. Returns the id, which SQLite gives to the next user."""
     user_id = world.ids[name]
@@ -980,7 +980,7 @@ class TestStaleIdentity:
         assert world.row("alice").password_state == "needed"
 
 
-async def _sent_while_locked(world: "World", method: str, url: str, **kwargs):
+async def _sent_while_locked(world: World, method: str, url: str, **kwargs):
     """Send a request while the test holds smb_lock, through httpx.ASGITransport in the test's
     own event loop (a TestClient runs the app in another loop, which has its own lock).
     Returns the host calls made and whether the request was answered while the lock was

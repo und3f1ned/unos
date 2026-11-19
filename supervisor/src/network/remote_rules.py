@@ -99,7 +99,7 @@ async def current_wanted() -> list[Wanted]:
     return [*([remote_rule(port)] if port else []), *(app_rule(p) for p in _app_ports())]
 
 
-async def missing_commands(state: "firewall.State") -> list[list[str]]:
+async def missing_commands(state: firewall.State) -> list[list[str]]:
     """For the firewall's Enable and Reset: the commands that add remote access's and the app names'
     rules the host lacks. None when they cannot be read: the firewall goes on with its own rules."""
     try:
@@ -122,7 +122,7 @@ async def refuse_while_firewall_waits() -> None:
         await firewall._refuse_while_waiting()
 
 
-async def sync(*, remote_port: "int | None | _Keep" = KEEP, app_ports: "list[int] | _Keep" = KEEP) -> None:
+async def sync(*, remote_port: int | None | _Keep = KEEP, app_ports: list[int] | _Keep = KEEP) -> None:
     """Make the host's ufw hold the rules of remote access (``remote_port``, or none) and of the app
     names (``app_ports``) and no other rule with their comments. Nothing without ufw."""
     if not await _has_ufw():
