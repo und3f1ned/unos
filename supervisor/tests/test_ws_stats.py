@@ -12,6 +12,12 @@ import pytest
 from src.websocket import events
 
 
+# psutil's answers, by their public fields: psutil._common's named tuples are private, and psutil 7
+# (the image's pin) no longer has them there.
+SDISKIO = namedtuple("sdiskio", "read_count write_count read_bytes write_bytes read_time write_time")
+SNETIO = namedtuple("snetio", "bytes_sent bytes_recv packets_sent packets_recv errin errout dropin dropout")
+
+
 @pytest.fixture
 def clock(monkeypatch):
     """A fresh sampler on a clock that the test moves: a list of one time in seconds."""
@@ -88,7 +94,7 @@ def host_disks(monkeypatch, tmp_path):
         assert perdisk, "psutil's totals of every device of /sys/block were read"
         disks.reads += 1
         return {
-            name: psutil._common.sdiskio(1, 1, read, written, 0, 0)
+            name: SDISKIO(1, 1, read, written, 0, 0)
             for name, (read, written) in disks.counters.items()
         }
 
@@ -176,7 +182,7 @@ def test_where_the_host_is_the_machine_itself_psutil_reads_its_interfaces(monkey
     def net_io_counters(pernic=False, nowrap=True):
         assert pernic
         return {
-            name: psutil._common.snetio(sent, received, 3, 3, 0, 0, 0, 0)
+            name: SNETIO(sent, received, 3, 3, 0, 0, 0, 0)
             for name, (received, sent) in next(samples).items()
         }
 
