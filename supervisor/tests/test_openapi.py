@@ -24,7 +24,7 @@ import json
 import re
 import textwrap
 import types
-from typing import Any, Optional, get_args, get_origin
+from typing import Any, get_args, get_origin
 
 import pytest
 from fastapi import Depends, FastAPI, HTTPException, Request, status
@@ -110,7 +110,7 @@ def _operation(spec: dict, method: str, path: str) -> dict:
 _STATUS_NAME = re.compile(r"HTTP_(\d{3})_")
 
 
-def _status(node: ast.AST) -> Optional[int]:
+def _status(node: ast.AST) -> int | None:
     if isinstance(node, ast.Constant) and type(node.value) is int:
         return node.value
     if isinstance(node, ast.Attribute):
@@ -154,7 +154,7 @@ class _Deriver:
         return (inspect.isfunction(obj) or inspect.isclass(obj)) and in_package
 
     @staticmethod
-    def parse(obj: Any) -> Optional[ast.AST]:
+    def parse(obj: Any) -> ast.AST | None:
         try:
             return ast.parse(textwrap.dedent(inspect.getsource(obj)))
         except (OSError, TypeError, SyntaxError):
@@ -323,7 +323,7 @@ def field_problems(spec: dict) -> list[str]:
     return problems
 
 
-def _model_name(schema: Optional[dict]) -> Optional[str]:
+def _model_name(schema: dict | None) -> str | None:
     """The component that a body or an answer is, or whose items or values it holds."""
     if not schema:
         return None

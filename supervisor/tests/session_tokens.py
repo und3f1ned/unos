@@ -1,7 +1,7 @@
 """Session tokens for tests: a JWT whose session row exists, as a sign-in makes it (ADR-0329)."""
 
 import secrets
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, UTC
 
 import jwt
 from sqlalchemy import create_engine, select
@@ -19,9 +19,9 @@ def session_token(engine, username: str, *, expires: int | None = None) -> str:
     settings = get_settings()
     session_id = secrets.token_urlsafe(24)
     if expires is None:
-        expires_at = datetime.now(timezone.utc) + timedelta(minutes=settings.jwt_expire_minutes)
+        expires_at = datetime.now(UTC) + timedelta(minutes=settings.jwt_expire_minutes)
     else:
-        expires_at = datetime.fromtimestamp(expires, timezone.utc)
+        expires_at = datetime.fromtimestamp(expires, UTC)
     # A connection of its own, closed afterwards: one left in the pool of ``engine`` would keep
     # SQLite's write-ahead log from its checkpoint, and tests that copy the database file would
     # copy less than it holds.

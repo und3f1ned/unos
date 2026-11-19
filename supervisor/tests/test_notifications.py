@@ -326,7 +326,7 @@ class TestTheMailServersCertificate:
         message = email.message_from_string(text)
         assert message["Date"] and message["Message-ID"], text
         sent_at = email.utils.parsedate_to_datetime(message["Date"])
-        assert abs(sent_at - datetime.datetime.now(datetime.timezone.utc)) < datetime.timedelta(minutes=1)
+        assert abs(sent_at - datetime.datetime.now(datetime.UTC)) < datetime.timedelta(minutes=1)
         assert re.fullmatch(r"<[^<>@\s]+@example>", message["Message-ID"]), message["Message-ID"]
 
     @pytest.mark.parametrize("server", ["untrusted"], indirect=True)

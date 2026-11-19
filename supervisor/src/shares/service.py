@@ -44,7 +44,7 @@ import struct
 import weakref
 from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, UTC
 from pathlib import Path, PurePosixPath
 from types import SimpleNamespace
 
@@ -71,7 +71,7 @@ from . import account_state, accounts, constants, interfaces, models, repair, sc
 
 logger = logging.getLogger(__name__)
 
-_locks: "weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Lock]" = weakref.WeakKeyDictionary()
+_locks: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Lock] = weakref.WeakKeyDictionary()
 
 # Longest path the import accepts; longer ones are skipped.
 MAX_IMPORT_PATH = 4096
@@ -104,7 +104,7 @@ def smb_lock() -> asyncio.Lock:
 
 
 def _utcnow() -> datetime:
-    return datetime.now(timezone.utc).replace(tzinfo=None)
+    return datetime.now(UTC).replace(tzinfo=None)
 
 
 def _reason(exc: BaseException) -> str:

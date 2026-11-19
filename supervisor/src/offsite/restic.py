@@ -171,7 +171,7 @@ async def run(args: list[str], env: dict[str, str], *, timeout: float, stdin: by
             out.close()  # restic has its own descriptor of the file
     try:
         return await asyncio.wait_for(_communicate(process, stdin, on_error_line), timeout)
-    except asyncio.TimeoutError:
+    except TimeoutError:
         await _kill(process)
         raise Timeout(timeout) from None
     except BaseException:

@@ -16,7 +16,7 @@ import json
 import logging
 import os
 import subprocess
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone, UTC
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -41,7 +41,7 @@ offsite = importlib.import_module("src.offsite.service")
 repair_router = importlib.import_module("src.shares.repair_router")
 
 API = "/api/v1/power"
-UTC = timezone.utc
+UTC = UTC
 
 SCHEDULED = ["shutdown", "-h", "+1", "UNOS: scheduled shutdown (power settings)"]
 IDLE = ["shutdown", "-h", "+1", "UNOS: idle shutdown (power settings)"]

@@ -18,7 +18,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
-from datetime import datetime, timezone
+from datetime import datetime, UTC
 from pathlib import Path
 from fastapi import APIRouter, HTTPException, Depends, Request
 from fastapi import Path as PathParameter
@@ -235,7 +235,7 @@ def history_entry(
         event=event,
         channel=config.channel,
         channel_name=config.name,
-        sent_at=datetime.now(timezone.utc).isoformat(),
+        sent_at=datetime.now(UTC).isoformat(),
         success=success,
         error=error,
     )

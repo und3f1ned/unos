@@ -147,7 +147,7 @@ SCRIPTS = {
 
 # One lock per event loop (an asyncio.Lock binds to the loop it is first used
 # in; tests run several loops, cf. shares.service.smb_lock).
-_locks: "weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Lock]" = weakref.WeakKeyDictionary()
+_locks: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Lock] = weakref.WeakKeyDictionary()
 
 
 def _lock() -> asyncio.Lock:

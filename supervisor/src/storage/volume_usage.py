@@ -36,7 +36,7 @@ import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, UTC
 from pathlib import Path
 from typing import Annotated
 
@@ -284,7 +284,7 @@ def history_of(uuid: str, subvol_id: int) -> list[Point]:
 
 
 def _iso(seconds: float) -> str:
-    return datetime.fromtimestamp(int(seconds), timezone.utc).isoformat()
+    return datetime.fromtimestamp(int(seconds), UTC).isoformat()
 
 
 def usage_history(pool_name: str, volume_name: str) -> VolumeUsageHistory:

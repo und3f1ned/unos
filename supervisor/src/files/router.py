@@ -56,7 +56,7 @@ import threading
 import time
 from collections.abc import Callable, Iterator
 from contextlib import closing, contextmanager
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, UTC
 from typing import Annotated, BinaryIO
 from urllib.parse import quote
 
@@ -551,7 +551,7 @@ def get_file_info(name: str, path: str, st: os.stat_result) -> FileInfo:
         path=path,
         type=file_type,
         size=st.st_size if file_type == FileType.FILE else 0,
-        modified=datetime.fromtimestamp(st.st_mtime, timezone.utc).isoformat(),
+        modified=datetime.fromtimestamp(st.st_mtime, UTC).isoformat(),
         permissions=stat.filemode(st.st_mode),
         owner=owner,
         group=group,
@@ -1412,7 +1412,7 @@ def _done_before(exc: HTTPException | OSError, done: int, total: int, how: str) 
 
 def _now() -> datetime:
     """The current time in UTC. Module level so tests can move it."""
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def _entry_time(name: str) -> datetime | None:
@@ -1420,7 +1420,7 @@ def _entry_time(name: str) -> datetime | None:
     if not _TRASH_ENTRY.fullmatch(name):
         return None
     try:
-        return datetime.strptime(name[:16], _TRASH_STAMP).replace(tzinfo=timezone.utc)
+        return datetime.strptime(name[:16], _TRASH_STAMP).replace(tzinfo=UTC)
     except ValueError:  # e.g. month 13
         return None
 
@@ -2406,7 +2406,7 @@ def _list_upload_leftovers(checking: bool) -> UploadLeftovers:
             # JSON cannot carry it, and a path shown otherwise would not lead back to the file.
             problems.append(f"{_shown(path)} is not listed: its path is not UTF-8")
             continue
-        modified = datetime.fromtimestamp(leftover.mtime, timezone.utc).isoformat()
+        modified = datetime.fromtimestamp(leftover.mtime, UTC).isoformat()
         files.append(UploadLeftover(path=path, size=leftover.size, modified=modified))
     checked = _leftovers.checked
     return UploadLeftovers(

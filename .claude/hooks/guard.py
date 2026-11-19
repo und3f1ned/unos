@@ -2019,7 +2019,7 @@ class Guard:
             positionals = _positionals(args, {"--match", "-t", "--type", "-m", "-A", "-B", "-C"})
             roots = positionals[1:]
         elif name == "git":
-            positionals = _positionals(args, {"-C", "-c", "-e", "-f", "-m", "-A", "-B", "-C"})
+            positionals = _positionals(args, {"-C", "-c", "-e", "-f", "-m", "-A", "-B"})
             if positionals[:1] != ["grep"]:
                 return
             unignored = ("--no-index" in args and "--exclude-standard" not in args) or (

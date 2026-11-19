@@ -7,7 +7,8 @@ every administrator-only router. A JSON answer without a response model gets its
 ``answer()``, a file or a text from ``file_answer()``. tests/test_openapi.py checks the whole schema.
 """
 
-from typing import Any, Mapping
+from typing import Any
+from collections.abc import Mapping
 
 from pydantic import BaseModel, ConfigDict, Field
 

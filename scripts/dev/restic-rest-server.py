@@ -232,7 +232,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self._answer(200)
 
     def _delete(self, repo, what, name) -> None:
-        if what == "repository" or name is None and what != "config":
+        if what == "repository" or (name is None and what != "config"):
             raise Refused(400, "a file's name is needed")
         path = self._file(repo, what, name)
         try:

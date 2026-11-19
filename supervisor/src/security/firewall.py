@@ -29,7 +29,8 @@ import re
 import subprocess
 import time
 import weakref
-from typing import Callable, NamedTuple
+from typing import NamedTuple
+from collections.abc import Callable
 
 from fastapi import HTTPException
 
@@ -210,7 +211,7 @@ SCRIPTS = {
 
 # One lock per event loop (an asyncio.Lock binds to the loop it is first used in; tests run
 # several loops, cf. network.links).
-_locks: "weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Lock]" = weakref.WeakKeyDictionary()
+_locks: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Lock] = weakref.WeakKeyDictionary()
 
 
 def _lock() -> asyncio.Lock:

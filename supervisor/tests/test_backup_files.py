@@ -14,7 +14,7 @@ import threading
 import time
 import tracemalloc
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timezone
+from datetime import datetime, UTC
 from pathlib import Path
 
 import pytest
@@ -35,7 +35,7 @@ from .test_backup_restore import (
 backup_router = importlib.import_module("src.backup.router")
 
 PASSPHRASE = "correct horse battery"
-FROZEN = datetime(2026, 1, 2, 3, 4, 5, tzinfo=timezone.utc)
+FROZEN = datetime(2026, 1, 2, 3, 4, 5, tzinfo=UTC)
 SECOND = "20260102_030405"  # the names carry the time in UTC (ADR-0401)
 
 

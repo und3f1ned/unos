@@ -185,7 +185,7 @@ def _certificate(name: str = "127.0.0.1") -> tuple[bytes, bytes]:
     """A self-signed certificate for the IP address NAME, and its key, in PEM."""
     private = ec.generate_private_key(ec.SECP256R1())
     subject = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, name)])
-    now = dt.datetime.now(dt.timezone.utc)
+    now = dt.datetime.now(dt.UTC)
     certificate = (
         x509.CertificateBuilder().subject_name(subject).issuer_name(subject).public_key(private.public_key())
         .serial_number(x509.random_serial_number()).not_valid_before(now - dt.timedelta(days=1))
@@ -214,7 +214,7 @@ def tls_server(tmp_path: Path, certificate: bytes, key_pem: bytes):
         while not stop.is_set():
             try:
                 conn, _ = server.accept()
-            except (socket.timeout, OSError):
+            except (TimeoutError, OSError):
                 continue
             with contextlib.suppress(OSError, ssl.SSLError):
                 conn.settimeout(5)
@@ -306,7 +306,7 @@ async def test_a_ca_certificate_reaches_restic_as_cacert(env):
 def _authority() -> tuple[x509.Certificate, ec.EllipticCurvePrivateKey]:
     private = ec.generate_private_key(ec.SECP256R1())
     name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "A CA of the family")])
-    now = dt.datetime.now(dt.timezone.utc)
+    now = dt.datetime.now(dt.UTC)
     certificate = (
         x509.CertificateBuilder().subject_name(name).issuer_name(name).public_key(private.public_key())
         .serial_number(x509.random_serial_number()).not_valid_before(now - dt.timedelta(days=1))
@@ -320,7 +320,7 @@ def _authority() -> tuple[x509.Certificate, ec.EllipticCurvePrivateKey]:
 def _issued(authority, authority_key, *, days: int = 30) -> tuple[bytes, bytes]:
     """A certificate for 127.0.0.1 that AUTHORITY signed, valid from yesterday for DAYS more days."""
     private = ec.generate_private_key(ec.SECP256R1())
-    now = dt.datetime.now(dt.timezone.utc)
+    now = dt.datetime.now(dt.UTC)
     certificate = (
         x509.CertificateBuilder().subject_name(x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "127.0.0.1")]))
         .issuer_name(authority.subject).public_key(private.public_key()).serial_number(x509.random_serial_number())

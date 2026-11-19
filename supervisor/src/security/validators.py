@@ -14,7 +14,6 @@ import os
 import stat
 from collections.abc import Sequence
 from pathlib import Path
-from typing import Optional
 from fastapi import HTTPException
 
 from ..config import get_settings
@@ -98,7 +97,7 @@ def validate_hostname(hostname: str) -> str:
     return hostname
 
 
-def validate_timezone(timezone: str, valid_timezones: Optional[set] = None) -> str:
+def validate_timezone(timezone: str, valid_timezones: set | None = None) -> str:
     """
     Validate a timezone string.
 

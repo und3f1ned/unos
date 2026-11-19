@@ -40,9 +40,9 @@ import stat
 import subprocess
 import threading
 import asyncio
-from datetime import datetime, timedelta, timezone, tzinfo
+from datetime import datetime, timedelta, tzinfo, UTC
 from pathlib import Path
-from typing import Annotated, NamedTuple, Optional
+from typing import Annotated, NamedTuple
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from fastapi import APIRouter, HTTPException, Depends, Request
 from fastapi import Path as PathParameter
@@ -146,8 +146,8 @@ _backup_keys_lock = threading.Lock()
 
 # In-memory scheduler state
 _scheduler_running = False
-_scheduler_task: Optional[asyncio.Task] = None
-_task_check_task: Optional[asyncio.Task] = None
+_scheduler_task: asyncio.Task | None = None
+_task_check_task: asyncio.Task | None = None
 # The runs the loop started and that have not ended: the event loop keeps only
 # weak references to tasks. stop_scheduler ends them.
 _runs: set[asyncio.Task] = set()
@@ -163,7 +163,7 @@ _sleep = asyncio.sleep  # replaced by the tests, as _utc_now
 
 
 def _utc_now() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def _warn_once(message: str) -> None:
@@ -328,12 +328,12 @@ def get_cron_expression(task: ScheduledTask) -> str:
 def _named_zone(name: str | None) -> tuple[tzinfo, str | None]:
     """The zone of host.time_zone_name's answer, or UTC and why the supervisor cannot use it."""
     if name is None:
-        return timezone.utc, "/etc/localtime is not a link into a zoneinfo folder"
+        return UTC, "/etc/localtime is not a link into a zoneinfo folder"
     try:
         return ZoneInfo(name), None
     # Not a key, not in the supervisor's database, or one of its folders (IsADirectoryError).
     except (OSError, ValueError, ZoneInfoNotFoundError) as e:
-        return timezone.utc, str(e)
+        return UTC, str(e)
 
 
 def schedule_zone() -> tzinfo:
@@ -351,7 +351,7 @@ def schedule_zone() -> tzinfo:
     try:
         name = host.time_zone_name()
     except (OSError, subprocess.SubprocessError, host.HostCommandError) as e:
-        zone = _last_zone or timezone.utc
+        zone = _last_zone or UTC
         _report_zone_problem(f"The time zone of the host cannot be read ({e}): the schedules follow {zone}")
         return zone
     zone, problem = _named_zone(name)
@@ -369,7 +369,7 @@ def _first_instant(wall: datetime, zone: tzinfo) -> datetime:
     saving time ends, and for a time that the clock skips when it begins, the end of
     the skip: 02:30 comes at 03:00 in central Europe (ADR-0266).
     """
-    at = wall.replace(tzinfo=zone, fold=0).astimezone(timezone.utc)
+    at = wall.replace(tzinfo=zone, fold=0).astimezone(UTC)
     # A skipped time is read with the offset before the change, which gives an
     # instant after the skip: go back to its end.
     while (at - MINUTE).astimezone(zone).replace(tzinfo=None) >= wall:
@@ -929,7 +929,7 @@ async def run_command(command: str) -> CommandResult:
     try:
         try:
             await asyncio.wait_for(process.wait(), COMMAND_TIMEOUT)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             timed_out = True
     finally:
         # What it left running, or all of it at the time limit (or when the run is cancelled):
@@ -1103,7 +1103,7 @@ def _instant(text: str | None) -> datetime | None:
         at = datetime.fromisoformat(text)
     except (TypeError, ValueError):
         return None
-    return at if at.tzinfo else at.replace(tzinfo=timezone.utc)
+    return at if at.tzinfo else at.replace(tzinfo=UTC)
 
 
 def task_problems(

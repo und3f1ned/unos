@@ -38,7 +38,7 @@ import time
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, UTC
 from typing import Any
 
 from docker.errors import DockerException
@@ -249,7 +249,7 @@ def start(template: AppTemplate, work: Callable[[Progress], AppInstallResponse],
                 template_id=template.id,
                 name=template.name,
                 kind=kind,
-                started_at=datetime.now(timezone.utc),
+                started_at=datetime.now(UTC),
                 containers=[ContainerStart(name=name, companion=companions.get(name)) for name in names],
             )
             _running = running = _Running(job_id=job.id, name=template.name, kind=kind)
@@ -317,7 +317,7 @@ def _run(running: _Running, job: AppInstallJob, work: Callable[[Progress], AppIn
         if end["state"] == "failed":
             # The request's own answer is 202: the supervisor's log is where a failure shows.
             logger.warning("The %s of %s failed (%s): %s", _noun(job.kind), job.name, end["error_status"], end["error"])
-        ended = progress.job.model_copy(update={**end, "finished_at": datetime.now(timezone.utc)})
+        ended = progress.job.model_copy(update={**end, "finished_at": datetime.now(UTC)})
         _publish(ended)
 
 

@@ -16,8 +16,8 @@ from __future__ import annotations
 
 import json
 import re
-from datetime import datetime, timezone
-from typing import Callable
+from datetime import datetime, UTC
+from collections.abc import Callable
 
 import pytest
 from fastapi.testclient import TestClient
@@ -459,7 +459,7 @@ class TestTwoFactor:
             clock.next_step()
         code = clock.code(secret)
 
-        monkeypatch.setattr(audit_router, "utc_now", lambda: datetime(2026, 11, 7, 12, 0, 5, int(code), tzinfo=timezone.utc))
+        monkeypatch.setattr(audit_router, "utc_now", lambda: datetime(2026, 11, 7, 12, 0, 5, int(code), tzinfo=UTC))
         if entry == "lost":
             the_audit_log_is_full(monkeypatch)
 

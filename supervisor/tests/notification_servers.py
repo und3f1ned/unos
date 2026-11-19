@@ -25,7 +25,7 @@ def certificate(directory: Path, *, dns: tuple[str, ...] = (), ips: tuple[str, .
 
     key = ec.generate_private_key(ec.SECP256R1())
     name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, (dns or ips)[0])])
-    now = datetime.datetime.now(datetime.timezone.utc)
+    now = datetime.datetime.now(datetime.UTC)
     names = [x509.DNSName(n) for n in dns] + [x509.IPAddress(ipaddress.ip_address(a)) for a in ips]
     cert = (
         x509.CertificateBuilder()

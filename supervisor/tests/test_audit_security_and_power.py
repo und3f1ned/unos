@@ -15,7 +15,7 @@ from __future__ import annotations
 import importlib
 import os
 import subprocess
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, UTC
 
 import pytest
 from sqlalchemy import create_engine
@@ -220,7 +220,7 @@ def attempts(tmp_path, audit_file):
     path = tmp_path / "history.db"
     engine = create_engine(f"sqlite:///{path}")
     Base.metadata.create_all(engine)
-    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    now = datetime.now(UTC).replace(tzinfo=None)
     with Session(engine) as session:
         session.add_all(LoginAttempt(username=name, ip_address="192.0.2.9", success=True, timestamp=now - timedelta(days=days))
                         for name, days in (("old", 40), ("middle", 20), ("new", 1)))

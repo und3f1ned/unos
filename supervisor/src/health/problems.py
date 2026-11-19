@@ -17,7 +17,7 @@ restart of the supervisor, the problems that are still there are alerted once ag
 
 import importlib
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, UTC
 from typing import Literal
 
 from pydantic import BaseModel, Field
@@ -31,7 +31,7 @@ _ORDER = {"error": 0, "warning": 1}
 
 
 def _utc_now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 class Problem(BaseModel):

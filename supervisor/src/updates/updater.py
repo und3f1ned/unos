@@ -21,7 +21,6 @@ import subprocess
 import tempfile
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
 
 import httpx
 
@@ -78,7 +77,7 @@ class Updater:
     def __init__(self):
         self._progress: UpdateProgress = UpdateProgress(status=UpdateStatus.IDLE)
         self._lock = asyncio.Lock()
-        self._http_client: Optional[httpx.AsyncClient] = None
+        self._http_client: httpx.AsyncClient | None = None
 
     async def _get_client(self) -> httpx.AsyncClient:
         """Get or create HTTP client with proper configuration."""
@@ -181,7 +180,7 @@ class Updater:
 
     async def fetch_latest_release(
         self, repo: str = "und3f1ned/unos", include_prereleases: bool = False
-    ) -> Optional[ReleaseInfo]:
+    ) -> ReleaseInfo | None:
         """Fetch the latest release from GitHub."""
         if not self._validate_repo(repo):
             raise UpdateError(f"Repository '{repo}' is not in the allowed list")
@@ -855,7 +854,7 @@ def _history_entries(history: object) -> list[UpdateHistoryEntry]:
 
 
 # Global updater instance
-_updater: Optional[Updater] = None
+_updater: Updater | None = None
 
 
 def get_updater() -> Updater:

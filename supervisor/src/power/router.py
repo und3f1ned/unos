@@ -7,7 +7,7 @@ import stat
 import asyncio
 import threading
 from pathlib import Path
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, UTC
 from fastapi import APIRouter, HTTPException, Depends, Request
 from fastapi import Path as PathParam
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
@@ -73,7 +73,7 @@ NOTHING_PENDING = "No reboot or shutdown is pending"
 
 # UPS monitoring state
 _ups_monitor_running = False
-_ups_monitor_task: Optional[asyncio.Task] = None
+_ups_monitor_task: asyncio.Task | None = None
 UPS_CHECK_INTERVAL = 30  # Check every 30 seconds
 # The monitor's last check of the UPS; None before its first one and while the UPS settings are
 # off (ADR-0356). Kept in RAM only.
@@ -135,7 +135,7 @@ class UPSSettings(BaseModel):
     port: int = Field(default=3493, ge=1, le=65535, description="upsd's TCP port.")
     ups_name: str = Field(default="ups", pattern=UPS_NAME_PATTERN, description=(
         "The UPS's name on the NUT server, as its ups.conf names it."))
-    username: Optional[str] = Field(None, description="The NUT user; null for none.")
+    username: str | None = Field(None, description="The NUT user; null for none.")
     # The monitor's shutdown runs only outside a container (is_in_container).
     auto_shutdown: bool = Field(True, description=(
         "Whether the UPS monitor shuts the host down while the UPS is on battery at or below "
@@ -152,7 +152,7 @@ class UPSSettings(BaseModel):
 
 class UPSConfig(UPSSettings):
     """The UPS settings' file, with the NUT password: kept out of repr() and so out of the logs."""
-    password: Optional[str] = Field(default=None, repr=False, description="The NUT password; null for none.")
+    password: str | None = Field(default=None, repr=False, description="The NUT password; null for none.")
 
 
 class UPSConfigRequest(UPSSettings):
@@ -166,7 +166,7 @@ class UPSConfigRequest(UPSSettings):
         "password": "example-password",
     }]})
 
-    password: Optional[str] = Field(default=None, repr=False, description=(
+    password: str | None = Field(default=None, repr=False, description=(
         "The NUT password, which needs a username; absent, null or empty keeps the stored one."))
 
 
@@ -193,22 +193,22 @@ class UPSStatus(BaseModel):
     }]})
 
     available: bool = Field(description="Whether upsc read the UPS.")
-    reason: Optional[str] = Field(None, description=(
+    reason: str | None = Field(None, description=(
         "Why it could not: the host has no upsc, upsc gave no answer in time, or what it reported; null when it read it."))
-    name: Optional[str] = Field(None, description="The UPS's name of the settings; null when it could not be read.")
-    status: Optional[str] = Field(None, description=(
+    name: str | None = Field(None, description="The UPS's name of the settings; null when it could not be read.")
+    status: str | None = Field(None, description=(
         "NUT's status flags, such as OL (online), OB (on battery) and LB (low battery); empty when upsc gave none, "
         "null when the UPS could not be read."))
-    charge_percent: Optional[int] = Field(None, description="The battery's charge in percent; null when upsc gave none.")
-    runtime_minutes: Optional[int] = Field(None, description=(
+    charge_percent: int | None = Field(None, description="The battery's charge in percent; null when upsc gave none.")
+    runtime_minutes: int | None = Field(None, description=(
         "The battery runtime left, in whole minutes; null when upsc gave none."))
-    load_percent: Optional[int] = Field(None, description="The load in percent of the UPS's capacity; null when upsc gave none.")
-    input_voltage: Optional[float] = Field(None, description="The input voltage in volts; null when upsc gave none.")
-    output_voltage: Optional[float] = Field(None, description="The output voltage in volts; null when upsc gave none.")
-    manufacturer: Optional[str] = Field(None, description="The UPS's manufacturer; null when upsc gave none.")
-    model: Optional[str] = Field(None, description="The UPS's model; null when upsc gave none.")
-    battery_type: Optional[str] = Field(None, description="The battery's chemistry, such as PbAc; null when upsc gave none.")
-    last_checked: Optional[UtcDatetime] = Field(None, description="When upsc was run, in UTC.")
+    load_percent: int | None = Field(None, description="The load in percent of the UPS's capacity; null when upsc gave none.")
+    input_voltage: float | None = Field(None, description="The input voltage in volts; null when upsc gave none.")
+    output_voltage: float | None = Field(None, description="The output voltage in volts; null when upsc gave none.")
+    manufacturer: str | None = Field(None, description="The UPS's manufacturer; null when upsc gave none.")
+    model: str | None = Field(None, description="The UPS's model; null when upsc gave none.")
+    battery_type: str | None = Field(None, description="The battery's chemistry, such as PbAc; null when upsc gave none.")
+    last_checked: UtcDatetime | None = Field(None, description="When upsc was run, in UTC.")
 
 
 class UPSMonitorStatus(BaseModel):
@@ -226,10 +226,10 @@ class UPSMonitorStatus(BaseModel):
     enabled: bool = Field(description="Whether the UPS settings are enabled.")
     available: bool = Field(description=(
         "Whether the monitor's last check read the UPS; false before its first check and while the settings are off."))
-    reason: Optional[str] = Field(None, description=(
+    reason: str | None = Field(None, description=(
         "Why the last check could not read the UPS; null when it could, before the first check and while the "
         "settings are off."))
-    last_checked: Optional[UtcDatetime] = Field(None, description=(
+    last_checked: UtcDatetime | None = Field(None, description=(
         "When the last check ran, in UTC; null before the first check and while the settings are off."))
     auto_shutdown: bool = Field(description="auto_shutdown of the UPS settings.")
     shutdown_battery_percent: int = Field(description="shutdown_battery_percent of the UPS settings.")
@@ -255,9 +255,9 @@ class PendingAction(BaseModel):
 
     model_config = ConfigDict(json_schema_extra={"examples": [{"action": "shutdown", "at": "2026-11-19T22:01:00Z"}]})
 
-    action: Optional[Literal["reboot", "shutdown"]] = Field(None, description=(
+    action: Literal["reboot", "shutdown"] | None = Field(None, description=(
         "reboot or shutdown; null when nothing is pending."))
-    at: Optional[UtcDatetime] = Field(None, description=(
+    at: UtcDatetime | None = Field(None, description=(
         "When logind acts, in UTC; null when nothing is pending, or after a reboot or shutdown when it could not "
         "be read."))
 
@@ -273,7 +273,7 @@ class PowerAnswer(BaseModel):
     status: Literal["scheduled", "cancelled", "none", "suspending"] = Field(description=(
         "scheduled (a reboot or shutdown), cancelled, none (nothing was pending to cancel) or suspending."))
     message: str = Field(description="What happened, in English.")
-    pending: Optional[PendingAction] = Field(None, description=(
+    pending: PendingAction | None = Field(None, description=(
         "What is pending after a reboot, shutdown or cancel; null after a suspend."))
 
 
@@ -285,7 +285,7 @@ class WolInterface(BaseModel):
     }]})
 
     name: str = Field(description="The interface's name, such as eth0 or enp3s0.")
-    mac_address: Optional[str] = Field(None, description="Its MAC address; null when ip reports none.")
+    mac_address: str | None = Field(None, description="Its MAC address; null when ip reports none.")
     supported: bool = Field(description=(
         "Whether it can wake the host by magic packet: g in ethtool's Supports Wake-on."))
     wol: str = Field(description="ethtool's Wake-on letters, d when nothing wakes the host; empty when ethtool shows none.")
@@ -331,7 +331,7 @@ def load_ups_config() -> UPSConfig:
     return state_files.load_json(Path(UPS_CONFIG_FILE), _read_ups_config, UPSConfig, what="the UPS settings")
 
 
-def saved_ups_config() -> Optional[UPSConfig]:
+def saved_ups_config() -> UPSConfig | None:
     """The UPS settings that were saved; None while there are none (no file, or one kept as .bad)."""
     return state_files.load_json(Path(UPS_CONFIG_FILE), _read_ups_config, lambda: None, what="the UPS settings")
 
@@ -357,7 +357,7 @@ def narrow_ups_config_mode() -> None:
             logger.warning("Could not make %s readable by its owner only: %s", file, exc)
 
 
-def _upsc(args: list[str]) -> tuple[Optional[str], Optional[str]]:
+def _upsc(args: list[str]) -> tuple[str | None, str | None]:
     """Run NUT's upsc with ARGS on the host (ADR-0356): its output and None, or None and why it
     could not run or what it reported. Blocking: run it off the event loop."""
     cmd = ["timeout", f"--kill-after={UPSC_KILL_AFTER}", str(UPSC_TIMEOUT), "upsc", *args]
@@ -377,7 +377,7 @@ def _upsc(args: list[str]) -> tuple[Optional[str], Optional[str]]:
     return result.stdout, None
 
 
-def _ups_number(data: dict[str, str], key: str) -> Optional[float]:
+def _ups_number(data: dict[str, str], key: str) -> float | None:
     """The variable KEY of upsc's answer as a number, with decimals or without ("100", "23.4"); None
     when upsc gave none or one that is no finite number. Each value stands on its own: one that
     cannot be read leaves the others, and the UPS stays available (ADR-0356)."""
@@ -419,7 +419,7 @@ def get_ups_status(config: UPSSettings) -> UPSStatus:
     )
 
 
-def _log_ups_change(previous: Optional[UPSStatus], status: UPSStatus, config: UPSSettings) -> None:
+def _log_ups_change(previous: UPSStatus | None, status: UPSStatus, config: UPSSettings) -> None:
     """Log a check of the monitor only when its outcome changes: a host without upsc gets one
     line, not one every UPS_CHECK_INTERVAL seconds (ADR-0356)."""
     if status.reason == (previous.reason if previous is not None else None):
@@ -639,7 +639,7 @@ def _read_pending() -> PendingAction:
     try:
         action, usec = json.loads(result.stdout)["data"]
         pending = _PENDING_ACTIONS.get(action)
-        at = datetime.fromtimestamp(int(usec) / 1_000_000, tz=timezone.utc) if pending and usec else None
+        at = datetime.fromtimestamp(int(usec) / 1_000_000, tz=UTC) if pending and usec else None
     except (ValueError, KeyError, TypeError, OverflowError, OSError):
         raise HTTPException(
             500, f"Could not read the pending reboot or shutdown: busctl answered {result.stdout.strip()[:100]!r}"
@@ -664,7 +664,7 @@ def _schedule(action: str) -> PowerAnswer:
     return PowerAnswer(status="scheduled", message=message, pending=pending)
 
 
-def _cancel() -> tuple[PowerAnswer, Optional[str]]:
+def _cancel() -> tuple[PowerAnswer, str | None]:
     """Cancel the pending reboot or shutdown, if there is one; the answer, and the action that was
     cancelled (None when none was pending)."""
     pending = _read_pending()
@@ -807,7 +807,7 @@ async def suspend_system(request: Request, user=Depends(verify_token)):
 # ==================== Wake-on-LAN (ADR-0233) ====================
 
 
-def _read_wol(name: str, mac_address: Optional[str]) -> WolInterface:
+def _read_wol(name: str, mac_address: str | None) -> WolInterface:
     """The Wake-on-LAN state of one interface, from ethtool on the host. Raises HTTPException(500)."""
     result = _run(["ethtool", name])
     # 124: no answer in time, 126 and 127: ethtool could not start (nsenter's exit status when

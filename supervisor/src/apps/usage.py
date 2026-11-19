@@ -34,7 +34,7 @@ import re
 import time
 from collections import deque
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, UTC
 from pathlib import Path
 from typing import Any
 
@@ -292,7 +292,7 @@ def _sample() -> dict[str, Problem] | None:
     state.docker_failed = False
     state.since = until
     now, wall = _monotonic(), _now()
-    at = datetime.fromtimestamp(wall, timezone.utc).isoformat()
+    at = datetime.fromtimestamp(wall, UTC).isoformat()
 
     uses: dict[str, Use] = {}
     running: set[str] = set()
@@ -402,7 +402,7 @@ async def sample_once() -> None:
     _pass = asyncio.ensure_future(asyncio.to_thread(_sample))
     try:
         found = await asyncio.wait_for(asyncio.shield(_pass), PASS_TIMEOUT_SECONDS)
-    except asyncio.TimeoutError:
+    except TimeoutError:
         if not _state.docker_failed:
             logger.warning("Could not read the use of the apps' containers: Docker did not answer within %s s",
                            PASS_TIMEOUT_SECONDS)

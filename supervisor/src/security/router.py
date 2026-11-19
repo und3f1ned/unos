@@ -6,7 +6,7 @@ import json
 import re
 import secrets
 import threading
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, UTC
 from pathlib import Path
 from typing import Annotated
 
@@ -738,7 +738,7 @@ def openssl_time(text: str) -> datetime | None:
     """A date as openssl x509 prints it, "Nov  8 01:47:31 2027 GMT", in UTC (ADR-0401); None for
     another form."""
     try:
-        return datetime.strptime(" ".join(text.split()), "%b %d %H:%M:%S %Y GMT").replace(tzinfo=timezone.utc)
+        return datetime.strptime(" ".join(text.split()), "%b %d %H:%M:%S %Y GMT").replace(tzinfo=UTC)
     except ValueError:
         return None
 
@@ -750,7 +750,7 @@ def get_custom_certificates() -> list[Certificate]:
     Runs openssl for each: call this in a worker thread.
     """
     certs = []
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     certs_path = Path(CERTS_DIR)
 
     if not certs_path.exists():
@@ -1271,7 +1271,7 @@ async def record_login_attempt(
         "failure_reason": failure_reason,
     }
     # The row takes its time from the database (server_default); the log line has to carry it.
-    attempted_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    attempted_at = datetime.now(UTC).isoformat(timespec="seconds")
     db.add(LoginAttempt(**fields))
     try:
         await db.commit()

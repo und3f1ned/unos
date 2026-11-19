@@ -14,7 +14,7 @@ import os
 import signal
 import subprocess
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, UTC
 
 import docker
 import pytest
@@ -1614,7 +1614,7 @@ class TestVolumeInUse:
         """A copy or a restore whose target, folder to copy or restore folder is the volume or lies in
         it (ADR-0337): restic would go on in a deleted directory."""
         offsite = importlib.import_module("src.offsite.service")
-        started = datetime(2026, 11, 11, 3, 0, tzinfo=timezone.utc)
+        started = datetime(2026, 11, 11, 3, 0, tzinfo=UTC)
         monkeypatch.setattr(offsite, "_activity", offsite.Activity("copy", started, paths={path}))
 
         response = api.delete(f"{API}/data/volumes/documents")
@@ -1649,7 +1649,7 @@ class TestVolumeInUse:
     def test_the_off_device_copy_of_the_whole_pool_does_not_count(self, api, documents, monkeypatch):
         # As a share of the pool: it keeps working without the volume.
         offsite = importlib.import_module("src.offsite.service")
-        started = datetime(2026, 11, 11, 3, 0, tzinfo=timezone.utc)
+        started = datetime(2026, 11, 11, 3, 0, tzinfo=UTC)
         monkeypatch.setattr(offsite, "_activity", offsite.Activity("copy", started, paths={"/mnt/pools/data"}))
 
         response = api.delete(f"{API}/data/volumes/documents")

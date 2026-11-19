@@ -23,7 +23,7 @@ import re
 import subprocess
 import threading
 import time
-from datetime import datetime, timezone
+from datetime import datetime, UTC
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -136,7 +136,7 @@ class FakeJournal:
         self.still_reading: list[list[str]] = []
         # The journalctl --follow commands started through host.stream_on_host, and what stops their
         # start (an OSError: nsenter cannot start).
-        self.followers: list["FakeFollow"] = []
+        self.followers: list[FakeFollow] = []
         self.cannot_follow: OSError | None = None
 
     def add(self, message, *, minutes_ago, priority=6, identifier=None, comm=None, unit=None,
@@ -284,7 +284,7 @@ class FakeJournal:
             return HostResult(1, "", "")
         return HostResult(0, "".join(self.printed(entry, spec.fields) + "\n" for entry in selected), "")
 
-    def follow(self, cmd: list[str]) -> "FakeFollow":
+    def follow(self, cmd: list[str]) -> FakeFollow:
         """``journalctl --follow --lines=all`` from a cursor or a time, as host.stream_on_host starts it."""
         self.calls.append(list(cmd))
         if self.cannot_follow is not None:
@@ -388,7 +388,7 @@ EXPECTED = {
 }
 
 
-def install_fake_journal(monkeypatch) -> "FakeJournal":
+def install_fake_journal(monkeypatch) -> FakeJournal:
     """Host commands reach FakeJournal through nsenter's path; nothing runs on this machine. The
     journal fixture, and that of test_ws_auth.py's journal socket."""
     fake = FakeJournal()
@@ -532,7 +532,7 @@ class TestTimeRange:
 class TestEntries:
     def test_an_entry_has_its_time_in_utc_level_program_and_message(self, client, journal):
         journal.entries = []
-        journal.now = datetime(2026, 11, 7, 9, 59, 30, 123456, tzinfo=timezone.utc).timestamp()
+        journal.now = datetime(2026, 11, 7, 9, 59, 30, 123456, tzinfo=UTC).timestamp()
         journal.add("Started Session 3 of User admin.", minutes_ago=0, priority=6, identifier="systemd",
                     comm="systemd", unit="init.scope", facility=3)
 

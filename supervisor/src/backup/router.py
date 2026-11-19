@@ -56,7 +56,7 @@ import zlib
 from collections.abc import Iterable, Iterator
 from datetime import datetime
 from pathlib import Path
-from typing import Annotated, BinaryIO, Optional
+from typing import Annotated, BinaryIO
 
 from cryptography.exceptions import InvalidTag
 from cryptography.hazmat.primitives import hashes
@@ -226,7 +226,7 @@ class BackupConfig(BaseModel):
     encrypt: bool = Field(False, description="Whether to encrypt it with AES-256-GCM, with a key derived from the "
                                              "passphrase.")
     # Required if encrypt=True
-    passphrase: Optional[str] = Field(None, description="The passphrase to encrypt it with; required with encrypt. "
+    passphrase: str | None = Field(None, description="The passphrase to encrypt it with; required with encrypt. "
                                                         "It is not stored: a restore needs it again.")
 
 
@@ -236,7 +236,7 @@ class DecryptRequest(BaseModel):
     model_config = ConfigDict(json_schema_extra={"examples": [{"passphrase": "example-passphrase"}]})
 
     # Optional so that the UI's empty body ({}) is accepted for unencrypted backups.
-    passphrase: Optional[str] = Field(None, description="The passphrase of an encrypted backup (.tar.gz.enc); "
+    passphrase: str | None = Field(None, description="The passphrase of an encrypted backup (.tar.gz.enc); "
                                                         "none for an unencrypted one.")
 
 
@@ -1017,7 +1017,7 @@ TWO_FACTOR_NOT_REQUIRED_BY_RESTORE = (
 _TWO_FACTOR_CHANGE = "_two_factor_requirement"  # the result's key of the change, which the answer leaves out
 
 
-def _two_factor_requirement_change(db_path: Path, db_file: Path) -> Optional[bool]:
+def _two_factor_requirement_change(db_path: Path, db_file: Path) -> bool | None:
     """Whether the restore turns the requirement on (True) or off (False); None when it keeps it or
     either database cannot be read."""
     live, restored = requirement.required_in(db_path), requirement.required_in(db_file)
@@ -1469,7 +1469,7 @@ async def upload_backup(request: Request, user=Depends(verify_token)):
 async def restore_backup(
     request: Request,
     filename: _Filename,
-    decrypt_request: Optional[DecryptRequest] = None,
+    decrypt_request: DecryptRequest | None = None,
     user=Depends(verify_token),
 ):
     """Restore from a backup file: replace the live database with the backup's once the archive and its

@@ -21,7 +21,7 @@ import sys
 import textwrap
 import threading
 import time
-from datetime import datetime, timezone
+from datetime import datetime, UTC
 from pathlib import Path
 
 import pytest
@@ -563,7 +563,7 @@ class TestSignInAndUserManagementAreListed:
     def test_the_entries_name_the_user_the_action_the_time_and_the_client_address(self, world):
         world.client = RecordingClient(TestClient(app, raise_server_exceptions=False, client=(CLIENT, 50000)))
         auth_router.limiter.reset()  # the login rate limit is not under test here
-        before = datetime.now(timezone.utc)
+        before = datetime.now(UTC)
 
         signed_in = world.client.post(f"{API}/auth/login", json={"username": "admin", "password": ADMIN_PW})
         assert signed_in.status_code == 200, signed_in.text
@@ -576,7 +576,7 @@ class TestSignInAndUserManagementAreListed:
             f"{API}/auth/users/{created.json()['id']}", params={"username": "carol"}, headers=headers
         )
         assert deleted.status_code == 200, deleted.text
-        after = datetime.now(timezone.utc)
+        after = datetime.now(UTC)
 
         response = world.client.get(f"{API}/audit/logs", headers=headers)
 
@@ -901,7 +901,7 @@ class TestAnActionNoLongerWritten:
         before = audit_entries(world.audit_file)[-1]
         # As the writer stored it: chained to the entry before it.
         # In UTC without an offset, as the supervisor's container wrote it before ADR-0401.
-        old = {"id": "audit_old", "timestamp": datetime.now(timezone.utc).replace(tzinfo=None).isoformat(),
+        old = {"id": "audit_old", "timestamp": datetime.now(UTC).replace(tzinfo=None).isoformat(),
                "action": OLD_ACTION,
                "severity": "info", "username": "admin", "ip_address": CLIENT,
                "details": "Allowed TCP port 8080", "success": True, "prev_hash": before["hash"]}

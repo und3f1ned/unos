@@ -21,7 +21,7 @@ import secrets
 import unicodedata
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Annotated, Literal, Optional
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Request, status
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, StringConstraints
@@ -164,13 +164,13 @@ class SecurityKeyInfo(BaseModel):
     id: int = Field(description="The key's id.")
     name: str = Field(description="The key's name; ? when the stored one cannot be read.")
     # The web UI's address where the key works; null when the stored one cannot be read.
-    origin: Optional[str] = Field(
+    origin: str | None = Field(
         None, description="The web UI's address where the key works; null when the stored one cannot be read."
     )
-    created_at: Optional[UtcDatetime] = Field(
+    created_at: UtcDatetime | None = Field(
         None, description="When the key was added, in UTC; null when the stored time cannot be read."
     )
-    last_used_at: Optional[UtcDatetime] = Field(
+    last_used_at: UtcDatetime | None = Field(
         None, description="When the key last signed in, in UTC; null: never, or a stored time that cannot be read."
     )
     # False for a key whose stored row cannot be read (a restored or damaged database): it signs in
@@ -191,14 +191,14 @@ class StoredKey:
 
     id: int
     name: str
-    credential_id: Optional[str]
-    public_key: Optional[bytes]
-    algorithm: Optional[int]
-    sign_count: Optional[int]
-    rp_id: Optional[str]
-    origin: Optional[str]
-    created_at: Optional[datetime]
-    last_used_at: Optional[datetime]
+    credential_id: str | None
+    public_key: bytes | None
+    algorithm: int | None
+    sign_count: int | None
+    rp_id: str | None
+    origin: str | None
+    created_at: datetime | None
+    last_used_at: datetime | None
 
     @property
     def usable(self) -> bool:
@@ -214,7 +214,7 @@ class StoredKey:
                                last_used_at=self.last_used_at, usable=self.usable)
 
 
-def _text(raw: object) -> Optional[str]:
+def _text(raw: object) -> str | None:
     if not isinstance(raw, bytes):
         return None
     try:
@@ -223,11 +223,11 @@ def _text(raw: object) -> Optional[str]:
         return None
 
 
-def _integer(value: object, top: int) -> Optional[int]:
+def _integer(value: object, top: int) -> int | None:
     return value if isinstance(value, int) and not isinstance(value, bool) and 0 <= value <= top else None
 
 
-def _time(raw: object) -> Optional[datetime]:
+def _time(raw: object) -> datetime | None:
     text = _text(raw)
     try:
         return parse_time(text) if text else None
@@ -235,7 +235,7 @@ def _time(raw: object) -> Optional[datetime]:
         return None
 
 
-def _credential_id(raw: object) -> Optional[str]:
+def _credential_id(raw: object) -> str | None:
     """The stored credential id when it is base64url of 1 to 1023 bytes, as the registration
     stores it."""
     text = _text(raw)
@@ -246,12 +246,12 @@ def _credential_id(raw: object) -> Optional[str]:
     return text if decoded and webauthn.b64url_encode(decoded) == text else None
 
 
-def _origin(raw: object) -> Optional[str]:
+def _origin(raw: object) -> str | None:
     text = _text(raw)
     return text if text and text.startswith("https://") and len(text) <= 300 else None
 
 
-def _rp_id(raw: object) -> Optional[str]:
+def _rp_id(raw: object) -> str | None:
     text = _text(raw)
     try:
         return webauthn.rp_id_of_host(text) if text else None
@@ -516,7 +516,7 @@ async def delete_security_key(
 
 async def code_step_offer(
     db: AsyncSession, user: User, request: Request,
-) -> tuple[Optional[SecurityKeyRequest], Optional[list[str]]]:
+) -> tuple[SecurityKeyRequest | None, list[str] | None]:
     """At the code step of an account with two-factor authentication: a challenge for its keys that
     work at the address of the request, if any, and the addresses where its keys work (None without
     keys). A challenge is issued only for keys of this address, after the password."""
@@ -541,7 +541,7 @@ async def code_step_offer(
 class KeyRefused(Exception):
     """A key's answer at the sign-in that does not open the session."""
 
-    def __init__(self, detail: str, reason: str, audit: Optional[str] = None) -> None:
+    def __init__(self, detail: str, reason: str, audit: str | None = None) -> None:
         super().__init__(detail)
         self.detail = detail          # the answer's
         self.reason = reason          # the login history's

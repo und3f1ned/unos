@@ -6,8 +6,8 @@ import json
 import logging
 import re
 import secrets
-from datetime import datetime, timedelta, timezone
-from typing import NamedTuple, Optional
+from datetime import datetime, timedelta, UTC
+from typing import NamedTuple
 
 import bcrypt
 import jwt
@@ -60,7 +60,7 @@ def create_access_token(data: dict) -> str:
     with its row (start_session): tests make the row themselves."""
     settings = get_settings()
     to_encode = {"jti": secrets.token_urlsafe(24), **data}
-    to_encode["exp"] = datetime.now(timezone.utc) + timedelta(minutes=settings.jwt_expire_minutes)
+    to_encode["exp"] = datetime.now(UTC) + timedelta(minutes=settings.jwt_expire_minutes)
     return jwt.encode(to_encode, settings.jwt_secret, algorithm=settings.jwt_algorithm)
 
 
@@ -75,7 +75,7 @@ def start_session(db: AsyncSession, user: User, *, cookie: bool = False) -> str:
     ``cookie``: the session of the session cookie, which the token says (COOKIE_SESSION_CLAIM)."""
     settings = get_settings()
     session_id = secrets.token_urlsafe(24)
-    expires = datetime.now(timezone.utc) + timedelta(minutes=settings.jwt_expire_minutes)
+    expires = datetime.now(UTC) + timedelta(minutes=settings.jwt_expire_minutes)
     db.add(UserSession(id=session_id, user_id=user.id, expires_at=expires.replace(tzinfo=None)))
     claims = {"sub": user.username, "jti": session_id, "exp": expires}
     if cookie:
@@ -121,11 +121,11 @@ async def _delete_sessions(db: AsyncSession, query) -> int:
 
 async def purge_expired_sessions(db: AsyncSession) -> None:
     """Delete the rows of the sessions whose tokens have expired, in the caller's commit."""
-    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    now = datetime.now(UTC).replace(tzinfo=None)
     await _delete_sessions(db, select(UserSession).where(UserSession.expires_at < now))
 
 
-async def end_sessions(db: AsyncSession, user_id: int, *, keep: Optional[str] = None) -> int:
+async def end_sessions(db: AsyncSession, user_id: int, *, keep: str | None = None) -> int:
     """End the sessions of a user, but the one ``keep`` names: their rows go in the caller's
     commit (ADR-0329). The number of stored sessions ended."""
     query = select(UserSession).where(UserSession.user_id == user_id)
@@ -170,7 +170,7 @@ def decode_access_token(token: str) -> tuple[str, str]:
     return username, session_id
 
 
-def session_id_of(token: str) -> Optional[str]:
+def session_id_of(token: str) -> str | None:
     """The session id of a session token that ``authenticate_token`` accepted; None for an API token.
     Its expiry is not checked again: a request that began with a valid token ends as it began."""
     if token.startswith(API_TOKEN_PREFIX):
@@ -189,7 +189,7 @@ class CallerSession(NamedTuple):
     expires_at: datetime  # UTC, without a zone, as user_sessions keeps it
 
 
-def caller_session(request: Request, user: User) -> Optional[CallerSession]:
+def caller_session(request: Request, user: User) -> CallerSession | None:
     """The session of the request that ``authenticate_token`` accepted for ``user``; None for an
     API token or a request without a credential."""
     found = request_credential(request)
@@ -199,7 +199,7 @@ def caller_session(request: Request, user: User) -> Optional[CallerSession]:
     settings = get_settings()
     claims = jwt.decode(token, settings.jwt_secret, algorithms=[settings.jwt_algorithm],
                         options={"verify_exp": False})
-    expires_at = datetime.fromtimestamp(claims["exp"], timezone.utc).replace(tzinfo=None)
+    expires_at = datetime.fromtimestamp(claims["exp"], UTC).replace(tzinfo=None)
     return CallerSession(claims["jti"], user.id, user.username, expires_at)
 
 
@@ -235,7 +235,7 @@ class TotpCheck(enum.Enum):
 
 def _totp_time() -> datetime:
     """The time TOTP codes are checked at (tests replace it)."""
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def check_totp_code(user_id: int, secret: object, code: object) -> TotpCheck:
@@ -290,7 +290,7 @@ LAST_USE_INTERVAL = timedelta(hours=1)
 def _token_time() -> datetime:
     """The time API tokens are checked and stamped at: UTC without a zone, as their times are
     stored (tests replace it)."""
-    return datetime.now(timezone.utc).replace(tzinfo=None)
+    return datetime.now(UTC).replace(tzinfo=None)
 
 
 # ==================== Recovery codes (ADR-0238) ====================
@@ -379,7 +379,7 @@ class Credential(NamedTuple):
     cookie: bool
 
 
-def request_credential(conn: HTTPConnection) -> Optional[Credential]:
+def request_credential(conn: HTTPConnection) -> Credential | None:
     """The token of a request: its Authorization header's, which a program sends itself, before the
     session cookie's, which a browser sends by itself. None without either. Checks nothing."""
     scheme, _, token = (conn.headers.get("authorization") or "").partition(" ")
@@ -572,7 +572,7 @@ async def require_session(
     return user
 
 
-async def verify_api_token(token: str, db: AsyncSession) -> tuple[User, Optional[str]]:
+async def verify_api_token(token: str, db: AsyncSession) -> tuple[User, str | None]:
     """Verify an API token and return the associated user and the token's scope as stored
     (api_tokens.permissions as text, None when it is none; ``scopes.parse`` reads it: ADR-0392).
 

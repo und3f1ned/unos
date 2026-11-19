@@ -126,7 +126,7 @@ import threading
 import time
 import types
 from collections.abc import Callable
-from datetime import datetime, timezone
+from datetime import datetime, UTC
 from pathlib import Path
 
 import pytest
@@ -3869,7 +3869,7 @@ def test_the_smbconf_check_expects_unos_s_texts():
     from src.shares import smb, smbconf
 
     assert scenario.REPLACED_COPIES_KEPT == smb.COPIES_KEPT == 10
-    named = f"smb.conf.{smb.REPLACED}-" + datetime.now(timezone.utc).strftime(smb._COPY_TIME)
+    named = f"smb.conf.{smb.REPLACED}-" + datetime.now(UTC).strftime(smb._COPY_TIME)
     assert scenario.REPLACED_COPY_NAME.fullmatch(named) and scenario.REPLACED_COPY_NAME.pattern.endswith(smb._COPY_TIME_PATTERN)
 
     assert scenario.UNOS_SHARE_LINES == smbconf._FIXED_SHARE_LINES

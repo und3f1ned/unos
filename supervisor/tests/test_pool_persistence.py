@@ -45,6 +45,7 @@ from src.shares import service as shares_service
 from src.storage import disks as disks_module
 from src.storage import pools
 from src.storage.schemas import PoolInfo
+from datetime import UTC
 
 apps_router = importlib.import_module("src.apps.router")
 REAL_LIST_MOUNTED_POOLS = apps_router.list_mounted_pools
@@ -3033,11 +3034,11 @@ class TestPoolEndpoints:
     def test_a_pool_that_the_off_device_copy_uses_answers_409(self, api, data_pool, monkeypatch, method, url):
         """While a copy or a restore of the off-device copy reads or writes a pool, UNOS neither
         unmounts nor forgets it (ADR-0337): restic would go on writing onto the mount point."""
-        from datetime import datetime, timezone
+        from datetime import datetime
 
         offsite = importlib.import_module("src.offsite.service")
         pools.mount_pool("data")
-        started = datetime(2026, 11, 11, 3, 0, tzinfo=timezone.utc)
+        started = datetime(2026, 11, 11, 3, 0, tzinfo=UTC)
         monkeypatch.setattr(offsite, "_activity", offsite.Activity("copy", started, pools={"data"}))
 
         response = getattr(api, method)(url)

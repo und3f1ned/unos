@@ -29,7 +29,7 @@ import logging
 import re
 import weakref
 from dataclasses import dataclass, field, replace
-from datetime import datetime, timezone
+from datetime import datetime, UTC
 
 from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
 from cryptography.hazmat.primitives.serialization import Encoding, NoEncryption, PrivateFormat, PublicFormat
@@ -90,7 +90,7 @@ _HEADER = "# UNOS remote access (ADR-0420): written by UNOS, System > Remote acc
 _ENDPOINT = "# UNOS endpoint: "
 _PEER = "# UNOS peer: "
 
-_locks: "weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Lock]" = weakref.WeakKeyDictionary()
+_locks: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Lock] = weakref.WeakKeyDictionary()
 
 
 def lock() -> asyncio.Lock:
@@ -369,7 +369,7 @@ async def live_peers() -> dict[str, tuple[datetime | None, int | None, int | Non
             if len(parts) == 2 and parts[1].isdigit():
                 seconds = int(parts[1])
                 found.setdefault(parts[0], [None, None, None])[0] = (
-                    datetime.fromtimestamp(seconds, timezone.utc) if seconds else None)
+                    datetime.fromtimestamp(seconds, UTC) if seconds else None)
     transfer = await firewall.run(["wg", "show", INTERFACE, "transfer"])
     if transfer.ok:
         for line in transfer.stdout.splitlines():

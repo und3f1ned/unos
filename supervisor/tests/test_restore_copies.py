@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import importlib
 import re
-from datetime import datetime, timezone
+from datetime import datetime, UTC
 
 import pytest
 
@@ -87,7 +87,7 @@ RENAMES = {
 def copy_info(name: str, volume: str | None = "documents") -> dict:
     """An entry of GET /snapshots/copies."""
     folder = f"{POOL}/{volume}" if volume else POOL
-    stamp = datetime.strptime(name, "restore_%Y%m%d_%H%M%S").replace(tzinfo=timezone.utc)
+    stamp = datetime.strptime(name, "restore_%Y%m%d_%H%M%S").replace(tzinfo=UTC)
     return {"name": name, "pool": "data", "volume": volume, "subvolume": folder, "path": f"{folder}/{name}",
             "created": stamp.isoformat()}
 
@@ -289,7 +289,7 @@ class TestDelete:
 
     def test_the_off_device_copy_that_uses_it(self, api, host, documents, monkeypatch):
         offsite = importlib.import_module("src.offsite.service")
-        started = datetime(2026, 11, 12, 3, 0, tzinfo=timezone.utc)
+        started = datetime(2026, 11, 12, 3, 0, tzinfo=UTC)
         monkeypatch.setattr(offsite, "_activity", offsite.Activity("copy", started, paths={f"{DOCUMENTS}/{COPY}"}))
         add_copy(host, f"documents/{COPY}", documents)
 

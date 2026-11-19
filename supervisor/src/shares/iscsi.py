@@ -30,9 +30,9 @@ import threading
 import uuid
 import weakref
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, UTC
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from fastapi import HTTPException
 from pydantic import BaseModel, ConfigDict, Field
@@ -157,13 +157,13 @@ class IscsiTargetCreate(BaseModel):
         description=f"The iSCSI names of the initiators that may log in, 1 to {MAX_INITIATORS}.",
         examples=[["iqn.2026-11.com.example:client-1"]],
     )
-    chap_user: Optional[str] = Field(default=None, description="The CHAP user name; the target's name by default.")
-    chap_secret: Optional[str] = Field(
+    chap_user: str | None = Field(default=None, description="The CHAP user name; the target's name by default.")
+    chap_secret: str | None = Field(
         default=None, repr=False,
         description="The CHAP secret, 12 to 16 characters; UNOS generates one when it is left out.",
     )
     mutual: bool = Field(default=False, description="Mutual CHAP: the target proves itself to the initiator too.")
-    mutual_secret: Optional[str] = Field(
+    mutual_secret: str | None = Field(
         default=None, repr=False,
         description="The secret of mutual CHAP, unlike the CHAP secret; generated when left out.",
     )
@@ -174,14 +174,14 @@ class IscsiTargetChange(BaseModel):
 
     model_config = ConfigDict(json_schema_extra={"examples": [{'initiators': ['iqn.2026-11.com.example:client-1', 'iqn.2026-11.com.example:client-2'], 'new_secret': True}]})
 
-    initiators: Optional[list[str]] = Field(default=None, description="The initiators that may log in, all of them.")
+    initiators: list[str] | None = Field(default=None, description="The initiators that may log in, all of them.")
     new_secret: bool = Field(default=False, description="Set a new CHAP secret: chap_secret, or a generated one.")
-    chap_secret: Optional[str] = Field(default=None, repr=False, description="The new CHAP secret, with new_secret.")
-    mutual: Optional[bool] = Field(default=None, description="Turn mutual CHAP on or off.")
+    chap_secret: str | None = Field(default=None, repr=False, description="The new CHAP secret, with new_secret.")
+    mutual: bool | None = Field(default=None, description="Turn mutual CHAP on or off.")
     new_mutual_secret: bool = Field(
         default=False, description="Set a new secret of mutual CHAP: mutual_secret, or a generated one."
     )
-    mutual_secret: Optional[str] = Field(
+    mutual_secret: str | None = Field(
         default=None, repr=False, description="The new secret of mutual CHAP, with new_mutual_secret or mutual."
     )
 
@@ -209,9 +209,9 @@ class IscsiTargetInfo(BaseModel):
     chap_user: str = Field(description="The CHAP user name.")
     mutual: bool = Field(description="Whether the target answers with mutual CHAP.")
     served: bool = Field(description="Whether the kernel serves the target now.")
-    problem: Optional[str] = Field(default=None, description="Why the target is not served; None while it is.")
+    problem: str | None = Field(default=None, description="Why the target is not served; None while it is.")
     sessions: list[str] = Field(default_factory=list, description="The initiators logged in now.")
-    created: Optional[str] = Field(default=None, description="When it was made, ISO 8601 with the UTC offset.")
+    created: str | None = Field(default=None, description="When it was made, ISO 8601 with the UTC offset.")
 
 
 class IscsiState(BaseModel):
@@ -221,7 +221,7 @@ class IscsiState(BaseModel):
 
     kernel_support: bool = Field(description="Whether the host's kernel has LIO's iSCSI target.")
     portals: list[str] = Field(description="The addresses and port on which the targets listen: the host's LAN addresses.")
-    portals_problem: Optional[str] = Field(default=None, description="Why the host's addresses could not be read.")
+    portals_problem: str | None = Field(default=None, description="Why the host's addresses could not be read.")
     targets: list[IscsiTargetInfo] = Field(description="Every target, by name.")
 
 
@@ -232,7 +232,7 @@ class IscsiTargetCreated(BaseModel):
 
     target: IscsiTargetInfo = Field(description="The new target.")
     chap_secret: str = Field(description="The CHAP secret, shown this once.")
-    mutual_secret: Optional[str] = Field(default=None, description="The secret of mutual CHAP, shown this once.")
+    mutual_secret: str | None = Field(default=None, description="The secret of mutual CHAP, shown this once.")
 
 
 class IscsiTargetChanged(BaseModel):
@@ -241,8 +241,8 @@ class IscsiTargetChanged(BaseModel):
     model_config = ConfigDict(json_schema_extra={"examples": [{'target': {'name': 'backup', 'iqn': 'iqn.2003-01.org.linux-iscsi.unos:backup', 'pool': 'data', 'volume': 'iscsi', 'size_gib': 100, 'path': '/mnt/pools/data/iscsi/.unos-iscsi/backup.lun', 'initiators': ['iqn.2026-11.com.example:client-1'], 'chap_user': 'backup', 'mutual': False, 'served': True, 'problem': None, 'sessions': ['iqn.2026-11.com.example:client-1'], 'created': '2026-11-19T08:00:00+00:00'}, 'chap_secret': 'example-secret', 'mutual_secret': None}]})
 
     target: IscsiTargetInfo = Field(description="The target as changed.")
-    chap_secret: Optional[str] = Field(default=None, description="The new CHAP secret; None when it stayed.")
-    mutual_secret: Optional[str] = Field(default=None, description="The new secret of mutual CHAP; None when none is new.")
+    chap_secret: str | None = Field(default=None, description="The new CHAP secret; None when it stayed.")
+    mutual_secret: str | None = Field(default=None, description="The new secret of mutual CHAP; None when none is new.")
 
 
 class IscsiTargetDeleted(BaseModel):
@@ -307,10 +307,10 @@ def lun_path(pool: str, volume: str, name: str) -> str:
     return os.path.join(pools.pool_mountpoint(pool), volume, LUN_FOLDER, f"{name}{LUN_SUFFIX}")
 
 
-def _iso(when: Optional[datetime]) -> Optional[str]:
+def _iso(when: datetime | None) -> str | None:
     if when is None:
         return None
-    return (when if when.tzinfo else when.replace(tzinfo=timezone.utc)).isoformat()
+    return (when if when.tzinfo else when.replace(tzinfo=UTC)).isoformat()
 
 
 def _refuse_locally() -> None:
@@ -324,7 +324,7 @@ def _refuse_locally() -> None:
 @dataclass(frozen=True)
 class Secret:
     chap: str = field(repr=False)
-    mutual: Optional[str] = field(default=None, repr=False)
+    mutual: str | None = field(default=None, repr=False)
 
 
 def _read_secrets(data: Any) -> dict[str, Secret]:
@@ -378,7 +378,7 @@ def _index_drop(name: str) -> None:
         _index.pop(name, None)
 
 
-def pool_user(pool: str) -> Optional[str]:
+def pool_user(pool: str) -> str | None:
     """The targets whose LUN is in a volume of POOL, as "a, b", or None (storage/pools.py refuses to
     unmount or forget the pool meanwhile)."""
     with _index_lock:
@@ -386,7 +386,7 @@ def pool_user(pool: str) -> Optional[str]:
     return ", ".join(names) or None
 
 
-def volume_user(path: str) -> Optional[str]:
+def volume_user(path: str) -> str | None:
     """The targets whose LUN's volume is the folder PATH or lies in it, as "a, b", or None
     (storage/pools.py refuses to delete it meanwhile)."""
     path = os.path.normpath(path)
@@ -589,7 +589,7 @@ fi
 """
 
 
-def _run(cmd: list[str], *, input: Optional[str] = None) -> host.HostResult:
+def _run(cmd: list[str], *, input: str | None = None) -> host.HostResult:
     """A host command (sync); IscsiError when the host cannot be asked. Never with a secret in argv."""
     try:
         return host.run_on_host(cmd, timeout=HOST_TIMEOUT, input=input, errors="replace")
@@ -801,7 +801,7 @@ def _auth(g: str, initiator: str, serve: Serve) -> list[Op]:
     return ops
 
 
-def _target_ops(serve: Serve, target: Optional[TargetState], portals: Optional[list[str]], rewrite: bool) -> list[Op]:
+def _target_ops(serve: Serve, target: TargetState | None, portals: list[str] | None, rewrite: bool) -> list[Op]:
     base = f"{ISCSI_ROOT}/{serve.iqn}"
     g = f"{base}/{TPG}"
     ops: list[Op] = []
@@ -856,7 +856,7 @@ def _target_ops(serve: Serve, target: Optional[TargetState], portals: Optional[l
     return ops
 
 
-def plan_parts(state: State, serve: list[Serve], portals: Optional[list[str]],
+def plan_parts(state: State, serve: list[Serve], portals: list[str] | None,
                rewrite: frozenset[str] = frozenset(), keep: frozenset[str] = frozenset()
                ) -> tuple[list[Op], dict[str, list[Op]]]:
     """The operations that make UNOS's part of configfs serve SERVE and nothing else: those that
@@ -895,7 +895,7 @@ def plan_parts(state: State, serve: list[Serve], portals: Optional[list[str]],
     return common, each
 
 
-def plan(state: State, serve: list[Serve], portals: Optional[list[str]], rewrite: frozenset[str] = frozenset(),
+def plan(state: State, serve: list[Serve], portals: list[str] | None, rewrite: frozenset[str] = frozenset(),
          keep: frozenset[str] = frozenset()) -> list[Op]:
     """plan_parts' operations in the order they run."""
     common, each = plan_parts(state, serve, portals, rewrite, keep)
@@ -952,15 +952,15 @@ class Row:
     chap_user: str
     mutual: bool
     initiators: tuple[str, ...]
-    created: Optional[str]
+    created: str | None
 
 
 # Why each target was not served at the last apply, and the portals it bound.
 _problems: dict[str, str] = {}
-_last_portals: Optional[list[str]] = None
+_last_portals: list[str] | None = None
 # One lock per event loop (an asyncio.Lock binds to the loop it is first used in; tests run several
 # loops, cf. security.firewall).
-_locks: "weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Lock]" = weakref.WeakKeyDictionary()
+_locks: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Lock] = weakref.WeakKeyDictionary()
 
 
 def _lock() -> asyncio.Lock:
@@ -972,7 +972,7 @@ def _lock() -> asyncio.Lock:
     return lock
 
 
-def _row_problem(row: Row) -> Optional[str]:
+def _row_problem(row: Row) -> str | None:
     """Why a row cannot be served whatever the host has: a value a restored database may hold."""
     try:
         check_name(row.name)
@@ -1058,7 +1058,7 @@ def _apply_sync(rows: list[Row], stored: dict[str, Secret], rewrite: frozenset[s
         state = read_state()
         if not state.loaded:
             raise IscsiError(NO_KERNEL_SUPPORT)
-    portals: Optional[list[str]] = None
+    portals: list[str] | None = None
     if serve:
         try:
             portals = lan_portals()
@@ -1159,11 +1159,11 @@ async def restore_targets(*, after_restore: bool = False) -> None:
 
 # --- the check of the host's addresses -----------------------------------------------------------
 
-_follow_task: Optional[asyncio.Task] = None
+_follow_task: asyncio.Task | None = None
 
 
 async def _follow() -> None:
-    failed: Optional[str] = None
+    failed: str | None = None
     while True:
         await asyncio.sleep(FOLLOW_INTERVAL)
         # Nothing served, nothing to follow: an unserved target is applied again at the start, at a
@@ -1207,7 +1207,7 @@ async def stop_follow() -> None:
 # --- the API's logic -----------------------------------------------------------------------------
 
 
-def _info(row: Row, state: Optional[State]) -> IscsiTargetInfo:
+def _info(row: Row, state: State | None) -> IscsiTargetInfo:
     target = state.targets.get(row.iqn) if state is not None else None
     tpg = target.tpgs.get(TPG) if target is not None else None
     served = bool(tpg and tpg.enabled and tpg.luns.get(LUN))
@@ -1220,7 +1220,7 @@ def _info(row: Row, state: Optional[State]) -> IscsiTargetInfo:
     )
 
 
-def _observe() -> tuple[State, bool, list[str], Optional[str]]:
+def _observe() -> tuple[State, bool, list[str], str | None]:
     state = read_state()
     support = kernel_support(state)
     try:
@@ -1300,7 +1300,7 @@ def _delete_lun(name: str, pool: str, volume: str) -> None:
         raise IscsiError(f"The LUN file {lun_path(pool, volume, name)} could not be deleted: {_why(result)}")
 
 
-def _store_secret(uid: str, secret: Optional[Secret]) -> None:
+def _store_secret(uid: str, secret: Secret | None) -> None:
     stored = load_secrets()
     if secret is None:
         stored.pop(uid, None)
@@ -1405,8 +1405,8 @@ async def _undo_create(db: AsyncSession, name: str, uid: str, pool: str, volume:
 @dataclass
 class Change:
     target: IscsiTargetInfo
-    chap_secret: Optional[str]
-    mutual_secret: Optional[str]
+    chap_secret: str | None
+    mutual_secret: str | None
     details: list[str]
 
 

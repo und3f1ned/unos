@@ -17,7 +17,6 @@ import secrets
 import threading
 import time
 from dataclasses import dataclass
-from typing import Optional
 
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives import hashes
@@ -112,7 +111,7 @@ def rp_id_of_host(host: object) -> str:
     return name
 
 
-def origin_of_host(host: object) -> Optional[str]:
+def origin_of_host(host: object) -> str | None:
     """The web UI's origin at a request's Host, as from_own_origin of utils compares it."""
     return f"https://{host.lower()}" if isinstance(host, str) and host else None
 
@@ -134,7 +133,7 @@ class Pending:
     username: str               # ids are reused by SQLite: the name must match too
     origin: str                 # https://<the Host it was issued at>
     rp_id: str
-    session_id: Optional[str]   # the session that asked for a registration; None at a sign-in
+    session_id: str | None   # the session that asked for a registration; None at a sign-in
     expires: float
 
 
@@ -149,7 +148,7 @@ class Challenges:
         self._lock = threading.Lock()
 
     def issue(self, ceremony: str, user_id: int, username: str, origin: str, rp_id: str,
-              session_id: Optional[str] = None) -> bytes:
+              session_id: str | None = None) -> bytes:
         with self._lock:
             now = _clock()
             for challenge in [c for c, p in self._pending.items() if p.expires <= now]:
@@ -164,7 +163,7 @@ class Challenges:
                                                now + CHALLENGE_SECONDS)
             return challenge
 
-    def take(self, challenge: bytes) -> Optional[Pending]:
+    def take(self, challenge: bytes) -> Pending | None:
         """The pending challenge, removed; None when there is none or it expired."""
         with self._lock:
             pending = self._pending.pop(challenge, None)
@@ -186,11 +185,11 @@ _challenges = Challenges()
 
 
 def issue(ceremony: str, user_id: int, username: str, origin: str, rp_id: str,
-          session_id: Optional[str] = None) -> bytes:
+          session_id: str | None = None) -> bytes:
     return _challenges.issue(ceremony, user_id, username, origin, rp_id, session_id)
 
 
-def take(challenge: bytes) -> Optional[Pending]:
+def take(challenge: bytes) -> Pending | None:
     return _challenges.take(challenge)
 
 
@@ -238,8 +237,8 @@ class AuthenticatorData:
     rp_id_hash: bytes
     flags: int
     sign_count: int
-    credential_id: Optional[bytes]      # with attested credential data (AT): a registration
-    public_key: Optional[bytes]         # its COSE_Key, as the authenticator wrote it
+    credential_id: bytes | None      # with attested credential data (AT): a registration
+    public_key: bytes | None         # its COSE_Key, as the authenticator wrote it
 
     @property
     def user_present(self) -> bool:

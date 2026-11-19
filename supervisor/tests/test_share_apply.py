@@ -17,7 +17,7 @@ import subprocess
 import sys
 import threading
 from contextlib import asynccontextmanager, closing
-from datetime import datetime, timezone
+from datetime import datetime, UTC
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -182,7 +182,7 @@ def copy_time(name: str) -> datetime:
 
 
 def utc_now() -> datetime:
-    return datetime.now(timezone.utc).replace(tzinfo=None)
+    return datetime.now(UTC).replace(tzinfo=None)
 
 
 # --- the apply pipeline (ADR-0089) ----------------------------------------------------------------

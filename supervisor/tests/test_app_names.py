@@ -59,9 +59,9 @@ class FakeNamesHost(FakeWgHost):
 
     def _script(self, name, args):
         if name == "sh":  # host.missing_host_binaries
-            missing = [tool for tool in args if tool == "ufw" and not self.has_ufw
-                       or tool in ("wg", "wg-quick") and not self.has_wg
-                       or tool == "avahi-publish" and not self.has_avahi_publish]
+            missing = [tool for tool in args if (tool == "ufw" and not self.has_ufw)
+                       or (tool in ("wg", "wg-quick") and not self.has_wg)
+                       or (tool == "avahi-publish" and not self.has_avahi_publish)]
             return self._ok("".join(f"{tool}\n" for tool in missing))
         if name == "unos-app-names-announced":
             assert args == ["unos-app-names.service"], args
@@ -328,7 +328,7 @@ class TestFirewall:
         assert client.post("/api/v1/network/remote-access/enable",
                            json={"port": 51820, "network": "10.99.0.0/24", "endpoint": "nas.example.org"}).status_code == 200
         added(client, "jellyfin", "jellyfin")
-        remote = "UNOS: remote access".encode().hex()
+        remote = b"UNOS: remote access".hex()
         assert sum(remote in line for line in names_host.rules[4] + names_host.rules[6]) == 2
 
 

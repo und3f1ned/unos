@@ -36,7 +36,7 @@ PASSWORD = "the check's REST password"
 def _certificate(folder: Path) -> tuple[Path, Path]:
     private = ec.generate_private_key(ec.SECP256R1())
     subject = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "127.0.0.1")])
-    now = dt.datetime.now(dt.timezone.utc)
+    now = dt.datetime.now(dt.UTC)
     certificate = (
         x509.CertificateBuilder().subject_name(subject).issuer_name(subject).public_key(private.public_key())
         .serial_number(x509.random_serial_number()).not_valid_before(now - dt.timedelta(days=1))

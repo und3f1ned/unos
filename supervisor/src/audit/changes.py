@@ -10,7 +10,6 @@ did. An entry that cannot be written, such as on a full /data, is in the supervi
 (log_action), and the request still answers what it did: the change is made, and an error would
 say it was not (as a sign-in does, ADR-0251, ADR-0343).
 """
-from typing import Optional
 
 from fastapi import Request
 
@@ -24,8 +23,8 @@ async def audit_change(
     username: str,
     *,
     resource_type: str,
-    resource_id: Optional[str] = None,
-    details: Optional[str] = None,
+    resource_id: str | None = None,
+    details: str | None = None,
     severity: AuditSeverity = AuditSeverity.INFO,
     success: bool = True,
 ) -> None:
@@ -63,7 +62,7 @@ def _shown(value: object) -> str:
 
 
 def changed_fields(
-    old: dict, new: dict, *, shown: Optional[set] = None, secret: tuple = (), whole: tuple = ()
+    old: dict, new: dict, *, shown: set | None = None, secret: tuple = (), whole: tuple = ()
 ) -> str:
     """The fields that differ between the dicts ``old`` and ``new``, for an entry's details:
     "enabled (off to on), host, password". A field named in ``shown`` (None: every field) comes with its

@@ -36,7 +36,7 @@ import subprocess
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timezone
+from datetime import datetime, UTC
 from pathlib import Path
 
 import pytest
@@ -1103,7 +1103,7 @@ def test_the_trash_expiry_passes_over_a_pool_whose_disks_sleep_and_takes_it_when
     base, asleep, _ = two_pools
     # A pool that sleeps is not even opened: its folder cannot be read here.
     os.chmod(base / "data", 0)
-    now = datetime(2026, 11, 15, tzinfo=timezone.utc)
+    now = datetime(2026, 11, 15, tzinfo=UTC)
     done: dict[str, float] = {}
     sleeping: dict[str, spindown.Asleep] = {}
     assert files_router._expire_due_trash(now, done, 0.0, sleeping) == (1, [], True)
@@ -1131,7 +1131,7 @@ def test_the_trash_expiry_runs_no_pass_when_it_cannot_tell_which_disks_sleep(two
         raise RuntimeError("lsblk failed: no udev")
 
     monkeypatch.setattr(spindown, "pool_sleeps", unreadable)
-    now = datetime(2026, 11, 15, tzinfo=timezone.utc)
+    now = datetime(2026, 11, 15, tzinfo=UTC)
     done: dict[str, float] = {}
     sleeping: dict[str, spindown.Asleep] = {}
     assert files_router._expire_due_trash(now, done, 0.0, sleeping) == (0, [
@@ -1146,7 +1146,7 @@ def test_the_trash_expiry_asks_a_pool_s_disks_whether_they_sleep_only_when_its_p
     # host without hdparm, ADR-0378): the hourly checks ask nothing while no pass is due, and then only
     # the disks of the pool that is due.
     base, asleep, asked = two_pools
-    now = datetime(2026, 11, 15, tzinfo=timezone.utc)
+    now = datetime(2026, 11, 15, tzinfo=UTC)
     done: dict[str, float] = {}
     sleeping: dict[str, spindown.Asleep] = {}
     files_router._expire_due_trash(now, done, 0.0, sleeping)
@@ -1189,7 +1189,7 @@ def test_the_trash_expiry_asks_an_awake_disk_of_a_pool_put_off_for_a_sleeping_on
     monkeypatch.setattr(files_router, "MOUNTINFO", str(mounts.path))
     io = {"sdi": (5000, 0), "sdj": (40, 3)}
     monkeypatch.setattr(disks, "io_counts", lambda: dict(io))
-    now = datetime(2026, 11, 15, tzinfo=timezone.utc)
+    now = datetime(2026, 11, 15, tzinfo=UTC)
     done: dict[str, float] = {}
     sleeping: dict[str, spindown.Asleep] = {}
 
