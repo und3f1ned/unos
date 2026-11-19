@@ -14,8 +14,8 @@
 	// bar, and the rest of it is a drawer under it that the menu button opens (ADR-0302). Escape and
 	// a click outside it close it and give the focus back to the button; a link closes it, and the
 	// navigation moves the focus to the new page. Back and Forward close it too.
-	// The button exists only below md, the same 768 px as the md: classes of the markup: from md
-	// up the sidebar is the one it was, its first button Logout.
+	// The button exists only below md, the same 768 px as the md: classes of the markup. From md
+	// the sidebar's first button is Search, which opens the command palette (ADR-0428).
 
 	type Props = {
 		/** Whose links the navigation shows (NavMenu). */
@@ -26,9 +26,16 @@
 		/** Whether the header bar of a phone offers the command palette (ADR-0393). */
 		paletteEnabled: boolean;
 		onlogout: () => void;
-		/** The header bar's search button asks for the command palette, once the drawer has closed. */
+		/** The Search button, or the header bar's, asks for the command palette, once the drawer has closed. */
 		onpalette: () => void;
 	};
+
+	// The keys that open the palette, as the system names them.
+	const mac = browser && /Mac|iPhone|iPad|iPod/.test(navigator.platform);
+	// i18n-ignore: the names of keys, the same in every language
+	const keyHint = mac ? '⌘ K' : 'Ctrl K';
+	// i18n-ignore: a key combination of ARIA, not a text
+	const keyShortcut = mac ? 'Meta+K' : 'Control+K';
 
 	let { role, pathname, user, paletteEnabled, onlogout, onpalette }: Props = $props();
 
@@ -118,10 +125,13 @@
 <svelte:window onkeydown={handleMenuKeydown} onclick={handleOutsideClick} onpopstate={handlePopState} />
 
 <!-- Sidebar. Below md its logo row is the header bar, with the menu button, and the rest of
-     it is the drawer that the button opens over the page (ADR-0302). -->
-<aside class="relative shrink-0 md:w-56 bg-surface-elevated flex flex-col md:border-r border-border">
+     it is the drawer that the button opens over the page (ADR-0302). From md it is 224 px wide,
+     from lg 248 px (ADR-0428). -->
+<aside
+	class="relative shrink-0 md:w-56 lg:w-[248px] bg-surface-elevated flex flex-col border-b md:border-b-0 md:border-r border-border"
+>
 	<!-- Logo -->
-	<div class="flex items-center gap-2 h-14 px-2 md:h-auto md:p-4 border-b border-border">
+	<div class="flex items-center gap-2.5 h-14 shrink-0 px-2 md:px-4">
 		{#if $narrow}
 			<Button
 				variant="ghost"
@@ -140,8 +150,13 @@
 				{/if}
 			</Button>
 		{/if}
-		<Server class="w-7 h-7 text-brand-ring" />
-		<span class="text-lg font-bold text-content">{$t('common.product')}</span>
+		<span
+			class="grid place-items-center w-7 h-7 shrink-0 rounded-[7px] bg-brand text-content-on-brand"
+			aria-hidden="true"
+		>
+			<Server class="w-4 h-4" />
+		</span>
+		<span class="text-base font-bold tracking-[0.04em] text-content">{$t('common.product')}</span>
 	</div>
 
 	{#if menuOpen}
@@ -154,16 +169,37 @@
 		></div>
 	{/if}
 
+	<!-- Below md a drawer that slides in (reduced motion: at once); closed, it is invisible, so that
+	     neither Tab nor a screen reader reaches it. It is visible as soon as it opens, and turns
+	     invisible only once it has slid out. -->
 	<div
 		id="layout-sidebar"
 		bind:this={sidebar}
 		onfocusout={handleSidebarFocusOut}
 		class="{menuOpen
-			? 'flex'
-			: 'hidden'} md:flex flex-1 min-h-0 flex-col fixed md:static top-14 bottom-0 left-0 z-40 w-64 md:w-auto bg-surface-elevated border-r md:border-r-0 border-border"
+			? 'visible translate-x-0 transition-transform'
+			: 'invisible -translate-x-full transition-[transform,visibility]'} md:visible md:translate-x-0 flex flex-1 min-h-0 flex-col fixed md:static top-14 bottom-0 left-0 z-40 w-72 max-w-[85vw] md:w-auto md:max-w-none bg-surface-elevated border-r md:border-r-0 border-border duration-[180ms] ease-[cubic-bezier(0.2,0,0,1)] md:transition-none"
 	>
+		<!-- From md: the command palette's Search button, before the links (ADR-0428). Its name
+		     starts with its visible word; the keys' hint is for the eye. -->
+		{#if paletteEnabled}
+			<div class="hidden md:block px-3 pt-1 pb-1">
+				<Button
+					variant="plain"
+					type="button"
+					aria-label={$t('palette.field')}
+					aria-keyshortcuts={keyShortcut}
+					onclick={onpalette}
+					class="w-full h-9 flex items-center gap-2 pl-2.5 pr-1.5 rounded border border-border bg-surface text-[13px] text-content-muted hover:border-border-strong hover:text-content-secondary transition-colors"
+				>
+					<Search class="w-4 h-4 shrink-0" aria-hidden="true" />
+					<span class="flex-1 min-w-0 truncate text-left">{$t('palette.trigger')}</span>
+					<kbd aria-hidden="true">{keyHint}</kbd>
+				</Button>
+			</div>
+		{/if}
 		<NavMenu {role} {pathname} onnavigate={() => closeMenu(false)} />
-		<SidebarUser {user} {onlogout} />
+		<SidebarUser {user} {onlogout} onnavigate={() => closeMenu(false)} />
 	</div>
 
 	<!-- A phone has no Ctrl+K: this button of the header bar opens the command palette there

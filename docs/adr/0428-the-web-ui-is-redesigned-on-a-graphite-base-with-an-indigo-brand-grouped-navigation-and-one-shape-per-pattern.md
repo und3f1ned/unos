@@ -73,7 +73,8 @@ groups, the system's own fonts. The entry is `webui.redesign`.
   Audit Log, System), each a `<p>` naming its `<ul>` by `aria-labelledby`; a regular user's two
   links get no labels. The `nav` is labelled "Main". Under the logo, from `md`, a "Search" button
   with the key hint (`kbd`, hidden from screen readers, `aria-keyshortcuts`) opens the command
-  palette: its name is its visible text. Above the user block, on every page, a line says whether
+  palette; its name, "Search pages and actions", starts with the word it shows (WCAG 2.5.3) and is
+  not the exact name of System > Logs' Search button. Above the user block, on every page, a line says whether
   the live connection is up ("Connected" or "Not connected", a polite `role="status"`). For an
   administrator the user block is a link to `/system#security`, "Your account". Below `md` the
   drawer slides in. The problems banner lists three problems and puts the rest behind "Show all N".

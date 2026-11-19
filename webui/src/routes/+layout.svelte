@@ -192,10 +192,13 @@
 		/>
 
 		<!-- Main content -->
-		<main class="flex-1 overflow-auto bg-surface p-4 md:p-6 scrollbar-thin">
+		<!-- 16 px of padding below md, 24 px from md, 32 px from xl (ADR-0428). -->
+		<main class="flex-1 min-w-0 overflow-auto bg-surface p-4 md:p-6 xl:p-8 scrollbar-thin">
 			<!-- The problems of the NAS, above every page of an administrator (ADR-0332). -->
 			{#if gate === 'allowed' && $isAdmin && !setupOnly}
-				<ProblemsBanner />
+				<div class="mx-auto max-w-[1440px]">
+					<ProblemsBanner />
+				</div>
 			{/if}
 			{#if gate === 'allowed' && showSlot}
 				{@render children?.()}

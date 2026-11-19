@@ -120,9 +120,11 @@ async function focusInPalette(page: Page): Promise<boolean> {
   });
 }
 
+// The System page's tabs in its three groups, Settings, Monitoring and Maintenance (ADR-0428).
 const SYSTEM_TABS = [
-  'General', 'Updates', 'Security', 'Resource Monitor', 'System Logs', 'Disk Health', 'Backup & Restore',
-  'Scheduler', 'Notifications', 'Network', 'Remote Access', 'Power Management',
+  'General', 'Network', 'Remote Access', 'Security',
+  'Resource Monitor', 'System Logs', 'Disk Health', 'Notifications',
+  'Updates', 'Backup & Restore', 'Scheduler', 'Power Management',
 ];
 const ADMIN_ACTIONS = [
   'Add a user…', 'Reboot the host…', 'Shut down the host…', 'Suspend the host…',
@@ -200,6 +202,27 @@ test.describe('The command palette of an administrator', () => {
     await expect(palette(page)).toBeHidden();
 
     expect(requests).toEqual([]);
+  });
+
+  test('from md the Search button of the sidebar opens it, and the focus comes back to it', async ({
+    authenticatedPage: page,
+  }) => {
+    // webui.redesign (ADR-0428): a visible way to the palette on a desktop. Its name starts with the
+    // word it shows, and the keys' hint is for the eye only.
+    await page.goto('/');
+    const trigger = page.locator('aside').getByRole('button', { name: 'Search pages and actions', exact: true });
+    await expect(trigger).toBeVisible();
+    await expect(trigger.locator('span').first()).toHaveText('Search');
+    await expect(trigger.locator('kbd')).toHaveAttribute('aria-hidden', 'true');
+    await expect(trigger).toHaveAttribute('aria-keyshortcuts', /^(Control|Meta)\+K$/);
+    await expect(page.getByRole('button', { name: 'Open the command palette' })).toHaveCount(0);
+    await trigger.click();
+    await expect(palette(page)).toBeVisible();
+    await expect(field(page)).toBeFocused();
+    expect(await optionNames(page)).toContain('Storage');
+    await page.keyboard.press('Escape');
+    await expect(palette(page)).toBeHidden();
+    await expect(trigger).toBeFocused();
   });
 
   test('Enter opens the chosen page, the arrows choose another, and a click opens one too', async ({

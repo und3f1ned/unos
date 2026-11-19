@@ -115,12 +115,20 @@ export const ADMIN_PAGES: Choice[] = [
 		run: { go: '/system#general' }
 	},
 	{
-		id: 'updates',
-		nameKey: 'system.tabs.updates',
-		keywordsKey: 'palette.keywords.updates',
+		id: 'network',
+		nameKey: 'system.tabs.network',
+		keywordsKey: 'palette.keywords.network',
 		kindKey: SYSTEM,
-		icon: ArrowUpCircle,
-		run: { go: '/system#updates' }
+		icon: Network,
+		run: { go: '/system#network' }
+	},
+	{
+		id: 'remote',
+		nameKey: 'remote.tab',
+		keywordsKey: 'palette.keywords.remote',
+		kindKey: SYSTEM,
+		icon: Globe,
+		run: { go: '/system#remote' }
 	},
 	{
 		id: 'security',
@@ -147,15 +155,6 @@ export const ADMIN_PAGES: Choice[] = [
 		icon: Heart,
 		run: { go: '/system#health' }
 	},
-	{ id: 'backup', nameKey: 'system.tabs.backup', kindKey: SYSTEM, icon: Database, run: { go: '/system#backup' } },
-	{
-		id: 'scheduler',
-		nameKey: 'system.tabs.scheduler',
-		keywordsKey: 'palette.keywords.scheduler',
-		kindKey: SYSTEM,
-		icon: Calendar,
-		run: { go: '/system#scheduler' }
-	},
 	{
 		id: 'notifications',
 		nameKey: 'system.tabs.notifications',
@@ -165,20 +164,21 @@ export const ADMIN_PAGES: Choice[] = [
 		run: { go: '/system#notifications' }
 	},
 	{
-		id: 'network',
-		nameKey: 'system.tabs.network',
-		keywordsKey: 'palette.keywords.network',
+		id: 'updates',
+		nameKey: 'system.tabs.updates',
+		keywordsKey: 'palette.keywords.updates',
 		kindKey: SYSTEM,
-		icon: Network,
-		run: { go: '/system#network' }
+		icon: ArrowUpCircle,
+		run: { go: '/system#updates' }
 	},
+	{ id: 'backup', nameKey: 'system.tabs.backup', kindKey: SYSTEM, icon: Database, run: { go: '/system#backup' } },
 	{
-		id: 'remote',
-		nameKey: 'remote.tab',
-		keywordsKey: 'palette.keywords.remote',
+		id: 'scheduler',
+		nameKey: 'system.tabs.scheduler',
+		keywordsKey: 'palette.keywords.scheduler',
 		kindKey: SYSTEM,
-		icon: Globe,
-		run: { go: '/system#remote' }
+		icon: Calendar,
+		run: { go: '/system#scheduler' }
 	},
 	{
 		id: 'power',
