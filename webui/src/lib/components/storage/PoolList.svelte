@@ -2,7 +2,7 @@
 	// The Pools card of the Storage page: a warning for the profiles that btrfs does not keep safe,
 	// and a card for each pool with the jobs on it.
 	import { Database } from 'lucide-svelte';
-	import { Alert, Card } from '$lib/components/ui';
+	import { Alert, Card, EmptyState } from '$lib/components/ui';
 	import type { Pool } from '$lib/api/storage';
 	import { t } from '$lib/i18n';
 	import type { PoolJobs } from './jobs.svelte';
@@ -23,9 +23,9 @@
 	let { pools, error, jobs, formatBytes, percentFormat, profileLabel, ...handlers }: Props = $props();
 </script>
 
-<Card>
-	<h2 class="section-title mb-4">
-		<Database class="w-5 h-5" />
+<Card class="space-y-4">
+	<h2 class="section-title">
+		<Database class="w-5 h-5 text-content-secondary" aria-hidden="true" />
 		{$t('storage.pools.title')}
 	</h2>
 
@@ -36,7 +36,7 @@
 	{#if error}
 		<Alert variant="error" title={$t('storage.pools.loadError')}>{error}</Alert>
 	{:else if pools.length === 0}
-		<p class="text-muted">{$t('storage.pools.none')}</p>
+		<EmptyState compact icon={Database} title={$t('storage.pools.none')} />
 	{:else}
 		<div class="space-y-4">
 			{#each pools as pool}

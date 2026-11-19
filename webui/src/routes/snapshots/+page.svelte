@@ -121,7 +121,7 @@
 		<Card>
 			<p class="text-muted">
 				{$t('snapshots.noPool')}
-				<a href="/storage" class="text-info hover:underline">{$t('snapshots.storagePage')}</a>.
+				<a href="/storage" class="link">{$t('snapshots.storagePage')}</a>.
 			</p>
 		</Card>
 	{/if}
@@ -140,7 +140,7 @@
 	{#if lists.selected}
 		<Card>
 			<h2 class="section-title mb-4">
-				<Archive class="w-5 h-5" />
+				<Archive class="w-5 h-5 text-content-secondary" />
 				{$t('snapshots.of', { name: label(lists.selected) })}
 			</h2>
 			{#if lists.snapshots.loading}
@@ -165,8 +165,8 @@
 							<RotateCcw class="w-4 h-4" />
 							<span class="sr-only">{$t('snapshots.restoreOne', { name: snap.name })}</span>
 						</Button>
-						<Button variant="ghost" size="icon-sm" onclick={() => (snapshotToDelete = snap)}>
-							<Trash2 class="w-4 h-4 text-error" />
+						<Button variant="ghost-danger" size="icon-sm" onclick={() => (snapshotToDelete = snap)}>
+							<Trash2 class="w-4 h-4" />
 							<span class="sr-only">{$t('snapshots.deleteOne', { name: snap.name })}</span>
 						</Button>
 					{/snippet}
@@ -178,7 +178,7 @@
 	{#if lists.selected}
 		<Card>
 			<h2 class="section-title mb-2">
-				<Copy class="w-5 h-5" />
+				<Copy class="w-5 h-5 text-content-secondary" />
 				{$t('snapshots.copies.of', { name: label(lists.selected) })}
 			</h2>
 			<p class="text-sm text-secondary mb-4">{$t('snapshots.copies.hint')}</p>
@@ -196,8 +196,8 @@
 					{formatDate}
 				>
 					{#snippet actions(copy)}
-						<Button variant="ghost" size="icon-sm" onclick={() => (copyToDelete = copy)}>
-							<Trash2 class="w-4 h-4 text-error" />
+						<Button variant="ghost-danger" size="icon-sm" onclick={() => (copyToDelete = copy)}>
+							<Trash2 class="w-4 h-4" />
 							<span class="sr-only">{$t('snapshots.copies.deleteOne', { name: copy.name })}</span>
 						</Button>
 					{/snippet}

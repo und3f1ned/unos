@@ -48,12 +48,12 @@
 				</Button>
 			{/if}
 			<Button
-				variant="ghost"
+				variant="ghost-danger"
 				size="icon-sm"
 				disabled={volumes.busy || volumes.readOnly}
 				onclick={() => volumes.askDelete(volume)}
 			>
-				<Trash2 class="w-4 h-4 text-error" />
+				<Trash2 class="w-4 h-4" />
 				<span class="sr-only">{$t('storage.volumes.deleteOne', { name: volume.name })}</span>
 			</Button>
 		</div>
