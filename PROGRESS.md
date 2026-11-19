@@ -659,10 +659,10 @@ Open owner actions:
     (4) a restart of the supervisor during Immich's wait for its database. The agent reads the job's
     API, the SD MiB and the audit log meanwhile.
 16. The BPI-F3's second SATA SSD (ADR-0372): its pool `data` is a RAID1 of two SSDs, and the
-    second has no link on the adapter's second port since the board was switched on on
-    2026-11-19, so the pool does not mount and Docker and UNOS stay down. Its cable and power,
-    or the owner's word on mounting the pool degraded (one SSD left, then a new second disk and a
-    balance). And a look at its cooling: the thermal zones read 70 to 97 C at idle.
+    second (devid 2) has had no link on either port of the adapter since 2026-11-19. The pool runs
+    degraded, mounted by hand, until the next boot; after a reboot it stays unmounted, and Docker
+    and UNOS down, until it is mounted again. Open: a new or repaired second disk added to the
+    pool and a balance back to RAID1, or the pool converted to one disk so that it mounts at boot.
 17. A kernel with LIO's file backstore (`target_core_file`) on a board, for the device check of
     `shares.iscsi-targets`: neither the BPI-W3's vendor kernel nor the BPI-F3's has one.
 18. `system.remote-access`, step 1: a port forward of UDP 51820 on the router to the dev device,
@@ -719,6 +719,19 @@ Open owner actions:
   0.133 SD MiB in two idle minutes; stopped until the next boot, 0.016. Its thermal zones read 70
   to 97 C within ten seconds at a load of 0.1 with the fan at 3 and 4 of 4, too fast a swing for a
   real temperature. Its kernel (6.18.45-current-spacemit) has no LIO.
+- The BPI-F3 again, after the owner reconnected its disks and rebooted it (about 10:27 UTC): the
+  SSD of the pool's devid 1 on the adapter's second port, the first port without a link, the
+  second SSD (devid 2) seen on neither. At the owner's word ("Mount it degraded") the pool was
+  mounted by hand at 10:51 UTC with `degraded,noatime` (0.000 SD MiB), outside UNOS and its fstab
+  entry, which stays as it was: the mount does not survive a reboot, by the owner's choice ("Leave
+  it for now") over converting the pool to one disk. Docker and UNOS started (0.992): both of
+  UNOS's containers and the Home Assistant and Frigate stack healthy, /api/v1/health 200. A scrub
+  of devid 1 found no errors in 13.82 GiB (38 s, 0.148), and its error counters are 0. Under a
+  load of about 2 the thermal zones read 39 to 64 C with the fan at 1 and 2 of 4, cooler than at
+  idle in the morning. `scripts/dev/check.sh` on the board (0.023): its idle CPU and the
+  containers' within budget, and two problems: the inbound IPv6 filter (ADR-0301) was never put on
+  the board, and the K1's top and gpu zones have their first passive trip at 40 C, which drives
+  the fan, not the CPU's clock, so the check's warning for them is a false one.
 
 ### 2026-11-18: A fourteenth batch: hot-plugged SMART, companions, no floating images, host commands and firewall
 
