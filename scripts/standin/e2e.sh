@@ -205,7 +205,7 @@ echo "== starting the stand-in: $base_url (plain HTTP $http_url, supervisor on 1
 PYTHONDONTWRITEBYTECODE=1 "$PYTHON" "$here/run_supervisor.py" --state-dir "$state" --port "$backend_port" --fresh \
   --front-https-port "$https_port" > "$logs/supervisor.log" 2>&1 &
 supervisor_pid=$!
-# The served certificate that the supervisor writes (run_supervisor.py's HOST_FILE_GLOBALS, ADR-0404).
+# The served certificate that the supervisor writes (UNOS_SERVED_CERTIFICATE_DIR of run_supervisor.py, ADR-0404).
 "$NODE" "$here/front.mjs" "$webui/build" "$https_port" "$http_port" "$backend_port" "$tls/cert.pem" "$tls/key.pem" \
   "$state/data/served-certificate/served.pem" > "$logs/front.log" 2>&1 &
 front_pid=$!

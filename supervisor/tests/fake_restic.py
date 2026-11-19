@@ -29,7 +29,9 @@ comes back from ``dump``, ``restore`` and ``snapshots``:
   only one that vanished between its first open and the next is reported;
 * each call records the host name that its wrapper wrote into ``<state>/hostname`` (on the device
   /proc/sys/kernel/hostname of the UTS namespace that ``unshare --uts`` made for that restic), and
-  ``install`` puts a pass-through ``unshare`` next to the pass-through ``ionice``.
+  ``install`` puts a pass-through ``unshare`` next to the pass-through ``ionice``: it gives the
+  command ``<state>/hostname`` in place of /proc/sys/kernel/hostname, the file of the namespace that
+  it does not make.
 
 ``<state>`` is FAKE_RESTIC_STATE, which the wrapper sets. Each call appends a line to
 ``<state>/calls.jsonl``: its arguments, its environment and its process id. ``<state>/faults.json``
@@ -61,6 +63,8 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
+# The host name of a UTS namespace, which the fake unshare replaces with <state>/hostname.
+UTS_HOSTNAME_FILE = "/proc/sys/kernel/hostname"
 GLOBAL_FLAGS = {"--no-cache", "--json", "--quiet", "-q", "--no-lock"}
 GLOBAL_VALUES = {"--cache-dir", "--limit-upload", "--limit-download", "--retry-lock"}
 COMMAND_VALUES = {
@@ -105,8 +109,14 @@ def install(folder: Path, state: Path, python: str = sys.executable) -> Path:
     unshare.write_text(
         "#!/bin/sh\n"
         "# unshare as the off-device copy calls it, without a namespace: the options, then the command.\n"
+        "# The host name of the UTS namespace, /proc/sys/kernel/hostname, is <state>/hostname.\n"
         '[ "$1" = --uts ] && [ "$2" = -- ] || { echo "fake unshare: unexpected options: $*" >&2; exit 99; }\n'
         "shift 2\n"
+        "for arg; do\n"
+        "  shift\n"
+        f'  [ "$arg" = {UTS_HOSTNAME_FILE} ] && arg={shlex.quote(str(state / "hostname"))}\n'
+        '  set -- "$@" "$arg"\n'
+        "done\n"
         'exec "$@"\n'
     )
     for path in (restic, ionice, unshare):
