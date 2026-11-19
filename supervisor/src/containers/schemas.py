@@ -76,7 +76,7 @@ class ContainerCreate(BaseModel):
         "name": "whoami",
         "image": "traefik/whoami:v1.10.3",
         "ports": [{"host_port": 8081, "container_port": 80, "protocol": "tcp"}],
-        "volumes": [{"host_path": "/mnt/pools/data/whoami", "container_path": "/data", "mode": "ro"}],
+        "volumes": [{"host_path": "/mnt/pools/data/whoami", "container_path": "/srv", "mode": "ro"}],
         "environment": {"TZ": "UTC"},
         "restart_policy": "unless-stopped",
         "labels": {},

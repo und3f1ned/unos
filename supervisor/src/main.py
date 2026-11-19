@@ -431,9 +431,9 @@ async def full_health_check():
 
     issues = []
 
-    # Database check
+    # Database check: the file the supervisor opens, in the data directory (ADR-0419).
     try:
-        db_path = Path("/data/unos.db")
+        db_path = Path(settings.db_path)
         if db_path.exists():
             health["components"]["database"] = {"status": "ok", "size_mb": round(db_path.stat().st_size / 1024 / 1024, 2)}
         else:

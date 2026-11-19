@@ -90,7 +90,6 @@ async def update(tmp_path, monkeypatch):
     temp_dir.mkdir()
     monkeypatch.setattr(tempfile, "tempdir", str(temp_dir))
     data = tmp_path / "data"
-    monkeypatch.setattr(updater_module, "DATA_DIR", data)
     monkeypatch.setattr(updater_module, "UPDATE_STATE_FILE", data / "update_state.json")
     monkeypatch.setattr(updater_module, "UPDATE_HISTORY_FILE", data / "update_history.json")
     monkeypatch.setattr(updater_module, "INSTALL_DIR", tmp_path / "unos")

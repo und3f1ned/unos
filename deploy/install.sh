@@ -19,7 +19,6 @@ NC='\033[0m' # No Color
 
 # Configuration
 UNOS_INSTALL_DIR="${UNOS_INSTALL_DIR:-/opt/unos}"
-UNOS_DATA_DIR="${UNOS_DATA_DIR:-/var/lib/unos}"
 UNOS_REPO="${UNOS_REPO:-https://github.com/und3f1ned/unos.git}"
 UNOS_BRANCH="${UNOS_BRANCH:-main}"
 # Seconds `docker compose up` (here and in the systemd unit) waits for the
@@ -313,7 +312,8 @@ setup_directories() {
     
     # Create installation directory
     mkdir -p "$UNOS_INSTALL_DIR"
-    mkdir -p "$UNOS_DATA_DIR"
+    # The backups of update.sh, which names this folder too.
+    mkdir -p /var/lib/unos
     mkdir -p /mnt/pools
     mkdir -p /etc/unos
     

@@ -27,6 +27,12 @@ _RUN_DIR = tempfile.mkdtemp(prefix="unos-tests-")
 os.environ["UNOS_SMB_CONF_PATH"] = os.path.join(_RUN_DIR, "smb.conf")
 os.environ["UNOS_NFS_EXPORTS_PATH"] = os.path.join(_RUN_DIR, "exports")
 os.environ["UNOS_POOLS_BASE_PATH"] = os.path.join(_RUN_DIR, "pools")
+# The supervisor's data directory too (src/paths.py, ADR-0419): no test reaches /data. The supervisor
+# reads it once, at its first import, so no test changes it: a test moves a module's path with
+# monkeypatch (test_data_dir.py). Read-only, as /data is to the tests: a test that did not move a
+# path it writes fails, instead of leaving a file to the next tests of its process.
+os.environ["UNOS_DATA_DIR"] = os.path.join(_RUN_DIR, "data")
+os.mkdir(os.environ["UNOS_DATA_DIR"], 0o555)
 atexit.register(shutil.rmtree, _RUN_DIR, ignore_errors=True)
 
 

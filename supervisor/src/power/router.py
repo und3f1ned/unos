@@ -15,7 +15,7 @@ from typing import Annotated, Literal, Optional
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 
-from .. import host, state_files
+from .. import host, paths, state_files
 from . import schedule
 from ..audit.changes import audit_change, changed_fields
 from ..audit.schemas import AuditAction, AuditSeverity
@@ -31,11 +31,11 @@ limiter = Limiter(key_func=get_remote_address)
 
 router = APIRouter(prefix="/power", tags=["power"])
 
-CONFIG_FILE = "/data/power_config.json"
-UPS_CONFIG_FILE = "/data/ups_config.json"
+CONFIG_FILE = str(paths.POWER_CONFIG)
+UPS_CONFIG_FILE = str(paths.UPS_CONFIG)
 # The Wake-on-LAN state an administrator chose per interface name, applied
 # again at every start of the supervisor (reapply_wol_settings, ADR-0233).
-WOL_FILE = "/data/wol_config.json"
+WOL_FILE = str(paths.WOL_CONFIG)
 # One Wake-on-LAN change at a time: each reads the file, changes it and writes it.
 _wol_lock = threading.Lock()
 

@@ -50,7 +50,8 @@ from croniter import croniter
 from pydantic import TypeAdapter
 import psutil
 
-from .. import host, state_files
+from .. import host, paths, state_files
+from ..config import get_settings
 from ..audit.changes import audit_change
 from ..audit.schemas import AuditAction
 from ..auth.utils import require_admin, verify_token
@@ -130,12 +131,13 @@ TASK_CHECK_INTERVAL = 300
 MISSED_AFTER = timedelta(minutes=10)
 TASK_PROBLEMS = "tasks"  # their source in health.problems
 
-TASKS_FILE = "/data/scheduled_tasks.json"
-RUNS_FILE = "/data/task_runs.json"
-SCHEDULED_BACKUP_DIR = "/data/backups"
-DB_FILE = "/data/unos.db"
+TASKS_FILE = str(paths.SCHEDULED_TASKS)
+RUNS_FILE = str(paths.TASK_RUNS)
+SCHEDULED_BACKUP_DIR = str(paths.BACKUPS)
+# The database the supervisor opens (UNOS_DB_PATH, in the data directory by default).
+DB_FILE = get_settings().db_path
 # The keys of the backup tasks by task id, base64 of backup.router.new_backup_key.
-BACKUP_KEYS_FILE = "/data/scheduled_backup_keys.json"
+BACKUP_KEYS_FILE = str(paths.SCHEDULED_BACKUP_KEYS)
 MIN_PASSPHRASE_LENGTH = 8  # as for passwords and SMB passwords
 NO_PASSPHRASE = "A backup task needs a passphrase: its backups are encrypted with it"
 NO_BACKUP_KEY = "No passphrase is set for this backup task: edit the task and set one"

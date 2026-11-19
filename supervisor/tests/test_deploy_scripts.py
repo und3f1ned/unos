@@ -869,7 +869,7 @@ def _start_install(tmp_path, *scenario, prelude=""):
 
 # What install.sh creates from setup_directories on (in the sandbox of
 # _run_install_main).
-_INSTALL_TARGETS = {"install", "data", "mnt-pools", "etc-unos", "etc-samba", "etc-systemd-system"}
+_INSTALL_TARGETS = {"install", "var-lib-unos", "mnt-pools", "etc-unos", "etc-samba", "etc-systemd-system"}
 
 # Logs the call; stubs of _run_install_main.
 _LOGGER = '#!/bin/bash\necho "${0##*/} $*" >> "$STUB_DIR/calls"\n'
@@ -924,7 +924,7 @@ def _run_install_main(tmp_path, *scenario, docker_installed=True, system=DEBIAN_
         (bin_dir / name).write_text(body)
         (bin_dir / name).chmod(0o755)
     paths = ["/etc/os-release", "/etc/apt", "/mnt/pools", "/etc/unos", "/etc/samba", "/etc/systemd/system",
-             "/proc/device-tree/compatible", "/etc/udev/rules.d", "/usr/local/sbin"]
+             "/proc/device-tree/compatible", "/etc/udev/rules.d", "/usr/local/sbin", "/var/lib/unos"]
     lib = _install_lib(tmp_path, paths)
 
     result = subprocess.run(
@@ -936,7 +936,6 @@ def _run_install_main(tmp_path, *scenario, docker_installed=True, system=DEBIAN_
             "STUB_DIR": str(stub_dir),
             "DOCKER_DIR": str(docker_dir),
             "UNOS_INSTALL_DIR": str(tmp_path / "install"),
-            "UNOS_DATA_DIR": str(tmp_path / "data"),
             "UNOS_REPO": str(tmp_path / "no-repository"),
         },
         stdin=subprocess.DEVNULL,
@@ -4277,8 +4276,12 @@ class TestServedCertificate:
         assert re.search(r"^\tocsp_stapling off$", caddyfile.split("\n}\n", 1)[0], re.M)
         # The supervisor writes that file, and reloads Caddy with that Caddyfile and those modes (as
         # the module sets them: the tests' own fixture gives each test a folder of its own).
+        # The folder is the default of its setting, UNOS_SERVED_CERTIFICATE_DIR (ADR-0419).
+        from src.config import Settings
+
+        assert Settings.model_fields["served_certificate_dir"].default == SERVED_FILE.rsplit("/", 1)[0]
         module = (REPO_ROOT / "supervisor" / "src" / "security" / "serving.py").read_text()
-        assert f'\nSERVED_DIR = "{SERVED_FILE.rsplit("/", 1)[0]}"\nSERVED_FILE = "served.pem"\n' in module
+        assert '\nSERVED_DIR = get_settings().served_certificate_dir\nSERVED_FILE = "served.pem"\n' in module
         assert '\nWEBUI_CADDYFILE = "/etc/caddy/Caddyfile"\n' in module
         assert '\nTLS_MODES = ("served", "local")\n' in module
 

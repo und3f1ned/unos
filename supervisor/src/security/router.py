@@ -16,7 +16,7 @@ from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, desc, text
 
-from .. import host
+from .. import host, paths
 from . import firewall, serving
 from ..audit.changes import audit_change
 from ..audit.schemas import AuditAction, AuditSeverity
@@ -45,7 +45,7 @@ logger = logging.getLogger(__name__)
 # Uploaded and self-signed certificates. The web UI's container cannot read this directory: the one
 # an administrator chooses is copied, with its chain and key, into the served file of
 # src/security/serving.py, which Caddy loads (ADR-0404).
-CERTS_DIR = "/data/certs"
+CERTS_DIR = str(paths.CERTIFICATES)
 # Held by every store and delete of the stored certificates and every change of the served one,
 # which run in worker threads: two of them never mix their files, and the served certificate is
 # never replaced or deleted beside a reload of Caddy (ADR-0404).

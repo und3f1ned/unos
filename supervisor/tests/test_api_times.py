@@ -14,24 +14,24 @@ from __future__ import annotations
 import ast
 import csv
 import importlib
-import importlib.util
 import io
 import json
 import pkgutil
 import re
+import sys
 import tarfile
 import time
 import typing
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
+from pathlib import Path, PurePath
 
 import httpx
 import pytest
 from pydantic import AfterValidator, BaseModel
 
 import src
-from src import times
+from src import paths, times
 from src.audit import router as audit_router
 from src.audit.schemas import AuditAction
 from src.health import problems as health_problems
@@ -48,7 +48,6 @@ no_side_effects = test_authz.no_side_effects
 world = test_audit_log.world
 
 SRC = Path(times.__file__).resolve().parent
-REPO = SRC.parents[1]
 API = "/api/v1"
 
 # A date and a time, as ISO 8601 or as SQLite and Python write it, with or without an offset; and
@@ -202,12 +201,17 @@ def test_every_datetime_field_of_a_model_is_answered_in_utc():
 
 # ==================== The walk ====================
 
-def _standin_data_globals() -> dict[str, tuple[str, ...]]:
-    spec = importlib.util.spec_from_file_location(
-        "standin_run_supervisor_times", REPO / "scripts" / "standin" / "run_supervisor.py")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module.DATA_GLOBALS
+def _data_globals() -> dict[str, tuple[str, ...]]:
+    """The module globals of the supervisor that hold a path in its data directory (src/paths.py)."""
+    found: dict[str, tuple[str, ...]] = {}
+    for module_name, module in list(sys.modules.items()):
+        if module_name == "src.paths" or not module_name.startswith("src."):
+            continue
+        names = tuple(name for name, value in vars(module).items()
+                      if isinstance(value, (str, PurePath)) and Path(value).is_relative_to(paths.DATA_DIR))
+        if names:
+            found[module_name] = names
+    return found
 
 
 @contextmanager
@@ -321,13 +325,12 @@ def stored_before(authz_db, tmp_path, monkeypatch):
     """The supervisor's /data in tmp_path, with a database and files from before ADR-0401."""
     data = tmp_path / "data"
     data.mkdir()
-    for module_name, names in _standin_data_globals().items():
+    for module_name, names in _data_globals().items():
         module = importlib.import_module(module_name)
         for name in names:
             original = getattr(module, name)
-            path = Path(str(original))  # the audit log is in a tmp_path already (conftest)
-            new = data / (path.relative_to("/data") if path.is_relative_to("/data") else path.name)
-            monkeypatch.setattr(module, name, new if isinstance(original, Path) else str(new))
+            new = data / Path(original).relative_to(paths.DATA_DIR)
+            monkeypatch.setattr(module, name, new if isinstance(original, PurePath) else str(new))
     _old_rows(authz_db.engine, authz_db.admin_id, authz_db.alice_id)
     _old_files(data)
     # A problem that a check found (kept in RAM, ADR-0332).

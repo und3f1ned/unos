@@ -15,7 +15,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from typing import Annotated, Optional
 
 from . import problems
-from .. import host, state_files
+from .. import host, paths, state_files
 from ..times import stored_time_text, utc_now, utc_text
 from ..auth.utils import verify_token
 from ..security.validators import validate_pool_name
@@ -128,8 +128,8 @@ class RaidHealthInfo(BaseModel):
 _raid_monitor_running = False
 _raid_monitor_task: Optional[asyncio.Task] = None
 RAID_CHECK_INTERVAL = 300  # Check every 5 minutes
-RAID_STATUS_FILE = "/data/raid_status.json"
-SMART_HISTORY_FILE = "/data/smart_history.json"
+RAID_STATUS_FILE = str(paths.RAID_STATUS)
+SMART_HISTORY_FILE = str(paths.SMART_HISTORY)
 SMART_CHECK_INTERVAL = 3600  # Check SMART every hour
 # Snapshots kept per disk: 30 days of hourly passes (ADR-0235).
 SMART_HISTORY_LIMIT = 720

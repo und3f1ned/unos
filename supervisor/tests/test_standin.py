@@ -1,11 +1,13 @@
 """The local E2E stand-in (scripts/standin/, ADR-0215) keeps to its directory and serves what Caddy serves.
 
-* scripts/standin/run_supervisor.py redirects every hard-coded /data path of
-  supervisor/src into the stand-in's state directory: a child process
-  configures the stand-in, imports every module of src and looks for a /data
-  path left in their globals and in the settings. A /data path inside a
-  function cannot be redirected; the only ones are the read-only probes listed
-  in READ_ONLY_PROBES.
+* scripts/standin/run_supervisor.py points the supervisor at the stand-in's
+  state directory through the environment alone: UNOS_DATA_DIR for every data
+  path (src/paths.py, ADR-0419) and the settings of the host paths it stands in
+  for. It patches no module constant, and no /data path is written or made from
+  DATA_DIR anywhere in supervisor/src but src/paths.py (the apps' paths inside
+  their containers aside). A child process configures the stand-in,
+  imports every module of src and looks for a /data path left in their globals
+  and in the settings.
 * The stand-in cannot reach this machine's Docker, and drops the caller's
   UNOS_* and DOCKER_* variables.
 * The security headers of scripts/standin/front.mjs equal those of the
@@ -87,18 +89,17 @@ SKIP_CONDITIONS = {
     "!process.env.E2E_STANDIN_STATE",
 }
 
-# /data literals inside functions of supervisor/src, which no runner can
-# redirect: (file below src, function, literal). Each one is only read where it
-# exists; the stand-in has no /data, so the handler reports it missing.
-READ_ONLY_PROBES = {
-    # GET /api/v1/health/full
-    ("main.py", "full_health_check", "/data/unos.db"),
-}
+# The one module of supervisor/src that names /data: the default of UNOS_DATA_DIR (ADR-0419).
+PATHS_MODULE = "paths.py"
+# The attributes the stand-in may set on the supervisor's modules: replacements of functions (the
+# system-disk checks, the S3 probe, Caddy's reload), which no setting may turn off on a NAS, and this
+# switch, the login rate limit, which no setting may turn off either (ADR-0419).
+STAND_IN_SWITCHES = {"limiter.enabled"}
 
 # Runs in a child process, so that the redirected globals and the cached
 # settings never reach the other tests. argv: the state directory.
 CHILD = r"""
-import importlib, json, os, pkgutil, shutil, sys
+import importlib, json, os, pkgutil, shutil, subprocess, sys
 from pathlib import Path, PurePath
 
 sys.path.insert(0, os.environ["STANDIN_DIR"])
@@ -130,15 +131,23 @@ def visit(where, value, depth=0):
 for name, module in sorted(sys.modules.items()):
     if name == "src" or name.startswith("src."):
         for attr, value in list(vars(module).items()):
-            visit(f"{name}.{attr}", value)
+            if f"{name}.{attr}" != "src.paths.DEFAULT_DATA_DIR":  # the default of UNOS_DATA_DIR
+                visit(f"{name}.{attr}", value)
 
-redirected = {}
-for module_name, names in standin.DATA_GLOBALS.items():
-    for name in names:
-        redirected[f"{module_name}.{name}"] = str(getattr(importlib.import_module(module_name), name))
-for module_name, files in standin.HOST_FILE_GLOBALS.items():
-    for name in files:
-        redirected[f"{module_name}.{name}"] = str(getattr(importlib.import_module(module_name), name))
+redirected = {
+    f"{module_name}.{name}": str(getattr(importlib.import_module(module_name), name))
+    for module_name, name in (
+        ("src.paths", "DATA_DIR"),
+        ("src.storage.pools", "FSTAB_PATH"),
+        ("src.storage.pools", "FSTAB_BACKUP_PATH"),
+        ("src.updates.updater", "BACKUP_DIR"),
+        ("src.security.serving", "SERVED_DIR"),
+    )
+}
+restic = importlib.import_module("src.offsite.restic")
+named = subprocess.run(["unshare", "--uts", "--", sys.executable, "-B", "-c", restic.SET_HOSTNAME,
+                        restic.HOSTNAME_FILE, "unos-standin", "true"], capture_output=True, text=True)
+hostname_written = (state / "fake-restic" / "hostname").read_text() if named.returncode == 0 else named.stderr
 
 from src.config import get_settings
 settings = get_settings()
@@ -153,7 +162,11 @@ print(json.dumps({
     "data": str(data),
     "left": left,
     "redirected": redirected,
-    "mountinfo": importlib.import_module("src.files.router").MOUNTINFO,
+    "mountinfo": {
+        "path": importlib.import_module("src.files.router").MOUNTINFO,
+        "read": importlib.import_module("src.files.router")._read_mount_points() is not None,
+        "replaced": importlib.import_module("src.files.router")._read_mount_points.__name__ == "<lambda>",
+    },
     "settings": {
         name: getattr(settings, name)
         for name in ("db_path", "smb_conf_path", "nfs_exports_path", "pools_base_path",
@@ -179,7 +192,8 @@ print(json.dumps({
         "restic": shutil.which("restic"),
         "ionice": shutil.which("ionice"),
         "unshare": shutil.which("unshare"),
-        "hostname_file": importlib.import_module("src.offsite.restic").HOSTNAME_FILE,
+        "hostname_file": restic.HOSTNAME_FILE,
+        "hostname_written": hostname_written,
         "probe": offsite.probe_store("https://127.0.0.1:9"),
     },
 }))
@@ -229,13 +243,12 @@ def configured(tmp_path_factory):
 
 class TestDataPaths:
     def test_no_data_path_is_left_in_the_supervisors_modules(self, configured):
-        assert configured["left"] == [], (
-            "add these globals to DATA_GLOBALS (or HOST_FILE_GLOBALS) in scripts/standin/run_supervisor.py"
-        )
+        assert configured["left"] == [], "take the path from src/paths.py (ADR-0419)"
 
-    def test_redirected_globals_point_into_the_data_directory(self, configured):
+    def test_the_data_directory_is_the_stand_ins(self, configured):
+        """UNOS_DATA_DIR alone puts every data path into the stand-in's data directory (ADR-0419)."""
         data = Path(configured["data"])
-        assert configured["redirected"], "DATA_GLOBALS and HOST_FILE_GLOBALS are empty"
+        assert Path(configured["redirected"]["src.paths.DATA_DIR"]) == data
         outside = {name: value for name, value in configured["redirected"].items() if not _inside(value, data)}
         assert outside == {}
 
@@ -244,9 +257,11 @@ class TestDataPaths:
         redirected = configured["redirected"]
         assert Path(redirected["src.storage.pools.FSTAB_PATH"]) == data / "fstab"
         assert _inside(redirected["src.updates.updater.BACKUP_DIR"], data)
-        # The real mount table where the machine has one (read only), else an empty one.
+        # The real mount table where the machine has one (read only), else none: the stand-in's
+        # reader of the file manager answers an empty table (no setting moves the table, ADR-0419).
         mountinfo = configured["mountinfo"]
-        assert mountinfo == "/proc/self/mountinfo" or _inside(mountinfo, data)
+        assert mountinfo["path"] == "/proc/self/mountinfo" and mountinfo["read"]
+        assert mountinfo["replaced"] is not os.path.exists("/proc/self/mountinfo")
 
     def test_settings_point_into_the_state_directory(self, configured):
         settings, state = configured["settings"], configured["state"]
@@ -255,36 +270,77 @@ class TestDataPaths:
             assert _inside(settings[name], state), (name, settings[name])
         assert settings["debug_mode"] is False
 
-    def test_data_literals_inside_functions_are_only_the_read_only_probes(self):
-        found = set()
-        unexpected = []
+    def test_no_data_path_is_written_outside_the_paths_module(self):
+        """Every data path comes from src/paths.py, which alone names /data, the default of
+        UNOS_DATA_DIR, and alone makes paths in the data directory (ADR-0419). The apps' own paths
+        inside their containers are not the supervisor's: the container side of a volume, and the
+        VOLUMEs an image of the catalog declares."""
+        found = []
         for path in sorted(SRC.rglob("*.py")):
+            relative = path.relative_to(SRC).as_posix()
+            if relative == PATHS_MODULE:
+                continue
             tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
             parents = {child: node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)}
             for node in ast.walk(tree):
+                # A path made in the data directory elsewhere: DATA_DIR / "name" or os.path.join(DATA_DIR, ...).
+                if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Div) and _names_data_dir(node.left):
+                    found.append(f"{relative}:{node.lineno}: {ast.unparse(node)}")
+                if isinstance(node, ast.Call) and _call_name(node) == "join" and node.args and _names_data_dir(node.args[0]):
+                    found.append(f"{relative}:{node.lineno}: {ast.unparse(node)}")
                 if not (isinstance(node, ast.Constant) and isinstance(node.value, str) and DATA_PATH.match(node.value)):
                     continue
                 parent = parents.get(node)
                 if isinstance(parent, ast.keyword) and parent.arg == "container":
                     continue  # the container side of an app's volume
-                function, ancestor = None, node
-                while ancestor in parents and function is None:
-                    ancestor = parents[ancestor]
-                    if isinstance(ancestor, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                        function = ancestor.name
-                    elif isinstance(ancestor, ast.Lambda):
-                        function = "<lambda>"
-                if function is None:
-                    continue  # module or class level: the child process checks it
-                key = (path.relative_to(SRC).as_posix(), function, node.value)
-                found.add(key)
-                if key not in READ_ONLY_PROBES:
-                    unexpected.append(f"{key[0]}:{node.lineno} in {function}(): {node.value!r}")
-        assert unexpected == [], (
-            "a /data path inside a function cannot be redirected by scripts/standin/run_supervisor.py: "
-            "use a setting or a module global instead"
-        )
-        assert READ_ONLY_PROBES <= found, f"stale READ_ONLY_PROBES entries: {sorted(READ_ONLY_PROBES - found)}"
+                if isinstance(parent, ast.Tuple) and _call_name(parents.get(parent)) == "PinnedImage":
+                    continue  # the VOLUMEs of a catalog image
+                found.append(f"{relative}:{node.lineno}: {node.value!r}")
+        assert found == [], "take the path from src/paths.py (ADR-0419)"
+        assert 'DEFAULT_DATA_DIR = "/data"' in (SRC / PATHS_MODULE).read_text(encoding="utf-8")
+
+    def test_the_stand_in_patches_no_module_constant(self):
+        """run_supervisor.py points the supervisor at the state directory through its environment
+        (stand_in_environment): it sets no constant of a module, neither with setattr nor by
+        assignment. It replaces functions only, and the switch of STAND_IN_SWITCHES (ADR-0419)."""
+        tree = ast.parse((STANDIN / "run_supervisor.py").read_text(encoding="utf-8"))
+        functions = {node.name for node in ast.walk(tree) if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))}
+        patched = []
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call) and _call_name(node) == "setattr":
+                patched.append(f"line {node.lineno}: {ast.unparse(node)}")
+            if isinstance(node, ast.Assign):
+                targets = node.targets
+            elif isinstance(node, (ast.AugAssign, ast.AnnAssign)):
+                targets = [node.target]
+            else:
+                continue
+            for target in targets:
+                if not isinstance(target, ast.Attribute):
+                    continue
+                replaces_a_function = isinstance(node.value, ast.Lambda) or (
+                    isinstance(node.value, ast.Name) and node.value.id in functions)
+                switch = f"{ast.unparse(target.value).rsplit('.', 1)[-1]}.{target.attr}"
+                if not replaces_a_function and switch not in STAND_IN_SWITCHES:
+                    patched.append(f"line {node.lineno}: {ast.unparse(node)}")
+        assert patched == [], "give the value a setting that stand_in_environment sets"
+
+
+def _names_data_dir(node: ast.AST) -> bool:
+    """Whether NODE is the data directory: DATA_DIR, paths.DATA_DIR, Path(DATA_DIR) or str(DATA_DIR)."""
+    if isinstance(node, ast.Call) and _call_name(node) in ("Path", "str") and len(node.args) == 1:
+        node = node.args[0]
+    return (isinstance(node, ast.Name) and node.id == "DATA_DIR") or (
+        isinstance(node, ast.Attribute) and node.attr == "DATA_DIR")
+
+
+def _call_name(node: ast.AST | None) -> str | None:
+    if isinstance(node, ast.Call):
+        if isinstance(node.func, ast.Name):
+            return node.func.id
+        if isinstance(node.func, ast.Attribute):
+            return node.func.attr
+    return None
 
 
 class TestIsolation:
@@ -327,7 +383,9 @@ class TestIsolation:
             assert offsite[tool] and _inside(offsite[tool], state), (tool, offsite[tool])
         assert "fake_restic.py" in Path(offsite["restic"]).read_text()
         assert "fake unshare" in Path(offsite["unshare"]).read_text()
-        assert Path(offsite["hostname_file"]) == state / "fake-restic" / "hostname"
+        # The fake unshare gives restic a UTS namespace's host name of its own: the file of the fake's state.
+        assert offsite["hostname_file"] == "/proc/sys/kernel/hostname"
+        assert offsite["hostname_written"] == "unos-standin"
         assert offsite["probe"] is None
 
     def test_state_directory_ignores_itself_and_seeds_the_e2e_share(self, configured):

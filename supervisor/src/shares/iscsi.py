@@ -39,7 +39,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .. import database, host, state_files
+from .. import database, host, paths, state_files
 from ..network import links
 from ..storage import pools
 from . import listen
@@ -63,7 +63,7 @@ MODULES = ("target_core_mod", "target_core_file", "iscsi_target_mod")
 # The folder of the LUN files in a volume's top folder, root's, mode 0700, kept immutable.
 LUN_FOLDER = ".unos-iscsi"
 LUN_SUFFIX = ".lun"
-SECRETS_FILE = "/data/iscsi_secrets.json"
+SECRETS_FILE = str(paths.ISCSI_SECRETS)
 
 GIB = 1 << 30
 MAX_SIZE_GIB = 65536

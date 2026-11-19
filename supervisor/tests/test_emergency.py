@@ -36,7 +36,7 @@ import yaml
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
-from src import emergency
+from src import emergency, paths
 from src.audit import router as audit_router
 from src.audit.schemas import AuditAction
 from src.auth import utils as auth_utils
@@ -953,7 +953,8 @@ class TestRunbook:
         # sessions, the account's API tokens, and the accounts it made or changed.
         section = _flat(_runbook().split(AFTER_THE_RESET, 1)[1])
         auth_router_source = (SUPERVISOR / "src" / "auth" / "router.py").read_text()
-        secret = Path(Settings.model_fields["db_path"].default).parent / JWT_SECRET_FILENAME
+        # On a NAS the data directory is its default, /data (ADR-0419).
+        secret = Path(paths.DEFAULT_DATA_DIR) / JWT_SECRET_FILENAME
 
         assert f"sudo docker exec unos-supervisor rm {secret}" in section
         assert "delete the API tokens you do not know" in section

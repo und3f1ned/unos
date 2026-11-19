@@ -12,6 +12,15 @@ features (SMB access per user and per share, volumes, copy and move in the file
 manager, encrypted backup uploads, health checks, CI checks).
 
 ### Changed
+- The supervisor keeps its whole data directory (the database, unless `UNOS_DB_PATH` names another
+  file, its JWT secret, the audit log, the state files, the stored certificates and the backups)
+  where `UNOS_DATA_DIR` names, `/data` by default as before, and refuses to start when the value is
+  not an absolute path of an existing folder. Host paths keep settings of their own
+  (`UNOS_FSTAB_PATH`, `UNOS_MOUNTS_BASE_PATH`, `UNOS_SERVED_CERTIFICATE_DIR`,
+  `UNOS_UPDATE_BACKUP_DIR`, and the web UI's TLS address `UNOS_WEBUI_TLS_HOST` and
+  `UNOS_WEBUI_TLS_PORT`), which the local E2E stand-in sets instead of patching the supervisor's
+  modules. Scheduled backups and the updater take the database the supervisor opens. `install.sh` no longer reads a `UNOS_DATA_DIR` of
+  its own: it creates `/var/lib/unos`, which `update.sh` names (ADR-0419).
 - An install of Open WebUI reaches the Ollama app, and one of Zigbee2MQTT the Mosquitto app, at
   `host.docker.internal`, which now names the NAS in their containers; Zigbee2MQTT's broker is
   `mqtt://host.docker.internal:1883` unless changed. Installed ones get it when they are installed
