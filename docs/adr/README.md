@@ -393,6 +393,7 @@ and this index, and `make check-fast` runs it.
 | [0399](0399-the-resource-monitor-keeps-an-hour-of-history-in-ram-and-only-administrators-get-the-hosts-processes.md) | The Resource Monitor keeps an hour of history in RAM, read once when its tab opens, and only administrators get the host's processes | accepted | 2026-11-18 |
 | [0407](0407-the-power-settings-shut-the-host-down-at-a-set-time-or-when-idle-and-arm-the-rtc-to-wake-it.md) | The power settings shut the host down at a set time or when idle, and arm the RTC to wake it | accepted | 2026-11-18 |
 | [0412](0412-the-load-check-fails-for-a-unos-container-it-could-not-measure-and-the-two-tab-measurement-is-the-owner-s.md) | The load check fails for a UNOS container it could not measure, and the two-tab measurement is the owner's | accepted | 2026-11-18 |
+| [0417](0417-remote-access-is-a-wireguard-tunnel-to-the-nas-alone-and-apps-get-local-names-through-caddy.md) | Remote access is a WireGuard tunnel on the host that reaches the NAS alone, and apps get single-label local names through Caddy | accepted | 2026-11-19 |
 
 ## Web UI
 

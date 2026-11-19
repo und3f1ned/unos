@@ -15,6 +15,7 @@
     Bell,
     Network,
     Shield,
+    Globe,
     ChevronRight,
     ArrowUpCircle
   } from "lucide-svelte";
@@ -33,6 +34,7 @@
     { id: "scheduler", icon: Calendar, label: $t("system.tabs.scheduler"), adminOnly: true },
     { id: "notifications", icon: Bell, label: $t("system.tabs.notifications"), adminOnly: true },
     { id: "network", icon: Network, label: $t("system.tabs.network"), adminOnly: true },
+    { id: "remote", icon: Globe, label: $t("remote.tab"), adminOnly: true },
     { id: "power", icon: Power, label: $t("system.tabs.power"), adminOnly: true },
   ];
 
@@ -128,6 +130,10 @@
     {:else if activeTab === "network"}
       {#await import("./tabs/NetworkTab.svelte") then { default: NetworkTab }}
         <NetworkTab />
+      {/await}
+    {:else if activeTab === "remote"}
+      {#await import("./tabs/RemoteAccessTab.svelte") then { default: RemoteAccessTab }}
+        <RemoteAccessTab />
       {/await}
     {:else if activeTab === "power"}
       {#await import("./tabs/PowerTab.svelte") then { default: PowerTab }}

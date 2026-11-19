@@ -44,6 +44,9 @@ services:
       # one file, mode 0600, which only this container writes and only webui mounts besides
       # (ADR-0404).
       - served-certificate:/served-certificate
+      # The local names of apps and their Caddy sites, which the supervisor writes and the web UI's
+      # Caddy imports read-only (ADR-0417).
+      - app-names:/app-names
       - /var/run/docker.sock:/var/run/docker.sock
       - /etc/samba:/etc/samba
       - /etc/os-release:/host/os-release:ro
@@ -141,6 +144,8 @@ services:
       - caddy-config:/config
       # The served certificate that the supervisor writes (ADR-0404), read-only here.
       - served-certificate:/served-certificate:ro
+      # The app names' Caddy sites that the supervisor writes (ADR-0417), read-only here.
+      - app-names:/app-names:ro
     # Not before the API answers: until then every request would fail with 502.
     depends_on:
       supervisor:
@@ -158,8 +163,9 @@ services:
     # in a single $ from the host's environment). Then the TLS of webui/Caddyfile
     # (ADR-0404): the served certificate when the supervisor wrote one and Caddy
     # validates it, else Caddy's local CA, with one line that says why, so that a
-    # certificate that does not load never leaves the web UI without HTTPS; and
-    # the CMD of webui/Dockerfile: change both together.
+    # certificate that does not load never leaves the web UI without HTTPS; the app
+    # names (ADR-0417) only when Caddy validates them too, else none, with one line;
+    # and the CMD of webui/Dockerfile: change both together.
     command:
       - /bin/sh
       - -c
@@ -169,10 +175,16 @@ services:
         last=$$err; sleep 2; done;
         UNOS_TLS=local;
         if [ -e /served-certificate/served.pem ]; then
-        if err=$$(UNOS_TLS=served caddy validate --config /etc/caddy/Caddyfile 2>&1); then UNOS_TLS=served;
+        if err=$$(UNOS_TLS=served UNOS_APP_NAMES=off caddy validate --config /etc/caddy/Caddyfile 2>&1); then UNOS_TLS=served;
         else echo "unos-webui: the served certificate does not load, Caddy's local CA instead: $$(echo "$$err" | tail -n 1)";
         fi; fi;
         export UNOS_TLS;
+        UNOS_APP_NAMES=off;
+        if [ -e /app-names/on/sites.caddy ]; then
+        if err=$$(UNOS_APP_NAMES=on caddy validate --config /etc/caddy/Caddyfile 2>&1); then UNOS_APP_NAMES=on;
+        else echo "unos-webui: the app names do not load, the web UI starts without them: $$(echo "$$err" | tail -n 1)";
+        fi; fi;
+        export UNOS_APP_NAMES;
         exec caddy run --config /etc/caddy/Caddyfile
     networks:
       unos-net:
@@ -193,6 +205,7 @@ volumes:
   caddy-data:
   caddy-config:
   served-certificate:
+  app-names:
 
 networks:
   unos-net:

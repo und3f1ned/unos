@@ -122,6 +122,13 @@ class AuditAction(str, Enum):
     SSL_CERT_SERVED = "certificate_served"
     # A firewall change kept before its revert undid it (ADR-0416)
     FIREWALL_CHANGE_KEPT = "firewall_change_kept"
+    # Remote access and the app names (ADR-0417)
+    REMOTE_ACCESS_ENABLED = "remote_access_enabled"
+    REMOTE_ACCESS_DISABLED = "remote_access_disabled"
+    REMOTE_ACCESS_CHANGED = "remote_access_changed"
+    REMOTE_ACCESS_PEER_ADDED = "remote_access_peer_added"
+    REMOTE_ACCESS_PEER_REVOKED = "remote_access_peer_revoked"
+    APP_NAMES_CHANGED = "app_names_changed"
 
     # Generic
     OTHER = "other"

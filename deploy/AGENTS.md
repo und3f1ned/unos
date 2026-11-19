@@ -21,6 +21,8 @@
   certificate, which the supervisor writes into the `served-certificate` volume that only it and
   the web UI (read-only) mount; the web UI's command serves it only when `caddy validate` passes,
   and the supervisor has Caddy load a change with `caddy reload` through `docker exec` (ADR-0404).
+  The app names' sites come the same way, from the volume `app-names`, which the Caddyfile imports
+  and the web UI's command loads only when they validate (ADR-0417).
 - `install.sh`, `update.sh` and `uninstall.sh` run as root on a user's host. `update.sh` refuses
   local changes and other branches, backs up, waits for health and rolls back on failure
   (ADR-0049); `uninstall.sh` keeps the SMB host accounts and removes only their exact passdb

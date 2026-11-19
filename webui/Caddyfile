@@ -104,6 +104,13 @@
 # otherwise Caddy's local CA.
 import tls-{$UNOS_TLS:local}
 
+# Local names of apps (ADR-0417): one site per name, <label>-<host name>.local, HTTPS from the
+# local CA, proxied to the app's port on the host. The supervisor writes them into the volume
+# app-names (deploy/docker-compose.yml), read-only here, and reloads Caddy. The web UI's command
+# sets UNOS_APP_NAMES=off when they do not validate, so that the glob matches nothing then and
+# the web UI starts without them; the supervisor's `caddy reload` leaves it unset (on).
+import /app-names/{$UNOS_APP_NAMES:on}/*.caddy
+
 http:// {
 	# Health checks (install.sh, update.sh, monitors) keep working over HTTP.
 	handle /api/v1/health {

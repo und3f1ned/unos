@@ -72,6 +72,8 @@ from .notifications.router import router as notifications_router
 from .scheduler.router import router as scheduler_router
 from .power.router import router as power_router, saved_ups_config
 from .network.router import router as network_router
+from .network.remote_router import router as remote_access_router
+from .network import app_names
 from .logs.router import router as logs_router
 from .health.router import raid_status_or_none, router as health_router
 from .security.router import router as security_router
@@ -148,6 +150,7 @@ async def lifespan(app: FastAPI):
     host_tool_check: asyncio.Task | None = None
     smb_reconcile: asyncio.Task | None = None
     wol_reapply: asyncio.Task | None = None
+    app_names_reconcile: asyncio.Task | None = None
     if run_background:
         # Runs beside the rest of startup (in a worker thread, bounded by
         # HOST_TOOL_CHECK_TIMEOUT), so a slow host neither delays nor fails it.
@@ -166,6 +169,9 @@ async def lifespan(app: FastAPI):
         # the state an administrator chose (power/router.py, ADR-0233), beside
         # the startup. Logs, never raises.
         wol_reapply = asyncio.create_task(reapply_wol_settings(), name="unos-wol-reapply")
+        # The app names announced with the host's address of now, and Caddy's file as their list
+        # renders it (network/app_names.py, ADR-0417), beside the startup. Logs, never raises.
+        app_names_reconcile = asyncio.create_task(app_names.reconcile_on_startup(), name="unos-app-names")
     # Background loops must be started here. FastAPI ignores router-level
     # @router.on_event hooks when the app defines a lifespan, which silently
     # disabled the scheduler and all monitors in earlier releases.
@@ -208,6 +214,9 @@ async def lifespan(app: FastAPI):
         if wol_reapply is not None:
             wol_reapply.cancel()
             await asyncio.gather(wol_reapply, return_exceptions=True)
+        if app_names_reconcile is not None:
+            app_names_reconcile.cancel()
+            await asyncio.gather(app_names_reconcile, return_exceptions=True)
         # The copies and restores of the off-device copy that Run now and Restore files started end
         # with their restic, and are recorded as stopped (ADR-0337); the Scheduler's end with it.
         await stop_offsite()
@@ -308,6 +317,7 @@ for _router in (
     scheduler_router,
     power_router,
     network_router,
+    remote_access_router,
     logs_router,
     health_router,
     monitor_router,

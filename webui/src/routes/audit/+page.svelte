@@ -147,6 +147,12 @@
 		certificate_deleted: 'audit.action.certificateDeleted',
 		certificate_served: 'audit.action.certificateServed',
 		firewall_change_kept: 'audit.action.firewallChangeKept',
+		remote_access_enabled: 'audit.action.remoteAccessEnabled',
+		remote_access_disabled: 'audit.action.remoteAccessDisabled',
+		remote_access_changed: 'audit.action.remoteAccessChanged',
+		remote_access_peer_added: 'audit.action.remoteAccessPeerAdded',
+		remote_access_peer_revoked: 'audit.action.remoteAccessPeerRevoked',
+		app_names_changed: 'audit.action.appNamesChanged',
 		other: 'audit.action.other'
 	};
 	// An info entry shows no severity.
@@ -186,7 +192,10 @@
 		ups: 'audit.resource.ups',
 		notification_channel: 'audit.resource.notificationChannel',
 		offsite: 'audit.resource.offsite',
-		certificate: 'audit.resource.certificate'
+		certificate: 'audit.resource.certificate',
+		remote_access: 'audit.resource.remoteAccess',
+		remote_peer: 'audit.resource.remotePeer',
+		app_name: 'audit.resource.appName'
 	};
 
 	/** The text of `value` by its key in `keys`, in the language of the page; else `value`. */
