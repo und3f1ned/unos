@@ -37,8 +37,8 @@
 </script>
 
 <Card>
-	<h3 class="section-title mb-4">
-		<Palette class="w-5 h-5" />
+	<h3 class="card-title mb-4">
+		<Palette class="w-5 h-5 text-content-secondary" />
 		{$t('theme.title')}
 	</h3>
 	<fieldset aria-describedby="theme-hint">

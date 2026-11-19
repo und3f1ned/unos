@@ -115,12 +115,12 @@
 </script>
 
 <div class="modal-overlay p-4">
-  <div class="bg-surface-elevated rounded-lg w-full max-w-lg max-h-[90vh] overflow-y-auto">
+  <div class="bg-surface-elevated border border-border rounded-dialog shadow-dialog w-full max-w-lg max-h-[90vh] overflow-y-auto">
     <!-- Modal Header -->
-    <div class="flex items-center justify-between p-4 border-b border-border">
-      <h3 class="text-lg font-bold">{task ? $t("scheduler.form.editTitle") : $t("scheduler.form.createTitle")}</h3>
-      <Button variant="ghost" size="icon-sm" onclick={onclose}>
-        <X class="w-5 h-5" />
+    <div class="flex items-center justify-between gap-3 px-5 py-4 border-b border-border">
+      <h3 class="modal-title">{task ? $t("scheduler.form.editTitle") : $t("scheduler.form.createTitle")}</h3>
+      <Button variant="ghost" size="icon-sm" aria-label={$t("ui.modal.close")} onclick={onclose}>
+        <X class="w-4 h-4" />
       </Button>
     </div>
 

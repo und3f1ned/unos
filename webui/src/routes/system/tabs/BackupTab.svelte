@@ -158,7 +158,7 @@
 
 <div class="space-y-4">
   <div class="flex flex-wrap items-center justify-between gap-3">
-    <h2 class="text-xl font-bold">{$t("backup.title")}</h2>
+    <h2 class="text-xl font-semibold">{$t("backup.title")}</h2>
     <div class="flex flex-wrap gap-2">
       <!-- Encrypted backups (.tar.gz.enc) are checked with their passphrase when restored. -->
       <input

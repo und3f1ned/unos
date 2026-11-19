@@ -120,8 +120,8 @@
 </script>
 
 <Card>
-	<h3 class="section-title mb-4">
-		<Share2 class="w-5 h-5" />
+	<h3 class="card-title mb-4">
+		<Share2 class="w-5 h-5 text-content-secondary" />
 		{$t('account.smb.title')}
 	</h3>
 

@@ -147,13 +147,14 @@
 
 <div class="space-y-6">
   <div class="flex flex-wrap items-center justify-between gap-3">
-    <h2 class="text-xl font-bold">{$t("monitor.title")}</h2>
+    <h2 class="text-xl font-semibold">{$t("monitor.title")}</h2>
     <div class="flex flex-wrap items-center gap-3">
-      <div class="flex flex-wrap gap-1" role="group" aria-label={$t("monitor.range")}>
+      <!-- The ranges as a segmented control (ADR-0428). -->
+      <div class="segmented" role="group" aria-label={$t("monitor.range")}>
         {#each RANGES as option (option.seconds)}
           <Button
-            size="sm"
-            variant={range === option ? "primary" : "secondary"}
+            variant="plain"
+            class="tab-pill {range === option ? 'tab-pill-active' : ''}"
             pressed={range === option}
             onclick={() => (range = option)}
           >

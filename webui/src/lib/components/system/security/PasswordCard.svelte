@@ -51,9 +51,9 @@
 </script>
 
 <!-- Change Password -->
-<div class="bg-surface-elevated rounded-lg p-4">
-  <h3 class="text-lg font-semibold mb-4 flex items-center gap-2">
-    <Key class="w-5 h-5" />
+<div class="card">
+  <h3 class="card-title mb-4">
+    <Key class="w-5 h-5 text-content-secondary" />
     {$t("account.password.title")}
   </h3>
 

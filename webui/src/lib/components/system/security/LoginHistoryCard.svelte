@@ -59,10 +59,10 @@
 </script>
 
 <!-- Login History -->
-<div class="bg-surface-elevated rounded-lg p-4">
+<div class="card">
   <div class="flex flex-wrap items-center justify-between gap-2 mb-4">
-    <h3 class="text-lg font-semibold flex items-center gap-2">
-      <History class="w-5 h-5" />
+    <h3 class="card-title">
+      <History class="w-5 h-5 text-content-secondary" />
       {$t("account.history.title")}
     </h3>
     <Button variant="primary" onclick={toggleLoginHistory}>

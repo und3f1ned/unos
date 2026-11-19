@@ -48,9 +48,8 @@
 		</div>
 		{#if !rule.unos}
 			<Button
-				variant="ghost"
+				variant="ghost-danger"
 				size="icon"
-				class="text-status-error hover:text-status-error"
 				disabled={busy}
 				aria-label={$t('firewall.deleteRule', { n: rule.number })}
 				onclick={ondelete}

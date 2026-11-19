@@ -141,7 +141,7 @@
 
 <Card>
 	<div class="flex flex-wrap items-center justify-between gap-2 mb-4">
-		<h3 class="text-lg font-semibold flex items-center gap-2 min-w-0">
+		<h3 class="card-title min-w-0">
 			<Tag class="w-5 h-5 shrink-0" />
 			{$t('remote.names.title')}
 		</h3>
@@ -195,9 +195,8 @@
 							{/if}
 						</div>
 						<Button
-							variant="ghost"
+							variant="ghost-danger"
 							size="icon"
-							class="text-status-error hover:text-status-error"
 							disabled={busy}
 							aria-label={$t('remote.names.removeLabel', { name: name.name })}
 							onclick={() => (removing = name)}

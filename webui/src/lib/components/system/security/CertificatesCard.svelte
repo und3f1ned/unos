@@ -64,10 +64,10 @@
 </script>
 
 <!-- SSL/TLS Certificates -->
-<div class="bg-surface-elevated rounded-lg p-4">
+<div class="card">
   <div class="flex flex-wrap items-center justify-between gap-2 mb-4">
-    <h3 class="text-lg font-semibold flex items-center gap-2">
-      <FileKey class="w-5 h-5" />
+    <h3 class="card-title">
+      <FileKey class="w-5 h-5 text-content-secondary" />
       {$t("account.certs.title")}
     </h3>
     <div class="flex flex-wrap items-center gap-2">
@@ -178,7 +178,7 @@
                   </Button>
                 {/if}
                 {#if cert.id.startsWith('custom_')}
-                  <Button variant="ghost" size="icon" class="text-status-error hover:text-status-error"
+                  <Button variant="ghost-danger" size="icon"
                     onclick={() => handleDeleteCert(cert)}
                     aria-label={$t("account.certs.delete", { domain: cert.domain })}
                   >
