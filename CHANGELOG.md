@@ -92,9 +92,10 @@ manager, encrypted backup uploads, health checks, CI checks).
   release, with the version in a comment that Dependabot updates; `make audit` and the CI audits
   run `scripts/audit-python.sh`, which resolves the supervisor's dependencies with pip, setuptools
   and wheel pinned with their hashes (`.github/audit-env-requirements.txt`) instead of pip-audit's
-  unpinned latest ones; `make setup`, the CI jobs and the supervisor images install wheels only
-  (but nut2, and on linux/riscv64); and `scripts/test-cycle.sh` runs Playwright from
-  `webui/node_modules` instead of npx (ADR-0422).
+  unpinned latest ones; `make setup`, the CI jobs and the test image install wheels only, but
+  nut2, which publishes none (the supervisor's image keeps its pip layer and pip's default, which
+  with exact pins takes a wheel wherever there is one); and `scripts/test-cycle.sh` runs Playwright
+  from `webui/node_modules` instead of npx (ADR-0422).
 - The audit log records the firewall (turned on or off, rules added and removed, reset), clearing the
   login history, pools mounted, unmounted and imported, containers created, images pulled and removed,
   suspend (written before the host goes down), and the power, UPS, notification and off-device copy

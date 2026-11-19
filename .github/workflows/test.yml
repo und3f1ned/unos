@@ -10,7 +10,7 @@ on:
 # configuration (persist-credentials: false): no step needs it later, and the build or test code of
 # a dependency could read it there. Every action is pinned to the commit of a release, with its
 # version in a comment, which Dependabot moves together (ADR-0422): a tag can be moved to other
-# code. pip installs wheels only; supervisor/requirements.txt names nut2, which has none.
+# code. pip installs wheels only, but nut2, which has none (--no-binary=nut2).
 permissions:
   contents: read
 
@@ -50,7 +50,7 @@ jobs:
             supervisor/requirements-dev.txt
 
       - name: Install dependencies
-        run: 'pip install --only-binary=:all: -r supervisor/requirements-dev.txt'
+        run: 'pip install --only-binary=:all: --no-binary=nut2 -r supervisor/requirements-dev.txt'
 
       - name: Run tests
         run: make test

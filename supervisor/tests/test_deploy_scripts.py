@@ -3869,23 +3869,20 @@ class TestBuildContexts:
         assert "restic" not in text.split("COPY requirements.txt")[0]
 
     def test_the_pip_layer_builds_on_riscv64_and_keeps_no_toolchain_there(self):
-        """The base's pip 24.0 takes no linux/riscv64 wheel, and six packages publish none for it:
+        """The base's pip 24.0 takes no linux/riscv64 wheel, and five packages publish none for it:
         the pip layer first installs a pip of 24.1 or later, and on riscv64 installs what compiles
         them, builds them and removes it again in the same RUN, so that no layer of the image keeps
-        the Rust toolchain. Elsewhere it installs the requirements as before (ADR-0370), and as
-        wheels only (ADR-0422): every package publishes one for linux/amd64 and linux/arm64, nut2
-        aside, which requirements.txt names. On riscv64 pip takes the wheel of a version where
-        there is one and compiles the others: --only-binary would stop the build there."""
+        the Rust toolchain. Elsewhere it installs the requirements as before (ADR-0370)."""
         lines = [line.strip() for line in (REPO_ROOT / "supervisor" / "Dockerfile").read_text().splitlines()]
         layer = _instruction(lines, _pip_layer(lines))
         toolchain = "cargo rustc pkg-config libssl-dev libffi-dev make"
 
-        pip = re.match(r"RUN pip install --no-cache-dir --only-binary=:all: pip==(\d+)\.(\d+)(?:\.\d+)? && ", layer)
+        pip = re.match(r"RUN pip install --no-cache-dir pip==(\d+)\.(\d+)(?:\.\d+)? && ", layer)
         assert pip and (int(pip[1]), int(pip[2])) >= (24, 1), layer
         other, riscv64 = re.fullmatch(
             r'.*? && if \[ "\$\(dpkg --print-architecture\)" != riscv64 \]; then (.*?); else (.*?); fi', layer
         ).groups()
-        assert other == "pip install --no-cache-dir --only-binary=:all: -r requirements.txt"
+        assert other == "pip install --no-cache-dir -r requirements.txt"
         steps = riscv64.split(" && ")
         assert steps == [
             "apt-get update",
@@ -5113,9 +5110,9 @@ class TestAuditEnvironment:
         # The pinned tools with their hashes, wheels only: no newer pip, setuptools or wheel.
         assert tools == f"env-python -m pip install {quiet} --require-hashes --only-binary=:all: -r {AUDIT_ENV}"
         # The resolution of pip-audit -r, with that pip: every package, also one the environment
-        # has; nut2's sdist built by the pinned setuptools, not one from the index.
+        # has; wheels only but nut2, whose sdist the pinned setuptools builds, not one from the index.
         assert resolve == (f"env-python -m pip install {quiet} --dry-run --ignore-installed --no-build-isolation "
-                           f"--only-binary=:all: --report {work}/report.json "
+                           f"--only-binary=:all: --no-binary=nut2 --report {work}/report.json "
                            f"-r {REPO_ROOT / 'supervisor' / 'requirements.txt'}")
         assert convert == f"env-python -c {work}/report.json"
         assert audit == f"pip-audit --disable-pip --no-deps --strict -r {work}/resolved.txt"
@@ -5174,25 +5171,48 @@ def _empty_distributions(folder, name, version):
 
 
 class TestWheelsOnly:
-    """pip installs take wheels only (ADR-0422): make setup, the CI jobs, the audit environment and
-    the images but on linux/riscv64, where six packages publish none and are compiled (ADR-0373).
-    nut2 publishes only its sdist."""
+    """pip installs take wheels only (ADR-0422): make setup, the CI jobs, the test image and the audit
+    environment. nut2 publishes only its sdist, which their command lines name after
+    --only-binary=:all:. The supervisor's image is left to pip's default, which with exact pins takes
+    a wheel wherever the pinned version has one: its pip layer, a hundred MB on the dev device's SD
+    card (ADR-0214), stays as it was."""
 
-    def test_the_requirements_name_nut2_alone_for_its_sdist(self):
+    # The one package without a wheel, after the option that it narrows: --only-binary=:all: after
+    # it would clear it.
+    WHEELS_ONLY = "--only-binary=:all: --no-binary=nut2"
+
+    def test_the_image_keeps_its_pip_layer_and_pips_default(self):
         runtime = (REPO_ROOT / "supervisor" / "requirements.txt").read_text()
         dev = (REPO_ROOT / "supervisor" / "requirements-dev.txt").read_text()
+        lines = [line.strip() for line in (REPO_ROOT / "supervisor" / "Dockerfile").read_text().splitlines()]
 
-        assert [line for line in runtime.splitlines() if line.startswith("-")] == ["--no-binary nut2"]
+        # The image copies requirements.txt before its pip layer: an option there changes the layer.
+        assert [line for line in runtime.splitlines() if line.startswith("-")] == []
         assert re.search(r"^nut2==", runtime, re.M)
-        # An --only-binary=:all: read after it, in requirements-dev.txt, would clear it.
         assert [line for line in dev.splitlines() if line.startswith("-")] == ["-r requirements.txt"]
+        assert "binary" not in _instruction(lines, _pip_layer(lines))
+
+    def test_every_install_of_the_supervisors_requirements_lets_nut2_come_as_its_sdist(self):
+        texts = {path.name: path.read_text() for path in WORKFLOWS}
+        for path in ("docs/TESTING.md", "supervisor/Dockerfile.test", "scripts/audit-python.sh"):
+            texts[path] = (REPO_ROOT / path).read_text()
+        # scripts/audit-python.sh writes its resolution over two lines.
+        texts["scripts/audit-python.sh"] = texts["scripts/audit-python.sh"].replace("\\\n", " ")
+        installs = {where: [line for line in re.findall(r"\bpip install\b[^\n`]*", text)
+                            if re.search(r'-r\s+"?(?:\$root/)?(?:supervisor/)?requirements(?:-dev)?\.txt\b', line)]
+                    for where, text in texts.items()}
+
+        assert [where for where, found in installs.items() if not found] == []
+        assert {where: [line for line in found if self.WHEELS_ONLY not in line] for where, found in installs.items()} == {
+            where: [] for where in texts
+        }
 
     def test_pip_takes_nut2_as_its_sdist_and_every_other_package_as_a_wheel(self, tmp_path):
         # With the pip of this Python and no index, each package offered as a wheel and an sdist:
-        # the command line's --only-binary=:all:, read before the files, leaves nut2 the sdist that
-        # requirements.txt names, through requirements-dev.txt too, and --no-build-isolation builds
-        # it with the setuptools of the environment, as the audit's resolution does (its flags,
-        # which TestAuditEnvironment checks).
+        # the command line's --only-binary=:all: --no-binary=nut2 leaves nut2 its sdist and gives
+        # every other package of the requirement files, read after it, through requirements-dev.txt
+        # too, a wheel; and --no-build-isolation builds nut2 with the setuptools of the environment,
+        # as the audit's resolution does (its flags, which TestAuditEnvironment checks).
         pytest.importorskip("setuptools")
         index = tmp_path / "index"
         index.mkdir()
@@ -5208,7 +5228,7 @@ class TestWheelsOnly:
         result = subprocess.run(
             [sys.executable, "-m", "pip", "install", "--isolated", "--disable-pip-version-check", "--quiet", "--no-input",
              "--no-cache-dir", "--no-index", "--find-links", str(index), "--dry-run", "--ignore-installed",
-             "--no-build-isolation", "--only-binary=:all:", "--report", str(tmp_path / "report.json"),
+             "--no-build-isolation", *self.WHEELS_ONLY.split(), "--report", str(tmp_path / "report.json"),
              "-r", str(tmp_path / "requirements-dev.txt")],
             capture_output=True, text=True, timeout=120,
         )

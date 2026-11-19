@@ -52,11 +52,15 @@ stops before changing anything when one is missing, then sets up what is missing
 7. The baseline: `make check-fast`, then `make smoke`. It ends with "baseline green", or names
    the target that failed before any work started.
 
-Steps 1 and 2 take wheels only (`--only-binary=:all:`): pip runs the build code of no package
-but nut2, which publishes only its source and which `supervisor/requirements.txt` names
-(`--no-binary nut2`, ADR-0422); pip builds it with the newest setuptools from the index. A
-machine for which a pinned package has no wheel cannot be set up: an Intel Mac, since
-cryptography 50 publishes none for macOS x86_64.
+Steps 1 and 2 take wheels only (`--only-binary=:all:`), so that pip runs the build code of no
+package but nut2, which publishes only its source: step 1 lets it come as its sdist
+(`--no-binary=nut2`, after `--only-binary=:all:`, which would clear it; ADR-0422), and pip builds
+it with the newest setuptools from the index. The CI jobs, `supervisor/Dockerfile.test` and the
+audit do the same. A machine for which a pinned package has no wheel cannot be set up: an Intel
+Mac, since cryptography 50 publishes none for macOS x86_64. The supervisor's image is left to
+pip's default, which with the exact pins of `supervisor/requirements.txt` takes a wheel wherever
+the pinned version has one: its pip layer, about a hundred MB of writes on the dev device's SD
+card (ADR-0214), stays as it is.
 
 A step that is up to date is skipped: each environment remembers the SHA-256 of the files it was
 installed from, so a rerun installs only what changed. Steps 1-4 need the network.
@@ -487,8 +491,8 @@ request against `main`; a new push to a pull request cancels the run for the pre
 1. **Unit Tests** (`test`): a checkout with the whole history (`fetch-depth: 0`), so that
    `tests/test_feature_list.py` can compare the ledger with the one at the merge base with
    `origin/main` (it skips while main has no `feature-list.json`), then
-   `pip install --only-binary=:all: -r supervisor/requirements-dev.txt` on Python 3.11 and
-   `make test`.
+   `pip install --only-binary=:all: --no-binary=nut2 -r supervisor/requirements-dev.txt` on
+   Python 3.11 and `make test`.
 2. **Lint and Audit (Python)** (`lint`):
    - `pip install --require-hashes --only-binary=:all: -r .github/lint-requirements.txt`: ruff
      and pip-audit, and every package they depend on, with their hashes
@@ -565,7 +569,7 @@ Without `make setup`, the same commands run with the tools of your own environme
 example:
 
 ```bash
-pip install --only-binary=:all: -r supervisor/requirements-dev.txt   # Python 3.11
+pip install --only-binary=:all: --no-binary=nut2 -r supervisor/requirements-dev.txt   # Python 3.11
 python3.11 -m venv ~/.venvs/unos-lint
 ~/.venvs/unos-lint/bin/pip install --require-hashes --only-binary=:all: -r .github/lint-requirements.txt
 make lint RUFF=~/.venvs/unos-lint/bin/ruff
@@ -580,9 +584,9 @@ make frontend
   virtual environment of Python 3.11 (`PYTHON`, `python3` by default) that it removes at the end:
   pip, setuptools and wheel (and packaging, which wheel needs) from
   `.github/audit-env-requirements.txt`, pinned with their hashes. That pip resolves the
-  requirements without installing them, with wheels only and every package listed (the flags
-  `--dry-run --ignore-installed --only-binary=:all:`), and builds nut2's sdist with the pinned
-  setuptools (`--no-build-isolation`); then pip-audit (`PIP_AUDIT`) checks the resolved versions
+  requirements without installing them, with wheels only but nut2 and every package listed (the
+  flags `--dry-run --ignore-installed --only-binary=:all: --no-binary=nut2`), and builds nut2's
+  sdist with the pinned setuptools (`--no-build-isolation`); then pip-audit (`PIP_AUDIT`) checks the resolved versions
   without pip (`--disable-pip --no-deps --strict`). `pip-audit -r` resolved them itself, after it had
   installed the latest pip, setuptools and wheel, unpinned (ADR-0422). `npm audit` asks the npm
   registry. Both need network access.

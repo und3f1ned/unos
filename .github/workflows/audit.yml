@@ -7,7 +7,7 @@ name: Audit
 # fails the run: update the affected package (supervisor/requirements.txt, or
 # webui/package-lock.json, e.g. with npm update <package>) rather than weakening the check.
 # As in test.yml, every action is pinned to the commit of a release and pip installs wheels
-# only (ADR-0422).
+# only, but nut2 (ADR-0422).
 on:
   schedule:
     # Mondays, 06:17 UTC.
@@ -90,7 +90,7 @@ jobs:
           cache-dependency-path: supervisor/requirements.txt
 
       - name: Install the supervisor's dependencies (the script reads the catalog)
-        run: 'pip install --only-binary=:all: -r supervisor/requirements.txt'
+        run: 'pip install --only-binary=:all: --no-binary=nut2 -r supervisor/requirements.txt'
 
       - name: Compare the recorded platforms with the registries
         run: python scripts/catalog-platforms.py check
@@ -118,7 +118,7 @@ jobs:
           cache-dependency-path: supervisor/requirements.txt
 
       - name: Install the supervisor's dependencies (the script reads the catalog)
-        run: 'pip install --only-binary=:all: -r supervisor/requirements.txt'
+        run: 'pip install --only-binary=:all: --no-binary=nut2 -r supervisor/requirements.txt'
 
       - name: Compare the pinned tags with the registries
         run: python scripts/catalog-platforms.py tags

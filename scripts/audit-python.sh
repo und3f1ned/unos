@@ -11,9 +11,10 @@
 #   2. pip, setuptools and wheel (and packaging, which wheel needs) from
 #      .github/audit-env-requirements.txt, pinned with their hashes, wheels only;
 #   3. that pip resolves requirements.txt without installing it (--dry-run --report), as pip-audit
-#      did, with wheels only, as the images install them (requirements.txt names nut2, which has
-#      none), and every package listed (--ignore-installed); nut2's sdist is built by the pinned
-#      setuptools (--no-build-isolation), not by one that pip would fetch from the index;
+#      did, with wheels only but nut2, which publishes none (--no-binary=nut2 after
+#      --only-binary=:all:, which would clear it), and every package listed (--ignore-installed);
+#      nut2's sdist is built by the pinned setuptools (--no-build-isolation), not by one that pip
+#      would fetch from the index;
 #   4. pip-audit checks the versions it resolved, without pip (--disable-pip --no-deps), and fails
 #      for a package that it cannot check (--strict).
 #
@@ -41,7 +42,7 @@ quiet=(--disable-pip-version-check --quiet --no-input)
 "$env_python" -m pip install "${quiet[@]}" --require-hashes --only-binary=:all: \
     -r "$root/.github/audit-env-requirements.txt"
 "$env_python" -m pip install "${quiet[@]}" --dry-run --ignore-installed --no-build-isolation \
-    --only-binary=:all: --report "$work/report.json" -r "$root/supervisor/requirements.txt"
+    --only-binary=:all: --no-binary=nut2 --report "$work/report.json" -r "$root/supervisor/requirements.txt"
 "$env_python" -c '
 import json, sys
 packages = [item["metadata"] for item in json.load(open(sys.argv[1]))["install"]]

@@ -1193,9 +1193,10 @@ def test_setup_bootstraps_a_checkout_and_a_rerun_changes_nothing(sandbox):
 
     first, calls = run()
     assert first.returncode == 0, first.stdout + first.stderr
-    # Wheels only (ADR-0422); requirements.txt names nut2, which publishes none.
+    # Wheels only, but nut2, which publishes none and which --only-binary=:all: after it would
+    # clear (ADR-0422).
     assert "supervisor/.venv/bin/python -m pip install --disable-pip-version-check -q --only-binary=:all: " \
-           "-r supervisor/requirements-dev.txt" in calls
+           "--no-binary=nut2 -r supervisor/requirements-dev.txt" in calls
     assert ".venv-lint/bin/python -m pip install --disable-pip-version-check -q --only-binary=:all: " \
            "--require-hashes -r .github/lint-requirements.txt" in calls
     assert "npm ci --no-audit --no-fund" in calls
@@ -1231,7 +1232,7 @@ def test_setup_installs_again_when_a_requirement_file_changes(sandbox):
     assert result.returncode == 0
     assert [call for call in calls if "-m pip install" in call] == [
         "supervisor/.venv/bin/python -m pip install --disable-pip-version-check -q --only-binary=:all: "
-        "-r supervisor/requirements-dev.txt"
+        "--no-binary=nut2 -r supervisor/requirements-dev.txt"
     ]
 
 

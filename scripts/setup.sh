@@ -101,8 +101,9 @@ fi
 
 # python_env <dir> <what> "<files>" <pip arguments...>: the venv in <dir>, installed with the pip
 # arguments; <files> (separated by spaces) are the requirement files it depends on, those that the
-# -r files include as well. Wheels only (ADR-0422): pip runs the build code of no package but
-# nut2, which publishes no wheel and which supervisor/requirements.txt names.
+# -r files include as well. Wheels only (ADR-0422), so that pip runs the build code of no package;
+# the supervisor's venv lets nut2, which publishes no wheel, come as its sdist (--no-binary=nut2,
+# after --only-binary=:all:, which would clear it).
 python_env() {
     local dir=$1 what=$2 files=$3
     shift 3
@@ -138,7 +139,8 @@ python_env() {
 
 echo "setup.sh: this checkout ($repo)"
 python_env supervisor/.venv "Python 3.11 with supervisor/requirements-dev.txt" \
-    "supervisor/requirements.txt supervisor/requirements-dev.txt" -r supervisor/requirements-dev.txt
+    "supervisor/requirements.txt supervisor/requirements-dev.txt" --no-binary=nut2 \
+    -r supervisor/requirements-dev.txt
 python_env .venv-lint "ruff and pip-audit with their hashes" \
     ".github/lint-requirements.txt" --require-hashes -r .github/lint-requirements.txt
 
