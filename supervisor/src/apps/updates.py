@@ -313,12 +313,6 @@ def _plan(client: Any, app: stacks.InstalledContainers, shares: list[Any]) -> _P
         )
     if app.missing:
         _refuse(f"{stacks.missing_detail(app)}: uninstall it (its data folders are kept) and install it again")
-    floating = [ref for ref in stacks.template_images(template) if stacks.pinned_digest(ref) is None]
-    if floating:
-        _refuse(
-            f"{name}'s image floats on a tag ({', '.join(floating)}): UNOS updates only an app whose catalog pins its "
-            "images by digest"
-        )
     if stacks.update_to(app) is None:
         _refuse(f"{name} runs the images that the catalog pins: there is nothing to update")
     host_platform = platforms.host_platform()
@@ -636,7 +630,9 @@ def _update(plan: _Plan, progress: install_jobs.Progress) -> tuple[AppInstallRes
             done.renamed.append((container, old_name))
         base._prepare_sources(plan.planned, create=True, status=409)
         for m in plan.secrets:
-            base.app_secrets.create(base._pool_root_of(m), m.source, m.target, uid=m.uid, gid=m.gid)
+            base.app_secrets.create(
+                base._pool_root_of(m), m.source, m.target, uid=m.uid, gid=m.gid, digits=m.secret_digits
+            )
         done.creating = True
         network = _app_network(client, template)
         done.created = base._create_and_start(

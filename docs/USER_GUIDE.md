@@ -281,9 +281,11 @@ is removed leaves the list the same way, together with the pools and the
 filesystems found on the disks. While a dialog of the page is open, its
 lists stay as they were until it closes, also when the host answers a
 reload that began before it opened, and an error message at the top of the
-page stays through such a reload. The SMART data of a disk attached
-after the supervisor started (**System** → **Disk Health**) can be read
-only once the supervisor has restarted.
+page stays through such a reload. Such a disk needs no restart for its
+SMART data either: **System** → **Disk Health** lists it with its SMART
+data the next time it loads (when opened, or with its refresh button), a
+**SMART Test** task in **System** → **Scheduler** tests it, and the hourly
+SMART records include it.
 
 ### Idle Timeouts (Spin-Down)
 
@@ -1437,7 +1439,7 @@ name its category the same way. Some of them:
 - **Media** - Plex, Jellyfin, Emby, Immich
 - **Downloads** - qBittorrent, Transmission
 - **Productivity** - Nextcloud, Syncthing
-- **Documents** - Stirling PDF, Wiki.js
+- **Documents** - Stirling PDF, Wiki.js, BookStack, Paperless-ngx
 - **Smart Home** - Home Assistant
 - **Development** - Gitea, Code Server
 - **Monitoring** - Grafana, Uptime Kuma
@@ -1559,9 +1561,55 @@ changed.
   older version, so the update copies the database first, and a rollback
   puts that copy back.
 
-BookStack, Paperless-ngx and Linkwarden are no longer in the catalog: each needs
-a database or a broker beside it, and they will come back as apps of several
-containers.
+BookStack, Paperless-ngx and Linkwarden are apps of two containers each, which
+work the same way:
+
+- **BookStack** (port 6875) runs with its database `bookstack-database`
+  (MariaDB 11.8). Its install asks for **APP_URL**, the address you open it at
+  with its port, such as `http://192.168.1.10:6875`: BookStack builds every
+  link of its pages with it. BookStack comes with the account
+  `admin@admin.com` and the password `password`: sign in as soon as it is
+  installed and change both, since anyone on your network can sign in with
+  them until then. The notice of the install says so.
+- **Paperless-ngx** (port 8010) runs with `paperless-ngx-redis` (Valkey, which
+  queues its tasks) and keeps its database in its data folder. Open it as soon
+  as it is installed and create its first account, which becomes its
+  administrator. It recognizes text in English, German, French, Italian and
+  Spanish (**PAPERLESS_OCR_LANGUAGE**: `eng`, `deu`, `fra`, `ita` or `spa`).
+- **Linkwarden** (port 3010) runs with its database `linkwarden-database`
+  (PostgreSQL 16). Open it as soon as it is installed and register its first
+  account, which becomes its administrator. Anyone who reaches it can register
+  an account while **NEXT_PUBLIC_DISABLE_REGISTRATION** is `false`: to stop
+  that, uninstall Linkwarden (its data is kept) and install it again with
+  `true`; its administrator then adds accounts in Linkwarden.
+
+Their data is all on the pool, in `apps/bookstack`, `apps/paperless-ngx` and
+`apps/linkwarden`: the databases in `database/data` (Paperless-ngx's in
+`data`), BookStack's uploads in `config`, Paperless-ngx's documents in `media`
+(and what it is working on in `scratch`), Linkwarden's archived pages in
+`data`. UNOS generates their passwords and keys at the install, as files that
+only root can read, and never shows them: BookStack's `database/password`,
+`database/root-password` and `app-key`, Paperless-ngx's `secret-key`,
+Linkwarden's `database/password` and `nextauth-secret`. As with Immich, an
+install that finds a database without these files is refused. The app's own
+container starts only once its database takes connections, at the install and
+at every start from the **Installed** tab. The hard disks of their pool stay
+awake while they run, as with Immich. Paperless-ngx and Linkwarden run without
+their images' health checks, which would write to the system disk every 30
+seconds, so the **Installed** tab shows no health for them.
+
+The details of every app say about how much its images take on the system
+disk (BookStack's about 770 MB, Paperless-ngx's 3.1 GB, Linkwarden's 2.6 GB),
+by the estimate that the install's space check counts.
+
+Open WebUI reaches Ollama, and Zigbee2MQTT reaches its MQTT broker, through
+`host.docker.internal`, which names the NAS in their containers: Open WebUI
+the Ollama app's port 11434, and Zigbee2MQTT the Mosquitto app's port 1883
+(**ZIGBEE2MQTT_CONFIG_MQTT_SERVER** names another broker). Mosquitto takes
+connections from other containers only once its `mosquitto.conf`, in
+`apps/mosquitto/config` on its pool, has a listener on port 1883 and its
+authentication. With the firewall on (**System** > **Security**), it must let
+Docker's networks reach those ports of the NAS.
 
 ### Hardware Acceleration
 
@@ -2381,7 +2429,7 @@ regular users have no access to it.
   Also recorded: a pool mounted, unmounted (a **Warning**) or imported; a container created on
   the **Containers** page (never its environment); an image pulled, when it is new or
   its tag moved, and removed (a **Warning**); the firewall turned on or off (off as a
-  **Warning**), a rule added or removed and a reset; clearing the login history (a
+  **Warning**), a change of it kept, a rule added or removed and a reset; clearing the login history (a
   **Warning**, with how many attempts); suspend (a **Warning**, recorded before the host goes
   to sleep, and again as **Failed** when the host refuses); and changes of the power, UPS,
   notification and off-device copy settings (**Settings changed**, resource `power`, `ups`,
@@ -2806,6 +2854,58 @@ certificate stored under the same name replaces the old one with its key, and
 its chain too, which goes when the new certificate has none. A store that fails
 keeps the old files. The trash button deletes a stored certificate. When the
 certificates cannot be loaded, the card says so with the reason and **Retry**.
+
+### Firewall
+
+**Firewall** on **System** → **Security** (administrators only) is the host's
+ufw: the badge says **Active**, **Inactive** or **Not installed**, and
+**Configure** shows its default policies, **Enable** or **Disable**, **Reset**
+and every rule of the host, as ufw keeps it, with its action, protocol, ports,
+source and comment; **IPv6** marks a rule of IPv6. UNOS does not install ufw:
+on a host without it the card says to install the package (`sudo apt install
+ufw`), and nothing can be changed.
+
+**Enable** asks first, and warns when your computer is not in the local
+networks. Before ufw goes on, UNOS adds its own rules, marked
+**UNOS**: the local networks (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16,
+100.64.0.0/10, 169.254.0.0/16, fc00::/7 and fe80::/10, the networks that SMB
+answers) may reach the web UI (80, 443), SSH (22 and every port that sshd
+listens on or is set up for), SMB (445) and network discovery (5357/tcp, 3702
+and 5355/udp; ufw lets mDNS in itself). UNOS also turns ufw's logging of what it blocks off, which would write to the
+system disk all the time (`sudo ufw logging low` turns it on). UNOS's rules have
+no Delete; they come
+after the rules the host had, so an earlier deny of the host still wins.
+UNOS does not turn ufw on where that would cut Docker's containers, the web
+UI's among them, off: `MANAGE_BUILTINS=yes` or a `DEFAULT_FORWARD_POLICY`
+other than `DROP` in `/etc/default/ufw`, or a Docker that does not keep its
+rules in iptables (its nftables backend); the card says which. Then the firewall goes on,
+and the card counts down: **unless you press Keep the change within 120
+seconds, the host turns the firewall off again by itself**, also when the page
+can no longer reach UNOS. Before you keep it, check from another computer that
+SSH and your shares still answer. A change of the rules while the firewall is
+on, **Add Rule** or a rule's Delete, is undone the same way unless you keep it,
+and until it is kept or undone no other change is taken; **Disable** always
+is. Every change, a kept one too, is in the audit log; the undo by the host is
+in its journal (`journalctl -u unos-firewall-revert`). When the host could not
+finish an undo, the card says so until the firewall is turned off or changed
+again.
+
+**Add Rule** makes an incoming rule: **Allow**, **Deny** or **Reject**; TCP,
+UDP or **Any**; one port, a range such as `6000:6007` or a list such as
+`80,443` (ranges and lists need TCP or UDP); an optional source address or
+network (empty: anywhere, as one rule for IPv4 and one for IPv6); and an
+optional comment. **Reset** turns the firewall off, removes every rule (ufw
+keeps copies of its files in `/etc/ufw`) and adds UNOS's rules again.
+
+Other services need rules of their own once the firewall is on, such as NFS
+(2049/tcp; NFSv3 also needs rpcbind's 111 and mountd), and so does a computer
+that reaches the NAS only through a public IPv6 address. Over IPv4, ufw does
+not filter the ports that Docker publishes, those of the web UI and of the apps
+on Docker's networks: Docker's own rules let them in. Over IPv6 it does, and so
+it does for the apps on the host's network, such as Home Assistant: their ports
+need rules. If the host reboots within the 120 seconds, the change is not
+undone: the countdown is gone, and ufw starts at boot as the change left it,
+with UNOS's rules.
 
 ---
 

@@ -21,22 +21,9 @@ export interface LogSource {
   description: string;
 }
 
-export interface LogFile {
-  name: string;
-  path: string;
-  size: number;
-  modified: string;
-}
-
 export interface LogsResponse {
   entries: LogEntry[];
   total: number;
-}
-
-export interface LogFileContent {
-  filename: string;
-  content: string;
-  lines: number;
 }
 
 /** The journal's levels; System > Logs names them through its catalog (ADR-0287). */
@@ -44,10 +31,6 @@ export type LogPriority = "emerg" | "alert" | "crit" | "err" | "warning" | "noti
 
 export async function getLogSources(): Promise<{ sources: LogSource[] }> {
   return api.get<{ sources: LogSource[] }>("/logs/sources");
-}
-
-export async function getLogFiles(): Promise<{ files: LogFile[] }> {
-  return api.get<{ files: LogFile[] }>("/logs/files");
 }
 
 export interface LogQueryParams {
@@ -149,17 +132,6 @@ export function streamLogEntries(params: LogQueryParams, handlers: JournalStream
       }
     }
   };
-}
-
-export async function getLogFileContent(
-  filename: string,
-  lines: number = 100
-): Promise<LogFileContent> {
-  return api.get<LogFileContent>(`/logs/file/${filename}?lines=${lines}`);
-}
-
-export async function clearLogs(source: string): Promise<{ status: string }> {
-  return api.delete<{ status: string }>(`/logs/clear/${source}`);
 }
 
 export function getPriorityColor(priority: string): string {

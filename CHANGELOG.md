@@ -12,6 +12,23 @@ features (SMB access per user and per share, volumes, copy and move in the file
 manager, encrypted backup uploads, health checks, CI checks).
 
 ### Changed
+- An install of Open WebUI reaches the Ollama app, and one of Zigbee2MQTT the Mosquitto app, at
+  `host.docker.internal`, which now names the NAS in their containers; Zigbee2MQTT's broker is
+  `mqtt://host.docker.internal:1883` unless changed. Installed ones get it when they are installed
+  again (ADR-0415).
+- The firewall of System > Security is the host's ufw, which it never reached before: its rules are
+  the host's, read from ufw's own files, and UNOS keeps no list of its own. **Enable** first adds
+  UNOS's rules, which let the local networks reach the web UI, SSH, SMB and network discovery,
+  turns ufw's logging off (it would write to the system disk all the time) and then counts down: unless **Keep the change** is pressed within 120 seconds, a timer on the host
+  turns ufw off again and puts its rules back, also when the page cannot reach UNOS any more. A
+  rule added or deleted while the firewall is on is undone the same way. New rules are incoming
+  ones, checked before they reach ufw; UNOS's rules cannot be deleted from the page. Turning ufw
+  off puts the FORWARD policies back as they were before the Enable (ufw's own stop opens them,
+  its start closes them), and the undo of an Enable does the same. UNOS does not turn ufw on where ufw would cut Docker's
+  forwarding. A host without ufw is told to install it; the stand-in and the test stack refuse
+  every firewall request (`firewall_change_kept` in the audit log, ADR-0416).
+- The system, security, logs and NFS routers start no command of their own: a test fails for one
+  outside `src/host.py`, and openssl runs through `host.run_in_container` (ADR-0416).
 - Every app of the App Store installs a pinned image: its publisher's version tag and the digest of
   the index that the tag named on 2026-11-18 (`name:tag@sha256:...`), pulled and run by that
   digest, with the version shown on its card (transmission `4.1.4-r0-ls370`, Traefik `v3.7`, Netdata
@@ -22,6 +39,9 @@ manager, encrypted backup uploads, health checks, CI checks).
   them. A weekly audit (`make catalog-tags`, the `tags` job of the Audit workflow) reports a pinned
   tag that names another index. Immich's digests are unchanged; Valkey's tag reads `9.1.2`, which
   names the same index as the `9` it replaces (ADR-0410).
+- The install's pull, its space check and the update's checks no longer have a path for an image
+  that floats on a tag, which no app of the catalog has since ADR-0410; an app installed from a tag
+  before its catalog pinned it is still listed, offered the pinned version and updated.
 - `install.sh` and the manual installation no longer install `mdadm`, `parted`, `nvme-cli`, `lm-sensors`,
   `net-tools` and `wget`, which UNOS does not run: Debian's mdadm assembled the arrays of an old NAS's
   disks into md arrays on the next boot. A host that has them keeps them; the Storage page already
@@ -444,6 +464,18 @@ manager, encrypted backup uploads, health checks, CI checks).
   `ups_name`, `host` and `port` are checked before they reach `upsc`.
 
 ### Added
+- BookStack, Paperless-ngx and Linkwarden are back in the App Store, each with the container it needs
+  beside it: BookStack with MariaDB 11.8, Paperless-ngx with Valkey and Linkwarden with PostgreSQL 16,
+  every image pinned by its version and digest. UNOS generates their database passwords and keys as
+  files on the pool that only root reads (BookStack's `APP_KEY` among them) and shows them nowhere;
+  their data is all on the pool, and what they write while they run outside it is kept in memory. The
+  app's own container starts once its database takes connections: UNOS asks the database with its
+  own check while it waits. The databases, Paperless-ngx and Linkwarden run without a Docker health
+  check, whose every probe would write to the system disk while they run. The
+  install notice asks to change BookStack's built-in `admin@admin.com` account and to create
+  Paperless-ngx's and Linkwarden's first account at once (ADR-0415).
+- The details of an app in the App Store say about how much its images take on the system disk
+  (`system_disk_bytes` of the catalog API, ADR-0415).
 - A disk can be added to a mounted pool and removed from one on the Storage page, after its path is
   typed again: **Add Disk** offers only whole disks that are not the system disk, hold no other pool
   or btrfs filesystem and are not mounted or in use, erases one with data only with its own
@@ -1457,6 +1489,11 @@ manager, encrypted backup uploads, health checks, CI checks).
   smb.conf as UNOS wrote it.
 
 ### Removed
+- `GET /api/v1/system/network` (nsenter of its own), `GET /api/v1/system/pcie` (an lspci that the
+  container lacks), `GET /api/v1/logs/files` and `GET /api/v1/logs/file/{filename}` (the
+  supervisor container's `/var/log`) and `DELETE /api/v1/logs/clear/{source}`, which did nothing:
+  no page called them, and they answer 404 (ADR-0416, ADR-0207). `/data/firewall_rules.json` is
+  gone with UNOS's own list of firewall rules.
 - Readarr from the App Store: the project is retired and its image's tag names an empty index, which
   no host could install (ADR-0410).
 - `GET /api/v1/monitor/cpu`, `/monitor/memory`, `/monitor/processes`,
@@ -1933,10 +1970,15 @@ manager, encrypted backup uploads, health checks, CI checks).
   not shown until the page was opened again, nor was a removed one taken off
   the list. The page now loads its lists again within a few seconds of the
   host's block devices changing, as the stats stream reports them, and not
-  while one of its dialogs is open but once it closes (ADR-0360). SMART data
-  of a disk attached after the supervisor started still cannot be read until
-  the supervisor restarts: smartctl runs in the container, whose `/dev` lacks
-  the new disk.
+  while one of its dialogs is open but once it closes (ADR-0360).
+- The SMART data of a disk attached after the supervisor started, such as a
+  USB disk, could not be read, nor its self-tests run, nor did the hourly SMART
+  monitor record it, until the supervisor restarted: smartctl runs in the
+  supervisor's container, whose `/dev` Docker fills once, when it starts.
+  Before each smartctl the supervisor now makes the container's node of the
+  disk from the host's `/sys/block/<disk>/dev`, in RAM, and replaces one whose
+  device number is another's; a disk that was there at the start keeps
+  Docker's node, and the container's privileges are unchanged (ADR-0414).
 
 ### Known issues
 - Not working yet, each with an entry in `feature-list.json`:
@@ -1950,9 +1992,6 @@ manager, encrypted backup uploads, health checks, CI checks).
     channel have no effect (`system.alert-events`).
   - The host name and the time zone cannot be set from the web interface
     (`system.hostname-and-time-zone`).
-  - The SMART data of a disk attached after the supervisor started, such as a
-    USB disk, cannot be read, nor its self-tests run, until the supervisor
-    restarts (`storage.hot-plugged-disks-smart`).
 
 ## [1.0.0] - 2026-02-05
 

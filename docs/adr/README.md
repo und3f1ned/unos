@@ -68,6 +68,7 @@ and this index, and `make check-fast` runs it.
 | [0363](0363-repair-permissions-runs-as-a-background-job-that-reports-over-the-events-socket.md) | Repair permissions runs as a background job that reports over the events socket, where live data goes | accepted | 2026-11-12 |
 | [0398](0398-the-supervisor-logs-one-json-object-per-line-from-one-setup-and-writes-nothing-while-it-idles.md) | The supervisor logs one JSON object per line from one setup, and writes nothing while it idles | accepted | 2026-11-18 |
 | [0401](0401-every-time-of-the-api-carries-its-offset-and-stored-times-without-one-are-utc.md) | Every time of the API carries its offset, a stored time without one is UTC, and the web UI shows times in the browser's time zone | accepted | 2026-11-18 |
+| [0416](0416-the-system-security-logs-and-nfs-routers-reach-the-host-only-through-host-py-and-the-firewall-is-the-hosts-ufw-turned-on-only-with-a-revert-armed.md) | The system, security, logs and NFS routers reach the host only through host.py, and the firewall is the host's ufw, changed only with the local networks let in and a revert armed | accepted | 2026-11-18 |
 
 ## Security
 
@@ -167,6 +168,7 @@ and this index, and `make check-fast` runs it.
 | [0379](0379-a-balance-runs-in-a-host-unit-with-a-usage-limit-of-20-percent-and-a-full-balance-behind-a-confirmation.md) | A balance runs in a unit of the host, rewrites the chunks less than 20% full by default, and a full one needs a confirmation | accepted | 2026-11-15 |
 | [0387](0387-volume-quota-use-is-read-from-sysfs-alerted-at-80-90-and-95-percent-and-kept-in-ram.md) | A volume's quota use is read from the kernel's sysfs, alerted once per level of 80, 90 and 95 percent, and its hourly history is kept in RAM and written at shutdown | accepted | 2026-11-17 |
 | [0411](0411-a-disk-joins-a-pool-at-once-and-leaves-it-in-a-host-unit-after-typed-confirmations-and-checks-of-the-profile-and-the-space.md) | A disk joins a pool at once and leaves it in a unit of the host, after typed confirmations and checks of the profile and the space | accepted | 2026-11-18 |
+| [0414](0414-a-hot-plugged-disk-is-read-by-smartctl-through-a-node-the-supervisor-makes-in-its-own-dev.md) | A disk attached after the supervisor started is read by smartctl through a node that the supervisor makes in its own /dev from the host's sysfs | accepted | 2026-11-18 |
 
 ## Shares
 
@@ -318,6 +320,7 @@ and this index, and `make check-fast` runs it.
 | [0403](0403-the-app-store-offers-only-apps-whose-images-publish-the-hosts-platform.md) | The App Store offers only apps whose images publish the host's platform, and the install refuses the others before any pull | accepted | 2026-11-18 |
 | [0408](0408-an-installed-app-updates-to-the-catalogs-newer-pinned-images-with-a-copy-of-its-database-and-can-be-rolled-back.md) | An installed app updates to the catalog's newer pinned images with a copy of its database, and can be rolled back | accepted | 2026-11-18 |
 | [0410](0410-every-catalog-image-is-pinned-by-a-version-tag-and-digest-and-a-weekly-audit-reports-moved-tags.md) | Every image of the catalog is pinned by a version tag and its index digest, and a weekly audit reports the tags that moved | accepted | 2026-11-18 |
+| [0415](0415-bookstack-paperless-ngx-and-linkwarden-install-with-their-database-or-broker-as-companions.md) | BookStack, Paperless-ngx and Linkwarden install with their database or broker as companions, their secrets as generated files and their databases awaited by a command | accepted | 2026-11-18 |
 
 ## Backup
 

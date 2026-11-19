@@ -161,19 +161,6 @@ test.describe('Security Settings', () => {
     await expect(card.getByRole('button', { name: 'Enable', exact: true })).toBeVisible();
   });
 
-  test('should toggle firewall configuration', async ({ authenticatedPage: page }) => {
-    await page.goto('/system#security');
-    await page.waitForTimeout(1000);
-
-    // Click Configure button for Firewall
-    const firewallSection = page.locator('div:has(h3:has-text("Firewall"))');
-    await firewallSection.locator('button:has-text("Configure")').click();
-    await page.waitForTimeout(500);
-
-    // Should show firewall status or rules section
-    await expect(page.locator('text=/Firewall Status|Firewall Rules/i').first()).toBeVisible();
-  });
-
   test('should toggle certificate management', async ({ authenticatedPage: page }) => {
     await page.goto('/system#security');
     await page.waitForTimeout(1000);
@@ -513,15 +500,16 @@ test.describe('Security API', () => {
     expect(data).toHaveProperty('success_count');
   });
 
-  test('should fetch firewall status', async ({ authenticatedPage: page }) => {
+  test('should refuse the firewall where host commands run locally', async ({ authenticatedPage: page }) => {
+    // The stand-in runs its host commands on this machine (UNOS_HOST_EXEC=local): its firewall is
+    // never this machine's (ADR-0416). tests/firewall.spec.ts shows the card on route fakes.
+    test.skip(process.env.E2E_STAND_IN !== '1', 'The refusal comes from a supervisor that runs its host commands locally');
     const response = await page.request.get('/api/v1/security/firewall', {
       headers: await browserSession(page),
     });
 
-    expect(response.ok()).toBeTruthy();
-    const data = await response.json();
-    expect(data).toHaveProperty('enabled');
-    expect(data).toHaveProperty('rules');
+    expect(response.status()).toBe(503);
+    expect((await response.json()).detail).toContain('UNOS_HOST_EXEC=local');
   });
 
   test('should fetch certificate status', async ({ authenticatedPage: page }) => {

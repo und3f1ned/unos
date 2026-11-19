@@ -20,17 +20,23 @@ on the pools and disks that the privileged container sees, and so does the
 pgrep that looks for a disk's stuck power read (the container has the host's
 process IDs, ``pid: host``):
 :func:`run_in_container` runs them, and at their timeout it kills them
-without waiting for them (ADR-0290).
+without waiting for them (ADR-0290). So does openssl, on the certificates of
+the container's /data/certs (ADR-0416). smartctl goes through :func:`run_smartctl`,
+which first makes the container's node of the disk the host's, so that a disk
+attached after the container started is read too (ADR-0414).
 """
 
 from __future__ import annotations
 
 import asyncio
 import contextlib
+import errno
 import logging
 import os
+import re
 import shlex
 import signal
+import stat
 import subprocess
 import threading
 from dataclasses import dataclass
@@ -53,7 +59,8 @@ logger = logging.getLogger(__name__)
 # busctl, systemctl, ip, ethtool: ADR-0233), power/schedule.py (shutdown, busctl and ss; sh
 # with cat, which read and set the RTC's wake alarm: ADR-0407), logs/router.py (journalctl, under
 # timeout: ADR-0257, ADR-0258), system/router.py (timedatectl under timeout, hostname:
-# ADR-0331) and notifications/router.py (curl, which sends a notification channel's
+# ADR-0331), security/firewall.py (ss: the ports that sshd listens on, ADR-0416) and
+# notifications/router.py (curl, which sends a notification channel's
 # request from the host's network when the container connects nowhere, and ends
 # itself at its --max-time: ADR-0336). cat, od (the export files: shares/nfs.py), test,
 # mkdir, rmdir, rm, find, sync, sleep, timeout, hostname, readlink (the time zone:
@@ -108,11 +115,17 @@ HOST_TOOLS: dict[str, str] = {
 # hdparm (ADR-0378): install.sh installs it, but a host set up by hand may lack it.
 # storage/disks.py runs hdparm -C (under timeout) for a disk's power state, one
 # per disk at a time and none while a timed-out one still runs (ADR-0378), and
-# smartctl -n standby -i in the container without it.
+# smartctl -n standby -i in the container without it. security/firewall.py runs ufw, and the
+# firewall card names a missing ufw (ADR-0416); it reads iptables' FORWARD chain (iptables, which
+# the ufw and Docker packages depend on; ip6tables too, in its host scripts) and asks sshd -T for
+# SSH's ports (none without openssh-server), and runs systemd-run and systemctl for the revert.
 OPTIONAL_HOST_TOOLS: dict[str, str] = {
     "exportfs": "nfs-kernel-server",
     "upsc": "nut-client",
     "hdparm": "hdparm",
+    "ufw": "ufw",
+    "iptables": "iptables",
+    "sshd": "openssh-server",
 }
 
 # Enter all of PID 1's namespaces except the user and cgroup namespaces.
@@ -235,14 +248,17 @@ def run_in_container(
     timeout: float,
     stdout: int | IO[Any] = subprocess.PIPE,
     stderr: int | IO[Any] = subprocess.PIPE,
+    input: str | None = None,
 ) -> subprocess.CompletedProcess[str]:
     """Run ``cmd`` in the supervisor's own container; at its timeout, kill it and return at once.
 
     For btrfs and smartctl, which reach the host's pools and disks through
-    the privileged container (ADR-0290). ``stdout`` and ``stderr`` are
-    pipes, whose text is returned (bytes that are not valid in the
-    locale's encoding become U+FFFD), or what Popen takes, such as
-    ``subprocess.DEVNULL`` or a file. The command reads nothing.
+    the privileged container (ADR-0290), and openssl, which reads and makes
+    the certificates of the container's /data/certs (ADR-0416). ``stdout``
+    and ``stderr`` are pipes, whose text is returned (bytes that are not
+    valid in the locale's encoding become U+FFFD), or what Popen takes, such
+    as ``subprocess.DEVNULL`` or a file. The command reads ``input``, or
+    nothing.
 
     The command runs in a session of its own. At ``timeout`` its process
     group, the command and the processes it started, is killed with
@@ -270,7 +286,7 @@ def run_in_container(
     try:
         process = subprocess.Popen(
             cmd,
-            stdin=subprocess.DEVNULL,
+            stdin=subprocess.DEVNULL if input is None else subprocess.PIPE,
             stdout=stdout,
             stderr=stderr,
             text=True,
@@ -278,7 +294,7 @@ def run_in_container(
             start_new_session=True,
         )
         try:
-            out, err = process.communicate(timeout=timeout)
+            out, err = process.communicate(input=input, timeout=timeout)
         except subprocess.TimeoutExpired:
             _kill_and_leave(process, key)
             logger.warning(
@@ -327,6 +343,148 @@ def _wait_for_killed(process: subprocess.Popen[str], key: tuple[str, ...]) -> No
                 pipe.close()
         with _runs:
             _stuck.pop(key, None)
+
+
+# The container's own /dev, a tmpfs that Docker fills with the host's device nodes once, when the
+# container starts, and the host's block devices in sysfs, which the container sees as the host
+# does: the kernel's block devices are in no namespace (ADR-0414). HOST_DEV is the host's /dev
+# through PID 1's root (pid: host): a CONTAINER_DEV on the same filesystem is the host's own, which
+# UNOS never writes. Tests give them folders of their own (tests/conftest.py).
+CONTAINER_DEV = "/dev"
+SYS_BLOCK = "/sys/block"
+HOST_DEV = "/proc/1/root/dev"
+# What _container_node_number answers for an entry of the container's /dev that is no block device.
+_NOT_A_BLOCK_NODE = (-1, -1)
+# A whole disk's node as smartctl is given it: /dev/<name>, a name without a slash or a dot.
+_DISK_NODE = re.compile(r"/dev/([a-z][a-z0-9]{0,31})")
+# The node changes of container_disk_node, one at a time; the disks whose node could not be made
+# right, each logged once until it is.
+_disk_nodes = threading.Lock()
+_disk_node_problems: set[str] = set()
+
+
+class DiskNodeError(OSError):
+    """The container's node of a disk could not be made the host's (ADR-0414); smartctl did not
+    run. Its strerror says why."""
+
+
+class NoHostDisk(DiskNodeError):
+    """The host has no whole disk of the name (a partition, or a disk that left after it was listed);
+    smartctl did not run."""
+
+
+def run_smartctl(options: list[str], device: str, *, timeout: float) -> subprocess.CompletedProcess[str]:
+    """``smartctl <options> <device>`` in the container (run_in_container, ADR-0290), on a whole
+    disk of the host given as ``/dev/<name>``, once the container's node of that disk is the host's
+    (container_disk_node, ADR-0414): so a disk attached after the supervisor started, such as a USB
+    disk, is read and tested too. NoHostDisk or DiskNodeError, and smartctl does not run, when the
+    node cannot be made right."""
+    container_disk_node(device)
+    return run_in_container(["smartctl", *options, device], timeout=timeout)
+
+
+def container_disk_node(device: str) -> None:
+    """Make the container's node ``/dev/<name>`` the host's whole disk ``<name>`` (ADR-0414).
+
+    Docker gives the privileged container a node of each device the host had when it started, and
+    none of a disk attached later. The host's sysfs names the disk's device number
+    (``/sys/block/<name>/dev``): a node with that number is left as it is (no write, no log); a
+    missing one is made, and one with another number, or anything else at that name, is replaced
+    (a disk that took the name of one detached since, whose number another device may have now): a
+    block device node, mode 0600, made under a temporary name and renamed into place, in the
+    container's /dev, a tmpfs (RAM). Nothing here opens the disk or sends it a command: a sleeping
+    disk stays asleep (ADR-0378).
+
+    Nothing changes where host commands run locally (``UNOS_HOST_EXEC=local``: the stand-in and the
+    compose test stack), for a device that is not ``/dev/<name>``, which smartctl then gets as
+    before, where the container has no sysfs of block devices, and where its /dev is the host's own
+    (bind-mounted), whose nodes the kernel keeps. NoHostDisk when the host has no whole disk of that
+    name; DiskNodeError when sysfs or the node cannot be read or made, logged once for each disk
+    until its node is right again.
+    """
+    if runs_locally():
+        return
+    found = _DISK_NODE.fullmatch(device)
+    if found is None:
+        return
+    name = found[1]
+    path = os.path.join(CONTAINER_DEV, name)
+    with _disk_nodes:
+        try:
+            try:
+                number = _host_disk_number(name)
+            except FileNotFoundError:  # no sysfs of block devices here: /dev stays as Docker made it
+                return
+            if number is not None:
+                node = _container_node_number(path)
+                if node != number:
+                    if not _dev_is_the_containers():
+                        return
+                    _make_container_node(path, number)
+                    logger.info(
+                        "%s %s in the container as the host's disk %d:%d",
+                        "Made" if node is None else "Replaced", device, *number,
+                    )
+        except OSError as exc:
+            if name not in _disk_node_problems:
+                _disk_node_problems.add(name)
+                logger.warning("Could not make the container's node of %s the host's disk: %s", device, exc)
+            raise DiskNodeError(exc.errno, f"The container's node of {device} could not be made: {exc}") from exc
+        _disk_node_problems.discard(name)
+    if number is None:
+        raise NoHostDisk(errno.ENODEV, f"The host has no disk {name}")
+
+
+def _host_disk_number(name: str) -> tuple[int, int] | None:
+    """The device number (major, minor) of the host's whole disk ``name`` (``/sys/block/<name>/dev``,
+    "8:16"), or None when the host has none of that name. FileNotFoundError when SYS_BLOCK itself
+    is missing; OSError when the number cannot be read."""
+    if not os.path.isdir(SYS_BLOCK):
+        raise FileNotFoundError(errno.ENOENT, "No sysfs of block devices", SYS_BLOCK)
+    try:
+        with open(os.path.join(SYS_BLOCK, name, "dev"), encoding="ascii") as file:
+            text = file.read()
+    except FileNotFoundError:
+        return None
+    found = re.fullmatch(r"(\d+):(\d+)\n?", text)
+    if found is None:
+        raise OSError(errno.EINVAL, f"No device number in {SYS_BLOCK}/{name}/dev: {text!r}")
+    return int(found[1]), int(found[2])
+
+
+def _container_node_number(path: str) -> tuple[int, int] | None:
+    """The device number (major, minor) of the block device node at ``path``; None when nothing is
+    there, and _NOT_A_BLOCK_NODE for anything else (a file, a link, a character device)."""
+    try:
+        status = os.lstat(path)
+    except FileNotFoundError:
+        return None
+    if not stat.S_ISBLK(status.st_mode):
+        return _NOT_A_BLOCK_NODE
+    return os.major(status.st_rdev), os.minor(status.st_rdev)
+
+
+def _dev_is_the_containers() -> bool:
+    """Whether CONTAINER_DEV is a filesystem of its own (Docker's tmpfs), not the host's /dev
+    (HOST_DEV): a bind mount of the host's /dev, or a supervisor that runs on the host itself, gets
+    no node of UNOS's. OSError when either cannot be read."""
+    return os.stat(CONTAINER_DEV).st_dev != os.stat(HOST_DEV).st_dev
+
+
+def _make_container_node(path: str, number: tuple[int, int]) -> None:
+    """Put a block device node of ``number`` (major, minor) at ``path``, mode 0600: made under a
+    temporary name beside it and renamed over what is there, so that smartctl finds the old entry
+    or the new node, never none."""
+    temporary = os.path.join(os.path.dirname(path), f".{os.path.basename(path)}.unos-new")
+    with contextlib.suppress(FileNotFoundError):
+        os.unlink(temporary)
+    os.mknod(temporary, stat.S_IFBLK | 0o600, os.makedev(*number))
+    try:
+        os.replace(temporary, path)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.unlink(temporary)
+        raise
 
 
 # The longest line that a command of stream_on_host may print; a longer one is skipped.

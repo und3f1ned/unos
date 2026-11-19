@@ -588,7 +588,7 @@ class TestTheServedCertificateIsNotReplaced:
         assert _serve(admin_api, "custom_nas.local").status_code == 200
         other = _certificate("nas.local")
         printed = other.key_pem + other.pem
-        monkeypatch.setattr(security_router.subprocess, "run",
+        monkeypatch.setattr(security_router.host, "run_in_container",
                             lambda cmd, **kw: security_router.subprocess.CompletedProcess(cmd, 0, printed, ""))
 
         answer = admin_api.post(f"{API}/self-signed", json={"domain": "nas.local"})

@@ -76,8 +76,20 @@ commits and pushes, opens pull requests and holds the credentials (ADR-0208, ADR
 Avoid: user (a UNOS user), admin.
 
 **Automatic revert**: What turns a network interface that UNOS disabled back on, with its saved
-addresses and routes: a timer on the host that runs unless the administrator keeps the disable
-within 60 seconds (ADR-0244). Avoid: rollback (what `update.sh` and `deploy.sh` do), undo.
+addresses and routes, or puts the host's firewall back as it was before a change: a timer on the
+host that runs unless the administrator keeps the change within 60 seconds (an interface,
+ADR-0244) or 120 seconds (the firewall, ADR-0416). Avoid: rollback (what `update.sh` and
+`deploy.sh` do), undo.
+
+**Firewall**: The host's ufw, which System > Security turns on and off and whose rules it lists and
+changes (ADR-0416). Its rules are the host's, as ufw records them; UNOS keeps none of its own.
+Avoid: iptables, the IPv6 inbound filter (the dev device's own nftables table, ADR-0301).
+
+**Local networks**: The private, link-local and unique-local networks of SMB's `hosts allow`
+(10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 100.64.0.0/10, 169.254.0.0/16, fc00::/7, fe80::/10),
+which SMB answers, NFS exports may name and UNOS's firewall rules let reach the web UI, SSH and SMB
+(ADR-0095, ADR-0416). Avoid: LAN when the networks are meant (a LAN can also use global IPv6
+addresses).
 
 **Scheduled task**: A task of System > Scheduler that runs at the times of its schedule on the
 clock of the host's time zone: a snapshot, a scrub, a SMART test, a backup or a custom task. Each
@@ -194,6 +206,11 @@ disk replace (a copy to a new disk, which UNOS does not start), shrink.
 **Recovery runbook**: `docs/RECOVERY.md`: how another Linux machine reads a pool's files without
 writing to its disks, also with a disk missing, and how root runs the emergency reset (ADR-0285).
 Avoid: disaster recovery plan, repair guide.
+
+**Hot-plugged disk**: A disk attached while UNOS runs, after the supervisor started, such as a USB
+disk. The Storage page lists it within seconds (ADR-0360); before smartctl reads it, the supervisor
+makes its device node in its own container's `/dev`, which Docker filled only at the start
+(ADR-0414). Avoid: hot-swap (a bay that takes a disk while powered), new disk.
 
 **SMART history**: The sector and error counters of each disk that the SMART monitor records every
 hour while the disk is awake, kept by serial in RAM and in `/data/smart_history.json`, which is
@@ -392,9 +409,21 @@ one or more containers. Avoid: app.
 **Companion container**: A container of an app besides its main container (the one of the
 template's own image, ports and overrides, named after the app): named `<app>-<name>` and
 labelled `unos.app.companion=<name>`, on the app's network `unos-app-<app>`, where it answers to
-its name, as Immich's `database`, `redis` and `machine-learning`. It publishes no port and takes no
-override; the main container starts once those it depends on are ready (ADR-0381). Avoid:
-sidecar, service.
+its name, as Immich's `database`, `redis` and `machine-learning`, BookStack's and Linkwarden's
+`database` and Paperless-ngx's `redis` (ADR-0415). It publishes no port and takes no override; the
+main container starts once those it depends on are ready (ADR-0381). Avoid: sidecar, service.
+
+**Ready command**: The command that UNOS runs in a companion container whose image has no health
+check (Docker's exec), every 2 seconds while the next container waits for it, at the install and
+at each start of its app: the companion is ready once it exits 0, such as MariaDB's
+`healthcheck.sh --connect` and PostgreSQL's `pg_isready` (`ContainerSpec.ready_command`,
+ADR-0415). Docker runs nothing between the waits. Avoid: health check (Docker's own, which writes
+its state to the system disk at each probe).
+
+**Host gateway**: The name `host.docker.internal`, which UNOS points at the NAS itself
+(Docker's `host-gateway`) in the container of an app that reaches another app's port on the NAS:
+Open WebUI's Ollama, Zigbee2MQTT's Mosquitto (`AppTemplate.host_gateway`, ADR-0415). Avoid: host
+network (an app in the host's network shares the NAS's network itself).
 
 **Install job**: An app's install as it runs in the background: `POST /api/v1/apps/install`
 answers it at once, and it checks, pulls the images, creates and starts the containers and
@@ -428,10 +457,11 @@ the database copy replaces the database (what the app stored since the update is
 earlier containers get their names back and start (ADR-0408). Avoid: restore (a backup's), rollback
 alone (what `update.sh` and `deploy.sh` do).
 
-**Generated secret**: A password file that UNOS writes once, at an app's install, beside the data
-it opens on the pool (64 hexadecimal digits, root, mode 0600), binds read-only into the
+**Generated secret**: A password or key file that UNOS writes once, at an app's install, beside
+the data it opens or signs on the pool (64 hexadecimal digits, or the `secret_digits` of its
+mapping, such as the 32 of BookStack's `APP_KEY`; root, mode 0600), binds read-only into the
 containers that read it and never shows, replaces or makes at a start; an install that finds
-that data without the file is refused (ADR-0381). Avoid: password variable.
+that data without the file is refused (ADR-0381, ADR-0415). Avoid: password variable.
 
 **Pinned image**: An image of the catalog named by a version tag and the digest of its index
 (`name:tag@sha256:...`), pulled and run by that digest, with its size on the system disk

@@ -144,6 +144,8 @@ export interface AppTemplate extends ContainerSpec {
   host_platform: string | null;
   /** False when an image of one of its containers publishes no build for the host's platform: the server refuses its install (409). */
   available: boolean;
+  /** About what the images that its install pulls on this host take on the system disk, in bytes (ADR-0415). */
+  system_disk_bytes: number | null;
 }
 
 /** A container of an app: its Docker name, its companion's name (null for the main container) and its spec. */

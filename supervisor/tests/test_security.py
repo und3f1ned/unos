@@ -15,6 +15,7 @@ from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
 
+from src import host as host_module
 from src.auth.utils import verify_token
 from src.main import app
 
@@ -77,38 +78,6 @@ class TestSecuritySchemas:
         assert response.failed_count == 2
         assert response.success_count == 8
 
-    def test_firewall_rule_schema(self):
-        """Test FirewallRule schema."""
-        from src.security.schemas import FirewallRule, FirewallAction, FirewallDirection, FirewallProtocol
-
-        rule = FirewallRule(
-            id="rule_001",
-            name="SSH Access",
-            action=FirewallAction.ALLOW,
-            direction=FirewallDirection.IN,
-            protocol=FirewallProtocol.TCP,
-            port="22",
-            enabled=True
-        )
-
-        assert rule.name == "SSH Access"
-        assert rule.action == FirewallAction.ALLOW
-        assert rule.port == "22"
-
-    def test_firewall_status_schema(self):
-        """Test FirewallStatus schema."""
-        from src.security.schemas import FirewallStatus
-
-        status = FirewallStatus(
-            enabled=True,
-            default_incoming="deny",
-            default_outgoing="allow",
-            rules=[]
-        )
-
-        assert status.enabled is True
-        assert status.default_incoming == "deny"
-
     def test_certificate_schema(self):
         """Test Certificate schema."""
         from src.security.schemas import Certificate, CertificateType
@@ -149,82 +118,6 @@ class TestSecuritySchemas:
         assert request.validity_days == 365
 
 
-class TestFirewallFunctions:
-    """Tests for firewall management functions."""
-
-    def test_load_firewall_rules_empty(self, tmp_path):
-        """Test loading firewall rules when file doesn't exist."""
-        from src.security.router import load_firewall_rules
-
-        with patch("src.security.router.FIREWALL_RULES_FILE", str(tmp_path / "rules.json")):
-            rules = load_firewall_rules()
-            assert rules == []
-
-    def test_save_and_load_firewall_rules(self, tmp_path):
-        """Test saving and loading firewall rules."""
-        from src.security.router import load_firewall_rules, save_firewall_rules
-        from src.security.schemas import FirewallRule, FirewallAction, FirewallDirection, FirewallProtocol
-
-        rules_file = tmp_path / "rules.json"
-
-        rule = FirewallRule(
-            id="rule_test",
-            name="Test Rule",
-            action=FirewallAction.ALLOW,
-            direction=FirewallDirection.IN,
-            protocol=FirewallProtocol.TCP,
-            port="8080",
-            enabled=True
-        )
-
-        with patch("src.security.router.FIREWALL_RULES_FILE", str(rules_file)):
-            save_firewall_rules([rule])
-            loaded = load_firewall_rules()
-
-            assert len(loaded) == 1
-            assert loaded[0].name == "Test Rule"
-            assert loaded[0].port == "8080"
-
-    def test_get_ufw_status_active(self):
-        """Test parsing UFW status when active."""
-        from src.security.router import get_ufw_status
-
-        mock_result = MagicMock()
-        mock_result.stdout = """Status: active
-Logging: on (low)
-Default: deny (incoming), allow (outgoing), disabled (routed)"""
-
-        with patch("subprocess.run", return_value=mock_result):
-            enabled, default_in, default_out = get_ufw_status()
-
-            assert enabled is True
-            assert default_in == "deny"
-            assert default_out == "allow"
-
-    def test_get_ufw_status_inactive(self):
-        """Test parsing UFW status when inactive."""
-        from src.security.router import get_ufw_status
-
-        mock_result = MagicMock()
-        mock_result.stdout = "Status: inactive"
-
-        with patch("subprocess.run", return_value=mock_result):
-            enabled, default_in, default_out = get_ufw_status()
-
-            assert enabled is False
-
-    def test_get_ufw_status_not_installed(self):
-        """Test UFW status when not installed."""
-        from src.security.router import get_ufw_status
-
-        with patch("subprocess.run", side_effect=FileNotFoundError):
-            enabled, default_in, default_out = get_ufw_status()
-
-            assert enabled is False
-            assert default_in == "deny"
-            assert default_out == "allow"
-
-
 class TestCertificateFunctions:
     """Tests for certificate management functions."""
 
@@ -244,7 +137,7 @@ SHA256 Fingerprint=AA:BB:CC:DD:EE:FF"""
         verify_result = MagicMock()
         verify_result.returncode = 0
 
-        with patch("subprocess.run", side_effect=[mock_result, verify_result]):
+        with patch("src.host.run_in_container", side_effect=[mock_result, verify_result]):
             info = get_certificate_info("/tmp/test.crt")
 
             assert info is not None
@@ -259,7 +152,7 @@ SHA256 Fingerprint=AA:BB:CC:DD:EE:FF"""
         mock_result.returncode = 1
         mock_result.stdout = ""
 
-        with patch("subprocess.run", return_value=mock_result):
+        with patch("src.host.run_in_container", return_value=mock_result):
             info = get_certificate_info("/tmp/invalid.crt")
 
             assert info is None
@@ -274,7 +167,7 @@ SHA256 Fingerprint=AA:BB:CC:DD:EE:FF"""
             calls.append((cmd, kwargs.get("input")))
             return subprocess.CompletedProcess(cmd, 0, "subject=CN = nas.local\n", "")
 
-        with patch("subprocess.run", side_effect=openssl):
+        with patch("src.host.run_in_container", side_effect=openssl):
             info = get_pem_certificate_info("PEM")
 
         assert (info["domain"], info["is_valid"]) == ("nas.local", True)
@@ -284,7 +177,7 @@ SHA256 Fingerprint=AA:BB:CC:DD:EE:FF"""
     def test_get_pem_certificate_info_refuses_text_that_cannot_be_encoded(self):
         from src.security.router import get_pem_certificate_info
 
-        with patch("subprocess.run") as run:
+        with patch("src.host.run_in_container") as run:
             assert get_pem_certificate_info("PEM\ud800") is None
         run.assert_not_called()
 
@@ -347,91 +240,6 @@ class TestRecordLoginAttempt:
         mock_db.commit.assert_called_once()
 
 
-class TestFirewallRuleApplication:
-    """Tests for applying firewall rules."""
-
-    def test_apply_ufw_rule_allow(self):
-        """Test applying an allow rule."""
-        from src.security.router import apply_ufw_rule
-        from src.security.schemas import FirewallRule, FirewallAction, FirewallDirection, FirewallProtocol
-
-        rule = FirewallRule(
-            id="test",
-            name="Test",
-            action=FirewallAction.ALLOW,
-            direction=FirewallDirection.IN,
-            protocol=FirewallProtocol.TCP,
-            port="80",
-            enabled=True
-        )
-
-        mock_result = MagicMock()
-        mock_result.returncode = 0
-        mock_result.stderr = ""
-        mock_result.stdout = "Rule added"
-
-        with patch("subprocess.run", return_value=mock_result) as mock_run:
-            success, error = apply_ufw_rule(rule)
-
-            assert success is True
-            assert error == ""
-            mock_run.assert_called_once()
-
-    def test_apply_ufw_rule_failure(self):
-        """Test applying a rule that fails."""
-        from src.security.router import apply_ufw_rule
-        from src.security.schemas import FirewallRule, FirewallAction, FirewallDirection, FirewallProtocol
-
-        rule = FirewallRule(
-            id="test",
-            name="Test",
-            action=FirewallAction.DENY,
-            direction=FirewallDirection.OUT,
-            protocol=FirewallProtocol.UDP,
-            port="53",
-            enabled=True
-        )
-
-        mock_result = MagicMock()
-        mock_result.returncode = 1
-        mock_result.stderr = "Permission denied"
-        mock_result.stdout = ""
-
-        with patch("subprocess.run", return_value=mock_result):
-            success, error = apply_ufw_rule(rule)
-
-            assert success is False
-            assert "Permission denied" in error
-
-    def test_apply_ufw_rule_delete(self):
-        """Test deleting a rule."""
-        from src.security.router import apply_ufw_rule
-        from src.security.schemas import FirewallRule, FirewallAction, FirewallDirection, FirewallProtocol
-
-        rule = FirewallRule(
-            id="test",
-            name="Test",
-            action=FirewallAction.ALLOW,
-            direction=FirewallDirection.IN,
-            protocol=FirewallProtocol.TCP,
-            port="443",
-            enabled=True
-        )
-
-        mock_result = MagicMock()
-        mock_result.returncode = 0
-        mock_result.stderr = ""
-        mock_result.stdout = "Rule deleted"
-
-        with patch("subprocess.run", return_value=mock_result) as mock_run:
-            success, error = apply_ufw_rule(rule, delete=True)
-
-            assert success is True
-            # Verify 'delete' is in the command
-            call_args = mock_run.call_args[0][0]
-            assert "delete" in call_args
-
-
 class TestEnums:
     """Tests for security enums."""
 
@@ -450,13 +258,6 @@ class TestEnums:
         assert FirewallProtocol.TCP.value == "tcp"
         assert FirewallProtocol.UDP.value == "udp"
         assert FirewallProtocol.ANY.value == "any"
-
-    def test_firewall_direction_values(self):
-        """Test FirewallDirection enum values."""
-        from src.security.schemas import FirewallDirection
-
-        assert FirewallDirection.IN.value == "in"
-        assert FirewallDirection.OUT.value == "out"
 
     def test_certificate_type_values(self):
         """Test CertificateType enum values."""
@@ -526,7 +327,7 @@ def certs(tmp_path, monkeypatch):
             return subprocess.CompletedProcess(cmd, 0, GENERATED_KEY, "")
         return subprocess.CompletedProcess(cmd, 0, GENERATED_KEY + GENERATED_CERTIFICATE, "")
 
-    monkeypatch.setattr(subprocess, "run", fake_openssl)
+    monkeypatch.setattr(host_module, "run_in_container", fake_openssl)
     return SimpleNamespace(root=tmp_path, dir=certs_dir, calls=calls)
 
 
@@ -627,7 +428,7 @@ class TestCertificateDomainValidation:
         assert cmd[cmd.index("-subj") + 1] == "/CN=nas.local/O=Home\\/Lab\\+Co\\\\/C=DE"
 
     def test_openssl_failure_is_reported_once(self, certs, admin_api, monkeypatch):
-        monkeypatch.setattr(subprocess, "run", lambda cmd, **kw: subprocess.CompletedProcess(
+        monkeypatch.setattr(host_module, "run_in_container", lambda cmd, **kw: subprocess.CompletedProcess(
             cmd, 1, "", "unknown option"))
         response = admin_api.post(f"{API}/self-signed", json={"domain": "nas.local"})
 
@@ -1106,7 +907,7 @@ class TestOpensslRunsOffTheEventLoop:
                 return subprocess.CompletedProcess(cmd, 0, GENERATED_KEY + GENERATED_CERTIFICATE, "")
             return subprocess.CompletedProcess(cmd, 0, "subject=CN = nas.local\nissuer=CN = nas.local\n", "")
 
-        monkeypatch.setattr(subprocess, "run", fake)
+        monkeypatch.setattr(host_module, "run_in_container", fake)
         return runs
 
     def test_generation_upload_and_listing(self, certs, openssl, admin_api):
@@ -1133,7 +934,7 @@ class TestOpensslRunsOffTheEventLoop:
         def fail(cmd, **kwargs):
             raise error
 
-        monkeypatch.setattr(subprocess, "run", fail)
+        monkeypatch.setattr(host_module, "run_in_container", fail)
         response = admin_api.post(f"{API}/self-signed", json={"domain": "nas.local"})
 
         assert (response.status_code, response.json()) == (
@@ -1145,7 +946,7 @@ class TestOpensslRunsOffTheEventLoop:
         def slow(cmd, **kwargs):
             raise subprocess.TimeoutExpired(cmd, kwargs["timeout"])
 
-        monkeypatch.setattr(subprocess, "run", slow)
+        monkeypatch.setattr(host_module, "run_in_container", slow)
         response = admin_api.post(f"{API}/upload", json={"certificate": "PEM", "private_key": "KEY"})
 
         assert (response.status_code, response.json()) == (
@@ -1160,7 +961,7 @@ class TestOpensslRunsOffTheEventLoop:
         def slow(cmd, **kwargs):
             raise subprocess.TimeoutExpired(cmd, kwargs["timeout"])
 
-        monkeypatch.setattr(subprocess, "run", slow)
+        monkeypatch.setattr(host_module, "run_in_container", slow)
         response = admin_api.get(API)
 
         assert (response.status_code, response.json()) == (

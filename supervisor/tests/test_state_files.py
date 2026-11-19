@@ -30,7 +30,6 @@ import pytest
 from src import state_files
 from src.notifications.schemas import NotificationChannel, NotificationConfig, NotificationEvent, NotificationLog
 from src.scheduler.schemas import ScheduleFrequency, ScheduledTask, TaskRun, TaskType
-from src.security.schemas import FirewallAction, FirewallRule
 from src.updates.schemas import UpdateConfig
 
 # The packages export their APIRouter as `router`, which hides the module of that name.
@@ -40,7 +39,6 @@ offsite = importlib.import_module("src.offsite.service")
 volume_usage = importlib.import_module("src.storage.volume_usage")
 power = importlib.import_module("src.power.router")
 scheduler = importlib.import_module("src.scheduler.router")
-security = importlib.import_module("src.security.router")
 updates = importlib.import_module("src.updates.updater")
 
 SUPERVISOR = Path(__file__).resolve().parents[1]
@@ -249,9 +247,6 @@ STATE_FILES = [
               lambda: power.save_ups_config(power.UPSConfig(enabled=True)), power.load_ups_config, power.UPSConfig()),
     StateFile("wol_config.json", power, "WOL_FILE",
               lambda: power._remember_wol("eth0", True), power._load_wol_choices, {}),
-    StateFile("firewall_rules.json", security, "FIREWALL_RULES_FILE",
-              lambda: security.save_firewall_rules([FirewallRule(id="f1", name="ssh", action=FirewallAction.ALLOW)]),
-              security.load_firewall_rules, []),
     StateFile("raid_status.json", health, "RAID_STATUS_FILE",
               lambda: health.save_raid_status({"alpha": {"status": "healthy"}}), health.load_previous_raid_status, {}),
     StateFile("smart_history.json", health, "SMART_HISTORY_FILE",

@@ -333,6 +333,19 @@ class FakeHost:
         self.udev_serials: dict[str, str | None] = {}
         # The commands run in the container (smartctl), in order.
         self.container_calls: list[list[str]] = []
+        # The supervisor's container's own /dev (ADR-0414): the device number ("8:1") of each whole
+        # disk's node, by its path. Docker made a node of every disk that the host had when the
+        # container started (add_disk), none of a disk attached later (attach_disk), and kept the
+        # node of one detached since (detach_disk). smartctl opens the node, so it reads the disk
+        # that has the node's number now (run_in_container). host.container_disk_node changes it
+        # through the fake's host_disk_number, container_node_number and make_container_node
+        # (install_fake_host), each node it made recorded in nodes_made as (path, number); smartctl
+        # fails the test unless container_disk_node asked for its disk just before (disk_asked).
+        self.container_dev: dict[str, str] = {}
+        self.nodes_made: list[tuple[str, str]] = []
+        self.disk_asked: str | None = None
+        # The SMART self-tests started (smartctl -t), as (disk, test type).
+        self.self_tests: list[tuple[str, str]] = []
         self._minor = 0
         # The host boots from the SD card (ext4 root on mmcblk1p1), like the
         # ArmSoM board, and swaps to zram.
@@ -350,15 +363,31 @@ class FakeHost:
         return f"{major}:{self._minor}"
 
     def add_disk(self, name, *, size=4_000_787_030_016, rota=True, model=None, serial=None,
-                 pttype=None, fstype=None, label=None, uuid=None, wwn=None):
+                 pttype=None, fstype=None, label=None, uuid=None, wwn=None, majmin=None,
+                 attached_later=False):
+        """A whole disk of the host, there when the supervisor's container started: its /dev has
+        the disk's node (container_dev), unless ``attached_later`` (attach_disk). ``majmin`` is its
+        device number, by default one that no other device of the fake has."""
         node = {
             "name": name, "kname": name, "path": f"/dev/{name}", "pkname": None,
             "type": "disk", "size": size, "rota": rota, "model": model, "serial": serial,
             "wwn": wwn, "fstype": fstype, "label": label, "uuid": uuid, "partuuid": None,
-            "pttype": pttype, "maj:min": self._majmin(name),
+            "pttype": pttype, "maj:min": majmin or self._majmin(name),
         }
         self.tree.append(node)
+        if not attached_later:
+            self.container_dev[node["path"]] = node["maj:min"]
         return node
+
+    def attach_disk(self, name, **kwargs):
+        """A whole disk attached after the supervisor's container started, such as a USB disk: the
+        host lists it, and the container's /dev has no node of it, or still the node of the disk
+        that had its name before (detach_disk)."""
+        return self.add_disk(name, attached_later=True, **kwargs)
+
+    def detach_disk(self, name):
+        """The whole disk ``name`` leaves the host; the container's /dev keeps its node."""
+        self.tree = [top for top in self.tree if top["name"] != name]
 
     def add_partition(self, parent, name, *, size=1_000_000_000, fstype=None, label=None,
                       uuid=None, partuuid=None):
@@ -499,6 +528,52 @@ class FakeHost:
                     return node
         return None
 
+    def _node_by_number(self, majmin):
+        """The block device of the host that has the device number ``majmin`` now, or None."""
+        for top in self.tree:
+            for node in self._walk(top):
+                if majmin is not None and node.get("maj:min") == majmin:
+                    return node
+        return None
+
+    # -- the container's /dev (host.container_disk_node, ADR-0414) --------------
+
+    # host.container_disk_node joins its CONTAINER_DEV (a missing folder of the test's own,
+    # tests/conftest.py) and the disk's name: the fake keeps its nodes by /dev/<name>.
+
+    def host_disk_number(self, name):
+        """host._host_disk_number: /sys/block/<name>/dev of the host, which names whole disks and
+        the other devices that are no partition, as (major, minor)."""
+        self.disk_asked = f"/dev/{name}"
+        node = next((n for top in self.tree for n in self._walk(top) if n["name"] == name), None)
+        if node is None or node["type"] == "part":
+            return None
+        major, minor = node["maj:min"].split(":")
+        return int(major), int(minor)
+
+    def container_node_number(self, path):
+        """host._container_node_number: the number of the container's node of that name."""
+        majmin = self.container_dev.get(f"/dev/{os.path.basename(path)}")
+        if majmin is None:
+            return None
+        major, minor = majmin.split(":")
+        return int(major), int(minor)
+
+    def make_container_node(self, path, number):
+        """host._make_container_node: the node of that name gets ``number``."""
+        majmin = "{}:{}".format(*number)
+        self.container_dev[f"/dev/{os.path.basename(path)}"] = majmin
+        self.nodes_made.append((f"/dev/{os.path.basename(path)}", majmin))
+
+    def _opened_by_smartctl(self, device):
+        """The whole disk that smartctl opens as ``device`` in the container: the one that has the
+        number of the container's node now, or None (no node, nothing with its number, or no whole
+        disk). Only after host.container_disk_node asked sysfs for that disk (host.run_smartctl)."""
+        asked, self.disk_asked = self.disk_asked, None
+        assert asked == device, f"smartctl ran on {device} without host.container_disk_node"
+        node = self._node_by_number(self.container_dev.get(device))
+        return node if node is not None and node["type"] == "disk" else None
+
     def _fs_of(self, path):
         return next((fs for fs in self.filesystems if path in fs["devices"]), None)
 
@@ -526,7 +601,11 @@ class FakeHost:
         power read of an NVMe disk, of a host without hdparm and of an EPC disk), -a (the SMART
         data), and -c, also with -i (the SMART capabilities, with the automatic offline data
         collection of offline_collection, and the identity's SMART support), also after -o on or
-        -o off, which switch it first, of a disk it goes on to read. And pgrep -f
+        -o off, which switch it first, of a disk it goes on to read; and smartctl -t short, long or
+        conveyance, which starts a self-test (self_tests) and wakes the disk. smartctl opens the
+        container's node of the disk, which reads the disk that has the node's number now
+        (_opened_by_smartctl): without one, "No such device", as for a disk attached after the
+        supervisor started whose node host.container_disk_node did not make (ADR-0414). And pgrep -f
         '^hdparm -C <disk>$', which finds the hdparm -C of a disk that still runs on the host
         (stuck_hdparm; the container shares the host's process IDs). Any other command fails the test, as smartctl without -n, which would
         wake a sleeping disk. container_answer answers a command instead, when it does."""
@@ -540,17 +619,25 @@ class FakeHost:
             assert found, cmd
             running = found[1] in self.stuck_hdparm
             return subprocess.CompletedProcess(cmd, 0 if running else 1, "4242\n" if running else "", "")
+        if cmd[:2] == ["smartctl", "-t"] and len(cmd) == 4 and cmd[2] in ("short", "long", "conveyance"):
+            node = self._opened_by_smartctl(cmd[-1])
+            if node is None:
+                return subprocess.CompletedProcess(
+                    cmd, 2, f"Smartctl open device: {cmd[-1]} failed: No such device\n", "")
+            self._wake(node["path"], cmd)
+            self.self_tests.append((node["path"], cmd[2]))
+            return subprocess.CompletedProcess(cmd, 0, "Testing has begun.\n", "")
         if cmd[:2] != ["smartctl", "-n"] or cmd[2] not in ("standby", "idle") \
                 or cmd[3:-1] not in (["-i", "-j"], ["-j", "-a"],
                                      *([*switch, *info, "-c", "-j"] for switch in ([], ["-o", "on"], ["-o", "off"])
                                        for info in ([], ["-i"]))):
             raise AssertionError(f"test tried to run a real command: {cmd!r}")
-        device = cmd[-1]
-        node = self._node_by_path(device)
-        if node is None or node["type"] != "disk":
-            message = f"Smartctl open device: {device} failed: No such device"
+        node = self._opened_by_smartctl(cmd[-1])
+        if node is None:
+            message = f"Smartctl open device: {cmd[-1]} failed: No such device"
             return subprocess.CompletedProcess(cmd, 2, json.dumps(
                 {"smartctl": {"messages": [{"string": message, "severity": "error"}], "exit_status": 2}}), "")
+        device = node["path"]
         condition = self.epc.get(device)
         mode = condition.upper() if condition else "STANDBY" if device in self.asleep else None
         if mode is not None and (cmd[2] == "idle" or not mode.startswith("IDLE")):
@@ -1114,8 +1201,15 @@ def install_fake_host(monkeypatch) -> FakeHost:
     monkeypatch.setattr(host_module, "run_on_host", fake.run)
     monkeypatch.setattr(subprocess, "run", _forbidden_subprocess)
     # btrfs scrubs and smartctl, which run in the container (ADR-0290): only smartctl -n standby,
-    # which leaves a sleeping disk asleep, is answered (FakeHost.run_in_container).
+    # which leaves a sleeping disk asleep, and -t, which asks for a self-test, are answered
+    # (FakeHost.run_in_container).
     monkeypatch.setattr(host_module, "run_in_container", fake.run_in_container)
+    # The container's node of a disk before smartctl opens it (ADR-0414): the fake's sysfs and
+    # /dev, never this machine's.
+    monkeypatch.setattr(host_module, "_host_disk_number", fake.host_disk_number)
+    monkeypatch.setattr(host_module, "_dev_is_the_containers", lambda: True)
+    monkeypatch.setattr(host_module, "_container_node_number", fake.container_node_number)
+    monkeypatch.setattr(host_module, "_make_container_node", fake.make_container_node)
     monkeypatch.setattr(pools, "_docker_api", fake.docker.api)
     monkeypatch.setattr(pools.settings, "pools_base_path", "/mnt/pools")
     # The checks before an app starts (apps.router.prepare_app_start) would look

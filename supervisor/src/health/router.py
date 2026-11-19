@@ -267,9 +267,8 @@ def collect_smart_snapshot(device: str) -> Optional[SmartHistoryEntry]:
     (failing health, logged errors, ...) still come with data.
     """
     try:
-        result = host.run_in_container(
-            ["smartctl", "-n", "standby", "-j", "-a", device], timeout=SMARTCTL_TIMEOUT
-        )
+        # Also of a disk attached after the supervisor started (ADR-0414).
+        result = host.run_smartctl(["-n", "standby", "-j", "-a"], device, timeout=SMARTCTL_TIMEOUT)
         if result.returncode & 0b11:  # bad command line, open failed or asleep
             return None
 
@@ -1174,7 +1173,7 @@ def parse_smart_data(device: str) -> SmartInfo:
     A disk that sleeps is left asleep (ADR-0378): its health status is STANDBY, without data.
     """
     try:
-        result = host.run_in_container(["smartctl", "-n", "standby", "-j", "-a", device], timeout=SMARTCTL_TIMEOUT)
+        result = host.run_smartctl(["-n", "standby", "-j", "-a"], device, timeout=SMARTCTL_TIMEOUT)
         if storage_disks.smartctl_found_it_asleep(result):
             return SmartInfo(
                 device=device, model="Unknown", serial="Unknown", firmware="Unknown", capacity="Unknown",
@@ -1182,6 +1181,10 @@ def parse_smart_data(device: str) -> SmartInfo:
                 attributes=[], self_test_status=None, last_test_result=None,
             )
         data = json.loads(result.stdout)
+    except host.NoHostDisk as e:  # it left the host after it was listed (ADR-0414)
+        raise HTTPException(400, e.strerror)
+    except host.DiskNodeError as e:  # logged by host.container_disk_node, once per disk
+        raise HTTPException(500, f"Failed to get SMART data: {e.strerror}")
     except (subprocess.TimeoutExpired, json.JSONDecodeError) as e:
         raise HTTPException(500, f"Failed to get SMART data: {e}")
 
@@ -1375,9 +1378,10 @@ def start_smart_test(
 ):
     """Start a SMART self-test on a whole disk of the host (``sda`` or ``/dev/sda``).
 
-    400 for another device or test type; 500 when the host's disks cannot
-    be listed or smartctl fails, and when it does not answer within
-    SMARTCTL_TIMEOUT: it is killed then (ADR-0290).
+    400 for another device or test type, also for a disk that left the host after it was listed;
+    500 when the host's disks cannot be listed, smartctl fails, the container's node of the disk
+    cannot be made (ADR-0414), and when smartctl does not answer within SMARTCTL_TIMEOUT: it is
+    killed then (ADR-0290).
     """
     if test_type not in ["short", "long", "conveyance"]:
         raise HTTPException(400, "Invalid test type. Use: short, long, or conveyance")
@@ -1385,11 +1389,15 @@ def start_smart_test(
     device = storage_disks.whole_disk_device(device)
 
     try:
-        result = host.run_in_container(["smartctl", "-t", test_type, device], timeout=SMARTCTL_TIMEOUT)
+        result = host.run_smartctl(["-t", test_type], device, timeout=SMARTCTL_TIMEOUT)
     except subprocess.TimeoutExpired:
         raise HTTPException(
             500, f"smartctl did not answer within {SMARTCTL_TIMEOUT} seconds: {device} may not be responding"
         )
+    except host.NoHostDisk as exc:
+        raise HTTPException(400, exc.strerror)
+    except host.DiskNodeError as exc:  # logged by host.container_disk_node, once per disk
+        raise HTTPException(500, f"smartctl could not run on {device}: {exc.strerror}")
 
     if result.returncode not in [0, 4]:  # 4 means test started
         raise HTTPException(500, f"Failed to start test: {result.stderr}")

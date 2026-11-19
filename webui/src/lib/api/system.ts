@@ -9,15 +9,6 @@ export interface SystemInfo {
   boot_time: string;
 }
 
-export interface PCIeDevice {
-  slot: string;
-  class_name: string;
-  vendor: string;
-  device: string;
-  revision: string | null;
-  driver: string | null;
-}
-
 export async function getSystemInfo(): Promise<SystemInfo> {
   return api.get<SystemInfo>('/system/info');
 }
@@ -35,8 +26,4 @@ export async function getTimezones(): Promise<{ timezones: string[] }> {
 /** Set the host's time zone; the Scheduler follows it (ADR-0264). */
 export async function setTimezone(timezone: string): Promise<{ status: string; timezone: string }> {
   return api.put<{ status: string; timezone: string }>('/system/timezone', { timezone });
-}
-
-export async function getPCIeDevices(): Promise<PCIeDevice[]> {
-  return api.get<PCIeDevice[]>('/system/pcie');
 }

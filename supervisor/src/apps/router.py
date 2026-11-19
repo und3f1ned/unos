@@ -12,7 +12,6 @@ from typing import Any, NoReturn
 
 from docker.errors import APIError, DockerException, NotFound
 from docker.types import Mount
-from docker.utils import parse_repository_tag
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from fastapi.responses import JSONResponse
 from sqlalchemy import select
@@ -32,7 +31,7 @@ from ..shares.constants import SMB_APP_UID, SMB_GROUP_GID, SMB_GROUP_NAME
 from ..shares.models import SmbShare
 from ..snapshots.router import SNAPSHOT_DIR_NAME
 from . import app_secrets, install_jobs, limits, preflight, pulls, stacks, usage
-from .catalog import APP_CATALOG, get_app_by_id, get_apps_by_category, search_apps
+from .catalog import APP_CATALOG, PINNED_IMAGES, get_app_by_id, get_apps_by_category, search_apps
 from . import platforms
 from .hardware import ContainerHardware, all_profiles, container_hardware, for_host, read_host_hardware
 from .schemas import (
@@ -122,9 +121,21 @@ async def _for_this_host(apps: list[AppTemplate]) -> list[AppTemplate]:
         apps = [for_host(app, hardware) for app in apps]
     host = platforms.host_platform()
     return [
-        app.model_copy(update={"host_platform": host, "available": not platforms.lacking(app, host)})
+        app.model_copy(update={
+            "host_platform": host,
+            "available": not platforms.lacking(app, host),
+            "system_disk_bytes": _images_size(app),
+        })
         for app in apps
     ]
+
+
+def _images_size(app: AppTemplate) -> int:
+    """About what the images of ``app``, each once, take on the system disk: the estimates of their
+    pins (ADR-0415). ``app`` is the host's copy (for_host), whose containers name the images that
+    its install pulls here, those of its hardware profiles included."""
+    images = dict.fromkeys(spec.image for spec in (app, *app.companions))
+    return sum(PINNED_IMAGES[image].disk_bytes for image in images if image in PINNED_IMAGES)
 
 
 @router.get("/installed", response_model=list[InstalledApp])
@@ -459,6 +470,8 @@ class _PlannedMount:
     # folder that it unlocks on the same pool (VolumeMapping.secret_for).
     generated_secret: bool = False
     secret_for: Path | None = None
+    # The hexadecimal digits of the generated secret (VolumeMapping.secret_digits, ADR-0415).
+    secret_digits: int = 64
 
 
 def _where(m: _PlannedMount) -> str:
@@ -585,6 +598,7 @@ def _plan_volumes(
                 app_data=is_app_data_path(volume.host),
                 generated_secret=volume.generated_secret,
                 secret_for=secret_for,
+                secret_digits=volume.secret_digits,
                 **mount,
             )
         )
@@ -998,17 +1012,20 @@ def _build_environment(
 _PINNED = re.compile(r"(?P<name>[^@\s]+):(?P<tag>[^@:/\s]+)@(?P<digest>sha256:[0-9a-f]{64})")
 
 
-def _pinned(ref: str) -> tuple[str, str, str] | None:
-    """The name, tag and digest of a pinned image reference; None for one with a floating tag."""
+def _pinned(ref: str) -> tuple[str, str, str]:
+    """The name, tag and digest of a pinned image reference. Every image of the catalog is pinned
+    (ADR-0410): ValueError for any other, which no install pulls."""
     match = _PINNED.fullmatch(ref)
-    return (match["name"], match["tag"], match["digest"]) if match else None
+    if match is None:
+        raise ValueError(f"{ref} is not pinned by tag and digest")
+    return match["name"], match["tag"], match["digest"]
 
 
 def _by_digest(ref: str) -> str:
-    """What a container is created from: ``name@digest`` for a pinned image, which Docker's
-    store resolves whatever tags it has; the reference itself for a floating one."""
-    pinned = _pinned(ref)
-    return f"{pinned[0]}@{pinned[2]}" if pinned else ref
+    """What a container is created from: ``name@digest``, which Docker's store resolves whatever
+    tags it has."""
+    name, _, digest = _pinned(ref)
+    return f"{name}@{digest}"
 
 
 @dataclass
@@ -1171,7 +1188,7 @@ def _install(
     generated = [
         str(m.source)
         for m in secrets_to_make
-        if app_secrets.create(_pool_root_of(m), m.source, m.target, uid=m.uid, gid=m.gid)
+        if app_secrets.create(_pool_root_of(m), m.source, m.target, uid=m.uid, gid=m.gid, digits=m.secret_digits)
     ]
 
     created = _create_and_start(client, template, containers, network, port_bindings, pool, progress)
@@ -1227,9 +1244,8 @@ def _secrets_to_make(template: AppTemplate, planned: list[_PlannedMount]) -> lis
 def _pull_images(
     client: Any, template: AppTemplate, containers: list[_NewContainer], progress: install_jobs.Progress
 ) -> dict[str, Any]:
-    """Pull the image of each container, each once, in the order of the containers: a floating
-    one always (as Docker's pull of a tag), a pinned one by its digest when Docker lacks it,
-    then tagged for the Images tab. The images of the pinned ones, by reference."""
+    """Pull the image of each container, each once, in the order of the containers, by its digest
+    when Docker lacks it, then tagged for the Images tab. The images, by reference."""
     images: dict[str, Any] = {}
     for ref in dict.fromkeys(c.image for c in containers):
         try:
@@ -1243,17 +1259,10 @@ def _pull_images(
     return images
 
 
-def _pull(client: Any, ref: str, progress: install_jobs.Progress) -> Any | None:
-    """Pull ``ref``, reporting each line of Docker's pull stream to ``progress`` (ADR-0384); the
-    image of a pinned one."""
-    pinned = _pinned(ref)
-    if pinned is None:
-        repository, tag = parse_repository_tag(ref)
-        progress.image(ref, "pulling")
-        _read_pull(pulls.open_pull(client, repository, tag or "latest"), ref, progress)
-        progress.pulled(ref, "pulled")
-        return None
-    name, tag, digest = pinned
+def _pull(client: Any, ref: str, progress: install_jobs.Progress) -> Any:
+    """Pull the pinned ``ref`` by its digest unless Docker has it, reporting each line of Docker's
+    pull stream to ``progress`` (ADR-0384); the image."""
+    name, tag, digest = _pinned(ref)
     try:
         image = client.images.get(f"{name}@{digest}")
     except NotFound:
@@ -1296,12 +1305,10 @@ def _read_pull(response: Any, ref: str, progress: install_jobs.Progress) -> None
 
 
 def _check_image_volumes(template: AppTemplate, containers: list[_NewContainer], images: dict[str, Any]) -> None:
-    """500 for a VOLUME that a pinned image declares and that its container neither binds nor
+    """500 for a VOLUME that an image declares and that its container neither binds nor
     keeps in RAM: Docker would make it an anonymous volume on the system disk (ADR-0381)."""
     for c in containers:
-        image = images.get(c.image)
-        if image is None:
-            continue
+        image = images[c.image]
         declared = ((image.attrs or {}).get("Config") or {}).get("Volumes") or {}
         targets = [m.target for m in c.planned] + list(c.spec.tmpfs)
         for path in sorted(declared):
@@ -1349,6 +1356,13 @@ def _create_options(
         options["shm_size"] = c.spec.shm_size
     if c.spec.stop_timeout is not None:
         options["stop_timeout"] = c.spec.stop_timeout
+    if c.spec.command is not None:
+        options["command"] = list(c.spec.command)
+    if not c.spec.image_healthcheck:
+        options["healthcheck"] = {"test": ["NONE"]}
+    # host.docker.internal names the host, as on Docker Desktop (ADR-0415).
+    if main and template.host_gateway:
+        options["extra_hosts"] = {"host.docker.internal": "host-gateway"}
     # The limits kept for it from before: Memory and MemorySwap, CpuPeriod and CpuQuota (ADR-0390).
     options.update(limits.create_args(c.kept_limits))
     return options
@@ -1408,7 +1422,9 @@ def _create_and_start(
             container.start()
             if c.companion in depends_on:
                 awaited = c
-                stacks.wait_ready(container, started_now=True, check=progress.check)
+                stacks.wait_ready(
+                    container, started_now=True, check=progress.check, ready_command=c.spec.ready_command
+                )
                 awaited = None
             progress.container(c.name, "running")
         current = None
@@ -1532,7 +1548,7 @@ def _roll_back(
 
 # The arguments of docker-py's low-level create_container that its high-level create takes too;
 # the others go to the host config.
-_CREATE_KEYS = ("name", "environment", "labels", "stop_timeout")
+_CREATE_KEYS = ("name", "environment", "labels", "stop_timeout", "command", "healthcheck")
 
 
 def _create_container(
@@ -1810,8 +1826,13 @@ def _start_all(app: stacks.InstalledContainers, done: _Done, *, every: bool, act
                 raise _failed(done, _failure(app, action, container, e))
             done.started.append(container.name)
         if container.labels.get(COMPANION_LABEL) in depends_on:
+            spec = app.spec(container)
             try:
-                stacks.wait_ready(container, started_now=container.name in done.started)
+                stacks.wait_ready(
+                    container,
+                    started_now=container.name in done.started,
+                    ready_command=spec.ready_command if spec is not None else None,
+                )
             except stacks.NotReady as e:
                 raise _failed(done, str(e))
             except _DOCKER_ERRORS as e:

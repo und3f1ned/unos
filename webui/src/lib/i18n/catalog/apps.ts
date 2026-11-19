@@ -32,6 +32,9 @@ export const en = {
 	// The notice of the install of an app whose first account to register becomes its administrator.
 	'apps.install.firstAdmin':
 		'Open {name} now and create its administrator: the first account that registers becomes the administrator.',
+	// The notice of the install of an app that comes with an account of a known e-mail and password.
+	'apps.install.defaultLogin':
+		'{name} comes with the account admin@admin.com and the password "password": sign in to {name} now and change both.',
 	// The states of an installed app: its main container runs, or is in any other state; an app
 	// that lacks one of its containers is incomplete (ADR-0381).
 	'apps.state.running': 'Running',
@@ -182,6 +185,8 @@ export const en = {
 	// An app whose database keeps the pool's disks awake while it runs (ADR-0381).
 	'apps.detail.diskAwake':
 		'While {name} runs, the hard disks of its pool do not go to sleep: its database and its jobs keep writing to them. Stop {name} on the Installed tab to let them sleep.',
+	// About what the images of an app take on the system disk, from their pins (ADR-0415).
+	'apps.detail.imagesSize': "{name}'s images take about {size} on the system disk.",
 	'apps.detail.dataLocations': 'Data locations on {pool}',
 	'apps.detail.mountedAt': 'mounted at {path}',
 	'apps.detail.mountedAtReadOnly': 'mounted at {path} (read-only)',
@@ -316,6 +321,8 @@ export const ru: Translation<typeof en> = {
 	'apps.installedNoticePool': 'Приложение {name} установлено. Его данные хранятся в пуле «{pool}».',
 	'apps.install.firstAdmin':
 		'Откройте {name} сейчас и создайте его администратора: администратором становится первая зарегистрированная учётная запись.',
+	'apps.install.defaultLogin':
+		'В {name} уже есть учётная запись admin@admin.com с паролем «password»: войдите в {name} сейчас и смените и адрес, и пароль.',
 	'apps.state.running': 'Работает',
 	'apps.state.stopped': 'Остановлено',
 	'apps.state.incomplete': 'Неполное',
@@ -444,6 +451,7 @@ export const ru: Translation<typeof en> = {
 		'Приложение {name} работает в {count} контейнерах в собственной сети: UNOS устанавливает, запускает, останавливает и удаляет их вместе. Каждый образ закреплён по дайджесту.',
 	'apps.detail.diskAwake':
 		'Пока {name} работает, жёсткие диски его пула не засыпают: его база данных и задания постоянно пишут на них. Чтобы они могли заснуть, остановите {name} на вкладке «Установленные».',
+	'apps.detail.imagesSize': 'Образы {name} занимают около {size} системного диска.',
 	'apps.detail.dataLocations': 'Расположение данных в пуле {pool}',
 	'apps.detail.mountedAt': 'монтируется в {path}',
 	'apps.detail.mountedAtReadOnly': 'монтируется в {path} (только чтение)',
