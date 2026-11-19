@@ -1,4 +1,4 @@
-from pydantic import AfterValidator, BaseModel
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field
 from typing import Annotated, Literal, Optional
 from enum import Enum
 
@@ -140,25 +140,52 @@ def _a_time(value: str) -> str:
 
 
 class AuditEntry(BaseModel):
-    id: str
+    """One entry of the audit log, as its line holds it."""
+
+    id: str = Field(description="The entry's id: audit_ and the time it was written, to the microsecond.")
     # As the line holds it, so that its hash still holds (ADR-0328): in UTC with Z since ADR-0401, as
     # the API answers it; in UTC without an offset before it (the clock of the supervisor's container).
-    timestamp: Annotated[str, AfterValidator(_a_time)]
+    timestamp: Annotated[str, AfterValidator(_a_time)] = Field(
+        description="When the entry was written, in UTC, as its line holds it."
+    )
     # A value of AuditAction when written; an older entry may name an action that AuditAction no
     # longer has, which is listed, filtered and exported as recorded (ADR-0359).
-    action: str
-    severity: AuditSeverity = AuditSeverity.INFO
-    username: Optional[str] = None
-    ip_address: Optional[str] = None
-    user_agent: Optional[str] = None
-    resource_type: Optional[str] = None  # e.g., "pool", "share", "user"
-    resource_id: Optional[str] = None    # e.g., pool name, share name
-    details: Optional[str] = None        # Additional context
-    success: bool = True
+    action: str = Field(
+        description="What was done: one of the values that GET /audit/actions lists, such as login_failed, or an "
+                    "older entry's action that the list no longer has."
+    )
+    severity: AuditSeverity = Field(AuditSeverity.INFO, description="info, warning or critical.")
+    username: Optional[str] = Field(
+        None,
+        description="Who did it: the user, the name that a failed sign-in gave, or system for the supervisor "
+                    "itself.",
+    )
+    ip_address: Optional[str] = Field(None, description="The client's address; null without a request.")
+    user_agent: Optional[str] = Field(
+        None, description="The client's User-Agent; null without one."
+    )
+    resource_type: Optional[str] = Field(
+        None, description="The kind of thing the entry is about, such as pool, share or user; null for none."
+    )  # e.g., "pool", "share", "user"
+    resource_id: Optional[str] = Field(
+        None, description="Which one, such as a pool's, a share's or a user's name; null for none."
+    )  # e.g., pool name, share name
+    details: Optional[str] = Field(
+        None, description="What happened, in English; null for none."
+    )  # Additional context
+    success: bool = Field(True, description="Whether the action succeeded.")
     # The hash chain (ADR-0328): the hash of the entry before it in the log, and its own hash over
     # its fields but this one. An entry written before the chain has neither.
-    prev_hash: Optional[str] = None
-    hash: Optional[str] = None
+    prev_hash: Optional[str] = Field(
+        None,
+        description="The hash of the entry before it in the log, hex; null for the log's first entry and for an "
+                    "entry from before the hash chain.",
+    )
+    hash: Optional[str] = Field(
+        None,
+        description="The SHA-256 of the entry's fields but this one, hex; null for an entry from before the hash "
+                    "chain.",
+    )
 
 
 class AuditEntryView(AuditEntry):
@@ -166,6 +193,30 @@ class AuditEntryView(AuditEntry):
     derived for the answer and never stored. "ok" while its hash and its link to the entry before
     it hold, "broken" where they do not, None for an entry from before the chain (ADR-0328)."""
 
-    chain: Optional[Literal["ok", "broken"]] = None
+    model_config = ConfigDict(json_schema_extra={"examples": [{
+        "id": "audit_20261119081503004211",
+        "timestamp": "2026-11-19T08:15:03.004211Z",
+        "action": "share_updated",
+        "severity": "info",
+        "username": "admin",
+        "ip_address": "192.0.2.10",
+        "user_agent": "Mozilla/5.0 (X11; Linux x86_64; rv:140.0) Gecko/20100101 Firefox/140.0",
+        "resource_type": "share",
+        "resource_id": "media",
+        "details": "Updated share media: access of alice: write",
+        "success": True,
+        "prev_hash": "5d0c8a4f9e1b7c3a2f6e8d4b0a9c7e5f3d1b8a6c4e2f0d9b7a5c3e1f8d6b4a20",
+        "hash": "9a3e5c7b1d2f4a6c8e0b2d4f6a8c0e2b4d6f8a0c2e4b6d8f0a2c4e6b8d0f2a41",
+        "chain": "ok",
+    }]})
+
+    chain: Optional[Literal["ok", "broken"]] = Field(
+        None,
+        description="Where the entry stands in the hash chain: ok while its hash and its link to the entry "
+                    "before it hold, broken where they do not, null for an entry from before the chain.",
+    )
     # The entry's time in UTC with its offset, also for an entry whose line holds none (ADR-0401).
-    timestamp: UtcDatetime
+    timestamp: UtcDatetime = Field(
+        description="When the entry was written, in UTC with Z; an older entry whose line holds no offset was "
+                    "written in UTC too."
+    )

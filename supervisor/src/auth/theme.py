@@ -10,7 +10,7 @@ from __future__ import annotations
 from typing import Literal, get_args
 
 from fastapi import APIRouter, Depends, Request
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 from sqlalchemy.dialects.sqlite import insert
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -19,6 +19,7 @@ from sqlalchemy.sql import func
 from ..audit.router import log_action
 from ..audit.schemas import AuditAction
 from ..database import get_db
+from ..openapi import BODY, SIGNED_IN, errors
 from .models import User, UserTheme
 from .utils import verify_token
 
@@ -30,9 +31,11 @@ DEFAULT: Theme = "system"
 
 
 class ThemeBody(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    """The user's theme of the web UI."""
 
-    theme: Theme
+    model_config = ConfigDict(extra="forbid", json_schema_extra={"examples": [{"theme": "dark"}]})
+
+    theme: Theme = Field(description="dark, light, or system: the light or dark setting of the user's device.")
 
 
 async def _stored(db: AsyncSession, user_id: int) -> object:
@@ -44,17 +47,18 @@ def _read(stored: object) -> Theme:
     return stored if isinstance(stored, str) and stored in THEMES else DEFAULT  # type: ignore[return-value]
 
 
-@router.get("", response_model=ThemeBody)
+@router.get("", response_model=ThemeBody, summary="Read your theme", responses=errors(SIGNED_IN))
 async def get_theme(user: User = Depends(verify_token), db: AsyncSession = Depends(get_db)):
-    """The user's theme; system when they never chose one."""
+    """The signed-in user's theme of the web UI; system when they never chose one. Any signed-in user."""
     return ThemeBody(theme=_read(await _stored(db, user.id)))
 
 
-@router.put("", response_model=ThemeBody)
+@router.put("", response_model=ThemeBody, summary="Set your theme", responses=errors(SIGNED_IN, BODY))
 async def put_theme(
     request: Request, body: ThemeBody, user: User = Depends(verify_token), db: AsyncSession = Depends(get_db),
 ):
-    """Keep the user's theme; the theme they have already writes nothing."""
+    """Keep the signed-in user's theme of the web UI; the theme they have already writes nothing, and a
+    change is written to the audit log. Any signed-in user."""
     user_id, username = user.id, user.username
     before = _read(await _stored(db, user_id))
     if body.theme != before:

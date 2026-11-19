@@ -9,14 +9,16 @@ name, are audited (ADR-0351).
 import asyncio
 import json
 import re
+from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Request
-from pydantic import BaseModel
+from fastapi import APIRouter, Depends, HTTPException, Path, Request
+from pydantic import BaseModel, ConfigDict, Field
 
 from . import links
 from ..audit.changes import audit_change
 from ..audit.schemas import AuditAction
 from ..auth.utils import verify_token
+from ..openapi import BODY, answer, errors
 from ..security.validators import validate_interface_name
 
 router = APIRouter(prefix="/network", tags=["network"])
@@ -24,46 +26,108 @@ router = APIRouter(prefix="/network", tags=["network"])
 # The host's /etc/hostname, mounted into the container (deploy/docker-compose.yml).
 
 
+_ETH0 = {
+    "name": "eth0", "mac": "00:00:5e:00:53:01", "state": "UP", "enabled": True,
+    "ip_addresses": ["192.0.2.10/24", "2001:db8::10/64", "fe80::1/64"], "speed": 1000, "mtu": 1500,
+    "type": "ether", "revert_in": None,
+}
+
+
 class NetworkInterface(BaseModel):
-    name: str
-    mac: str
+    """A network interface of the host."""
+
+    model_config = ConfigDict(json_schema_extra={"examples": [_ETH0]})
+
+    name: str = Field(description="The interface's name, such as eth0, end1 or wlan0.")
+    mac: str = Field(description="Its link-layer address, a MAC address for Ethernet and Wi-Fi; empty when it has none.")
     # The operational state the kernel reports: UP, DOWN (also without a link), UNKNOWN, ...
-    state: str
+    state: str = Field(
+        description="The operational state that the kernel reports, such as UP, DOWN (also without a link) or UNKNOWN."
+    )
     # Administratively up: what Disable and Enable change.
-    enabled: bool
+    enabled: bool = Field(description="Whether it is administratively up: what Disable and Enable change.")
     # IPv4 and IPv6, with their prefix lengths.
-    ip_addresses: list[str]
+    ip_addresses: list[str] = Field(description="Its IPv4 and IPv6 addresses, each with its prefix length.")
     # Mb/s, while the link is up and the driver knows it.
-    speed: int | None
-    mtu: int
-    type: str
+    speed: int | None = Field(
+        description="The link speed in Mb/s; null while the link is not UP, for Wi-Fi and when the driver does not "
+                    "know it."
+    )
+    mtu: int = Field(description="The MTU in bytes.")
+    type: str = Field(
+        description="The link type that ip reports, such as ether, or none for a link without one (WireGuard); "
+                    "unknown when ip reports no type."
+    )
     # Seconds until a disable that waits to be kept comes back on by itself.
-    revert_in: int | None
+    revert_in: int | None = Field(
+        description="Seconds until the automatic revert turns a disabled interface back on unless the disable is "
+                    "kept; null when no disable waits to be kept."
+    )
 
 
 class InterfaceList(BaseModel):
-    interfaces: list[NetworkInterface]
+    """The host's interfaces."""
+
+    model_config = ConfigDict(json_schema_extra={"examples": [{
+        "interfaces": [
+            _ETH0,
+            {"name": "wlan0", "mac": "00:00:5e:00:53:02", "state": "DOWN", "enabled": False, "ip_addresses": [],
+             "speed": None, "mtu": 1500, "type": "ether", "revert_in": 42},
+        ],
+        "revert_seconds": 60,
+    }]})
+
+    interfaces: list[NetworkInterface] = Field(description="The interfaces, without the loopback, dummy0 and Docker's.")
     # How long a disable waits to be kept.
-    revert_seconds: int
+    revert_seconds: int = Field(description="How long a disable waits to be kept, in seconds.")
 
 
 class DNSConfig(BaseModel):
-    nameservers: list[str]
-    search_domains: list[str]
+    """The host's DNS servers and search domains."""
+
+    model_config = ConfigDict(json_schema_extra={"examples": [{
+        "nameservers": ["192.0.2.1", "2001:db8::1"], "search_domains": ["example.com"],
+    }]})
+
+    nameservers: list[str] = Field(
+        description="The addresses of the DNS servers: systemd-resolved's without its fallback and link-local IPv6 "
+                    "servers, else /etc/resolv.conf's without the local stub resolvers 127.0.0.53 and 127.0.0.11."
+    )
+    search_domains: list[str] = Field(description="The search domains, without routing-only domains.")
 
 
 class HostnameConfig(BaseModel):
-    hostname: str
+    """The host's name."""
+
+    model_config = ConfigDict(json_schema_extra={"examples": [{"hostname": "nas"}]})
+
+    hostname: str = Field(
+        description="The host's name. A new one is one label of letters, digits and hyphens, at most 63 characters, "
+                    "with no hyphen at either end; the host's own is unknown when it cannot be read."
+    )
 
 
 class NetworkStats(BaseModel):
-    interface: str
-    rx_bytes: int
-    tx_bytes: int
-    rx_packets: int
-    tx_packets: int
-    rx_errors: int
-    tx_errors: int
+    """The traffic counters of one interface, as the host's kernel counts them."""
+
+    interface: str = Field(description="The interface's name.")
+    rx_bytes: int = Field(description="Bytes received.")
+    tx_bytes: int = Field(description="Bytes sent.")
+    rx_packets: int = Field(description="Packets received.")
+    tx_packets: int = Field(description="Packets sent.")
+    rx_errors: int = Field(description="Errors while receiving.")
+    tx_errors: int = Field(description="Errors while sending.")
+
+
+# The path parameter of the routes of one interface.
+InterfaceName = Annotated[str, Path(description="The interface's name, such as eth0, end1 or wlan0.")]
+
+# What every route of one interface answers for its name (security.validators.validate_interface_name,
+# links._link), in the API documentation (ADR-0417).
+_NAME_ERRORS = {
+    400: "The name is not an interface's name, or it is the loopback's, dummy0 or one of Docker's: UNOS does not change it.",
+    404: "The host has no interface of this name.",
+}
 
 
 def _is_dockers(dev: str) -> bool:
@@ -114,9 +178,13 @@ async def _interface(entry: dict) -> NetworkInterface:
     )
 
 
-@router.get("/interfaces", response_model=InterfaceList)
+@router.get(
+    "/interfaces", response_model=InterfaceList, summary="List the host's interfaces",
+    responses=errors({500: "ip could not list the host's interfaces, or its output could not be read."}),
+)
 async def get_interfaces(_=Depends(verify_token)):
-    """The host's interfaces, without the loopback and Docker's."""
+    """The host's network interfaces, without the loopback, dummy0 and Docker's, and how long a disable
+    waits to be kept."""
     result = await links.run(["ip", "-j", "addr", "show"])
     if not result.ok:
         raise HTTPException(500, f"Failed to get network interfaces: {links.reason(result)}")
@@ -128,9 +196,16 @@ async def get_interfaces(_=Depends(verify_token)):
     return InterfaceList(interfaces=list(interfaces), revert_seconds=links.REVERT_SECONDS)
 
 
-@router.get("/interfaces/{name}", response_model=NetworkInterface)
-async def get_interface(name: str, _=Depends(verify_token)):
-    """One interface of the host."""
+@router.get(
+    "/interfaces/{name}", response_model=NetworkInterface, summary="Read an interface",
+    responses=errors({
+        400: "The name is not an interface's name.",
+        404: "The host has no interface of this name, or it is the loopback, dummy0 or one of Docker's.",
+        500: "ip could not read the interface, or its output could not be read.",
+    }),
+)
+async def get_interface(name: InterfaceName, _=Depends(verify_token)):
+    """One network interface of the host."""
     validate_interface_name(name)
     if links.is_hidden(name):
         raise HTTPException(404, f"Interface {name} not found")
@@ -150,10 +225,26 @@ async def _audit_interface(request: Request, user, name: str, details: str, *, s
                        resource_type="network_interface", resource_id=name, details=details, success=success)
 
 
-@router.post("/interfaces/{name}/down")
-async def bring_interface_down(request: Request, name: str, user=Depends(verify_token)):
-    """Disable an interface. It comes back on by itself after revert_in seconds unless the
-    change is kept with POST .../down/confirm (ADR-0244)."""
+@router.post(
+    "/interfaces/{name}/down", summary="Disable an interface",
+    responses={
+        **answer({"status": "success", "interface": "eth0", "state": "down", "revert_in": 60},
+                 "success, the interface, down, and the seconds until the automatic revert turns it back on unless "
+                 "the disable is kept."),
+        **errors(_NAME_ERRORS, {
+            409: "The interface is disabled already, carries VLANs, or is still coming back on from its last disable.",
+            500: "A step on the host failed, such as reading the interface or its VLANs, saving its addresses and "
+                 "routes, arming the automatic revert or disabling it: the answer says which.",
+        }),
+    },
+)
+async def bring_interface_down(request: Request, name: InterfaceName, user=Depends(verify_token)):
+    """Disable an interface, after saving its addresses and routes and arming the automatic
+    revert: unless POST /network/interfaces/{name}/down/confirm keeps the disable within revert_in
+    seconds, the interface comes back on with them. The audit log gets network_config_changed.
+    
+    ADR-0244, ADR-0246, ADR-0351.
+    """
     revert_in = await links.disable(name)
     await _audit_interface(
         request, user, name, f"Disabled; it comes back on by itself in {revert_in} seconds unless the disable is kept"
@@ -161,20 +252,47 @@ async def bring_interface_down(request: Request, name: str, user=Depends(verify_
     return {"status": "success", "interface": name, "state": "down", "revert_in": revert_in}
 
 
-@router.post("/interfaces/{name}/down/confirm")
-async def keep_interface_down(request: Request, name: str, user=Depends(verify_token)):
-    """Keep a disable that waits to be kept; 409 when none waits (it was turned back on)."""
+@router.post(
+    "/interfaces/{name}/down/confirm", summary="Keep an interface's disable",
+    responses={
+        **answer({"status": "success", "interface": "eth0", "state": "down"},
+                 "success, the interface, and down: it stays disabled."),
+        **errors(_NAME_ERRORS, {
+            409: "No disable of the interface waits to be kept: it was turned back on, or not disabled from UNOS.",
+            500: "The interface could not be read, or the disable could not be kept and the automatic revert turns "
+                 "it back on, or whether it was kept is not known.",
+        }),
+    },
+)
+async def keep_interface_down(request: Request, name: InterfaceName, user=Depends(verify_token)):
+    """Keep a disable that waits to be kept: its automatic revert is called off and the interface
+    stays disabled. The audit log gets network_config_changed.
+    
+    ADR-0244, ADR-0246.
+    """
     await links.keep(name)
     await _audit_interface(request, user, name, "Disable kept: it stays off")
     return {"status": "success", "interface": name, "state": "down"}
 
 
-@router.post("/interfaces/{name}/up")
-async def bring_interface_up(request: Request, name: str, user=Depends(verify_token)):
-    """Enable an interface, with the addresses and routes its disable saved.
-
-    An Enable that turned it on is audited; as failed when not all of them could be restored,
-    which answers 500 (ADR-0351).
+@router.post(
+    "/interfaces/{name}/up", summary="Enable an interface",
+    responses={
+        **answer({"status": "success", "interface": "eth0", "state": "up"},
+                 "success, the interface, and up; also for an interface that was enabled already."),
+        **errors(_NAME_ERRORS, {
+            500: "The interface could not be read or turned on, or it is on but its saved addresses and routes "
+                 "could not all be restored.",
+        }),
+    },
+)
+async def bring_interface_up(request: Request, name: InterfaceName, user=Depends(verify_token)):
+    """Enable an interface, with the addresses and routes its disable saved; a disable that waits
+    to be kept is called off. An interface that is enabled already is left as it is. The audit log
+    gets network_config_changed when the interface was turned on, as failed when not all of them
+    could be restored.
+    
+    ADR-0244, ADR-0246, ADR-0351.
     """
     try:
         enabled = await links.enable(name)
@@ -189,9 +307,20 @@ async def bring_interface_up(request: Request, name: str, user=Depends(verify_to
     return {"status": "success", "interface": name, "state": "up"}
 
 
-@router.get("/stats")
+@router.get(
+    "/stats", summary="Read the interfaces' traffic counters",
+    responses={
+        **answer(
+            {"stats": [{"interface": "eth0", "rx_bytes": 9123456789, "tx_bytes": 1234567890, "rx_packets": 7345123,
+                        "tx_packets": 2345678, "rx_errors": 0, "tx_errors": 0}]},
+            "stats: for each interface of the host but the loopback, dummy0 and Docker's, its name and the bytes, packets "
+            "and errors it received (rx) and sent (tx).",
+        ),
+        **errors({500: "The host's /proc/net/dev could not be read."}),
+    },
+)
 async def get_network_stats(_=Depends(verify_token)):
-    """Traffic counters of the host's interfaces, from its /proc/net/dev."""
+    """The traffic counters of the host's interfaces, from its /proc/net/dev."""
     result = await links.run(["cat", "/proc/net/dev"])
     if not result.ok:
         raise HTTPException(500, f"Failed to get network stats: {links.reason(result)}")
@@ -237,7 +366,10 @@ def parse_resolvectl(text: str) -> tuple[list[str], list[str]]:
     return servers, domains
 
 
-@router.get("/dns", response_model=DNSConfig)
+@router.get(
+    "/dns", response_model=DNSConfig, summary="Read the host's DNS settings",
+    responses=errors({500: "Neither resolvectl nor the host's /etc/resolv.conf could be read."}),
+)
 async def get_dns_config(_=Depends(verify_token)):
     """The host's DNS servers and search domains: systemd-resolved's, else /etc/resolv.conf's."""
     servers: list[str] = []
@@ -258,17 +390,33 @@ async def get_dns_config(_=Depends(verify_token)):
     return DNSConfig(nameservers=servers, search_domains=domains)
 
 
-@router.get("/hostname", response_model=HostnameConfig)
+@router.get("/hostname", response_model=HostnameConfig, summary="Read the host's name")
 async def get_hostname(_=Depends(verify_token)):
-    """The host's name, as `hostname` prints it on the host (ADR-0331)."""
+    """The host's name, as hostname prints it on the host; unknown when it cannot be read.
+    
+    ADR-0331.
+    """
     result = await links.run(["hostname"])
     return HostnameConfig(hostname=result.stdout.strip() if result.ok else "unknown")
 
 
-@router.put("/hostname")
+@router.put(
+    "/hostname", summary="Set the host's name",
+    responses={
+        **answer({"status": "success", "hostname": "nas"}, "success, and the host's new name."),
+        **errors(BODY, {
+            400: "The name is not one label of letters, digits and hyphens of at most 63 characters, with no hyphen "
+                 "at either end.",
+            500: "hostnamectl could not set the name.",
+        }),
+    },
+)
 async def set_hostname(request: Request, config: HostnameConfig, user=Depends(verify_token)):
-    """Set the host's name with hostnamectl, which also writes /etc/hostname: it lasts (ADR-0331).
-    A name other than the one `hostname` printed before is audited (ADR-0351)."""
+    """Set the host's name with hostnamectl, which also writes /etc/hostname: it lasts after a
+    restart. A name other than the one before is written to the audit log (settings_changed).
+    
+    ADR-0331, ADR-0351.
+    """
     if not re.fullmatch(r"[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?", config.hostname):
         raise HTTPException(400, "Invalid hostname format")
     before = await links.run(["hostname"])
@@ -284,7 +432,25 @@ async def set_hostname(request: Request, config: HostnameConfig, user=Depends(ve
     return {"status": "success", "hostname": config.hostname}
 
 
-@router.get("/routes")
+@router.get(
+    "/routes", summary="List the host's routes",
+    responses={
+        **answer(
+            {"routes": [
+                {"dst": "default", "gateway": "192.0.2.1", "dev": "eth0", "protocol": "dhcp",
+                 "prefsrc": "192.0.2.10", "metric": 100, "flags": []},
+                {"dst": "192.0.2.0/24", "dev": "eth0", "protocol": "kernel", "scope": "link",
+                 "prefsrc": "192.0.2.10", "metric": 100, "flags": []},
+                {"dst": "2001:db8::/64", "dev": "eth0", "protocol": "ra", "metric": 100, "flags": [],
+                 "pref": "medium"},
+            ]},
+            "routes: the routes of the main IPv4 table, then of the IPv6 one when the host has it, each as "
+            "ip -j route prints it (dst, gateway, dev, protocol, scope, prefsrc, metric, flags and others), "
+            "without those of Docker's interfaces.",
+        ),
+        **errors({500: "ip could not list the IPv4 routes, or its output could not be read."}),
+    },
+)
 async def get_routes(_=Depends(verify_token)):
     """The host's IPv4 and IPv6 routing tables (main), without Docker's interfaces."""
     ipv4 = await links.run(["ip", "-j", "route", "show"])
@@ -298,9 +464,17 @@ async def get_routes(_=Depends(verify_token)):
     return {"routes": [r for r in routes if isinstance(r, dict) and not _is_dockers(r.get("dev", ""))]}
 
 
-@router.get("/gateway")
+@router.get(
+    "/gateway", summary="Read the host's default gateway",
+    responses={
+        **answer({"gateway": "192.0.2.1", "interface": "eth0"},
+                 "gateway and interface of the IPv4 default route, one not through Docker's interfaces when there "
+                 "is one; both null without a default route, the gateway null for a route without one."),
+        **errors({500: "ip could not list the default routes, or its output could not be read."}),
+    },
+)
 async def get_default_gateway(_=Depends(verify_token)):
-    """The host's IPv4 default route."""
+    """The host's IPv4 default route: its gateway and its interface."""
     result = await links.run(["ip", "-j", "route", "show", "default"])
     if not result.ok:
         raise HTTPException(500, f"Failed to get gateway: {links.reason(result)}")
@@ -311,9 +485,22 @@ async def get_default_gateway(_=Depends(verify_token)):
     return {"gateway": route.get("gateway"), "interface": route.get("dev")}
 
 
-@router.get("/connections")
+@router.get(
+    "/connections", summary="List the host's connections",
+    responses={
+        **answer(
+            {"connections": [
+                {"protocol": "tcp", "state": "ESTAB", "local": "192.0.2.10:445", "remote": "192.0.2.20:51234"},
+                {"protocol": "udp", "state": "UNCONN", "local": "0.0.0.0:3702", "remote": "0.0.0.0:*"},
+            ]},
+            "connections: at most 50 of the host's TCP and UDP sockets, each with its protocol, its state, and "
+            "its local and remote address and port as ss prints them.",
+        ),
+        **errors({500: "ss could not list the host's sockets."}),
+    },
+)
 async def get_connections(_=Depends(verify_token)):
-    """The host's TCP and UDP sockets (`ss -tunap`), the first 50."""
+    """The host's TCP and UDP sockets (ss -tunap), the first 50."""
     result = await links.run(["ss", "-tunap"])
     if not result.ok:
         raise HTTPException(500, f"Failed to get connections: {links.reason(result)}")

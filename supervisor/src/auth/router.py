@@ -3,12 +3,14 @@ import json
 import logging
 from dataclasses import dataclass
 from datetime import timedelta
-from fastapi import APIRouter, Depends, HTTPException, Query, status, Request, Response
+from typing import Annotated
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, status, Request, Response
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import delete, select, func, update
 import pyotp
 from ..database import get_db
+from ..openapi import ADMIN, BODY, RATE_LIMITED, SIGNED_IN, answer, errors
 from ..times import db_now
 from ..audit.router import log_action
 from ..audit.schemas import AuditAction, AuditSeverity
@@ -48,6 +50,43 @@ router.include_router(security_keys.router)
 logger = logging.getLogger(__name__)
 
 LAST_ADMIN_DETAIL = "At least one administrator account must remain"
+
+# ==================== The API documentation's texts (ADR-0417) ====================
+
+# The 403 of the routes that a setup-only account's session reaches (verify_token_allowing_setup).
+_SETUP_ALLOWED = {
+    403: "The credential does not reach this route: the session cookie came from another page than the web "
+         "UI's, or an API token belongs to an account that must set up two-factor authentication first or its "
+         "scope does not reach this route.",
+}
+# The 403 of the routes that change API tokens (require_session).
+_SESSION_ONLY = {
+    403: "The credential does not reach this route: an API token (only a session token creates, enables, "
+         "disables or deletes API tokens), a session cookie from another page than the web UI's, or an account "
+         "that must set up two-factor authentication first.",
+}
+_SELF_GONE = "The signed-in user was deleted or renamed meanwhile."
+_NO_USER = "No user has this id."
+_ID_REUSED = "The id now belongs to another username: SQLite reuses the ids of deleted users."
+_SMB_PASSWORD_RULES = "the rules of SMB passwords: at least 8 characters, no control characters, not a common password"
+_SMB_HOST_FAILED = (
+    "A step on the host failed (Samba's tools are missing, or a command failed or did not answer in time), or "
+    "the database was busy."
+)
+_SMB_REVOKE_FAILED = (
+    "Samba's password could not be removed (its tools are missing, or a command failed or did not answer in "
+    "time), or the database was busy."
+)
+_SMB_CANNOT_TURN_ON = (
+    "SMB is unavailable for the user (an administrator, or a username that SMB cannot use), or the host cannot "
+    "take the account: smb.conf is not UNOS's own yet, a host account, group or Samba account of the name "
+    "exists, the user id or the gid of unos-smb belongs to another host account or group, the previous account "
+    "is still in use, or no SMB user ids are left"
+)
+_USER_ID = Annotated[int, Path(description="The user's id, as GET /auth/users lists it.")]
+_EXPECTED_USERNAME = (
+    "The user's current name, as the request was built for it: 409 when the id now belongs to another user."
+)
 
 # First-run setup must create exactly one administrator. The supervisor runs
 # as a single uvicorn process, so this lock makes "no users yet" and the
@@ -166,10 +205,19 @@ async def _my_smb_status(db: AsyncSession, user: User, row: SmbAccount | None) -
     return MySmbStatus(account=account, totp_required=bool(user.totp_enabled), shares=shares)
 
 
-@router.post("/setup", response_model=UserResponse)
+@router.post(
+    "/setup",
+    response_model=UserResponse,
+    summary="Create the first administrator",
+    responses=errors(BODY, RATE_LIMITED, {
+        400: "The username breaks the rule of new users, smb_enabled is true (administrators cannot use SMB), "
+             "or a user exists already.",
+    }),
+)
 @limiter.limit("3/minute")  # Limit setup attempts
 async def setup_admin(request: Request, user: UserCreate, db: AsyncSession = Depends(get_db)):
-    """Create initial admin user. Only works if no users exist."""
+    """First-run setup: create the first administrator, only while no user exists. Public: it needs no
+    credential."""
     validate_new_username(user.username)
     if user.smb_enabled:
         raise HTTPException(status_code=400, detail="Administrators cannot use SMB")
@@ -203,7 +251,18 @@ async def _audit_sign_in(**entry) -> None:
         pass  # log_action reported the entry
 
 
-@router.post("/login", response_model=Token, response_model_exclude_none=True)
+@router.post(
+    "/login",
+    response_model=Token,
+    response_model_exclude_none=True,
+    summary="Sign in",
+    responses=errors(BODY, RATE_LIMITED, {
+        401: "The username or password is wrong; or the second factor is: a two-factor code that is wrong or "
+             "was used already, a recovery code that is not an unused one of the account, or a security key's "
+             "answer that is not accepted, whose challenge expired or whose signature counter went backwards.",
+        403: "cookie is true, but the request did not come from the web UI's own page (its Origin).",
+    }),
+)
 @limiter.limit("5/minute")  # 5 login attempts per minute per IP
 async def login(
     request: Request,
@@ -211,10 +270,18 @@ async def login(
     login_request: LoginRequest,
     db: AsyncSession = Depends(get_db)
 ):
-    """Sign in. With ``cookie`` (the web UI) the session goes into the session cookie and the
-    answer holds no token, only the session key that the page sends with the cookie; only the web
-    UI's own page may ask for it, which is checked before the password (ADR-0397). Without it
-    (programs) the answer carries the token, for a Bearer header."""
+    """Sign in with the username and password. For an account with two-factor authentication, a request
+    without a second factor answers requires_totp, with the challenge for its security keys when it has
+    some for this address; the next request sends the password again with a two-factor code, a recovery
+    code or a security key's answer. With ``cookie`` (the web UI) the session goes into the session cookie and the
+    answer holds no token, only the session key that the page sends with the cookie; only the web UI's
+    own page may ask for it, which is checked before the password. Without it (programs) the answer
+    carries the token, for a Bearer header. A wrong password, a refused second factor and a completed
+    sign-in go into the login history; the step that asks for the second factor does not. Public: it
+    needs no credential.
+    \f
+    ADR-0397, ADR-0238, ADR-0409.
+    """
     if login_request.cookie and not from_own_origin(request, origin_required=True):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=CROSS_ORIGIN)
     result = await db.execute(select(User).where(User.username == login_request.username))
@@ -352,7 +419,16 @@ async def _own_account_audit(
         pass  # log_action reported the entry
 
 
-@router.post("/logout")
+@router.post(
+    "/logout",
+    summary="Sign out",
+    responses={
+        **answer({"status": "ok"}, "The session has ended."),
+        **errors(SIGNED_IN, _SETUP_ALLOWED, {
+            400: "The credential is an API token, which is no session: delete the token to end it.",
+        }),
+    },
+)
 async def logout(
     request: Request,
     response: Response,
@@ -360,9 +436,13 @@ async def logout(
     current_user: User = Depends(verify_token_allowing_setup),
     db: AsyncSession = Depends(get_db),
 ):
-    """End the session of this token on the server (ADR-0329); an API token is not a session.
-    Only the sign-out that ended the session writes the audit entry (ADR-0343). A session of the
-    cookie also deletes the cookie (ADR-0397)."""
+    """End the session of this session token on the server, and delete the session cookie when the
+    token came in it; an API token is no session. Written to the audit log. Any signed-in user, also a
+    setup-only account's session.
+    \f
+    ADR-0329. Only the sign-out that ended the session writes the audit entry (ADR-0343). A session of
+    the cookie also deletes the cookie (ADR-0397).
+    """
     session_id = session_id_of(found.token)
     if session_id is None:
         raise HTTPException(status_code=400, detail="An API token is no session: delete it to end it")
@@ -376,10 +456,16 @@ async def logout(
     return {"status": "ok"}
 
 
-@router.get("/me", response_model=UserResponse)
+@router.get(
+    "/me", response_model=UserResponse, summary="Read your account", responses=errors(SIGNED_IN, _SETUP_ALLOWED),
+)
 async def get_current_user(user: User = Depends(verify_token_allowing_setup), db: AsyncSession = Depends(get_db)):
-    """The signed-in user, and what the requirement of two-factor authentication asks of them
-    (src/auth/requirement.py): by when to set it up, and whether the grace period is over."""
+    """The signed-in user, and what the two-factor requirement asks of them: by when to set up
+    two-factor authentication, and whether the grace period is over. Any signed-in user, also a
+    setup-only account's session.
+    \f
+    src/auth/requirement.py.
+    """
     response = UserResponse.model_validate(user)
     state = await requirement.account_state(db, user)
     if state is not None:
@@ -387,15 +473,40 @@ async def get_current_user(user: User = Depends(verify_token_allowing_setup), db
     return response
 
 
-@router.get("/status")
+@router.get(
+    "/status",
+    summary="Check whether first-run setup is needed",
+    responses=answer(
+        {"setup_required": False},
+        "setup_required: true while no user exists, when POST /auth/setup creates the first administrator.",
+    ),
+)
 async def get_auth_status(db: AsyncSession = Depends(get_db)):
-    """Check if setup is required (no users exist)."""
+    """Whether first-run setup is needed: true while no user exists. Public: it needs no credential."""
     result = await db.execute(select(func.count()).select_from(User))
     count = result.scalar()
     return {"setup_required": count == 0}
 
 
-@router.post("/change-password")
+@router.post(
+    "/change-password",
+    summary="Change your password",
+    responses={
+        **answer(
+            {"status": "ok", "message": "Password changed successfully", "warnings": []},
+            "The password is changed. warnings: that some of the user's open SMB connections could not be ended.",
+        ),
+        **errors(SIGNED_IN, BODY, {
+            400: f"The current password is wrong, or the user's SMB account is active and the new password "
+                 f"breaks {_SMB_PASSWORD_RULES}.",
+            404: _SELF_GONE,
+            409: "The user's SMB account meets a host account that UNOS did not create, or a Samba account of "
+                 "the name in another letter case.",
+            503: "Samba's copy of the password could not be changed (its tools are missing, or a command failed "
+                 "or did not answer in time), or the database was busy.",
+        }),
+    },
+)
 async def change_password(
     request: Request,
     data: PasswordChange,
@@ -403,13 +514,15 @@ async def change_password(
     current_user: User = Depends(verify_token),
     db: AsyncSession = Depends(get_db)
 ):
-    """Change current user password.
-
+    """Change the signed-in user's own password, with the current one. The user's other sessions end;
+    an active SMB account gets the new password first, and its open SMB connections end. Written to the
+    audit log. Any signed-in user.
+    \f
     For an active SMB account, Samba's copy is changed first and the
     account's open SMB sessions end after the commit (ADR-0121, ADR-0123). A self flow:
     its warnings are fixed texts (the details are logged). A stored change writes a
     password_change entry, and a change of Samba's copy also an smb_account_updated one
-    (ADR-0343, ADR-0320).
+    (ADR-0343, ADR-0320). Sessions: ADR-0329.
     """
     keep = session_id_of(found.token)  # read before anything changes
     verified_hash = current_user.hashed_password
@@ -452,12 +565,21 @@ async def change_password(
 
 # ==================== TOTP 2FA Endpoints ====================
 
-@router.post("/totp/setup", response_model=TOTPSetupResponse)
+@router.post(
+    "/totp/setup",
+    response_model=TOTPSetupResponse,
+    summary="Start setting up two-factor authentication",
+    responses=errors(SIGNED_IN, _SETUP_ALLOWED, {400: "The user has two-factor authentication already."}),
+)
 async def setup_totp(
     current_user: User = Depends(verify_token_allowing_setup),
     db: AsyncSession = Depends(get_db)
 ):
-    """Generate TOTP secret for 2FA setup."""
+    """A new secret for the authenticator app, which POST /auth/totp/enable confirms; a later setup
+    replaces it. Any signed-in user, also a setup-only account's session.
+    \f
+    Stored only while 2FA is still off (ADR-0343).
+    """
     if current_user.totp_enabled:
         raise HTTPException(status_code=400, detail="2FA is already enabled")
 
@@ -480,15 +602,29 @@ async def setup_totp(
     return TOTPSetupResponse(secret=secret, qr_uri=uri)
 
 
-@router.post("/totp/enable")
+@router.post(
+    "/totp/enable",
+    summary="Turn on two-factor authentication",
+    responses={
+        **answer({"status": "ok", "message": "2FA enabled successfully"}, "Two-factor authentication is on."),
+        **errors(SIGNED_IN, _SETUP_ALLOWED, BODY, {
+            400: "There is no setup to confirm (none, or another setup replaced its secret), two-factor "
+                 "authentication is on already, or the code is wrong or was used already.",
+        }),
+    },
+)
 async def enable_totp(
     request: Request,
     data: TOTPEnableRequest,
     current_user: User = Depends(verify_token_allowing_setup),
     db: AsyncSession = Depends(get_db)
 ):
-    """Enable 2FA after verifying TOTP code. Only the request that turned it on writes a
-    totp_enabled entry (ADR-0343)."""
+    """Confirm the setup of POST /auth/totp/setup with a code of the authenticator app: two-factor
+    authentication is on, with no recovery codes or security keys yet. Written to the audit log. Any
+    signed-in user, also a setup-only account's session.
+    \f
+    Only the request that turned it on writes a totp_enabled entry (ADR-0343).
+    """
     if not current_user.totp_secret:
         raise HTTPException(status_code=400, detail="Run /totp/setup first")
 
@@ -530,15 +666,28 @@ async def enable_totp(
     return {"status": "ok", "message": "2FA enabled successfully"}
 
 
-@router.post("/totp/disable")
+@router.post(
+    "/totp/disable",
+    summary="Turn off two-factor authentication",
+    responses={
+        **answer({"status": "ok", "message": "2FA disabled successfully"}, "Two-factor authentication is off."),
+        **errors(SIGNED_IN, BODY, {
+            400: "Two-factor authentication is off already, or the code is wrong or was used already.",
+        }),
+    },
+)
 async def disable_totp(
     request: Request,
     data: TOTPVerifyRequest,
     current_user: User = Depends(verify_token),
     db: AsyncSession = Depends(get_db)
 ):
-    """Disable 2FA. Only the request that turned it off writes a totp_disabled entry, of
-    severity warning (ADR-0343)."""
+    """Turn the signed-in user's two-factor authentication off with a code of the authenticator app;
+    its recovery codes and security keys go with it. Written to the audit log as a warning. Any
+    signed-in user.
+    \f
+    Only the request that turned it off writes a totp_disabled entry, of severity warning (ADR-0343).
+    """
     if not current_user.totp_enabled:
         raise HTTPException(status_code=400, detail="2FA is not enabled")
 
@@ -576,34 +725,57 @@ async def disable_totp(
     return {"status": "ok", "message": "2FA disabled successfully"}
 
 
-@router.get("/totp/status")
+@router.get(
+    "/totp/status",
+    summary="Read your two-factor status",
+    responses={
+        **answer(
+            {"enabled": True, "required": False},
+            "enabled: the user has two-factor authentication; required: the two-factor requirement asks it of "
+            "every account.",
+        ),
+        **errors(SIGNED_IN, _SETUP_ALLOWED),
+    },
+)
 async def totp_status(current_user: User = Depends(verify_token_allowing_setup), db: AsyncSession = Depends(get_db)):
-    """Whether 2FA is on for the current user, and whether every account must have it."""
+    """Whether the signed-in user has two-factor authentication, and whether every account must have it.
+    Any signed-in user, also a setup-only account's session."""
     return {"enabled": bool(current_user.totp_enabled), "required": await requirement.current(db) is not None}
 
 
 # ==================== User Management (admin only) ====================
 
-@router.get("/users", response_model=list[UserResponse])
+@router.get("/users", response_model=list[UserResponse], summary="List the users", responses=errors(ADMIN))
 async def list_users(
     current_user: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db)
 ):
-    """List all users (admin only), with the SMB state of each."""
+    """Every UNOS user, with their SMB state. Administrators only."""
     users = (await db.execute(select(User))).scalars().all()
     rows = {row.user_id: row for row in (await db.execute(select(SmbAccount))).scalars()}
     return [_user_response(user, rows.get(user.id)) for user in users]
 
 
-@router.post("/users", response_model=UserResponse)
+@router.post(
+    "/users",
+    response_model=UserResponse,
+    summary="Create a user",
+    responses=errors(ADMIN, BODY, {
+        400: f"The username breaks the rule of new users or exists already (in any letter case), or with "
+             f"smb_enabled the password breaks {_SMB_PASSWORD_RULES}.",
+        404: "The new user was deleted again before the answer.",
+    }),
+)
 async def create_user(
     request: Request,
     user: UserCreate,
     current_user: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db)
 ):
-    """Create a new user (admin only), optionally with SMB access (the same password).
-
+    """Create a regular user, optionally with SMB turned on with the same password: when SMB cannot be
+    turned on, the user is created all the same, and the answer's warnings say why. Written to the audit
+    log. Administrators only.
+    \f
     The insert runs under smb_lock: SQLite gives the new user the highest rowid
     plus one, so a restored or hand-edited database may have left SMB rows with
     that id, which the reconcile and the restore remove under the lock. In
@@ -669,22 +841,36 @@ async def create_user(
     return _user_response(created, row, warnings)
 
 
-@router.put("/users/{user_id}", response_model=UserResponse)
+@router.put(
+    "/users/{user_id}",
+    response_model=UserResponse,
+    summary="Change a user",
+    responses=errors(ADMIN, BODY, {
+        400: f"The new name breaks the rule of new users or another user has it (in any letter case), the name "
+             f"and the role change at once, or for an active SMB account the password is missing for a rename "
+             f"or breaks {_SMB_PASSWORD_RULES}.",
+        404: _NO_USER,
+        409: "The id now belongs to another username, the change would leave no administrator, or the host "
+             "cannot take the SMB account's new name or password: a host account, group or Samba account of "
+             "the name exists, smb.conf is not UNOS's own yet, or the account is still in use.",
+        503: _SMB_HOST_FAILED,
+    }),
+)
 async def update_user(
     request: Request,
-    user_id: int,
+    user_id: _USER_ID,
     data: UserUpdate,
     found: Credential = Depends(credential),
     current_user: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db)
 ):
-    """Update a user (admin only).
-
-    Promotion to administrator revokes SMB first (administrators never have an
-    active SMB account) and deletes the user's share access. A new password of
-    an active SMB account goes to Samba first and ends its open SMB sessions.
-    A new name (``new_username``) renames the user and their SMB account
-    (ADR-0368, _rename_user).
+    """Change a user's role, password or name. Promotion to administrator turns SMB off first and
+    removes the user's share access and group memberships: administrators never have SMB. A new password
+    of an active SMB account goes to Samba first and ends its open SMB connections. A new name
+    (``new_username``) renames the user and their SMB account. Written to the audit log. Administrators
+    only.
+    \f
+    ADR-0368, _rename_user.
     """
     new_name = validate_new_username(data.new_username) if data.new_username is not None else None
     new_hash = await asyncio.to_thread(hash_password, data.password) if data.password else None
@@ -826,16 +1012,37 @@ async def _rename_user(
     return _Renamed(user, row, had_row, smb_on, warnings)
 
 
-@router.delete("/users/{user_id}")
+@router.delete(
+    "/users/{user_id}",
+    summary="Delete a user",
+    responses={
+        **answer(
+            {"status": "ok", "message": "User deleted", "warnings": []},
+            "The user is deleted. warnings: what the removal of their SMB account on the host or the update of "
+            "smb.conf did not finish.",
+        ),
+        **errors(ADMIN, {
+            400: "The administrator asked to delete themselves while another administrator remains.",
+            404: _NO_USER,
+            409: "The id now belongs to another username, or the deletion would leave no administrator.",
+            503: "The user's SMB access could not be revoked (Samba's tools are missing, or a command failed or "
+                 "did not answer in time), or the database was busy: the user is kept.",
+        }),
+    },
+)
 async def delete_user(
     request: Request,
-    user_id: int,
+    user_id: _USER_ID,
     # The username the request was built for (ids are reused): 409 when it is not the user's.
-    username: str = Query(max_length=255),
+    username: str = Query(max_length=255, description=_EXPECTED_USERNAME),
     current_user: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db)
 ):
-    """Delete a user (admin only)."""
+    """Delete a user, with their sessions, API tokens, security keys, dashboard layout, theme, share
+    access, group memberships and SMB account. Written to the audit log. Administrators only.
+    \f
+    SMB first (accounts.begin_user_removal), every write up to the commit in revocation_guard.
+    """
     if current_user.id == user_id:
         admin_count = await db.scalar(
             select(func.count()).select_from(User).where(User.is_admin.is_(True))
@@ -889,17 +1096,27 @@ async def delete_user(
     return {"status": "ok", "message": "User deleted", "warnings": warnings}
 
 
-@router.post("/users/{user_id}/end-sessions")
+@router.post(
+    "/users/{user_id}/end-sessions",
+    summary="End a user's sessions",
+    responses={
+        **answer({"status": "ok", "ended": 2}, "ended: how many of the user's stored sessions ended."),
+        **errors(ADMIN, {404: _NO_USER, 409: _ID_REUSED}),
+    },
+)
 async def end_user_sessions(
     request: Request,
-    user_id: int,
+    user_id: _USER_ID,
     # The username the request was built for (ids are reused): 409 when it is not the user's.
-    username: str = Query(max_length=255),
+    username: str = Query(max_length=255, description=_EXPECTED_USERNAME),
     current_user: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ):
-    """End every session of a user (admin only, ADR-0329): their tokens answer 401 from now on, and
-    their live-data socket closes at its next check. Their API tokens stay."""
+    """End every session of a user: their session tokens answer 401 from now on, and their live-data
+    socket closes at its next check. Their API tokens stay. Written to the audit log. Administrators only.
+    \f
+    ADR-0329.
+    """
     user = await db.get(User, user_id)
     if user is None:
         raise HTTPException(status_code=404, detail=accounts.USER_NOT_FOUND)
@@ -920,16 +1137,26 @@ async def end_user_sessions(
     return {"status": "ok", "ended": ended}
 
 
-@router.post("/users/{user_id}/smb/enable", response_model=UserResponse)
+@router.post(
+    "/users/{user_id}/smb/enable",
+    response_model=UserResponse,
+    summary="Allow SMB for a user",
+    responses=errors(ADMIN, BODY, {
+        400: f"The password breaks {_SMB_PASSWORD_RULES}.",
+        404: _NO_USER,
+        409: f"The id now belongs to another username; or {_SMB_CANNOT_TURN_ON}.",
+        503: _SMB_HOST_FAILED,
+    }),
+)
 async def enable_user_smb(
     request: Request,
-    user_id: int,
+    user_id: _USER_ID,
     data: SmbEnableRequest,
     current_user: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db)
 ):
-    """Allow SMB for a user (admin only). With a password, also set it: it becomes the
-    user's UNOS password and SMB password, and SMB is turned on."""
+    """Allow SMB for a regular user. With a password, also set it: it becomes the user's UNOS password
+    and SMB password, and SMB is turned on. A change is written to the audit log. Administrators only."""
     new_hash = None
     if data.password is not None:
         new_hash = await asyncio.to_thread(hash_password, data.password)
@@ -953,16 +1180,22 @@ async def enable_user_smb(
     return _user_response(user, row, flow.warnings)
 
 
-@router.post("/users/{user_id}/smb/disable", response_model=UserResponse)
+@router.post(
+    "/users/{user_id}/smb/disable",
+    response_model=UserResponse,
+    summary="Disallow SMB for a user",
+    responses=errors(ADMIN, BODY, {404: _NO_USER, 409: _ID_REUSED, 503: _SMB_REVOKE_FAILED}),
+)
 async def disable_user_smb(
     request: Request,
-    user_id: int,
+    user_id: _USER_ID,
     data: SmbDisableRequest,
     current_user: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db)
 ):
-    """Disallow SMB for a user (admin only): Samba's password is removed and the
-    user's open SMB sessions end. The host account is kept (and so its uid)."""
+    """Disallow SMB for a user: Samba's password is removed and the user's open SMB connections end.
+    The host account is kept, and so its user id. A change is written to the audit log. Administrators
+    only."""
     admin_name = current_user.username
     async with service.smb_lock():
         user, row = await _reload_target(db, user_id)
@@ -977,19 +1210,33 @@ async def disable_user_smb(
     return _user_response(user, row, flow.warnings)
 
 
-@router.get("/me/smb", response_model=MySmbStatus)
+@router.get("/me/smb", response_model=MySmbStatus, summary="Read your SMB access", responses=errors(SIGNED_IN))
 async def get_my_smb(
     current_user: User = Depends(verify_token),
     db: AsyncSession = Depends(get_db)
 ):
-    """The signed-in user's SMB state and the shares they can use."""
+    """The signed-in user's SMB state and the shares they can use, from the database only. Any signed-in
+    user."""
     row = (
         await db.execute(select(SmbAccount).where(SmbAccount.user_id == current_user.id))
     ).scalar_one_or_none()
     return await _my_smb_status(db, current_user, row)
 
 
-@router.post("/me/smb/enable", response_model=MySmbChange)
+@router.post(
+    "/me/smb/enable",
+    response_model=MySmbChange,
+    summary="Turn on your SMB access",
+    responses=errors(SIGNED_IN, BODY, RATE_LIMITED, {
+        400: f"The current password is wrong, the two-factor code is missing, wrong or used already, or the "
+             f"password breaks {_SMB_PASSWORD_RULES}.",
+        403: f"An administrator has not allowed SMB for the user, or {SIGNED_IN[403][:1].lower()}"
+             f"{SIGNED_IN[403][1:]}",
+        404: _SELF_GONE,
+        409: f"{_SMB_CANNOT_TURN_ON}.",
+        503: _SMB_HOST_FAILED,
+    }),
+)
 @limiter.limit("5/minute")
 async def enable_my_smb(
     request: Request,
@@ -997,11 +1244,13 @@ async def enable_my_smb(
     current_user: User = Depends(verify_token),
     db: AsyncSession = Depends(get_db)
 ):
-    """Turn SMB on with the current UNOS password, once an administrator allowed it.
-
-    Needs the two-factor code of users with 2FA: SMB is a password-only channel.
-    The code must be a new one (not the code of the login). A self flow: its
-    warnings are fixed texts (the details are logged).
+    """Turn SMB on with the current UNOS password, once an administrator allowed it: the password
+    becomes the SMB password. A user with two-factor authentication also sends a new two-factor code,
+    not the one of the sign-in, since SMB signs in with the password only. Written to the audit log. Any
+    signed-in user.
+    \f
+    A self flow: its warnings and the texts of failed host commands are fixed (the details are logged,
+    ADR-0131).
     """
     verified_hash = current_user.hashed_password
     if not await asyncio.to_thread(verify_password, data.current_password, verified_hash):
@@ -1033,14 +1282,21 @@ async def enable_my_smb(
     return MySmbChange(**result.model_dump(), warnings=warnings)
 
 
-@router.post("/me/smb/disable", response_model=MySmbChange)
+@router.post(
+    "/me/smb/disable",
+    response_model=MySmbChange,
+    summary="Turn off your SMB access",
+    responses=errors(SIGNED_IN, {404: _SELF_GONE, 503: _SMB_REVOKE_FAILED}),
+)
 async def disable_my_smb(
     request: Request,
     current_user: User = Depends(verify_token),
     db: AsyncSession = Depends(get_db)
 ):
-    """Turn the signed-in user's SMB access off (an administrator's allowance is kept).
-
+    """Turn the signed-in user's SMB access off: Samba's password is removed and their open SMB
+    connections end; an administrator's allowance is kept. A change is written to the audit log. Any
+    signed-in user.
+    \f
     A self flow: its warnings are fixed texts (the details are logged).
     """
     user_id, token_username = current_user.id, current_user.username
@@ -1079,12 +1335,15 @@ def _scope_fields(kind: object, raw: object) -> dict:
     return {"read_only": scope.read_only, "areas": areas, "scope_known": True}
 
 
-@router.get("/tokens", response_model=list[APITokenResponse])
+@router.get(
+    "/tokens", response_model=list[APITokenResponse], summary="List your API tokens", responses=errors(SIGNED_IN),
+)
 async def list_api_tokens(
     current_user: User = Depends(verify_token),
     db: AsyncSession = Depends(get_db)
 ):
-    """List all API tokens for current user, each with its scope."""
+    """The signed-in user's API tokens with their scopes, never the tokens themselves. Any signed-in
+    user, also with an API token."""
     result = await db.execute(
         select(APIToken, *scopes.stored_columns(APIToken.permissions)).where(APIToken.user_id == current_user.id)
     )
@@ -1098,14 +1357,25 @@ async def list_api_tokens(
     ]
 
 
-@router.post("/tokens", response_model=APITokenCreated)
+@router.post(
+    "/tokens",
+    response_model=APITokenCreated,
+    summary="Create an API token",
+    responses=errors(SIGNED_IN, BODY, _SESSION_ONLY, {
+        409: f"The user has {MAX_API_TOKENS_PER_USER} API tokens already, the most a user can have.",
+    }),
+)
 async def create_api_token(
     request: Request,
     data: APITokenCreate,
     current_user: User = Depends(require_session),
     db: AsyncSession = Depends(get_db)
 ):
-    """Create a new API token, full or limited (ADR-0392). The full token is only shown once!"""
+    """Create an API token of the signed-in user, full or limited by its scope; the token is in this
+    answer only. Only with a session token. Written to the audit log. Any signed-in user.
+    \f
+    ADR-0392, ADR-0253.
+    """
     scope = data.scope()
     # Generate the token
     full_token, token_hash = generate_api_token()
@@ -1158,14 +1428,25 @@ async def create_api_token(
     )
 
 
-@router.delete("/tokens/{token_id}")
+_TOKEN_ID = Annotated[int, Path(description="The token's id, as GET /auth/tokens lists it.")]
+
+
+@router.delete(
+    "/tokens/{token_id}",
+    summary="Delete an API token",
+    responses={
+        **answer({"status": "ok", "message": "Token deleted"}, "The token is deleted."),
+        **errors(SIGNED_IN, _SESSION_ONLY, {404: "The user has no API token with this id."}),
+    },
+)
 async def delete_api_token(
     request: Request,
-    token_id: int,
+    token_id: _TOKEN_ID,
     current_user: User = Depends(require_session),
     db: AsyncSession = Depends(get_db)
 ):
-    """Delete an API token."""
+    """Delete one of the signed-in user's API tokens: it is refused from now on. Only with a session
+    token. Written to the audit log. Any signed-in user."""
     result = await db.execute(
         select(APIToken).where(
             APIToken.id == token_id,
@@ -1194,13 +1475,24 @@ async def delete_api_token(
     return {"status": "ok", "message": "Token deleted"}
 
 
-@router.post("/tokens/{token_id}/toggle")
+@router.post(
+    "/tokens/{token_id}/toggle",
+    summary="Enable or disable an API token",
+    responses={
+        **answer(
+            {"status": "ok", "is_active": False, "message": "Token disabled"},
+            "is_active: whether the token is enabled now.",
+        ),
+        **errors(SIGNED_IN, _SESSION_ONLY, {404: "The user has no API token with this id."}),
+    },
+)
 async def toggle_api_token(
-    token_id: int,
+    token_id: _TOKEN_ID,
     current_user: User = Depends(require_session),
     db: AsyncSession = Depends(get_db)
 ):
-    """Enable or disable an API token."""
+    """Disable an enabled API token of the signed-in user, or enable a disabled one. Only with a session
+    token. Any signed-in user."""
     result = await db.execute(
         select(APIToken).where(
             APIToken.id == token_id,
@@ -1226,13 +1518,22 @@ async def toggle_api_token(
 
 RECOVERY_CODES_NEED_2FA = "2FA must be enabled before generating recovery codes"
 
-@router.post("/recovery-codes/generate", response_model=RecoveryCodesResponse)
+@router.post(
+    "/recovery-codes/generate",
+    response_model=RecoveryCodesResponse,
+    summary="Generate new recovery codes",
+    responses=errors(SIGNED_IN, {400: "The user has no two-factor authentication."}),
+)
 async def generate_new_recovery_codes(
     request: Request,
     current_user: User = Depends(verify_token),
     db: AsyncSession = Depends(get_db)
 ):
-    """Replace the user's recovery codes with ten new ones, answered only this once."""
+    """Replace the signed-in user's recovery codes with ten new ones, which this answer alone shows; the
+    earlier codes no longer sign in. Written to the audit log as a warning. Any signed-in user.
+    \f
+    ADR-0238.
+    """
     if not current_user.totp_enabled:
         raise HTTPException(status_code=400, detail=RECOVERY_CODES_NEED_2FA)
 
@@ -1267,10 +1568,18 @@ async def generate_new_recovery_codes(
     return RecoveryCodesResponse(codes=plain_codes)
 
 
-@router.get("/recovery-codes/status", response_model=RecoveryCodesStatus)
+@router.get(
+    "/recovery-codes/status",
+    response_model=RecoveryCodesStatus,
+    summary="Count your recovery codes",
+    responses=errors(SIGNED_IN),
+)
 async def recovery_codes_status(current_user: User = Depends(verify_token)):
-    """How many of the user's recovery codes are left: none while 2FA is off, when no code
-    signs in (codes stored then come only from a restored database)."""
+    """How many of the signed-in user's recovery codes are left: none while two-factor authentication is
+    off, when no code signs in. Any signed-in user.
+    \f
+    Codes stored while 2FA is off come only from a restored database.
+    """
     stored = current_user.recovery_codes if current_user.totp_enabled else None
     return RecoveryCodesStatus(
         remaining=recovery_codes_left(stored),

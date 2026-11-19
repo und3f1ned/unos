@@ -22,10 +22,11 @@ from datetime import datetime, timezone
 from typing import Literal, NamedTuple, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from .. import host
 from ..auth.utils import verify_token
+from ..openapi import answer, errors
 
 logger = logging.getLogger(__name__)
 
@@ -93,27 +94,53 @@ LOG_SOURCES: dict[str, Source] = {
 
 
 class LogEntry(BaseModel):
+    """One entry of the host's journal."""
+
     # UTC with its offset, to the second; "" when the journal gives none.
-    timestamp: str
-    facility: str = ""
-    priority: str
-    message: str
-    source: str
+    timestamp: str = Field(description="When it was logged, in UTC with its offset, to the second; empty when the "
+                                       "journal gives no time.")
+    facility: str = Field("", description="The number of its syslog facility, such as 4 for auth; empty when it has none.")
+    priority: str = Field(
+        description="Its level: emerg, alert, crit, err, warning, notice, info or debug; info when it has none."
+    )
+    message: str = Field(description="The message.")
+    source: str = Field(description="The source that was read, as GET /logs/sources names it.")
     # The program that logged it: SYSLOG_IDENTIFIER, else _COMM, else _SYSTEMD_UNIT.
-    unit: str | None = None
+    unit: str | None = Field(
+        None, description="The program that logged it: its syslog identifier, else its command, else its systemd "
+                          "unit; null when the entry names none."
+    )
     # The journal's cursor of the entry (__CURSOR): the journal socket follows on after it (ADR-0366).
-    cursor: str = ""
+    cursor: str = Field("", description="The journal's cursor of the entry, where /ws/v1/journal follows on after it.")
 
 
 class LogsResponse(BaseModel):
-    entries: list[LogEntry]
-    total: int
+    """The newest entries of a source of the host's journal."""
+
+    model_config = ConfigDict(json_schema_extra={"examples": [{
+        "entries": [
+            {"timestamp": "2026-11-18T10:02:41+00:00", "facility": "3", "priority": "info",
+             "message": "Started smbd.service - Samba SMB Daemon.", "source": "journal", "unit": "systemd",
+             "cursor": "s=4b1c0e9f2a7d4c3e8f6a5b4c3d2e1f00;i=1a2b3;b=9f8e7d6c5b4a39281706f5e4d3c2b1a0;"
+                       "m=2a3b4c5d;t=6443f2e1d0c9b;x=7e6d5c4b3a291807"},
+            {"timestamp": "2026-11-18T10:02:40+00:00", "facility": "0", "priority": "info",
+             "message": "eth0: Link is Down", "source": "journal", "unit": "kernel",
+             "cursor": "s=4b1c0e9f2a7d4c3e8f6a5b4c3d2e1f00;i=1a2b2;b=9f8e7d6c5b4a39281706f5e4d3c2b1a0;"
+                       "m=2a3b4c5c;t=6443f2e1d0c9a;x=7e6d5c4b3a291806"},
+        ],
+        "total": 2,
+    }]})
+
+    entries: list[LogEntry] = Field(description="The entries, newest first.")
+    total: int = Field(description="How many entries this answer holds.")
 
 
 class LogSource(BaseModel):
-    name: str
-    label: str
-    description: str
+    """A source of GET /logs/entries: a part of the host's journal."""
+
+    name: str = Field(description="The source's name, for the source parameter of GET /logs/entries.")
+    label: str = Field(description="The source's name in the web UI.")
+    description: str = Field(description="What the source holds.")
 
 
 def _text(value) -> str:
@@ -237,11 +264,13 @@ async def read_journal(
 class JournalQuery(BaseModel):
     """What System > Logs reads: the values of GET /entries, also those of the journal socket."""
 
-    source: str = "journal"
-    limit: int = Field(100, ge=1, le=1000)
-    priority: Optional[Priority] = None
-    search: Optional[str] = Field(None, max_length=MAX_SEARCH_CHARS)
-    since: Optional[str] = None
+    source: str = Field("journal", description="A source of GET /logs/sources.")
+    limit: int = Field(100, ge=1, le=1000, description="How many of the newest entries to read, from 1 to 1000.")
+    priority: Optional[Priority] = Field(None, description="Only this level and the more severe ones; null for all.")
+    search: Optional[str] = Field(
+        None, max_length=MAX_SEARCH_CHARS, description="Only the entries with this text in their message, in any case."
+    )
+    since: Optional[str] = Field(None, description="<N> minutes ago, <N> hours ago or <N> days ago; null for all.")
 
 
 def _check_query(source: str, since: Optional[str], search: Optional[str]) -> None:
@@ -294,9 +323,18 @@ def journal_ended(result: host.HostResult) -> str:
     return f"{CANNOT_READ}: {_why(result)}"
 
 
-@router.get("/sources")
+@router.get(
+    "/sources", summary="List the log sources",
+    responses=answer(
+        {"sources": [
+            {"name": name, "label": source.label, "description": source.description}
+            for name, source in LOG_SOURCES.items()
+        ]},
+        "sources: each source of GET /logs/entries with its name, its label in the web UI and what it holds.",
+    ),
+)
 async def get_log_sources(_: dict = Depends(verify_token)):
-    """The sources of GET /entries: parts of the host's journal."""
+    """The sources of GET /logs/entries: parts of the host's journal."""
     return {
         "sources": [
             LogSource(name=name, label=source.label, description=source.description)
@@ -305,15 +343,26 @@ async def get_log_sources(_: dict = Depends(verify_token)):
     }
 
 
-@router.get("/entries", response_model=LogsResponse)
+@router.get(
+    "/entries", response_model=LogsResponse, summary="Read the newest log entries",
+    responses=errors({
+        400: "The source is unknown, the time range is not <N> minutes, hours or days ago, or the search holds "
+             "control characters.",
+        500: "journalctl could not run, failed or did not answer in time on the host.",
+    }),
+)
 async def get_log_entries(
     source: str = Query("journal", description="A source of GET /sources"),
-    limit: int = Query(100, ge=1, le=1000),
+    limit: int = Query(100, ge=1, le=1000, description="How many of the newest entries to read, from 1 to 1000."),
     priority: Optional[Priority] = Query(None, description="This level and the more severe ones"),
     search: Optional[str] = Query(None, max_length=MAX_SEARCH_CHARS, description="Text of the message, in any case"),
     since: Optional[str] = Query(None, description="<N> minutes ago, <N> hours ago or <N> days ago"),
     _: dict = Depends(verify_token)
 ):
-    """The newest entries of a source of the host's journal, newest first (ADR-0366)."""
+    """The newest entries of a source of the host's journal, newest first: at the level asked for or
+    a more severe one, within the time range and with the search text in their message.
+    
+    ADR-0257, ADR-0258, ADR-0366.
+    """
     _check_query(source, since, search)
     return await read_journal(source, limit=limit, priority=priority, since=since or None, search=search or None)
