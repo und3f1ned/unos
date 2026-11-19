@@ -53,7 +53,8 @@ logger = logging.getLogger(__name__)
 # processes, ADR-0288), shares/smb.py, shares/accounts.py (SMB accounts: getent
 # and the shadow tools, smbpasswd, pdbedit, smbstatus), health/router.py and
 # network/ (ip, ss, systemd-run, hostnamectl; resolvectl only where
-# systemd-resolved runs, else /etc/resolv.conf), apps/preflight.py (ss: the host
+# systemd-resolved runs, else /etc/resolv.conf; networkctl, sed and cp for the bonds,
+# VLANs and bridges of network/virtual.py, ADR-0422), apps/preflight.py (ss: the host
 # ports that an app's install would take; sh with df: the free space of the system
 # disk before its pulls, ADR-0381), power/router.py (shutdown,
 # busctl, systemctl, ip, ethtool: ADR-0233), power/schedule.py (shutdown, busctl and ss; sh
@@ -102,6 +103,7 @@ HOST_TOOLS: dict[str, str] = {
     "ss": "iproute2",
     "systemd-run": "systemd",
     "hostnamectl": "systemd",
+    "networkctl": "systemd",
     "timedatectl": "systemd",
     "shutdown": "systemd-sysv",
     "busctl": "systemd",

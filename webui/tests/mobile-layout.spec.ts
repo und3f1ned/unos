@@ -14,7 +14,7 @@ import {
   groupAccessOf,
 } from './shares-fakes';
 import { HEALTHY_HDD_2, REPLACE_SOON, fakeHealthApi, predictionsAnswer } from './health-fakes';
-import { fakeNetworkApi } from './network-fakes';
+import { fakeBridge, fakeNetworkApi } from './network-fakes';
 import { fakeIscsiApi, fakeTarget } from './iscsi-fakes';
 import { fakeNotificationsApi, type Channel } from './notifications-fakes';
 import { installedImmich } from './apps-fakes';
@@ -1606,6 +1606,40 @@ const VIEWS: View[] = [
       await page.getByRole('button', { name: /^(Delete selected|Удалить выбранные)$/ }).click();
     },
     shows: (page) => page.getByRole('dialog').getByText(`${POOLS}/tank/family_photos_and_videos`),
+    start: dialogTitle,
+    end: dialogEnd,
+  },
+  {
+    // The bonds, VLANs and bridges of System > Network (ADR-0422): a bond of the uplink, whose dialog
+    // warns that the change waits to be kept, and a bridge with a long name to delete.
+    name: 'Dialog: create a bond',
+    path: '/system#network',
+    fake: (page) => fakeNetworkApi(page),
+    open: async (page) => {
+      await page.getByRole('button', { name: /^(Create bond|Создать агрегат)$/ }).click();
+      await page.getByRole('dialog').getByRole('checkbox', { name: 'eth0' }).check();
+      // Checking the box scrolled the dialog to it: back to its title, as it opens.
+      await dialogTitle(page).scrollIntoViewIfNeeded();
+    },
+    shows: (page) => page.getByRole('dialog').getByText(/MAC/),
+    start: dialogTitle,
+    end: dialogEnd,
+  },
+  {
+    name: 'Dialog: create a VLAN',
+    path: '/system#network',
+    fake: (page) => fakeNetworkApi(page),
+    open: (page) => page.getByRole('button', { name: /^(Create VLAN|Создать VLAN)$/ }).click(),
+    shows: (page) => page.getByRole('dialog'),
+    start: dialogTitle,
+    end: dialogEnd,
+  },
+  {
+    name: 'Dialog: delete a bridge',
+    path: '/system#network',
+    fake: (page) => fakeNetworkApi(page, { virtual: { interfaces: [fakeBridge('brcontainers01', ['eth0'])] } }),
+    open: (page) => page.getByRole('button', { name: /^(Delete brcontainers01|Удалить brcontainers01)$/ }).click(),
+    shows: (page) => page.getByRole('dialog').getByText(/eth0/),
     start: dialogTitle,
     end: dialogEnd,
   },

@@ -70,6 +70,77 @@ export const FAKE_CONNECTIONS: readonly FakeConnection[] = [
 export interface RecordedWrite {
   method: string;
   path: string;
+  /** The JSON body of the request, when it has one. */
+  body?: unknown;
+}
+
+// The bonds, VLANs and bridges of /api/v1/network/virtual-interfaces (supervisor/src/network/virtual.py,
+// ADR-0422): its texts word for word. The fake host's eth0 carries the default route and the
+// connection to UNOS: a change that touches it waits to be kept until the spec calls
+// revertVirtual() (the host's timer) or the page keeps it.
+export const VIRTUAL_REVERT_SECONDS = 120;
+export const VIRTUAL_NOTHING_TO_KEEP = 'No network change waits to be kept: it was kept already, or it was undone';
+export const VIRTUAL_CHANGE_WAITS = 'A network change waits to be kept: keep it, or wait until it is undone';
+
+export interface FakeVirtualInterface {
+  kind: 'bond' | 'vlan' | 'bridge';
+  name: string;
+  present: boolean;
+  state: string;
+  mode: string | null;
+  ports: string[];
+  parent: string | null;
+  vlan_id: number | null;
+  mtu: number | null;
+  addressing: string;
+  addresses: string[];
+  copied_from: string | null;
+  protected: boolean;
+}
+
+export interface FakeHostInterface {
+  name: string;
+  kind: string;
+  wireless: boolean;
+  master: string | null;
+  parent: string | null;
+  managed: boolean;
+  addresses: string[];
+  protected: boolean;
+}
+
+export const FAKE_HOST_INTERFACES: readonly FakeHostInterface[] = [
+  { name: 'eth0', kind: 'physical', wireless: false, master: null, parent: null, managed: true,
+    addresses: ['192.168.1.10/24', '2001:db8:1::10/64'], protected: true },
+  { name: 'eth1', kind: 'physical', wireless: false, master: null, parent: null, managed: true,
+    addresses: [], protected: false },
+  { name: 'eth2', kind: 'physical', wireless: false, master: null, parent: null, managed: true,
+    addresses: [], protected: false },
+  // A card with addresses of its own, which it would lose as a port: no port, but a VLAN's interface.
+  { name: 'eth3', kind: 'physical', wireless: false, master: null, parent: null, managed: true,
+    addresses: ['198.51.100.7/24'], protected: false },
+  { name: 'wlan0', kind: 'physical', wireless: true, master: null, parent: null, managed: false,
+    addresses: [], protected: false },
+];
+
+export interface FakeChange {
+  action: 'create' | 'delete';
+  kind: 'bond' | 'vlan' | 'bridge';
+  name: string;
+}
+
+export interface FakeVirtualOptions {
+  manager?: 'systemd-networkd' | 'NetworkManager' | 'ifupdown' | 'none';
+  /** The interfaces that UNOS made already. */
+  interfaces?: FakeVirtualInterface[];
+  /** A change that waits to be kept already (the page was reloaded): what it is and the seconds left. */
+  waiting?: { change: FakeChange; seconds: number };
+}
+
+/** A bridge made in UNOS before the page opened. */
+export function fakeBridge(name: string, ports: string[] = []): FakeVirtualInterface {
+  return { kind: 'bridge', name, present: true, state: 'UP', mode: null, ports, parent: null, vlan_id: null,
+    mtu: null, addressing: 'none', addresses: [], copied_from: null, protected: false };
 }
 
 /**
@@ -88,6 +159,8 @@ export interface FakeNetworkOptions {
   failures?: Record<string, FakeFailure>;
   /** The host's sockets, in place of FAKE_CONNECTIONS. */
   connections?: readonly FakeConnection[];
+  /** The bonds, VLANs and bridges and what keeps the host's network. */
+  virtual?: FakeVirtualOptions;
 }
 
 export interface FakeNetwork {
@@ -101,6 +174,10 @@ export interface FakeNetwork {
   unplug(name: string): void;
   /** The seconds left that the host reports, from now on, for a disable that waits to be kept. */
   waiting(name: string, seconds: number): void;
+  /** The bonds, VLANs and bridges that UNOS made, as the fake host has them now. */
+  virtual: FakeVirtualInterface[];
+  /** The host's timer of the network change that waits runs out: the change is undone. */
+  revertVirtual(): void;
 }
 
 /** Serve the fake network API to the page. */
@@ -113,6 +190,24 @@ export async function fakeNetworkApi(page: Page, options: FakeNetworkOptions = {
     Object.assign(iface, { enabled: false, state: 'DOWN', speed: null });
   }
   const writes: RecordedWrite[] = [];
+  const v = options.virtual ?? {};
+  const virtual: FakeVirtualInterface[] = (v.interfaces ?? []).map((i) => ({ ...i, ports: [...i.ports] }));
+  const hosts: FakeHostInterface[] = FAKE_HOST_INTERFACES.map((i) => ({ ...i }));
+  for (const item of virtual) {
+    hosts.push({ name: item.name, kind: item.kind, wireless: false, master: null, parent: item.parent, managed: true,
+      addresses: [], protected: item.protected });
+    for (const port of item.ports) hosts.find((h) => h.name === port)!.master = item.name;
+  }
+  // The change that waits to be kept: what it was, the seconds left, and how the host undoes it.
+  let waits: { change: FakeChange; seconds: number; undo: () => void } | null = v.waiting
+    ? { ...v.waiting, undo: () => {} }
+    : null;
+  const virtualStatus = () => ({
+    manager: v.manager ?? 'systemd-networkd', supported: (v.manager ?? 'systemd-networkd') === 'systemd-networkd',
+    interfaces: virtual, host_interfaces: hosts, unreadable: [], revert_in: waits?.seconds ?? null,
+    reverting: false, revert_failed: false, change: waits?.change ?? null, revert_seconds: VIRTUAL_REVERT_SECONDS,
+  });
+  const isProtected = (name: string | null) => !!name && !!hosts.find((h) => h.name === name)?.protected;
 
   const setEnabled = (iface: FakeInterface, enabled: boolean) => {
     const original = FAKE_INTERFACES.find((i) => i.name === iface.name)!;
@@ -125,7 +220,7 @@ export async function fakeNetworkApi(page: Page, options: FakeNetworkOptions = {
       const request = route.request();
       const method = request.method();
       const path = new URL(request.url()).pathname.slice('/api/v1/network'.length);
-      if (method !== 'GET') writes.push({ method, path });
+      if (method !== 'GET') writes.push({ method, path, body: request.postDataJSON() ?? undefined });
 
       const failure = options.failures?.[`${method} ${path}`];
       if (failure === 'abort') return route.abort();
@@ -147,6 +242,76 @@ export async function fakeNetworkApi(page: Page, options: FakeNetworkOptions = {
         if (path === '/gateway') return answer({ json: FAKE_GATEWAY });
         if (path === '/routes') return answer({ json: { routes: FAKE_ROUTES } });
         if (path === '/connections') return answer({ json: { connections: options.connections ?? FAKE_CONNECTIONS } });
+        if (path === '/virtual-interfaces') return answer({ json: virtualStatus() });
+        return route.abort();
+      }
+
+      if (path.startsWith('/virtual-interfaces')) {
+        if (path === '/virtual-interfaces/confirm' && method === 'POST') {
+          if (!waits) return answer({ status: 409, json: { detail: VIRTUAL_NOTHING_TO_KEEP } });
+          const change = waits.change;
+          waits = null;
+          return answer({ json: { status: 'success', change } });
+        }
+        if (waits) return answer({ status: 409, json: { detail: VIRTUAL_CHANGE_WAITS } });
+        const kindOf: Record<string, 'bond' | 'vlan' | 'bridge'> = {
+          '/virtual-interfaces/bonds': 'bond', '/virtual-interfaces/vlans': 'vlan', '/virtual-interfaces/bridges': 'bridge',
+        };
+        if (method === 'POST' && kindOf[path]) {
+          const kind = kindOf[path];
+          const body = request.postDataJSON();
+          const name: string = kind === 'vlan' ? body.name || `${body.parent}.${body.vlan_id}` : body.name;
+          if (hosts.some((h) => h.name === name)) {
+            return answer({ status: 409, json: { detail: `The host has an interface named ${name} already` } });
+          }
+          const ports: string[] = kind === 'vlan' ? [] : body.ports;
+          const touched = kind === 'vlan' ? [body.parent] : ports;
+          const takes = ports.find((p) => isProtected(p)) ?? null;
+          const item: FakeVirtualInterface = {
+            kind, name, present: true, state: 'UP', mode: kind === 'bond' ? body.mode : null, ports,
+            parent: kind === 'vlan' ? body.parent : null, vlan_id: kind === 'vlan' ? body.vlan_id : null, mtu: body.mtu,
+            addressing: takes ? 'copied' : body.addressing, addresses: takes ? [] : body.addresses, copied_from: takes,
+            protected: !!takes,
+          };
+          virtual.push(item);
+          const host: FakeHostInterface = { name, kind, wireless: false, master: null, parent: item.parent, managed: true,
+            addresses: [], protected: !!takes };
+          hosts.push(host);
+          for (const port of ports) hosts.find((h) => h.name === port)!.master = name;
+          const undo = () => {
+            virtual.splice(virtual.indexOf(item), 1);
+            hosts.splice(hosts.indexOf(host), 1);
+            for (const port of ports) hosts.find((h) => h.name === port)!.master = null;
+          };
+          const armed = touched.some((n) => isProtected(n));
+          const change: FakeChange = { action: 'create', kind, name };
+          if (armed) waits = { change, seconds: VIRTUAL_REVERT_SECONDS, undo };
+          return answer({ json: { status: 'success', action: 'created', kind, name,
+            revert_in: armed ? VIRTUAL_REVERT_SECONDS : null } });
+        }
+        const deleted = method === 'DELETE' ? path.match(/^\/virtual-interfaces\/([^/]+)$/) : null;
+        if (deleted) {
+          const name = decodeURIComponent(deleted[1]);
+          const item = virtual.find((i) => i.name === name);
+          if (!item) return answer({ status: 404, json: { detail: `No bond, VLAN or bridge named ${name} was made in UNOS` } });
+          const index = virtual.indexOf(item);
+          virtual.splice(index, 1);
+          const hostIndex = hosts.findIndex((h) => h.name === name);
+          const [host] = hosts.splice(hostIndex, 1);
+          for (const port of item.ports) hosts.find((h) => h.name === port)!.master = null;
+          const armed = [name, ...item.ports, item.parent].some((n) => isProtected(n));
+          if (armed) {
+            waits = {
+              change: { action: 'delete', kind: item.kind, name }, seconds: VIRTUAL_REVERT_SECONDS, undo: () => {
+                virtual.splice(index, 0, item);
+                hosts.splice(hostIndex, 0, host);
+                for (const port of item.ports) hosts.find((h) => h.name === port)!.master = name;
+              },
+            };
+          }
+          return answer({ json: { status: 'success', action: 'deleted', kind: item.kind, name,
+            revert_in: armed ? VIRTUAL_REVERT_SECONDS : null } });
+        }
         return route.abort();
       }
 
@@ -193,6 +358,12 @@ export async function fakeNetworkApi(page: Page, options: FakeNetworkOptions = {
     waiting(name: string, seconds: number) {
       if (!pending.has(name)) throw new Error(`no disable of ${name} waits to be kept`);
       pending.set(name, seconds);
+    },
+    virtual,
+    revertVirtual() {
+      if (!waits) throw new Error('no network change waits to be kept');
+      waits.undo();
+      waits = null;
     },
   };
 }

@@ -76,6 +76,7 @@ from .scheduler.router import router as scheduler_router
 from .power.router import router as power_router, saved_ups_config
 from .network.router import router as network_router
 from .network.remote_router import router as remote_access_router
+from .network.virtual_router import router as virtual_interfaces_router
 from .network import app_names
 from .logs.router import router as logs_router
 from .health.router import raid_status_or_none, router as health_router
@@ -337,6 +338,7 @@ for _router in (
     power_router,
     network_router,
     remote_access_router,
+    virtual_interfaces_router,
     logs_router,
     health_router,
     monitor_router,

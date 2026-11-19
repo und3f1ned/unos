@@ -156,6 +156,9 @@
 		remote_access_peer_added: 'audit.action.remoteAccessPeerAdded',
 		remote_access_peer_revoked: 'audit.action.remoteAccessPeerRevoked',
 		app_names_changed: 'audit.action.appNamesChanged',
+		network_interface_created: 'audit.action.networkInterfaceCreated',
+		network_interface_deleted: 'audit.action.networkInterfaceDeleted',
+		network_change_kept: 'audit.action.networkChangeKept',
 		other: 'audit.action.other'
 	};
 	// An info entry shows no severity.
