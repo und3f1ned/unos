@@ -2666,7 +2666,8 @@ def test_the_probe_asks_for_immich_s_models_and_prints_status_timings_and_shapes
                      r"  OCR read: 'IMMICH ON THE NPU', 'UNOS PROBE \[2J 2026'\n", out, re.M), out
     assert re.search(r"^the text 'a photo of a dog': CLIP textual:\n  first call: status 200 in .*\n  3 more calls: "
                      r'.*all status 200\n  answer: \{"clip": an embedding of 512 numbers\}\n', out, re.M), out
-    assert "0.012" not in out and "\x1b" not in out
+    # No number of the embedding is printed (0.0123456 and up): a timing such as "0.012 s" may be.
+    assert "0.01234" not in out and "\x1b" not in out
     assert [(m, p) for m, p, *_ in machine_learning.requests] == [("GET", "/ping")] + [("POST", "/predict")] * 8
 
     predictions = machine_learning.predictions()
