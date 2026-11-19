@@ -49,6 +49,6 @@
 		></div>
 	</div>
 	{#if showLabel}
-		<span class="text-xs text-secondary mt-1">{percent.toFixed(1)}%</span>
+		<span class="block mt-1 text-right text-xs text-secondary tabular">{percent.toFixed(1)}%</span>
 	{/if}
 </div>

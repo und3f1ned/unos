@@ -59,7 +59,7 @@
       <p class="text-sm">{$t("files.leftovers.confirm", { n: leftovers.removing.length })}</p>
       <ul class="space-y-2">
         {#each leftovers.removing as file (file.path)}
-          <li class="card-nested py-2 text-sm">
+          <li class="card-nested px-3 py-2 text-sm">
             <p class="font-mono break-all">{file.path}</p>
             <p class="text-content-secondary">
               {$t("files.leftovers.file", {

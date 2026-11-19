@@ -15,7 +15,7 @@
 
 <script lang="ts">
 	import type { Snippet } from 'svelte';
-	import { X } from 'lucide-svelte';
+	import { AlertTriangle, X } from 'lucide-svelte';
 	import { onDestroy, untrack } from 'svelte';
 	import { on } from 'svelte/events';
 	import { t } from '$lib/i18n';
@@ -28,7 +28,8 @@
 		danger?: boolean;
 		// Escape, the backdrop or the close button asked to close a closable dialog.
 		onclose?: () => void;
-		// Drawn before the title, such as the icon of a dangerous action.
+		// Drawn before the title, such as the icon of a dangerous action (in the tinted circle of a
+		// danger dialog, whose default icon is a warning triangle).
 		titleIcon?: Snippet;
 		footer?: Snippet;
 		children?: Snippet;
@@ -164,21 +165,30 @@
 	>
 		<div class="modal my-auto {sizeClasses[size]}">
 			<div class="modal-header">
-				<h2
-					id={titleId}
-					class="modal-title {danger ? 'text-error flex items-center gap-2' : ''}"
-				>
-					{@render titleIcon?.()}
-					{title}
+				<!-- A danger dialog's title stays in the text's colour: its icon carries the warning. -->
+				<h2 id={titleId} class="modal-title {danger || titleIcon ? 'flex items-center gap-3' : ''}">
+					{#if danger}
+						<span class="modal-danger-icon" aria-hidden="true">
+							{#if titleIcon}
+								{@render titleIcon()}
+							{:else}
+								<AlertTriangle class="w-4 h-4" />
+							{/if}
+						</span>
+					{:else}
+						{@render titleIcon?.()}
+					{/if}
+					<span class="min-w-0">{title}</span>
 				</h2>
 				{#if closable}
+					<!-- A 32 px ghost icon button, as Button's icon-sm draws it. -->
 					<button
 						type="button"
-						class="modal-close"
+						class="btn btn-ghost btn-icon-sm modal-close shrink-0"
 						onclick={handleClose}
 						aria-label={$t('ui.modal.close')}
 					>
-						<X class="w-5 h-5" />
+						<X class="w-4 h-4" />
 					</button>
 				{/if}
 			</div>

@@ -155,6 +155,19 @@ class TestRawColors:
         )
         assert result.returncode == 0, result.stderr
 
+    def test_the_redesigns_variants_and_tokens_pass(self, node, tmp_path):
+        """webui.redesign (ADR-0428): the ghost-danger Button, a text link and a stat tile's chip
+        are tokens and variants, not raw colours."""
+        result = check(
+            node,
+            tmp_path,
+            '<Button variant="ghost-danger" size="icon-sm" aria-label={label}>x</Button>\n'
+            '<a href="/storage" class="link text-content-link">Manage</a>\n'
+            '<span class="stat-chip chip-cpu bg-accent-cpu/20 shadow-raised rounded-card"></span>\n',
+            "import { Button } from '$lib/components/ui';\nconst label = 'Delete';\n",
+        )
+        assert result.returncode == 0, result.stderr
+
     def test_a_comment_with_a_reason_exempts_markup_and_script(self, node, tmp_path):
         result = check(
             node,
