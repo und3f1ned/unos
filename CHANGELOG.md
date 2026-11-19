@@ -41,6 +41,13 @@ manager, encrypted backup uploads, health checks, CI checks).
   `app_names_changed` in the audit log, ADR-0420).
 
 ### Changed
+- A pool on an NVMe drive of a SpacemiT K1 (Banana Pi BPI-F3) gets TRIM like every other pool:
+  `mkfs.btrfs` and `btrfs device add` trim it, it is mounted without `nodiscard` and its fstab entry
+  without `nodiscard,X-fstrim.notrim`, so the weekly `fstrim.timer` trims it, and Add Disk no longer
+  refuses an NVMe drive for a pool with TRIM there; `docs/INSTALL.md` no longer advises against NVMe
+  on the K1. A Kingston A1000 on the K1 ran `fstrim`, `discard=async` and a warm reboot without an
+  error; the Patriot P300 that hung on a TRIM had also hung under load and did not come back after a
+  warm reboot. The K1's udev rule that turns off the power saving of NVMe drives stays (ADR-0429).
 - The web interface is redesigned (ADR-0428): a calm graphite look in both themes with an indigo
   brand, the system's own fonts at 14 px, cards set apart by a border, one focus ring for the
   keyboard, and status colours that mean status only. The sidebar groups its links under **Data**,

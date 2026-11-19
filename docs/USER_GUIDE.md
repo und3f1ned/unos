@@ -504,9 +504,7 @@ For each pool, you can:
   RAID1 and so on): new data goes to the new disk too, and a full **Balance**
   spreads the data that is there already. When the path names another disk
   than the one listed (disks change names when they are reconnected), the
-  add is refused: open the dialog again. On a board that hangs on the TRIM of
-  an NVMe drive (ADR-0370), an NVMe drive joins only a pool that has one
-  already
+  add is refused: open the dialog again
 - **Remove Disk** - (the same pools) Remove a disk from the pool: select it
   and type its path again. Its data moves to the other disks first, which can
   take hours on a hard disk; the pool stays usable meanwhile, and the disk

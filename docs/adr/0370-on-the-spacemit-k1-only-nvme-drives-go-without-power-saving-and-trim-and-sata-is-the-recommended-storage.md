@@ -1,14 +1,17 @@
 ---
-status: proposed
+status: superseded
 date: 2026-11-13
 area: deploy
 decided-by: agent
+superseded-by: ADR-0429
 supersedes: [ADR-0369]
 ---
 
 # ADR-0370: UNOS runs on the Banana Pi BPI-F3 with both images built on the host, and on its SpacemiT K1 only NVMe drives go without power saving and TRIM
 
 ## Context
+
+Superseded by ADR-0429: only in part, the TRIM rule of NVMe drives on the K1 (`mkfs.btrfs --nodiscard`, `nodiscard`, `nodiscard,X-fstrim.notrim`, `NVME_NO_TRIM_SOCS` and `pool_is_trimmed`) and the advice of `docs/INSTALL.md` against NVMe on the K1: a pool on an NVMe drive of a K1 gets TRIM like every other pool, and NVMe drives are among the K1's disks for pools; every other rule here stays as written, the udev rule of NVMe power saving included, and still proposed until `deploy.riscv64-bpi-f3` passes.
 
 ADR-0369 made UNOS run on the Banana Pi BPI-F3 (SpacemiT K1, riscv64) and took TRIM off every pool
 of a K1 and its weekly `fstrim.timer` off, because the NVMe drive of the board hung on a TRIM of

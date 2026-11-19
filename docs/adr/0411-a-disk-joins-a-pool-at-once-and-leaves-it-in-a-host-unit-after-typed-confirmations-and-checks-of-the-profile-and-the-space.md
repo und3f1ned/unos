@@ -1,13 +1,16 @@
 ---
-status: accepted
+status: superseded
 date: 2026-11-18
 area: storage
 decided-by: agent
+superseded-by: ADR-0429
 ---
 
 # ADR-0411: A disk joins a pool at once and leaves it in a unit of the host, after typed confirmations and checks of the profile and the space
 
 ## Context
+
+Superseded by ADR-0429: only in part, the refusal of an NVMe disk on a SoC of `pools.NVME_NO_TRIM_SOCS` for a pool that gets TRIM and the `--nodiscard` of `btrfs device add` for a pool without TRIM: every disk is added with TRIM, and none is refused for being an NVMe drive; every other rule here stays in force.
 
 `storage.pool-add-and-remove-disks` asks for adding a free disk to a pool, which grows and keeps
 its profile, and removing one, whose data moves to the other disks first, with a removal that the

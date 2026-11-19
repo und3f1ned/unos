@@ -255,19 +255,18 @@ require_k1_webui_image() {
     exit 1
 }
 
-# NVMe drives are not recommended on the SpacemiT K1 (docs/INSTALL.md): one hung
-# under load ("QID 0 timeout, disable controller") unless its power saving
-# (APST) and the ASPM L1 of its PCIe link were off, and the kernel parameters
-# that would turn them off (pcie_aspm=off, nvme_core.default_ps_max_latency_us=0)
-# keep the BPI-F3 from booting. For an NVMe drive that is used anyway, udev turns
-# them off as each drive appears, also when the K1 enumerates PCIe late in the
-# boot: ASPM L1 when its PCIe function appears, and APST once its disk appears,
-# since the driver adds the controller's APST setting only after it has
-# identified the drive. udev applies the rule to the drives there are now. It
-# touches NVMe drives only: SATA and USB disks keep their power management and
-# TRIM, and fstrim.timer stays as it is; the supervisor keeps TRIM off the pools
-# with an NVMe drive (ADR-0370). Elsewhere this does nothing. uninstall.sh keeps
-# the rule: the pools stay.
+# On the SpacemiT K1 an NVMe drive hung under load ("QID 0 timeout, disable
+# controller") unless its power saving (APST) and the ASPM L1 of its PCIe link
+# were off, and the kernel parameters that would turn them off (pcie_aspm=off,
+# nvme_core.default_ps_max_latency_us=0) keep the BPI-F3 from booting
+# (docs/INSTALL.md). udev turns them off as each NVMe drive appears, also when
+# the K1 enumerates PCIe late in the boot: ASPM L1 when its PCIe function
+# appears, and APST once its disk appears, since the driver adds the
+# controller's APST setting only after it has identified the drive. udev applies
+# the rule to the drives there are now. It touches the power saving of NVMe
+# drives only: SATA and USB disks keep theirs, every pool keeps TRIM and
+# fstrim.timer stays as it is (ADR-0370, ADR-0429). Elsewhere this does nothing.
+# uninstall.sh keeps the rule: the pools stay.
 configure_spacemit_k1() {
     is_spacemit_k1 || return 0
     log_info "Configuring NVMe for the SpacemiT K1..."
