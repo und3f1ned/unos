@@ -87,7 +87,7 @@
 <Card>
 	<div class="flex flex-wrap items-center justify-between gap-3 mb-4">
 		<h2 class="section-title">
-			<UsersRound class="w-5 h-5" />
+			<UsersRound class="w-5 h-5 text-content-secondary" />
 			{$t('groups.title', { count: directory.groups.length })}
 		</h2>
 		<Button icon={Plus} variant="secondary" onclick={() => groupDialog?.openCreate()}>{$t('groups.add')}</Button>
@@ -139,8 +139,8 @@
 							<Button variant="secondary" size="sm" icon={Edit} onclick={() => groupDialog?.openEdit(group)}>
 								{$t('groups.edit')}<span class="sr-only">{` ${$t('groups.editOf', { name: group.name })}`}</span>
 							</Button>
-							<Button variant="ghost" size="icon-sm" onclick={() => openDelete(group)}>
-								<Trash2 class="w-4 h-4 text-error" />
+							<Button variant="ghost-danger" size="icon-sm" onclick={() => openDelete(group)}>
+								<Trash2 class="w-4 h-4" />
 								<span class="sr-only">{$t('groups.deleteGroup', { name: group.name })}</span>
 							</Button>
 						</div>

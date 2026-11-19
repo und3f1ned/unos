@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { Edit, LogOut, Shield, ShieldOff, Trash2, Users } from 'lucide-svelte';
 	import type { User } from '$lib/api/auth';
-	import { Badge, Button, Card } from '$lib/components/ui';
+	import { Badge, Button, Card, EmptyState } from '$lib/components/ui';
 	import { SmbStateBadge } from '$lib/components/shares';
 	import { intlLocale, t } from '$lib/i18n';
 	import { formatDateTime } from '$lib/time';
@@ -32,14 +32,17 @@
 </script>
 
 <!-- The users, each with their role, two-factor and SMB state, and what can be done to them. -->
-<Card>
-	<h2 class="section-title mb-4">
-		<Users class="w-5 h-5" />
-		{$t('users.count', { count: users.length })}
-	</h2>
+<!-- A flush card: the table reaches its edges (ADR-0428). -->
+<Card flush>
+	<div class="card-header">
+		<h2 class="section-title">
+			<Users class="w-5 h-5 text-content-secondary" aria-hidden="true" />
+			{$t('users.count', { count: users.length })}
+		</h2>
+	</div>
 
 	{#if users.length === 0}
-		<p class="text-muted">{$t('users.empty')}</p>
+		<EmptyState compact icon={Users} title={$t('users.empty')} />
 	{:else}
 		<div class="table-frame">
 			<table class="table">
@@ -66,22 +69,22 @@
 							</td>
 							<td>
 								{#if user.is_admin}
-									<span class="flex items-center gap-1 text-warning">
-										<Shield class="w-4 h-4" />
+									<span class="flex items-center gap-1.5 text-content">
+										<Shield class="w-4 h-4 text-content-secondary" aria-hidden="true" />
 										{$t('users.admin')}
 									</span>
 								{:else}
-									<span class="flex items-center gap-1 text-secondary">
-										<ShieldOff class="w-4 h-4" />
+									<span class="flex items-center gap-1.5 text-secondary">
+										<ShieldOff class="w-4 h-4" aria-hidden="true" />
 										{$t('users.user')}
 									</span>
 								{/if}
 							</td>
 							<td>
 								{#if user.totp_enabled}
-									<span class="text-success">{$t('users.twoFactorOn')}</span>
+									<Badge variant="success" dot>{$t('users.twoFactorOn')}</Badge>
 								{:else}
-									<span class="text-muted">{$t('users.twoFactorOff')}</span>
+									<Badge variant="neutral">{$t('users.twoFactorOff')}</Badge>
 								{/if}
 							</td>
 							<td>
@@ -93,8 +96,8 @@
 							</td>
 							<td class="text-secondary">{formatDate(user.created_at)}</td>
 							<td>
-								<div class="flex items-center justify-end gap-2">
-									<Button variant="secondary" size="icon-sm" onclick={() => onedit(user)}>
+								<div class="table-actions">
+									<Button variant="ghost" size="icon-sm" onclick={() => onedit(user)}>
 										<Edit class="w-4 h-4" />
 										<span class="sr-only">{$t('users.editUser', { name: user.username })}</span>
 									</Button>
@@ -103,8 +106,8 @@
 											<LogOut class="w-4 h-4" />
 											<span class="sr-only">{$t('users.endSessionsOf', { name: user.username })}</span>
 										</Button>
-										<Button variant="ghost" size="icon-sm" onclick={() => ondelete(user)}>
-											<Trash2 class="w-4 h-4 text-error" />
+										<Button variant="ghost-danger" size="icon-sm" onclick={() => ondelete(user)}>
+											<Trash2 class="w-4 h-4" />
 											<span class="sr-only">{$t('users.deleteUser', { name: user.username })}</span>
 										</Button>
 									{/if}
