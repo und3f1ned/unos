@@ -212,7 +212,9 @@ VALKEY = PinnedImage(
 # or broker as the app's own docker-compose.yml names it (BookStack's, which names none: MariaDB's
 # 11.8 LTS line), pinned by its version tag, with the estimate on the system disk of
 # APP_IMAGES (four times the compressed layers of the larger linux/arm64 or linux/amd64 image) and
-# the VOLUMEs of its configuration. Each moves with its app, never with Immich's.
+# the VOLUMEs of its configuration. Each moves with its app, never with Immich's. Paperless-ngx's and
+# Linkwarden's are the sizes that their pulls took on the dev device on 2026-11-19 with their
+# companions (3308 and 2858 MiB), plus about 5%: four times their compressed layers fell short.
 BOOKSTACK = PinnedImage(
     "lscr.io/linuxserver/bookstack", "v26.09.3-ls299",
     "sha256:c741211356966fd38f8fea10483f341ca29c41cdd1b96b5cfcdd4312f26d7f97", 385_000_000, ("/config",),
@@ -223,7 +225,7 @@ BOOKSTACK_MARIADB = PinnedImage(
 )
 PAPERLESS = PinnedImage(
     "ghcr.io/paperless-ngx/paperless-ngx", "3.5.1",
-    "sha256:8508853b8a0f8394074260957d0be186c8c64f346973b24a7583de4580f306b9", 3_282_000_000,
+    "sha256:8508853b8a0f8394074260957d0be186c8c64f346973b24a7583de4580f306b9", 3_560_000_000,
     ("/usr/src/paperless/consume", "/usr/src/paperless/data", "/usr/src/paperless/export", "/usr/src/paperless/media"),
 )
 # Paperless-ngx's broker: Valkey's Alpine build, as its docker-compose files name it (9-alpine).
@@ -233,7 +235,7 @@ PAPERLESS_VALKEY = PinnedImage(
 )
 LINKWARDEN = PinnedImage(
     "ghcr.io/linkwarden/linkwarden", "v2.17.0",
-    "sha256:7c11fde57d1a0c819b6de0079966eba3a33584d718464af7dacde22bd470ae46", 2_283_000_000,
+    "sha256:7c11fde57d1a0c819b6de0079966eba3a33584d718464af7dacde22bd470ae46", 2_690_000_000,
     cmd=(
         "sh", "-c",
         "export PATH=/data/node_modules/.bin:$PATH && prisma migrate deploy --schema=/data/packages/prisma/schema.prisma"
@@ -2399,8 +2401,10 @@ APP_CATALOG: list[AppTemplate] = [
             EnvVar(name="XDG_CACHE_HOME", value="/tmp/cache", editable=False),
         ],
         command=["sh", "-c", LINKWARDEN_COMMAND],
-        # Chromium's profiles and its shared memory (Playwright runs it with --disable-dev-shm-usage).
-        tmpfs={"/tmp": "size=512m"},
+        # Chromium's profiles and its shared memory (Playwright runs it with --disable-dev-shm-usage),
+        # and Prisma's cache, which its start writes to /root/.cache/prisma whatever XDG_CACHE_HOME
+        # says (the dev device's check, 2026-11-19).
+        tmpfs={"/tmp": "size=512m", "/root/.cache": "size=64m"},
         # Its image's curl every 30 s would write the container's state to the system disk.
         image_healthcheck=False,
         depends_on=["database"],

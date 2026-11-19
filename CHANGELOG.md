@@ -1558,6 +1558,11 @@ manager, encrypted backup uploads, health checks, CI checks).
   installed once, under its id, and a request with `name` answers 422.
 
 ### Fixed
+- Linkwarden keeps Prisma's cache in memory too: its start wrote it into its container's layer on
+  the system disk. The App Store's estimates of the system disk for Paperless-ngx and Linkwarden
+  are now what their pulls took, plus about 5%: they were 3% and 8% short (ADR-0415).
+- The tests of the live statistics build psutil's answers themselves: the named tuples of
+  psutil's private module, which psutil 7 no longer has there, failed them on Linux.
 - The CPU share of the live statistics, of the CPU and of each core, was of
   the time since the last sample taken in the same worker thread, any number
   of samples back; it is now of the time since the last sample, and 0 in the
