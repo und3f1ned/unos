@@ -6,6 +6,7 @@
 	import { Alert, Badge, Button, Input, Modal } from '$lib/components/ui';
 	import { addPoolDisk, getPoolDevices, type DiskCandidate, type Pool } from '$lib/api/storage';
 	import { t } from '$lib/i18n';
+	import { messageOf } from './pools';
 
 	type Props = {
 		/** The pool to add a disk to; the dialog is open while it is set. */
@@ -61,7 +62,7 @@
 			candidates = found.candidates;
 			profiles = found.profiles;
 		} catch (e) {
-			if (loadedFor === target) loadError = e instanceof Error ? e.message : String(e);
+			if (loadedFor === target) loadError = messageOf(e);
 		} finally {
 			if (loadedFor === target) loading = false;
 		}
@@ -85,7 +86,7 @@
 			busy = false;
 			onadded?.(grown);
 		} catch (e) {
-			error = e instanceof Error ? e.message : String(e);
+			error = messageOf(e);
 			busy = false;
 		}
 	}
