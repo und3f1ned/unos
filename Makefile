@@ -148,7 +148,7 @@ e2e-local: ## Playwright E2E against the local stand-in, never the device (ADR-0
 	PYTHON="$(PY)" NPM="$(NPM_BIN)" scripts/standin/e2e.sh $(E2E_ARGS)
 
 audit: ## pip-audit and npm audit of the runtime dependencies (needs the network)
-	$(PIP_AUDIT) -r supervisor/requirements.txt
+	PYTHON="$(PY)" PIP_AUDIT="$(call absolute,$(PIP_AUDIT))" scripts/audit-python.sh
 	cd webui && $(NPM_BIN) audit --omit=dev --audit-level=high
 
 catalog-platforms: ## The recorded platforms of the catalog's images are the registries' (needs the network; ADR-0403)

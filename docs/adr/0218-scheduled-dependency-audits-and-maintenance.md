@@ -1,13 +1,16 @@
 ---
-status: accepted
+status: superseded
 date: 2026-11-07
 area: ci
 decided-by: agent
+superseded-by: ADR-0423
 ---
 
 # ADR-0218: Dependencies are audited weekly, and maintenance passes run monthly
 
 ## Context
+
+Superseded by ADR-0423: only in part, the Python audit of `.github/workflows/audit.yml`, now `scripts/audit-python.sh` in place of `pip-audit -r supervisor/requirements.txt`; every other rule here stays in force.
 
 CI audits the dependencies only when it runs for a push or a pull request (ADR-0190), so a new advisory against an unchanged dependency stays unnoticed between changes, and nothing proposes updates. Drift between the code and what agents rely on (the AGENTS.md files, the skills, ADR statuses, the glossary, the feature ledger, the device's state) is not visible to a per-change review either (the book's Scheduled Maintenance pattern).
 

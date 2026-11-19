@@ -285,6 +285,8 @@ class TestRouteMatrix:
             ("GET", f"{API}/offsite/settings"),
             ("PUT", f"{API}/offsite/settings"),
             ("DELETE", f"{API}/offsite/settings"),
+            # UNOS's key pair for SFTP (ADR-0422).
+            ("POST", f"{API}/offsite/sftp-key"),
             ("GET", f"{API}/offsite/status"),
             ("POST", f"{API}/offsite/run"),
             ("GET", f"{API}/offsite/snapshots"),

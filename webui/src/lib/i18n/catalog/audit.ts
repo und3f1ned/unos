@@ -139,6 +139,9 @@ export const en = {
 	'audit.action.remoteAccessPeerAdded': 'Remote access peer added',
 	'audit.action.remoteAccessPeerRevoked': 'Remote access peer revoked',
 	'audit.action.appNamesChanged': 'App names changed',
+	'audit.action.networkInterfaceCreated': 'Network interface created',
+	'audit.action.networkInterfaceDeleted': 'Network interface deleted',
+	'audit.action.networkChangeKept': 'Network change kept',
 	'audit.action.other': 'Other',
 
 	// The types of resource that the server records: in English as it records them.
@@ -311,6 +314,9 @@ export const ru: Translation<typeof en> = {
 	'audit.action.remoteAccessPeerAdded': 'Узел удалённого доступа добавлен',
 	'audit.action.remoteAccessPeerRevoked': 'Узел удалённого доступа отозван',
 	'audit.action.appNamesChanged': 'Имена приложений изменены',
+	'audit.action.networkInterfaceCreated': 'Сетевой интерфейс создан',
+	'audit.action.networkInterfaceDeleted': 'Сетевой интерфейс удалён',
+	'audit.action.networkChangeKept': 'Изменение сети сохранено',
 	'audit.action.other': 'Другое',
 
 	'audit.resource.user': 'пользователь',

@@ -53,7 +53,8 @@ logger = logging.getLogger(__name__)
 # processes, ADR-0288), shares/smb.py, shares/accounts.py (SMB accounts: getent
 # and the shadow tools, smbpasswd, pdbedit, smbstatus), health/router.py and
 # network/ (ip, ss, systemd-run, hostnamectl; resolvectl only where
-# systemd-resolved runs, else /etc/resolv.conf), apps/preflight.py (ss: the host
+# systemd-resolved runs, else /etc/resolv.conf; networkctl, sed and cp for the bonds,
+# VLANs and bridges of network/virtual.py, ADR-0424), apps/preflight.py (ss: the host
 # ports that an app's install would take; sh with df: the free space of the system
 # disk before its pulls, ADR-0381), power/router.py (shutdown,
 # busctl, systemctl, ip, ethtool: ADR-0233), power/schedule.py (shutdown, busctl and ss; sh
@@ -102,6 +103,7 @@ HOST_TOOLS: dict[str, str] = {
     "ss": "iproute2",
     "systemd-run": "systemd",
     "hostnamectl": "systemd",
+    "networkctl": "systemd",
     "timedatectl": "systemd",
     "shutdown": "systemd-sysv",
     "busctl": "systemd",
@@ -126,7 +128,9 @@ HOST_TOOLS: dict[str, str] = {
 # SSH's ports (none without openssh-server), and runs systemd-run and systemctl for the revert.
 # network/wireguard.py runs wg and wg-quick (through the unit wg-quick@unos-wg) for remote access, and
 # the remote access card names a missing wireguard-tools; network/app_names.py's unit runs
-# avahi-publish, and the app names card names a missing avahi-utils (ADR-0420).
+# avahi-publish, and the app names card names a missing avahi-utils (ADR-0420). The off-device copy
+# over SFTP runs the host's ssh, which restic starts through program_on_host, and Save names a
+# missing openssh-client (offsite/ssh.py, ADR-0422).
 OPTIONAL_HOST_TOOLS: dict[str, str] = {
     "exportfs": "nfs-kernel-server",
     "upsc": "nut-client",
@@ -137,6 +141,7 @@ OPTIONAL_HOST_TOOLS: dict[str, str] = {
     "wg": "wireguard-tools",
     "wg-quick": "wireguard-tools",
     "avahi-publish": "avahi-utils",
+    "ssh": "openssh-client",
 }
 
 # Enter all of PID 1's namespaces except the user and cgroup namespaces.
@@ -191,6 +196,33 @@ def _prefix() -> list[str]:
     if runs_locally():
         return []
     return list(_NSENTER_PREFIX)
+
+
+# The namespaces of PID 1 that a program of the host enters when another program of the container
+# starts it (program_on_host): its files and its network, nothing else.
+_PROGRAM_PREFIX = ["nsenter", "--target", "1", "--mount", "--net", "--"]
+
+
+def program_on_host(argv: list[str]) -> list[str]:
+    """The argv that runs the host's program ARGV, for a program of the container that starts it
+    itself: restic's sftp.command runs the host's ssh (ADR-0422). nsenter enters the host's mount and
+    network namespaces only, and execs ARGV without a fork of its own; the files that ARGV names in
+    this container go through container_path. ``UNOS_HOST_EXEC=local``: ARGV as it is."""
+    _validate_cmd(argv)
+    if runs_locally():
+        return list(argv)
+    return [*_PROGRAM_PREFIX, *argv]
+
+
+def container_path(path: str) -> str:
+    """PATH, an absolute path of this container, as a program of the host's mount namespace opens it:
+    through /proc/<the supervisor's PID>/root (pid: host, so the PID is the host's). With
+    ``UNOS_HOST_EXEC=local``, PATH itself."""
+    if not path.startswith("/"):
+        raise ValueError("container_path takes an absolute path")
+    if runs_locally():
+        return path
+    return f"/proc/{os.getpid()}/root{path}"
 
 
 def _validate_cmd(cmd: list[str]) -> None:

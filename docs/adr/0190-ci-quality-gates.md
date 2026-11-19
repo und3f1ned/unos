@@ -1,14 +1,17 @@
 ---
-status: accepted
+status: superseded
 date: 2026-11-06
 area: ci
 decided-by: agent
+superseded-by: ADR-0423
 supersedes: [ADR-0056]
 ---
 
 # ADR-0190: CI fails on any test, lint, audit, build or check error, with a read-only token
 
 ## Context
+
+Superseded by ADR-0423: only in part, the commands of the Lint and Audit job: ruff and pip-audit are installed with `pip install --require-hashes --only-binary=:all: -r .github/lint-requirements.txt`, and `scripts/audit-python.sh` runs pip-audit in place of `pip-audit -r supervisor/requirements.txt`; every other rule here stays in force.
 
 CI ran only pytest, and an x86 image build after a merge. The November 2026 audit counted 179 svelte-check errors, 10 of them in the web UI's source and 3 of those real bugs of the file manager, and Phase 0 still shipped with 7 of them, in files it did not change (ADR-0056). A tool run through npx could be downloaded unpinned, and the build or test code of a dependency could read the workflow's token from the git configuration.
 

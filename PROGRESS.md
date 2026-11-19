@@ -180,6 +180,14 @@ significant step. Features and their state live in `feature-list.json`, decision
   it yourself"): `apps.manage-installed`, `storage.edge-cases`, `shares.rollback-era-safeguards`,
   `shares.nfs-exports-parser` and `apps.docker-calls-off-event-loop` pass; Paperless-ngx and
   Linkwarden installed and ran, BookStack's pull and transmission's update failed at lscr.io.
+- On 2026-11-19 (Log): the sixteenth batch on the branch `mvp.batch-16`, merged into `main` with
+  its record: off-device copies to a restic REST server and over SFTP through the host's ssh
+  (`backup.off-device-copies-over-sftp`, ADR-0422), the workflows' actions pinned by commit and the
+  audit's tools by hash, with wheels only outside the images (`ci.actions-pinned-by-sha`,
+  `ci.pinned-check-tools`, ADR-0423), and bonds, VLANs and bridges with a revert of the uplink
+  (`system.network-bonding-and-vlans`, ADR-0424). The off-device copy passes; the bond waits for a
+  second network card, the pins for Dependabot and the owner's `make audit`. The triage labels
+  exist and the merged branches are gone, on GitHub and in the local worktrees.
 - On the device the NFS server runs (nfs-server, rpcbind.socket and rpcbind, enabled since
   2026-11-08, ADR-0303) and exports nothing for now; over IPv6 only LAN sources reach it
   (ADR-0301). avahi-daemon and wsdd2 run (network discovery), and nmbd is disabled since
@@ -230,7 +238,7 @@ significant step. Features and their state live in `feature-list.json`, decision
 
 ## Dev device
 
-State on 2026-11-19, 10:05 UTC. A Banana Pi BPI-W3 (ArmSoM W3, Rockchip RK3588, 8 GB), running
+State on 2026-11-19, 16:20 UTC. A Banana Pi BPI-W3 (ArmSoM W3, Rockchip RK3588, 8 GB), running
 Armbian's community image for `armsom-w3`, upgraded on 2026-11-15 from 26.2.0-trunk.151 to
 26.11.0-trunk.133 (Debian 13, kernel 6.1.172-vendor-rk35xx);
 its address and logins are in `dev.env` (ADR-0212). This journal called it a UGREEN board, after
@@ -241,7 +249,13 @@ the UGREEN firmware on its eMMC, until the owner set that right on 2026-11-15 (A
   since boot, its own wear estimate 0 to 10%. Nothing writes to it.
 - SSH by key only, root by the workstation's key `~/.ssh/unos_dev_ed25519`; root's and the UNOS
   administrator's passwords were rotated and live only in `dev.env` (ADR-0226).
-- Runs 82346c1 of the branch `mvp.batch-15` (the fifteenth batch, ADR-0417 to ADR-0420, and its
+- Runs 988bf19 of the branch `mvp.batch-16` (the sixteenth batch, ADR-0422 to ADR-0424), merged
+  into `main` with the record of its device check, whose commits on top of it change no runtime
+  file. Deployed on 2026-11-19 (SD MiB sync 4.562, build-supervisor 15.062, build-webui 20.875, up
+  5.719), a reboot from the API at 14:41:15 UTC (all containers healthy by about 14:43). No
+  off-device copy is configured and no virtual interface of UNOS is there; `/etc/unos` is an empty
+  folder that the check's kept interfaces left.
+- Before it, 82346c1 of the branch `mvp.batch-15` (the fifteenth batch, ADR-0417 to ADR-0420, and its
   fixes), merged into `main` with the record of its device check, whose commits on top of it change
   no runtime file. 15cf31d was deployed on 2026-11-19 at 07:50 to 08:01 UTC (SD MiB sync 6.215,
   build-supervisor 17.715, build-webui 21.367, up 6.465), a reboot from the API at 08:21:50 UTC
@@ -668,11 +682,40 @@ Open owner actions:
 18. `system.remote-access`, step 1: a port forward of UDP 51820 on the router to the dev device,
     remote access turned on, and a phone or laptop outside the LAN that imports a peer's
     configuration and reaches the web UI; a Mac's `dns-sd` for an app's name.
+20. A second network card on the dev device (a USB NIC), for a real bond of
+    `system.network-bonding-and-vlans`'s step 1, and `make audit` in the owner's terminal for
+    `ci.pinned-check-tools` (pip cannot reach the index from the agents' sessions).
 19. The pulls from lscr.io on the dev device's network: Docker's downloads of its blobs fail with
     "timeout awaiting response headers" (four times since 2026-11-18) while curl on the device
     fetches the same blob in 0.3 s. BookStack's install and transmission's update wait for it.
 
 ## Log
+
+### 2026-11-19: A sixteenth batch: off-device copies over REST and SFTP, pinned actions and tools, virtual interfaces
+
+- Three builders in parallel worktrees from main 4575c68, each reviewed in a fresh context by its
+  own builder, which fixed its findings. The lead had the pins' builder leave the supervisor image
+  alone: `--no-binary=nut2` goes on the command lines, so the image's pip layer is not rebuilt on
+  the SD card (about a hundred MB), and pip's default already takes the pinned wheels there
+  (ADR-0423). Recorded, not fixed: the audit with wheels only could check another version than the
+  image builds of a package that is not pinned and has no wheel (ADR-0423); NetworkManager and
+  ifupdown hosts, the inert boot unit after an uninstall, and Docker's macvlan networks on a card
+  that becomes a port (`system.network-bonding-and-vlans`); the private key is not in the device
+  check's log scan (`backup.off-device-copies-over-sftp`).
+- Merged as ADR-0422 to ADR-0424 in that order. `make check` 10631 passed, 124 skipped, 1 xfailed;
+  the full E2E run 1093 passed, 14 skipped. By the lead at the owner's word: the triage labels
+  made on GitHub, its setting that deletes a merged pull request's branch turned on, the 86 merged
+  remote branches deleted, 170 clean local worktrees and 12 local branches of merged work removed.
+- Device check of 988bf19 (SD MiB per step in each entry's notes), before and after a reboot from
+  the API at 14:41:15 UTC: a REST server and a second sshd on the device's LAN address as copy
+  targets, each saved, run with its check and restore test, restored from and refused at a changed
+  certificate or host key; a bridge without ports and a VLAN on the uplink, its revert, kept, back
+  after the reboot and deleted, with every LAN check OK; `scenario.sh all` (all areas but balance,
+  whose step 10 failed twice: after Resume the balance of 13 to 14 chunks finished before Cancel
+  took effect, the check's timing on a pool with little data, not shown to be UNOS's, open); the
+  audit chain unbroken over 3213 entries. One fault of the check's own tooling:
+  `scripts/dev/restic-rest-server.py` refused restic 0.18's POST without a Content-Length; fixed
+  with a test.
 
 ### 2026-11-19: A fifteenth batch: API documentation, iSCSI, the data directory, remote access; the owner's open checks
 

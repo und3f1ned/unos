@@ -148,15 +148,17 @@ run_e2e_tests() {
         npm ci
     fi
 
-    # Install Playwright browsers if needed
-    npx playwright install chromium --with-deps 2>/dev/null || true
+    # Install Playwright browsers if needed. Playwright runs from node_modules/.bin, the version of
+    # package-lock.json, not through npx, which would download a missing one from the registry
+    # (ADR-0423).
+    ./node_modules/.bin/playwright install chromium --with-deps 2>/dev/null || true
 
     # Run tests. HTTP_URL is the plain-HTTP port for the redirect and health
     # checks in tests/https.spec.ts. E2E_STAND_IN=1: like the stand-in, the test
     # stack has no Samba and the seeded share, so the specs take the stand-in's
     # skips, also those that need Docker (docs/TESTING.md).
     log_info "Executing Playwright tests..."
-    E2E_STAND_IN=1 BASE_URL="$TEST_HTTPS_URL" HTTP_URL="$TEST_URL" CI=true npx playwright test --reporter=list
+    E2E_STAND_IN=1 BASE_URL="$TEST_HTTPS_URL" HTTP_URL="$TEST_URL" CI=true ./node_modules/.bin/playwright test --reporter=list
 
     log_success "E2E tests passed!"
 }
@@ -171,7 +173,8 @@ run_quick_test() {
     fi
 
     # Run only auth and API tests as smoke test
-    E2E_STAND_IN=1 BASE_URL="$TEST_HTTPS_URL" HTTP_URL="$TEST_URL" CI=true npx playwright test auth.spec.ts api.spec.ts --reporter=list
+    E2E_STAND_IN=1 BASE_URL="$TEST_HTTPS_URL" HTTP_URL="$TEST_URL" CI=true \
+        ./node_modules/.bin/playwright test auth.spec.ts api.spec.ts --reporter=list
 
     log_success "Smoke test passed!"
 }

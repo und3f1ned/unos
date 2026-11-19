@@ -84,8 +84,18 @@ Avoid: user (a UNOS user), admin.
 **Automatic revert**: What turns a network interface that UNOS disabled back on, with its saved
 addresses and routes, or puts the host's firewall back as it was before a change: a timer on the
 host that runs unless the administrator keeps the change within 60 seconds (an interface,
-ADR-0244) or 120 seconds (the firewall, ADR-0416). Avoid: rollback (what `update.sh` and
-`deploy.sh` do), undo.
+ADR-0244) or 120 seconds (the firewall, ADR-0416; a virtual interface, ADR-0424). Avoid: rollback
+(what `update.sh` and `deploy.sh` do), undo.
+
+**Virtual interface**: A bond, VLAN or bridge that UNOS made on the host with systemd-networkd,
+whose `.netdev` file names it as UNOS's; UNOS lists and removes only those (ADR-0424). Its files
+are live in `/run/systemd/network`, and kept, for the boot, in `/etc/unos/netdevs`. Avoid: netdev
+(networkd's file), virtual network (Docker's).
+
+**Protected interface**: An interface that carries the host's default route or its route to the
+computer that asks, or one they rest on (a VLAN's parent, a bond's or bridge's port). A change of
+virtual interfaces that touches one waits to be kept, with its automatic revert armed (ADR-0424).
+Avoid: uplink (one of them), management interface.
 
 **Firewall**: The host's ufw, which System > Security turns on and off and whose rules it lists and
 changes (ADR-0416). Its rules are the host's, as ufw records them; UNOS keeps none of its own.
@@ -565,9 +575,19 @@ configuration tested, and its snapshots restore the configuration into the backu
 files into a new folder of a pool (ADR-0337). Avoid: offsite backup, sync, cloud backup.
 
 **Copy repository**: The one restic repository of an installation's off-device copies: a folder on
-a disk mounted below `/mnt` that is not the system disk, or a bucket of an S3-compatible store.
-Saving its settings opens it with its password, or makes it; a copy never makes one (ADR-0337).
+a disk mounted below `/mnt` that is not the system disk, a bucket of an S3-compatible store, a
+repository of a restic REST server, or a folder of an SFTP server (ADR-0422). Saving its settings
+opens it with its password, or makes it; a copy never makes one (ADR-0337).
 Avoid: backup target, vault, bucket (unless it is one).
+
+**Key pair of UNOS**: The SSH key pair (Ed25519) with which the off-device copy logs in to an SFTP
+server: UNOS makes it, the section shows its public key for the server's authorized keys, and its
+private key stays in the copy's secrets file, never answered (ADR-0422). Avoid: SSH key of the NAS
+(the host's own keys are other ones), deploy key.
+
+**Pinned host key**: The SFTP server's host key that the first test of the copy's settings took,
+or that a save trusted anew; every command of the copy holds to it, and a server that shows another
+one is refused (ADR-0422). Avoid: known host, fingerprint (the pinned key has one).
 
 ## Development
 
@@ -586,6 +606,15 @@ handoff skill (ADR-0204). Avoid: summary, progress report.
 **Base image**: The image that a Dockerfile's `FROM` line starts from, named by tag and digest
 (`python:3.11-slim@sha256:...`): the digest decides what is built, and only a commit that changes
 it moves the base (ADR-0305). Avoid: parent image.
+
+**Action pin**: The commit SHA that a workflow's `uses:` line names for a GitHub Action, with its
+release's version in a comment (`actions/checkout@3d3c42e... # v7.0.1`): a tag can be moved to
+other code, a commit cannot, and Dependabot proposes the next release's (ADR-0423). Avoid: action
+tag.
+
+**Audit environment**: The temporary virtual environment in which `scripts/audit-python.sh`
+resolves the supervisor's runtime dependencies for pip-audit, with pip, setuptools, wheel and
+packaging from `.github/audit-env-requirements.txt`, pinned with their hashes (ADR-0423).
 
 **Quality gate**: `make check`: the same steps as CI's test, lint and frontend jobs (ADR-0216).
 Avoid: CI (which also runs the audits and the Linux-only tests).

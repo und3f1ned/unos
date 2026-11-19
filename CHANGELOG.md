@@ -12,6 +12,23 @@ features (SMB access per user and per share, volumes, copy and move in the file
 manager, encrypted backup uploads, health checks, CI checks).
 
 ### Added
+- The off-device copy (System > Backup & Restore) also goes to a restic REST server over HTTPS,
+  with its user and password (only in restic's environment, never answered or logged) and its
+  certificate checked by the system's roots, by a CA certificate or by the SHA-256 fingerprint of
+  the server's own certificate, and to an SFTP server, which the host's ssh (`openssh-client`)
+  reaches with a key pair that UNOS makes (`POST /api/v1/offsite/sftp-key`; the private key is never
+  shown) and the server's host key pinned at the first test and refused when it changes until a
+  save trusts the new one. Copies, their check and restore test, and both restores run to them as
+  to a disk or an S3 store; the upload and download limits apply to both (ADR-0422).
+- Bonds, VLANs and bridges (System > Network, ADR-0424): an administrator creates and deletes bonds
+  (LACP or balance-rr) of two or more wired network cards, VLANs (ids 1 to 4094) on a card or a bond,
+  and bridges for containers, as systemd-networkd files that UNOS writes before the host's own; on a
+  host whose network NetworkManager or ifupdown keeps, the card says so and offers nothing. A change
+  that touches the interface of the default route or of the connection to UNOS waits to be kept: the
+  host undoes it after 120 seconds unless **Keep this change** is clicked, also without the
+  supervisor, and a reboot before that drops it. Kept interfaces come back after a reboot
+  (`/etc/unos/netdevs` and the host's unit `unos-netdevs.service`); UNOS removes only the interfaces
+  it made. The audit log records each creation, deletion and Keep.
 - Remote access (System > Remote Access): a WireGuard tunnel on the host (wireguard-tools'
   `wg-quick@unos-wg`, enabled so that it comes up at boot) through which devices added as peers reach
   the NAS alone, never the rest of the LAN. The server's key is made on the host and never leaves
@@ -88,6 +105,14 @@ manager, encrypted backup uploads, health checks, CI checks).
   backup's size now names the limit (ADR-0406).
 
 ### Security
+- The checks take their tools from pins: the workflows name every GitHub Action by the commit of its
+  release, with the version in a comment that Dependabot updates; `make audit` and the CI audits
+  run `scripts/audit-python.sh`, which resolves the supervisor's dependencies with pip, setuptools
+  and wheel pinned with their hashes (`.github/audit-env-requirements.txt`) instead of pip-audit's
+  unpinned latest ones; `make setup`, the CI jobs and the test image install wheels only, but
+  nut2, which publishes none (the supervisor's image keeps its pip layer and pip's default, which
+  with exact pins takes a wheel wherever there is one); and `scripts/test-cycle.sh` runs Playwright
+  from `webui/node_modules` instead of npx (ADR-0423).
 - The audit log records the firewall (turned on or off, rules added and removed, reset), clearing the
   login history, pools mounted, unmounted and imported, containers created, images pulled and removed,
   suspend (written before the host goes down), and the power, UPS, notification and off-device copy

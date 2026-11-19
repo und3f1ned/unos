@@ -6,7 +6,10 @@ repository of its own with what the commands of src/offsite/ need, so that what 
 comes back from ``dump``, ``restore`` and ``snapshots``:
 
 * the repository is the folder that RESTIC_REPOSITORY names (``local:<path>`` or a path), or, for
-  ``s3:<endpoint>/<bucket>[/<prefix>]``, a folder below ``<state>/s3``; it holds ``config``, a
+  ``s3:<endpoint>/<bucket>[/<prefix>]``, a folder below ``<state>/s3``, for a REST server
+  ``rest:https://<host>:<port>/[<prefix>/]`` and for SFTP ``sftp://<user>@<host>:<port>/<path>`` a
+  folder of the server that the fake plays in ``<state>/rest/<host>_<port>`` and
+  ``<state>/sftp/<host>_<port>`` (below; ADR-0422); it holds ``config``, a
   ``keys/key`` with the digest of the password and one JSON file per snapshot in ``snapshots/``,
   with the files of the snapshot in it (the tests copy small folders);
 * the commands init, cat config, unlock, backup (of folders, with --exclude, or of standard input
@@ -33,6 +36,24 @@ comes back from ``dump``, ``restore`` and ``snapshots``:
   command ``<state>/hostname`` in place of /proc/sys/kernel/hostname, the file of the namespace that
   it does not make.
 
+* a REST server (``rest_server``): restic's credentials in RESTIC_REST_USERNAME and
+  RESTIC_REST_PASSWORD, which ``credentials.json`` of the server's folder checks when it is there
+  (401 otherwise, as restic reports it), and its certificate: without ``certificate.pem`` (the
+  server's own) and ``ca.pem`` (the CA that signed it) the server's is one of the system's roots,
+  and a --cacert fails; with them, only a --cacert that holds one of them passes. Each opening appends ``{"user", "cacert"}`` (the file's content) to
+  ``<state>/rest.jsonl``;
+* an SFTP server (``sftp_server``), which restic reaches through the command of ``-o
+  sftp.command``, never one of its own: the fake reads that command as UNOS builds it (ADR-0422):
+  ``nsenter --target 1 --mount --net --`` (optional), ``/usr/bin/env -i /usr/bin/ssh -F /dev/null``, its ``-o``
+  options, ``-p``, ``-l``, ``-s -- <host> sftp``, and checks the ones that keep passwords, agents,
+  forwardings and other host keys out; a path ``/proc/<pid>/root/<path>`` is ``<path>`` of the
+  supervisor's container. It checks the server's host key, ``host_key`` (made from the server's
+  name when missing), against UserKnownHostsFile under its HostKeyAlias as ssh does with
+  StrictHostKeyChecking yes, and writes it there with accept-new; the key of IdentityFile, which
+  must be a file of mode 0600, against ``authorized_keys`` when that is there. Each opening
+  appends ``{"argv", "identity_mode", "known_hosts"}`` (before the opening) to
+  ``<state>/ssh.jsonl``.
+
 ``<state>`` is FAKE_RESTIC_STATE, which the wrapper sets. Each call appends a line to
 ``<state>/calls.jsonl``: its arguments, its environment and its process id. ``<state>/faults.json``
 changes what a command does, by the command's name (``backup-stdin`` for the configuration's
@@ -54,6 +75,7 @@ import fnmatch
 import hashlib
 import json
 import os
+import re
 import secrets
 import shlex
 import signal
@@ -62,11 +84,12 @@ import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
+from urllib.parse import urlsplit
 
 # The host name of a UTS namespace, which the fake unshare replaces with <state>/hostname.
 UTS_HOSTNAME_FILE = "/proc/sys/kernel/hostname"
 GLOBAL_FLAGS = {"--no-cache", "--json", "--quiet", "-q", "--no-lock"}
-GLOBAL_VALUES = {"--cache-dir", "--limit-upload", "--limit-download", "--retry-lock"}
+GLOBAL_VALUES = {"--cache-dir", "--limit-upload", "--limit-download", "--retry-lock", "-o", "--option", "--cacert"}
 COMMAND_VALUES = {
     "--stdin-filename", "--tag", "--exclude", "--keep-daily", "--keep-weekly", "--keep-monthly", "--target",
     "--host", "--group-by",
@@ -176,8 +199,222 @@ def location() -> str:
     return found
 
 
+# --- the servers of rest: and sftp: repositories (ADR-0422) ---------------------------------------
+
+SSH = "/usr/bin/ssh"
+NSENTER = ["nsenter", "--target", "1", "--mount", "--net", "--"]
+HOST_KEY_ALIAS = "unos-copy-target"
+# The options of UNOS's ssh that the fake insists on, with their values.
+SSH_OPTIONS = {
+    "BatchMode": "yes", "IdentitiesOnly": "yes", "IdentityAgent": "none", "PasswordAuthentication": "no",
+    "KbdInteractiveAuthentication": "no", "PreferredAuthentications": "publickey", "GlobalKnownHostsFile": "/dev/null",
+    "HostKeyAlias": HOST_KEY_ALIAS, "UpdateHostKeys": "no", "ForwardAgent": "no", "ForwardX11": "no",
+    "ClearAllForwardings": "yes", "PermitLocalCommand": "no", "ControlMaster": "no", "ControlPath": "none",
+}
+_values: dict[str, list[str]] = {}
+_repository: Path | None = None
+
+
+def _ssh_string(data: bytes) -> bytes:
+    return len(data).to_bytes(4, "big") + data
+
+
+def ssh_key_line(seed: bytes) -> str:
+    """An ssh-ed25519 public key as known_hosts holds it, "<type> <base64>", of 32 bytes of SEED."""
+    blob = _ssh_string(b"ssh-ed25519") + _ssh_string(hashlib.sha256(seed).digest())
+    return "ssh-ed25519 " + base64.b64encode(blob).decode()
+
+
+def server_folder(kind: str, host: str, port: int) -> Path:
+    """The folder of the fake's REST or SFTP server at HOST:PORT."""
+    return state_dir() / kind / f"{host.strip('[]')}_{port}"
+
+
+def server_host_key(server: Path) -> str:
+    """The host key of the SFTP server whose folder is SERVER, made from its name when it has none."""
+    path = server / "host_key"
+    if not path.exists():
+        server.mkdir(parents=True, exist_ok=True)
+        path.write_text(ssh_key_line(server.name.encode()) + "\n")
+    return path.read_text().strip()
+
+
+def public_key_of(private: str) -> str:
+    """The public key, "<type> <base64>", of an unencrypted OpenSSH private key."""
+    body = "".join(line for line in private.strip().splitlines() if not line.startswith("-----"))
+    data = base64.b64decode(body)
+    magic = b"openssh-key-v1\0"
+    if not data.startswith(magic):
+        raise Fatal("subprocess ssh: Load key: invalid format")
+    i = len(magic)
+    fields = []
+    for _ in range(3):  # ciphername, kdfname, kdfoptions
+        size = int.from_bytes(data[i:i + 4], "big")
+        fields.append(data[i + 4:i + 4 + size])
+        i += 4 + size
+    if fields[0] != b"none":
+        raise Fatal("subprocess ssh: Load key: the fake reads no encrypted key")
+    i += 4  # the number of keys
+    size = int.from_bytes(data[i:i + 4], "big")
+    blob = data[i + 4:i + 4 + size]
+    kind = blob[4:4 + int.from_bytes(blob[:4], "big")].decode()
+    return f"{kind} {base64.b64encode(blob).decode()}"
+
+
+def _container_path(path: str) -> str:
+    """A file of the supervisor's container as the host's ssh opens it, /proc/<pid>/root/<path>:
+    <path> where that does not resolve (macOS)."""
+    found = re.fullmatch(r"/proc/\d+/root(/.*)", path)
+    return found.group(1) if found and not os.path.exists(path) else path
+
+
+def _log(name: str, entry: dict) -> None:
+    with open(state_dir() / name, "a") as f:
+        f.write(json.dumps(entry) + "\n")
+
+
+def _option_map() -> dict[str, str]:
+    found = {}
+    for item in _values.get("-o", []) + _values.get("--option", []):
+        key, _, value = item.partition("=")
+        found[key] = value
+    return found
+
+
+def _ssh_failed(program: str, lines: list[str]) -> Fatal:
+    text = "".join(f"subprocess {program}: {line}\n" for line in lines)
+    return Fatal(f"{text}Fatal: unable to open repository at {location()}: unable to start the sftp session, error: "
+                 "error receiving version packet from server: server unexpectedly closed connection: unexpected EOF")
+
+
+def sftp_server(where: str) -> Path:
+    """The repository folder of an sftp: location, once the command of sftp.command has reached the
+    fake's server as ssh would."""
+    parts = urlsplit(where)
+    user, host, port = parts.username or "", parts.hostname or "", parts.port or 22
+    command = _option_map().get("sftp.command")
+    if not command:
+        raise Fatal("Fatal: the fake restic runs no ssh of its own: -o sftp.command is missing")
+    argv = command.split()
+    program = argv[0]
+    if argv[:len(NSENTER)] == NSENTER:
+        argv = argv[len(NSENTER):]
+    if argv[:3] != ["/usr/bin/env", "-i", SSH]:
+        raise Fatal(f"Fatal: fake ssh: the command is not /usr/bin/env -i {SSH}: {command}")
+    argv = argv[2:]
+    options: dict[str, str] = {}
+    flags: list[str] = []
+    positional: list[str] = []
+    i = 1
+    while i < len(argv):
+        arg = argv[i]
+        if arg in ("-o", "-p", "-l", "-F"):
+            if i + 1 >= len(argv):
+                raise Fatal(f"Fatal: fake ssh: {arg} needs a value")
+            value = argv[i + 1]
+            if arg == "-o":
+                key, eq, val = value.partition("=")
+                if not eq or key in options:
+                    raise Fatal(f"Fatal: fake ssh: bad or repeated option {value}")
+                options[key] = val
+            else:
+                options[arg] = value
+            i += 2
+        elif arg == "-s":
+            flags.append(arg)
+            i += 1
+        elif arg == "--":
+            positional = argv[i + 1:]
+            break
+        else:
+            raise Fatal(f"Fatal: fake ssh: unexpected argument {arg}")
+    wanted = {**SSH_OPTIONS, "-F": "/dev/null", "-p": str(port), "-l": user}
+    wrong = {k: options.get(k) for k, v in wanted.items() if options.get(k) != v}
+    if wrong or flags != ["-s"] or positional != [host.strip("[]"), "sftp"]:
+        raise Fatal(f"Fatal: fake ssh: not the command of UNOS: {wrong}, {flags}, {positional}")
+    strict = options.get("StrictHostKeyChecking")
+    if strict not in ("yes", "accept-new"):
+        raise Fatal(f"Fatal: fake ssh: StrictHostKeyChecking {strict}")
+    known = Path(_container_path(options.get("UserKnownHostsFile", "")))
+    identity = Path(_container_path(options.get("IdentityFile", "")))
+    server = server_folder("sftp", host, port)
+    expected = server_host_key(server)
+    before = known.read_text() if known.is_file() else None
+    mode = stat.S_IMODE(identity.stat().st_mode) if identity.is_file() else None
+    _log("ssh.jsonl", {"argv": command.split(), "identity_mode": mode, "known_hosts": before})
+    if before is None:
+        raise _ssh_failed(program, [f"Can't open user-known-hosts file {known}"])
+    # The key exchange comes first: a server without a key of the algorithms offered ends it there.
+    algorithms = options.get("HostKeyAlgorithms")
+    offered = {"ssh-rsa": "rsa-sha2-512"}.get(expected.split()[0], expected.split()[0])
+    if algorithms is not None and offered not in algorithms.split(","):
+        raise _ssh_failed(program, [f"Unable to negotiate with {host} port {port}: no matching host key type found. "
+                                    f"Their offer: {expected.split()[0]}"])
+    pinned = [" ".join(line.split()[1:3]) for line in before.splitlines() if line.split()[:1] == [HOST_KEY_ALIAS]]
+    if pinned and expected not in pinned:
+        raise _ssh_failed(program, ["@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@",
+                                    "@    WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED!     @",
+                                    f"Host key for {HOST_KEY_ALIAS} has changed and you have requested strict checking.",
+                                    "Host key verification failed."])
+    if not pinned:
+        if strict == "yes":
+            raise _ssh_failed(program, [f"No ED25519 host key is known for {HOST_KEY_ALIAS} and you have requested "
+                                        "strict checking.", "Host key verification failed."])
+        with open(known, "a") as f:
+            f.write(f"{HOST_KEY_ALIAS} {expected}\n")
+    if mode != 0o600:
+        raise _ssh_failed(program, ["Permissions for the identity file are too open or it is missing",
+                                    f"{user}@{host}: Permission denied (publickey)."])
+    authorized = server / "authorized_keys"
+    if authorized.exists():
+        offered = public_key_of(identity.read_text())
+        allowed = {" ".join(line.split()[:2]) for line in authorized.read_text().splitlines() if line.strip()}
+        if offered not in allowed:
+            raise _ssh_failed(program, [f"{user}@{host}: Permission denied (publickey)."])
+    path = parts.path[1:]
+    if not path:
+        raise Fatal(f"Fatal: invalid backend {where!r}, no directory specified")
+    return server / "files" / (path.lstrip("/") if path.startswith("/") else f"home/{user}/{path}")
+
+
+def rest_server(where: str) -> Path:
+    """The repository folder of a rest: location, once its credentials and certificate passed."""
+    url = where[len("rest:"):]
+    parts = urlsplit(url)
+    if parts.scheme != "https" or parts.username or parts.password:
+        raise Fatal(f"Fatal: the fake REST server takes https:// without credentials in the URL: {url}")
+    server = server_folder("rest", parts.hostname or "", parts.port or 443)
+    user, secret = os.environ.get("RESTIC_REST_USERNAME", ""), os.environ.get("RESTIC_REST_PASSWORD", "")
+    cacert = _values.get("--cacert", [])
+    content = Path(cacert[0]).read_text() if cacert and Path(cacert[0]).is_file() else None
+    _log("rest.jsonl", {"user": user, "cacert": content, "cacert_path": cacert[0] if cacert else None})
+    if cacert and content is None:
+        raise Fatal(f"Fatal: unable to load root certificates: open {cacert[0]}: no such file or directory")
+    roots = [path.read_text().strip() for path in (server / "certificate.pem", server / "ca.pem") if path.exists()]
+    if (not roots and content is not None) or (roots and (content is None or not any(r in content for r in roots))):
+        raise Fatal(f"Fatal: unable to open config file: Stat: Head \"{url}config\": tls: failed to verify "
+                    "certificate: x509: certificate signed by unknown authority")
+    credentials = server / "credentials.json"
+    allowed = json.loads(credentials.read_text()) if credentials.exists() else None
+    if not user or not secret or (allowed is not None and (allowed["username"], allowed["password"]) != (user, secret)):
+        raise Fatal("Fatal: unable to open config file: unexpected HTTP response (401): 401 Unauthorized\n"
+                    f"Is there a repository at the following location?\n{where}")
+    return server / "repos" / parts.path.strip("/")
+
+
 def repository() -> Path:
-    where = location()
+    """The repository's folder, its server reached once per call."""
+    global _repository
+    if _repository is None:
+        _repository = _repository_of(location())
+    return _repository
+
+
+def _repository_of(where: str) -> Path:
+    if where.startswith("rest:"):
+        return rest_server(where)
+    if where.startswith("sftp:"):
+        return sftp_server(where)
     if where.startswith("s3:"):
         rest = where[3:]
         for scheme in ("https://", "http://"):
@@ -537,7 +774,7 @@ def _stop(signum: int, frame: object) -> None:
 
 
 def main(argv: list[str]) -> int:
-    global _fault, _hostname
+    global _fault, _hostname, _values
     signal.signal(signal.SIGTERM, _stop)
     signal.signal(signal.SIGINT, _stop)
     state = state_dir()
@@ -547,6 +784,7 @@ def main(argv: list[str]) -> int:
         log.write(json.dumps({"argv": argv, "env": dict(os.environ), "pid": os.getpid(), "hostname": hostname}) + "\n")
     try:
         command, args, values, flags = parse(argv)
+        _values = values
         name = "backup-stdin" if command == "backup" and "--stdin" in flags else command
         faults = json.loads((state / "faults.json").read_text()) if (state / "faults.json").exists() else {}
         _fault = faults.get(name, {})

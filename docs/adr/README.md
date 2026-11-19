@@ -340,6 +340,7 @@ and this index, and `make check-fast` runs it.
 | [0345](0345-backups-hold-neither-fstab-nor-netplan-and-an-encrypted-upload-that-is-gzip-data-is-refused.md) | Backups hold neither fstab nor netplan, and an encrypted upload that is gzip data is refused | accepted | 2026-11-11 |
 | [0355](0355-the-backup-api-has-no-include-options-and-a-manifest-names-no-options.md) | The backup API has no include_ options, and a backup's manifest names no options | accepted | 2026-11-12 |
 | [0364](0364-a-restore-checks-the-archive-and-extracts-its-database-in-one-streaming-pass.md) | A restore checks the archive and extracts its database in one streaming pass | accepted | 2026-11-12 |
+| [0422](0422-off-device-copies-also-go-to-a-rest-server-and-to-sftp-through-the-hosts-ssh-with-the-host-key-pinned.md) | Off-device copies also go to a restic REST server over HTTPS and to an SFTP server through the host's ssh, with a key pair of UNOS and the host key pinned at the first test | accepted | 2026-11-19 |
 
 ## Files
 
@@ -398,6 +399,7 @@ and this index, and `make check-fast` runs it.
 | [0412](0412-the-load-check-fails-for-a-unos-container-it-could-not-measure-and-the-two-tab-measurement-is-the-owner-s.md) | The load check fails for a UNOS container it could not measure, and the two-tab measurement is the owner's | accepted | 2026-11-18 |
 | [0420](0420-remote-access-is-a-wireguard-tunnel-to-the-nas-alone-and-apps-get-local-names-through-caddy.md) | Remote access is a WireGuard tunnel on the host that reaches the NAS alone, and apps get single-label local names through Caddy | accepted | 2026-11-19 |
 | [0421](0421-check-sh-measures-heat-only-in-zones-that-slow-a-processor-and-unos-keeps-its-idle-budget.md) | The device check measures heat only in zones that slow a processor, and UNOS keeps its idle budget | accepted | 2026-11-19 |
+| [0424](0424-bonds-vlans-and-bridges-are-systemd-networkd-files-and-a-change-that-may-cut-the-connection-waits-to-be-kept.md) | Bonds, VLANs and bridges are systemd-networkd files that UNOS writes, and a change that may cut the connection waits to be kept | accepted | 2026-11-19 |
 
 ## Web UI
 
@@ -504,10 +506,11 @@ and this index, and `make check-fast` runs it.
 | ADR | Title | Status | Date |
 | --- | --- | --- | --- |
 | [0056](0056-ship-with-existing-svelte-check-errors.md) | Changes may ship with the existing svelte-check errors | superseded by [0190](0190-ci-quality-gates.md) | 2026-11-05 |
-| [0190](0190-ci-quality-gates.md) | CI fails on any test, lint, audit, build or check error, with a read-only token | accepted | 2026-11-06 |
-| [0216](0216-make-check-is-the-single-quality-gate.md) | One quality gate: make check runs what CI runs | accepted | 2026-11-07 |
+| [0190](0190-ci-quality-gates.md) | CI fails on any test, lint, audit, build or check error, with a read-only token | superseded by [0423](0423-actions-are-pinned-by-commit-the-audits-tools-by-hash-and-pip-takes-wheels.md) | 2026-11-06 |
+| [0216](0216-make-check-is-the-single-quality-gate.md) | One quality gate: make check runs what CI runs | superseded by [0423](0423-actions-are-pinned-by-commit-the-audits-tools-by-hash-and-pip-takes-wheels.md) | 2026-11-07 |
 | [0217](0217-make-setup-bootstraps-a-checkout.md) | One command, make setup, bootstraps a checkout idempotently | accepted | 2026-11-07 |
-| [0218](0218-scheduled-dependency-audits-and-maintenance.md) | Dependencies are audited weekly, and maintenance passes run monthly | accepted | 2026-11-07 |
+| [0218](0218-scheduled-dependency-audits-and-maintenance.md) | Dependencies are audited weekly, and maintenance passes run monthly | superseded by [0423](0423-actions-are-pinned-by-commit-the-audits-tools-by-hash-and-pip-takes-wheels.md) | 2026-11-07 |
 | [0229](0229-main-stays-without-branch-protection-on-the-free-plan.md) | The main branch stays without branch protection on GitHub's Free plan | accepted | 2026-11-07 |
 | [0230](0230-the-ci-workflow-is-off-on-github.md) | The CI workflow is off on GitHub, and make check on the workstation is the only gate | accepted | 2026-11-07 |
 | [0231](0231-dependabot-proposes-no-major-npm-versions-and-leaves-playwright-alone.md) | Dependabot proposes no major npm versions and leaves Playwright alone | accepted | 2026-11-07 |
+| [0423](0423-actions-are-pinned-by-commit-the-audits-tools-by-hash-and-pip-takes-wheels.md) | Actions are pinned by commit, the audit's tools by hash, and pip takes wheels only | accepted | 2026-11-19 |

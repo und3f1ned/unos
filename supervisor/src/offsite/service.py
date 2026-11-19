@@ -2,10 +2,12 @@
 
 ADR-0337 decides it. restic keeps the copy repository, encrypted with a password that the
 administrator types and that only this device keeps: a folder on a disk mounted below MOUNTS_BASE
-that is not the system disk (disk), or an S3-compatible store (s3).
+that is not the system disk (disk), an S3-compatible store (s3), or, by ADR-0422, a restic REST
+server over HTTPS (rest) or a folder of an SFTP server that the host's ssh reaches (sftp, ssh.py).
 
-* The settings are in SETTINGS_FILE, without a secret. The repository's password and the S3 secret
-  key are in SECRETS_FILE, mode 0600, written as a new file renamed over the old one and synced with
+* The settings are in SETTINGS_FILE, without a secret. The repository's password, the S3 secret
+  key, the REST server's password and the private key of UNOS's SSH key pair are in SECRETS_FILE,
+  mode 0600, written as a new file renamed over the old one and synced with
   its folder; one that cannot be read is kept as .bad (ADR-0324). Neither file is in the
   configuration backups, and no answer, log line, status or argument of restic holds a secret: restic
   gets them in an environment of its own (restic.py), and its messages are redacted.
@@ -31,6 +33,7 @@ that is not the system disk (disk), or an S3-compatible store (s3).
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import errno
 import fcntl
 import hashlib
@@ -45,7 +48,7 @@ import tempfile
 import threading
 import time
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
@@ -56,7 +59,7 @@ from urllib.parse import urlsplit
 from fastapi import HTTPException
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from .. import paths, state_files
+from .. import host, paths, state_files
 from ..config import get_settings
 from ..audit.changes import changed_fields
 from ..backup.router import (
@@ -76,7 +79,7 @@ from ..security.validators import (
     validate_pools_path,
 )
 from ..storage import pools as storage_pools
-from . import restic
+from . import restic, ssh
 
 logger = logging.getLogger(__name__)
 
@@ -143,6 +146,10 @@ NO_PASSWORD = ("The password of the copy repository is not stored: save the sett
                "again with it")
 NO_SECRET_KEY = ("The secret access key of the S3 store is not stored: save the settings of the off-device copy "
                  "again with it")
+NO_REST_PASSWORD = ("The password of the REST server is not stored: save the settings of the off-device copy again "
+                    "with it")
+NO_KEY_PAIR = ("The key pair of UNOS for SFTP is not stored: make a new one, add its public key to the SFTP server "
+               "and save the settings of the off-device copy again")
 STOPPED_DURING_COPY = "The supervisor stopped during the copy"
 STOPPED_DURING_RESTORE = "The supervisor stopped during the restore"
 SAME_DISK = ("This copy is on a disk it copies: it protects against deleted and damaged files, not against the loss "
@@ -169,6 +176,18 @@ _BUCKET = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{1,61}[A-Za-z0-9]")
 _PREFIX_PART = re.compile(r"[A-Za-z0-9._-]{1,128}")
 _REGION = re.compile(r"[A-Za-z0-9-]{1,64}")
 _KEY = re.compile(r"[\x21-\x7e]{1,256}")
+# A REST server's user (basic authentication: no ':'), a login on an SFTP server, and the parts of
+# a folder there: words that neither the repository's URL nor restic's splitting of sftp.command
+# (ssh.py) can take apart.
+_REST_USER = re.compile(r"[\x21-\x39\x3b-\x7e]{1,128}")
+_SSH_USER = re.compile(r"[A-Za-z0-9_][A-Za-z0-9._-]{0,63}")
+_REMOTE_PART = re.compile(r"[A-Za-z0-9_+-][A-Za-z0-9._+-]{0,254}")
+_SHA256 = re.compile(r"[0-9a-f]{64}")
+MAX_REMOTE_PASSWORD_LENGTH = 1024
+MAX_CERTIFICATE_LENGTH = 64 * 1024
+# How a REST server's certificate is checked (rest): by the system's roots; by its own certificate,
+# pinned by its SHA-256 fingerprint at a save; or by a CA certificate that the administrator gave.
+TLS_MODES = ("system", "fingerprint", "ca")
 
 
 # --- the models -----------------------------------------------------------------------------------
@@ -177,6 +196,9 @@ _KEY = re.compile(r"[\x21-\x7e]{1,256}")
 class Kind(str, Enum):
     DISK = "disk"
     S3 = "s3"
+    REST = "rest"
+    SFTP = "sftp"
+
 
 
 _SOURCES_EXAMPLE = ["/mnt/pools/data/documents", "/mnt/pools/data/photos"]
@@ -192,28 +214,51 @@ class OffsiteSettings(BaseModel):
     """The copy target and what is copied: SETTINGS_FILE, and the settings in the answers. No secret."""
 
     kind: Kind = Field(description=f"Where the copy repository is: disk, a folder on a disk mounted below {MOUNTS_BASE} "
-                                   "that is not the system disk; s3, a bucket of an S3-compatible store.")
-    # disk: the folder of the repository, below MOUNTS_BASE
+                                   "that is not the system disk; s3, a bucket of an S3-compatible store; rest, a restic "
+                                   "REST server over HTTPS; sftp, a folder of an SFTP server.")
+    # disk: the folder of the repository, below MOUNTS_BASE; sftp: the folder on the server
     path: Optional[str] = Field(None, description=f"disk: the folder of the copy repository, below {MOUNTS_BASE}, "
-                                                  "made when it is missing; null for s3.")
-    # s3: https://host[:port] or http://host[:port]
+                                                  "made when it is missing; sftp: its folder on the server, absolute or "
+                                                  "below the login's home folder; null for s3 and rest.")
+    # s3: https://host[:port] or http://host[:port]; rest: https://host[:port]
     endpoint: Optional[str] = Field(None, description="s3: the store's address, https:// or http://, its host and "
-                                                      "an optional port; null for disk.")
+                                                      "an optional port; rest: the server's, https:// only; null "
+                                                      "otherwise.")
     bucket: Optional[str] = Field(None, description="s3: the bucket, 3 to 63 letters, digits, '.', '_' or '-'; "
-                                                    "null for disk.")
-    prefix: Optional[str] = Field(None, description="s3: the folders of the copy repository in the bucket, joined "
-                                                    "by /; null for its top.")
+                                                    "null otherwise.")
+    prefix: Optional[str] = Field(None, description="s3: the folders of the copy repository in the bucket, rest: on "
+                                                    "the server, joined by /; null for the top.")
     region: Optional[str] = Field(None, description="s3: the store's region, such as eu-central-1; null when it "
                                                     "needs none.")
-    access_key_id: Optional[str] = Field(None, description="s3: the access key ID; null for disk.")
+    access_key_id: Optional[str] = Field(None, description="s3: the access key ID; null otherwise.")
+    # rest: the user of basic authentication; sftp: the login on the server
+    username: Optional[str] = Field(None, description="rest: the server's user; sftp: the login on the server; null "
+                                                      "otherwise.")
+    # sftp
+    host: Optional[str] = Field(None, description="sftp: the server's host name or IP address; null otherwise.")
+    port: Optional[int] = Field(None, description="sftp: the server's SSH port, 22 by default; null otherwise.")
+    # the server's key, "<type> <base64>", pinned at the first test of the server
+    host_key: Optional[str] = Field(None, description="sftp: the server's host key that the first test pinned, "
+                                                      "'<type> <base64>'; a request cannot set it. null otherwise.")
+    # rest: system, fingerprint or ca
+    tls: Optional[str] = Field(None, description="rest: how the server's certificate is checked: system, by the "
+                                                 "system's roots; fingerprint, by the server's own certificate that a "
+                                                 "save pinned by certificate_sha256; ca, by the CA certificate of "
+                                                 "certificate. null otherwise.")
+    certificate: Optional[str] = Field(None, description="rest: the certificate in PEM that restic trusts alone: the "
+                                                         "CA's (tls ca, given) or the server's own (tls fingerprint, "
+                                                         "read from the server at the save); null otherwise.")
+    certificate_sha256: Optional[str] = Field(None, description="rest, tls fingerprint: the SHA-256 fingerprint of "
+                                                                "the server's certificate, 64 hexadecimal digits, "
+                                                                "colons allowed in a request.")
     # folders of the pools
     sources: list[str] = Field([], description=f"The folders of the pools that a copy takes, 1 to {MAX_SOURCES}, "
                                                "each on a mounted pool.")
     # KiB/s, 0: none; s3 only
-    limit_upload_kib: int = Field(0, description=f"s3: the most that restic sends, in KiB/s, 0 to {MAX_LIMIT_KIB}; "
-                                                 "0: no limit.")
-    limit_download_kib: int = Field(0, description=f"s3: the most that restic reads, in KiB/s, 0 to {MAX_LIMIT_KIB}; "
-                                                   "0: no limit.")
+    limit_upload_kib: int = Field(0, description=f"s3, rest and sftp: the most that restic sends, in KiB/s, 0 to "
+                                                 f"{MAX_LIMIT_KIB}; 0: no limit.")
+    limit_download_kib: int = Field(0, description=f"s3, rest and sftp: the most that restic reads, in KiB/s, 0 to "
+                                                   f"{MAX_LIMIT_KIB}; 0: no limit.")
     keep_daily: int = Field(7, description=_retention_text("daily"))
     keep_weekly: int = Field(4, description=_retention_text("weekly"))
     keep_monthly: int = Field(12, description=_retention_text("monthly"))
@@ -233,6 +278,13 @@ class SettingsRequest(OffsiteSettings):
          "region": "eu-central-1", "access_key_id": "EXAMPLEACCESSKEYID", "sources": _SOURCES_EXAMPLE,
          "limit_upload_kib": 2048, "limit_download_kib": 0, **_RETENTION_EXAMPLE,
          "password": "example-repository-password", "s3_secret_access_key": "example-secret-access-key"},
+        {"kind": "rest", "endpoint": "https://nas2.example.com:8000", "prefix": "unos", "username": "unos",
+         "tls": "fingerprint", "certificate_sha256": "3F:9A:0C:41:7E:22:B8:5D:90:6A:1F:C4:3B:E8:77:02:5C:9D:1A:E6:48:B0"
+                                                     ":2F:73:C1:9E:05:6D:8A:B4:31:F7",
+         "sources": _SOURCES_EXAMPLE, **_RETENTION_EXAMPLE, "password": "example-repository-password",
+         "rest_password": "example-rest-password"},
+        {"kind": "sftp", "host": "nas2.example.com", "port": 22, "username": "unos", "path": "/srv/copies/unos",
+         "sources": _SOURCES_EXAMPLE, **_RETENTION_EXAMPLE, "password": "example-repository-password"},
     ]})
 
     password: Optional[str] = Field(
@@ -245,13 +297,31 @@ class SettingsRequest(OffsiteSettings):
         description="s3: the secret access key; write-only. Without it, an edit with the same endpoint and access "
                     "key ID keeps the stored one.",
     )
+    rest_password: Optional[str] = Field(
+        default=None, exclude=True, repr=False,
+        description="rest: the server's password; write-only. Without it, an edit with the same endpoint and user "
+                    "keeps the stored one.",
+    )
+    trust_new_host_key: bool = Field(
+        default=False, exclude=True,
+        description="sftp: pin the host key that the server shows at this test, also when another one is pinned "
+                    "for its host and port: for a server whose key changed on purpose.",
+    )
+    host_key_fingerprint: Optional[str] = Field(
+        default=None, exclude=True,
+        description="sftp: the fingerprint that the server's host key must have, SHA256:<base64> as ssh-keygen -l "
+                    "prints it; checked before restic makes anything. Optional.",
+    )
 
 
 class Secrets(BaseModel):
-    """SECRETS_FILE: what restic needs to open the repository."""
+    """SECRETS_FILE: what restic needs to open the repository, and the private key of UNOS's SSH key
+    pair (sftp)."""
 
     password: Optional[str] = Field(default=None, repr=False)
     s3_secret_access_key: Optional[str] = Field(default=None, repr=False)
+    rest_password: Optional[str] = Field(default=None, repr=False)
+    sftp_private_key: Optional[str] = Field(default=None, repr=False)
 
 
 class CopySummary(BaseModel):
@@ -339,7 +409,7 @@ class RestoreFilesRequest(BaseModel):
 
 # What runs, by its kind: a copy, a restore, or a change of the settings, which waits for neither.
 _WHAT = {"copy": "copy", "restore-files": "restore", "restore-configuration": "restore",
-         "save": "test of the settings", "remove": "removal of the settings"}
+         "save": "test of the settings", "remove": "removal of the settings", "key": "making of the key pair"}
 
 
 @dataclass
@@ -699,40 +769,162 @@ def system_disks() -> set[str]:
     return found
 
 
-def probe_store(endpoint: str) -> Optional[str]:
-    """Why the S3 store at ENDPOINT cannot be reached, or None: a TCP connection to its host and port
-    and, for https, a TLS handshake that verifies its certificate with the system's roots, as restic
-    does, within PROBE_TIMEOUT. Nothing is sent but the handshake: no request, no key. Blocking."""
+def _colons(digest: str) -> str:
+    """A SHA-256 fingerprint as openssl prints it: pairs of upper-case digits joined by colons."""
+    return ":".join(digest[i:i + 2] for i in range(0, len(digest), 2)).upper()
+
+
+def _handshake(endpoint: str, context: ssl.SSLContext) -> bytes:
+    """Connect to ENDPOINT's host and port and make the TLS handshake of CONTEXT within PROBE_TIMEOUT:
+    the server's certificate in DER. Raises OSError and ssl.SSLError. Blocking."""
     parts = urlsplit(endpoint)
     host = parts.hostname or ""
-    port = parts.port or (443 if parts.scheme == "https" else 80)
+    port = parts.port or 443
     deadline = time.monotonic() + PROBE_TIMEOUT
+    with socket.create_connection((host, port), timeout=PROBE_TIMEOUT) as connection:
+        connection.settimeout(max(deadline - time.monotonic(), 0.01))
+        with context.wrap_socket(connection, server_hostname=host) as tls:
+            return tls.getpeercert(binary_form=True) or b""
+
+
+def _unverified() -> ssl.SSLContext:
+    """A TLS context that takes any certificate: only to read a server's own, whose fingerprint is
+    then compared (fetch_certificate, probe_store)."""
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    context.check_hostname = False
+    context.verify_mode = ssl.CERT_NONE
+    return context
+
+
+def certificate_problem(der: bytes, endpoint: str) -> Optional[str]:
+    """Why restic, with the certificate DER as its only root (tls fingerprint), would refuse it for
+    ENDPOINT, as Go checks it: its validity period and a subject alternative name for the host (an IP
+    address, or a DNS name with at most one wildcard label); None when it would take it."""
+    from cryptography import x509
+
     try:
-        with socket.create_connection((host, port), timeout=PROBE_TIMEOUT) as connection:
-            if parts.scheme == "https":
-                connection.settimeout(max(deadline - time.monotonic(), 0.01))
-                with ssl.create_default_context().wrap_socket(connection, server_hostname=host):
-                    pass
-    except ssl.SSLCertVerificationError as e:
-        return f"The S3 store at {endpoint} has a certificate that restic refuses: {e.verify_message or e}"
-    except TimeoutError:
-        return f"The S3 store does not answer at {endpoint}: no answer within {PROBE_TIMEOUT:g} s"
-    except ssl.SSLError as e:
-        return f"The S3 store does not answer at {endpoint}: its TLS handshake failed: {e.reason or e}"
-    except OSError as e:
-        return f"The S3 store does not answer at {endpoint}: {e.strerror or e}"
+        certificate = x509.load_der_x509_certificate(der)
+    except ValueError:
+        return f"The REST server at {endpoint} shows no certificate that can be read"
+    now = datetime.now(timezone.utc)
+    if now < certificate.not_valid_before_utc:
+        return f"The certificate of the REST server at {endpoint} is valid only from {certificate.not_valid_before_utc:%Y-%m-%d %H:%M} UTC"
+    if now > certificate.not_valid_after_utc:
+        return f"The certificate of the REST server at {endpoint} expired at {certificate.not_valid_after_utc:%Y-%m-%d %H:%M} UTC"
+    host = (urlsplit(endpoint).hostname or "").lower()
+    try:
+        names = certificate.extensions.get_extension_for_class(x509.SubjectAlternativeName).value
+    except x509.ExtensionNotFound:
+        names = None
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        address = None
+    if names is not None and address is not None:
+        named = address in names.get_values_for_type(x509.IPAddress)
+    elif names is not None:
+        named = any(_dns_name_matches(name.lower(), host) for name in names.get_values_for_type(x509.DNSName))
+    else:
+        named = False
+    if not named:
+        return (f"The certificate of the REST server at {endpoint} does not name {host} as a subject alternative name, "
+                "which restic needs")
     return None
 
 
+def _dns_name_matches(pattern: str, host: str) -> bool:
+    if pattern.startswith("*."):
+        return host.count(".") >= 2 and host.split(".", 1)[1] == pattern[2:]
+    return pattern == host
+
+
+def fetch_certificate(endpoint: str) -> bytes:
+    """The certificate that the server at ENDPOINT shows, in DER, read in a TLS handshake within
+    PROBE_TIMEOUT that sends nothing else. Raises OSError and ssl.SSLError. Blocking."""
+    return _handshake(endpoint, _unverified())
+
+
+def probe_store(endpoint: str, *, what: str = "The S3 store", cadata: Optional[str] = None,
+                fingerprint: Optional[str] = None) -> Optional[str]:
+    """Why the store (WHAT) at ENDPOINT cannot be reached, or None: a TCP connection to its host and
+    port and, for https, a TLS handshake that verifies its certificate as restic does, within
+    PROBE_TIMEOUT: with the system's roots, or only with CADATA (PEM); with FINGERPRINT, the server's
+    certificate must have that SHA-256 digest (hexadecimal), and restic checks the rest with it as
+    its only root. Nothing is sent but the handshake: no request, no key. Blocking."""
+    parts = urlsplit(endpoint)
+    try:
+        if parts.scheme != "https":
+            with socket.create_connection((parts.hostname or "", parts.port or 80), timeout=PROBE_TIMEOUT):
+                return None
+        if fingerprint:
+            der = _handshake(endpoint, _unverified())
+            found = hashlib.sha256(der).hexdigest()
+            if found != fingerprint:
+                return (f"{what} at {endpoint} shows a certificate with the SHA-256 fingerprint {_colons(found)}, not "
+                        f"the pinned {_colons(fingerprint)}: if it changed on purpose, save the settings again with "
+                        "its new fingerprint")
+            return certificate_problem(der, endpoint)
+        context = ssl.create_default_context(cadata=cadata) if cadata else ssl.create_default_context()
+        if cadata:  # a certificate of the server's own, not a CA's, is a root too, as restic takes it
+            context.verify_flags |= ssl.VERIFY_X509_PARTIAL_CHAIN
+        _handshake(endpoint, context)
+    except ssl.SSLCertVerificationError as e:
+        return f"{what} at {endpoint} has a certificate that restic refuses: {e.verify_message or e}"
+    except TimeoutError:
+        return f"{what} does not answer at {endpoint}: no answer within {PROBE_TIMEOUT:g} s"
+    except ssl.SSLError as e:
+        return f"{what} does not answer at {endpoint}: its TLS handshake failed: {e.reason or e}"
+    except OSError as e:
+        return f"{what} does not answer at {endpoint}: {e.strerror or e}"
+    return None
+
+
+def _store_name(settings: OffsiteSettings) -> str:
+    return "The REST server" if settings.kind == Kind.REST else "The S3 store"
+
+
 async def _unreachable(settings: OffsiteSettings) -> Optional[str]:
-    """For an S3 store, why it cannot be reached (probe_store); None when it answers, and for a disk."""
-    if settings.kind != Kind.S3:
+    """For an S3 store or a REST server, why it cannot be reached (probe_store); None when it answers,
+    and for a disk and an SFTP server, whose ssh gives up after its ConnectTimeout (ssh.py)."""
+    if settings.kind not in (Kind.S3, Kind.REST):
         return None
+    what = _store_name(settings)
+    options: dict = {}
+    if settings.kind == Kind.REST:
+        options = {"what": what}
+        if settings.tls == "fingerprint":
+            options["fingerprint"] = settings.certificate_sha256
+        elif settings.tls == "ca":
+            options["cadata"] = settings.certificate
     try:
         # The name's lookup is not bounded by the socket's timeout.
-        return await asyncio.wait_for(asyncio.to_thread(probe_store, settings.endpoint or ""), PROBE_TIMEOUT + 5)
+        return await asyncio.wait_for(asyncio.to_thread(probe_store, settings.endpoint or "", **options),
+                                      PROBE_TIMEOUT + 5)
     except asyncio.TimeoutError:
-        return f"The S3 store does not answer at {settings.endpoint}: no answer within {PROBE_TIMEOUT:g} s"
+        return f"{what} does not answer at {settings.endpoint}: no answer within {PROBE_TIMEOUT:g} s"
+
+
+async def _pin_certificate(settings: OffsiteSettings) -> None:
+    """For tls fingerprint, read the server's certificate, compare it with the fingerprint typed and
+    keep it in SETTINGS as the root that restic trusts alone (--cacert); 400 when the server cannot be
+    reached or shows another certificate."""
+    endpoint = settings.endpoint or ""
+    try:
+        der = await asyncio.wait_for(asyncio.to_thread(fetch_certificate, endpoint), PROBE_TIMEOUT + 5)
+    except (asyncio.TimeoutError, TimeoutError):
+        raise _bad(f"The REST server does not answer at {endpoint}: no answer within {PROBE_TIMEOUT:g} s") from None
+    except ssl.SSLError as e:
+        raise _bad(f"The REST server does not answer at {endpoint}: its TLS handshake failed: {e.reason or e}") from None
+    except OSError as e:
+        raise _bad(f"The REST server does not answer at {endpoint}: {e.strerror or e}") from None
+    found = hashlib.sha256(der).hexdigest()
+    if found != settings.certificate_sha256:
+        raise _bad(f"The REST server at {endpoint} shows a certificate with the SHA-256 fingerprint {_colons(found)}, "
+                   f"not {_colons(settings.certificate_sha256 or '')}: nothing was saved")
+    problem = certificate_problem(der, endpoint)
+    if problem:
+        raise _bad(f"{problem}: nothing was saved")
+    settings.certificate = ssl.DER_cert_to_PEM_cert(der)
 
 
 def _close(fds: list[int]) -> None:
@@ -938,28 +1130,96 @@ def _number(value: object, name: str, low: int, high: int) -> int:
     return value
 
 
-def _endpoint(value: object) -> str:
+def _endpoint(value: object, kind: Kind = Kind.S3) -> str:
+    """An S3 store's endpoint, https:// or http://, or a REST server's, https:// only: its scheme, host
+    and port, normalized; 400 otherwise."""
+    rest = kind == Kind.REST
+    what = "the REST server" if rest else "the S3 store"
     if not isinstance(value, str) or not value or not value.isprintable() or len(value) > 512:
-        raise _bad("Enter the endpoint of the S3 store, such as https://s3.eu-central-1.amazonaws.com")
+        example = "https://nas2.example.com:8000" if rest else "https://s3.eu-central-1.amazonaws.com"
+        raise _bad(f"Enter the address of {what}, such as {example}" if rest
+                   else f"Enter the endpoint of {what}, such as {example}")
     parts = urlsplit(value)
+    if rest and parts.scheme != "https":
+        raise _bad("The address of the REST server must start with https://: restic sends its password with "
+                   "every request")
     if parts.scheme not in ("https", "http"):
-        raise _bad("The endpoint of the S3 store must start with https:// or http://")
+        raise _bad(f"The endpoint of {what} must start with https:// or http://")
     if parts.username or parts.password or parts.query or parts.fragment or parts.path not in ("", "/"):
-        raise _bad("The endpoint of the S3 store must hold only the scheme, the host and the port")
+        raise _bad(f"The {'address' if rest else 'endpoint'} of {what} must hold only the scheme, the host and the "
+                   "port" + ("; its folders go into Folders on the server" if rest else ""))
     host = parts.hostname or ""
     try:
         port = parts.port
     except ValueError:
-        raise _bad("The port of the endpoint of the S3 store is not a port number") from None
+        raise _bad(f"The port of the endpoint of {what} is not a port number") from None
+    return f"{parts.scheme}://{_url_host(_host_name(host, 'The host of the endpoint'))}" + (f":{port}" if port else "")
+
+
+def _host_name(value: object, what: str) -> str:
+    """VALUE as a host name, an IPv4 address or an IPv6 address without brackets; 400 otherwise."""
+    host = value if isinstance(value, str) else ""
     if ":" in host:
         try:
-            ipaddress.IPv6Address(host)
+            return str(ipaddress.IPv6Address(host.strip("[]")))
         except ValueError:
-            raise _bad(f"The host of the endpoint, {host}, is not a host name or an IP address") from None
-        host = f"[{host}]"
-    elif not _HOST_NAME.fullmatch(host):
-        raise _bad(f"The host of the endpoint, {host!r}, is not a host name or an IP address")
-    return f"{parts.scheme}://{host}" + (f":{port}" if port else "")
+            raise _bad(f"{what}, {host}, is not a host name or an IP address") from None
+    if not _HOST_NAME.fullmatch(host) or len(host) > 253:
+        raise _bad(f"{what}, {host!r}, is not a host name or an IP address")
+    return host
+
+
+def _url_host(host: str) -> str:
+    return f"[{host}]" if ":" in host else host
+
+
+def _folders(value: object, what: str) -> Optional[str]:
+    """Folder names of letters, digits, '.', '_' or '-' joined by '/' (an S3 prefix, the folders on a
+    REST server); None for none; 400 otherwise."""
+    if not value:
+        return None
+    parts = [p for p in value.split("/") if p] if isinstance(value, str) else []
+    if not parts or len(value) > 512 or any(not _PREFIX_PART.fullmatch(p) or p in (".", "..") for p in parts):
+        raise _bad(f"{what} must be folder names of letters, digits, '.', '_' or '-', joined by '/'")
+    return "/".join(parts)
+
+
+def _remote_path(value: object) -> str:
+    """The folder on an SFTP server: absolute, or below the login's home folder; its parts words of
+    letters, digits, '.', '_', '+' and '-', none '.' or '..'; normalized. 400 otherwise."""
+    what = "The folder on the SFTP server"
+    if not isinstance(value, str) or not value.strip("/"):
+        raise _bad(f"Enter {what[0].lower() + what[1:]}, such as /srv/copies/unos")
+    parts = [p for p in value.split("/") if p]
+    if len(value) > MAX_PATH_LENGTH or any(not _REMOTE_PART.fullmatch(p) or p in (".", "..") for p in parts):
+        raise _bad(f"{what} must be an absolute path or one below the login's home folder, of folder names of "
+                   "letters, digits, '.', '_', '+' and '-', without '..' or '~'")
+    return ("/" if value.startswith("/") else "") + "/".join(parts)
+
+
+def _certificates(value: object) -> str:
+    """CA certificates in PEM, as restic's --cacert reads them; 400 otherwise."""
+    if not isinstance(value, str) or not value.strip() or len(value) > MAX_CERTIFICATE_LENGTH:
+        raise _bad("Paste the CA certificate of the REST server in PEM, from -----BEGIN CERTIFICATE-----")
+    blocks = re.findall(r"-----BEGIN CERTIFICATE-----[A-Za-z0-9+/=\s]+?-----END CERTIFICATE-----", value)
+    try:
+        if not blocks:
+            raise ValueError("no certificate")
+        for block in blocks:
+            ssl.PEM_cert_to_DER_cert(block)
+        ssl.create_default_context(cadata="\n".join(blocks))
+    except (ValueError, ssl.SSLError):
+        raise _bad("The CA certificate of the REST server is no certificate in PEM that restic can read") from None
+    return "\n".join(blocks) + "\n"
+
+
+def _sha256_text(value: object) -> str:
+    """A SHA-256 fingerprint of a certificate: 64 hexadecimal digits, colons allowed; 400 otherwise."""
+    digest = value.replace(":", "").strip().lower() if isinstance(value, str) else ""
+    if not _SHA256.fullmatch(digest):
+        raise _bad("The fingerprint of the REST server's certificate must be its SHA-256 digest, 64 hexadecimal "
+                   "digits, colons allowed")
+    return digest
 
 
 def _password(value: str) -> str:
@@ -990,17 +1250,14 @@ def _normalized(request: SettingsRequest) -> OffsiteSettings:
     if request.kind == Kind.DISK:
         return OffsiteSettings(kind=Kind.DISK, path=_target_path(request.path), sources=list(request.sources),
                                **numbers)
+    if request.kind in (Kind.REST, Kind.SFTP):
+        target = _rest_target(request) if request.kind == Kind.REST else _sftp_target(request)
+        return OffsiteSettings(**target, sources=list(request.sources), **numbers)
     bucket = request.bucket or ""
     if not _BUCKET.fullmatch(bucket):
         raise _bad("The bucket must have 3 to 63 letters, digits, '.', '_' or '-', starting and ending with a "
                    "letter or digit")
-    prefix = None
-    if request.prefix:
-        parts = [p for p in request.prefix.split("/") if p]
-        if not parts or len(request.prefix) > 512 or any(not _PREFIX_PART.fullmatch(p) or p in (".", "..")
-                                                         for p in parts):
-            raise _bad("The prefix must be folder names of letters, digits, '.', '_' or '-', joined by '/'")
-        prefix = "/".join(parts)
+    prefix = _folders(request.prefix, "The prefix")
     region = request.region or None
     if region is not None and not _REGION.fullmatch(region):
         raise _bad("The region must have letters, digits and '-' only, such as eu-central-1")
@@ -1011,16 +1268,83 @@ def _normalized(request: SettingsRequest) -> OffsiteSettings:
                            **numbers)
 
 
+def _rest_target(settings: OffsiteSettings) -> dict:
+    """The fields of a REST server, checked: https only, its folders, its user and how its certificate is
+    checked; 400 otherwise. The certificate of tls fingerprint is read from the server at a save
+    (_pin_certificate); a stored one must be a certificate."""
+    endpoint = _endpoint(settings.endpoint, Kind.REST)
+    prefix = _folders(settings.prefix, "The folders of the copy repository on the REST server")
+    if not isinstance(settings.username, str) or not _REST_USER.fullmatch(settings.username):
+        raise _bad("Enter the user of the REST server: printable characters without spaces or ':'")
+    tls = settings.tls or "system"
+    if tls not in TLS_MODES:
+        raise _bad("How the REST server's certificate is checked must be system, fingerprint or ca")
+    target = {"kind": Kind.REST, "endpoint": endpoint, "prefix": prefix, "username": settings.username, "tls": tls}
+    if tls == "ca":
+        target["certificate"] = _certificates(settings.certificate)
+    elif tls == "fingerprint":
+        target["certificate_sha256"] = _sha256_text(settings.certificate_sha256)
+        if not isinstance(settings, SettingsRequest):  # stored: the certificate read at the save
+            target["certificate"] = _certificates(settings.certificate).strip() + "\n"
+    return target
+
+
+def _sftp_target(settings: OffsiteSettings) -> dict:
+    """The fields of an SFTP server, checked: its host, port, login and folder, words that change
+    neither the repository's URL nor the command of ssh.py; 400 otherwise. The host key comes from
+    the server at the first test (save_settings), never from a request; a stored one must be a key."""
+    target = {
+        "kind": Kind.SFTP,
+        "host": _host_name(settings.host, "The host of the SFTP server"),
+        "port": _number(22 if settings.port is None else settings.port, "The port of the SFTP server", 1, 65535),
+        "username": settings.username if isinstance(settings.username, str) and _SSH_USER.fullmatch(
+            settings.username) else None,
+        "path": _remote_path(settings.path),
+    }
+    if target["username"] is None:
+        raise _bad("Enter the user of the SFTP server: letters, digits, '.', '_' and '-', not starting with '-' or '.'")
+    if not isinstance(settings, SettingsRequest):
+        target["host_key"] = ssh.host_key(settings.host_key)
+        if target["host_key"] is None:
+            raise _bad("No valid host key of the SFTP server is pinned: save the settings again")
+    return target
+
+
 def location(settings: OffsiteSettings) -> str:
     """The repository as restic names it."""
     if settings.kind == Kind.DISK:
         return f"local:{settings.path}"
+    if settings.kind == Kind.REST:
+        return f"rest:{settings.endpoint}/" + (f"{settings.prefix}/" if settings.prefix else "")
+    if settings.kind == Kind.SFTP:
+        # restic takes the path after the first '/' of sftp://: //srv/copies is /srv/copies.
+        return f"sftp://{settings.username}@{_url_host(settings.host or '')}:{settings.port}/{settings.path}"
     return f"s3:{settings.endpoint}/{settings.bucket}" + (f"/{settings.prefix}" if settings.prefix else "")
+
+
+def _checked(stored: OffsiteSettings) -> OffsiteSettings:
+    """STORED settings of a REST or SFTP server checked again before restic runs: a file edited by
+    hand could otherwise put words into ssh's command or restic's URL. 400 otherwise."""
+    if stored.kind == Kind.REST:
+        target = _rest_target(stored)
+    elif stored.kind == Kind.SFTP:
+        target = _sftp_target(stored)
+    else:
+        return stored
+    return stored.model_copy(update=target)
+
+
+def _remote_password(value: str) -> str:
+    if len(value) > MAX_REMOTE_PASSWORD_LENGTH or not value.isprintable():
+        raise _bad(f"The password of the REST server must have at most {MAX_REMOTE_PASSWORD_LENGTH} printable "
+                   "characters")
+    return value
 
 
 def _secrets_for(request: SettingsRequest, settings: OffsiteSettings, stored: Optional[OffsiteSettings],
                  kept: Secrets) -> Secrets:
-    """The secrets of REQUEST, or the stored ones that an edit of the same target keeps; 400 otherwise."""
+    """The secrets of REQUEST, or the stored ones that an edit of the same target keeps; 400 otherwise.
+    The key pair of SFTP is kept as it is: only POST /offsite/sftp-key makes one."""
     if request.password:
         password = _password(request.password)
     elif stored is not None and kept.password and location(stored) == location(settings):
@@ -1038,7 +1362,20 @@ def _secrets_for(request: SettingsRequest, settings: OffsiteSettings, stored: Op
             secret = kept.s3_secret_access_key
         else:
             raise _bad("Enter the secret access key of the S3 store")
-    return Secrets(password=password, s3_secret_access_key=secret)
+    rest_password = None
+    if settings.kind == Kind.REST:
+        if request.rest_password:
+            rest_password = _remote_password(request.rest_password)
+        elif (stored is not None and stored.kind == Kind.REST and kept.rest_password
+              and (stored.endpoint, stored.username) == (settings.endpoint, settings.username)):
+            rest_password = kept.rest_password
+        else:
+            raise _bad("Enter the password of the REST server")
+    if settings.kind == Kind.SFTP and not (kept.sftp_private_key and ssh.public_key(kept.sftp_private_key)):
+        raise _bad("Make the key pair of UNOS first (Make a key pair), and add its public key to the authorized "
+                   "keys of the login on the SFTP server")
+    return Secrets(password=password, s3_secret_access_key=secret, rest_password=rest_password,
+                   sftp_private_key=kept.sftp_private_key)
 
 
 def _prepare_folders(settings: OffsiteSettings, activity: Activity) -> tuple[Optional[str], list[int]]:
@@ -1099,28 +1436,50 @@ async def settings_answer() -> dict:
     stored, secrets = _stored()
     pools = await asyncio.to_thread(_managed_pools)
     warnings = await asyncio.to_thread(_warnings, stored) if stored is not None else []
+    pinned = ssh.host_key(stored.host_key) if stored is not None and stored.kind == Kind.SFTP else None
     return {
         "configured": stored is not None,
         "settings": stored.model_dump(mode="json") if stored is not None else None,
         "has_password": bool(secrets.password),
         "has_s3_secret_access_key": bool(secrets.s3_secret_access_key),
+        "has_rest_password": bool(secrets.rest_password),
+        "sftp_public_key": ssh.public_key(secrets.sftp_private_key) if secrets.sftp_private_key else None,
+        "host_key_fingerprint": ssh.fingerprint(pinned) if pinned else None,
         "pools": pools,
         "pools_base": str(pools_base()),
         "warnings": warnings,
     }
 
 
-async def _open_or_create(repo: _Repository, created: Optional[str]) -> None:
+def _sftp_server(settings: OffsiteSettings) -> str:
+    return f"{_url_host(settings.host or '')}:{settings.port}"
+
+
+async def _open_or_create(repo: _Repository, created: Optional[str], expected: Optional[str] = None) -> None:
     """Open the repository with its password, or make it when none is there; 400 with restic's message,
-    or when restic does not end within SAVE_TIMEOUT."""
+    or when restic does not end within SAVE_TIMEOUT. For sftp, the host key that ssh pinned at the
+    first command must have the fingerprint EXPECTED when one was typed, before restic makes anything;
+    a key that differs from the pinned one is refused with what to do."""
+    pinned = repo.host_key
     try:
         await _restic(repo, ["cat", "config"], step="settings", timeout=SAVE_TIMEOUT)
-        return
+        failure = None
     except _Failed as e:
         failure = e
+    # Compared only with a key that this test pinned: a kept pin was compared before restic ran.
+    if expected and pinned is None and repo.host_key and ssh.fingerprint(repo.host_key) != expected:
+        raise _bad(f"The host key of the SFTP server at {_sftp_server(repo.settings)} has the fingerprint "
+                   f"{ssh.fingerprint(repo.host_key)}, not {expected}: nothing was saved")
+    if failure is None:
+        return
     if failure.timed_out:
         raise _bad(f"The store did not answer within {SAVE_TIMEOUT:g} s")
     where = location(repo.settings)
+    if repo.settings.kind == Kind.SFTP and pinned and any(
+            text in failure.message for text in ("Host key verification failed", "no matching host key type found")):
+        raise _bad(f"The host key of the SFTP server at {_sftp_server(repo.settings)} is not the one pinned at its first "
+                   f"test ({ssh.fingerprint(pinned)}). If the server's key changed on purpose, save again with Trust "
+                   f"its new host key. {failure.message}")
     if failure.code == WRONG_PASSWORD:
         raise _bad(f"The password does not open the copy repository at {where}: {failure.message}")
     if failure.code != REPOSITORY_MISSING:
@@ -1150,10 +1509,11 @@ def _change_made(stored: Optional[OffsiteSettings], kept: Secrets, settings: Off
     if stored is None:
         return f"Off-device copy set up: {location(settings)}"
     changed = changed_fields(stored.model_dump(mode="json"), settings.model_dump(mode="json"),
-                             shown=set(OffsiteSettings.model_fields) - {"access_key_id"})
+                             shown=set(OffsiteSettings.model_fields) - {"access_key_id", "host_key", "certificate"})
     named = [name for name, new, old in (("password", secrets.password, kept.password),
                                          ("s3_secret_access_key", secrets.s3_secret_access_key,
-                                          kept.s3_secret_access_key)) if new != old]
+                                          kept.s3_secret_access_key),
+                                         ("rest_password", secrets.rest_password, kept.rest_password)) if new != old]
     both = ", ".join(part for part in (changed, *named) if part)
     return f"Off-device copy settings changed: {both}" if both else None
 
@@ -1168,25 +1528,76 @@ async def save_settings(request: SettingsRequest, changes: Optional[list[tuple[s
         stored, kept = _stored()
         settings = _normalized(request)
         secrets = _secrets_for(request, settings, stored, kept)
-        problem = await _unreachable(settings)
-        if problem:
-            raise _bad(problem)
+        expected = None
+        if settings.kind == Kind.SFTP:
+            if request.host_key_fingerprint:
+                expected = ssh.fingerprint_text(request.host_key_fingerprint)
+                if expected is None:
+                    raise _bad("The fingerprint of the SFTP server's host key must be SHA256: and 43 characters of "
+                               "base64, as ssh-keygen -l prints it")
+            if await asyncio.to_thread(host.missing_host_binaries, [ssh.ENV, ssh.SSH]):
+                raise _bad(f"The host has no {ssh.SSH}, which the copy over SFTP runs: install the package "
+                           "openssh-client on the host")
+            # The same server keeps its pin; another server, or a trusted new key, is pinned at this test.
+            kept_pin = (stored.host_key if stored is not None and stored.kind == Kind.SFTP
+                        and (stored.host, stored.port) == (settings.host, settings.port) else None)
+            kept_pin = ssh.host_key(kept_pin)
+            if kept_pin and request.trust_new_host_key and expected is None:
+                raise _bad("Enter the fingerprint of the server's new host key to trust it: a changed key is what a "
+                           "server in the middle would show")
+            if kept_pin and not request.trust_new_host_key:
+                if expected and ssh.fingerprint(kept_pin) != expected:
+                    raise _bad(f"The pinned host key of the SFTP server at {_sftp_server(settings)} has the fingerprint "
+                               f"{ssh.fingerprint(kept_pin)}, not {expected}. If the server's key changed on purpose, "
+                               "save again with Trust its new host key")
+                settings.host_key = kept_pin
+        if settings.kind == Kind.REST and settings.tls == "fingerprint":
+            await _pin_certificate(settings)
+        else:
+            problem = await _unreachable(settings)
+            if problem:
+                raise _bad(problem)
         created, held = await asyncio.to_thread(_prepare_folders, settings, activity)
-        repo = _Repository(settings, secrets.password, secrets.s3_secret_access_key)
+        repo = _repository_of(settings, secrets)
         try:
-            await _open_or_create(repo, created)
+            await _open_or_create(repo, created, expected)
         except BaseException:
             if created is not None:
                 await asyncio.to_thread(_remove_if_empty, created)
             raise
         finally:
             _close(held)
+        if settings.kind == Kind.SFTP:
+            if repo.host_key is None:
+                raise _bad(f"ssh pinned no host key of the SFTP server at {_sftp_server(settings)}: nothing was saved")
+            settings.host_key = repo.host_key
         made = _change_made(stored, kept, settings, secrets)
         if made:  # settings and secrets as they were are not written again (ADR-0214)
             await asyncio.to_thread(_store, settings, secrets)
             logger.info("The off-device copy goes to %s", location(settings))
             if changes is not None:
                 changes.append((location(settings), made))
+    finally:
+        _end(activity)
+    return await settings_answer()
+
+
+async def make_key_pair(changes: Optional[list[tuple[str, str]]] = None) -> dict:
+    """POST /offsite/sftp-key: a new key pair of UNOS for SFTP, whose private key goes into the secrets
+    file and never into an answer; the answer is GET /offsite/settings's, with the public key. It
+    replaces the one before: the SFTP server must then take the new public key. CHANGES, when given,
+    gets (what, the audit's text) (ADR-0402)."""
+    activity = _begin_or_409("key")
+    try:
+        _, kept = _stored()
+        private = await asyncio.to_thread(ssh.new_private_key)
+        await asyncio.to_thread(write_secrets, kept.model_copy(update={"sftp_private_key": private}))
+        public = ssh.public_key(private) or ""
+        text = (f"Made a new SSH key pair for the off-device copy over SFTP ({ssh.fingerprint(public)})"
+                + (", which replaces the one before" if kept.sftp_private_key else ""))
+        logger.info("%s", text)
+        if changes is not None:
+            changes.append(("sftp-key", text))
     finally:
         _end(activity)
     return await settings_answer()
@@ -1244,11 +1655,16 @@ class _Failed(Exception):
 
 @dataclass
 class _Repository:
-    """The settings and the secrets that restic gets: its environment and its options."""
+    """The settings and the secrets that restic gets: its environment, its options and the files that
+    they name. For sftp, HOST_KEY is the key that ssh holds to; without it (the first test of a
+    server) ssh pins the one it meets, which files() then puts into HOST_KEY for the next commands."""
 
     settings: OffsiteSettings
     password: str = field(repr=False)
     secret_key: Optional[str] = field(default=None, repr=False)
+    rest_password: Optional[str] = field(default=None, repr=False)
+    private_key: Optional[str] = field(default=None, repr=False)
+    host_key: Optional[str] = None
 
     def env(self) -> dict[str, str]:
         """restic's environment, built for it: never the supervisor's own, which holds UNOS_JWT_SECRET."""
@@ -1265,12 +1681,42 @@ class _Repository:
             env["AWS_SECRET_ACCESS_KEY"] = self.secret_key or ""
             if self.settings.region:
                 env["AWS_DEFAULT_REGION"] = self.settings.region
+        if self.settings.kind == Kind.REST:  # restic 0.17 and later; never in the URL
+            env["RESTIC_REST_USERNAME"] = self.settings.username or ""
+            env["RESTIC_REST_PASSWORD"] = self.rest_password or ""
         return env
 
+    @contextlib.contextmanager
+    def files(self) -> Iterator[list[str]]:
+        """The options that name files for one restic command, with the files in a new folder of
+        TMPDIR (the tmpfs, mode 0700), removed when the command ends: for rest with a certificate,
+        --cacert; for sftp, -o sftp.command with UNOS's private key (mode 0600) and the known host
+        key. A key that ssh pinned at a first test is read back into host_key."""
+        kind = self.settings.kind
+        if not (kind == Kind.SFTP or (kind == Kind.REST and self.settings.certificate)):
+            yield []
+            return
+        with tempfile.TemporaryDirectory(prefix="unos-offsite-") as folder:
+            if kind == Kind.REST:
+                root = os.path.join(folder, "root.pem")
+                _write_private(root, self.settings.certificate or "")
+                yield ["--cacert", root]
+                return
+            identity, known = os.path.join(folder, "id"), os.path.join(folder, "known_hosts")
+            _write_private(identity, self.private_key or "")
+            _write_private(known, ssh.known_hosts_line(self.host_key) if self.host_key else "")
+            settings = self.settings
+            argv = ssh.command(server=settings.host or "", port=settings.port or 22, user=settings.username or "",
+                               identity=identity, known_hosts=known, pinned=self.host_key)
+            yield ["-o", "sftp.command=" + " ".join(argv)]
+            if self.host_key is None:
+                with open(known) as f:
+                    self.host_key = ssh.known_host(f.read())
+
     def options(self, *, cache: bool = True) -> list[str]:
-        """restic's global options: for s3 a cache in TMPDIR (the tmpfs, rebuilt after a restart) and the
-        limits; no cache for a disk, which is read as fast as a cache, nor without CACHE (the check,
-        which reads every file from the store)."""
+        """restic's global options: for a store over the network (s3, rest, sftp) a cache in TMPDIR
+        (the tmpfs, rebuilt after a restart) and the limits; no cache for a disk, which is read as
+        fast as a cache, nor without CACHE (the check, which reads every file from the store)."""
         if self.settings.kind == Kind.DISK:
             return ["--no-cache"]
         options = ["--cache-dir", os.path.join(tempfile.gettempdir(), "restic-cache")] if cache else ["--no-cache"]
@@ -1281,10 +1727,17 @@ class _Repository:
         return options
 
     def redact(self, text: str) -> str:
-        for secret in (self.password, self.secret_key):
+        for secret in (self.password, self.secret_key, self.rest_password, self.private_key):
             if secret:
                 text = text.replace(secret, "<redacted>")
         return text
+
+
+def _write_private(path: str, text: str) -> None:
+    """A new file PATH of mode 0600 with TEXT."""
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC, 0o600)
+    with os.fdopen(fd, "w") as f:
+        f.write(text)
 
 
 def _duration(seconds: float) -> str:
@@ -1311,8 +1764,9 @@ async def _restic(repo: _Repository, args: list[str], *, step: str, stdin: Optio
     timeout = timeout or TIMEOUTS[name]
     waits = ["--retry-lock", RETRY_LOCK] if name in WAIT_FOR_LOCKS else []
     try:
-        result = await restic.run([*repo.options(cache=cache), *waits, *args], repo.env(), timeout=timeout, stdin=stdin,
-                                  stdout_path=stdout_path, on_error_line=on_error_line)
+        with repo.files() as named:
+            result = await restic.run([*repo.options(cache=cache), *named, *waits, *args], repo.env(), timeout=timeout,
+                                      stdin=stdin, stdout_path=stdout_path, on_error_line=on_error_line)
     except restic.Timeout:
         raise _Failed(step, f"restic {name} did not end within {_duration(timeout)}: it was stopped",
                       timed_out=True) from None
@@ -1338,6 +1792,16 @@ def _ready(stored: Optional[OffsiteSettings], secrets: Secrets, *, sources: bool
         raise _Failed("settings", NO_PASSWORD)
     if stored.kind == Kind.S3 and not secrets.s3_secret_access_key:
         raise _Failed("settings", NO_SECRET_KEY)
+    if stored.kind == Kind.REST and not secrets.rest_password:
+        raise _Failed("settings", NO_REST_PASSWORD)
+    if stored.kind == Kind.SFTP and not (secrets.sftp_private_key and ssh.public_key(secrets.sftp_private_key)):
+        raise _Failed("settings", NO_KEY_PAIR)
+    try:
+        stored = _checked(stored)
+    except HTTPException as e:
+        message = f"The stored settings of the off-device copy are not valid: {e.detail}"
+        logger.warning("%s", message)
+        raise _Failed("settings", message) from None
     held: list[int] = []
     try:
         with FOLDERS_LOCK:
@@ -1354,7 +1818,12 @@ def _ready(stored: Optional[OffsiteSettings], secrets: Secrets, *, sources: bool
     except BaseException:
         _close(held)
         raise
-    return _Repository(stored, secrets.password, secrets.s3_secret_access_key), held
+    return _repository_of(stored, secrets), held
+
+
+def _repository_of(settings: OffsiteSettings, secrets: Secrets) -> _Repository:
+    return _Repository(settings, secrets.password or "", secrets.s3_secret_access_key, secrets.rest_password,
+                       secrets.sftp_private_key, settings.host_key if settings.kind == Kind.SFTP else None)
 
 
 async def _repository(activity: Optional[Activity] = None) -> tuple[_Repository, list[int]]:

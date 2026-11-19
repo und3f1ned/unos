@@ -129,6 +129,123 @@ export async function getConnections(): Promise<{ connections: Connection[] }> {
   return api.get<{ connections: Connection[] }>("/network/connections");
 }
 
+// Bonds, VLANs and bridges of the host (ADR-0424).
+
+export type VirtualKind = "bond" | "vlan" | "bridge";
+export type Addressing = "none" | "dhcp" | "static";
+
+export interface VirtualInterface {
+  kind: VirtualKind;
+  name: string;
+  /** Whether the host has it now. */
+  present: boolean;
+  /** UP, DOWN, ... or ABSENT. */
+  state: string;
+  mode: string | null;
+  ports: string[];
+  parent: string | null;
+  vlan_id: number | null;
+  mtu: number | null;
+  addressing: Addressing | "copied";
+  addresses: string[];
+  /** The port whose network settings it took over. */
+  copied_from: string | null;
+  /** It carries the default route or the connection to UNOS: a change of it waits to be kept. */
+  protected: boolean;
+}
+
+export interface HostInterface {
+  name: string;
+  /** physical, bond, bridge, vlan, or another kind of the kernel's. */
+  kind: string;
+  wireless: boolean;
+  master: string | null;
+  parent: string | null;
+  managed: boolean;
+  addresses: string[];
+  protected: boolean;
+}
+
+export interface VirtualStatus {
+  manager: "systemd-networkd" | "NetworkManager" | "ifupdown" | "none";
+  supported: boolean;
+  interfaces: VirtualInterface[];
+  host_interfaces: HostInterface[];
+  unreadable: string[];
+  /** Seconds until the host undoes the change that waits to be kept. */
+  revert_in: number | null;
+  reverting: boolean;
+  revert_failed: boolean;
+  /** The change that waits to be kept. */
+  change: WaitingChange | null;
+  revert_seconds: number;
+}
+
+export interface WaitingChange {
+  action: "create" | "delete";
+  kind: VirtualKind;
+  name: string;
+}
+
+export interface VirtualChange {
+  status: string;
+  action: "created" | "deleted";
+  kind: VirtualKind;
+  name: string;
+  /** Seconds until the host undoes the change unless it is kept; null when it is kept already. */
+  revert_in: number | null;
+}
+
+interface AddressingFields {
+  mtu: number | null;
+  addressing: Addressing;
+  addresses: string[];
+}
+
+export interface BondCreate extends AddressingFields {
+  name: string;
+  mode: "802.3ad" | "balance-rr";
+  ports: string[];
+}
+
+export interface VlanCreate extends AddressingFields {
+  parent: string;
+  vlan_id: number;
+  name: string | null;
+}
+
+export interface BridgeCreate extends AddressingFields {
+  name: string;
+  ports: string[];
+}
+
+const VIRTUAL = "/network/virtual-interfaces";
+
+export async function getVirtualInterfaces(): Promise<VirtualStatus> {
+  return api.get<VirtualStatus>(VIRTUAL);
+}
+
+export async function createBond(spec: BondCreate): Promise<VirtualChange> {
+  return api.post<VirtualChange>(`${VIRTUAL}/bonds`, spec);
+}
+
+export async function createVlan(spec: VlanCreate): Promise<VirtualChange> {
+  return api.post<VirtualChange>(`${VIRTUAL}/vlans`, spec);
+}
+
+export async function createBridge(spec: BridgeCreate): Promise<VirtualChange> {
+  return api.post<VirtualChange>(`${VIRTUAL}/bridges`, spec);
+}
+
+export async function deleteVirtualInterface(name: string): Promise<VirtualChange> {
+  return api.delete<VirtualChange>(`${VIRTUAL}/${encodeURIComponent(name)}`);
+}
+
+/** Keep the change that waits; the server answers 409 once it was undone. */
+export async function keepVirtualChange(): Promise<{ status: string; change: WaitingChange | null }> {
+  return api.post<{ status: string; change: WaitingChange | null }>(`${VIRTUAL}/confirm`);
+}
+
 export function formatBytes(bytes: number): string {
   if (bytes === 0) return "0 B";
   const k = 1024;

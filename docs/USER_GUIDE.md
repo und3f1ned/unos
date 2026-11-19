@@ -2682,8 +2682,62 @@ UNOS does not disable an interface that carries VLANs, such as `eth0` with
 `eth0.100`: the VLANs would go down with it and come back without their
 routes. Disable the VLANs themselves, or the interface on the host.
 
-The tab does not change addresses, DNS or routes: configure them on the host
-or in your router.
+#### Bonds, VLANs and bridges
+
+The card **Bonds, VLANs and bridges** under the interfaces makes them on the
+host and lists the ones UNOS made, with their state, ports and addresses
+(ADR-0424). UNOS makes them only where systemd-networkd keeps the host's
+network, as on Ubuntu Server and Armbian's minimal images; on a host with
+NetworkManager (Raspberry Pi OS, desktops) or `/etc/network/interfaces`
+(Debian's own server install) the card names that manager and offers nothing.
+
+- **Create bond**: a name, the mode (**LACP (802.3ad)**, which needs LACP on
+  the switch's ports, or **Round robin (balance-rr)**) and two to eight wired
+  network cards that are in no other bond or bridge and carry no VLAN. A card
+  loses its own addresses in a bond, so only the one through which you reach
+  UNOS may have any; unplug another card's cable, or remove its addresses on
+  the host, first.
+- **Create VLAN**: a wired network card or a bond, a VLAN id from 1 to 4094 and
+  a name (empty: `<interface>.<id>`, such as `eth0.100`).
+- **Create bridge**: a name and no port, or up to eight ports (wired cards,
+  bonds or VLANs), for containers and virtual machines.
+
+Each can take an MTU from 1280 to 9216 bytes and its addresses: none, DHCP
+(IPv4 only, and never the server's gateway, routes or DNS servers, so it never
+becomes the default route) or up to four static addresses with their prefix
+lengths, such as `192.0.2.10/24`, without a gateway. A bond or bridge that takes
+the network card through which you reach UNOS, or that carries the default
+route, takes over that card's network settings and its MAC address instead,
+so that your router gives it the same address.
+
+A change that touches such an interface (a bond or bridge of it, a VLAN on it,
+or the deletion of an interface that carries the connection) can cut you off.
+The dialog says so before you create it. The change is made, and the card
+counts down 120 seconds: check that the web UI, SSH and your shares still
+answer, then click **Keep this change**. If you do not, or cannot because the
+connection dropped, the host undoes the change by itself after 120 seconds:
+wait two minutes and reload the page. A change that is not kept is gone after
+a reboot as well. A change that does not touch the connection, such as a bridge
+without ports or a VLAN on another card, is kept at once. Only one change waits
+to be kept at a time.
+
+Kept interfaces come back after a reboot: UNOS keeps their systemd-networkd
+files in `/etc/unos/netdevs`, and the host's unit `unos-netdevs.service` puts
+them into `/run/systemd/network` before systemd-networkd starts. A VLAN's
+interface gets a file of UNOS's that holds that interface's own settings and
+its VLANs; a bond or bridge that took over a card's settings keeps a copy of
+them; neither copy follows later changes of netplan, and an interface whose network
+file has drop-ins of its own is not taken over. **Delete** removes an
+interface UNOS made and its files, and its ports get the host's own settings
+back; an interface that carries VLANs or is a bridge's port is deleted after
+them. UNOS never deletes an interface it did not make. Uninstalling UNOS
+removes `/etc/unos`: its interfaces then stay until the next reboot.
+
+A bond needs at least two network cards. On a host with one, such as a board
+with a single Ethernet port, add a USB network adapter first.
+
+The tab does not change addresses, DNS or routes of the host's own
+interfaces: configure them on the host or in your router.
 
 ### Power Management
 
@@ -3301,7 +3355,41 @@ installation: give each NAS a folder or a bucket prefix of its own.
   `http://` in your own network, since restic encrypts everything anyway),
   bucket, an optional prefix and region, the access key ID and the secret
   access key. Upload and download limits in KiB/s (0: none) keep a copy from
-  filling your connection.
+  filling your connection; they apply to the REST server and SFTP too.
+- **A restic REST server**, such as `rest-server` on a second NAS: its address
+  (`https://` only, with the host and port: restic sends the server's password
+  with every request), optional folders on the server, the server's user and
+  password. **Check of the server's certificate**: **By the system's
+  certificate authorities** for a certificate of a public authority, such as
+  Let's Encrypt's; **By the fingerprint of the server's own certificate** for
+  a self-signed one: enter its SHA-256 fingerprint as `openssl x509 -noout
+  -fingerprint -sha256 -in <certificate>` prints it on the server, and **Save
+  and test** reads the certificate from the server, compares it and from then
+  on trusts only it (a new certificate needs its new fingerprint); or **By a
+  certificate authority of my own**, whose certificate you paste in PEM. The
+  certificate must name the address you enter (as a subject alternative name)
+  and be valid now, or restic refuses it; with a pinned fingerprint the NAS
+  says so before restic runs.
+- **An SFTP server**, such as a second NAS that you reach over SSH: **Make a
+  key pair** first. UNOS logs in with a key pair of its own, never with a
+  password; its private key stays on this NAS, readable only by the supervisor,
+  and is never shown. Add the **Public key of UNOS** that the section shows to
+  `~/.ssh/authorized_keys` of the login on the server. Then enter the host, the
+  SSH port (22), the login and the folder on the server (`/srv/copies/unos`, or
+  `copies/unos` below the login's home folder). The first **Save and test**
+  pins the server's host key and shows its fingerprint; every later copy,
+  check and restore holds to it, and one that meets another key fails with
+  "Host key verification failed". If you entered **Fingerprint of the server's
+  host key** (`ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub` on the
+  server prints it), a server that shows another key is refused before
+  anything is written. When the server's key changed on purpose (a reinstalled
+  server), check **trust its new key at this test**, enter the **Fingerprint of
+  the server's new host key** as the server prints it, and save again: a
+  changed key is what a server in the middle would show, so it is never
+  trusted without its fingerprint. **Make a
+  new key pair** replaces the key pair: the server then needs the new public
+  key. SFTP runs the host's `ssh`: a host without the package
+  `openssh-client` is refused, with its name.
 
 To set it up:
 
@@ -3319,8 +3407,9 @@ To set it up:
 3. **Save and test**: the NAS opens the repository with the password, or makes
    a new one when the folder or bucket has none. A wrong password, or a store
    that cannot be reached, is refused with restic's message. The NAS first
-   connects to an S3 store: one that does not answer within 10 seconds is
-   refused at once, and restic gets 2 minutes at most.
+   connects to an S3 store or a REST server: one that does not answer within
+   10 seconds is refused at once, and so is an SFTP server that does not take
+   ssh's connection within 10 seconds; restic gets 2 minutes at most.
 4. **Add a daily copy at 03:00** adds a task of the type **Off-device Copy**
    to **System** → **Scheduler**. Until there is one, copies run only on
    **Run now**.
@@ -3375,8 +3464,8 @@ To restore:
 - On a new device: install UNOS, set up the same target with its password,
   **Restore configuration**, restore that backup, then **Restore files**.
 
-**Forget this target** removes the settings and the password from the NAS,
-damaged copies of their files included; the copies stay where they are. A task of the type **Off-device Copy** then fails
+**Forget this target** removes the settings, the passwords and the key pair
+of UNOS from the NAS, damaged copies of their files included; the copies stay where they are. A task of the type **Off-device Copy** then fails
 at each run, which is alerted, until a target is set up again: delete it on
 **System** → **Scheduler** when no copies are wanted.
 

@@ -3633,6 +3633,38 @@ class TestTestCycle:
         assert "docker compose -f docker-compose.test.yml build --quiet" in calls
         assert _wait_timeouts(calls) == [_supervisor_decided_within("docker-compose.test.yml")]
 
+    def test_playwright_runs_from_the_web_uis_node_modules_never_through_npx(self, tmp_path):
+        # npx downloads a program that is missing from node_modules/.bin, unpinned, without asking
+        # where CI is set (ADR-0423): a missing Playwright is an error instead.
+        script = (REPO_ROOT / "scripts" / "test-cycle.sh").read_text()
+        tail = '\n# Handle Ctrl+C\ntrap cleanup EXIT\n\n# Run main\nmain "$@"\n'
+        assert script.endswith(tail)
+        for directory in ("scripts", "bin", "webui/node_modules/.bin"):
+            (tmp_path / directory).mkdir(parents=True)
+        (tmp_path / "scripts" / "test-cycle-lib.sh").write_text(script[: -len(tail)] + "\n")
+        stubs = {
+            "bin/npx": 'echo "npx $*" >> "$STUB_DIR/calls"\n',
+            "bin/npm": 'echo "npm $*" >> "$STUB_DIR/calls"\n',
+            "webui/node_modules/.bin/playwright": 'echo "$(basename "$PWD"): playwright $*" >> "$STUB_DIR/calls"\n',
+        }
+        for name, body in stubs.items():
+            (tmp_path / name).write_text("#!/bin/bash\n" + body)
+            (tmp_path / name).chmod(0o755)
+
+        result = subprocess.run(
+            ["bash", "-c", '. "$LIB"; run_e2e_tests && run_quick_test'],
+            env={**os.environ, "PATH": f"{tmp_path / 'bin'}:{os.environ['PATH']}",
+                 "LIB": str(tmp_path / "scripts" / "test-cycle-lib.sh"), "STUB_DIR": str(tmp_path)},
+            stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=60,
+        )
+
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert (tmp_path / "calls").read_text().splitlines() == [
+            "webui: playwright install chromium --with-deps",
+            "webui: playwright test --reporter=list",
+            "webui: playwright test auth.spec.ts api.spec.ts --reporter=list",
+        ]
+
     def test_creates_the_administrator_the_specs_sign_in_as(self):
         script = (REPO_ROOT / "scripts" / "test-cycle.sh").read_text()
         bodies = re.findall(r"-d '(\{[^'\n]*\})'", script)
@@ -4634,6 +4666,18 @@ class TestTemporaryFiles:
 
 
 WORKFLOW = REPO_ROOT / ".github" / "workflows" / "test.yml"
+WORKFLOWS = sorted((REPO_ROOT / ".github" / "workflows").glob("*.y*ml"))
+# A workflow's `uses:` line, its value and what follows it on the line.
+USES_LINE = re.compile(r"^\s*(?:-\s+)?uses:\s*(\S+)(.*)$")
+# An action pinned to a full commit SHA, with the version of its release in a comment, as Dependabot
+# writes and updates it: `uses: actions/checkout@<40 hex digits> # v7.0.1` (ADR-0423). A tag can be
+# moved to other code; a commit cannot.
+PINNED_ACTION = re.compile(r"[A-Za-z0-9][\w-]*/[\w.-]+(?:/[\w.-]+)*@[0-9a-f]{40}")
+VERSION_COMMENT = re.compile(r"\s+# v\d+\.\d+\.\d+")
+# The tools of the environment in which scripts/audit-python.sh resolves the supervisor's
+# dependencies for pip-audit (ADR-0423).
+AUDIT_ENV = REPO_ROOT / ".github" / "audit-env-requirements.txt"
+AUDIT_SCRIPT = REPO_ROOT / "scripts" / "audit-python.sh"
 # The command in the header of .github/lint-requirements.txt.
 LINT_COMPILE = (
     "uv pip compile --universal --python-version 3.11 --generate-hashes"
@@ -4651,6 +4695,17 @@ HASH_LINE = re.compile(r"\s+--hash=sha256:([0-9a-f]{64})(?: \\)?")
 
 def _workflow_jobs():
     return yaml.safe_load(WORKFLOW.read_text())["jobs"]
+
+
+def _unpinned_actions(text):
+    """The `uses:` lines of a workflow that do not name a full commit SHA with the version of its
+    release in a comment, stripped."""
+    unpinned = []
+    for line in text.splitlines():
+        uses = USES_LINE.match(line)
+        if uses and not (PINNED_ACTION.fullmatch(uses[1]) and VERSION_COMMENT.fullmatch(uses[2])):
+            unpinned.append(line.strip())
+    return unpinned
 
 
 def _commands(job):
@@ -4751,9 +4806,12 @@ class TestContinuousIntegration:
         # depend on afresh in every run, without hashes.
         commands = _commands("lint")
 
-        assert commands[0] == "pip install --require-hashes -r .github/lint-requirements.txt"
+        assert commands[0] == "pip install --require-hashes --only-binary=:all: -r .github/lint-requirements.txt"
         assert "make lint" in commands
-        assert "pip-audit -r supervisor/requirements.txt" in commands
+        # pip-audit -r installed the latest pip, setuptools and wheel, unpinned, into the
+        # environment in which it resolved the requirements (ADR-0423).
+        assert "scripts/audit-python.sh" in commands
+        assert not [command for command in commands if "pip-audit" in command]
         # make lint runs ruff from PATH there, where the hashed install put it, over the supervisor
         # and the repository's tooling.
         assert "ruff check --select F,E9 supervisor scripts .claude/hooks" in _make_dry_run(
@@ -4858,11 +4916,54 @@ class TestContinuousIntegration:
         assert len(checkouts) == len(_workflow_jobs())
         assert [step for step in checkouts if step.get("with", {}).get("persist-credentials") is not False] == []
 
-    def test_actions_are_pinned_to_a_major_version(self):
-        actions = [step["uses"] for job in _workflow_jobs().values() for step in job["steps"] if "uses" in step]
+    def test_every_action_is_pinned_to_a_commit_with_the_version_of_its_release(self):
+        # A tag such as v7 can be moved to other code by whoever controls the action's repository,
+        # and the next run takes it with the job's token. Every workflow, not only test.yml.
+        assert [path.name for path in WORKFLOWS] == ["audit.yml", "test.yml"]
+        for path in WORKFLOWS:
+            text = path.read_text()
+            jobs = yaml.safe_load(text)["jobs"]
+            parsed = sorted([step["uses"] for job in jobs.values() for step in job.get("steps", []) if "uses" in step]
+                            + [job["uses"] for job in jobs.values() if "uses" in job])
+            found = sorted(uses[1] for uses in map(USES_LINE.match, text.splitlines()) if uses)
 
-        assert actions
-        assert [action for action in actions if not re.fullmatch(r"[\w.-]+/[\w.-]+@v\d+", action)] == []
+            # The line search sees every action that GitHub runs: none written in another form.
+            assert parsed and found == parsed, path.name
+            assert _unpinned_actions(text) == [], path.name
+
+    def test_the_pin_check_refuses_a_tag_a_short_sha_and_a_missing_version(self):
+        sha = "3d3c42e5aac5ba805825da76410c181273ba90b1"
+        pinned = (f"      - uses: actions/checkout@{sha} # v7.0.1\n"
+                  f"        uses: docker/setup-buildx-action@{sha} # v4.4.1\n"
+                  f"      - uses: github/codeql-action/init@{sha} # v4.31.2\n")
+
+        assert _unpinned_actions(pinned) == []
+        for line in (
+            "      - uses: actions/checkout@v7",  # a tag only
+            "      - uses: actions/checkout@v7.0.1 # v7.0.1",  # a full tag, even with the comment
+            f"      - uses: actions/checkout@{sha}",  # no version
+            f"      - uses: actions/checkout@{sha} # latest",  # a comment without a version
+            f"      - uses: actions/checkout@{sha} # v7",  # only the major version
+            f"      - uses: actions/checkout@{sha[:12]} # v7.0.1",  # a short SHA
+            f"      - uses: actions/checkout@{sha.upper()} # v7.0.1",  # not as git writes it
+            "      - uses: actions/checkout@main # v7.0.1",  # a branch
+            f"      - uses: 'actions/checkout@{sha}' # v7.0.1",  # quoted
+            f"      - uses: ./.github/actions/local@{sha} # v1.0.0",  # a local action
+        ):
+            assert _unpinned_actions(f"steps:\n{line}\n") == [line.strip()], line
+
+    def test_an_action_has_the_same_pin_in_every_workflow(self):
+        # Dependabot moves them as one group; a pin left behind would run older code in one job.
+        pins = {}
+        for path in WORKFLOWS:
+            for uses in map(USES_LINE.match, path.read_text().splitlines()):
+                if uses:
+                    action, commit = uses[1].split("@")
+                    pins.setdefault(action, set()).add((commit, uses[2].strip()))
+
+        assert set(pins) == {"actions/checkout", "actions/setup-python", "actions/setup-node",
+                             "docker/setup-buildx-action"}
+        assert {action: len(found) for action, found in pins.items()} == {action: 1 for action in pins}
 
     def test_every_check_fails_the_run(self):
         # Hard gates, also while a check fails (an audit after a new advisory,
@@ -4911,10 +5012,10 @@ class TestContinuousIntegration:
         check = [command.split()[0] for command in scripts["check"].split("&&")]
 
         assert npx["workflow"] == []
-        # The Playwright commands of the guide and the script: the search
-        # finds what it looks for.
+        # The script runs Playwright from node_modules/.bin (TestTestCycle). The Playwright
+        # commands of the guide: the search finds what it looks for.
+        assert npx["scripts/test-cycle.sh"] == []
         assert "playwright" in npx["docs/TESTING.md"]
-        assert "playwright" in npx["scripts/test-cycle.sh"]
         assert {where: [program for program in found if program not in programs] for where, found in npx.items()} == {
             where: [] for where in texts
         }
@@ -4923,3 +5024,227 @@ class TestContinuousIntegration:
         }
         assert check == ["svelte-kit", "svelte-check"]
         assert set(check) <= programs
+
+
+# Stand-ins for the tools of scripts/audit-python.sh. PYTHON answers the version check and makes
+# the environment, whose python fakes pip and runs the conversion with the real Python; pip's
+# dry-run writes the report $REPORT. Each logs its call to $LOG, the -c code left out.
+AUDIT_FAKES = {
+    "python3.11": """
+        case "$1" in
+            -c) echo "python -c" >> "$LOG"; echo "$FAKE_VERSION" ;;
+            -m) echo "python $*" >> "$LOG"; [ "$2" = venv ] && mkdir -p "$3/bin" && cp "$ENV_PYTHON" "$3/bin/python" ;;
+            *) exit 9 ;;
+        esac
+    """,
+    "env-python": """
+        if [ "$1" = -c ]; then echo "env-python -c ${*:3}" >> "$LOG"; exec "$REAL_PYTHON" "$@"; fi
+        echo "env-python $*" >> "$LOG"
+        [ "$1 $2 $3" = "-m pip install" ] || exit 9
+        if [ -n "$FAIL_ON" ]; then case " $* " in *" $FAIL_ON "*) exit 1 ;; esac; fi
+        while [ $# -gt 0 ]; do
+            if [ "$1" = --report ]; then cp "$REPORT" "$2"; fi
+            shift
+        done
+    """,
+    "pip-audit": """
+        echo "pip-audit $*" >> "$LOG"
+        cat "${@: -1}" >> "$LOG"
+        exit "${AUDIT_STATUS:-0}"
+    """,
+}
+RESOLVED = {"install": [{"metadata": {"name": "fastapi", "version": "0.162.0"}},
+                        {"metadata": {"name": "nut2", "version": "2.1.1"}}]}
+
+
+class TestAuditEnvironment:
+    """scripts/audit-python.sh, the Python part of make audit and of the CI audits: pip-audit of the
+    supervisor's runtime dependencies, resolved by pinned, hashed tools (ADR-0423)."""
+
+    def _run(self, tmp_path, report=RESOLVED, version="3.11", fail_on="", audit_status=0):
+        bin_dir, tmp = tmp_path / "bin", tmp_path / "tmp"
+        bin_dir.mkdir()
+        tmp.mkdir()
+        for name, body in AUDIT_FAKES.items():
+            (bin_dir / name).write_text("#!/bin/bash\n" + textwrap.dedent(body).strip() + "\n")
+            (bin_dir / name).chmod(0o755)
+        (tmp_path / "report.json").write_text(json.dumps(report))
+        (tmp_path / "log").write_text("")
+        result = subprocess.run(
+            ["bash", str(AUDIT_SCRIPT)], cwd=tmp_path, capture_output=True, text=True, timeout=60, env={
+                **os.environ, "PYTHON": str(bin_dir / "python3.11"), "PIP_AUDIT": str(bin_dir / "pip-audit"),
+                "ENV_PYTHON": str(bin_dir / "env-python"), "REAL_PYTHON": sys.executable, "TMPDIR": str(tmp),
+                "LOG": str(tmp_path / "log"), "REPORT": str(tmp_path / "report.json"), "FAKE_VERSION": version,
+                "FAIL_ON": fail_on, "AUDIT_STATUS": str(audit_status),
+            })
+        return result, (tmp_path / "log").read_text().splitlines(), sorted(os.listdir(tmp))
+
+    def test_the_environment_pins_pip_setuptools_and_wheel_with_their_hashes(self):
+        requirements = _hashed_requirements(AUDIT_ENV.read_text())
+
+        # wheel depends on packaging, and pip's hash-checking mode wants every package it installs.
+        assert sorted(name for name, _, _, _ in requirements) == ["packaging", "pip", "setuptools", "wheel"]
+        assert [name for name, version, markers, hashes in requirements
+                if not re.fullmatch(r"\d+(\.\d+)+", version) or markers or not hashes] == []
+
+    def test_its_pip_and_packaging_are_those_of_the_lint_tools(self):
+        # One version of each among the check tools; the hashes that uv wrote for the lint tools
+        # confirm those of the hand-written file (pip checks setuptools' and wheel's).
+        audit = {name: (version, set(hashes)) for name, version, _, hashes in _hashed_requirements(AUDIT_ENV.read_text())}
+        lint = {name: (version, set(hashes)) for name, version, _, hashes in
+                _hashed_requirements((REPO_ROOT / ".github" / "lint-requirements.txt").read_text())}
+
+        for name in ("pip", "packaging"):
+            assert audit[name][0] == lint[name][0], name
+            assert audit[name][1] <= lint[name][1], name
+
+    def test_it_resolves_with_the_pinned_tools_and_audits_without_pip(self, tmp_path):
+        result, calls, left = self._run(tmp_path)
+
+        assert result.returncode == 0, result.stdout + result.stderr
+        version, venv, tools, resolve, convert, audit, *resolved = calls
+        work = venv.removeprefix("python -m venv ").removesuffix("/env")
+        quiet = "--disable-pip-version-check --quiet --no-input"
+        assert version == "python -c"
+        assert Path(work).parent == tmp_path / "tmp"
+        # The pinned tools with their hashes, wheels only: no newer pip, setuptools or wheel.
+        assert tools == f"env-python -m pip install {quiet} --require-hashes --only-binary=:all: -r {AUDIT_ENV}"
+        # The resolution of pip-audit -r, with that pip: every package, also one the environment
+        # has; wheels only but nut2, whose sdist the pinned setuptools builds, not one from the index.
+        assert resolve == (f"env-python -m pip install {quiet} --dry-run --ignore-installed --no-build-isolation "
+                           f"--only-binary=:all: --no-binary=nut2 --report {work}/report.json "
+                           f"-r {REPO_ROOT / 'supervisor' / 'requirements.txt'}")
+        assert convert == f"env-python -c {work}/report.json"
+        assert audit == f"pip-audit --disable-pip --no-deps --strict -r {work}/resolved.txt"
+        assert resolved == ["fastapi==0.162.0", "nut2==2.1.1"]
+        assert left == []
+
+    @pytest.mark.parametrize("fail_on, steps", [("--require-hashes", 3), ("--dry-run", 4)])
+    def test_a_failed_step_stops_before_the_audit(self, tmp_path, fail_on, steps):
+        result, calls, left = self._run(tmp_path, fail_on=fail_on)
+
+        assert result.returncode != 0
+        assert len(calls) == steps and fail_on in calls[-1]
+        assert left == []
+
+    def test_a_resolution_without_packages_is_no_pass(self, tmp_path):
+        result, calls, left = self._run(tmp_path, report={"install": []})
+
+        assert result.returncode != 0
+        assert "no package" in result.stderr
+        assert not [call for call in calls if call.startswith("pip-audit")]
+        assert left == []
+
+    def test_a_finding_fails_it(self, tmp_path):
+        result, calls, left = self._run(tmp_path, audit_status=1)
+
+        assert result.returncode == 1
+        assert calls[5].startswith("pip-audit ")
+        assert left == []
+
+    def test_it_resolves_for_the_python_of_the_image_only(self, tmp_path):
+        # Another Python resolves other versions (markers, wheels): an audit of what is not installed.
+        result, calls, left = self._run(tmp_path, version="3.15")
+
+        assert result.returncode != 0
+        assert "3.11" in result.stderr and "3.15" in result.stderr
+        assert calls == ["python -c"] and left == []
+
+
+def _empty_distributions(folder, name, version):
+    """A wheel and an sdist of an empty package `name` in `folder`, for pip's --find-links."""
+    import tarfile
+    import zipfile
+
+    info = f"{name}-{version}.dist-info"
+    with zipfile.ZipFile(folder / f"{name}-{version}-py3-none-any.whl", "w") as wheel:
+        wheel.writestr(f"{info}/METADATA", f"Metadata-Version: 2.1\nName: {name}\nVersion: {version}\n")
+        wheel.writestr(f"{info}/WHEEL", "Wheel-Version: 1.0\nGenerator: test\nRoot-Is-Purelib: true\nTag: py3-none-any\n")
+        wheel.writestr(f"{info}/RECORD", f"{info}/METADATA,,\n{info}/WHEEL,,\n{info}/RECORD,,\n")
+    source = folder / f"{name}-{version}"
+    source.mkdir()
+    (source / "setup.py").write_text(f"from setuptools import setup\nsetup(name={name!r}, version={version!r}, py_modules=[])\n")
+    (source / "PKG-INFO").write_text(f"Metadata-Version: 2.1\nName: {name}\nVersion: {version}\n")
+    with tarfile.open(folder / f"{name}-{version}.tar.gz", "w:gz") as sdist:
+        sdist.add(source, arcname=source.name)
+    shutil.rmtree(source)
+
+
+class TestWheelsOnly:
+    """pip installs take wheels only (ADR-0423): make setup, the CI jobs, the test image and the audit
+    environment. nut2 publishes only its sdist, which their command lines name after
+    --only-binary=:all:. The supervisor's image is left to pip's default, which with exact pins takes
+    a wheel wherever the pinned version has one: its pip layer, a hundred MB on the dev device's SD
+    card (ADR-0214), stays as it was."""
+
+    # The one package without a wheel, after the option that it narrows: --only-binary=:all: after
+    # it would clear it.
+    WHEELS_ONLY = "--only-binary=:all: --no-binary=nut2"
+
+    def test_the_image_keeps_its_pip_layer_and_pips_default(self):
+        runtime = (REPO_ROOT / "supervisor" / "requirements.txt").read_text()
+        dev = (REPO_ROOT / "supervisor" / "requirements-dev.txt").read_text()
+        lines = [line.strip() for line in (REPO_ROOT / "supervisor" / "Dockerfile").read_text().splitlines()]
+
+        # The image copies requirements.txt before its pip layer: an option there changes the layer.
+        assert [line for line in runtime.splitlines() if line.startswith("-")] == []
+        assert re.search(r"^nut2==", runtime, re.M)
+        assert [line for line in dev.splitlines() if line.startswith("-")] == ["-r requirements.txt"]
+        assert "binary" not in _instruction(lines, _pip_layer(lines))
+
+    def test_every_install_of_the_supervisors_requirements_lets_nut2_come_as_its_sdist(self):
+        texts = {path.name: path.read_text() for path in WORKFLOWS}
+        for path in ("docs/TESTING.md", "supervisor/Dockerfile.test", "scripts/audit-python.sh"):
+            texts[path] = (REPO_ROOT / path).read_text()
+        # scripts/audit-python.sh writes its resolution over two lines.
+        texts["scripts/audit-python.sh"] = texts["scripts/audit-python.sh"].replace("\\\n", " ")
+        installs = {where: [line for line in re.findall(r"\bpip install\b[^\n`]*", text)
+                            if re.search(r'-r\s+"?(?:\$root/)?(?:supervisor/)?requirements(?:-dev)?\.txt\b', line)]
+                    for where, text in texts.items()}
+
+        assert [where for where, found in installs.items() if not found] == []
+        assert {where: [line for line in found if self.WHEELS_ONLY not in line] for where, found in installs.items()} == {
+            where: [] for where in texts
+        }
+
+    def test_pip_takes_nut2_as_its_sdist_and_every_other_package_as_a_wheel(self, tmp_path):
+        # With the pip of this Python and no index, each package offered as a wheel and an sdist:
+        # the command line's --only-binary=:all: --no-binary=nut2 leaves nut2 its sdist and gives
+        # every other package of the requirement files, read after it, through requirements-dev.txt
+        # too, a wheel; and --no-build-isolation builds nut2 with the setuptools of the environment,
+        # as the audit's resolution does (its flags, which TestAuditEnvironment checks).
+        pytest.importorskip("setuptools")
+        index = tmp_path / "index"
+        index.mkdir()
+        for name in ("alpha", "beta", "nut2"):
+            _empty_distributions(index, name, "1.0")
+        options = {
+            name: [line for line in (REPO_ROOT / "supervisor" / name).read_text().splitlines() if line.startswith("-")]
+            for name in ("requirements.txt", "requirements-dev.txt")
+        }
+        (tmp_path / "requirements.txt").write_text("\n".join(options["requirements.txt"] + ["alpha==1.0", "nut2==1.0"]) + "\n")
+        (tmp_path / "requirements-dev.txt").write_text("\n".join(options["requirements-dev.txt"] + ["beta==1.0"]) + "\n")
+
+        result = subprocess.run(
+            [sys.executable, "-m", "pip", "install", "--isolated", "--disable-pip-version-check", "--quiet", "--no-input",
+             "--no-cache-dir", "--no-index", "--find-links", str(index), "--dry-run", "--ignore-installed",
+             "--no-build-isolation", *self.WHEELS_ONLY.split(), "--report", str(tmp_path / "report.json"),
+             "-r", str(tmp_path / "requirements-dev.txt")],
+            capture_output=True, text=True, timeout=120,
+        )
+
+        assert result.returncode == 0, result.stdout + result.stderr
+        report = json.loads((tmp_path / "report.json").read_text())
+        assert {item["metadata"]["name"]: Path(item["download_info"]["url"]).name for item in report["install"]} == {
+            "alpha": "alpha-1.0-py3-none-any.whl", "beta": "beta-1.0-py3-none-any.whl", "nut2": "nut2-1.0.tar.gz",
+        }
+
+    def test_every_pip_install_of_the_workflows_the_guide_and_the_test_image_takes_wheels_only(self):
+        texts = {path.name: path.read_text() for path in WORKFLOWS}
+        for path in ("docs/TESTING.md", "supervisor/Dockerfile.test"):
+            texts[path] = (REPO_ROOT / path).read_text()
+        installs = {where: re.findall(r"\bpip install\b[^\n`]*", text) for where, text in texts.items()}
+
+        assert [where for where, found in installs.items() if not found] == []
+        assert {where: [line for line in found if "--only-binary=:all:" not in line]
+                for where, found in installs.items()} == {where: [] for where in texts}

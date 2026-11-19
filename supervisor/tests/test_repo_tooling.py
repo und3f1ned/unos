@@ -108,7 +108,9 @@ def test_help_is_the_default_target():
     ("smoke", ["cd supervisor &&", "/opt/py/bin/python -m pytest " + " ".join(SMOKE)]),
     ("frontend", ["cd webui && npm run check", "cd webui && npm run i18n", "cd webui && npm run build"]),
     ("e2e-local", ["scripts/standin/e2e.sh"]),
-    ("audit", ["pip-audit -r supervisor/requirements.txt", "cd webui && npm audit --omit=dev --audit-level=high"]),
+    # pip-audit of the supervisor's dependencies as resolved by pinned, hashed tools (ADR-0423).
+    ("audit", ['PYTHON="/opt/py/bin/python" PIP_AUDIT="pip-audit" scripts/audit-python.sh',
+               "cd webui && npm audit --omit=dev --audit-level=high"]),
 ])
 def test_targets_run_the_agreed_commands(target, commands):
     dry_run = make("-n", target, *TOOLS).stdout
@@ -1191,10 +1193,12 @@ def test_setup_bootstraps_a_checkout_and_a_rerun_changes_nothing(sandbox):
 
     first, calls = run()
     assert first.returncode == 0, first.stdout + first.stderr
-    assert "supervisor/.venv/bin/python -m pip install --disable-pip-version-check -q " \
-           "-r supervisor/requirements-dev.txt" in calls
-    assert ".venv-lint/bin/python -m pip install --disable-pip-version-check -q --require-hashes " \
-           "-r .github/lint-requirements.txt" in calls
+    # Wheels only, but nut2, which publishes none and which --only-binary=:all: after it would
+    # clear (ADR-0423).
+    assert "supervisor/.venv/bin/python -m pip install --disable-pip-version-check -q --only-binary=:all: " \
+           "--no-binary=nut2 -r supervisor/requirements-dev.txt" in calls
+    assert ".venv-lint/bin/python -m pip install --disable-pip-version-check -q --only-binary=:all: " \
+           "--require-hashes -r .github/lint-requirements.txt" in calls
     assert "npm ci --no-audit --no-fund" in calls
     assert "playwright install chromium" in calls
     assert calls[-2:] == ["make check-fast", "make smoke"]  # the baseline comes last
@@ -1227,7 +1231,8 @@ def test_setup_installs_again_when_a_requirement_file_changes(sandbox):
     assert "missing  supervisor/.venv is not up to date" in checked.stdout
     assert result.returncode == 0
     assert [call for call in calls if "-m pip install" in call] == [
-        "supervisor/.venv/bin/python -m pip install --disable-pip-version-check -q -r supervisor/requirements-dev.txt"
+        "supervisor/.venv/bin/python -m pip install --disable-pip-version-check -q --only-binary=:all: "
+        "--no-binary=nut2 -r supervisor/requirements-dev.txt"
     ]
 
 
@@ -1381,12 +1386,16 @@ def test_the_audit_workflow_runs_weekly_and_on_demand_the_commands_of_make_audit
     trigger = _on(workflow)
     runs = [step["run"] for job in workflow["jobs"].values() for step in job["steps"] if "run" in step]
     audits = [run for run in runs if "audit" in run and not run.startswith("pip install")]
-    dry_run = make("-n", "audit", "PIP_AUDIT=pip-audit", "NPM=npm").stdout.splitlines()
+    dry_run = make("-n", "audit", "PYTHON=python3", "PIP_AUDIT=pip-audit", "NPM=npm").stdout.splitlines()
 
     assert "workflow_dispatch" in trigger
     assert re.fullmatch(r"\d+ \d+ \* \* [0-6]", trigger["schedule"][0]["cron"])
-    assert audits == ["pip-audit -r supervisor/requirements.txt", "npm audit --omit=dev --audit-level=high"]
-    assert dry_run == ["pip-audit -r supervisor/requirements.txt", "cd webui && npm audit --omit=dev --audit-level=high"]
+    # The script's defaults are the tools on PATH, as there: python3 and pip-audit.
+    assert audits == ["scripts/audit-python.sh", "npm audit --omit=dev --audit-level=high"]
+    assert dry_run == ['PYTHON="python3" PIP_AUDIT="pip-audit" scripts/audit-python.sh',
+                       "cd webui && npm audit --omit=dev --audit-level=high"]
+    script = (REPO_ROOT / "scripts" / "audit-python.sh").read_text()
+    assert 'python=${PYTHON:-python3}' in script and 'pip_audit=${PIP_AUDIT:-pip-audit}' in script
 
 
 def test_the_audit_workflow_checks_the_catalog_images_as_make_does():
@@ -1420,6 +1429,20 @@ def test_dependabot_proposes_weekly_grouped_updates_with_conventional_prefixes()
         assert update["commit-message"]["prefix"] in CHECKER.TYPES
         assert update["groups"]
     assert updates["pip"]["directory"] == "/supervisor" and updates["npm"]["directory"] == "/webui"
+
+
+def test_dependabot_proposes_the_next_commit_of_every_pinned_action():
+    """The workflows pin every action to a commit SHA with its version in a comment (ADR-0423):
+    Dependabot proposes the release's commit and rewrites the comment, for every action of every
+    workflow; no rule keeps one at its version, and nothing in the file pins an action by tag."""
+    text = (REPO_ROOT / ".github" / "dependabot.yml").read_text()
+    config = yaml.safe_load(text)
+    (actions,) = [update for update in config["updates"] if update["package-ecosystem"] == "github-actions"]
+
+    assert actions["directory"] == "/"
+    assert "ignore" not in actions and "allow" not in actions
+    assert actions["groups"] == {"actions": {"patterns": ["*"]}}
+    assert not re.search(r"\buses:|@v\d", text)
 
 
 def test_dependabot_leaves_major_npm_versions_and_playwright_alone():
