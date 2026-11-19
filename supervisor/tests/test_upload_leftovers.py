@@ -217,7 +217,7 @@ def test_the_check_leaves_out_dockers_data_root_on_a_pool(env, monkeypatch):
     """A host may keep Docker's data root on a pool, as the BPI-F3 does (ADR-0372): its image
     layers and the mounted root filesystems of the running containers were walked after every
     start, minutes of CPU on a slow board, and the walk went on into those containers' /sys. Docker's
-    files hold no upload, so the walk leaves the data root out (ADR-0374)."""
+    files hold no upload, so the walk leaves the data root out (ADR-0421)."""
     docker_root = env.pool / ".docker"
     layer = docker_root / "overlay2" / "0123abcd" / "diff" / "tmp"
     layer.mkdir(parents=True)

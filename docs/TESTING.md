@@ -406,7 +406,7 @@ secrets from the git-ignored `dev.env` (ADR-0212):
 
 - `scripts/dev/check.sh`: the device's health (containers, Samba and network discovery, the API,
   the inbound IPv6 filter, SD writes since boot, each container's CPU and the temperatures, with
-  UNOS's budget and the throttling margin of ADR-0374), read-only.
+  UNOS's budget and the throttling margin of ADR-0421), read-only.
 - `scripts/dev/api.py METHOD PATH`: what the API on the device answers. Methods other than GET
   change the device.
 - `scripts/dev/upload-speed.py [--mib N] [--runs R]`: how fast this workstation uploads to the

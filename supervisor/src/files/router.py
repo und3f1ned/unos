@@ -2270,7 +2270,7 @@ def _mount_roots() -> set[tuple[int, int]] | None:
 
 def _docker_data_root() -> str | None:
     """Docker's data root as Docker names it, or None when Docker does not answer. A host may keep
-    it on a pool (ADR-0372); _find_upload_leftovers leaves it out (ADR-0374)."""
+    it on a pool (ADR-0372); _find_upload_leftovers leaves it out (ADR-0421)."""
     from ..containers import docker as docker_ops
 
     try:
@@ -2293,7 +2293,7 @@ def _find_upload_leftovers(
     with the number of folders; every folder only when the mount table
     cannot be read. The trash and the snapshots are left out, and so are the folders of
     ``skipped`` (absolute paths): Docker's data root, whose image layers and mounted container
-    roots hold no upload and cost minutes of a slow board's CPU (ADR-0374). It only reads.
+    roots hold no upload and cost minutes of a slow board's CPU (ADR-0421). It only reads.
     """
     found: list[_FoundLeftover] = []
     problems: list[str] = []
@@ -2363,7 +2363,7 @@ def _find_upload_leftovers(
 
 
 def _find_upload_leftovers_outside_docker(now: datetime) -> tuple[list[_FoundLeftover], list[str]]:
-    """_find_upload_leftovers without Docker's data root (ADR-0374)."""
+    """_find_upload_leftovers without Docker's data root (ADR-0421)."""
     root = _docker_data_root()
     if root is None:
         return _find_upload_leftovers(now)

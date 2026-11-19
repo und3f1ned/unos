@@ -1559,6 +1559,10 @@ manager, encrypted backup uploads, health checks, CI checks).
   installed once, under its id, and a request with `name` answers 422.
 
 ### Fixed
+- `scripts/dev/check.sh` no longer warns of a thermal zone whose trips drive only a fan or are
+  bound to nothing, such as the BPI-F3's top_thermal and gpu_thermal at their first passive trip
+  of 40 C: it measures the margin in the zones that slow a processor, and warns of every zone 5 C
+  before its critical trip (ADR-0421).
 - Linkwarden keeps Prisma's cache in memory too: its start wrote it into its container's layer on
   the system disk. The App Store's estimates of the system disk for Paperless-ngx and Linkwarden
   are now what their pulls took, plus about 5%: they were 3% and 8% short (ADR-0415).

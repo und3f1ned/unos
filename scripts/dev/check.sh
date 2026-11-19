@@ -9,12 +9,12 @@
 # the API's health answer, the inbound IPv6 filter (ADR-0301), the system disk's writes since
 # boot (and its wear data where the card reports it), free RAM, the mounted pools, each running
 # container's CPU averaged over five readings of docker stats, the load average and each thermal
-# zone with its first passive trip point (ADR-0374). Exits 0 when unos-supervisor and unos-webui
+# zone with its first passive trip point (ADR-0421). Exits 0 when unos-supervisor and unos-webui
 # run and are healthy and stay within 15% of a core, smbd, wsdd2 and avahi-daemon are active,
 # nmbd neither runs nor is enabled, the API answers, the filter's unit is active with its table
-# loaded and no thermal zone is within 5 C of its first passive trip (a UNOS container without a CPU
-# reading is a problem too, ADR-0412); 1 otherwise ("check:
-# problems").
+# loaded, no thermal zone that slows a processor is within 5 C of its first passive trip and no
+# zone within 5 C of its critical trip (a UNOS container without a CPU reading is a problem too,
+# ADR-0412); 1 otherwise ("check: problems").
 #
 # It runs one script on the device, with the root filesystem read-only (dev_remote_ro of
 # env.sh, ADR-0221), starts no container (ADR-0183), takes no lock (it waits for nobody) and
@@ -135,10 +135,13 @@ else
     echo "no pool mounted under /mnt/pools"
 fi
 
-# Load and temperature (ADR-0374): a board that runs hot or a UNOS that keeps a core busy went
+# Load and temperature (ADR-0421): a board that runs hot or a UNOS that keeps a core busy went
 # unnoticed. Each reading of docker stats compares two samples; five readings take about ten
 # seconds. A thermal zone within 5 C of its first passive trip point is about to be slowed down by
-# the kernel.
+# the kernel, when the zone binds a cooling device other than a fan to a trip (cpufreq, devfreq) or
+# leaves its trips to a daemon (the governor user_space): one whose trips drive a fan alone, or are
+# bound to nothing, slows no processor. Every zone is a problem within 5 C of its critical trip,
+# where the kernel powers the board off (ADR-0421).
 echo "== load and temperature"
 budget=15
 readings=
@@ -154,12 +157,12 @@ for c in unos-supervisor unos-webui; do
     if [ -z "$avg" ]; then
         # A container that runs and has no reading must not pass for one within its budget.
         case $(docker inspect -f "{{.State.Status}}" "$c" 2> /dev/null) in
-            running) problem "$c has no CPU reading from docker stats, so its budget of $budget% of a core is unchecked (ADR-0374)" ;;
+            running) problem "$c has no CPU reading from docker stats, so its budget of $budget% of a core is unchecked (ADR-0421)" ;;
         esac
         continue
     fi
     if awk -v a="$avg" -v b="$budget" "BEGIN { exit !(a > b) }"; then
-        problem "$c used $avg% of a core on average, more than its budget of $budget% (ADR-0374)"
+        problem "$c used $avg% of a core on average, more than its budget of $budget% (ADR-0421)"
     fi
 done
 [ -r /proc/loadavg ] && echo "load average: $(cut -d " " -f 1-3 /proc/loadavg)"
@@ -177,21 +180,43 @@ for z in "$thermal"/thermal_zone*; do
             ;;
     esac
     t=$((raw / 1000))
-    trip=
+    # cdevN links the zone to a cooling device; its cdevN_trip_point file is no directory. A type
+    # that cannot be read counts as a processor: a doubt warns rather than stays silent.
+    slows=
+    [ "$(cat "$z/policy" 2> /dev/null)" = user_space ] && slows=1
+    for c in "$z"/cdev[0-9]*; do
+        [ -d "$c" ] || continue
+        case $(cat "$c/type" 2> /dev/null) in
+            *fan*) ;;
+            *) slows=1 ;;
+        esac
+    done
+    trip= critical=
     for tt in "$z"/trip_point_*_type; do
-        [ -r "$tt" ] && [ "$(cat "$tt")" = passive ] || continue
+        [ -r "$tt" ] || continue
+        kind=$(cat "$tt")
+        case $kind in passive | critical) ;; *) continue ;; esac
         v=$(cat "${tt%_type}_temp" 2> /dev/null) || v=
         case $v in "" | - | *[!0-9-]* | ?*-*) continue ;; esac
         v=$((v / 1000))
-        if [ -z "$trip" ] || [ "$v" -lt "$trip" ]; then trip=$v; fi
+        if [ "$kind" = critical ]; then
+            if [ -z "$critical" ] || [ "$v" -lt "$critical" ]; then critical=$v; fi
+        elif [ -z "$trip" ] || [ "$v" -lt "$trip" ]; then
+            trip=$v
+        fi
     done
     if [ -z "$trip" ]; then
         echo "$name: $t C"
-        continue
+    elif [ -z "$slows" ]; then
+        echo "$name: $t C, no trip that slows a processor"
+    else
+        echo "$name: $t C, first passive trip $trip C"
+        if [ "$t" -ge $((trip - 5)) ]; then
+            problem "$name is at $t C, within 5 C of its first passive trip ($trip C), where the kernel slows a processor down: the board needs cooling or less load"
+        fi
     fi
-    echo "$name: $t C, first passive trip $trip C"
-    if [ "$t" -ge $((trip - 5)) ]; then
-        problem "$name is at $t C, within 5 C of its first passive trip ($trip C), where the kernel slows the CPU down: the board needs cooling or less load"
+    if [ -n "$critical" ] && [ "$t" -ge $((critical - 5)) ]; then
+        problem "$name is at $t C, within 5 C of its critical trip ($critical C), where the kernel powers the board off: the board needs cooling or less load"
     fi
 done
 [ "$zones" -gt 0 ] || echo "no thermal zones"

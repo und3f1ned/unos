@@ -731,7 +731,11 @@ Open owner actions:
   idle in the morning. `scripts/dev/check.sh` on the board (0.023): its idle CPU and the
   containers' within budget, and two problems: the inbound IPv6 filter (ADR-0301) was never put on
   the board, and the K1's top and gpu zones have their first passive trip at 40 C, which drives
-  the fan, not the CPU's clock, so the check's warning for them is a false one.
+  the fan, not the CPU's clock, so the check's warning for them is a false one. Fixed the same day
+  (ADR-0421, superseding ADR-0374): the margin counts only the zones that bind a cooling device
+  other than a fan, and every zone is a problem 5 C before its critical trip; reviewed in a fresh
+  context, whose findings (cluster1_thermal unwatched, user_space, an unreadable type) are fixed;
+  check.sh then shows on the BPI-F3 only its missing IPv6 filter, and on the BPI-W3 check: OK.
 
 ### 2026-11-18: A fourteenth batch: hot-plugged SMART, companions, no floating images, host commands and firewall
 

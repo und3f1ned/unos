@@ -891,9 +891,15 @@ def test_check_sh_reports_samba_and_network_discovery_problems(local_device, env
     assert f"- {problem}" in out and "check: problems" in out and result.returncode == 1, out + result.stderr
 
 
-def _thermal_zones(folder: Path, zones: list[tuple[str, int, list[tuple[str, int]]]]) -> Path:
-    """A /sys/class/thermal in ``folder``: zones of (type, degrees, [(trip type, degrees), ...])."""
-    for n, (kind, degrees, trips) in enumerate(zones):
+def _thermal_zones(folder: Path, zones: list[tuple]) -> Path:
+    """A /sys/class/thermal in ``folder``: zones of (type, degrees, [(trip type, degrees), ...]) and,
+    as a fourth item, the cooling devices bound to its passive trips (cdevN, a link to
+    cooling_deviceM, and cdevN_trip_point, as the kernel has them): a type, bound to the zone's
+    passive trips in turn, or (type, trip index). Without it a zone with a passive trip has the
+    CPU's clock (cpufreq-cpu0) bound to its first one; a fifth item is the zone's governor."""
+    devices = folder / "devices"
+    for n, (kind, degrees, trips, *extra) in enumerate(zones):
+        cooling, policy = extra[:1], extra[1:]
         zone = folder / f"thermal_zone{n}"
         zone.mkdir(parents=True)
         (zone / "type").write_text(f"{kind}\n")
@@ -901,6 +907,17 @@ def _thermal_zones(folder: Path, zones: list[tuple[str, int, list[tuple[str, int
         for t, (trip, trip_degrees) in enumerate(trips):
             (zone / f"trip_point_{t}_type").write_text(f"{trip}\n")
             (zone / f"trip_point_{t}_temp").write_text(f"{trip_degrees * 1000}\n")
+        passive = [t for t, (trip, _) in enumerate(trips) if trip == "passive"]
+        bound = cooling[0] if cooling else (["cpufreq-cpu0"] if passive else [])
+        for c, device_type in enumerate(bound):
+            device_type, at = device_type if isinstance(device_type, tuple) else (
+                device_type, passive[min(c, len(passive) - 1)])
+            device = devices / f"cooling_device{n}_{c}"
+            device.mkdir(parents=True)
+            (device / "type").write_text(f"{device_type}\n")
+            (zone / f"cdev{c}").symlink_to(device)
+            (zone / f"cdev{c}_trip_point").write_text(f"{at}\n")
+        (zone / "policy").write_text(f"{policy[0] if policy else 'step_wise'}\n")
     return folder
 
 
@@ -923,7 +940,7 @@ def _run_check(device, tmp_path, zones, **env):
 def test_check_sh_shows_the_containers_cpu_and_the_temperatures(local_device, tmp_path):
     """Nobody saw a BPI-F3 run at 71 C without a fan, 4 degrees below the point where its kernel
     slows the CPU down, nor UNOS's supervisor take half a core while a dashboard was open: check.sh
-    shows each container's CPU, averaged over five readings, and each thermal zone (ADR-0374)."""
+    shows each container's CPU, averaged over five readings, and each thermal zone (ADR-0421)."""
     zones = [("cluster0_thermal", 53, K1_TRIPS), ("gpu_thermal", 52, [("active", 40)])]
     result = _run_check(local_device, tmp_path, zones)
     out = result.stdout
@@ -937,11 +954,11 @@ def test_check_sh_shows_the_containers_cpu_and_the_temperatures(local_device, tm
 
 def test_check_sh_reports_unos_over_its_cpu_budget(local_device, tmp_path):
     """UNOS's containers stay within 15% of a core on average, also with a dashboard open
-    (ADR-0374); the supervisor took 25 to 64% before."""
+    (ADR-0421); the supervisor took 25 to 64% before."""
     stats = "unos-supervisor 64.00%\nunos-webui 0.10%\nfrigate 190.00%"
     result = _run_check(local_device, tmp_path, [("cluster0_thermal", 53, K1_TRIPS)], FAKE_DOCKER_STATS=stats)
     out = result.stdout
-    assert "- unos-supervisor used 64.0% of a core on average, more than its budget of 15% (ADR-0374)" in out, out
+    assert "- unos-supervisor used 64.0% of a core on average, more than its budget of 15% (ADR-0421)" in out, out
     assert "frigate" not in out.split("check: problems", 1)[1]
     assert result.returncode == 1
 
@@ -950,12 +967,12 @@ def test_check_sh_reports_a_board_near_its_throttling_point(local_device, tmp_pa
     result = _run_check(local_device, tmp_path, [("cluster0_thermal", 71, K1_TRIPS)])
     out = result.stdout
     assert ("- cluster0_thermal is at 71 C, within 5 C of its first passive trip (75 C), where the "
-            "kernel slows the CPU down: the board needs cooling or less load") in out, out + result.stderr
+            "kernel slows a processor down: the board needs cooling or less load") in out, out + result.stderr
     assert result.returncode == 1
 
 
 def test_check_sh_averages_the_five_readings_of_docker_stats(local_device, tmp_path):
-    """One reading is a spike: the budget is on the average of five (ADR-0374). A supervisor at 40%
+    """One reading is a spike: the budget is on the average of five (ADR-0421). A supervisor at 40%
     once and 1% four times averages 8.8%, within the budget; one at 20% in four readings of five
     averages 16.2%."""
     zones = [("cluster0_thermal", 53, K1_TRIPS)]
@@ -986,7 +1003,7 @@ def test_check_sh_does_not_pass_a_unos_container_that_docker_stats_does_not_show
     for stats in ("unos-webui 0.10%\ntransmission 50.00%", "unos-supervisor --\nunos-webui 0.10%"):
         result = _run_check(local_device, tmp_path, zones, FAKE_DOCKER_STATS=stats)
         assert ("- unos-supervisor has no CPU reading from docker stats, so its budget of 15% of a core "
-                "is unchecked (ADR-0374)") in result.stdout, result.stdout
+                "is unchecked (ADR-0421)") in result.stdout, result.stdout
         assert result.returncode == 1
 
 
@@ -999,8 +1016,8 @@ def test_check_sh_margin_is_5_degrees_below_the_first_passive_trip(local_device,
 
 def test_check_sh_takes_the_lowest_passive_trip_and_ignores_the_others(local_device, tmp_path):
     """Only a passive trip is where the kernel slows the CPU down; the hot and critical ones, and
-    the higher passive one, are not the margin's."""
-    trips = [("hot", 60), ("passive", 85), ("passive", 75), ("critical", 65)]
+    the higher passive one, are not the margin's (a critical trip has a margin of its own)."""
+    trips = [("hot", 60), ("passive", 85), ("passive", 75), ("critical", 125)]
     result = _run_check(local_device, tmp_path, [("cluster0_thermal", 66, trips)])
     assert "cluster0_thermal: 66 C, first passive trip 75 C" in result.stdout and result.returncode == 0
 
@@ -1012,6 +1029,11 @@ def test_check_sh_shows_a_zone_that_cannot_be_read_and_checks_the_others(local_d
     (thermal / "thermal_zone1" / "temp").write_text("71000\n")
     (thermal / "thermal_zone1" / "trip_point_0_type").write_text("passive\n")
     (thermal / "thermal_zone1" / "trip_point_0_temp").write_text("75000\n")
+    cpufreq = thermal / "devices" / "cooling_device_cpu"
+    cpufreq.mkdir(parents=True)
+    (cpufreq / "type").write_text("cpufreq-cpu0\n")
+    (thermal / "thermal_zone1" / "cdev0").symlink_to(cpufreq)
+    (thermal / "thermal_zone1" / "cdev0_trip_point").write_text("0\n")
     local_device.stub("docker", STUB_DOCKER)
     local_device.stub("systemctl", STUB_SYSTEMCTL)
     local_device.stub("nft", STUB_NFT_LIST)
@@ -1054,7 +1076,7 @@ def test_check_sh_unreadable_values_of_a_zone_never_end_the_check_early(local_de
 
 def test_check_sh_reads_load_and_heat_without_writing_anything():
     """The reading is /proc, /sys and docker stats --no-stream: no redirection into a file, no tool
-    that makes one, so that the check adds nothing to the device's SD card (ADR-0214, ADR-0374)."""
+    that makes one, so that the check adds nothing to the device's SD card (ADR-0214, ADR-0421)."""
     script = (DEV / "check.sh").read_text()
     section = script.split('echo "== load and temperature"', 1)[1].split('echo "== result"', 1)[0]
     assert "docker stats --no-stream" in section
@@ -1069,8 +1091,9 @@ def test_check_sh_reads_load_and_heat_without_writing_anything():
 # The thermal zones of a Rockchip RK3588 (BPI-W3, ArmSoM W3) under Armbian's vendor kernel 6.1,
 # as the dev device has them: only soc-thermal has passive trips; the zones of the CPU's clusters,
 # the GPU and the NPU have a critical trip alone (ADR-0376).
+RK3588_SOC_COOLING = [("devfreq-fb000000.gpu", 1), ("cpufreq-cpu0", 1), ("cpufreq-cpu4", 1), ("cpufreq-cpu6", 1)]
 RK3588_ZONES = [
-    ("soc-thermal", 42, [("passive", 75), ("passive", 85), ("critical", 115)]),
+    ("soc-thermal", 42, [("passive", 75), ("passive", 85), ("critical", 115)], RK3588_SOC_COOLING),
     *[(zone, 42, [("critical", 115)]) for zone in
       ("bigcore0-thermal", "bigcore1-thermal", "littlecore-thermal", "center-thermal", "gpu-thermal", "npu-thermal")],
 ]
@@ -1089,13 +1112,92 @@ def test_check_sh_reads_the_zones_of_an_rk3588(local_device, tmp_path):
 
 
 def test_check_sh_reports_an_rk3588_near_its_throttling_point(local_device, tmp_path):
-    zones = [("soc-thermal", 70, RK3588_ZONES[0][2]), ("bigcore0-thermal", 72, [("critical", 115)])]
+    zones = [("soc-thermal", 70, RK3588_ZONES[0][2], RK3588_SOC_COOLING), ("bigcore0-thermal", 72, [("critical", 115)])]
     result = _run_check(local_device, tmp_path, zones)
     out = result.stdout
     assert ("- soc-thermal is at 70 C, within 5 C of its first passive trip (75 C), where the "
-            "kernel slows the CPU down: the board needs cooling or less load") in out, out + result.stderr
+            "kernel slows a processor down: the board needs cooling or less load") in out, out + result.stderr
     assert "bigcore0-thermal is at" not in out
     assert result.returncode == 1
+
+
+# The thermal zones of the owner's BPI-F3 (SpacemiT K1, kernel 6.18.45-current-spacemit) as it had
+# them on 2026-11-19: top_thermal's passive trips drive the fan alone, gpu_thermal's and
+# cluster1_thermal's are bound to nothing, and only cluster0_thermal slows the CPU's clock, at 75 C.
+K1_F3_ZONES = [
+    ("top_thermal", 59, [("passive", 40), ("passive", 55), ("passive", 70), ("passive", 85)],
+     ["pwm-fan", "pwm-fan", "pwm-fan", "pwm-fan"]),
+    ("gpu_thermal", 59, [("passive", 40)], []),
+    ("cluster0_thermal", 53, K1_TRIPS, ["cpufreq-cpu0"]),
+    ("cluster1_thermal", 52, [("passive", 75), ("passive", 85), ("critical", 115)], []),
+]
+
+
+def test_check_sh_leaves_out_the_trips_of_zones_that_slow_no_processor(local_device, tmp_path):
+    """On the BPI-F3 check.sh warned of top_thermal and gpu_thermal at 40 to 64 C, within 5 C of
+    their first passive trip at 40 C; that trip turns the fan up (top_thermal) or is bound to
+    nothing (gpu_thermal), and the kernel slows no processor there (ADR-0421). Such a zone is shown
+    without a trip and is never a problem; cluster0_thermal keeps its margin below 75 C."""
+    result = _run_check(local_device, tmp_path, K1_F3_ZONES)
+    out = result.stdout
+    section = out.split("== load and temperature", 1)[1].split("\n== ", 1)[0]
+    lines = section.splitlines()
+    assert "top_thermal: 59 C, no trip that slows a processor" in lines, out + result.stderr
+    assert "gpu_thermal: 59 C, no trip that slows a processor" in lines
+    assert "cluster1_thermal: 52 C, no trip that slows a processor" in lines
+    assert "cluster0_thermal: 53 C, first passive trip 75 C" in lines
+    assert "check: OK" in out and result.returncode == 0, out + result.stderr
+
+
+def test_check_sh_still_reports_the_k1_near_its_throttling_point(local_device, tmp_path):
+    zones = [*K1_F3_ZONES[:2], ("cluster0_thermal", 71, K1_TRIPS, ["cpufreq-cpu0"])]
+    result = _run_check(local_device, tmp_path, zones)
+    out = result.stdout
+    assert "- cluster0_thermal is at 71 C, within 5 C of its first passive trip (75 C)" in out, out + result.stderr
+    assert "top_thermal is at" not in out and "gpu_thermal is at" not in out
+    assert result.returncode == 1
+
+
+@pytest.mark.parametrize("bound, problem", [
+    (["pwm-fan", "cpufreq-cpu0"], True),   # a fan and the CPU's clock: the zone slows the CPU
+    (["devfreq-fb000000.gpu"], True),      # the GPU's clock is a processor's too
+    ([""], True),                          # a type that cannot be read: rather a warning than none
+    (["gpio-fan"], False),
+    ([], False),
+])
+def test_check_sh_counts_a_zone_that_binds_any_processor(local_device, tmp_path, bound, problem):
+    """A zone counts with every passive trip of it once it binds a cooling device other than a fan,
+    as the RK3588's soc-thermal, whose CPU and GPU are bound at 85 C behind a first passive trip
+    of 75 C, does: the check stays as careful as it was there."""
+    result = _run_check(local_device, tmp_path, [("soc-thermal", 71, [("passive", 75), ("passive", 85)], bound)])
+    assert ("- soc-thermal is at 71 C, within 5 C of its first passive trip (75 C)" in result.stdout) is problem, \
+        result.stdout + result.stderr
+    assert result.returncode == int(problem)
+
+
+def test_check_sh_counts_a_zone_that_a_daemon_governs(local_device, tmp_path):
+    """Under the governor user_space a passive trip without a cooling device asks a daemon to slow
+    the processors down: the zone counts."""
+    zones = [("soc-thermal", 71, [("passive", 75)], [], "user_space")]
+    result = _run_check(local_device, tmp_path, zones)
+    assert "- soc-thermal is at 71 C, within 5 C of its first passive trip (75 C)" in result.stdout, \
+        result.stdout + result.stderr
+    assert result.returncode == 1
+
+
+@pytest.mark.parametrize("zone, degrees, problem", [
+    (K1_F3_ZONES[3], 110, True),     # cluster1_thermal: bound to nothing, watched against its critical trip
+    (K1_F3_ZONES[3], 109, False),
+    (("bigcore0-thermal", 110, [("critical", 115)]), 110, True),   # an RK3588 zone with a critical trip alone
+    (("cluster0_thermal", 111, K1_TRIPS, ["cpufreq-cpu0"]), 111, True),
+])
+def test_check_sh_warns_before_every_zones_critical_trip(local_device, tmp_path, zone, degrees, problem):
+    """A zone that slows no processor is not left unwatched up to the kernel's power-off: every zone
+    is a problem within 5 C of its critical trip (ADR-0421)."""
+    result = _run_check(local_device, tmp_path, [(zone[0], degrees, *zone[2:])])
+    expected = f"- {zone[0]} is at {degrees} C, within 5 C of its critical trip (115 C), where the kernel powers the board off"
+    assert (expected in result.stdout) is problem, result.stdout + result.stderr
+    assert result.returncode == int(problem)
 
 
 @pytest.mark.parametrize("enabled", ["none", "masked", "static"])
