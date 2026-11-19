@@ -428,29 +428,29 @@ class TestAdd:
         assert audited() == [("pool_disk_added", "pool", "data",
                               f"Tried to add /dev/sdb to the pool data; then: {detail}", False)]
 
-    def test_an_nvme_drive_joins_no_pool_with_trim_on_a_board_that_hangs_on_its_trim(self, pool):
-        """ADR-0370: the SpacemiT K1 hangs on the TRIM of an NVMe drive."""
+    @pytest.mark.parametrize("into_nvme_pool", [False, True], ids=["nvme-drive-into-a-sata-pool", "sata-disk-into-an-nvme-pool"])
+    def test_on_a_spacemit_k1_disks_join_pools_with_trim_whatever_their_kind(self, pool, into_nvme_pool):
+        """ADR-0429: an NVMe drive of a SpacemiT K1 gets TRIM like every disk, so btrfs device add
+        runs without --nodiscard, no add is refused for the disk's kind, and the board's device tree
+        is not read."""
         pool.host.files["/proc/device-tree/compatible"] = "spacemit,k1-x\0"
         pool.host.add_disk("nvme0n1", serial="NV-1", size=256 * 10**9, rota=False)
+        if into_nvme_pool:
+            pool.fs["devices"] = ["/dev/nvme0n1"]
+            pool.devids = {"/dev/nvme0n1": 1}
+            pool.used = {"/dev/nvme0n1": GIB}
+            pool.host.mounts.clear()
+            pool.host.mount_pool("data")
+            device, body = "/dev/sda", add_body("/dev/sda", "WD-A")
+        else:
+            device = "/dev/nvme0n1"
+            body = {**add_body(device, "NV-1"), "identity": identity(device, "NV-1", 256 * 10**9)}
+        pool.host.calls.clear()
         with admin_client() as client:
-            r = client.post(DEVICES, json={**add_body("/dev/nvme0n1", "NV-1"),
-                                           "identity": identity("/dev/nvme0n1", "NV-1", 256 * 10**9)})
-        assert r.status_code == 409
-        assert r.json()["detail"].startswith("Refusing to add /dev/nvme0n1: this board hangs on the TRIM of an NVMe drive")
-        assert pool.adds == []
-
-    def test_a_pool_without_trim_gets_its_new_disk_without_a_discard(self, pool):
-        pool.host.files["/proc/device-tree/compatible"] = "spacemit,k1-x\0"
-        pool.host.add_disk("nvme0n1", serial="NV-1", size=256 * 10**9, rota=False)
-        pool.fs["devices"] = ["/dev/nvme0n1"]
-        pool.devids = {"/dev/nvme0n1": 1}
-        pool.used = {"/dev/nvme0n1": GIB}
-        pool.host.mounts.clear()
-        pool.host.mount_pool("data")
-        with admin_client() as client:
-            r = client.post(DEVICES, json=add_body("/dev/sda", "WD-A"))
+            r = client.post(DEVICES, json=body)
         assert r.status_code == 200, r.text
-        assert pool.adds == [["btrfs", "device", "add", "--nodiscard", "/dev/sda", MOUNTPOINT]]
+        assert pool.adds == [["btrfs", "device", "add", device, MOUNTPOINT]]
+        assert not any("/proc/device-tree/compatible" in call for call in pool.host.calls)
 
 
 M = devices.Member

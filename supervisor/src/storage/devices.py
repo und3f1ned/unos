@@ -318,19 +318,11 @@ def add(pool: str, request: DiskAdd) -> str:
                 f"{device} holds {fact.data_description}, not what the list showed "
                 f"({request.contents or 'nothing'}). Open the dialog again to see what an add would erase."
             )
-        trimmed = pools.pool_is_trimmed([member.path for member in found])
-        if trimmed and not pools.pool_is_trimmed([device]):
-            raise pools.DeviceSafetyError(
-                f"Refusing to add {device}: this board hangs on the TRIM of an NVMe drive, and the pool {pool} "
-                "is mounted with TRIM. Add it to a pool that has an NVMe drive already, or make a new pool of it"
-            )
         in_use = profiles(path)
         cmd = ["btrfs", "device", "add"]
         if request.force and fact.has_data:
             # Without -f btrfs-progs refuses a disk with signatures: the last line of defence.
             cmd.append("-f")
-        if not trimmed:
-            cmd.append("--nodiscard")
         try:
             result = host.run_on_host([*cmd, device, path], timeout=ADD_TIMEOUT)
         except subprocess.TimeoutExpired:
