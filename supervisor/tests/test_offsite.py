@@ -115,8 +115,8 @@ def env(tmp_path, monkeypatch):
         monkeypatch.setattr(offsite, name, str(value))
     monkeypatch.setattr(offsite, "on_system_disk", lambda fd: False)
     monkeypatch.setattr(offsite, "on_system_filesystem", lambda fd: False, raising=False)
-    # The S3 stores of the tests exist only in the fake restic: they answer.
-    monkeypatch.setattr(offsite, "probe_store", lambda endpoint: None, raising=False)
+    # The S3 stores and REST servers of the tests exist only in the fake restic: they answer.
+    monkeypatch.setattr(offsite, "probe_store", lambda endpoint, **options: None, raising=False)
     monkeypatch.setattr(offsite, "_activity", None)
     monkeypatch.setattr(offsite, "_tasks", set())
     monkeypatch.setattr("src.security.validators.settings", SimpleNamespace(pools_base_path=str(pools)))
@@ -461,7 +461,8 @@ async def test_limits_retention_and_the_checks_share_are_kept_in_range(env, chan
 async def test_the_settings_offer_the_managed_pools_and_say_when_nothing_is_set_up(env):
     answer = await offsite.settings_answer()
     assert answer == {"configured": False, "settings": None, "has_password": False,
-                      "has_s3_secret_access_key": False, "pools": [{"name": "data", "path": str(env.pool)}],
+                      "has_s3_secret_access_key": False, "has_rest_password": False, "sftp_public_key": None,
+                      "host_key_fingerprint": None, "pools": [{"name": "data", "path": str(env.pool)}],
                       "pools_base": str(env.pools), "warnings": []}
 
 

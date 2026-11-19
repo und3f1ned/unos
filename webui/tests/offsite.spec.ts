@@ -1,4 +1,5 @@
-import { rmSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { APIRequestContext, Locator, Page } from '@playwright/test';
 import { test, expect, E2E_ADMIN } from './fixtures';
@@ -7,7 +8,9 @@ import { targetUrl } from './target';
 // The off-device copy on System > Backup & Restore (backup.off-device-copies, ADR-0337): a disk
 // target saved and tested, Run now, the state with its check and restore test, the snapshots, the
 // configuration of a snapshot restored into the backup list and the files of one into a new folder,
-// a daily task at 03:00, a file that vanishes during a copy, and the form's refusals.
+// a daily task at 03:00, a file that vanishes during a copy, and the form's refusals; a restic REST
+// server and an SFTP server with UNOS's key pair and the host key pinned at the first test
+// (backup.off-device-copies-over-sftp, ADR-0422), both played by the fake restic.
 //
 // The main flow runs on the stand-in only, which runs the fake restic of
 // supervisor/tests/fake_restic.py and counts no folder as the system disk
@@ -54,6 +57,37 @@ async function cleanUp(request: APIRequestContext, token: string, folders: strin
   if (gone.length) {
     await request.delete(`${BASE_URL}/api/v1/files/delete`, { headers, data: gone, params: { permanent: 'true' } });
   }
+}
+
+/** A folder of the test pool with a letter in it, which a copy takes. */
+async function makeSource(request: APIRequestContext, headers: Record<string, string>, name: string): Promise<string> {
+  const made = await request.post(`${BASE_URL}/api/v1/files/mkdir`, { headers, data: { path: `${POOLS}/testpool`, name } });
+  expect(made.ok(), await made.text()).toBeTruthy();
+  const source = `${POOLS}/testpool/${name}`;
+  const upload = await request.post(`${BASE_URL}/api/v1/files/upload`, {
+    headers,
+    params: { path: source },
+    multipart: { file: { name: 'letter.txt', mimeType: 'text/plain', buffer: Buffer.from('Dear family,\n') } },
+  });
+  expect(upload.ok(), await upload.text()).toBeTruthy();
+  return source;
+}
+
+/** An ssh-ed25519 host key as known_hosts holds it, made from SEED: the fake SFTP server's key. */
+function hostKey(seed: string): string {
+  const field = (data: Buffer) => {
+    const size = Buffer.alloc(4);
+    size.writeUInt32BE(data.length);
+    return Buffer.concat([size, data]);
+  };
+  const blob = Buffer.concat([field(Buffer.from('ssh-ed25519')), field(createHash('sha256').update(seed).digest())]);
+  return `ssh-ed25519 ${blob.toString('base64')}`;
+}
+
+/** The fingerprint of a host key as ssh-keygen -l prints it. */
+function fingerprintOf(key: string): string {
+  const digest = createHash('sha256').update(Buffer.from(key.split(' ')[1], 'base64')).digest('base64');
+  return `SHA256:${digest.replace(/=+$/, '')}`;
 }
 
 async function openSection(page: Page): Promise<Locator> {
@@ -196,6 +230,127 @@ test.describe('Off-device copy', () => {
     } finally {
       rmSync(faults, { force: true });
       await cleanUp(request, token, [source, target]);
+    }
+  });
+
+  test('a REST server is saved and tested with its user and password, and a copy runs to it', async ({
+    authenticatedPage: page,
+    request,
+  }) => {
+    test.skip(!process.env.E2E_STANDIN_STATE, ONLY_THE_STAND_IN);
+    const token = await loginToken(request);
+    const headers = { Authorization: `Bearer ${token}` };
+    const run = Date.now().toString(36);
+    const source = await makeSource(request, headers, `e2e-offsite-${run}`);
+    try {
+      const section = await openSection(page);
+      await section.getByLabel('A restic REST server').check();
+      await section.getByLabel('Address of the REST server').fill(`https://rest-${run}.example.com:8000`);
+      await section.getByLabel('Folders on the server').fill('unos');
+      await section.getByLabel('User of the REST server').fill('family');
+      const save = section.getByRole('button', { name: 'Save and test' });
+      await section.getByLabel('Another folder to copy').fill(source);
+      await section.getByRole('button', { name: 'Add folder' }).click();
+      await section.getByLabel('Password of the copy repository').fill(PASSWORD);
+      await section.getByLabel('Password again').fill(PASSWORD);
+      // Without the server's password nothing can be saved.
+      await expect(save).toBeDisabled();
+      await section.getByLabel('Password of the REST server').fill('the REST password');
+      await expect(section.getByLabel('Check of the server’s certificate')).toHaveValue('system');
+      await save.click();
+      await expect(section.getByText('Saved: the copy repository answered')).toBeVisible();
+      // The stored password is kept: the field stays empty and says so.
+      await expect(section.getByText('Leave it empty to keep the stored password.')).toBeVisible();
+
+      await section.getByRole('button', { name: 'Run now' }).click();
+      await refreshUntil(section, 'Last copy: succeeded');
+      await expect(section.getByText('Check: passed')).toBeVisible();
+      await expect(section.getByText('Restore test: passed')).toBeVisible();
+      const snapshots = section.getByRole('list', { name: 'Snapshots of the copy' });
+      await expect(snapshots.getByRole('listitem').filter({ hasText: 'Folders' })).toContainText(source);
+
+      // A CA of one's own needs its certificate: Save waits for it.
+      await section.getByLabel('Check of the server’s certificate').selectOption('ca');
+      await expect(save).toBeDisabled();
+      await section.getByLabel('Check of the server’s certificate').selectOption('fingerprint');
+      await section.getByLabel('SHA-256 fingerprint of the server’s certificate').fill('12:34');
+      await save.click();
+      await expect(section.locator('.alert-error')).toContainText('SHA-256 digest, 64 hexadecimal digits');
+    } finally {
+      await cleanUp(request, token, [source]);
+    }
+  });
+
+  test('an SFTP server: UNOS makes the key pair, the first test pins the host key, and a changed key is refused until trusted', async ({
+    authenticatedPage: page,
+    request,
+  }) => {
+    test.skip(!process.env.E2E_STANDIN_STATE, ONLY_THE_STAND_IN);
+    const token = await loginToken(request);
+    const headers = { Authorization: `Bearer ${token}` };
+    const run = Date.now().toString(36);
+    const host = `sftp-${run}.example.com`;
+    // The fake restic's SFTP server at that host and port 2222 (supervisor/tests/fake_restic.py).
+    const server = join(process.env.E2E_STANDIN_STATE as string, 'fake-restic', 'sftp', `${host}_2222`);
+    mkdirSync(server, { recursive: true });
+    writeFileSync(join(server, 'host_key'), `${hostKey(`first ${run}`)}\n`);
+    const source = await makeSource(request, headers, `e2e-offsite-${run}`);
+    try {
+      const section = await openSection(page);
+      await section.getByLabel('An SFTP server').check();
+      await expect(section.getByText('No key pair is made yet.')).toBeVisible();
+      await section.getByLabel('Host of the SFTP server').fill(host);
+      await section.getByLabel('SSH port').fill('2222');
+      await section.getByLabel('Login on the server').fill('unos');
+      await section.getByLabel('Folder on the server').fill(`/srv/copies/${run}`);
+      await section.getByLabel('Another folder to copy').fill(source);
+      await section.getByRole('button', { name: 'Add folder' }).click();
+      await section.getByLabel('Password of the copy repository').fill(PASSWORD);
+      await section.getByLabel('Password again').fill(PASSWORD);
+      const save = section.getByRole('button', { name: 'Save and test' });
+      // No key pair yet: nothing to log in with.
+      await expect(save).toBeDisabled();
+
+      await section.getByRole('button', { name: 'Make a key pair' }).click();
+      await expect(section.getByText('A new key pair is made')).toBeVisible();
+      const publicKey = (await section.getByTestId('sftp-public-key').innerText()).trim();
+      expect(publicKey).toMatch(/^ssh-ed25519 [A-Za-z0-9+/]+=* unos-off-device-copy$/);
+      // The server takes only that key.
+      writeFileSync(join(server, 'authorized_keys'), `${publicKey}\n`);
+
+      await save.click();
+      await expect(section.getByText('Saved: the copy repository answered')).toBeVisible();
+      const pinned = section.getByTestId('sftp-pinned');
+      await expect(pinned).toHaveText(/^Pinned host key: SHA256:[A-Za-z0-9+/]{43}$/);
+      const first = await pinned.innerText();
+
+      await section.getByRole('button', { name: 'Run now' }).click();
+      await refreshUntil(section, 'Last copy: succeeded');
+      await expect(section.getByText('Restore test: passed')).toBeVisible();
+
+      // The server shows another host key: the copy fails, and so does a save, until it is trusted.
+      const second = hostKey(`second ${run}`);
+      writeFileSync(join(server, 'host_key'), `${second}\n`);
+      await section.getByRole('button', { name: 'Run now' }).click();
+      await refreshUntil(section, 'Last copy: failed');
+      await expect(section.getByText(/^Failed at removing stale locks: .*Host key verification failed/)).toBeVisible();
+      // The listing of the snapshots meets the same refusal.
+      await expect(section.getByText(/^The snapshots could not be read: .*Host key verification failed/)).toBeVisible();
+      await save.click();
+      await expect(section.locator('.alert-error')).toContainText('is not the one pinned at its first test');
+      // Trusting it needs the new key's fingerprint, as the server prints it.
+      await section.getByLabel('trust its new key at this test').check();
+      await expect(save).toBeDisabled();
+      await section.getByLabel('Fingerprint of the server’s new host key').fill(fingerprintOf(second));
+      await save.click();
+      await expect(section.getByText('Saved: the copy repository answered')).toBeVisible();
+      await expect(pinned).toHaveText(`Pinned host key: ${fingerprintOf(second)}`);
+      expect(await pinned.innerText()).not.toBe(first);
+      await section.getByRole('button', { name: 'Run now' }).click();
+      await refreshUntil(section, 'Last copy: succeeded');
+    } finally {
+      await cleanUp(request, token, [source]);
+      rmSync(server, { recursive: true, force: true });
     }
   });
 

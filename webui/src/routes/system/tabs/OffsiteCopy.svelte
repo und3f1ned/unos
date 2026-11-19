@@ -1,6 +1,7 @@
 <script lang="ts">
   // The off-device copy (ADR-0337), a section of System > Backup & Restore: the copy target with its
-  // password, the folders to copy, the state of the last copy and restore with Run now, a daily task
+  // password (a disk, an S3 store, a REST server or an SFTP server with UNOS's key pair and the host
+  // key pinned at its first test, ADR-0422), the folders to copy, the state of the last copy and restore with Run now, a daily task
   // of the Scheduler, and the snapshots with their restores. The state is read when the section
   // opens and on Refresh: copies and restores run in the background, and nothing polls (ADR-0006).
   import { createEventDispatcher, onMount, tick } from "svelte";
@@ -10,6 +11,7 @@
     getOffsiteSettings,
     getOffsiteSnapshots,
     getOffsiteStatus,
+    makeOffsiteKeyPair,
     removeOffsiteSettings,
     restoreOffsiteConfiguration,
     restoreOffsiteFiles,
@@ -20,12 +22,13 @@
     type OffsiteSettingsRequest,
     type OffsiteSnapshot,
     type OffsiteStatus,
+    type OffsiteTls,
   } from "$lib/api/offsite";
   import { createTask, getTasks, type ScheduledTask } from "$lib/api/scheduler";
   import { Alert, Badge, Button, Card, Input } from "$lib/components/ui";
   import { intlLocale, t } from "$lib/i18n";
   import { formatDateTime } from "$lib/time";
-  import { Play, Plus, RefreshCw, RotateCcw, Trash2, UploadCloud, X } from "lucide-svelte";
+  import { Key, Play, Plus, RefreshCw, RotateCcw, Trash2, UploadCloud, X } from "lucide-svelte";
 
   const dispatch = createEventDispatcher<{ restored: string }>();
 
@@ -70,6 +73,18 @@
   let region = "";
   let accessKeyId = "";
   let secretKey = "";
+  // A REST server (endpoint and prefix are the S3 fields') and an SFTP server.
+  let username = "";
+  let restPassword = "";
+  let tls: OffsiteTls = "system";
+  let certificate = "";
+  let certificateSha256 = "";
+  let sftpHost = "";
+  let sftpPort = "22";
+  let remotePath = "";
+  let hostKeyFingerprint = "";
+  let trustNewHostKey = false;
+  let makingKey = false;
   let poolSources: string[] = [];
   let extraSources: string[] = [];
   let newSource = "";
@@ -98,7 +113,23 @@
     stored.kind === kind &&
     (kind === "disk"
       ? normalized(path) === stored.path
-      : endpoint.trim() === stored.endpoint && bucket.trim() === stored.bucket && (prefix.trim() || null) === (stored.prefix ?? null));
+      : kind === "sftp"
+        ? sameSftpServer && username.trim() === stored.username && remotePath.trim() === stored.path
+        : endpoint.trim() === stored.endpoint &&
+          (kind === "rest" || bucket.trim() === stored.bucket) &&
+          (prefix.trim() || null) === (stored.prefix ?? null));
+  // The same SFTP server keeps its pinned host key (the server's rule).
+  $: sameSftpServer =
+    stored?.kind === "sftp" && kind === "sftp" && sftpHost.trim() === stored.host && Number(sftpPort) === stored.port;
+  // The pin of the same server is kept; trusting a new key needs its fingerprint (the server's rule).
+  $: pinShown = sameSftpServer && !!answer?.host_key_fingerprint;
+  $: fingerprintShown = !pinShown || trustNewHostKey;
+  $: keepsRestPassword =
+    !!answer?.has_rest_password &&
+    stored?.kind === "rest" &&
+    kind === "rest" &&
+    endpoint.trim() === stored.endpoint &&
+    username.trim() === stored.username;
   $: keepsPassword = !!answer?.has_password && sameTarget;
   $: keepsSecret =
     !!answer?.has_s3_secret_access_key &&
@@ -108,7 +139,26 @@
     accessKeyId.trim() === stored.access_key_id;
   $: passwordTooShort = password !== "" && password.length < MIN_PASSWORD_LENGTH;
   $: passwordsDiffer = passwordAgain !== password;
-  $: targetGiven = kind === "disk" ? path.trim() !== "" : !!(endpoint.trim() && bucket.trim() && accessKeyId.trim() && (secretKey || keepsSecret));
+  $: targetGiven =
+    kind === "disk"
+      ? path.trim() !== ""
+      : kind === "s3"
+        ? !!(endpoint.trim() && bucket.trim() && accessKeyId.trim() && (secretKey || keepsSecret))
+        : kind === "rest"
+          ? !!(
+              endpoint.trim() &&
+              username.trim() &&
+              (restPassword || keepsRestPassword) &&
+              (tls !== "ca" || certificate.trim()) &&
+              (tls !== "fingerprint" || certificateSha256.trim())
+            )
+          : !!(
+              sftpHost.trim() &&
+              username.trim() &&
+              remotePath.trim() &&
+              answer?.sftp_public_key &&
+              (!pinShown || !trustNewHostKey || hostKeyFingerprint.trim())
+            );
   $: canSave =
     !saving &&
     targetGiven &&
@@ -182,6 +232,17 @@
     prefix = settings?.prefix ?? "";
     region = settings?.region ?? "";
     accessKeyId = settings?.access_key_id ?? "";
+    username = settings?.username ?? "";
+    tls = settings?.tls ?? "system";
+    certificate = settings?.tls === "ca" ? (settings.certificate ?? "") : "";
+    certificateSha256 = settings?.certificate_sha256 ?? "";
+    sftpHost = settings?.host ?? "";
+    sftpPort = String(settings?.port ?? 22);
+    remotePath = settings?.kind === "sftp" ? (settings.path ?? "") : "";
+    if (settings?.kind === "sftp") path = "";
+    hostKeyFingerprint = "";
+    trustNewHostKey = false;
+    restPassword = "";
     poolSources = settings ? settings.sources.filter((source) => poolPaths.includes(source)) : poolPaths;
     extraSources = settings ? settings.sources.filter((source) => !poolPaths.includes(source)) : [];
     limitUpload = String(settings?.limit_upload_kib ?? 0);
@@ -251,14 +312,21 @@
     saving = true;
     error = null;
     notice = "";
+    const remote = kind === "s3" || kind === "rest";
     const request: OffsiteSettingsRequest = {
       kind,
-      path: kind === "disk" ? path.trim() : null,
-      endpoint: kind === "s3" ? endpoint.trim() : null,
+      path: kind === "disk" ? path.trim() : kind === "sftp" ? remotePath.trim() : null,
+      endpoint: remote ? endpoint.trim() : null,
       bucket: kind === "s3" ? bucket.trim() : null,
-      prefix: kind === "s3" ? prefix.trim() || null : null,
+      prefix: remote ? prefix.trim() || null : null,
       region: kind === "s3" ? region.trim() || null : null,
       access_key_id: kind === "s3" ? accessKeyId.trim() : null,
+      username: kind === "rest" || kind === "sftp" ? username.trim() : null,
+      host: kind === "sftp" ? sftpHost.trim() : null,
+      port: kind === "sftp" ? Number(sftpPort) : null,
+      tls: kind === "rest" ? tls : null,
+      certificate: kind === "rest" && tls === "ca" ? certificate : null,
+      certificate_sha256: kind === "rest" && tls === "fingerprint" ? certificateSha256.trim() : null,
       sources,
       limit_upload_kib: Number(limitUpload),
       limit_download_kib: Number(limitDownload),
@@ -269,6 +337,9 @@
       // Sent only when typed: left out, the server keeps the stored ones of the same target.
       password: password || undefined,
       s3_secret_access_key: kind === "s3" && secretKey ? secretKey : undefined,
+      rest_password: kind === "rest" && restPassword ? restPassword : undefined,
+      trust_new_host_key: kind === "sftp" && pinShown && trustNewHostKey ? true : undefined,
+      host_key_fingerprint: kind === "sftp" && fingerprintShown && hostKeyFingerprint.trim() ? hostKeyFingerprint.trim() : undefined,
     };
     try {
       answer = await saveOffsiteSettings(request);
@@ -279,6 +350,21 @@
       showError($t("offsite.form.saveFailed"), e);
     }
     saving = false;
+  }
+
+  async function makeKeyPair() {
+    if (answer?.sftp_public_key && !confirm($t("offsite.sftp.confirmNewKey"))) return;
+    makingKey = true;
+    error = null;
+    notice = "";
+    try {
+      const found = await makeOffsiteKeyPair();
+      if (answer) answer = { ...answer, sftp_public_key: found.sftp_public_key };
+      notice = $t("offsite.sftp.keyMade");
+    } catch (e) {
+      showError($t("offsite.sftp.keyFailed"), e);
+    }
+    makingKey = false;
   }
 
   async function forget() {
@@ -580,10 +666,107 @@
             <input type="radio" name="offsite-kind" value="s3" bind:group={kind} />
             {$t("offsite.form.s3")}
           </label>
+          <label class="flex items-center gap-2">
+            <input type="radio" name="offsite-kind" value="rest" bind:group={kind} />
+            {$t("offsite.form.rest")}
+          </label>
+          <label class="flex items-center gap-2">
+            <input type="radio" name="offsite-kind" value="sftp" bind:group={kind} />
+            {$t("offsite.form.sftp")}
+          </label>
         </fieldset>
 
         {#if kind === "disk"}
           <Input id="offsite-path" label={$t("offsite.form.path")} bind:value={path} hint={$t("offsite.form.pathHint")} spellcheck={false} />
+        {:else if kind === "rest"}
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <Input id="offsite-rest-endpoint" label={$t("offsite.rest.endpoint")} bind:value={endpoint} hint={$t("offsite.rest.endpointHint")} spellcheck={false} />
+            <Input id="offsite-rest-prefix" label={$t("offsite.rest.prefix")} bind:value={prefix} spellcheck={false} />
+            <Input id="offsite-rest-user" label={$t("offsite.rest.username")} bind:value={username} autocomplete="off" spellcheck={false} />
+            <Input
+              id="offsite-rest-password"
+              type="password"
+              label={$t("offsite.rest.password")}
+              bind:value={restPassword}
+              autocomplete="new-password"
+              hint={keepsRestPassword ? $t("offsite.rest.passwordKept") : ""}
+            />
+            <div>
+              <label for="offsite-rest-tls" class="form-label">{$t("offsite.rest.tls")}</label>
+              <select id="offsite-rest-tls" class="form-select" bind:value={tls}>
+                <option value="system">{$t("offsite.rest.tlsSystem")}</option>
+                <option value="fingerprint">{$t("offsite.rest.tlsFingerprint")}</option>
+                <option value="ca">{$t("offsite.rest.tlsCa")}</option>
+              </select>
+            </div>
+            {#if tls === "fingerprint"}
+              <Input
+                id="offsite-rest-fingerprint"
+                label={$t("offsite.rest.fingerprint")}
+                bind:value={certificateSha256}
+                hint={$t("offsite.rest.fingerprintHint")}
+                spellcheck={false}
+              />
+            {/if}
+            <Input id="offsite-limit-upload" type="number" label={$t("offsite.form.limitUpload")} bind:value={limitUpload} hint={$t("offsite.form.limitHint")} />
+            <Input id="offsite-limit-download" type="number" label={$t("offsite.form.limitDownload")} bind:value={limitDownload} hint={$t("offsite.form.limitHint")} />
+          </div>
+          {#if tls === "ca"}
+            <div>
+              <label for="offsite-rest-certificate" class="form-label">{$t("offsite.rest.certificate")}</label>
+              <textarea
+                id="offsite-rest-certificate"
+                class="form-input font-mono text-xs"
+                rows="6"
+                spellcheck="false"
+                bind:value={certificate}
+                aria-describedby="offsite-rest-certificate-hint"
+              ></textarea>
+              <p id="offsite-rest-certificate-hint" class="form-hint">{$t("offsite.rest.certificateHint")}</p>
+            </div>
+          {/if}
+        {:else if kind === "sftp"}
+          <div class="card-nested p-3 space-y-2 text-sm">
+            <h5 class="font-medium">{$t("offsite.sftp.keyTitle")}</h5>
+            <p class="text-content-secondary">{$t("offsite.sftp.keyIntro")}</p>
+            {#if answer.sftp_public_key}
+              <p class="form-label">{$t("offsite.sftp.publicKey")}</p>
+              <code class="block font-mono text-xs break-all select-all" data-testid="sftp-public-key">{answer.sftp_public_key}</code>
+              <p class="form-hint">{$t("offsite.sftp.publicKeyHint")}</p>
+            {:else}
+              <p class="text-status-warning">{$t("offsite.sftp.noKey")}</p>
+            {/if}
+            <Button size="sm" variant="secondary" icon={Key} loading={makingKey} disabled={running !== null} on:click={makeKeyPair}>
+              {answer.sftp_public_key ? $t("offsite.sftp.newKey") : $t("offsite.sftp.makeKey")}
+            </Button>
+          </div>
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <Input id="offsite-sftp-host" label={$t("offsite.sftp.host")} bind:value={sftpHost} spellcheck={false} />
+            <Input id="offsite-sftp-port" type="number" label={$t("offsite.sftp.port")} bind:value={sftpPort} />
+            <Input id="offsite-sftp-user" label={$t("offsite.sftp.username")} bind:value={username} autocomplete="off" spellcheck={false} />
+            <Input id="offsite-sftp-path" label={$t("offsite.sftp.path")} bind:value={remotePath} hint={$t("offsite.sftp.pathHint")} spellcheck={false} />
+            <Input id="offsite-limit-upload" type="number" label={$t("offsite.form.limitUpload")} bind:value={limitUpload} hint={$t("offsite.form.limitHint")} />
+            <Input id="offsite-limit-download" type="number" label={$t("offsite.form.limitDownload")} bind:value={limitDownload} hint={$t("offsite.form.limitHint")} />
+          </div>
+          {#if pinShown}
+            <div class="space-y-2 text-sm">
+              <p class="break-all" data-testid="sftp-pinned">{$t("offsite.sftp.pinned", { fingerprint: answer.host_key_fingerprint ?? "" })}</p>
+              <p class="form-hint">{$t("offsite.sftp.pinnedHint")}</p>
+              <label class="flex items-center gap-2">
+                <input type="checkbox" bind:checked={trustNewHostKey} />
+                {$t("offsite.sftp.trustNewKey")}
+              </label>
+            </div>
+          {/if}
+          {#if fingerprintShown}
+            <Input
+              id="offsite-sftp-fingerprint"
+              label={pinShown ? $t("offsite.sftp.newFingerprint") : $t("offsite.sftp.fingerprint")}
+              bind:value={hostKeyFingerprint}
+              hint={$t("offsite.sftp.fingerprintHint")}
+              spellcheck={false}
+            />
+          {/if}
         {:else}
           <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
             <Input id="offsite-endpoint" label={$t("offsite.form.endpoint")} bind:value={endpoint} hint={$t("offsite.form.endpointHint")} spellcheck={false} />

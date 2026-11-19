@@ -340,6 +340,7 @@ and this index, and `make check-fast` runs it.
 | [0345](0345-backups-hold-neither-fstab-nor-netplan-and-an-encrypted-upload-that-is-gzip-data-is-refused.md) | Backups hold neither fstab nor netplan, and an encrypted upload that is gzip data is refused | accepted | 2026-11-11 |
 | [0355](0355-the-backup-api-has-no-include-options-and-a-manifest-names-no-options.md) | The backup API has no include_ options, and a backup's manifest names no options | accepted | 2026-11-12 |
 | [0364](0364-a-restore-checks-the-archive-and-extracts-its-database-in-one-streaming-pass.md) | A restore checks the archive and extracts its database in one streaming pass | accepted | 2026-11-12 |
+| [0422](0422-off-device-copies-also-go-to-a-rest-server-and-to-sftp-through-the-hosts-ssh-with-the-host-key-pinned.md) | Off-device copies also go to a restic REST server over HTTPS and to an SFTP server through the host's ssh, with a key pair of UNOS and the host key pinned at the first test | accepted | 2026-11-19 |
 
 ## Files
 

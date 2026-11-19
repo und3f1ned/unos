@@ -231,8 +231,9 @@ def configure(state: Path, *, front_https_port: int = DEFAULT_FRONT_HTTPS_PORT) 
     offsite = importlib.import_module("src.offsite.service")
     offsite.on_system_disk = lambda fd: False
     offsite.on_system_filesystem = lambda fd: False
-    # Its fake restic keeps an S3 store in its state directory: no store to connect to first.
-    offsite.probe_store = lambda endpoint: None
+    # Its fake restic keeps an S3 store and a REST server in its state directory: no store to connect
+    # to first (ADR-0422).
+    offsite.probe_store = lambda endpoint, **options: None
 
     # The file manager reads the mount table before it deletes a folder or moves one to another
     # filesystem (src/files/router.py). Without /proc (macOS): an empty table; the st_dev checks
