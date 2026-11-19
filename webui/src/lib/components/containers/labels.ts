@@ -5,7 +5,6 @@ import type { Translate } from '$lib/i18n';
 /** What a container's own buttons do on the page and in its drawer. */
 export type QuickAction = 'start' | 'stop' | 'restart' | 'remove';
 
-/** The page's $t: a key's text in the language of the page. */
 
 // Docker's words that the server passes on: keys of the catalog, by value. A container's state
 // and status (State.Status) and a port's protocol.

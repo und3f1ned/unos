@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { messageOf } from "$lib/errors";
   import { Clock, History, MapPin, Monitor, RefreshCw, User } from "lucide-svelte";
   import { getLoginHistory, type LoginAttempt } from "$lib/api/security";
   import { Alert, Badge, Button } from "$lib/components/ui";
@@ -27,7 +28,7 @@
     } catch (e) {
       // Not an empty history: what the list and the counts would be is unknown.
       loginHistory = [];
-      loginHistoryError = e instanceof Error ? e.message : String(e);
+      loginHistoryError = messageOf(e);
     } finally {
       loginHistoryLoading = false;
     }

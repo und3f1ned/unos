@@ -31,15 +31,19 @@ it be safe.
   Tailwind CSS 4, TypeScript 6 or 7, adapter-static 4 and lucide-svelte 1 stay with
   `webui.toolchain-major-versions`. lucide-svelte 0.x ships class components of Svelte 4: they are
   a library's and keep their mode, and pages type an icon as `IconComponent` of
-  `$lib/components/ui`.
+  `$lib/components/ui`. lucide-svelte 1 is deprecated for `@lucide/svelte`, whose components are
+  Svelte 5's: moving to it is a new dependency, for `webui.toolchain-major-versions`.
 - Runes mode only. `webui/svelte.config.js` compiles every file of `webui/src` with
   `runes: true` (`vitePlugin.dynamicCompileOptions`; the files under `node_modules` keep theirs),
-  so `export let`, `$:` and `$$props` fail the build. `webui/scripts/runes-check.mjs`, which
-  `npm run check` runs after svelte-check (`make frontend`, `make check`), compiles every
-  component in runes mode and fails for the syntax of Svelte 4 that runes mode still takes:
-  `on:` directives, `<slot>`, `$$slots`, a `slot` attribute, `<svelte:fragment>`,
-  `<svelte:component>`, `<svelte:self>`, `<script context="module">`, and the imports of
-  `svelte/legacy`, `createEventDispatcher` and `$app/stores` (also in `.ts` modules).
+  so `export let`, `$:` and `$$props` fail the build. `webui/scripts/runes-check.mjs`
+  (`npm run runes`, `make frontend-runes`, part of `make frontend` and `make check`) compiles
+  every component in runes mode and fails for one that is not in runes mode after all
+  (`<svelte:options runes={false} />`), for what runes mode refuses, and for the syntax of
+  Svelte 4 that it still takes: `on:` and `let:` directives, `<slot>`, `$$slots`, a `slot`
+  attribute, `<svelte:fragment>`, `<svelte:component>`, `<svelte:self>`,
+  `<script context="module">`, the options accessors and immutable, a plain `let` that the markup
+  shows and that changes (`non_reactive_update`), and the imports of `svelte/legacy`,
+  `createEventDispatcher` and `$app/stores`, also in `.ts` modules and as `import(...)`.
   `supervisor/tests/test_webui_runes.py` tests it and runs it on the web UI.
 - Components: props are `$props()` with a `Props` type; a prop a parent binds is `$bindable()`;
   events are element attributes (`onclick`) and callback props named `on` and the event in lower
@@ -53,17 +57,32 @@ it be safe.
   Stores (`$lib/stores`, `$t`) stay stores.
 - The checks of ADR-0287, ADR-0365 and ADR-0400 read Svelte 5: they walk the parser's tree with
   `webui/scripts/svelte-walk.mjs` (Svelte 5 no longer exports Svelte 4's walk); the text check
-  also reads `{@render}` and the defaults of a `{#snippet}`'s parameters; the polling check
-  follows `$effect`, `$effect.pre`, `$derived` and `$derived.by` instead of `$:`, with the state
-  of `$state`, `$derived` and `$props()` and without what `untrack` reads.
+  also reads `{@render}`, `{@attach}` and the defaults of a `{#snippet}`'s parameters, and the
+  keys that the `.ts` modules of `webui/src` name (the helpers of an area take `$t` as an
+  argument of the type `Translate` of `$lib/i18n`): each exists, and a text with plural forms
+  gets its count. The polling check follows `$effect` and `$effect.pre` (anywhere, also given by
+  name) and `$derived` instead of `$:`, with the state of `$state`, `$derived` and `$props()`,
+  every variable they read, also one they assign, and nothing that `untrack` reads; and a call
+  `obj.method()` reaches the API when a class of a `.ts` module of `webui/src` has a method of
+  that name that reaches it.
 - Pages are composed of area components. A route file holds the page's state and loads and
   passes data down and callbacks up; each card, table, tab and dialog with its form is a component
   of `webui/src/lib/components/<area>/`, with typed props. Logic that files share moves into
   modules beside them: pure functions into `.ts`, state with its loading and error into a
   `.svelte.ts` module with runes; the sizes of every area are scaled and written by
-  `webui/src/lib/format.ts`. Duplicated markup becomes a component or a snippet. A file above
+  `webui/src/lib/format.ts`, and the message of a failed request is `messageOf` of
+  `webui/src/lib/errors.ts`. Duplicated markup becomes a component or a snippet. A file above
   about 400 lines is one concern or is split. The refactor changes no DOM, class, text or
-  behaviour: the redesign is a step of its own, and the E2E specs pass unchanged.
+  behaviour: the redesign is a step of its own, and the E2E specs pass unchanged; one markup
+  keeps a space that Svelte 5 no longer writes between the iterations of an `{#each}`, and one
+  text keeps on one line two expressions between which Svelte 5 keeps a line break. A backdrop
+  that closes on a click listens for it itself (`{@attach}` with `on` of `svelte/events`), as
+  `on:click` did: Svelte 5 delegates `onclick` to the app's root, which a click that does not
+  bubble never reaches.
+- The stand-in's Caddy, `scripts/standin/front.mjs`, serves HTTP/2 as Caddy does (and
+  HTTP/1.1 to a client that asks for it, the WebSockets): SvelteKit 2.70's fallback page preloads
+  the root layout's 40-odd modules, and over HTTP/1.1 a navigation while they were loading failed
+  in the browser with `ERR_TOO_MANY_RETRIES`, which the device's Caddy, with HTTP/2, never shows.
 - Kept from ADR-0231: Dependabot's npm updates ignore semver-major versions of every dependency
   and `@playwright/test`; its Docker updates ignore the image `playwright`; new majors of the
   toolchain are feature work; Playwright moves by hand in the monthly maintenance pass
@@ -73,8 +92,11 @@ it be safe.
 
 - `webui/node_modules` shrinks from 129 MiB to 107 MiB (no svelte-preprocess, svelte-hmr or
   the svelte-check 3 toolchain); the web UI image's npm layer is rebuilt once.
-- A component of Svelte 4's syntax, copied from older code or a tutorial, fails `make check`.
+- A component of Svelte 4's syntax, copied from older code or a tutorial, fails `make check`;
+  `export let` and `$:` fail the build too. The icons of lucide-svelte 0.x stay the one place
+  compiled in legacy mode, as a library's.
 - lucide-svelte 0.x keeps compiling in legacy mode inside the build until lucide-svelte 1
   (`webui.toolchain-major-versions`); `IconComponent` is the one place to change then.
 - The polling check cannot see a `$state` field of a class in a `.svelte.ts` module that a timer
-  changes: review reads those.
+  changes and an effect reads, and it takes any method of a class's name for that class's:
+  review reads those. The texts (not the keys) of `.ts` modules stay out of the text check.

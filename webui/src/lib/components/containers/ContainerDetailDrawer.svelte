@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onDestroy, untrack } from 'svelte';
+	import { on } from 'svelte/events';
 	import {
 		X,
 		Play,
@@ -116,8 +117,9 @@
 
 {#if open && container}
 	{@const href = webUrl(container)}
-	<!-- Backdrop -->
-	<div class="fixed inset-0 scrim z-40" onclick={close} role="presentation"></div>
+	<!-- Backdrop: it listens for the click itself, not through Svelte's delegated listener at the
+	     app's root, as Modal's overlay does (iOS Safari, and a click that does not bubble). -->
+	<div class="fixed inset-0 scrim z-40" {@attach (node) => on(node, 'click', close)} role="presentation"></div>
 
 	<!-- Drawer -->
 	<div

@@ -1,9 +1,10 @@
+import { messageOf } from '$lib/errors';
 import { getAppCatalog, getInstalledApps, type AppTemplate, type InstalledApp } from '$lib/api/apps';
 
 export type LoadState = 'loading' | 'loaded' | 'failed';
 
 /** The text of a failed request: the server's message (ApiError) or the error's. */
-export const reasonOf = (reason: unknown) => (reason instanceof Error ? reason.message : String(reason));
+export const reasonOf = (reason: unknown) => (messageOf(reason));
 
 /**
  * The catalog and the installed apps of the App Store. They load each on its own: the catalog

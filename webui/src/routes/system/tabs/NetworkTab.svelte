@@ -57,7 +57,7 @@
   let ticker: ReturnType<typeof setInterval> | null = null;
   const timeouts = new Set<ReturnType<typeof setTimeout>>();
   // The countdowns: the focus goes there after a Disable, one Tab away from its Keep.
-  let pendingList = $state<PendingDisables | null>(null);
+  let pendingList = $state.raw<PendingDisables | null>(null);
 
   // The interface the Disable dialog asks about, and the one being changed.
   let confirming = $state<string | null>(null);

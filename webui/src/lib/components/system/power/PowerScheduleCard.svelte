@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { messageOf } from "$lib/errors";
   import { CalendarClock } from "lucide-svelte";
   import { updatePowerConfig } from "$lib/api/power";
   import { Alert, Button, Card } from "$lib/components/ui";
@@ -51,7 +52,7 @@
       onnotice($t("power.schedule.saved"));
       await plan.loadSchedule();
     } catch (e) {
-      plan.saveError = e instanceof Error ? e.message : String(e);
+      plan.saveError = messageOf(e);
     } finally {
       plan.saving = false;
     }

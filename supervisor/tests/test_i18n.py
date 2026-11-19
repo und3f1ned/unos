@@ -151,7 +151,7 @@ class TestTheWebUI:
         makefile = (REPO / "Makefile").read_text(encoding="utf-8")
 
         assert package["scripts"]["i18n"] == "node scripts/i18n-check.mjs"
-        assert "frontend-check frontend-i18n frontend-design frontend-build" in makefile
+        assert "frontend-check frontend-runes frontend-i18n frontend-design frontend-build" in makefile
         assert "frontend-i18n:\n\tcd webui && $(NPM_BIN) run i18n\n" in makefile
 
     def test_a_small_web_ui_passes(self, node, tmp_path):
@@ -216,6 +216,7 @@ UNTRANSLATED = [
     ("{#snippet row(name = 'Guest user')}\n\t<p>{name}</p>\n{/snippet}", "Guest user"),
     ("{@render row('Free space')}", "Free space"),
     ("<Modal>\n\t{#snippet footer()}Close now{/snippet}\n</Modal>", "Close now"),
+    ("<p {@attach tooltip('Copy the address')}>{$t('demo.title')}</p>", "Copy the address"),
     ("<Tabs items={[{ id: 'disks', name: 'Disks' }]} />", "Disks"),
     ('<ConfirmDialog confirm="Delete the share" />', "Delete the share"),
 ]
@@ -315,6 +316,29 @@ class TestKeys:
 
         assert (result.returncode == 1) is reported, result.stderr
         assert ("a text with plural forms needs its count" in result.stderr) is reported
+
+
+    @pytest.mark.parametrize(("module", "reported"), [
+        ("export const LABELS = { allow: 'demo.title', deny: 'demo.missing' };\n", "'demo.missing': no such key"),
+        ("export const label = (t: (key: string) => string) => t(`demo.missing`);\n", "'demo.missing': no such key"),
+        ("export const count = (t: (key: string) => string) => t('demo.files');\n",
+         "t('demo.files'): a text with plural forms needs its count"),
+        ("export const count = (t: (key: string, p?: object) => string) => t('demo.files', { n: 2 });\n", None),
+        ("export const known = 'demo.title';\n// demo.missing in a comment is no key\n", None),
+    ], ids=["map", "template", "plural", "plural-with-count", "existing"])
+    def test_the_keys_of_a_ts_module_must_exist(self, node, tmp_path, module, reported):
+        # The helpers of an area take $t and name its keys in .ts modules (ADR-0425).
+        webui = make_webui(tmp_path, files={"src/lib/components/demo/labels.ts": module})
+
+        result = run_check(node, webui)
+
+        assert (result.returncode == 1) is (reported is not None), result.stderr
+        if reported:
+            assert "src/lib/components/demo/labels.ts:1:" in result.stderr and reported in result.stderr
+
+    def test_the_keys_of_the_catalogs_themselves_are_not_read_as_uses(self, node, tmp_path):
+        result = run_check(node, make_webui(tmp_path))
+        assert result.returncode == 0, result.stderr
 
 
 def replace(catalog: str, old: str, new: str) -> str:

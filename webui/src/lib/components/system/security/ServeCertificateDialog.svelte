@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { messageOf } from "$lib/errors";
   import { serveCertificate, LOCAL_CA_ID } from "$lib/api/security";
   import { Alert, Button, Modal } from "$lib/components/ui";
   import { intlLocale, t } from "$lib/i18n";
@@ -34,7 +35,7 @@
       certificates.serveTarget = null;
       await certificates.load();
     } catch (e) {
-      certificates.serveError = e instanceof Error ? e.message : String(e);
+      certificates.serveError = messageOf(e);
     } finally {
       certificates.serveBusy = false;
     }

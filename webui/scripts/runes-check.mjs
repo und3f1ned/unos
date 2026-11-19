@@ -6,13 +6,18 @@
 //   node scripts/runes-check.mjs [webui directory]      (default: the webui/ of this script)
 //
 // Each .svelte file of src/ is compiled as svelte.config.js builds it, in runes mode, and fails
+// - when it is not in runes mode after all (`<svelte:options runes={false} />`);
 // - for what runes mode refuses: `export let`, `$:`, `$$props`, `$$restProps`, beforeUpdate;
-// - for the syntax of Svelte 4 that runes mode still takes: `on:` directives (onclick={...}, and
-//   callback props instead of createEventDispatcher), <slot> and $$slots (snippets and
-//   {@render}), a `slot` attribute and <svelte:fragment> (a {#snippet} in the component),
-//   <svelte:component> (a component in a variable), <svelte:self> (the component imported by
-//   its own name) and <script context="module"> (<script module>);
-// - for the imports of svelte/legacy, of createEventDispatcher and of $app/stores ($app/state).
+// - for the syntax of Svelte 4 that runes mode still takes: `on:` directives, also on a
+//   component (onclick={...}, and callback props instead of createEventDispatcher), <slot>,
+//   $$slots and `let:` (snippets and {@render}), a `slot` attribute and <svelte:fragment> (a
+//   {#snippet} in the component), <svelte:component> (a component in a variable), <svelte:self>
+//   (the component imported by its own name), <script context="module"> (<script module>) and
+//   the options accessors and immutable;
+// - for a variable that changes and that the markup shows but that is no $state
+//   (non_reactive_update: in runes mode a plain `let` is not reactive);
+// - for the imports of svelte/legacy, of createEventDispatcher and of $app/stores ($app/state),
+//   also as import(...).
 // The .ts modules of src/ fail for the imports of svelte/legacy and $app/stores too.
 
 import { readFileSync, readdirSync } from 'node:fs';
@@ -27,11 +32,13 @@ const relative = (file) => path.relative(WEBUI, file).split(path.sep).join('/');
 
 // The warnings of runes mode for the syntax of Svelte 4, with what replaces it.
 const DEPRECATED = {
-	event_directive_deprecated: 'an on: directive: use an event attribute (onclick={...}) or a callback prop',
 	slot_element_deprecated: '<slot>: use a snippet prop and {@render ...}',
 	svelte_component_deprecated: '<svelte:component>: use the component in a variable',
 	svelte_self_deprecated: '<svelte:self>: import the component by its own name',
-	script_context_deprecated: '<script context="module">: use <script module>'
+	script_context_deprecated: '<script context="module">: use <script module>',
+	options_deprecated_accessors: 'the option accessors: export what the parent needs',
+	options_deprecated_immutable: 'the option immutable: runes mode compares by value',
+	non_reactive_update: 'a variable that changes and that the markup shows: declare it with $state'
 };
 // Imports of Svelte 4's ways, with what replaces them.
 const IMPORTS = {
@@ -72,6 +79,9 @@ function checkComponent(file) {
 		errors.push(`${name}:${at}: not a component of runes mode: ${error.message.split('\n')[0]}`);
 		return;
 	}
+	if (result.metadata.runes !== true) {
+		errors.push(`${name}:1:1: not in runes mode (<svelte:options runes={false} />): remove the option`);
+	}
 	for (const warning of result.warnings) {
 		if (!(warning.code in DEPRECATED)) continue;
 		errors.push(`${name}:${warning.start.line}:${warning.start.column + 1}: ${DEPRECATED[warning.code]}`);
@@ -81,6 +91,8 @@ function checkComponent(file) {
 	walk(ast.fragment, {
 		enter(node) {
 			if (node.type === 'SvelteFragment') report(node.start, '<svelte:fragment>: use a {#snippet} in the component');
+			if (node.type === 'OnDirective') report(node.start, 'an on: directive: use an event attribute (onclick={...}) or a callback prop');
+			if (node.type === 'LetDirective') report(node.start, 'a let: directive: take the value as a parameter of a {#snippet}');
 			if (Array.isArray(node.attributes)) {
 				for (const attribute of node.attributes) {
 					if (attribute.type === 'Attribute' && attribute.name === 'slot') {
@@ -91,6 +103,9 @@ function checkComponent(file) {
 		}
 	});
 	for (const match of source.matchAll(/\$\$slots\b/g)) report(match.index, '$$slots: use the snippet props');
+	for (const match of source.matchAll(/\bimport\s*\(\s*['"](svelte\/legacy|\$app\/stores)['"]/g)) {
+		report(match.index, `an import of ${IMPORTS[match[1]]}`);
+	}
 	for (const script of [ast.instance, ast.module]) {
 		if (!script) continue;
 		for (const statement of script.content.body) {
@@ -106,10 +121,13 @@ function checkComponent(file) {
 	}
 }
 
+// An import of a module by name: `from '...'`, `import '...'` or `import('...')`.
+const LEGACY_IMPORT = /\b(?:from\s*|import\s*\(?\s*)['"](svelte\/legacy|\$app\/stores)['"]/g;
+
 function checkModule(file) {
 	const name = relative(file);
 	const source = readFileSync(file, 'utf8');
-	for (const match of source.matchAll(/\bfrom\s+['"](svelte\/legacy|\$app\/stores)['"]/g)) {
+	for (const match of source.matchAll(LEGACY_IMPORT)) {
 		errors.push(`${name}:${position(source, match.index)}: an import of ${IMPORTS[match[1]]}`);
 	}
 }

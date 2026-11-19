@@ -1,3 +1,4 @@
+import { messageOf } from '$lib/errors';
 // An action on several containers at once (ADR-0389): the endpoint of each container, one after
 // another, and each one's result.
 import { ApiError } from '$lib/api/client';
@@ -94,7 +95,7 @@ export class BulkRun {
 				} catch (e) {
 					// The session ended: the sign-in page is on its way.
 					if (e instanceof ApiError && e.status === 401) return null;
-					items.push({ ...target, reason: e instanceof Error ? e.message : String(e) });
+					items.push({ ...target, reason: messageOf(e) });
 				}
 			}
 		} finally {

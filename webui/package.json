@@ -5,9 +5,10 @@
   "scripts": {
     "dev": "vite dev",
     "build": "vite build",
-    "check": "svelte-kit sync && svelte-check --threshold error && node scripts/runes-check.mjs",
+    "check": "svelte-kit sync && svelte-check --threshold error",
     "i18n": "node scripts/i18n-check.mjs",
     "design": "node scripts/design-check.mjs",
+    "runes": "node scripts/runes-check.mjs",
     "preview": "vite preview"
   },
   "devDependencies": {

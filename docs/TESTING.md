@@ -77,10 +77,10 @@ The make targets use these environments when they exist, and `python3`, `ruff`, 
 | `make check` | `lint`, `test` and `frontend`: what CI's Unit Tests, Lint and Frontend jobs run, without the network audits |
 | `make check-fast` | `lint` and `test-fast`: the pre-commit hook and the Stop hook |
 | `make lint` | `ruff check --select F,E9 supervisor scripts .claude/hooks` (pyflakes findings and syntax errors in the supervisor and in the repository's own tooling), `bash -n` on every shell script of `deploy/`, `scripts/` and `.claude/hooks/`, and the JSON syntax of `feature-list.json` and `.claude/settings.json` |
-| `make test` | all backend tests (`supervisor/tests`), in parallel worker processes (below), with the checks of the web UI's code that run under node: `test_i18n.py`, `test_webui_design_system.py` and `test_webui_polling.py` (`webui/scripts/polling-check.mjs`: no `setInterval` reaches the API, ADR-0365); `TESTS=tests/test_auth.py` for one file, `PYTEST_ARGS='-x -k smb'` for pytest options, `TEST_WORKERS=4` for the number of workers |
+| `make test` | all backend tests (`supervisor/tests`), in parallel worker processes (below), with the checks of the web UI's code that run under node: `test_i18n.py`, `test_webui_design_system.py`, `test_webui_polling.py` (`webui/scripts/polling-check.mjs`: no `setInterval` reaches the API, ADR-0365) and `test_webui_runes.py` (`webui/scripts/runes-check.mjs`: every component in runes mode, ADR-0425); `TESTS=tests/test_auth.py` for one file, `PYTEST_ARGS='-x -k smb'` for pytest options, `TEST_WORKERS=4` for the number of workers |
 | `make test-fast` | the convention tests, in parallel worker processes: `test_adrs.py`, `test_feature_list.py`, `test_agent_guard.py`, `test_repo_tooling.py` (with the secret scan below), `test_dev_scripts.py`, `test_dev_scenarios.py`, `test_standin.py` |
 | `make smoke` | backend tests that start the app and serve requests, in a few seconds: the startup and `/api/v1/health` (`test_lifespan.py`), the first-run setup, a login through the proxy layer and the refusal of anonymous requests |
-| `make frontend` | `npm run check` (svelte-kit sync, then svelte-check), `npm run design` (`scripts/design-check.mjs`: no raw button, bare field or raw palette colour in a page, ADR-0400), `npm run i18n` (`scripts/i18n-check.mjs`: the texts of every `.svelte` file that `scripts/i18n-untranslated.txt` does not list come from the catalogs in English and Russian; texts put together at run time and `.ts` modules are for review, ADR-0287) and `npm run build` in `webui/` |
+| `make frontend` | `npm run check` (svelte-kit sync, then svelte-check), `npm run runes` (`scripts/runes-check.mjs`: every component in runes mode, without the syntax of Svelte 4, ADR-0425), `npm run design` (`scripts/design-check.mjs`: no raw button, bare field or raw palette colour in a page, ADR-0400), `npm run i18n` (`scripts/i18n-check.mjs`: the texts of every `.svelte` file that `scripts/i18n-untranslated.txt` does not list come from the catalogs in English and Russian; texts put together at run time and `.ts` modules are for review, ADR-0287) and `npm run build` in `webui/` |
 | `make e2e-local` | the Playwright specs against the local stand-in (`scripts/standin/e2e.sh`); `E2E_ARGS='tests/auth.spec.ts'` for a part |
 | `make catalog-platforms` | `scripts/catalog-platforms.py check`: the platforms recorded for the catalog's images (`supervisor/src/apps/image_platforms.json`) are those the registries publish now; `record` rewrites the file (needs the network, ADR-0403) |
 | `make catalog-tags` | `scripts/catalog-platforms.py tags`: the tag of every pinned image of the catalog still names the index it is pinned to, asked with HEAD requests only (needs the network, ADR-0410) |
@@ -510,7 +510,7 @@ request against `main`; a new push to a pull request cancels the run for the pre
 3. **Frontend Checks** (`frontend`), on Node.js 22:
    - `npm ci` in `webui/`
    - `make frontend`: `npm run check` (`svelte-kit sync`, then `svelte-check --threshold
-     error`), `npm run i18n` (the web UI's texts, ADR-0287) and `npm run build`, each also when
+     error`), `npm run runes` (every component in runes mode, ADR-0425), `npm run i18n` (the web UI's texts, ADR-0287) and `npm run build`, each also when
      another one failed
    - `npm audit --omit=dev --audit-level=high`: high and critical
      vulnerabilities in the `dependencies` of `webui/package.json`
@@ -561,7 +561,7 @@ that this page has the commands of the lint and frontend jobs).
 - `.github/dependabot.yml` proposes grouped updates every week for pip, npm, GitHub Actions (the
   commit of a newer release, ADR-0423) and the Docker base images (a newer digest of each pinned
   tag, ADR-0305), with a cooldown of a week and Conventional Commit prefixes. Nothing is merged
-  automatically. New major npm versions and Playwright are left out (ADR-0231).
+  automatically. New major npm versions and Playwright are left out (ADR-0425).
 - The monthly local passes are listed in [maintenance.md](maintenance.md).
 
 ### Running the CI Checks Locally

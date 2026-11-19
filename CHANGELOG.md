@@ -41,6 +41,14 @@ manager, encrypted backup uploads, health checks, CI checks).
   `app_names_changed` in the audit log, ADR-0420).
 
 ### Changed
+- The web UI runs on Svelte 5 (with SvelteKit 2.70, @sveltejs/vite-plugin-svelte 4, svelte-check 4
+  and lucide-svelte 0.321), every component in runes mode: the build fails for a component of
+  Svelte 4's legacy mode, and `make check` for one that uses the rest of Svelte 4's syntax
+  (`webui/scripts/runes-check.mjs`). The large pages are composed of components of their area under
+  `webui/src/lib/components/`, with what they share in modules beside them; the pages look and work
+  as before (ADR-0425). On a phone, a tap beside the menu or a container's drawer closes it on iOS
+  Safari too.
+- The local stand-in of the E2E specs serves HTTP/2, as Caddy does (ADR-0425).
 - The supervisor keeps its whole data directory (the database, unless `UNOS_DB_PATH` names another
   file, its JWT secret, the audit log, the state files, the stored certificates and the backups)
   where `UNOS_DATA_DIR` names, `/data` by default as before, and refuses to start when the value is

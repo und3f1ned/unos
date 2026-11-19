@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { messageOf } from "$lib/errors";
   import { onMount, untrack } from "svelte";
   import { get } from "svelte/store";
   import { Cpu, MemoryStick, Network, HardDrive, Activity, Wifi, WifiOff } from "lucide-svelte";
@@ -52,7 +53,7 @@
         diskWrite: point.disk_write_rate
       }));
     } catch (error) {
-      historyError = error instanceof Error ? error.message : String(error);
+      historyError = messageOf(error);
     }
   });
 

@@ -15,12 +15,16 @@
 //   names, again and again: a function declared with `function`, or a variable whose value is a
 //   function. A function literal inside a body counts as run (a .map() or a .forEach() runs it at
 //   once, and the check cannot tell one that runs later).
+// - A call `obj.method()` reaches the API when a class of a .ts module of src/ (a page's state in
+//   a .svelte.ts module) has a method of that name that reaches it, also through its other
+//   methods (`this.load()`): by name, whatever `obj` is, as the check has no types.
 // - A callback that assigns a variable of a component's state (`$state`, `$state.raw`, `$derived`,
 //   a prop of `$props()`; also `name.field = ...`, `name++`) that an `$effect` or `$effect.pre`
-//   reaching the API reads fails: Svelte runs that effect again (ADR-0425). An effect reads what
-//   its function reads and what the functions of its file that it calls read, again and again, but
-//   not inside untrack(...). So does a callback that assigns a variable that a `$derived` reads
-//   whose value such an effect reads, and so on.
+//   (anywhere in the script, also given by name) or a `$derived` reaching the API reads fails:
+//   Svelte runs it again (ADR-0425). It reads what its function reads, also a variable that it
+//   assigns too, and what the functions of its file that it calls read, again and again, but not
+//   inside untrack(...) nor the target of a plain `name = value`. So does a callback that assigns
+//   a variable that a `$derived` reads whose value such an effect reads, and so on.
 // - A callback that changes a store fails: `name.set(...)`, `name.update(...)` or `$name = ...`,
 //   where name is declared with writable, readable or derived in its file or in the .ts module it
 //   comes from, or read as `$name` in its file. What reads a store can be in any file.
@@ -30,6 +34,7 @@
 // that counts down and asks the server once when its time has run out is no polling. Review reads
 // the reasons; the summary counts the exempted timers. Out of the check's reach, for review: a loop
 // of setTimeout calls; the markup of a component ({#await}, {#key} on a variable a timer changes);
+// a `$state` field of a class that a timer changes and an effect reads;
 // a function of another module that changes a store; objects and stores that a module exports
 // with methods that reach the API; and, in a cycle of imports, the module that the cycle comes
 // back to, which is taken as reaching nothing while its importers are read.
@@ -166,11 +171,57 @@ function walk(start, { imports, functions, stores }, via = []) {
 			}
 			const store = storeCall(child, stores);
 			if (store && !result.stores.has(store)) result.stores.set(store, via);
+			// obj.method(), where a class of src/ has a method of that name that reaches the API.
+			if (ts.isCallExpression(child) && ts.isPropertyAccessExpression(child.expression)) {
+				const found = classMethods().get(child.expression.name.text);
+				if (found) result.api ??= { name: `${child.expression.expression.getText()}.${child.expression.name.text}`, module: found.module, via };
+			}
 			ts.forEachChild(child, visit);
 		};
 		ts.forEachChild(node, visit);
 	}
 	return result;
+}
+
+let methods = null;
+
+/**
+ * The methods of the classes of src/'s .ts modules (a page's state in a .svelte.ts module,
+ * ADR-0425) that reach the API, by name, each with its class's file and what it reaches: methods,
+ * properties whose value is a function, and getters; through each other too (this.load()). By
+ * name, whatever the object it is called on: the check has no types.
+ */
+function classMethods() {
+	if (methods !== null) return methods;
+	methods = new Map();
+	const candidates = [];
+	for (const file of sourceFiles().filter((name) => name.endsWith('.ts'))) {
+		const sourceFile = parse(readFileSync(file, 'utf8'));
+		const context = scriptContext(sourceFile, file);
+		const visit = (node) => {
+			if (ts.isClassDeclaration(node) || ts.isClassExpression(node)) {
+				for (const member of node.members) {
+					if (!member.name || !ts.isIdentifier(member.name)) continue;
+					const body = ts.isMethodDeclaration(member) || ts.isGetAccessorDeclaration(member) ? member.body
+						: ts.isPropertyDeclaration(member) && isFunction(member.initializer) ? member.initializer : null;
+					if (body) candidates.push({ name: member.name.text, body, file, context });
+				}
+			}
+			ts.forEachChild(node, visit);
+		};
+		visit(sourceFile);
+	}
+	for (let grown = true; grown;) {
+		grown = false;
+		for (const { name, body, file, context } of candidates) {
+			if (methods.has(name)) continue;
+			const found = walk(body, context).api;
+			if (!found) continue;
+			methods.set(name, { module: `${relative(file)}, which reaches ${describe(found)}` });
+			grown = true;
+		}
+	}
+	return methods;
 }
 
 const NOTHING = { api: new Map(), stores: new Set(), apiModules: [] };
@@ -347,6 +398,13 @@ function reads(start, { functions }, state) {
 	while (queue.length > 0) {
 		const visit = (node) => {
 			if (isUntrack(node)) return;
+			// name = value assigns name without reading it; name += 1 reads it.
+			if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+				ts.isIdentifier(node.left)) {
+				writes.add(node.left.text);
+				visit(node.right);
+				return;
+			}
 			if (ts.isIdentifier(node) && isReference(node)) {
 				if (state.has(node.text)) names.add(node.text);
 				const local = functions.get(node.text);
@@ -360,7 +418,8 @@ function reads(start, { functions }, state) {
 		};
 		ts.forEachChild(queue.shift(), visit);
 	}
-	return { names: [...names].filter((name) => !writes.has(name)), writes };
+	// Svelte 5 runs an effect again for a variable that it read, also one that it assigns.
+	return { names: [...names], writes };
 }
 
 /**
@@ -369,28 +428,31 @@ function reads(start, { functions }, state) {
  */
 function reactiveTriggers(sourceFile, context, lineOf) {
 	const state = stateVariables(sourceFile);
-	const effects = [];
+	// What runs again: every $effect of the script, wherever it is and also given by name, and
+	// every $derived, whose value is read again.
+	const reactive = [];
 	const derived = [];
-	for (const statement of sourceFile.statements) {
-		if (ts.isExpressionStatement(statement)) {
-			const rune = runeOf(statement.expression);
-			const [run] = statement.expression.arguments ?? [];
-			if ((rune === '$effect' || rune === '$effect.pre') && run) {
-				effects.push({ rune, run, line: lineOf(statement), ...reads(run, context, state) });
-			}
-		} else if (ts.isVariableStatement(statement)) {
-			for (const declaration of statement.declarationList.declarations) {
-				const rune = runeOf(declaration.initializer);
-				const [value] = declaration.initializer?.arguments ?? [];
-				if ((rune === '$derived' || rune === '$derived.by') && value && ts.isIdentifier(declaration.name)) {
-					const { names } = reads(declaration.initializer, context, state);
-					derived.push({ names, writes: new Set([declaration.name.text]) });
-				}
+	const visit = (node) => {
+		const rune = runeOf(node);
+		if (rune === '$effect' || rune === '$effect.pre') {
+			const [given] = node.arguments;
+			const run = given && ts.isIdentifier(given) ? context.functions.get(given.text) : given;
+			if (run) reactive.push({ rune, run, line: lineOf(node), ...reads(run, context, state) });
+		}
+		if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name)) {
+			const declared = runeOf(node.initializer);
+			const [value] = node.initializer?.arguments ?? [];
+			if ((declared === '$derived' || declared === '$derived.by') && value) {
+				const { names } = reads(node.initializer, context, state);
+				derived.push({ names, writes: new Set([node.name.text]) });
+				reactive.push({ rune: '$derived', run: value, line: lineOf(node), names });
 			}
 		}
-	}
+		ts.forEachChild(node, visit);
+	};
+	visit(sourceFile);
 	const triggers = new Map();
-	for (const { rune, run, line, names } of effects) {
+	for (const { rune, run, line, names } of reactive) {
 		const found = walk(run, context).api;
 		if (!found) continue;
 		for (const name of names) if (!triggers.has(name)) triggers.set(name, { rune, line, found, chain: [] });

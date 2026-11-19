@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { messageOf } from '$lib/errors';
 	// The memory and CPU limits of one container of an app (ADR-0390): an empty field is no limit.
 	// The server checks the bounds and refuses a memory limit below what a running container uses
 	// now; its message shows here as it comes. Docker applies the limits at once, and UNOS keeps
@@ -93,7 +94,7 @@
 			});
 			onsaved?.(result);
 		} catch (e) {
-			error = e instanceof Error ? e.message : String(e);
+			error = messageOf(e);
 		} finally {
 			saving = false;
 		}

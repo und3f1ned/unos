@@ -265,6 +265,62 @@ class TestWhatATimerChanges:
         assert ("+page.svelte:7: setInterval changes now, which the $effect of line 6 reads through minute; "
                 "it reaches the API: getStatus (from $lib/api/demo) through run") in result.stderr
 
+    def test_a_variable_that_an_effect_reads_and_assigns_counts(self, node, tmp_path):
+        # Svelte 5 runs an effect again when a variable that it read changes, also one it assigns.
+        result = check(node, tmp_path, """\
+            let page = $state(1);
+            $effect(() => { if (page < 1) page = 1; getEntries(); });
+            setInterval(() => { page++; }, 5000);
+            """)
+        assert result.returncode == 1
+        assert "+page.svelte:5: setInterval changes page, which the $effect of line 4 reads" in result.stderr
+
+    def test_a_derived_value_that_reaches_the_api_counts(self, node, tmp_path):
+        result = check(node, tmp_path, """\
+            let tick = $state(0);
+            const status = $derived(getStatus().then((s) => s + tick));
+            setInterval(() => { tick++; }, 5000);
+            """)
+        assert result.returncode == 1
+        assert "+page.svelte:5: setInterval changes tick, which the $derived of line 4 reads" in result.stderr
+
+    @pytest.mark.parametrize("effect", [
+        "function refresh() { if (tick > 0) getStatus(); }\n$effect(refresh);",
+        "if (true) { $effect(() => { if (tick > 0) getStatus(); }); }",
+        "function follow() { $effect(() => { if (tick > 0) getStatus(); }); }\nfollow();",
+    ], ids=["by-name", "in-a-block", "in-a-function"])
+    def test_an_effect_anywhere_in_the_script_counts(self, node, tmp_path, effect):
+        result = check(node, tmp_path, "let tick = $state(0);\n" + effect + "\nsetInterval(() => { tick++; }, 5000);\n")
+        assert result.returncode == 1
+        assert "setInterval changes tick, which the $effect of line" in result.stderr
+
+    def test_a_method_of_a_class_that_reaches_the_api_counts(self, node, tmp_path):
+        # The state of a page in a .svelte.ts module (ADR-0425): a timer that calls a method of it
+        # that reaches the API, directly or through another method, polls.
+        module = """\
+            import { getStatus } from '$lib/api/demo';
+            export class Lists {
+              status = $state('');
+              async load() { this.status = await getStatus(); }
+              reload = () => this.load();
+              count() { return 1; }
+            }
+            """
+        script = """\
+            import { Lists } from '$lib/components/demo/lists.svelte';
+            const lists = new Lists();
+            setInterval(() => { {call}; }, 5000);
+            """
+        for call, found in [("lists.load()", "lists.load"), ("void lists.reload()", "lists.reload")]:
+            webui = demo(tmp_path / found, {"lib/components/demo/lists.svelte.ts": module,
+                                            "routes/a/+page.svelte": page(script.replace("{call}", call))})
+            result = run_check(node, webui)
+            assert result.returncode == 1, result.stdout
+            assert f"setInterval reaches the API: {found} (from src/lib/components/demo/lists.svelte.ts" in result.stderr
+        webui = demo(tmp_path / "count", {"lib/components/demo/lists.svelte.ts": module,
+                                          "routes/a/+page.svelte": page(script.replace("{call}", "lists.count()"))})
+        assert run_check(node, webui).returncode == 0
+
     @pytest.mark.parametrize("script, store", [
         ("import { writable } from 'svelte/store';\nconst tick = writable(0);\n"
          "setInterval(() => tick.update((n) => n + 1), 1000);\n", "tick"),

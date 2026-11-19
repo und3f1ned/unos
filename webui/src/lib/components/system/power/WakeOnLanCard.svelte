@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { messageOf } from "$lib/errors";
   import { Network } from "lucide-svelte";
   import { disableWol, enableWol, type WolInterface } from "$lib/api/power";
   import { Alert, Badge, Button, Card, EmptyState } from "$lib/components/ui";
@@ -24,7 +25,7 @@
       wol.interfaces = wol.interfaces.map((i) => (i.name === updated.name ? updated : i));
       onnotice($t(updated.enabled ? "power.wol.turnedOn" : "power.wol.turnedOff", { name: updated.name }));
     } catch (e) {
-      onfailure(e instanceof Error ? e.message : String(e));
+      onfailure(messageOf(e));
       // Show what the host has now.
       await wol.load();
     } finally {

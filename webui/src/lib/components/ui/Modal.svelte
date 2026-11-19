@@ -149,7 +149,7 @@
 	<!-- A dialog taller than the window scrolls with the overlay, so that its buttons stay
 	     reachable; my-auto centers it while it fits (items-center would cut off its top). The
 	     overlay listens for the click itself, not through Svelte's delegated listener at the
-	     app's root, as the drawer's scrim of +layout.svelte does: iOS Safari makes a tap a click
+	     app's root, as the drawer's scrim of layout/AppSidebar.svelte does: iOS Safari makes a tap a click
 	     only where an element listens, and a click that does not bubble closes it too. -->
 	<div
 		bind:this={overlay}

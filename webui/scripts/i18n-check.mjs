@@ -32,7 +32,8 @@
 // 3. Every key that a $t('...') call names exists in English, and a text with plural forms gets
 //    its count: $t('area.key', { n }). A literal that starts with the name of a catalog and a dot
 //    is a key too, as in a map from values to keys ({ allow: 'account.firewall.allow' }): it
-//    exists.
+//    exists. The same holds in the .ts modules of src/ (but $lib/i18n), whose helpers take $t
+//    (`t('area.key')`); their other texts are for review.
 // 4. scripts/i18n-untranslated.txt lists the .svelte files not translated yet. Their texts are
 //    not reported, and a listed file without such texts fails until it leaves the list.
 
@@ -548,6 +549,7 @@ function readMarkup(html, markup, into) {
 					this.skip();
 					break;
 				case 'RenderTag':
+				case 'AttachTag':
 					expression(node.expression, 'code');
 					this.skip();
 					break;
@@ -657,6 +659,46 @@ function readList() {
 	return entries;
 }
 
+/** The .ts modules of src/, but the catalogs and $lib/i18n, which define the keys. */
+function moduleFiles() {
+	const i18n = path.join(SRC, 'lib', 'i18n') + path.sep;
+	return readdirSync(SRC, { recursive: true })
+		.filter((name) => name.endsWith('.ts') && !name.endsWith('.d.ts'))
+		.map((name) => path.join(SRC, name))
+		.filter((file) => !file.startsWith(i18n))
+		.sort();
+}
+
+/**
+ * The keys that a .ts module names: every literal that starts with the name of a catalog and a
+ * dot, each with its offset and, when it is the first argument of a call (t('key'), $t('key')),
+ * the callee and whether a count goes with it (see hasCount).
+ */
+function moduleKeys(source, areas) {
+	const file = ts.createSourceFile('module.ts', source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+	const found = [];
+	const visit = (node) => {
+		if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) {
+			const area = /^([a-z][a-zA-Z0-9]*)\.[\w.]*\w$/.exec(node.text)?.[1];
+			if (areas.has(area)) {
+				const parent = node.parent;
+				const call = ts.isCallExpression(parent) && parent.arguments[0] === node ? parent : null;
+				const callee = call && ts.isIdentifier(call.expression) ? call.expression.text : null;
+				const second = call?.arguments[1];
+				const count = second === undefined ? false : ts.isObjectLiteralExpression(second)
+					? hasCount(second.properties, (property) =>
+						property.name && (ts.isIdentifier(property.name) || ts.isStringLiteral(property.name))
+							? property.name.text : undefined)
+					: null;
+				found.push({ start: node.getStart(file), key: node.text, call: callee, count });
+			}
+		}
+		ts.forEachChild(node, visit);
+	};
+	visit(file);
+	return found;
+}
+
 // --- The check ---------------------------------------------------------------------------------
 
 const { areas, english } = await checkCatalogs();
@@ -710,6 +752,20 @@ for (const file of files) {
 			errors.push(`${at}: $t('${key}'): no such key in the catalogs`);
 		} else if (isObject(english.get(key).message) && count === false) {
 			errors.push(`${at}: $t('${key}'): a text with plural forms needs its count, $t('${key}', { n })`);
+		}
+	}
+}
+
+// The .ts modules of src/: the helpers of an area that take $t name its keys too (ADR-0425).
+for (const file of moduleFiles()) {
+	const name = relative(file);
+	const source = readFileSync(file, 'utf8');
+	for (const { start, key, call, count } of moduleKeys(source, areas)) {
+		const at = `${name}:${position(source, start)}`;
+		if (!english.has(key)) {
+			errors.push(`${at}: '${key}': no such key in the catalogs`);
+		} else if (call && isObject(english.get(key).message) && count === false) {
+			errors.push(`${at}: ${call}('${key}'): a text with plural forms needs its count, ${call}('${key}', { n })`);
 		}
 	}
 }

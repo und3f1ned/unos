@@ -4,7 +4,6 @@
 import type { FirewallAction, FirewallProtocol, FirewallRule } from '$lib/api/security';
 import type { Translate } from '$lib/i18n';
 
-/** The page's $t: a key's text in the language of the page. */
 
 export const RULE_ACTIONS: Record<string, string> = {
 	allow: 'firewall.allow',

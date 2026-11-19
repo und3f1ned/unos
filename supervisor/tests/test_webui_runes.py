@@ -1,12 +1,15 @@
 """Every component of the web UI is a Svelte 5 component in runes mode, none in legacy mode (ADR-0425).
 
 webui/scripts/runes-check.mjs compiles each .svelte file of src/ with Svelte's compiler in runes
-mode, as svelte.config.js builds it, and fails for what runes mode refuses (`export let`, `$:`,
-`$$props`) and for the syntax of Svelte 4 that it still accepts: `on:` directives, `<slot>`, a
-`slot` attribute, `<svelte:fragment>`, `<svelte:component>`, `<svelte:self>`,
-`<script context="module">`, `$$slots`, and the imports of svelte/legacy, createEventDispatcher
-and $app/stores. `npm run check` runs it after svelte-check. Each test builds a small web UI in
-tmp_path and checks it, and the real one passes.
+mode, as svelte.config.js builds it, and fails for a component that is not in runes mode after all
+(`<svelte:options runes={false} />`), for what runes mode refuses (`export let`, `$:`, `$$props`,
+`$$restProps`, beforeUpdate) and for the syntax of Svelte 4 that it still accepts: `on:` and `let:`
+directives, `<slot>`, a `slot` attribute, `<svelte:fragment>`, `<svelte:component>`,
+`<svelte:self>`, `<script context="module">`, `$$slots`, the options accessors and immutable, a
+plain `let` that the markup shows and that changes, and the imports of svelte/legacy,
+createEventDispatcher and $app/stores, in components and in .ts modules. `make frontend` runs it
+(`npm run runes`). Each test builds a small web UI in tmp_path and checks it, and the real one
+passes.
 
 Without node, or without webui/node_modules (make setup), the tests skip.
 """
@@ -49,6 +52,9 @@ def check(node: str, tmp_path: Path, component: str, name: str = "lib/components
     return run_check(node, webui)
 
 
+LEGACY = '<script lang="ts">\n\texport let label = "";\n\t$: shout = label.toUpperCase();\n</script>\n<p>{shout}</p>\n'
+
+
 RUNES = """\
     <script lang="ts">
     \timport type { Snippet } from 'svelte';
@@ -85,6 +91,16 @@ def test_a_component_in_runes_mode_passes(node, tmp_path):
         ('<script lang="ts">\n\timport { createEventDispatcher } from "svelte";\n\tconst dispatch = createEventDispatcher();\n'
          '\tlet { x } = $props();\n</script>\n<p>{x}</p>\n', "createEventDispatcher"),
         ('<script lang="ts">\n\timport { page } from "$app/stores";\n</script>\n<p>{$page.url.pathname}</p>\n', "$app/stores"),
+        ("<svelte:options runes={false} />\n" + LEGACY, "not in runes mode"),
+        ("<p>{$$restProps.title}</p>\n", "$$restProps"),
+        ("{#if $$slots.footer}<p>x</p>{/if}\n", "$$slots"),
+        ('<script lang="ts">\n\timport { beforeUpdate } from "svelte";\n\tbeforeUpdate(() => {});\n</script>\n', "beforeUpdate"),
+        ("{#if true}<svelte:self />{/if}\n", "<svelte:self>"),
+        ('<script lang="ts">\n\timport Card from "./Card.svelte";\n</script>\n<Card on:close={() => {}} />\n', "an on: directive"),
+        ('<script lang="ts">\n\timport List from "./List.svelte";\n</script>\n<List let:item>{item}</List>\n', "let: directive"),
+        ("<svelte:options accessors />\n<p>x</p>\n", "accessors"),
+        ('<script lang="ts">\n\tlet n = 0;\n</script>\n<button onclick={() => n++}>{n}</button>\n', "$state"),
+        ('<script lang="ts">\n\tconst stores = import("$app/stores");\n</script>\n', "$app/stores"),
     ],
 )
 def test_the_syntax_of_svelte_4_fails_with_the_file_and_line(node, tmp_path, component, found):
@@ -100,18 +116,43 @@ def test_a_component_that_cannot_be_compiled_fails(node, tmp_path):
     assert "src/lib/components/Demo.svelte:" in result.stderr
 
 
-def test_the_svelte_config_compiles_the_web_ui_in_runes_mode():
+@pytest.mark.parametrize("module", ["lib/stores/demo.ts", "lib/components/demo.svelte.ts"])
+@pytest.mark.parametrize(("imported", "found"), [
+    ("import { run } from 'svelte/legacy';\n", "svelte/legacy"),
+    ("export const page = import('$app/stores');\n", "$app/stores"),
+])
+def test_a_ts_module_fails_for_the_imports_of_svelte_4(node, tmp_path, module, imported, found):
+    webui = tmp_path / "webui"
+    (webui / "src" / module).parent.mkdir(parents=True)
+    (webui / "src" / module).write_text(imported)
+    result = run_check(node, webui)
+    assert result.returncode == 1
+    assert f"src/{module}:1:" in result.stderr and found in result.stderr
+
+
+def test_the_svelte_config_compiles_the_web_ui_in_runes_mode(node):
     # The build refuses a component of legacy mode too: every file of src/ is compiled with
     # runes: true; only the libraries under node_modules (lucide-svelte 0.x) keep their mode.
-    config = (WEBUI / "svelte.config.js").read_text()
-    assert "dynamicCompileOptions" in config
-    assert "runes: true" in config
-    assert "node_modules" in config
+    script = (
+        "const { default: config } = await import(process.argv[1]);"
+        "const options = config.vitePlugin.dynamicCompileOptions;"
+        "console.log(JSON.stringify([options({ filename: process.argv[2] }), options({ filename: process.argv[3] })]));"
+    )
+    result = subprocess.run(
+        [node, "--input-type=module", "-e", script, (WEBUI / "svelte.config.js").as_uri(),
+         str(WEBUI / "src" / "routes" / "+page.svelte"), str(WEBUI / "node_modules" / "lucide-svelte" / "dist" / "Icon.svelte")],
+        capture_output=True, text=True, timeout=60, cwd=WEBUI,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == '[{"runes":true},null]'
 
 
-def test_npm_run_check_runs_the_runes_check():
+def test_make_frontend_runs_the_runes_check():
     package = (WEBUI / "package.json").read_text()
-    assert "node scripts/runes-check.mjs" in package
+    makefile = (REPO / "Makefile").read_text()
+    assert '"runes": "node scripts/runes-check.mjs"' in package
+    assert "frontend-check frontend-runes frontend-i18n" in makefile
+    assert "frontend-runes:\n\tcd webui && $(NPM_BIN) run runes\n" in makefile
 
 
 def test_the_web_ui_has_no_component_of_legacy_mode(node):

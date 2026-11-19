@@ -1446,7 +1446,7 @@ def test_dependabot_proposes_the_next_commit_of_every_pinned_action():
 
 
 def test_dependabot_leaves_major_npm_versions_and_playwright_alone():
-    """Majors of the web UI's toolchain are features; Playwright moves with its image by hand (ADR-0231)."""
+    """Majors of the web UI's toolchain are features; Playwright moves with its image by hand (ADR-0425)."""
     config = yaml.safe_load((REPO_ROOT / ".github" / "dependabot.yml").read_text())
     updates = {update["package-ecosystem"]: update for update in config["updates"]}
     npm_ignored = {rule["dependency-name"]: rule.get("update-types") for rule in updates["npm"]["ignore"]}

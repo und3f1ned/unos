@@ -42,6 +42,8 @@ logs = importlib.import_module("src.logs.router")
 REPO = Path(__file__).resolve().parents[2]
 API = "/api/v1/logs"
 LOGS_TAB = REPO / "webui" / "src" / "routes" / "system" / "tabs" / "LogsTab.svelte"
+# The tab and its components (ADR-0425): the filters and the entries hold maps of their own.
+LOGS_PARTS = [LOGS_TAB, *sorted((REPO / "webui" / "src" / "lib" / "components" / "system" / "journal").glob("*.svelte"))]
 
 LEVELS = ["emerg", "alert", "crit", "err", "warning", "notice", "info", "debug"]
 BOOT = "6f0c3c2b1a9e4d7f8e5b4a3c2d1e0f9a"
@@ -75,9 +77,11 @@ DID_NOT_ANSWER = CANNOT_READ + "journalctl did not answer within 30 seconds"
 
 
 def _web_ui_values(name: str) -> list[str]:
-    """The values of the map ``name`` of System > Logs (LogsTab.svelte), in its order: the values
-    the tab sends, or shows, by the keys of their texts in the catalog (ADR-0287)."""
-    return list(key_map(LOGS_TAB, name))
+    """The values of the map ``name`` of System > Logs (LogsTab.svelte or one of its components),
+    in its order: the values the tab sends, or shows, by the keys of their texts in the catalog
+    (ADR-0287)."""
+    [part] = [part for part in LOGS_PARTS if f"const {name}" in part.read_text(encoding="utf-8")]
+    return list(key_map(part, name))
 
 
 # The time ranges of the tab ("" is all time: no since).

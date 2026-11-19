@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { messageOf } from "$lib/errors";
   import { onMount, tick } from "svelte";
   import { ApiError } from "$lib/api/client";
   import { Alert, Button } from "$lib/components/ui";
@@ -38,7 +39,7 @@
   }
 
   function errorMessage(e: unknown): string {
-    return e instanceof Error ? e.message : String(e);
+    return messageOf(e);
   }
 
   async function showError(title: string, e: unknown) {

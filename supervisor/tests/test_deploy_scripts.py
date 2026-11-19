@@ -4888,8 +4888,7 @@ class TestContinuousIntegration:
         # make frontend runs both, also when the type check fails (ADR-0190).
         dry_run = _make_dry_run("frontend", "NPM=npm").splitlines()
         assert {"cd webui && npm run check", "cd webui && npm run build"} <= set(dry_run)
-        # and then the check that every component is in runes mode (ADR-0425).
-        assert scripts["check"] == "svelte-kit sync && svelte-check --threshold error && node scripts/runes-check.mjs"
+        assert scripts["check"] == "svelte-kit sync && svelte-check --threshold error"
 
     def test_svelte_check_is_an_exact_dev_dependency_in_the_lockfile(self):
         package = json.loads((REPO_ROOT / "webui" / "package.json").read_text())
@@ -5023,9 +5022,8 @@ class TestContinuousIntegration:
         assert {where: {"svelte-kit", "svelte-check"} & set(found) for where, found in npx.items()} == {
             where: set() for where in texts
         }
-        # node runs a script of webui/scripts, not a program of the registry (ADR-0425).
-        assert check == ["svelte-kit", "svelte-check", "node"]
-        assert set(check) - {"node"} <= programs
+        assert check == ["svelte-kit", "svelte-check"]
+        assert set(check) <= programs
 
 
 # Stand-ins for the tools of scripts/audit-python.sh. PYTHON answers the version check and makes

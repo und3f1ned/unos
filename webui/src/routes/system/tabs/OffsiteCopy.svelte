@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { messageOf } from "$lib/errors";
   // The off-device copy (ADR-0337), a section of System > Backup & Restore: the copy target with its
   // password (a disk, an S3 store, a REST server or an SFTP server with UNOS's key pair and the host
   // key pinned at its first test, ADR-0422), the folders to copy, the state of the last copy and restore with Run now, a daily task
@@ -79,7 +80,7 @@
 
   async function showError(title: string, e: unknown) {
     if (sessionEnded(e)) return;
-    error = { title, message: e instanceof Error ? e.message : String(e) };
+    error = { title, message: messageOf(e) };
     await tick();
     errorBox?.scrollIntoView({ block: "nearest" });
   }
@@ -98,7 +99,7 @@
       snapshots = (await getOffsiteSnapshots()).snapshots;
     } catch (e) {
       snapshots = [];
-      if (!sessionEnded(e)) snapshotsError = e instanceof Error ? e.message : String(e);
+      if (!sessionEnded(e)) snapshotsError = messageOf(e);
     }
   }
 

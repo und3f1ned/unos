@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { messageOf as plainMessageOf } from '$lib/errors';
 	import { onMount } from 'svelte';
 	import {
 		beginSecurityKeyRegistration,
@@ -47,7 +48,7 @@
 	function messageOf(e: unknown): string {
 		const key = browserErrorKey(e);
 		if (key) return $t(key);
-		return e instanceof Error ? e.message : String(e);
+		return plainMessageOf(e);
 	}
 
 	async function load() {

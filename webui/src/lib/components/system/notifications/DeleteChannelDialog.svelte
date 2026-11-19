@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { messageOf } from "$lib/errors";
   import { deleteConfig, type NotificationConfig } from "$lib/api/notifications";
   import { Alert, Button, Modal } from "$lib/components/ui";
   import { t } from "$lib/i18n";
@@ -35,7 +36,7 @@
       error = "";
       await ondeleted(id);
     } catch (e) {
-      error = e instanceof Error ? e.message : String(e);
+      error = messageOf(e);
     } finally {
       busy = false;
     }

@@ -346,11 +346,12 @@ class TestPassword:
         assert audit_entries(world.audit_file) == []
 
     def test_the_rules_are_those_of_bcrypt_and_of_the_web_ui(self):
-        users_page = (REPO / "webui" / "src" / "routes" / "users" / "+page.svelte").read_text()
+        # The Users page's password rule is in its module (ADR-0425).
+        users_page = (REPO / "webui" / "src" / "lib" / "components" / "users" / "password.ts").read_text()
         setup_page = (REPO / "webui" / "src" / "routes" / "setup" / "+page.svelte").read_text()
 
         assert emergency.MIN_PASSWORD_CHARS == 8
-        assert f"const MIN_PASSWORD_LENGTH = {emergency.MIN_PASSWORD_CHARS};" in users_page
+        assert f"export const MIN_PASSWORD_LENGTH = {emergency.MIN_PASSWORD_CHARS};" in users_page
         assert f'minlength="{emergency.MIN_PASSWORD_CHARS}"' in setup_page
         assert MAX_PASSWORD_BYTES == 72
 

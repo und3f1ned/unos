@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { messageOf } from '$lib/errors';
 	// The update of an installed app to the catalog's newer pinned images (ADR-0408): before it
 	// runs, the dialog shows what the server read for it (each container's image before and
 	// after, what the pulls write to the system disk, the copy of the database on the pool) or why
@@ -56,7 +57,7 @@
 		try {
 			plan = await getUpdatePlan(target.container_id);
 		} catch (e) {
-			error = $t('appUpdates.loadFailed', { error: e instanceof Error ? e.message : String(e) });
+			error = $t('appUpdates.loadFailed', { error: messageOf(e) });
 		} finally {
 			loading = false;
 		}
@@ -70,7 +71,7 @@
 			const job = await updateApp(app.container_id);
 			onstarted?.(job);
 		} catch (e) {
-			error = $t('appUpdates.startFailed', { error: e instanceof Error ? e.message : String(e) });
+			error = $t('appUpdates.startFailed', { error: messageOf(e) });
 		} finally {
 			starting = false;
 		}

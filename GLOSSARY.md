@@ -39,6 +39,17 @@ others open their page's own dialog (ADR-0393). Avoid: quick switcher, command b
 phone's screen: the table scrolls sideways inside it, while the page never does (ADR-0302).
 Avoid: scroll wrapper, responsive table.
 
+**Runes mode**: How every component of the web UI is compiled, Svelte 5's: its props, state and
+reactions are written with runes (`$props`, `$state`, `$derived`, `$effect`), its content with
+snippets and its events as attributes and callback props. A component of Svelte 4's legacy mode
+(`export let`, `$:`) fails the build, and one with its other syntax (slots, `on:`) fails
+`make check` (ADR-0425). Avoid: Svelte 5 syntax, new syntax.
+
+**Area component**: A component of `webui/src/lib/components/<area>/` that draws one part of a page
+of that area, such as a card, a table, a tab or a dialog with its form, from typed props and
+callbacks; the page's route file composes them and holds the page's state (ADR-0425). Avoid:
+widget (a Dashboard card), partial, subview.
+
 **Bulk action**: An action that an administrator takes at once on the containers or SMB shares
 selected on their page: Start, Stop or Restart of containers, each through its own endpoint, and
 Delete of shares, after one question and with one apply. Each one selected gets its own result
