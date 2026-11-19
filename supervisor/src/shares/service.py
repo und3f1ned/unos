@@ -228,7 +228,7 @@ def _check_paths(entries: Sequence[tuple[int, str, object]], pool_names: Collect
             passing[key] = (name, path)  # type: ignore[assignment]
         else:
             problems[key] = problem
-    for key, (name, path) in passing.items():
+    for key, (_name, path) in passing.items():
         others = {other_name: other_path for k, (other_name, other_path) in passing.items() if k != key}
         problem = share_path_problem(path, other_paths=others, pool_names=pool_names)
         if problem is not None:

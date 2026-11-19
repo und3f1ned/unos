@@ -422,7 +422,7 @@ def model_example_problems(models: list[type[BaseModel]]) -> list[str]:
             where = f"{model.__module__}.{model.__qualname__}, example {number}"
             try:
                 taken = model.model_validate_json(json.dumps(example))
-            except Exception as exc:  # noqa: BLE001 - every refusal is the problem
+            except Exception as exc:  # every refusal is the problem
                 problems.append(f"{where}: the model refuses it: {str(exc).splitlines()[0]}")
                 continue
             dumped = taken.model_dump(mode="json")

@@ -50,7 +50,7 @@ from .. import host
 from ..auth.models import User
 from ..security.validators import sanitize_error_message
 from ..times import db_now
-from . import account_state, constants, interfaces, models, service, smb, smbconf  # noqa: F401  (models registers the tables)
+from . import account_state, constants, interfaces, models, service, smb, smbconf  # models registers the tables
 
 logger = logging.getLogger(__name__)
 
@@ -2319,7 +2319,7 @@ def _uid_pairs(conn: sqlite3.Connection, table: str) -> list[tuple[int, str]]:
     """The (uid, linux_name) rows of ``table`` with a valid uid and a string name; none when the
     table is missing or has another layout."""
     try:
-        found = conn.execute(f"SELECT uid, linux_name FROM {table} ORDER BY uid, linux_name").fetchall()
+        found = conn.execute(f"SELECT uid, linux_name FROM {table} ORDER BY uid, linux_name").fetchall()  # noqa: S608 - two table names of this module
     except sqlite3.Error:
         return []
     return [(uid, name) for uid, name in found if _valid_uid(uid) and isinstance(name, str)]
@@ -2455,7 +2455,8 @@ def prepare_restored_accounts(
             values["updated_at"] = None
         if values:
             assignments = ", ".join(f"{column} = ?" for column in values)
-            conn.execute(f"UPDATE smb_accounts SET {assignments} WHERE user_id = ?", (*values.values(), user_id))
+            conn.execute(f"UPDATE smb_accounts SET {assignments} WHERE user_id = ?",  # noqa: S608 - columns of this function
+                         (*values.values(), user_id))
         if created_at is None or not _loads_as_datetime(created_at):
             conn.execute("UPDATE smb_accounts SET created_at = CURRENT_TIMESTAMP WHERE user_id = ?", (user_id,))
 

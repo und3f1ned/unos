@@ -737,7 +737,7 @@ def run_guard(stdin: str, cwd: Path, project_dir: Path):
     return result.returncode, result.stderr
 
 
-def hook_input(command, cwd: Path, tool: str = "Bash", extra: dict = None) -> str:
+def hook_input(command, cwd: Path, tool: str = "Bash", extra: dict | None = None) -> str:
     """The hook input of a tool call; `extra` adds fields to tool_input (the terminal tool's cwd)."""
     return json.dumps({"session_id": "test", "hook_event_name": "PreToolUse", "tool_name": tool,
                        "tool_input": {"command": command, "description": "test", **(extra or {})}, "cwd": str(cwd)})

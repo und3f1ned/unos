@@ -904,7 +904,7 @@ def plan(state: State, serve: list[Serve], portals: list[str] | None, rewrite: f
 
 def run_ops(ops: list[Op]) -> None:
     """Run the operations on the host (sync); IscsiError naming the one that failed, never a value."""
-    for op, path, value in ops:
+    for _op, path, value in ops:
         if "\t" in path or "\n" in path or "\t" in value or "\n" in value:
             raise IscsiError(f"Refused a value with a tab or a line break for {path}")
     text = "".join(f"{op}\t{path}\t{value}\n" for op, path, value in ops)

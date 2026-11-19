@@ -23,7 +23,6 @@ from .test_scheduler_validation import _REAL_RUN, _task, make_env
 
 scheduler = importlib.import_module("src.scheduler.router")
 
-UTC = UTC
 
 
 @pytest.fixture

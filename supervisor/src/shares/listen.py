@@ -41,7 +41,7 @@ IP_COMMAND = ["ip", "-j", "addr", "show"]
 SS_COMMAND = ["ss", "-H", "-l", "-n", "-t", "-p"]
 SMB_PORT = "445"  # smb ports of the rendered [global] (ADR-0275)
 _PROGRAM = re.compile(r'users:\(\("([^"]*)"')
-WILDCARDS = ("0.0.0.0", "::")
+WILDCARDS = ("0.0.0.0", "::")  # noqa: S104 - read from ss's lines, never bound
 
 # The answers, which webui/tests/shares-fakes.ts repeats word for word (ADR-0189).
 NAME_RULE = "is not an interface name: use up to 15 letters, digits, '.', '_' and '-', starting with a letter"

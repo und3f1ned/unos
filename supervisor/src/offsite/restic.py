@@ -156,7 +156,7 @@ async def run(args: list[str], env: dict[str, str], *, timeout: float, stdin: by
     Timeout after killing its process group at the timeout, OSError when it cannot start; a
     cancellation kills the group too and goes on.
     """
-    out = open(stdout_path, "xb") if stdout_path is not None else None
+    out = open(stdout_path, "xb") if stdout_path is not None else None  # noqa: SIM115 - closed below
     try:
         process = await asyncio.create_subprocess_exec(
             *command(args, f"unos-{secrets.token_hex(6)}"),

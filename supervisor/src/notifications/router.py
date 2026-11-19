@@ -204,7 +204,7 @@ def _history(data: object) -> list[NotificationLog]:
 
 def _write_history(logs: list[NotificationLog]) -> None:
     """Replace the history file with ``logs`` (blocking: fsync)."""
-    _replace_file(Path(LOGS_FILE), json.dumps([l.model_dump(mode="json") for l in logs], indent=2))
+    _replace_file(Path(LOGS_FILE), json.dumps([log.model_dump(mode="json") for log in logs], indent=2))
 
 
 def save_logs(entries: list[NotificationLog]) -> None:

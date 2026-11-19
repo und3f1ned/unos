@@ -787,8 +787,6 @@ def save_unsaved_smart_history() -> None:
 
 async def smart_monitor_loop():
     """Background loop for SMART trend monitoring, and the problems of the disks (ADR-0332)."""
-    global _smart_monitor_running
-
     while _smart_monitor_running:
         try:
             # smartctl takes seconds per disk: never run it on the event loop.
@@ -1104,8 +1102,6 @@ async def raid_monitor_loop():
     the same check names them, and a state that could not be read. For the other pools it alerts new
     errors, a filesystem forced read-only, and a status that turned from healthy.
     """
-    global _raid_monitor_running
-
     while _raid_monitor_running:
         read = None
         try:
@@ -2045,8 +2041,7 @@ async def start_health_monitors():
 
 async def stop_health_monitors():
     """Stop health monitors on app shutdown."""
-    global _raid_monitor_running, _raid_monitor_task
-    global _smart_monitor_running, _smart_monitor_task
+    global _raid_monitor_running, _smart_monitor_running
 
     _raid_monitor_running = False
     if _raid_monitor_task:

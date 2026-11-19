@@ -24,7 +24,6 @@ from .test_scheduler_validation import _task, make_env
 
 scheduler = importlib.import_module("src.scheduler.router")
 
-UTC = UTC
 # As `timedatectl set-timezone` writes the link, and as Debian's tzdata does.
 BERLIN = "../usr/share/zoneinfo/Europe/Berlin"
 NEW_YORK = "/usr/share/zoneinfo/America/New_York"

@@ -125,7 +125,7 @@ async def get_login_history(
     total = total_result.scalar() or 0
 
     # Get failed count
-    failed_query = count_query.where(LoginAttempt.success == False)
+    failed_query = count_query.where(LoginAttempt.success == False)  # noqa: E712 - SQL, not Python
     failed_result = await db.execute(failed_query)
     failed_count = failed_result.scalar() or 0
 

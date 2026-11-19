@@ -81,7 +81,7 @@ class TestRecordedPlatforms:
         assert all(p.startswith("linux/") for t in APP_CATALOG for p in t.platforms)
 
     def test_every_companion_lists_the_platforms_of_its_image(self):
-        without = [(t.id, c.name) for t in APP_CATALOG for c in t.companions if not c.platforms]  # noqa
+        without = [(t.id, c.name) for t in APP_CATALOG for c in t.companions if not c.platforms]
 
         assert without == []
 

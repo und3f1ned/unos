@@ -1236,7 +1236,7 @@ class TestCertificateStoresAndDeletesDoNotMix:
         def run():
             try:
                 function(*args)
-            except BaseException as error:  # noqa: BLE001 - reported by the test
+            except BaseException as error:  # reported by the test
                 errors.append(error)
         return threading.Thread(target=run, name=name)
 

@@ -254,7 +254,7 @@ class TestPinnedTemporaryDirectory:
             with pytest.raises(PermissionError):
                 tempfile.mkstemp()
             with pytest.raises(PermissionError):
-                tempfile.NamedTemporaryFile()
+                tempfile.NamedTemporaryFile()  # noqa: SIM115 - it raises
         finally:
             tmpfs.chmod(0o700)
         assert list(var_tmp.iterdir()) == []

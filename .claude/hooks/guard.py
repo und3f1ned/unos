@@ -2271,7 +2271,7 @@ def log_denial(rule: str, tool: str) -> None:
             os.write(descriptor, line.encode())
         finally:
             os.close(descriptor)
-    except Exception:  # noqa: BLE001 - the log must neither block nor unblock a command
+    except Exception:  # the log must neither block nor unblock a command
         pass
 
 
@@ -2298,7 +2298,7 @@ def main() -> int:
         print(f"Blocked by .claude/hooks/guard.py ({blocked.rule}): {blocked.message}.", file=sys.stderr)
         log_denial(blocked.rule, str(tool))
         return 2
-    except Exception as error:  # noqa: BLE001 - an error of the guard must never block a command
+    except Exception as error:  # an error of the guard must never block a command
         print(f"guard.py: internal error, the command was not checked ({type(error).__name__}: {error})",
               file=sys.stderr)
         return 1

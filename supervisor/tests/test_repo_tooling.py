@@ -1604,7 +1604,7 @@ def _literal(value: str):
     return value
 
 
-def secret_shapes(text: str, name: str = "", used: set = None) -> list:
+def secret_shapes(text: str, name: str = "", used: set | None = None) -> list:
     """(line number, shape) of every secret-shaped literal of a text; the value is never returned.
     `name` is the file's path in the repository: the mapping shape applies to YAML and JSON files,
     and a value that ALLOWED_SECRET_VALUES allows in that file is left out and added to `used`."""

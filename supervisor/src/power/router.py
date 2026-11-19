@@ -492,7 +492,7 @@ def is_in_container() -> bool:
     in the supervisor's container (system.ups-monitoring). The power actions
     reach the host through src/host.py instead (ADR-0233).
     """
-    return os.path.exists("/.dockerenv") or os.environ.get("container") == "docker"
+    return os.path.exists("/.dockerenv") or os.environ.get("container") == "docker"  # noqa: SIM112 - systemd's name
 
 
 # The 503 of every route that acts on the host or reads it with a host command (_refuse_local).
@@ -1140,7 +1140,7 @@ async def start_ups_monitor():
 
 async def stop_ups_monitor():
     """Stop the UPS monitor on app shutdown."""
-    global _ups_monitor_running, _ups_monitor_task
+    global _ups_monitor_running
     _ups_monitor_running = False
     if _ups_monitor_task:
         _ups_monitor_task.cancel()

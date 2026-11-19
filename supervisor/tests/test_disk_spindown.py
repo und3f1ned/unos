@@ -711,8 +711,9 @@ def test_the_rule_file_keeps_its_records_and_drops_one_edited_by_hand(host):
     # Only spindown.py names the rule file, and only set_timeout writes it: no startup or restore path
     # rewrites it, so none could drop a record.
     src = Path(__file__).resolve().parents[1] / "src"
-    assert [path.relative_to(src).as_posix() for path in sorted(src.rglob("*.py"))
-            if "RULES_PATH" in (text := path.read_text()) or "90-unos-disk-spindown" in text] == ["storage/spindown.py"]
+    naming = [path.relative_to(src).as_posix() for path in sorted(src.rglob("*.py"))
+              if "RULES_PATH" in (text := path.read_text()) or "90-unos-disk-spindown" in text]
+    assert naming == ["storage/spindown.py"]
 
 
 def test_the_rule_is_read_as_udev_reads_a_file_without_nul_bytes(host):

@@ -41,7 +41,7 @@ from cryptography.x509.oid import NameOID
 from fastapi import HTTPException
 
 from . import fake_restic
-from .test_offsite import (  # noqa: F401  the fixtures env and client
+from .test_offsite import (  # the fixtures env and client
     API,
     PASSWORD,
     REAL_PROBE_STORE,

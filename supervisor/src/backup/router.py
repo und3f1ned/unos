@@ -602,7 +602,7 @@ def _extract(tar: tarfile.TarFile, members: dict[str, tarfile.TarInfo], dest: Pa
     if not hasattr(tarfile, "data_filter"):
         raise RuntimeError("Restoring backups requires Python 3.11.4 or newer (tarfile filters)")
     try:
-        tar.extractall(dest, members=list(members.values()), filter=_restore_filter)
+        tar.extractall(dest, members=list(members.values()), filter=_restore_filter)  # noqa: S202 - _restore_filter
     except tarfile.FilterError as e:
         raise BackupValidationError(f"Invalid backup: {e}") from e
 
@@ -1327,7 +1327,7 @@ def _create_backup(config: BackupConfig) -> dict:
 )
 async def create_backup(
     request: Request,
-    config: BackupConfig = BackupConfig(),
+    config: BackupConfig = BackupConfig(),  # noqa: B008 - the body's default, only read
     user=Depends(verify_token),
 ):
     """Create a new backup of the UNOS configuration: the database and a manifest, not the pools' files.

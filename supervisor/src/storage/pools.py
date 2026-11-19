@@ -1053,7 +1053,7 @@ def _finished_within(
     def run() -> None:
         try:
             func(*args)
-        except BaseException as exc:  # noqa: BLE001 - re-raised in the waiting thread
+        except BaseException as exc:  # re-raised in the waiting thread
             raised.append(exc)
 
     worker = threading.Thread(target=run, name=thread_name, daemon=True)
