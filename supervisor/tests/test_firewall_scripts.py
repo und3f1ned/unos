@@ -163,7 +163,9 @@ class TestSave:
 
         assert stub_host.run("unos-firewall-save", "inactive").returncode == 0
 
-        assert _saved(stub_host) == {"user.rules", "was", "forward4", "forward6"}
+        # With ufw off, its FORWARD policies are kept for the turning off too.
+        assert _saved(stub_host) == {"user.rules", "was", "forward4", "forward6", "off4", "off6"}
+        assert (stub_host.state / "off6").read_text() == "DROP\n"
         assert (stub_host.state / "user.rules").read_text() == "v4 later\n"
         assert (stub_host.state / "was").read_text() == "inactive\n"
 
@@ -194,10 +196,10 @@ class TestMarkCancelDiscard:
         assert _saved(stub_host) == {"user.rules", "user6.rules", "was", "forward4", "forward6"}
         assert not [line for line in stub_host.log() if line.startswith("systemctl")]
 
-    def test_discard_forgets_the_saved_rules(self, stub_host):
+    def test_discard_forgets_the_saved_rules_but_not_the_policies_of_ufw_off(self, stub_host):
         stub_host.run("unos-firewall-save", "inactive")
         assert stub_host.run("unos-firewall-discard").returncode == 0
-        assert _saved(stub_host) == set()
+        assert _saved(stub_host) == {"off4", "off6"}
 
 
 class TestRevert:
@@ -280,7 +282,7 @@ class TestRevert:
         assert result.returncode == 1
         # Not the old rules under a ufw that is still on: they stay as they were, with UNOS's rules.
         assert (stub_host.ufw / "user.rules").read_text() == "v4 with UNOS's rules\n"
-        assert _saved(stub_host) == {"user.rules", "user6.rules", "was", "forward4", "forward6", "failed"}
+        assert _saved(stub_host) == {"user.rules", "user6.rules", "was", "forward4", "forward6", "off4", "off6", "failed"}
         # The next turning off forgets the failure.
         assert stub_host.run("unos-firewall-off", "disable").returncode == 0
         assert "failed" not in _saved(stub_host)
@@ -312,6 +314,49 @@ class TestOff:
         assert result.returncode == 0, result.stderr
         assert not stub_host.is_on()
         assert stub_host.forward() == policies
+
+    def _enable_and_keep(self, host, before):
+        """What an Enable that was kept leaves: the save with ufw off, ufw's start, the cancel."""
+        (host.stub_state / "forward4").write_text(before[0])
+        (host.stub_state / "forward6").write_text(before[1])
+        assert host.run("unos-firewall-save", "inactive").returncode == 0
+        host.run("unos-firewall-mark", "1700000120")
+        # ufw's start set its DEFAULT_FORWARD_POLICY, DROP, on both.
+        (host.stub_state / "forward4").write_text("DROP")
+        (host.stub_state / "forward6").write_text("DROP")
+        host.turn_on()
+        assert host.run("unos-firewall-cancel").returncode == 0
+
+    @pytest.mark.parametrize("how", ["disable", "reset"])
+    def test_after_a_kept_enable_the_forward_policies_from_before_it_come_back(self, stub_host, how):
+        # The dev device: Docker closes IPv4's FORWARD chain, IPv6's stays open.
+        self._enable_and_keep(stub_host, ("DROP", "ACCEPT"))
+
+        assert stub_host.run("unos-firewall-off", how).returncode == 0
+
+        assert stub_host.forward() == ("DROP", "ACCEPT")
+        assert not {"off4", "off6"} & _saved(stub_host)
+
+    def test_a_rule_change_while_ufw_is_on_keeps_them(self, stub_host):
+        self._enable_and_keep(stub_host, ("DROP", "ACCEPT"))
+        assert stub_host.run("unos-firewall-save", "active").returncode == 0
+        assert stub_host.run("unos-firewall-discard").returncode == 0
+
+        assert stub_host.run("unos-firewall-off", "disable").returncode == 0
+
+        assert stub_host.forward() == ("DROP", "ACCEPT")
+
+    def test_an_undone_enable_forgets_them(self, stub_host):
+        (stub_host.stub_state / "forward6").write_text("ACCEPT")
+        stub_host.run("unos-firewall-save", "inactive")
+        stub_host.run("unos-firewall-mark", "1700000120")
+        (stub_host.stub_state / "forward6").write_text("DROP")
+        stub_host.turn_on()
+
+        assert stub_host.run("unos-firewall-revert").returncode == 0
+
+        assert stub_host.forward() == ("DROP", "ACCEPT")
+        assert _saved(stub_host) == set()
 
     def test_reset_keeps_them_too(self, stub_host):
         stub_host.turn_on()

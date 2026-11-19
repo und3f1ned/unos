@@ -76,6 +76,7 @@ class FakeUfwHost:
         self.input_policy = "DROP"
         self.output_policy = "ACCEPT"
         self.forward = {4: "DROP", 6: "DROP"}
+        self.off_forward: dict[int, str] | None = None   # off4 and off6 of the state folder
         self.manage_builtins = False
         self.forward_default = "DROP"
         self.docker_in_iptables = True   # Docker's chains in iptables' FORWARD (its iptables backend)
@@ -267,6 +268,8 @@ class FakeUfwHost:
         if name == "unos-firewall-save":
             assert extra[0] in ("active", "inactive")
             self.saved = {"was": extra[0], "rules": copy.deepcopy(self.rules), "forward": dict(self.forward)}
+            if extra[0] != "active":
+                self.off_forward = dict(self.forward)
             self.failed = False
             return self._ok()
         if name == "unos-firewall-mark":
@@ -290,8 +293,8 @@ class FakeUfwHost:
             self.failed = not result.ok
             return result
         if name == "unos-firewall-off":
-            result = self._off(extra[0])
-            self.failed = False
+            result = self._off(extra[0], self.off_forward)
+            self.failed, self.off_forward = False, None
             return result
         raise AssertionError(f"FakeUfwHost does not know the script {name}")
 
@@ -302,6 +305,7 @@ class FakeUfwHost:
             return self._failed("ERROR: Could not reload")
         if self.saved["was"] != "active":
             self._off("disable", self.saved["forward"])
+            self.off_forward = None
         self.rules = copy.deepcopy(self.saved["rules"])
         if self.saved["was"] == "active":
             self._ufw(["reload"])
@@ -310,7 +314,7 @@ class FakeUfwHost:
 
     def _off(self, how: str, forward: dict[int, str] | None = None) -> HostResult:
         # ufw's stop would set FORWARD to ACCEPT; the script puts the policies back: those saved
-        # before the change, or those from before the stop.
+        # with ufw off, or those from before the stop.
         kept = dict(forward or self.forward)
         self.active = False
         if how == "reset":
@@ -1055,6 +1059,18 @@ class TestDisableAndReset:
         assert summaries(ufw_host) == ["unos-firewall-off disable"]
         assert not ufw_host.active and ufw_host.forward == {4: "DROP", 6: "DROP"}
         assert ufw_host.timer is None
+
+    @pytest.mark.parametrize("how", ["disable", "reset"])
+    def test_after_a_kept_enable_the_forward_policies_from_before_it_come_back(self, client, ufw_host, how):
+        # The dev device: Docker closes IPv4's FORWARD chain, IPv6's stays open; ufw's start closes both.
+        ufw_host.forward = {4: "DROP", 6: "ACCEPT"}
+        client.post(f"{API}/enable")
+        assert client.post(f"{API}/confirm").status_code == 200
+        assert ufw_host.forward == {4: "DROP", 6: "DROP"}
+
+        assert client.post(f"{API}/{how}").status_code == 200
+
+        assert not ufw_host.active and ufw_host.forward == {4: "DROP", 6: "ACCEPT"}
 
     def test_disable_of_a_firewall_that_is_off_changes_nothing(self, client, ufw_host):
         response = client.post(f"{API}/disable")

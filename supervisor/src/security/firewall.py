@@ -12,8 +12,9 @@ back after REVERT_SECONDS (REVERT_SCRIPT), as the network's revert does (ADR-024
 changes ufw. Keep (keep()) calls the revert off. A change that fails after the save is undone at
 once (RESTORE_SCRIPT); when that fails too, or the host did not answer, the timer undoes it. A revert
 that fails leaves the file ``failed``, which the status reports. ufw's own stop opens the FORWARD
-chains (policy ACCEPT), which Docker closes: OFF_SCRIPT, which every turning off runs, puts their
-policies back.
+chains (policy ACCEPT), which Docker closes, and ufw's start closes both (its DEFAULT_FORWARD_POLICY):
+a save with ufw off keeps their policies in ``off4`` and ``off6`` too, which outlive Keep, and
+OFF_SCRIPT, which every turning off runs, puts those back, or after a reboot the policies of ufw on.
 """
 
 from __future__ import annotations
@@ -101,8 +102,9 @@ FORWARDS = (
 # iptables and ip6tables set to P4 and P6, or to those from before ufw's stop, which sets them to
 # ACCEPT. Return status 1: ufw failed; 4: a policy could not be set.
 # restore: put the saved rules files back and bring ufw to the state saved with them: off when it
-# was off (before the files go back, so that a failure never leaves ufw on with the old rules), a
-# reload when it was on. Nothing saved: another restore took it.
+# was off (before the files go back, so that a failure never leaves ufw on with the old rules; the
+# policies of ufw off are then forgotten), a reload when it was on. Nothing saved: another restore
+# took it.
 _FUNCTIONS = """\
 forward_policy() {
   set -- $("$1" -S FORWARD 2> /dev/null | head -n 1)
@@ -124,6 +126,7 @@ restore() {
   [ -e "$1/was" ] || return 0
   if [ "$(cat "$1/was")" != active ]; then
     ufw_off disable "$(cat "$1/forward4" 2> /dev/null)" "$(cat "$1/forward6" 2> /dev/null)" || return 1
+    rm -f "$1/off4" "$1/off6"
   fi
   for f in user.rules user6.rules; do
     if [ -e "$1/$f" ]; then
@@ -140,7 +143,8 @@ restore() {
 """
 
 # $3: "active" or "inactive", whether ufw was on before the change. A revert that failed before is
-# forgotten: this change saves the state as it is now.
+# forgotten: this change saves the state as it is now. With ufw off, the FORWARD policies are also
+# those that a turning off puts back (off4, off6); with ufw on, those of the save before stay.
 SAVE_SCRIPT = _FUNCTIONS + """\
 set -e
 umask 077
@@ -150,6 +154,10 @@ cp -p "$2/user.rules" "$1/user.rules"
 if [ -e "$2/user6.rules" ]; then cp -p "$2/user6.rules" "$1/user6.rules"; fi
 forward_policy iptables > "$1/forward4"
 forward_policy ip6tables > "$1/forward6"
+if [ "$3" != active ]; then
+  cp "$1/forward4" "$1/off4"
+  cp "$1/forward6" "$1/off6"
+fi
 echo "$3" > "$1/was"
 """
 
@@ -168,8 +176,12 @@ rm -f "$1/was" "$1/user.rules" "$1/user6.rules" "$1/forward4" "$1/forward6"
 exit 0
 """
 
-# $3: "disable" or "reset". Off, nothing of a failed revert is left to report.
-OFF_SCRIPT = _FUNCTIONS + 'ufw_off "$3" || exit\nrm -f "$1/failed"\n'
+# $3: "disable" or "reset". Off, nothing of a failed revert is left to report, and the policies of ufw
+# off are used up.
+OFF_SCRIPT = _FUNCTIONS + """\
+ufw_off "$3" "$(cat "$1/off4" 2> /dev/null)" "$(cat "$1/off6" 2> /dev/null)" || exit
+rm -f "$1/failed" "$1/off4" "$1/off6"
+"""
 
 RESTORE_SCRIPT = _FUNCTIONS + 'restore "$1" "$2"\n'
 

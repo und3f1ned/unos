@@ -23,8 +23,8 @@ manager, encrypted backup uploads, health checks, CI checks).
   turns ufw off again and puts its rules back, also when the page cannot reach UNOS any more. A
   rule added or deleted while the firewall is on is undone the same way. New rules are incoming
   ones, checked before they reach ufw; UNOS's rules cannot be deleted from the page. Turning ufw
-  off keeps the FORWARD policies as they were (ufw's own stop opens them), and the undo of an
-  Enable puts back those from before it. UNOS does not turn ufw on where ufw would cut Docker's
+  off puts the FORWARD policies back as they were before the Enable (ufw's own stop opens them,
+  its start closes them), and the undo of an Enable does the same. UNOS does not turn ufw on where ufw would cut Docker's
   forwarding. A host without ufw is told to install it; the stand-in and the test stack refuse
   every firewall request (`firewall_change_kept` in the audit log, ADR-0416).
 - The system, security, logs and NFS routers start no command of their own: a test fails for one
