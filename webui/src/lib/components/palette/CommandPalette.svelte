@@ -19,6 +19,7 @@
 		FileText,
 		FolderOpen,
 		Gauge,
+		Globe,
 		HardDrive,
 		Heart,
 		Languages,
@@ -186,6 +187,14 @@
 			kindKey: SYSTEM,
 			icon: Network,
 			run: { go: '/system#network' }
+		},
+		{
+			id: 'remote',
+			nameKey: 'remote.tab',
+			keywordsKey: 'palette.keywords.remote',
+			kindKey: SYSTEM,
+			icon: Globe,
+			run: { go: '/system#remote' }
 		},
 		{
 			id: 'power',
