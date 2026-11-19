@@ -1,11 +1,10 @@
 // The audit log as a timeline (ADR-0401): the entries by the browser's days, their texts and
 // marks, and the days of the filters. The server answers each time in UTC with its offset.
 import type { AuditEntry } from '$lib/api/audit';
-import type { Params } from '$lib/i18n';
+import type { Translate } from '$lib/i18n';
 import { localDay } from '$lib/time';
 
 /** The page's $t: a key's text in the language of the page. */
-type Translate = (key: string, params?: Params) => string;
 
 export interface Day {
 	day: string;

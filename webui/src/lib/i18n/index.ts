@@ -15,6 +15,9 @@ import {
 
 export { isLocale, type Locale, type Params } from './translate';
 
+/** What `$t` is, for a module whose texts take it as an argument: `labelOf($t, ...)`. */
+export type Translate = (key: string, params?: Params) => string;
+
 /** The languages the Account page offers, each named in its own language. */
 export const LANGUAGES: readonly { code: Locale; name: string }[] = [
 	{ code: 'en', name: 'English' },

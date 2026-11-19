@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { messageOf } from "$lib/errors";
   import { onMount, untrack } from "svelte";
   import { cancelShutdown, getPendingAction, type PendingAction } from "$lib/api/power";
   import { Alert } from "$lib/components/ui";
@@ -41,10 +42,6 @@
     void plan.loadConfig();
     void plan.loadSchedule();
   });
-
-  function messageOf(e: unknown): string {
-    return e instanceof Error ? e.message : String(e);
-  }
 
   /** What an action of a card did: the page says it, in place of an earlier failure. */
   function showNotice(message: string) {

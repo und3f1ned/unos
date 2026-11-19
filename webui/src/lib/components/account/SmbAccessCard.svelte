@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { messageOf } from '$lib/errors';
 	import { onMount } from 'svelte';
 	import { Share2 } from 'lucide-svelte';
 	import { disableMySmb, enableMySmb, getMySmb, type MySmbStatus } from '$lib/api/auth';
@@ -32,10 +33,6 @@
 		host = window.location.hostname;
 		void load();
 	});
-
-	function messageOf(e: unknown): string {
-		return e instanceof Error ? e.message : String(e);
-	}
 
 	async function load() {
 		try {

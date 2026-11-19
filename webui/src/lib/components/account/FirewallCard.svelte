@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { messageOf } from '$lib/errors';
 	import { onDestroy, onMount, tick } from 'svelte';
 	import {
 		createFirewallRule,
@@ -67,10 +68,6 @@
 		if (ticker) clearInterval(ticker);
 		if (check) clearTimeout(check);
 	});
-
-	function messageOf(e: unknown): string {
-		return e instanceof Error ? e.message : String(e);
-	}
 
 	async function load() {
 		loading = true;

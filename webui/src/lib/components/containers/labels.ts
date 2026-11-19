@@ -1,12 +1,11 @@
 // The words and looks of a container that the Containers page and its drawer share (ADR-0255).
 import type { Container } from '$lib/api/containers';
-import type { Params } from '$lib/i18n';
+import type { Translate } from '$lib/i18n';
 
 /** What a container's own buttons do on the page and in its drawer. */
 export type QuickAction = 'start' | 'stop' | 'restart' | 'remove';
 
 /** The page's $t: a key's text in the language of the page. */
-type Translate = (key: string, params?: Params) => string;
 
 // Docker's words that the server passes on: keys of the catalog, by value. A container's state
 // and status (State.Status) and a port's protocol.

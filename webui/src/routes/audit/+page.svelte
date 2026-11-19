@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { messageOf } from '$lib/errors';
 	import { onDestroy, onMount, untrack } from 'svelte';
 	import { Download, ScrollText } from 'lucide-svelte';
 	import { exportAuditLog, type AuditExportFormat, type AuditFilters as Filters } from '$lib/api/audit';
@@ -197,10 +198,6 @@
 	});
 
 	onDestroy(() => log.dispose());
-
-	function messageOf(e: unknown): string {
-		return e instanceof Error ? e.message : String(e);
-	}
 
 	function clearFilters() {
 		search = '';

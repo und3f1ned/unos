@@ -7,6 +7,4 @@ export const SNAP_PREFIX = 'snap_';
 export const RESTORE_PREFIX = 'restore_';
 export const AUTO_PREFIX = 'auto_';
 
-export function messageOf(e: unknown): string {
-	return e instanceof Error ? e.message : String(e);
-}
+export { messageOf } from '$lib/errors';

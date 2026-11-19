@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { messageOf } from '$lib/errors';
 	import { onMount } from 'svelte';
 	import { toDataURL } from 'qrcode';
 	import {
@@ -57,10 +58,6 @@
 	onMount(() => {
 		void load();
 	});
-
-	function messageOf(e: unknown): string {
-		return e instanceof Error ? e.message : String(e);
-	}
 
 	async function load() {
 		loading = true;

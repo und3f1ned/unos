@@ -2,10 +2,9 @@
 // labels of the values that the server answers as words (FirewallRule and FirewallStatus of
 // $lib/api/security), keys of the catalog, by value.
 import type { FirewallAction, FirewallProtocol, FirewallRule } from '$lib/api/security';
-import type { Params } from '$lib/i18n';
+import type { Translate } from '$lib/i18n';
 
 /** The page's $t: a key's text in the language of the page. */
-type Translate = (key: string, params?: Params) => string;
 
 export const RULE_ACTIONS: Record<string, string> = {
 	allow: 'firewall.allow',

@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { messageOf } from '$lib/errors';
 	import { untrack } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { toDataURL } from 'qrcode';
@@ -33,10 +34,6 @@
 	$effect.pre(() => {
 		if ($user && !required && !done) untrack(() => goto('/', { replaceState: true }));
 	});
-
-	function messageOf(e: unknown): string {
-		return e instanceof Error ? e.message : String(e);
-	}
 
 	async function start() {
 		busy = true;

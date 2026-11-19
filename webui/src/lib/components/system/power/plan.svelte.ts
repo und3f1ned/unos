@@ -1,8 +1,5 @@
+import { messageOf } from "$lib/errors";
 import { getPowerConfig, getPowerSchedule, type PowerConfig, type PowerSchedule } from "$lib/api/power";
-
-function messageOf(e: unknown): string {
-  return e instanceof Error ? e.message : String(e);
-}
 
 function clockTime(hour: number, minute: number): string {
   return `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;

@@ -1,10 +1,7 @@
+import { messageOf } from "$lib/errors";
 import { get } from "svelte/store";
 import { getCertificateStatus, getCertificates, type Certificate, type CertificateStatus } from "$lib/api/security";
 import { t } from "$lib/i18n";
-
-function messageOf(e: unknown): string {
-  return e instanceof Error ? e.message : String(e);
-}
 
 /**
  * The web server's certificates (ADR-0404): what browsers get, the stored certificates, and the

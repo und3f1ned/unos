@@ -1,8 +1,7 @@
 // Helpers of System > Logs: its texts come from src/lib/i18n/catalog/logs.ts (ADR-0287).
-import type { Params } from "$lib/i18n";
+import type { Translate } from "$lib/i18n";
 
 /** $t of $lib/i18n: the text of a key in the language of the page. */
-type Translate = (key: string, params?: Params) => string;
 
 /** The text of `value` by its key in `keys`, in the language of the page; else `fallback`. */
 export function textOf(t: Translate, keys: Record<string, string>, value: string, fallback: string = value): string {

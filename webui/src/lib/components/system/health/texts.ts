@@ -1,14 +1,14 @@
 import { AlertTriangle, Check, Moon, X } from "lucide-svelte";
 import type { DiskPrediction, SmartInfo } from "$lib/api/health";
 import type { IconComponent } from "$lib/components/ui";
-import type { Params } from "$lib/i18n";
+import type { Translate } from "$lib/i18n";
 
 // What System > Health shows of a disk's health, in the language of the page (ADR-0287). The
 // functions that give texts take the page's $t (and $intlLocale), so that the markup that calls
 // them follows a change of the language.
 
 /** $t of $lib/i18n. */
-export type Translate = (key: string, params?: Params) => string;
+export type { Translate } from '$lib/i18n';
 
 export const HEALTH_STATUS: Record<string, string> = {
   PASSED: "health.status.passed",

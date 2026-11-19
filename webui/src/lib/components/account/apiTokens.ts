@@ -1,11 +1,10 @@
 // The words of the API tokens of the signed-in account (ADR-0239, ADR-0392), which the card, its
 // list and its dialogs share.
 import type { ApiToken, TokenArea } from '$lib/api/auth';
-import type { Params } from '$lib/i18n';
+import type { Translate } from '$lib/i18n';
 import { apiTime } from '$lib/time';
 
 /** The page's $t: a key's text in the language of the page. */
-type Translate = (key: string, params?: Params) => string;
 
 export const AREA_LABELS: Record<TokenArea, string> = {
 	apps: 'tokens.area.apps',

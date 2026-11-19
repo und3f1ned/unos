@@ -3,7 +3,7 @@ import {
 } from "lucide-svelte";
 import type { ChannelKind, NotificationConfig } from "$lib/api/notifications";
 import type { IconComponent } from "$lib/components/ui";
-import type { Params } from "$lib/i18n";
+import type { Translate } from "$lib/i18n";
 import { apiTime } from "$lib/time";
 
 // Channels of five kinds (ADR-0326): what System > Notifications shows of them. The texts are keys
@@ -11,7 +11,7 @@ import { apiTime } from "$lib/time";
 // them follows a change of the language.
 
 /** $t of $lib/i18n. */
-export type Translate = (key: string, params?: Params) => string;
+export type { Translate } from '$lib/i18n';
 
 export const own = (object: object, key: string) => Object.prototype.hasOwnProperty.call(object, key);
 

@@ -1,3 +1,4 @@
+import { messageOf } from '$lib/errors';
 // The entries of the audit log that the page shows (ADR-0401), with their loading and error: a
 // change of the filters loads the newest entries that match, after a pause in the typing, and
 // Show more loads more of them. The page creates it and passes it down.
@@ -13,10 +14,6 @@ import {
 // Entries per "Show more", and how long typing may pause before the list follows it.
 const PAGE_SIZE = 100;
 const TYPING_DELAY_MS = 300;
-
-function messageOf(e: unknown): string {
-	return e instanceof Error ? e.message : String(e);
-}
 
 export class AuditLog {
 	// The server's answers, each only ever replaced whole.

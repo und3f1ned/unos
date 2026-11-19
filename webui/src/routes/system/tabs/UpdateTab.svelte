@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { messageOf } from "$lib/errors";
   import { onMount } from "svelte";
   import { ArrowUpCircle, ExternalLink, Package, RefreshCw, Terminal } from "lucide-svelte";
   import { checkForUpdates, getCurrentVersion, type CurrentVersion, type UpdateCheck } from "$lib/api/updates";
@@ -24,10 +25,6 @@
     void loadCurrent();
     void runCheck();
   });
-
-  function messageOf(e: unknown): string {
-    return e instanceof Error ? e.message : String(e);
-  }
 
   async function loadCurrent() {
     try {

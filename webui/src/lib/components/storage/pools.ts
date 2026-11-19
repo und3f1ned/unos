@@ -6,9 +6,7 @@ import type { BalanceStatus, DiskRemovalStatus, Pool, ScrubStatus, Volume } from
 /** The variants of the page's badges. */
 export type BadgeVariant = 'success' | 'warning' | 'error' | 'info' | 'neutral' | 'orange';
 
-export function messageOf(e: unknown): string {
-	return e instanceof Error ? e.message : String(e);
-}
+export { messageOf } from '$lib/errors';
 
 /** Where UNOS mounts the pool of this name. */
 export function poolMountpoint(name: string): string {

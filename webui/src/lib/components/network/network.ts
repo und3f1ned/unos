@@ -1,14 +1,12 @@
 // Helpers of System > Network: its texts come from src/lib/i18n/catalog/network.ts and virtual.ts.
 import type { Route } from "$lib/api/network";
-import type { Params } from "$lib/i18n";
+import type { Translate } from "$lib/i18n";
 
 /** $t of $lib/i18n: the text of a key in the language of the page. */
-export type Translate = (key: string, params?: Params) => string;
+export type { Translate } from '$lib/i18n';
 
 /** The message of an error that an API call threw. */
-export function messageOf(e: unknown): string {
-  return e instanceof Error ? e.message : String(e);
-}
+export { messageOf } from '$lib/errors';
 
 /** The text of `value`'s key in `keys`, in the language of the page; a value without one as it comes. */
 export function labelOf(t: Translate, keys: Record<string, string>, value: string | null): string {

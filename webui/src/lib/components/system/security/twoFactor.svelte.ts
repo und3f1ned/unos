@@ -1,8 +1,5 @@
+import { messageOf } from "$lib/errors";
 import { getTOTPStatus, type TOTPSetupResponse } from "$lib/api/auth";
-
-function messageOf(e: unknown): string {
-  return e instanceof Error ? e.message : String(e);
-}
 
 /**
  * The account's two-factor authentication: its status, and the setup or the turning off in

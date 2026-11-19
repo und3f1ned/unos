@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { messageOf } from '$lib/errors';
 	import { onMount, untrack } from 'svelte';
 	import {
 		addAppName,
@@ -45,10 +46,6 @@
 	function urlOf(name: AppName): string {
 		// i18n-ignore: a URL
 		return `https://${name.name}`;
-	}
-
-	function messageOf(e: unknown): string {
-		return e instanceof Error ? e.message : String(e);
 	}
 
 	async function load() {

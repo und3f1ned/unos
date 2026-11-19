@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { messageOf } from "$lib/errors";
   import { onMount } from "svelte";
   import { Clock, RefreshCw, Settings } from "lucide-svelte";
   import { Alert, Button, type IconComponent } from "$lib/components/ui";
@@ -47,10 +48,6 @@
   let activeChannels = $derived(configs.filter((c) => c.enabled).length);
 
   onMount(() => loadData());
-
-  function messageOf(e: unknown): string {
-    return e instanceof Error ? e.message : String(e);
-  }
 
   async function loadData() {
     loading = true;
