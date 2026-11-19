@@ -9,7 +9,7 @@
 	import { Alert, Button, Card, Input } from '$lib/components/ui';
 	import { intlLocale, t } from '$lib/i18n';
 	import { formatDateTime } from '$lib/time';
-	import { CheckCircle, ShieldCheck } from 'lucide-svelte';
+	import { CheckCircle } from 'lucide-svelte';
 
 	// The page of an account without two-factor authentication while every account must have it
 	// (ADR-0386). During the account's grace period the sign-in leads here, and Later goes on to the
@@ -87,10 +87,7 @@
 </script>
 
 <div class="page-container max-w-xl space-y-6">
-	<h1 class="page-title flex items-center gap-2">
-		<ShieldCheck class="w-6 h-6 shrink-0" />
-		{$t('twofactor.title')}
-	</h1>
+	<h1 class="page-title">{$t('twofactor.title')}</h1>
 
 	{#if done}
 		<Card class="space-y-4">

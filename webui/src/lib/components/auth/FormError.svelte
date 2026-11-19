@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { Alert } from '$lib/components/ui';
 	// Why the sign-in or the first-run setup failed, above the form's fields.
 
 	type Props = {
@@ -8,6 +9,5 @@
 	let { message }: Props = $props();
 </script>
 
-<div class="bg-status-error/20 border border-status-error text-status-error px-4 py-2 rounded">
-	{message}
-</div>
+<!-- An error as an Alert (ADR-0428). -->
+<Alert variant="error" size="sm">{message}</Alert>
