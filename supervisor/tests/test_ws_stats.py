@@ -1,4 +1,4 @@
-"""The stats message of /ws/v1/events (ADR-0006, ADR-0374)."""
+"""The stats message of /ws/v1/events (ADR-0006, ADR-0421)."""
 
 import os
 import pwd
@@ -305,7 +305,7 @@ def test_a_disk_that_comes_or_goes_never_makes_the_disk_rates_jump(clock, host_d
 
 def test_one_sample_serves_every_socket_of_an_interval(monkeypatch, clock):
     """Every open socket took a sample of its own every two seconds: on a SpacemiT K1 0.4 s of CPU
-    each, and as much again for every further tab (ADR-0374). One sample now serves every socket
+    each, and as much again for every further tab (ADR-0421). One sample now serves every socket
     until it is STATS_INTERVAL_SECONDS old."""
     taken = []
 
@@ -329,7 +329,7 @@ def test_one_sample_serves_every_socket_of_an_interval(monkeypatch, clock):
 def test_the_process_list_is_taken_at_most_every_process_list_interval(monkeypatch, clock):
     """The list of the host's processes was most of a sample's cost: 0.4 s of a K1's CPU for 315
     processes. A sample reuses the last list until it is PROCESS_LIST_INTERVAL_SECONDS old
-    (ADR-0374)."""
+    (ADR-0421)."""
     listings = []
     real = psutil.process_iter
 

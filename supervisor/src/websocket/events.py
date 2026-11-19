@@ -160,7 +160,7 @@ SYS_BLOCK = "/sys/block"
 RATE_MAX_GAP_SECONDS = 5 * STATS_INTERVAL_SECONDS
 
 # The list of the host's processes is most of a sample's cost: on a SpacemiT K1 one listing of
-# 315 processes took 0.4 s of CPU. A sample reuses the last list until it is this old (ADR-0374).
+# 315 processes took 0.4 s of CPU. A sample reuses the last list until it is this old (ADR-0421).
 PROCESS_LIST_INTERVAL_SECONDS = 10.0
 _processes: list[dict] = []
 _processes_at: float | None = None
@@ -173,7 +173,7 @@ _host_users: tuple[tuple[int, int, int], dict[int, str]] | None = None
 _passwd_unreadable_logged = False
 
 # One sample serves every socket of /ws/v1/events until it is STATS_INTERVAL_SECONDS old, taken in
-# a worker thread (shared_system_stats, ADR-0374).
+# a worker thread (shared_system_stats, ADR-0421).
 _sample: dict | None = None
 _sample_at: float | None = None
 _sample_lock = threading.Lock()
@@ -184,7 +184,7 @@ def shared_system_stats() -> dict:
     """The stats message for every open socket: the last sample while it is younger than
     STATS_INTERVAL_SECONDS, else a new one. Each socket used to take its own every interval, in the
     event loop, which on a slow board cost a share of a core per open tab and held the API while it
-    ran (ADR-0374). Callers run it in a worker thread; the lock makes concurrent callers wait for
+    ran (ADR-0421). Callers run it in a worker thread; the lock makes concurrent callers wait for
     one sample instead of taking one each."""
     global _sample, _sample_at
     with _sample_lock:

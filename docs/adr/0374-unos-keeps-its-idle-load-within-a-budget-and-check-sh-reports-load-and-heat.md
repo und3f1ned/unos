@@ -1,13 +1,16 @@
 ---
-status: accepted
+status: superseded
 date: 2026-11-13
 area: system
 decided-by: agent
+superseded-by: ADR-0421
 ---
 
 # ADR-0374: UNOS keeps its idle load within a budget, and check.sh reports load and heat
 
 ## Context
+
+Superseded by ADR-0421: check.sh's margin counts only the zones that slow a processor.
 
 On the Banana Pi BPI-F3 (ADR-0372) the owner found the board at about half its CPU and memory
 "at idle" and asked that "such load issues never happen again". Most of it was a test video that

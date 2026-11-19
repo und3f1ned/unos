@@ -109,7 +109,7 @@ class TestEventsSocket:
             assert ws.receive_json()["type"] == "stats"
 
     def test_stats_are_sampled_outside_the_event_loop(self, client, user_token, monkeypatch):
-        """A sample in the event loop held every request of the API meanwhile (ADR-0374)."""
+        """A sample in the event loop held every request of the API meanwhile (ADR-0421)."""
         monkeypatch.setattr(events, "_sample", None)
         monkeypatch.setattr(events, "_sample_at", None)
         where = []
@@ -219,7 +219,7 @@ class TestEventsSocket:
 
 
 class TestSharedStatsSample:
-    """system.idle-load-budget (ADR-0374): every socket of /ws/v1/events gets the same stats sample,
+    """system.idle-load-budget (ADR-0421): every socket of /ws/v1/events gets the same stats sample,
     taken once per interval in a worker thread, not in the event loop that serves the API."""
 
     def test_two_sockets_get_one_sample_taken_off_the_event_loop(self, client, admin_token, user_token, monkeypatch):

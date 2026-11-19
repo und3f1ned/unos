@@ -390,13 +390,14 @@ and this index, and `make check-fast` runs it.
 | [0346](0346-the-dashboard-shows-the-cpu-or-soc-temperature-chosen-by-sensor-name-in-one-place.md) | The dashboard shows the CPU's or SoC's temperature, chosen by the sensor's name in one place on the server | accepted | 2026-11-11 |
 | [0356](0356-the-nut-password-is-write-only-and-upsc-runs-on-the-host.md) | The NUT password of the UPS settings is write-only, and upsc runs on the host, where its absence makes the UPS unavailable | accepted | 2026-11-12 |
 | [0366](0366-system-logs-follows-new-journal-entries-over-the-journal-socket.md) | System > Logs reads every source from the host's journal, newest first, and its Auto follows new entries over the journal socket | accepted | 2026-11-12 |
-| [0374](0374-unos-keeps-its-idle-load-within-a-budget-and-check-sh-reports-load-and-heat.md) | UNOS keeps its idle load within a budget, and check.sh reports load and heat | accepted | 2026-11-13 |
+| [0374](0374-unos-keeps-its-idle-load-within-a-budget-and-check-sh-reports-load-and-heat.md) | UNOS keeps its idle load within a budget, and check.sh reports load and heat | superseded by [0421](0421-check-sh-measures-heat-only-in-zones-that-slow-a-processor-and-unos-keeps-its-idle-budget.md) | 2026-11-13 |
 | [0375](0375-the-supervisor-s-healthcheck-runs-bash-and-the-process-list-reads-ten-processes-in-full.md) | The supervisor's healthcheck runs bash, and the process list reads ten processes in full | accepted | 2026-11-13 |
 | [0388](0388-the-dashboard-shows-disk-io-and-the-stats-network-is-the-hosts-interfaces.md) | The dashboard shows the disks' I/O, and the network of the stats message is the traffic of the host's interfaces | accepted | 2026-11-17 |
 | [0399](0399-the-resource-monitor-keeps-an-hour-of-history-in-ram-and-only-administrators-get-the-hosts-processes.md) | The Resource Monitor keeps an hour of history in RAM, read once when its tab opens, and only administrators get the host's processes | accepted | 2026-11-18 |
 | [0407](0407-the-power-settings-shut-the-host-down-at-a-set-time-or-when-idle-and-arm-the-rtc-to-wake-it.md) | The power settings shut the host down at a set time or when idle, and arm the RTC to wake it | accepted | 2026-11-18 |
 | [0412](0412-the-load-check-fails-for-a-unos-container-it-could-not-measure-and-the-two-tab-measurement-is-the-owner-s.md) | The load check fails for a UNOS container it could not measure, and the two-tab measurement is the owner's | accepted | 2026-11-18 |
 | [0420](0420-remote-access-is-a-wireguard-tunnel-to-the-nas-alone-and-apps-get-local-names-through-caddy.md) | Remote access is a WireGuard tunnel on the host that reaches the NAS alone, and apps get single-label local names through Caddy | accepted | 2026-11-19 |
+| [0421](0421-check-sh-measures-heat-only-in-zones-that-slow-a-processor-and-unos-keeps-its-idle-budget.md) | The device check measures heat only in zones that slow a processor, and UNOS keeps its idle budget | accepted | 2026-11-19 |
 
 ## Web UI
 
