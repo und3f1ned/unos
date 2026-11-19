@@ -93,6 +93,14 @@
 	}
 </script>
 
+<!-- "alice, bob": the users who get access; one that does not count is crossed out, with the
+     reason as hover text and as text for screen readers (not <s>: it means "deleted"). -->
+{#snippet names(entries: (ShareAccess | ShareGroupMember)[])}{#each entries as entry, i}{#if i > 0}{', '}{/if}{#if entry.effective}{entry.username}{:else}<span
+				class="line-through text-muted"
+				title={reason(entry)}>{entry.username}</span
+			><span class="sr-only">{` ${$t('shares.card.notActive', { reason: reason(entry) })}`}</span
+			>{/if}{/each}{/snippet}
+
 <div class="card-nested space-y-3">
 	<div class="flex flex-wrap items-start justify-between gap-3">
 		<div class="min-w-0 space-y-1">
@@ -181,19 +189,13 @@
 				{share.guest_ok ? $t('shares.card.nobodyOwn') : $t('shares.card.nobody')}
 			</p>
 		{:else}
-			<!-- "Read & write: alice, bob · Read: carol"; entries that do not count are crossed out,
-			     with the reason as hover text and as text for screen readers (not <s>: it means "deleted"). -->
+			<!-- "Read & write: alice, bob · Read: carol", crossed out as in names. -->
 			{#if groups.length > 0}<p>
 				{#each groups as group, g}{#if g > 0}<span class="text-muted">{' · '}</span>{/if}<span
 						class="text-secondary">{group.label}:</span
-					>{' '}{#each group.entries as entry, i}{#if i > 0}{', '}{/if}{#if entry.effective}{entry.username}{:else}<span
-								class="line-through text-muted"
-								title={reason(entry)}>{entry.username}</span
-							><span class="sr-only"
-								>{` ${$t('shares.card.notActive', { reason: reason(entry) })}`}</span
-							>{/if}{/each}{/each}
+					>{' '}{@render names(group.entries)}{/each}
 			</p>{/if}
-			<!-- "Group family (Read & write): bob, carol", crossed out as above. -->
+			<!-- "Group family (Read & write): bob, carol", crossed out as in names. -->
 			{#each groupAccess as entry (entry.group_id)}
 				<p>
 					<span class="text-secondary"
@@ -203,12 +205,7 @@
 						})}</span
 					>{' '}{#if entry.members.length === 0}<span class="text-muted"
 							>{$t('shares.card.groupEmpty')}</span
-						>{:else}{#each entry.members as member, i}{#if i > 0}{', '}{/if}{#if member.effective}{member.username}{:else}<span
-									class="line-through text-muted"
-									title={reason(member)}>{member.username}</span
-								><span class="sr-only"
-									>{` ${$t('shares.card.notActive', { reason: reason(member) })}`}</span
-								>{/if}{/each}{/if}
+						>{:else}{@render names(entry.members)}{/if}
 				</p>
 			{/each}
 			{#each raised as entry (entry.username)}

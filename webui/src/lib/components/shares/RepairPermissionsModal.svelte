@@ -7,6 +7,7 @@
 	import { intlLocale, t } from '$lib/i18n';
 	import { formatDateTime } from '$lib/time';
 	import { isRepairOf, repairJob } from '$lib/stores/repair';
+	import { messageOf } from './errors';
 
 	type Props = {
 		/**
@@ -65,10 +66,6 @@
 			if (!(e instanceof ApiError && e.status === 404)) lastError = messageOf(e);
 		}
 	});
-
-	function messageOf(e: unknown): string {
-		return e instanceof Error ? e.message : String(e);
-	}
 
 	async function repair() {
 		if (starting || running) return;

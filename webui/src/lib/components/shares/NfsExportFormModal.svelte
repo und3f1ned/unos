@@ -8,7 +8,9 @@
 	} from '$lib/api/shares';
 	import { Alert, Button, Input, Modal, Select } from '$lib/components/ui';
 	import { t } from '$lib/i18n';
-	import { folderParts, folderProblem, joinSharePath } from './paths';
+	import { messageOf } from './errors';
+	import LocationFields from './LocationFields.svelte';
+	import { folderParts, folderProblem, joinSharePath, managedLocations } from './paths';
 
 	type Props = {
 		/** Pools and volumes (GET /shares/paths); only those of pools that UNOS manages are offered. */
@@ -34,7 +36,7 @@
 
 	// The server refuses a folder of a pool that UNOS does not manage (ADR-0293). Taken from the
 	// paths the dialog opened with.
-	const locations = untrack(() => paths.filter((location) => location.managed));
+	const locations = untrack(() => managedLocations(paths));
 	let base = $state(locations[0]?.path ?? '');
 	let folder = $state('');
 	let client = $state('');
@@ -44,13 +46,6 @@
 	let attempted = $state(false);
 	let error = $state('');
 
-	// A pool's or a volume's name, and its kind in the page's language.
-	const locationOptions = $derived(
-		locations.map((p) => ({
-			value: p.path,
-			label: $t(p.type === 'volume' ? 'shares.location.volume' : 'shares.location.pool', { name: p.name })
-		}))
-	);
 	const location = $derived(locations.find((p) => p.path === base));
 	const parts = $derived(folderParts(folder));
 	const finalPath = $derived(base ? joinSharePath(base, parts) : '');
@@ -58,10 +53,6 @@
 	// A missing folder is shown once the user tried to save; "apps" at once.
 	const folderError = $derived(problem && (attempted || parts.length > 0) ? problem : '');
 	const clientError = $derived(attempted && !client.trim() ? $t('shares.nfs.form.clientRequired') : '');
-
-	function messageOf(e: unknown): string {
-		return e instanceof Error ? e.message : String(e);
-	}
 
 	async function submit() {
 		if (saving) return;
@@ -95,38 +86,20 @@
 		class="space-y-4"
 	>
 		<div class="space-y-3">
-			{#if paths.length === 0}
-				<Alert variant="warning">{$t('shares.location.noneMounted')}</Alert>
-			{:else if locations.length === 0}
-				<Alert variant="warning">
-					<p>{$t('shares.location.noneManaged')}</p>
-					<p class="mt-1">{$t('shares.nfs.form.unmanagedPools')}</p>
-				</Alert>
-			{:else}
-				<Select
-					id="nfs-location"
-					label={$t('shares.location.label')}
-					bind:value={base}
-					options={locationOptions}
-					placeholder={$t('shares.location.choose')}
-					hint={locations.length < paths.length ? $t('shares.nfs.form.unmanagedPools') : ''}
-				/>
-			{/if}
-			<Input
-				id="nfs-folder"
-				label={$t('shares.location.folder')}
-				bind:value={folder}
-				placeholder={$t('shares.nfs.form.folderPlaceholder')}
-				autocomplete="off"
-				maxlength={4096}
-				error={folderError}
-				hint={location?.type === 'volume' ? $t('shares.nfs.form.volumeHint') : $t('shares.nfs.form.poolHint')}
+			<LocationFields
+				locationId="nfs-location"
+				folderId="nfs-folder"
+				{paths}
+				{locations}
+				bind:base
+				bind:folder
+				{folderError}
+				folderPlaceholder={$t('shares.nfs.form.folderPlaceholder')}
+				folderHint={location?.type === 'volume' ? $t('shares.nfs.form.volumeHint') : $t('shares.nfs.form.poolHint')}
+				unmanagedHint={$t('shares.nfs.form.unmanagedPools')}
+				finalPath={finalPath && !problem ? finalPath : ''}
+				finalPathLabel={$t('shares.nfs.form.exportedFolder')}
 			/>
-			{#if finalPath && !problem}
-				<p class="text-sm text-secondary">
-					{$t('shares.nfs.form.exportedFolder')} <span class="mono break-all">{finalPath}</span>
-				</p>
-			{/if}
 		</div>
 
 		<Input
