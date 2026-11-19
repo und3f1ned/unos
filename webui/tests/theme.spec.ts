@@ -474,7 +474,8 @@ test.describe('Every page in each theme', () => {
       expect(await background(page, '.card')).toBe(values['surface-elevated']);
       expect(await colour(page, 'main h2.text-xl')).toBe(values['content']); // Security Settings
       expect(await background(page, 'nav .nav-item-active')).toBe(values['brand']);
-      expect(await colour(page, 'nav .nav-item-active')).toBe(values['content-on-brand']);
+      // The active link is a brand tint with the text's colour (webui.redesign, ADR-0428).
+      expect(await colour(page, 'nav .nav-item-active')).toBe(values['content']);
       const lightPage = luminance(values['surface']) > 0.8 && luminance(values['content']) < 0.05;
       const darkPage = luminance(values['surface']) < 0.05 && luminance(values['content']) > 0.8;
       expect(theme === 'light' ? lightPage : darkPage).toBe(true);

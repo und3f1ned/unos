@@ -123,8 +123,24 @@
 		--shadow-dialog: 0 24px 48px -12px rgb(var(--color-shadow) / 0.25);
 	}
 
+	/* Motion (ADR-0428): colours, then the drawer, lists and the palette, then dialogs. */
+	:root {
+		--dur-fast: 120ms;
+		--dur-base: 180ms;
+		--dur-slow: 240ms;
+		--ease: cubic-bezier(0.2, 0, 0, 1);
+	}
+
+	/* 14 px body text, the system's own fonts (tailwind.config.js). */
 	body {
-		@apply bg-surface text-content;
+		@apply bg-surface text-content font-sans text-sm antialiased;
+	}
+
+	/* One focus style for every control: a ring for the keyboard, nothing for a mouse click, and no
+	   gap of the page colour around a button on a card. */
+	:focus-visible {
+		outline: 2px solid rgb(var(--color-brand-ring));
+		outline-offset: 2px;
 	}
 
 	/* The browser draws checkboxes and radio buttons; they take the theme's selection colour. */
@@ -132,10 +148,34 @@
 	input[type='radio'] {
 		accent-color: rgb(var(--color-brand-ring));
 	}
+
+	kbd {
+		@apply font-mono text-2xs px-1.5 rounded border border-border bg-surface-elevated text-content-muted;
+	}
+
+	/* Reduced motion: transitions and the pulse of a dot stop; a spinner still says "busy", slower. */
+	@media (prefers-reduced-motion: reduce) {
+		*,
+		*::before,
+		*::after {
+			transition-duration: 0.01ms !important;
+			animation-duration: 0.01ms !important;
+			scroll-behavior: auto !important;
+		}
+
+		.animate-spin,
+		.loading-spinner {
+			animation-duration: 2s !important;
+		}
+
+		.animate-pulse {
+			animation: none !important;
+		}
+	}
 }
 
 /* ============================================
-   UNOS Design System - Component Classes
+   UNOS Design System - Component Classes (ADR-0428)
    ============================================ */
 
 @layer components {
@@ -143,149 +183,217 @@
 	   Layout
 	   ---------------------------------------- */
 	.page-container {
-		@apply space-y-6;
+		@apply mx-auto max-w-[1440px] space-y-6;
 	}
 
 	/* A title and its buttons: on a narrow screen the buttons wrap below the title (ADR-0302). */
 	.page-header {
-		@apply flex flex-wrap items-center justify-between gap-x-4 gap-y-3;
+		@apply flex flex-wrap items-end justify-between gap-x-4 gap-y-3;
 	}
 
 	.page-title {
-		@apply text-2xl font-bold text-content;
+		@apply text-2xl font-semibold tracking-[-0.01em] text-content;
+		overflow-wrap: anywhere;
+	}
+
+	/* One line under the page title, such as a count. */
+	.page-subtitle {
+		@apply mt-0.5 text-sm text-content-secondary;
+	}
+
+	.page-actions {
+		@apply flex flex-wrap items-center gap-2;
 	}
 
 	.section-title {
-		@apply text-lg font-semibold text-content flex items-center gap-2;
+		@apply text-base font-semibold text-content flex items-center gap-2;
+	}
+
+	/* The System tabs that are forms. */
+	.content-narrow {
+		@apply max-w-[960px];
+	}
+
+	/* A label above a group of links or tabs, or a divider between runs of cards. */
+	.eyebrow {
+		@apply text-2xs font-semibold uppercase tracking-[0.06em] text-content-muted;
 	}
 
 	/* ----------------------------------------
 	   Cards
 	   ---------------------------------------- */
 	.card {
-		@apply bg-surface-elevated rounded-lg p-4;
+		@apply bg-surface-elevated border border-border rounded-card shadow-raised p-5 min-w-0;
 	}
 
 	.card-header {
-		@apply flex flex-wrap items-center justify-between gap-2 mb-4;
+		@apply flex flex-wrap items-center justify-between gap-x-3 gap-y-2 mb-4;
 	}
 
 	.card-title {
-		@apply font-semibold text-content flex items-center gap-2;
+		@apply text-[15px] leading-[22px] font-semibold text-content flex items-center gap-2;
+	}
+
+	.card-description {
+		@apply mt-0.5 text-[13px] leading-[18px] text-content-secondary;
 	}
 
 	.card-nested {
-		@apply bg-surface-muted rounded-lg p-4;
+		@apply bg-surface-muted border border-border-muted rounded-lg p-4 min-w-0;
+	}
+
+	/* A card that holds a table: the table reaches its edges, and its outer cells take the card's
+	   padding. */
+	.card-flush {
+		@apply p-0 overflow-hidden;
+	}
+
+	.card-flush > .card-header {
+		@apply px-5 pt-4 mb-2;
 	}
 
 	/* ----------------------------------------
-	   Buttons
+	   Buttons: 32, 36 and 44 px; never below 40 px on a touch screen
 	   ---------------------------------------- */
 	.btn {
-		@apply inline-flex items-center justify-center gap-2 rounded-lg font-medium transition-colors
-		       focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-surface
+		@apply inline-flex items-center justify-center gap-2 rounded border border-transparent font-medium
 		       disabled:cursor-not-allowed disabled:opacity-50;
+		transition: background-color var(--dur-fast), color var(--dur-fast), border-color var(--dur-fast);
 	}
 
 	/* Button sizes */
 	.btn-sm {
-		@apply px-3 py-1.5 text-sm;
+		@apply min-h-8 px-3 py-1 text-[13px];
 	}
 
 	.btn-md {
-		@apply px-4 py-2 text-sm;
+		@apply min-h-9 px-3.5 py-1.5 text-sm;
 	}
 
 	.btn-lg {
-		@apply px-5 py-2.5 text-base;
+		@apply min-h-11 px-5 py-2 text-base;
 	}
 
 	.btn-icon {
-		@apply p-2;
+		@apply min-h-9 min-w-9 p-2;
 	}
 
 	.btn-icon-sm {
-		@apply p-1.5;
+		@apply min-h-8 min-w-8 p-1.5;
+	}
+
+	@media (pointer: coarse) {
+		.btn {
+			min-height: 40px;
+		}
+
+		.btn-icon,
+		.btn-icon-sm {
+			min-width: 40px;
+		}
 	}
 
 	/* Button variants */
 	.btn-primary {
-		@apply bg-brand text-content-on-brand hover:bg-brand-hover focus:ring-brand-ring;
+		@apply bg-brand text-content-on-brand hover:bg-brand-hover;
 	}
 
 	.btn-secondary {
-		@apply bg-surface-overlay text-content hover:bg-surface-hover focus:ring-brand-ring;
+		@apply bg-surface-overlay border-border text-content hover:bg-surface-hover;
 	}
 
 	.btn-danger {
-		@apply bg-solid-error text-content-on-brand hover:bg-solid-error-hover focus:ring-brand-ring;
+		@apply bg-solid-error text-content-on-brand hover:bg-solid-error-hover;
 	}
 
 	.btn-warning {
-		@apply bg-solid-warning text-content-on-brand hover:bg-solid-warning-hover focus:ring-brand-ring;
+		@apply bg-solid-warning text-content-on-brand hover:bg-solid-warning-hover;
 	}
 
 	.btn-success {
-		@apply bg-solid-success text-content-on-brand hover:bg-solid-success-hover focus:ring-brand-ring;
+		@apply bg-solid-success text-content-on-brand hover:bg-solid-success-hover;
 	}
 
 	.btn-ghost {
-		@apply bg-transparent text-content-secondary hover:text-content hover:bg-surface-overlay focus:ring-brand-ring;
+		@apply bg-transparent text-content-secondary hover:text-content hover:bg-surface-overlay;
 	}
 
-	/* Tabs, for a Button of variant plain: pills in a bar, or a line under the tab in a dialog. */
-	.tab-pill {
-		@apply px-4 py-2 rounded-md text-sm font-medium transition-colors text-content-secondary hover:text-content;
+	/* An icon button that deletes or removes. */
+	.btn-ghost-danger {
+		@apply bg-transparent text-status-error hover:bg-status-error/10;
 	}
 
-	.tab-pill-active {
-		@apply bg-brand text-content-on-brand hover:text-content-on-brand;
+	/* ----------------------------------------
+	   Tabs, for a Button of variant plain. Page tabs are a line under the row
+	   (tab-bar with tab-underline); tab-pill is the segmented control of filters and views.
+	   ---------------------------------------- */
+	.tab-bar {
+		@apply flex flex-wrap gap-x-1 border-b border-border;
 	}
 
 	.tab-underline {
-		@apply flex items-center gap-2 px-4 py-2.5 text-sm font-medium transition-colors text-content-secondary hover:text-content;
+		@apply relative flex items-center gap-2 px-3 py-2.5 -mb-px text-sm font-medium border-b-2 border-transparent text-content-secondary hover:text-content;
+		transition: color var(--dur-fast), border-color var(--dur-fast);
 	}
 
 	.tab-underline-active {
-		@apply text-status-info border-b-2 border-brand-ring hover:text-status-info;
+		@apply text-content border-brand-ring hover:text-content;
+	}
+
+	.segmented {
+		@apply inline-flex flex-wrap gap-0.5 p-0.5 rounded-lg bg-surface-overlay;
+	}
+
+	.tab-pill {
+		@apply px-3 py-1.5 rounded text-[13px] font-medium text-content-secondary hover:text-content;
+		transition: background-color var(--dur-fast), color var(--dur-fast);
+	}
+
+	.tab-pill-active {
+		@apply bg-surface-elevated text-content shadow-raised hover:text-content;
 	}
 
 	/* ----------------------------------------
 	   Form Elements
 	   ---------------------------------------- */
 	.form-label {
-		@apply block text-sm font-medium text-content-secondary mb-1;
+		@apply block text-[13px] leading-[18px] font-medium text-content-soft mb-1.5;
 	}
 
-	.form-input {
-		@apply w-full px-3 py-2 bg-surface-overlay border border-border-strong rounded-lg text-content
-		       placeholder:text-content-muted
-		       focus:outline-none focus:border-brand-ring focus:ring-1 focus:ring-brand-ring;
-	}
-
+	.form-input,
 	.form-select {
-		@apply w-full px-3 py-2 bg-surface-overlay border border-border-strong rounded-lg text-content
-		       focus:outline-none focus:border-brand-ring focus:ring-1 focus:ring-brand-ring;
+		@apply w-full min-h-9 px-3 py-1.5 bg-surface-overlay border border-border-strong rounded text-content
+		       placeholder:text-content-muted;
+		transition: border-color var(--dur-fast), box-shadow var(--dur-fast);
+	}
+
+	.form-input:focus,
+	.form-select:focus {
+		@apply outline-none border-brand-ring;
+		box-shadow: 0 0 0 3px rgb(var(--color-brand-ring) / 0.25);
 	}
 
 	.form-checkbox {
-		@apply rounded border-border-strong bg-surface-overlay text-brand
-		       focus:ring-brand-ring focus:ring-offset-surface;
+		@apply rounded border-border-strong bg-surface-overlay text-brand;
 	}
 
 	.form-error {
-		@apply text-sm text-status-error mt-1;
+		@apply flex items-start gap-1.5 text-[13px] leading-[18px] text-status-error mt-1.5;
 	}
 
 	.form-hint {
-		@apply text-sm text-content-muted mt-1;
+		@apply text-[13px] leading-[18px] text-content-muted mt-1.5;
 	}
 
 	/* ----------------------------------------
-	   Badges
+	   Badges: 20 px, the 20 % tint of the colour
 	   ---------------------------------------- */
 	.badge {
-		@apply inline-flex items-center px-2 py-0.5 text-xs font-medium rounded;
+		@apply inline-flex items-center gap-1.5 min-h-5 px-[7px] text-xs font-medium rounded;
+	}
+
+	.badge-dot {
+		@apply w-1.5 h-1.5 rounded-full bg-current shrink-0;
 	}
 
 	.badge-success {
@@ -321,10 +429,10 @@
 	}
 
 	/* ----------------------------------------
-	   Status Indicators
+	   Status Indicators: an 8 px dot with a ring of the card it sits on
 	   ---------------------------------------- */
 	.status-dot {
-		@apply w-2 h-2 rounded-full;
+		@apply inline-block w-2 h-2 rounded-full shrink-0 ring-2 ring-surface-elevated;
 	}
 
 	.status-dot-success {
@@ -344,18 +452,19 @@
 	}
 
 	/* ----------------------------------------
-	   Progress Bars
+	   Progress Bars: 6 px, 4 px small
 	   ---------------------------------------- */
 	.progress-bar {
-		@apply h-2.5 bg-surface/60 rounded-full overflow-hidden ring-1 ring-border-muted;
+		@apply h-1.5 bg-surface-overlay rounded-full overflow-hidden;
 	}
 
 	.progress-bar-sm {
-		@apply h-1.5 ring-0;
+		@apply h-1;
 	}
 
 	.progress-bar-fill {
-		@apply h-full transition-all duration-300;
+		@apply h-full rounded-full;
+		transition: width var(--dur-slow) var(--ease);
 	}
 
 	.progress-fill-success {
@@ -375,34 +484,59 @@
 	}
 
 	/* ----------------------------------------
-	   Alerts
+	   Alerts: the 10 % tint, a 3 px bar of the colour on the left; the icon and title in the
+	   colour, the body in content
 	   ---------------------------------------- */
 	.alert {
-		@apply px-4 py-3 rounded-lg border;
+		@apply px-3.5 py-3 rounded-lg border border-l-[3px] text-content;
+	}
+
+	.alert-sm {
+		@apply px-3 py-2 text-[13px] leading-[18px];
+	}
+
+	.alert-title {
+		@apply font-semibold mb-0.5;
 	}
 
 	.alert-error {
-		@apply bg-status-error/10 border-status-error/50 text-status-error;
+		@apply bg-status-error/10 border-status-error/35 border-l-status-error;
 	}
 
 	.alert-warning {
-		@apply bg-status-warning/10 border-status-warning/50 text-status-warning;
+		@apply bg-status-warning/10 border-status-warning/35 border-l-status-warning;
 	}
 
 	.alert-success {
-		@apply bg-status-success/10 border-status-success/50 text-status-success;
+		@apply bg-status-success/10 border-status-success/35 border-l-status-success;
 	}
 
 	.alert-info {
-		@apply bg-status-info/10 border-status-info/50 text-status-info;
+		@apply bg-status-info/10 border-status-info/35 border-l-status-info;
+	}
+
+	.alert-error .alert-tone {
+		@apply text-status-error;
+	}
+
+	.alert-warning .alert-tone {
+		@apply text-status-warning;
+	}
+
+	.alert-success .alert-tone {
+		@apply text-status-success;
+	}
+
+	.alert-info .alert-tone {
+		@apply text-status-info;
 	}
 
 	/* ----------------------------------------
 	   Modal / Dialog
 	   ---------------------------------------- */
-	/* The dimmed backdrop of a dialog or a drawer: the theme's scrim colour, half transparent. */
+	/* The dimmed backdrop of a dialog or a drawer: the theme's scrim colour (60 % dark, 45 % light). */
 	.scrim {
-		background-color: rgb(var(--color-scrim) / 0.5);
+		background-color: rgb(var(--color-scrim) / var(--scrim-alpha));
 	}
 
 	.modal-overlay {
@@ -410,7 +544,19 @@
 	}
 
 	.modal {
-		@apply bg-surface-elevated rounded-lg p-6 w-full shadow-xl;
+		@apply bg-surface-elevated border border-border rounded-dialog p-5 sm:p-6 w-full shadow-dialog;
+		animation: dialog-in var(--dur-slow) var(--ease);
+	}
+
+	@keyframes dialog-in {
+		from {
+			opacity: 0;
+			transform: scale(0.98);
+		}
+		to {
+			opacity: 1;
+			transform: none;
+		}
 	}
 
 	.modal-sm {
@@ -430,50 +576,122 @@
 	}
 
 	.modal-header {
-		@apply flex items-center justify-between mb-4;
+		@apply flex items-center justify-between gap-3 mb-4;
 	}
 
 	.modal-title {
-		@apply text-xl font-bold text-content;
+		@apply text-lg leading-[26px] font-semibold text-content;
+	}
+
+	/* The error icon of a dangerous action, in a tinted circle before the title. */
+	.modal-danger-icon {
+		@apply grid place-items-center w-8 h-8 shrink-0 rounded-full bg-status-error/20 text-status-error;
 	}
 
 	.modal-close {
-		@apply text-content-secondary hover:text-content transition-colors;
+		@apply text-content-secondary hover:text-content;
 	}
 
 	.modal-body {
 		@apply space-y-4;
 	}
 
+	/* Right-aligned from sm, the primary button last (the DOM's order is the visual order); below
+	   sm the buttons share the row, wrapping when long. The pages' footers give their buttons
+	   flex-1: from sm they take their own width. */
 	.modal-footer {
-		@apply flex gap-3 pt-4;
+		@apply flex flex-wrap justify-end gap-2 mt-5 pt-4 border-t border-border;
+	}
+
+	/* A phone held sideways: less room around a dialog's parts, so that its title stays in view. */
+	@media (max-height: 480px) {
+		.modal {
+			@apply p-4;
+		}
+
+		.modal-header {
+			@apply mb-3;
+		}
+
+		.modal-footer {
+			@apply mt-4 pt-3;
+		}
+	}
+
+	.modal-footer > .btn {
+		flex: 1 1 auto;
+	}
+
+	@media (min-width: 640px) {
+		.modal-footer > .btn {
+			flex: 0 0 auto;
+		}
 	}
 
 	/* ----------------------------------------
-	   Tables
+	   Tables: cells with side padding (the outer ones without, inside a card's padding), tabular
+	   figures; :where keeps a page's own utilities stronger than these
 	   ---------------------------------------- */
 	.table {
 		@apply w-full text-sm;
+	}
+
+	.table :where(th) {
+		@apply px-3 py-2.5 text-left text-xs font-medium text-content-secondary align-bottom;
+	}
+
+	.table :where(td) {
+		@apply px-3 py-2.5 align-top;
+		font-variant-numeric: tabular-nums;
+	}
+
+	.table :where(th:first-child, td:first-child) {
+		@apply pl-0;
+	}
+
+	.table :where(th:last-child, td:last-child) {
+		@apply pr-0;
+	}
+
+	.card-flush .table :where(th:first-child, td:first-child) {
+		@apply pl-5;
+	}
+
+	.card-flush .table :where(th:last-child, td:last-child) {
+		@apply pr-5;
+	}
+
+	.table-compact :where(td) {
+		@apply py-1.5;
 	}
 
 	.table-header {
 		@apply text-left text-content-secondary border-b border-border;
 	}
 
-	.table-header th {
-		@apply pb-3 font-medium;
-	}
-
 	.table-row {
 		@apply border-b border-border-muted;
+		transition: background-color var(--dur-fast);
 	}
 
-	.table-row td {
-		@apply py-3;
+	.table-row:hover {
+		@apply bg-surface-overlay/60;
 	}
 
 	.table-row:last-child {
 		@apply border-b-0;
+	}
+
+	/* Sizes and counts: right-aligned, tabular. */
+	.table .num,
+	.num {
+		@apply text-right whitespace-nowrap;
+		font-variant-numeric: tabular-nums;
+	}
+
+	/* A row's icon buttons, right-aligned and always visible: a touch screen has no hover. */
+	.table-actions {
+		@apply flex flex-wrap items-center justify-end gap-1;
 	}
 
 	/* The frame of a table that can be wider than the screen: the table scrolls sideways in it,
@@ -484,14 +702,67 @@
 	}
 
 	/* ----------------------------------------
-	   Navigation
+	   Key-value lists: a label over its value, two to four columns by width. div > span, so that
+	   a field is found by its label's span.
+	   ---------------------------------------- */
+	.kv {
+		@apply grid gap-x-6 gap-y-3;
+		grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));
+	}
+
+	.kv > div {
+		@apply flex flex-col gap-0.5 min-w-0;
+	}
+
+	.kv-label {
+		@apply text-xs text-content-secondary;
+	}
+
+	.kv-value {
+		@apply text-sm text-content;
+		overflow-wrap: anywhere;
+	}
+
+	/* ----------------------------------------
+	   Toolbars: groups of buttons, a divider between groups from md
+	   ---------------------------------------- */
+	.toolbar {
+		@apply flex flex-wrap items-center gap-x-4 gap-y-2;
+	}
+
+	.toolbar-group {
+		@apply flex flex-wrap items-center gap-2;
+	}
+
+	@media (min-width: 768px) {
+		.toolbar-group + .toolbar-group {
+			@apply pl-4 border-l border-border;
+		}
+	}
+
+	/* ----------------------------------------
+	   Navigation: the sidebar's links and System's tabs
 	   ---------------------------------------- */
 	.nav-item {
-		@apply flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors;
+		@apply relative flex items-center gap-2.5 min-h-9 px-2.5 py-1.5 rounded text-sm;
+		transition: background-color var(--dur-fast), color var(--dur-fast);
+	}
+
+	.nav-item svg {
+		@apply w-[18px] h-[18px] shrink-0 text-content-muted;
 	}
 
 	.nav-item-active {
-		@apply bg-brand text-content-on-brand;
+		@apply bg-brand/20 text-content font-medium;
+	}
+
+	.nav-item-active svg {
+		@apply text-brand-ring;
+	}
+
+	.nav-item-active::before {
+		content: '';
+		@apply absolute left-0 top-2 bottom-2 w-[3px] rounded-r-[3px] bg-brand-ring;
 	}
 
 	.nav-item-inactive {
@@ -502,42 +773,66 @@
 	   Stat Cards (Dashboard widgets)
 	   ---------------------------------------- */
 	.stat-card {
-		@apply card;
+		@apply card p-4 flex flex-col gap-1.5;
 	}
 
 	.stat-card-header {
-		@apply flex items-center gap-2 mb-2;
+		@apply flex items-center gap-2 mb-0.5 min-w-0;
+	}
+
+	/* The 28 px icon chip of a stat tile, in the widget's accent. */
+	.stat-chip {
+		@apply grid place-items-center w-7 h-7 shrink-0 rounded-[7px];
 	}
 
 	.stat-card-label {
-		@apply text-sm text-content-secondary;
+		@apply text-[13px] font-medium text-content-secondary truncate;
+	}
+
+	.stat-card-context {
+		@apply ml-auto text-xs text-content-muted whitespace-nowrap;
 	}
 
 	.stat-card-value {
-		@apply text-2xl font-bold;
+		@apply text-2xl md:text-[28px] md:leading-[34px] font-semibold tracking-[-0.01em];
+		font-variant-numeric: tabular-nums;
+	}
+
+	/* Calm in the normal range: the class stays, the colour is the text's. */
+	.stat-card-value.text-success {
+		@apply text-content;
 	}
 
 	.stat-card-sublabel {
 		@apply text-xs text-content-muted;
+		font-variant-numeric: tabular-nums;
 	}
 
 	/* ----------------------------------------
 	   Empty States
 	   ---------------------------------------- */
 	.empty-state {
-		@apply text-center py-8;
+		@apply flex flex-col items-center text-center py-12 px-4;
+	}
+
+	.empty-state-compact {
+		@apply py-6;
+	}
+
+	.empty-state-icon-wrap {
+		@apply grid place-items-center w-11 h-11 mb-3 rounded-full bg-surface-overlay;
 	}
 
 	.empty-state-icon {
-		@apply w-12 h-12 mx-auto mb-4 text-content-muted;
+		@apply w-5 h-5 text-content-secondary;
 	}
 
 	.empty-state-title {
-		@apply text-lg font-medium text-content-secondary mb-1;
+		@apply text-[15px] font-semibold text-content mb-1;
 	}
 
 	.empty-state-description {
-		@apply text-sm text-content-muted;
+		@apply text-sm text-content-secondary max-w-[48ch];
 	}
 
 	/* ----------------------------------------
@@ -549,6 +844,11 @@
 
 	.loading-text {
 		@apply text-center text-content-muted py-8;
+	}
+
+	/* A bar of a skeleton, in a card that waits (aria-busy on the card). */
+	.skeleton {
+		@apply h-3 rounded bg-surface-overlay animate-pulse;
 	}
 
 	/* ----------------------------------------
@@ -582,6 +882,16 @@
 		@apply text-status-info;
 	}
 
+	/* A text link. */
+	.link {
+		@apply font-medium text-content-link hover:underline;
+	}
+
+	/* Figures that change (sizes, rates, times) keep their width. */
+	.tabular {
+		font-variant-numeric: tabular-nums;
+	}
+
 	/* Icon accent colors */
 	.icon-cpu {
 		@apply text-accent-cpu;
@@ -607,11 +917,36 @@
 		@apply text-accent-temperature;
 	}
 
+	/* The icon chip of a stat tile: the accent on its 20 % tint. */
+	.chip-cpu {
+		@apply bg-accent-cpu/20 text-accent-cpu;
+	}
+
+	.chip-memory {
+		@apply bg-accent-memory/20 text-accent-memory;
+	}
+
+	.chip-network {
+		@apply bg-accent-network/20 text-accent-network;
+	}
+
+	.chip-storage {
+		@apply bg-accent-storage/20 text-accent-storage;
+	}
+
+	.chip-container {
+		@apply bg-accent-container/20 text-accent-container;
+	}
+
+	.chip-temperature {
+		@apply bg-accent-temperature/20 text-accent-temperature;
+	}
+
 	/* ----------------------------------------
 	   Monospace text
 	   ---------------------------------------- */
 	.mono {
-		@apply font-mono text-sm;
+		@apply font-mono text-[13px];
 	}
 
 	.mono-xs {
