@@ -253,6 +253,42 @@ class SmbUidName(Base):
     linux_name = Column(String(32), primary_key=True)
 
 
+class IscsiTarget(Base):
+    """An iSCSI target of a volume, with one LUN: a sparse file in the volume (ADR-0417).
+
+    Its CHAP secrets are not here but in shares.iscsi.SECRETS_FILE, keyed by ``uid``: a database
+    restored from another installation finds none for its targets, which are then not served.
+    Values read from these rows are checked again before they reach configfs or a host command.
+    """
+
+    __tablename__ = "iscsi_targets"
+
+    id = Column(Integer, primary_key=True)
+    name = Column(String(32), nullable=False, unique=True)
+    # 32 random hex digits: the key of the secrets, the name of the LUN's storage object in configfs
+    # and its VPD unit serial; its first 8 make the IQN unique.
+    uid = Column(String(32), nullable=False, unique=True)
+    iqn = Column(String(223), nullable=False, unique=True)
+    pool = Column(String(63), nullable=False)
+    volume = Column(String(63), nullable=False)
+    size_gib = Column(Integer, nullable=False)
+    chap_user = Column(String(64), nullable=False)
+    mutual = Column(Boolean, nullable=False, default=False)
+    created_at = Column(DateTime, nullable=False, server_default=func.now())
+
+
+class IscsiInitiator(Base):
+    """An initiator that may log in to a target, by its iSCSI name (ADR-0417). SQLite does not
+    enforce the foreign key: a target's delete deletes its rows in the same transaction."""
+
+    __tablename__ = "iscsi_initiators"
+    __table_args__ = (UniqueConstraint("target_id", "name", name="uq_iscsi_initiators_target_name"),)
+
+    id = Column(Integer, primary_key=True)
+    target_id = Column(Integer, ForeignKey("iscsi_targets.id"), nullable=False, index=True)
+    name = Column(String(223), nullable=False)
+
+
 async def get_smb_state(db: AsyncSession) -> SmbState:
     """The single SmbState row; added to the session (flushed, not committed) when missing."""
     state = await db.get(SmbState, 1)

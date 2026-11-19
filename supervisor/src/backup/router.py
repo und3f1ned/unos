@@ -1027,6 +1027,10 @@ async def _after_database_restore(result: dict) -> None:
         except Exception:
             logger.exception("The SMB state could not be updated after the database restore")
             warnings, applied = [SMB_REPAIRED_AT_START], False
+    # The restored database's iSCSI targets are served, and those it lacks are removed (ADR-0417).
+    from ..shares import iscsi
+
+    await iscsi.restore_targets(after_restore=True)
     result["warnings"].extend(warnings)
     if applied:
         result["restored"].append("smb_config")

@@ -464,6 +464,16 @@ manager, encrypted backup uploads, health checks, CI checks).
   `ups_name`, `host` and `port` are checked before they reach `upsc`.
 
 ### Added
+- iSCSI targets on the new **iSCSI** tab of Shares: a target gives the computers you allow a disk,
+  one LUN that is a sparse file in a volume of a pool, served by the kernel's LIO through configfs,
+  without a host package. CHAP is always on, one-way or mutual, with secrets of 12 to 16 characters
+  that UNOS generates or you type, kept in `/data/iscsi_secrets.json` (root only, in no backup) and
+  shown once; only the allowed initiators log in. The targets listen on port 3260 of the NAS's LAN
+  addresses only, which UNOS's firewall rules now let the local networks reach. UNOS restores its
+  targets at every start, and after a restore of the database, and removes those it no longer
+  knows; a target whose pool did not mount, whose LUN file is not as UNOS made it or whose secret is
+  missing is not served, and the tab says why. A pool or volume that holds a LUN is not unmounted,
+  forgotten or deleted, and a delete needs the target's name typed again (ADR-0417).
 - BookStack, Paperless-ngx and Linkwarden are back in the App Store, each with the container it needs
   beside it: BookStack with MariaDB 11.8, Paperless-ngx with Valkey and Linkwarden with PostgreSQL 16,
   every image pinned by its version and digest. UNOS generates their database passwords and keys as

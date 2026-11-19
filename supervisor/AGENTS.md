@@ -85,6 +85,7 @@ Python 3.11 and FastAPI. The package is `src`: tests import `src.*`, some from `
 | `groups.py` | groups of users and their API; smb.conf names their active members (ADR-0385) |
 | `listen.py` | the network interfaces that SMB listens on: the host's interfaces, smbd's listeners, the choice and Restart SMB (ADR-0391) |
 | `exports.py`, `nfs.py` | NFS: export files as exportfs reads them (pure); UNOS's own export file on the host, exportfs and the export rules (ADR-0321, ADR-0293) |
+| `iscsi.py`, `iscsi_router.py` | iSCSI targets: LIO in the host's configfs, the LUN files, the CHAP secrets file, the restore at the start and the API (ADR-0417) |
 
 The SMB flows of users (allow, turn on, password changes) are in `src/auth/router.py`. Rules:
 - UNOS alone writes smb.conf, rendered from the database (ADR-0074); every apply is staged,

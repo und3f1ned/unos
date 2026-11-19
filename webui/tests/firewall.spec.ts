@@ -181,7 +181,7 @@ test.describe('Firewall', () => {
     await card(page).getByRole('button', { name: 'Enable' }).click();
     const dialog = page.getByRole('dialog', { name: 'Turn the firewall on?' });
     await expect(dialog).toContainText(
-      'First UNOS adds rules that let the local networks reach the web UI (ports 80 and 443), SSH, SMB (445) and ' +
+      'First UNOS adds rules that let the local networks reach the web UI (ports 80 and 443), SSH, SMB (445), iSCSI (3260) and ' +
       'network discovery: 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 100.64.0.0/10, 169.254.0.0/16, fc00::/7, fe80::/10.',
     );
     await expect(dialog).toContainText(

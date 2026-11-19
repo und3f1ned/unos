@@ -17,6 +17,7 @@ from ..security.validators import (
     validate_pool_name,
     validate_volume_name,
 )
+from ..shares import iscsi
 from ..shares import service as shares_service
 from . import balances, devices, disks, pools, scrubs, spindown, volume_usage
 from .schemas import (
@@ -302,7 +303,8 @@ async def mount_pool_endpoint(request: Request, name: str, user: User = Depends(
     it mounts another subvolume than its top level by default: it is
     unmounted again. The pool's apps that could not start without it
     are started in the background; the response does not wait for them. Its
-    SMB shares are served again before it answers (ADR-0248). The audit log gets pool_mounted when
+    SMB shares and iSCSI targets are served again before it answers (ADR-0248, ADR-0417). The audit
+    log gets pool_mounted when
     it mounted the pool or wrote its fstab entry (ADR-0402).
     """
     validated_name = validate_pool_name(name)
@@ -313,6 +315,9 @@ async def mount_pool_endpoint(request: Request, name: str, user: User = Depends(
             AuditAction.POOL_MOUNTED, request, user.username, resource_type="pool", resource_id=validated_name,
             details=f"Mounted the pool {validated_name}",
         )
+    # The iSCSI targets of the pool's volumes, not served while it was not mounted (ADR-0417).
+    if iscsi.pool_user(validated_name):
+        await iscsi.restore_targets()
     return info
 
 

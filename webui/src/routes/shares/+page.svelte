@@ -24,6 +24,7 @@
 	import { ApiError } from '$lib/api/client';
 	import { Alert, Button, Card, EmptyState, Modal } from '$lib/components/ui';
 	import {
+		IscsiTab,
 		NfsExportFormModal,
 		RepairPermissionsModal,
 		ShareCard,
@@ -36,7 +37,8 @@
 	// i18n-ignore: the names of the protocols, the same in every language
 	const tabs = [
 		{ id: 'smb', label: 'SMB' },
-		{ id: 'nfs', label: 'NFS' }
+		{ id: 'nfs', label: 'NFS' },
+		{ id: 'iscsi', label: 'iSCSI' }
 	] as const;
 	type TabId = (typeof tabs)[number]['id'];
 
@@ -444,7 +446,7 @@
 			<Button icon={Plus} disabled={loading || paths.length === 0} on:click={openCreate}>
 				{$t('shares.smb.add')}
 			</Button>
-		{:else}
+		{:else if activeTab === 'nfs'}
 			<Button icon={Plus} disabled={loading || paths.length === 0} on:click={() => (nfsFormOpen = true)}>
 				{$t('shares.nfs.add')}
 			</Button>
@@ -633,6 +635,8 @@
 			</Card>
 
 			<SmbInterfacesCard />
+		{:else if activeTab === 'iscsi'}
+			<IscsiTab {paths} />
 		{:else}
 			{#if nfsStatus}
 				{#if nfsStatus.server_missing}

@@ -36,6 +36,7 @@ TCP_PORTS = "22,80,443,445,5357"
 UDP_PORTS = "3702,5355"
 WEB_SSH_SMB = "UNOS: web UI, SSH and SMB"
 DISCOVERY = "UNOS: network discovery"
+ISCSI = "UNOS: iSCSI"
 LOCAL_V4 = ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "100.64.0.0/10", "169.254.0.0/16"]
 LOCAL_V6 = ["fc00::/7", "fe80::/10"]
 
@@ -356,6 +357,7 @@ def base_rule_commands(ssh: str = TCP_PORTS, *, ipv6: bool = True) -> list[str]:
     for network in LOCAL_V4 + (LOCAL_V6 if ipv6 else []):
         commands.append(f"ufw allow in proto tcp from {network} to any port {ssh} comment {WEB_SSH_SMB}")
         commands.append(f"ufw allow in proto udp from {network} to any port {UDP_PORTS} comment {DISCOVERY}")
+        commands.append(f"ufw allow in proto tcp from {network} to any port 3260 comment {ISCSI}")
     return commands
 
 
@@ -572,6 +574,9 @@ class TestEnable:
             *(("ipv4", "udp", UDP_PORTS, net, True) for net in LOCAL_V4),
             *(("ipv6", "tcp", TCP_PORTS, net, True) for net in LOCAL_V6),
             *(("ipv6", "udp", UDP_PORTS, net, True) for net in LOCAL_V6),
+            # iSCSI's targets, from the local networks too (ADR-0417).
+            *(("ipv4", "tcp", "3260", net, True) for net in LOCAL_V4),
+            *(("ipv6", "tcp", "3260", net, True) for net in LOCAL_V6),
         }
 
     def test_ufws_logging_of_what_it_blocks_is_turned_off_once(self, client, ufw_host):

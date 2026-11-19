@@ -1360,6 +1360,15 @@ def _unmount_pool_target(name: str, target: str, mounts: list[disks.HostMount]) 
         raise PoolBusyError(
             f"Pool '{name}' is used by the off-device copy: {copying}. Wait for it to end and try again."
         )
+    # The kernel's iSCSI target holds the LUN files of a pool's volumes open: the targets are
+    # deleted first (ADR-0417). That module imports this one.
+    from ..shares import iscsi
+
+    targets = iscsi.pool_user(name)
+    if targets:
+        raise PoolBusyError(
+            f"Pool '{name}' holds the LUN of the iSCSI target {targets}: delete the target on the Shares page first."
+        )
     users = _containers_using(name, target, mounts)
     if users:
         raise PoolBusyError(
@@ -2633,7 +2642,8 @@ def _refuse_used_subvolume(what: str, path: str) -> None:
     (HTTP 503) when Docker cannot be asked about the containers or their
     volumes, as for an unmount of the pool (_containers_using). RuntimeError (HTTP 500)
     when the containers' folders cannot be resolved on the host or the shares cannot be read. A copy or a restore of the off-device copy whose folders are the
-    subvolume or lie in it is refused first, as for an unmount of its pool (ADR-0337).
+    subvolume or lie in it is refused first, as for an unmount of its pool (ADR-0337), and so is a
+    volume that holds the LUN of an iSCSI target (ADR-0417).
     """
     from ..offsite import service as offsite  # it imports this module
 
@@ -2641,6 +2651,13 @@ def _refuse_used_subvolume(what: str, path: str) -> None:
     if copying:
         raise PoolConflictError(
             f"{what} is used by the off-device copy: {copying}. Wait for it to end and try again."
+        )
+    from ..shares import iscsi  # it imports this module
+
+    targets = iscsi.volume_user(path)
+    if targets:
+        raise PoolConflictError(
+            f"{what} holds the LUN of the iSCSI target {targets}: delete the target on the Shares page first."
         )
     try:
         with _docker_api() as api:

@@ -130,6 +130,9 @@ export const en = {
 	'audit.action.certificateDeleted': 'Certificate deleted',
 	'audit.action.certificateServed': 'Certificate served',
 	'audit.action.firewallChangeKept': 'Firewall change kept',
+	'audit.action.iscsiTargetCreated': 'Iscsi target created',
+	'audit.action.iscsiTargetChanged': 'Iscsi target changed',
+	'audit.action.iscsiTargetDeleted': 'Iscsi target deleted',
 	'audit.action.other': 'Other',
 
 	// The types of resource that the server records: in English as it records them.
@@ -143,6 +146,7 @@ export const en = {
 	'audit.resource.group': 'group',
 	'audit.resource.smbAccount': 'smb_account',
 	'audit.resource.nfsExport': 'nfs_export',
+	'audit.resource.iscsiTarget': 'iscsi_target',
 	'audit.resource.apiToken': 'api_token',
 	'audit.resource.recoveryCodes': 'recovery_codes',
 	'audit.resource.securityKey': 'security_key',
@@ -289,6 +293,9 @@ export const ru: Translation<typeof en> = {
 	'audit.action.certificateDeleted': 'Сертификат удалён',
 	'audit.action.certificateServed': 'Сертификат HTTPS сменён',
 	'audit.action.firewallChangeKept': 'Изменение брандмауэра сохранено',
+	'audit.action.iscsiTargetCreated': 'Цель iSCSI создана',
+	'audit.action.iscsiTargetChanged': 'Цель iSCSI изменена',
+	'audit.action.iscsiTargetDeleted': 'Цель iSCSI удалена',
 	'audit.action.other': 'Другое',
 
 	'audit.resource.user': 'пользователь',
@@ -301,6 +308,7 @@ export const ru: Translation<typeof en> = {
 	'audit.resource.group': 'группа',
 	'audit.resource.smbAccount': 'учётная запись SMB',
 	'audit.resource.nfsExport': 'экспорт NFS',
+	'audit.resource.iscsiTarget': 'цель iSCSI',
 	'audit.resource.apiToken': 'API-токен',
 	'audit.resource.recoveryCodes': 'коды восстановления',
 	'audit.resource.securityKey': 'ключ безопасности',

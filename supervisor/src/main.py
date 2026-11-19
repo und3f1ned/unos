@@ -55,6 +55,8 @@ from .shares.router import router as shares_router
 from .shares.groups import router as groups_router
 from .shares import repair_router
 from .shares.repair_router import router as shares_repair_router
+from .shares import iscsi
+from .shares.iscsi_router import router as iscsi_router
 from .containers.router import router as containers_router
 from .apps import install_jobs
 from .apps.usage import start_app_resources, stop_app_resources
@@ -142,12 +144,16 @@ async def check_host_tools() -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await init_db()
+    # The volumes that hold the LUNs of iSCSI targets, which the Storage page does not unmount or
+    # delete (ADR-0417): read before the first request.
+    await iscsi.load_index()
     # UNOS_DISABLE_BACKGROUND_TASKS=1 (tests, development) also skips the pool
     # mount check below, because it mounts filesystems on the host.
     run_background = os.environ.get("UNOS_DISABLE_BACKGROUND_TASKS") != "1"
     host_tool_check: asyncio.Task | None = None
     smb_reconcile: asyncio.Task | None = None
     wol_reapply: asyncio.Task | None = None
+    iscsi_restore: asyncio.Task | None = None
     if run_background:
         # Runs beside the rest of startup (in a worker thread, bounded by
         # HOST_TOOL_CHECK_TIMEOUT), so a slow host neither delays nor fails it.
@@ -166,6 +172,10 @@ async def lifespan(app: FastAPI):
         # the state an administrator chose (power/router.py, ADR-0233), beside
         # the startup. Logs, never raises.
         wol_reapply = asyncio.create_task(reapply_wol_settings(), name="unos-wol-reapply")
+        # configfs is in RAM: the iSCSI targets are served again after a reboot, once the pools are
+        # mounted, and UNOS's targets that the database no longer has are removed (ADR-0417).
+        # Beside the startup. Logs, never raises.
+        iscsi_restore = asyncio.create_task(iscsi.restore_targets(), name="unos-iscsi-restore")
     # Background loops must be started here. FastAPI ignores router-level
     # @router.on_event hooks when the app defines a lifespan, which silently
     # disabled the scheduler and all monitors in earlier releases.
@@ -185,10 +195,14 @@ async def lifespan(app: FastAPI):
         # A point of the host's CPU, memory, network and disks every 10 s, an hour of them in RAM,
         # for the Resource Monitor's history (ADR-0399).
         await start_history()
+        # Applies the iSCSI targets again when the host's LAN addresses changed, every 5 minutes
+        # while a target exists (ADR-0417).
+        await iscsi.start_follow()
     try:
         yield
     finally:
         if run_background:
+            await iscsi.stop_follow()
             await stop_history()
             await stop_app_resources()
             await stop_upload_leftover_check()
@@ -208,6 +222,9 @@ async def lifespan(app: FastAPI):
         if wol_reapply is not None:
             wol_reapply.cancel()
             await asyncio.gather(wol_reapply, return_exceptions=True)
+        if iscsi_restore is not None:
+            iscsi_restore.cancel()
+            await asyncio.gather(iscsi_restore, return_exceptions=True)
         # The copies and restores of the off-device copy that Run now and Restore files started end
         # with their restic, and are recorded as stopped (ADR-0337); the Scheduler's end with it.
         await stop_offsite()
@@ -298,6 +315,7 @@ for _router in (
     storage_router,
     shares_router,
     shares_repair_router,
+    iscsi_router,
     groups_router,
     containers_router,
     apps_router,

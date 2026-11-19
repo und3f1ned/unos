@@ -122,6 +122,10 @@ class AuditAction(str, Enum):
     SSL_CERT_SERVED = "certificate_served"
     # A firewall change kept before its revert undid it (ADR-0416)
     FIREWALL_CHANGE_KEPT = "firewall_change_kept"
+    # iSCSI targets of volumes (ADR-0417); their details name no secret
+    ISCSI_TARGET_CREATED = "iscsi_target_created"
+    ISCSI_TARGET_CHANGED = "iscsi_target_changed"
+    ISCSI_TARGET_DELETED = "iscsi_target_deleted"
 
     # Generic
     OTHER = "other"

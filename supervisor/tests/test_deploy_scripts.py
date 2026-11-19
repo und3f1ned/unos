@@ -1168,7 +1168,9 @@ class TestInstallScript:
 
         (tmp_path / "dependencies").mkdir()
         packages = set(_install_packages(tmp_path / "dependencies"))
-        essential = {"e2fsprogs", "util-linux", "mount", "udev", "systemd", "systemd-sysv", "passwd", "libc-bin"}
+        # kmod: modprobe, with which the kernel itself loads modules (shares/iscsi.py, ADR-0417).
+        essential = {"e2fsprogs", "util-linux", "mount", "udev", "systemd", "systemd-sysv", "passwd", "libc-bin",
+                     "kmod"}
         assert set(HOST_TOOLS.values()) <= packages | essential
 
     @pytest.mark.parametrize("name", ["update.sh", "uninstall.sh"])

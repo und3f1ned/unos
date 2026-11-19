@@ -147,6 +147,9 @@
 		certificate_deleted: 'audit.action.certificateDeleted',
 		certificate_served: 'audit.action.certificateServed',
 		firewall_change_kept: 'audit.action.firewallChangeKept',
+		iscsi_target_created: 'audit.action.iscsiTargetCreated',
+		iscsi_target_changed: 'audit.action.iscsiTargetChanged',
+		iscsi_target_deleted: 'audit.action.iscsiTargetDeleted',
 		other: 'audit.action.other'
 	};
 	// An info entry shows no severity.
@@ -165,6 +168,7 @@
 		group: 'audit.resource.group',
 		smb_account: 'audit.resource.smbAccount',
 		nfs_export: 'audit.resource.nfsExport',
+		iscsi_target: 'audit.resource.iscsiTarget',
 		api_token: 'audit.resource.apiToken',
 		recovery_codes: 'audit.resource.recoveryCodes',
 		security_key: 'audit.resource.securityKey',
