@@ -70,12 +70,20 @@ def server(tmp_path):
         assert "serves" in process.stderr.readline()
         context = ssl.create_default_context(cafile=str(cert))
 
-        def request(method, path, body=None, headers=None, auth=True):
+        def request(method, path, body=None, headers=None, auth=True, length=True):
+            """An iterable body goes chunked (http.client does so without a Content-Length);
+            length=False sends no Content-Length and no body at all."""
             connection = http.client.HTTPSConnection("127.0.0.1", port, context=context, timeout=10)
             sent = dict(headers or {})
             if auth:
                 sent["Authorization"] = "Basic " + base64.b64encode(f"unoscheck:{PASSWORD}".encode()).decode()
-            connection.request(method, path, body=body, headers=sent)
+            if length:
+                connection.request(method, path, body=body, headers=sent)
+            else:
+                connection.putrequest(method, path)
+                for name, value in sent.items():
+                    connection.putheader(name, value)
+                connection.endheaders()
             answer = connection.getresponse()
             data = answer.read()
             connection.close()
@@ -114,6 +122,18 @@ def test_the_calls_of_restics_client_round_trip(server):
     assert request("DELETE", f"/unos/data/{NAME}")[0].status == 200
     assert request("DELETE", f"/unos/data/{NAME}")[0].status == 404
     assert request("GET", f"/unos/keys/{NAME}")[0].status == 404
+
+
+def test_restic_018s_bodies_without_a_length_are_read(server):
+    """restic 0.18 sends POST ?create=true without a Content-Length and its uploads chunked: the
+    batch-16 device check failed at its first save with 411 (RFC 9112 6.3: no Content-Length and no
+    Transfer-Encoding is an empty body)."""
+    request, root = server
+    assert request("POST", "/unos/?create=true", body=None, length=False)[0].status == 200
+    assert request("POST", "/unos/config", body=iter([b"the ", b"chunked ", b"config"]))[0].status == 200
+    assert (root / "unos" / "config").read_bytes() == b"the chunked config"
+    assert request("POST", f"/unos/data/{NAME}", body=iter([b"01234", b"56789"]))[0].status == 200
+    assert (root / "unos" / "data" / "ab" / NAME).read_bytes() == b"0123456789"
 
 
 def test_requests_without_the_password_and_paths_out_of_the_root_are_refused(server):

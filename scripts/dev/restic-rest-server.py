@@ -36,6 +36,9 @@ _RANGE = re.compile(r"bytes=(\d+)-(\d*)")
 CHUNK = 1024 * 1024
 
 
+# The longest line of a chunked body's size or trailer that the server reads.
+MAX_LINE = 1024
+
 class Refused(Exception):
     def __init__(self, status: int, text: str) -> None:
         super().__init__(text)
@@ -100,9 +103,28 @@ class Handler(http.server.BaseHTTPRequestHandler):
         return os.path.join(folder, what, name)
 
     def _body(self) -> bytes:
+        """The request's body: chunked, of its Content-Length, or none. restic 0.18 sends POST
+        ?create=true without a length and its uploads chunked; a request with neither header has
+        an empty body (RFC 9112 6.3)."""
+        if "chunked" in self.headers.get("Transfer-Encoding", "").lower():
+            parts = []
+            while True:
+                line = self.rfile.readline(MAX_LINE)
+                try:
+                    size = int(line.split(b";")[0].strip(), 16)
+                except ValueError:
+                    raise Refused(400, "a chunk without its size") from None
+                if size == 0:
+                    while self.rfile.readline(MAX_LINE) not in (b"\r\n", b"\n", b""):
+                        pass  # the trailer
+                    return b"".join(parts)
+                parts.append(self.rfile.read(size))
+                self.rfile.readline(MAX_LINE)
         length = self.headers.get("Content-Length")
-        if length is None or not length.isdigit():
-            raise Refused(411, "a Content-Length is needed")
+        if length is None:
+            return b""
+        if not length.isdigit():
+            raise Refused(400, "a Content-Length that is not a number")
         return self.rfile.read(int(length))
 
     def _handle(self, method: str) -> None:
