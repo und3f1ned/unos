@@ -101,7 +101,9 @@ fi
 
 # python_env <dir> <what> "<files>" <pip arguments...>: the venv in <dir>, installed with the pip
 # arguments; <files> (separated by spaces) are the requirement files it depends on, those that the
-# -r files include as well.
+# -r files include as well. Wheels only (ADR-0423), so that pip runs the build code of no package;
+# the supervisor's venv lets nut2, which publishes no wheel, come as its sdist (--no-binary=nut2,
+# after --only-binary=:all:, which would clear it).
 python_env() {
     local dir=$1 what=$2 files=$3
     shift 3
@@ -128,16 +130,17 @@ python_env() {
         doing "creating $dir with $python311"
         "$python311" -m venv --clear "$dir" || failed "creating $dir failed (Debian/Ubuntu: apt install python3.11-venv)"
     fi
-    doing "$dir: pip install $*"
-    "$dir/bin/python" -m pip install --disable-pip-version-check -q "$@" \
-        || failed "pip install for $dir failed (it needs the network); see the output above"
+    doing "$dir: pip install --only-binary=:all: $*"
+    "$dir/bin/python" -m pip install --disable-pip-version-check -q --only-binary=:all: "$@" \
+        || failed "pip install for $dir failed (it needs the network, and a wheel of every package for this machine); see the output above"
     printf '%s\n' "$want" > "$dir/.unos-setup.sha256"
     ok "$dir ($what)"
 }
 
 echo "setup.sh: this checkout ($repo)"
 python_env supervisor/.venv "Python 3.11 with supervisor/requirements-dev.txt" \
-    "supervisor/requirements.txt supervisor/requirements-dev.txt" -r supervisor/requirements-dev.txt
+    "supervisor/requirements.txt supervisor/requirements-dev.txt" --no-binary=nut2 \
+    -r supervisor/requirements-dev.txt
 python_env .venv-lint "ruff and pip-audit with their hashes" \
     ".github/lint-requirements.txt" --require-hashes -r .github/lint-requirements.txt
 

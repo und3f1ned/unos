@@ -5,7 +5,9 @@
 # usually pulled by then.
 #
 # Not here: .github/lint-requirements.txt (ruff and pip-audit with every dependency and hash,
-# compiled by uv from lint-requirements.in; docs/TESTING.md has the command); Playwright, that is
+# compiled by uv from lint-requirements.in; docs/TESTING.md has the command) and
+# .github/audit-env-requirements.txt (the hashed tools of scripts/audit-python.sh, ADR-0423), moved
+# by hand in the monthly maintenance pass; Playwright, that is
 # @playwright/test and the image of webui/Dockerfile.test, which carries its version, moved together
 # by hand in the monthly maintenance pass; and new major versions of npm packages, which change the
 # web UI's toolchain and come as features of feature-list.json (ADR-0231).
@@ -43,6 +45,9 @@ updates:
       npm:
         patterns: ["*"]
 
+  # The workflows pin every action to the commit of a release, with its version in a comment
+  # (`actions/checkout@<sha> # v7.0.1`, ADR-0423): Dependabot proposes the newer release's
+  # commit and rewrites the comment. No rule keeps an action back.
   - package-ecosystem: github-actions
     directory: /
     schedule:

@@ -16,7 +16,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# Wheels only, but nut2, which publishes none (ADR-0423). supervisor/Dockerfile leaves its pip layer
+# to pip's default, which with exact pins takes a wheel wherever the pinned version has one.
+RUN pip install --no-cache-dir --only-binary=:all: --no-binary=nut2 -r requirements.txt
 
 # Copy application code
 COPY src/ ./src/

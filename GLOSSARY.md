@@ -597,6 +597,15 @@ handoff skill (ADR-0204). Avoid: summary, progress report.
 (`python:3.11-slim@sha256:...`): the digest decides what is built, and only a commit that changes
 it moves the base (ADR-0305). Avoid: parent image.
 
+**Action pin**: The commit SHA that a workflow's `uses:` line names for a GitHub Action, with its
+release's version in a comment (`actions/checkout@3d3c42e... # v7.0.1`): a tag can be moved to
+other code, a commit cannot, and Dependabot proposes the next release's (ADR-0423). Avoid: action
+tag.
+
+**Audit environment**: The temporary virtual environment in which `scripts/audit-python.sh`
+resolves the supervisor's runtime dependencies for pip-audit, with pip, setuptools, wheel and
+packaging from `.github/audit-env-requirements.txt`, pinned with their hashes (ADR-0423).
+
 **Quality gate**: `make check`: the same steps as CI's test, lint and frontend jobs (ADR-0216).
 Avoid: CI (which also runs the audits and the Linux-only tests).
 

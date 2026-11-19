@@ -117,7 +117,8 @@ The SMB flows of users (allow, turn on, password changes) are in `src/auth/route
   `tests/test_smbconf_testparm.py` needs `scripts/dev/bin/testparm` on PATH (the device-checks
   skill).
 - After an edit of a file that tests read, run those tests: `test_deploy_scripts.py` (deploy/,
-  `docs/INSTALL.md`, `docs/TESTING.md`, `scripts/test-cycle.sh`, the workflow, Dockerfiles, package
-  files), `test_emergency.py` (`deploy/reset-admin.sh`, `docs/RECOVERY.md` and the links to it),
-  `test_authz.py`, `test_secret_bootstrap.py`, `test_request_limits.py`, `test_standin.py`,
-  `test_smb_accounts.py`, `test_smb_models.py` and those of `make test-fast`.
+  `docs/INSTALL.md`, `docs/TESTING.md`, `scripts/test-cycle.sh`, `scripts/audit-python.sh`, the
+  workflows, Dockerfiles, package files), `test_emergency.py` (`deploy/reset-admin.sh`,
+  `docs/RECOVERY.md` and the links to it), `test_authz.py`, `test_secret_bootstrap.py`,
+  `test_request_limits.py`, `test_standin.py`, `test_smb_accounts.py`, `test_smb_models.py` and
+  those of `make test-fast`.
