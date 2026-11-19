@@ -126,7 +126,7 @@
     </div>
     <div class="page-actions">
       <Button variant="secondary" icon={ArrowLeft} href="/files">{$t("files.trash.files")}</Button>
-      <!-- The span shows the tooltip: Button does not pass a title on. -->
+      <!-- The span shows the tooltip over the button and its text for screen readers. -->
       <span class="flex" title={$t("common.refresh")}>
         <Button variant="secondary" size="icon" disabled={loading} onclick={load}>
           <RefreshCw class="w-4 h-4 {loading ? 'animate-spin' : ''}" />

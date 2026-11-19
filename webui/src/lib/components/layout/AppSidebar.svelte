@@ -23,7 +23,7 @@
 		/** The path of the page shown. */
 		pathname: string;
 		user: User | null;
-		/** Whether the header bar of a phone offers the command palette (ADR-0393). */
+		/** Whether the sidebar from md, and the header bar of a phone, offer the command palette (ADR-0393, ADR-0428). */
 		paletteEnabled: boolean;
 		onlogout: () => void;
 		/** The Search button, or the header bar's, asks for the command palette, once the drawer has closed. */

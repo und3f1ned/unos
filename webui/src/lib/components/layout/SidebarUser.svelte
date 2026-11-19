@@ -1,9 +1,10 @@
 <script lang="ts">
+	import { untrack } from 'svelte';
 	import { LogOut } from 'lucide-svelte';
 	import type { User } from '$lib/api/auth';
 	import { Button } from '$lib/components/ui';
 	import { t } from '$lib/i18n';
-	import { wsConnected } from '$lib/stores/stats';
+	import { wsConnected, wsForbidden } from '$lib/stores/stats';
 
 	// The foot of the sidebar: whether the live connection is up, who is signed in, and Logout. An
 	// administrator's own password, two-factor authentication and theme are in System > Security:
@@ -19,8 +20,14 @@
 
 	let { user, onlogout, onnavigate }: Props = $props();
 
-	// The events socket is up once the server has taken its credentials.
+	// The events socket is up once the server has taken its credentials. Until it has been up once
+	// (or refused), the line says it connects and is no live region: a screen reader hears of the
+	// connection only when it changes afterwards, not at every page load.
 	const connected = $derived($wsConnected);
+	let settled = $state(false);
+	$effect(() => {
+		if ($wsConnected || $wsForbidden) untrack(() => (settled = true));
+	});
 </script>
 
 {#snippet who(user: User)}
@@ -37,26 +44,43 @@
 {/snippet}
 
 {#if user}
-	<!-- A polite status: it speaks when the state changes, and only then. -->
-	<div
-		class="flex items-center gap-2 px-[22px] py-2.5 border-t border-border text-xs text-content-secondary"
-		role="status"
-	>
-		<span
-			class="status-dot {connected ? 'status-dot-success' : 'status-dot-neutral'}"
-			aria-hidden="true"
-		></span>
-		{connected ? $t('layout.connected') : $t('layout.notConnected')}
-	</div>
+	{#snippet line(text: string, dot: string)}
+		<span class="status-dot {dot}" aria-hidden="true"></span>
+		{text}
+	{/snippet}
+	{#if !settled}
+		<div class="flex items-center gap-2 px-[22px] py-2.5 border-t border-border text-xs text-content-secondary">
+			{@render line($t('layout.connecting'), 'status-dot-neutral')}
+		</div>
+	{:else}
+		<!-- A polite live region that speaks when the state changes, and only then. No role status:
+		     a page's own status (a saved setting, a count) stays the page's one status. -->
+		<div
+			class="flex items-center gap-2 px-[22px] py-2.5 border-t border-border text-xs text-content-secondary"
+			aria-live="polite"
+			aria-atomic="true"
+		>
+			{#if $wsForbidden}
+				{@render line($t('layout.noLiveData'), 'status-dot-neutral')}
+			{:else}
+				{@render line(
+					connected ? $t('layout.connected') : $t('layout.notConnected'),
+					connected ? 'status-dot-success' : 'status-dot-warning'
+				)}
+			{/if}
+		</div>
+	{/if}
 	<div class="flex items-center gap-1 px-3 pt-1 pb-3">
 		{#if user.is_admin}
 			<a
 				href="/system#security"
 				title={$t('layout.yourAccount')}
 				onclick={onnavigate}
-				class="flex-1 min-w-0 flex items-center gap-2.5 p-1.5 rounded hover:bg-surface-overlay"
+				class="relative flex-1 min-w-0 flex items-center gap-2.5 p-1.5 rounded hover:bg-surface-overlay"
 			>
 				{@render who(user)}
+				<!-- Where the link goes, for a screen reader: the title shows only under a mouse. -->
+				<span class="sr-only">{`, ${$t('layout.yourAccount')}`}</span>
 			</a>
 		{:else}
 			<div class="flex-1 min-w-0 flex items-center gap-2.5 p-1.5">

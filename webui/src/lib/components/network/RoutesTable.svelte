@@ -10,7 +10,7 @@
 </script>
 
 <div class="card table-frame">
-  <table class="table">
+  <table class="table table-compact">
     <thead class="table-header">
       <tr>
         <th class="pr-4">{$t("network.routes.destination")}</th>

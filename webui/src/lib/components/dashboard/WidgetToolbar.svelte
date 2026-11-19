@@ -24,10 +24,11 @@
 	let { name, first, last, saving, ondragstart, ondragend, onmove, onhide }: Props = $props();
 </script>
 
-<!-- A small bar in the widget's top right corner while the widgets are arranged (ADR-0428). -->
+<!-- A small bar at the widget's top right while the widgets are arranged (ADR-0428), in the room
+     that the widget keeps above its card. -->
 <div
 	data-toolbar
-	class="absolute -top-3 right-2 z-[2] flex items-center gap-0.5 p-0.5 rounded-lg border border-border bg-surface-elevated shadow-popover"
+	class="absolute top-0 right-0 z-[2] flex items-center gap-0.5 p-0.5 rounded-lg border border-border bg-surface-elevated shadow-popover"
 >
 	<!-- Dragging is for a mouse; the buttons are for the keyboard and a finger. -->
 	<span

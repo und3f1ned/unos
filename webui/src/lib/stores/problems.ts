@@ -27,3 +27,9 @@ export interface Problem {
  * shows. Regular users never get one; empty again after sign-out.
  */
 export const problems = writable<Problem[]>([]);
+
+/**
+ * Whether the current socket has sent its problems message: until it has, an empty list says
+ * nothing, and the dashboard's "No problems" waits (ADR-0428). False again when the socket closes.
+ */
+export const problemsKnown = writable(false);

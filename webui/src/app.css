@@ -63,7 +63,7 @@
 		--color-shadow: 0 0 0; /* #000000 */
 		/* Elevation (no colour of its own: the shadow token) */
 		--scrim-alpha: 0.6;
-		--shadow-raised: none;
+		--shadow-raised: 0 0 rgb(var(--color-shadow) / 0);
 		--shadow-popover: 0 12px 32px -8px rgb(var(--color-shadow) / 0.6);
 		--shadow-dialog: 0 24px 48px -12px rgb(var(--color-shadow) / 0.7);
 	}
@@ -349,8 +349,9 @@
 		transition: background-color var(--dur-fast), color var(--dur-fast);
 	}
 
+	/* The chosen segment: lifted, with a boundary of border-strong (3:1 on the track). */
 	.tab-pill-active {
-		@apply bg-surface-elevated text-content shadow-raised hover:text-content;
+		@apply bg-surface-elevated text-content shadow-raised ring-1 ring-border-strong hover:text-content;
 	}
 
 	/* ----------------------------------------
@@ -367,10 +368,13 @@
 		transition: border-color var(--dur-fast), box-shadow var(--dur-fast);
 	}
 
+	/* A focused field: its border, a ring of brand-ring and a halo. */
 	.form-input:focus,
 	.form-select:focus {
 		@apply outline-none border-brand-ring;
-		box-shadow: 0 0 0 3px rgb(var(--color-brand-ring) / 0.25);
+		box-shadow:
+			0 0 0 1px rgb(var(--color-brand-ring)),
+			0 0 0 4px rgb(var(--color-brand-ring) / 0.25);
 	}
 
 	.form-checkbox {
@@ -392,8 +396,38 @@
 		@apply inline-flex items-center gap-1.5 min-h-5 px-[7px] text-xs font-medium rounded;
 	}
 
+	/* The dot of a state badge, in the badge's colour token (never currentColor: a text token as a
+	   background would leave the theme's walk of colours). */
 	.badge-dot {
-		@apply w-1.5 h-1.5 rounded-full bg-current shrink-0;
+		@apply w-1.5 h-1.5 rounded-full shrink-0 bg-status-neutral;
+	}
+
+	.badge-success .badge-dot {
+		@apply bg-status-success;
+	}
+
+	.badge-warning .badge-dot {
+		@apply bg-status-warning;
+	}
+
+	.badge-error .badge-dot {
+		@apply bg-status-error;
+	}
+
+	.badge-info .badge-dot {
+		@apply bg-status-info;
+	}
+
+	.badge-purple .badge-dot {
+		@apply bg-accent-memory;
+	}
+
+	.badge-cyan .badge-dot {
+		@apply bg-accent-container;
+	}
+
+	.badge-orange .badge-dot {
+		@apply bg-accent-temperature;
 	}
 
 	.badge-success {
@@ -702,8 +736,8 @@
 	}
 
 	/* ----------------------------------------
-	   Key-value lists: a label over its value, two to four columns by width. div > span, so that
-	   a field is found by its label's span.
+	   Key-value lists: a label over its value, as many columns of at least 10rem as fit. div > span,
+	   so that a field is found by its label's span.
 	   ---------------------------------------- */
 	.kv {
 		@apply grid gap-x-6 gap-y-3;

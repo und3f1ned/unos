@@ -38,7 +38,8 @@ groups, the system's own fonts. The entry is `webui.redesign`.
   colour), `content-link` on the four backgrounds, on `surface-hover` and on the brand 20 % tint,
   `content-secondary` on `surface-hover` and on the brand tint, `brand-ring` against the brand tint
   (the active item's bar) and `surface-hover`, `border-strong` against `surface-hover`, and each
-  accent against its 20 % tint (3:1, the icon chips). Only 10 % and 20 % tints are used.
+  accent against its 20 % tint (3:1, the icon chips). Text and icons sit only on 10 % and 20 %
+  tints; the other alphas are borders (35 %), hovers (60 %) and the fields' focus halo (25 %).
 - **Type, shape and motion.** The system font stack (`ui-sans-serif, system-ui, ...` and
   `ui-monospace, ...`, `tailwind.config.js`), no web font: every one carries Cyrillic, and a
   self-hosted font would cost 100 to 300 KB a weight. Body text 14 px; `2xs` 11 px; page titles
@@ -52,12 +53,12 @@ groups, the system's own fonts. The entry is `webui.redesign`.
   `animate-pulse`; spinners turn at half speed.
 - **Components of `ui`** keep their props; new ones are optional. `Button`: heights 32, 36 and
   44 px, `secondary` with a 1 px border, a new `ghost-danger` variant (an icon button that deletes),
-  `loading` sets `aria-busy`, and under `pointer: coarse` no control is below 40 px. `Card`:
+  `loading` sets `aria-busy`, and under `pointer: coarse` no `Button` is below 40 px. `Card`:
   `title`, `description`, `headingLevel` (an `h3` by default) and an `actions` snippet draw its
   header. `Badge`: `dot`. `Input`: `icon`, and `aria-invalid` with `aria-describedby` naming its
   hint or error. `Alert`: `size="sm"`. `EmptyState`: `compact`. `StatusDot`: `label` for screen
   readers. `Modal`: a 32 px ghost close button, a footer that is right-aligned from `sm` and shares
-  the row below it, and a danger dialog's error icon in a tinted circle with the title in
+  the row below it, and a danger dialog's warning icon in a tinted circle with the title in
   `content`; its stack, Escape, focus and inert logic stay (ADR-0361).
 - **Patterns of `app.css`**: `.table` cells with side padding, `.num`, `.table-compact`,
   `.table-actions` (always visible, a touch screen has no hover) and `.card-flush`; page tabs are
@@ -74,9 +75,11 @@ groups, the system's own fonts. The entry is `webui.redesign`.
   links get no labels. The `nav` is labelled "Main". Under the logo, from `md`, a "Search" button
   with the key hint (`kbd`, hidden from screen readers, `aria-keyshortcuts`) opens the command
   palette; its name, "Search pages and actions", starts with the word it shows (WCAG 2.5.3) and is
-  not the exact name of System > Logs' Search button. Above the user block, on every page, a line says whether
-  the live connection is up ("Connected" or "Not connected", a polite `role="status"`). For an
-  administrator the user block is a link to `/system#security`, "Your account". Below `md` the
+  not the exact name of System > Logs' Search button. Above the user block, on every page, a
+  line says whether the live connection is up ("Connecting…" until it has been up once, then
+  "Connected" or "Not connected", and "No live data" for an account the socket refuses; a polite
+  live region). For an administrator the user block is a link to `/system#security`, whose name
+  ends in "Your account" (a text for screen readers; a `title` for the mouse). Below `md` the
   drawer slides in. The problems banner lists three problems and puts the rest behind "Show all N".
 - **The System page** gets an `h1`, "System" or "Account", and its twelve tabs (ids, hashes and
   labels unchanged, General the default) come in three groups in this order: Settings (General,
@@ -85,8 +88,8 @@ groups, the system's own fonts. The entry is `webui.redesign`.
   palette lists them in the same order. From `xl` the groups are a 220 px column beside the tab;
   below it they are labelled rows of chips above it, so that from `md` to `xl` the tab keeps the
   width. A regular user sees the one Security tab without labels. Inside Security the cards come in
-  two runs under divider labels, "Your account" and, for administrators, "This NAS" (the 2FA
-  requirement, the firewall, the certificates). Splitting Security and moving Disk Health to the
+  two runs, for administrators under divider labels, "Your account" and "This NAS" (the 2FA
+  requirement, the firewall, the certificates); a regular user's tab is the first run alone. Splitting Security and moving Disk Health to the
   Storage page are not part of this decision.
 - **The dashboard** (ADR-0395 stays): a status chip in the header, by priority "Live stats are not
   available for this account", "Disconnected from the NAS" (the key `dashboard.disconnected`, which
@@ -94,13 +97,18 @@ groups, the system's own fonts. The entry is `webui.redesign`.
   "No problems" chip; stat tiles with an icon chip in their accent, the value in `content` in the
   normal range and in the status colour above the thresholds (the classes `text-success`,
   `text-warning`, `text-error` stay), rates with a plain arrow; Quick Actions as a two by two grid;
-  with every widget hidden, an empty state with Customize.
+  with every widget hidden, an empty state that points to Customize. "No problems" waits for the
+  socket's problems message (`problemsKnown` of `$lib/stores/problems`).
 - **The E2E specs** keep their hooks (routes, hashes, texts, headings, classes and the DOM shapes
-  they walk). Two change, for the reasons above: `SYSTEM_TABS` of `command-palette.spec.ts` takes
-  the new order, and `websocket.spec.ts` checks that the new disconnected text is absent. New
-  checks: the Search button opens the palette from `md` (`command-palette.spec.ts`,
-  `mobile-layout.spec.ts`), and the group labels of the sidebar and of System
-  (`navigation.spec.ts`).
+  they walk). Three change, for the reasons above: `SYSTEM_TABS` of `command-palette.spec.ts` takes
+  the new order, `websocket.spec.ts` checks that the new disconnected text is absent, and
+  `theme.spec.ts` expects the active navigation item's text in `content` on its brand tint (it
+  was white on a solid brand). New checks: the Search button opens the palette from `md`
+  (`command-palette.spec.ts`, `mobile-layout.spec.ts`), the group labels of the sidebar and of
+  System (`navigation.spec.ts`), and the new states (`redesign.spec.ts`). Where a spec reads a
+  class that the look no longer needs, the class stays: the App Store's tiles keep `rounded-xl`,
+  which `appstore.spec.ts` counts. The connection line is a polite `aria-live` region, not
+  `role="status"`: the specs read a page's own status by that role.
 - **Superseded in part.** ADR-0405: only its listed values of the light theme and the dark values
   it moved, now those of this ADR. ADR-0400: only its line that the new tokens have the hex values
   of the Tailwind colours they replace. ADR-0393: only "From md up there is no such button, and the

@@ -147,6 +147,7 @@
 					variant={temperature < 50 ? 'success' : temperature < 70 ? 'warning' : 'error'}
 					class="mt-auto pt-1"
 					label={$t('dashboard.stats.temperature')}
+					valueText={$t('dashboard.celsius', { value: temperature })}
 				/>
 			{:else}
 				<p class="stat-card-value text-muted">{$t('dashboard.stats.none')}</p>

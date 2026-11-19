@@ -26,6 +26,8 @@ export const en = {
 	'layout.yourAccount': 'Your account',
 	'layout.connected': 'Connected',
 	'layout.notConnected': 'Not connected',
+	'layout.connecting': 'Connecting…',
+	'layout.noLiveData': 'No live data',
 	'layout.menu': 'Menu',
 	'layout.accountError': 'Could not load your account',
 	'layout.accountFailed': 'Failed to load your account'
@@ -53,6 +55,8 @@ export const ru: Translation<typeof en> = {
 	'layout.yourAccount': 'Ваша учётная запись',
 	'layout.connected': 'Подключено',
 	'layout.notConnected': 'Нет подключения',
+	'layout.connecting': 'Подключение…',
+	'layout.noLiveData': 'Нет данных в реальном времени',
 	'layout.menu': 'Меню',
 	'layout.accountError': 'Не удалось загрузить вашу учётную запись',
 	'layout.accountFailed': 'Не удалось загрузить учётную запись'

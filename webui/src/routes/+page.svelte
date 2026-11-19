@@ -120,6 +120,8 @@
   // A widget shows when it is not hidden and has its data: the stats cards come with the live stats.
   const shown = $derived(layout.filter((e) => !e.hidden && (currentStats !== null || widgetDef(e.id)?.adminOnly)));
   const hiddenWidgets = $derived(layout.filter((e) => e.hidden));
+  // Every widget hidden by the user, not only waiting for its data (ADR-0428).
+  const allHidden = $derived(layout.length > 0 && layout.every((e) => e.hidden));
   // The name of a widget in the language of the page; it reads $t where it is called.
   function nameOf(id: string): string {
     const def = widgetDef(id);
@@ -267,7 +269,7 @@
       />
     {/if}
 
-    {#if shown.length === 0 && !arranging}
+    {#if allHidden && !arranging}
       <!-- Every widget hidden: say so, and where the way back is, the header's Customize (ADR-0428). -->
       <EmptyState
         icon={SlidersHorizontal}
@@ -277,14 +279,15 @@
     {/if}
 
     <!-- The widgets: small cards five to a row on a wide screen, wide ones two to a row (ADR-0395).
-         While they are arranged each has a dashed outline and its toolbar in the top right corner. -->
-    <div class="grid grid-cols-2 md:grid-cols-6 xl:grid-cols-10 gap-4 {arranging ? 'pt-3' : ''}">
+         While they are arranged each has a dashed outline and its toolbar in room of its own at the
+         top right, so that it covers nothing of the widget. -->
+    <div class="grid grid-cols-2 md:grid-cols-6 xl:grid-cols-10 gap-4">
       {#each shown as entry, index (entry.id)}
         {@const def = widgetDef(entry.id)}
         <div
           data-widget={entry.id}
           class="widget relative min-w-0 flex flex-col {def?.size === 'wide' ? 'col-span-2 md:col-span-6 xl:col-span-5' : 'col-span-1 md:col-span-2'}
-            {arranging ? 'rounded-card outline-dashed outline-1 outline-offset-[3px] outline-border-strong' : ''}
+            {arranging ? 'pt-10 rounded-card outline-dashed outline-1 outline-offset-[3px] outline-border-strong' : ''}
             {overId === entry.id && draggedId !== entry.id ? 'ring-2 ring-brand-ring' : ''}
             {draggedId === entry.id ? 'opacity-50' : ''}"
           ondragover={(e) => onDragOver(e, entry.id)}

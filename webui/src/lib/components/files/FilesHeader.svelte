@@ -28,7 +28,7 @@
   <h1 class="page-title">{$t("files.title")}</h1>
   <div class="page-actions">
     <input bind:this={uploadInput} type="file" multiple class="hidden" onchange={handleUpload} />
-    <!-- The span shows the tooltip: Button does not pass a title on. -->
+    <!-- The span shows the tooltip over the button and its text for screen readers. -->
     <span class="flex" title={$t("files.upload")}>
       <Button variant="secondary" size="icon" onclick={() => uploadInput?.click()}>
         <Upload class="w-4 h-4" />

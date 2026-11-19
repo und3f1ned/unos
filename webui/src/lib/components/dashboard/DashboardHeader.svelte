@@ -4,7 +4,7 @@
 	import { Button, StatusDot } from '$lib/components/ui';
 	import { intlLocale, t } from '$lib/i18n';
 	import { isAdmin } from '$lib/stores/auth';
-	import { problems } from '$lib/stores/problems';
+	import { problems, problemsKnown } from '$lib/stores/problems';
 	import { wsConnected, wsForbidden } from '$lib/stores/stats';
 	import { apiTime } from '$lib/time';
 
@@ -78,7 +78,7 @@
 				<span>{$t('dashboard.updated', { time: formatTime(lastUpdate) })}</span>
 			</span>
 		{/if}
-		{#if $isAdmin && $wsConnected && $problems.length === 0}
+		{#if $isAdmin && $wsConnected && $problemsKnown && $problems.length === 0}
 			<span class="chip text-status-success">
 				<CheckCircle class="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
 				<span>{$t('dashboard.noProblems')}</span>

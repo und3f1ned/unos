@@ -67,9 +67,15 @@ adapter, strict TypeScript and TailwindCSS (ADR-0012). Caddy serves the built fi
   a value in both themes or a pair that text or a control uses below WCAG AA (4.5:1, 3:1). Icons take the classes of
   `src/app.css`: `icon-cpu`, `icon-memory`, `icon-network`, `icon-storage`, `icon-container`,
   `icon-temperature`.
-- Layout uses the classes of `src/app.css`: `page-container`, `page-header`, `page-title`,
-  `section-title`, `card`, `card-header`, `card-title`, `card-nested`, `table`, `table-header`,
-  `table-row`, `table-frame`.
+- Layout uses the classes of `src/app.css` (the shapes of ADR-0428): `page-container`,
+  `page-header` (`page-title`, `page-subtitle`, `page-actions`), `section-title`, `card`,
+  `card-header`, `card-title`, `card-nested`, `card-flush` (a table to the card's edges; `Card
+  flush`), `table` with `num`, `table-compact` and `table-actions`, `table-header`, `table-row`,
+  `table-frame`; `kv` (a label over its value, `div > span.kv-label + span.kv-value`), `toolbar`
+  of `toolbar-group`s, `chip`, `eyebrow` (group labels), `content-narrow` (forms), `link` (a text
+  link, `content-link`). Page tabs are `tab-bar` with `tab-underline`; filters and views a
+  `segmented` control of `tab-pill`s. Focus is the one `:focus-visible` ring of `app.css`: do not
+  remove an outline without a ring of its own. A delete icon button is `Button variant="ghost-danger"`.
 - Every page fits a 375 px phone (ADR-0302): below `md` the sidebar is the drawer of the header
   bar's menu button. The page never scrolls sideways: a table that can be wider than the screen
   sits in a `table-frame` and scrolls inside it, rows of buttons and fields wrap (`flex-wrap`),
@@ -85,7 +91,7 @@ adapter, strict TypeScript and TailwindCSS (ADR-0012). Caddy serves the built fi
   `Select`, or a raw field with a `form-input` or `form-select` class when it needs an attribute
   they lack. No `.svelte` file outside `ui` uses a palette colour (`bg-slate-700`, `text-red-400`, `text-white`; the classes a `.ts` module returns are for review): the
   tokens above are the colours, and `brand`, `brand-hover`, `brand-ring`, `brand-disabled`,
-  `surface-hover`, `border-strong`, `content-soft`, `content-on-brand` and `status-neutral` cover
+  `surface-hover`, `border-strong`, `content-soft`, `content-on-brand`, `content-link` and `status-neutral` cover
   the rest; a dialog's backdrop is the class `scrim`. `npm run design` (`scripts/design-check.mjs`,
   run by `make frontend`, tested by `supervisor/tests/test_webui_design_system.py`) fails for a
   raw `<button>`, a raw `<a>` styled as a button, a raw text field, select or textarea without a

@@ -68,7 +68,7 @@
 {#snippet card(stat: Stat)}
 	<Button variant="plain"
 	 class="card p-3 hover:bg-surface-overlay transition-colors text-left cursor-pointer {stat.active ? stat.ring : ''}"
-		aria-pressed={stat.active}
+		pressed={stat.active}
 		onclick={() => onfilter(stat.next)}
 	>
 		<!-- A compact stat button (ADR-0428): the label over the count, a ring while it filters. -->

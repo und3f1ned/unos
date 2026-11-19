@@ -140,7 +140,7 @@
 				<span>{$t('storage.pool.capacity')}</span>
 				<span class="tabular">{wholePercent.format(used / 100)}</span>
 			</div>
-			<ProgressBar value={used} variant="info" label={$t('storage.pool.capacity')} />
+			<ProgressBar value={used} variant="info" label={$t('storage.pool.capacityOf', { name: pool.name })} />
 		</div>
 	{/if}
 

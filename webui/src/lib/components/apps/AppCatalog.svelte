@@ -112,7 +112,7 @@
 				>
 					<div class="flex items-center gap-4 mb-3">
 						<div
-							class="w-12 h-12 rounded-card bg-surface-overlay flex items-center justify-center text-2xl flex-shrink-0"
+							class="w-12 h-12 rounded-xl bg-surface-overlay flex items-center justify-center text-2xl flex-shrink-0"
 						>
 							{app.icon}
 						</div>

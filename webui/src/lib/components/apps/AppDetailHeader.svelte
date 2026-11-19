@@ -34,7 +34,7 @@
 <div class="-mx-6 -mt-6 mb-6 p-6 bg-gradient-to-b from-surface-overlay to-transparent">
 	<div class="flex items-start gap-4">
 		<div
-			class="w-14 h-14 rounded-card bg-surface-overlay flex items-center justify-center text-3xl flex-shrink-0"
+			class="w-14 h-14 rounded-xl bg-surface-overlay flex items-center justify-center text-3xl flex-shrink-0"
 		>
 			{app.icon}
 		</div>

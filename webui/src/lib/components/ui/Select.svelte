@@ -289,7 +289,9 @@
 	.select-trigger:focus,
 	.select-trigger-open {
 		@apply outline-none border-brand-ring;
-		box-shadow: 0 0 0 3px rgb(var(--color-brand-ring) / 0.25);
+		box-shadow:
+			0 0 0 1px rgb(var(--color-brand-ring)),
+			0 0 0 4px rgb(var(--color-brand-ring) / 0.25);
 	}
 
 	.select-trigger-error {

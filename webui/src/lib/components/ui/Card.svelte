@@ -30,12 +30,12 @@
 		children
 	}: Props = $props();
 
-	const paddingClasses = {
+	const paddingClasses = $derived({
 		none: 'p-0',
 		sm: 'p-4',
 		md: nested ? 'p-4' : 'p-5',
 		lg: 'p-6'
-	};
+	});
 
 	const classes = $derived(
 		[nested ? 'card-nested' : 'card', flush ? 'card-flush' : paddingClasses[padding], className]

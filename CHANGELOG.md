@@ -41,6 +41,17 @@ manager, encrypted backup uploads, health checks, CI checks).
   `app_names_changed` in the audit log, ADR-0420).
 
 ### Changed
+- The web interface is redesigned (ADR-0428): a calm graphite look in both themes with an indigo
+  brand, the system's own fonts at 14 px, cards set apart by a border, one focus ring for the
+  keyboard, and status colours that mean status only. The sidebar groups its links under **Data**,
+  **Applications** and **Administration**, offers **Search** (the command palette) from 768 pixels
+  up, says whether the page is connected, and links an administrator's name to **Your account**.
+  **System** has its title and its tabs in the groups **Settings**, **Monitoring** and
+  **Maintenance**; **Security** lists your own settings before those of the NAS. The dashboard
+  says when it is disconnected and, for an administrator, that there are no problems; the problems
+  banner lists three and shows the rest on request. Pages share one header, underline tabs, flush
+  tables and toolbars of grouped buttons; the hand-written cards and the certificate dialog take
+  the shared components.
 - `make lint`, and with it `make check`, the pre-commit hook and the CI workflow's Lint job, checks
   the rules of ruff that find bugs, set in `ruff.toml`, beyond pyflakes findings and syntax errors:
   bugbear, pycodestyle's imports and statements, pyupgrade, bandit (not in the tests), pylint's

@@ -9,7 +9,7 @@
 		// Without a title: "No data" in the language of the page.
 		title?: string | undefined;
 		description?: string;
-		/** A list inside a card: less room above and below. */
+		/** A list inside a card, whose heading names it: less room, and a title that is no heading. */
 		compact?: boolean;
 		class?: string;
 		children?: Snippet;
@@ -31,7 +31,11 @@
 	<span class="empty-state-icon-wrap" aria-hidden="true">
 		<Icon class="empty-state-icon" />
 	</span>
-	<h3 class="empty-state-title">{title ?? $t('ui.emptyState.title')}</h3>
+	{#if compact}
+		<p class="empty-state-title">{title ?? $t('ui.emptyState.title')}</p>
+	{:else}
+		<h3 class="empty-state-title">{title ?? $t('ui.emptyState.title')}</h3>
+	{/if}
 	{#if description}
 		<p class="empty-state-description">{description}</p>
 	{/if}
