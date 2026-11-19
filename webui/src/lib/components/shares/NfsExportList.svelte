@@ -25,7 +25,7 @@
 
 <Card>
 	<h2 class="section-title mb-4">
-		<Network class="w-5 h-5" />
+		<Network class="w-5 h-5 text-content-secondary" />
 		{$t('shares.nfs.title')}
 	</h2>
 
@@ -59,8 +59,8 @@
 						{/if}
 					</div>
 					{#if exp.managed}
-						<Button variant="ghost" size="icon-sm" onclick={() => ondelete(exp)}>
-							<Trash2 class="w-4 h-4 text-error" />
+						<Button variant="ghost-danger" size="icon-sm" onclick={() => ondelete(exp)}>
+							<Trash2 class="w-4 h-4" />
 							<span class="sr-only">{$t('shares.nfs.deleteOne', { path: exp.path })}</span>
 						</Button>
 					{/if}

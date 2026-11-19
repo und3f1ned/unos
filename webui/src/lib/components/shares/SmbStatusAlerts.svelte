@@ -37,19 +37,19 @@
 		</Alert>
 	{/if}
 	{#if status.import_report.length > 0}
-		<Alert variant="info" title={$t('shares.status.imported')} dismissible ondismiss={ondismissimport}>
+		<Alert variant="info" size="sm" title={$t('shares.status.imported')} dismissible ondismiss={ondismissimport}>
 			{#each status.import_report as line}
 				<p>{line}</p>
 			{/each}
 		</Alert>
 	{/if}
 	{#if status.unmanaged_samba_users.length > 0}
-		<Alert variant="info">
+		<Alert variant="info" size="sm">
 			{$t('shares.status.unmanagedUsers', { users: status.unmanaged_samba_users.join(', ') })}
 		</Alert>
 	{/if}
 	{#if status.active_smb_users === 0}
-		<Alert variant="info">{$t('shares.status.nobody')}</Alert>
+		<Alert variant="info" size="sm">{$t('shares.status.nobody')}</Alert>
 	{/if}
 {:else if error}
 	<Alert variant="error" title={$t('shares.status.error')}>{error}</Alert>

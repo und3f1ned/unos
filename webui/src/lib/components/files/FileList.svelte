@@ -117,8 +117,9 @@
 </script>
 
 <!-- File List -->
-<div class="md:flex-1 md:min-h-0 flex flex-col bg-surface-elevated rounded-xl border border-border overflow-hidden">
-  <div class="grid {columnsClass} gap-4 px-4 py-2 bg-surface/50 text-sm text-content-secondary border-b border-border">
+<!-- A framed table on the grid (ADR-0428): 40 px rows, the selected one a brand tint. -->
+<div class="md:flex-1 md:min-h-0 flex flex-col bg-surface-elevated rounded-card border border-border shadow-raised overflow-hidden">
+  <div class="grid {columnsClass} gap-4 px-4 py-2.5 text-xs font-medium text-content-secondary border-b border-border">
     <div class="w-6"></div>
     <div>{$t("files.column.name")}</div>
     <div>{$t("files.column.size")}</div>
@@ -135,10 +136,10 @@
       <Button variant="plain"
         bind:el={upButton}
         onclick={goUp}
-        class="w-full grid {columnsClass} gap-4 px-4 py-3 hover:bg-surface-muted items-center text-left border-b border-border-muted"
+        class="w-full grid {columnsClass} gap-4 px-4 min-h-10 py-1.5 hover:bg-surface-overlay/60 items-center text-left border-b border-border-muted"
         title={$t("files.up")}
       >
-        <ArrowUp class="w-5 h-5 text-content-secondary" />
+        <ArrowUp class="w-[18px] h-[18px] text-content-secondary" />
         <span class="text-content-secondary">..</span>
         <span></span>
         <span class="hidden sm:block"></span>
@@ -152,7 +153,7 @@
              opens it. From the keyboard, the checkbox selects and the name opens. -->
         <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
         <div
-          class="grid {columnsClass} gap-4 px-4 py-3 hover:bg-surface-muted items-center border-b border-border-muted cursor-pointer {browser.selected.has(item.path) ? 'bg-brand/20' : ''}"
+          class="grid {columnsClass} gap-4 px-4 min-h-10 py-1.5 hover:bg-surface-overlay/60 items-center border-b border-border-muted last:border-b-0 cursor-pointer {browser.selected.has(item.path) ? 'bg-brand/20' : ''}"
           onclick={() => browser.toggleSelect(item.path)}
           ondblclick={() => browser.open(item)}
         >
@@ -169,7 +170,7 @@
           />
           <div class="flex items-center gap-3 min-w-0">
             <Icon
-              class="w-5 h-5 flex-shrink-0 {item.type === 'directory' ? 'text-status-warning' : 'text-content-secondary'}"
+              class="w-[18px] h-[18px] flex-shrink-0 text-content-secondary"
             />
             {#if browser.renaming === item.path}
               <!-- Clicks in the field, a double-click on a word too, stay out of the row. -->
@@ -190,7 +191,7 @@
               <Button
                 variant="ghost"
                 size="sm"
-                class="pointer-events-none min-w-0 max-w-full justify-start -mx-1 px-1 py-0.5 text-base font-normal text-content hover:bg-transparent"
+                class="pointer-events-none min-w-0 max-w-full min-h-0 justify-start -mx-1 px-1 py-0.5 text-sm {item.type === 'directory' ? 'font-medium' : 'font-normal'} text-content hover:bg-transparent"
                 onclick={(e) => openFromName(e, item)}
               >
                 <span class="sr-only">{$t(item.type === "directory" ? "files.openItem" : "files.downloadItem", { name: item.name })}</span>
@@ -200,10 +201,10 @@
               <span class="truncate">{item.name}</span>
             {/if}
           </div>
-          <span class="text-sm text-content-secondary">
+          <span class="text-sm text-content-secondary tabular">
             {item.type === "directory" ? "-" : formatSize(item.size, units)}
           </span>
-          <span class="hidden sm:block text-sm text-content-secondary">
+          <span class="hidden sm:block text-sm text-content-secondary tabular">
             {formatDate(item.modified, $intlLocale)}
           </span>
         </div>

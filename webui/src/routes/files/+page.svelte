@@ -55,10 +55,11 @@
   let units = $derived([$t("files.unit.b"), $t("files.unit.kb"), $t("files.unit.mb"), $t("files.unit.gb"), $t("files.unit.tb")]);
 </script>
 
-<!-- On a narrow screen the page has no padding of its own beside main's, its buttons wrap, the
-     list leaves out the Modified column, and the page grows with the list, so that main scrolls
-     it as a whole. From md the list fills the rest of the window and scrolls inside it (ADR-0302). -->
-<div class="md:p-6 md:h-full flex flex-col">
+<!-- The page has no padding of its own beside main's (ADR-0428). On a narrow screen its buttons
+     wrap, the list leaves out the Modified column, and the page grows with the list, so that main
+     scrolls it as a whole. From md the list fills the rest of the window and scrolls inside it
+     (ADR-0302). -->
+<div class="md:h-full flex flex-col mx-auto w-full max-w-[1440px]">
   <FilesHeader {browser} />
 
   {#if browser.error}

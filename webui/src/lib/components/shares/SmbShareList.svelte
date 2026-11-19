@@ -25,7 +25,7 @@
 
 <Card>
 	<h2 class="section-title mb-4">
-		<FolderOpen class="w-5 h-5" />
+		<FolderOpen class="w-5 h-5 text-content-secondary" />
 		{$t('shares.smb.title')}
 	</h2>
 

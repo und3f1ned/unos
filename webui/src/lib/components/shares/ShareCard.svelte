@@ -176,8 +176,8 @@
 					>
 				</Button>
 			{/if}
-			<Button variant="ghost" size="icon-sm" onclick={() => ondelete?.(share)}>
-				<Trash2 class="w-4 h-4 text-error" />
+			<Button variant="ghost-danger" size="icon-sm" onclick={() => ondelete?.(share)}>
+				<Trash2 class="w-4 h-4" />
 				<span class="sr-only">{$t('shares.card.delete', { name: share.name })}</span>
 			</Button>
 		</div>

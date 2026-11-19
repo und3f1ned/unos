@@ -116,16 +116,20 @@
 
 <div class="page-container">
   <div class="page-header">
-    <h1 class="page-title flex items-center gap-2">
-      <Trash class="w-7 h-7" />
-      {$t("files.trash.title")}
-    </h1>
-    <div class="flex flex-wrap items-center gap-2">
+    <div class="min-w-0">
+      <h1 class="page-title">{$t("files.trash.title")}</h1>
+      <!-- How long the trash keeps what it holds: a muted line under the title (ADR-0428). -->
+      <p class="page-subtitle">
+        {retentionDays === null ? $t("files.trash.keptUnknown") : $t("files.trash.kept", { n: retentionDays })}
+        {$t("files.trash.space")}
+      </p>
+    </div>
+    <div class="page-actions">
       <Button variant="secondary" icon={ArrowLeft} href="/files">{$t("files.trash.files")}</Button>
       <!-- The span shows the tooltip: Button does not pass a title on. -->
       <span class="flex" title={$t("common.refresh")}>
         <Button variant="secondary" size="icon" disabled={loading} onclick={load}>
-          <RefreshCw class="w-5 h-5 {loading ? 'animate-spin' : ''}" />
+          <RefreshCw class="w-4 h-4 {loading ? 'animate-spin' : ''}" />
           <span class="sr-only">{$t("common.refresh")}</span>
         </Button>
       </span>
@@ -134,13 +138,6 @@
       </Button>
     </div>
   </div>
-
-  <Card>
-    <p class="text-sm text-secondary">
-      {retentionDays === null ? $t("files.trash.keptUnknown") : $t("files.trash.kept", { n: retentionDays })}
-      {$t("files.trash.space")}
-    </p>
-  </Card>
 
   {#if loadError}
     <Alert variant="error" title={$t("files.trash.loadError")}>{loadError}</Alert>
