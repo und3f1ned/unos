@@ -1595,6 +1595,9 @@ manager, encrypted backup uploads, health checks, CI checks).
   installed once, under its id, and a request with `name` answers 422.
 
 ### Fixed
+- Removing a large image no longer answers 500 after a minute while Docker still deletes it: the
+  removal waits up to ten minutes for Docker, and the audit log gets its image_removed. BookStack's
+  estimate of the system disk is what its pull took, plus about 5%: it was a quarter short.
 - `scripts/dev/check.sh` no longer warns of a thermal zone whose trips drive only a fan or are
   bound to nothing, such as the BPI-F3's top_thermal and gpu_thermal at their first passive trip
   of 40 C: it measures the margin in the zones that slow a processor, and warns of every zone 5 C

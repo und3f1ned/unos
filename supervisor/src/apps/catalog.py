@@ -218,14 +218,15 @@ VALKEY = PinnedImage(
 # APP_IMAGES (four times the compressed layers of the larger linux/arm64 or linux/amd64 image) and
 # the VOLUMEs of its configuration. Each moves with its app, never with Immich's. Paperless-ngx's and
 # Linkwarden's are the sizes that their pulls took on the dev device on 2026-11-19 with their
-# companions (3308 and 2858 MiB), plus about 5%: four times their compressed layers fell short.
+# companions (3308 and 2858 MiB), and BookStack's and its MariaDB's on 2026-11-19 (482.6 and 457.4
+# MiB), plus about 5%: four times their compressed layers fell short.
 BOOKSTACK = PinnedImage(
     "ghcr.io/linuxserver/bookstack", "v26.09.3-ls299",
-    "sha256:c741211356966fd38f8fea10483f341ca29c41cdd1b96b5cfcdd4312f26d7f97", 385_000_000, ("/config",),
+    "sha256:c741211356966fd38f8fea10483f341ca29c41cdd1b96b5cfcdd4312f26d7f97", 531_000_000, ("/config",),
 )
 BOOKSTACK_MARIADB = PinnedImage(
     "mariadb", "11.8.9",
-    "sha256:d36f18d65a0459510b8b0f643b226a6d299e3206486e2b64ff20754a6d291707", 425_000_000, ("/var/lib/mysql",),
+    "sha256:d36f18d65a0459510b8b0f643b226a6d299e3206486e2b64ff20754a6d291707", 504_000_000, ("/var/lib/mysql",),
 )
 PAPERLESS = PinnedImage(
     "ghcr.io/paperless-ngx/paperless-ngx", "3.5.1",
