@@ -20,6 +20,15 @@ manager, encrypted backup uploads, health checks, CI checks).
   shown) and the server's host key pinned at the first test and refused when it changes until a
   save trusts the new one. Copies, their check and restore test, and both restores run to them as
   to a disk or an S3 store; the upload and download limits apply to both (ADR-0422).
+- Bonds, VLANs and bridges (System > Network, ADR-0424): an administrator creates and deletes bonds
+  (LACP or balance-rr) of two or more wired network cards, VLANs (ids 1 to 4094) on a card or a bond,
+  and bridges for containers, as systemd-networkd files that UNOS writes before the host's own; on a
+  host whose network NetworkManager or ifupdown keeps, the card says so and offers nothing. A change
+  that touches the interface of the default route or of the connection to UNOS waits to be kept: the
+  host undoes it after 120 seconds unless **Keep this change** is clicked, also without the
+  supervisor, and a reboot before that drops it. Kept interfaces come back after a reboot
+  (`/etc/unos/netdevs` and the host's unit `unos-netdevs.service`); UNOS removes only the interfaces
+  it made. The audit log records each creation, deletion and Keep.
 - Remote access (System > Remote Access): a WireGuard tunnel on the host (wireguard-tools'
   `wg-quick@unos-wg`, enabled so that it comes up at boot) through which devices added as peers reach
   the NAS alone, never the rest of the LAN. The server's key is made on the host and never leaves

@@ -399,6 +399,7 @@ and this index, and `make check-fast` runs it.
 | [0412](0412-the-load-check-fails-for-a-unos-container-it-could-not-measure-and-the-two-tab-measurement-is-the-owner-s.md) | The load check fails for a UNOS container it could not measure, and the two-tab measurement is the owner's | accepted | 2026-11-18 |
 | [0420](0420-remote-access-is-a-wireguard-tunnel-to-the-nas-alone-and-apps-get-local-names-through-caddy.md) | Remote access is a WireGuard tunnel on the host that reaches the NAS alone, and apps get single-label local names through Caddy | accepted | 2026-11-19 |
 | [0421](0421-check-sh-measures-heat-only-in-zones-that-slow-a-processor-and-unos-keeps-its-idle-budget.md) | The device check measures heat only in zones that slow a processor, and UNOS keeps its idle budget | accepted | 2026-11-19 |
+| [0424](0424-bonds-vlans-and-bridges-are-systemd-networkd-files-and-a-change-that-may-cut-the-connection-waits-to-be-kept.md) | Bonds, VLANs and bridges are systemd-networkd files that UNOS writes, and a change that may cut the connection waits to be kept | accepted | 2026-11-19 |
 
 ## Web UI
 

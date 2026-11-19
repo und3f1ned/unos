@@ -18,6 +18,7 @@
   } from "$lib/api/network";
   import { ApiError } from "$lib/api/client";
   import { Alert, Badge, Button, EmptyState, Modal } from "$lib/components/ui";
+  import VirtualInterfacesCard from "$lib/components/network/VirtualInterfacesCard.svelte";
   import { intlLocale, t } from "$lib/i18n";
   import { stats, wsConnected, type NetworkInterface as WSNetworkInterface } from "$lib/stores/stats";
   import {
@@ -634,6 +635,9 @@
         {/if}
       {/each}
     </div>
+
+    <!-- Bonds, VLANs and bridges (ADR-0424): a change lists the interfaces again -->
+    <VirtualInterfacesCard on:changed={() => loadInterfaces()} />
   {/if}
 
   <!-- Routes -->

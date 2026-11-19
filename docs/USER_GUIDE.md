@@ -2682,8 +2682,62 @@ UNOS does not disable an interface that carries VLANs, such as `eth0` with
 `eth0.100`: the VLANs would go down with it and come back without their
 routes. Disable the VLANs themselves, or the interface on the host.
 
-The tab does not change addresses, DNS or routes: configure them on the host
-or in your router.
+#### Bonds, VLANs and bridges
+
+The card **Bonds, VLANs and bridges** under the interfaces makes them on the
+host and lists the ones UNOS made, with their state, ports and addresses
+(ADR-0424). UNOS makes them only where systemd-networkd keeps the host's
+network, as on Ubuntu Server and Armbian's minimal images; on a host with
+NetworkManager (Raspberry Pi OS, desktops) or `/etc/network/interfaces`
+(Debian's own server install) the card names that manager and offers nothing.
+
+- **Create bond**: a name, the mode (**LACP (802.3ad)**, which needs LACP on
+  the switch's ports, or **Round robin (balance-rr)**) and two to eight wired
+  network cards that are in no other bond or bridge and carry no VLAN. A card
+  loses its own addresses in a bond, so only the one through which you reach
+  UNOS may have any; unplug another card's cable, or remove its addresses on
+  the host, first.
+- **Create VLAN**: a wired network card or a bond, a VLAN id from 1 to 4094 and
+  a name (empty: `<interface>.<id>`, such as `eth0.100`).
+- **Create bridge**: a name and no port, or up to eight ports (wired cards,
+  bonds or VLANs), for containers and virtual machines.
+
+Each can take an MTU from 1280 to 9216 bytes and its addresses: none, DHCP
+(IPv4 only, and never the server's gateway, routes or DNS servers, so it never
+becomes the default route) or up to four static addresses with their prefix
+lengths, such as `192.0.2.10/24`, without a gateway. A bond or bridge that takes
+the network card through which you reach UNOS, or that carries the default
+route, takes over that card's network settings and its MAC address instead,
+so that your router gives it the same address.
+
+A change that touches such an interface (a bond or bridge of it, a VLAN on it,
+or the deletion of an interface that carries the connection) can cut you off.
+The dialog says so before you create it. The change is made, and the card
+counts down 120 seconds: check that the web UI, SSH and your shares still
+answer, then click **Keep this change**. If you do not, or cannot because the
+connection dropped, the host undoes the change by itself after 120 seconds:
+wait two minutes and reload the page. A change that is not kept is gone after
+a reboot as well. A change that does not touch the connection, such as a bridge
+without ports or a VLAN on another card, is kept at once. Only one change waits
+to be kept at a time.
+
+Kept interfaces come back after a reboot: UNOS keeps their systemd-networkd
+files in `/etc/unos/netdevs`, and the host's unit `unos-netdevs.service` puts
+them into `/run/systemd/network` before systemd-networkd starts. A VLAN's
+interface gets a file of UNOS's that holds that interface's own settings and
+its VLANs; a bond or bridge that took over a card's settings keeps a copy of
+them; neither copy follows later changes of netplan, and an interface whose network
+file has drop-ins of its own is not taken over. **Delete** removes an
+interface UNOS made and its files, and its ports get the host's own settings
+back; an interface that carries VLANs or is a bridge's port is deleted after
+them. UNOS never deletes an interface it did not make. Uninstalling UNOS
+removes `/etc/unos`: its interfaces then stay until the next reboot.
+
+A bond needs at least two network cards. On a host with one, such as a board
+with a single Ethernet port, add a USB network adapter first.
+
+The tab does not change addresses, DNS or routes of the host's own
+interfaces: configure them on the host or in your router.
 
 ### Power Management
 

@@ -84,8 +84,18 @@ Avoid: user (a UNOS user), admin.
 **Automatic revert**: What turns a network interface that UNOS disabled back on, with its saved
 addresses and routes, or puts the host's firewall back as it was before a change: a timer on the
 host that runs unless the administrator keeps the change within 60 seconds (an interface,
-ADR-0244) or 120 seconds (the firewall, ADR-0416). Avoid: rollback (what `update.sh` and
-`deploy.sh` do), undo.
+ADR-0244) or 120 seconds (the firewall, ADR-0416; a virtual interface, ADR-0424). Avoid: rollback
+(what `update.sh` and `deploy.sh` do), undo.
+
+**Virtual interface**: A bond, VLAN or bridge that UNOS made on the host with systemd-networkd,
+whose `.netdev` file names it as UNOS's; UNOS lists and removes only those (ADR-0424). Its files
+are live in `/run/systemd/network`, and kept, for the boot, in `/etc/unos/netdevs`. Avoid: netdev
+(networkd's file), virtual network (Docker's).
+
+**Protected interface**: An interface that carries the host's default route or its route to the
+computer that asks, or one they rest on (a VLAN's parent, a bond's or bridge's port). A change of
+virtual interfaces that touches one waits to be kept, with its automatic revert armed (ADR-0424).
+Avoid: uplink (one of them), management interface.
 
 **Firewall**: The host's ufw, which System > Security turns on and off and whose rules it lists and
 changes (ADR-0416). Its rules are the host's, as ufw records them; UNOS keeps none of its own.

@@ -133,6 +133,11 @@ class AuditAction(str, Enum):
     REMOTE_ACCESS_PEER_ADDED = "remote_access_peer_added"
     REMOTE_ACCESS_PEER_REVOKED = "remote_access_peer_revoked"
     APP_NAMES_CHANGED = "app_names_changed"
+    # Bonds, VLANs and bridges of the host's network, and a change of them kept before its revert
+    # undid it (ADR-0424)
+    NETWORK_INTERFACE_CREATED = "network_interface_created"
+    NETWORK_INTERFACE_DELETED = "network_interface_deleted"
+    NETWORK_CHANGE_KEPT = "network_change_kept"
 
     # Generic
     OTHER = "other"
