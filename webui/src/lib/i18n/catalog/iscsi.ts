@@ -5,13 +5,14 @@ import type { Translation } from '../translate';
 
 export const en = {
 	'iscsi.title': 'iSCSI targets',
-	'iscsi.intro':
-		'An iSCSI target gives computers a disk of their own: a file in a volume of a pool, which they format and use like a local disk. Only the initiators you allow log in, and only with CHAP.',
+	'iscsi.intro': 'A target gives a computer a disk of its own: a file in a volume, which only the initiators you allow reach, with CHAP.',
 	'iscsi.add': 'Add target',
 	'iscsi.loadError': 'Could not load the iSCSI targets',
 	'iscsi.empty': 'No iSCSI targets yet',
-	'iscsi.emptyHint': 'Add a target to give a computer a disk in a volume of a pool.',
-	'iscsi.noVolumes': 'An iSCSI target needs a volume of a pool that UNOS manages: create one on the Storage page.',
+	'iscsi.emptyHint': 'Use Add target above to give a computer a disk in a volume of a pool.',
+	// Under the page header's Add target while none can be added.
+	'iscsi.noVolumesShort': 'Create a volume on the Storage page first',
+	'iscsi.noKernelShort': 'The host\'s kernel has no iSCSI target',
 	'iscsi.noKernel':
 		"The host's kernel has no iSCSI target (LIO): the modules target_core_mod, target_core_file and iscsi_target_mod are missing.",
 	'iscsi.portals': 'Initiators connect to: {portals}',
@@ -26,12 +27,14 @@ export const en = {
 	'iscsi.file': 'File',
 	'iscsi.initiators': 'Allowed initiators',
 	'iscsi.chapUser': 'CHAP user name',
-	'iscsi.mutual': 'Mutual CHAP',
-	'iscsi.yes': 'Yes',
-	'iscsi.no': 'No',
 	'iscsi.sessions': 'Logged in now',
 	'iscsi.noSessions': 'No initiator is logged in',
-	'iscsi.change': 'Change',
+	'iscsi.loggedIn': { one: '{n} initiator logged in', other: '{n} initiators logged in' },
+	'iscsi.mutualOn': 'mutual CHAP',
+	// The buttons of a target, and what screen readers hear after Edit: "Edit target backup".
+	'iscsi.editButton': 'Edit',
+	'iscsi.editOf': 'target {name}',
+	'iscsi.deleteOf': 'Delete target {name}',
 	'iscsi.delete': 'Delete',
 	'iscsi.created': 'The iSCSI target {name} was created.',
 	'iscsi.changed': 'The iSCSI target {name} was changed.',
@@ -64,7 +67,7 @@ export const en = {
 	'iscsi.form.sizeRequired': 'Enter a size in whole GiB',
 	'iscsi.form.initiatorsRequired': 'Enter at least one initiator',
 
-	'iscsi.edit.title': 'Change {name}',
+	'iscsi.edit.title': 'Edit {name}',
 	'iscsi.edit.newSecret': 'Set a new CHAP secret',
 	'iscsi.edit.newSecretHint':
 		'Every initiator of the target is logged out and must log in again with the new secret. Leave the field empty and UNOS generates one.',
@@ -94,13 +97,13 @@ export const en = {
 
 export const ru: Translation<typeof en> = {
 	'iscsi.title': 'Цели iSCSI',
-	'iscsi.intro':
-		'Цель iSCSI даёт компьютерам собственный диск: файл в томе пула, который они форматируют и используют как локальный диск. Входят только разрешённые вами инициаторы и только с CHAP.',
+	'iscsi.intro': 'Цель даёт компьютеру собственный диск: файл в томе, к которому подключаются только разрешённые вами инициаторы, с CHAP.',
 	'iscsi.add': 'Добавить цель',
 	'iscsi.loadError': 'Не удалось загрузить цели iSCSI',
 	'iscsi.empty': 'Целей iSCSI пока нет',
-	'iscsi.emptyHint': 'Добавьте цель, чтобы дать компьютеру диск в томе пула.',
-	'iscsi.noVolumes': 'Цели iSCSI нужен том пула, которым управляет UNOS: создайте его на странице «Хранилище».',
+	'iscsi.emptyHint': 'Кнопка «Добавить цель» выше даёт компьютеру диск в томе пула.',
+	'iscsi.noVolumesShort': 'Сначала создайте том на странице «Хранилище»',
+	'iscsi.noKernelShort': 'В ядре хоста нет цели iSCSI',
 	'iscsi.noKernel':
 		'В ядре хоста нет цели iSCSI (LIO): отсутствуют модули target_core_mod, target_core_file и iscsi_target_mod.',
 	'iscsi.portals': 'Инициаторы подключаются к: {portals}',
@@ -114,12 +117,13 @@ export const ru: Translation<typeof en> = {
 	'iscsi.file': 'Файл',
 	'iscsi.initiators': 'Разрешённые инициаторы',
 	'iscsi.chapUser': 'Имя пользователя CHAP',
-	'iscsi.mutual': 'Взаимный CHAP',
-	'iscsi.yes': 'Да',
-	'iscsi.no': 'Нет',
 	'iscsi.sessions': 'Сейчас подключены',
 	'iscsi.noSessions': 'Ни один инициатор не подключён',
-	'iscsi.change': 'Изменить',
+	'iscsi.loggedIn': { one: 'Подключён {n} инициатор', few: 'Подключены {n} инициатора', many: 'Подключено {n} инициаторов' },
+	'iscsi.mutualOn': 'взаимный CHAP',
+	'iscsi.editButton': 'Изменить',
+	'iscsi.editOf': 'цель {name}',
+	'iscsi.deleteOf': 'Удалить цель {name}',
 	'iscsi.delete': 'Удалить',
 	'iscsi.created': 'Цель iSCSI {name} создана.',
 	'iscsi.changed': 'Цель iSCSI {name} изменена.',

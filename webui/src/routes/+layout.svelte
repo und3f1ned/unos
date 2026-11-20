@@ -44,6 +44,14 @@
 
 	// An account that can only set up two-factor authentication gets its setup page alone.
 	const setupOnly = $derived(isSetupOnly($user));
+	// Its two-factor setup stays the sign-in card until the account leaves the page: once set up,
+	// the account has its rights again, and drawing the page anew in the shell would lose its
+	// answer ("Two-factor authentication is on", the recovery codes).
+	let setupCard = $state(false);
+	$effect.pre(() => {
+		if (setupOnly) setupCard = true;
+		else if (page.url.pathname !== '/two-factor-setup') setupCard = false;
+	});
 	// The theme that the signed-in user chose (ADR-0405), once per session; an account that can only
 	// set up two-factor authentication cannot ask, and keeps the theme of this browser. Whoever
 	// signs in (this layout, the sign-in page, another tab), $user tells it.
@@ -205,7 +213,9 @@
 	}
 </script>
 
-{#if gate === 'public'}
+{#if gate === 'public' || (gate === 'allowed' && (setupOnly || (setupCard && pathname === '/two-factor-setup')))}
+	<!-- The sign-in and first-run pages, and the one page of an account that can only set up
+	     two-factor authentication: a card of their own, without the shell's empty menu. -->
 	{#if showSlot}
 		{@render children?.()}
 	{/if}

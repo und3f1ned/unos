@@ -1609,7 +1609,7 @@ const VIEWS: View[] = [
     fake: fakeIscsiTab,
     open: async (page) => {
       await page.locator('#shares-tab-iscsi').click();
-      await page.locator(`li[data-target="${ISCSI_TARGET.name}"]`).getByRole('button', { name: /^(Delete|Удалить)$/ }).click();
+      await page.locator(`li[data-target="${ISCSI_TARGET.name}"]`).getByRole('button', { name: /^(Delete target|Удалить цель) / }).click();
     },
     shows: (page) => page.getByRole('dialog').getByText(ISCSI_TARGET.path),
     start: dialogTitle,
@@ -1796,7 +1796,7 @@ const VIEWS: View[] = [
     name: 'Dialog: a new group',
     path: '/users',
     fake: (page) => fakeSmbApi(page, { users: USERS, groups: [fakeGroup(1, 'family_and_friends', USERS, [2, 3])] }),
-    open: (page) => page.getByRole('button', { name: /^(New group|Новая группа)$/ }).click(),
+    open: (page) => page.getByRole('button', { name: /^(Add group|Добавить группу)$/ }).click(),
     shows: (page) => page.getByRole('dialog').getByText('bob_the_family_photographer'),
     start: dialogTitle,
     end: dialogEnd,

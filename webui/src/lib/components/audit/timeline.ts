@@ -70,3 +70,33 @@ export function textOf(keys: Record<string, string>, value: string, t: Translate
 export function resourceOf(entry: AuditEntry, types: Record<string, string>, t: Translate): string {
 	return [entry.resource_type && textOf(types, entry.resource_type, t), entry.resource_id].filter(Boolean).join(' ');
 }
+
+/**
+ * A browser's user agent in a few words, "Firefox 144" and "Android", for an entry's line; null
+ * when it names no browser that this knows (a script, curl), which then shows as it comes. The
+ * names of browsers and systems are the same in every language.
+ */
+export function agentOf(ua: string): { browser: string; os: string } | null {
+	const version = (pattern: RegExp) => ua.match(pattern)?.[1]?.split('.')[0] ?? '';
+	const browsers: [string, RegExp][] = [
+		['Edge', /Edg(?:e|A|iOS)?\/([\d.]+)/],
+		['Opera', /OPR\/([\d.]+)/],
+		['Firefox', /(?:Firefox|FxiOS)\/([\d.]+)/],
+		['Chrome', /(?:Chrome|CriOS)\/([\d.]+)/],
+		['Safari', /Version\/([\d.]+).*Safari\//]
+	];
+	const found = browsers.find(([, pattern]) => pattern.test(ua));
+	if (!found) return null;
+	const systems: [string, RegExp][] = [
+		['Android', /Android/],
+		['iPhone', /iPhone/],
+		['iPad', /iPad/],
+		['Windows', /Windows/],
+		['macOS', /Mac OS X|Macintosh/],
+		['ChromeOS', /CrOS/],
+		['Linux', /Linux/]
+	];
+	const os = systems.find(([, pattern]) => pattern.test(ua))?.[0] ?? '';
+	const number = version(found[1]);
+	return { browser: number ? `${found[0]} ${number}` : found[0], os };
+}

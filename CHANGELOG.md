@@ -41,6 +41,18 @@ manager, encrypted backup uploads, health checks, CI checks).
   `app_names_changed` in the audit log, ADR-0420).
 
 ### Changed
+- Sharing and people say each thing once (ADR-0432). A share's Access is a table: one row per user
+  and group with its kind or SMB state, a None / Read / Read & write choice and an All users row in
+  place of the Everyone buttons; saving a served share that takes access away asks "Close open
+  connections?" with each change listed, instead of a standing paragraph. Share cards show states
+  in colour and features as neutral chips, mute users whose SMB is off instead of striking them
+  through, and copy the Connect addresses; a share's problem is said on its card only. Each Shares
+  tab's Add button, Add target included, is in the page header and says why when disabled. Users
+  shows an error with Retry instead of "No users found", fits a phone, names what deleting a user
+  removes, and has its rules in the create dialog instead of an About card. The Audit Log names an
+  API token's entries, shows the browser in a few words and folds its filters on a phone. The
+  sign-in pages are in sentence case with Show password; first-run setup shows its rules and errors
+  under the fields; the forced two-factor setup is a sign-in card without the menu.
 - The web UI loads without flicker (ADR-0430): from the first frame a boot screen (the logo, and
   a thin bar after 400 ms) in the user's theme covers the page until the account is known and the
   page has drawn its skeleton, then fades out in 160 ms; the sidebar is drawn once with the

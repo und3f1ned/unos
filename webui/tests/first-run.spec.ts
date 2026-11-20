@@ -52,6 +52,27 @@ test('a new installation asks for its administrator, signs it in and refuses a s
   expect((await signedOut).status()).toBe(200);
   await expect(page).toHaveURL('/login');
   await page.goto('/setup');
+  // The page checks its fields itself, each error under its field in the page's language, never
+  // with the browser's bubble, and sends nothing until they are right.
+  const sent: string[] = [];
+  page.on('request', (request) => {
+    if (new URL(request.url()).pathname === '/api/v1/auth/setup') sent.push(request.method());
+  });
+  await expect(page.getByText('1–32 lowercase letters, digits, _ or -, starting with a letter', { exact: true })).toBeVisible();
+  await expect(page.getByText('At least 8 characters', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Create admin account' }).click();
+  await expect(page.getByText('Enter a username', { exact: true })).toBeVisible();
+  await expect(page.getByText('Use at least 8 characters', { exact: true })).toBeVisible();
+  await page.getByLabel('Username').fill('Second Admin');
+  await page.getByLabel('Password', { exact: true }).fill('e2e-Second-Admin-1');
+  await page.getByLabel('Confirm Password').fill('e2e-Second-Admin-2');
+  await page.getByRole('button', { name: 'Create admin account' }).click();
+  await expect(
+    page.getByText('Use 1–32 lowercase letters, digits, _ or -, starting with a letter', { exact: true }),
+  ).toBeVisible();
+  await expect(page.getByText('Passwords do not match', { exact: true })).toBeVisible();
+  await expect(page.getByText('Use at least 8 characters', { exact: true })).toHaveCount(0);
+  expect(sent).toEqual([]);
   await page.getByLabel('Username').fill('e2e_second_admin');
   await page.getByLabel('Password', { exact: true }).fill('e2e-Second-Admin-1');
   await page.getByLabel('Confirm Password').fill('e2e-Second-Admin-1');

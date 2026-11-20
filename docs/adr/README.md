@@ -432,6 +432,7 @@ and this index, and `make check-fast` runs it.
 | [0428](0428-the-web-ui-is-redesigned-on-a-graphite-base-with-an-indigo-brand-grouped-navigation-and-one-shape-per-pattern.md) | The web UI is redesigned on a graphite base with an indigo brand, grouped navigation and one shape per pattern | superseded by [0431](0431-every-accounts-own-settings-are-on-the-account-page-system-is-the-nass-and-each-setting-action-and-fact-has-one-place.md) | 2026-11-19 |
 | [0430](0430-the-web-ui-loads-behind-a-boot-screen-draws-its-shell-once-and-shows-skeletons-in-each-pages-final-layout.md) | The web UI loads behind a boot screen, draws its shell once and shows skeletons in each page's final layout | accepted | 2026-11-20 |
 | [0431](0431-every-accounts-own-settings-are-on-the-account-page-system-is-the-nass-and-each-setting-action-and-fact-has-one-place.md) | Every account's own settings are on the Account page, System is the NAS's, and each setting, action and fact has one place | accepted | 2026-11-20 |
+| [0432](0432-share-access-is-a-table-of-who-and-level-and-the-sharing-and-people-pages-say-each-state-once.md) | Share access is a table of who and level, and the sharing and people pages say each state once | accepted | 2026-11-20 |
 
 ## Deploy
 

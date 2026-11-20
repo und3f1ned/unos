@@ -803,15 +803,16 @@ AUDIT_PAGE = REPO / "webui" / "src" / "routes" / "audit" / "+page.svelte"
 def test_the_web_ui_names_every_action_by_words_the_search_finds():
     """The Audit Log page shows an action by its name in the audit catalog (ADR-0287, ADR-0298):
     one for every AuditAction, in Russian and in English, where the name is the action with spaces
-    for its underscores and a capital (ADR-0401), words that the search of the list finds in the
-    action's entries."""
+    for its underscores, in sentence case with its acronyms in capitals (ADR-0401), words
+    that the search of the list finds in the action's entries."""
     actions = key_map(AUDIT_PAGE, "ACTION_NAMES")
     assert sorted(actions) == sorted(action.value for action in AuditAction)
 
     catalog = read_catalog("audit")  # skips without node
     for action in AuditAction:
         english = catalog["en"][actions[action.value]]
-        assert english == action.value.replace("_", " ").capitalize()
+        assert english.casefold() == action.value.replace("_", " ")
+        assert english[0].isupper() or english.startswith("iSCSI"), english
         entry = AuditEntry(id="audit_1", timestamp="2026-11-08T10:00:00", action=action)
         assert audit_router.AuditFilter(search=english.casefold()).matches(entry), english
         assert catalog["ru"][actions[action.value]]
@@ -832,8 +833,9 @@ def _recorded_resource_types() -> set[str]:
 def test_the_web_ui_names_every_resource_type_as_the_server_records_it():
     """The Audit Log page shows an entry's resource as its type, by its name in the audit catalog,
     and its id (ADR-0287, ADR-0298): a name for every type the server records, which in English is
-    the type as recorded, so that the search finds the resource as the English page shows it
-    (ADR-0401), and a Russian name."""
+    the type as recorded with spaces for its underscores and its acronyms in capitals ("API token"),
+    so that the search finds the resource as the English page shows it (ADR-0401), and a
+    Russian name."""
     types = key_map(AUDIT_PAGE, "RESOURCE_TYPES")
     recorded = _recorded_resource_types()
     assert {"user", "share", "audit_log"} <= recorded  # the scan finds the server's calls
@@ -842,7 +844,7 @@ def test_the_web_ui_names_every_resource_type_as_the_server_records_it():
     catalog = read_catalog("audit")  # skips without node
     for resource_type, key in types.items():
         english = catalog["en"][key]
-        assert english == resource_type
+        assert english.casefold() == resource_type.replace("_", " ")
         entry = AuditEntry(id="audit_1", timestamp="2026-11-08T10:00:00", action=AuditAction.OTHER,
                            resource_type=resource_type, resource_id="carol")
         assert audit_router.AuditFilter(search=f"{english} carol".casefold()).matches(entry), english

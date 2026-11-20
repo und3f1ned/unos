@@ -1,6 +1,6 @@
 <script lang="ts">
-	import type { SmbServiceStatus } from '$lib/api/shares';
-	import { Alert } from '$lib/components/ui';
+	import type { SmbServiceStatus, SmbShare } from '$lib/api/shares';
+	import { Alert, Button } from '$lib/components/ui';
 	import { t } from '$lib/i18n';
 
 	type Props = {
@@ -8,18 +8,39 @@
 		status: SmbServiceStatus | null;
 		/** Why the status could not be read. */
 		error: string;
+		/** The shares of the list: a share's own problem is said on its card, not again here. */
+		shares?: SmbShare[];
 		/** The report of the import of the old smb.conf was dismissed. */
 		ondismissimport: () => void;
 	};
 
-	let { status, error, ondismissimport }: Props = $props();
+	let { status, error, shares = [], ondismissimport }: Props = $props();
+
+	// "Share old is not served: ..." as the server words it (supervisor/src/shares/service.py): the
+	// card of that share says the same with its badge and its folder's problem.
+	const problems = $derived(
+		(status?.problems ?? []).filter(
+			(problem) => !shares.some((share) => !share.served && problem.startsWith(`Share ${share.name} is not served:`))
+		)
+	);
+	// What is worth knowing but needs no action now, in one panel instead of an alert each.
+	const notes = $derived(
+		status
+			? [
+					status.active_smb_users === 0 ? $t('shares.status.nobody') : '',
+					status.unmanaged_samba_users.length > 0
+						? $t('shares.status.unmanagedUsers', { users: status.unmanaged_samba_users.join(', ') })
+						: ''
+				].filter(Boolean)
+			: []
+	);
 </script>
 
 {#if status}
-	{#if status.problems.length > 0}
+	{#if problems.length > 0}
 		<Alert variant="error">
-			{#each status.problems as problem}
-				<p>{problem}</p>
+			{#each problems as problem}
+				<p class="break-words">{problem}</p>
 			{/each}
 		</Alert>
 	{/if}
@@ -32,24 +53,35 @@
 		</Alert>
 	{/if}
 	{#if status.guest_shares.length > 0}
-		<Alert variant="warning">
+		<Alert variant="warning" size="sm">
 			{$t('shares.status.guestShares', { shares: status.guest_shares.join(', ') })}
 		</Alert>
 	{/if}
-	{#if status.import_report.length > 0}
-		<Alert variant="info" size="sm" title={$t('shares.status.imported')} dismissible ondismiss={ondismissimport}>
-			{#each status.import_report as line}
-				<p>{line}</p>
-			{/each}
-		</Alert>
-	{/if}
-	{#if status.unmanaged_samba_users.length > 0}
+	{#if notes.length > 0 || status.import_report.length > 0}
 		<Alert variant="info" size="sm">
-			{$t('shares.status.unmanagedUsers', { users: status.unmanaged_samba_users.join(', ') })}
+			<ul class="space-y-1">
+				{#each notes as note (note)}
+					<li class="break-words">{note}</li>
+				{/each}
+				{#if status.import_report.length > 0}
+					<li>
+						<details>
+							<summary class="cursor-pointer">
+								{$t('shares.status.imported', { n: status.import_report.length })}
+							</summary>
+							<ul class="mt-1 list-disc space-y-0.5 pl-5">
+								{#each status.import_report as line}
+									<li class="break-words">{line}</li>
+								{/each}
+							</ul>
+							<Button variant="secondary" size="sm" class="mt-2" onclick={ondismissimport}>
+								{$t('shares.status.dismissImport')}
+							</Button>
+						</details>
+					</li>
+				{/if}
+			</ul>
 		</Alert>
-	{/if}
-	{#if status.active_smb_users === 0}
-		<Alert variant="info" size="sm">{$t('shares.status.nobody')}</Alert>
 	{/if}
 {:else if error}
 	<Alert variant="error" title={$t('shares.status.error')}>{error}</Alert>

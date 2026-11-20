@@ -14,6 +14,9 @@ export const en = {
 	'twofactor.appHint':
 		'You need an authenticator app on your phone or computer, such as Google Authenticator, Authy or FreeOTP.',
 	'twofactor.start': 'Set up now',
+	// Once the setup started: the app is named once, before it (twofactor.appHint).
+	'twofactor.scan': 'Scan this QR code with your authenticator app.',
+	'twofactor.codeInvalid': 'Enter the 6 digits that the app shows',
 	'twofactor.later': 'Later',
 	'twofactor.signOut': 'Sign out',
 	'twofactor.done': 'Two-factor authentication is on',
@@ -61,6 +64,8 @@ export const ru: Translation<typeof en> = {
 	'twofactor.appHint':
 		'Понадобится приложение-аутентификатор на телефоне или компьютере, например Google Authenticator, Authy или FreeOTP.',
 	'twofactor.start': 'Настроить сейчас',
+	'twofactor.scan': 'Отсканируйте этот QR-код приложением-аутентификатором.',
+	'twofactor.codeInvalid': 'Введите 6 цифр, которые показывает приложение',
 	'twofactor.later': 'Позже',
 	'twofactor.signOut': 'Выйти',
 	'twofactor.done': 'Двухфакторная аутентификация включена',

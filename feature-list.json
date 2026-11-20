@@ -4772,6 +4772,37 @@
       "notes": "Built on main 89ca9fc. The ADR's number is 0431, after the ADR of the boot screen and the loaders (another branch), which takes 0430; while that one is not on this branch the ADR tests refuse the gap, so this branch numbers its ADR 0430, and the merge after the boot screen renames the file and its citations to 0431. The ADR lists every move and each removed duplicate with the place it keeps (38, from an inventory of every menu item and place). The specs that reached a moved setting open its new place and assert what they did; where a page's structure changed, the page-ready marker follows it (the h2 Security Settings became Sign-in and security, Security of the NAS or File sharing), and where an element was removed as a duplicate the spec checks its one place (monitor.spec.ts and network.spec.ts the sidebar's connection line for the Live badges, files.spec.ts the sidebar's Files for the Trash's button, containers.spec.ts that the drawer has no actions, dashboard-layout.spec.ts 8 widgets without Quick Actions). account-smb.spec.ts's canned-answer tests sign in as a regular account, since an administrator has no File sharing tab. Step 3: the login audits each refused second step (test_totp_once.py, test_recovery_codes.py, test_security_keys.py), mine=true limits an administrator's history as a user's (test_authz.py TestLoginHistory), information-architecture.spec.ts finds another account's failed sign-in in the Audit Log and not in the own history. Fresh-context review (17 findings): all BLOCKING and RISK fixed; left, a nit: with three wide widgets the dashboard's last one is half a row wide, as when a user hid one of four before; the layout is each user's (ADR-0395). Web UI and a supervisor query parameter plus audit lines of failed sign-ins: not host-level (GLOSSARY.md)."
     },
     {
+      "id": "webui.ux-sharing",
+      "category": "webui",
+      "description": "The share dialog's Access is a table of who and level, and Shares, Users and groups, the Audit Log and the sign-in pages say each state once, beside what it concerns",
+      "steps": [
+        "The Add and Edit share dialogs show Access as one row per user and group, each with its kind or SMB state and a None / Read / Read & write choice, an All users row, and at 375 px the choice under the name, nothing wider than the screen",
+        "Saving a served share that lowers access, turns guest access off, requires encryption or turns Previous Versions off first asks \"Close open connections?\", listing each change; giving access saves at once",
+        "Shares shows each tab's Add button in the page header (Add target too), says under a disabled one why, and names a share's problem once, on its card; features are neutral chips and users whose SMB is off are muted with a tag, never struck through",
+        "Users shows an error with Retry when the list cannot be read, never \"No users found\"; at 375 px every user's role, 2FA, SMB and actions are on screen, and Delete names what it removes",
+        "The Audit Log heads an API token's entry by what it did, shows the browser in a few words and folds its filters on a phone; first-run setup shows its rules and errors under the fields, and the forced two-factor setup is a sign-in card without the menu",
+        "Every new text is in English and Russian"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0432"
+      ],
+      "verified_by": [
+        "webui/tests/shares.spec.ts",
+        "webui/tests/nfs-exports.spec.ts",
+        "webui/tests/iscsi.spec.ts",
+        "webui/tests/smb-interfaces.spec.ts",
+        "webui/tests/users.spec.ts",
+        "webui/tests/audit.spec.ts",
+        "webui/tests/auth.spec.ts",
+        "webui/tests/first-run.spec.ts",
+        "webui/tests/mandatory-two-factor.spec.ts",
+        "webui/tests/mobile-layout.spec.ts",
+        "webui/tests/language.spec.ts"
+      ],
+      "notes": "Chunk 3 of the web UI's UX work, built on mvp.batch-18 69dfae5 beside chunk 1 (the design foundations), which owns lib/components/ui, app.css and the common and ui catalogs. The ADR's final number is 0435; this branch names it 0432 so that the ADR tests' contiguous numbering passes, and the merge renames it. The pages use the ui components that exist now; the places that switch to chunk 1's ConfirmDialog, Sheet, Menu and Toast are listed in the ADR's consequences. NFS exports still have no Edit: the API has none. The Save question counts only what smb.conf has (a user whose SMB is active, a group with such a member, a guest access or Previous Versions that smb.conf did not leave out, on a share someone can connect to), as smbconf.shrunk_shares closes connections only then. Fresh-context review (10 findings): fixed the BLOCKING one (the Save question listed users not in smb.conf) and the RISKs: the header Add target said no volume while the paths loaded or failed; the access table links lost the open form (now a new tab) and /users#groups did not reach the Groups card (scrolled to after the load); a failed copy of a Connect address said nothing (now said, also to screen readers); a failed critical audit entry lost Critical; the specs did not cover setup validation, Show, the users load error, the audit entry words or the forced setup card (tests added in first-run, auth, users, audit and mandatory-two-factor specs). Left: a disabled Save with nothing to change (Edit user, SMB interfaces) and Export after a failed audit load give their reason as hover text only, until chunk 1 adds Button disabledReason (a one-line change each); the users page hides the groups while the users cannot be read, and a groups load error has no Retry of its own (Retry of the page reads both); UsersCard formats its dates itself instead of lib/time (chunk 1 owns it)."
+    },
+    {
       "id": "ci.btrfs-loop-device-tests",
       "category": "ci",
       "description": "CI runs the storage scenarios against real btrfs on loop devices in a privileged container",

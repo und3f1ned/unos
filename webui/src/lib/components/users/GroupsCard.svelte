@@ -90,15 +90,17 @@
 	}
 </script>
 
+<!-- id: the Shares page's access table links here to create a group. -->
+<div id="groups" class="scroll-mt-4">
 <Card>
-	<div class="flex flex-wrap items-center justify-between gap-3 mb-4">
+	<div class="card-header flex-wrap gap-3">
 		<h2 class="section-title">
-			<UsersRound class="w-5 h-5 text-content-secondary" />
+			<UsersRound class="w-5 h-5 text-content-secondary" aria-hidden="true" />
 			{$t('groups.title', { count: directory.groups.length })}
 		</h2>
-		<Button icon={Plus} variant="secondary" onclick={() => groupDialog?.openCreate()}>{$t('groups.add')}</Button>
+		<Button icon={Plus} variant="secondary" size="sm" onclick={() => groupDialog?.openCreate()}>{$t('groups.add')}</Button>
 	</div>
-	<p class="text-sm text-secondary mb-4">{$t('groups.about')}</p>
+	<p class="form-hint mt-0 mb-4">{$t('groups.about')}</p>
 
 	{#if directory.loadError}
 		<Alert variant="error" title={$t('groups.loadFailed')}>{directory.loadError}</Alert>
@@ -122,7 +124,7 @@
 								<p class="flex flex-wrap items-center gap-x-2 gap-y-1">
 									<span class="text-secondary">{$t('groups.members')}</span>
 									{#each group.members as member (member.user_id)}
-										<span class="inline-flex items-center gap-1 break-all"
+										<span class="inline-flex flex-wrap items-center gap-1 break-words"
 											>{member.username}{#if member.smb_state !== 'active'}<SmbStateBadge
 													state={member.smb_state}
 												/>{/if}</span
@@ -145,7 +147,7 @@
 							<Button variant="secondary" size="sm" icon={Edit} onclick={() => groupDialog?.openEdit(group)}>
 								{$t('groups.edit')}<span class="sr-only">{` ${$t('groups.editOf', { name: group.name })}`}</span>
 							</Button>
-							<Button variant="ghost-danger" size="icon-sm" onclick={() => openDelete(group)}>
+							<Button variant="ghost-danger" size="icon-sm" title={$t('groups.deleteShort')} onclick={() => openDelete(group)}>
 								<Trash2 class="w-4 h-4" />
 								<span class="sr-only">{$t('groups.deleteGroup', { name: group.name })}</span>
 							</Button>
@@ -156,6 +158,7 @@
 		</ul>
 	{/if}
 </Card>
+</div>
 
 <GroupDialog bind:this={groupDialog} {directory} />
 

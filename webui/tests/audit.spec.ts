@@ -409,12 +409,58 @@ test.describe('Audit log, the other changes of the administrators', () => {
     await expect(timelineEntries(page).nth(0)).toContainText('Image pulled');
     await expect(timelineEntries(page).nth(1)).toContainText('Login history cleared');
     await expect(timelineEntries(page).nth(2)).toContainText('Firewall rule added');
-    await expect(timelineEntries(page).nth(2)).toContainText('firewall_rule');
+    await expect(timelineEntries(page).nth(2)).toContainText('firewall rule');
 
     await page.getByRole('combobox', { name: 'Action' }).click();
     for (const name of ['Firewall enabled', 'Pool mounted', 'System suspend', 'Image removed']) {
       await expect(page.getByRole('option', { name, exact: true })).toBeVisible();
     }
+  });
+});
+
+test.describe('Audit log, the words of an entry', () => {
+  const UA = 'Mozilla/5.0 (Android 14; Mobile; rv:144.0) Gecko/144.0 Firefox/144.0';
+  const base = {
+    severity: 'info', username: 'admin', ip_address: '192.0.2.10', user_agent: null, resource_type: null,
+    resource_id: null, details: null, success: true,
+  };
+  const ENTRIES = [
+    {
+      ...base, id: 'audit_words_token', timestamp: '2026-11-10T12:02:00Z', action: 'other', user_agent: UA,
+      resource_type: 'api_token', resource_id: 'backup-script', details: 'Created API token: backup-script',
+    },
+    { ...base, id: 'audit_words_warning', timestamp: '2026-11-10T12:01:00Z', action: 'login_failed', severity: 'warning', username: 'mallory', success: false },
+    { ...base, id: 'audit_words_critical', timestamp: '2026-11-10T12:00:00Z', action: 'login_failed', severity: 'critical', username: 'eve', success: false },
+  ];
+
+  test("an API token's entry says what it did, the browser in a few words, and one mark per fact", async ({
+    authenticatedPage: page,
+  }) => {
+    await page.route(
+      (url) => url.pathname.startsWith('/api/v1/audit/'),
+      (route) => {
+        const url = new URL(route.request().url());
+        if (url.pathname === '/api/v1/audit/logs') return route.fulfill({ json: ENTRIES });
+        if (url.pathname === '/api/v1/audit/logs/count') return route.fulfill({ json: { count: ENTRIES.length } });
+        if (url.pathname === '/api/v1/audit/actions') return route.continue();
+        return route.abort();
+      },
+    );
+    await page.goto('/audit');
+    await expect(timelineEntries(page)).toHaveCount(3);
+
+    const token = timelineEntries(page).filter({ hasText: 'backup-script' });
+    await expect(token).toContainText('Created API token: backup-script');
+    await expect(token).not.toContainText('Other');
+    await expect(token.getByText('API token backup-script', { exact: true })).toBeVisible();
+    await expect(token).not.toContainText('api_token');
+    const browser = token.getByText('Firefox 144 on Android', { exact: true });
+    await expect(browser).toBeVisible();
+    await expect(browser).toHaveAttribute('title', UA);
+
+    // A failed sign-in is Failed alone, not Failed and Warning; a critical one says Critical too.
+    await expect(timelineEntries(page).filter({ hasText: /\bmallory\b/ }).locator('.badge')).toHaveText(['Failed']);
+    await expect(timelineEntries(page).filter({ hasText: /\beve\b/ }).locator('.badge')).toHaveText(['Failed', 'Critical']);
   });
 });
 
@@ -563,7 +609,8 @@ test.describe('Audit log in Russian', () => {
     await expect(timeline.locator('h2 time')).toHaveText([/^суббота, 7 ноября 2026/, /^пятница, 6 ноября 2026/]);
     const [failed, created] = [timeline.getByRole('listitem').nth(0), timeline.getByRole('listitem').nth(1)];
     await expect(failed).toContainText('Неудачный вход');
-    await expect(failed.locator('.badge')).toHaveText(['Неудачно', 'Предупреждение']);
+    // One mark for one fact: a failure is Failed, whatever its severity.
+    await expect(failed.locator('.badge')).toHaveText(['Неудачно']);
     await expect(failed.locator('dt')).toHaveText(['Пользователь', 'Адрес', 'Браузер']);
     await expect(created).toContainText('Пользователь создан');
     await expect(created).toContainText('Created new user: alice');

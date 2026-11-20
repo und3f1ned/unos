@@ -3,6 +3,7 @@
 	import { onDestroy, onMount, untrack } from 'svelte';
 	import { Download, ScrollText } from 'lucide-svelte';
 	import { exportAuditLog, type AuditExportFormat, type AuditFilters as Filters } from '$lib/api/audit';
+	import { getUsers } from '$lib/api/auth';
 	import { Alert, Button, Card, EmptyState, Skeleton } from '$lib/components/ui';
 	import { AuditFilters, AuditLog, AuditTimeline } from '$lib/components/audit';
 	import { dayBound, textOf, today } from '$lib/components/audit/timeline';
@@ -32,6 +33,10 @@
 		end_date: dayBound(endDate, true)
 	});
 	const filtered = $derived(Object.values(filters).some(Boolean));
+	// How many filters are set: From and To count once each, as fields.
+	const activeFilters = $derived(Object.values(filters).filter(Boolean).length);
+	// The NAS's users, which the User field suggests; a name of a deleted user can still be typed.
+	let usernames = $state<string[]>([]);
 	// A change of the filters shows the newest entries that match, from the first page; the first
 	// load once the page is mounted. Only those make it run again: what schedule reads and writes
 	// is its own business.
@@ -186,6 +191,8 @@
 			.map((a) => ({ value: a.value, label: textOf(ACTION_NAMES, a.value, $t) }))
 			.sort((a, b) => a.label.localeCompare(b.label, $intlLocale))
 	]);
+	// The export writes what the list shows: not while the list could not be read.
+	const exportBlocked = $derived(log.error ? $t('audit.exportBlocked') : '');
 	const countText = $derived(
 		log.entries.length < log.total
 			? $t('audit.showing', { shown: log.entries.length, n: log.total })
@@ -195,6 +202,10 @@
 	onMount(() => {
 		mounted = true;
 		void log.loadActions();
+		// Only suggestions: a failure leaves the field as it was, free text.
+		getUsers()
+			.then((users) => (usernames = users.map((u) => u.username).sort((a, b) => a.localeCompare(b))))
+			.catch(() => {});
 	});
 
 	onDestroy(() => log.dispose());
@@ -229,14 +240,16 @@
 				variant="secondary"
 				icon={Download}
 				loading={exporting === 'csv'}
-				disabled={exporting !== null}
+				disabled={exporting !== null || exportBlocked !== ''}
+				title={exportBlocked || undefined}
 				onclick={() => exportAs('csv')}>{$t('audit.exportCsv')}</Button
 			>
 			<Button
 				variant="secondary"
 				icon={Download}
 				loading={exporting === 'json'}
-				disabled={exporting !== null}
+				disabled={exporting !== null || exportBlocked !== ''}
+				title={exportBlocked || undefined}
 				onclick={() => exportAs('json')}>{$t('audit.exportJson')}</Button
 			>
 		</div>
@@ -261,6 +274,8 @@
 		actionsError={log.actionsError}
 		count={log.loaded && !log.error ? countText : ''}
 		{filtered}
+		active={activeFilters}
+		{usernames}
 		onclear={clearFilters}
 	/>
 

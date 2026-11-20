@@ -7,6 +7,7 @@
 	import { isSetupOnly, loadCurrentUser, signOut as endSession, user } from '$lib/stores/auth';
 	import { connectWebSocket, disconnectWebSocket } from '$lib/stores/stats';
 	import { Alert, Button, Card, Input } from '$lib/components/ui';
+	import { AuthCard } from '$lib/components/auth';
 	import { intlLocale, t } from '$lib/i18n';
 	import { formatDateTime } from '$lib/time';
 	import { CheckCircle } from 'lucide-svelte';
@@ -26,6 +27,12 @@
 
 	const required = $derived($user?.two_factor_required ?? null);
 	const setupOnly = $derived(isSetupOnly($user));
+	// Drawn as the sign-in card from the start, it stays one when the setup is done (the layout
+	// keeps it so too), until the account leaves the page.
+	let asCard = $state(false);
+	$effect.pre(() => {
+		if (setupOnly) asCard = true;
+	});
 	const deadline = $derived(
 		required ? formatDateTime(required.by, $intlLocale, { dateStyle: 'long', timeStyle: 'short' }) : ''
 	);
@@ -54,7 +61,23 @@
 		}
 	}
 
+	// The code says what is wrong with it at its field; six digits are sent at once.
+	let codeError = $state('');
+
+	function typed(value: string) {
+		codeError = '';
+		if (/^\d{6}$/.test(value) && !busy) {
+			code = value;
+			void confirm();
+		}
+	}
+
 	async function confirm() {
+		if (busy) return;
+		if (!/^\d{6}$/.test(code)) {
+			codeError = $t('twofactor.codeInvalid');
+			return;
+		}
 		busy = true;
 		error = '';
 		try {
@@ -86,11 +109,9 @@
 	}
 </script>
 
-<div class="page-container max-w-xl space-y-6">
-	<h1 class="page-title">{$t('twofactor.title')}</h1>
-
+{#snippet content()}
 	{#if done}
-		<Card class="space-y-4">
+		<div class="space-y-4">
 			<p class="flex items-center gap-2 font-medium text-status-success">
 				<CheckCircle class="w-5 h-5 shrink-0" />
 				{$t('twofactor.done')}
@@ -100,22 +121,21 @@
 				<Button href="/account#security">{$t('twofactor.recoveryCodes')}</Button>
 				<Button variant="secondary" href="/">{$t('twofactor.continue')}</Button>
 			</div>
-		</Card>
+		</div>
 	{:else if required}
-		<Card class="space-y-4">
+		<div class="space-y-4">
 			{#if setupOnly}
-				<Alert variant="warning">{$t('twofactor.setupOnly')}</Alert>
+				<Alert variant="warning" size="sm">{$t('twofactor.setupOnly')}</Alert>
 			{:else}
 				<p>{$t('twofactor.due', { date: deadline })}</p>
 			{/if}
-			<p class="text-sm text-content-secondary">{$t('twofactor.appHint')}</p>
 
 			{#if error}
 				<Alert variant="error">{error}</Alert>
 			{/if}
 
 			{#if setup}
-				<p class="text-sm text-content-secondary">{$t('account.totp.scan')}</p>
+				<p class="text-sm text-content-secondary">{$t('twofactor.scan')}</p>
 				{#if qrDataUrl}
 					<div class="flex justify-center">
 						<div class="bg-content-on-brand p-2 rounded-lg">
@@ -129,6 +149,7 @@
 				</div>
 				<form
 					class="space-y-4"
+					novalidate
 					onsubmit={(event) => {
 						event.preventDefault();
 						confirm();
@@ -140,12 +161,11 @@
 						bind:value={code}
 						autocomplete="one-time-code"
 						maxlength={6}
-						required
+						error={codeError}
+						oninput={(event) => typed(event.currentTarget.value)}
 					/>
 					<div class="flex flex-wrap gap-3">
-						<Button type="submit" loading={busy} disabled={busy || code.length !== 6}
-							>{$t('account.totp.enable2fa')}</Button
-						>
+						<Button type="submit" loading={busy}>{$t('account.totp.enable2fa')}</Button>
 						{#if setupOnly}
 							<Button variant="secondary" onclick={signOut}>{$t('twofactor.signOut')}</Button>
 						{:else}
@@ -154,6 +174,8 @@
 					</div>
 				</form>
 			{:else}
+				<!-- Before the setup: what it needs, named once. -->
+				<p class="text-sm text-content-secondary">{$t('twofactor.appHint')}</p>
 				<div class="flex flex-wrap gap-3">
 					<Button loading={busy} disabled={busy} onclick={start}>{$t('twofactor.start')}</Button>
 					{#if setupOnly}
@@ -163,6 +185,20 @@
 					{/if}
 				</div>
 			{/if}
-		</Card>
+		</div>
 	{/if}
-</div>
+{/snippet}
+
+<!-- An account that can only set this up gets it as the sign-in page's card, without the shell;
+     during the grace period it is a page of the app. -->
+{#if setupOnly || asCard}
+	<AuthCard>
+		<h1 class="mb-4 text-lg font-semibold text-content">{$t('twofactor.title')}</h1>
+		{@render content()}
+	</AuthCard>
+{:else}
+	<div class="page-container max-w-xl space-y-6">
+		<h1 class="page-title">{$t('twofactor.title')}</h1>
+		<Card>{@render content()}</Card>
+	</div>
+{/if}

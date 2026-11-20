@@ -15,7 +15,7 @@
 	import ConfirmDialog from './ConfirmDialog.svelte';
 	import type { UserDirectory } from './directory.svelte';
 	import { messageOf } from './errors';
-	import { passwordComplete } from './password';
+	import { MIN_PASSWORD_LENGTH, passwordComplete } from './password';
 	import PasswordFields from './PasswordFields.svelte';
 
 	type Props = {
@@ -80,6 +80,8 @@
 			!saving &&
 			!smbBusy
 	);
+	// Save was pressed: a password the rename needs says that it is missing.
+	let editAttempted = $state(false);
 	let smbToggleDisabled = $derived(saving || smbBusy || promoting);
 
 	/** Opens the dialog for `user`, as the list shows them now. */
@@ -89,6 +91,7 @@
 		editIsAdmin = user.is_admin;
 		editPassword = '';
 		editConfirm = '';
+		editAttempted = false;
 		alsoTurnOnSmb = true;
 		editError = '';
 		editWarnings = [];
@@ -154,6 +157,7 @@
 	}
 
 	async function saveEdit() {
+		editAttempted = true;
 		if (!editing || !canSave) return;
 		const target = editing;
 		const password = editPassword;
@@ -311,8 +315,9 @@
 					confirmId="edit-password-confirm"
 					label={$t('users.edit.password')}
 					confirmLabel={$t('users.edit.confirm')}
-					hint={$t('users.edit.passwordHint')}
+					hint={$t('users.edit.passwordHint', { n: MIN_PASSWORD_LENGTH })}
 					disabled={saving}
+					attempted={editAttempted && (renameNeedsPassword || editPassword !== '')}
 					bind:password={editPassword}
 					bind:confirmation={editConfirm}
 				/>
@@ -386,7 +391,15 @@
 		>
 			{$t('users.edit.close')}
 		</Button>
-		<Button class="flex-1" loading={saving} disabled={!canSave} onclick={saveEdit}>
+		<!-- Disabled only while nothing changed, and then it says so; what a change lacks is
+		     said at its field. -->
+		<Button
+			class="flex-1"
+			loading={saving}
+			disabled={!editChanged || saving || smbBusy}
+			title={editChanged ? undefined : $t('users.edit.noChanges')}
+			onclick={saveEdit}
+		>
 			{$t('users.edit.save')}
 		</Button>
 	{/snippet}

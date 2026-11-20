@@ -486,10 +486,11 @@ class AuditFilter:
             return False
         if self.search:
             action = entry.action
-            # The resource as the page shows it: its type and id, a space between them.
+            # The resource as the page shows it: its type and id, a space between them; the type
+            # also in words, its underscores as spaces ("api token").
             resource = " ".join(part for part in (entry.resource_type, entry.resource_id) if part)
             fields = (entry.username, action, action.replace("_", " "), entry.ip_address, entry.user_agent,
-                      resource, entry.details)
+                      resource, resource.replace("_", " "), entry.details)
             return any(self.search in field.casefold() for field in fields if field)
         return True
 

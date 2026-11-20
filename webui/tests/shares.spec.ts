@@ -48,7 +48,7 @@ test.describe('Shares Management', () => {
   test('should display NFS shares section', async ({ authenticatedPage: page }) => {
     await page.goto('/shares');
     await page.getByRole('tab', { name: 'NFS' }).click();
-    await expect(page.getByRole('heading', { name: 'NFS exports', exact: true })).toBeVisible();
+    await expect(page.getByRole('region', { name: 'NFS exports', exact: true })).toBeVisible();
     await expect(page.getByRole('tab', { name: 'NFS' })).toHaveAttribute('aria-selected', 'true');
     // The supervisor read the export files and the NFS status (the stand-in's own files: none).
     await expect(page.getByText('No NFS exports yet')).toBeVisible();
@@ -85,20 +85,36 @@ function fakeUsers(): FakeUser[] {
   ];
 }
 
-const shareCard = (page: Page, name: string) =>
-  page.locator('.card-nested').filter({ has: page.locator('h3', { hasText: new RegExp(`^${name}$`) }) });
+const shareCard = (page: Page, name: string) => page.locator(`[data-share="${name}"]`);
 
-const accessRow = (scope: Locator, username: string) =>
-  scope.getByRole('listitem').filter({ has: scope.page().getByRole('combobox', { name: username, exact: true }) });
+/** The levels of a row of the access table: a user by name, a group as "Group <name>". */
+const levels = (scope: Locator, name: string) => scope.getByRole('radiogroup', { name, exact: true });
 
-/** Choose a level for a user in the access picker, then wait until its list is closed. */
-async function pick(scope: Locator, username: string, level: 'No access' | 'Read only' | 'Read & write') {
-  const combobox = scope.getByRole('combobox', { name: username, exact: true });
-  const list = scope.getByRole('listbox', { name: username, exact: true });
-  await combobox.click();
-  await list.getByRole('option', { name: level, exact: true }).click();
-  await expect(combobox).toHaveText(level);
-  await expect(list).toHaveCount(0);
+const accessRow = (scope: Locator, name: string) =>
+  scope.getByRole('listitem').filter({ has: scope.page().getByRole('radiogroup', { name, exact: true }) });
+
+type Level = 'None' | 'Read' | 'Read & write';
+
+/** Choose a level in a row of the access table. */
+async function pick(scope: Locator, name: string, level: Level) {
+  const radio = levels(scope, name).getByRole('radio', { name: level, exact: true });
+  await radio.check();
+  await expect(radio).toBeChecked();
+}
+
+/** The level chosen in a row of the access table; '' when none is (the All users row of mixed levels). */
+async function expectLevel(scope: Locator, name: string, level: Level | '') {
+  const chosen = levels(scope, name).getByRole('radio', { checked: true });
+  if (level === '') await expect(chosen).toHaveCount(0);
+  else await expect(chosen).toHaveAccessibleName(level);
+}
+
+/** Every level of a row can be chosen, or none can. */
+async function expectRowEnabled(scope: Locator, name: string, enabled: boolean) {
+  for (const radio of await levels(scope, name).getByRole('radio').all()) {
+    if (enabled) await expect(radio).toBeEnabled();
+    else await expect(radio).toBeDisabled();
+  }
 }
 
 // The texts the server answers about folders that other accounts can change: share
@@ -147,13 +163,7 @@ test.describe('SMB shares page (fake data)', () => {
     await expect(dialog.getByText(/^Shared folder:/)).toHaveText(`Shared folder: ${POOLS}/tank/Documents`);
     await dialog.getByLabel('Comment').fill('Team files');
     await pick(dialog, 'alice', 'Read & write');
-    await pick(dialog, 'bob', 'Read only');
-    // Only shrinking access disconnects (smbconf.shrunk_shares).
-    await expect(
-      dialog.getByText(
-        'Removing or lowering access, turning guest access off, requiring encryption or turning Previous Versions off disconnects open connections to that share (clients reconnect); adding access disconnects nobody.',
-      ),
-    ).toBeVisible();
+    await pick(dialog, 'bob', 'Read');
     await expect(
       dialog.getByText(
         'Folders that apps use (downloads, media) can be shared. SMB users with write access then change what the app sees.',
@@ -217,29 +227,44 @@ test.describe('SMB shares page (fake data)', () => {
     const dialog = page.getByRole('dialog', { name: 'Add SMB share' });
     const access = dialog.getByRole('group', { name: 'Access' });
 
-    await expect(access.getByRole('combobox')).toHaveCount(4);
-    await expect(access.getByRole('combobox', { name: 'admin', exact: true })).toHaveCount(0);
+    // One row per user who is not an administrator, by name, after the All users row; then the groups.
+    await expect(access.locator('[data-access-row]')).toHaveText([
+      /^\s*All users/,
+      /^\s*alice/,
+      /^\s*bob/,
+      /^\s*carol/,
+      /^\s*Dave\.Smith/,
+    ]);
+    await expect(levels(access, 'admin')).toHaveCount(0);
     await expect(access.getByText('Administrators are not listed: they cannot use SMB.')).toBeVisible();
-    // Active users need no badge; the others say why their access does not count yet.
-    await expect(accessRow(access, 'alice').locator('.badge')).toHaveCount(0);
-    await expect(accessRow(access, 'bob').locator('.badge')).toHaveText('Password needed');
-    await expect(accessRow(access, 'carol').locator('.badge')).toHaveText('Off');
+    // Each row names its kind, or why its access does not count yet: no bare name.
+    await expect(accessRow(access, 'alice')).toContainText('User');
+    await expect(accessRow(access, 'bob')).toContainText('SMB not on yet');
+    await expect(accessRow(access, 'carol')).toContainText('SMB off');
+    await expect(accessRow(access, 'carol').getByRole('link', { name: 'Turn SMB on in Users →' })).toHaveAttribute(
+      'href',
+      '/users',
+    );
     // A username SMB cannot use: listed, but it cannot be given access.
-    await expect(accessRow(access, 'Dave.Smith').locator('.badge')).toHaveText('Not available');
+    await expect(accessRow(access, 'Dave.Smith')).toContainText('No SMB');
     await expect(accessRow(access, 'Dave.Smith')).toContainText(DAVE_REASON);
-    await expect(access.getByRole('combobox', { name: 'Dave.Smith' })).toBeDisabled();
+    await expectRowEnabled(access, 'Dave.Smith', false);
+    await expect(access.getByText('No groups yet.')).toBeVisible();
+    await expect(access.getByRole('link', { name: 'Create a group →' })).toHaveAttribute('href', '/users#groups');
 
-    // In the order of the list: alice, bob, carol, Dave.Smith.
-    const levels = access.getByRole('combobox');
-    await expect(levels).toHaveText(['No access', 'No access', 'No access', 'No access']);
-    await access.getByRole('button', { name: 'Everyone: Read & write' }).click();
-    await expect(levels).toHaveText(['Read & write', 'Read & write', 'Read & write', 'No access']);
-    await access.getByRole('button', { name: 'Clear' }).click();
-    await expect(levels).toHaveText(['No access', 'No access', 'No access', 'No access']);
-    await access.getByRole('button', { name: 'Everyone: Read only' }).click();
-    await expect(levels).toHaveText(['Read only', 'Read only', 'Read only', 'No access']);
+    // The All users row sets every user who can be given access, and shows their common level.
+    for (const name of ['All users', 'alice', 'bob', 'carol', 'Dave.Smith']) await expectLevel(access, name, 'None');
+    await pick(access, 'All users', 'Read & write');
+    for (const name of ['alice', 'bob', 'carol']) await expectLevel(access, name, 'Read & write');
+    await expectLevel(access, 'Dave.Smith', 'None');
+    await pick(access, 'All users', 'None');
+    for (const name of ['alice', 'bob', 'carol']) await expectLevel(access, name, 'None');
+    await pick(access, 'alice', 'Read & write');
+    await expectLevel(access, 'All users', '');
+    await pick(access, 'All users', 'Read');
+    for (const name of ['All users', 'alice', 'bob', 'carol']) await expectLevel(access, name, 'Read');
 
-    // The bulk buttons only fill the picker.
+    // The All users row only fills the table.
     expect(fake.writes).toEqual([]);
     await dialog.getByLabel(/^Name/).fill('e2e_all');
     await dialog.getByLabel('Folder', { exact: true }).fill('all');
@@ -259,11 +284,16 @@ test.describe('SMB shares page (fake data)', () => {
     const dialog = page.getByRole('dialog', { name: 'Add SMB share' });
 
     const guest = dialog.getByLabel('Guests can read this share without a password');
+    const short = 'Anyone on your network can read this share without a password.';
     await expect(guest).not.toBeChecked();
-    await expect(dialog.getByText(GUEST_WARNING)).toHaveCount(0);
+    await expect(dialog.getByText(short)).toHaveCount(0);
     await guest.check();
+    // One line, and the server's whole warning under Details.
+    await expect(dialog.getByText(short)).toBeVisible();
+    await dialog.locator('summary', { hasText: 'Details' }).first().click();
     await expect(dialog.getByText(GUEST_WARNING)).toBeVisible();
     await guest.uncheck();
+    await expect(dialog.getByText(short)).toHaveCount(0);
     await expect(dialog.getByText(GUEST_WARNING)).toHaveCount(0);
     await expect(dialog.getByLabel('Show in network browsing')).toBeChecked();
 
@@ -360,12 +390,18 @@ test.describe('SMB shares page (fake data)', () => {
     });
     await page.goto('/shares');
     const card = shareCard(page, 'old_photos');
-    await expect(card.locator('.badge', { hasText: /^Encryption required$/ })).toHaveClass(/badge-info/);
-    for (const badge of [/^Time Machine$/, /^Previous Versions$/]) {
-      await expect(card.locator('.badge', { hasText: badge })).toHaveClass(/badge-warning/);
+    // The features are facts, so neutral; a stored setting that smb.conf leaves out is one line,
+    // with the server's reason under it.
+    for (const badge of [/^Encryption required$/, /^Time Machine$/, /^Previous Versions$/]) {
+      await expect(card.locator('.badge', { hasText: badge })).toHaveClass(/badge-neutral/);
     }
-    await expect(card.getByText(`Time Machine is off: ${TIME_MACHINE_MODULES}`)).toBeVisible();
-    await expect(card.getByText(`Previous Versions are off: ${NO_SNAPSHOTS}`)).toBeVisible();
+    const timeMachine = card.locator('details', { hasText: 'Time Machine does not work here' });
+    await expect(timeMachine.getByText(TIME_MACHINE_MODULES)).toBeHidden();
+    await timeMachine.locator('summary').click();
+    await expect(timeMachine.getByText(TIME_MACHINE_MODULES)).toBeVisible();
+    const previous = card.locator('details', { hasText: 'Previous Versions shows nothing here' });
+    await previous.locator('summary').click();
+    await expect(previous.getByText(NO_SNAPSHOTS)).toBeVisible();
   });
 
   test('the edit dialog sends only the changed fields and the expected version', async ({
@@ -394,8 +430,8 @@ test.describe('SMB shares page (fake data)', () => {
     await expect(dialog.getByLabel('Name')).toBeDisabled();
     await expect(dialog.getByRole('combobox', { name: 'Location' })).toHaveCount(0);
     await expect(dialog.getByText(`${POOLS}/tank/docs`, { exact: true })).toBeVisible();
-    await expect(dialog.getByRole('combobox', { name: 'alice', exact: true })).toHaveText('Read & write');
-    await expect(dialog.getByRole('combobox', { name: 'carol', exact: true })).toHaveText('Read only');
+    await expectLevel(dialog, 'alice', 'Read & write');
+    await expectLevel(dialog, 'carol', 'Read');
 
     await dialog.getByLabel('Comment').fill('New comment');
     await dialog.getByRole('button', { name: 'Save' }).click();
@@ -407,7 +443,8 @@ test.describe('SMB shares page (fake data)', () => {
 
     // A changed access list is sent complete.
     await shareCard(page, 'docs').getByRole('button', { name: 'Edit' }).click();
-    await pick(dialog, 'bob', 'Read only');
+    await pick(dialog, 'bob', 'Read');
+    // Only given access, so no question about open connections.
     await dialog.getByRole('button', { name: 'Save' }).click();
     await expect(dialog).toBeHidden();
     expect(fake.writes[1]).toEqual({
@@ -489,8 +526,8 @@ test.describe('SMB shares page (fake data)', () => {
     await expect(card.getByText(POOL_ROOT_MESSAGE)).toBeVisible();
     await expect(card.getByRole('button', { name: 'Repair permissions' })).toHaveCount(0);
     await expect(card.getByText(/^Connect:/)).toHaveCount(0);
-    // Not served, so "No access" would say nothing more.
-    await expect(card.locator('.badge', { hasText: /^No access$/ })).toHaveCount(0);
+    // Not served, so "Nobody can connect yet" would say nothing more.
+    await expect(card.locator('.badge', { hasText: /^Nobody can connect yet$/ })).toHaveCount(0);
 
     await card.getByRole('button', { name: 'Edit' }).click();
     const dialog = page.getByRole('dialog', { name: 'Edit share legacy' });
@@ -508,9 +545,10 @@ test.describe('SMB shares page (fake data)', () => {
     await expect(hint).toBeVisible();
     // It grants nothing, so nothing has to be removed before it is saved.
     await expect(dialog.getByText(NOT_SERVED_GRANTS_NOTE)).toHaveCount(0);
-    await expect(dialog.getByRole('combobox', { name: 'alice', exact: true })).toBeDisabled();
-    await expect(dialog.getByRole('button', { name: 'Everyone: Read only' })).toBeDisabled();
-    await expect(dialog.getByRole('button', { name: 'Clear' })).toBeDisabled();
+    await expectRowEnabled(dialog, 'alice', false);
+    // The All users row can only take access away, and nobody has any.
+    await expect(levels(dialog, 'All users').getByRole('radio', { name: 'Read', exact: true })).toBeDisabled();
+    await expect(levels(dialog, 'All users').getByRole('radio', { name: 'Read & write', exact: true })).toBeDisabled();
     await expect(dialog.getByLabel('Guests can read this share without a password')).toBeDisabled();
 
     // Its comment can change without a folder.
@@ -525,18 +563,17 @@ test.describe('SMB shares page (fake data)', () => {
     await card.getByRole('button', { name: 'Edit' }).click();
     await folder.fill('legacy');
     await expect(hint).toHaveCount(0);
-    const alice = dialog.getByRole('combobox', { name: 'alice', exact: true });
-    await expect(alice).toBeEnabled();
-    await pick(dialog, 'alice', 'Read only');
+    await expectRowEnabled(dialog, 'alice', true);
+    await pick(dialog, 'alice', 'Read');
     // Without the new folder, access given meanwhile can only be removed again.
     await folder.fill('');
     await expect(hint).toBeVisible();
-    await expect(alice).toHaveText('Read only');
-    await expect(alice).toBeEnabled();
-    await pick(dialog, 'alice', 'No access');
-    await expect(alice).toBeDisabled();
+    await expectLevel(dialog, 'alice', 'Read');
+    await expect(levels(dialog, 'alice').getByRole('radio', { name: 'None', exact: true })).toBeEnabled();
+    await pick(dialog, 'alice', 'None');
+    await expectRowEnabled(dialog, 'alice', false);
     await folder.fill('legacy');
-    await pick(dialog, 'alice', 'Read only');
+    await pick(dialog, 'alice', 'Read');
     await dialog.getByRole('button', { name: 'Save' }).click();
     await expect(dialog).toBeHidden();
     expect(fake.writes[1]).toEqual({
@@ -577,24 +614,19 @@ test.describe('SMB shares page (fake data)', () => {
     await expect(dialog.getByText(NOT_SERVED_HINT)).toBeVisible();
 
     // Nothing can be given: no bulk grants, no access for others, no other level.
-    const alice = dialog.getByRole('combobox', { name: 'alice', exact: true });
-    await expect(alice).toHaveText('Read & write');
-    await expect(alice).toBeEnabled();
-    await expect(dialog.getByRole('combobox', { name: 'bob', exact: true })).toBeDisabled();
-    await expect(dialog.getByRole('button', { name: 'Everyone: Read only' })).toBeDisabled();
-    await expect(dialog.getByRole('button', { name: 'Everyone: Read & write' })).toBeDisabled();
-    await alice.click();
-    const levels = dialog.getByRole('listbox', { name: 'alice', exact: true });
-    await expect(levels.getByRole('option', { name: 'Read only', exact: true })).toBeDisabled();
+    const alice = levels(dialog, 'alice');
+    await expectLevel(dialog, 'alice', 'Read & write');
+    await expectRowEnabled(dialog, 'bob', false);
+    await expect(levels(dialog, 'All users').getByRole('radio', { name: 'Read', exact: true })).toBeDisabled();
+    await expect(levels(dialog, 'All users').getByRole('radio', { name: 'Read & write', exact: true })).toBeDisabled();
+    await expect(alice.getByRole('radio', { name: 'Read', exact: true })).toBeDisabled();
     // Her own level stays, so that a removal can be undone.
-    await expect(levels.getByRole('option', { name: 'Read & write', exact: true })).toBeEnabled();
-    await expect(levels.getByRole('option', { name: 'No access', exact: true })).toBeEnabled();
-    await alice.click();
-    await expect(levels).toHaveCount(0);
+    await expect(alice.getByRole('radio', { name: 'Read & write', exact: true })).toBeEnabled();
+    await expect(alice.getByRole('radio', { name: 'None', exact: true })).toBeEnabled();
 
     // A removal can be undone in the dialog: back to the access the share has.
-    await pick(dialog, 'alice', 'No access');
-    await expect(alice).toBeEnabled();
+    await pick(dialog, 'alice', 'None');
+    await expect(alice.getByRole('radio', { name: 'Read & write', exact: true })).toBeEnabled();
     await pick(dialog, 'alice', 'Read & write');
     const guest = dialog.getByLabel('Guests can read this share without a password');
     await expect(guest).toBeChecked();
@@ -608,14 +640,13 @@ test.describe('SMB shares page (fake data)', () => {
     await dialog.getByRole('button', { name: 'Save' }).click();
     await expect(dialog.locator('.alert', { hasText: 'Share was not saved' })).toContainText(problem);
 
-    // Its access and its guest access can be removed; then it is saved.
-    const clear = dialog.getByRole('button', { name: 'Clear' });
-    await clear.click();
-    await expect(alice).toHaveText('No access');
-    await expect(clear).toBeDisabled();
+    // Its access and its guest access can be removed; then it is saved. A share that is not served
+    // has no open connection, so no question about them.
+    await pick(dialog, 'All users', 'None');
+    await expectLevel(dialog, 'alice', 'None');
     await guest.uncheck();
     // Removed, both can still be given back as they were.
-    await expect(alice).toBeEnabled();
+    await expect(alice.getByRole('radio', { name: 'Read & write', exact: true })).toBeEnabled();
     await expect(guest).toBeEnabled();
     await dialog.getByRole('button', { name: 'Save' }).click();
     await expect(dialog).toBeHidden();
@@ -698,7 +729,7 @@ test.describe('SMB shares page (fake data)', () => {
     const panel = page.getByRole('tabpanel');
     await expect(smb).toHaveAttribute('aria-selected', 'true');
     await expect(panel).toHaveAccessibleName('SMB');
-    await expect(panel.getByRole('heading', { name: 'SMB shares' })).toBeVisible();
+    await expect(panel.getByRole('region', { name: 'SMB shares' })).toBeVisible();
     await expect(shareCard(page, 'docs')).toBeVisible();
     const panelId = (await panel.getAttribute('id')) ?? '';
     expect(panelId).not.toBe('');
@@ -719,11 +750,11 @@ test.describe('SMB shares page (fake data)', () => {
     await expect(nfs).toHaveAttribute('tabindex', '0');
     await expect(smb).toHaveAttribute('tabindex', '-1');
     await expect(panel).toHaveAccessibleName('NFS');
-    await expect(panel.getByRole('heading', { name: 'NFS exports', exact: true })).toBeVisible();
+    await expect(panel.getByRole('region', { name: 'NFS exports', exact: true })).toBeVisible();
     await page.keyboard.press('ArrowRight');
     await expect(iscsi).toBeFocused();
     await expect(panel).toHaveAccessibleName('iSCSI');
-    await expect(panel.getByRole('heading', { name: 'iSCSI targets', exact: true })).toBeVisible();
+    await expect(panel.getByRole('region', { name: 'iSCSI targets', exact: true })).toBeVisible();
     await page.keyboard.press('ArrowRight');
     await expect(smb).toBeFocused();
     await expect(panel).toHaveAccessibleName('SMB');
@@ -736,7 +767,7 @@ test.describe('SMB shares page (fake data)', () => {
     await expect(smb).toHaveAttribute('aria-selected', 'true');
     await page.keyboard.press('End');
     await expect(iscsi).toBeFocused();
-    await expect(panel.getByRole('heading', { name: 'iSCSI targets', exact: true })).toBeVisible();
+    await expect(panel.getByRole('region', { name: 'iSCSI targets', exact: true })).toBeVisible();
   });
 
   test('share cards show the state, the access and how to connect', async ({ authenticatedPage: page }) => {
@@ -772,29 +803,33 @@ test.describe('SMB shares page (fake data)', () => {
     await expect(docs).toContainText('Team files');
     await expect(docs.locator('.badge', { hasText: /^Hidden$/ })).toBeVisible();
     await expect(docs.locator('.badge', { hasText: /^Permissions need repair$/ })).toBeVisible();
-    await expect(docs.locator('.badge', { hasText: /^No access$/ })).toHaveCount(0);
-    // Entries of users whose SMB is not active do not count yet: crossed out, with the
-    // reason as hover text and as text for screen readers (not <s>, which means "deleted").
+    await expect(docs.locator('.badge', { hasText: /^Nobody can connect yet$/ })).toHaveCount(0);
+    // Entries of users whose SMB is not active do not count yet: muted, with a short tag, the
+    // reason as hover text and as text for screen readers; never struck through.
     const bobReason = 'SMB is allowed for bob, but not turned on yet';
     const carolReason = 'SMB is off for carol: allow it on the Users page';
     await expect(docs.locator('p', { hasText: 'Read & write:' })).toHaveText(
-      `Read & write: alice, bob (not active yet: ${bobReason}) · Read: carol (not active yet: ${carolReason})`,
+      `Read & write: alice, bobSMB not on yet (not active yet: ${bobReason}) · Read: carolSMB off (not active yet: ${carolReason})`,
     );
-    const crossedOut = docs.locator('.line-through');
-    await expect(crossedOut).toHaveText(['bob', 'carol']);
-    await expect(crossedOut.filter({ hasText: 'bob' })).toHaveAttribute('title', bobReason);
-    await expect(crossedOut.filter({ hasText: 'carol' })).toHaveAttribute('title', carolReason);
+    const inactive = docs.locator('[data-inactive]');
+    await expect(inactive).toHaveText(['bobSMB not on yet', 'carolSMB off']);
+    await expect(inactive.filter({ hasText: 'bob' })).toHaveAttribute('title', bobReason);
+    await expect(inactive.filter({ hasText: 'carol' })).toHaveAttribute('title', carolReason);
     await expect(docs.locator('.sr-only', { hasText: 'not active yet' })).toHaveText([
       `(not active yet: ${bobReason})`,
       `(not active yet: ${carolReason})`,
     ]);
-    await expect(docs.locator('s, del')).toHaveCount(0);
-    await expect(docs.getByText(/^Crossed-out users cannot connect yet/)).toBeVisible();
-    await expect(docs.getByText(/^Connect:/)).toHaveText(`Connect: \\\\${host}\\docs · smb://${host}/docs`);
+    await expect(docs.locator('s, del, .line-through')).toHaveCount(0);
+    const connect = docs.locator('[data-connect]');
+    await expect(connect.locator('code, span').first()).toHaveText('Connect:');
+    await expect(connect).toContainText(`\\\\${host}\\docs`);
+    await expect(connect).toContainText(`smb://${host}/docs`);
+    await expect(connect.getByRole('button', { name: 'Copy the Windows address' })).toBeVisible();
+    await expect(connect.getByRole('button', { name: 'Copy the smb:// address' })).toBeVisible();
     await expect(docs.getByRole('button', { name: 'Repair permissions' })).toBeVisible();
 
     await expect(shareCard(page, 'public').locator('.badge', { hasText: /^Guest: read only$/ })).toBeVisible();
-    await expect(shareCard(page, 'empty').locator('.badge', { hasText: /^No access$/ })).toBeVisible();
+    await expect(shareCard(page, 'empty').locator('.badge', { hasText: /^Nobody can connect yet$/ })).toBeVisible();
     await expect(shareCard(page, 'empty')).toContainText('No user has access.');
     await expect(shareCard(page, 'offline').locator('.badge', { hasText: /^Pool not mounted$/ })).toBeVisible();
 
@@ -1043,10 +1078,12 @@ test.describe('SMB shares page (fake data)', () => {
       page.getByText('Nobody can connect yet: allow SMB on the Users page, then grant access here.'),
     ).toBeVisible();
 
-    const report = page.locator('.alert', { hasText: 'Shares imported from the previous smb.conf' });
+    // The import's report folds into one line of the notes, its lines under it.
+    const report = page.locator('.alert details', { hasText: 'Shares imported from the previous smb.conf' });
+    await report.locator('summary').click();
     await expect(report).toContainText('Imported 2 share(s) from /etc/samba/smb.conf');
     await expect(report).toContainText('map to guest = Bad Password');
-    await report.getByRole('button', { name: 'Dismiss' }).click();
+    await report.getByRole('button', { name: 'Dismiss the notes' }).click();
     await expect(report).toHaveCount(0);
     expect(fake.writes).toEqual([{ method: 'DELETE', path: '/shares/smb-status/import-report', body: null }]);
   });
@@ -1117,9 +1154,9 @@ test.describe('SMB shares page (fake data)', () => {
     await dialog.getByRole('button', { name: 'Save' }).click();
 
     await expect(dialog.getByText("User 2 is now 'mallory'; reload the page")).toBeVisible();
-    // The reloaded list names mallory, who starts at No access: the choice was alice's.
-    await expect(dialog.getByRole('combobox', { name: 'mallory', exact: true })).toHaveText('No access');
-    await expect(dialog.getByRole('combobox', { name: 'alice', exact: true })).toHaveCount(0);
+    // The reloaded list names mallory, who starts at None: the choice was alice's.
+    await expectLevel(dialog, 'mallory', 'None');
+    await expect(levels(dialog, 'alice')).toHaveCount(0);
     await dialog.getByRole('button', { name: 'Save' }).click();
     await expect(dialog).toBeHidden();
     expect(fake.writes).toEqual([
@@ -1141,7 +1178,7 @@ test.describe('SMB shares page (fake data)', () => {
     const dialog = page.getByRole('dialog', { name: 'Add SMB share' });
     await dialog.getByLabel(/^Name/).fill('e2e_team');
     await dialog.getByLabel('Folder', { exact: true }).fill('team');
-    await pick(dialog, 'bob', 'Read only');
+    await pick(dialog, 'bob', 'Read');
     fake.users[2] = fakeUser(3, 'bob', 'unavailable', { is_admin: true });
     await dialog.getByRole('button', { name: 'Create share' }).click();
 
@@ -1308,44 +1345,106 @@ test.describe('SMB shares page (fake data)', () => {
     await expect(repair.locator('.alert', { hasText: 'Permissions were not repaired' })).toContainText(UNSAFE_PARENT);
   });
 
-  test('Escape in an open level list closes only the list', async ({ authenticatedPage: page }) => {
+  test('the levels of a row are chosen with the arrow keys, and Escape is the dialog\'s', async ({
+    authenticatedPage: page,
+  }) => {
     await fakeSmbApi(page, { users: fakeUsers() });
     await page.goto('/shares');
     await page.getByRole('button', { name: 'Add SMB share' }).click();
     const dialog = page.getByRole('dialog', { name: 'Add SMB share' });
-    const alice = dialog.getByRole('combobox', { name: 'alice', exact: true });
-    const list = dialog.getByRole('listbox', { name: 'alice', exact: true });
+    const alice = levels(dialog, 'alice');
 
-    await alice.click();
-    await expect(list).toBeVisible();
-    await page.keyboard.press('Escape');
-    await expect(list).toHaveCount(0);
-    await expect(dialog).toBeVisible();
-    await expect(alice).toBeFocused();
-    // With the list closed, Escape is the dialog's.
+    // A row is one stop of Tab, at its chosen level; the arrows move the choice.
+    await alice.getByRole('radio', { name: 'None', exact: true }).focus();
+    await page.keyboard.press('ArrowRight');
+    await expect(alice.getByRole('radio', { name: 'Read', exact: true })).toBeFocused();
+    await expectLevel(dialog, 'alice', 'Read');
+    await page.keyboard.press('ArrowRight');
+    await expectLevel(dialog, 'alice', 'Read & write');
+    await page.keyboard.press('Tab');
+    await expect(levels(dialog, 'bob').getByRole('radio', { name: 'None', exact: true })).toBeFocused();
     await page.keyboard.press('Escape');
     await expect(dialog).toBeHidden();
   });
 
-  test('a level list opened again at once shows the current choice', async ({ authenticatedPage: page }) => {
-    await fakeSmbApi(page, { users: fakeUsers() });
-    await page.goto('/shares');
-    await page.getByRole('button', { name: 'Add SMB share' }).click();
-    const dialog = page.getByRole('dialog', { name: 'Add SMB share' });
-    const alice = dialog.getByRole('combobox', { name: 'alice', exact: true });
-    const list = dialog.getByRole('listbox', { name: 'alice', exact: true });
-
-    await alice.click();
-    // Choose, and open the list again right away (a list that faded out
-    // would still be on the page then).
-    await list.getByRole('option', { name: 'Read & write', exact: true }).evaluate(async (option) => {
-      (option as HTMLElement).click();
-      await new Promise((resolve) => setTimeout(resolve, 30));
-      (document.getElementById('share-access-2') as HTMLElement).click();
+  test('a save that lowers access asks first, naming what it takes away; one that gives access does not', async ({
+    authenticatedPage: page,
+  }) => {
+    const users = fakeUsers();
+    const groups = [fakeGroup(1, 'family', users, [2, 3])];
+    const fake = await fakeSmbApi(page, {
+      users,
+      groups,
+      shares: [
+        fakeShare('docs', {
+          available: true,
+          previous_versions: true,
+          access: accessOf(users, [
+            { user_id: 2, username: 'alice', level: 'write' },
+            { user_id: 3, username: 'bob', level: 'read' },
+          ]),
+          group_access: groupAccessOf(groups, [{ group: 'family', level: 'write' }]),
+        }),
+      ],
     });
-    await expect(alice).toHaveText('Read & write');
-    await expect(list.getByRole('option', { name: 'Read & write', exact: true })).toHaveAttribute('aria-selected', 'true');
-    await expect(list.getByRole('option', { name: 'No access', exact: true })).toHaveAttribute('aria-selected', 'false');
+    await page.goto('/shares');
+    const card = shareCard(page, 'docs');
+    await card.getByRole('button', { name: 'Edit' }).click();
+    const dialog = page.getByRole('dialog', { name: 'Edit share docs' });
+    // No standing paragraph about connections: the question comes when it applies.
+    await expect(dialog.getByText(/disconnects open connections/)).toHaveCount(0);
+
+    await pick(dialog, 'alice', 'Read');
+    await pick(dialog, 'bob', 'None');
+    await pick(dialog, 'Group family', 'Read');
+    await dialog.getByLabel('Previous Versions from snapshots').uncheck();
+    await dialog.getByRole('button', { name: 'Save' }).click();
+    const question = page.getByRole('dialog', { name: 'Close open connections?' });
+    await expect(question).toContainText('Saving closes the open connections to docs:');
+    await expect(question.getByRole('list', { name: 'What the save takes away' }).getByRole('listitem')).toHaveText([
+      'alice: Read & write → Read',
+      'Group family: Read & write → Read',
+      'Previous Versions turned off',
+    ]);
+    // bob's SMB is not on yet: smb.conf does not have him, so taking his access closes nothing.
+    await expect(question).not.toContainText('bob');
+    // Cancel goes back to the form, as it was.
+    await question.getByRole('button', { name: 'Cancel' }).click();
+    await expect(question).toBeHidden();
+    await expect(dialog).toBeVisible();
+    expect(fake.writes).toEqual([]);
+
+    await dialog.getByRole('button', { name: 'Save' }).click();
+    await question.getByRole('button', { name: 'Save and disconnect' }).click();
+    await expect(dialog).toBeHidden();
+    expect(fake.writes).toEqual([
+      {
+        method: 'PATCH',
+        path: '/shares/smb/docs',
+        body: {
+          expected_version: 1,
+          access: [{ user_id: 2, username: 'alice', level: 'read' }],
+          group_access: [{ group_id: 1, group: 'family', level: 'read' }],
+          previous_versions: false,
+        },
+      },
+    ]);
+
+    // Given access closes nothing: saved at once.
+    await card.getByRole('button', { name: 'Edit' }).click();
+    await pick(dialog, 'carol', 'Read & write');
+    await dialog.getByRole('button', { name: 'Save' }).click();
+    await expect(dialog).toBeHidden();
+    await expect(question).toHaveCount(0);
+    expect(fake.writes).toHaveLength(2);
+
+    // Nor does taking it from a user whose SMB is off, whom smb.conf does not have.
+    await card.getByRole('button', { name: 'Edit' }).click();
+    await pick(dialog, 'carol', 'None');
+    await dialog.getByRole('button', { name: 'Save' }).click();
+    await expect(dialog).toBeHidden();
+    await expect(question).toHaveCount(0);
+    expect(fake.writes).toHaveLength(3);
   });
 
   test('a disabled field looks disabled', async ({ authenticatedPage: page }) => {
@@ -1392,9 +1491,9 @@ test.describe('SMB shares page (fake data)', () => {
 
     // Windows paths take an IPv6 address only in the ipv6-literal.net form; smb:// URLs keep the brackets.
     await page.goto(`${origin}/shares`);
-    await expect(shareCard(page, 'docs').getByText(/^Connect:/)).toHaveText(
-      'Connect: \\\\--1.ipv6-literal.net\\docs · smb://[::1]/docs',
-    );
+    const connect = shareCard(page, 'docs').locator('[data-connect]');
+    await expect(connect).toContainText('\\\\--1.ipv6-literal.net\\docs');
+    await expect(connect).toContainText('smb://[::1]/docs');
 
     // An account's own hints are on its File sharing tab, a regular account's (ADR-0117, ADR-0431):
     // signed in again as one, made for this test.
@@ -1457,7 +1556,8 @@ test.describe('In Russian', () => {
     await expect(page.getByRole('heading', { level: 1 })).toHaveText('Общие папки');
     // The names of the protocols are the same in every language.
     await expect(page.getByRole('tablist', { name: 'Виды общего доступа' }).getByRole('tab')).toHaveText(['SMB', 'NFS', 'iSCSI']);
-    await expect(page.getByRole('heading', { name: 'Общие папки SMB' })).toBeVisible();
+    // The list is named by the tab, with no card title that repeats it.
+    await expect(page.getByRole('region', { name: 'Общие папки SMB' })).toBeVisible();
     await expect(
       page.getByText(
         'Гостевой доступ включён для: public. Любой в вашей сети может читать эти общие папки без пароля, ' +
@@ -1468,15 +1568,16 @@ test.describe('In Russian', () => {
     // A card: its badges, its access with the reasons of the entries that do not count yet, and
     // the buttons, named for screen readers with the share's name.
     const docs = shareCard(page, 'docs');
-    await expect(docs.locator('.badge')).toHaveText(['Скрыта', 'Нужно исправить права']);
+    await expect(docs.locator('.badge')).toHaveText(['Нужно исправить права', 'Скрыта']);
     const bobReason = 'SMB разрешён для bob, но ещё не включён';
     const carolReason = 'SMB для carol выключен: разрешите его на странице «Пользователи»';
     await expect(docs.locator('p', { hasText: 'Чтение и запись:' })).toHaveText(
-      `Чтение и запись: alice, bob (ещё не действует: ${bobReason}) · Чтение: carol (ещё не действует: ${carolReason})`,
+      `Чтение и запись: alice, bobSMB ещё не включён (ещё не действует: ${bobReason}) · Чтение: carolSMB выключен (ещё не действует: ${carolReason})`,
     );
-    await expect(docs.locator('.line-through').filter({ hasText: 'bob' })).toHaveAttribute('title', bobReason);
-    await expect(docs.getByText(/^Зачёркнутые пользователи пока не могут подключиться/)).toBeVisible();
-    await expect(docs.getByText(/^Подключение:/)).toContainText('smb://');
+    await expect(docs.locator('[data-inactive]').filter({ hasText: 'bob' })).toHaveAttribute('title', bobReason);
+    await expect(docs.locator('[data-connect]')).toContainText('Подключение:');
+    await expect(docs.locator('[data-connect]')).toContainText('smb://');
+    await expect(docs.getByRole('button', { name: 'Скопировать адрес smb://' })).toBeVisible();
     await expect(docs.getByRole('button', { name: 'Изменить общую папку docs' })).toBeVisible();
     await expect(docs.getByRole('button', { name: 'Исправить права общей папки docs' })).toBeVisible();
     await expect(docs.getByRole('button', { name: 'Удалить общую папку docs' })).toBeVisible();
@@ -1531,26 +1632,29 @@ test.describe('In Russian', () => {
     await expect(dialog.getByText(/^Общая папка:/)).toHaveText(`Общая папка: ${POOLS}/tank/Documents`);
     expect(fake.writes).toEqual([]);
 
-    // The access picker: the levels, and the SMB state of each user who cannot connect yet.
-    const access = dialog.getByRole('group', { name: 'Доступ' });
-    await expect(access.getByRole('combobox')).toHaveText(['Нет доступа', 'Нет доступа', 'Нет доступа', 'Нет доступа']);
-    await expect(accessRow(access, 'bob').locator('.badge')).toHaveText('Нужен пароль');
-    await expect(accessRow(access, 'carol').locator('.badge')).toHaveText('Выключен');
-    await expect(accessRow(access, 'Dave.Smith').locator('.badge')).toHaveText('Недоступен');
-    await access.getByRole('button', { name: 'Всем: только чтение' }).click();
-    await expect(access.getByRole('combobox')).toHaveText([
-      'Только чтение',
-      'Только чтение',
-      'Только чтение',
-      'Нет доступа',
-    ]);
+    // The access table: the levels, and the SMB state of each user who cannot connect yet.
+    const access = dialog.getByRole('group', { name: 'Доступ', exact: true });
+    const chosen = (name: string) =>
+      access.getByRole('radiogroup', { name, exact: true }).getByRole('radio', { checked: true });
+    for (const name of ['Все пользователи', 'alice', 'bob', 'carol', 'Dave.Smith']) {
+      await expect(chosen(name)).toHaveAccessibleName('Нет');
+    }
+    await expect(accessRow(access, 'alice')).toContainText('Пользователь');
+    await expect(accessRow(access, 'bob')).toContainText('SMB ещё не включён');
+    await expect(accessRow(access, 'carol')).toContainText('SMB выключен');
+    await expect(accessRow(access, 'carol').getByRole('link', { name: 'Включить SMB в «Пользователях» →' })).toBeVisible();
+    await expect(accessRow(access, 'Dave.Smith')).toContainText('Без SMB');
+    await access
+      .getByRole('radiogroup', { name: 'Все пользователи', exact: true })
+      .getByRole('radio', { name: 'Чтение', exact: true })
+      .check();
+    for (const name of ['alice', 'bob', 'carol']) await expect(chosen(name)).toHaveAccessibleName('Чтение');
+    await expect(chosen('Dave.Smith')).toHaveAccessibleName('Нет');
     await expect(access.getByText('Администраторы не показаны: они не могут пользоваться SMB.')).toBeVisible();
 
     const guest = dialog.getByLabel('Гости могут читать эту общую папку без пароля');
     await guest.check();
-    await expect(
-      dialog.getByText('Любой в вашей сети может читать эту общую папку без пароля, и её имя видно всем в вашей сети.'),
-    ).toBeVisible();
+    await expect(dialog.getByText('Любой в вашей сети может читать эту общую папку без пароля.')).toBeVisible();
     await guest.uncheck();
 
     await dialog.getByLabel(/^Имя/).fill('e2e_docs');
@@ -1798,25 +1902,24 @@ test.describe('Group access (fake data)', () => {
     const dialog = page.getByRole('dialog', { name: 'Add SMB share' });
     const access = dialog.getByRole('group', { name: 'Access' });
 
-    // Each group with its members under its level, after the users.
-    await expect(access.getByRole('combobox', { name: 'Group family' })).toHaveText('No access');
-    await expect(access.getByText('Members: alice, bob')).toBeVisible();
-    await expect(access.getByText('No members yet')).toBeVisible();
+    // Each group after the users, as a group with its members, at None.
+    await expectLevel(access, 'Group family', 'None');
+    await expect(accessRow(access, 'Group family')).toContainText('Group · 2 members: alice, bob');
+    await expect(accessRow(access, 'Group guests_of_honour')).toContainText('Group · no members yet');
     await expect(
-      access.getByText(
-        'Every member of a group gets its level once their SMB is on, and so does every user added to the group later. A user who also has a level of their own, or through another group, gets the higher one.',
-      ),
+      access.getByText("A group's members get its level once their SMB is on; whoever has several levels gets the highest."),
     ).toBeVisible();
-    // "Everyone" sets the users only; Clear takes the groups' access away too.
-    await pick(access, 'Group family', 'Read only');
-    await access.getByRole('button', { name: 'Everyone: Read only' }).click();
-    await expect(access.getByRole('combobox', { name: 'Group family' })).toHaveText('Read only');
-    await access.getByRole('button', { name: 'Clear' }).click();
-    await expect(access.getByRole('combobox', { name: 'Group family' })).toHaveText('No access');
+    // The All users row sets the users only.
+    await pick(access, 'Group family', 'Read');
+    await pick(access, 'All users', 'Read');
+    await expectLevel(access, 'Group family', 'Read');
+    await pick(access, 'All users', 'None');
+    await expectLevel(access, 'Group family', 'Read');
+    await pick(access, 'Group family', 'None');
 
     await dialog.getByLabel(/^Name/).fill('docs');
     await dialog.getByLabel('Folder', { exact: true }).fill('docs');
-    await pick(access, 'alice', 'Read only');
+    await pick(access, 'alice', 'Read');
     await pick(access, 'Group family', 'Read & write');
     await dialog.getByRole('button', { name: 'Create share' }).click();
     await expect(dialog).toBeHidden();
@@ -1827,15 +1930,15 @@ test.describe('Group access (fake data)', () => {
     });
 
     const card = shareCard(page, 'docs');
-    // bob's SMB is not on: crossed out, with the reason for screen readers.
+    // bob's SMB is not on: muted with a short tag, with the reason for screen readers.
     const line = card.getByText('Group family (Read & write):').locator('..');
     await expect(line).toHaveText(
-      'Group family (Read & write): alice, bob (not active yet: SMB is allowed for bob, but not turned on yet)',
+      'Group family (Read & write): alice, bobSMB not on yet (not active yet: SMB is allowed for bob, but not turned on yet)',
     );
-    await expect(line.locator('.line-through')).toHaveText('bob');
+    await expect(line.locator('[data-inactive]')).toHaveText('bobSMB not on yet');
     // alice reads by her own level and writes through the group: the higher level counts.
     await expect(card.getByText('alice also writes through a group: the higher level counts.')).toBeVisible();
-    await expect(card.locator('.badge', { hasText: /^No access$/ })).toHaveCount(0);
+    await expect(card.locator('.badge', { hasText: /^Nobody can connect yet$/ })).toHaveCount(0);
   });
 
   test('the edit dialog sends a changed group access only, and the server\'s refusal is shown', async ({
@@ -1861,7 +1964,7 @@ test.describe('Group access (fake data)', () => {
     await card.getByRole('button', { name: 'Edit' }).click();
     const dialog = page.getByRole('dialog', { name: 'Edit share docs' });
     const access = dialog.getByRole('group', { name: 'Access' });
-    await expect(access.getByRole('combobox', { name: 'Group family' })).toHaveText('Read only');
+    await expectLevel(access, 'Group family', 'Read');
     await dialog.getByLabel('Comment').fill('Family files');
     await dialog.getByRole('button', { name: 'Save' }).click();
     await expect(dialog).toBeHidden();
@@ -1884,9 +1987,10 @@ test.describe('Group access (fake data)', () => {
     });
     await dialog.getByRole('button', { name: 'Cancel' }).click();
 
-    // Without groups the picker says where to make them.
+    // Without groups the table says so, and leads to where they are made.
     await card.getByRole('button', { name: 'Edit' }).click();
-    await expect(access.getByText('No groups yet: make them on the Users page.')).toBeVisible();
+    await expect(access.getByText('No groups yet.')).toBeVisible();
+    await expect(access.getByRole('link', { name: 'Create a group →' })).toHaveAttribute('href', '/users#groups');
   });
 
   test('the group access of the dialog and the card are in Russian once Russian is chosen', async ({
@@ -1907,8 +2011,10 @@ test.describe('Group access (fake data)', () => {
     );
     await card.getByRole('button', { name: /^Изменить/ }).click();
     const dialog = page.getByRole('dialog');
-    await expect(dialog.getByRole('combobox', { name: 'Группа family' })).toHaveText('Чтение и запись');
-    await expect(dialog.getByText('Участники: alice')).toBeVisible();
+    await expect(
+      dialog.getByRole('radiogroup', { name: 'Группа family', exact: true }).getByRole('radio', { checked: true }),
+    ).toHaveAccessibleName('Чтение и запись');
+    await expect(dialog.getByText('Группа · 1 участник: alice')).toBeVisible();
     await expect(dialog.getByText('Группы', { exact: true })).toBeVisible();
   });
 });
@@ -1926,8 +2032,9 @@ test.describe('Deleting several shares (fake data)', () => {
   }) => {
     const fake = await fakeSmbApi(page, { users: fakeUsers(), shares: shares() });
     await page.goto('/shares');
-    await expect(toolbar(page)).toContainText('0 shares selected');
-    await expect(toolbar(page).getByRole('button', { name: 'Delete selected' })).toBeDisabled();
+    // With nothing selected the bar offers Select all only: no count, no Delete.
+    await expect(toolbar(page)).not.toContainText('selected');
+    await expect(toolbar(page).getByRole('button', { name: 'Delete selected' })).toHaveCount(0);
 
     await checkbox(page, 'docs').check();
     await checkbox(page, 'photos').check();
@@ -1971,7 +2078,8 @@ test.describe('Deleting several shares (fake data)', () => {
     await expect(shareCard(page, 'media')).toBeVisible();
     await expect(page.getByText('Deleted 2 shares: docs, photos')).toBeVisible();
     await expect(page.locator('main .alert-warning')).toHaveText(reloadWarning);
-    await expect(toolbar(page)).toContainText('0 shares selected');
+    await expect(toolbar(page)).not.toContainText('selected');
+    await expect(toolbar(page).getByRole('button', { name: 'Delete selected' })).toHaveCount(0);
   });
 
   test('a share changed or deleted elsewhere is named with the reason, and the others are deleted', async ({
@@ -2058,7 +2166,8 @@ test.describe('Deleting several shares (fake data)', () => {
     await expect(shareCard(page, 'docs')).toContainText(`${POOLS}/tank/other`);
     // The selection was of docs in its old folder: the share now under that name is not selected.
     await expect(checkbox(page, 'docs')).not.toBeChecked();
-    await expect(toolbar(page)).toContainText('0 shares selected');
+    await expect(toolbar(page)).not.toContainText('selected');
+    await expect(toolbar(page).getByRole('button', { name: 'Delete selected' })).toHaveCount(0);
   });
 
   test('an error after which some of the shares are gone does not say that none was deleted', async ({
@@ -2155,7 +2264,7 @@ test.describe('Deleting several shares (fake data)', () => {
     await page.goto('/shares');
 
     const bar = page.getByRole('toolbar', { name: 'Выбранные общие папки' });
-    await expect(bar).toContainText('Выбрано 0 общих папок');
+    await expect(bar).not.toContainText('Выбран');
     await page.getByRole('checkbox', { name: 'Выбрать общую папку docs', exact: true }).check();
     await expect(bar).toContainText('Выбрана 1 общая папка');
     await page.getByRole('checkbox', { name: 'Выбрать все', exact: true }).check();

@@ -352,7 +352,8 @@ class TestPassword:
 
         assert emergency.MIN_PASSWORD_CHARS == 8
         assert f"export const MIN_PASSWORD_LENGTH = {emergency.MIN_PASSWORD_CHARS};" in users_page
-        assert f'minlength="{emergency.MIN_PASSWORD_CHARS}"' in setup_page
+        # The first-run page checks the same rule itself, from that module.
+        assert "MIN_PASSWORD_LENGTH" in setup_page and "$lib/components/users/password" in setup_page
         assert MAX_PASSWORD_BYTES == 72
 
     def test_a_password_of_8_characters_and_one_of_72_bytes_are_taken(self, world, run):

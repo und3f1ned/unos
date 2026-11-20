@@ -11,6 +11,8 @@
 		confirmLabel: string;
 		hint?: string;
 		disabled?: boolean;
+		// The form was submitted: an empty field says so too.
+		attempted?: boolean;
 		password: string;
 		confirmation: string;
 	};
@@ -22,19 +24,20 @@
 		confirmLabel,
 		hint = '',
 		disabled = false,
+		attempted = false,
 		password = $bindable(),
 		confirmation = $bindable()
 	}: Props = $props();
 
 	// The texts follow a change of the language: the markup reads $t through them.
 	function passwordError(password: string): string {
-		return password && password.length < MIN_PASSWORD_LENGTH
-			? $t('users.password.short', { n: MIN_PASSWORD_LENGTH })
-			: '';
+		if (!password) return attempted ? $t('users.password.required') : '';
+		return password.length < MIN_PASSWORD_LENGTH ? $t('users.password.short', { n: MIN_PASSWORD_LENGTH }) : '';
 	}
 
 	function confirmError(password: string, confirmation: string): string {
-		return confirmation && confirmation !== password ? $t('users.password.mismatch') : '';
+		if (!confirmation) return attempted && password ? $t('users.password.confirmRequired') : '';
+		return confirmation !== password ? $t('users.password.mismatch') : '';
 	}
 </script>
 
