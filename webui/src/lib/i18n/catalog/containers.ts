@@ -52,6 +52,8 @@ export const en = {
 	'containers.action.remove': 'Remove',
 	'containers.openInBrowser': 'Open in browser',
 	'containers.confirmRemove': 'Remove container "{name}"?',
+	'containers.removeMessage': 'Docker deletes the container. Its image and its volumes stay.',
+	'containers.removeAction': 'Remove container',
 
 	'containers.create.button': 'Create Container',
 	'containers.create.title': 'Create Container',
@@ -197,6 +199,8 @@ export const ru: Translation<typeof en> = {
 	'containers.action.remove': 'Удалить',
 	'containers.openInBrowser': 'Открыть в браузере',
 	'containers.confirmRemove': 'Удалить контейнер «{name}»?',
+	'containers.removeMessage': 'Docker удалит контейнер. Его образ и тома останутся.',
+	'containers.removeAction': 'Удалить контейнер',
 
 	'containers.create.button': 'Создать контейнер',
 	'containers.create.title': 'Новый контейнер',

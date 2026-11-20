@@ -1,5 +1,6 @@
 import type { Page, Route } from '@playwright/test';
 import { test, expect } from './fixtures';
+import { answerConfirmation } from './ui';
 
 // The firewall card of System > Security: the host's ufw (security.host-firewall, ADR-0416). The
 // stand-in and the compose test stack run their host commands on their own machine
@@ -302,14 +303,14 @@ test.describe('Firewall', () => {
       action: 'allow', protocol: 'tcp', port: '8080', source: '192.168.1.0/24', comment: 'Web server' } }]);
 
     // A second change waits until the first is kept: the server's refusal is shown.
-    page.once('dialog', (confirm) => confirm.accept());
     await added.getByRole('button', { name: /^Delete rule/ }).click();
+    await answerConfirmation(page, { title: "Delete this rule from the host's firewall?", action: 'Delete rule' });
     await expect(card(page).getByText(CHANGE_WAITS, { exact: true })).toBeVisible();
     await expect(added).toBeVisible();
 
     await card(page).getByRole('button', { name: 'Keep the change' }).click();
-    page.once('dialog', (confirm) => confirm.accept());
     await added.getByRole('button', { name: /^Delete rule/ }).click();
+    await answerConfirmation(page, { title: "Delete this rule from the host's firewall?", action: 'Delete rule' });
     await expect(card(page).getByText('Rule deleted', { exact: true })).toBeVisible();
     await expect(added).toHaveCount(0);
     expect(fake.writes.slice(1).map((w) => `${w.method} ${w.path}`)).toEqual([

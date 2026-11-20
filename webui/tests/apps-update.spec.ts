@@ -1,5 +1,6 @@
 import type { Page, Route } from '@playwright/test';
 import { test, expect } from './fixtures';
+import { answerConfirmation } from './ui';
 import {
   fakeInstallEvents,
   installedCard,
@@ -176,13 +177,12 @@ test.describe('Updating an installed app', () => {
     await expect(card.getByRole('button', { name: /^Update to/ })).toHaveCount(0);
 
     // The rollback asks first, then runs as a job that cannot be cancelled.
-    page.once('dialog', (question) => {
-      expect(question.message()).toBe(
-        'Roll Immich back to its earlier version? Its database returns to the copy made before the update: what Immich stored since then is lost.',
-      );
-      void question.accept();
-    });
     await card.getByRole('button', { name: 'Roll back' }).click();
+    await answerConfirmation(page, {
+      title: 'Roll Immich back to its earlier version?',
+      message: 'Its database returns to the copy made before the update: what Immich stored since then is lost.',
+      action: 'Roll back',
+    });
     await expect.poll(() => fakes.requests).toContain('POST /api/v1/apps/installed/e2e-immich-id/rollback');
     const rollback = fakes.started[1];
     await fakes.events.update({ ...rollback, step: 'restoring' });
@@ -199,13 +199,12 @@ test.describe('Updating an installed app', () => {
   test('the earlier version can be removed, after a question', async ({ authenticatedPage: page }) => {
     const fakes = await fakeApps(page, updated());
     const card = await openInstalled(page);
-    page.once('dialog', (question) => {
-      expect(question.message()).toBe(
-        'Remove the earlier version of Immich and the copy of its database? A rollback is then no longer possible.',
-      );
-      void question.accept();
-    });
     await card.getByRole('button', { name: 'Remove earlier version' }).click();
+    await answerConfirmation(page, {
+      title: 'Remove the earlier version of Immich?',
+      message: 'The copy of its database goes with it, and a rollback is then no longer possible.',
+      action: 'Remove earlier version',
+    });
     await expect(card).not.toContainText('Earlier version kept');
     expect(fakes.requests).toEqual(['DELETE /api/v1/apps/installed/e2e-immich-id/previous']);
   });

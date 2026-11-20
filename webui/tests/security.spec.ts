@@ -1,4 +1,5 @@
 import { test, expect } from './fixtures';
+import { answerConfirmation } from './ui';
 import { browserSession } from './session';
 
 // The account's own sign-in settings (Account > Sign-in and security, /account#security) and the
@@ -203,14 +204,14 @@ test.describe('Security Settings', () => {
       await expect(card.getByText('Certificate generated successfully')).toBeVisible();
 
       const row = card.locator('div.bg-surface-overlay').filter({ has: page.getByText(domain, { exact: true }) });
-      await expect(row.getByText('VALID', { exact: true })).toBeVisible();
-      await expect(row.getByText('NOT SERVED', { exact: true })).toBeVisible();
+      await expect(row.getByText('Valid', { exact: true })).toBeVisible();
+      await expect(row.getByText('Not served', { exact: true })).toBeVisible();
       // The new certificate is valid, and still not what browsers get.
       await expect(served).toBeVisible();
       await expect(card.getByText("Caddy's local CA", { exact: true })).toBeVisible();
 
-      page.once('dialog', (confirm) => confirm.accept());
       await row.getByRole('button', { name: `Delete ${domain}` }).click();
+      await answerConfirmation(page, { title: `Delete the certificate of ${domain}?`, action: 'Delete certificate' });
       await expect(card.getByText('Certificate deleted')).toBeVisible();
       await expect(card.getByText(domain, { exact: true })).toHaveCount(0);
     } finally {
@@ -240,7 +241,7 @@ test.describe('Security Settings', () => {
       })).ok()).toBeTruthy();
       await page.goto('/system#security');
       await card.getByRole('button', { name: 'Manage', exact: true }).click();
-      await expect(row.getByText('NOT SERVED', { exact: true })).toBeVisible();
+      await expect(row.getByText('Not served', { exact: true })).toBeVisible();
       await expect(card.getByRole('button', { name: "Use Caddy's local CA" })).toHaveCount(0);
 
       // Serve it: the dialog warns that browsers will see a new certificate.
@@ -252,7 +253,7 @@ test.describe('Security Settings', () => {
       await expect(dialog).toHaveCount(0);
       await expect(card.getByText(`Browsers now get ${domain}`, { exact: true })).toBeVisible();
       await expect(card.getByText(`HTTPS for browsers: ${domain}`, { exact: true })).toBeVisible();
-      await expect(row.getByText('SERVED', { exact: true })).toBeVisible();
+      await expect(row.getByText('Served', { exact: true })).toBeVisible();
       await expect(row.getByRole('button', { name: `Serve ${domain}` })).toHaveCount(0);
       // What the handshake shows is the stored certificate's fingerprint.
       const listed = (await (await page.request.get('/api/v1/security/certificates', { headers })).json())
@@ -269,23 +270,22 @@ test.describe('Security Settings', () => {
       await dialog.getByRole('button', { name: "Use Caddy's local CA" }).click();
       await expect(card.getByText("Browsers now get the certificate of Caddy's local CA", { exact: true })).toBeVisible();
       await expect(card.getByText("HTTPS for browsers: Caddy's local CA", { exact: true })).toBeVisible();
-      await expect(row.getByText('NOT SERVED', { exact: true })).toBeVisible();
+      await expect(row.getByText('Not served', { exact: true })).toBeVisible();
       expect(await status()).toMatchObject({ served_by: 'caddy_local_ca', served_id: null, chosen_id: null });
 
       // Served again, then deleted: the confirmation says that browsers get the local CA's again.
       await row.getByRole('button', { name: `Serve ${domain}` }).click();
       await dialog.getByRole('button', { name: 'Serve', exact: true }).click();
       await expect(card.getByText(`HTTPS for browsers: ${domain}`, { exact: true })).toBeVisible();
-      let question = '';
-      page.once('dialog', (confirm) => {
-        question = confirm.message();
-        void confirm.accept();
-      });
+      // The list has loaded again after the status: the row knows that it is served.
+      await expect(row.getByText('Served', { exact: true })).toBeVisible();
       await row.getByRole('button', { name: `Delete ${domain}` }).click();
+      await answerConfirmation(page, {
+        title: `Delete the certificate of ${domain}?`,
+        message: "It is served: deleting it gives every browser the certificate of Caddy's local CA, a new certificate for them.",
+        action: 'Delete certificate',
+      });
       await expect(card.getByText('Certificate deleted')).toBeVisible();
-      expect(question).toBe(
-        `${domain} is served: deleting it gives every browser the certificate of Caddy's local CA, a new certificate for them. Delete it?`,
-      );
       await expect(card.getByText("HTTPS for browsers: Caddy's local CA", { exact: true })).toBeVisible();
       await expect(card.getByText(domain, { exact: true })).toHaveCount(0);
       expect(await status()).toMatchObject({ served_by: 'caddy_local_ca', served_id: null, chosen_id: null });
@@ -310,14 +310,14 @@ test.describe('Security Settings', () => {
       })).ok()).toBeTruthy();
       await page.goto('/system#security');
       await card.getByRole('button', { name: 'Manage', exact: true }).click();
-      await expect(row.getByText('EXPIRES SOON', { exact: true })).toBeVisible();
+      await expect(row.getByText('Expires soon', { exact: true })).toBeVisible();
 
       await row.getByRole('button', { name: `Serve ${domain}` }).click();
       await expect(dialog.getByText(/This certificate expires on \d+\/\d+\/\d{4}, .+: replace it in time\./)).toBeVisible();
       // Cancel: nothing changes.
       await dialog.getByRole('button', { name: 'Cancel' }).click();
       await expect(dialog).toHaveCount(0);
-      await expect(row.getByText('NOT SERVED', { exact: true })).toBeVisible();
+      await expect(row.getByText('Not served', { exact: true })).toBeVisible();
       expect((await (await page.request.get('/api/v1/security/certificates/status', { headers })).json()).served_by)
         .toBe('caddy_local_ca');
     } finally {
@@ -399,8 +399,8 @@ test.describe('Security Settings', () => {
 
       // The delete succeeds, the reload after it fails: the deleted certificate is not listed.
       failing = true;
-      page.once('dialog', (confirm) => confirm.accept());
       await row.getByRole('button', { name: `Delete ${domain}` }).click();
+      await answerConfirmation(page, { title: `Delete the certificate of ${domain}?`, action: 'Delete certificate' });
       await expect(card.getByText('Certificate deleted')).toBeVisible();
       await expect(loadError).toBeVisible();
       await expect(card.getByText(domain, { exact: true })).toHaveCount(0);

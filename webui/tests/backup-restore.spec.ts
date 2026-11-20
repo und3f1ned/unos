@@ -3,6 +3,7 @@ import type { Page, Request } from '@playwright/test';
 import { test, expect } from './fixtures';
 import { targetUrl } from './target';
 import { browserSession } from './session';
+import { actionsFor, chooseAction, confirmWith } from './ui';
 
 // Backup and restore flows against the real API. Backups, users and
 // scheduled tasks created here are removed afterwards.
@@ -74,9 +75,9 @@ async function usernames(page: Page): Promise<string[]> {
 
 const restoreDialog = (page: Page) => page.getByRole('dialog', { name: 'Restore backup' });
 
-/** The "encrypted" mark in the details of backup `name` in the list. */
+/** The "Encrypted" mark in the row of backup `name` in the list. */
 const encryptedMark = (page: Page, name: string) =>
-  page.getByText(name, { exact: true }).locator('..').getByText('encrypted', { exact: true });
+  page.locator('tr').filter({ has: page.getByText(name, { exact: true }) }).getByText('Encrypted', { exact: true });
 
 /** The file input behind "Upload Backup"; it offers encrypted backups too. */
 const uploadInput = (page: Page) => page.locator('input[type="file"][accept=".tar.gz,.tar.gz.enc"]');
@@ -128,7 +129,7 @@ test.describe('Backup files', () => {
 
     const requestSent = page.waitForRequest(isApi(`/backup/download/${name}`));
     const downloadStarted = page.waitForEvent('download');
-    await page.getByRole('button', { name: `Download ${name}` }).click();
+    await chooseAction(page, name, 'Download');
     // The session cookie with the page's session key, no Authorization header (ADR-0397).
     const sent = (await requestSent).headers();
     expect(sent['authorization']).toBeUndefined();
@@ -162,7 +163,7 @@ test.describe('Backup files', () => {
     const name: string = (await response.json()).backup.filename;
     backups.push(name);
     expect(name).toMatch(/^uploaded_\d{8}_\d{6}(_\d+)?\.tar\.gz$/);
-    await expect(page.getByRole('button', { name: `Restore ${name}` })).toBeVisible();
+    await expect(actionsFor(page, name)).toBeVisible();
     await expect(encryptedMark(page, name)).toHaveCount(0);
   });
 
@@ -194,7 +195,7 @@ test.describe('Backup files', () => {
     // As if the session had ended: the browser's next request carries no session cookie, and the
     // page learns of it only from the answer.
     await page.context().clearCookies();
-    await page.getByRole('button', { name: `Download ${name}` }).click();
+    await chooseAction(page, name, 'Download');
     await expect(page).toHaveURL('/login');
     await expect(page.locator('#username')).toBeVisible();
   });
@@ -232,7 +233,7 @@ test.describe('Restoring backups', () => {
 
     await expect(page.getByText(name, { exact: true })).toBeVisible();
     await expect(encryptedMark(page, name)).toHaveCount(0);
-    await page.getByRole('button', { name: `Restore ${name}` }).click();
+    await chooseAction(page, name, 'Restore');
     const dialog = restoreDialog(page);
     const restoreButton = dialog.getByRole('button', { name: 'Restore', exact: true });
     await expect(restoreButton).toBeDisabled();
@@ -263,7 +264,7 @@ test.describe('Restoring backups', () => {
     await openBackupTab(page);
     // Encrypted backups are marked in the list.
     await expect(encryptedMark(page, name)).toBeVisible();
-    await page.getByRole('button', { name: `Restore ${name}` }).click();
+    await chooseAction(page, name, 'Restore');
     const dialog = restoreDialog(page);
     const restoreButton = dialog.getByRole('button', { name: 'Restore', exact: true });
     await dialog.getByLabel('Type the backup filename to confirm:').fill(name);
@@ -277,7 +278,7 @@ test.describe('Restoring backups', () => {
     expect(await usernames(page)).toContain(later);
     await dialog.getByRole('button', { name: 'Close' }).click();
 
-    await page.getByRole('button', { name: `Restore ${name}` }).click();
+    await chooseAction(page, name, 'Restore');
     await dialog.getByLabel('Type the backup filename to confirm:').fill(name);
     await dialog.getByLabel('Passphrase of the encrypted backup').fill(passphrase);
     const requestSent = page.waitForRequest(isApi(`/backup/restore/${name}`));
@@ -299,18 +300,18 @@ test.describe('Restoring backups', () => {
 
     // Download it in the UI.
     const downloadStarted = page.waitForEvent('download');
-    await page.getByRole('button', { name: `Download ${name}` }).click();
+    await chooseAction(page, name, 'Download');
     const download = await downloadStarted;
     expect(download.suggestedFilename()).toBe(name);
     const saved = testInfo.outputPath(name);
     await download.saveAs(saved);
 
     // Delete it in the UI.
-    page.once('dialog', (dialog) => dialog.accept());
     const deleted = page.waitForResponse(
       (response) => isApi(`/backup/${name}`)(response.request()) && response.request().method() === 'DELETE',
     );
     await page.getByRole('button', { name: `Delete ${name}` }).click();
+    await confirmWith(page, 'Delete backup', `Delete backup ${name}?`);
     expect((await deleted).status()).toBe(200);
     backups = backups.filter((backup) => backup !== name);
     await expect(page.getByText(name, { exact: true })).toHaveCount(0);
@@ -328,7 +329,7 @@ test.describe('Restoring backups', () => {
     expect((await copy.body()).equals(await readFile(saved))).toBe(true);
 
     // Restore it with the passphrase.
-    await page.getByRole('button', { name: `Restore ${stored}` }).click();
+    await chooseAction(page, stored, 'Restore');
     const dialog = restoreDialog(page);
     await dialog.getByLabel('Type the backup filename to confirm:').fill(stored);
     await dialog.getByLabel('Passphrase of the encrypted backup').fill(passphrase);
@@ -359,7 +360,7 @@ test.describe('Restoring backups', () => {
     const task = await (await created).json();
     tasks.push(task.id);
     expect(task).not.toHaveProperty('passphrase');
-    await page.locator('div.justify-between', { hasText: taskName }).getByRole('button', { name: 'Run now' }).click();
+    await chooseAction(page, taskName, 'Run now');
 
     let name = '';
     await expect
@@ -379,7 +380,7 @@ test.describe('Restoring backups', () => {
 
     await openBackupTab(page);
     await expect(encryptedMark(page, name)).toBeVisible();
-    await page.getByRole('button', { name: `Restore ${name}` }).click();
+    await chooseAction(page, name, 'Restore');
     const dialog = restoreDialog(page);
     const restoreButton = dialog.getByRole('button', { name: 'Restore', exact: true });
     await dialog.getByLabel('Type the backup filename to confirm:').fill(name);
@@ -392,7 +393,7 @@ test.describe('Restoring backups', () => {
     expect(await usernames(page)).toContain(later);
     await dialog.getByRole('button', { name: 'Close' }).click();
 
-    await page.getByRole('button', { name: `Restore ${name}` }).click();
+    await chooseAction(page, name, 'Restore');
     await dialog.getByLabel('Type the backup filename to confirm:').fill(name);
     await dialog.getByLabel('Passphrase of the encrypted backup').fill(passphrase);
     const requestSent = page.waitForRequest(isApi(`/backup/restore/${name}`));

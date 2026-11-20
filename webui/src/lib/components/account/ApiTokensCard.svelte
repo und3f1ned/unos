@@ -151,7 +151,7 @@
 				<KeyRound class="w-5 h-5" />
 				{$t('tokens.title')}
 			</h3>
-			<Button size="sm" onclick={openCreate}>{$t('tokens.new')}</Button>
+			<Button variant="secondary" size="sm" onclick={openCreate}>{$t('tokens.new')}</Button>
 		</div>
 		<p class="text-sm text-secondary mb-4">{$t('tokens.description')}</p>
 

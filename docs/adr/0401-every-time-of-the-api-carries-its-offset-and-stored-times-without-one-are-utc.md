@@ -1,5 +1,6 @@
 ---
-status: accepted
+status: superseded
+superseded-by: ADR-0432
 date: 2026-11-18
 area: architecture
 decided-by: agent
@@ -9,6 +10,8 @@ supersedes: [ADR-0237, ADR-0300]
 # ADR-0401: Every time of the API carries its offset, a stored time without one is UTC, and the web UI shows times in the browser's time zone
 
 ## Context
+
+Superseded by ADR-0432: only in part, the web UI's rule that every page shows the server's times in the browser's time zone, which no longer holds for the times of what the NAS runs by its own clock (the Scheduler's next runs and runs, shown on the NAS's clock); every other rule here stays in force.
 
 The API answered its times in many forms: the naive `datetime.now()` of the supervisor's container (the audit log, backups, health, updates, the resource monitor and the stats), SQLite's naive `CURRENT_TIMESTAMP` and `datetime.utcnow()` from the DATETIME columns (users, API tokens, SMB passwords), btrfs's ctime ("Fri Nov  6 10:00:00 2026") for a scrub's start, openssl's "Nov  8 01:47:31 2027 GMT" for a certificate and seconds since the epoch for the host's boot. A browser reads a time without an offset as its own local time, so pages showed some times hours off (ledger entry `architecture.times-with-time-zones`, ADR-0023). The dev device's database keeps its rows: no table or column is altered and there is no migration framework (ADR-0319); the audit log's hash chain covers the text of its lines (ADR-0328). The decisions were delegated to the agent.
 

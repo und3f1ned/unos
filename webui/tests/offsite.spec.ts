@@ -3,6 +3,7 @@ import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { APIRequestContext, Locator, Page } from '@playwright/test';
 import { test, expect, E2E_ADMIN } from './fixtures';
+import { answerConfirmation } from './ui';
 import { targetUrl } from './target';
 
 // The off-device copy on System > Backup & Restore (backup.off-device-copies, ADR-0337): a disk
@@ -192,8 +193,8 @@ test.describe('Off-device copy', () => {
       expect(await restored.text()).toBe('Dear family,\n');
 
       // Forget the target: the section offers a new one; the copies stay where they are.
-      page.once('dialog', (dialog) => dialog.accept());
       await section.getByRole('button', { name: 'Forget this target' }).click();
+      await answerConfirmation(page, { title: 'Forget the target of the copy?', action: 'Forget target' });
       await expect(section.getByText('No off-device copy is set up')).toBeVisible();
     } finally {
       await cleanUp(request, token, [source, target]);

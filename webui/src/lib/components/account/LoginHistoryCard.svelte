@@ -2,7 +2,7 @@
   import { messageOf } from "$lib/errors";
   import { Clock, History, MapPin, Monitor, RefreshCw, User } from "lucide-svelte";
   import { getLoginHistory, type LoginAttempt } from "$lib/api/security";
-  import { Alert, Badge, Button, Skeleton } from "$lib/components/ui";
+  import { Alert, Badge, Button, CardAction, Skeleton } from "$lib/components/ui";
   import { intlLocale, t } from "$lib/i18n";
   import { formatDateTime } from "$lib/time";
 
@@ -71,9 +71,9 @@
       <History class="w-5 h-5 text-content-secondary" />
       {$t("account.history.title")}
     </h3>
-    <Button variant="primary" onclick={toggleLoginHistory}>
+    <CardAction aria-expanded={showLoginHistory} onclick={toggleLoginHistory}>
       {showLoginHistory ? $t("account.history.hide") : $t("account.history.show")}
-    </Button>
+    </CardAction>
   </div>
 
   <p class="text-sm text-content-secondary">

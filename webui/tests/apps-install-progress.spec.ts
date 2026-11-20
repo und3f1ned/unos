@@ -1,5 +1,6 @@
 import type { Page, Route } from '@playwright/test';
 import { test, expect } from './fixtures';
+import { answerConfirmation } from './ui';
 import {
   answerInstall,
   catalogCard,
@@ -286,19 +287,13 @@ test.describe('Cancel, Dismiss and a restart', () => {
     await events.update(pulling(job, images));
     const card = jobCard(page);
 
-    let question = '';
-    page.once('dialog', (dialog) => {
-      question = dialog.message();
-      void dialog.accept();
-    });
     await card.getByRole('button', { name: 'Cancel install' }).click();
-
-    await expect
-      .poll(() => question)
-      .toBe(
-        'Cancel the install of Immich? What it made so far is removed; its data folders and the downloaded images ' +
-          'are kept.',
-      );
+    // A confirmation of the page, which keeps the install unless the cancel is confirmed.
+    await answerConfirmation(page, {
+      title: 'Cancel the install of Immich?',
+      message: 'What it made so far is removed; its data folders and the downloaded images are kept.',
+      action: 'Cancel install',
+    });
     await expect(card.getByRole('button', { name: 'Cancelling...' })).toBeDisabled();
     expect(requests).toEqual([`DELETE /api/v1/apps/install/jobs/${job.id}`]);
 

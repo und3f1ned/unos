@@ -2,6 +2,7 @@
   import { Globe } from "lucide-svelte";
   import { setHostname } from "$lib/api/network";
   import { setTimezone } from "$lib/api/system";
+  import { setNasTimeZone } from "$lib/stores/nasTime";
   import { Alert, Button, Card, Input, Select, Skeleton } from "$lib/components/ui";
   import { t } from "$lib/i18n";
   import type { HostSettings } from "./host.svelte";
@@ -39,6 +40,7 @@
     try {
       const answer = await setTimezone(host.zone);
       host.zone = host.savedZone = answer.timezone;
+      setNasTimeZone(answer.timezone);
       hostNotice = $t("general.host.zoneSaved", { zone: answer.timezone });
     } catch (e) {
       hostError = e instanceof Error ? e.message : $t("general.host.saveFailed");

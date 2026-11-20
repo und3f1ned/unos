@@ -1,17 +1,75 @@
 import type { Translation } from '../translate';
 
-// The texts of the shared components of src/lib/components/ui (ADR-0012, ADR-0197).
+// The texts of the shared components of src/lib/components/ui (ADR-0012, ADR-0197, ADR-0432).
 
 export const en = {
 	'ui.alert.dismiss': 'Dismiss',
+	'ui.alert.showDetails': 'Show details',
+	'ui.alert.hideDetails': 'Hide details',
 	'ui.modal.close': 'Close modal',
 	'ui.emptyState.title': 'No data',
-	'ui.select.placeholder': 'Select an option'
+	'ui.select.placeholder': 'Select an option',
+	'ui.help.details': 'Details',
+	'ui.help.hide': 'Hide details',
+	'ui.error.title': 'Could not load this',
+	'ui.error.technical': 'The server gave a technical reason, in the details below.',
+	'ui.error.details': 'Technical details',
+	'ui.error.copy': 'Copy',
+	'ui.error.copied': 'Copied',
+	'ui.confirm.consequences': 'What happens',
+	'ui.confirm.typeLabel': 'To confirm, type',
+	'ui.confirm.typeHint': 'The button turns on once the text matches.',
+	'ui.confirm.typeMismatch': 'Type the text above, exactly, to confirm.',
+	'ui.toast.dismiss': 'Dismiss message',
+	'ui.menu.actions': 'Actions',
+	'ui.menu.actionsFor': 'Actions for {name}',
+	'ui.bulk.selected': { one: '{n} selected', other: '{n} selected' },
+	'ui.bulk.clear': 'Clear selection',
+	'ui.input.range': 'From {min} to {max}',
+	'ui.input.atLeast': 'At least {min}',
+	'ui.input.atMost': 'At most {max}',
+	'ui.input.increase': 'Increase {label}',
+	'ui.input.decrease': 'Decrease {label}',
+	'ui.input.value': 'value',
+	'ui.status.issues': { one: '{n} thing needs attention', other: '{n} things need attention' },
+	'ui.status.show': 'Show',
+	'ui.status.hide': 'Hide',
 };
 
 export const ru: Translation<typeof en> = {
 	'ui.alert.dismiss': 'Закрыть',
+	'ui.alert.showDetails': 'Показать подробности',
+	'ui.alert.hideDetails': 'Скрыть подробности',
 	'ui.modal.close': 'Закрыть окно',
 	'ui.emptyState.title': 'Нет данных',
-	'ui.select.placeholder': 'Выберите значение'
+	'ui.select.placeholder': 'Выберите значение',
+	'ui.help.details': 'Подробнее',
+	'ui.help.hide': 'Свернуть',
+	'ui.error.title': 'Не удалось загрузить',
+	'ui.error.technical': 'Сервер назвал техническую причину — она в подробностях ниже.',
+	'ui.error.details': 'Технические подробности',
+	'ui.error.copy': 'Копировать',
+	'ui.error.copied': 'Скопировано',
+	'ui.confirm.consequences': 'Что произойдёт',
+	'ui.confirm.typeLabel': 'Для подтверждения введите',
+	'ui.confirm.typeHint': 'Кнопка станет доступна, когда текст совпадёт.',
+	'ui.confirm.typeMismatch': 'Введите текст выше точно так же, чтобы подтвердить.',
+	'ui.toast.dismiss': 'Закрыть сообщение',
+	'ui.menu.actions': 'Действия',
+	'ui.menu.actionsFor': 'Действия: {name}',
+	'ui.bulk.selected': { one: 'Выбран {n}', few: 'Выбрано {n}', many: 'Выбрано {n}' },
+	'ui.bulk.clear': 'Снять выделение',
+	'ui.input.range': 'От {min} до {max}',
+	'ui.input.atLeast': 'Не меньше {min}',
+	'ui.input.atMost': 'Не больше {max}',
+	'ui.input.increase': 'Увеличить: {label}',
+	'ui.input.decrease': 'Уменьшить: {label}',
+	'ui.input.value': 'значение',
+	'ui.status.issues': {
+		one: '{n} пункт требует внимания',
+		few: '{n} пункта требуют внимания',
+		many: '{n} пунктов требуют внимания'
+	},
+	'ui.status.show': 'Показать',
+	'ui.status.hide': 'Скрыть',
 };

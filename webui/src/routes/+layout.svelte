@@ -33,7 +33,7 @@
 		setUnauthorizedHandler
 	} from '$lib/api/client';
 	import type { User } from '$lib/api/auth';
-	import { Alert, Button, Skeleton } from '$lib/components/ui';
+	import { Alert, Button, ConfirmHost, Skeleton, ToastRegion } from '$lib/components/ui';
 	import { t } from '$lib/i18n';
 
 	type Props = {
@@ -251,3 +251,7 @@
 		admin={$user?.is_admin === true}
 	/>
 {/if}
+
+<!-- The messages after an action and the confirmations of confirm() (ADR-0432), on every page. -->
+<ToastRegion />
+<ConfirmHost />

@@ -53,8 +53,11 @@ adapter, strict TypeScript and TailwindCSS (ADR-0012). Caddy serves the built fi
 
 ## Design system (ADR-0012)
 
-- Pages are built from `$lib/components/ui`: `Button`, `Card`, `Badge`, `Input`, `Select`,
-  `Modal`, `Alert`, `ProgressBar`, `EmptyState`, `StatusDot`, `Skeleton`. `Input` and `Select` take a
+- Pages are built from `$lib/components/ui`: `Button`, `Card`, `CardAction`, `Badge`, `Input`,
+  `Select`, `Checkbox`, `RadioGroup`, `Switch`, `SwitchRow`, `FieldGroup`, `Modal`, `Sheet`,
+  `ConfirmDialog`, `Alert`, `StatusSummary`, `HelpText`, `TechDetails`, `ProgressBar`, `EmptyState`,
+  `ErrorState`, `LoadState`, `StatusDot`, `Skeleton`, `Menu`, `ActionMenu`, `BulkBar`, `Tabs`,
+  `Segmented`, and `confirm()` and `toast` (ADR-0432). `Input` and `Select` take a
   `label`, and dialogs, lists and hints work with the keyboard and screen readers (ADR-0361).
   A dialog asked from a dialog opens over it, which stays open: `Modal` keeps the stack of open
   dialogs, and Escape closes only the top one, whatever the markup order.
@@ -97,7 +100,34 @@ adapter, strict TypeScript and TailwindCSS (ADR-0012). Caddy serves the built fi
   raw `<button>`, a raw `<a>` styled as a button, a raw text field, select or textarea without a
   `form-*` class, and a raw palette class in a class attribute, a `class:` directive or a string
   literal, outside `src/lib/components/ui`, and names the token to use (ADR-0400; the mapping is
-  in the ADR). `// design-ignore: <reason>` (an HTML comment above an element) exempts a use.
+  in the ADR). It also fails for `window.confirm`, `alert` and `prompt` (also in a `.ts` module) and
+  the class `uppercase`, and, beyond each file's count in `scripts/design-baseline.json`, which only
+  shrinks, for a raw checkbox or radio and a filled primary `Button` in a card's header or a table's
+  row (ADR-0432). `// design-ignore: <reason>` (an HTML comment above an element) exempts a use.
+
+## Patterns (ADR-0432)
+
+- A load: `LoadState` with the page's skeleton, its `ErrorState` (a catalog title, the server's
+  message, Retry; never the empty state after a failure) and its `EmptyState` with its next step.
+  A technical message folds into `TechDetails` (`isTechnical` of `$lib/errors`); an `Alert` takes a
+  `details` snippet, help is one line of `HelpText`, and a page's several states are one
+  `StatusSummary`.
+- A destructive action asks with `await confirm({ title, message, consequences, confirmLabel })`:
+  the title is the question, the button a verb and its object. What an action did, or why it failed,
+  is a `toast` (`toast.success`, `toast.error(message, { title })`); an outcome to read before going
+  on stays on the page, by its object. The specs answer a confirmation with `tests/ui.ts`.
+- One filled primary button per view, in the page header. A card's header action is a `CardAction`
+  (a link with an arrow, or a small secondary button), its badges Card's `status`. A row shows at
+  most edit and delete as icons, in a `table-actions` cell that never wraps, and the rest in an
+  `ActionMenu`; a table that must read on a phone takes `table-stack` and a `data-label` per cell.
+  A selection's actions are a `BulkBar`. A disabled button says why (`disabledReason`).
+- A number field has its unit (`suffix`), bounds (`min`, `max`) and a width; related fields are a
+  `FieldGroup`; an on/off setting is a `Switch` or a `SwitchRow`, an item to select a `Checkbox`,
+  one of several a `RadioGroup`; a page section a `Tabs`, a filter a `Segmented`. A dialog takes a
+  `Modal` `size`; more than six fields or a list is a `Sheet`. A badge is sentence case and readable
+  alone; a category is `outline`.
+- A time of what the NAS runs by its clock is shown on it (`formatDateTime(v, $intlLocale, { zone:
+  $nasTimeZone })`), the zone named once on the page.
 
 ## Loading (ADR-0430)
 

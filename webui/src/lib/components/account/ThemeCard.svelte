@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { Monitor, Moon, Palette, Sun } from 'lucide-svelte';
-	import { Alert, Card } from '$lib/components/ui';
+	import { Alert, Card, RadioGroup } from '$lib/components/ui';
 	import { t } from '$lib/i18n';
 	import {
 		chooseTheme,
@@ -41,31 +41,16 @@
 		<Palette class="w-5 h-5 text-content-secondary" />
 		{$t('theme.title')}
 	</h3>
-	<fieldset aria-describedby="theme-hint">
-		<legend class="form-label">{$t('theme.label')}</legend>
-		<div class="flex flex-wrap gap-2">
-			{#each THEME_CHOICES as choice (choice)}
-				{@const Icon = icons[choice]}
-				<label
-					class="flex items-center gap-2 px-3 py-2 rounded-lg border cursor-pointer text-sm transition-colors
-						{$themeChoice === choice
-						? 'border-brand-ring bg-surface-overlay text-content'
-						: 'border-border-strong text-content-soft hover:bg-surface-overlay'}"
-				>
-					<input
-						type="radio"
-						name="theme"
-						value={choice}
-						checked={$themeChoice === choice}
-						onchange={() => choose(choice)}
-					/>
-					<Icon class="w-4 h-4" aria-hidden="true" />
-					{$t(names[choice])}
-				</label>
-			{/each}
-		</div>
-	</fieldset>
-	<p id="theme-hint" class="form-hint">{$t('theme.hint')}</p>
+	<!-- The choices stay enabled while one is sent (ADR-0405); a RadioGroup of the theme (ADR-0432). -->
+	<RadioGroup
+		name="theme"
+		legend={$t('theme.label')}
+		description={$t('theme.hint')}
+		inline
+		value={$themeChoice}
+		options={THEME_CHOICES.map((choice) => ({ value: choice, label: $t(names[choice]), icon: icons[choice] }))}
+		onchange={(value) => choose(value as ThemeChoice)}
+	/>
 	{#if $themeLoadFailed}
 		<Alert variant="warning" class="mt-3">{$t('theme.loadFailed')}</Alert>
 	{/if}

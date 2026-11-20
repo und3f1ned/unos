@@ -15,7 +15,20 @@
 // - a raw Tailwind colour: a utility of the palette (bg-slate-700, text-red-400, hover:bg-blue-600,
 //   border-green-500/50, ring-white) in a class attribute, a `class:` directive or any string
 //   literal of the markup or a <script>. Use the token of the same role (the message names it);
-//   a colour that no token covers is added to tailwind.config.js first.
+//   a colour that no token covers is added to tailwind.config.js first;
+// and, since ADR-0432:
+// - the browser's own dialogs, window.confirm, window.alert and window.prompt (called so or bare,
+//   in a .svelte file or a .ts module): use confirm() and toast of $lib/components/ui;
+// - the class `uppercase`: a badge is sentence case, and a group label is the class `eyebrow`;
+// - a raw checkbox or radio button (<input type="checkbox|radio">): use Checkbox, Switch or
+//   RadioGroup;
+// - a filled primary Button (the default variant) in a card's header (Card's `actions`, an element
+//   of class card-header, a header row of a card: a justify-between box with an h3 to h6 or a
+//   card-title in it) or in a table's row (tr, td, table-actions): use CardAction, a secondary or
+//   ghost Button or an ActionMenu; the primary action is the page header's.
+// The last two have a baseline (scripts/design-baseline.json): the files that had such uses when
+// the rules came, with their count. A file may have up to its count; one that has fewer fails until
+// its count is lowered, so that the baseline only shrinks (the UX work's chunks 2 to 5 empty it).
 // A comment `design-ignore: <reason>` exempts what it stands for: above an element (an HTML comment
 // <!-- design-ignore: ... -->), or above or at the end of the statement or property of a script
 // (as `i18n-ignore:` does). Review reads the reasons; the summary counts the exemptions.
@@ -36,6 +49,10 @@ const COLOR = new RegExp(
 	`^(?:[a-z0-9-]+:)*!?(${UTILITIES})-(?:(${PALETTE})-(\\d{2,3})|(white|black))(?:/(?:\\d+|\\[[^\\]]+\\]))?$`
 );
 const FIELD_TYPES_EXEMPT = new Set(['checkbox', 'radio', 'file', 'hidden', 'range', 'color', 'submit', 'button', 'reset', 'image']);
+const UPPERCASE = /^(?:[a-z0-9-]+:)*!?uppercase$/;
+const NATIVE_DIALOGS = new Set(['confirm', 'alert', 'prompt']);
+const GLOBALS = new Set(['window', 'globalThis', 'self']);
+const CHOICE_TYPES = new Set(['checkbox', 'radio']);
 const TAG_LIKE = new Set(['Element', 'InlineComponent', 'Slot', 'Head', 'Options', 'Window', 'Body', 'Document']);
 
 const webui = path.resolve(process.argv[2] ?? path.join(path.dirname(fileURLToPath(import.meta.url)), '..'));
@@ -44,6 +61,16 @@ const UI = path.join(SRC, 'lib', 'components', 'ui') + path.sep;
 const relative = (file) => path.relative(webui, file).split(path.sep).join('/');
 const errors = [];
 let exempt = 0;
+// The uses that a baseline admits: rule -> file -> count found (ADR-0432).
+const counted = { 'raw-choice': new Map(), 'primary-in-card': new Map() };
+const BASELINE_FILE = path.join(webui, 'scripts', 'design-baseline.json');
+const baseline = existsSync(BASELINE_FILE) ? JSON.parse(readFileSync(BASELINE_FILE, 'utf8')) : {};
+/** A use of a rule with a baseline: kept to compare with the file's count at the end. */
+function countUse(rule, file, text) {
+	const uses = counted[rule].get(file) ?? [];
+	uses.push(text);
+	counted[rule].set(file, uses);
+}
 
 /** "line:column" of `offset` in `text`, both counted from 1. */
 function position(text, offset) {
@@ -120,6 +147,45 @@ function rawColors(value) {
 	return found;
 }
 
+/** The `uppercase` classes of the text `value`, as { name, at }. */
+function upperCases(value) {
+	const found = [];
+	const words = /\S+/g;
+	for (let match = words.exec(value); match; match = words.exec(value)) {
+		if (UPPERCASE.test(match[0])) found.push({ name: match[0], at: match.index });
+	}
+	return found;
+}
+
+/** Whether the TypeScript call `node` is window.confirm, alert or prompt, with the names the file declares. */
+function nativeDialogCall(node, declared) {
+	if (!ts.isCallExpression(node)) return null;
+	const callee = node.expression;
+	if (ts.isIdentifier(callee) && NATIVE_DIALOGS.has(callee.text) && !declared.has(callee.text)) return callee.text;
+	if (ts.isPropertyAccessExpression(callee) && ts.isIdentifier(callee.expression) &&
+		GLOBALS.has(callee.expression.text) && NATIVE_DIALOGS.has(callee.name.text)) {
+		return `${callee.expression.text}.${callee.name.text}`;
+	}
+	return null;
+}
+
+/** The names that a TypeScript source declares: functions, variables, parameters and imports. */
+function declaredNames(sourceFile) {
+	const names = new Set();
+	const visit = (node) => {
+		if ((ts.isFunctionDeclaration(node) || ts.isVariableDeclaration(node) || ts.isParameter(node) ||
+			ts.isImportSpecifier(node) || ts.isImportClause(node) || ts.isNamespaceImport(node)) &&
+			node.name && ts.isIdentifier(node.name)) {
+			names.add(node.name.text);
+		}
+		ts.forEachChild(node, visit);
+	};
+	visit(sourceFile);
+	return names;
+}
+
+const DIALOG_HINT = 'use confirm() and toast of $lib/components/ui (ADR-0432)';
+
 /** The source with the content of every <script> and <style> blanked out, and the scripts. */
 function split(source) {
 	const scripts = [];
@@ -176,6 +242,45 @@ function classText(node) {
 	return parts.join(' ');
 }
 
+/** Whether a Button node is a filled primary one: no variant, or the static variant "primary". */
+function primaryButton(node) {
+	const variant = node.attributes.find((a) => a.type === 'Attribute' && a.name === 'variant');
+	if (!variant) return true;
+	if (variant.value === true) return false;
+	return variant.value.every((part) => part.type === 'Text') && variant.value.map((part) => part.data).join('') === 'primary';
+}
+
+const HEADINGS = new Set(['h3', 'h4', 'h5', 'h6']);
+
+/** Whether an element node has a class word `word` in its static class text. */
+function hasClass(node, word) {
+	return node.type === 'Element' && new RegExp(`(^|\\s)${word}(\\s|$)`).test(classText(node));
+}
+
+/** Whether an element is a header row of a card: a justify-between box with a card's heading in it. */
+function headerRow(node) {
+	if (!hasClass(node, 'justify-between')) return false;
+	const heading = (child) => child.type === 'Element' && (HEADINGS.has(child.name) || hasClass(child, 'card-title'));
+	return (node.children ?? []).some((child) => heading(child) ||
+		(child.type === 'Element' && (child.children ?? []).some(heading)));
+}
+
+/** Where a Button sits that may not be primary: a card's header or a table's row; null elsewhere. */
+function cardOrRow(ancestors, button) {
+	for (let i = ancestors.length - 1; i >= 0; i--) {
+		const node = ancestors[i];
+		if (node.type === 'InlineComponent' && /^(Modal|Sheet|ConfirmDialog)$/.test(node.name)) return null;
+		if (node.type === 'SnippetBlock' && node.expression?.name === 'actions' && ancestors[i - 1]?.type === 'InlineComponent' &&
+			ancestors[i - 1].name === 'Card') return "a card's header (Card actions)";
+		if (node.type !== 'Element') continue;
+		if (node.name === 'tr' || node.name === 'td' || hasClass(node, 'table-actions')) return "a table's row";
+		if (hasClass(node, 'card-header') || headerRow(node)) return "a card's header";
+		if (hasClass(node, 'page-header') || hasClass(node, 'modal-footer')) return null;
+	}
+	void button;
+	return null;
+}
+
 // --- The check -----------------------------------------------------------------------------------
 
 function checkFile(file) {
@@ -188,7 +293,18 @@ function checkFile(file) {
 			if (exempted()) exempt += 1;
 			else report(offset + found.at, `raw colour class '${found.name}': use ${found.use}`);
 		}
+		for (const found of upperCases(value)) {
+			if (exempted()) exempt += 1;
+			else report(offset + found.at, `class '${found.name}': a badge is sentence case, a group label the class eyebrow (ADR-0432)`);
+		}
 	};
+	// The scripts' declared names: a component's own `confirm` function is no browser dialog.
+	const declared = new Set();
+	for (const script of scripts) {
+		for (const name of declaredNames(ts.createSourceFile('script.ts', script.body, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS))) {
+			declared.add(name);
+		}
+	}
 
 	let ast;
 	try {
@@ -221,11 +337,31 @@ function checkFile(file) {
 					tag('raw <a> styled as a button: use Button with href');
 				} else if (node.name === 'input' || node.name === 'select' || node.name === 'textarea') {
 					const type = node.name === 'input' ? staticAttribute(node, 'type') : '';
-					if (type === null || FIELD_TYPES_EXEMPT.has(type)) {
+					if (type !== null && CHOICE_TYPES.has(type)) {
+						if (own()) exempt += 1;
+						else countUse('raw-choice', name, `${name}:${position(source, node.start)}: raw <input type="${type}">: use ${type === 'radio' ? 'RadioGroup' : 'Checkbox or Switch'} of $lib/components/ui (ADR-0432)`);
+					} else if (type === null || FIELD_TYPES_EXEMPT.has(type)) {
 						// A type that is not static, or one that no component covers.
 					} else if (!/(^|\s)form-(?:input|select|textarea)(\s|$)/.test(classText(node))) {
 						tag(`raw <${node.name}> without a form-* class: use ${node.name === 'select' ? 'Select' : 'Input'} of $lib/components/ui, or the class form-${node.name === 'select' ? 'select' : 'input'}`);
 					}
+				}
+			} else if (node.type === 'InlineComponent' && node.name === 'Button' && primaryButton(node)) {
+				const where = cardOrRow(ancestors, node);
+				if (where) {
+					if (markupExempted(markup, node.start)) exempt += 1;
+					else countUse('primary-in-card', name, `${name}:${position(source, node.start)}: a filled primary Button in ${where}: use CardAction, a secondary or ghost Button or an ActionMenu; the primary action is the page header's (ADR-0432)`);
+				}
+			} else if (node.type === 'CallExpression') {
+				const callee = node.callee;
+				const called = callee?.type === 'Identifier' && NATIVE_DIALOGS.has(callee.name) && !declared.has(callee.name)
+					? callee.name
+					: callee?.type === 'MemberExpression' && callee.object?.type === 'Identifier' && GLOBALS.has(callee.object.name) &&
+						callee.property?.type === 'Identifier' && NATIVE_DIALOGS.has(callee.property.name)
+						? `${callee.object.name}.${callee.property.name}` : null;
+				if (called) {
+					if (exemptedHere()) exempt += 1;
+					else report(node.start, `the browser's ${called}(): ${DIALOG_HINT}`);
 				}
 			} else if (node.type === 'Class') {
 				color(node.start, node.name, () => ancestors.some((a) => markupExempted(markup, a.start)) && exemptedHere());
@@ -246,6 +382,11 @@ function checkFile(file) {
 	for (const script of scripts) {
 		const sourceFile = ts.createSourceFile('script.ts', script.body, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
 		const visit = (node) => {
+			const called = nativeDialogCall(node, declared);
+			if (called) {
+				if (scriptExempted(node, sourceFile)) exempt += 1;
+				else report(script.offset + node.getStart(sourceFile), `the browser's ${called}(): ${DIALOG_HINT}`);
+			}
 			if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node) || ts.isTemplateHead(node) ||
 				ts.isTemplateMiddle(node) || ts.isTemplateTail(node)) {
 				color(script.offset + node.getStart(sourceFile) + 1, node.text, () => scriptExempted(node, sourceFile));
@@ -267,12 +408,57 @@ async function checkTable() {
 	}
 }
 
+/** The browser's dialogs in a .ts module outside ui. */
+function checkModule(file) {
+	const name = relative(file);
+	const text = readFileSync(file, 'utf8');
+	const sourceFile = ts.createSourceFile(name, text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+	const declared = declaredNames(sourceFile);
+	const visit = (node) => {
+		const called = nativeDialogCall(node, declared);
+		if (called) {
+			if (scriptExempted(node, sourceFile)) exempt += 1;
+			else errors.push(`${name}:${position(text, node.getStart(sourceFile))}: the browser's ${called}(): ${DIALOG_HINT}`);
+		}
+		ts.forEachChild(node, visit);
+	};
+	visit(sourceFile);
+}
+
+/** The rules with a baseline: a file over its count fails with each use, one under it until it is lowered. */
+function checkBaseline() {
+	for (const [rule, files] of Object.entries(counted)) {
+		const allowed = baseline[rule] ?? {};
+		for (const [file, uses] of files) {
+			const limit = allowed[file] ?? 0;
+			if (uses.length > limit) {
+				for (const use of uses) errors.push(`${use} [${uses.length} in the file, baseline ${limit}]`);
+			}
+		}
+		for (const [file, limit] of Object.entries(allowed)) {
+			if (file.startsWith('//')) continue;
+			const found = files.get(file)?.length ?? 0;
+			if (found < limit) {
+				errors.push(`scripts/design-baseline.json: ${rule} of ${file} is ${limit}, the file has ${found}: lower it to ${found}` +
+					`${found === 0 ? ' (remove the line)' : ''}, so that the baseline only shrinks`);
+			}
+		}
+	}
+}
+
 const files = readdirSync(SRC, { recursive: true })
 	.filter((entry) => entry.endsWith('.svelte'))
 	.map((entry) => path.join(SRC, entry))
 	.filter((file) => !file.startsWith(UI))
 	.sort();
 for (const file of files) checkFile(file);
+const modules = readdirSync(SRC, { recursive: true })
+	.filter((entry) => entry.endsWith('.ts') && !entry.endsWith('.d.ts'))
+	.map((entry) => path.join(SRC, entry))
+	.filter((file) => !file.startsWith(UI))
+	.sort();
+for (const file of modules) checkModule(file);
+checkBaseline();
 await checkTable();
 
 if (errors.length > 0) {
@@ -281,5 +467,7 @@ if (errors.length > 0) {
 		'tokens of tailwind.config.js (webui/AGENTS.md, ADR-0400); `design-ignore: <reason>` exempts a use.');
 	process.exit(1);
 }
-console.log(`design: ${files.length} .svelte files outside lib/components/ui use no raw <button>, no bare field and ` +
-	`no raw colour class; ${exempt} use(s) exempted with design-ignore`);
+const admitted = Object.values(counted).reduce((sum, map) => sum + [...map.values()].reduce((n, uses) => n + uses.length, 0), 0);
+console.log(`design: ${files.length} .svelte files outside lib/components/ui use no raw <button>, no bare field, ` +
+	`no raw colour class, no browser dialog and no uppercase; ${admitted} raw choice(s) and primary button(s) in cards ` +
+	`left in the baseline; ${exempt} use(s) exempted with design-ignore`);

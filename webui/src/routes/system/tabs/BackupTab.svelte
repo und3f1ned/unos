@@ -1,8 +1,8 @@
 <script lang="ts">
-  import { messageOf } from "$lib/errors";
+  import { isTechnical, messageOf } from "$lib/errors";
   import { onMount, tick } from "svelte";
   import { ApiError } from "$lib/api/client";
-  import { Alert, Button } from "$lib/components/ui";
+  import { Alert, Button, confirm, toast } from "$lib/components/ui";
   import { t } from "$lib/i18n";
   import { listBackups, createBackup, deleteBackup, downloadBackup, uploadBackup, restoreBackup, type BackupInfo } from "$lib/api/backup";
   import BackupList from "$lib/components/system/backup/BackupList.svelte";
@@ -83,10 +83,16 @@
   }
 
   async function handleDelete(filename: string) {
-    if (!confirm($t("backup.confirmDelete", { name: filename }))) return;
+    const yes = await confirm({
+      title: $t("backup.confirmDelete", { name: filename }),
+      message: $t("backup.deleteMessage"),
+      confirmLabel: $t("backup.deleteAction"),
+    });
+    if (!yes) return;
     error = null;
     try {
       await deleteBackup(filename);
+      toast.success($t("backup.deleted", { name: filename }));
       await loadBackups();
     } catch (e) {
       showError($t("backup.deleteFailed", { name: filename }), e);
@@ -159,6 +165,10 @@
   }
 </script>
 
+{#snippet reason()}
+  <pre class="whitespace-pre-wrap break-words font-mono text-xs text-content-soft">{error?.message}</pre>
+{/snippet}
+
 <div class="space-y-4">
   <div class="flex flex-wrap items-center justify-between gap-3">
     <h2 class="text-xl font-semibold">{$t("backup.title")}</h2>
@@ -197,10 +207,18 @@
   </div>
 
   {#if error}
+    {@const technical = isTechnical(error.message)}
     <!-- role="alert": screen readers announce the message when it appears. -->
     <div bind:this={errorBox} role="alert">
-      <Alert variant="error" title={error.title} dismissible ondismiss={() => (error = null)}>
-        {error.message}
+      <!-- A technical reason ([Errno 28] ...) folds under its details behind a plain sentence (ADR-0432). -->
+      <Alert
+        variant="error"
+        title={error.title}
+        dismissible
+        ondismiss={() => (error = null)}
+        details={technical ? reason : undefined}
+      >
+        {technical ? $t("backup.technical") : error.message}
       </Alert>
     </div>
   {/if}

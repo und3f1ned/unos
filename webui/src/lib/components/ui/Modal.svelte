@@ -23,14 +23,29 @@
 	type Props = {
 		open?: boolean;
 		title?: string;
+		/** One line under the title, such as what the dialog is about (a Sheet's image name). */
+		description?: string;
+		// The width (ADR-0432): sm 420 px (a question), md 560 px (a form), lg 720 px (a list or a
+		// form of two columns), xl 880 px.
 		size?: 'sm' | 'md' | 'lg' | 'xl';
 		closable?: boolean;
+		/** A dangerous action: the warning icon in a red tint before the title; `tone` says the same. */
 		danger?: boolean;
+		/** The icon before the title: danger in a red tint, warning in a yellow one. */
+		tone?: 'danger' | 'warning' | null;
+		/**
+		 * center: a dialog in the middle, which scrolls with the page behind it when taller than the
+		 * window; side: a Sheet, a panel at the right edge as tall as the window (the whole screen of
+		 * a phone), which scrolls inside.
+		 */
+		placement?: 'center' | 'side';
 		// Escape, the backdrop or the close button asked to close a closable dialog.
 		onclose?: () => void;
 		// Drawn before the title, such as the icon of a dangerous action (in the tinted circle of a
 		// danger dialog, whose default icon is a warning triangle).
 		titleIcon?: Snippet;
+		/** Beside the title, such as the state of what the dialog shows (a Badge). */
+		status?: Snippet;
 		footer?: Snippet;
 		children?: Snippet;
 	};
@@ -38,14 +53,20 @@
 	let {
 		open = false,
 		title = '',
+		description = '',
 		size = 'md',
 		closable = true,
 		danger = false,
+		tone = null,
+		placement = 'center',
 		onclose,
 		titleIcon,
+		status,
 		footer,
 		children
 	}: Props = $props();
+
+	const toneOf = $derived(tone ?? (danger ? 'danger' : null));
 
 	const titleId = `modal-title-${++titleCount}`;
 
@@ -137,6 +158,31 @@
 		handleClose();
 	}
 
+	// The header and the footer stick to the edges of what scrolls (the overlay, or a Sheet's
+	// panel); each gets a shadow while content is under it (data-stuck), so that the dialog shows
+	// it has more. Two marks, at the body's start and end, tell when.
+	let header: HTMLDivElement | null = $state(null);
+	let footerBox: HTMLDivElement | null = $state(null);
+
+	function edges(panel: HTMLElement) {
+		const scroller = placement === 'side' ? panel : panel.closest<HTMLElement>('.modal-overlay');
+		const top = panel.querySelector<HTMLElement>(':scope > [data-edge="top"]');
+		const bottom = panel.querySelector<HTMLElement>(':scope > [data-edge="bottom"]');
+		if (!scroller || !top || !bottom || typeof IntersectionObserver === 'undefined') return;
+		const observer = new IntersectionObserver(
+			(entries) => {
+				for (const entry of entries) {
+					const box = entry.target === top ? header : footerBox;
+					box?.toggleAttribute('data-stuck', !entry.isIntersecting);
+				}
+			},
+			{ root: scroller, threshold: 1 }
+		);
+		observer.observe(top);
+		observer.observe(bottom);
+		return () => observer.disconnect();
+	}
+
 	function handleBackdropClick(event: MouseEvent) {
 		if (event.target === event.currentTarget && closable) {
 			handleClose();
@@ -155,50 +201,63 @@
 	<div
 		bind:this={overlay}
 		use:inStack
-		class="modal-overlay items-start overflow-y-auto p-4 outline-none"
+		class="modal-overlay outline-none {placement === 'side'
+			? 'modal-overlay-side'
+			: 'items-start overflow-y-auto p-4'}"
 		{@attach (node) => on(node, 'click', handleBackdropClick)}
 		role="dialog"
 		aria-modal="true"
 		aria-labelledby={titleId}
+		aria-describedby={description ? `${titleId}-description` : undefined}
 		tabindex="-1"
 		style:z-index={50 + depth}
 	>
-		<div class="modal my-auto {sizeClasses[size]}">
-			<div class="modal-header">
-				<!-- A danger dialog's title stays in the text's colour: its icon carries the warning. -->
-				<h2 id={titleId} class="modal-title {danger || titleIcon ? 'flex items-center gap-3' : ''}">
-					{#if danger}
-						<span class="modal-danger-icon" aria-hidden="true">
+		<div class="modal modal-panel {placement === 'side' ? 'modal-side' : 'my-auto'} {sizeClasses[size]}" {@attach edges}>
+			<div class="modal-header" bind:this={header}>
+				<div class="flex items-center gap-3 min-w-0">
+					{#if toneOf}
+						<span class="modal-tone-icon modal-tone-{toneOf}" aria-hidden="true">
 							{#if titleIcon}
 								{@render titleIcon()}
 							{:else}
 								<AlertTriangle class="w-4 h-4" />
 							{/if}
 						</span>
-					{:else}
-						{@render titleIcon?.()}
+					{:else if titleIcon}
+						<span class="shrink-0 flex">{@render titleIcon()}</span>
 					{/if}
-					<span class="min-w-0">{title}</span>
-				</h2>
-				{#if closable}
-					<!-- A 32 px ghost icon button, as Button's icon-sm draws it. -->
-					<button
-						type="button"
-						class="btn btn-ghost btn-icon-sm modal-close shrink-0"
-						onclick={handleClose}
-						aria-label={$t('ui.modal.close')}
-					>
-						<X class="w-4 h-4" />
-					</button>
-				{/if}
+					<div class="min-w-0">
+						<!-- A dangerous dialog's title stays in the text's colour: its icon carries the warning. -->
+						<h2 id={titleId} class="modal-title">{title}</h2>
+						{#if description}
+							<p id="{titleId}-description" class="modal-description">{description}</p>
+						{/if}
+					</div>
+				</div>
+				<div class="flex items-center gap-2 shrink-0">
+					{@render status?.()}
+					{#if closable}
+						<!-- A 32 px ghost icon button, as Button's icon-sm draws it. -->
+						<button
+							type="button"
+							class="btn btn-ghost btn-icon-sm modal-close shrink-0"
+							onclick={handleClose}
+							aria-label={$t('ui.modal.close')}
+						>
+							<X class="w-4 h-4" />
+						</button>
+					{/if}
+				</div>
 			</div>
 
+			<div class="modal-edge" data-edge="top" aria-hidden="true"></div>
 			<div class="modal-body">
 				{@render children?.()}
 			</div>
+			<div class="modal-edge" data-edge="bottom" aria-hidden="true"></div>
 
 			{#if footer}
-				<div class="modal-footer">
+				<div class="modal-footer" bind:this={footerBox}>
 					{@render footer()}
 				</div>
 			{/if}

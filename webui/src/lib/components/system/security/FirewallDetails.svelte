@@ -52,10 +52,7 @@
 
 	<div class="flex flex-wrap justify-between items-center gap-2">
 		<h4 class="font-medium">{$t('firewall.rules')}</h4>
-		<Button variant="primary" size="sm" disabled={busy} onclick={onadd}>
-			<Plus class="w-4 h-4" />
-			{$t('firewall.addRule')}
-		</Button>
+		<Button variant="secondary" size="sm" icon={Plus} disabled={busy} onclick={onadd}>{$t('firewall.addRule')}</Button>
 	</div>
 
 	{#if status.rules.length === 0}

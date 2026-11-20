@@ -49,8 +49,10 @@ export const en = {
 	'firewall.resetFailed': 'Failed to reset firewall',
 	'firewall.keepFailed': 'The change could not be kept',
 	'firewall.confirmDelete': "Delete this rule from the host's firewall?",
-	'firewall.confirmReset':
-		"Reset the firewall? It is turned off, every rule is removed, and UNOS's rules are added again.",
+	'firewall.deleteAction': 'Delete rule',
+	'firewall.resetTitle': 'Reset the firewall?',
+	'firewall.confirmReset': "It is turned off, every rule is removed, and UNOS's rules are added again.",
+	'firewall.resetAction': 'Reset firewall',
 
 	// Turning it on.
 	'firewall.enableTitle': 'Turn the firewall on?',
@@ -162,8 +164,10 @@ export const ru: Translation<typeof en> = {
 	'firewall.resetFailed': 'Не удалось сбросить брандмауэр',
 	'firewall.keepFailed': 'Не удалось сохранить изменение',
 	'firewall.confirmDelete': 'Удалить это правило из брандмауэра хоста?',
-	'firewall.confirmReset':
-		'Сбросить брандмауэр? Он будет выключен, все правила удалены, а правила UNOS добавлены снова.',
+	'firewall.deleteAction': 'Удалить правило',
+	'firewall.resetTitle': 'Сбросить брандмауэр?',
+	'firewall.confirmReset': 'Он будет выключен, все правила удалены, а правила UNOS добавлены снова.',
+	'firewall.resetAction': 'Сбросить брандмауэр',
 
 	'firewall.enableTitle': 'Включить брандмауэр?',
 	'firewall.enableRules':

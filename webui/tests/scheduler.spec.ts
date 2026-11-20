@@ -2,6 +2,7 @@ import type { Page } from '@playwright/test';
 import { test, expect } from './fixtures';
 import { FAKE_DISKS, FAKE_POOLS, fakeStorageApi } from './storage-fakes';
 import { browserSession } from './session';
+import { chooseAction } from './ui';
 
 test.describe('Scheduler', () => {
   test('should display scheduler tab', async ({ authenticatedPage: page }) => {
@@ -166,7 +167,7 @@ test.describe('Scheduler: SMART task whose disk is not connected', () => {
   }) => {
     const { updated } = await fakeSchedulerApi(page, FAKE_DISKS);
     await openSchedulerTab(page);
-    await page.getByRole('button', { name: 'Edit', exact: true }).click();
+    await page.getByRole('button', { name: /^Edit / }).click();
 
     const select = page.getByLabel('Target Disk');
     await expect(select.locator('option')).toHaveText([`${GONE_DISK} (not connected)`, ...DISK_OPTIONS]);
@@ -183,7 +184,7 @@ test.describe('Scheduler: SMART task whose disk is not connected', () => {
   }) => {
     const { updated } = await fakeSchedulerApi(page, []);
     await openSchedulerTab(page);
-    await page.getByRole('button', { name: 'Edit', exact: true }).click();
+    await page.getByRole('button', { name: /^Edit / }).click();
 
     const select = page.getByLabel('Target Disk');
     await expect(select.locator('option')).toHaveText([`${GONE_DISK} (not connected)`]);
@@ -205,7 +206,7 @@ test.describe('Scheduler: SMART task whose disk is not connected', () => {
     const disksAnswered = page.waitForResponse((r) => new URL(r.url()).pathname === '/api/v1/storage/disks');
     await openSchedulerTab(page);
     expect((await disksAnswered).status()).toBe(500);
-    await page.getByRole('button', { name: 'Edit', exact: true }).click();
+    await page.getByRole('button', { name: /^Edit / }).click();
 
     const select = page.getByLabel('Target Disk');
     await expect(select.locator('option')).toHaveText([GONE_DISK]);
@@ -218,7 +219,7 @@ test.describe('Scheduler: SMART task whose disk is not connected', () => {
     await fakeSchedulerApi(page, FAKE_DISKS);
     await openSchedulerTab(page);
     // Edited and closed first: its disk must not stay a choice.
-    await page.getByRole('button', { name: 'Edit', exact: true }).click();
+    await page.getByRole('button', { name: /^Edit / }).click();
     await expect(page.getByLabel('Target Disk')).toHaveValue(GONE_DISK);
     await page.getByRole('button', { name: 'Cancel' }).click();
 
@@ -260,7 +261,7 @@ test.describe('Scheduler: SMART task whose disk is connected', () => {
       },
     );
     await openSchedulerTab(page);
-    await page.getByRole('button', { name: 'Edit', exact: true }).click();
+    await page.getByRole('button', { name: /^Edit / }).click();
 
     const select = page.getByLabel('Target Disk');
     await expect(select.locator('option')).toHaveText([disk.path]);
@@ -361,7 +362,7 @@ test.describe('Scheduler: the task form', () => {
     expect(created).toEqual([expect.objectContaining({ task_type: 'backup', passphrase: PASSPHRASE })]);
 
     // Editing a backup task shows no passphrase; left empty, the stored one stays.
-    await page.getByRole('button', { name: 'Edit', exact: true }).click();
+    await page.getByRole('button', { name: /^Edit / }).click();
     await expect(field(page, 'Passphrase')).toHaveValue('');
     await expect(field(page, 'Confirm Passphrase')).toHaveValue('');
     await expect(page.getByText('Leave empty to keep the current passphrase.', { exact: false })).toBeVisible();
@@ -372,7 +373,7 @@ test.describe('Scheduler: the task form', () => {
     expect(updated[0]).not.toHaveProperty('passphrase');
 
     // A new passphrase is sent once it is confirmed.
-    await page.getByRole('button', { name: 'Edit', exact: true }).click();
+    await page.getByRole('button', { name: /^Edit / }).click();
     await field(page, 'Passphrase').fill('a new passphrase');
     await expect(page.getByRole('button', { name: 'Save Changes' })).toBeDisabled();
     await field(page, 'Confirm Passphrase').fill('a new passphrase');
@@ -385,7 +386,7 @@ test.describe('Scheduler: the task form', () => {
     // until a passphrase is set, and an edit without one is refused.
     const { updated } = await fakeSchedulerApi(page, FAKE_DISKS, [{ ...BACKUP_TASK, has_backup_key: false }]);
     await openSchedulerTab(page, BACKUP_TASK.name);
-    await page.getByRole('button', { name: 'Edit', exact: true }).click();
+    await page.getByRole('button', { name: /^Edit / }).click();
 
     const save = page.getByRole('button', { name: 'Save Changes' });
     await expect(page.getByText('a backup cannot be restored without it')).toBeVisible();
@@ -459,14 +460,14 @@ test.describe('Scheduler: a task that ran', () => {
     expect(createdTask).not.toHaveProperty('passphrase');
 
     const row = page.locator('div.justify-between', { hasText: name });
-    await row.getByRole('button', { name: 'Run now' }).click();
+    await chooseAction(page, name, 'Run now');
     await expect.poll(async () => (await storedTask(page)).last_status, { timeout: 30000 }).toBe('success');
     const ran = await storedTask(page);
     expect(ran.last_run).toBeTruthy();
     // Listed with its key, so the edit below may leave the passphrase empty.
     expect(ran.has_backup_key).toBe(true);
 
-    await row.getByRole('button', { name: 'Edit', exact: true }).click();
+    await row.getByRole('button', { name: `Edit ${name}`, exact: true }).click();
     await field(page, 'Hour').selectOption('5');
     await saveTask(page);
 
@@ -562,7 +563,7 @@ test.describe('Scheduler: snapshot tasks', () => {
     await expect(page.getByText(SNAPSHOT_TASK.name, { exact: true })).toBeVisible();
     await expect(page.getByText(/BTRFS Snapshot\s+on e2e_tank/)).toBeVisible();
 
-    await page.getByTitle('View history').click();
+    await chooseAction(page, SNAPSHOT_TASK.name, 'View history');
 
     await expect(page.getByRole('heading', { name: `Run History: ${SNAPSHOT_TASK.name}` })).toBeVisible();
     await expect(page.getByText('Pool e2e_tank is not mounted at /mnt/pools/e2e_tank')).toBeVisible();
@@ -574,24 +575,23 @@ test.describe('Scheduler: snapshot tasks', () => {
 test.describe('Scheduler: the time zone of the schedules', () => {
   test.use({ timezoneId: 'America/New_York', locale: 'en-US' });
 
-  test("the tab names the time zone that the schedules follow and shows times in the browser's", async ({
+  test("the tab names the NAS's time zone once and shows every time on its clock", async ({
     authenticatedPage: page,
   }) => {
     await fakeSnapshotTasksApi(page, [SNAPSHOT_TASK], [FAILED_SNAPSHOT_RUN]);
     await page.goto('/system#scheduler');
     await expect(page.getByText(SNAPSHOT_TASK.name, { exact: true })).toBeVisible();
 
-    // A schedule is shown as it is, on the NAS's clock; next runs and run times in the browser's zone.
-    await expect(
-      page.getByText(
-        `The schedules follow the clock of the NAS's time zone, ${NAS_ZONE}. ` +
-          "Next runs and the times of the history are shown in your browser's time zone.",
-        { exact: true },
-      ),
-    ).toBeVisible();
+    // One time zone on the page, the NAS's, named once (ADR-0432); the rest behind Details.
+    const zoneLine = page.locator('.help-text');
+    await expect(zoneLine).toContainText(`Times on this page follow the NAS's clock: ${NAS_ZONE}.`);
+    await zoneLine.getByRole('button', { name: 'Details' }).click();
+    await expect(zoneLine).toContainText('The NAS\'s time zone is set in General.');
     await expect(page.getByText(/Daily at 02:00$/)).toBeVisible();
-    // The next run, 03:00 in Berlin (2026-11-08T03:00:00+01:00), is 21:00 the evening before in New York.
-    await expect(page.getByText(/^11\/7\/2026, 9:00:00\sPM$/)).toBeVisible();
+    // The next run, 03:00 in Berlin (2026-11-08T03:00:00+01:00), is shown as 03:00, not as the
+    // browser's 21:00 the evening before in New York.
+    await expect(page.getByText(/^Nov 8, 2026, 3:00\sAM$/)).toBeVisible();
+    await expect(page.getByText(/9:00(:00)?\sPM/)).toHaveCount(0);
 
     // The times of the task form are on the NAS's clock, and the form says so.
     await page.getByRole('button', { name: 'New Task' }).click();
@@ -602,10 +602,10 @@ test.describe('Scheduler: the time zone of the schedules', () => {
     await expect(field(page, 'Cron Expression')).toHaveAccessibleDescription(onTheClock);
     await page.getByRole('button', { name: 'Cancel' }).click();
 
-    // A run started at 01:00:01 UTC, in the browser's time zone.
-    await page.getByTitle('View history').click();
+    // A run started at 01:00:01 UTC, on the NAS's clock: 02:00:01 in Berlin.
+    await chooseAction(page, SNAPSHOT_TASK.name, 'View history');
     await expect(page.getByRole('heading', { name: `Run History: ${SNAPSHOT_TASK.name}` })).toBeVisible();
-    await expect(page.getByText(/^11\/6\/2026, 8:00:01\sPM$/)).toBeVisible();
+    await expect(page.getByText(/^11\/7\/2026, 2:00:01\sAM$/)).toBeVisible();
   });
 });
 
@@ -663,9 +663,9 @@ test.describe('Scheduler: custom tasks', () => {
     await createCustomTask(page, name, 'echo "e2e to stdout"; echo "e2e to stderr" >&2; exit 3');
 
     const row = page.locator('div.justify-between', { hasText: name });
-    await row.getByRole('button', { name: 'Run now' }).click();
+    await chooseAction(page, name, 'Run now');
     await expect.poll(() => endedRuns(page), { timeout: 30000 }).toEqual(['failed']);
-    await row.getByRole('button', { name: 'View history' }).click();
+    await chooseAction(page, name, 'View history');
     await expect(page.getByRole('heading', { name: `Run History: ${name}` })).toBeVisible();
     await expect(page.getByText('Exit status 3', { exact: true })).toBeVisible();
     await expect(page.getByText('The command exited with status 3', { exact: true })).toBeVisible();
@@ -675,12 +675,12 @@ test.describe('Scheduler: custom tasks', () => {
     await page.getByRole('button', { name: 'Close', exact: true }).click();
 
     // A command that succeeds: exit status 0, its output, no error.
-    await row.getByRole('button', { name: 'Edit', exact: true }).click();
+    await row.getByRole('button', { name: `Edit ${name}`, exact: true }).click();
     await field(page, 'Command').fill('echo "e2e all good"');
     await saveTask(page);
-    await row.getByRole('button', { name: 'Run now' }).click();
+    await chooseAction(page, name, 'Run now');
     await expect.poll(() => endedRuns(page), { timeout: 30000 }).toEqual(['failed', 'success']);
-    await row.getByRole('button', { name: 'View history' }).click();
+    await chooseAction(page, name, 'View history');
     await expect(page.getByText('Exit status 0', { exact: true })).toBeVisible();
     const succeeded = page.locator('details').nth(1);
     await succeeded.getByText('View output').click();
@@ -697,9 +697,7 @@ test.describe('Scheduler: custom tasks', () => {
 
     const task = await createCustomTask(page, `E2E at three ${Date.now().toString(36)}`, 'true', 3);
 
-    await expect(
-      page.getByText(`The schedules follow the clock of the NAS's time zone, ${timezone}.`, { exact: false }),
-    ).toBeVisible();
+    await expect(page.getByText(`Times on this page follow the NAS's clock: ${timezone}.`, { exact: false })).toBeVisible();
     expect(task.hour).toBe(3);
     // 03:00 on that clock, with its offset, at most a day away.
     expect(task.next_run).toMatch(/T03:00:00[+-]\d\d:\d\d$/);
@@ -780,7 +778,7 @@ test.describe('Scheduler: a backup task with a Keep Count', () => {
     const row = page.locator('div.justify-between', { hasText: name });
     const scheduled: string[] = [];
     for (let run = 1; run <= 4; run++) {
-      await row.getByRole('button', { name: 'Run now' }).click();
+      await chooseAction(page, name, 'Run now');
       await expect.poll(async () => (await runStatuses(page)).length, { timeout: 30000 }).toBe(run);
       const listed = (await backupNames(page)).filter(isScheduled);
       const added = listed.filter((backup) => !scheduled.includes(backup));
@@ -839,22 +837,17 @@ test.describe('Scheduler: in Russian', () => {
     await page.reload();
     await expect(page.getByRole('heading', { name: 'Задачи по расписанию', exact: true })).toBeVisible();
     await expect(page.getByRole('button', { name: 'История', exact: true })).toBeVisible();
-    await expect(
-      page.getByText(
-        `Расписания идут по часам часового пояса NAS, ${NAS_ZONE}. ` +
-          'Следующие запуски и время в истории показаны в часовом поясе вашего браузера.',
-        { exact: true },
-      ),
-    ).toBeVisible();
+    await expect(page.locator('.help-text')).toContainText(`Время на этой странице — по часам NAS: ${NAS_ZONE}.`);
+    await expect(page.locator('.help-text').getByRole('button', { name: 'Подробнее', exact: true })).toBeVisible();
     await expect(row(SNAPSHOT_TASK.name).getByText(/Снимок BTRFS\s+на e2e_tank\s+• Ежедневно в 02:00/)).toBeVisible();
     await expect(row(SMART_TASK.name).getByText(/Тест SMART\s+на \/dev\/e2e-gone\s+• По воскресеньям в 03:00/))
       .toBeVisible();
     await expect(
       row(MONTHLY_TASK.name).getByText(/Проверка целостности BTRFS \(scrub\)\s+на e2e_tank\s+• Ежемесячно, 12-го в 04:30/),
     ).toBeVisible();
-    // The next run, 03:00 in Berlin, in UTC and in the Russian format.
+    // The next run, 03:00 in Berlin, on the NAS's clock (ADR-0432) and in the Russian format.
     await expect(row(SNAPSHOT_TASK.name).getByText('Следующий запуск', { exact: true })).toBeVisible();
-    await expect(row(SNAPSHOT_TASK.name).getByText('08.11.2026, 02:00:00', { exact: true })).toBeVisible();
+    await expect(row(SNAPSHOT_TASK.name).getByText('8 нояб. 2026 г., 03:00', { exact: true })).toBeVisible();
     await expect(page.getByRole('heading', { name: 'Scheduled Tasks' })).toHaveCount(0);
 
     await page.getByRole('button', { name: 'Новая задача', exact: true }).click();
@@ -885,11 +878,12 @@ test.describe('Scheduler: in Russian', () => {
     await page.getByRole('button', { name: 'Отмена', exact: true }).click();
     await expect(page.getByRole('heading', { name: 'Новая задача', exact: true })).toHaveCount(0);
 
-    await row(SNAPSHOT_TASK.name).getByTitle('Показать историю').click();
+    await chooseAction(page, SNAPSHOT_TASK.name, 'Показать историю', true);
     await expect(page.getByRole('heading', { name: `История запусков: ${SNAPSHOT_TASK.name}`, exact: true }))
       .toBeVisible();
     await expect(page.getByText('ошибка', { exact: true })).toBeVisible();
-    await expect(page.getByText('07.11.2026, 01:00:01', { exact: true })).toBeVisible();
+    // On the NAS's clock, Berlin's (ADR-0432).
+    await expect(page.getByText('07.11.2026, 02:00:01', { exact: true })).toBeVisible();
     await expect(page.getByText('11 мс', { exact: true })).toBeVisible();
     await expect(page.getByText(FAILED_SNAPSHOT_RUN.error, { exact: true })).toBeVisible();
     await page.getByRole('button', { name: 'Закрыть', exact: true }).click();
@@ -959,7 +953,7 @@ test.describe('Scheduler: in Russian', () => {
   }) => {
     await fakeSnapshotTasksApi(page, [SNAPSHOT_TASK], [FAILED_SNAPSHOT_RUN, SLOW_SNAPSHOT_RUN]);
     await page.goto('/system#scheduler');
-    await page.getByTitle('View history').click();
+    await chooseAction(page, SNAPSHOT_TASK.name, 'View history');
     await expect(page.getByRole('heading', { name: `Run History: ${SNAPSHOT_TASK.name}` })).toBeVisible();
     await expect(page.getByText('1.5s', { exact: true })).toBeVisible();
     await expect(page.getByText('11ms', { exact: true })).toBeVisible();
@@ -968,7 +962,7 @@ test.describe('Scheduler: in Russian', () => {
     // As the Language card of the Account page leaves it.
     await page.evaluate(() => localStorage.setItem('unos-locale', 'ru'));
     await page.reload();
-    await page.getByTitle('Показать историю').click();
+    await chooseAction(page, SNAPSHOT_TASK.name, 'Показать историю', true);
     await expect(page.getByRole('heading', { name: `История запусков: ${SNAPSHOT_TASK.name}`, exact: true }))
       .toBeVisible();
     await expect(page.getByText('успешно', { exact: true })).toBeVisible();

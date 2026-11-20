@@ -84,10 +84,12 @@ export const en = {
 	'apps.installed.restart': 'Restart',
 	'apps.installed.uninstall': 'Uninstall',
 	// {n} is the number of the app's containers that Docker has.
+	'apps.installed.uninstallTitle': 'Uninstall {name}?',
 	'apps.installed.confirmUninstall': {
-		one: 'Uninstall {name}? This removes its container and keeps its data folders.',
-		other: 'Uninstall {name}? This removes its {n} containers and keeps its data folders.'
+		one: 'Its container is removed; its data folders are kept.',
+		other: 'Its {n} containers are removed; its data folders are kept.'
 	},
+	'apps.installed.uninstallAction': 'Uninstall app',
 	'apps.installed.loadError': 'The installed apps could not be loaded: {error}',
 	'apps.installed.startFailed': 'Start failed',
 	'apps.installed.stopFailed': 'Stop failed',
@@ -284,8 +286,10 @@ export const en = {
 	'apps.job.step.cleaning': 'Removing what the install made',
 	'apps.job.cancel': 'Cancel install',
 	'apps.job.cancelling': 'Cancelling...',
-	'apps.job.confirmCancel':
-		'Cancel the install of {name}? What it made so far is removed; its data folders and the downloaded images are kept.',
+	'apps.job.cancelTitle': 'Cancel the install of {name}?',
+	'apps.job.confirmCancel': 'What it made so far is removed; its data folders and the downloaded images are kept.',
+	'apps.job.cancelAction': 'Cancel install',
+	'apps.job.keepGoing': 'Keep installing',
 	'apps.job.cancelledTitle': 'The install was cancelled',
 	'apps.detail.jobLost':
 		'UNOS restarted during the install, and its progress was lost. The Installed tab shows what it made.'
@@ -356,11 +360,13 @@ export const ru: Translation<typeof en> = {
 	'apps.installed.stop': 'Остановить',
 	'apps.installed.restart': 'Перезапустить',
 	'apps.installed.uninstall': 'Удалить',
+	'apps.installed.uninstallTitle': 'Удалить приложение {name}?',
 	'apps.installed.confirmUninstall': {
-		one: 'Удалить приложение {name}? Его контейнер будет удалён, а папки с данными останутся.',
-		few: 'Удалить приложение {name}? Его {n} контейнера будут удалены, а папки с данными останутся.',
-		many: 'Удалить приложение {name}? Его {n} контейнеров будут удалены, а папки с данными останутся.'
+		one: 'Его контейнер будет удалён, а папки с данными останутся.',
+		few: 'Его {n} контейнера будут удалены, а папки с данными останутся.',
+		many: 'Его {n} контейнеров будут удалены, а папки с данными останутся.'
 	},
+	'apps.installed.uninstallAction': 'Удалить приложение',
 	'apps.installed.loadError': 'Не удалось загрузить установленные приложения: {error}',
 	'apps.installed.startFailed': 'Не удалось запустить приложение',
 	'apps.installed.stopFailed': 'Не удалось остановить приложение',
@@ -533,8 +539,10 @@ export const ru: Translation<typeof en> = {
 	'apps.job.step.cleaning': 'Удаление сделанного установкой',
 	'apps.job.cancel': 'Отменить установку',
 	'apps.job.cancelling': 'Отмена...',
-	'apps.job.confirmCancel':
-		'Отменить установку приложения {name}? Всё, что она успела сделать, будет удалено; папки с данными и загруженные образы останутся.',
+	'apps.job.cancelTitle': 'Отменить установку приложения {name}?',
+	'apps.job.confirmCancel': 'Всё, что она успела сделать, будет удалено; папки с данными и загруженные образы останутся.',
+	'apps.job.cancelAction': 'Отменить установку',
+	'apps.job.keepGoing': 'Продолжить установку',
 	'apps.job.cancelledTitle': 'Установка отменена',
 	'apps.detail.jobLost':
 		'UNOS перезапустился во время установки, и её ход потерян. Что она успела сделать, видно на вкладке «Установленные».'

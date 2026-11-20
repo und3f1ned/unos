@@ -952,6 +952,12 @@ async function resetLayout(page: Page) {
   await page.request.delete('/api/v1/auth/me/dashboard-layout', { headers: { Authorization: `Bearer ${token}` } });
 }
 
+/** Choose `item` in the ⋯ menu of the listed backup (ADR-0432), in either language. */
+async function backupAction(page: Page, item: RegExp): Promise<void> {
+  await page.getByRole('button', { name: /^(Actions for |Действия: )unos_backup_20261107_020000\.tar\.gz\.enc$/ }).click();
+  await page.getByRole('menu').getByRole('menuitem', { name: item }).click();
+}
+
 const VIEWS: View[] = [
   {
     name: 'Dashboard',
@@ -1298,8 +1304,7 @@ const VIEWS: View[] = [
       );
     },
     // The error names the backup, whose long name has nowhere to break.
-    open: (page) =>
-      page.getByRole('button', { name: /^(Download|Скачать) unos_backup_20261107_020000\.tar\.gz\.enc$/ }).click(),
+    open: (page) => backupAction(page, /^(Download|Скачать)$/),
     shows: (page) => page.getByText('Backup not found'),
   },
   {
@@ -1812,10 +1817,37 @@ const VIEWS: View[] = [
     end: (page) => page.getByRole('dialog').getByRole('row').last().getByRole('cell').first(),
   },
   {
+    // The confirmation of confirm() (ADR-0432): its question, what happens and its two buttons.
+    name: 'Dialog: confirm deleting a backup',
+    path: '/system#backup',
+    fake: (page) => serve(page, BACKUPS),
+    open: (page) =>
+      page.getByRole('button', { name: /^(Delete|Удалить) unos_backup_20261107_020000\.tar\.gz\.enc$/ }).click(),
+    shows: (page) => page.getByRole('dialog'),
+    start: dialogTitle,
+    end: dialogEnd,
+  },
+  {
+    // A Sheet (ADR-0432): the runs of a task in a panel as tall as the screen.
+    name: 'Sheet: the runs of a task',
+    path: '/system#scheduler',
+    fake: async (page) => {
+      await fakeStorageApi(page);
+      await serve(page, SCHEDULER);
+    },
+    open: async (page) => {
+      await page.getByRole('button', { name: /^(Actions for |Действия: )Nightly encrypted backup of the configuration$/ }).click();
+      await page.getByRole('menu').getByRole('menuitem', { name: /^(View history|Показать историю)$/ }).click();
+    },
+    shows: (page) => page.getByRole('dialog'),
+    start: dialogTitle,
+    end: dialogEnd,
+  },
+  {
     name: 'Dialog: restore a backup',
     path: '/system#backup',
     fake: (page) => serve(page, BACKUPS),
-    open: (page) => page.getByRole('button', { name: /unos_backup_20261107_020000\.tar\.gz\.enc$/ }).first().click(),
+    open: (page) => backupAction(page, /^(Restore|Восстановить)$/),
     shows: (page) => page.getByRole('dialog'),
     start: dialogTitle,
     end: dialogEnd,
@@ -2012,6 +2044,9 @@ async function checkFits(page: Page, view: View): Promise<void> {
   await page.goto(view.path);
   await view.open?.(page);
   await expect(view.shows(page)).toBeVisible();
+  // A dialog that flies in (a Sheet slides 24 px from the right) is measured at rest.
+  const panel = page.locator('.modal-overlay > .modal');
+  if (await panel.count()) await settled(panel.last());
   expect(await tooWide(page)).toEqual([]);
   expect(await overscroll(page), 'px that the overlay scrolls past the dialog').toBeLessThanOrEqual(1);
   if (view.start) await expect(view.start(page), 'shown whole as it opens').toBeInViewport({ ratio: WHOLE });

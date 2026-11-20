@@ -243,8 +243,19 @@
 		@apply bg-surface-elevated border border-border rounded-card shadow-raised p-5 min-w-0;
 	}
 
+	/* A card's header: the title with its state badges, and its actions, centred on one row at least
+	   as tall as a small button (32 px), so that a badge and a button line up (ADR-0432). */
 	.card-header {
-		@apply flex flex-wrap items-center justify-between gap-x-3 gap-y-2 mb-4;
+		@apply flex flex-wrap items-center justify-between gap-x-3 gap-y-2 mb-4 min-h-8;
+	}
+
+	.card-status {
+		@apply inline-flex flex-wrap items-center gap-1.5;
+	}
+
+	/* A header action that leads to another place: a text link with an arrow, as tall as a badge. */
+	.card-action-link {
+		@apply inline-flex items-center gap-1 min-h-8 text-[13px] font-medium text-content-link hover:underline;
 	}
 
 	.card-title {
@@ -276,6 +287,18 @@
 		@apply inline-flex items-center justify-center gap-2 rounded border border-transparent font-medium
 		       disabled:cursor-not-allowed disabled:opacity-50;
 		transition: background-color var(--dur-fast), color var(--dur-fast), border-color var(--dur-fast);
+	}
+
+	/* A disabled button that says why (Button's disabledReason, ADR-0432): it keeps the focus, so
+	   that the reason can be read, and looks and acts as a disabled one. */
+	.btn[aria-disabled='true'] {
+		@apply cursor-not-allowed opacity-50;
+	}
+
+	/* The tooltip of a reason: dark on light and light on dark, above the control. */
+	.tooltip {
+		@apply fixed z-[200] max-w-[280px] px-2.5 py-1.5 rounded text-xs font-medium leading-snug pointer-events-none
+		       bg-content text-content-inverse shadow-popover;
 	}
 
 	/* Button sizes */
@@ -406,6 +429,228 @@
 		@apply text-[13px] leading-[18px] text-content-muted mt-1.5;
 	}
 
+	/* A field with a unit or a sign beside its text, inside its frame (Input's prefix and suffix):
+	   the frame is the field's, the input inside it has none. */
+	.form-affix {
+		@apply flex items-stretch w-full min-h-9 bg-surface-overlay border border-border-strong rounded text-content;
+		transition: border-color var(--dur-fast), box-shadow var(--dur-fast);
+	}
+
+	.form-affix:focus-within {
+		@apply border-brand-ring;
+		box-shadow:
+			0 0 0 1px rgb(var(--color-brand-ring)),
+			0 0 0 4px rgb(var(--color-brand-ring) / 0.25);
+	}
+
+	.form-affix.form-affix-invalid {
+		@apply border-status-error;
+	}
+
+	.form-affix > .form-input {
+		@apply min-w-0 flex-1 border-0 bg-transparent;
+		box-shadow: none;
+	}
+
+	.form-affix > .form-input:focus {
+		box-shadow: none;
+	}
+
+	.form-affix-text {
+		@apply flex items-center px-2.5 text-[13px] text-content-secondary whitespace-nowrap select-none;
+	}
+
+	.form-affix-text:first-child {
+		@apply pr-0;
+	}
+
+	.form-affix-text + .form-input,
+	.form-input + .form-affix-text {
+		@apply px-1.5;
+	}
+
+	/* The number field's steppers: two 20 px buttons in a column at its end. */
+	.form-stepper {
+		@apply flex flex-col border-l border-border;
+	}
+
+	.form-stepper button {
+		@apply flex flex-1 items-center justify-center w-7 text-content-secondary hover:text-content hover:bg-surface-hover
+		       disabled:opacity-40 disabled:hover:bg-transparent;
+	}
+
+	.form-stepper button:first-child {
+		@apply rounded-tr border-b border-border;
+	}
+
+	.form-stepper button:last-child {
+		@apply rounded-br;
+	}
+
+	/* The browser's own spin buttons give way to the steppers. */
+	.form-affix input[type='number'] {
+		-moz-appearance: textfield;
+		appearance: textfield;
+	}
+
+	.form-affix input[type='number']::-webkit-inner-spin-button,
+	.form-affix input[type='number']::-webkit-outer-spin-button {
+		-webkit-appearance: none;
+		margin: 0;
+	}
+
+	/* Widths of a field (Input's width): a number of a few digits, a short code, a name. */
+	.field-w-xs {
+		@apply w-[8.5rem] max-w-full;
+	}
+
+	.field-w-sm {
+		@apply w-[12rem] max-w-full;
+	}
+
+	.field-w-md {
+		@apply w-[20rem] max-w-full;
+	}
+
+	/* A group of fields (FieldGroup): a legend, a line of help, and the fields in columns on a
+	   subgrid, so that every field of a row lines up whatever the length of its label: the labels
+	   sit on the row's last line, the fields on one line, the hints under them. */
+	.field-group {
+		@apply min-w-0 border-0 p-0 m-0;
+	}
+
+	.field-group-legend {
+		@apply p-0 text-sm font-semibold text-content;
+	}
+
+	.field-group-description {
+		@apply mt-0.5 text-[13px] leading-[18px] text-content-secondary;
+	}
+
+	.field-group-grid {
+		@apply grid gap-x-4 mt-3;
+		grid-template-columns: repeat(auto-fill, minmax(var(--field-min, 9rem), 1fr));
+	}
+
+	.field-group-grid > * {
+		display: grid;
+		grid-row: span 3;
+		grid-template-rows: subgrid;
+		row-gap: 0;
+		min-width: 0;
+	}
+
+	.field-group-grid > * > .form-label {
+		@apply self-end;
+	}
+
+	.field-group-grid > * > .form-hint,
+	.field-group-grid > * > .form-error {
+		@apply self-start mb-3;
+	}
+
+	/* A switch (Switch): a 36 x 20 px track and its knob, a checkbox underneath with the role switch. */
+	.switch {
+		@apply relative inline-flex shrink-0 w-9 h-5;
+	}
+
+	.switch input {
+		@apply absolute inset-0 m-0 w-full h-full opacity-0 cursor-pointer disabled:cursor-not-allowed;
+	}
+
+	.switch-track {
+		@apply pointer-events-none w-full h-full rounded-full bg-surface-hover border border-border-strong;
+		transition: background-color var(--dur-fast), border-color var(--dur-fast);
+	}
+
+	.switch-knob {
+		@apply pointer-events-none absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-content-secondary;
+		transition: transform var(--dur-base) var(--ease), background-color var(--dur-fast);
+	}
+
+	.switch input:checked + .switch-track {
+		@apply bg-brand border-brand;
+	}
+
+	.switch input:checked ~ .switch-knob {
+		@apply translate-x-4 bg-content-on-brand;
+	}
+
+	.switch input:focus-visible + .switch-track {
+		outline: 2px solid rgb(var(--color-brand-ring));
+		outline-offset: 2px;
+	}
+
+	.switch input:disabled ~ * {
+		@apply opacity-50;
+	}
+
+	/* A setting turned on and off (SwitchRow): its title and a line of help, the switch at the end,
+	   and what the setting needs below when it is on. */
+	.switch-row {
+		@apply flex items-start justify-between gap-4;
+	}
+
+	.switch-row-title {
+		@apply block text-sm font-medium text-content;
+	}
+
+	.switch-row-help {
+		@apply block mt-0.5 text-[13px] leading-[18px] text-content-secondary;
+	}
+
+	/* A checkbox and a radio button of the theme (Checkbox, RadioGroup): 18 px, the brand when on. */
+	.checkbox,
+	.radio {
+		@apply relative shrink-0 w-[18px] h-[18px] m-0 mt-px border border-border-strong bg-surface-overlay cursor-pointer
+		       disabled:cursor-not-allowed disabled:opacity-50;
+		appearance: none;
+		transition: background-color var(--dur-fast), border-color var(--dur-fast);
+	}
+
+	.checkbox {
+		@apply rounded-[4px];
+	}
+
+	.radio {
+		@apply rounded-full;
+	}
+
+	.checkbox:checked,
+	.checkbox:indeterminate {
+		@apply bg-brand border-brand;
+	}
+
+	.radio:checked {
+		@apply border-brand-ring;
+		border-width: 5px;
+	}
+
+	/* The check and the dash: borders of a pseudo-element, in the text colour on the brand. */
+	.checkbox:checked::after {
+		content: '';
+		@apply absolute left-[5px] top-[1px] w-[6px] h-[11px] border-content-on-brand;
+		border-width: 0 2px 2px 0;
+		transform: rotate(45deg);
+	}
+
+	.checkbox:indeterminate::after {
+		content: '';
+		@apply absolute left-[3px] top-[7px] w-[10px] h-[2px] bg-content-on-brand;
+	}
+
+	.choice {
+		@apply flex items-start gap-2.5 text-sm text-content cursor-pointer;
+	}
+
+	.choice-description {
+		@apply block mt-0.5 text-[13px] leading-[18px] text-content-secondary;
+	}
+
+	.choice-disabled {
+		@apply cursor-not-allowed text-content-muted;
+	}
+
 	/* ----------------------------------------
 	   Badges: 20 px, the 20 % tint of the colour
 	   ---------------------------------------- */
@@ -465,6 +710,11 @@
 
 	.badge-neutral {
 		@apply bg-status-neutral/20 text-content-secondary;
+	}
+
+	/* A category or a feature, not a state: no colour, a line around it. */
+	.badge-outline {
+		@apply border border-border-strong text-content-secondary;
 	}
 
 	.badge-purple {
@@ -550,6 +800,10 @@
 		@apply font-semibold mb-0.5;
 	}
 
+	.alert-details-toggle {
+		@apply inline-flex items-center gap-1 mt-1.5 text-[13px] font-medium text-content-link hover:underline;
+	}
+
 	.alert-error {
 		@apply bg-status-error/10 border-status-error/35 border-l-status-error;
 	}
@@ -610,33 +864,138 @@
 		}
 	}
 
+	/* Modal's panel (ADR-0432): the header and the footer stick to the edges of what scrolls, each
+	   with a shadow while content is under it, so that a tall dialog keeps its title and its buttons
+	   in view and shows that it has more. A hand-made dialog keeps .modal. */
+	.modal.modal-panel {
+		@apply p-0;
+	}
+
+	.modal-panel > .modal-header {
+		@apply sticky top-0 z-[2] mb-0 px-5 sm:px-6 pt-5 sm:pt-6 pb-4 bg-surface-elevated rounded-t-dialog items-start;
+		transition: box-shadow var(--dur-fast);
+	}
+
+	.modal-panel > .modal-body {
+		@apply px-5 sm:px-6;
+	}
+
+	.modal-panel:not(:has(> .modal-footer)) > .modal-body {
+		@apply pb-5 sm:pb-6;
+	}
+
+	.modal-panel > .modal-footer {
+		@apply sticky bottom-0 z-[2] mt-5 px-5 sm:px-6 pb-5 sm:pb-6 bg-surface-elevated rounded-b-dialog;
+		transition: box-shadow var(--dur-fast);
+	}
+
+	.modal-panel > .modal-header[data-stuck] {
+		box-shadow:
+			0 1px 0 rgb(var(--color-border)),
+			0 10px 14px -12px rgb(var(--color-shadow) / 0.6);
+	}
+
+	.modal-panel > .modal-footer[data-stuck] {
+		box-shadow: 0 -10px 14px -12px rgb(var(--color-shadow) / 0.6);
+	}
+
+	.modal-edge {
+		@apply h-px -mb-px;
+	}
+
+	.modal-description {
+		@apply mt-0.5 text-[13px] leading-[18px] text-content-secondary break-words;
+	}
+
+	/* Widths: a question, a form, a list or a form of two columns, a management view. */
 	.modal-sm {
-		@apply max-w-sm;
+		@apply max-w-[420px];
 	}
 
 	.modal-md {
-		@apply max-w-md;
+		@apply max-w-[560px];
 	}
 
 	.modal-lg {
-		@apply max-w-lg;
+		@apply max-w-[720px];
 	}
 
 	.modal-xl {
-		@apply max-w-xl;
+		@apply max-w-[880px];
+	}
+
+	/* A Sheet: a panel at the right edge as tall as the window, the whole screen of a phone; the
+	   panel scrolls. */
+	.modal-overlay-side {
+		@apply items-stretch justify-end p-0 overflow-hidden;
+	}
+
+	.modal-panel.modal-side {
+		@apply relative h-full max-h-dvh overflow-y-auto rounded-none border-0 md:border-l md:border-border scrollbar-thin;
+		animation: sheet-in var(--dur-slow) var(--ease);
+	}
+
+	.modal-side > .modal-header,
+	.modal-side > .modal-footer {
+		@apply rounded-none;
+	}
+
+	.modal-side > .modal-footer {
+		@apply mt-auto;
+	}
+
+	@media (max-width: 767px) {
+		.modal-panel.modal-side {
+			@apply max-w-none;
+		}
+	}
+
+	@keyframes sheet-in {
+		from {
+			transform: translateX(24px);
+			opacity: 0;
+		}
+		to {
+			transform: none;
+			opacity: 1;
+		}
 	}
 
 	.modal-header {
 		@apply flex items-center justify-between gap-3 mb-4;
 	}
 
+	/* A title that names a long file breaks inside it rather than widen the dialog (ADR-0432). */
 	.modal-title {
-		@apply text-lg leading-[26px] font-semibold text-content;
+		@apply text-lg leading-[26px] font-semibold text-content [overflow-wrap:anywhere];
 	}
 
-	/* The error icon of a dangerous action, in a tinted circle before the title. */
-	.modal-danger-icon {
+	/* The icon of a dangerous action, in a tinted circle before the title; of a warning, in yellow. */
+	.modal-danger-icon,
+	.modal-tone-icon.modal-tone-danger {
 		@apply grid place-items-center w-8 h-8 shrink-0 rounded-full bg-status-error/20 text-status-error;
+	}
+
+	.modal-tone-icon.modal-tone-warning {
+		@apply grid place-items-center w-8 h-8 shrink-0 rounded-full bg-status-warning/20 text-status-warning;
+	}
+
+	/* What a confirmation will do: a list with a mark of the dialog's tone. */
+	.confirm-consequences {
+		@apply space-y-1 text-sm text-content;
+	}
+
+	.confirm-consequences li {
+		@apply relative pl-4;
+	}
+
+	.confirm-consequences li::before {
+		content: '';
+		@apply absolute left-0.5 top-[0.55em] w-1.5 h-1.5 rounded-full bg-status-neutral;
+	}
+
+	.confirm-expected {
+		@apply font-mono text-[13px] px-1.5 py-0.5 rounded bg-surface-overlay border border-border text-content break-all;
 	}
 
 	.modal-close {
@@ -658,6 +1017,14 @@
 	@media (max-height: 480px) {
 		.modal {
 			@apply p-4;
+		}
+
+		.modal-panel > .modal-header {
+			@apply pt-3 pb-3;
+		}
+
+		.modal-panel > .modal-footer {
+			@apply mt-3 pb-3;
 		}
 
 		.modal-header {
@@ -740,9 +1107,73 @@
 		font-variant-numeric: tabular-nums;
 	}
 
-	/* A row's icon buttons, right-aligned and always visible: a touch screen has no hover. */
+	/* A row's icon buttons, right-aligned and always visible: a touch screen has no hover. They stay
+	   on one line, in a cell as narrow as they are (ADR-0432): a row never doubles its height for
+	   them. More than two go into an ActionMenu. */
 	.table-actions {
-		@apply flex flex-wrap items-center justify-end gap-1;
+		@apply flex flex-nowrap items-center justify-end gap-1;
+	}
+
+	.table :where(td:has(> .table-actions), th:has(> .table-actions)) {
+		@apply w-px whitespace-nowrap;
+	}
+
+	/* A table that becomes cards below sm (ADR-0432): each row a card, the first cell (the name) and
+	   the actions on its first line, every other cell a line of its own with its column's name
+	   (data-label) before the value. The head stays for screen readers. A cell that the card leaves
+	   out takes .stack-hide. */
+	@media (max-width: 639px) {
+		.table-stack,
+		.table-stack tbody {
+			@apply block;
+		}
+
+		.table-stack thead {
+			@apply sr-only;
+		}
+
+		.table-stack tr {
+			@apply grid gap-x-3 gap-y-1 py-3 border-b border-border-muted;
+			grid-template-columns: minmax(0, 1fr) auto;
+		}
+
+		.table-stack tr:last-child {
+			@apply border-b-0;
+		}
+
+		.card-flush .table-stack tr {
+			@apply px-5;
+		}
+
+		.table-stack.table :where(td) {
+			@apply block p-0 min-w-0;
+			grid-column: 1 / -1;
+		}
+
+		.table-stack.table :where(td:first-child) {
+			@apply font-medium;
+			grid-column: 1;
+			grid-row: 1;
+		}
+
+		.table-stack.table :where(td:has(> .table-actions)) {
+			@apply w-auto;
+			grid-column: 2;
+			grid-row: 1;
+		}
+
+		.table-stack td[data-label]::before {
+			content: attr(data-label);
+			@apply block text-xs text-content-secondary;
+		}
+
+		.table-stack td.num {
+			@apply text-left;
+		}
+
+		.table-stack .stack-hide {
+			@apply hidden;
+		}
 	}
 
 	/* The frame of a table that can be wider than the screen: the table scrolls sideways in it,
@@ -789,6 +1220,194 @@
 		.toolbar-group + .toolbar-group {
 			@apply pl-4 border-l border-border;
 		}
+	}
+
+	/* The bar of a selection (BulkBar, ADR-0432): the count, and the actions only while something is
+	   selected. Its height stays, so that the list under it never moves; while something is
+	   selected it sticks to the top of what scrolls, on a brand tint. */
+	.bulk-bar {
+		@apply flex flex-wrap items-center gap-x-3 gap-y-2 min-h-11 px-3 py-1.5 rounded-lg border border-transparent;
+		transition: background-color var(--dur-fast), border-color var(--dur-fast);
+	}
+
+	.bulk-bar[data-active] {
+		@apply sticky top-0 z-10 bg-surface-elevated border-brand-ring/35 shadow-popover;
+	}
+
+	.bulk-bar-count {
+		@apply text-sm text-content-secondary tabular;
+	}
+
+	.bulk-bar[data-active] .bulk-bar-count {
+		@apply text-content font-medium;
+	}
+
+	/* A page's states in one bar that opens (StatusSummary): the worst tone's colour. */
+	.status-summary {
+		@apply rounded-lg border border-l-[3px] text-content;
+	}
+
+	.status-summary-head {
+		@apply flex flex-wrap items-center gap-x-3 gap-y-1 px-3.5 py-2.5;
+	}
+
+	.status-summary-list {
+		@apply border-t border-border divide-y divide-border;
+	}
+
+	.status-summary-item {
+		@apply flex flex-wrap items-start gap-x-3 gap-y-1.5 px-3.5 py-2.5;
+	}
+
+	/* One line of help, and what it leaves out behind Details (HelpText). */
+	.help-text {
+		@apply text-[13px] leading-[18px] text-content-secondary;
+	}
+
+	.help-text-toggle {
+		@apply inline font-medium text-content-link hover:underline;
+	}
+
+	.help-text-more {
+		@apply mt-1.5 space-y-1.5;
+	}
+
+	/* A menu (Menu, ActionMenu): a list that floats below its button. */
+	.menu {
+		@apply fixed z-[150] m-0 min-w-[11rem] max-w-[min(20rem,calc(100vw-16px))] overflow-y-auto p-1 rounded-card
+		       border border-border bg-surface-elevated text-content shadow-popover outline-none;
+		inset: auto;
+		animation: menu-in var(--dur-fast) var(--ease);
+	}
+
+	.menu-item {
+		@apply flex w-full items-start gap-2.5 px-2.5 py-2 rounded text-sm text-content outline-none cursor-pointer
+		       hover:bg-surface-overlay focus:bg-surface-overlay;
+	}
+
+	.menu-item svg {
+		@apply mt-0.5 text-content-secondary;
+	}
+
+	.menu-item[aria-disabled='true'] {
+		@apply cursor-not-allowed text-content-muted hover:bg-transparent;
+	}
+
+	.menu-item-danger,
+	.menu-item-danger svg {
+		@apply text-status-error;
+	}
+
+	.menu-item-danger:hover,
+	.menu-item-danger:focus {
+		@apply bg-status-error/10;
+	}
+
+	.menu-separator {
+		@apply my-1 h-px bg-border;
+	}
+
+	@keyframes menu-in {
+		from {
+			opacity: 0;
+			transform: translateY(-4px);
+		}
+		to {
+			opacity: 1;
+			transform: none;
+		}
+	}
+
+	/* Toasts (ToastRegion): at the bottom right, along the bottom on a phone, over everything. */
+	.toast-region {
+		@apply fixed z-[300] bottom-4 right-4 left-4 sm:left-auto sm:w-[380px] flex flex-col gap-2 pointer-events-none;
+	}
+
+	.toast-stack {
+		@apply flex flex-col gap-2;
+	}
+
+	.toast {
+		@apply pointer-events-auto flex items-start gap-3 px-3.5 py-3 rounded-card border border-border border-l-[3px]
+		       bg-surface-elevated text-sm text-content shadow-popover;
+		animation: toast-in var(--dur-base) var(--ease);
+	}
+
+	.toast-icon {
+		@apply w-[18px] h-[18px] mt-px shrink-0;
+	}
+
+	.toast-success {
+		@apply border-l-status-success;
+	}
+
+	.toast-success .toast-icon {
+		@apply text-status-success;
+	}
+
+	.toast-error {
+		@apply border-l-status-error;
+	}
+
+	.toast-error .toast-icon {
+		@apply text-status-error;
+	}
+
+	.toast-warning {
+		@apply border-l-status-warning;
+	}
+
+	.toast-warning .toast-icon {
+		@apply text-status-warning;
+	}
+
+	.toast-info {
+		@apply border-l-status-info;
+	}
+
+	.toast-info .toast-icon {
+		@apply text-status-info;
+	}
+
+	@keyframes toast-in {
+		from {
+			opacity: 0;
+			transform: translateY(8px);
+		}
+		to {
+			opacity: 1;
+			transform: none;
+		}
+	}
+
+	/* Technical text, folded (TechDetails): the server's raw message with a Copy button. */
+	.tech-details {
+		@apply mt-2 text-left;
+	}
+
+	.tech-details > summary {
+		@apply inline-flex items-center gap-1 cursor-pointer text-[13px] font-medium text-content-link;
+		list-style: none;
+	}
+
+	.tech-details > summary::-webkit-details-marker {
+		display: none;
+	}
+
+	.details-chevron {
+		transition: transform var(--dur-fast);
+	}
+
+	details[open] > summary .details-chevron {
+		transform: rotate(90deg);
+	}
+
+	.tech-details-body {
+		@apply mt-2 flex items-start gap-2 p-2.5 rounded border border-border bg-surface-overlay;
+	}
+
+	.tech-details-body pre {
+		@apply flex-1 min-w-0 font-mono text-xs text-content-soft whitespace-pre-wrap break-words;
 	}
 
 	/* ----------------------------------------
@@ -891,6 +1510,15 @@
 
 	.empty-state-description {
 		@apply text-sm text-content-secondary max-w-[48ch];
+	}
+
+	/* A load that failed (ErrorState): the empty state's shape, its icon on the error tint. */
+	.error-state-icon-wrap {
+		@apply bg-status-error/20;
+	}
+
+	.error-state-icon-wrap .empty-state-icon {
+		@apply text-status-error;
 	}
 
 	/* ----------------------------------------

@@ -2,7 +2,7 @@
 	import { onDestroy, onMount, untrack } from 'svelte';
 	import { getContainers, createContainer, type Container } from '$lib/api/containers';
 	import { Plus, RefreshCw } from 'lucide-svelte';
-	import { Button, Alert, Skeleton } from '$lib/components/ui';
+	import { Button, Alert, Skeleton, confirm } from '$lib/components/ui';
 	import {
 		BulkStatus,
 		BulkToolbar,
@@ -173,7 +173,12 @@
 
 		if (action === 'remove') {
 			const container = containers.find((c) => c.id === containerId);
-			if (!confirm($t('containers.confirmRemove', { name: container?.name ?? containerId }))) return;
+			const yes = await confirm({
+				title: $t('containers.confirmRemove', { name: container?.name ?? containerId }),
+				message: $t('containers.removeMessage'),
+				confirmLabel: $t('containers.removeAction')
+			});
+			if (!yes) return;
 		}
 
 		try {
