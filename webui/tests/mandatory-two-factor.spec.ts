@@ -159,10 +159,10 @@ test.describe('Two-factor authentication for every account', () => {
     // Later: everything works during the grace period.
     await page.getByRole('link', { name: 'Later' }).click();
     await expect(page).toHaveURL('/');
-    await page.locator('aside nav a[href="/system#security"]').click();
+    await page.locator('aside nav a[href="/account"]').click();
     const own = page.locator('div:has(> h3:has-text("Two-Factor Authentication"))');
     await expect(own.getByText('Disabled', { exact: true })).toBeVisible();
-    await expect(page).toHaveURL(/\/system#security$/);
+    await expect(page).toHaveURL(/\/account$/);
 
     // The next sign-in asks again.
     await signIn(page, USER);
@@ -197,14 +197,14 @@ test.describe('Two-factor authentication for every account', () => {
     expect(on.ok(), `turn the requirement on: ${await on.text()}`).toBeTruthy();
 
     // The open session's next requests are refused, and the page leads to the setup.
-    await page.locator('aside nav a[href="/system#security"]').click();
+    await page.locator('aside nav a[href="/account"]').click();
     await expect(page).toHaveURL('/two-factor-setup');
     await expect(page.getByText('the time to set it up has ended')).toBeVisible();
     await expect(page.locator('aside nav a')).toHaveCount(0);
     const refused = await request.get('/api/v1/auth/me/smb', { headers: before });
     expect([refused.status(), (await refused.json()).detail]).toEqual([403, SETUP_REQUIRED]);
     // Any other page leads back to the setup.
-    await page.goto('/system#security');
+    await page.goto('/account');
     await expect(page).toHaveURL('/two-factor-setup');
 
     // The password still signs in, to the setup alone.
@@ -234,7 +234,7 @@ test.describe('Two-factor authentication for every account', () => {
     expect((await request.get('/api/v1/auth/me/smb', { headers: after })).status()).toBe(200);
     await page.getByRole('link', { name: 'Continue' }).click();
     await expect(page).toHaveURL('/');
-    await expect(page.locator('aside nav a[href="/system#security"]')).toBeVisible();
+    await expect(page.locator('aside nav a[href="/account"]')).toBeVisible();
 
     await requirementOff(request);
   });

@@ -41,7 +41,7 @@ class Widget(BaseModel):
     id: str = Field(
         pattern=WIDGET_ID,
         description="The widget's id, such as cpu, memory, network, disk-io, temperature, storage, containers, "
-                    "quick-actions or recent-activity: 1 to 32 lowercase letters, digits and -, not first. The web "
+                    "or recent-activity: 1 to 32 lowercase letters, digits and -, not first. The web "
                     "UI ignores an id it has no widget for.",
     )
     hidden: StrictBool = Field(description="Whether the user hid the widget.")

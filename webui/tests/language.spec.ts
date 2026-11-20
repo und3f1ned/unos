@@ -20,7 +20,7 @@ async function savedLanguage(page: Page): Promise<string | null> {
   return page.evaluate((key) => localStorage.getItem(key), LOCALE_KEY);
 }
 
-/** The navigation and an administrator's Account page (System > Security), in Russian. */
+/** The navigation and an administrator's Account page, both of its tabs, in Russian (ADR-0430). */
 async function expectRussianAccountPage(page: Page) {
   await expect(page.locator('html')).toHaveAttribute('lang', 'ru');
   const sidebar = page.locator('aside');
@@ -32,25 +32,21 @@ async function expectRussianAccountPage(page: Page) {
   await expect(sidebar.getByRole('button', { name: 'Выйти' })).toBeVisible();
 
   const main = page.locator('main');
-  await expect(main.locator('nav').getByRole('button', { name: 'Безопасность' })).toBeVisible();
-  await expect(main.locator('nav').getByRole('button', { name: 'Резервные копии' })).toBeVisible();
-  for (const heading of [
-    'Настройки безопасности',
-    'Язык',
-    'Двухфакторная аутентификация',
-    'Смена пароля',
-    'Сетевой доступ к файлам (SMB)',
-    'Брандмауэр',
-    'Сертификаты SSL/TLS',
-    'История входов',
-  ]) {
+  const tabs = main.locator('nav').getByRole('button');
+  await expect(tabs).toHaveText(['Вход и безопасность', 'Оформление и язык']);
+  await tabs.getByText('Оформление и язык', { exact: true }).click();
+  for (const heading of ['Учётная запись', 'Оформление и язык', 'Тема', 'Язык']) {
+    await expect(main.getByRole('heading', { name: heading, exact: true })).toBeVisible();
+  }
+  await expect(main.getByRole('combobox', { name: 'Язык интерфейса' })).toHaveText('Русский');
+  await tabs.getByText('Вход и безопасность', { exact: true }).click();
+  for (const heading of ['Вход и безопасность', 'Двухфакторная аутентификация', 'Смена пароля', 'История входов']) {
     await expect(main.getByRole('heading', { name: heading, exact: true })).toBeVisible();
   }
   await expect(main.getByLabel('Текущий пароль', { exact: true })).toBeVisible();
   await expect(main.getByRole('button', { name: 'Сменить пароль' })).toBeVisible();
-  await expect(main.getByRole('combobox', { name: 'Язык интерфейса' })).toHaveText('Русский');
   // Nothing of the English page is left.
-  for (const heading of ['Security Settings', 'Two-Factor Authentication', 'Change Password', 'Login History']) {
+  for (const heading of ['Sign-in and security', 'Appearance and language', 'Two-Factor Authentication', 'Change Password', 'Login History']) {
     await expect(main.getByRole('heading', { name: heading })).toHaveCount(0);
   }
 }
@@ -59,20 +55,23 @@ test.describe('Language', () => {
   test('the Account page switches the web UI to Russian at once, and the choice stays', async ({
     authenticatedPage: page,
   }) => {
-    await page.goto('/system#security');
+    await page.goto('/account#security');
     await expect(page.locator('html')).toHaveAttribute('lang', 'en');
-    await expect(page.getByRole('heading', { name: 'Security Settings' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Sign-in and security' })).toBeVisible();
     expect(await savedLanguage(page)).toBeNull();
-    // The login history is open while the language changes: the administrator's sign-in of this
-    // test, with its time as an en-US browser writes it.
+    // The login history: the administrator's sign-in of this test, with its time as an en-US
+    // browser writes it.
     await page.getByRole('button', { name: 'View History' }).click();
     const englishTime = page.getByRole('list', { name: 'Login history' }).locator('time').first();
     await expect(englishTime).toHaveText(/^\d{1,2}\/\d{1,2}\/\d{4}, \d{1,2}:\d{2}:\d{2}\s[AP]M$/);
 
+    // The language is chosen on the tab beside it, Appearance and language (ADR-0430).
+    await page.locator('main nav').getByRole('button', { name: 'Appearance and language' }).click();
     await chooseLanguage(page, 'Interface language', 'Русский');
     // At once, without loading the page again.
     await expectRussianAccountPage(page);
     expect(await savedLanguage(page)).toBe('ru');
+    await page.getByRole('button', { name: 'Показать историю' }).click();
     const history = page.getByRole('list', { name: 'История входов' });
     await expect(history.getByRole('listitem').first()).toContainText('УСПЕШНО');
     await expect(history.locator('time').first()).toHaveText(/^\d{2}\.\d{2}\.\d{4}, \d{2}:\d{2}:\d{2}$/);
@@ -98,17 +97,17 @@ test.describe('Language', () => {
     await page.getByLabel('Пароль').fill(E2E_ADMIN.password);
     await page.getByRole('button', { name: 'Войти' }).click();
     await expect(page).toHaveURL('/');
-    await page.locator('aside nav a[href="/system"]').click();
-    await page.locator('main nav').getByRole('button', { name: 'Безопасность' }).click();
+    await page.locator('aside a[href="/account"]').click();
+    await page.locator('main nav').getByRole('button', { name: 'Оформление и язык' }).click();
     await chooseLanguage(page, 'Язык интерфейса', 'English');
 
     await expect(page.locator('html')).toHaveAttribute('lang', 'en');
-    await expect(page.getByRole('heading', { name: 'Security Settings' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Appearance and language' })).toBeVisible();
     await expect(page.locator('aside nav a[href="/storage"]')).toHaveText('Storage');
-    await expect(page.locator('main nav').getByRole('button', { name: 'Security' })).toBeVisible();
+    await expect(page.locator('main nav').getByRole('button', { name: 'Appearance and language' })).toBeVisible();
     expect(await savedLanguage(page)).toBe('en');
     await page.reload();
-    await expect(page.getByRole('heading', { name: 'Security Settings' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Appearance and language' })).toBeVisible();
     await expect(page.getByRole('combobox', { name: 'Interface language' })).toHaveText('English');
   });
 
@@ -182,7 +181,15 @@ test.describe('Language', () => {
       await expect(dialog.getByText('This certificate expires on 11/8/2027, 1:47:31 AM: replace it in time.')).toBeVisible();
       await dialog.getByRole('button', { name: 'Cancel' }).click();
 
+      // The language is chosen on the Account page (ADR-0430); back in System > Security, the cards
+      // are opened again.
+      await page.locator('aside a[href="/account"]').click();
+      await main.locator('nav').getByRole('button', { name: 'Appearance and language' }).click();
       await chooseLanguage(page, 'Interface language', 'Русский');
+      await page.goBack();
+      await expect(page).toHaveURL('/system#security');
+      await main.getByRole('button', { name: 'Настроить', exact: true }).click();
+      await main.getByRole('button', { name: 'Управление', exact: true }).click();
       await expect(main.getByText('По умолчанию: входящие — запрещены, исходящие — разрешены', { exact: true }))
         .toBeVisible();
       expect(await rule.locator('span').first().innerText()).toBe('ЗАПРЕТИТЬ');
@@ -222,7 +229,8 @@ test.describe('Language', () => {
       await page.getByLabel('Password').fill(USER.password);
       await page.getByRole('button', { name: 'Sign In' }).click();
       await expect(page).toHaveURL('/');
-      await page.locator('aside nav a[href="/system#security"]').click();
+      await page.locator('aside nav a[href="/account"]').click();
+      await page.locator('main nav').getByRole('button', { name: 'Appearance and language' }).click();
 
       await chooseLanguage(page, 'Interface language', 'Русский');
       for (let load = 0; load < 2; load++) {
@@ -231,12 +239,19 @@ test.describe('Language', () => {
         await expect(sidebar.getByText('Пользователь', { exact: true })).toBeVisible();
         const main = page.locator('main');
         await expect(main.getByRole('heading', { name: 'Учётная запись', exact: true })).toBeVisible();
-        await expect(main.locator('nav').getByRole('button')).toHaveText(['Безопасность']);
-        await expect(main.getByRole('heading', { name: 'Настройки безопасности' })).toBeVisible();
-        await expect(main.getByRole('heading', { name: 'Двухфакторная аутентификация' })).toBeVisible();
+        await expect(main.locator('nav').getByRole('button')).toHaveText([
+          'Вход и безопасность',
+          'Общий доступ к файлам',
+          'Оформление и язык',
+        ]);
+        await expect(main.getByRole('heading', { name: 'Оформление и язык' })).toBeVisible();
+        await expect(main.getByRole('heading', { name: 'Тема', exact: true })).toBeVisible();
         await expect(main.getByRole('heading', { name: 'Брандмауэр' })).toHaveCount(0);
         if (load === 0) await page.reload();
       }
+      // The account's own SMB access, on its File sharing tab.
+      await page.locator('main nav').getByRole('button', { name: 'Общий доступ к файлам' }).click();
+      await expect(page.locator('main').getByRole('heading', { name: 'Сетевой доступ к файлам (SMB)' })).toBeVisible();
     });
   });
 
@@ -259,7 +274,7 @@ test.describe('Language', () => {
       authenticatedPage: page,
     }) => {
       await page.evaluate((key) => localStorage.setItem(key, 'en'), LOCALE_KEY);
-      await page.goto('/system#security');
+      await page.goto('/account#security');
       await expect(page.locator('html')).toHaveAttribute('lang', 'en');
       await page.getByRole('button', { name: 'View History' }).click();
 

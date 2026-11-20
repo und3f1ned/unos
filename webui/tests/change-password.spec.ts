@@ -51,7 +51,7 @@ test.describe('Change Password', () => {
     });
     await signIn(page, USER.password);
     await expect(page).toHaveURL('/');
-    await page.goto('/system#security');
+    await page.goto('/account#security');
     const change = page.getByRole('button', { name: 'Change Password', exact: true });
 
     // Step 2: the fields are reached through their labels, and without any one of them the

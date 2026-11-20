@@ -6,7 +6,6 @@ import type { Translation } from '../translate';
 
 export const en = {
 	'network.title': 'Network',
-	'network.live': 'Live',
 	'network.loadError': 'Some network information could not be loaded',
 	// The parts of the page: the views, and what could not be loaded.
 	'network.interfaces': 'Interfaces',
@@ -40,13 +39,7 @@ export const en = {
 	'network.revert.stillOff':
 		'{name} is still disabled: either the change was kept, or {name} could not come back on by itself. Enable it if it should be on.',
 
-	'network.summary.gateway': 'Default Gateway',
-	'network.summary.notSet': 'Not set',
-	'network.summary.via': 'via {name}',
-	'network.summary.dns': 'DNS Servers',
-	'network.summary.notConfigured': 'Not configured',
-	'network.summary.connections': 'Active Connections',
-	'network.summary.sockets': 'TCP/UDP sockets',
+	'network.dnsConfig.none': 'Not configured',
 
 	'network.interface.label': 'Interface {name}',
 	'network.interface.disabled': 'Disabled',
@@ -116,7 +109,6 @@ export const en = {
 
 export const ru: Translation<typeof en> = {
 	'network.title': 'Сеть',
-	'network.live': 'В реальном времени',
 	'network.loadError': 'Не удалось загрузить часть сведений о сети',
 	'network.interfaces': 'Интерфейсы',
 	'network.dns': 'DNS',
@@ -149,13 +141,7 @@ export const ru: Translation<typeof en> = {
 	'network.revert.stillOff':
 		'{name} всё ещё выключен: либо изменение сохранили, либо {name} не смог включиться снова сам. Включите его, если он должен работать.',
 
-	'network.summary.gateway': 'Шлюз по умолчанию',
-	'network.summary.notSet': 'Не задан',
-	'network.summary.via': 'через {name}',
-	'network.summary.dns': 'DNS-серверы',
-	'network.summary.notConfigured': 'Не настроены',
-	'network.summary.connections': 'Активные подключения',
-	'network.summary.sockets': 'Сокеты TCP/UDP',
+	'network.dnsConfig.none': 'Не настроены',
 
 	'network.interface.label': 'Интерфейс {name}',
 	'network.interface.disabled': 'Выключен',

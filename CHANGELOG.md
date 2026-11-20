@@ -41,6 +41,33 @@ manager, encrypted backup uploads, health checks, CI checks).
   `app_names_changed` in the audit log, ADR-0420).
 
 ### Changed
+- Every account's own settings have a page of their own, **Account** (`/account`), which the
+  account block at the foot of the sidebar opens (a regular account's **Account** link too), in
+  three tabs with their own addresses: **Sign-in and security** (`#security`: password, two-factor
+  authentication, API tokens, the account's own login history), **File sharing** (`#sharing`: the
+  account's SMB access, regular accounts only) and **Appearance and language** (`#appearance`:
+  theme, language). **System** is the NAS's, for administrators only: its **Security** tab keeps
+  the two-factor requirement for every account, the firewall and the HTTPS certificates, and
+  **Notifications** moves from Monitoring to Settings. An administrator's login history on the
+  Account page lists the administrator's own sign-ins
+  (`GET /api/v1/security/login-history?mine=true`); every account's are in the Audit Log, which now
+  also records each refused second step of a sign-in (a wrong or reused two-factor code, a wrong
+  recovery code, a refused security key) as a failed sign-in, a warning, as it did a wrong
+  password. `/settings`, which only led to System, is gone.
+- Each setting, action and fact has one place (ADR-0430). Gone as second copies: the dashboard's
+  Quick Actions (links the sidebar has), General's UNOS Version (Updates has it), Current User
+  (the sidebar's account block) and host name fact (its field), Network's summary cards (the
+  default route, the DNS card and the Connections view) and its and Resource Monitor's Live badge
+  (the sidebar's connection line), the local names for apps in Remote Access (now in Network,
+  since they reach the LAN only), the Containers page's count cards as filters, the container
+  drawer's actions and Open in browser (the row's; a card now has Restart too), the empty state's
+  Create Container (the header's), the App Store's Featured Apps, the installed count of its
+  header, the catalog card's Open and running dot and Browse Catalog, the off-device copy's Add a
+  daily copy (the Scheduler makes tasks), the Trash's Files button (the sidebar's), the extra links
+  of the dashboard's Containers card, an administrator's own password in Users (the Account
+  page's, with the current one), and the command palette's General (System opens it), language
+  and Logout entries. The dashboard's stats tiles and its host line link to Resource Monitor and
+  General for administrators.
 - A pool on an NVMe drive of a SpacemiT K1 (Banana Pi BPI-F3) gets TRIM like every other pool:
   `mkfs.btrfs` and `btrfs device add` trim it, it is mounted without `nodiscard` and its fstab entry
   without `nodiscard,X-fstrim.notrim`, so the weekly `fstrim.timer` trims it, and Add Disk no longer

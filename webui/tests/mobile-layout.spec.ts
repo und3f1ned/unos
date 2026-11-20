@@ -1180,8 +1180,8 @@ const VIEWS: View[] = [
   {
     name: 'System: General',
     path: '/system#general',
-    fake: (page) => serve(page, { '/api/v1/system/info': SYSTEM_INFO, ...UPDATES }),
-    shows: (page) => page.getByText('nas-living-room.home.arpa'),
+    fake: (page) => serve(page, { '/api/v1/system/info': SYSTEM_INFO }),
+    shows: (page) => page.getByText('6.12.48+deb13-arm64'),
   },
   {
     name: 'System: Updates',
@@ -1223,22 +1223,28 @@ const VIEWS: View[] = [
     end: (page) => page.getByRole('button', { name: /^(Sign out|Выйти)$/ }),
   },
   {
-    name: 'System: Security, API tokens',
-    path: '/system#security',
+    name: 'Account: Appearance and language',
+    path: '/account#appearance',
+    shows: (page) => page.getByRole('group', { name: /^(Colour theme|Цветовая тема)$/ }),
+    end: (page) => page.getByRole('combobox', { name: /^(Interface language|Язык интерфейса)$/ }),
+  },
+  {
+    name: 'Account: Sign-in and security, API tokens',
+    path: '/account#security',
     fake: (page) => serve(page, API_TOKENS),
     shows: (page) => page.getByText('nightly_backup_of_the_family_photos_to_the_garage_nas'),
     end: (page) => tokensRegion(page).getByRole('button', { name: /^(Delete Token|Удалить токен)$/ }).last(),
   },
   {
-    name: 'System: Security, security keys',
-    path: '/system#security',
+    name: 'Account: Sign-in and security, security keys',
+    path: '/account#security',
     fake: (page) => serve(page, SECURITY_KEYS),
     shows: (page) => page.getByText(LONG_KEY_NAME),
     end: (page) => page.getByRole('button', { name: /^(Add a security key|Добавить ключ безопасности)$/ }),
   },
   {
-    name: 'System: Security, the sign-in history',
-    path: '/system#security',
+    name: 'Account: Sign-in and security, the sign-in history',
+    path: '/account#security',
     fake: (page) => serve(page, { ...SECURITY, '/api/v1/security/login-history': LOGIN_HISTORY }),
     open: (page) => page.locator('main').getByRole('button', { name: /^(View History|Показать историю)$/ }).click(),
     shows: (page) => page.getByText('2001:db8:1234:5678:9abc:def0:1234:5678'),
@@ -1344,6 +1350,16 @@ const VIEWS: View[] = [
     path: '/system#remote',
     fake: (page) => fakeRemoteApi(page, REMOTE_ON),
     shows: (page) => page.getByText(SERVER_KEY),
+  },
+  {
+    // The apps' local names reach the LAN only: Network's (ADR-0430).
+    name: 'System: Network, local names for apps',
+    path: '/system#network',
+    fake: async (page) => {
+      await fakeNetworkApi(page);
+      await fakeRemoteApi(page, REMOTE_ON);
+    },
+    shows: (page) => page.getByText('https://photosofthefamilyandthegardenxyz-nasinthelivingroom.local'),
     end: (page) => page.getByText('https://photosofthefamilyandthegardenxyz-nasinthelivingroom.local'),
   },
   {
@@ -1393,8 +1409,11 @@ const VIEWS: View[] = [
   },
   {
     name: 'Dialog: give an app a name',
-    path: '/system#remote',
-    fake: (page) => fakeRemoteApi(page, REMOTE_ON),
+    path: '/system#network',
+    fake: async (page) => {
+      await fakeNetworkApi(page);
+      await fakeRemoteApi(page, REMOTE_ON);
+    },
     open: (page) => page.getByRole('button', { name: /^(Add name|Добавить имя)$/ }).click(),
     shows: (page) => page.getByRole('dialog'),
     start: dialogTitle,
@@ -1885,7 +1904,7 @@ const VIEWS: View[] = [
   },
   {
     name: 'Dialog: a new API token',
-    path: '/system#security',
+    path: '/account#security',
     fake: (page) => serve(page, API_TOKENS),
     open: openNewTokenDialog,
     shows: (page) => page.getByRole('dialog').getByRole('checkbox', { name: /^(Updates|Обновления)/ }),
@@ -1894,7 +1913,7 @@ const VIEWS: View[] = [
   },
   {
     name: 'Dialog: the new API token, shown once',
-    path: '/system#security',
+    path: '/account#security',
     fake: async (page) => {
       await serve(page, API_TOKENS);
       await page.route(
@@ -1914,7 +1933,7 @@ const VIEWS: View[] = [
   },
   {
     name: 'Dialog: turn on two-factor authentication',
-    path: '/system#security',
+    path: '/account#security',
     fake: async (page) => {
       await serve(page, { ...SECURITY, '/api/v1/auth/totp/status': { enabled: false } });
       // The new secret, without making one on the stand-in.
@@ -1931,7 +1950,7 @@ const VIEWS: View[] = [
   },
   {
     name: 'Dialog: add a security key',
-    path: '/system#security',
+    path: '/account#security',
     fake: (page) => serve(page, SECURITY_KEYS),
     open: (page) =>
       page.locator('main').getByRole('button', { name: /^(Add a security key|Добавить ключ безопасности)$/ }).click(),
@@ -1941,7 +1960,7 @@ const VIEWS: View[] = [
   },
   {
     name: 'Dialog: remove a security key',
-    path: '/system#security',
+    path: '/account#security',
     fake: (page) => serve(page, SECURITY_KEYS),
     open: (page) =>
       page.locator('main').getByRole('button', { name: new RegExp(`^(Remove|Удалить) ${LONG_KEY_NAME}$`) }).click(),
@@ -1951,7 +1970,7 @@ const VIEWS: View[] = [
   },
   {
     name: 'Dialog: turn off two-factor authentication',
-    path: '/system#security',
+    path: '/account#security',
     fake: (page) =>
       serve(page, {
         ...SECURITY,
@@ -2128,8 +2147,8 @@ test.describe('The menu on a phone', () => {
   });
 
   test('choosing a link opens its page and closes the menu', async ({ authenticatedPage: page }) => {
-    // System's General and Updates tabs, without asking the internet for a release.
-    await serve(page, { '/api/v1/system/info': SYSTEM_INFO, ...UPDATES });
+    // System's Backup & Restore, whose off-device copy has no task yet, and Scheduler tabs.
+    await serve(page, { '/api/v1/system/info': SYSTEM_INFO, ...BACKUPS, ...OFFSITE, ...SCHEDULER });
     await menuButton(page).click();
     await navLink(page, '/storage').click();
     await expect(page).toHaveURL('/storage');
@@ -2153,18 +2172,20 @@ test.describe('The menu on a phone', () => {
     await expect(page).toHaveURL('/storage');
     await expect(navLink(page, '/system')).toBeHidden();
 
-    // Back between two places of one page, here from System's #updates to #general, opens no
-    // other page, so SvelteKit's afterNavigate does not run: the menu closes all the same.
-    await page.goto('/system#general');
-    const checkForUpdates = page.locator('main').getByRole('link', { name: 'Check for Updates' });
-    await checkForUpdates.click();
-    await expect(page).toHaveURL('/system#updates');
-    await expect(checkForUpdates).toBeHidden();
+    // Back between two places of one page, here from System's #scheduler to #backup, opens no
+    // other page, so SvelteKit's afterNavigate does not run: the menu closes all the same. The off-
+    // device copy's link to the Scheduler is such a link (General's Check for Updates is gone,
+    // ADR-0430).
+    await page.goto('/system#backup');
+    const toScheduler = page.locator('main').getByRole('link', { name: 'Add a task of the type Off-device Copy in the Scheduler.' });
+    await toScheduler.click();
+    await expect(page).toHaveURL('/system#scheduler');
+    await expect(toScheduler).toBeHidden();
     await menuButton(page).click();
     await expect(navLink(page, '/system')).toBeVisible();
     await page.goBack();
-    await expect(page).toHaveURL('/system#general');
-    await expect(checkForUpdates).toBeVisible();
+    await expect(page).toHaveURL('/system#backup');
+    await expect(toScheduler).toBeVisible();
     await expect(menuButton(page)).toHaveAttribute('aria-expanded', 'false');
     await expect(navLink(page, '/system')).toBeHidden();
   });
@@ -2193,11 +2214,31 @@ test.describe('The menu on a phone', () => {
       await menuButton(page).click();
       await expect(page.locator('aside nav a')).toHaveText(['Dashboard', 'Account']);
       await expect(page.locator('aside').getByText('User', { exact: true })).toBeVisible();
-      await navLink(page, '/system#security').click();
-      await expect(page).toHaveURL('/system#security');
-      await expect(page.getByRole('heading', { name: 'Security Settings' })).toBeVisible();
-      await expect(navLink(page, '/system#security')).toBeHidden();
+      await navLink(page, '/account').click();
+      await expect(page).toHaveURL('/account');
+      await expect(page.getByRole('heading', { name: 'Sign-in and security' })).toBeVisible();
+      await expect(navLink(page, '/account')).toBeHidden();
       expect(await tooWide(page)).toEqual([]);
+
+      // Each tab of the Account page, File sharing a regular account's only (ADR-0430), in both
+      // languages.
+      const tabs = page.locator('main nav').getByRole('button');
+      const headings = {
+        English: ['Sign-in and security', 'File sharing', 'Appearance and language'],
+        Russian: ['Вход и безопасность', 'Общий доступ к файлам', 'Оформление и язык'],
+      };
+      for (const language of ['English', 'Russian'] as const) {
+        for (const name of headings[language]) {
+          await tabs.getByText(name, { exact: true }).click();
+          await expect(page.getByRole('heading', { level: 2, name })).toBeVisible();
+          expect(await tooWide(page), `${name} fits`).toEqual([]);
+        }
+        if (language === 'English') {
+          await page.getByRole('combobox', { name: 'Interface language' }).click();
+          await page.getByRole('option', { name: 'Русский' }).click();
+          await expect(page.locator('html')).toHaveAttribute('lang', 'ru');
+        }
+      }
     });
   });
 });

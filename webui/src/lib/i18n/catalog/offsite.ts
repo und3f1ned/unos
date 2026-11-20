@@ -153,9 +153,7 @@ export const en = {
 
 	// The scheduled task.
 	'offsite.task.none': 'No scheduled task: copies run only on Run now.',
-	'offsite.task.add': 'Add a daily copy at 03:00',
-	'offsite.task.name': 'Off-device copy',
-	'offsite.task.addFailed': 'Could not add the task',
+	'offsite.task.schedule': 'Add a task of the type Off-device Copy in the Scheduler.',
 	'offsite.task.some': 'A scheduled task copies: {names}',
 	'offsite.task.next': 'Next run {time}.',
 
@@ -320,9 +318,7 @@ export const ru: Translation<typeof en> = {
 	'offsite.restore.failed': 'Последнее восстановление: ошибка, в папку',
 
 	'offsite.task.none': 'Задачи по расписанию нет: копии создаются только кнопкой «Запустить сейчас».',
-	'offsite.task.add': 'Добавить ежедневное копирование в 03:00',
-	'offsite.task.name': 'Копия вне устройства',
-	'offsite.task.addFailed': 'Не удалось добавить задачу',
+	'offsite.task.schedule': 'Добавьте в планировщике задачу типа «Копия вне устройства».',
 	'offsite.task.some': 'Копирует задача по расписанию: {names}',
 	'offsite.task.next': 'Следующий запуск {time}.',
 

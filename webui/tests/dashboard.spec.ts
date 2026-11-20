@@ -519,16 +519,14 @@ test.describe('Dashboard', () => {
     const containers = main.locator('.card', { has: page.getByRole('heading', { name: 'Контейнеры' }) });
     await expect(containers.getByText('Работают', { exact: true })).toBeVisible();
     await expect(containers.getByText('Остановлены', { exact: true })).toBeVisible();
+    // Its rows are no links: the card's one link is Manage (ADR-0430).
     const state = (name: string) =>
-      containers.getByRole('link').filter({ hasText: name }).locator('.badge');
+      containers.locator('div.border-b').filter({ hasText: name }).locator('.badge');
     await expect(state('e2e-web')).toHaveText('работает');
     await expect(state('e2e-db')).toHaveText('остановлен');
 
-    // The quick actions and the recent activity, with the time of a notification.
-    await expect(main.getByRole('heading', { name: 'Быстрые действия' })).toBeVisible();
-    for (const action of ['Файловый менеджер', 'Общие папки', 'Магазин приложений', 'Настройки']) {
-      await expect(main.getByRole('button', { name: action, exact: true })).toBeVisible();
-    }
+    // The recent activity, with the time of a notification. Quick Actions are gone: they only
+    // repeated the sidebar's links (ADR-0430).
     const activity = main.locator('.card', { has: page.getByRole('heading', { name: 'Последние события' }) });
     await expect(activity.getByRole('link', { name: 'Показать все', exact: true })).toHaveAttribute(
       'href',
@@ -538,7 +536,7 @@ test.describe('Dashboard', () => {
     await expect(activity.getByText('5 мин назад', { exact: true })).toBeVisible();
 
     // Nothing of the English dashboard is left.
-    for (const heading of ['Storage Pools', 'Containers', 'Quick Actions', 'Recent Activity']) {
+    for (const heading of ['Storage Pools', 'Containers', 'Recent Activity']) {
       await expect(main.getByRole('heading', { name: heading })).toHaveCount(0);
     }
     await expect(main.getByText('Replace soon')).toHaveCount(0);
@@ -581,7 +579,7 @@ test.describe('Dashboard', () => {
         .toBeVisible();
       await expect(main.getByRole('link', { name: 'Учётная запись', exact: true })).toHaveAttribute(
         'href',
-        '/system#security',
+        '/account',
       );
       await expect(main.getByText('Signed in as')).toHaveCount(0);
 

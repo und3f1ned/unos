@@ -42,7 +42,8 @@
 	}
 
 	const running = $derived(containers.filter((c) => c.state === 'running').length);
-	const stopped = $derived(containers.filter((c) => c.state !== 'running').length);
+	// Stopped as the Containers page counts it, whose summary this is (ADR-0430): the exited ones.
+	const stopped = $derived(containers.filter((c) => c.state === 'exited').length);
 	const displayContainers = $derived(containers.slice(0, limit));
 
 	function getStateColor(state: string): string {
@@ -137,18 +138,15 @@
 			<div class="text-center py-4">
 				<Container class="w-8 h-8 mx-auto mb-2 text-muted opacity-50" />
 				<p class="text-secondary text-sm">{$t('dashboard.containers.none')}</p>
-				<a href="/containers" class="link text-sm mt-1 inline-block">
-					{$t('dashboard.containers.create')}
-				</a>
 			</div>
 		{:else}
 			<div class="flex flex-col">
 				{#each displayContainers as container}
 					{@const webUrl = getWebUrl(container)}
 					{@const Icon = getStateIcon(container.state)}
-					<a
-						href="/containers"
-						class="flex items-center justify-between gap-3 px-2 py-2 -mx-2 rounded border-b border-border-muted last:border-b-0 hover:bg-surface-overlay transition-colors"
+					<!-- A row, not a link: the card's one link is Manage, to the Containers page (ADR-0430). -->
+					<div
+						class="flex items-center justify-between gap-3 px-2 py-2 -mx-2 border-b border-border-muted last:border-b-0"
 					>
 						<div class="flex items-center gap-3 min-w-0">
 							<div
@@ -164,9 +162,6 @@
 						</div>
 						<div class="flex items-center gap-2">
 							{#if webUrl}
-								<!-- A link in the row's link: the widget is drawn in the browser only (the layout shows
-								     a page once it knows the account), where no HTML parser moves it out. -->
-								<!-- svelte-ignore node_invalid_placement_ssr -->
 								<a
 									href={webUrl}
 									target="_blank"
@@ -182,15 +177,12 @@
 								{stateLabel(container.state)}
 							</Badge>
 						</div>
-					</a>
+					</div>
 				{/each}
 				{#if containers.length > limit}
-					<a
-						href="/containers"
-						class="link block text-xs text-center pt-2.5"
-					>
-						{$t('dashboard.containers.viewAll', { n: containers.length })}
-					</a>
+					<p class="text-xs text-content-muted text-center pt-2.5">
+						{$t('dashboard.containers.shown', { shown: limit, n: containers.length })}
+					</p>
 				{/if}
 			</div>
 		{/if}

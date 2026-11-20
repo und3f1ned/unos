@@ -2,7 +2,8 @@ import type { Translation } from '../translate';
 
 // Two-factor authentication for every account: the page that asks an account to set it up
 // (src/routes/two-factor-setup/+page.svelte), the administrator's card in System > Security
-// (src/lib/components/account/TwoFactorRequirementCard.svelte) and the Account page's warning.
+// (src/lib/components/system/security/TwoFactorRequirementCard.svelte) and the Account page's
+// warning.
 
 export const en = {
 	'twofactor.title': 'Set up two-factor authentication',

@@ -1,6 +1,6 @@
 import type { Translation } from '../translate';
 
-// The firewall card of System > Security (src/lib/components/account/FirewallCard.svelte): the
+// The firewall card of System > Security (src/lib/components/system/security/FirewallCard.svelte): the
 // host's ufw, turned on and changed with a revert that undoes the change unless it is kept
 // (ADR-0416).
 

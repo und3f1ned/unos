@@ -1,5 +1,6 @@
 ---
-status: accepted
+status: superseded
+superseded-by: ADR-0430
 date: 2026-11-19
 area: system
 decided-by: agent
@@ -8,6 +9,8 @@ decided-by: agent
 # ADR-0420: Remote access is a WireGuard tunnel on the host that reaches the NAS alone, and apps get single-label local names through Caddy
 
 ## Context
+
+Superseded by ADR-0430: only in part, the tab of the local names for apps: they reach the LAN only and are in System > Network; every other rule here stays in force.
 
 `system.remote-access` asks for remote access set up in the web UI, Tailscale or WireGuard, and for
 local names of apps behind the reverse proxy. Tailscale needs an account of the owner's, WireGuard

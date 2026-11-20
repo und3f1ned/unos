@@ -6,7 +6,10 @@
   import { intlLocale, t } from "$lib/i18n";
   import { formatDateTime } from "$lib/time";
 
-  // The account's own sign-ins, newest first: loaded when the list is first shown.
+  // The account's own sign-ins (mine), an administrator's too: every account's are in the Audit Log,
+  // which holds every failed sign-in and second factor (ADR-0430).
+
+  // The sign-ins, newest first: loaded when the list is first shown.
   let loginHistory = $state<LoginAttempt[]>([]);
   let loginHistoryTotal = $state(0);
   let loginHistoryFailed = $state(0);
@@ -20,7 +23,7 @@
     loginHistoryLoading = true;
     loginHistoryError = "";
     try {
-      const response = await getLoginHistory(50, 0);
+      const response = await getLoginHistory(50, 0, undefined, undefined, true);
       loginHistory = response.attempts;
       loginHistoryTotal = response.total;
       loginHistoryFailed = response.failed_count;

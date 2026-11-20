@@ -158,7 +158,7 @@ async function newBrowser(browser: Browser, scheme: Theme): Promise<{ context: B
 }
 
 async function openAccount(page: Page) {
-  await page.goto('/system#security');
+  await page.goto('/account#appearance');
   await expect(page.getByRole('group', { name: 'Colour theme' })).toBeVisible();
 }
 
@@ -297,7 +297,7 @@ test.describe('The theme of a user', () => {
       // Signed in, the page opens in the user's theme, as the browser keeps it.
       await storeChoice(page, 'dark');
       await signIn(page);
-      await page.goto('/system#security');
+      await page.goto('/account#appearance');
       expect(await themeAtBody()).toBe('dark dark');
       await expect(option(page, 'Dark')).toBeChecked();
       expect(await page.evaluate((key) => localStorage.getItem(key), THEME_KEY)).toBe('dark');
@@ -383,11 +383,13 @@ test.describe('The theme of a user', () => {
       await signIn(page);
       await expectTheme(page, 'dark');
       await page.locator('nav').getByRole('link', { name: 'Account' }).click();
+      await page.locator('main nav').getByRole('button', { name: 'Appearance and language' }).click();
       await expect(page.getByText('Your saved theme could not be loaded')).toBeVisible();
       await expect(option(page, 'System')).toBeChecked();
       await page.unrouteAll({ behavior: 'ignoreErrors' });
       await page.locator('nav').getByRole('link', { name: 'Dashboard' }).click();
       await page.locator('nav').getByRole('link', { name: 'Account' }).click();
+      await page.locator('main nav').getByRole('button', { name: 'Appearance and language' }).click();
       await expect(option(page, 'Light')).toBeChecked();
       await expectTheme(page, 'light');
       await expect(page.getByText('Your saved theme could not be loaded')).toHaveCount(0);
@@ -406,7 +408,7 @@ test.describe('The theme of a user', () => {
       await page.getByLabel('Пароль').fill(USER.password);
       await page.getByRole('button', { name: 'Войти' }).click();
       await expect(page).toHaveURL('/');
-      await page.goto('/system#security');
+      await page.goto('/account#appearance');
       const group = page.getByRole('group', { name: 'Цветовая тема' });
       await expect(group).toBeVisible();
       await expect(page.getByRole('heading', { name: 'Тема', exact: true })).toBeVisible();
@@ -439,6 +441,8 @@ test.describe('Every page in each theme', () => {
     { path: '/system#general' },
     { path: '/system#updates' },
     { path: '/system#security' },
+    { path: '/account#security' },
+    { path: '/account#appearance' },
     { path: '/system#monitor' },
     { path: '/system#logs' },
     { path: '/system#health', fake: (page) => fakeHealthApi(page) },
@@ -468,11 +472,11 @@ test.describe('Every page in each theme', () => {
 
       // The key colours of a page are the theme's.
       await page.goto('/system#security');
-      await expect(page.getByRole('group', { name: 'Colour theme' })).toBeVisible();
+      await expect(page.getByRole('heading', { name: 'Security of the NAS' })).toBeVisible();
       expect(await background(page, 'main')).toBe(values['surface']);
       expect(await background(page, 'aside')).toBe(values['surface-elevated']);
       expect(await background(page, '.card')).toBe(values['surface-elevated']);
-      expect(await colour(page, 'main h2.text-xl')).toBe(values['content']); // Security Settings
+      expect(await colour(page, 'main h2.text-xl')).toBe(values['content']); // Security of the NAS
       expect(await background(page, 'nav .nav-item-active')).toBe(values['brand']);
       // A 20 % tint of the brand, which test_webui_theme.py checks with the text on it.
       expect(await page.locator('nav .nav-item-active').first().evaluate((e) => getComputedStyle(e).backgroundColor))

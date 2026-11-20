@@ -3,11 +3,10 @@ import { test, expect } from './fixtures';
 import { createAccount, deleteAccount, type Account } from './accounts';
 import { sessionToken } from './session';
 
-// The command palette (feature webui.command-palette, ADR-0393): Ctrl+K (Cmd+K on macOS) opens it
-// over a signed-in page, typing narrows its pages and actions, and Enter opens the chosen page or
-// starts the chosen action. It offers a user what the user's role may open, runs only the actions
-// that change nothing on the NAS (the language, Logout), opens the page and the confirmation of the
-// others, and asks the server for nothing itself. The power API is a route fake that refuses every
+// The command palette (feature webui.command-palette, ADR-0393, ADR-0430): Ctrl+K (Cmd+K on macOS)
+// opens it over a signed-in page, typing narrows its pages and actions, and Enter opens the chosen
+// page or tab, or the page's own confirmation of an action. It offers a user what the user's role
+// may open, each place once, changes nothing itself, and asks the server for nothing itself. The power API is a route fake that refuses every
 // change: nothing here reboots anything (ADR-0233). The regular account of the last tests is made
 // through the API and deleted afterwards.
 
@@ -120,16 +119,17 @@ async function focusInPalette(page: Page): Promise<boolean> {
   });
 }
 
-// The System page's tabs in its three groups, Settings, Monitoring and Maintenance (ADR-0428).
+// The System page's tabs in its three groups, Settings, Monitoring and Maintenance (ADR-0428,
+// ADR-0430). The palette's System opens General: General is no choice of its own.
 const SYSTEM_TABS = [
-  'General', 'Network', 'Remote Access', 'Security',
-  'Resource Monitor', 'System Logs', 'Disk Health', 'Notifications',
+  'General', 'Network', 'Remote Access', 'Security', 'Notifications',
+  'Resource Monitor', 'System Logs', 'Disk Health',
   'Updates', 'Backup & Restore', 'Scheduler', 'Power Management',
 ];
-const ADMIN_ACTIONS = [
-  'Add a user…', 'Reboot the host…', 'Shut down the host…', 'Suspend the host…',
-  'Switch the language to Russian (Русский)', 'Logout',
-];
+// The Account page of the sidebar's account block, which opens Sign-in and security, and its other
+// tab of an administrator.
+const ACCOUNT_CHOICES = ['Account', 'Appearance and language'];
+const ADMIN_ACTIONS = ['Add a user…', 'Reboot the host…', 'Shut down the host…', 'Suspend the host…'];
 
 test.describe('The command palette of an administrator', () => {
   test('Ctrl+K opens it with every page and action, and typing narrows them', async ({ authenticatedPage: page }) => {
@@ -141,7 +141,7 @@ test.describe('The command palette of an administrator', () => {
     const all = await optionNames(page);
     const pages = sidebar.map((name) => name.trim());
     pages.splice(pages.indexOf('Files') + 1, 0, 'Trash');
-    expect(all).toEqual([...pages, ...SYSTEM_TABS, ...ADMIN_ACTIONS]);
+    expect(all).toEqual([...pages, ...SYSTEM_TABS.slice(1), ...ACCOUNT_CHOICES, ...ADMIN_ACTIONS]);
     // The tabs of System are the System page's own.
     await page.keyboard.press('Escape');
     await page.goto('/system');
@@ -150,7 +150,7 @@ test.describe('The command palette of an administrator', () => {
     await openPalette(page);
     // A prefix of a name first, then a prefix of one of its words, then a part of a word.
     await search(page, 'log');
-    expect(await optionNames(page)).toEqual(['Logout', 'Audit Log', 'System Logs']);
+    expect(await optionNames(page)).toEqual(['Audit Log', 'System Logs', 'Account']);
     await search(page, 'stor');
     expect(await optionNames(page)).toEqual(['Storage', 'App Store', 'Backup & Restore']);
     await search(page, 'onitor');
@@ -269,13 +269,13 @@ test.describe('The command palette of an administrator', () => {
     await expect(page).toHaveURL('/system#monitor');
     await expect(page.getByRole('heading', { name: 'Resource Monitor' })).toBeVisible();
 
-    // The second of two options, with the arrow.
+    // The second of the options, with the arrow.
     await openPalette(page);
     await search(page, 'log');
     await page.keyboard.press('ArrowDown');
     await page.keyboard.press('Enter');
-    await expect(page).toHaveURL('/audit');
-    await expect(page.getByRole('heading', { name: 'Audit Log', exact: true })).toBeVisible();
+    await expect(page).toHaveURL('/system#logs');
+    await expect(page.getByRole('heading', { name: 'System Logs', exact: true })).toBeVisible();
 
     // A click opens an option as Enter does.
     await openPalette(page);
@@ -284,30 +284,27 @@ test.describe('The command palette of an administrator', () => {
     await expect(palette(page)).toBeHidden();
   });
 
-  test('the language and Logout run from the palette', async ({ authenticatedPage: page }) => {
+  test('the language and the theme are found as Appearance and language, which the palette opens', async ({
+    authenticatedPage: page,
+  }) => {
+    // The palette changes no setting itself: the language has one place, the Account page's tab
+    // (ADR-0430), which a language's name finds in either language.
     await openPalette(page);
     await search(page, 'russian');
-    expect(await optionNames(page)).toEqual(['Switch the language to Russian (Русский)']);
+    expect(await optionNames(page)).toEqual(['Appearance and language']);
+    await search(page, 'русский');
+    expect(await optionNames(page)).toEqual(['Appearance and language']);
     await page.keyboard.press('Enter');
     await expect(palette(page)).toBeHidden();
-    await expect(page.locator('aside nav a[href="/storage"]')).toHaveText('Хранилище');
-    expect(await page.evaluate(() => localStorage.getItem('unos-locale'))).toBe('ru');
+    await expect(page).toHaveURL('/account#appearance');
+    await expect(page.getByRole('combobox', { name: 'Interface language' })).toHaveText('English');
+    expect(await page.evaluate(() => localStorage.getItem('unos-locale'))).toBeNull();
 
-    // The palette in Russian, which still finds the English name of the language.
-    await openPalette(page);
-    await expect(field(page)).toHaveAttribute('placeholder', 'Введите название страницы или действия');
-    await search(page, 'english');
-    expect(await optionNames(page)).toEqual(['Переключить язык на английский (English)']);
-    await page.keyboard.press('Enter');
-    await expect(page.locator('aside nav a[href="/storage"]')).toHaveText('Storage');
-
+    // Logout is the sidebar's button alone.
     await openPalette(page);
     await search(page, 'logout');
-    const signedOut = page.waitForResponse('**/api/v1/auth/logout');
-    await page.keyboard.press('Enter');
-    expect((await signedOut).status()).toBe(200);
-    await expect(page).toHaveURL('/login');
-    expect(await sessionToken(page)).toBeNull();
+    await expect(options(page)).toHaveCount(0);
+    expect(await sessionToken(page)).not.toBeNull();
   });
 
   test('Reboot, Shut down and Suspend open their confirmation on System > Power and run nothing', async ({
@@ -531,7 +528,7 @@ test.describe('The command palette of an administrator', () => {
     await expect(field(page)).toBeFocused();
   });
 
-  test('nor over a dialog written by hand: the Scheduler\'s and the Security tab\'s', async ({
+  test('nor over a dialog written by hand: the Scheduler\'s and Sign-in and security\'s', async ({
     authenticatedPage: page,
   }) => {
     // Cmd+K on macOS: the key of a text field there is not the question here.
@@ -551,7 +548,7 @@ test.describe('The command palette of an administrator', () => {
           ? route.fulfill({ json: { secret: TOTP_SECRET, qr_uri: `otpauth://totp/UNOS:admin?secret=${TOTP_SECRET}&issuer=UNOS` } })
           : route.abort(),
     );
-    await page.goto('/system#security');
+    await page.goto('/account#security');
     const card = page.locator('div:has(> h3:has-text("Two-Factor Authentication"))');
     await card.getByRole('button', { name: 'Enable', exact: true }).click();
     await expect(page.getByRole('heading', { name: 'Setup Two-Factor Authentication' })).toBeVisible();
@@ -632,7 +629,7 @@ test.describe('The command palette of a regular user', () => {
     await deleteAccount(request, account, USER.username);
   });
 
-  test('offers only the Dashboard, the Account page, the language and Logout', async ({ page }) => {
+  test('offers only the Dashboard and the Account page with its tabs', async ({ page }) => {
     await page.goto('/login');
     await page.getByLabel('Username').fill(USER.username);
     await page.getByLabel('Password').fill(USER.password);
@@ -640,22 +637,22 @@ test.describe('The command palette of a regular user', () => {
     await expect(page).toHaveURL('/');
     await expect(page.locator('main').getByText(USER.username)).toBeVisible();
 
-    // The pages of the user's sidebar, Dashboard and Account, then the language and Logout.
+    // The pages of the user's sidebar, Dashboard and Account, then the Account page's other tabs.
     const sidebar = (await page.locator('aside nav a').allTextContents()).map((name) => name.trim());
     expect(sidebar).toEqual(['Dashboard', 'Account']);
     await openPalette(page);
-    expect(await optionNames(page)).toEqual([...sidebar, 'Switch the language to Russian (Русский)', 'Logout']);
+    expect(await optionNames(page)).toEqual([...sidebar, 'File sharing', 'Appearance and language']);
     for (const query of ['storage', 'users', 'reboot', 'add user', 'trash', 'firewall']) {
       await search(page, query);
       await expect(options(page), query).toHaveCount(0);
     }
-    // The Account page is System's Security tab.
+    // The Account page opens Sign-in and security.
     await search(page, 'security');
     expect(await optionNames(page)).toEqual(['Account']);
     await search(page, 'acc');
     await page.keyboard.press('Enter');
-    await expect(page).toHaveURL('/system#security');
-    await expect(page.getByRole('heading', { name: 'Security Settings' })).toBeVisible();
+    await expect(page).toHaveURL('/account');
+    await expect(page.getByRole('heading', { name: 'Sign-in and security' })).toBeVisible();
   });
 });
 

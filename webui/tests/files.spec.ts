@@ -92,7 +92,8 @@ test.describe('File Browser', () => {
     await expect(page).toHaveURL('/files/trash');
     await expect(page.getByRole('heading', { name: 'Корзина', level: 1 })).toBeVisible();
     await expect(page.getByText('удаляются навсегда через 30 дней после удаления')).toBeVisible();
-    await expect(page.locator('main').getByRole('link', { name: 'Файлы', exact: true })).toHaveAttribute('href', '/files');
+    // The way back to Files is the sidebar's (ADR-0430).
+    await expect(page.locator('aside nav a[href="/files"]')).toHaveText('Файлы');
     await expect(page.getByRole('heading', { name: 'Trash' })).toHaveCount(0);
   });
 });
@@ -573,8 +574,8 @@ test.describe('File Browser operations', () => {
     expect(await listNames(page, sub)).toEqual(['inner.txt']);
     expect(await trashedFrom(page, dir)).toEqual([]);
 
-    // Back in Files, the items are where they were.
-    await page.locator('main').getByRole('link', { name: 'Files', exact: true }).click();
+    // Back in Files, the items are where they were: the sidebar's Files is the one way back (ADR-0430).
+    await page.locator('aside nav a[href="/files"]').click();
     await expect(page).toHaveURL('/files');
     await openFolder(page, scratch!.pool.name);
     await openFolder(page, scratch!.name);

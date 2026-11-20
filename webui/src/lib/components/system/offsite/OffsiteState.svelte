@@ -7,7 +7,7 @@
   import { Button } from "$lib/components/ui";
   import { intlLocale, t } from "$lib/i18n";
   import { formatDateTime } from "$lib/time";
-  import { Play, Plus, RefreshCw } from "lucide-svelte";
+  import { Play, RefreshCw } from "lucide-svelte";
 
   type Props = {
     status: OffsiteStatus | null;
@@ -16,13 +16,11 @@
     // The units of sizes in the language of the page (formatBytes).
     sizeUnits: string[];
     starting: boolean;
-    addingTask: boolean;
     onrefresh: () => void;
     onrunnow: () => void;
-    onaddtask: () => void;
   };
 
-  let { status, tasks, sizeUnits, starting, addingTask, onrefresh, onrunnow, onaddtask }: Props = $props();
+  let { status, tasks, sizeUnits, starting, onrefresh, onrunnow }: Props = $props();
 
   // The step at which a copy failed, as the server names it, with the keys of their texts (ADR-0287).
   const STEPS: Record<string, string> = {
@@ -130,14 +128,13 @@
     {/if}
   {/if}
 
-  <!-- The task of the Scheduler that runs the copy. -->
+  <!-- The task of the Scheduler that runs the copy: a task is made in the Scheduler, its one
+       place (ADR-0430). -->
   {#if tasks.length === 0}
-    <div class="flex flex-wrap items-center gap-2 pt-1">
+    <p class="pt-1 break-words">
       <span class="text-status-warning">{$t("offsite.task.none")}</span>
-      <Button size="sm" variant="secondary" icon={Plus} loading={addingTask} onclick={onaddtask}>
-        {$t("offsite.task.add")}
-      </Button>
-    </div>
+      <a href="#scheduler" class="link">{$t("offsite.task.schedule")}</a>
+    </p>
   {:else}
     <p class="pt-1 break-words">
       {$t("offsite.task.some", { names: tasks.map((task) => task.name).join(", ") })}

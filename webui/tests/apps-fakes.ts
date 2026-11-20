@@ -274,7 +274,7 @@ export function installAnswer(app: FakeInstalledApp) {
   };
 }
 
-/** The card of the app `name` in the catalog's grid (Featured Apps lists some of them too). */
+/** The card of the app `name` in the catalog's grid. */
 export function catalogCard(page: Page, name: string) {
   return page.locator('.card[role="button"]', { has: page.locator('h3', { hasText: new RegExp(`^${name}$`) }) });
 }

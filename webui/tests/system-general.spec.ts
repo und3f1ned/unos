@@ -55,8 +55,12 @@ test.describe('System > General: the name and time zone of the NAS', () => {
 
     await expect(page.getByText('The hostname is now nas-new.')).toBeVisible();
     expect(sent).toEqual([{ method: 'PUT', path: '/network/hostname', body: { hostname: 'nas-new' } }]);
-    // System Information shows the new name too.
-    await expect(page.getByText('nas-new', { exact: true })).toBeVisible();
+    // The field, the name's one place, keeps the new name: System Information shows no second copy
+    // of it (ADR-0430).
+    await expect(field).toHaveValue('nas-new');
+    const info = page.locator('.card').filter({ has: page.getByRole('heading', { name: 'System Information' }) });
+    await expect(info.getByText('Kernel:')).toBeVisible();
+    await expect(info.getByText('Hostname:')).toHaveCount(0);
   });
 
   test('a hostname that the host refuses says why', async ({ authenticatedPage: page }) => {

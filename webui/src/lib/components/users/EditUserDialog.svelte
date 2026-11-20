@@ -293,6 +293,17 @@
 				{/if}
 			</section>
 
+			<!-- The own password has one place, the Account page, which asks for the current one
+			     (ADR-0430). -->
+			{#if currentUserId === editing.id}
+			<section class="space-y-2">
+				<h3 class="card-title">{$t('common.password')}</h3>
+				<p class="form-hint">
+					{$t('users.edit.ownPassword')}
+					<a href="/account#security" class="link">{$t('account.tabs.security')}</a>
+				</p>
+			</section>
+			{:else}
 			<section class="space-y-2">
 				<h3 class="card-title">{$t('common.password')}</h3>
 				<PasswordFields
@@ -321,6 +332,7 @@
 					</label>
 				{/if}
 			</section>
+			{/if}
 
 			<section class="space-y-2">
 				<h3 class="card-title">{$t('users.edit.smbTitle')}</h3>

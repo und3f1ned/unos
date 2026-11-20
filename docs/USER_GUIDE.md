@@ -94,10 +94,10 @@ The UNOS interface consists of:
   **Applications** (Containers, App Store) and **Administration** (Users, Audit
   Log, System). At the bottom a line says whether the page is **Connected** to
   the NAS's live data, then your name and role, and **Logout**. For an
-  administrator the name is a link to **Your account**: **System** →
-  **Security**, with your own password, two-factor authentication, theme and
-  language. Regular users see **Dashboard** and **Account** only, without
-  groups (see [User Roles](#user-roles)).
+  administrator the name is a link to **Your account**, the
+  [Account page](#account-page). Regular users see **Dashboard** and
+  **Account** only, without groups (see [User Roles](#user-roles)); their
+  **Account** link is the way to the Account page.
 - **Main Content** - Current page content, under the page's title and its
   buttons.
 
@@ -131,21 +131,48 @@ you are typing in a field, except that on a Mac, Ctrl+K in a field keeps
 deleting to the end of the line (use Cmd+K there); while a dialog is open,
 Ctrl+K does nothing but what the browser does with it.
 
-The palette lists what your account may open: an administrator every page,
-the **Trash**, every tab of **System** and the actions; a regular user
-**Dashboard**, **Account**, the language and **Logout**. It switches the
-language and logs out by itself. The actions that change the NAS end with
+The palette lists what your account may open, each place once: an
+administrator every page, the **Trash**, the tabs of **System** (its own entry
+opens **General**), **Account** and **Appearance and language**, and the
+actions; a regular user **Dashboard**, **Account**, **File sharing** and
+**Appearance and language**. It changes nothing itself: a language's name, such
+as "russian", finds **Appearance and language**, where the language is chosen,
+and **Logout** is the sidebar's button. The actions that change the NAS end with
 "…" and only open the dialog of their page, which asks before anything
 happens: **Add a user…** opens the **Users** page's **Add user**, and
 **Reboot the host…**, **Shut down the host…** and **Suspend the host…** open
 the confirmations of **System** → **Power Management**. Other changes, such
 as deleting something, are made on their pages.
 
+### Account Page
+
+Every account's own settings are on the **Account** page (`/account`): the
+**Account** link of a regular account's sidebar, or an administrator's name at
+the bottom of the sidebar, opens it. It has a tab for each part, with an address
+of its own, like the tabs of **System**:
+
+- **Sign-in and security** (`/account#security`): **Change Password**,
+  **Two-Factor Authentication** with its recovery codes and security keys, your
+  **API Tokens** and your **Login History**.
+- **File sharing** (`/account#sharing`), for regular accounts: **Network file
+  access (SMB)**, your SMB state, the shares you can use and how to connect.
+  Administrators never have SMB (see [SMB Access](#smb-access)), so their
+  Account page has no such tab.
+- **Appearance and language** (`/account#appearance`): **Theme** and
+  **Language**.
+
+What applies to the whole NAS, such as the two-factor requirement for every
+account, the firewall and the HTTPS certificate, is on **System** → **Security**,
+for administrators; the sign-ins of every account are in the
+[Audit Log](#audit-log). In **Users**, an
+administrator's own row sets no password: the own password is changed here,
+with the current one.
+
 ### Theme
 
 The web interface has a dark and a light theme. Choose **Dark**, **Light** or
-**System** on the **Account** page (administrators: **System** → **Security**),
-under **Theme**. **System** follows the light or dark setting of your device, and
+**System** on the **Account** page, under **Appearance and language** →
+**Theme**. **System** follows the light or dark setting of your device, and
 changes with it. The choice applies at once and is kept for your account on the
 NAS: it stays after you sign out and in, and follows you to every browser you
 sign in to. Until you choose, the theme is **System**. Before anyone signs in, the
@@ -158,7 +185,7 @@ shows this browser's; it asks again when you open the page again.
 ### Language
 
 The web interface is in English or Russian. Choose the language on the **Account**
-page (administrators: **System** → **Security**), under **Language**: the list
+page, under **Appearance and language** → **Language**: the list
 names each language in its own language. The choice applies at once and is kept
 in this browser, for every account that signs in with it, and the login page
 shows it too. Without a choice, UNOS is in Russian when the browser's language is
@@ -190,7 +217,7 @@ the page has lost its live connection.
 
 ### Arranging the Dashboard
 Each widget (the five stats cards below and, for administrators, **Storage
-Overview**, **Containers**, **Quick Actions** and **Recent Activity**) can be
+Overview**, **Containers** and **Recent Activity**) can be
 moved and hidden. Click **Customize** beside **Refresh**:
 - Drag a widget by the handle at the left of its toolbar to the place of
   another widget. On a phone and with the keyboard, use the toolbar's
@@ -243,10 +270,8 @@ reasons, and links to **System** → **Disk Health** (see
 warning says why instead.
 
 ### Containers
-Lists running Docker containers with status indicators
-
-### Quick Actions
-Common tasks like creating shares, managing pools, etc.
+Counts the running and the stopped containers, as the **Containers** page does,
+and lists the first five with their state; **Manage →** opens **Containers**.
 
 ### Recent Activity
 Latest system events and notifications
@@ -1025,8 +1050,8 @@ the share appears in the NAS's list of shares.
 
 Sign in with your UNOS username and password, after SMB is turned on for your
 account. Use the NAS's address on your local network (IPv4, or an IPv6 ULA or
-link-local address): SMB refuses public addresses. **Account** → **Network
-file access (SMB)** lists the shares you can use and how to connect to them.
+link-local address): SMB refuses public addresses. **Account** → **File
+sharing** lists the shares you can use and how to connect to them.
 
 **Windows:**
 1. Open File Explorer
@@ -1483,13 +1508,14 @@ containers (`unos-supervisor`, `unos-webui`) and images are not listed.
 ### Viewing Containers
 
 The **Containers** tab lists every container with its name, image, state
-(running, exited, paused and so on) and the ports it publishes. The **Running**
-and **Stopped** cards and the state menu show only the containers in that
-state, and the search box finds containers by name or image.
+(running, exited, paused and so on) and the ports it publishes, under the counts
+of the **Running**, **Stopped** and all containers. The state menu shows only the
+containers in that state, and the search box finds containers by name or image.
 
 ### Container Actions
 
-- **Start**, **Stop** and **Restart** act on the container, and the list shows
+- **Start**, **Stop** and **Restart**, the buttons of its row or card, act on the
+  container, and the list shows
   its new state. An app from the App Store does not start while its data folders
   are not on a mounted pool: the message names the pool to mount.
 - **Remove** deletes the container, also a running one, after a confirmation.
@@ -1504,7 +1530,8 @@ state, and the search box finds containers by name or image.
   container's failure does not stop the others, and what was not done stays
   selected for another try. Leaving the page stops the run after the container
   it is at. Removal is one container at a time.
-- Click a container for its details: **Overview**, **Logs** and **Network**.
+- Click a container for its details: **Overview**, **Logs** and **Network**; its
+  actions are those of its row or card.
   **Logs** shows the last 200 lines of its log and then each new line as the
   container writes it, each line with the time Docker received it. When the log
   ends, for example because the container stopped, or the connection is lost,
@@ -2017,7 +2044,7 @@ active after the restore.
 | Role | Permissions |
 |------|-------------|
 | Admin | Full access to all features, except SMB: administrators cannot use SMB |
-| User | **Dashboard** (system overview and live statistics) and **Account** (language, theme, own password, two-factor authentication and security keys, login history and SMB access); SMB shares as an administrator allows |
+| User | **Dashboard** (system overview and live statistics) and **Account** (own password, two-factor authentication and security keys, API tokens, login history, SMB access, theme and language); SMB shares as an administrator allows |
 
 Every other page and API is for administrators only; regular users do not see
 them. At least one administrator must remain: the last one cannot be demoted
@@ -2039,7 +2066,7 @@ it. The **SMB** column of the **Users** page shows each user's state:
 To allow SMB for a user, edit the user and turn on **Allow SMB access**. The
 state is then **Password needed**, and SMB is turned on with a password in
 one of two ways:
-- the user goes to **Account** → **Network file access (SMB)**, enters their
+- the user goes to **Account** → **File sharing**, enters their
   current password (and their two-factor code, if they use 2FA) and clicks
   **Turn on SMB**: the SMB password is the UNOS password;
 - or you set a new password for the user in the edit dialog, with **Also turn
@@ -2062,7 +2089,7 @@ then turns SMB on. A two-factor code works only once:
 the code the user signed in with cannot turn SMB on as well, so wait until
 the authenticator app shows the next one.
 
-An SMB password changes only in UNOS: the user under **Account** →
+An SMB password changes only in UNOS: the user under **Account** → **Sign-in and security** →
 **Change Password**, or an administrator in the edit dialog of the **Users**
 page. Samba refuses every password change that a computer asks for over the
 network, such as **Change a password** in Windows (Ctrl+Alt+Del) aimed at the
@@ -2107,7 +2134,7 @@ was made shows **Password needed** and must turn SMB on again.
 ### Changing Passwords
 
 Users can change their own password:
-1. Go to **Account** (administrators: **System** → **Security**)
+1. Go to **Account** → **Sign-in and security**
 2. Under **Change Password**, enter the **Current Password**, the **New
    Password** (at least 8 characters) and the new one again under **Confirm
    New Password**; all three are required
@@ -2140,7 +2167,7 @@ that stays until you dismiss it.
 
 Protect your account with TOTP-based two-factor authentication:
 
-1. Go to **Account** (administrators: **System** → **Security**)
+1. Go to **Account** → **Sign-in and security**
 2. Under **Two-Factor Authentication**, click **Enable**
 3. Scan the QR code with an authenticator app (Google Authenticator, Authy,
    etc.). The QR code is drawn in your browser; the secret is never sent to
@@ -2156,7 +2183,7 @@ asks for the **Authentication Code**. Enter the 6-digit code that the app
 shows and click **Verify**; **← Back to login** returns to the password form.
 
 To disable 2FA:
-1. Go to **Account** (administrators: **System** → **Security**)
+1. Go to **Account** → **Sign-in and security**
 2. Under **Two-Factor Authentication**, click **Disable**
 3. Enter a current 2FA code and click **Disable 2FA**
 
@@ -2174,7 +2201,7 @@ alone. Turning SMB on yourself needs your two-factor code as well.
 A recovery code signs you in when you have lost your authenticator app.
 Generate them as soon as 2FA is on:
 
-1. Go to **Account** (administrators: **System** → **Security**)
+1. Go to **Account** → **Sign-in and security**
 2. Under **Two-Factor Authentication** → **Recovery codes**, click
    **Generate recovery codes**
 3. Save the ten codes (they look like `5251-6486-2F69`) somewhere safe, away
@@ -2191,8 +2218,8 @@ To sign in with one, enter your username and password, click **Use a
 recovery code** at the code step and enter one of your codes; letter case,
 dashes and spaces do not matter. Each code works once: a used code is refused
 with "Invalid recovery code", as a wrong one is. A refused code appears in the
-login history as a failed sign-in, and the audit log records each sign-in with
-a recovery code.
+login history and the audit log as a failed sign-in (without the code), and the
+audit log records each sign-in with a recovery code.
 
 Turning 2FA off deletes the recovery codes, and after turning it on again you
 generate new ones. Turning 2FA off needs a code from the authenticator app:
@@ -2220,7 +2247,7 @@ once 2FA is on, and turning 2FA off removes them.
    when the page's certificate is trusted (trust UNOS's certificate authority
    or serve your own certificate, see [HTTPS Certificates](#https-certificates)). Opened by an IP
    address, the section says so and offers no **Add**.
-2. Go to **Account** (administrators: **System** → **Security**)
+2. Go to **Account** → **Sign-in and security**
 3. Under **Two-Factor Authentication** → **Security keys**, click **Add a
    security key**
 4. Give the key a name (up to 64 characters, different from your other
@@ -2240,7 +2267,8 @@ in. Turning 2FA off and turning SMB on still take a code from the app, not a
 key. A key whose signature counter goes backwards, as a copied key's can, is
 refused at the sign-in ("This security key's signature counter went
 backwards, so it may have been copied: sign in another way and remove it"),
-and the audit log records it as a warning. The audit log also records each
+and the audit log records it as a warning, as it does every refused key. The
+audit log also records each
 key added (`security_key_added`) and removed (`security_key_removed`) and
 each sign-in with a key. UNOS accepts any authenticator, a passkey kept in
 software too: it checks that the key's private key signed the sign-in, not
@@ -2303,13 +2331,15 @@ account.
 
 ### Login History
 
-Under **Login History** on the **Account** page (administrators: **System** →
-**Security**), **View History** lists the latest 50 sign-ins, newest first:
-those with your account's name since your account got it, when it was created
-or last renamed (an account that gets the name of a deleted or renamed one
-does not see that account's), and for administrators those of every account,
-also of deleted accounts, of names given up by a rename and the attempts with
-names that do not exist. Each entry shows **SUCCESS** or **FAILED** with the
+Under **Login History** on the **Account** page (**Sign-in and security**),
+**View History** lists the latest 50 sign-ins with your account's name, newest
+first: since your account got the name, when it was created or last renamed (an
+account that gets the name of a deleted or renamed one does not see that
+account's). An administrator's list there is the administrator's own too. The
+sign-ins of every account, also of deleted accounts, of names given up by a
+rename and with names that do not exist, each failed one with its reason (a
+wrong password or a refused second step), are in the [Audit Log](#audit-log),
+for administrators. Each entry shows **SUCCESS** or **FAILED** with the
 reason (such as "Incorrect username or password" or "Invalid 2FA code"), the
 account, the time in your browser's time zone, the address of the computer
 that signed in (not that of the web interface's proxy) and the browser. Above
@@ -2325,7 +2355,7 @@ created them: a regular user's token cannot use the administrator-only APIs.
 A token can be limited to reading, or to areas of the API, so that a script
 gets only what it needs.
 
-**On the Account page** (**System** → **Security**), **API Tokens** lists your
+**On the Account page** (**Sign-in and security**), **API Tokens** lists your
 tokens: each with its name and first 12 characters, its access (**Full
 access**, **Read only** or **Read and change**), its areas, whether it is
 disabled or expired, when it was created, when it expires and when it was last
@@ -2508,8 +2538,9 @@ regular users have no access to it.
   entries that the NAS recorded without one, in UTC. An entry's hash covers
   its time as the log file holds it: in the JSON file, the time as given, or
   for an entry recorded without an offset the time without its `Z`.
-- Recorded today: sign-ins and failed sign-ins (a wrong two-factor code
-  appears only in the login history), sign-outs, a user's own password
+- Recorded today: sign-ins and failed sign-ins (as a **Warning**: a wrong
+  password, or a refused second step: a wrong or reused two-factor code, a
+  recovery code or a security key), sign-outs, a user's own password
   changes (with an SMB account entry when the SMB password changed too) and
   turning two-factor authentication on or off (off as a **Warning**), each
   by that user, users created, changed (a rename with the old name) and
@@ -2588,19 +2619,20 @@ same forms.
 
 ## System Settings
 
-Access via **System** in the sidebar. Its tabs come in three groups:
-**Settings** (General, Network, Remote Access, Security), **Monitoring**
-(Resource Monitor, System Logs, Disk Health, Notifications) and
-**Maintenance** (Updates, Backup & Restore, Scheduler, Power Management). In a
-window 1280 pixels wide or more they are a column beside the open tab, in a
-narrower one rows of buttons above it. **Security** lists your own settings
-under **Your account** and, for an administrator, those of the NAS (the
-two-factor requirement, the firewall and the certificates) under **This NAS**.
+Access via **System** in the sidebar, administrators only: it holds the NAS's
+settings, and each account's own are on the [Account page](#account-page). Its
+tabs come in three groups: **Settings**, what the NAS is set to (General,
+Network, Remote Access, Security, Notifications), **Monitoring**, what it does
+(Resource Monitor, System Logs, Disk Health) and **Maintenance**, what is done
+to it (Updates, Backup & Restore, Scheduler, Power Management). In a window
+1280 pixels wide or more they are a column beside the open tab, in a narrower
+one rows of buttons above it. **Security** holds the two-factor requirement for
+every account, the firewall and the HTTPS certificates. Each setting, action and
+fact has one place: the dashboard summarizes some of them and links there.
 
 ### General
 
-- Shows the host name, the operating system, the kernel and the architecture
-- Shows the UNOS version, as the Updates tab does
+- Shows the operating system, the kernel, the architecture and the uptime
 - **Name and time zone**: the host's name and time zone, set on the host.
   **Save hostname** sets the name (letters, digits and hyphens, at most 63);
   **Save time zone** sets one of the zones the host lists, and scheduled tasks
@@ -2611,7 +2643,7 @@ two-factor requirement, the firewall and the certificates) under **This NAS**.
 
 ### Updates
 
-- **Current version**: the version UNOS was built from, as `git describe`
+- **Current version**: the one place of the version UNOS was built from, as `git describe`
   named its checkout at the build: a release tag such as `v1.2.0`, or, marked
   **dev**, a tag with the commits after it such as `v1.2.0-3-g712fc3a` or only
   the commit while no tag was in its history. A release tagged later on the
@@ -2664,9 +2696,11 @@ The tab shows the host's network as the host itself sees it:
   speed. Click an interface for its MAC address, MTU, type, speed and all
   its addresses. VLANs are listed by their kernel names, such as `eth0.100`.
   The loopback and Docker's own interfaces are not listed.
-- **Default Gateway**, **DNS Servers** and **DNS Configuration**: the gateway,
-  the DNS servers and the search domains the host uses.
-- **Routes**: the host's IPv4 and IPv6 routing tables.
+- **DNS Configuration**: the DNS servers and the search domains the host uses.
+- **Routes**: the host's IPv4 and IPv6 routing tables; the default gateway is
+  the route marked default.
+- **Local names for apps**: the apps' names on the LAN (see
+  [Local names for apps](#local-names-for-apps)).
 - **Connections**: the first 50 TCP and UDP sockets of the host.
 
 What could not be read is named above the lists, with the host's message.
@@ -3160,7 +3194,7 @@ UNOS does not set up.
 
 #### Local names for apps
 
-**Add name** gives a published port of an installed app a name on the LAN,
+On **System** → **Network**, since the names reach the LAN only, **Add name** gives a published port of an installed app a name on the LAN,
 `<name>-<host name>.local` (for example `https://jellyfin-unos.local`); the app's web port is
 offered first. The host needs the package avahi-utils (`sudo apt install avahi-utils`): its unit
 `unos-app-names` announces each name with the host's address, and the web UI's Caddy forwards it
@@ -3433,9 +3467,8 @@ To set it up:
    connects to an S3 store or a REST server: one that does not answer within
    10 seconds is refused at once, and so is an SFTP server that does not take
    ssh's connection within 10 seconds; restic gets 2 minutes at most.
-4. **Add a daily copy at 03:00** adds a task of the type **Off-device Copy**
-   to **System** → **Scheduler**. Until there is one, copies run only on
-   **Run now**.
+4. Add a task of the type **Off-device Copy** in **System** → **Scheduler**
+   (the card links there). Until there is one, copies run only on **Run now**.
 
 Each copy sends the configuration (the archive that **Create Backup** makes)
 and the changes of the folders since the last copy; removes the snapshots

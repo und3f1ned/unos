@@ -9,7 +9,8 @@
 
   // What works until the in-app updater does (ADR-0234, ADR-0173): the
   // version the supervisor image was built with, the latest release, and the
-  // update script on the host. The tab has no Install Update or Rollback.
+  // update script on the host. The tab has no Install Update or Rollback. It is
+  // the one place of the version (ADR-0430).
 
   // i18n-ignore: a command, the same in every language
   const UPDATE_COMMAND = "sudo /opt/unos/deploy/update.sh";
@@ -97,12 +98,9 @@
         <p class="text-sm">{$t("updates.latest.none")}</p>
       {:else if check && release}
         {#if check.update_available}
+          <!-- The version that runs is the card above's (ADR-0430). -->
           <Alert variant="info" title={$t("updates.latest.available", { tag: release.tag_name })}>
-            <p>
-              {check.current_version === "unknown"
-                ? $t("updates.latest.youRunUnknown")
-                : $t("updates.latest.youRun", { version: check.current_version })}
-            </p>
+            <p>{$t("updates.latest.howTo")}</p>
           </Alert>
         {:else}
           <p class="text-sm">{$t("updates.latest.upToDate", { tag: release.tag_name })}</p>

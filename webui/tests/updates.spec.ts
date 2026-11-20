@@ -182,13 +182,14 @@ test.describe('Software Updates', () => {
     ]);
   });
 
-  test('General shows the same version', async ({ authenticatedPage: page }) => {
+  // The version is in Updates alone: General shows it no more (ADR-0430).
+  test('General does not show the version', async ({ authenticatedPage: page }) => {
     await fakeUpdatesApi(page, { version: 'v1.2.0-3-g712fc3a', check: checked('v1.2.0-3-g712fc3a', null, false) });
     await page.goto('/system#general');
 
-    const version = card(page, 'UNOS Version');
-    await expect(version.getByText('v1.2.0-3-g712fc3a', { exact: true })).toBeVisible();
-    await expect(version.getByText('dev', { exact: true })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'System Information' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'UNOS Version' })).toHaveCount(0);
+    await expect(page.getByText('v1.2.0-3-g712fc3a', { exact: true })).toHaveCount(0);
   });
 });
 
@@ -214,9 +215,8 @@ test.describe('Software Updates in Russian', () => {
     await expect(current.getByText('разработка', { exact: true })).toBeVisible();
     const latest = card(page, 'Последний выпуск');
     await expect(latest.getByText('Доступно обновление: v1.3.0', { exact: true })).toBeVisible();
-    await expect(
-      latest.getByText('Установлена версия v1.2.0-3-g712fc3a. Обновите её с помощью сценария ниже.', { exact: true }),
-    ).toBeVisible();
+    // The version that runs is the card above's alone (ADR-0430).
+    await expect(latest.getByText('Обновите UNOS с помощью сценария ниже.', { exact: true })).toBeVisible();
     await expect(latest.getByText('UNOS v1.3.0', { exact: true })).toBeVisible();
     await expect(latest.getByText('Опубликован 01.12.2026', { exact: true })).toBeVisible();
     await expect(latest.getByRole('link', { name: 'Открыть на GitHub' })).toHaveAttribute(
@@ -231,16 +231,10 @@ test.describe('Software Updates in Russian', () => {
     await page.locator('main nav').getByRole('button', { name: 'Общие', exact: true }).click();
     await expect(page.getByRole('heading', { name: 'Общие настройки', exact: true })).toBeVisible();
     await expect(page.getByRole('heading', { name: 'Сведения о системе', exact: true })).toBeVisible();
-    await expect(page.getByText('Имя хоста:', { exact: true })).toBeVisible();
+    await expect(page.getByText('Ядро:', { exact: true })).toBeVisible();
+    await expect(page.getByLabel('Имя хоста', { exact: true })).toBeVisible();
     // The uptime in Russian units: days, hours and minutes, as long as it is.
     await expect(page.getByText(/^(?:\d+ д \d+ ч |\d+ ч )?\d+ мин$/)).toBeVisible();
-    const version = card(page, 'Версия UNOS');
-    await expect(version.getByText('v1.2.0-3-g712fc3a', { exact: true })).toBeVisible();
-    await expect(version.getByText('разработка', { exact: true })).toBeVisible();
-    await expect(version.getByRole('link', { name: 'Проверить обновления', exact: true })).toBeVisible();
-    await expect(page.getByRole('heading', { name: 'Текущий пользователь', exact: true })).toBeVisible();
-    await expect(page.locator('main').getByText('Администратор', { exact: true })).toBeVisible();
-    await expect(page.getByRole('link', { name: 'Управление пользователями', exact: true })).toBeVisible();
     await expect(page.getByRole('heading', { name: 'General Settings' })).toHaveCount(0);
   });
 
@@ -257,28 +251,19 @@ test.describe('Software Updates in Russian', () => {
     await expect(current.getByText('unknown', { exact: true })).toBeVisible();
     await expect(current.getByText('dev', { exact: true })).toHaveCount(0);
     await expect(
-      card(page, 'Latest release').getByText('You run unknown. Update with the script below.', { exact: true }),
+      card(page, 'Latest release').getByText('Update with the script below.', { exact: true }),
     ).toBeVisible();
-    await page.locator('main nav').getByRole('button', { name: 'General', exact: true }).click();
-    await expect(card(page, 'UNOS Version').getByText('unknown', { exact: true })).toBeVisible();
-    await expect(page).toHaveURL(/#general$/);
+    await expect(card(page, 'Latest release').getByText(/unknown/)).toHaveCount(0);
 
     // As the Language card of the Account page leaves it.
     await page.evaluate(() => localStorage.setItem('unos-locale', 'ru'));
     await page.reload();
-    const version = card(page, 'Версия UNOS');
-    await expect(version.getByText('неизвестна', { exact: true })).toBeVisible();
-    await expect(version.getByText(/unknown/)).toHaveCount(0);
-
-    await page.locator('main nav').getByRole('button', { name: 'Обновления', exact: true }).click();
     const currentRu = card(page, 'Текущая версия');
     await expect(currentRu.getByText('неизвестна', { exact: true })).toBeVisible();
     await expect(currentRu.getByText('разработка', { exact: true })).toHaveCount(0);
     const latest = card(page, 'Последний выпуск');
     await expect(latest.getByText('Доступно обновление: v1.3.0', { exact: true })).toBeVisible();
-    await expect(
-      latest.getByText('Установленная версия неизвестна. Обновите UNOS с помощью сценария ниже.', { exact: true }),
-    ).toBeVisible();
+    await expect(latest.getByText('Обновите UNOS с помощью сценария ниже.', { exact: true })).toBeVisible();
     await expect(currentRu.getByText(/unknown/)).toHaveCount(0);
     await expect(latest.getByText(/unknown/)).toHaveCount(0);
   });

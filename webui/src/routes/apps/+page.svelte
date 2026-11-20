@@ -14,7 +14,7 @@
 		type ContainerResources,
 		type InstalledApp
 	} from '$lib/api/apps';
-	import { Package, Download, RefreshCw, Grid3X3, CheckCircle2 } from 'lucide-svelte';
+	import { Package, RefreshCw, Grid3X3, CheckCircle2 } from 'lucide-svelte';
 	import { Button, Alert, EmptyState } from '$lib/components/ui';
 	import {
 		AppCatalog,
@@ -176,9 +176,8 @@
 		<div class="min-w-0">
 			<h1 class="page-title">{$t('apps.title')}</h1>
 			<p class="page-subtitle">
-				{#if data.catalogState === 'loaded' && data.installedState === 'loaded'}
-					{$t('apps.summary', { available: data.availableCount, installed: data.installed.length })}
-				{:else if data.catalogState === 'loaded'}
+				<!-- The installed apps are counted by their tab (ADR-0430). -->
+				{#if data.catalogState === 'loaded'}
 					{$t('apps.summaryAvailable', { available: data.availableCount })}
 				{/if}
 			</p>
@@ -248,15 +247,8 @@
 		{:else if data.installedState === 'failed'}
 			<!-- The error above says why nothing is listed. -->
 		{:else if data.installed.length === 0}
-			<EmptyState
-				icon={Package}
-				title={$t('apps.noneInstalled')}
-				description={$t('apps.noneInstalledHint')}
-			>
-				<Button variant="primary" onclick={() => (activeTab = 'catalog')} icon={Download}>
-					{$t('apps.browseCatalog')}
-				</Button>
-			</EmptyState>
+			<!-- The Catalog is the tab beside this one: no second way there (ADR-0430). -->
+			<EmptyState icon={Package} title={$t('apps.noneInstalled')} description={$t('apps.noneInstalledHint')} />
 		{:else}
 			<div class="space-y-4">
 				{#each data.installed as app}

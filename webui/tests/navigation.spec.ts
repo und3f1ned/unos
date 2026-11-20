@@ -2,7 +2,7 @@ import type { Page } from '@playwright/test';
 import { test, expect } from './fixtures';
 
 // Links of the sidebar menu. The pages link to each other too (e.g. the
-// dashboard widgets' "Manage →" links to /storage and /containers).
+// dashboard widgets' "Manage →" links to /storage and /containers, each widget's one link).
 const sidebarLink = (page: Page, href: string) => page.locator(`aside nav a[href="${href}"]`);
 
 test.describe('Navigation', () => {
@@ -51,8 +51,9 @@ test.describe('Navigation', () => {
     await expect(page.getByRole('heading', { level: 1, name: 'System', exact: true })).toBeVisible();
     const tabs = page.getByRole('navigation', { name: 'System', exact: true });
     const groups: [string, string[]][] = [
-      ['Settings', ['General', 'Network', 'Remote Access', 'Security']],
-      ['Monitoring', ['Resource Monitor', 'System Logs', 'Disk Health', 'Notifications']],
+      // Notifications, the configuration of channels, is a setting (ADR-0430).
+      ['Settings', ['General', 'Network', 'Remote Access', 'Security', 'Notifications']],
+      ['Monitoring', ['Resource Monitor', 'System Logs', 'Disk Health']],
       ['Maintenance', ['Updates', 'Backup & Restore', 'Scheduler', 'Power Management']],
     ];
     for (const [label, names] of groups) {

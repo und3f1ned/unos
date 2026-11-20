@@ -10,7 +10,7 @@ import { apiLogin, createAccount, deleteAccount, type Account } from './accounts
 const LAYOUT_API = '/api/v1/auth/me/dashboard-layout';
 /** The widgets of an administrator in their default order, as data-widget names them. */
 const DEFAULT_ORDER = [
-  'cpu', 'memory', 'network', 'disk-io', 'temperature', 'storage', 'containers', 'quick-actions', 'recent-activity',
+  'cpu', 'memory', 'network', 'disk-io', 'temperature', 'storage', 'containers', 'recent-activity',
 ];
 /** What a regular user sees: the stats cards alone (ADR-0030). */
 const USER_ORDER = DEFAULT_ORDER.slice(0, 5);
@@ -79,7 +79,7 @@ test.describe('Dashboard layout', () => {
     await expect(customize(page)).toHaveCount(0); // the button now says Done
     await widget(page, 'disk-io').locator('[data-drag-handle]').dragTo(widget(page, 'cpu'));
 
-    const arranged = ['disk-io', 'cpu', 'memory', 'network', 'temperature', 'storage', 'containers', 'quick-actions', 'recent-activity'];
+    const arranged = ['disk-io', 'cpu', 'memory', 'network', 'temperature', 'storage', 'containers', 'recent-activity'];
     await expectOrder(page, arranged);
     await expect.poll(async () => (await savedLayout(page)).map((w) => w.id)).toEqual(arranged);
 
@@ -89,7 +89,7 @@ test.describe('Dashboard layout', () => {
     await customize(page).click();
     await widget(page, 'recent-activity').locator('[data-drag-handle]').dragTo(widget(page, 'storage'));
     await page.reload();
-    await expectOrder(page, ['disk-io', 'cpu', 'memory', 'network', 'temperature', 'recent-activity', 'storage', 'containers', 'quick-actions']);
+    await expectOrder(page, ['disk-io', 'cpu', 'memory', 'network', 'temperature', 'recent-activity', 'storage', 'containers']);
   });
 
   test('dropping a widget where it is sends nothing', async ({ authenticatedPage: page }) => {
@@ -112,28 +112,28 @@ test.describe('Dashboard layout', () => {
     const down = page.getByRole('button', { name: 'Move Memory down' });
     await down.focus();
     await page.keyboard.press('Enter');
-    await expectOrder(page, ['cpu', 'network', 'memory', 'disk-io', 'temperature', 'storage', 'containers', 'quick-actions', 'recent-activity']);
+    await expectOrder(page, ['cpu', 'network', 'memory', 'disk-io', 'temperature', 'storage', 'containers', 'recent-activity']);
     await expect(page.getByRole('button', { name: 'Move Memory down' })).toBeFocused();
-    await expect(page.locator('[data-layout-status]')).toHaveText('Memory moved to position 3 of 9');
+    await expect(page.locator('[data-layout-status]')).toHaveText('Memory moved to position 3 of 8');
     await page.keyboard.press('Space');
-    await expectOrder(page, ['cpu', 'network', 'disk-io', 'memory', 'temperature', 'storage', 'containers', 'quick-actions', 'recent-activity']);
+    await expectOrder(page, ['cpu', 'network', 'disk-io', 'memory', 'temperature', 'storage', 'containers', 'recent-activity']);
 
     // The controls are disabled while the move before is saved: a disabled button takes no focus.
     await expect(page.getByRole('button', { name: 'Move Memory up' })).toBeEnabled();
     await page.getByRole('button', { name: 'Move Memory up' }).focus();
     await page.keyboard.press('Enter');
-    await expectOrder(page, ['cpu', 'network', 'memory', 'disk-io', 'temperature', 'storage', 'containers', 'quick-actions', 'recent-activity']);
+    await expectOrder(page, ['cpu', 'network', 'memory', 'disk-io', 'temperature', 'storage', 'containers', 'recent-activity']);
     await expect(page.getByRole('button', { name: 'Move Memory up' })).toBeFocused();
 
     await page.reload();
-    await expectOrder(page, ['cpu', 'network', 'memory', 'disk-io', 'temperature', 'storage', 'containers', 'quick-actions', 'recent-activity']);
+    await expectOrder(page, ['cpu', 'network', 'memory', 'disk-io', 'temperature', 'storage', 'containers', 'recent-activity']);
   });
 
   test('the first widget of the page moves down past the last one it was moved over, and the last moves up', async ({ authenticatedPage: page }) => {
     await openArranging(page);
     await page.getByRole('button', { name: 'Move CPU down' }).click();
     await page.getByRole('button', { name: 'Move Recent Activity up' }).click();
-    await expectOrder(page, ['memory', 'cpu', 'network', 'disk-io', 'temperature', 'storage', 'containers', 'recent-activity', 'quick-actions']);
+    await expectOrder(page, ['memory', 'cpu', 'network', 'disk-io', 'temperature', 'storage', 'recent-activity', 'containers']);
   });
 
   // Step 2: hide a widget, and show it again.
@@ -153,11 +153,11 @@ test.describe('Dashboard layout', () => {
     await customize(page).click();
     // The cards that follow keep their order: Move down skips what is hidden.
     await page.getByRole('button', { name: 'Move Memory down' }).click();
-    await expectOrder(page, ['cpu', 'disk-io', 'memory', 'temperature', 'storage', 'containers', 'quick-actions', 'recent-activity']);
+    await expectOrder(page, ['cpu', 'disk-io', 'memory', 'temperature', 'storage', 'containers', 'recent-activity']);
 
     await page.getByRole('button', { name: 'Show Network' }).click();
     await expect(page.getByRole('button', { name: 'Move Network up' })).toBeFocused();
-    await expectOrder(page, ['cpu', 'network', 'disk-io', 'memory', 'temperature', 'storage', 'containers', 'quick-actions', 'recent-activity']);
+    await expectOrder(page, ['cpu', 'network', 'disk-io', 'memory', 'temperature', 'storage', 'containers', 'recent-activity']);
     await expect(page.getByText('No hidden widgets')).toBeVisible();
     await page.reload();
     await expect(widget(page, 'network')).toBeVisible();
@@ -166,11 +166,11 @@ test.describe('Dashboard layout', () => {
 
   test('every widget can be hidden, and the page says how to bring them back', async ({ authenticatedPage: page }) => {
     await openArranging(page);
-    for (const name of ['CPU', 'Memory', 'Network', 'Disk I/O', 'Temperature', 'Storage Pools', 'Containers', 'Quick Actions', 'Recent Activity']) {
+    for (const name of ['CPU', 'Memory', 'Network', 'Disk I/O', 'Temperature', 'Storage Pools', 'Containers', 'Recent Activity']) {
       await page.getByRole('button', { name: `Hide ${name}`, exact: true }).click();
     }
     await expectOrder(page, []);
-    await expect(page.getByRole('region', { name: 'Hidden widgets' }).getByRole('button', { name: /^Show / })).toHaveCount(9);
+    await expect(page.getByRole('region', { name: 'Hidden widgets' }).getByRole('button', { name: /^Show / })).toHaveCount(8);
     await page.reload();
     await expectOrder(page, []);
     await expect(customize(page)).toBeVisible();
@@ -181,7 +181,7 @@ test.describe('Dashboard layout', () => {
     await expect(page.getByRole('button', { name: 'Reset to default' })).toBeDisabled();
     await page.getByRole('button', { name: 'Move Memory down' }).click();
     await page.getByRole('button', { name: 'Hide Temperature' }).click();
-    await expectOrder(page, ['cpu', 'network', 'memory', 'disk-io', 'storage', 'containers', 'quick-actions', 'recent-activity']);
+    await expectOrder(page, ['cpu', 'network', 'memory', 'disk-io', 'storage', 'containers', 'recent-activity']);
 
     await page.getByRole('button', { name: 'Reset to default' }).click();
 
@@ -203,7 +203,7 @@ test.describe('Dashboard layout', () => {
     expect(saved.ok()).toBe(true);
 
     await page.goto('/');
-    await expectOrder(page, ['storage', 'cpu', 'memory', 'disk-io', 'temperature', 'containers', 'quick-actions', 'recent-activity']);
+    await expectOrder(page, ['storage', 'cpu', 'memory', 'disk-io', 'temperature', 'containers', 'recent-activity']);
     await customize(page).click();
     // Only widgets that exist are listed as hidden.
     await expect(page.getByRole('region', { name: 'Hidden widgets' }).getByRole('button', { name: /^Show / })).toHaveText(['Show Network']);
@@ -241,7 +241,7 @@ test.describe('Dashboard layout', () => {
 
     await page.clock.fastForward('02:00');
     await page.getByRole('button', { name: 'Move Memory down' }).click();
-    await expectOrder(page, ['cpu', 'network', 'memory', 'disk-io', 'temperature', 'storage', 'containers', 'quick-actions', 'recent-activity']);
+    await expectOrder(page, ['cpu', 'network', 'memory', 'disk-io', 'temperature', 'storage', 'containers', 'recent-activity']);
     await page.clock.fastForward('02:00');
 
     expect(requests).toEqual(['PUT']);

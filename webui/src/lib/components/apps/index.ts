@@ -8,5 +8,4 @@ export { default as AppResources } from './AppResources.svelte';
 export { default as AppLimitsDialog } from './AppLimitsDialog.svelte';
 export { default as AppCatalog } from './AppCatalog.svelte';
 export { default as AppCatalogCard } from './AppCatalogCard.svelte';
-export { default as AppRunningDot } from './AppRunningDot.svelte';
 export { default as InstalledAppCard } from './InstalledAppCard.svelte';

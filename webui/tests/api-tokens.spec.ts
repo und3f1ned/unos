@@ -321,7 +321,7 @@ signedIn.describe('API tokens on the Account page', () => {
     authenticatedPage: page,
     request,
   }) => {
-    await page.goto('/system#security');
+    await page.goto('/account#security');
     const name = `${prefix}-reader`;
     const token = await makeInDialog(page, name, async (dialog) => {
       await expect(dialog.getByRole('radio', { name: /^Read only/ })).toBeChecked();
@@ -345,7 +345,7 @@ signedIn.describe('API tokens on the Account page', () => {
     authenticatedPage: page,
     request,
   }) => {
-    await page.goto('/system#security');
+    await page.goto('/account#security');
     const name = `${prefix}-audit`;
     const token = await makeInDialog(page, name, async (dialog) => {
       await dialog.getByRole('radio', { name: /^Read and change/ }).check();
@@ -376,7 +376,7 @@ signedIn.describe('API tokens on the Account page', () => {
   });
 
   signedIn('a token is disabled, enabled and deleted on the page', async ({ authenticatedPage: page, request }) => {
-    await page.goto('/system#security');
+    await page.goto('/account#security');
     const name = `${prefix}-lifecycle`;
     const token = await makeInDialog(page, name, async () => {});
     const row = tokensCard(page).getByRole('listitem', { name });

@@ -229,7 +229,7 @@ test.describe('Containers without Docker (stand-in)', () => {
     await expect(page.locator('.alert').getByText(NO_DOCKER_ANSWER)).toBeVisible();
     // The error alone: no counts of 0, search, empty list or Create button.
     const panel = page.getByRole('tabpanel', { name: 'Containers' });
-    await expect(panel.getByRole('button', { name: /^Running/ })).toHaveCount(0);
+    await expect(panel.getByText('Running', { exact: true })).toHaveCount(0);
     await expect(panel.getByPlaceholder('Search containers...')).toHaveCount(0);
     await expect(page.getByText('No containers found')).toHaveCount(0);
     await expect(page.getByRole('button', { name: 'Create Container' })).toHaveCount(0);
@@ -642,15 +642,16 @@ test.describe('Several containers at once', () => {
     await expect(page.getByText('Stopping e2e-web (1 of 2)')).toBeVisible();
     await expect.poll(() => gates.length).toBe(1);
     expect(posts(requests)).toEqual([`POST /api/v1/containers/${WEB.id}/stop`]);
-    // Nothing else is started while it runs: not from the bar, a row or the drawer.
+    // Nothing else is started while it runs: not from the bar or a row. The drawer has no actions:
+    // a container's are its row's (ADR-0430).
     await expect(button(page, 'Start selected')).toBeDisabled();
     await expect(checkbox(page, 'e2e-db')).toBeDisabled();
     await expect(rowOf(page, 'e2e-db').getByRole('button', { name: 'Start', exact: true })).toBeDisabled();
     await expect(rowOf(page, 'e2e-db').getByRole('button', { name: 'Remove', exact: true })).toBeDisabled();
     await rowOf(page, 'e2e-db').getByText('e2e-db').click();
     const drawer = page.getByRole('dialog', { name: 'e2e-db' });
-    await expect(drawer.getByRole('button', { name: 'Start', exact: true })).toBeDisabled();
-    await expect(drawer.getByRole('button', { name: 'Remove', exact: true })).toBeDisabled();
+    await expect(drawer.getByRole('button', { name: 'Start', exact: true })).toHaveCount(0);
+    await expect(drawer.getByRole('button', { name: 'Remove', exact: true })).toHaveCount(0);
     await page.keyboard.press('Escape');
     await expect(drawer).toBeHidden();
     gates.shift()!();

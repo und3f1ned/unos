@@ -9,7 +9,7 @@
   import { toggled } from "$lib/components/files/selection";
   import { Alert, Button, Card, EmptyState, Modal } from "$lib/components/ui";
   import { t } from "$lib/i18n";
-  import { ArrowLeft, RefreshCw, RotateCcw, Trash, Trash2 } from "lucide-svelte";
+  import { RefreshCw, RotateCcw, Trash, Trash2 } from "lucide-svelte";
 
   let items = $state.raw<TrashItem[]>([]);
   let retentionDays: number | null = $state(null);
@@ -125,7 +125,6 @@
       </p>
     </div>
     <div class="page-actions">
-      <Button variant="secondary" icon={ArrowLeft} href="/files">{$t("files.trash.files")}</Button>
       <!-- The span shows the tooltip over the button and its text for screen readers. -->
       <span class="flex" title={$t("common.refresh")}>
         <Button variant="secondary" size="icon" disabled={loading} onclick={load}>

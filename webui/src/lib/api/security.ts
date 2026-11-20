@@ -146,15 +146,22 @@ export interface SelfSignedCertRequest {
 }
 
 // Login History API
+/**
+ * The sign-in attempts the caller may see, newest first. `mine`: only the caller's own, as a
+ * regular user always gets them (the Account page, ADR-0430); an administrator gets every
+ * account's without it.
+ */
 export async function getLoginHistory(
   limit: number = 50,
   offset: number = 0,
   username?: string,
-  success?: boolean
+  success?: boolean,
+  mine: boolean = false
 ): Promise<LoginHistoryResponse> {
   let path = `/security/login-history?limit=${limit}&offset=${offset}`;
   if (username) path += `&username=${encodeURIComponent(username)}`;
   if (success !== undefined) path += `&success=${success}`;
+  if (mine) path += "&mine=true";
   return api.get<LoginHistoryResponse>(path);
 }
 

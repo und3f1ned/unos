@@ -99,7 +99,7 @@ test.describe('Two-factor authentication', () => {
     test.setTimeout(4 * TOTP_STEP_MS + 60_000);
     await submitPassword(page);
     await expect(page).toHaveURL('/');
-    await page.goto('/system#security');
+    await page.goto('/account#security');
     const card = page.locator('div:has(> h3:has-text("Two-Factor Authentication"))');
     await expect(card.getByText('Disabled', { exact: true })).toBeVisible();
 
@@ -181,7 +181,7 @@ test.describe('Two-factor authentication', () => {
 
     // Step 5: in the session of step 3, a code of a newer step turns two-factor authentication off.
     await useSessionCookie(page, session, key);
-    await page.goto('/system#security');
+    await page.goto('/account#security');
     await expect(card.getByText('Enabled', { exact: true })).toBeVisible();
     await card.getByRole('button', { name: 'Disable', exact: true }).click();
     const disable = page.locator('div:has(> h3:has-text("Disable Two-Factor Authentication"))');

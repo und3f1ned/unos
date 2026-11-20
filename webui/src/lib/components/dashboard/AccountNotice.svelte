@@ -3,7 +3,8 @@
 	import { Card } from '$lib/components/ui';
 	import { t } from '$lib/i18n';
 
-	// A regular account's dashboard (ADR-0030): who is signed in, and where the account is managed.
+	// A regular account's dashboard (ADR-0030): who is signed in, and where the account is managed, a
+	// summary that links to the Account page (ADR-0430).
 
 	type Props = {
 		username: string;
@@ -22,7 +23,7 @@
 			<p class="text-sm text-secondary">
 				{$t('dashboard.user.managed')}
 				{$t('dashboard.user.account')}
-				<a href="/system#security" class="link">{$t('dashboard.user.accountLink')}</a>.
+				<a href="/account" class="link">{$t('dashboard.user.accountLink')}</a>.
 			</p>
 		</div>
 	</div>

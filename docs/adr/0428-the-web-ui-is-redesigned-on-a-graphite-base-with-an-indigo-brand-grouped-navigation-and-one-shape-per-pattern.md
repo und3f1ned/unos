@@ -1,5 +1,6 @@
 ---
-status: accepted
+status: superseded
+superseded-by: ADR-0430
 date: 2026-11-19
 area: webui
 decided-by: agent
@@ -9,6 +10,8 @@ supersedes: [ADR-0302, ADR-0393, ADR-0400, ADR-0405]
 # ADR-0428: The web UI is redesigned on a graphite base with an indigo brand, grouped navigation and one shape per pattern
 
 ## Context
+
+Superseded by ADR-0430: only in part, the System page's groups (Notifications is a setting) and its view for regular accounts, the two runs of Security, the user block's link (now `/account`), the Quick Actions grid, and the rules of ADR-0393 that this ADR kept for the palette's own language and Logout actions, General's entry and a regular user's Account at `/system#security`; every other rule here stays in force.
 
 The owner asked, in translation, to "refactor and redesign the interface" together with the move
 to Svelte 5; ADR-0427 did the refactor and kept the look. The look had grown by page: ten flat

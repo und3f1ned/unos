@@ -6,7 +6,6 @@
 	import type { WebSocketStats } from '$lib/stores/stats';
 	import {
 		ContainersWidget,
-		QuickActionsWidget,
 		RecentActivityWidget,
 		StorageWidget,
 		SystemStatsWidget
@@ -75,8 +74,6 @@
 	<StorageWidget pools={poolsForWidget} />
 {:else if id === 'containers'}
 	<ContainersWidget containers={containersForWidget} limit={5} />
-{:else if id === 'quick-actions'}
-	<QuickActionsWidget />
 {:else if id === 'recent-activity'}
 	<RecentActivityWidget notifications={notificationsForWidget} limit={5} />
 {:else if stats}

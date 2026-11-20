@@ -1,5 +1,6 @@
 ---
-status: accepted
+status: superseded
+superseded-by: ADR-0430
 date: 2026-11-17
 area: webui
 decided-by: agent
@@ -8,6 +9,8 @@ decided-by: agent
 # ADR-0395: Each user arranges, hides and shows the dashboard's widgets, and the server keeps the layout
 
 ## Context
+
+Superseded by ADR-0430: only in part, the widget `quick-actions`, which repeated the sidebar's links and is gone; every other rule here stays in force.
 
 The entry `webui.dashboard-layout` says that a user arranges, hides and shows the dashboard's
 widgets, and that a dragged widget stays where it was put after a reload. The dashboard was a fixed

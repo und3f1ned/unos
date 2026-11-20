@@ -545,7 +545,7 @@ class KeyRefused(Exception):
         super().__init__(detail)
         self.detail = detail          # the answer's
         self.reason = reason          # the login history's
-        self.audit = audit            # a warning for the audit log, for a key that may be copied
+        self.audit = audit            # the audit log's, for a key that may be copied; else reason
 
 
 def _invalid() -> KeyRefused:

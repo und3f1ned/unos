@@ -8,7 +8,7 @@ import { test, expect } from './fixtures';
 // of the widgets comes from a fake of its API, so that the administrator's own stays as it is.
 
 const WIDGETS = [
-  'cpu', 'memory', 'network', 'disk-io', 'temperature', 'storage', 'containers', 'quick-actions', 'recent-activity',
+  'cpu', 'memory', 'network', 'disk-io', 'temperature', 'storage', 'containers', 'recent-activity',
 ];
 
 /** A problem of the kind pool_degraded, as the server words it (supervisor/src/health/problems.py). */

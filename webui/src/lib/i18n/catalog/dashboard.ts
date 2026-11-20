@@ -90,9 +90,8 @@ export const en = {
 	'dashboard.containers.runningCount': '{n} running',
 	'dashboard.containers.stoppedCount': '{n} stopped',
 	'dashboard.containers.none': 'No containers found',
-	'dashboard.containers.create': 'Create your first container',
 	'dashboard.containers.open': 'Open',
-	'dashboard.containers.viewAll': 'View all {n} containers →',
+	'dashboard.containers.shown': { one: '{shown} of {n} container shown', other: '{shown} of {n} containers shown' },
 	// A container's state, as Docker names it (ContainerState of supervisor/src/containers/schemas.py).
 	'dashboard.containers.state.running': 'running',
 	'dashboard.containers.state.exited': 'exited',
@@ -101,12 +100,6 @@ export const en = {
 	'dashboard.containers.state.restarting': 'restarting',
 	'dashboard.containers.state.created': 'created',
 	'dashboard.containers.state.dead': 'dead',
-
-	'dashboard.actions.title': 'Quick Actions',
-	'dashboard.actions.files': 'File Browser',
-	'dashboard.actions.shares': 'Manage Shares',
-	'dashboard.actions.apps': 'App Store',
-	'dashboard.actions.settings': 'Settings',
 
 	'dashboard.activity.title': 'Recent Activity',
 	'dashboard.activity.viewAll': 'View all',
@@ -214,9 +207,12 @@ export const ru: Translation<typeof en> = {
 	'dashboard.containers.runningCount': 'Работают: {n}',
 	'dashboard.containers.stoppedCount': 'Остановлены: {n}',
 	'dashboard.containers.none': 'Контейнеры не найдены',
-	'dashboard.containers.create': 'Создайте первый контейнер',
 	'dashboard.containers.open': 'Открыть',
-	'dashboard.containers.viewAll': 'Показать все контейнеры ({n}) →',
+	'dashboard.containers.shown': {
+		one: 'Показаны {shown} из {n} контейнера',
+		few: 'Показаны {shown} из {n} контейнеров',
+		many: 'Показаны {shown} из {n} контейнеров'
+	},
 	'dashboard.containers.state.running': 'работает',
 	'dashboard.containers.state.exited': 'остановлен',
 	'dashboard.containers.state.stopped': 'остановлен',
@@ -224,12 +220,6 @@ export const ru: Translation<typeof en> = {
 	'dashboard.containers.state.restarting': 'перезапускается',
 	'dashboard.containers.state.created': 'создан',
 	'dashboard.containers.state.dead': 'неисправен',
-
-	'dashboard.actions.title': 'Быстрые действия',
-	'dashboard.actions.files': 'Файловый менеджер',
-	'dashboard.actions.shares': 'Общие папки',
-	'dashboard.actions.apps': 'Магазин приложений',
-	'dashboard.actions.settings': 'Настройки',
 
 	'dashboard.activity.title': 'Последние события',
 	'dashboard.activity.viewAll': 'Показать все',

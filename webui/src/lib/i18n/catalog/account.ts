@@ -1,12 +1,12 @@
 import type { Translation } from '../translate';
 
-// The Account page: System > Security for an administrator, Account for a regular user
-// (src/routes/system/tabs/SecurityTab.svelte and src/lib/components/account/).
+// The Account page, every account's own settings (src/routes/account/ and
+// src/lib/components/account/, ADR-0430), and the certificates of System > Security.
 
 export const en = {
-	'account.title': 'Security Settings',
-	'account.group.mine': 'Your account',
-	'account.group.nas': 'This NAS',
+	'account.tabs.security': 'Sign-in and security',
+	'account.tabs.sharing': 'File sharing',
+	'account.tabs.appearance': 'Appearance and language',
 
 	'account.language.title': 'Language',
 	'account.language.label': 'Interface language',
@@ -91,7 +91,7 @@ export const en = {
 		'with your UNOS password. Changing your UNOS password changes it for SMB too and ends your open SMB connections.',
 	'account.smb.notOn': 'SMB was not turned on',
 	'account.smb.passwordRule':
-		'Change your password above (Change Password) so that it meets this rule, then turn SMB on.',
+		'Change your password under Sign-in and security (Change Password) so that it meets this rule, then turn SMB on.',
 	'account.smb.shares': 'Shares you can use',
 	'account.smb.noShares': 'No shares yet. Ask an administrator for access.',
 	'account.smb.name': 'Name',
@@ -197,9 +197,9 @@ export const en = {
 };
 
 export const ru: Translation<typeof en> = {
-	'account.title': 'Настройки безопасности',
-	'account.group.mine': 'Ваша учётная запись',
-	'account.group.nas': 'Этот NAS',
+	'account.tabs.security': 'Вход и безопасность',
+	'account.tabs.sharing': 'Общий доступ к файлам',
+	'account.tabs.appearance': 'Оформление и язык',
 
 	'account.language.title': 'Язык',
 	'account.language.label': 'Язык интерфейса',
@@ -291,7 +291,7 @@ export const ru: Translation<typeof en> = {
 		'с паролем UNOS. Смена пароля UNOS меняет и пароль SMB и закрывает ваши открытые подключения по SMB.',
 	'account.smb.notOn': 'SMB не включён',
 	'account.smb.passwordRule':
-		'Смените пароль выше (раздел «Смена пароля»), чтобы он отвечал этому правилу, затем включите SMB.',
+		'Смените пароль на вкладке «Вход и безопасность» (раздел «Смена пароля»), чтобы он отвечал этому правилу, затем включите SMB.',
 	'account.smb.shares': 'Доступные вам общие папки',
 	'account.smb.noShares': 'Общих папок пока нет. Попросите доступ у администратора.',
 	'account.smb.name': 'Имя',

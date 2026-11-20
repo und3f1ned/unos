@@ -2,6 +2,7 @@
 	import { Cpu, HardDrive, MemoryStick, Network, Thermometer } from 'lucide-svelte';
 	import { Card, ProgressBar } from '$lib/components/ui';
 	import { t } from '$lib/i18n';
+	import { isAdmin } from '$lib/stores/auth';
 	import { formatBytes } from './bytes';
 
 	type Props = {
@@ -76,10 +77,17 @@
 	<!-- A stat tile (ADR-0428): an icon chip in the widget's accent, the label and a context word;
 	     the value in the text's colour in the normal range (the class text-success stays) and in
 	     the status colour above the thresholds; a thin meter, or the rates with a plain arrow. -->
-	{#snippet header(Icon: typeof Cpu, chip: string, label: string, context: string)}
+	<!-- CPU, memory, network and disk I/O summarize System > Resource Monitor, where an
+	     administrator follows them: the label links there (ADR-0430). The temperature is shown here
+	     alone. -->
+	{#snippet header(Icon: typeof Cpu, chip: string, label: string, context: string, home = '/system#monitor')}
 		<div class="stat-card-header">
 			<span class="stat-chip {chip}" aria-hidden="true"><Icon class="w-4 h-4" /></span>
-			<span class="stat-card-label">{label}</span>
+			{#if $isAdmin && home}
+				<a href={home} class="stat-card-label hover:underline">{label}</a>
+			{:else}
+				<span class="stat-card-label">{label}</span>
+			{/if}
 			{#if context}<span class="stat-card-context">{context}</span>{/if}
 		</div>
 	{/snippet}
@@ -137,7 +145,7 @@
 		<!-- Temperature, its meter against 90 °C -->
 		{#if only === 'temperature'}
 		<Card padding="sm" class="stat-card">
-			{@render header(Thermometer, 'chip-temperature', $t('dashboard.stats.temperature'), '')}
+			{@render header(Thermometer, 'chip-temperature', $t('dashboard.stats.temperature'), '', '')}
 			{#if temperature !== null}
 				<p class="stat-card-value {getTempColor(temperature)}">{$t('dashboard.celsius', { value: temperature })}</p>
 				<ProgressBar

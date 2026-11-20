@@ -1,15 +1,13 @@
-// What System > Network reads from the host (ADR-0244): the interfaces, DNS, the default gateway,
-// the routes and the sockets, each part with its own error, so that one that fails leaves the
+// What System > Network reads from the host (ADR-0244): the interfaces, DNS, the routes (the
+// default gateway among them, ADR-0430) and the sockets, each part with its own error, so that one that fails leaves the
 // others shown. The page creates it and reads it again on Refresh and after a change.
 import {
   getConnections,
-  getDefaultGateway,
   getDNSConfig,
   getInterfaces,
   getRoutes,
   type Connection,
   type DNSConfig,
-  type GatewayInfo,
   type NetworkInterface,
   type Route,
 } from "$lib/api/network";
@@ -18,7 +16,6 @@ import { messageOf, without } from "./network";
 export class NetworkData {
   interfaces = $state<NetworkInterface[]>([]);
   dnsConfig = $state<DNSConfig | null>(null);
-  gateway = $state<GatewayInfo | null>(null);
   routes = $state<Route[]>([]);
   connections = $state<Connection[]>([]);
   // What could not be loaded: part of the page (a key of the page's PARTS) -> the server's message.
@@ -50,7 +47,6 @@ export class NetworkData {
     await Promise.all([
       this.loadInterfaces(),
       this.#load("dns", async () => { this.dnsConfig = await getDNSConfig(); }),
-      this.#load("gateway", async () => { this.gateway = await getDefaultGateway(); }),
       this.#load("routes", async () => { this.routes = (await getRoutes()).routes; }),
       this.loadConnections(),
     ]);

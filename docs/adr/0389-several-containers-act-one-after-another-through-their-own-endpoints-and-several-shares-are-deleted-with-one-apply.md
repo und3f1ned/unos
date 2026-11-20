@@ -1,5 +1,6 @@
 ---
-status: accepted
+status: superseded
+superseded-by: ADR-0430
 date: 2026-11-17
 area: webui
 decided-by: agent
@@ -8,6 +9,8 @@ decided-by: agent
 # ADR-0389: Several containers act one after another through their own endpoints, and several shares are deleted with one request and one apply
 
 ## Context
+
+Superseded by ADR-0430: only in part, the drawer's actions: the container drawer has none, a container's actions are its row's; every other rule here stays in force.
 
 Feature `webui.bulk-actions` lets an administrator select several containers and start, stop or
 restart them, and select several shares and delete them after one question. The owner delegated

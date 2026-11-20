@@ -16,12 +16,12 @@
   import DnsDetails from "$lib/components/network/DnsDetails.svelte";
   import InterfaceCard from "$lib/components/network/InterfaceCard.svelte";
   import { labelOf, messageOf, without } from "$lib/components/network/network";
-  import NetworkSummary from "$lib/components/network/NetworkSummary.svelte";
   import PendingDisables from "$lib/components/network/PendingDisables.svelte";
   import RoutesTable from "$lib/components/network/RoutesTable.svelte";
   import VirtualInterfacesCard from "$lib/components/network/VirtualInterfacesCard.svelte";
+  import AppNamesCard from "$lib/components/remote/AppNamesCard.svelte";
   import { t } from "$lib/i18n";
-  import { stats, wsConnected, type NetworkInterface as WSNetworkInterface } from "$lib/stores/stats";
+  import { stats, type NetworkInterface as WSNetworkInterface } from "$lib/stores/stats";
   import { Network, Cable, RefreshCw, Router, Activity } from "lucide-svelte";
 
   // Once the time to keep a disable has run out, the page reads the interfaces
@@ -38,7 +38,6 @@
   const PARTS: Record<string, string> = {
     interfaces: "network.interfaces",
     dns: "network.dns",
-    gateway: "network.gateway",
     routes: "network.routes",
     connections: "network.connections",
   };
@@ -259,10 +258,8 @@
       <Network class="w-6 h-6 icon-network" />
       {$t("network.title")}
     </h2>
+    <!-- Whether the live traffic comes is the sidebar's connection line (ADR-0430). -->
     <div class="flex items-center gap-2">
-      {#if $wsConnected}
-        <span class="text-xs text-status-success">{$t("network.live")}</span>
-      {/if}
       <Button variant="secondary" size="icon" icon={RefreshCw} loading={net.loading} onclick={() => net.loadAll()}>
         <span class="sr-only">{$t("common.refresh")}</span>
       </Button>
@@ -287,9 +284,6 @@
   {#if countdowns.length > 0}
     <PendingDisables bind:this={pendingList} {countdowns} {now} {busy} onkeep={keep} />
   {/if}
-
-  <!-- Summary Cards -->
-  <NetworkSummary gateway={net.gateway} dnsConfig={net.dnsConfig} connectionCount={net.connections.length} />
 
   <!-- Views -->
   <div class="flex flex-wrap gap-2 border-b border-border pb-2">
@@ -339,10 +333,14 @@
     <ConnectionsTable connections={net.connections} onrefresh={() => net.loadConnections()} />
   {/if}
 
-  <!-- DNS Details -->
-  {#if net.dnsConfig && (net.dnsConfig.nameservers?.length > 1 || net.dnsConfig.search_domains?.length)}
+  <!-- The host's name servers and search domains: their one place (ADR-0430). The default gateway
+       is the default route of Routes, the number of sockets the head of Connections. -->
+  {#if net.dnsConfig}
     <DnsDetails dnsConfig={net.dnsConfig} />
   {/if}
+
+  <!-- The apps' names on the LAN (ADR-0420), which reach the LAN only: no remote access. -->
+  <AppNamesCard />
 </div>
 
 <!-- Disable asks first: the connection to UNOS may go through the interface (ADR-0244) -->

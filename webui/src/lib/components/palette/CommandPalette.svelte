@@ -1,17 +1,16 @@
 <script lang="ts">
-	// The command palette (ADR-0393): Ctrl+K, or Cmd+K, opens it over a signed-in page; its field
-	// narrows the pages and actions of the user's role, and Enter opens the chosen page or starts
-	// the chosen action. It acts itself only where nothing on the NAS changes (the language of this
-	// browser, Logout); every other action opens its page's own dialog, which asks first. It asks
-	// the server for nothing: its choices come from the role the layout has already loaded and from
-	// the catalogs.
+	// The command palette (ADR-0393, ADR-0430): Ctrl+K, or Cmd+K, opens it over a signed-in page;
+	// its field narrows the places of the user's role, and Enter opens the chosen page or tab, or
+	// the page's own dialog of an action, which asks first. It changes nothing itself and asks the
+	// server for nothing: its choices come from the role the layout has already loaded and from the
+	// catalogs.
 	import { tick, untrack } from 'svelte';
 	import { get } from 'svelte/store';
 	import { afterNavigate, goto } from '$app/navigation';
 	import { Input, Modal, type IconComponent } from '$lib/components/ui';
-	import { locale, t } from '$lib/i18n';
+	import { t } from '$lib/i18n';
 	import { paletteRequest } from '$lib/stores/palette';
-	import { ADMIN_ACTIONS, ADMIN_PAGES, inEveryLanguage, ownActions, USER_PAGES, type Run } from './choices';
+	import { ADMIN_ACTIONS, ADMIN_PAGES, inEveryLanguage, USER_PAGES, type Run } from './choices';
 	import { dialogOpen, isShortcut, keptByTheField } from './keys';
 	import { narrow, type Findable } from './match';
 
@@ -20,11 +19,9 @@
 		enabled?: boolean;
 		/** An administrator gets every page and action; a regular user the Dashboard and Account (ADR-0030). */
 		admin?: boolean;
-		/** Logout was chosen: the layout signs out. */
-		onlogout?: () => void;
 	};
 
-	let { enabled = false, admin = false, onlogout }: Props = $props();
+	let { enabled = false, admin = false }: Props = $props();
 
 	interface Shown extends Findable {
 		id: string;
@@ -34,7 +31,7 @@
 		run: Run;
 	}
 
-	const choices = $derived([...(admin ? [...ADMIN_PAGES, ...ADMIN_ACTIONS] : USER_PAGES), ...ownActions($locale)]);
+	const choices = $derived(admin ? [...ADMIN_PAGES, ...ADMIN_ACTIONS] : USER_PAGES);
 	// Reactive: the names follow the language of the page; the search also finds the other's.
 	const shown = $derived(
 		choices.map(
@@ -102,14 +99,8 @@
 		open = false;
 		// The palette has gone and the focus is back where it was before anything happens.
 		await tick();
-		if ('logout' in run) {
-			onlogout?.();
-		} else if ('language' in run) {
-			locale.set(run.language);
-		} else {
-			if (run.dialog) paletteRequest.set({ dialog: run.dialog, at: run.go });
-			if (location.pathname + location.hash !== run.go) await goto(run.go);
-		}
+		if (run.dialog) paletteRequest.set({ dialog: run.dialog, at: run.go });
+		if (location.pathname + location.hash !== run.go) await goto(run.go);
 	}
 
 	function handleFieldKeydown(event: KeyboardEvent) {

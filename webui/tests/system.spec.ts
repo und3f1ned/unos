@@ -10,7 +10,8 @@ test.describe('System Settings', () => {
 
   test('should display General tab by default', async ({ authenticatedPage: page }) => {
     await page.goto('/system');
-    await expect(page.getByText('Hostname:', { exact: true })).toBeVisible();
+    // The host name is the field of Name and time zone, its one place (ADR-0430).
+    await expect(page.getByLabel('Hostname', { exact: true })).toBeVisible();
   });
 
   test('should switch to Resource Monitor tab', async ({ authenticatedPage: page }) => {
@@ -74,8 +75,8 @@ test.describe('System Settings', () => {
 });
 
 // The tab named in the URL hash must not override later clicks on the tab
-// buttons. Pages reached with a hash (dashboard "View all", /settings,
-// bookmarks, reloads) used to stay stuck on that tab.
+// buttons. Pages reached with a hash (dashboard "View all", bookmarks,
+// reloads) used to stay stuck on that tab.
 test.describe('System tabs and the URL', () => {
   const tabButton = (page: Page, name: string) =>
     page.locator('main nav').getByRole('button', { name, exact: true });
@@ -95,14 +96,14 @@ test.describe('System tabs and the URL', () => {
     await expect(page.locator('h2:has-text("Backup and Restore")')).toBeVisible();
   });
 
-  test('/settings opens General and the other tabs still switch', async ({ authenticatedPage: page }) => {
-    await page.goto('/settings');
-    await expect(page).toHaveURL(/\/system#general$/);
+  // /settings, which led here, is gone (ADR-0207, ADR-0430): /system opens General.
+  test('/system opens General and the other tabs still switch', async ({ authenticatedPage: page }) => {
+    await page.goto('/system');
     await expect(page.locator('h2:has-text("General Settings")')).toBeVisible();
 
     await tabButton(page, 'Security').click();
     await expect(page).toHaveURL(/\/system#security$/);
-    await expect(page.locator('h2:has-text("Security Settings")')).toBeVisible();
+    await expect(page.locator('h2:has-text("Security of the NAS")')).toBeVisible();
     await expect(page.locator('h2:has-text("General Settings")')).toHaveCount(0);
   });
 

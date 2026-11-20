@@ -148,7 +148,10 @@
   </Button>
 {/snippet}
 
+<!-- A tab of System's Settings: the channels the NAS notifies through, and what it sent (ADR-0430). -->
 <div class="space-y-6">
+  <h2 class="text-xl font-semibold">{$t("system.tabs.notifications")}</h2>
+
   <NotificationStats active={activeChannels} sent={logs.length} delivered={successCount} failed={failedCount} />
 
   <div class="flex items-center justify-between gap-3">

@@ -1,5 +1,5 @@
 <script lang="ts">
-  // The host's name servers and search domains, when there is more than the summary shows.
+  // The host's name servers and search domains (ADR-0430: their one place in System > Network).
   import type { DNSConfig } from "$lib/api/network";
   import { t } from "$lib/i18n";
   import { Server } from "lucide-svelte";
@@ -17,8 +17,10 @@
   <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
     <div>
       <p class="text-xs text-content-muted mb-2">{$t("network.dnsConfig.servers")}</p>
-      {#each dnsConfig.nameservers as ns}
+      {#each dnsConfig.nameservers ?? [] as ns}
         <p class="text-sm font-mono break-all">{ns}</p>
+      {:else}
+        <p class="text-sm text-content-muted">{$t("network.dnsConfig.none")}</p>
       {/each}
     </div>
     {#if dnsConfig.search_domains?.length}

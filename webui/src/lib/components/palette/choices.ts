@@ -1,6 +1,7 @@
-// The choices of the command palette (ADR-0393): the pages and actions of each role, by the keys
-// of their names in the catalogs. What changes the NAS is never done by the palette: it opens the
-// page's own dialog, which asks first.
+// The choices of the command palette (ADR-0393, ADR-0430): the places of each role, by the keys of
+// their names in the catalogs. The palette is an index: each choice opens one place, a page, a tab
+// or a page's own dialog, and the palette changes nothing itself. A page with tabs is one choice by
+// its own name, which opens its first tab, and one for each other tab.
 import {
 	Archive,
 	ArrowUpCircle,
@@ -14,16 +15,14 @@ import {
 	Globe,
 	HardDrive,
 	Heart,
-	Languages,
 	LayoutDashboard,
-	LogOut,
 	Moon,
+	Palette,
 	Network,
 	Package,
 	Power,
 	RotateCcw,
 	ScrollText,
-	Settings,
 	Share2,
 	Shield,
 	Trash2,
@@ -33,14 +32,11 @@ import {
 	Wrench
 } from 'lucide-svelte';
 import type { IconComponent } from '$lib/components/ui';
-import { LANGUAGES, translateIn, type Locale } from '$lib/i18n';
+import { LANGUAGES, translateIn } from '$lib/i18n';
 import type { PaletteDialog } from '$lib/stores/palette';
 
-/** What a choice does: open a page, open a page's dialog, set the language, or log out. */
-export type Run =
-	| { go: string; dialog?: PaletteDialog }
-	| { language: Locale }
-	| { logout: true };
+/** What a choice does: open a page or a tab, and maybe the page's dialog. */
+export type Run = { go: string; dialog?: PaletteDialog };
 
 export interface Choice {
 	id: string;
@@ -54,11 +50,40 @@ export interface Choice {
 
 const PAGE = 'palette.kind.page';
 const SYSTEM = 'layout.nav.system';
+const ACCOUNT = 'layout.nav.account';
 const ACTION = 'palette.kind.action';
 
-// The pages of the sidebar (layout/NavMenu.svelte), with the trash of Files, and the tabs of the
-// System page (src/routes/system/+page.svelte), in their order: webui/tests/command-palette.spec.ts
-// compares them.
+// The Account page (src/routes/account/+page.svelte): the page, which opens Sign-in and security,
+// then its other tabs. File sharing is a regular account's only (ADR-0117).
+const ACCOUNT_PAGE: Choice = {
+	id: 'account',
+	nameKey: 'layout.nav.account',
+	keywordsKey: 'palette.keywords.account',
+	kindKey: PAGE,
+	icon: UserCog,
+	run: { go: '/account' }
+};
+const SHARING_TAB: Choice = {
+	id: 'sharing',
+	nameKey: 'account.tabs.sharing',
+	keywordsKey: 'palette.keywords.sharing',
+	kindKey: ACCOUNT,
+	icon: FolderOpen,
+	run: { go: '/account#sharing' }
+};
+const APPEARANCE_TAB: Choice = {
+	id: 'appearance',
+	nameKey: 'account.tabs.appearance',
+	keywordsKey: 'palette.keywords.appearance',
+	kindKey: ACCOUNT,
+	icon: Palette,
+	run: { go: '/account#appearance' }
+};
+
+// The pages of the sidebar (layout/NavMenu.svelte), with the trash of Files, the tabs of the System
+// page after General, which the System page's own choice opens (src/routes/system/+page.svelte),
+// and the Account page of the sidebar's account block, in their order:
+// webui/tests/command-palette.spec.ts compares them.
 export const ADMIN_PAGES: Choice[] = [
 	{ id: 'dashboard', nameKey: 'layout.nav.dashboard', kindKey: PAGE, icon: LayoutDashboard, run: { go: '/' } },
 	{
@@ -105,14 +130,13 @@ export const ADMIN_PAGES: Choice[] = [
 		run: { go: '/users' }
 	},
 	{ id: 'audit', nameKey: 'layout.nav.audit', kindKey: PAGE, icon: ScrollText, run: { go: '/audit' } },
-	{ id: 'system', nameKey: 'layout.nav.system', kindKey: PAGE, icon: Wrench, run: { go: '/system' } },
 	{
-		id: 'general',
-		nameKey: 'system.tabs.general',
+		id: 'system',
+		nameKey: 'layout.nav.system',
 		keywordsKey: 'palette.keywords.general',
-		kindKey: SYSTEM,
-		icon: Settings,
-		run: { go: '/system#general' }
+		kindKey: PAGE,
+		icon: Wrench,
+		run: { go: '/system' }
 	},
 	{
 		id: 'network',
@@ -139,6 +163,14 @@ export const ADMIN_PAGES: Choice[] = [
 		run: { go: '/system#security' }
 	},
 	{
+		id: 'notifications',
+		nameKey: 'system.tabs.notifications',
+		keywordsKey: 'palette.keywords.notifications',
+		kindKey: SYSTEM,
+		icon: Bell,
+		run: { go: '/system#notifications' }
+	},
+	{
 		id: 'monitor',
 		nameKey: 'system.tabs.monitor',
 		keywordsKey: 'palette.keywords.monitor',
@@ -154,14 +186,6 @@ export const ADMIN_PAGES: Choice[] = [
 		kindKey: SYSTEM,
 		icon: Heart,
 		run: { go: '/system#health' }
-	},
-	{
-		id: 'notifications',
-		nameKey: 'system.tabs.notifications',
-		keywordsKey: 'palette.keywords.notifications',
-		kindKey: SYSTEM,
-		icon: Bell,
-		run: { go: '/system#notifications' }
 	},
 	{
 		id: 'updates',
@@ -187,20 +211,17 @@ export const ADMIN_PAGES: Choice[] = [
 		kindKey: SYSTEM,
 		icon: Power,
 		run: { go: '/system#power' }
-	}
+	},
+	ACCOUNT_PAGE,
+	APPEARANCE_TAB
 ];
 
-// A regular user's pages: those of the sidebar (ADR-0030).
+// A regular user's pages: those of the sidebar (ADR-0030), and the Account page's other tabs.
 export const USER_PAGES: Choice[] = [
 	{ id: 'dashboard', nameKey: 'layout.nav.dashboard', kindKey: PAGE, icon: LayoutDashboard, run: { go: '/' } },
-	{
-		id: 'account',
-		nameKey: 'layout.nav.account',
-		keywordsKey: 'palette.keywords.account',
-		kindKey: PAGE,
-		icon: UserCog,
-		run: { go: '/system#security' }
-	}
+	ACCOUNT_PAGE,
+	SHARING_TAB,
+	APPEARANCE_TAB
 ];
 
 // What changes the NAS is never done here: the palette opens the page's own dialog, which asks
@@ -239,26 +260,6 @@ export const ADMIN_ACTIONS: Choice[] = [
 		run: { go: '/system#power', dialog: 'suspend' }
 	}
 ];
-
-// The actions that the palette runs itself: they change nothing on the NAS. The language offered
-// is the one the page is not in.
-const TO_LANGUAGE: Record<Locale, string> = {
-	en: 'palette.action.toEnglish',
-	ru: 'palette.action.toRussian'
-};
-
-export function ownActions(current: Locale): Choice[] {
-	return [
-		...LANGUAGES.filter((language) => language.code !== current).map((language) => ({
-			id: `language-${language.code}`,
-			nameKey: TO_LANGUAGE[language.code],
-			kindKey: ACTION,
-			icon: Languages,
-			run: { language: language.code }
-		})),
-		{ id: 'logout', nameKey: 'layout.logout', kindKey: ACTION, icon: LogOut, run: { logout: true } }
-	];
-}
 
 /** The text of `key` in every language of the web UI. */
 export function inEveryLanguage(key: string | undefined): string[] {

@@ -1,15 +1,14 @@
 import type { Translation } from '../translate';
 
-// The frame of the System page and its tabs: src/routes/system/+page.svelte. A regular user sees
-// it as the Account page, with the Security tab alone.
+// The frame of the System page and its tabs, an administrator's: src/routes/system/+page.svelte.
 
 export const en = {
 	'system.heading.admin': 'System',
-	'system.heading.user': 'Account',
 	'system.group.settings': 'Settings',
 	'system.group.monitoring': 'Monitoring',
 	'system.group.maintenance': 'Maintenance',
 	'system.tabs.general': 'General',
+	'system.security.title': 'Security of the NAS',
 	'system.tabs.updates': 'Updates',
 	'system.tabs.security': 'Security',
 	'system.tabs.monitor': 'Resource Monitor',
@@ -24,11 +23,11 @@ export const en = {
 
 export const ru: Translation<typeof en> = {
 	'system.heading.admin': 'Система',
-	'system.heading.user': 'Учётная запись',
 	'system.group.settings': 'Настройки',
 	'system.group.monitoring': 'Мониторинг',
 	'system.group.maintenance': 'Обслуживание',
 	'system.tabs.general': 'Общие',
+	'system.security.title': 'Безопасность NAS',
 	'system.tabs.updates': 'Обновления',
 	'system.tabs.security': 'Безопасность',
 	'system.tabs.monitor': 'Монитор ресурсов',

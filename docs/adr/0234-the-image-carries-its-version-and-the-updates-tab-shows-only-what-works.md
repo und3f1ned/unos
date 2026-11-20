@@ -1,5 +1,6 @@
 ---
-status: accepted
+status: superseded
+superseded-by: ADR-0430
 date: 2026-11-07
 area: system
 decided-by: agent
@@ -8,6 +9,8 @@ decided-by: agent
 # ADR-0234: The supervisor image carries its version, and System > Updates shows only what works
 
 ## Context
+
+Superseded by ADR-0430: only in part, "General shows the same version": the version's one place is Updates; every other rule here stays in force.
 
 `get_current_version` of `supervisor/src/updates/updater.py` ran git in `/opt/unos` inside the supervisor container, which has neither, so System > Updates and General showed the version "unknown". The Updates tab offered Install Update and Rollback, which start nothing (ADR-0173), and said "You're running the latest version" when GitHub had no release to show (its 404, also for a private repository). The dev device's checkout is synced file by file and is not a git workspace (`system.updates-tab-without-dead-buttons`).
 

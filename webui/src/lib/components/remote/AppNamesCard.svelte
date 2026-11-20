@@ -15,7 +15,7 @@
 	import ConfirmDialog from './ConfirmDialog.svelte';
 	import FormDialog from './FormDialog.svelte';
 
-	// System > Remote access, administrators only: the local names of apps (ADR-0420), routed by the
+	// System > Network, administrators only: the local names of apps (ADR-0420, ADR-0430), routed by the
 	// web UI's Caddy to a published port of the app and announced by avahi on the LAN.
 
 	let status = $state<AppNamesStatus | null>(null);

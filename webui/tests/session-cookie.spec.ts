@@ -98,8 +98,8 @@ test.describe('The session cookie', () => {
     await signInWithTheForm(page);
     const inSession = await browserSession(page);
     const other = await context.newPage();
-    await other.goto('/system#security');
-    await expect(other.locator('h2:has-text("Security Settings")')).toBeVisible();
+    await other.goto('/account#security');
+    await expect(other.locator('h2:has-text("Sign-in and security")')).toBeVisible();
 
     const signedOut = page.waitForResponse((response) => response.url().endsWith('/api/v1/auth/logout'));
     await page.getByRole('button', { name: 'Logout' }).click();
