@@ -37,9 +37,15 @@ here: `webui/package.json` has no test scripts, and a bare
    whole run, without further arguments.
    Result: the run ends with `== Playwright exit code 0`.
 
-3. **Run the whole suite** before you hand over: `make e2e-local` (about
-   7 minutes). Result: no `failed` and no `flaky` line in the summary; every
-   skipped test shows its reason in the HTML report.
+3. **Run the whole suite** when it is due (ADR-0433): `make e2e-local` (about
+   7 minutes), once per batch on the batch branch after the merges, before the
+   deploy and before the batch reaches main, and after a change to
+   `webui/src/lib/components/ui/`, `webui/src/app.css` or
+   `webui/src/routes/+layout.svelte`. Any other feature runs only the specs of
+   its area in step 2: those of the pages and APIs it changes, plus every spec
+   citing a test id, label or catalog key it changed. Result: no `failed` and
+   no `flaky` line in the summary; every skipped test shows its reason in the
+   HTML report.
 
 4. **When a test fails, find the cause; check your own change first.** Read,
    in this order: the error in `.standin/logs/playwright.log`;

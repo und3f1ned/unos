@@ -43,7 +43,7 @@ The one exception is the web UI's Russian texts and the tests that check them (A
 | `make check` | The gate (ADR-0216), the only one while CI is off on GitHub (ADR-0230): what the CI workflow's Unit Tests, Lint and Frontend jobs check. All backend tests, `ruff check` with the rules of `ruff.toml` (ADR-0425), `bash -n` on the shell scripts, JSON syntax, svelte-check, the checks of the web UI's texts (ADR-0287) and design system (ADR-0400) and the production build; `make test`, `make lint` and `make frontend` run its parts. Linux-only tests skip on macOS. |
 | `make check-fast` | Lint plus `make test-fast`: the convention tests of the ADRs, the ledger, the guard, the repository tooling, the dev scripts and the stand-in. The pre-commit hook runs it, and so does the Stop hook `.claude/hooks/stop-check.sh`, unless the working tree is the one in which `make check` or `make check-fast` last passed (ADR-0383): a failure sends you back to work. |
 | `make smoke` | In a few seconds, through existing backend tests: the app starts and serves health, first-run setup and login. The baseline of a session. |
-| `make e2e-local` | The Playwright specs pass against the local stand-in: the real supervisor and the built web UI on this machine. `scripts/standin/e2e.sh <spec> [args]` runs a part. |
+| `make e2e-local` | The Playwright specs pass against the local stand-in: the real supervisor and the built web UI on this machine. It runs once per batch, on the batch branch after the merges, and after a change to the shared components or the layout (ADR-0433); `scripts/standin/e2e.sh <spec> [args]` runs the specs of a feature's area. |
 | `scripts/dev/linux-tests.sh [pytest args]` | The backend tests pass on Linux, in the dev device's RAM: the ones that skip on macOS. |
 | `scripts/dev/check.sh` | The dev device is healthy: containers, Samba and network discovery (smbd, wsdd2, avahi-daemon; nmbd off), the API, the inbound IPv6 filter, SD writes since boot, UNOS within its CPU budget and no thermal zone near its throttling point (ADR-0421). Read-only. |
 | `scripts/dev/api.py METHOD PATH` | What the API on the dev device answers. Methods other than GET change the device. |
@@ -68,8 +68,12 @@ One feature per session, branch and pull request (ADR-0203).
 3. Write the test first and watch it fail on the current code (ADR-0186): backend tests in
    `supervisor/tests/`, the user flow in `webui/tests/`. From then on the test stands: weakening
    it to get green needs the owner's yes.
-4. Make it pass. Done when `make check` exits 0, and `make e2e-local` too after a change to
-   `webui/` or to an API the web UI calls.
+4. Make it pass. Done when `make check` exits 0 and, after a change to `webui/` or to an API the
+   web UI calls, the E2E specs of its area pass: those of the pages and APIs it changes, plus
+   every spec citing a test id, label or catalog key it changed (`scripts/standin/e2e.sh
+   tests/<name>.spec.ts ...`). A change to `webui/src/lib/components/ui/`, `webui/src/app.css` or
+   `webui/src/routes/+layout.svelte` runs the full `make e2e-local`, which otherwise runs once per
+   batch, on the batch branch after the merges, before the deploy and before main (ADR-0433).
 5. Review in a fresh context (ADR-0017): a reviewer without this session's history (a subagent,
    or a new session with mattpocock-skills:code-review) gets the diff, the ledger entry and its
    ADRs and tries to refute the change. Each finding is fixed, or recorded with the reason in

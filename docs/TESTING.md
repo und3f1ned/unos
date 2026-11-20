@@ -18,7 +18,12 @@ template point here.
   parts of it run on their own: `make check-fast` (lint and the convention tests; the pre-commit
   hook and the Stop hook of Claude Code sessions run it) and `make smoke` (in seconds: the app
   starts and serves health, the first-run setup and a login; the baseline of a session).
-- Level 2 follows every change to `webui/` or to an API the web UI calls. E2E specs run only
+- Level 2 follows every change to `webui/` or to an API the web UI calls (ADR-0433): the change
+  runs the specs of its area (those of the pages and APIs it changes, plus every spec citing a
+  test id, label or catalog key it changed), and the full `make e2e-local` runs once per batch,
+  on the batch branch after the merges, before the deploy and before the batch reaches main; a
+  change to `webui/src/lib/components/ui/`, `webui/src/app.css` or
+  `webui/src/routes/+layout.svelte` runs the full suite itself. E2E specs run only
   against local targets, never against the device (ADR-0215): the stand-in, which is the
   default, or the compose test stack of
   [The Container-Level Route](#the-container-level-route-linux-with-docker). They create and

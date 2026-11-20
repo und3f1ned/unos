@@ -244,3 +244,8 @@ adapter, strict TypeScript and TailwindCSS (ADR-0012). Caddy serves the built fi
   line against the stand-in's data (`tests/emergency-reset.spec.ts`). Restore specs run only on a
   local target or with `E2E_ALLOW_RESTORE=1` (`tests/backup-restore.spec.ts`).
 - Every feature's user flow has a spec (ADR-0186).
+- A change runs the specs of its area: those of the pages and APIs it changes, plus every spec
+  citing a test id, label or catalog key it changed (`git grep` in `tests/`). A change to
+  `src/lib/components/ui/`, `src/app.css` or `src/routes/+layout.svelte` runs the full
+  `make e2e-local`, which otherwise runs once per batch, on the batch branch after the merges
+  (ADR-0433).

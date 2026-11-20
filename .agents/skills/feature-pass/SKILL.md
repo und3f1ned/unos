@@ -56,8 +56,11 @@ A pass takes one entry of `feature-list.json` from `passes: false` to `passes: t
    the web UI updated with an API change (ADR-0207). Result: the new tests pass.
 
 6. **Run the gate.** `make check`; after a change to `webui/` or to an API the web UI calls, also
-   `make e2e-local` (the standin-e2e skill). Result: both exit 0, nothing failed or was flaky, and
-   the entry's E2E tests ran instead of being skipped.
+   the E2E specs of its area (the standin-e2e skill, ADR-0433): the specs of the pages and APIs it
+   changes, plus every spec citing a test id, label or catalog key it changed (`git grep` in
+   `webui/tests/`). A change to `webui/src/lib/components/ui/`, `webui/src/app.css` or
+   `webui/src/routes/+layout.svelte` runs the full `make e2e-local` instead. Result: all exit 0,
+   nothing failed or was flaky, and the entry's E2E tests ran instead of being skipped.
 
 7. **Get the change reviewed in a fresh context** (ADR-0017). Give a reviewer without this
    session's history (a subagent, or a new session with mattpocock-skills:code-review) the diff,
