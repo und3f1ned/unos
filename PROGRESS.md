@@ -246,7 +246,7 @@ significant step. Features and their state live in `feature-list.json`, decision
 
 ## Dev device
 
-State on 2026-11-20, 00:30 UTC. A Banana Pi BPI-W3 (ArmSoM W3, Rockchip RK3588, 8 GB), running
+State on 2026-11-20, 13:10 UTC. A Banana Pi BPI-W3 (ArmSoM W3, Rockchip RK3588, 8 GB), running
 Armbian's community image for `armsom-w3`, upgraded on 2026-11-15 from 26.2.0-trunk.151 to
 26.11.0-trunk.133 (Debian 13, kernel 6.1.172-vendor-rk35xx);
 its address and logins are in `dev.env` (ADR-0212). This journal called it a UGREEN board, after
@@ -257,7 +257,12 @@ the UGREEN firmware on its eMMC, until the owner set that right on 2026-11-15 (A
   since boot, its own wear estimate 0 to 10%. Nothing writes to it.
 - SSH by key only, root by the workstation's key `~/.ssh/unos_dev_ed25519`; root's and the UNOS
   administrator's passwords were rotated and live only in `dev.env` (ADR-0226).
-- Runs e00008b of the branch `mvp.batch-17` (the seventeenth batch, ADR-0425 to ADR-0429), merged
+- Runs 69dfae5 of the branch `mvp.batch-18` (the eighteenth batch, in progress: loading without
+  flicker, ADR-0430, and every setting in one place, ADR-0431), deployed on 2026-11-20 at about
+  13:04 UTC at the owner's request before the batch's other UX changes (SD MiB sync 6.012,
+  build-supervisor 14.750, build-webui 17.590, up 6.184, check 0.254; total 45.496). Both
+  containers healthy, `post-up check: OK`; `GET /security/login-history?mine=true` answers.
+- Before it, e00008b of the branch `mvp.batch-17` (the seventeenth batch, ADR-0425 to ADR-0429), merged
   into `main` with its record, whose commits on top of it change no runtime file. Its backend was
   deployed on 2026-11-19 in three steps (fc42813: sync 9.027, build-supervisor 18.461, up 3.293
   SD MiB; d907d94 with the web UI: sync 6.348, build-supervisor 15.016, build-webui 17.820, up
