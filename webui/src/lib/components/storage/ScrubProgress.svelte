@@ -1,23 +1,29 @@
 <script lang="ts">
-	// A mounted pool's scrub (ADR-0313): its progress while it runs, then the result of the last
-	// one; or why its status could not be read.
+	// A mounted pool's scrub (ADR-0313): its progress while it runs, with its Cancel (`part`
+	// running, under the pool's header), then the result of the last one, or why its status could not
+	// be read (`part` result, at the foot of the pool: ADR-0432).
 	import { AlertTriangle, CheckCircle, Loader2, XCircle } from 'lucide-svelte';
-	import { Alert, ProgressBar } from '$lib/components/ui';
+	import { Alert, Button, ProgressBar } from '$lib/components/ui';
 	import type { ScrubStatus } from '$lib/api/storage';
 	import { intlLocale, t } from '$lib/i18n';
+	import { DATE_TIME_MINUTES } from '$lib/format';
 	import { formatDateTime } from '$lib/time';
 	import { formatDuration, getScrubProgress } from './pools';
 
 	type Props = {
+		/** The scrub that runs, or how the last one ended. */
+		part: 'running' | 'result';
 		mounted: boolean;
 		status: ScrubStatus | undefined;
 		/** Why the status could not be read: shown instead of the last one. */
 		error: string | undefined;
 		formatBytes: (bytes: number) => string;
 		percentFormat: Intl.NumberFormat;
+		/** Cancel was pressed: the scrub that runs is to stop. */
+		oncancel?: () => void;
 	};
 
-	let { mounted, status, error, formatBytes, percentFormat }: Props = $props();
+	let { part, mounted, status, error, formatBytes, percentFormat, oncancel }: Props = $props();
 
 	// How a scrub that did not finish ended, as btrfs names it; another value is shown as it comes.
 	const SCRUB_STOPPED: Record<string, string> = {
@@ -44,7 +50,8 @@
 
 	// When the last scrub started: the server answers it in UTC with its offset, the page shows it
 	// in the browser's time zone and the date format of the page's language (ADR-0401).
-	const scrubStarted = (value: string): string => formatDateTime(value, $intlLocale);
+	const scrubStarted = (value: string): string =>
+		formatDateTime(value, $intlLocale, DATE_TIME_MINUTES);
 
 	const scrubResultStyles = {
 		success: { icon: CheckCircle, class: 'text-success' },
@@ -53,59 +60,58 @@
 	};
 </script>
 
-{#if mounted && error}
-	<Alert variant="warning" title={$t('storage.scrub.statusError')} class="mt-3">
+{#if part === 'result' && mounted && error}
+	<Alert variant="warning" size="sm" title={$t('storage.scrub.statusError')}>
 		{error}
-	</Alert>
-{:else if mounted && status && status.status !== 'idle'}
-	<div class="mt-3 pt-3 border-t border-border">
-		{#if status.status === 'running'}
-			<div class="space-y-2">
-				<div class="flex items-center justify-between text-sm">
-					<span class="flex items-center gap-2 text-info">
-						<Loader2 class="w-4 h-4 loading-spinner" />
-						{$t('storage.scrub.running')}
-					</span>
-					<span class="text-secondary">
-						{#if status.duration}
-							{formatDuration(status.duration)}
-						{/if}
-					</span>
-				</div>
-				{#if status.total_bytes && status.bytes_scrubbed}
-					<ProgressBar
-						value={getScrubProgress(status)}
-						variant="info"
-						label={$t('storage.scrub.progress')}
-					/>
-					<div class="flex justify-between text-xs text-secondary">
-						<span
-							>{formatBytes(status.bytes_scrubbed)} / {formatBytes(
-								status.total_bytes
-							)}</span
-						>
-						<span>{percentFormat.format(getScrubProgress(status) / 100)}</span>
-						{#if status.rate}
-							<span>{$t('storage.scrub.rate', { rate: formatBytes(status.rate) })}</span>
-						{/if}
-					</div>
-				{/if}
-			</div>
-		{:else}
-			{@const result = scrubResult(status)}
-			{@const style = scrubResultStyles[result.tone]}
-			{@const Icon = style.icon}
-			<div class="flex items-center justify-between text-sm">
-				<span class="flex items-center gap-2 {style.class}">
-					<Icon class="w-4 h-4" />
-					{result.text}
-				</span>
-				<span class="text-xs text-muted">
-					{#if status.last_run}
-						{scrubStarted(status.last_run)}
-					{/if}
-				</span>
+		{#if status?.status === 'running'}
+			<!-- It was running when it was last read: it can still be cancelled. -->
+			<div class="mt-2">
+				<Button variant="secondary" size="sm" onclick={() => oncancel?.()}>
+					{$t('storage.pool.cancelScrub')}
+				</Button>
 			</div>
 		{/if}
+	</Alert>
+{:else if part === 'running' && mounted && !error && status?.status === 'running'}
+	<div class="space-y-2">
+		<div class="flex flex-wrap items-center justify-between gap-2 text-sm">
+			<span class="flex items-center gap-2 text-info">
+				<Loader2 class="w-4 h-4 loading-spinner" aria-hidden="true" />
+				{$t('storage.scrub.running')}
+			</span>
+			<span class="flex items-center gap-3">
+				{#if status.duration}
+					<span class="text-xs text-secondary tabular">{formatDuration(status.duration)}</span>
+				{/if}
+				<Button variant="secondary" size="sm" onclick={() => oncancel?.()}>
+					{$t('storage.pool.cancelScrub')}
+				</Button>
+			</span>
+		</div>
+		{#if status.total_bytes && status.bytes_scrubbed}
+			<ProgressBar value={getScrubProgress(status)} variant="info" label={$t('storage.scrub.progress')} />
+			<div class="flex flex-wrap justify-between gap-x-3 text-xs text-secondary tabular">
+				<span>{formatBytes(status.bytes_scrubbed)} / {formatBytes(status.total_bytes)}</span>
+				<span>{percentFormat.format(getScrubProgress(status) / 100)}</span>
+				{#if status.rate}
+					<span>{$t('storage.scrub.rate', { rate: formatBytes(status.rate) })}</span>
+				{/if}
+			</div>
+		{/if}
+	</div>
+{:else if part === 'result' && mounted && !error && status && status.status !== 'idle' && status.status !== 'running'}
+	{@const result = scrubResult(status)}
+	{@const style = scrubResultStyles[result.tone]}
+	{@const Icon = style.icon}
+	<div class="pt-3 border-t border-border flex flex-wrap items-center justify-between gap-x-3 text-sm">
+		<span class="flex items-center gap-2 {style.class}">
+			<Icon class="w-4 h-4" aria-hidden="true" />
+			{result.text}
+		</span>
+		<span class="text-xs text-muted">
+			{#if status.last_run}
+				{scrubStarted(status.last_run)}
+			{/if}
+		</span>
 	</div>
 {/if}

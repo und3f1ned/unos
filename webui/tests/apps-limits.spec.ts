@@ -1,6 +1,8 @@
 import type { Page, Route, WebSocketRoute } from '@playwright/test';
 import { test, expect } from './fixtures';
 import { installedCard, installedImmich, noResources, type FakeInstalledApp, type FakeResources } from './apps-fakes';
+import { fakeHealthApi } from './health-fakes';
+import { HEALTHY_POOL, fakeStorageApi } from './storage-fakes';
 
 // The memory and CPU limits of an app's containers on the Installed tab, and their use against
 // them (apps.container-resource-limits, ADR-0390). The stand-in has no Docker and reads no
@@ -257,6 +259,11 @@ async function fakeProblems(page: Page, problems: object[]): Promise<void> {
 
 test('crossing a limit shows in the health banner, in the words of the page', async ({ authenticatedPage: page }) => {
   await fakeProblems(page, [OUT_OF_MEMORY, NEAR_MEMORY, HELD]);
+  // The dashboard lists its own issues in the same banner (ADR-0432): no disk is to be replaced and
+  // the check of the disks works and the one pool is healthy, so that the banner holds the socket's
+  // problems alone.
+  await fakeHealthApi(page);
+  await fakeStorageApi(page, { pools: [HEALTHY_POOL] });
   await page.goto('/');
 
   const banner = page.getByRole('region', { name: '3 problems need attention' });

@@ -21,9 +21,9 @@
   }
 </script>
 
-<!-- Actions on the selected items. Always shown: a bar that appeared on the
-     first click of a double-click would move the rows under the pointer. -->
-<SelectionBar count={browser.selected.size}>
+<!-- Actions on the selected items, shown in the selection's bar while one is selected; Delete
+     moves to the trash, so it is no solid red button (ADR-0432). -->
+<SelectionBar count={browser.selected.size} hint={$t("files.selectHint")}>
   <Button
     variant="secondary"
     size="sm"
@@ -63,7 +63,7 @@
   </Button>
   <span bind:this={deleteButtonSlot} class="contents">
     <Button
-      variant="danger"
+      variant="ghost-danger"
       size="sm"
       icon={Trash2}
       disabled={browser.working || browser.selected.size === 0}

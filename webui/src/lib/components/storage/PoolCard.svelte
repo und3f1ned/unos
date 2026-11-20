@@ -1,6 +1,7 @@
 <script lang="ts">
 	// A pool of the Pools card: its name, health and mount at boot, its buttons, its profile, use,
 	// disks and mount point, what is wrong with it, and the jobs on it.
+	import { AlertCircle, AlertTriangle } from 'lucide-svelte';
 	import { Alert, Badge, ProgressBar } from '$lib/components/ui';
 	import type { BalanceStatus, DiskRemovalStatus, Pool, ScrubStatus } from '$lib/api/storage';
 	import { intlLocale, t } from '$lib/i18n';
@@ -66,13 +67,50 @@
 
 	// i18n-ignore: a command, the same in every language
 	const RESET_COUNTERS = 'btrfs device stats -z';
+
+	/** What is wrong with the pool, worst first, each a line of one alert (ADR-0432). */
+	type Issue = { tone: 'error' | 'warning'; title: string; text: string; command?: string };
+	// Reads $t where the markup calls it: the texts follow the language.
+	function issues(): Issue[] {
+		const list: Issue[] = [];
+		if (pool.missing_devices > 0) {
+			list.push({ tone: 'error', title: $t('storage.pool.missingTitle', { n: pool.missing_devices }), text: $t('storage.pool.missing') });
+		}
+		if (pool.forced_read_only) {
+			list.push({ tone: 'error', title: $t('storage.pool.forcedReadOnlyTitle'), text: $t('storage.pool.forcedReadOnly') });
+		}
+		if (pool.device_errors > 0) {
+			list.push({
+				tone: 'error',
+				title: $t('storage.pool.deviceErrorsTitle', { n: pool.device_errors }),
+				text: $t('storage.pool.deviceErrors'),
+				command: `${RESET_COUNTERS} ${pool.mountpoint || poolMountpoint(pool.name)}`
+			});
+		}
+		if (pool.raid_level === 'raid5' || pool.raid_level === 'raid6') {
+			list.push({ tone: 'warning', title: $t('storage.pools.unsafeTitle'), text: $t('storage.pools.unsafe') });
+		}
+		if (pool.read_only && !pool.forced_read_only) {
+			list.push({ tone: 'warning', title: $t('storage.pool.readOnlyTitle'), text: $t('storage.pool.readOnly') });
+		}
+		if (pool.health === 'unknown') {
+			list.push({ tone: 'warning', title: $t('storage.pool.unreadableTitle'), text: $t('storage.pool.unreadable') });
+		}
+		return list;
+	}
+	const ISSUE_ICONS = { error: AlertCircle, warning: AlertTriangle };
+
+	let poolIssues = $derived(issues());
+	let used = $derived(pool.mounted && pool.total_size > 0 ? (pool.used_size / pool.total_size) * 100 : null);
 </script>
 
-<!-- A pool (ADR-0428): its name and badges with its toolbar, its facts as label over value (each
-     a div of spans, "Mount:" and its value), its capacity, then its problems and its jobs. -->
+<!-- A pool (ADR-0432): its name and badges on the left and its actions on the right, on every
+     pool; then a job that runs, with its controls; its facts as label over value (each a div of
+     spans with a data-field); its use; what is wrong with it, in one alert; and how its last jobs
+     ended. -->
 <div class="card-nested space-y-4">
-	<div class="flex flex-wrap items-start justify-between gap-3">
-		<div class="flex flex-wrap items-center gap-2 min-w-0 pt-1">
+	<div class="flex flex-wrap items-center justify-between gap-3">
+		<div class="flex flex-wrap items-center gap-2 min-w-0">
 			<h3 class="text-base font-semibold break-words">{pool.name}</h3>
 			<Badge variant={health.variant} dot>{health.label}</Badge>
 			{#if pool.mounted && !pool.persistent}
@@ -83,19 +121,18 @@
 				<Badge variant="warning">{$t('storage.pool.inFstab')}</Badge>
 			{/if}
 		</div>
-		<PoolActions
-			{pool}
-			{scrub}
-			{balance}
-			{removal}
-			{startingScrub}
-			{balanceBusy}
-			{...handlers}
-		/>
+		<PoolActions {pool} {scrub} {balance} {removal} {startingScrub} {...handlers} />
 	</div>
 
+	<!-- The jobs that run, right under the header with their controls (ADR-0313, ADR-0379, ADR-0411). -->
+	<ScrubProgress part="running" mounted={pool.mounted} status={scrub} error={scrubError} {formatBytes} {percentFormat}
+		oncancel={() => handlers.oncancelscrub(pool)} />
+	<BalanceProgress part="running" {pool} scrubRunning={scrub?.status === 'running'} status={balance} error={balanceError} {percentFormat} busy={balanceBusy}
+		onaction={(action) => handlers.onbalanceaction(pool, action)} />
+	<RemovalProgress part="running" mounted={pool.mounted} status={removal} error={removalError} {formatBytes} {percentFormat} />
+
 	<div class="kv">
-		<div>
+		<div data-field="raid">
 			<span class="kv-label">{$t('storage.pool.raid')}</span>
 			{#if pool.raid_level}
 				<span class="kv-value flex flex-wrap items-center gap-2"
@@ -111,21 +148,11 @@
 				>
 			{/if}
 		</div>
-		<div>
-			<span class="kv-label">{$t('storage.pool.used')}</span>
-			{#if pool.mounted}
-				<span class="kv-value tabular"
-					>{formatBytes(pool.used_size)} / {formatBytes(pool.total_size)}</span
-				>
-			{:else}
-				<span class="kv-value text-muted">{$t('storage.pool.unknownNotMounted')}</span>
-			{/if}
-		</div>
-		<div>
+		<div data-field="devices">
 			<span class="kv-label">{$t('storage.pool.devices')}</span>
 			<span class="kv-value mono-xs break-words">{pool.devices.join(', ') || '-'}</span>
 		</div>
-		<div>
+		<div data-field="mount">
 			<span class="kv-label">{$t('storage.pool.mountpoint')}</span>
 			<span class="kv-value mono-xs break-words"
 				>{pool.mounted ? pool.mountpoint || '-' : $t('storage.pool.notMounted')}</span
@@ -133,51 +160,53 @@
 		</div>
 	</div>
 
-	{#if pool.mounted && pool.total_size > 0}
-		{@const used = (pool.used_size / pool.total_size) * 100}
-		<div>
-			<div class="flex items-center justify-between gap-3 mb-1.5 text-xs text-content-secondary">
-				<span>{$t('storage.pool.capacity')}</span>
-				<span class="tabular">{wholePercent.format(used / 100)}</span>
-			</div>
-			<ProgressBar value={used} variant="info" label={$t('storage.pool.capacityOf', { name: pool.name })} />
+	<!-- Its use: the sizes and the share over the bar; unknown while it is not mounted. -->
+	<div data-field="used">
+		<div class="flex flex-wrap items-baseline justify-between gap-x-3 mb-1.5 text-xs text-content-secondary">
+			<span class="kv-label">{$t('storage.pool.used')}</span>
+			{#if pool.mounted}
+				<span class="kv-value tabular text-content"
+					>{$t('storage.pool.usedOf', { used: formatBytes(pool.used_size), size: formatBytes(pool.total_size) })}{#if used !== null}<span
+							class="text-content-secondary">&nbsp;· {wholePercent.format(used / 100)}</span
+						>{/if}</span
+				>
+			{:else}
+				<span class="kv-value text-muted">{$t('storage.pool.unknownNotMounted')}</span>
+			{/if}
 		</div>
+		{#if used !== null}
+			<ProgressBar value={used} variant="info" label={$t('storage.pool.capacityOf', { name: pool.name })} />
+		{/if}
+	</div>
+
+	{#if poolIssues.length > 0}
+		<!-- What is wrong, in one alert in the colour of the worst, a line each (ADR-0432). -->
+		<Alert variant={poolIssues[0].tone} size="sm">
+			<ul class="space-y-1.5">
+				{#each poolIssues as issue (issue.title)}
+					{@const Icon = ISSUE_ICONS[issue.tone]}
+					<li class="flex items-start gap-2">
+						{#if poolIssues.length > 1}
+							<Icon class="w-3.5 h-3.5 mt-0.5 shrink-0 {issue.tone === 'error' ? 'text-status-error' : 'text-status-warning'}" aria-hidden="true" />
+						{/if}
+						<span class="min-w-0">
+							<span class="font-medium">{issue.title}.</span>
+							{issue.text}
+							{#if issue.command}
+								<span class="block mt-0.5 text-xs text-content-secondary"
+									>{$t('storage.pool.resetWith')} <span class="mono-xs break-all">{issue.command}</span></span
+								>
+							{/if}
+						</span>
+					</li>
+				{/each}
+			</ul>
+		</Alert>
 	{/if}
 
-	{#if pool.missing_devices > 0}
-		<Alert variant="error" title={$t('storage.pool.missingTitle')}>
-			{$t('storage.pool.missing', { n: pool.missing_devices })}
-		</Alert>
-	{/if}
-	{#if pool.forced_read_only}
-		<Alert variant="error" title={$t('storage.pool.forcedReadOnlyTitle')}>
-			{$t('storage.pool.forcedReadOnly')}
-		</Alert>
-	{:else if pool.read_only}
-		<Alert variant="warning" title={$t('storage.pool.readOnlyTitle')}>
-			{$t('storage.pool.readOnly')}
-		</Alert>
-	{/if}
-	{#if pool.device_errors > 0}
-		<Alert variant="error" title={$t('storage.pool.deviceErrorsTitle')}>
-			{$t('storage.pool.deviceErrors', { n: pool.device_errors })}
-			<span class="mono-xs"
-				>{RESET_COUNTERS} {pool.mountpoint || poolMountpoint(pool.name)}</span
-			>.
-		</Alert>
-	{/if}
-	{#if pool.health === 'unknown'}
-		<Alert variant="warning" title={$t('storage.pool.unreadableTitle')}>
-			{$t('storage.pool.unreadable')}
-		</Alert>
-	{/if}
-
-	<!-- Scrub Status: progress while it runs, then the result (ADR-0313) -->
-	<ScrubProgress mounted={pool.mounted} status={scrub} error={scrubError} {formatBytes} {percentFormat} />
-
-	<!-- Balance: its progress while it runs or is paused, then how it ended (ADR-0379) -->
-	<BalanceProgress mounted={pool.mounted} status={balance} error={balanceError} {percentFormat} />
-
-	<!-- A disk removal: its progress while it runs, then how it ended (ADR-0411) -->
-	<RemovalProgress mounted={pool.mounted} status={removal} error={removalError} {formatBytes} {percentFormat} />
+	<!-- How the last jobs ended, or why their state could not be read. -->
+	<ScrubProgress part="result" mounted={pool.mounted} status={scrub} error={scrubError} {formatBytes} {percentFormat}
+		oncancel={() => handlers.oncancelscrub(pool)} />
+	<BalanceProgress part="result" {pool} status={balance} error={balanceError} {percentFormat} />
+	<RemovalProgress part="result" mounted={pool.mounted} status={removal} error={removalError} {formatBytes} {percentFormat} />
 </div>

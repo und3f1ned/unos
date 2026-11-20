@@ -7,7 +7,9 @@ import type { Translation } from '../translate';
 
 export const en = {
 	'snapshots.title': 'Snapshots',
-	'snapshots.create': 'Create Snapshot',
+	'snapshots.subtitle': "Read-only copies of a pool or a volume. A pool's snapshot leaves out its volumes: take theirs as well.",
+	'snapshots.create': 'Create snapshot',
+	'snapshots.createBlocked': 'Mount a pool on the Storage page first',
 	'snapshots.loadPoolsError': 'Could not load the pools and volumes',
 	'snapshots.picker': 'Pool or volume',
 	'snapshots.pool': '{pool} (Pool)',
@@ -15,42 +17,31 @@ export const en = {
 	'snapshots.volumesError': 'The volumes of {pool} could not be read',
 	'snapshots.volumesErrorHint': 'The pool itself is offered; its volumes are missing from the list.',
 	// Before a link to the Storage page.
-	'snapshots.noPool': 'No pool is mounted. Mount a pool on the',
-	'snapshots.storagePage': 'Storage page',
+	'snapshots.noPool': 'Snapshots are taken of a mounted pool or volume.',
+	'snapshots.storagePage': 'Storage →',
+	'snapshots.noPoolTitle': 'No pool is mounted',
+	'snapshots.keptIn': 'Kept in',
+	'snapshots.schedule': 'Schedule snapshots →',
 	'snapshots.restored': 'Snapshot restored',
 	// Before the path of the copy.
 	'snapshots.restoredAt': 'The copy is at',
 	'snapshots.of': 'Snapshots of {name}',
 	'snapshots.loadError': 'Could not load the snapshots',
 	'snapshots.empty': 'No snapshots yet',
-	'snapshots.emptyHint': 'A snapshot keeps the files as they are now, read-only.',
+	'snapshots.emptyHint': 'Create snapshot takes one now; the Scheduler takes them of pools on a schedule.',
 	'snapshots.list': 'Snapshots',
 	'snapshots.name': 'Name',
 	'snapshots.created': 'Created',
 	'snapshots.actions': 'Actions',
 	'snapshots.restoreOne': 'Restore snapshot {name}',
+	'snapshots.restoreAction': 'Restore…',
 	'snapshots.deleteOne': 'Delete snapshot {name}',
 	// After the prefix of a name that UNOS gives, in the pattern of the names of scheduled
 	// snapshots (auto_) and of restored copies (restore_).
 	'snapshots.dateTime': '<date>_<time>',
 
-	// About Snapshots: before the .snapshots folder, after it, ..., before auto_<date>_<time>;
-	// then before the prefixes snap_, restore_ and auto_, between the last two, and after them.
-	'snapshots.about.title': 'About Snapshots',
-	'snapshots.about.kept':
-		'A snapshot is a read-only copy of a pool or a volume at one point in time, kept in its',
-	'snapshots.about.folder': 'folder.',
-	'snapshots.about.btrfs': 'btrfs makes it at once and then stores only what changes.',
-	'snapshots.about.volumes':
-		'A snapshot of a pool does not include the files in its volumes: take snapshots of each volume as well.',
-	'snapshots.about.restore': 'Restoring makes a writable copy next to the original and overwrites nothing.',
-	'snapshots.about.scheduled': 'Scheduled snapshots (System, Scheduler) are made of pools only and are named',
-	'snapshots.about.names': 'The date and time in the names that UNOS gives,',
-	'snapshots.about.and': 'and',
-	'snapshots.about.utc': ", are in UTC; Created shows the time in your browser's time zone.",
-
 	// Create Snapshot: before the pool's or the volume's path, and before its .snapshots folder.
-	'snapshots.new.title': 'Create Snapshot',
+	'snapshots.new.title': 'Create snapshot',
 	'snapshots.new.of': 'A read-only snapshot of',
 	'snapshots.new.keptIn': ', kept in',
 	'snapshots.new.pool':
@@ -60,9 +51,9 @@ export const en = {
 	'snapshots.new.failed': 'Snapshot was not created',
 	'snapshots.new.submit': 'Create',
 
-	// Restore Snapshot: before the snapshot's name, after it, after restore_<date>_<time>, and
+	// Restore snapshot: before the snapshot's name, after it, after restore_<date>_<time>, and
 	// after the path the copy is made in.
-	'snapshots.restore.title': 'Restore Snapshot',
+	'snapshots.restore.title': 'Restore snapshot',
 	'snapshots.restore.before': 'Restore snapshot',
 	'snapshots.restore.copy': '? A writable copy of it,',
 	'snapshots.restore.madeIn': 'with the date and time in UTC, is made in',
@@ -75,16 +66,15 @@ export const en = {
 	'snapshots.restore.submit': 'Restore',
 
 	// Delete Snapshot: before the snapshot's name, and after its path in parentheses.
-	'snapshots.delete.title': 'Delete Snapshot',
+	'snapshots.delete.title': 'Delete snapshot',
 	'snapshots.delete.before': 'Delete snapshot',
 	'snapshots.delete.after': '? This cannot be undone.',
 	'snapshots.delete.failed': 'Snapshot was not deleted',
-	'snapshots.delete.submit': 'Delete Snapshot',
+	'snapshots.delete.submit': 'Delete snapshot',
 
 	// The copies that restores made right in the pool or volume chosen (ADR-0358).
 	'snapshots.copies.of': 'Restored copies in {name}',
-	'snapshots.copies.hint':
-		'Writable copies that Restore made here. Copy what you need from one, then delete it: a volume cannot be deleted while it holds one.',
+	'snapshots.copies.hint': 'Writable copies that Restore made here: copy what you need, then delete them.',
 	'snapshots.copies.loadError': 'Could not load the restored copies',
 	'snapshots.copies.empty': 'No restored copies here.',
 	'snapshots.copies.list': 'Restored copies',
@@ -92,54 +82,46 @@ export const en = {
 	'snapshots.copies.deleteOne': 'Delete restored copy {name}',
 
 	// Delete Restored Copy: before the copy's name, and after its path in parentheses.
-	'snapshots.copies.delete.title': 'Delete Restored Copy',
+	'snapshots.copies.delete.title': 'Delete restored copy',
 	'snapshots.copies.delete.before': 'Delete the restored copy',
 	'snapshots.copies.delete.after': '? Its files are deleted with it, and this cannot be undone.',
 	'snapshots.copies.delete.inUse':
 		'It is not deleted while a running container, an SMB share or an NFS export uses it.',
 	'snapshots.copies.delete.failed': 'Restored copy was not deleted',
-	'snapshots.copies.delete.submit': 'Delete Copy'
+	'snapshots.copies.delete.submit': 'Delete copy'
 };
 
 export const ru: Translation<typeof en> = {
 	'snapshots.title': 'Снимки',
+	'snapshots.subtitle': 'Копии пула или тома только для чтения. Снимок пула не включает его тома: делайте снимки и томов.',
 	'snapshots.create': 'Создать снимок',
+	'snapshots.createBlocked': 'Сначала смонтируйте пул на странице «Хранилище»',
 	'snapshots.loadPoolsError': 'Не удалось загрузить пулы и тома',
 	'snapshots.picker': 'Пул или том',
 	'snapshots.pool': '{pool} (пул)',
 	'snapshots.volume': '{pool}/{volume} (том)',
 	'snapshots.volumesError': 'Не удалось прочитать тома пула {pool}',
 	'snapshots.volumesErrorHint': 'Сам пул можно выбрать, но его томов нет в списке.',
-	'snapshots.noPool': 'Нет смонтированных пулов. Смонтируйте пул на странице',
-	'snapshots.storagePage': '«Хранилище»',
+	'snapshots.noPool': 'Снимки делаются со смонтированного пула или тома.',
+	'snapshots.storagePage': 'Хранилище →',
+	'snapshots.noPoolTitle': 'Нет смонтированных пулов',
+	'snapshots.keptIn': 'Хранятся в',
+	'snapshots.schedule': 'Снимки по расписанию →',
 	'snapshots.restored': 'Снимок восстановлен',
 	'snapshots.restoredAt': 'Путь к копии:',
 	'snapshots.of': 'Снимки {name}',
 	'snapshots.loadError': 'Не удалось загрузить снимки',
 	'snapshots.empty': 'Снимков пока нет',
-	'snapshots.emptyHint': 'Снимок сохраняет файлы в их нынешнем виде, только для чтения.',
+	'snapshots.emptyHint': 'Кнопка «Создать снимок» сделает его сейчас; Планировщик делает снимки пулов по расписанию.',
 	'snapshots.list': 'Снимки',
 	'snapshots.name': 'Имя',
 	'snapshots.created': 'Создан',
 	'snapshots.actions': 'Действия',
 	'snapshots.restoreOne': 'Восстановить снимок {name}',
+	'snapshots.restoreAction': 'Восстановить…',
 	'snapshots.deleteOne': 'Удалить снимок {name}',
 	'snapshots.dateTime': '<дата>_<время>',
 
-	'snapshots.about.title': 'О снимках',
-	'snapshots.about.kept':
-		'Снимок — это доступная только для чтения копия пула или тома на определённый момент времени. Он хранится в папке',
-	'snapshots.about.folder': 'этого пула или тома.',
-	'snapshots.about.btrfs': 'btrfs создаёт снимок мгновенно, а затем хранит только изменения.',
-	'snapshots.about.volumes': 'Снимок пула не включает файлы его томов: делайте снимки и каждого тома.',
-	'snapshots.about.restore':
-		'Восстановление создаёт рядом с оригиналом копию, доступную для записи, и ничего не перезаписывает.',
-	'snapshots.about.scheduled':
-		'Снимки по расписанию (Система, Планировщик) делаются только для пулов и называются',
-	'snapshots.about.names': 'В именах, которые даёт UNOS,',
-	'snapshots.about.and': 'и',
-	'snapshots.about.utc':
-		', дата и время указаны в UTC; в столбце «Создан» время показано в часовом поясе вашего браузера.',
 
 	'snapshots.new.title': 'Создание снимка',
 	'snapshots.new.of': 'Снимок содержимого',
@@ -170,8 +152,7 @@ export const ru: Translation<typeof en> = {
 	'snapshots.delete.submit': 'Удалить снимок',
 
 	'snapshots.copies.of': 'Восстановленные копии в {name}',
-	'snapshots.copies.hint':
-		'Копии, доступные для записи, которые создало восстановление снимка. Скопируйте из копии нужное, затем удалите её: том нельзя удалить, пока в нём есть копия.',
+	'snapshots.copies.hint': 'Копии для записи, созданные восстановлением: скопируйте нужное, затем удалите их.',
 	'snapshots.copies.loadError': 'Не удалось загрузить восстановленные копии',
 	'snapshots.copies.empty': 'Восстановленных копий здесь нет.',
 	'snapshots.copies.list': 'Восстановленные копии',

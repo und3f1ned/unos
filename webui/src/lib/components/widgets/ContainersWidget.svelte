@@ -1,14 +1,6 @@
 <script lang="ts">
-	import {
-		Container,
-		Play,
-		Square,
-		AlertCircle,
-		CheckCircle2,
-		XCircle,
-		ExternalLink
-	} from 'lucide-svelte';
-	import { Card, StatusDot, Badge } from '$lib/components/ui';
+	import { Container, ExternalLink } from 'lucide-svelte';
+	import { Card, Badge } from '$lib/components/ui';
 	import { t } from '$lib/i18n';
 
 	type Props = {
@@ -44,31 +36,9 @@
 	const running = $derived(containers.filter((c) => c.state === 'running').length);
 	// Stopped as the Containers page counts it, whose summary this is (ADR-0431): the exited ones.
 	const stopped = $derived(containers.filter((c) => c.state === 'exited').length);
+	// The paused, restarting, created and dead ones: the three counts add up to the total (ADR-0432).
+	const other = $derived(containers.length - running - stopped);
 	const displayContainers = $derived(containers.slice(0, limit));
-
-	function getStateColor(state: string): string {
-		switch (state) {
-			case 'running':
-				return 'text-success';
-			case 'exited':
-			case 'stopped':
-				return 'text-secondary';
-			default:
-				return 'text-warning';
-		}
-	}
-
-	function getStateIcon(state: string) {
-		switch (state) {
-			case 'running':
-				return Play;
-			case 'exited':
-			case 'stopped':
-				return Square;
-			default:
-				return AlertCircle;
-		}
-	}
 
 	function getStatusDotVariant(state: string): 'success' | 'warning' | 'error' | 'neutral' {
 		switch (state) {
@@ -112,65 +82,52 @@
 			<a href="/containers" class="link text-[13px]">{$t('dashboard.manage')}</a>
 		</div>
 
-		<!-- Summary Stats -->
-		<div class="grid grid-cols-2 gap-2 mb-3">
-			<div class="flex items-center gap-2.5 px-3 py-2.5 rounded-lg bg-surface-muted">
-				<div class="w-8 h-8 rounded-full bg-status-success/20 flex items-center justify-center" aria-hidden="true">
-					<CheckCircle2 class="w-4 h-4 text-success" />
-				</div>
-				<div>
-					<p class="text-xl font-semibold tabular">{running}</p>
-					<p class="text-xs text-secondary">{$t('dashboard.containers.running')}</p>
-				</div>
+		<!-- The counts, which add up to the total: Other only when there is one (ADR-0432). -->
+		<dl class="grid {other > 0 ? 'grid-cols-3' : 'grid-cols-2'} gap-2 mb-3">
+			<div class="px-3 py-2 rounded-lg bg-surface-muted">
+				<dt class="text-xs text-secondary">{$t('dashboard.containers.running')}</dt>
+				<dd class="text-xl font-semibold tabular">{running}</dd>
 			</div>
-			<div class="flex items-center gap-2.5 px-3 py-2.5 rounded-lg bg-surface-muted">
-				<div class="w-8 h-8 rounded-full bg-status-neutral/20 flex items-center justify-center" aria-hidden="true">
-					<XCircle class="w-4 h-4 text-secondary" />
-				</div>
-				<div>
-					<p class="text-xl font-semibold tabular">{stopped}</p>
-					<p class="text-xs text-secondary">{$t('dashboard.containers.stopped')}</p>
-				</div>
+			<div class="px-3 py-2 rounded-lg bg-surface-muted">
+				<dt class="text-xs text-secondary">{$t('dashboard.containers.stopped')}</dt>
+				<dd class="text-xl font-semibold tabular">{stopped}</dd>
 			</div>
-		</div>
+			{#if other > 0}
+				<div class="px-3 py-2 rounded-lg bg-surface-muted">
+					<dt class="text-xs text-secondary">{$t('dashboard.containers.other')}</dt>
+					<dd class="text-xl font-semibold tabular">{other}</dd>
+				</div>
+			{/if}
+		</dl>
 
 		{#if containers.length === 0}
-			<div class="text-center py-4">
-				<Container class="w-8 h-8 mx-auto mb-2 text-muted opacity-50" />
-				<p class="text-secondary text-sm">{$t('dashboard.containers.none')}</p>
-			</div>
+			<p class="text-secondary text-sm">{$t('dashboard.containers.none')}</p>
 		{:else}
+			<!-- A row per container: its name and image, then its state as a badge with a dot. No
+			     state icon: the play and stop icons are the Containers page's buttons (ADR-0432). -->
 			<div class="flex flex-col">
 				{#each displayContainers as container}
 					{@const webUrl = getWebUrl(container)}
-					{@const Icon = getStateIcon(container.state)}
 					<!-- A row, not a link: the card's one link is Manage, to the Containers page (ADR-0431). -->
 					<div
-						class="flex items-center justify-between gap-3 px-2 py-2 -mx-2 border-b border-border-muted last:border-b-0"
+						class="flex items-center justify-between gap-3 py-2 border-b border-border-muted last:border-b-0"
 					>
-						<div class="flex items-center gap-3 min-w-0">
-							<div
-								class="w-8 h-8 rounded bg-surface-overlay flex items-center justify-center flex-shrink-0"
-								aria-hidden="true"
-							>
-								<Icon class="w-4 h-4 {getStateColor(container.state)}" />
-							</div>
-							<div class="min-w-0">
-								<p class="font-medium text-sm truncate">{container.name}</p>
-								<p class="text-xs text-muted truncate">{container.image.split(':')[0]}</p>
-							</div>
+						<div class="min-w-0">
+							<p class="font-medium text-sm truncate" title={container.name}>{container.name}</p>
+							<p class="text-xs text-muted truncate" title={container.image}>{container.image.split(':')[0]}</p>
 						</div>
-						<div class="flex items-center gap-2">
+						<div class="flex items-center gap-2 shrink-0">
 							{#if webUrl}
 								<a
 									href={webUrl}
 									target="_blank"
 									rel="noopener"
 									onclick={(event) => event.stopPropagation()}
-									class="p-1 rounded hover:bg-surface-elevated text-content-link"
+									class="p-1 rounded hover:bg-surface-hover text-content-link"
 									title={$t('dashboard.containers.open')}
+									aria-label={$t('dashboard.containers.open')}
 								>
-									<ExternalLink class="w-3.5 h-3.5" />
+									<ExternalLink class="w-3.5 h-3.5" aria-hidden="true" />
 								</a>
 							{/if}
 							<Badge variant={getStatusDotVariant(container.state)} dot>

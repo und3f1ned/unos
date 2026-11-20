@@ -98,7 +98,7 @@
 			loading={busy}
 			onclick={confirm}
 		>
-			{$t(action?.kind === 'mount' ? 'storage.pool.mount' : 'storage.pool.unmount')}
+			{$t(action?.kind === 'mount' ? 'storage.mount.confirm' : 'storage.unmount.confirm')}
 		</Button>
 	{/snippet}
 </Modal>

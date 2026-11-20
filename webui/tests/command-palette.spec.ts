@@ -133,14 +133,14 @@ const ADMIN_ACTIONS = ['Add a user…', 'Reboot the host…', 'Shut down the hos
 
 test.describe('The command palette of an administrator', () => {
   test('Ctrl+K opens it with every page and action, and typing narrows them', async ({ authenticatedPage: page }) => {
-    // Step 1. Every link of the sidebar, the trash of Files, every tab of System and the actions.
+    // Step 1. Every link of the sidebar (Files' Trash among them, ADR-0432), every tab of System and
+    // the actions.
     const sidebar = await page.locator('aside nav a').allTextContents();
     expect(sidebar.length).toBeGreaterThan(5);
     await openPalette(page);
     await expect(field(page)).toHaveAttribute('aria-expanded', 'true');
     const all = await optionNames(page);
     const pages = sidebar.map((name) => name.trim());
-    pages.splice(pages.indexOf('Files') + 1, 0, 'Trash');
     expect(all).toEqual([...pages, ...SYSTEM_TABS.slice(1), ...ACCOUNT_CHOICES, ...ADMIN_ACTIONS]);
     // The tabs of System are the System page's own.
     await page.keyboard.press('Escape');

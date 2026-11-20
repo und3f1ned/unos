@@ -19,3 +19,15 @@ export function formatNumber(value: number, locale: string, digits: number): str
 export function roundedNumber(value: number, digits: number): string {
 	return String(parseFloat(value.toFixed(digits)));
 }
+
+/**
+ * A date and time to the minute, the year in full: what the data pages show of a time of the API
+ * ("11/7/2026, 3:00 AM", "07.11.2026, 03:00"); seconds only in logs (ADR-0432).
+ */
+export const DATE_TIME_MINUTES: Intl.DateTimeFormatOptions = {
+	year: 'numeric',
+	month: 'numeric',
+	day: 'numeric',
+	hour: 'numeric',
+	minute: '2-digit'
+};

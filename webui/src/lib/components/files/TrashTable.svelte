@@ -1,6 +1,7 @@
 <script lang="ts">
   import { formatSize, type TrashItem } from "$lib/api/files";
   import { intlLocale, t } from "$lib/i18n";
+  import { DATE_TIME_MINUTES } from "$lib/format";
   import { formatDate, formatDateTime } from "$lib/time";
   import { trashItemIcon } from "./icons";
 
@@ -22,7 +23,7 @@
   // The server gives UTC times with their offset; the browser shows them in its own time zone,
   // in the language of the page.
   function formatTime(value: string, dateOnly = false): string {
-    return dateOnly ? formatDate(value, $intlLocale) : formatDateTime(value, $intlLocale);
+    return dateOnly ? formatDate(value, $intlLocale) : formatDateTime(value, $intlLocale, DATE_TIME_MINUTES);
   }
 
   // The folder an item was deleted from.
@@ -33,25 +34,29 @@
   }
 
   // What a screen reader says for an item's checkbox: items of the same name
-  // differ in where and when they were deleted (ADR-0197).
+  // differ in where and when they were deleted (ADR-0197), to the second, which
+  // the row leaves out (ADR-0432).
   function checkboxLabel(item: TrashItem): string {
-    const time = formatTime(item.deleted);
+    const time = formatDateTime(item.deleted, $intlLocale);
     return item.original_path === null
       ? $t("files.trash.selectUnknown", { name: item.name, time })
       : $t("files.trash.select", { name: item.name, folder: folderOf(item), time });
   }
 </script>
 
+<!-- The name keeps its words whole and takes the room; the folder it came from ends in an
+     ellipsis, whole in its tooltip, and goes under the name on a phone, where Kept until is left out
+     (ADR-0432). -->
 <div class="table-frame">
   <table class="table" aria-label={$t("files.trash.items")}>
     <thead class="table-header">
       <tr>
         <th class="w-8"><span class="sr-only">{$t("files.trash.column.selected")}</span></th>
-        <th>{$t("files.column.name")}</th>
-        <th>{$t("files.trash.column.from")}</th>
-        <th>{$t("files.trash.column.deleted")}</th>
-        <th>{$t("files.trash.column.keptUntil")}</th>
-        <th>{$t("files.column.size")}</th>
+        <th class="min-w-[12rem]">{$t("files.column.name")}</th>
+        <th class="hidden md:table-cell w-[30%]">{$t("files.trash.column.from")}</th>
+        <th class="whitespace-nowrap">{$t("files.trash.column.deleted")}</th>
+        <th class="hidden sm:table-cell whitespace-nowrap">{$t("files.trash.column.keptUntil")}</th>
+        <th class="num">{$t("files.column.size")}</th>
       </tr>
     </thead>
     <tbody>
@@ -67,16 +72,21 @@
               class="w-4 h-4 rounded bg-surface-overlay border-border"
             />
           </td>
-          <td>
-            <div class="flex items-center gap-2 min-w-0">
-              <Icon class="w-4 h-4 flex-shrink-0 text-content-secondary" />
-              <span class="break-all">{item.name}</span>
+          <td class="min-w-[12rem]">
+            <div class="flex items-start gap-2 min-w-0">
+              <Icon class="w-4 h-4 mt-0.5 flex-shrink-0 text-content-secondary" />
+              <div class="min-w-0">
+                <span class="break-words">{item.name}</span>
+                <p class="md:hidden mono-xs text-muted truncate max-w-[14rem]" title={folderOf(item)}>{folderOf(item)}</p>
+              </div>
             </div>
           </td>
-          <td class="mono-xs break-all">{folderOf(item)}</td>
-          <td class="whitespace-nowrap">{formatTime(item.deleted)}</td>
-          <td class="whitespace-nowrap">{formatTime(item.expires, true)}</td>
-          <td class="whitespace-nowrap">{item.type === "directory" ? "-" : formatSize(item.size, units)}</td>
+          <td class="hidden md:table-cell max-w-0">
+            <p class="mono-xs truncate" title={folderOf(item)}>{folderOf(item)}</p>
+          </td>
+          <td class="whitespace-nowrap tabular">{formatTime(item.deleted)}</td>
+          <td class="hidden sm:table-cell whitespace-nowrap tabular">{formatTime(item.expires, true)}</td>
+          <td class="num whitespace-nowrap">{item.type === "directory" ? "-" : formatSize(item.size, units)}</td>
         </tr>
       {/each}
     </tbody>

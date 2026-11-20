@@ -900,6 +900,12 @@ interface View {
 /** The title and the last button of a dialog that is named one (role dialog), as Modal's are. */
 const dialogTitle = (page: Page) => page.getByRole('dialog').getByRole('heading', { name: /\S/ }).first();
 const dialogEnd = (page: Page) => page.getByRole('dialog').getByRole('button').last();
+/** Opens every pool's More, where its less frequent actions are (ADR-0432). */
+async function poolMore(page: Page): Promise<void> {
+  const buttons = page.getByRole('button', { name: /^(More actions for|Ещё действия с) / });
+  await expect(buttons.first()).toBeVisible();
+  for (const button of await buttons.all()) await button.click();
+}
 
 /**
  * Wait until `target` has ended its own transitions, such as the 150 ms in which Select's list
@@ -979,12 +985,13 @@ const VIEWS: View[] = [
     // The name and the time come in apart: the page lists the host after all its requests, and
     // the time with the first live stats.
     open: (page) => expect(page.getByRole('heading', { name: LONG_HOST_NAME })).toBeVisible(),
-    shows: (page) => page.getByText(/(Updated|Обновлено) \d/),
+    shows: (page) => page.getByText(/^(Live|Онлайн)$/),
   },
   {
-    // The banner shows above every page of an administrator: here above the dashboard.
+    // The banner shows above every page of an administrator but the dashboard, which draws it under
+    // its header with its own issues (ADR-0432): here above the Storage page.
     name: 'The health banner',
-    path: '/',
+    path: '/storage',
     fake: async (page) => {
       await fakeStorageApi(page);
       await fakeHealthApi(page, { predictions: () => predictionsAnswer(REPLACE_SOON, HEALTHY_HDD_2) });
@@ -1034,7 +1041,7 @@ const VIEWS: View[] = [
     name: 'Snapshots',
     path: '/snapshots',
     fake: (page) => serve(page, SNAPSHOTS_API),
-    shows: (page) => page.getByText(`${DATA}/restore_20261106_090000`).first(),
+    shows: (page) => page.getByText('restore_20261106_090000').first(),
   },
   {
     // With the card of the network interfaces: smbd's long IPv6 addresses, and a chosen USB adapter
@@ -1073,12 +1080,12 @@ const VIEWS: View[] = [
     shows: (page) => page.getByText('Annual report 2026 - final version signed by both parties.pdf', { exact: true }),
   },
   {
-    name: 'Files: New Folder',
+    name: 'Files: New folder',
     path: '/files',
     fake: (page) => fakeFiles(page, FILES),
     open: async (page) => {
       await openData(page);
-      await page.getByTitle(/^(New Folder|Новая папка)$/).click();
+      await page.getByRole('button', { name: /^(New folder|Новая папка)$/ }).click();
     },
     shows: (page) => page.getByPlaceholder(/^(Folder name|Имя папки)$/),
   },
@@ -1423,7 +1430,7 @@ const VIEWS: View[] = [
     name: 'Dialog: create a pool',
     path: '/storage',
     fake: (page) => fakeStorageApi(page),
-    open: (page) => page.getByRole('button', { name: /^(Create Pool|Создать пул)$/ }).click(),
+    open: (page) => page.getByRole('button', { name: /^(Create pool|Создать пул)$/ }).click(),
     shows: (page) => page.getByRole('dialog'),
     start: dialogTitle,
     end: dialogEnd,
@@ -1489,7 +1496,8 @@ const VIEWS: View[] = [
     path: '/storage',
     fake: (page) => fakeStorageApi(page),
     open: async (page) => {
-      await page.getByRole('button', { name: /^(Balance|Балансировка)$/ }).first().click();
+      await poolMore(page);
+      await page.getByRole('button', { name: /^(Balance…|Балансировка…)$/, disabled: false }).first().click();
       await page.getByRole('dialog').getByRole('combobox').click();
       await settled(page.getByRole('listbox'));
       await page.getByRole('option', { name: /^(Every chunk \(full balance\)|Все блоки \(полная балансировка\))$/ }).click();
@@ -1513,7 +1521,8 @@ const VIEWS: View[] = [
         }),
       }),
     open: async (page) => {
-      await page.getByRole('button', { name: /^(Add Disk|Добавить диск)$/, disabled: false }).first().click();
+      await poolMore(page);
+      await page.getByRole('button', { name: /^(Add disk…|Добавить диск…)$/, disabled: false }).first().click();
       await page.getByRole('dialog').getByRole('radio').check();
     },
     shows: (page) => page.getByRole('dialog').getByRole('checkbox'),
@@ -1541,7 +1550,8 @@ const VIEWS: View[] = [
         }),
       }),
     open: async (page) => {
-      await page.getByRole('button', { name: /^(Remove Disk|Удалить диск)$/, disabled: false }).first().click();
+      await poolMore(page);
+      await page.getByRole('button', { name: /^(Remove disk…|Удалить диск…)$/, disabled: false }).first().click();
       await page.getByRole('dialog').getByRole('radio').first().check();
     },
     shows: (page) => page.getByRole('dialog').getByRole('textbox'),
@@ -1561,7 +1571,7 @@ const VIEWS: View[] = [
     name: 'Dialog: create a snapshot',
     path: '/snapshots',
     fake: (page) => serve(page, SNAPSHOTS_API),
-    open: (page) => page.getByRole('button', { name: /^(Create Snapshot|Создать снимок)$/ }).click(),
+    open: (page) => page.getByRole('button', { name: /^(Create snapshot|Создать снимок)$/ }).click(),
     shows: (page) => page.getByRole('dialog'),
     start: dialogTitle,
     end: dialogEnd,

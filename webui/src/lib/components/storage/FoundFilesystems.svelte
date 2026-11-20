@@ -2,7 +2,8 @@
 	// The btrfs filesystems on the host's disks that are not pools yet (ADR-0283): without a label,
 	// with one that is no pool name, or with one that another filesystem has too, when the pool of
 	// that name is the other one or neither. A pool found on the disks is a pool of the Pools card,
-	// and its Mount imports it. The card shows only when there is one, or the search failed.
+	// and its Mount imports it. The card shows only when there is one, or the search failed. It comes
+	// after the pools and the disks, a compact list with a secondary Import… each (ADR-0432).
 	import { HardDriveDownload } from 'lucide-svelte';
 	import { Alert, Button, Card } from '$lib/components/ui';
 	import type { ImportableFilesystem } from '$lib/api/storage';
@@ -12,12 +13,14 @@
 		filesystems: ImportableFilesystem[];
 		/** Why the disks could not be searched. */
 		error: string;
+		/** The reason is not a card's above already: it is shown under the title. */
+		errorDetail?: boolean;
 		formatBytes: (bytes: number) => string;
 		/** The filesystem is to be imported as a pool. */
 		onimport: (fs: ImportableFilesystem) => void;
 	};
 
-	let { filesystems, error, formatBytes, onimport }: Props = $props();
+	let { filesystems, error, errorDetail = true, formatBytes, onimport }: Props = $props();
 
 	const describeFilesystem = (fs: ImportableFilesystem): string =>
 		fs.label === null ? $t('storage.found.noLabel') : $t('storage.found.label', { label: fs.label });
@@ -36,35 +39,41 @@
 {#if filesystems.length > 0 || error}
 	<Card>
 		<section aria-labelledby="found-on-the-disks">
-			<h2 id="found-on-the-disks" class="section-title mb-4">
-				<HardDriveDownload class="w-5 h-5" />
+			<h2 id="found-on-the-disks" class="section-title">
+				<HardDriveDownload class="w-5 h-5 text-content-secondary" aria-hidden="true" />
 				{$t('storage.found.title')}
 			</h2>
 			{#if error}
-				<Alert variant="error" title={$t('storage.found.searchError')}>{error}</Alert>
+				<Alert variant="error" size="sm" title={$t('storage.found.searchError')} class="mt-4">
+					{#if errorDetail}
+						<span class="text-xs text-content-secondary break-words">{error}</span>
+					{/if}
+				</Alert>
 			{:else}
-				<p class="text-sm text-secondary mb-4">{$t('storage.found.intro')}</p>
-				<ul class="space-y-3">
+				<p class="mt-1 text-sm text-secondary">{$t('storage.found.intro')}</p>
+				<ul class="mt-3 divide-y divide-border">
 					{#each filesystems as fs (fs.uuid)}
-						<li class="card-nested flex flex-wrap items-start justify-between gap-3">
-							<div class="min-w-0 space-y-1">
-								<p class="font-semibold">{describeFilesystem(fs)}</p>
-								<p class="mono-xs text-muted break-all">{$t('storage.found.uuid', { uuid: fs.uuid })}</p>
-								<p class="text-sm text-secondary">
+						<li class="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 py-3 first:pt-1 last:pb-0">
+							<div class="min-w-0 flex-1 basis-64 space-y-0.5">
+								<p class="font-medium">{describeFilesystem(fs)}</p>
+								<p class="text-xs text-secondary">
 									<span class="mono-xs">{fs.devices.join(', ')}</span> · {$t('storage.found.usage', {
 										size: formatBytes(fs.size),
 										used: formatBytes(fs.used)
 									})}
 								</p>
+								<p class="mono-xs text-muted break-all">{$t('storage.found.uuid', { uuid: fs.uuid })}</p>
 								<p class="text-xs text-muted">{labelHint(fs)}</p>
 								{#if fs.missing_devices > 0}
-									<p class="text-sm text-warning">{missingDevicesText(fs)}</p>
+									<p class="text-xs text-warning">{missingDevicesText(fs)}</p>
 								{/if}
 							</div>
 							<Button
+								variant="secondary"
 								size="sm"
 								icon={HardDriveDownload}
 								disabled={fs.missing_devices > 0}
+								title={fs.missing_devices > 0 ? missingDevicesText(fs) : undefined}
 								onclick={() => onimport(fs)}
 							>
 								{$t('storage.found.import')}<span class="sr-only"

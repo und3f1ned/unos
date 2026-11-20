@@ -181,7 +181,7 @@ test.describe('Where things live', () => {
 
   test('the dashboard has no Quick Actions, and /settings is gone', async ({ authenticatedPage: page }) => {
     await page.goto('/');
-    await expect(page.getByRole('heading', { name: 'Storage Pools' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Storage pools' })).toBeVisible();
     await expect(page.getByRole('heading', { name: 'Quick Actions' })).toHaveCount(0);
     // Its summaries link to the places of their facts, for an administrator.
     await expect(page.locator('main a[href="/system#monitor"]', { hasText: 'CPU' })).toBeVisible();

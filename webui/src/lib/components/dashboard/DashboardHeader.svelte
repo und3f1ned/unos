@@ -1,18 +1,19 @@
 <script lang="ts">
-	import { AlertTriangle, Check, CheckCircle, RefreshCw, SlidersHorizontal } from 'lucide-svelte';
+	import { AlertCircle, AlertTriangle, Check, CheckCircle, RefreshCw, SlidersHorizontal } from 'lucide-svelte';
 	import type { SystemInfo } from '$lib/api/system';
 	import { Button, Skeleton, StatusDot } from '$lib/components/ui';
 	import { intlLocale, t } from '$lib/i18n';
 	import { isAdmin } from '$lib/stores/auth';
-	import { problems, problemsKnown } from '$lib/stores/problems';
+	import { problemsKnown } from '$lib/stores/problems';
 	import { wsConnected, wsForbidden, wsSettled } from '$lib/stores/stats';
 	import { apiTime } from '$lib/time';
 
-	// The head of the dashboard: the host's name, system and uptime, a chip that says how fresh the
-	// live stats are (or why there are none), for an administrator a chip "No problems" while the
-	// problems banner has nothing to say, and the buttons Customize (ADR-0395) and Refresh
-	// (ADR-0428). On a narrow screen the chips and buttons go below the host name, and a long host
-	// name breaks (ADR-0302). The chips are no live region: the time changes every 2 seconds.
+	// The head of the dashboard: the host's name, system and uptime, a muted line that says whether
+	// the live stats come (the time of the last one on hover, so that nothing ticks: ADR-0432), for
+	// an administrator a chip with the number of issues that the banner below lists, linked to it, or
+	// "No problems" once that is known, and the buttons Customize (ADR-0395) and Refresh (ADR-0428).
+	// On a narrow screen the line and buttons go below the host name, and a long host name breaks
+	// (ADR-0302). Nothing here is a live region.
 
 	type Props = {
 		systemInfo: SystemInfo | null;
@@ -24,6 +25,13 @@
 		pending: boolean;
 		/** The widgets are being arranged. */
 		arranging: boolean;
+		/**
+		 * An administrator's issues, as the banner under the header lists them: the socket's problems
+		 * and the dashboard's own (ADR-0432); null until the page has loaded, and for a regular user.
+		 */
+		issueCount?: number | null;
+		/** One of them is an error: the chip is red, else amber. */
+		issueError?: boolean;
 		loading: boolean;
 		saving: boolean;
 		/** Customize or Done was pressed. */
@@ -31,8 +39,22 @@
 		onrefresh: () => void;
 	};
 
-	let { systemInfo, lastUpdate, customizable, pending, arranging, loading, saving, oncustomize, onrefresh }: Props =
-		$props();
+	let {
+		systemInfo,
+		lastUpdate,
+		customizable,
+		pending,
+		arranging,
+		issueCount = null,
+		issueError = false,
+		loading,
+		saving,
+		oncustomize,
+		onrefresh
+	}: Props = $props();
+
+	// The socket is up: the live stats come.
+	const live = $derived(!$wsForbidden && $wsSettled && $wsConnected);
 
 
 	// The functions that read $t or $intlLocale do it where the markup calls them: the texts follow
@@ -79,30 +101,40 @@
 		{/if}
 	</div>
 	<div class="page-actions">
+		<!-- Whether the live stats come: a muted line, not a chip (ADR-0432). -->
 		{#if $wsForbidden}
-			<span class="chip text-status-warning">
+			<span class="flex items-center gap-1.5 text-xs text-status-warning">
 				<AlertTriangle class="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
 				<span>{$t('dashboard.liveStatsForbidden')}</span>
 			</span>
 		{:else if !$wsSettled}
 			<!-- The first attempt of the live connection has not ended: connecting, not disconnected
 			     (ADR-0430). -->
-			<span class="chip">
+			<span class="flex items-center gap-1.5 text-xs text-content-secondary">
 				<StatusDot status="neutral" />
 				<span>{$t('dashboard.connecting')}</span>
 			</span>
 		{:else if !$wsConnected}
-			<span class="chip text-status-warning">
+			<span class="flex items-center gap-1.5 text-xs text-status-warning">
 				<AlertTriangle class="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
 				<span>{$t('dashboard.disconnected')}</span>
 			</span>
-		{:else if lastUpdate}
-			<span class="chip">
+		{:else if live}
+			<span
+				class="flex items-center gap-1.5 text-xs text-content-secondary"
+				title={lastUpdate ? $t('dashboard.updated', { time: formatTime(lastUpdate) }) : undefined}
+			>
 				<StatusDot status="success" />
-				<span>{$t('dashboard.updated', { time: formatTime(lastUpdate) })}</span>
+				<span>{$t('dashboard.live')}</span>
 			</span>
 		{/if}
-		{#if $isAdmin && $wsConnected && $problemsKnown && $problems.length === 0}
+		{#if $isAdmin && issueCount !== null && issueCount > 0}
+			<!-- The banner under the header lists them, each linked to where it is dealt with. -->
+			<a href="#problems-banner" class="chip hover:bg-surface-hover {issueError ? 'text-status-error' : 'text-status-warning'}">
+				<AlertCircle class="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+				<span>{$t('dashboard.issues', { n: issueCount })}</span>
+			</a>
+		{:else if $isAdmin && $wsConnected && $problemsKnown && issueCount === 0}
 			<span class="chip text-status-success">
 				<CheckCircle class="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
 				<span>{$t('dashboard.noProblems')}</span>

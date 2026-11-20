@@ -4,12 +4,13 @@ import type { Translation } from '../translate';
 // (src/routes/files/trash/+page.svelte, ADR-0259). The messages of the server stay English.
 
 export const en = {
-	'files.title': 'File Browser',
+	'files.title': 'Files',
 	'files.upload': 'Upload',
-	'files.newFolder': 'New Folder',
+	'files.newFolder': 'New folder',
 	'files.pools': 'Pools',
 	'files.selectedItems': 'Selected items',
 	'files.selected': '{n} selected',
+	'files.selectHint': 'Select items to download, copy, move, rename or delete them.',
 	'files.download': 'Download',
 	'files.copy': 'Copy',
 	'files.move': 'Move',
@@ -56,14 +57,12 @@ export const en = {
 	'files.delete.forGoodMany':
 		'Delete for good deletes them at once, without the trash, and frees their space. This cannot be undone.',
 	'files.deleteForGood': 'Delete for good',
+	'files.deleteForGoodAction': 'Delete for good…',
 	'files.moveToTrash': 'Move to trash',
 
-	// The hidden files that uploads left when the supervisor stopped (ADR-0354): the notice and its dialog.
+	// The hidden files that uploads left when UNOS restarted (ADR-0354): the notice and its dialog.
 	'files.leftovers.title': 'Leftovers of interrupted uploads',
-	'files.leftovers.found': {
-		one: '{n} hidden file that an upload left when the supervisor stopped in the middle of it takes {size}.',
-		other: '{n} hidden files that uploads left when the supervisor stopped in the middle of them take {size}.'
-	},
+	'files.leftovers.found': { one: '{n} hidden file that an upload left when UNOS restarted in the middle of it takes {size}.', other: '{n} hidden files that uploads left when UNOS restarted in the middle of them take {size}.' },
 	'files.leftovers.hint':
 		'They hold the part of a file that had arrived, and nothing uses them: upload those files again.',
 	'files.leftovers.remove': 'Remove…',
@@ -88,15 +87,11 @@ export const en = {
 
 	'files.trash.title': 'Trash',
 	'files.trash.empty': 'Empty trash',
-	'files.trash.kept': {
-		one: 'Items deleted in Files wait here, in the trash of their pool or volume, and are deleted for good {n} day after they were deleted.',
-		other:
-			'Items deleted in Files wait here, in the trash of their pool or volume, and are deleted for good {n} days after they were deleted.'
-	},
-	'files.trash.keptUnknown':
-		'Items deleted in Files wait here, in the trash of their pool or volume, and are deleted for good a number of days after they were deleted.',
-	'files.trash.space':
-		'Until then they take up space in their pool: delete them for good to free it at once. Restore puts an item back in the folder it was deleted from; it stays here while that folder is gone or its name is taken there.',
+	'files.trash.emptyAction': 'Empty trash…',
+	'files.trash.kept': { one: 'Deleted items are kept here {n} day, then deleted for good.', other: 'Deleted items are kept here {n} days, then deleted for good.' },
+	'files.trash.keptUnknown': 'Deleted items are kept here for some days, then deleted for good.',
+	'files.trash.selectHint': 'Select items to restore them or delete them for good.',
+	'files.trash.space': 'Their space in the pools is freed at once.',
 	'files.trash.loadError': 'Could not load the trash',
 	'files.trash.problem': 'A trash could not be read',
 	'files.trash.restore': 'Restore',
@@ -127,12 +122,13 @@ export const en = {
 };
 
 export const ru: Translation<typeof en> = {
-	'files.title': 'Файловый менеджер',
+	'files.title': 'Файлы',
 	'files.upload': 'Загрузить',
 	'files.newFolder': 'Новая папка',
 	'files.pools': 'Пулы',
 	'files.selectedItems': 'Выбранные элементы',
 	'files.selected': 'Выбрано: {n}',
+	'files.selectHint': 'Выберите элементы, чтобы скачать, скопировать, переместить, переименовать или удалить их.',
 	'files.download': 'Скачать',
 	'files.copy': 'Копировать',
 	'files.move': 'Переместить',
@@ -184,14 +180,11 @@ export const ru: Translation<typeof en> = {
 	'files.delete.forGoodMany':
 		'«Удалить навсегда» удаляет их сразу, минуя корзину, и освобождает занятое ими место. Это нельзя отменить.',
 	'files.deleteForGood': 'Удалить навсегда',
+	'files.deleteForGoodAction': 'Удалить навсегда…',
 	'files.moveToTrash': 'Переместить в корзину',
 
 	'files.leftovers.title': 'Остатки прерванных загрузок',
-	'files.leftovers.found': {
-		one: 'Скрытые файлы, которые оставили загрузки, прерванные остановкой супервизора: {n} файл, {size}.',
-		few: 'Скрытые файлы, которые оставили загрузки, прерванные остановкой супервизора: {n} файла, {size}.',
-		many: 'Скрытые файлы, которые оставили загрузки, прерванные остановкой супервизора: {n} файлов, {size}.'
-	},
+	'files.leftovers.found': { one: 'Скрытые файлы, которые оставили загрузки, прерванные перезапуском UNOS: {n} файл, {size}.', few: 'Скрытые файлы, которые оставили загрузки, прерванные перезапуском UNOS: {n} файла, {size}.', many: 'Скрытые файлы, которые оставили загрузки, прерванные перезапуском UNOS: {n} файлов, {size}.' },
 	'files.leftovers.hint':
 		'В них часть файла, которая успела прийти, и они ничему не нужны: загрузите эти файлы снова.',
 	'files.leftovers.remove': 'Удалить…',
@@ -217,15 +210,11 @@ export const ru: Translation<typeof en> = {
 
 	'files.trash.title': 'Корзина',
 	'files.trash.empty': 'Очистить корзину',
-	'files.trash.kept': {
-		one: 'Элементы, удалённые в «Файлах», ждут здесь, в корзине своего пула или тома, и удаляются навсегда через {n} день после удаления.',
-		few: 'Элементы, удалённые в «Файлах», ждут здесь, в корзине своего пула или тома, и удаляются навсегда через {n} дня после удаления.',
-		many: 'Элементы, удалённые в «Файлах», ждут здесь, в корзине своего пула или тома, и удаляются навсегда через {n} дней после удаления.'
-	},
-	'files.trash.keptUnknown':
-		'Элементы, удалённые в «Файлах», ждут здесь, в корзине своего пула или тома, и удаляются навсегда через заданное число дней после удаления.',
-	'files.trash.space':
-		'До тех пор они занимают место в своём пуле: удалите их навсегда, чтобы сразу освободить его. «Восстановить» возвращает элемент в папку, из которой он был удалён; он остаётся здесь, пока этой папки нет или его имя в ней занято.',
+	'files.trash.emptyAction': 'Очистить корзину…',
+	'files.trash.kept': { one: 'Удалённое хранится здесь {n} день, затем удаляется навсегда.', few: 'Удалённое хранится здесь {n} дня, затем удаляется навсегда.', many: 'Удалённое хранится здесь {n} дней, затем удаляется навсегда.' },
+	'files.trash.keptUnknown': 'Удалённое хранится здесь несколько дней, затем удаляется навсегда.',
+	'files.trash.selectHint': 'Выберите элементы, чтобы восстановить их или удалить навсегда.',
+	'files.trash.space': 'Их место в пулах освобождается сразу.',
 	'files.trash.loadError': 'Не удалось загрузить корзину',
 	'files.trash.problem': 'Не удалось прочитать одну из корзин',
 	'files.trash.restore': 'Восстановить',

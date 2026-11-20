@@ -202,7 +202,8 @@
             {/if}
           </div>
           <span class="text-sm text-content-secondary tabular">
-            {item.type === "directory" ? "-" : formatSize(item.size, units)}
+            <!-- A folder's size is not known without walking it: the cell stays empty rather than "-". -->
+            {item.type === "directory" ? "" : formatSize(item.size, units)}
           </span>
           <span class="hidden sm:block text-sm text-content-secondary tabular">
             {formatDate(item.modified, $intlLocale)}

@@ -3,7 +3,7 @@
 	// jobs on them, and the dialogs that change them. The page holds the lists (StorageLists, with
 	// the jobs of PoolJobs) and which dialog is open, and follows the events socket.
 	import { onMount, untrack } from 'svelte';
-	import { Plus } from 'lucide-svelte';
+	import { Plus, RefreshCw } from 'lucide-svelte';
 	import { Alert, Button, Skeleton } from '$lib/components/ui';
 	import type { BalanceStatus, Disk, DiskRemovalStatus, ImportableFilesystem, Pool } from '$lib/api/storage';
 	import { scaleBytes } from '$lib/format';
@@ -29,6 +29,7 @@
 	import { StorageLists } from '$lib/components/storage/lists.svelte';
 	import { PoolVolumes } from '$lib/components/storage/volumes.svelte';
 	import type { PoolAction, PoolHandlers } from '$lib/components/storage/pools';
+	import { usableForPool } from '$lib/components/storage/pools';
 
 	const lists = new StorageLists(() => dialogOpen);
 	const jobs = lists.jobs;
@@ -219,6 +220,23 @@
 		jobs.balance.show(pool, status);
 	}
 
+	// Refresh: the lists again, keeping what is shown until they answer (ADR-0430).
+	let refreshing = $state(false);
+	async function refresh() {
+		refreshing = true;
+		try {
+			await lists.loadData(false);
+		} finally {
+			refreshing = false;
+		}
+	}
+
+	// The disks that a new pool can take, as the Create pool dialog offers them; null when the disks
+	// could not be read, which also disables Create pool, with the reason (ADR-0432).
+	let freeDisks = $derived(
+		lists.disksError ? null : lists.disks.filter(usableForPool).length
+	);
+
 	// What the pools' cards ask for.
 	const poolHandlers: PoolHandlers = {
 		onscrub: (pool) => jobs.startScrub(pool.name),
@@ -237,7 +255,31 @@
 <div class="page-container">
 	<div class="page-header">
 		<h1 class="page-title">{$t('storage.title')}</h1>
-		<Button icon={Plus} onclick={openCreateModal}>{$t('storage.createPool')}</Button>
+		<div class="page-actions">
+			<!-- Reads every list again: also the way to try again after a list could not be read. -->
+			<Button
+				variant="secondary"
+				size="icon"
+				title={$t('common.refresh')}
+				disabled={lists.loading || refreshing}
+				onclick={refresh}
+			>
+				<RefreshCw class="w-4 h-4 {refreshing ? 'animate-spin' : ''}" aria-hidden="true" />
+				<span class="sr-only">{$t('common.refresh')}</span>
+			</Button>
+			<!-- A pool is made of the disks the page lists: without them, Create pool waits and says why. -->
+			<span class="flex" title={lists.disksError ? $t('storage.createBlocked') : undefined}>
+				<Button
+					icon={Plus}
+					disabled={!lists.loading && !!lists.disksError}
+					aria-describedby={lists.disksError ? 'create-pool-blocked' : undefined}
+					onclick={openCreateModal}>{$t('storage.createPool')}</Button
+				>
+			</span>
+			{#if lists.disksError}
+				<span id="create-pool-blocked" class="sr-only">{$t('storage.createBlocked')}</span>
+			{/if}
+		</div>
 	</div>
 
 	{#if jobs.error}
@@ -245,15 +287,30 @@
 	{/if}
 
 	{#if lists.loading}
-		<!-- The first load (ADR-0430): the disks' table and the pools, swapped for them at once. -->
+		<!-- The first load (ADR-0430): the pools and the disks' table, swapped for them at once. -->
 		<div class="space-y-6" aria-busy="true">
-			<Skeleton shape="table" columns={8} count={3} />
-			<Skeleton shape="card" count={3} />
+			<Skeleton shape="card" count={2} />
+			<Skeleton shape="table" columns={7} count={3} />
 		</div>
 	{:else}
+		<!-- The pools first, the page's subject; then the disks they are made of, and the btrfs
+		     filesystems found on them that can become pools (ADR-0432). A list that could not be read
+		     says so in its card, and a cause that a card above names already is not repeated. -->
+		<PoolList
+			pools={lists.pools}
+			error={lists.poolsError}
+			{freeDisks}
+			{jobs}
+			{formatBytes}
+			{percentFormat}
+			{profileLabel}
+			{...poolHandlers}
+		/>
+
 		<DiskTable
 			disks={lists.disks}
 			error={lists.disksError}
+			errorDetail={lists.disksError !== lists.poolsError}
 			warning={spindownWarning}
 			{formatBytes}
 			{quoted}
@@ -266,18 +323,9 @@
 		<FoundFilesystems
 			filesystems={lists.importable}
 			error={lists.importableError}
+			errorDetail={lists.importableError !== lists.disksError && lists.importableError !== lists.poolsError}
 			{formatBytes}
 			onimport={(fs) => (importTarget = fs)}
-		/>
-
-		<PoolList
-			pools={lists.pools}
-			error={lists.poolsError}
-			{jobs}
-			{formatBytes}
-			{percentFormat}
-			{profileLabel}
-			{...poolHandlers}
 		/>
 	{/if}
 </div>

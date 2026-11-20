@@ -257,9 +257,9 @@ test.describe('Snapshots of pools and volumes (fake data)', () => {
     await expect(picker(page)).toHaveText('e2e_data (Pool)');
     await expect(rows(page)).toHaveCount(3); // the header and two snapshots
     await expect(rows(page).nth(1)).toContainText('auto_20261107_020000');
-    await expect(rows(page).nth(1)).toContainText('11/7/2026, 5:00:00 AM');
+    await expect(rows(page).nth(1)).toContainText('11/7/2026, 5:00 AM');
     await expect(rows(page).nth(2)).toContainText('auto_20261106_020000');
-    await expect(rows(page).nth(2)).toContainText('11/6/2026, 5:00:00 AM');
+    await expect(rows(page).nth(2)).toContainText('11/6/2026, 5:00 AM');
     await expect(row(page, 'before-edit')).toHaveCount(0);
     // No size: measuring a snapshot walked all its files (ADR-0243).
     await expect(page.getByRole('columnheader')).toHaveText(['Name', 'Created', 'Actions']);
@@ -274,8 +274,9 @@ test.describe('Snapshots of pools and volumes (fake data)', () => {
     await page.getByRole('option', { name: 'e2e_data/documents (Volume)' }).click();
 
     await expect(rows(page)).toHaveCount(2);
-    await expect(row(page, 'before-edit')).toContainText('11/7/2026, 11:15:00 AM');
-    await expect(row(page, 'before-edit')).toContainText('/mnt/pools/e2e_data/documents/.snapshots/before-edit');
+    await expect(row(page, 'before-edit')).toContainText('11/7/2026, 11:15 AM');
+    // The full path is the name's tooltip (ADR-0432): the card names the folder once.
+    await expect(row(page, 'before-edit').getByText('before-edit', { exact: true })).toHaveAttribute('title', '/mnt/pools/e2e_data/documents/.snapshots/before-edit');
     expect(requests.filter((r) => r.method === 'GET' && r.path === '/').map((r) => r.subvolume)).toEqual([
       DATA.path,
       DOCUMENTS.path,
@@ -283,8 +284,8 @@ test.describe('Snapshots of pools and volumes (fake data)', () => {
 
     await choose(page, 'e2e_data/photos (Volume)');
     await expect(page.getByText('No snapshots yet')).toBeVisible();
-    // The names say UTC, the list the browser's time (ADR-0243).
-    await expect(page.getByText('names that UNOS gives, snap_, restore_ and auto_, are in UTC')).toBeVisible();
+    // The names say UTC, the list the browser's time (ADR-0243): the dialogs that make a name say so
+    // where it is made (ADR-0432), which 'create a snapshot of a volume' checks.
     await expect(page.locator('.alert').filter({ hasText: 'could not be read' })).toHaveCount(0);
     expect(writes(requests)).toEqual([]);
     expect(dialogs).toEqual([]);
@@ -314,7 +315,7 @@ test.describe('Snapshots of pools and volumes (fake data)', () => {
     ]);
     await page.getByRole('option', { name: 'e2e_media (Pool)' }).click();
     await expect(row(page, 'nightly')).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Create Snapshot' })).toBeEnabled();
+    await expect(page.getByRole('button', { name: 'Create snapshot' })).toBeEnabled();
     expect(writes(requests)).toEqual([]);
   });
 
@@ -325,8 +326,8 @@ test.describe('Snapshots of pools and volumes (fake data)', () => {
     await choose(page, 'e2e_data/documents (Volume)');
     await expect(page.getByText('No snapshots yet')).toBeVisible();
 
-    await page.getByRole('button', { name: 'Create Snapshot' }).click();
-    const dialog = page.getByRole('dialog', { name: 'Create Snapshot' });
+    await page.getByRole('button', { name: 'Create snapshot' }).click();
+    const dialog = page.getByRole('dialog', { name: 'Create snapshot' });
     await expect(dialog).toContainText('/mnt/pools/e2e_data/documents');
     await expect(dialog.getByLabel('Snapshot name (optional)')).toHaveAttribute(
       'placeholder',
@@ -336,13 +337,13 @@ test.describe('Snapshots of pools and volumes (fake data)', () => {
     await dialog.getByRole('button', { name: 'Create', exact: true }).click();
 
     await expect(dialog).toBeHidden();
-    await expect(row(page, 'before-upgrade')).toContainText('11/7/2026, 1:30:00 PM');
+    await expect(row(page, 'before-upgrade')).toContainText('11/7/2026, 1:30 PM');
     expect(writes(requests)).toEqual([
       { method: 'POST', path: '/', subvolume: null, body: { subvolume: DOCUMENTS.path, name: 'before-upgrade' } },
     ]);
 
     // Without a name the server names it; the body has none.
-    await page.getByRole('button', { name: 'Create Snapshot' }).click();
+    await page.getByRole('button', { name: 'Create snapshot' }).click();
     await expect(dialog.getByLabel('Snapshot name (optional)')).toHaveValue('');
     await dialog.getByRole('button', { name: 'Create', exact: true }).click();
     await expect(dialog).toBeHidden();
@@ -356,8 +357,8 @@ test.describe('Snapshots of pools and volumes (fake data)', () => {
     await page.goto('/snapshots');
     await expect(picker(page)).toHaveText('e2e_data (Pool)');
 
-    await page.getByRole('button', { name: 'Create Snapshot' }).click();
-    const dialog = page.getByRole('dialog', { name: 'Create Snapshot' });
+    await page.getByRole('button', { name: 'Create snapshot' }).click();
+    const dialog = page.getByRole('dialog', { name: 'Create snapshot' });
     // btrfs snapshots stop at subvolumes: a pool's snapshot leaves out its volumes,
     // which get none until one is made of each (ADR-0243).
     await expect(
@@ -371,7 +372,8 @@ test.describe('Snapshots of pools and volumes (fake data)', () => {
     await dialog.getByRole('button', { name: 'Create', exact: true }).click();
 
     await expect(dialog).toBeHidden();
-    await expect(row(page, 'nightly')).toContainText('/mnt/pools/e2e_data/.snapshots/nightly');
+    // The full path is the name's tooltip (ADR-0432): the card names the folder once.
+    await expect(row(page, 'nightly').getByText('nightly', { exact: true })).toHaveAttribute('title', '/mnt/pools/e2e_data/.snapshots/nightly');
     expect(writes(requests)).toEqual([
       { method: 'POST', path: '/', subvolume: null, body: { subvolume: DATA.path, name: 'nightly' } },
     ]);
@@ -385,7 +387,7 @@ test.describe('Snapshots of pools and volumes (fake data)', () => {
     await choose(page, 'e2e_data/documents (Volume)');
 
     await page.getByRole('button', { name: 'Restore snapshot before-edit' }).click();
-    const dialog = page.getByRole('dialog', { name: 'Restore Snapshot' });
+    const dialog = page.getByRole('dialog', { name: 'Restore snapshot' });
     await expect(dialog).toContainText('restore_<date>_<time> with the date and time in UTC');
     await expect(dialog).toContainText('/mnt/pools/e2e_data/documents');
     await expect(dialog).toContainText('Nothing is overwritten.');
@@ -420,7 +422,7 @@ test.describe('Snapshots of pools and volumes (fake data)', () => {
     await page.goto('/snapshots');
 
     await page.getByRole('button', { name: 'Restore snapshot nightly' }).click();
-    const dialog = page.getByRole('dialog', { name: 'Restore Snapshot' });
+    const dialog = page.getByRole('dialog', { name: 'Restore snapshot' });
     await expect(
       dialog.getByText(
         'The copy is a volume of the pool too. When it is no longer needed, delete it under Restored copies below.',
@@ -445,7 +447,7 @@ test.describe('Snapshots of pools and volumes (fake data)', () => {
     await choose(page, 'e2e_data/documents (Volume)');
 
     await page.getByRole('button', { name: 'Delete snapshot before-edit' }).click();
-    const dialog = page.getByRole('dialog', { name: 'Delete Snapshot' });
+    const dialog = page.getByRole('dialog', { name: 'Delete snapshot' });
     await expect(dialog).toContainText('/mnt/pools/e2e_data/documents/.snapshots/before-edit');
     await expect(dialog).toContainText('This cannot be undone.');
     await dialog.getByRole('button', { name: 'Cancel' }).click();
@@ -453,7 +455,7 @@ test.describe('Snapshots of pools and volumes (fake data)', () => {
     expect(writes(requests)).toEqual([]);
 
     await page.getByRole('button', { name: 'Delete snapshot before-edit' }).click();
-    await dialog.getByRole('button', { name: 'Delete Snapshot' }).click();
+    await dialog.getByRole('button', { name: 'Delete snapshot' }).click();
 
     await expect(dialog).toBeHidden();
     await expect(page.getByText('No snapshots yet')).toBeVisible();
@@ -487,16 +489,19 @@ test.describe('Snapshots of pools and volumes (fake data)', () => {
     await expect(page.getByRole('heading', { name: 'Restored copies in e2e_data (Pool)' })).toBeVisible();
     await expect(copyRows(page)).toHaveCount(2); // the header and the pool's copy
     await expect(copyRows(page).nth(1)).toContainText('restore_20261105_080000');
-    await expect(copyRows(page).nth(1)).toContainText(`${DATA.path}/restore_20261105_080000`);
-    await expect(copyRows(page).nth(1)).toContainText('11/5/2026, 11:00:00 AM');
+    // The full path is the name's tooltip (ADR-0432).
+    await expect(copyRows(page).nth(1).getByText('restore_20261105_080000', { exact: true })).toHaveAttribute(
+      'title',
+      `${DATA.path}/restore_20261105_080000`,
+    );
+    await expect(copyRows(page).nth(1)).toContainText('11/5/2026, 11:00 AM');
     await expect(page.getByText('No snapshots yet')).toBeVisible();
 
     await choose(page, 'e2e_data/documents (Volume)');
     await expect(page.getByRole('heading', { name: 'Restored copies in e2e_data/documents (Volume)' })).toBeVisible();
     await expect(
       page.getByText(
-        'Writable copies that Restore made here. Copy what you need from one, then delete it: a volume cannot be ' +
-          'deleted while it holds one.',
+        'Writable copies that Restore made here: copy what you need, then delete them.',
       ),
     ).toBeVisible();
     const table = page.getByRole('table', { name: 'Restored copies' });
@@ -504,8 +509,11 @@ test.describe('Snapshots of pools and volumes (fake data)', () => {
     // Newest first, at the browser's time; the copies are no snapshots.
     await expect(copyRows(page)).toHaveCount(3);
     await expect(copyRows(page).nth(1)).toContainText('restore_20261107_103000');
-    await expect(copyRows(page).nth(1)).toContainText(`${DOCUMENTS.path}/restore_20261107_103000`);
-    await expect(copyRows(page).nth(1)).toContainText('11/7/2026, 1:30:00 PM');
+    await expect(copyRows(page).nth(1).getByText('restore_20261107_103000', { exact: true })).toHaveAttribute(
+      'title',
+      `${DOCUMENTS.path}/restore_20261107_103000`,
+    );
+    await expect(copyRows(page).nth(1)).toContainText('11/7/2026, 1:30 PM');
     await expect(copyRows(page).nth(2)).toContainText('restore_20261106_090000');
     await expect(rows(page)).toHaveCount(2);
     await expect(row(page, 'before-edit')).toBeVisible();
@@ -531,11 +539,11 @@ test.describe('Snapshots of pools and volumes (fake data)', () => {
     await expect(page.getByText('No restored copies here.')).toBeVisible();
 
     await page.getByRole('button', { name: 'Restore snapshot before-edit' }).click();
-    await page.getByRole('dialog', { name: 'Restore Snapshot' }).getByRole('button', { name: 'Restore', exact: true }).click();
-    await expect(copyRows(page).filter({ hasText: RESTORE_NAME })).toContainText('11/7/2026, 1:30:00 PM');
+    await page.getByRole('dialog', { name: 'Restore snapshot' }).getByRole('button', { name: 'Restore', exact: true }).click();
+    await expect(copyRows(page).filter({ hasText: RESTORE_NAME })).toContainText('11/7/2026, 1:30 PM');
 
     await page.getByRole('button', { name: `Delete restored copy ${RESTORE_NAME}` }).click();
-    const dialog = page.getByRole('dialog', { name: 'Delete Restored Copy' });
+    const dialog = page.getByRole('dialog', { name: 'Delete restored copy' });
     await expect(dialog).toContainText(
       `Delete the restored copy ${RESTORE_NAME} (${DOCUMENTS.path}/${RESTORE_NAME})? Its files are deleted with ` +
         'it, and this cannot be undone.',
@@ -548,7 +556,7 @@ test.describe('Snapshots of pools and volumes (fake data)', () => {
     expect(writes(requests).map((r) => `${r.method} ${r.path}`)).toEqual(['POST /restore']);
 
     await page.getByRole('button', { name: `Delete restored copy ${RESTORE_NAME}` }).click();
-    await dialog.getByRole('button', { name: 'Delete Copy' }).click();
+    await dialog.getByRole('button', { name: 'Delete copy' }).click();
 
     await expect(dialog).toBeHidden();
     await expect(page.getByText('No restored copies here.')).toBeVisible();
@@ -573,8 +581,8 @@ test.describe('Snapshots of pools and volumes (fake data)', () => {
     await choose(page, 'e2e_data/documents (Volume)');
 
     await page.getByRole('button', { name: `Delete restored copy ${RESTORE_NAME}` }).click();
-    const dialog = page.getByRole('dialog', { name: 'Delete Restored Copy' });
-    await dialog.getByRole('button', { name: 'Delete Copy' }).click();
+    const dialog = page.getByRole('dialog', { name: 'Delete restored copy' });
+    await dialog.getByRole('button', { name: 'Delete copy' }).click();
 
     await expect(dialog.getByText('Restored copy was not deleted')).toBeVisible();
     await expect(dialog.getByText(detail)).toBeVisible();
@@ -614,8 +622,8 @@ test.describe('Snapshots of pools and volumes (fake data)', () => {
     });
     await page.goto('/snapshots');
 
-    await page.getByRole('button', { name: 'Create Snapshot' }).click();
-    const create = page.getByRole('dialog', { name: 'Create Snapshot' });
+    await page.getByRole('button', { name: 'Create snapshot' }).click();
+    const create = page.getByRole('dialog', { name: 'Create snapshot' });
     await create.getByLabel('Snapshot name (optional)').fill('nightly');
     await create.getByRole('button', { name: 'Create', exact: true }).click();
     await expect(create.getByText('Snapshot was not created')).toBeVisible();
@@ -625,15 +633,15 @@ test.describe('Snapshots of pools and volumes (fake data)', () => {
     await expect(create).toBeHidden();
 
     await page.getByRole('button', { name: 'Restore snapshot nightly' }).click();
-    const restore = page.getByRole('dialog', { name: 'Restore Snapshot' });
+    const restore = page.getByRole('dialog', { name: 'Restore snapshot' });
     await restore.getByRole('button', { name: 'Restore', exact: true }).click();
     await expect(restore.getByText('Snapshot was not restored')).toBeVisible();
     await expect(restore.getByText(`Restore target already exists: ${DATA.path}/${RESTORE_NAME}`)).toBeVisible();
     await restore.getByRole('button', { name: 'Cancel' }).click();
 
     await page.getByRole('button', { name: 'Delete snapshot nightly' }).click();
-    const remove = page.getByRole('dialog', { name: 'Delete Snapshot' });
-    await remove.getByRole('button', { name: 'Delete Snapshot' }).click();
+    const remove = page.getByRole('dialog', { name: 'Delete snapshot' });
+    await remove.getByRole('button', { name: 'Delete snapshot' }).click();
     await expect(remove.getByText('Snapshot was not deleted')).toBeVisible();
     await expect(remove.getByText(/Read-only file system/)).toBeVisible();
     await remove.getByRole('button', { name: 'Cancel' }).click();
@@ -650,7 +658,7 @@ test.describe('Snapshots of pools and volumes (fake data)', () => {
 
     await expect(page.getByText('Could not load the pools and volumes')).toBeVisible();
     await expect(page.getByText(detail)).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Create Snapshot' })).toBeDisabled();
+    await expect(page.getByRole('button', { name: 'Create snapshot' })).toBeDisabled();
     expect(requests.filter((r) => r.path === '/')).toEqual([]);
   });
 
@@ -658,8 +666,11 @@ test.describe('Snapshots of pools and volumes (fake data)', () => {
     const requests = await fakeSnapshotsApi(page, { subvolumes: [] });
     await page.goto('/snapshots');
 
-    await expect(page.getByText('No pool is mounted. Mount a pool on the Storage page.')).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Create Snapshot' })).toBeDisabled();
+    // An empty state with what to do and where (ADR-0432).
+    await expect(page.getByText('No pool is mounted', { exact: true })).toBeVisible();
+    await expect(page.getByText('Snapshots are taken of a mounted pool or volume.', { exact: true })).toBeVisible();
+    await expect(page.getByRole('link', { name: 'Storage →' })).toHaveAttribute('href', '/storage');
+    await expect(page.getByRole('button', { name: 'Create snapshot' })).toBeDisabled();
     await expect(picker(page)).toHaveCount(0);
     expect(requests.filter((r) => r.path === '/')).toEqual([]);
   });
@@ -672,22 +683,14 @@ test.describe('Snapshots of pools and volumes (fake data)', () => {
     });
     await page.goto('/snapshots');
 
-    await expect(
-      page.getByText(
-        'A snapshot is a read-only copy of a pool or a volume at one point in time, kept in its .snapshots ' +
-          'folder. btrfs makes it at once and then stores only what changes.',
-      ),
-    ).toBeVisible();
-    await expect(
-      page.getByText(
-        'Scheduled snapshots (System, Scheduler) are made of pools only and are named auto_<date>_<time>. The ' +
-          'date and time in the names that UNOS gives, snap_, restore_ and auto_, are in UTC; Created shows the ' +
-          "time in your browser's time zone.",
-      ),
-    ).toBeVisible();
+    // The list's card names its folder once, and links to the schedule of snapshots; the About card
+    // is gone, its rules are where they apply (ADR-0432).
+    await expect(page.getByText(`Kept in ${DATA.path}/.snapshots`, { exact: true })).toBeVisible();
+    await expect(page.getByRole('link', { name: 'Schedule snapshots →' })).toHaveAttribute('href', '/system#scheduler');
+    await expect(page.getByRole('heading', { name: 'About Snapshots' })).toHaveCount(0);
 
-    await page.getByRole('button', { name: 'Create Snapshot' }).click();
-    const create = page.getByRole('dialog', { name: 'Create Snapshot' });
+    await page.getByRole('button', { name: 'Create snapshot' }).click();
+    const create = page.getByRole('dialog', { name: 'Create snapshot' });
     await expect(create).toContainText(
       `A read-only snapshot of ${DATA.path}, kept in ${DATA.path}/.snapshots. It does not include the files`,
     );
@@ -695,7 +698,7 @@ test.describe('Snapshots of pools and volumes (fake data)', () => {
     await expect(create).toBeHidden();
 
     await page.getByRole('button', { name: 'Restore snapshot nightly' }).click();
-    const restore = page.getByRole('dialog', { name: 'Restore Snapshot' });
+    const restore = page.getByRole('dialog', { name: 'Restore snapshot' });
     await expect(restore).toContainText(
       'Restore snapshot nightly? A writable copy of it, restore_<date>_<time> with the date and time in UTC, ' +
         `is made in ${DATA.path}. Nothing is overwritten.`,
@@ -707,7 +710,7 @@ test.describe('Snapshots of pools and volumes (fake data)', () => {
     );
 
     await page.getByRole('button', { name: 'Delete snapshot nightly' }).click();
-    const remove = page.getByRole('dialog', { name: 'Delete Snapshot' });
+    const remove = page.getByRole('dialog', { name: 'Delete snapshot' });
     await expect(remove).toContainText(
       `Delete snapshot nightly (${DATA.path}/.snapshots/nightly)? This cannot be undone.`,
     );
@@ -744,7 +747,7 @@ test.describe('Snapshots of pools and volumes (fake data)', () => {
     const copiesTable = page.getByRole('table', { name: 'Восстановленные копии' });
     await expect(copiesTable.getByRole('columnheader')).toHaveText(['Имя', 'Восстановлена', 'Действия']);
     await expect(copiesTable.getByRole('row').filter({ hasText: 'restore_20261106_090000' })).toContainText(
-      '06.11.2026, 12:00:00',
+      '06.11.2026, 12:00',
     );
     await page.getByRole('button', { name: 'Удалить восстановленную копию restore_20261106_090000' }).click();
     const removeCopy = page.getByRole('dialog', { name: 'Удаление восстановленной копии' });
@@ -759,18 +762,14 @@ test.describe('Snapshots of pools and volumes (fake data)', () => {
     await removeCopy.getByRole('button', { name: 'Отмена' }).click();
     await expect(removeCopy).toBeHidden();
     // The time in the language of the page, in Moscow: the day first, on a 24-hour clock.
-    await expect(table.getByRole('row').filter({ hasText: 'nightly' })).toContainText('07.11.2026, 05:00:00');
+    await expect(table.getByRole('row').filter({ hasText: 'nightly' })).toContainText('07.11.2026, 5:00');
     // The title in Russian, the server's reason as it comes.
     const warning = page.locator('.alert').filter({ hasText: 'Не удалось прочитать тома пула e2e_media' });
     await expect(warning).toContainText(`${detail} Сам пул можно выбрать, но его томов нет в списке.`);
-    await expect(page.getByRole('heading', { name: 'О снимках' })).toBeVisible();
-    // Names on the disk stay as they are; the date and time of a name's pattern are words.
-    await expect(page.getByText('Он хранится в папке .snapshots этого пула или тома.')).toBeVisible();
+    // No About card (ADR-0432): its rules are where they apply, the first in the page's subtitle.
+    await expect(page.getByRole('heading', { name: 'О снимках' })).toHaveCount(0);
     await expect(
-      page.getByText(
-        'называются auto_<дата>_<время>. В именах, которые даёт UNOS, snap_, restore_ и auto_, ' +
-          'дата и время указаны в UTC; в столбце «Создан» время показано в часовом поясе вашего браузера.',
-      ),
+      page.getByText('Копии пула или тома только для чтения. Снимок пула не включает его тома: делайте снимки и томов.'),
     ).toBeVisible();
 
     await russianPicker.click();
@@ -825,7 +824,7 @@ test.describe('Snapshots of pools and volumes (fake data)', () => {
     await remove.getByRole('button', { name: 'Отмена' }).click();
     await expect(remove).toBeHidden();
     // Nothing of the English page is left.
-    await expect(page.getByRole('button', { name: 'Create Snapshot' })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Create snapshot' })).toHaveCount(0);
     await expect(page.getByRole('heading', { name: 'About Snapshots' })).toHaveCount(0);
     expect(writes(requests).map((r) => `${r.method} ${r.path}`)).toEqual(['POST /restore']);
   });
@@ -835,8 +834,9 @@ test.describe('Snapshots of pools and volumes (fake data)', () => {
     await chooseRussian(page);
     await page.goto('/snapshots');
 
-    await expect(page.getByText('Нет смонтированных пулов. Смонтируйте пул на странице «Хранилище».')).toBeVisible();
-    await expect(page.getByRole('link', { name: '«Хранилище»' })).toHaveAttribute('href', '/storage');
+    await expect(page.getByText('Нет смонтированных пулов', { exact: true })).toBeVisible();
+    await expect(page.getByText('Снимки делаются со смонтированного пула или тома.', { exact: true })).toBeVisible();
+    await expect(page.getByRole('link', { name: 'Хранилище →' })).toHaveAttribute('href', '/storage');
     await expect(page.getByRole('button', { name: 'Создать снимок' })).toBeDisabled();
   });
 });

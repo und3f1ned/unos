@@ -19,9 +19,11 @@
 			forcedReadOnly?: boolean;
 		}>;
 		compact?: boolean;
+		/** The pools could not be read: no "No pools yet" (ADR-0432). */
+		failed?: boolean;
 	};
 
-	let { pools = [], compact = false }: Props = $props();
+	let { pools = [], compact = false, failed = false }: Props = $props();
 
 	type BadgeVariant = 'success' | 'warning' | 'error' | 'orange' | 'neutral';
 
@@ -104,8 +106,12 @@
 			<a href="/storage" class="link text-[13px]">{$t('dashboard.manage')}</a>
 		</div>
 
-		{#if pools.length === 0}
-			<p class="text-secondary text-sm">{$t('dashboard.storage.none')}</p>
+		{#if failed}
+			<!-- The banner above names the reason and links to Storage. -->
+			<p class="text-sm text-error">{$t('dashboard.issue.poolsFailed')}</p>
+		{:else if pools.length === 0}
+			<!-- No pool yet: where one is made, which the header's Manage opens (ADR-0431, ADR-0432). -->
+			<p class="text-sm text-secondary">{$t('dashboard.storage.none')}</p>
 		{:else}
 			<div class="pb-3.5 mb-3.5 border-b border-border">
 				<p class="text-xs text-content-secondary">{$t('dashboard.storage.total')}</p>
@@ -113,26 +119,24 @@
 					{formatBytes(totalUsed, $t)} / {formatBytes(totalSize, $t)} ({totalPercent.toFixed(1)}%)
 				</p>
 			</div>
+			<!-- A row per pool, the same on every screen (ADR-0432): its name and health with its share
+			     on the right, the bar, then its use and its problems below. An unmounted pool's badge
+			     says so: no line repeats it. -->
 			<div class="space-y-3">
 				{#each pools as pool}
 					{@const badge = getHealthBadge(pool.health)}
 					{@const mounted = isMounted(pool)}
 					{@const issues = problems(pool)}
 					<div>
-						<div class="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
+						<div class="flex items-center justify-between gap-3">
 							<div class="flex items-center gap-2 min-w-0">
-								<span class="font-medium truncate">{pool.name}</span>
+								<span class="font-medium truncate" title={pool.name}>{pool.name}</span>
 								<Badge variant={badge.variant}>{badge.label}</Badge>
 							</div>
 							{#if mounted}
 								<span class="text-[13px] text-secondary tabular whitespace-nowrap"
-									>{formatBytes(pool.used, $t)} / {formatBytes(pool.size, $t)} · {getUsagePercent(
-										pool.used,
-										pool.size
-									).toFixed(0)}%</span
+									>{getUsagePercent(pool.used, pool.size).toFixed(0)}%</span
 								>
-							{:else}
-								<span class="text-[13px] text-muted">{$t('dashboard.storage.inaccessible')}</span>
 							{/if}
 						</div>
 						{#if mounted}
@@ -143,10 +147,20 @@
 								label={pool.name}
 							/>
 						{/if}
-						{#if issues.length > 0}
-							<p class="text-xs mt-1.5 {isWarning(pool) ? 'text-warning' : 'text-error'}">
-								{issues.join(' • ')}
-							</p>
+						{#if mounted || issues.length > 0}
+							<div class="mt-1.5 flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5 text-xs">
+								{#if issues.length > 0}
+									<span data-field="issues" class={isWarning(pool) ? 'text-warning' : 'text-error'}>{issues.join(' · ')}</span>
+								{/if}
+								{#if mounted}
+									<span data-field="used" class="ml-auto text-secondary tabular whitespace-nowrap"
+										>{$t('dashboard.storage.usedOf', {
+											used: formatBytes(pool.used, $t),
+											size: formatBytes(pool.size, $t)
+										})}</span
+									>
+								{/if}
+							</div>
 						{/if}
 					</div>
 				{/each}

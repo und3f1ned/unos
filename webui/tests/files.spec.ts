@@ -43,8 +43,9 @@ test.describe('File Browser', () => {
   test('should have new folder button', async ({ authenticatedPage: page }) => {
     await page.goto('/files');
     await page.waitForTimeout(1000);
-    const newFolderButton = page.locator('button[title*="Folder" i], button:has([class*="FolderPlus"])').first();
-    await expect(newFolderButton).toBeVisible();
+    // In words beside Upload, the page's one primary action (ADR-0432).
+    await expect(page.getByRole('button', { name: 'New folder', exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Upload', exact: true })).toHaveClass(/btn-primary/);
   });
 
   test('should show create folder dialog', async ({ authenticatedPage: page }) => {
@@ -78,20 +79,25 @@ test.describe('File Browser', () => {
     await chooseRussian(page);
     await page.goto('/files');
     await expect(page.locator('html')).toHaveAttribute('lang', 'ru');
-    await expect(page.getByRole('heading', { name: 'Файловый менеджер', level: 1 })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Файлы', level: 1 })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Пулы', exact: true })).toBeVisible();
-    await expect(page.getByTitle('Новая папка')).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Новая папка', exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Загрузить', exact: true })).toBeVisible();
+    // The selection's actions show only while something is selected (ADR-0432).
     const toolbar = page.getByRole('toolbar', { name: 'Выбранные элементы' });
     await expect(toolbar).toContainText('Выбрано: 0');
-    await expect(toolbar.getByRole('button')).toHaveText(['Скачать', 'Копировать', 'Переместить', 'Переименовать', 'Удалить']);
+    await expect(toolbar).toContainText('Выберите элементы, чтобы скачать, скопировать, переместить, переименовать или удалить их.');
+    await expect(toolbar.getByRole('button')).toHaveCount(0);
     for (const column of ['Имя', 'Размер', 'Изменён']) {
       await expect(page.getByText(column, { exact: true })).toBeVisible();
     }
 
-    await page.locator('main').getByRole('link', { name: 'Корзина', exact: true }).click();
+    // The trash is in the sidebar, under Files (ADR-0432).
+    await expect(page.locator('aside nav a[href="/files/trash"]')).toHaveText('Корзина');
+    await page.locator('aside nav a[href="/files/trash"]').click();
     await expect(page).toHaveURL('/files/trash');
     await expect(page.getByRole('heading', { name: 'Корзина', level: 1 })).toBeVisible();
-    await expect(page.getByText('удаляются навсегда через 30 дней после удаления')).toBeVisible();
+    await expect(page.getByText('Удалённое хранится здесь 30 дней, затем удаляется навсегда.', { exact: true })).toBeVisible();
     // The way back to Files is the sidebar's (ADR-0431).
     await expect(page.locator('aside nav a[href="/files"]')).toHaveText('Файлы');
     await expect(page.getByRole('heading', { name: 'Trash' })).toHaveCount(0);
@@ -373,9 +379,9 @@ test.describe('File Browser operations', () => {
     const sub = await makeFolder(page, dir, 'sub');
     await putFile(page, sub, 'inner.txt', Buffer.from('inner'));
     await openScratch(page);
-    for (const action of ['Download', 'Copy', 'Move', 'Delete']) {
-      await expect(selectionBar(page).getByRole('button', { name: action, exact: true })).toBeDisabled();
-    }
+    // Nothing selected: the bar counts none and says what selecting offers, with no buttons (ADR-0432).
+    await expect(selectionBar(page)).toContainText('0 selected');
+    await expect(selectionBar(page).getByRole('button')).toHaveCount(0);
 
     await row(page, 'a.txt').getByRole('checkbox').check();
     await row(page, 'sub').getByRole('checkbox').check();
@@ -545,10 +551,10 @@ test.describe('File Browser operations', () => {
     await openScratch(page);
     await moveToTrash(page, 'a.txt', 'sub');
 
-    await page.locator('main').getByRole('link', { name: 'Trash', exact: true }).click();
+    await page.locator('aside nav a[href="/files/trash"]').click();
     await expect(page).toHaveURL('/files/trash');
     await expect(page.getByRole('heading', { name: 'Trash', level: 1 })).toBeVisible();
-    await expect(page.getByText('deleted for good 30 days after they were deleted')).toBeVisible();
+    await expect(page.getByText('Deleted items are kept here 30 days, then deleted for good.', { exact: true })).toBeVisible();
     const file = await trashed(page, `${dir}/a.txt`);
     const folder = await trashed(page, `${dir}/sub`);
     expect(Date.parse(file.expires) - Date.parse(file.deleted)).toBe(30 * 24 * 60 * 60 * 1000);
@@ -709,7 +715,7 @@ test.describe('File Browser operations', () => {
     await expect(entry('a.txt')).toHaveCount(0);
 
     // Each checkbox of the trash says where and when its item was deleted from.
-    await page.locator('main').getByRole('link', { name: 'Корзина', exact: true }).click();
+    await page.locator('aside nav a[href="/files/trash"]').click();
     const deleted = (name: string) =>
       page.getByRole('checkbox', {
         name: new RegExp(`^Выбрать ${literally(name)}, удалён из ${literally(dir)} \\d{2}\\.\\d{2}\\.\\d{4}, \\d{2}:\\d{2}:\\d{2}$`),
@@ -725,7 +731,7 @@ test.describe('File Browser operations', () => {
     expect(moved.ok(), `move a.txt to the trash: HTTP ${moved.status()}`).toBeTruthy();
     await page.getByRole('button', { name: 'Обновить', exact: true }).click();
     await deleted('a.txt').check();
-    await toolbar.getByRole('button', { name: 'Удалить навсегда', exact: true }).click();
+    await toolbar.getByRole('button', { name: 'Удалить навсегда…', exact: true }).click();
     const forGood = page.getByRole('dialog', { name: 'Удалить навсегда', exact: true });
     await expect(forGood).toContainText('Удалить навсегда 1 выбранный элемент? Это нельзя отменить.');
     await forGood.getByRole('button', { name: 'Удалить навсегда', exact: true }).click();
@@ -1072,7 +1078,7 @@ test.describe('File Browser operations', () => {
 
   test('creates a folder in the open folder', async ({ authenticatedPage: page }) => {
     await openScratch(page);
-    await page.getByTitle('New Folder').click();
+    await page.getByRole('button', { name: 'New folder', exact: true }).click();
     await page.getByPlaceholder('Folder name').fill('made-here');
     await page.getByRole('button', { name: 'Create', exact: true }).click();
     await expect(row(page, 'made-here')).toBeVisible();
@@ -1085,7 +1091,7 @@ test.describe('File Browser operations', () => {
     // Only a share folder (setgid, the group unos-smb, mode 2770) gives them group write (ADR-0273).
     // The scratch folder is an ordinary one: its new entries keep what the umask leaves, and its group.
     const dir = (await openScratch(page)).path;
-    await page.getByTitle('New Folder').click();
+    await page.getByRole('button', { name: 'New folder', exact: true }).click();
     await page.getByPlaceholder('Folder name').fill('made-here');
     await page.getByRole('button', { name: 'Create', exact: true }).click();
     await expect(row(page, 'made-here')).toBeVisible();
@@ -1115,8 +1121,8 @@ test.describe('File Browser operations', () => {
     await openScratch(page);
     const renames = countRenames(page);
 
-    // Rename works on one selected item.
-    await expect(renameButton(page)).toBeDisabled();
+    // Rename works on one selected item; with none it is not shown (ADR-0432).
+    await expect(renameButton(page)).toHaveCount(0);
     await row(page, 'draft.txt').getByRole('checkbox').check();
     await row(page, 'photos').getByRole('checkbox').check();
     await expect(renameButton(page)).toBeDisabled();
@@ -1252,7 +1258,7 @@ test.describe('File Browser operations', () => {
     await putFile(page, dir, 'taken', Buffer.from('taken'));
     await openScratch(page);
     const renames = countRenames(page);
-    const heading = page.getByRole('heading', { name: 'File Browser', level: 1 });
+    const heading = page.getByRole('heading', { name: 'Files', level: 1 });
     await row(page, 'box').getByRole('checkbox').check();
     await renameButton(page).click();
     const field = nameField(page, 'box');
@@ -1315,7 +1321,7 @@ test.describe('File Browser operations', () => {
     await field.press('Enter');
     await held;
     await field.press('Enter');
-    await page.getByRole('heading', { name: 'File Browser', level: 1 }).click();
+    await page.getByRole('heading', { name: 'Files', level: 1 }).click();
     release();
 
     await expect(row(page, 'renamed.txt')).toBeVisible();
@@ -1435,7 +1441,7 @@ test.describe('File Browser operations', () => {
     await makeFolder(page, dir, ' notes');
     await openScratch(page);
     const renames = countRenames(page);
-    const heading = page.getByRole('heading', { name: 'File Browser', level: 1 });
+    const heading = page.getByRole('heading', { name: 'Files', level: 1 });
 
     // An item whose own name has a space at its start keeps it while its field is left unchanged.
     await row(page, ' notes').getByRole('checkbox').check();
@@ -1479,7 +1485,7 @@ test.describe('File Browser operations', () => {
     await page.goto('/files');
     const notice = page.getByRole('region', { name: 'Leftovers of interrupted uploads' });
     await expect(notice).toContainText(
-      '1 hidden file that an upload left when the supervisor stopped in the middle of it takes 3 KB.',
+      '1 hidden file that an upload left when UNOS restarted in the middle of it takes 3 KB.',
     );
     const removeButton = notice.getByRole('button', { name: 'Remove…', exact: true });
     const dialog = page.getByRole('dialog', { name: 'Remove 1 leftover of an upload', exact: true });

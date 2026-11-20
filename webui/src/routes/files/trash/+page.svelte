@@ -118,22 +118,19 @@
   <div class="page-header">
     <div class="min-w-0">
       <h1 class="page-title">{$t("files.trash.title")}</h1>
-      <!-- How long the trash keeps what it holds: a muted line under the title (ADR-0428). -->
+      <!-- How long the trash keeps what it holds, in one line (ADR-0432). -->
       <p class="page-subtitle">
         {retentionDays === null ? $t("files.trash.keptUnknown") : $t("files.trash.kept", { n: retentionDays })}
-        {$t("files.trash.space")}
       </p>
     </div>
     <div class="page-actions">
-      <!-- The span shows the tooltip over the button and its text for screen readers. -->
-      <span class="flex" title={$t("common.refresh")}>
-        <Button variant="secondary" size="icon" disabled={loading} onclick={load}>
-          <RefreshCw class="w-4 h-4 {loading ? 'animate-spin' : ''}" />
-          <span class="sr-only">{$t("common.refresh")}</span>
-        </Button>
-      </span>
-      <Button variant="danger" icon={Trash2} disabled={busy || items.length === 0} onclick={() => ask("everything")}>
-        {$t("files.trash.empty")}
+      <Button variant="secondary" size="icon" disabled={loading} title={$t("common.refresh")} onclick={load}>
+        <RefreshCw class="w-4 h-4 {loading ? 'animate-spin' : ''}" aria-hidden="true" />
+        <span class="sr-only">{$t("common.refresh")}</span>
+      </Button>
+      <!-- Not a solid red button: the red one is the confirmation's (ADR-0432). -->
+      <Button variant="ghost-danger" icon={Trash2} disabled={busy || items.length === 0} onclick={() => ask("everything")}>
+        {$t("files.trash.emptyAction")}
       </Button>
     </div>
   </div>
@@ -141,9 +138,16 @@
   {#if loadError}
     <Alert variant="error" title={$t("files.trash.loadError")}>{loadError}</Alert>
   {/if}
-  {#each problems as problem}
-    <Alert variant="warning" title={$t("files.trash.problem")}>{problem}</Alert>
-  {/each}
+  {#if problems.length > 0}
+    <!-- The trashes that could not be read, in one alert. -->
+    <Alert variant="warning" size="sm" title={$t("files.trash.problem")}>
+      <ul class="space-y-0.5">
+        {#each problems as problem}
+          <li class="break-words">{problem}</li>
+        {/each}
+      </ul>
+    </Alert>
+  {/if}
   {#if error}
     <!-- role="alert": screen readers announce the message when it appears. -->
     <div role="alert">
@@ -157,25 +161,25 @@
   {/if}
 
   <Card>
-    <SelectionBar count={selected.size}>
+    <SelectionBar count={selected.size} hint={$t("files.trash.selectHint")}>
       <Button
         variant="secondary"
         size="sm"
         icon={RotateCcw}
         loading={restoring}
-        disabled={busy || selected.size === 0}
+        disabled={busy}
         onclick={handleRestore}
       >
         {$t("files.trash.restore")}
       </Button>
       <Button
-        variant="danger"
+        variant="ghost-danger"
         size="sm"
         icon={Trash2}
-        disabled={busy || selected.size === 0}
+        disabled={busy}
         onclick={() => ask("selected")}
       >
-        {$t("files.deleteForGood")}
+        {$t("files.deleteForGoodAction")}
       </Button>
     </SelectionBar>
 
@@ -202,6 +206,7 @@
     <p class="text-sm">
       {#if confirming === "everything"}
         {$t("files.trash.confirmEmpty")}
+        {$t("files.trash.space")}
       {:else}
         {$t("files.trash.confirmSelected", { n: selected.size })}
       {/if}

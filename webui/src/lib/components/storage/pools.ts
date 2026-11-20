@@ -1,7 +1,7 @@
 // What the components of the Storage page share, without texts: where a pool is mounted, which
 // jobs run on it (scrub ADR-0313, balance ADR-0379, disk removal ADR-0411) and how far they are.
 // The texts are the components' own, from $t (ADR-0287).
-import type { BalanceStatus, DiskRemovalStatus, Pool, ScrubStatus, Volume } from '$lib/api/storage';
+import type { BalanceStatus, Disk, DiskRemovalStatus, Pool, ScrubStatus, Volume } from '$lib/api/storage';
 
 /** The variants of the page's badges. */
 export type BadgeVariant = 'success' | 'warning' | 'error' | 'info' | 'neutral' | 'orange';
@@ -24,21 +24,32 @@ export const removalRuns = (status: DiskRemovalStatus | undefined): boolean => s
 /** What the buttons of a balance that runs or is paused ask the server for. */
 export type BalanceAction = 'pause' | 'resume' | 'cancel';
 
-/** Neither an add nor a removal beside a scrub, a balance or a removal, nor on a pool that cannot change. */
-export function diskChangeBlocked(
+/**
+ * Why an action of a pool is not available now, as a key of the catalog, or null when it is: the
+ * page says it beside the disabled button (ADR-0432). A disk's add or removal (`disks`) waits for a
+ * scrub, a balance (a paused one is resumed or cancelled first) and a removal, and needs the pool
+ * writable and whole; a balance waits for a scrub and a removal; a scrub for a balance and a removal.
+ */
+export function blockedReason(
+	action: 'disks' | 'balance' | 'scrub',
 	pool: Pool,
 	scrub: ScrubStatus | undefined,
 	balance: BalanceStatus | undefined,
 	removal: DiskRemovalStatus | undefined
-): boolean {
-	return (
-		pool.read_only ||
-		pool.missing_devices > 0 ||
-		scrub?.status === 'running' ||
-		(balance !== undefined && balance.status !== 'idle') ||
-		removalRuns(removal)
-	);
+): string | null {
+	if (action !== 'scrub' && pool.read_only) return 'storage.pool.blocked.readOnly';
+	if (action === 'disks' && pool.missing_devices > 0) return 'storage.pool.blocked.missing';
+	if (action !== 'scrub' && scrub?.status === 'running') return 'storage.pool.blocked.scrub';
+	if (action === 'disks' && balance?.status === 'paused') return 'storage.pool.blocked.balancePaused';
+	if (action === 'disks' && balance !== undefined && balance.status !== 'idle') return 'storage.pool.blocked.balance';
+	if (action === 'scrub' && balanceRuns(balance)) return 'storage.pool.blocked.balance';
+	if (removalRuns(removal)) return 'storage.pool.blocked.removal';
+	return null;
 }
+
+/** Whether a new pool can take the disk: neither the system's disk nor one in use. The Create pool
+ * dialog and the count of the empty state share it (ADR-0432). */
+export const usableForPool = (disk: Disk): boolean => !disk.is_system && !disk.in_use;
 
 /** What the Mount / Unmount dialog asks for. */
 export type PoolAction = { kind: 'mount' | 'unmount'; pool: Pool };

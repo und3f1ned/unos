@@ -1,6 +1,7 @@
 <script lang="ts">
-	// A disk removal from a mounted pool (ADR-0411): its progress while it runs, then how it ended;
-	// or why its status could not be read.
+	// A disk removal from a mounted pool (ADR-0411): its progress while it runs (`part` running,
+	// under the pool's header), then how it ended, or why its status could not be read (`part`
+	// result, at the foot of the pool: ADR-0432).
 	import { CheckCircle, Loader2 } from 'lucide-svelte';
 	import { Alert, ProgressBar } from '$lib/components/ui';
 	import type { DiskRemovalStatus } from '$lib/api/storage';
@@ -8,6 +9,8 @@
 	import { removalProgress } from './pools';
 
 	type Props = {
+		/** The removal that runs, or how the last one ended. */
+		part: 'running' | 'result';
 		mounted: boolean;
 		status: DiskRemovalStatus | undefined;
 		/** Why the status could not be read: shown instead of the last one. */
@@ -16,15 +19,15 @@
 		percentFormat: Intl.NumberFormat;
 	};
 
-	let { mounted, status, error, formatBytes, percentFormat }: Props = $props();
+	let { part, mounted, status, error, formatBytes, percentFormat }: Props = $props();
 </script>
 
-{#if mounted && error}
-	<Alert variant="warning" title={$t('storage.removal.statusError')} class="mt-3">
+{#if part === 'result' && mounted && error}
+	<Alert variant="warning" size="sm" title={$t('storage.removal.statusError')}>
 		{error}
 	</Alert>
-{:else if mounted && status?.status === 'running'}
-	<div class="mt-3 pt-3 border-t border-border space-y-2">
+{:else if part === 'running' && mounted && !error && status?.status === 'running'}
+	<div class="space-y-2">
 		<span class="flex items-center gap-2 text-sm text-info break-all">
 			<Loader2 class="w-4 h-4 loading-spinner shrink-0" />
 			{$t('storage.removal.running', { device: status.device ?? '' })}
@@ -50,19 +53,15 @@
 			</p>
 		{/if}
 	</div>
-{:else if mounted && status?.result === 'finished'}
+{:else if part === 'result' && mounted && !error && status?.status !== 'running' && status?.result === 'finished'}
 	<div
-		class="mt-3 pt-3 border-t border-border flex items-center gap-2 text-sm text-success break-all"
+		class="pt-3 border-t border-border flex items-center gap-2 text-sm text-success break-all"
 	>
 		<CheckCircle class="w-4 h-4 shrink-0" />
 		{$t('storage.removal.finished', { device: status.device ?? '' })}
 	</div>
-{:else if mounted && status?.result === 'failed'}
-	<Alert
-		variant="error"
-		title={$t('storage.removal.failed', { device: status.device ?? '' })}
-		class="mt-3"
-	>
+{:else if part === 'result' && mounted && !error && status?.status !== 'running' && status?.result === 'failed'}
+	<Alert variant="error" size="sm" title={$t('storage.removal.failed', { device: status.device ?? '' })}>
 		<span class="break-words">{status.error}</span>
 	</Alert>
 {/if}

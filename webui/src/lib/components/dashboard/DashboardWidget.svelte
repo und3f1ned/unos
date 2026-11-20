@@ -18,13 +18,15 @@
 	type Props = {
 		id: string;
 		pools: Pool[];
+		/** The pools could not be read: the storage card says so, not "No pools yet" (ADR-0432). */
+		poolsFailed?: boolean;
 		containers: Container[];
 		notificationLogs: NotificationLog[];
 		/** The last message of the live stats; until the first, a stats card is a skeleton of its tile (ADR-0430). */
 		stats: WebSocketStats | null;
 	};
 
-	let { id, pools, containers, notificationLogs, stats }: Props = $props();
+	let { id, pools, poolsFailed = false, containers, notificationLogs, stats }: Props = $props();
 
 	// The CPU's temperature, which the server chooses among the host's sensors (ADR-0346), in whole
 	// degrees; null on a host without sensors.
@@ -72,7 +74,7 @@
 </script>
 
 {#if id === 'storage'}
-	<StorageWidget pools={poolsForWidget} />
+	<StorageWidget pools={poolsForWidget} failed={poolsFailed} />
 {:else if id === 'containers'}
 	<ContainersWidget containers={containersForWidget} limit={5} />
 {:else if id === 'recent-activity'}

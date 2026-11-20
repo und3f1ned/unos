@@ -1,6 +1,9 @@
 <script lang="ts" generics="Row extends { name: string; path: string; created: string }">
 	// A table of the Snapshots page: the snapshots of a pool or a volume, or the copies that
-	// restores made in it, each with its name, path and date, and the buttons of `actions`.
+	// restores made in it, each with its name, its date and the buttons of `actions`. A name that
+	// is too long ends in an ellipsis, its full path in its tooltip: the card names the folder once,
+	// and no name breaks a letter per line on a phone, where the date goes under the name
+	// (ADR-0432).
 	import type { Snippet } from 'svelte';
 	import { t } from '$lib/i18n';
 
@@ -22,21 +25,21 @@
 	<table class="table" aria-label={label}>
 		<thead class="table-header">
 			<tr>
-				<th>{$t('snapshots.name')}</th>
-				<th>{dateHeading}</th>
-				<th><span class="sr-only">{$t('snapshots.actions')}</span></th>
+				<th class="w-full">{$t('snapshots.name')}</th>
+				<th class="hidden sm:table-cell whitespace-nowrap">{dateHeading}</th>
+				<th class="w-px"><span class="sr-only">{$t('snapshots.actions')}</span></th>
 			</tr>
 		</thead>
 		<tbody>
 			{#each rows as row (row.path)}
-				<tr class="table-row align-top">
-					<td>
-						<p class="font-medium break-all">{row.name}</p>
-						<p class="mono-xs text-muted break-all">{row.path}</p>
+				<tr class="table-row">
+					<td class="max-w-0">
+						<p class="font-medium truncate" title={row.path}>{row.name}</p>
+						<p class="sm:hidden text-xs text-secondary tabular">{formatDate(row.created)}</p>
 					</td>
-					<td class="whitespace-nowrap">{formatDate(row.created)}</td>
-					<td>
-						<div class="flex justify-end gap-1">
+					<td class="hidden sm:table-cell whitespace-nowrap tabular">{formatDate(row.created)}</td>
+					<td class="w-px">
+						<div class="flex justify-end items-center gap-1 whitespace-nowrap">
 							{@render actions(row)}
 						</div>
 					</td>

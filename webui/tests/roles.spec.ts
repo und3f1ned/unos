@@ -99,7 +99,7 @@ test.describe('Regular user account', () => {
     await expect(links.nth(1)).toHaveText(/Account/);
     await expect(page.locator('aside').getByText('User', { exact: true })).toBeVisible();
     // No storage, container or notification widgets (and no calls for them).
-    await expect(page.getByText('Storage Pools')).toHaveCount(0);
+    await expect(page.getByText('Storage pools')).toHaveCount(0);
     expect(forbidden).toEqual([]);
   });
 
@@ -121,7 +121,8 @@ test.describe('Regular user account', () => {
 
     await expect(page.getByText(`Signed in as ${REGULAR.username}`)).toBeVisible();
     expect(health).toEqual([]);
-    await expect(page.getByText('Replace soon', { exact: true })).toHaveCount(0);
+    await expect(page.getByText(/Replace disk .* soon/)).toHaveCount(0);
+    await expect(page.locator('#problems-banner')).toHaveCount(0);
     await expect(page.getByText('Could not check the disks for a predicted failure')).toHaveCount(0);
   });
 

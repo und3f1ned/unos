@@ -1,6 +1,7 @@
 import type { Page, WebSocketRoute } from '@playwright/test';
 import { test, expect } from './fixtures';
-import { fakeStorageApi, fakeVolumesWithUse, type FakeVolume, type FakeVolumeUsage } from './storage-fakes';
+import { HEALTHY_POOL, fakeStorageApi, fakeVolumesWithUse, type FakeVolume, type FakeVolumeUsage } from './storage-fakes';
+import { fakeHealthApi } from './health-fakes';
 
 // How much of its quota each volume uses (storage.volume-quota-usage, ADR-0387). The stand-in has
 // no btrfs, so route fakes answer the volumes with their use and their use over time as the
@@ -193,6 +194,10 @@ test.describe('Alerts at the levels of a volume\'s quota', () => {
     const problems = [quotaProblem(95, 'backups', 258, 96), quotaProblem(80, 'documents', 256, 80),
       quotaProblem(90, 'photos', 257, 90)];
     const sockets = await fakeEvents(page, problems);
+    // The dashboard adds what it knows itself to the banner (ADR-0432): here nothing, with its disks
+    // checked and its one pool healthy.
+    await fakeHealthApi(page);
+    await fakeStorageApi(page, { pools: [HEALTHY_POOL] });
     await page.goto('/');
 
     const shown = page.getByRole('region', { name: '3 problems need attention' });
@@ -213,6 +218,8 @@ test.describe('Alerts at the levels of a volume\'s quota', () => {
   test('in Russian', async ({ authenticatedPage: page }) => {
     await page.evaluate((key) => localStorage.setItem(key, 'ru'), 'unos-locale');
     await fakeEvents(page, [quotaProblem(90, 'photos', 257, 92)]);
+    await fakeHealthApi(page);
+    await fakeStorageApi(page, { pools: [HEALTHY_POOL] });
     await page.goto('/');
 
     await expect(page.getByRole('region', { name: '1 проблема требует внимания' }).getByRole('listitem')).toHaveText(

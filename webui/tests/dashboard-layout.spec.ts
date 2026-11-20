@@ -107,7 +107,7 @@ test.describe('Dashboard layout', () => {
   test('the move buttons arrange the widgets from the keyboard, and keep the focus', async ({ authenticatedPage: page }) => {
     await openArranging(page);
     await expect(page.getByRole('button', { name: 'Move CPU up' })).toBeDisabled();
-    await expect(page.getByRole('button', { name: 'Move Recent Activity down' })).toBeDisabled();
+    await expect(page.getByRole('button', { name: 'Move Recent activity down' })).toBeDisabled();
 
     const down = page.getByRole('button', { name: 'Move Memory down' });
     await down.focus();
@@ -132,7 +132,7 @@ test.describe('Dashboard layout', () => {
   test('the first widget of the page moves down past the last one it was moved over, and the last moves up', async ({ authenticatedPage: page }) => {
     await openArranging(page);
     await page.getByRole('button', { name: 'Move CPU down' }).click();
-    await page.getByRole('button', { name: 'Move Recent Activity up' }).click();
+    await page.getByRole('button', { name: 'Move Recent activity up' }).click();
     await expectOrder(page, ['memory', 'cpu', 'network', 'disk-io', 'temperature', 'storage', 'recent-activity', 'containers']);
   });
 
@@ -166,7 +166,7 @@ test.describe('Dashboard layout', () => {
 
   test('every widget can be hidden, and the page says how to bring them back', async ({ authenticatedPage: page }) => {
     await openArranging(page);
-    for (const name of ['CPU', 'Memory', 'Network', 'Disk I/O', 'Temperature', 'Storage Pools', 'Containers', 'Recent Activity']) {
+    for (const name of ['CPU', 'Memory', 'Network', 'Disk I/O', 'Temperature', 'Storage pools', 'Containers', 'Recent activity']) {
       await page.getByRole('button', { name: `Hide ${name}`, exact: true }).click();
     }
     await expectOrder(page, []);
