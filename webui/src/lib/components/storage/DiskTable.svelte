@@ -1,7 +1,7 @@
 <script lang="ts">
 	// The Disks card of the Storage page, under the pools: the host's whole disks, what they hold and
 	// their state, and each disk's power: awake or asleep, and its idle timeout, which its button
-	// sets (ADR-0378). Where a disk is mounted is its status's reason (ADR-0432).
+	// sets (ADR-0378). Where a disk is mounted is its status's reason.
 	import { HardDrive, Pencil } from 'lucide-svelte';
 	import { Alert, Badge, Button, Card, EmptyState, StatusDot } from '$lib/components/ui';
 	import type { Disk, PowerState } from '$lib/api/storage';
@@ -50,7 +50,7 @@
 		return { variant: 'success', label: $t('storage.disks.status.free') };
 	};
 
-	// A disk's power as a dot and a word: awake, asleep, or not known (ADR-0432).
+	// A disk's power as a dot and a word: awake, asleep, or not known.
 	const POWER_STATES: Record<PowerState, { dot: 'success' | 'neutral' | null; key: string }> = {
 		active: { dot: 'success', key: 'storage.disks.power.active' },
 		standby: { dot: 'neutral', key: 'storage.disks.power.standby' },
@@ -143,7 +143,7 @@
 							</td>
 							<td class="min-w-[11rem]">
 								<!-- Awake or asleep, then the idle timeout and its button, which says whose it is
-								     to screen readers (ADR-0432). A disk that cannot get one says why instead. -->
+								     to screen readers. A disk that cannot get one says why instead. -->
 								<p class="flex items-center gap-1.5 whitespace-nowrap">
 									{#if power.dot}<StatusDot status={power.dot} />{/if}
 									{$t(power.key)}

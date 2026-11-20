@@ -19,7 +19,7 @@
 			forcedReadOnly?: boolean;
 		}>;
 		compact?: boolean;
-		/** The pools could not be read: no "No pools yet" (ADR-0432). */
+		/** The pools could not be read: no "No pools yet". */
 		failed?: boolean;
 	};
 
@@ -110,7 +110,7 @@
 			<!-- The banner above names the reason and links to Storage. -->
 			<p class="text-sm text-error">{$t('dashboard.issue.poolsFailed')}</p>
 		{:else if pools.length === 0}
-			<!-- No pool yet: where one is made, which the header's Manage opens (ADR-0431, ADR-0432). -->
+			<!-- No pool yet: where one is made, which the header's Manage opens (ADR-0431). -->
 			<p class="text-sm text-secondary">{$t('dashboard.storage.none')}</p>
 		{:else}
 			<div class="pb-3.5 mb-3.5 border-b border-border">
@@ -119,7 +119,7 @@
 					{formatBytes(totalUsed, $t)} / {formatBytes(totalSize, $t)} ({totalPercent.toFixed(1)}%)
 				</p>
 			</div>
-			<!-- A row per pool, the same on every screen (ADR-0432): its name and health with its share
+			<!-- A row per pool, the same on every screen: its name and health with its share
 			     on the right, the bar, then its use and its problems below. An unmounted pool's badge
 			     says so: no line repeats it. -->
 			<div class="space-y-3">

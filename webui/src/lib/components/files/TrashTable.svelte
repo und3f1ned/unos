@@ -35,7 +35,7 @@
 
   // What a screen reader says for an item's checkbox: items of the same name
   // differ in where and when they were deleted (ADR-0197), to the second, which
-  // the row leaves out (ADR-0432).
+  // the row leaves out.
   function checkboxLabel(item: TrashItem): string {
     const time = formatDateTime(item.deleted, $intlLocale);
     return item.original_path === null
@@ -45,8 +45,7 @@
 </script>
 
 <!-- The name keeps its words whole and takes the room; the folder it came from ends in an
-     ellipsis, whole in its tooltip, and goes under the name on a phone, where Kept until is left out
-     (ADR-0432). -->
+     ellipsis, whole in its tooltip, and goes under the name on a phone, where Kept until is left out. -->
 <div class="table-frame">
   <table class="table" aria-label={$t("files.trash.items")}>
     <thead class="table-header">

@@ -3,7 +3,7 @@
 	// with one that is no pool name, or with one that another filesystem has too, when the pool of
 	// that name is the other one or neither. A pool found on the disks is a pool of the Pools card,
 	// and its Mount imports it. The card shows only when there is one, or the search failed. It comes
-	// after the pools and the disks, a compact list with a secondary Import… each (ADR-0432).
+	// after the pools and the disks, a compact list with a secondary Import… each.
 	import { HardDriveDownload } from 'lucide-svelte';
 	import { Alert, Button, Card } from '$lib/components/ui';
 	import type { ImportableFilesystem } from '$lib/api/storage';

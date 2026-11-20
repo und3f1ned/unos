@@ -1,7 +1,7 @@
 <script lang="ts">
 	// The Pools card of the Storage page, first on the page: a card for each pool with the jobs on
 	// it, or, without a pool, how many disks are free for one: the header's Create pool makes it,
-	// and the empty state repeats no button (ADR-0431, ADR-0432).
+	// and the empty state repeats no button (ADR-0431).
 	import { Database } from 'lucide-svelte';
 	import { Alert, Card, EmptyState } from '$lib/components/ui';
 	import type { Pool } from '$lib/api/storage';

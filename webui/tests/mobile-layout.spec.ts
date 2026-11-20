@@ -900,7 +900,7 @@ interface View {
 /** The title and the last button of a dialog that is named one (role dialog), as Modal's are. */
 const dialogTitle = (page: Page) => page.getByRole('dialog').getByRole('heading', { name: /\S/ }).first();
 const dialogEnd = (page: Page) => page.getByRole('dialog').getByRole('button').last();
-/** Opens every pool's More, where its less frequent actions are (ADR-0432). */
+/** Opens every pool's More, where its less frequent actions are. */
 async function poolMore(page: Page): Promise<void> {
   const buttons = page.getByRole('button', { name: /^(More actions for|Ещё действия с) / });
   await expect(buttons.first()).toBeVisible();
@@ -989,7 +989,7 @@ const VIEWS: View[] = [
   },
   {
     // The banner shows above every page of an administrator but the dashboard, which draws it under
-    // its header with its own issues (ADR-0432): here above the Storage page.
+    // its header with its own issues: here above the Storage page.
     name: 'The health banner',
     path: '/storage',
     fake: async (page) => {

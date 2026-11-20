@@ -232,7 +232,7 @@
 	}
 
 	// The disks that a new pool can take, as the Create pool dialog offers them; null when the disks
-	// could not be read, which also disables Create pool, with the reason (ADR-0432).
+	// could not be read, which also disables Create pool, with the reason.
 	let freeDisks = $derived(
 		lists.disksError ? null : lists.disks.filter(usableForPool).length
 	);
@@ -294,7 +294,7 @@
 		</div>
 	{:else}
 		<!-- The pools first, the page's subject; then the disks they are made of, and the btrfs
-		     filesystems found on them that can become pools (ADR-0432). A list that could not be read
+		     filesystems found on them that can become pools. A list that could not be read
 		     says so in its card, and a cause that a card above names already is not repeated. -->
 		<PoolList
 			pools={lists.pools}

@@ -85,7 +85,7 @@ test.describe('The redesign', () => {
     await expect(page.getByText('No problems', { exact: true })).toHaveCount(0);
   });
 
-  // ADR-0432: the dashboard's chip counts what its banner lists, the socket's problems and the pools
+  // The dashboard's chip counts what its banner lists, the socket's problems and the pools
   // that are not healthy, each once, and never says "No problems" beside a pool in error.
   test('the dashboard counts the pools that are not healthy, and links each issue to its page', async ({
     authenticatedPage: page,

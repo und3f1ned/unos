@@ -1,7 +1,7 @@
 <script lang="ts">
 	// A disk removal from a mounted pool (ADR-0411): its progress while it runs (`part` running,
 	// under the pool's header), then how it ended, or why its status could not be read (`part`
-	// result, at the foot of the pool: ADR-0432).
+	// result, at the foot of the pool).
 	import { CheckCircle, Loader2 } from 'lucide-svelte';
 	import { Alert, ProgressBar } from '$lib/components/ui';
 	import type { DiskRemovalStatus } from '$lib/api/storage';

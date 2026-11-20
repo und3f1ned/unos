@@ -68,7 +68,7 @@
 	// i18n-ignore: a command, the same in every language
 	const RESET_COUNTERS = 'btrfs device stats -z';
 
-	/** What is wrong with the pool, worst first, each a line of one alert (ADR-0432). */
+	/** What is wrong with the pool, worst first, each a line of one alert. */
 	type Issue = { tone: 'error' | 'warning'; title: string; text: string; command?: string };
 	// Reads $t where the markup calls it: the texts follow the language.
 	function issues(): Issue[] {
@@ -104,7 +104,7 @@
 	let used = $derived(pool.mounted && pool.total_size > 0 ? (pool.used_size / pool.total_size) * 100 : null);
 </script>
 
-<!-- A pool (ADR-0432): its name and badges on the left and its actions on the right, on every
+<!-- A pool: its name and badges on the left and its actions on the right, on every
      pool; then a job that runs, with its controls; its facts as label over value (each a div of
      spans with a data-field); its use; what is wrong with it, in one alert; and how its last jobs
      ended. -->
@@ -180,8 +180,13 @@
 	</div>
 
 	{#if poolIssues.length > 0}
-		<!-- What is wrong, in one alert in the colour of the worst, a line each (ADR-0432). -->
-		<Alert variant={poolIssues[0].tone} size="sm">
+		<!-- What is wrong, in one alert in the colour of the worst, a line each; with more than one,
+		     a title counts them, so that the alert's icon is not doubled by the first line's. -->
+		<Alert
+			variant={poolIssues[0].tone}
+			size="sm"
+			title={poolIssues.length > 1 ? $t('storage.pool.issuesTitle', { n: poolIssues.length }) : ''}
+		>
 			<ul class="space-y-1.5">
 				{#each poolIssues as issue (issue.title)}
 					{@const Icon = ISSUE_ICONS[issue.tone]}

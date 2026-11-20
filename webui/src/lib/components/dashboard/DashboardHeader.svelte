@@ -9,7 +9,7 @@
 	import { apiTime } from '$lib/time';
 
 	// The head of the dashboard: the host's name, system and uptime, a muted line that says whether
-	// the live stats come (the time of the last one on hover, so that nothing ticks: ADR-0432), for
+	// the live stats come (the time of the last one on hover, so that nothing ticks), for
 	// an administrator a chip with the number of issues that the banner below lists, linked to it, or
 	// "No problems" once that is known, and the buttons Customize (ADR-0395) and Refresh (ADR-0428).
 	// On a narrow screen the line and buttons go below the host name, and a long host name breaks
@@ -27,7 +27,7 @@
 		arranging: boolean;
 		/**
 		 * An administrator's issues, as the banner under the header lists them: the socket's problems
-		 * and the dashboard's own (ADR-0432); null until the page has loaded, and for a regular user.
+		 * and the dashboard's own; null until the page has loaded, and for a regular user.
 		 */
 		issueCount?: number | null;
 		/** One of them is an error: the chip is red, else amber. */
@@ -101,7 +101,7 @@
 		{/if}
 	</div>
 	<div class="page-actions">
-		<!-- Whether the live stats come: a muted line, not a chip (ADR-0432). -->
+		<!-- Whether the live stats come: a muted line, not a chip. -->
 		{#if $wsForbidden}
 			<span class="flex items-center gap-1.5 text-xs text-status-warning">
 				<AlertTriangle class="w-3.5 h-3.5 shrink-0" aria-hidden="true" />

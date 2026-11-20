@@ -1,7 +1,7 @@
 <script lang="ts">
 	// A mounted pool's scrub (ADR-0313): its progress while it runs, with its Cancel (`part`
 	// running, under the pool's header), then the result of the last one, or why its status could not
-	// be read (`part` result, at the foot of the pool: ADR-0432).
+	// be read (`part` result, at the foot of the pool).
 	import { AlertTriangle, CheckCircle, Loader2, XCircle } from 'lucide-svelte';
 	import { Alert, Button, ProgressBar } from '$lib/components/ui';
 	import type { ScrubStatus } from '$lib/api/storage';

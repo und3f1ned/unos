@@ -64,8 +64,8 @@ test.describe('Storage Management', () => {
   });
 
   test('should open create pool dialog', async ({ authenticatedPage: page }) => {
-    // The disks of the fakes: where the host's disks cannot be read, Create pool waits and says why
-    // (ADR-0432), which 'a disk list that cannot be read disables Create pool' checks.
+    // The disks of the fakes: where the host's disks cannot be read, Create pool waits and says why,
+    // which 'a disk list that cannot be read disables Create pool' checks.
     await fakeStorageApi(page);
     await page.goto('/storage');
     await page.locator('main .page-header').getByRole('button', { name: 'Create pool', exact: true }).click();
@@ -94,13 +94,13 @@ test.describe('Storage Management', () => {
 
 const poolCard = (page: Page, name: string) =>
   page.locator('.card-nested').filter({ has: page.locator('h3', { hasText: new RegExp(`^${name}$`) }) });
-/** The fields of a pool card by their labels, and their data-field (ADR-0432). */
+/** The fields of a pool card by their labels, and their data-field. */
 const FIELD_IDS: Record<string, string> = { Mount: 'mount', RAID: 'raid', Used: 'used', Devices: 'devices' };
 /** The value of a field of a pool card. */
 const field = (card: Locator, label: string) => card.locator(`[data-field="${FIELD_IDS[label]}"] .kv-value`);
 /**
  * A pool card with its other actions shown: Balance…, Add disk…, Remove disk…, Unmount… and
- * Remove pool… are behind More (ADR-0432), which stays open once opened.
+ * Remove pool… are behind More, which stays open once opened.
  */
 async function more(card: Locator): Promise<Locator> {
   const toggle = card.getByRole('button', { name: /^(More actions for|Ещё действия с) / });
@@ -153,7 +153,7 @@ test.describe('Physical disks (fake data)', () => {
     await expect(rows).toHaveCount(1 + LISTED_DISKS.length);
     // Device, Model (and serial), Size, Type, Contents, Status (where a disk is mounted is its
     // reason), and Power: awake or asleep, the idle timeout's button (with its text for screen
-    // readers), or why there is none instead (ADR-0432).
+    // readers), or why there is none instead.
     await expect(cells('/dev/e2e-sd0')).toHaveText([
       '/dev/e2e-sd0', 'Boot card E2E0', '59.6 GB', 'SSD',
       'DOS partition table, 1 partition e2e-sd0p1 · 58.7 GB · ext4', 'System Mounted at /',
@@ -177,7 +177,7 @@ test.describe('Physical disks (fake data)', () => {
       'Unknown /dev/e2e-sd4 reports no serial number that a udev rule can match: ' +
         'UNOS could not set its idle timeout again when it is connected',
     ]);
-    // The system disk is no fault: a neutral badge (ADR-0432).
+    // The system disk is no fault: a neutral badge.
     const status = (path: string) => cells(path).nth(5).locator('.badge');
     await expect(status('/dev/e2e-sd0')).toHaveClass(/badge-neutral/);
     await expect(status('/dev/e2e-hd3')).toHaveClass(/badge-warning/);
@@ -195,7 +195,7 @@ test.describe('Physical disks (fake data)', () => {
     const cells = (path: string) =>
       disksCard(page).getByRole('row').filter({ has: page.getByRole('cell', { name: path, exact: true }) }).getByRole('cell');
     await expect(disksCard(page).locator('thead th').last()).toHaveText('Power');
-    // Awake or asleep in words, the first line of the cell (ADR-0432).
+    // Awake or asleep in words, the first line of the cell.
     const power = (path: string) => cells(path).last().locator('p').first();
     await expect(power('/dev/e2e-hd1')).toHaveText('Asleep');
     await expect(power('/dev/e2e-hd2')).toHaveText('Awake');
@@ -437,7 +437,7 @@ test.describe('Physical disks (fake data)', () => {
 
     await page.getByRole('button', { name: 'Create pool', exact: true }).click();
     const dialog = page.getByRole('dialog', { name: 'Create a pool' });
-    // Only the disks a pool can take have a checkbox (ADR-0432).
+    // Only the disks a pool can take have a checkbox.
     const usable = FAKE_DISKS.filter((disk) => !disk.is_system && !disk.in_use).length;
     const choices = dialog.getByRole('checkbox');
     await expect(choices).toHaveCount(usable);
@@ -530,7 +530,7 @@ test.describe('Physical disks (fake data)', () => {
     await page.getByRole('button', { name: 'Create pool', exact: true }).click();
     const dialog = page.getByRole('dialog', { name: 'Create a pool' });
     // A disk the pool cannot take has no checkbox: it waits, with its reason, behind the
-    // disks not available (ADR-0432).
+    // disks not available.
     const stick = dialog.getByRole('checkbox', { name: /\/dev\/e2e-sd4/ });
     await expect(stick).toHaveCount(0);
     await dialog.getByRole('button', { name: /^\d+ disks? not available$/ }).click();
@@ -802,7 +802,7 @@ test.describe('Pool unmount, mount and removal (fake data)', () => {
     const card = poolCard(page, 'e2e_data');
     await (await more(card)).getByRole('button', { name: 'Remove pool e2e_data', exact: true }).click();
     const dialog = page.getByRole('dialog', { name: 'Remove pool' });
-    // One step: what it does, then the name typed into an empty field (ADR-0432).
+    // One step: what it does, then the name typed into an empty field.
     await expect(dialog).toContainText('UNOS stops using the pool "e2e_data".');
     await expect(dialog).toContainText('It is unmounted, and no longer mounted at boot: /mnt/pools/e2e_data');
     await expect(dialog).toContainText(
@@ -1666,7 +1666,7 @@ test.describe('Pool disks (fake data)', () => {
         await expect((await more(poolCard(page, pool))).getByRole('button', { name, exact: true })).toBeDisabled();
       }
     }
-    // Each says why (ADR-0432): a paused balance is resumed or cancelled first.
+    // Each says why: a paused balance is resumed or cancelled first.
     await expect(poolCard(page, 'e2e_bal')).toContainText('Resume or cancel the paused balance first.');
   });
 });
@@ -1841,7 +1841,7 @@ test.describe('Storage pools (fake data)', () => {
     const disk = (path: string) => dialog.getByRole('checkbox', { name: new RegExp(path) });
     const erase = dialog.getByLabel('Erase the existing data on these disks');
     await expect(create).toBeDisabled();
-    // The dialog says what Create waits for (ADR-0432).
+    // The dialog says what Create waits for.
     await expect(dialog.getByText('To create the pool: enter a name, choose at least 1 disk, type the name again.')).toBeVisible();
 
     // The boot disk cannot be selected at all: it has no checkbox, and its reason is behind the
@@ -2653,7 +2653,8 @@ test.describe('The Storage page in Russian', () => {
     const media = poolCard(page, 'e2e_media');
     await expect(badge(media, 'Деградирован')).toBeVisible();
     await expect(field(media, 'RAID')).toHaveText('RAID 1 (2 копии)');
-    // The pool's problems, one alert with a line each (ADR-0432).
+    // The pool's problems, one alert with a line each, counted in its title.
+    await expect(media.locator('.alert-title').filter({ hasText: 'проблем' })).toHaveText('2 проблемы');
     const problems = media.locator('.alert li');
     await expect(problems.filter({ hasText: 'Не хватает 1 диска.' })).toContainText(
       'Подключите или замените его, пока не потеряна оставшаяся избыточность.',
@@ -2712,7 +2713,7 @@ test.describe('The Storage page in Russian', () => {
     await expect(create.getByText('Диски', { exact: true })).toBeVisible();
     const disk = (path: string) => create.getByRole('checkbox', { name: new RegExp(path) });
     // The system disk cannot be selected: it has no checkbox, and the server's reason is behind the
-    // disks not available (ADR-0432).
+    // disks not available.
     await expect(disk('/dev/e2e-sd0')).toHaveCount(0);
     await create.getByRole('button', { name: '1 диск недоступен', exact: true }).click();
     await expect(create.locator('#create-pool-unusable')).toContainText('/dev/e2e-sd0');
@@ -2735,7 +2736,7 @@ test.describe('The Storage page in Russian', () => {
     await expect(create.getByText('Выбрано: 2 устройства', { exact: true })).toBeVisible();
     await expect(create.getByText('Для RAID1C3 нужно не меньше 3 устройств. Выбрано: 2.', { exact: true })).toBeVisible();
     await create.getByLabel(/^Имя пула/).fill('e2e_new');
-    // Once the name is typed, the label names it (ADR-0432).
+    // Once the name is typed, the label names it.
     await create.getByLabel(/^Введите e2e_new для подтверждения/).fill('e2e_ne');
     await expect(create.getByText('Не совпадает с именем пула', { exact: true })).toBeVisible();
     await expect(create.getByRole('button', { name: 'Стереть диски и создать пул' })).toBeDisabled();

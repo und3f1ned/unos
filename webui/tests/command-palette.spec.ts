@@ -133,7 +133,7 @@ const ADMIN_ACTIONS = ['Add a user…', 'Reboot the host…', 'Shut down the hos
 
 test.describe('The command palette of an administrator', () => {
   test('Ctrl+K opens it with every page and action, and typing narrows them', async ({ authenticatedPage: page }) => {
-    // Step 1. Every link of the sidebar (Files' Trash among them, ADR-0432), every tab of System and
+    // Step 1. Every link of the sidebar (Files' Trash among them), every tab of System and
     // the actions.
     const sidebar = await page.locator('aside nav a').allTextContents();
     expect(sidebar.length).toBeGreaterThan(5);

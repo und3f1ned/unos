@@ -37,7 +37,7 @@
 	// group's label and links.
 	const PENDING_GROUPS = [1, 5, 2, 3].map((links) => Array.from({ length: links }, (_, i) => i));
 
-	/** A link; `sub` is a page of the link above it, drawn indented under it (Files' Trash, ADR-0432). */
+	/** A link; `sub` is a page of the link above it, drawn indented under it (Files' Trash). */
 	type Link = { href: string; icon: typeof LayoutDashboard; label: string; sub?: boolean };
 	type Group = { id: string; label: string | null; links: Link[] };
 
@@ -54,7 +54,7 @@
 				{ href: '/snapshots', icon: Archive, label: $t('layout.nav.snapshots') },
 				{ href: '/shares', icon: Share2, label: $t('layout.nav.shares') },
 				{ href: '/files', icon: FolderOpen, label: $t('layout.nav.files') },
-				// The trash is Files' own page, and in the navigation under it (ADR-0432).
+				// The trash is Files' own page, and in the navigation under it.
 				{ href: '/files/trash', icon: Trash2, label: $t('files.trash.title'), sub: true }
 			]
 		},

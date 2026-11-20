@@ -4,7 +4,7 @@
 	// disk list again when it opens the dialog, and again here after a disk changed under its path.
 	// It lists the disks a pool can take; the others wait behind "N disks not available", each with
 	// its reason. The dialog scrolls as a whole, with no box that scrolls inside it, and says what is
-	// still missing while Create is disabled (ADR-0432).
+	// still missing while Create is disabled.
 	import { untrack } from 'svelte';
 	import { ChevronDown } from 'lucide-svelte';
 	import { Alert, Badge, Button, Input, Modal, Select } from '$lib/components/ui';
@@ -96,7 +96,7 @@
 	let unusable = $derived(disks.filter((d) => unavailableReason(d) !== null));
 	let showUnusable = $state(false);
 	// What Create still waits for, in the order of the form: said under the form while it is
-	// disabled (ADR-0432).
+	// disabled.
 	let missing = $derived(
 		[
 			!poolForm.name ? $t('storage.create.needName') : null,
@@ -198,7 +198,7 @@
 	closable={!saving}
 	onclose={closeCreateModal}
 >
-	<!-- The dialog scrolls as a whole, so that the typed confirmation is never hidden (ADR-0432). -->
+	<!-- The dialog scrolls as a whole, so that the typed confirmation is never hidden. -->
 	<form
 		id="create-pool-form"
 		onsubmit={(e) => { e.preventDefault(); handleCreatePool(); }}
@@ -328,7 +328,7 @@
 		{/if}
 
 		<!-- The name to type is said in the label, and the field starts empty: a placeholder with
-		     the name would look filled in (ADR-0432). -->
+		     the name would look filled in. -->
 		<Input
 			label={poolForm.name ? $t('storage.create.confirmName', { name: poolForm.name }) : $t('storage.create.confirm')}
 			bind:value={poolForm.confirm_name}

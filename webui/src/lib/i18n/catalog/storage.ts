@@ -174,6 +174,8 @@ export const en = {
 	// Before the command that resets the counters.
 	'storage.pool.deviceErrors': "btrfs counted read, write or checksum errors on the pool's disks. Check the disks' SMART health and run a scrub.",
 	'storage.pool.resetWith': 'The count stays until it is reset with',
+	// The title of a pool's alert that lists more than one problem.
+	'storage.pool.issuesTitle': { one: '{n} problem', other: '{n} problems' },
 	'storage.pool.unreadableTitle': 'State unknown',
 	'storage.pool.unreadable': "UNOS could not read the host's mount table or the pool's error counters; the system logs say why.",
 
@@ -566,6 +568,7 @@ export const ru: Translation<typeof en> = {
 	'storage.pool.deviceErrorsTitle': { one: '{n} ошибка дисков', few: '{n} ошибки дисков', many: '{n} ошибок дисков' },
 	'storage.pool.deviceErrors': 'btrfs насчитал ошибки чтения, записи или контрольных сумм на дисках пула. Проверьте состояние SMART дисков и запустите проверку целостности.',
 	'storage.pool.resetWith': 'Счётчик сохраняется, пока его не сбросят командой',
+	'storage.pool.issuesTitle': { one: '{n} проблема', few: '{n} проблемы', many: '{n} проблем' },
 	'storage.pool.unreadableTitle': 'Состояние неизвестно',
 	'storage.pool.unreadable': 'UNOS не удалось прочитать таблицу монтирования хоста или счётчики ошибок пула; причину покажут системные журналы.',
 

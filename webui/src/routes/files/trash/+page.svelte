@@ -118,7 +118,7 @@
   <div class="page-header">
     <div class="min-w-0">
       <h1 class="page-title">{$t("files.trash.title")}</h1>
-      <!-- How long the trash keeps what it holds, in one line (ADR-0432). -->
+      <!-- How long the trash keeps what it holds, in one line. -->
       <p class="page-subtitle">
         {retentionDays === null ? $t("files.trash.keptUnknown") : $t("files.trash.kept", { n: retentionDays })}
       </p>
@@ -128,7 +128,7 @@
         <RefreshCw class="w-4 h-4 {loading ? 'animate-spin' : ''}" aria-hidden="true" />
         <span class="sr-only">{$t("common.refresh")}</span>
       </Button>
-      <!-- Not a solid red button: the red one is the confirmation's (ADR-0432). -->
+      <!-- Not a solid red button: the red one is the confirmation's. -->
       <Button variant="ghost-danger" icon={Trash2} disabled={busy || items.length === 0} onclick={() => ask("everything")}>
         {$t("files.trash.emptyAction")}
       </Button>

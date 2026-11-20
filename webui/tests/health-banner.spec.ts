@@ -61,7 +61,7 @@ test.describe('The health banner', () => {
     authenticatedPage: page,
   }) => {
     const sockets = await fakeEvents(page, [DEGRADED, MISSED]);
-    // The dashboard lists its own issues in the banner too (ADR-0432): here it has none, with its
+    // The dashboard lists its own issues in the banner too: here it has none, with its
     // one pool healthy (the stand-in cannot read pools on every machine).
     await fakeHealthApi(page);
     await fakeStorageApi(page, { pools: [HEALTHY_POOL] });

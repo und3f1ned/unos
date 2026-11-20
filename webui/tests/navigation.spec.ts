@@ -27,7 +27,7 @@ test.describe('Navigation', () => {
   }) => {
     // webui.redesign (ADR-0428): Dashboard alone on top, then Data, Applications and Administration;
     // a label is no link and no heading, so the navigation's links are the pages: the ten and Files'
-    // Trash, under Files (ADR-0432).
+    // Trash, under Files.
     await page.goto('/');
     const nav = page.getByRole('navigation', { name: 'Main' });
     await expect(nav.locator('a')).toHaveText([
@@ -72,7 +72,7 @@ test.describe('Navigation', () => {
     await expect(sidebarLink(page, '/storage')).toHaveClass(/\bnav-item-active\b/);
     await expect(sidebarLink(page, '/')).not.toHaveClass(/\bnav-item-active\b/);
 
-    // The Trash is marked on its page, and Files, whose page it is, is not (ADR-0432).
+    // The Trash is marked on its page, and Files, whose page it is, is not.
     await page.goto('/files/trash');
     await expect(sidebarLink(page, '/files/trash')).toHaveClass(/\bnav-item-active\b/);
     await expect(sidebarLink(page, '/files/trash')).toHaveAttribute('aria-current', 'page');

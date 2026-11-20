@@ -2,8 +2,7 @@
 	// A table of the Snapshots page: the snapshots of a pool or a volume, or the copies that
 	// restores made in it, each with its name, its date and the buttons of `actions`. A name that
 	// is too long ends in an ellipsis, its full path in its tooltip: the card names the folder once,
-	// and no name breaks a letter per line on a phone, where the date goes under the name
-	// (ADR-0432).
+	// and no name breaks a letter per line on a phone, where the date goes under the name.
 	import type { Snippet } from 'svelte';
 	import { t } from '$lib/i18n';
 

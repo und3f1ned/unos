@@ -7,7 +7,7 @@
 	import type { ExtraIssue } from './dashboard/issues';
 
 	// The health banner (ADR-0332): the problems of the NAS that are still there, as the events
-	// socket sends them to administrators, each a link to the page where it is dealt with (ADR-0432).
+	// socket sends them to administrators, each a link to the page where it is dealt with.
 	// It goes once the list is empty. The layout draws it above every page but the dashboard, which
 	// draws it under its header with what it knows besides (`extra`: the disks to replace soon, the
 	// pools whose health the server reports no problem for), so that one list says it all once.

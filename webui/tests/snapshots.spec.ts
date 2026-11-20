@@ -275,7 +275,7 @@ test.describe('Snapshots of pools and volumes (fake data)', () => {
 
     await expect(rows(page)).toHaveCount(2);
     await expect(row(page, 'before-edit')).toContainText('11/7/2026, 11:15 AM');
-    // The full path is the name's tooltip (ADR-0432): the card names the folder once.
+    // The full path is the name's tooltip: the card names the folder once.
     await expect(row(page, 'before-edit').getByText('before-edit', { exact: true })).toHaveAttribute('title', '/mnt/pools/e2e_data/documents/.snapshots/before-edit');
     expect(requests.filter((r) => r.method === 'GET' && r.path === '/').map((r) => r.subvolume)).toEqual([
       DATA.path,
@@ -285,7 +285,7 @@ test.describe('Snapshots of pools and volumes (fake data)', () => {
     await choose(page, 'e2e_data/photos (Volume)');
     await expect(page.getByText('No snapshots yet')).toBeVisible();
     // The names say UTC, the list the browser's time (ADR-0243): the dialogs that make a name say so
-    // where it is made (ADR-0432), which 'create a snapshot of a volume' checks.
+    // where it is made, which 'create a snapshot of a volume' checks.
     await expect(page.locator('.alert').filter({ hasText: 'could not be read' })).toHaveCount(0);
     expect(writes(requests)).toEqual([]);
     expect(dialogs).toEqual([]);
@@ -372,7 +372,7 @@ test.describe('Snapshots of pools and volumes (fake data)', () => {
     await dialog.getByRole('button', { name: 'Create', exact: true }).click();
 
     await expect(dialog).toBeHidden();
-    // The full path is the name's tooltip (ADR-0432): the card names the folder once.
+    // The full path is the name's tooltip: the card names the folder once.
     await expect(row(page, 'nightly').getByText('nightly', { exact: true })).toHaveAttribute('title', '/mnt/pools/e2e_data/.snapshots/nightly');
     expect(writes(requests)).toEqual([
       { method: 'POST', path: '/', subvolume: null, body: { subvolume: DATA.path, name: 'nightly' } },
@@ -489,7 +489,7 @@ test.describe('Snapshots of pools and volumes (fake data)', () => {
     await expect(page.getByRole('heading', { name: 'Restored copies in e2e_data (Pool)' })).toBeVisible();
     await expect(copyRows(page)).toHaveCount(2); // the header and the pool's copy
     await expect(copyRows(page).nth(1)).toContainText('restore_20261105_080000');
-    // The full path is the name's tooltip (ADR-0432).
+    // The full path is the name's tooltip.
     await expect(copyRows(page).nth(1).getByText('restore_20261105_080000', { exact: true })).toHaveAttribute(
       'title',
       `${DATA.path}/restore_20261105_080000`,
@@ -666,7 +666,7 @@ test.describe('Snapshots of pools and volumes (fake data)', () => {
     const requests = await fakeSnapshotsApi(page, { subvolumes: [] });
     await page.goto('/snapshots');
 
-    // An empty state with what to do and where (ADR-0432).
+    // An empty state with what to do and where.
     await expect(page.getByText('No pool is mounted', { exact: true })).toBeVisible();
     await expect(page.getByText('Snapshots are taken of a mounted pool or volume.', { exact: true })).toBeVisible();
     await expect(page.getByRole('link', { name: 'Storage →' })).toHaveAttribute('href', '/storage');
@@ -684,7 +684,7 @@ test.describe('Snapshots of pools and volumes (fake data)', () => {
     await page.goto('/snapshots');
 
     // The list's card names its folder once, and links to the schedule of snapshots; the About card
-    // is gone, its rules are where they apply (ADR-0432).
+    // is gone, its rules are where they apply.
     await expect(page.getByText(`Kept in ${DATA.path}/.snapshots`, { exact: true })).toBeVisible();
     await expect(page.getByRole('link', { name: 'Schedule snapshots →' })).toHaveAttribute('href', '/system#scheduler');
     await expect(page.getByRole('heading', { name: 'About Snapshots' })).toHaveCount(0);
@@ -766,7 +766,7 @@ test.describe('Snapshots of pools and volumes (fake data)', () => {
     // The title in Russian, the server's reason as it comes.
     const warning = page.locator('.alert').filter({ hasText: 'Не удалось прочитать тома пула e2e_media' });
     await expect(warning).toContainText(`${detail} Сам пул можно выбрать, но его томов нет в списке.`);
-    // No About card (ADR-0432): its rules are where they apply, the first in the page's subtitle.
+    // No About card: its rules are where they apply, the first in the page's subtitle.
     await expect(page.getByRole('heading', { name: 'О снимках' })).toHaveCount(0);
     await expect(
       page.getByText('Копии пула или тома только для чтения. Снимок пула не включает его тома: делайте снимки и томов.'),

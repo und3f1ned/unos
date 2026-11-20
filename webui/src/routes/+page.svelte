@@ -37,7 +37,7 @@
   let toReplace = $state.raw<DiskPrediction[]>([]);
   let predictionsError = $state("");
   // Why the pools could not be read: an issue of its own, so that the header never says
-  // "No problems" about pools it does not know (ADR-0432).
+  // "No problems" about pools it does not know.
   let poolsError = $state("");
   let loading = $state(true);
   // The first load has answered: until then the page is its skeleton, in the default layout of the
@@ -75,7 +75,7 @@
   // accounts get the system overview and the live stats only.
   const isAdmin = $derived($user?.is_admin === true);
 
-  // What the dashboard knows besides the socket's problems (ADR-0432): the pools that are not
+  // What the dashboard knows besides the socket's problems: the pools that are not
   // healthy, the disks to replace soon and a failed check of them. With the socket's problems they
   // are one banner under the header, and the header counts them: never "No problems" beside them.
   const extraIssues = $derived(
@@ -297,7 +297,7 @@
     </div>
   {:else}
     <!-- The problems of the NAS, the disks to replace soon and the pools that are not healthy, in
-         one banner above the widgets, always: a warning is not one of them (ADR-0432). -->
+         one banner above the widgets, always: a warning is not one of them. -->
     {#if isAdmin}
       <ProblemsBanner dashboard extra={extraIssues} />
     {/if}

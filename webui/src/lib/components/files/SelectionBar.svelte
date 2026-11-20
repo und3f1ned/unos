@@ -14,7 +14,7 @@
   let { count, hint, children }: Props = $props();
 </script>
 
-<!-- The toolbar of the Files page and of its trash (ADR-0432): the count of the selected items,
+<!-- The toolbar of the Files page and of its trash: the count of the selected items,
      and their actions only while one is selected; until then a hint takes their place. The actions
      and the hint share one cell, so that the bar is as tall either way: actions that appeared on
      the first click of a double-click would otherwise move the rows under the pointer, as a row of

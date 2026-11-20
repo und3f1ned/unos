@@ -1,7 +1,7 @@
 <script lang="ts">
 	// A mounted pool's balance (ADR-0379): its progress while it runs or is paused, with its Pause,
 	// Resume and Cancel (`part` running, under the pool's header), then how it ended, or why its
-	// status could not be read (`part` result, at the foot of the pool: ADR-0432).
+	// status could not be read (`part` result, at the foot of the pool).
 	import { AlertTriangle, CheckCircle, Loader2, Pause, Play } from 'lucide-svelte';
 	import { Alert, Button, ProgressBar } from '$lib/components/ui';
 	import type { BalanceStatus, Pool } from '$lib/api/storage';
@@ -91,7 +91,7 @@
 		{#if status.expected && status.completed !== null}
 			<ProgressBar value={balanceProgress(status)} variant="info" label={$t('storage.balance.progress')} />
 		{/if}
-		<!-- How far, and how long it needs still: no chunk counts (ADR-0432). -->
+		<!-- How far, and how long it needs still: no chunk counts. -->
 		<div class="flex flex-wrap justify-between gap-x-3 text-xs text-secondary tabular">
 			{#if status.expected && status.completed !== null}
 				<span>{$t('storage.balance.done', { percent: percentFormat.format(balanceProgress(status) / 100) })}</span>

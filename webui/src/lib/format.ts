@@ -22,7 +22,7 @@ export function roundedNumber(value: number, digits: number): string {
 
 /**
  * A date and time to the minute, the year in full: what the data pages show of a time of the API
- * ("11/7/2026, 3:00 AM", "07.11.2026, 03:00"); seconds only in logs (ADR-0432).
+ * ("11/7/2026, 3:00 AM", "07.11.2026, 03:00"); seconds only in logs.
  */
 export const DATE_TIME_MINUTES: Intl.DateTimeFormatOptions = {
 	year: 'numeric',

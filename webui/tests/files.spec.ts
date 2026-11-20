@@ -43,7 +43,7 @@ test.describe('File Browser', () => {
   test('should have new folder button', async ({ authenticatedPage: page }) => {
     await page.goto('/files');
     await page.waitForTimeout(1000);
-    // In words beside Upload, the page's one primary action (ADR-0432).
+    // In words beside Upload, the page's one primary action.
     await expect(page.getByRole('button', { name: 'New folder', exact: true })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Upload', exact: true })).toHaveClass(/btn-primary/);
   });
@@ -83,7 +83,7 @@ test.describe('File Browser', () => {
     await expect(page.getByRole('button', { name: 'Пулы', exact: true })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Новая папка', exact: true })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Загрузить', exact: true })).toBeVisible();
-    // The selection's actions show only while something is selected (ADR-0432).
+    // The selection's actions show only while something is selected.
     const toolbar = page.getByRole('toolbar', { name: 'Выбранные элементы' });
     await expect(toolbar).toContainText('Выбрано: 0');
     await expect(toolbar).toContainText('Выберите элементы, чтобы скачать, скопировать, переместить, переименовать или удалить их.');
@@ -92,7 +92,7 @@ test.describe('File Browser', () => {
       await expect(page.getByText(column, { exact: true })).toBeVisible();
     }
 
-    // The trash is in the sidebar, under Files (ADR-0432).
+    // The trash is in the sidebar, under Files.
     await expect(page.locator('aside nav a[href="/files/trash"]')).toHaveText('Корзина');
     await page.locator('aside nav a[href="/files/trash"]').click();
     await expect(page).toHaveURL('/files/trash');
@@ -379,7 +379,7 @@ test.describe('File Browser operations', () => {
     const sub = await makeFolder(page, dir, 'sub');
     await putFile(page, sub, 'inner.txt', Buffer.from('inner'));
     await openScratch(page);
-    // Nothing selected: the bar counts none and says what selecting offers, with no buttons (ADR-0432).
+    // Nothing selected: the bar counts none and says what selecting offers, with no buttons.
     await expect(selectionBar(page)).toContainText('0 selected');
     await expect(selectionBar(page).getByRole('button')).toHaveCount(0);
 
@@ -1121,7 +1121,7 @@ test.describe('File Browser operations', () => {
     await openScratch(page);
     const renames = countRenames(page);
 
-    // Rename works on one selected item; with none it is not shown (ADR-0432).
+    // Rename works on one selected item; with none it is not shown.
     await expect(renameButton(page)).toHaveCount(0);
     await row(page, 'draft.txt').getByRole('checkbox').check();
     await row(page, 'photos').getByRole('checkbox').check();

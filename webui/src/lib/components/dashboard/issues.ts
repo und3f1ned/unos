@@ -2,7 +2,7 @@
 // (ADR-0332): the disks whose SMART trend says replace soon (ADR-0235), a failed check of them, and
 // the pools whose health is not healthy where the server reports no problem for the pool. The
 // dashboard lists them with the socket's in one banner and counts them all in its header, so that
-// it never says "No problems" beside a pool in error (ADR-0432).
+// it never says "No problems" beside a pool in error.
 import type { DiskPrediction } from '$lib/api/health';
 import type { Pool } from '$lib/api/storage';
 import type { Translate } from '$lib/i18n';

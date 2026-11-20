@@ -22,7 +22,7 @@
   }
 </script>
 
-<!-- The page header (ADR-0428, ADR-0432): the title, then Refresh, New folder and the page's one
+<!-- The page header (ADR-0428): the title, then Refresh, New folder and the page's one
      primary action, Upload, in words. The trash is in the sidebar, under Files. -->
 <div class="page-header mb-4">
   <h1 class="page-title">{$t("files.title")}</h1>

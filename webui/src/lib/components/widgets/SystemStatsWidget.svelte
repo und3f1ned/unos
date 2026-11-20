@@ -111,7 +111,7 @@
 		</Card>
 		{/if}
 
-		<!-- Network: received, then sent, each with its word as Disk I/O's rates have (ADR-0432). -->
+		<!-- Network: received, then sent, each with its word as Disk I/O's rates have. -->
 		{#if only === 'network'}
 		<Card padding="sm" class="stat-card">
 			{@render header(Network, 'chip-network', $t('dashboard.stats.network'), '')}
@@ -157,7 +157,7 @@
 					valueText={$t('dashboard.celsius', { value: temperature })}
 				/>
 			{:else}
-				<!-- No sensor answered: a quiet line, not a big grey value (ADR-0432). -->
+				<!-- No sensor answered: a quiet line, not a big grey value. -->
 				<p class="text-sm text-content-muted">{$t('dashboard.stats.none')}</p>
 			{/if}
 		</Card>

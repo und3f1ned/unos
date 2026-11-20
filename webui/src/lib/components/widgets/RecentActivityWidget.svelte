@@ -74,7 +74,7 @@
 	</div>
 
 	{#if notifications.length === 0}
-		<!-- Nothing yet: one quiet line, not an empty state as tall as the card (ADR-0432). -->
+		<!-- Nothing yet: one quiet line, not an empty state as tall as the card. -->
 		<p class="text-sm text-secondary">{$t('dashboard.activity.none')}</p>
 	{:else}
 		<div class="flex flex-col">

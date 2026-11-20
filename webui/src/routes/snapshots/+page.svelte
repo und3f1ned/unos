@@ -2,7 +2,7 @@
 	// The Snapshots page: the snapshots of a mounted pool or volume and the copies that restores
 	// made in it, with the dialogs that take, restore and delete them. Its lists are SnapshotLists.
 	// The pool or volume is chosen in the header; each card names its folder once, and the rules
-	// that the About card listed are where they apply (ADR-0432).
+	// that the About card listed are where they apply.
 	import { onMount } from 'svelte';
 	import { Archive, Copy, Plus, Trash2, RotateCcw, RefreshCw } from 'lucide-svelte';
 	import { Alert, Button, Card, EmptyState, Select, Skeleton } from '$lib/components/ui';
@@ -194,7 +194,7 @@
 				>
 					{#snippet actions(snap)}
 						<!-- Restore in words, so that its icon is never taken for Refresh; Delete an icon with
-						     its tooltip (ADR-0432). -->
+						     its tooltip. -->
 						<Button
 							variant="secondary"
 							size="sm"

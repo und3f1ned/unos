@@ -259,7 +259,7 @@ async function fakeProblems(page: Page, problems: object[]): Promise<void> {
 
 test('crossing a limit shows in the health banner, in the words of the page', async ({ authenticatedPage: page }) => {
   await fakeProblems(page, [OUT_OF_MEMORY, NEAR_MEMORY, HELD]);
-  // The dashboard lists its own issues in the same banner (ADR-0432): no disk is to be replaced and
+  // The dashboard lists its own issues in the same banner: no disk is to be replaced and
   // the check of the disks works and the one pool is healthy, so that the banner holds the socket's
   // problems alone.
   await fakeHealthApi(page);

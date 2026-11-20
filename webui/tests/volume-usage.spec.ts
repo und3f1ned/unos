@@ -194,7 +194,7 @@ test.describe('Alerts at the levels of a volume\'s quota', () => {
     const problems = [quotaProblem(95, 'backups', 258, 96), quotaProblem(80, 'documents', 256, 80),
       quotaProblem(90, 'photos', 257, 90)];
     const sockets = await fakeEvents(page, problems);
-    // The dashboard adds what it knows itself to the banner (ADR-0432): here nothing, with its disks
+    // The dashboard adds what it knows itself to the banner: here nothing, with its disks
     // checked and its one pool healthy.
     await fakeHealthApi(page);
     await fakeStorageApi(page, { pools: [HEALTHY_POOL] });

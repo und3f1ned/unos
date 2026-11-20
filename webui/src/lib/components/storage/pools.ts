@@ -26,7 +26,7 @@ export type BalanceAction = 'pause' | 'resume' | 'cancel';
 
 /**
  * Why an action of a pool is not available now, as a key of the catalog, or null when it is: the
- * page says it beside the disabled button (ADR-0432). A disk's add or removal (`disks`) waits for a
+ * page says it beside the disabled button. A disk's add or removal (`disks`) waits for a
  * scrub, a balance (a paused one is resumed or cancelled first) and a removal, and needs the pool
  * writable and whole; a balance waits for a scrub and a removal; a scrub for a balance and a removal.
  */
@@ -48,7 +48,7 @@ export function blockedReason(
 }
 
 /** Whether a new pool can take the disk: neither the system's disk nor one in use. The Create pool
- * dialog and the count of the empty state share it (ADR-0432). */
+ * dialog and the count of the empty state share it. */
 export const usableForPool = (disk: Disk): boolean => !disk.is_system && !disk.in_use;
 
 /** What the Mount / Unmount dialog asks for. */

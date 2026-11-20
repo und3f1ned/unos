@@ -36,7 +36,7 @@
 	const running = $derived(containers.filter((c) => c.state === 'running').length);
 	// Stopped as the Containers page counts it, whose summary this is (ADR-0431): the exited ones.
 	const stopped = $derived(containers.filter((c) => c.state === 'exited').length);
-	// The paused, restarting, created and dead ones: the three counts add up to the total (ADR-0432).
+	// The paused, restarting, created and dead ones: the three counts add up to the total.
 	const other = $derived(containers.length - running - stopped);
 	const displayContainers = $derived(containers.slice(0, limit));
 
@@ -82,7 +82,7 @@
 			<a href="/containers" class="link text-[13px]">{$t('dashboard.manage')}</a>
 		</div>
 
-		<!-- The counts, which add up to the total: Other only when there is one (ADR-0432). -->
+		<!-- The counts, which add up to the total: Other only when there is one. -->
 		<dl class="grid {other > 0 ? 'grid-cols-3' : 'grid-cols-2'} gap-2 mb-3">
 			<div class="px-3 py-2 rounded-lg bg-surface-muted">
 				<dt class="text-xs text-secondary">{$t('dashboard.containers.running')}</dt>
@@ -104,7 +104,7 @@
 			<p class="text-secondary text-sm">{$t('dashboard.containers.none')}</p>
 		{:else}
 			<!-- A row per container: its name and image, then its state as a badge with a dot. No
-			     state icon: the play and stop icons are the Containers page's buttons (ADR-0432). -->
+			     state icon: the play and stop icons are the Containers page's buttons. -->
 			<div class="flex flex-col">
 				{#each displayContainers as container}
 					{@const webUrl = getWebUrl(container)}

@@ -18,7 +18,7 @@
 	type Props = {
 		id: string;
 		pools: Pool[];
-		/** The pools could not be read: the storage card says so, not "No pools yet" (ADR-0432). */
+		/** The pools could not be read: the storage card says so, not "No pools yet". */
 		poolsFailed?: boolean;
 		containers: Container[];
 		notificationLogs: NotificationLog[];

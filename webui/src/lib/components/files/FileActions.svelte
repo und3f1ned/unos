@@ -22,7 +22,7 @@
 </script>
 
 <!-- Actions on the selected items, shown in the selection's bar while one is selected; Delete
-     moves to the trash, so it is no solid red button (ADR-0432). -->
+     moves to the trash, so it is no solid red button. -->
 <SelectionBar count={browser.selected.size} hint={$t("files.selectHint")}>
   <Button
     variant="secondary"

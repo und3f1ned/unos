@@ -1,5 +1,5 @@
 <script lang="ts">
-	// The actions of a pool's card (ADR-0432): its two everyday ones, Volumes and Scrub (Mount for a
+	// The actions of a pool's card: its two everyday ones, Volumes and Scrub (Mount for a
 	// pool that is not mounted), as buttons, and the rest behind More: a balance (ADR-0379), a
 	// disk's add and removal (ADR-0411), the unmount and the removal of the pool. An action that
 	// cannot run now is disabled and says why. The controls of a job that runs (cancel a scrub,
@@ -41,7 +41,7 @@
 	// A balance that runs or is paused has its controls beside its progress.
 	let balanceShown = $derived(!balance || balance.status === 'idle');
 
-	/** An action behind More: what the ActionMenu of the design system will list (ADR-0432). */
+	/** An action behind More: what the ActionMenu of the design system will list. */
 	type MoreAction = {
 		id: string;
 		label: string;
@@ -124,7 +124,7 @@
 
 {#if open}
 	<!-- The other actions, in a row under the header: the ActionMenu of the design system takes
-	     this list when it comes (ADR-0432). -->
+	     this list when it comes. -->
 	<div id={panelId} class="basis-full flex flex-col gap-2 pt-3 border-t border-border">
 		<div class="flex flex-wrap items-center gap-2" role="group" aria-label={$t('storage.pool.moreOf', { name: pool.name })}>
 			{#each moreActions() as action (action.id)}

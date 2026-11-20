@@ -229,7 +229,7 @@ test.describe('Dashboard', () => {
     await page.waitForLoadState('networkidle');
     const loaded = requests.length;
     // The header says "Live", with the time of the last stats in its tooltip: nothing on the page
-    // ticks every 2 seconds (ADR-0432).
+    // ticks every 2 seconds.
     await expect(page.locator('main').getByText('Live', { exact: true })).toBeVisible();
     const updated = page.locator('main span[title^="Updated "]');
     const firstUpdate = await updated.getAttribute('title');
@@ -311,7 +311,7 @@ test.describe('Dashboard', () => {
   });
 
   // system.temperatures: on a host without sensors the server sends no temperature, and the card
-  // says so in a quiet line, not as a big grey value (ADR-0432).
+  // says so in a quiet line, not as a big grey value.
   test('the temperature card says there is no reading on a host without sensors', async ({ authenticatedPage: page }) => {
     await fakeLiveStats(page, { ...LIVE_STATS, cpu: { ...LIVE_STATS.cpu, temperature: null } });
     await page.goto('/');
@@ -388,7 +388,7 @@ test.describe('Dashboard', () => {
       widget.locator('.space-y-3 > div').filter({ has: page.locator('span', { hasText: new RegExp(`^${name}$`) }) });
     await expect(pool('e2e_data').locator('.badge')).toHaveText('Healthy');
     await expect(pool('e2e_media').locator('.badge')).toHaveText('Healthy');
-    // The share on the name's line, the sizes on the line under the bar (ADR-0432).
+    // The share on the name's line, the sizes on the line under the bar.
     await expect(pool('e2e_media').locator('[data-field="used"]')).toHaveText('931.3 GB of 3.6 TB');
     await expect(pool('e2e_media').locator('[data-field="issues"]')).toHaveCount(0);
 
@@ -410,8 +410,7 @@ test.describe('Dashboard', () => {
 
   // storage.smart-replace-soon (ADR-0235): the dashboard shows no disks, so the disks to replace
   // soon are issues of the problems banner under its header, each a link to Disk Health with the
-  // server's reasons under it, and the header counts them: never "No problems" beside them
-  // (ADR-0432).
+  // server's reasons under it, and the header counts them: never "No problems" beside them.
   test('lists the disks to replace soon with the reason, until the prediction changes', async ({
     authenticatedPage: page,
   }) => {
@@ -459,7 +458,7 @@ test.describe('Dashboard', () => {
     await fakeHealthApi(page, { predictions: () => predictions });
     await page.goto('/');
 
-    // An issue of the banner, the server's reason under it, linked to Disk Health (ADR-0432).
+    // An issue of the banner, the server's reason under it, linked to Disk Health.
     const warning = page.locator('main #problems-banner').getByRole('listitem').filter({
       has: page.getByRole('link', { name: 'Could not check the disks for a predicted failure', exact: true }),
     });
@@ -530,7 +529,7 @@ test.describe('Dashboard', () => {
     await expect(storage.getByText('1.9 ТБ / 11.8 ТБ (16.2%)', { exact: true })).toBeVisible();
 
     // A disk to replace soon: the words of the page in Russian, the reasons as the server gives them.
-    // The banner lists the pools' issues too, errors first: the rest is behind "Show all" (ADR-0432).
+    // The banner lists the pools' issues too, errors first: the rest is behind "Show all".
     await main.locator('#problems-banner').getByRole('button', { name: /^Показать все/ }).click();
     const replace = main.locator('#problems-banner').getByRole('listitem').filter({
       has: page.getByRole('link', { name: 'Скоро замените диск /dev/e2e-sda (серийный номер E2E-HDD-1)', exact: true }),

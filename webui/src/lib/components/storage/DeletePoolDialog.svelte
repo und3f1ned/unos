@@ -1,5 +1,5 @@
 <script lang="ts">
-	// The dialog that removes a pool, in one step (ADR-0432): what it does, as a short list of
+	// The dialog that removes a pool, in one step: what it does, as a short list of
 	// consequences, then the pool's name typed into an empty field. The data stays on the disks.
 	// The ConfirmDialog of the design system takes it over when it comes.
 	import { AlertTriangle } from 'lucide-svelte';
