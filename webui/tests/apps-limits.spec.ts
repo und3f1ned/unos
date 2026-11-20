@@ -131,6 +131,22 @@ test.describe('The limits of an app\'s containers', () => {
     await expect(installedCard(page, 'immich').getByRole('progressbar')).toHaveCount(0);
   });
 
+  test('the running containers whose use is not read yet are counted in one note', async ({
+    authenticatedPage: page,
+  }) => {
+    // Immich runs; the use of its server and of redis is not read yet (webui.ux-apps).
+    const app = immich();
+    app.resources = noResources();
+    app.companions.find((c) => c.container === 'immich-redis')!.resources = noResources();
+    await fakeLimits(page, [app]);
+    await openInstalled(page);
+
+    await expect(memory(page, 'immich-database')).toHaveText('470 MB of 512 MB');
+    const notes = installedCard(page, 'immich').getByText(/has not been read yet/);
+    await expect(notes).toHaveCount(1);
+    await expect(notes).toContainText('The use of 2 running containers has not been read yet.');
+  });
+
   test('an administrator sets a memory limit and a CPU quota for a container', async ({ authenticatedPage: page }) => {
     const changes = await fakeLimits(page, [immich()]);
     await openInstalled(page);

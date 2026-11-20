@@ -1,5 +1,6 @@
 ---
-status: accepted
+status: superseded
+superseded-by: ADR-0432
 date: 2026-11-20
 area: webui
 decided-by: agent
@@ -9,6 +10,8 @@ supersedes: [ADR-0174, ADR-0234, ADR-0238, ADR-0337, ADR-0389, ADR-0395, ADR-040
 # ADR-0431: Every account's own settings are on the Account page, System is the NAS's, and each setting, action and fact has one place
 
 ## Context
+
+Superseded by ADR-0432: only in part, the Containers item: the state filter is one segmented control whose segments carry the counts, in place of the state select and the count cards; every other rule here stays in force.
 
 The owner asked, in translation: "why are the theme and language settings in Security Settings? Go
 through all the tabs and make the menus logical", and then: "check every duplicate of every menu

@@ -1526,7 +1526,8 @@ container that an app of the App Store made names its app, a link to the app's
 card on the App Store's **Installed** tab. On a phone the containers show as
 cards; the buttons beside the search switch between the table and the cards.
 When Docker does not answer, the tab says so, with Docker's reason and
-**Retry**.
+**Retry**; when the list cannot be loaded for another reason, it says that the
+containers could not be loaded, with the reason and **Retry**.
 
 ### Container Actions
 
@@ -1613,7 +1614,8 @@ the same way. Some of them:
 2. Browse or search for an app
 3. Click its card: its details open. The card's foot says **Install** while
    apps can be installed; when Docker does not answer, the App Store says so with
-   **Retry**, and no app can be installed until it does
+   **Retry**, and no app can be installed until it does. Until the installed
+   apps have been loaded (or when they cannot be), no card says **Install**
 4. Choose the **Storage pool** for the app's data (apps that keep data need a
    mounted pool; create or mount one on the **Storage** page first) and
    configure settings if prompted
@@ -1624,9 +1626,10 @@ the same way. Some of them:
    checks the pool, the ports and the free space, and show why it is refused
    if it is, so that you can change the settings and try again
 7. Once the checks have passed, the details close, and a card at the top of
-   the **App Store** follows the install: while it downloads, one bar of the
-   whole download and how many of its images are on the NAS, then each image
-   with its download, each container as it is created and started, and at the
+   the **App Store** follows the install: while it downloads, how many of its
+   images are on the NAS and one bar of the whole download, in which each image
+   counts the same (an image's size is known only as its download goes on), then
+   each image with its download, each container as it is created and started, and at the
    end the result, or why the install failed.
    You can leave the page or reload it meanwhile: the install goes on in the
    background, and the card shows where it is when you come back. **Cancel
@@ -1876,7 +1879,7 @@ image checks its own health, the card shows **Starting**, **Healthy** or
   first and the main one once those it needs are ready (Immich's server once
   its database and Valkey are), a stop stops them in the reverse order, and a
   restart stops them all and starts them again.
-- **Uninstall** (the bin at the end of the card's buttons) removes the app's
+- **Uninstall** (the last of the card's buttons) removes the app's
   containers, and the network of an app of several, after a confirmation and
   keeps its data folders. Installing the app
   again on the same pool uses them again.

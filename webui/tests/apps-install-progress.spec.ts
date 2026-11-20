@@ -107,6 +107,17 @@ function pulling(job: FakeInstallJob, images: string[]): FakeInstallJob {
   };
 }
 
+/** The job further on: its first image on the NAS, the second at a quarter of the 4 MiB reported so far. */
+function pullingSecond(job: FakeInstallJob, images: string[]): FakeInstallJob {
+  const done = { state: 'pulled', layers: 2, layers_done: 2, bytes_total: 3 * MIB, bytes_done: 3 * MIB } as const;
+  const second = { state: 'pulling', layers: 3, layers_done: 0, bytes_total: 4 * MIB, bytes_done: 1 * MIB } as const;
+  const waiting = { state: 'waiting', layers: 0, layers_done: 0, bytes_total: 0, bytes_done: 0 } as const;
+  return {
+    ...pulling(job, images),
+    images: images.map((image, i) => ({ image, ...(i === 0 ? done : i === 1 ? second : waiting) })),
+  };
+}
+
 /** The job starting its containers: its images pulled, the database and redis running. */
 function starting(job: FakeInstallJob, images: string[]): FakeInstallJob {
   const states = { 'immich-database': 'running', 'immich-redis': 'running', 'immich-machine-learning': 'starting' } as const;
@@ -168,12 +179,14 @@ test.describe('The progress of an install', () => {
     await expect(first).toContainText('Downloading');
     await expect(first).toContainText('1.5 MB of 3 MB');
     // No layers, Docker's word for a part of an image (webui.ux-apps); one line of the whole
-    // download above the images instead.
+    // download above the images instead. Each image is a quarter of its bar: the bytes of the
+    // images are not added up, since an image's size is known only as Docker reports its layers
+    // (ADR-0384), and a sum would near 100% and drop as the next image starts.
     await expect(card.getByText(/layers?\b/)).toHaveCount(0);
     await expect(card.getByText('0 of 4 images on the NAS', { exact: true })).toBeVisible();
     const whole = card.getByRole('progressbar', { name: 'Download of the images of Immich' });
-    await expect(whole).toHaveAttribute('aria-valuenow', String(1.5 * MIB));
-    await expect(whole).toHaveAttribute('aria-valuemax', String(3 * MIB));
+    await expect(whole).toHaveAttribute('aria-valuenow', '12');
+    await expect(whole).toHaveAttribute('aria-valuemax', '100');
     const bar = first.getByRole('progressbar', { name: `Download of ${shortName(images[0])}` });
     await expect(bar).toHaveAttribute('aria-valuenow', String(1.5 * MIB));
     await expect(bar).toHaveAttribute('aria-valuemax', String(3 * MIB));
@@ -183,6 +196,11 @@ test.describe('The progress of an install', () => {
     // No second install of the app while its install runs.
     await expect(catalogCard(page, 'Immich').getByText('Installing', { exact: true })).toBeVisible();
     await expect(catalogCard(page, 'Immich').getByText('Install', { exact: true })).toHaveCount(0);
+
+    // The first image on the NAS and the second begun: the bar goes on from there, (1 + 1/4) of 4.
+    await events.update(pullingSecond(started[0], images));
+    await expect(card.getByText('1 of 4 images on the NAS', { exact: true })).toBeVisible();
+    await expect(whole).toHaveAttribute('aria-valuenow', '31');
 
     // Each container's start, in their order.
     await events.update(starting(started[0], images));
@@ -225,8 +243,8 @@ test.describe('The progress of an install', () => {
     await page.reload();
     await expect.poll(() => events.signIns()).toBe(2);
     await expect(jobCard(page).getByText('Installing', { exact: true })).toBeVisible();
-    // The whole download's line and the first image's say the same, the only bytes known so far.
-    await expect(jobCard(page).getByText('1.5 MB of 3 MB')).toHaveCount(2);
+    // The bytes are the first image's alone: the whole download's line counts images.
+    await expect(jobCard(page).getByText('1.5 MB of 3 MB')).toHaveCount(1);
 
     installed.push(installedImmich(POOL.path));
     await events.update(endedJob(job, installedImmich(POOL.path)));

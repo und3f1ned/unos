@@ -42,7 +42,8 @@
 {/snippet}
 
 <!-- One row from sm: the search grows, the filter and the view keep their width; on a phone the
-     filter takes a row of its own under the search and the view. -->
+     filter takes a row of its own under the search and the view, its segments sharing the row's
+     width on one line, also with Other and in Russian (webui.ux-apps). -->
 <div class="flex flex-wrap items-center gap-3">
 	<Input
 		icon={Search}
@@ -53,14 +54,14 @@
 	/>
 	<!-- The filter: a segment's name and its count; the pressed one is the filter. -->
 	<div
-		class="segmented order-last w-full sm:order-none sm:w-auto"
+		class="segmented order-last w-full flex-nowrap sm:order-none sm:w-auto"
 		role="group"
 		aria-label={$t('containers.filter.label')}
 	>
 		{#each shown as segment (segment.id)}
 			<Button
 				variant="plain"
-				class="tab-pill inline-flex items-center gap-1.5 {filter === segment.id ? 'tab-pill-active' : ''}"
+				class="tab-pill inline-flex min-w-0 flex-1 items-center justify-center gap-1 whitespace-nowrap px-2 sm:flex-none sm:gap-1.5 sm:px-3 {filter === segment.id ? 'tab-pill-active' : ''}"
 				pressed={filter === segment.id}
 				onclick={() => (filter = segment.id)}
 			>

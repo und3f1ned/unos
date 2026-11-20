@@ -36,11 +36,40 @@ test.describe('App Store', () => {
     await expect(page.getByRole('heading', { name: 'Jellyfin' }).first()).toBeVisible();
     await expect(page.getByText(/^\d+ apps available$/)).toBeVisible();
     await expect(page.getByRole('button', { name: 'Installed', exact: true })).toBeVisible();
+    // While the installed apps are not known no app offers Install (webui.ux-apps): one of them
+    // may be the app, and Docker may not answer.
+    const jellyfin = page.locator('.card[role="button"]', { has: page.locator('h3', { hasText: /^Jellyfin$/ }) });
+    await expect(jellyfin).toBeVisible();
+    await expect(jellyfin.getByText('Install', { exact: true })).toHaveCount(0);
+    await jellyfin.click();
+    const details = page.getByRole('dialog', { name: 'Jellyfin' });
+    await expect(details.getByRole('button', { name: 'Install Jellyfin' })).toBeDisabled();
+    await expect(details.getByRole('button', { name: 'Install Jellyfin' })).toHaveAccessibleDescription(
+      /The installed apps are not loaded yet, so no app can be installed now\./,
+    );
+    await details.getByRole('button', { name: 'Cancel' }).click();
 
     release();
     const alert = page.locator('.alert', { hasText: 'The installed apps could not be loaded' });
     await expect(alert.getByText('Docker is not available: held by the test')).toBeVisible();
     await expect(page.getByRole('heading', { name: 'Jellyfin' }).first()).toBeVisible();
+  });
+
+  test('installed apps that fail for another reason than Docker say so plainly', async ({ authenticatedPage: page }) => {
+    // A 500 of the server, not Docker's 503 (ADR-0323): no "Docker is not answering".
+    await page.route('**/api/v1/apps/installed', (route) =>
+      route.fulfill({ status: 500, json: { detail: 'Docker failed: held by the test' } }),
+    );
+    await page.goto('/apps');
+
+    const alert = page.locator('.alert', { hasText: 'Docker failed: held by the test' });
+    await expect(alert.getByText('The installed apps could not be loaded', { exact: true })).toBeVisible();
+    await expect(page.getByText(/Docker is not answering/)).toHaveCount(0);
+    await expect(alert.getByRole('button', { name: 'Retry' })).toBeVisible();
+    // The catalog is listed, without Install: the installed apps are not known.
+    const jellyfin = page.locator('.card[role="button"]', { has: page.locator('h3', { hasText: /^Jellyfin$/ }) });
+    await expect(jellyfin).toBeVisible();
+    await expect(jellyfin.getByText('Install', { exact: true })).toHaveCount(0);
   });
 
   test('should show app cards in catalog', async ({ authenticatedPage: page }) => {

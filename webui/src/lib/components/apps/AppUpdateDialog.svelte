@@ -127,7 +127,7 @@
 				<div>
 					<span class="kv-label">{$t('appUpdates.containers')}</span>
 					<span class="kv-value" data-field="containers">
-						{$t('appUpdates.changedCount', { changed, n: plan.containers.length })}
+						{$t('appUpdates.changedCount', { n: changed, total: plan.containers.length })}
 					</span>
 				</div>
 				<div>

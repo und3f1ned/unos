@@ -55,7 +55,11 @@
 {/snippet}
 
 <Modal {open} title={$t('containers.create.title')} size="lg" {onclose}>
+	<!-- Enter in a field submits the form through Create, its submit button in the footer; novalidate:
+	     the dialog says under each field what is missing, instead of the browser's bubble. -->
 	<form
+		id="container-create-form"
+		novalidate
 		onsubmit={(e) => {
 			e.preventDefault();
 			submit();
@@ -166,7 +170,8 @@
 			variant="primary"
 			class="flex-1"
 			loading={submitting}
-			onclick={submit}
+			type="submit"
+			form="container-create-form"
 			icon={Plus}
 		>
 			{$t('containers.create.button')}

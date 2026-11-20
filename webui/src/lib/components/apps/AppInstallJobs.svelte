@@ -1,7 +1,7 @@
 <script lang="ts">
 	// The card of each install, update or rollback of an app (ADR-0384, ADR-0408): its state and
-	// step, while it downloads one line of its whole download (the bytes of every image whose size
-	// is known, and how many images are on the NAS), each image and each container, and its result.
+	// step, while it downloads one line of its whole download (how many images are on the NAS, and
+	// a bar in which each image is an equal share), each image and each container, and its result.
 	// No layers: Docker's word for a part of an image says nothing to a person (webui.ux-apps).
 	import { Ban, X } from 'lucide-svelte';
 	import { Alert, Badge, Button, Card, ProgressBar } from '$lib/components/ui';
@@ -106,17 +106,25 @@
 		return catalog.find((app) => app.id === job.template_id);
 	}
 
-	/** The whole download of a job: the bytes of the images whose size is known, and the images on the NAS. */
-	function download(job: AppInstallJob): { done: number; total: number; ready: number } {
-		let done = 0;
-		let total = 0;
+	/**
+	 * The whole download of a job: the images on the NAS, and the percent of the download, in which
+	 * each image is an equal share: one on the NAS is whole, one that downloads its part done of the
+	 * layers Docker reported so far, any other none. Bytes are not added up across the images: an
+	 * image's size is known only as Docker reports its layers (ADR-0384), so a sum of them would near
+	 * 100% and drop as each next image starts.
+	 */
+	function download(job: AppInstallJob): { percent: number; ready: number } {
+		let shares = 0;
 		let ready = 0;
 		for (const image of job.images) {
-			done += image.bytes_done;
-			total += image.bytes_total;
-			if (image.state === 'pulled' || image.state === 'present') ready++;
+			if (image.state === 'pulled' || image.state === 'present') {
+				ready++;
+				shares += 1;
+			} else if (image.state === 'pulling' && image.bytes_total > 0) {
+				shares += Math.min(1, image.bytes_done / image.bytes_total);
+			}
 		}
-		return { done, total, ready };
+		return { percent: Math.floor((shares / job.images.length) * 100), ready };
 	}
 
 	/** The image's name without its digest: the tag tells the version; the digest is in the details. */
@@ -204,19 +212,12 @@
 			{#if job.state === 'running' && job.step === 'pulling' && job.images.length > 0}
 				{@const whole = download(job)}
 				<div class="mt-4">
-					<div class="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 text-sm">
-						<span>{$t('apps.job.imagesReady', { done: whole.ready, n: job.images.length })}</span>
-						{#if whole.total > 0}
-							<span class="text-content-secondary tabular">
-								{$t('apps.job.bytes', { done: formatSize(whole.done), total: formatSize(whole.total) })}
-							</span>
-						{/if}
-					</div>
+					<p class="text-sm">{$t('apps.job.imagesReady', { done: whole.ready, n: job.images.length })}</p>
 					<ProgressBar
 						class="mt-1.5"
 						variant="info"
-						value={whole.total > 0 ? whole.done : whole.ready}
-						max={whole.total > 0 ? whole.total : job.images.length}
+						value={whole.percent}
+						max={100}
 						label={$t('apps.job.downloadAll', { name: job.name })}
 					/>
 				</div>

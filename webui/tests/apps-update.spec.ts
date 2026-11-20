@@ -131,6 +131,18 @@ async function openInstalled(page: Page) {
 }
 
 test.describe('Updating an installed app', () => {
+  test('the summary says one container gets a new image in the singular (webui.ux-apps)', async ({
+    authenticatedPage: page,
+  }) => {
+    const fakes = await fakeApps(page, withUpdate());
+    const containers = PLAN.containers.map((c) => (c.name === 'immich' ? c : { ...c, changed: false }));
+    fakes.plan = { status: 200, json: { ...PLAN, containers } };
+    const card = await openInstalled(page);
+    await card.getByRole('button', { name: 'Update to v3.5.0' }).click();
+    const dialog = page.getByRole('dialog', { name: 'Update Immich' });
+    await expect(dialog.locator('[data-field="containers"]')).toHaveText('1 of 4 gets a new image');
+  });
+
   test('the update shows what it writes and copies, runs as a job, and keeps the earlier version until a rollback', async ({
     authenticatedPage: page,
   }) => {

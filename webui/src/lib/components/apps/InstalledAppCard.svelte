@@ -5,7 +5,7 @@
 	// its containers' resources. The buttons are quiet and in one place, the top right: Update and
 	// Open, Start or Stop and Restart as secondary buttons, Uninstall as a trash icon; no solid
 	// colours, which are for a confirming dialog's button (webui.ux-apps).
-	import { ArrowUpCircle, ExternalLink, Play, RotateCw, Square, Trash2, Undo2 } from 'lucide-svelte';
+	import { ArrowUpCircle, ExternalLink, PackageX, Play, RotateCw, Square, Trash2, Undo2 } from 'lucide-svelte';
 	import { Alert, Badge, Button, Card } from '$lib/components/ui';
 	import type { AppTemplate, ContainerResources, InstalledApp } from '$lib/api/apps';
 	import { t } from '$lib/i18n';
@@ -113,14 +113,16 @@
 					{$t('apps.installed.start')}
 				</Button>
 			{/if}
+			<!-- It removes every container of the app: its word on the button, the app in its name, and a
+			     glyph of its own beside Remove earlier version's bin (webui.ux-apps). -->
 			<Button
 				variant="ghost-danger"
-				size="icon-sm"
+				size="sm"
+				icon={PackageX}
 				onclick={() => onuninstall(app)}
-				title={$t('apps.installed.uninstallOne', { name: app.name })}
+				aria-label={$t('apps.installed.uninstallOne', { name: app.name })}
 			>
-				<Trash2 class="w-4 h-4" aria-hidden="true" />
-				<span class="sr-only">{$t('apps.installed.uninstall')}</span>
+				{$t('apps.installed.uninstall')}
 			</Button>
 		</div>
 	</div>

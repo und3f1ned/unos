@@ -243,15 +243,31 @@ const SYSTEM_INFO = {
   boot_time: new Date(Date.now() - (3 * 24 + 4) * 3600 * 1000).toISOString(),
 };
 
-function container(id: string, name: string, image: string, state: string, ports: object[] = []) {
-  return { id, name, image, status: state, state, created: '2026-11-01T10:00:00Z', ports, labels: {} };
+function container(
+  id: string,
+  name: string,
+  image: string,
+  state: string,
+  ports: object[] = [],
+  labels: Record<string, string> = {},
+) {
+  return { id, name, image, status: state, state, created: '2026-11-01T10:00:00Z', ports, labels };
 }
+// A container of an app of the App Store (the label unos.app): it names its app as a link.
+const APP_LABELS = { 'unos.app': 'immich', 'unos.app.name': 'Immich', 'com.docker.compose.project': 'immich' };
 const CONTAINERS = [
   container('0d1f2e3c4b5a', 'e2e-web', 'nginx:1.27', 'running', [
     { host_port: 8080, container_port: 80, protocol: 'tcp' },
     { host_port: 8443, container_port: 443, protocol: 'tcp' },
   ]),
-  container('1a2b3c4d5e6f', 'e2e-immich-machine-learning', 'ghcr.io/immich-app/immich-machine-learning:release', 'exited'),
+  container(
+    '1a2b3c4d5e6f',
+    'e2e-immich-machine-learning',
+    'ghcr.io/immich-app/immich-machine-learning:release',
+    'exited',
+    [],
+    APP_LABELS,
+  ),
   container('2b3c4d5e6f70', 'e2e-cache', 'redis:7', 'paused', [{ host_port: null, container_port: 6379, protocol: 'tcp' }]),
 ];
 const IMAGES = [
@@ -1101,7 +1117,8 @@ const VIEWS: View[] = [
     name: 'Containers',
     path: '/containers',
     fake: (page) => serve(page, DOCKER),
-    shows: (page) => page.getByText('e2e-immich-machine-learning').first(),
+    // An app's container names its app as a link (webui.ux-apps).
+    shows: (page) => page.getByRole('link', { name: /^(Immich app|Приложение Immich)$/ }),
   },
   {
     name: 'Containers (images)',
@@ -1699,10 +1716,11 @@ const VIEWS: View[] = [
     // A phone shows the containers as cards and one held sideways (667 px) as the table (webui.ux-apps):
     // the container's name opens its drawer in both.
     open: (page) => page.getByText('e2e-immich-machine-learning', { exact: true }).first().click(),
-    shows: (page) => page.getByRole('dialog'),
+    // The container of an app: its facts with the app's link, and Docker's labels at the end.
+    shows: (page) => page.getByRole('dialog').getByRole('link', { name: 'Immich', exact: true }),
     start: dialogTitle,
-    // A drawer without buttons at its end: the container's image ends its Overview.
-    end: (page) => page.getByRole('dialog').locator('code').last(),
+    // A drawer without buttons at its end: the disclosure of Docker's labels ends its Overview.
+    end: (page) => page.getByRole('dialog').locator('summary'),
   },
   {
     // An app of several containers to install: its containers and their pinned images.

@@ -337,6 +337,21 @@ test.describe('Containers', () => {
     await expect(segment(/^All/)).toHaveAttribute('aria-pressed', 'true');
   });
 
+  test('a failed load that is not Docker\'s says so plainly', async ({ authenticatedPage: page }) => {
+    // A 500 of the server, not Docker's 503 (ADR-0323): no "Docker is not answering".
+    await page.route(
+      (url) => url.pathname === '/api/v1/containers',
+      (route) => route.fulfill({ status: 500, json: { detail: 'Docker failed: held by the test' } }),
+    );
+    await page.goto('/containers');
+
+    const alert = page.locator('.alert', { hasText: 'Docker failed: held by the test' });
+    await expect(alert.getByText('The containers could not be loaded', { exact: true })).toBeVisible();
+    await expect(page.getByText(/Docker is not answering/)).toHaveCount(0);
+    await expect(alert.getByRole('button', { name: 'Retry' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Create container' })).toHaveCount(0);
+  });
+
   test('Create container says under each field what is missing, and sends nothing', async ({
     authenticatedPage: page,
   }) => {
@@ -345,9 +360,12 @@ test.describe('Containers', () => {
     await page.getByRole('button', { name: 'Create container' }).click();
     const form = page.getByRole('dialog', { name: 'Create container' });
     await expect(form.getByText('Enter a name for the container.')).toHaveCount(0);
-    await form.getByRole('button', { name: 'Create container' }).click();
+    // Enter in a field submits as the button does: the messages, not the browser's bubble.
+    await form.getByLabel('Name *', { exact: true }).press('Enter');
     await expect(form.getByText('Enter a name for the container.')).toBeVisible();
     await expect(form.getByText('Enter the image to create the container from.')).toBeVisible();
+    await form.getByRole('button', { name: 'Create container' }).click();
+    await expect(form.getByText('Enter a name for the container.')).toBeVisible();
     await form.getByLabel('Name *', { exact: true }).fill('e2e-new');
     await expect(form.getByText('Enter a name for the container.')).toHaveCount(0);
     expect(requests.filter((r) => r.startsWith('POST'))).toEqual([]);

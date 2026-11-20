@@ -3,6 +3,7 @@ status: accepted
 date: 2026-11-20
 area: webui
 decided-by: agent
+supersedes: [ADR-0384, ADR-0431]
 ---
 
 # ADR-0432: Containers and the App Store get one filter, quiet actions and plain states, and an app's container is removed only with its app
@@ -35,7 +36,8 @@ work; chunk 1 (the design-system foundations) builds the shared components at th
   ("the state select; the counts stay"): the segments are both.
 - **Rows and cards.** A row's buttons sit on one line in a column as narrow as they are, each in a
   fixed slot (Open in browser, Start or Stop, Restart, Remove), as ghost icons with their names as
-  tooltips and for screen readers; no status colours on an action. A container that keeps
+  tooltips and for screen readers; no status colours on a routine action. Remove, which deletes,
+  is the quiet red of every delete icon (`ghost-danger`, `webui/AGENTS.md`), with no fill. A container that keeps
   restarting offers Stop and Restart, as a running one, since Start does nothing to it. The name keeps at least 16
   characters, the image is cut with its full name on hover, Select all shown is the table head's
   checkbox. Below 640 px the list is cards unless the user chose the table (`MediaQuery` in
@@ -49,11 +51,13 @@ work; chunk 1 (the design-system foundations) builds the shared components at th
   one container leaves the app incomplete (ADR-0381), and Uninstall on the App Store is the one place
   that removes an app's containers. Start, Stop and Restart stay, as the server allows them.
 - **Plain states and errors.** Docker's states are shown in sentence case, `exited` as Stopped, the
-  filter's word; a stopped container is neutral, not red. When Docker does not answer, the page says
-  "Docker is not answering", what that means, Docker's reason in small type and Retry; the App Store
-  does the same, and while the installed apps could not be read no card says Install and the
-  details' Install is disabled with the reason as its description (`dockerDown` of
-  `AppDetailModal.svelte`). Dates of the drawer and the Images tab have no seconds.
+  filter's word; a stopped container is neutral, not red. When Docker does not answer (its 503,
+  ADR-0323), the page says "Docker is not answering", what that means, Docker's reason in small type
+  and Retry; the App Store does the same. Any other failed load says plainly that the containers or
+  the installed apps could not be loaded, with the reason and Retry. While the installed apps are not
+  known (not answered within the first load's moment, or failed: `installedKnown`) no card says
+  Install and the details' Install is disabled with the reason as its description (`installBlocked`
+  of `AppDetailModal.svelte`). Dates of the drawer and the Images tab have no seconds.
 - **The drawer** shows its facts as labels over values (ID with Copy, created, image, app), the state
   once in its header, the name wrapped, Docker's labels behind a disclosure, and a Ports tab as a
   table. The create dialog has short sentence-case labels, a labelled field each for the host port,
@@ -70,14 +74,25 @@ work; chunk 1 (the design-system foundations) builds the shared components at th
   Environment is called Variables. An installed app's details close with Close, not a disabled
   "Already Installed".
 - **Installed apps**: the buttons are secondary and small (Update to, Open, Start or Stop, Restart)
-  and Uninstall is a trash icon; Roll back and Remove earlier version are neutral and say why they
+  and Uninstall, which removes every container of the app, is a small quiet-red button
+  (`ghost-danger`) with its word, a glyph of its own beside Remove earlier version's bin, and the
+  app in its name ("Uninstall immich"); Roll back and Remove earlier version are neutral and say why they
   wait. The facts (Port, Pool, Group, Containers) are labels over values. Resources is a table in all
   but its markup: a line per container with Memory and CPU in columns and Limits at its end, and the
   use not read yet said once.
-- **Progress and updates.** An install's card shows one bar of the whole download and how many images
-  are on the NAS, and no layers (ADR-0384 otherwise stays). The update dialog opens with the versions,
+- **Progress and updates.** An install's card shows how many images are on the NAS and one bar of
+  the whole download in which each image is an equal share: one on the NAS whole, one that
+  downloads its part of the layers reported so far, any other none; and no layers. The bytes are
+  not added up across the images: `bytes_total` counts only the layers that Docker reported so far
+  (ADR-0384), so a sum would near 100% and drop as each next image starts. The rest of ADR-0384
+  stays. The update dialog opens with the versions,
   how many containers get a new image, the download and the system disk, the database copy and the
   safety net; each container's images are in a disclosure.
+- **Skeletons at every width.** The first load's skeletons take the layout of the width they are
+  drawn at (ADR-0430): the App Store's the category menu beside the search below `lg`, and the
+  list of categories from it; the Containers page's on a phone the filter's row and Select all
+  shown above the cards. The filter's segments share a phone's row on one line, also in Russian
+  with Other.
 - **Left for chunk 1's components**, each a one-line swap: `confirm()` for the `window.confirm` of
   the App Store and the Containers page (left as they are), `ActionMenu` for Restart and Uninstall
   and the containers' Restart and Remove, `BulkBar`, `Segmented`/`Tabs`, `ErrorState`/`LoadState`,

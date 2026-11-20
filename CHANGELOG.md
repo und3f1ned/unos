@@ -88,15 +88,20 @@ manager, encrypted backup uploads, health checks, CI checks).
   menu; a row's buttons stay on one line as quiet icons with their names as tooltips; a phone shows
   cards (with Restart) unless the table is chosen; the selection's bar appears only with a
   selection; states are in sentence case and a stopped container is neutral, not red; when Docker
-  does not answer the page says so with the reason and Retry. A container of an app links to its
+  does not answer the page says so with the reason and Retry, and any other failed load says
+  plainly that the containers could not be loaded; on a phone the filter stays one line and the
+  first load's skeleton has the cards' layout. A container of an app links to its
   app and has no Remove: Uninstall on the App Store removes an app's containers. The drawer shows
   its facts as labels over values and the state once; the create dialog has sentence-case labels
   and a field each for the host port, the container port and the protocol. App Store: a catalog
   card is the one control (no Install button on each of 69 cards), publishers are neutral badges,
-  nothing offers Install while Docker is down, an app's details lead with its memory (in GB, not
-  "6g"), disk and containers instead of image digests, an installed app's Stop and Uninstall are
-  no longer orange and red, its resources are one table that says once what is not read yet, an
-  install shows one bar for the whole download instead of Docker's layers, and the update dialog
+  nothing offers Install while the installed apps are not known (as while Docker is down), the
+  first load's skeleton has a phone's layout (the category menu beside the search), an app's details lead with its memory (in GB, not
+  "6g"), disk and containers instead of image digests, an installed app's Stop is no longer orange
+  and Uninstall no longer a solid red button but a quiet red one that says Uninstall and names the
+  app, its resources are one table that says once what is not read yet, an install shows how many
+  images are on the NAS and one bar for the whole download, each image an equal share of it,
+  instead of Docker's layers, and the update dialog
   opens with a summary (versions, changed containers, download, disk, the database copy) and keeps
   each container's images behind a disclosure.
 - A pool on an NVMe drive of a SpacemiT K1 (Banana Pi BPI-F3) gets TRIM like every other pool:

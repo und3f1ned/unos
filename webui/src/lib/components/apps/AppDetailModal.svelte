@@ -50,8 +50,9 @@
 		isInstalled?: boolean;
 		/** The installed instance of the app, if any: its real host folders are shown. */
 		installedApp?: InstalledApp | null;
-		/** Docker did not answer the installed apps: no app can be installed now (webui.ux-apps). */
-		dockerDown?: boolean;
+		/** Why no app can be installed now, '' when one can: the installed apps are not known, as
+		 * while Docker does not answer (webui.ux-apps). */
+		installBlocked?: string;
 		/** Cancel, Escape or the backdrop asked to close the dialog, or its install was handed on. */
 		onclose?: () => void;
 		/** The install's checks have passed (or it ended): the App Store's card follows its job. */
@@ -63,7 +64,7 @@
 		open = $bindable(false),
 		isInstalled = false,
 		installedApp = null,
-		dockerDown = false,
+		installBlocked = '',
 		onclose,
 		onstarted
 	}: Props = $props();
@@ -199,7 +200,7 @@
 			: []),
 		...(app && !app.available ? [$t('apps.detail.notAvailable', { name: app.name, platform: app.host_platform ?? '' })] : []),
 		...(otherInstall ? [$t('apps.detail.installRunning', { name: otherInstall.name })] : []),
-		...(dockerDown ? [$t('apps.detail.dockerDown')] : [])
+		...(installBlocked ? [installBlocked] : [])
 	]);
 	const canInstall = $derived(
 		!!app &&

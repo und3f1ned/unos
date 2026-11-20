@@ -25,6 +25,7 @@
 		type StateFilter
 	} from '$lib/components/containers/labels';
 	import { t } from '$lib/i18n';
+	import { ApiError } from '$lib/api/client';
 
 	let activeTab = $state<TabId>('containers');
 	// The Images tab loads its list when it is first shown, and keeps it (and a
@@ -38,10 +39,11 @@
 	// shown (ADR-0430).
 	let loaded = $state(false);
 	let error = $state('');
-	// Why the list could not be loaded (Docker did not answer: 503, ADR-0323). The tab then shows
-	// this error alone: no counts, search or empty list, and no Create button. The actions' and the
-	// Create dialog's errors are `error`.
+	// Why the list could not be loaded. The tab then shows this error alone: no counts, search or
+	// empty list, and no Create button. The actions' and the Create dialog's errors are `error`.
 	let loadError = $state('');
+	// The load failed because Docker did not answer (503, ADR-0323), not for another reason.
+	let dockerDown = $state(false);
 	let showCreateModal = $state(false);
 	let submitting = $state(false);
 
@@ -125,6 +127,7 @@
 			selection.set([...selection.ids].filter((id) => listed.has(id)));
 		} catch (e: any) {
 			loadError = e.message;
+			dockerDown = e instanceof ApiError && e.status === 503;
 		} finally {
 			loading = false;
 			loaded = true;
@@ -233,15 +236,16 @@
 	>
 		{#if !loaded}
 			<!-- The first load (ADR-0430): the toolbar (on a phone the filter has a row of its own)
-			     and the list, swapped at once. -->
+			     and the list, swapped at once; the cards with their Select all shown. -->
 			<div class="space-y-6" aria-busy="true">
 				<div class="space-y-3">
 					<Skeleton shape="block" class="h-9 w-full" />
-					<Skeleton shape="block" class="h-8 w-full sm:hidden" />
+					<Skeleton shape="block" class="h-9 w-full sm:hidden" />
 				</div>
 				{#if viewMode === 'cards'}
 					<!-- A phone's cards (the view it starts in). -->
 					<div class="space-y-3">
+						<Skeleton shape="block" class="h-5 w-40" />
 						{#each [0, 1, 2] as card (card)}
 							<Skeleton shape="card" count={2} />
 						{/each}
@@ -251,10 +255,10 @@
 				{/if}
 			</div>
 		{:else if loadError}
-			<!-- Docker did not answer: a plain title, the server's reason, and Retry; no counts, list
-			     or Create (webui.ux-apps). -->
-			<Alert variant="error" title={$t('containers.loadError.title')}>
-				<p>{$t('containers.loadError.hint')}</p>
+			<!-- A plain title, the server's reason, and Retry; no counts, list or Create (webui.ux-apps).
+			     "Docker is not answering" only for Docker's own 503 (ADR-0323). -->
+			<Alert variant="error" title={$t(dockerDown ? 'containers.loadError.title' : 'containers.loadFailed.title')}>
+				<p>{$t(dockerDown ? 'containers.loadError.hint' : 'containers.loadFailed.hint')}</p>
 				<p class="mt-1 mono-xs break-words text-content-secondary">{loadError}</p>
 				<Button variant="secondary" size="sm" icon={RotateCw} class="mt-3" loading={loading} onclick={loadData}>
 					{$t('common.retry')}

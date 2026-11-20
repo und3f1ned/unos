@@ -28,6 +28,8 @@ export const en = {
 	'containers.empty.clear': 'Clear filters',
 	'containers.loadError.title': 'Docker is not answering',
 	'containers.loadError.hint': 'The containers cannot be listed or changed until Docker runs on the NAS again. Retry once it does; its reason:',
+	'containers.loadFailed.title': 'The containers could not be loaded',
+	'containers.loadFailed.hint': 'Retry in a moment; the reason:',
 
 	'containers.column.name': 'Name',
 	'containers.column.image': 'Image',
@@ -191,6 +193,8 @@ export const ru: Translation<typeof en> = {
 	'containers.empty.clear': 'Сбросить фильтры',
 	'containers.loadError.title': 'Docker не отвечает',
 	'containers.loadError.hint': 'Пока Docker на NAS не заработает снова, контейнеры нельзя ни показать, ни изменить. Повторите, когда он заработает; его причина:',
+	'containers.loadFailed.title': 'Не удалось загрузить контейнеры',
+	'containers.loadFailed.hint': 'Повторите чуть позже; причина:',
 
 	'containers.column.name': 'Имя',
 	'containers.column.image': 'Образ',

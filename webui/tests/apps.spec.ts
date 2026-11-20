@@ -211,10 +211,13 @@ test.describe('Installed apps', () => {
     await page.getByRole('button', { name: /^Installed/ }).click();
     const jellyfin = card(page, 'e2e-jellyfin');
     await expect(jellyfin.getByText('Running', { exact: true })).toBeVisible();
-    // Quiet buttons: no solid colour on an app's routine actions, Uninstall a trash icon with its
-    // name (webui.ux-apps).
+    // Quiet buttons: no solid colour on an app's routine actions (webui.ux-apps). Uninstall, which
+    // removes every container of the app, says so in words, names the app and is a delete's quiet
+    // red, as every delete is (webui/AGENTS.md).
     await expect(jellyfin.locator('.btn-primary, .btn-warning, .btn-danger, .btn-success')).toHaveCount(0);
-    await expect(jellyfin.getByRole('button', { name: 'Uninstall', exact: true })).toHaveClass(/btn-ghost-danger/);
+    const uninstall = jellyfin.getByRole('button', { name: 'Uninstall e2e-jellyfin', exact: true });
+    await expect(uninstall).toHaveText('Uninstall');
+    await expect(uninstall).toHaveClass(/btn-ghost-danger/);
 
     await jellyfin.getByRole('button', { name: 'Stop' }).click();
     await expect(jellyfin.getByText('Stopped', { exact: true })).toBeVisible();
@@ -699,7 +702,7 @@ test.describe('The App Store in Russian', () => {
     await expect(jellyfin.getByText('Работает', { exact: true })).toBeVisible();
     await expect(jellyfin.getByText('Пул', { exact: true })).toBeVisible();
     await expect(jellyfin.locator('[data-field="pool"]')).toHaveText('e2e_data');
-    for (const action of ['Остановить', 'Перезапустить', 'Удалить']) {
+    for (const action of ['Остановить', 'Перезапустить', 'Удалить e2e-jellyfin']) {
       await expect(jellyfin.getByRole('button', { name: action, exact: true })).toBeVisible();
     }
     const syncthing = installedCard('e2e-syncthing');
@@ -712,7 +715,7 @@ test.describe('The App Store in Russian', () => {
       question = dialog.message();
       void dialog.dismiss();
     });
-    await jellyfin.getByRole('button', { name: 'Удалить', exact: true }).click();
+    await jellyfin.getByRole('button', { name: 'Удалить e2e-jellyfin', exact: true }).click();
     await expect
       .poll(() => question)
       .toBe('Удалить приложение e2e-jellyfin? Его контейнер будет удалён, а папки с данными останутся.');

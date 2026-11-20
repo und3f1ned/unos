@@ -370,7 +370,7 @@ test.describe('An installed app of several containers', () => {
     await expect(immich.getByText('Running', { exact: true })).toBeVisible();
 
     const question = confirmNext(page);
-    await immich.getByRole('button', { name: 'Uninstall', exact: true }).click();
+    await immich.getByRole('button', { name: 'Uninstall immich', exact: true }).click();
     await expect(immich).toHaveCount(0);
     expect(question()).toBe('Uninstall immich? This removes its 4 containers and keeps its data folders.');
     expect(requests).toEqual([
@@ -421,7 +421,7 @@ test.describe('An installed app of several containers', () => {
     await installedTab(page, 1);
 
     const question = confirmNext(page);
-    await immich.getByRole('button', { name: 'Uninstall', exact: true }).click();
+    await immich.getByRole('button', { name: 'Uninstall immich', exact: true }).click();
     await expect(immich).toHaveCount(0);
     expect(question()).toBe('Uninstall immich? This removes its 3 containers and keeps its data folders.');
     expect(requests).toEqual(['DELETE /api/v1/apps/installed/e2e-immich-id']);
@@ -440,7 +440,7 @@ test.describe('An installed app of several containers', () => {
     const immich = installedCard(page, 'immich');
     await expect(immich.getByText('Incomplete', { exact: true })).toBeVisible();
     await expect(immich.locator('.alert-warning')).toHaveText(incomplete('immich-redis'));
-    await expect(immich.getByRole('button', { name: 'Uninstall', exact: true })).toBeVisible();
+    await expect(immich.getByRole('button', { name: 'Uninstall immich', exact: true })).toBeVisible();
     for (const action of ['Restart', 'Start']) {
       await expect(immich.getByRole('button', { name: action, exact: true })).toHaveCount(0);
     }
@@ -468,7 +468,7 @@ test.describe('An installed app of several containers', () => {
     await expect(immich.getByRole('button', { name: 'Start', exact: true })).toHaveCount(0);
 
     const question = confirmNext(page);
-    await immich.getByRole('button', { name: 'Uninstall', exact: true }).click();
+    await immich.getByRole('button', { name: 'Uninstall immich', exact: true }).click();
     await expect(immich).toHaveCount(0);
     expect(question()).toBe('Uninstall immich? This removes its 3 containers and keeps its data folders.');
     expect(requests).toEqual(['DELETE /api/v1/apps/installed/e2e-immich-database-id']);
@@ -569,7 +569,7 @@ test.describe('Apps of several containers in Russian', () => {
       question = dialog.message();
       void dialog.dismiss();
     });
-    await immich.getByRole('button', { name: 'Удалить', exact: true }).click();
+    await immich.getByRole('button', { name: 'Удалить immich', exact: true }).click();
     await expect
       .poll(() => question)
       .toBe('Удалить приложение immich? Его 4 контейнера будут удалены, а папки с данными останутся.');
@@ -593,7 +593,7 @@ test.describe('Apps of several containers in Russian', () => {
       await expect(immich.getByRole('button', { name: 'Остановить', exact: true })).toHaveCount(
         status === 'running' ? 1 : 0,
       );
-      await expect(immich.getByRole('button', { name: 'Удалить', exact: true })).toBeVisible();
+      await expect(immich.getByRole('button', { name: 'Удалить immich', exact: true })).toBeVisible();
     });
   }
 });
