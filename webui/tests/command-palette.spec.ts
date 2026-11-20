@@ -260,7 +260,7 @@ test.describe('The command palette of an administrator', () => {
     expect(await optionNames(page)).toEqual(['Scheduler']);
     await page.keyboard.press('Enter');
     await expect(page).toHaveURL('/system#scheduler');
-    await expect(page.getByRole('heading', { name: 'Scheduled Tasks' })).toBeVisible();
+    await expect(page.getByRole('heading', { level: 2, name: 'Scheduler', exact: true })).toBeVisible();
 
     // A tab of System from another one.
     await openPalette(page);
@@ -533,8 +533,8 @@ test.describe('The command palette of an administrator', () => {
   }) => {
     // Cmd+K on macOS: the key of a text field there is not the question here.
     await page.goto('/system#scheduler');
-    await page.getByRole('button', { name: 'New Task', exact: true }).click();
-    await expect(page.getByRole('heading', { name: 'Create Task' })).toBeVisible();
+    await page.getByRole('button', { name: 'New task', exact: true }).click();
+    await expect(page.getByRole('heading', { name: 'Create task' })).toBeVisible();
     await watchKeydowns(page);
     await page.keyboard.press('ControlOrMeta+k');
     await expect(palette(page)).toHaveCount(0);

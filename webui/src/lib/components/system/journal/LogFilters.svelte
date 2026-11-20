@@ -80,23 +80,25 @@
     <!-- Search -->
     <div class="flex gap-2">
       <div class="relative flex-1">
-        <Search class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-secondary" />
+        <Search class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-content-muted" aria-hidden="true" />
         <input
           type="text"
           bind:value={search}
           onkeydown={(e) => e.key === 'Enter' && onsearch()}
           placeholder={$t("logs.searchPlaceholder")}
+          aria-label={$t("logs.searchPlaceholder")}
           class="form-input pl-10 pr-10 text-sm"
         />
         {#if search}
-          <Button variant="plain" class="absolute right-3 top-1/2 -translate-y-1/2 text-secondary hover:text-content"
-            onclick={onclearsearch}
+          <Button variant="plain" class="absolute right-3 top-1/2 -translate-y-1/2 text-content-muted hover:text-content"
+            title={$t("logs.clearSearch")} onclick={onclearsearch}
           >
             <X class="w-4 h-4" />
+            <span class="sr-only">{$t("logs.clearSearch")}</span>
           </Button>
         {/if}
       </div>
-      <Button variant="primary" size="sm" onclick={onsearch} disabled={loading}>
+      <Button variant="secondary" onclick={onsearch} disabled={loading}>
         {$t("logs.search")}
       </Button>
     </div>
@@ -144,19 +146,19 @@
     <!-- Active Filters Badges -->
     {#if hasActiveFilters}
       <div class="flex flex-wrap gap-2 pt-2 border-t border-border">
-        <span class="text-sm text-secondary">{$t("logs.filter.active")}</span>
+        <span class="text-sm text-content-secondary">{$t("logs.filter.active")}</span>
         {#if priority}
-          <Badge variant="info">
+          <Badge variant="neutral">
             {$t("logs.filter.priorityBadge", { level: textOf($t, PRIORITIES, priority) })}
           </Badge>
         {/if}
         {#if since}
-          <Badge variant="info">
+          <Badge variant="neutral">
             {$t("logs.filter.timeBadge", { range: textOf($t, TIME_RANGES, since) })}
           </Badge>
         {/if}
         {#if search}
-          <Badge variant="info">
+          <Badge variant="neutral">
             {$t("logs.filter.searchBadge", { text: search })}
           </Badge>
         {/if}

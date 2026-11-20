@@ -15,13 +15,13 @@ export type { Translate } from '$lib/i18n';
 
 export const own = (object: object, key: string) => Object.prototype.hasOwnProperty.call(object, key);
 
-// Each kind's name and the text of the button that adds one: keys of the catalog.
-export const KINDS: Record<ChannelKind, { name: string; add: string; icon: IconComponent }> = {
-  email: { name: "notifications.kinds.email", add: "notifications.add.email", icon: Mail },
-  telegram: { name: "notifications.kinds.telegram", add: "notifications.add.telegram", icon: MessageCircle },
-  webhook: { name: "notifications.kinds.webhook", add: "notifications.add.webhook", icon: Webhook },
-  discord: { name: "notifications.kinds.discord", add: "notifications.add.discord", icon: MessageSquare },
-  slack: { name: "notifications.kinds.slack", add: "notifications.add.slack", icon: Slack },
+// Each kind's name (a key of the catalog) and icon.
+export const KINDS: Record<ChannelKind, { name: string; icon: IconComponent }> = {
+  email: { name: "notifications.kinds.email", icon: Mail },
+  telegram: { name: "notifications.kinds.telegram", icon: MessageCircle },
+  webhook: { name: "notifications.kinds.webhook", icon: Webhook },
+  discord: { name: "notifications.kinds.discord", icon: MessageSquare },
+  slack: { name: "notifications.kinds.slack", icon: Slack },
 };
 export const KIND_ORDER: ChannelKind[] = ["email", "telegram", "webhook", "discord", "slack"];
 // The URL field of the kinds that have one: its label and hint (keys of the catalog), and an example.
@@ -60,27 +60,6 @@ export const TYPES: Record<string, string> = {
   error: "notifications.types.error",
   success: "notifications.types.success",
 };
-// The events of the server's list (GET /api/v1/notifications/events), by id: the keys of their
-// names and descriptions, for the dialog and a channel's events in the list. An event without keys
-// shows the server's texts, or its id in the list. supervisor/tests/test_notifications.py checks
-// that the English half of the catalog copies the server's list.
-export const EVENTS: Record<string, { name: string; when: string }> = {
-  disk_warning: { name: "notifications.events.diskWarning.name", when: "notifications.events.diskWarning.when" },
-  smart_error: { name: "notifications.events.smartError.name", when: "notifications.events.smartError.when" },
-  pool_degraded: { name: "notifications.events.poolDegraded.name", when: "notifications.events.poolDegraded.when" },
-  backup_complete: {
-    name: "notifications.events.backupComplete.name",
-    when: "notifications.events.backupComplete.when",
-  },
-  backup_failed: { name: "notifications.events.backupFailed.name", when: "notifications.events.backupFailed.when" },
-  container_stopped: {
-    name: "notifications.events.containerStopped.name",
-    when: "notifications.events.containerStopped.when",
-  },
-  system_boot: { name: "notifications.events.systemBoot.name", when: "notifications.events.systemBoot.when" },
-  user_login: { name: "notifications.events.userLogin.name", when: "notifications.events.userLogin.when" },
-};
-
 /** The text of `value`'s key in `keys`, in the language of the page; a value without one as it comes. */
 export function labelOf(t: Translate, keys: Record<string, string>, value: string): string {
   return own(keys, value) ? t(keys[value]) : value;
@@ -93,11 +72,6 @@ export function kindName(t: Translate, kind: string): string {
 
 export function nameOf(t: Translate, config: NotificationConfig): string {
   return config.name || kindName(t, config.channel);
-}
-
-/** The name of an event of a channel in the language of the page; an id without one as it comes. */
-export function eventName(t: Translate, id: string): string {
-  return own(EVENTS, id) ? t(EVENTS[id].name) : id;
 }
 
 function hostOf(t: Translate, url: string): string {

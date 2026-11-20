@@ -154,15 +154,15 @@ test.describe('Where things live', () => {
 
     // General: the system's facts and its name and time zone, without the version, the signed-in
     // account or a second copy of the host name.
-    await expect(page.getByRole('heading', { level: 2, name: 'General Settings' })).toBeVisible();
-    await expectCards(page, ['System Information', 'Name and time zone']);
-    const info = page.locator('.card').filter({ has: page.getByRole('heading', { name: 'System Information' }) });
-    await expect(info.getByText('Kernel:')).toBeVisible();
+    await expect(page.getByRole('heading', { level: 2, name: 'General', exact: true })).toBeVisible();
+    await expectCards(page, ['System information', 'Name and time zone']);
+    const info = page.locator('.card').filter({ has: page.getByRole('heading', { name: 'System information' }) });
+    await expect(info.getByText('Kernel', { exact: true })).toBeVisible();
     await expect(info.getByText('Hostname:')).toHaveCount(0);
 
     // The version is in Updates alone.
     await openTab(page, 'Updates', '/system#updates');
-    await expect(page.getByRole('heading', { name: 'Current version' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'UNOS version' })).toBeVisible();
 
     // Remote Access is the tunnel alone; the apps' names on the LAN are in Network.
     await openTab(page, 'Remote Access', '/system#remote');
@@ -176,7 +176,7 @@ test.describe('Where things live', () => {
     await expect(palette.getByRole('option').first()).toContainText('System');
     await page.keyboard.press('Enter');
     await expect(page).toHaveURL('/system');
-    await expect(page.getByRole('heading', { level: 2, name: 'General Settings' })).toBeVisible();
+    await expect(page.getByRole('heading', { level: 2, name: 'General', exact: true })).toBeVisible();
   });
 
   test('the dashboard has no Quick Actions, and /settings is gone', async ({ authenticatedPage: page }) => {

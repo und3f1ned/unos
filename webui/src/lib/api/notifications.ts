@@ -78,12 +78,6 @@ export interface NotificationLog {
   error?: string | null;
 }
 
-export interface EventType {
-  id: string;
-  name: string;
-  description: string;
-}
-
 export async function getConfigs(): Promise<NotificationConfig[]> {
   return api.get<NotificationConfig[]>("/notifications/configs");
 }
@@ -108,10 +102,6 @@ export async function testNotification(id: string): Promise<{ status: string; ch
 /** The history: the latest notifications sent, newest first. */
 export async function getLogs(): Promise<NotificationLog[]> {
   return api.get<NotificationLog[]>("/notifications/logs");
-}
-
-export async function getEventTypes(): Promise<EventType[]> {
-  return api.get<EventType[]>("/notifications/events");
 }
 
 export async function sendNotification(event: NotificationEvent): Promise<void> {

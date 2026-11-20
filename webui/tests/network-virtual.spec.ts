@@ -1,4 +1,4 @@
-import type { Page } from '@playwright/test';
+import type { Locator, Page } from '@playwright/test';
 import { test, expect } from './fixtures';
 import { fakeBridge, fakeNetworkApi, VIRTUAL_REVERT_SECONDS } from './network-fakes';
 
@@ -26,13 +26,19 @@ async function choose(page: Page, label: string, option: string) {
   await page.getByRole('option', { name: option, exact: true }).click();
 }
 
+/** Open the dialog that makes a `kind` (Bond, VLAN or Bridge): one Create… asks for the kind. */
+async function openCreate(page: Page, card: Locator, kind: string) {
+  await card.getByRole('button', { name: 'Create…' }).click();
+  if (kind !== 'Bond') await choose(page, 'Kind', kind);
+}
+
 test.describe('System > Network: bonds, VLANs and bridges', () => {
   test('a bridge without ports is made and kept at once', async ({ authenticatedPage: page }) => {
     const fake = await fakeNetworkApi(page);
     const card = await openCard(page);
     await expect(card).toContainText('UNOS has made no bond, VLAN or bridge.');
 
-    await card.getByRole('button', { name: 'Create bridge' }).click();
+    await openCreate(page, card, 'Bridge');
     const dialog = page.getByRole('dialog', { name: 'Create a bridge' });
     await expect(dialog).toContainText('This change does not touch the connection to UNOS: it is kept at once.');
     await dialog.getByRole('button', { name: 'Create', exact: true }).click();
@@ -54,7 +60,7 @@ test.describe('System > Network: bonds, VLANs and bridges', () => {
     const fake = await fakeNetworkApi(page);
     const card = await openCard(page);
 
-    await card.getByRole('button', { name: 'Create bond' }).click();
+    await openCreate(page, card, 'Bond');
     const dialog = page.getByRole('dialog', { name: 'Create a bond' });
     // Only wired cards in no bond or bridge are offered.
     await expect(dialog.getByRole('checkbox')).toHaveCount(3);
@@ -73,7 +79,7 @@ test.describe('System > Network: bonds, VLANs and bridges', () => {
     const keep = card.getByRole('button', { name: 'Keep this change' });
     await expect(keep).toBeFocused();
     // No other change while one waits.
-    await expect(card.getByRole('button', { name: 'Create VLAN' })).toBeDisabled();
+    await expect(card.getByRole('button', { name: 'Create…' })).toBeDisabled();
     await expect(card).toContainText('The network settings of eth0');
     await keep.click();
 
@@ -91,7 +97,7 @@ test.describe('System > Network: bonds, VLANs and bridges', () => {
     const fake = await fakeNetworkApi(page);
     const card = await openCard(page);
 
-    await card.getByRole('button', { name: 'Create VLAN' }).click();
+    await openCreate(page, card, 'VLAN');
     await choose(page, 'Interface', 'eth0');
     const dialog = page.getByRole('dialog', { name: 'Create a VLAN' });
     await dialog.getByLabel('VLAN id').fill('20');
@@ -112,7 +118,7 @@ test.describe('System > Network: bonds, VLANs and bridges', () => {
     const fake = await fakeNetworkApi(page);
     const card = await openCard(page);
 
-    await card.getByRole('button', { name: 'Create VLAN' }).click();
+    await openCreate(page, card, 'VLAN');
     const dialog = page.getByRole('dialog', { name: 'Create a VLAN' });
     await choose(page, 'Interface', 'eth1');
     await dialog.getByLabel('VLAN id').fill('10');
@@ -135,7 +141,7 @@ test.describe('System > Network: bonds, VLANs and bridges', () => {
     const fake = await fakeNetworkApi(page);
     const card = await openCard(page);
 
-    await card.getByRole('button', { name: 'Create VLAN' }).click();
+    await openCreate(page, card, 'VLAN');
     let dialog = page.getByRole('dialog', { name: 'Create a VLAN' });
     await choose(page, 'Interface', 'eth1');
     await dialog.getByLabel('VLAN id').fill('4095');
@@ -147,7 +153,7 @@ test.describe('System > Network: bonds, VLANs and bridges', () => {
     await expect(dialog).toContainText('The MTU is a number from 1280 to 9216.');
     await dialog.getByRole('button', { name: 'Cancel' }).click();
 
-    await card.getByRole('button', { name: 'Create bond' }).click();
+    await openCreate(page, card, 'Bond');
     dialog = page.getByRole('dialog', { name: 'Create a bond' });
     await dialog.getByRole('checkbox', { name: 'eth1' }).check();
     await dialog.getByRole('button', { name: 'Create', exact: true }).click();
@@ -160,7 +166,7 @@ test.describe('System > Network: bonds, VLANs and bridges', () => {
     await fakeNetworkApi(page, { failures: { 'POST /virtual-interfaces/bonds': { status: 409, detail } } });
     const card = await openCard(page);
 
-    await card.getByRole('button', { name: 'Create bond' }).click();
+    await openCreate(page, card, 'Bond');
     const dialog = page.getByRole('dialog', { name: 'Create a bond' });
     await dialog.getByRole('checkbox', { name: 'eth1' }).check();
     await dialog.getByRole('checkbox', { name: 'eth2' }).check();
@@ -203,7 +209,7 @@ test.describe('System > Network: bonds, VLANs and bridges', () => {
     await expect(card).toContainText(
       "UNOS makes bonds, VLANs and bridges only where systemd-networkd keeps the host's network. This host's network is kept by NetworkManager",
     );
-    await expect(card.getByRole('button', { name: 'Create bond' })).toHaveCount(0);
+    await expect(card.getByRole('button', { name: 'Create…' })).toHaveCount(0);
   });
 
   test('in Russian, the card, its dialog and the countdown speak Russian', async ({ authenticatedPage: page }) => {

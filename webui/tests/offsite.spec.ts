@@ -131,7 +131,7 @@ test.describe('Off-device copy', () => {
       const section = await openSection(page);
       await expect(section.getByText('No off-device copy is set up')).toBeVisible();
 
-      await section.getByLabel('A disk').check();
+      await section.getByLabel('Disk', { exact: true }).check();
       await section.getByLabel('Folder of the copy').fill(target);
       await section.getByLabel('Another folder to copy').fill(source);
       await section.getByRole('button', { name: 'Add folder' }).click();
@@ -149,13 +149,13 @@ test.describe('Off-device copy', () => {
       // No task runs the copy yet: one is made in the Scheduler, the one place of tasks (ADR-0431),
       // which the card links to.
       await expect(section.getByText('No scheduled task: copies run only on Run now')).toBeVisible();
-      await section.getByRole('link', { name: 'Add a task of the type Off-device Copy in the Scheduler.' }).click();
+      await section.getByRole('link', { name: 'Add a task of the type Off-device copy in the Scheduler.' }).click();
       await expect(page).toHaveURL(/\/system#scheduler$/);
-      await page.getByRole('button', { name: 'New Task', exact: true }).click();
-      await page.getByLabel('Task Name', { exact: true }).fill('Off-device copy');
-      await page.getByLabel('Task Type', { exact: true }).selectOption('offsite_copy');
-      await page.getByRole('button', { name: 'Create Task' }).click();
-      await expect(page.getByRole('heading', { name: 'Create Task' })).toHaveCount(0);
+      await page.getByRole('button', { name: 'New task', exact: true }).click();
+      await page.getByLabel('Task name', { exact: true }).fill('Off-device copy');
+      await page.getByLabel('Task type', { exact: true }).selectOption('offsite_copy');
+      await page.getByRole('button', { name: 'Create task' }).click();
+      await expect(page.getByRole('heading', { name: 'Create task' })).toHaveCount(0);
       await page.locator('main nav').getByRole('button', { name: 'Backup & Restore' }).click();
       await expect(section.getByText(/A scheduled task copies: Off-device copy/)).toBeVisible();
 
@@ -252,7 +252,7 @@ test.describe('Off-device copy', () => {
     const source = await makeSource(request, headers, `e2e-offsite-${run}`);
     try {
       const section = await openSection(page);
-      await section.getByLabel('A restic REST server').check();
+      await section.getByLabel('restic REST server', { exact: true }).check();
       await section.getByLabel('Address of the REST server').fill(`https://rest-${run}.example.com:8000`);
       await section.getByLabel('Folders on the server').fill('unos');
       await section.getByLabel('User of the REST server').fill('family');
@@ -305,7 +305,7 @@ test.describe('Off-device copy', () => {
     const source = await makeSource(request, headers, `e2e-offsite-${run}`);
     try {
       const section = await openSection(page);
-      await section.getByLabel('An SFTP server').check();
+      await section.getByLabel('SFTP server', { exact: true }).check();
       await expect(section.getByText('No key pair is made yet.')).toBeVisible();
       await section.getByLabel('Host of the SFTP server').fill(host);
       await section.getByLabel('SSH port').fill('2222');
@@ -341,7 +341,10 @@ test.describe('Off-device copy', () => {
       writeFileSync(join(server, 'host_key'), `${second}\n`);
       await section.getByRole('button', { name: 'Run now' }).click();
       await refreshUntil(section, 'Last copy: failed');
-      await expect(section.getByText(/^Failed at removing stale locks: .*Host key verification failed/)).toBeVisible();
+      const failure = section.getByTestId('copy-error');
+      await expect(failure.getByText('The copy failed at removing stale locks.')).toBeVisible();
+      await failure.getByText('Details', { exact: true }).click();
+      await expect(failure.getByText(/Host key verification failed/)).toBeVisible();
       // The listing of the snapshots meets the same refusal.
       await expect(section.getByText(/^The snapshots could not be read: .*Host key verification failed/)).toBeVisible();
       await save.click();
@@ -369,7 +372,7 @@ test.describe('Off-device copy', () => {
     const token = await loginToken(request);
     try {
       const section = await openSection(page);
-      await section.getByLabel('A disk').check();
+      await section.getByLabel('Disk', { exact: true }).check();
       await section.getByLabel('Folder of the copy').fill('/etc/unos-copy');
       await section.getByLabel('Another folder to copy').fill(`${POOLS}/testpool`);
       await section.getByRole('button', { name: 'Add folder' }).click();

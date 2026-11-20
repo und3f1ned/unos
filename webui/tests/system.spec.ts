@@ -87,24 +87,24 @@ test.describe('System tabs and the URL', () => {
 
     await tabButton(page, 'Scheduler').click();
     await expect(page).toHaveURL(/\/system#scheduler$/);
-    await expect(page.locator('h2:has-text("Scheduled Tasks")')).toBeVisible();
+    await expect(page.locator('h2:text-is("Scheduler")')).toBeVisible();
     await expect(tabButton(page, 'Scheduler')).toHaveClass(/bg-brand/);
     await expect(tabButton(page, 'Notifications')).not.toHaveClass(/bg-brand/);
 
     await tabButton(page, 'Backup & Restore').click();
     await expect(page).toHaveURL(/\/system#backup$/);
-    await expect(page.locator('h2:has-text("Backup and Restore")')).toBeVisible();
+    await expect(page.locator('h2:has-text("Backup & Restore")')).toBeVisible();
   });
 
   // /settings, which led here, is gone (ADR-0207, ADR-0431): /system opens General.
   test('/system opens General and the other tabs still switch', async ({ authenticatedPage: page }) => {
     await page.goto('/system');
-    await expect(page.locator('h2:has-text("General Settings")')).toBeVisible();
+    await expect(page.locator('h2:text-is("General")')).toBeVisible();
 
     await tabButton(page, 'Security').click();
     await expect(page).toHaveURL(/\/system#security$/);
     await expect(page.locator('h2:has-text("Security of the NAS")')).toBeVisible();
-    await expect(page.locator('h2:has-text("General Settings")')).toHaveCount(0);
+    await expect(page.locator('h2:text-is("General")')).toHaveCount(0);
   });
 
   test('Back returns to the tab that was open', async ({ authenticatedPage: page }) => {

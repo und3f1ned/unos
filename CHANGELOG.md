@@ -41,6 +41,15 @@ manager, encrypted backup uploads, health checks, CI checks).
   `app_names_changed` in the audit log, ADR-0420).
 
 ### Changed
+- The System tabs other than Security are rebuilt for clarity (ADR-0432). Power opens with a
+  Status card, then its actions, then a schedule of three on/off rows with their fields in one
+  column, all on the NAS's clock, named once; a failed read is said once with Retry, and the
+  actions wait with the reason. Notifications offer no event choices (every enabled channel gets
+  every alert), one Add channel and tabs for Channels and History. Backup's off-device copy groups
+  its fields (Snapshots to keep, Integrity check) in one aligned row and says what Save waits for.
+  Scheduler, Disk Health, System Logs, Resource Monitor, Network, Remote Access and Updates get one
+  primary action, neutral icon actions with tooltips, badges that read alone, page tabs, scales
+  and time axes on the charts, and sentence case.
 - The web UI loads without flicker (ADR-0430): from the first frame a boot screen (the logo, and
   a thin bar after 400 ms) in the user's theme covers the page until the account is known and the
   page has drawn its skeleton, then fades out in 160 ms; the sidebar is drawn once with the

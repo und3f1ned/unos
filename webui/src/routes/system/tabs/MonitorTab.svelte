@@ -2,7 +2,7 @@
   import { messageOf } from "$lib/errors";
   import { onMount, untrack } from "svelte";
   import { get } from "svelte/store";
-  import { Cpu, MemoryStick, Network, HardDrive, Activity } from "lucide-svelte";
+  import { Cpu, MemoryStick, Network, HardDrive } from "lucide-svelte";
   import { Alert, Button, Card, Skeleton } from "$lib/components/ui";
   import { stats, wsConnected, wsForbidden, wsSettled, type WebSocketStats } from "$lib/stores/stats";
   import { getMonitorHistory } from "$lib/api/monitor";
@@ -27,9 +27,9 @@
 
   const KEPT_MS = 3600 * 1000;
   const RANGES = [
-    { seconds: 300, key: "monitor.range.5m", span: "monitor.range.5m.span" },
-    { seconds: 900, key: "monitor.range.15m", span: "monitor.range.15m.span" },
-    { seconds: 3600, key: "monitor.range.1h", span: "monitor.range.1h.span" }
+    { seconds: 300, key: "monitor.range.5m", span: "monitor.range.5m.span", ago: "monitor.axis.5m" },
+    { seconds: 900, key: "monitor.range.15m", span: "monitor.range.15m.span", ago: "monitor.axis.15m" },
+    { seconds: 3600, key: "monitor.range.1h", span: "monitor.range.1h.span", ago: "monitor.axis.1h" }
   ];
   // Raw: the buttons compare it with the option itself (a proxy would be another object).
   let range = $state.raw(RANGES[0]);
@@ -127,22 +127,40 @@
     return $t("monitor.chart", { metric: $t(metric), span: $t(range.span) });
   }
 
-  function percentClass(p: number): string {
-    return p < 70 ? "text-success" : p < 90 ? "text-warning" : "text-error";
-  }
-
-  function percentFill(p: number): string {
-    return p < 70 ? "bg-status-success" : p < 90 ? "bg-status-warning" : "bg-status-error";
+  // A share of 90% or more is the one that the page marks: the bar of a core in the warning's
+  // colour, beside its number. Values are plain text, as on the dashboard.
+  function coreFill(p: number): string {
+    return p < 90 ? "bg-brand" : "bg-status-warning";
   }
 </script>
 
-<!-- A chart of the range: one line for each series, scaled from 0 to max. -->
-{#snippet chart(metric: string, svgClass: string, max: number, lines: { cls?: string; value: Series }[])}
-  <svg viewBox="0 0 100 40" preserveAspectRatio="none" class={svgClass} role="img" aria-label={chartName(metric)}>
-    {#each lines as line}
-      <path class={line.cls} d={path(shown, line.value, max, start, range.seconds * 1000)} fill="none" stroke="currentColor" stroke-width="1.5" vector-effect="non-scaling-stroke" />
-    {/each}
-  </svg>
+<!-- A chart of the range: one line for each series, scaled from 0 to max, with its scale (the top
+     line's value) and its time axis (the start of the range and now). -->
+{#snippet chart(metric: string, svgClass: string, max: number, top: string, lines: { cls?: string; value: Series }[])}
+  <div class="mt-3">
+    <div class="relative">
+      <span class="absolute right-0 top-0 text-[11px] leading-none text-content-muted tabular" aria-hidden="true">{top}</span>
+      <svg viewBox="0 0 100 40" preserveAspectRatio="none" class="h-16 w-full border-b border-l border-border {svgClass}" role="img" aria-label={chartName(metric)}>
+        <line x1="0" y1="0.5" x2="100" y2="0.5" class="text-border" stroke="currentColor" stroke-width="1" stroke-dasharray="2 2" vector-effect="non-scaling-stroke" />
+        {#each lines as line}
+          <path class={line.cls} d={path(shown, line.value, max, start, range.seconds * 1000)} fill="none" stroke="currentColor" stroke-width="1.5" vector-effect="non-scaling-stroke" />
+        {/each}
+      </svg>
+    </div>
+    <div class="mt-1 flex justify-between text-[11px] leading-none text-content-muted" aria-hidden="true">
+      <span>{$t(range.ago)}</span>
+      <span>{$t("monitor.axis.now")}</span>
+    </div>
+  </div>
+{/snippet}
+
+<!-- A rate of a card: the swatch of its line, its name and its value, in plain text. -->
+{#snippet rate(swatch: string, name: string, value: string)}
+  <p class="flex items-center gap-2 text-sm">
+    <span class="h-0.5 w-3 rounded-full {swatch}" aria-hidden="true"></span>
+    <span class="text-content-secondary">{name}</span>
+    <span class="font-semibold tabular">{value}</span>
+  </p>
 {/snippet}
 
 <div class="space-y-6">
@@ -182,7 +200,7 @@
     </div>
   {:else if !currentStats?.cpu}
     <div class="flex items-center justify-center py-12">
-      <p class="text-muted">{$t("monitor.waiting")}</p>
+      <p class="text-content-muted">{$t("monitor.waiting")}</p>
     </div>
   {:else}
     <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
@@ -191,8 +209,8 @@
           <Cpu class="w-5 h-5 icon-cpu" />
           <h3 class="stat-card-label">{$t("monitor.cpu")}</h3>
         </div>
-        <p class="stat-card-value {percentClass(currentStats.cpu.percent)}">{percent(currentStats.cpu.percent)}</p>
-        {@render chart("monitor.cpu", "w-full h-16 mt-2 icon-cpu", 100, [{ value: cpuOf }])}
+        <p class="stat-card-value">{percent(currentStats.cpu.percent)}</p>
+        {@render chart("monitor.cpu", "icon-cpu", 100, percent(100), [{ value: cpuOf }])}
         <p class="stat-card-sublabel">{$t("monitor.peak", { value: percent(cpuPeak) })}</p>
       </Card>
 
@@ -201,9 +219,9 @@
           <MemoryStick class="w-5 h-5 icon-memory" />
           <h3 class="stat-card-label">{$t("monitor.memory")}</h3>
         </div>
-        <p class="stat-card-value {percentClass(currentStats.memory.percent)}">{percent(currentStats.memory.percent)}</p>
+        <p class="stat-card-value">{percent(currentStats.memory.percent)}</p>
         <p class="stat-card-sublabel">{amount(currentStats.memory.used, SIZE_UNITS)} / {amount(currentStats.memory.total, SIZE_UNITS)}</p>
-        {@render chart("monitor.memory", "w-full h-16 mt-2 icon-memory", 100, [{ value: memoryOf }])}
+        {@render chart("monitor.memory", "icon-memory", 100, percent(100), [{ value: memoryOf }])}
         <p class="stat-card-sublabel">{$t("monitor.peak", { value: percent(memoryPeak) })}</p>
       </Card>
 
@@ -212,11 +230,11 @@
           <Network class="w-5 h-5 icon-network" />
           <h3 class="stat-card-label">{$t("monitor.network")}</h3>
         </div>
-        <p class="text-sm">↓ <span class="text-success font-semibold">{amount(currentStats.network.bytes_recv_rate, RATE_UNITS)}</span></p>
-        <p class="text-sm">↑ <span class="icon-temperature font-semibold">{amount(currentStats.network.bytes_sent_rate, RATE_UNITS)}</span></p>
-        {@render chart("monitor.network", "w-full h-16 mt-2", networkMax, [
-          { cls: "text-success", value: recvOf },
-          { cls: "icon-temperature", value: sentOf }
+        {@render rate("bg-brand", "↓", amount(currentStats.network.bytes_recv_rate, RATE_UNITS))}
+        {@render rate("bg-content-muted", "↑", amount(currentStats.network.bytes_sent_rate, RATE_UNITS))}
+        {@render chart("monitor.network", "", networkMax, amount(networkMax, RATE_UNITS), [
+          { cls: "text-brand", value: recvOf },
+          { cls: "text-content-muted", value: sentOf }
         ])}
         <p class="stat-card-sublabel">{$t("monitor.peak.network", { recv: amount(recvPeak, RATE_UNITS), sent: amount(sentPeak, RATE_UNITS) })}</p>
       </Card>
@@ -226,11 +244,11 @@
           <HardDrive class="w-5 h-5 icon-storage" />
           <h3 class="stat-card-label">{$t("monitor.diskIo")}</h3>
         </div>
-        <p class="text-sm">{$t("monitor.read")} <span class="text-success font-semibold">{amount(currentStats.disk_io.read_rate, RATE_UNITS)}</span></p>
-        <p class="text-sm">{$t("monitor.write")} <span class="text-error font-semibold">{amount(currentStats.disk_io.write_rate, RATE_UNITS)}</span></p>
-        {@render chart("monitor.diskIo", "w-full h-16 mt-2", diskMax, [
-          { cls: "text-success", value: readOf },
-          { cls: "text-error", value: writeOf }
+        {@render rate("bg-brand", $t("monitor.read"), amount(currentStats.disk_io.read_rate, RATE_UNITS))}
+        {@render rate("bg-content-muted", $t("monitor.write"), amount(currentStats.disk_io.write_rate, RATE_UNITS))}
+        {@render chart("monitor.diskIo", "", diskMax, amount(diskMax, RATE_UNITS), [
+          { cls: "text-brand", value: readOf },
+          { cls: "text-content-muted", value: writeOf }
         ])}
         <p class="stat-card-sublabel">{$t("monitor.peak.disk", { read: amount(readPeak, RATE_UNITS), write: amount(writePeak, RATE_UNITS) })}</p>
       </Card>
@@ -239,25 +257,24 @@
     {#if currentStats.cpu.per_core.length > 1}
       <Card>
         <h3 class="card-title mb-3">{$t("monitor.cores")}</h3>
-        <div class="grid grid-cols-8 gap-2">
+        <!-- Each core: its bar, its share in numbers and its index. -->
+        <ul class="grid grid-cols-4 gap-3 sm:grid-cols-8" aria-label={$t("monitor.cores")}>
           {#each currentStats.cpu.per_core as core, i}
-            <div class="text-center">
-              <div class="h-12 bg-surface-overlay rounded relative overflow-hidden">
-                <div class="absolute bottom-0 left-0 right-0 {percentFill(core)}" style="height: {core}%"></div>
+            <li class="text-center">
+              <div class="relative h-12 overflow-hidden rounded bg-surface-overlay" aria-hidden="true">
+                <div class="absolute bottom-0 left-0 right-0 {coreFill(core)}" style="height: {core}%"></div>
               </div>
-              <p class="text-xs mt-1 text-muted">{i}</p>
-            </div>
+              <p class="mt-1 text-xs font-medium tabular">{percent(core)}</p>
+              <p class="text-[11px] text-content-muted">{$t("monitor.core", { n: i })}</p>
+            </li>
           {/each}
-        </div>
+        </ul>
       </Card>
     {/if}
 
     <Card>
-      <h3 class="card-title mb-1 flex items-center gap-2">
-        <Activity class="w-4 h-4" />
-        {$t("monitor.processes")}
-      </h3>
-      <p class="text-sm text-muted mb-3">{$t("monitor.processes.hint")}</p>
+      <h3 class="card-title mb-1">{$t("monitor.processes")}</h3>
+      <p class="text-sm text-content-muted mb-3">{$t("monitor.processes.hint")}</p>
       <div class="table-frame">
         <table class="table">
           <thead class="table-header">
@@ -275,7 +292,7 @@
                 <td class="mono break-all">{proc.name}</td>
                 <td class="text-right mono">{proc.pid}</td>
                 <td class="text-secondary break-all">{proc.username}</td>
-                <td class="text-right {percentClass(proc.cpu_percent)}">{percent(proc.cpu_percent)}</td>
+                <td class="text-right tabular">{percent(proc.cpu_percent)}</td>
                 <td class="text-right whitespace-nowrap">{amount(proc.memory_bytes, SIZE_UNITS)}</td>
               </tr>
             {/each}

@@ -9,7 +9,7 @@
     type NetworkInterface,
   } from "$lib/api/network";
   import { ApiError } from "$lib/api/client";
-  import { Alert, Button, EmptyState, Skeleton, type IconComponent } from "$lib/components/ui";
+  import { Alert, Button, EmptyState, Skeleton } from "$lib/components/ui";
   import ConnectionsTable from "$lib/components/network/ConnectionsTable.svelte";
   import { NetworkData } from "$lib/components/network/data.svelte";
   import DisableInterfaceDialog from "$lib/components/network/DisableInterfaceDialog.svelte";
@@ -22,18 +22,14 @@
   import AppNamesCard from "$lib/components/remote/AppNamesCard.svelte";
   import { t } from "$lib/i18n";
   import { stats, type NetworkInterface as WSNetworkInterface } from "$lib/stores/stats";
-  import { Network, Cable, RefreshCw, Router, Activity } from "lucide-svelte";
+  import { Network, RefreshCw } from "lucide-svelte";
 
   // Once the time to keep a disable has run out, the page reads the interfaces
   // again after the host's revert had a few seconds to turn it back on (ADR-0244).
   const REVERT_GRACE_MS = 5000;
 
   type View = "interfaces" | "routes" | "connections";
-  const VIEWS: { id: View; icon: IconComponent }[] = [
-    { id: "interfaces", icon: Cable },
-    { id: "routes", icon: Router },
-    { id: "connections", icon: Activity },
-  ];
+  const VIEWS: { id: View }[] = [{ id: "interfaces" }, { id: "routes" }, { id: "connections" }];
   // The name of each part of the page, a view or what could not be loaded: keys of the catalog.
   const PARTS: Record<string, string> = {
     interfaces: "network.interfaces",
@@ -253,17 +249,12 @@
 
 <div class="space-y-6">
   <!-- Header -->
-  <div class="flex items-center justify-between">
-    <h2 class="text-xl font-bold text-content flex items-center gap-2">
-      <Network class="w-6 h-6 icon-network" />
-      {$t("network.title")}
-    </h2>
+  <div class="flex items-center justify-between gap-3">
+    <h2 class="text-xl font-semibold">{$t("network.title")}</h2>
     <!-- Whether the live traffic comes is the sidebar's connection line (ADR-0431). -->
-    <div class="flex items-center gap-2">
-      <Button variant="secondary" size="icon" icon={RefreshCw} loading={net.loading} onclick={() => net.loadAll()}>
-        <span class="sr-only">{$t("common.refresh")}</span>
-      </Button>
-    </div>
+    <Button variant="ghost" size="icon" icon={RefreshCw} loading={net.loading} title={$t("common.refresh")} onclick={() => net.loadAll()}>
+      <span class="sr-only">{$t("common.refresh")}</span>
+    </Button>
   </div>
 
   {#if actionError}
@@ -286,12 +277,13 @@
   {/if}
 
   <!-- Views -->
-  <div class="flex flex-wrap gap-2 border-b border-border pb-2">
+  <!-- The views are page tabs, the one look of tabs (ADR-0428). -->
+  <div class="tab-bar">
     {#each VIEWS as view (view.id)}
       <Button
-        variant={activeTab === view.id ? "secondary" : "ghost"}
-        size="sm"
-        icon={view.icon}
+        variant="plain"
+        class="tab-underline {activeTab === view.id ? 'tab-underline-active' : ''}"
+        pressed={activeTab === view.id}
         onclick={() => (activeTab = view.id)}
       >
         {$t(PARTS[view.id])}

@@ -11,6 +11,7 @@ export class ChannelForm {
   kind = $state<ChannelKind>("email");
   name = $state("");
   enabled = $state(true);
+  // The events a channel was stored with, sent back as they were: the dialog does not offer them.
   events = $state<string[]>([]);
   saving = $state(false);
   saveError = $state("");
@@ -96,14 +97,17 @@ export class ChannelForm {
     if (config.channel === "slack" && config.slack_config) this.hookUrl = config.slack_config.webhook_url;
   }
 
+  /** A new channel's kind, chosen in its dialog: a name it was given stays, the default follows the kind. */
+  changeKind(kind: ChannelKind, defaultName: (kind: ChannelKind) => string) {
+    if (this.editing || kind === this.kind) return;
+    if (this.name === defaultName(this.kind)) this.name = defaultName(kind);
+    this.kind = kind;
+  }
+
   close() {
     if (this.saving) return;
     this.open = false;
     this.editing = null;
-  }
-
-  toggleEvent(eventId: string) {
-    this.events = this.events.includes(eventId) ? this.events.filter((e) => e !== eventId) : [...this.events, eventId];
   }
 
   // The channel as the form describes it. Settings that only the API sets (a webhook's headers and

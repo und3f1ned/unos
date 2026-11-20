@@ -7,7 +7,7 @@
   import { listBackups, createBackup, deleteBackup, downloadBackup, uploadBackup, restoreBackup, type BackupInfo } from "$lib/api/backup";
   import BackupList from "$lib/components/system/backup/BackupList.svelte";
   import RestoreBackupDialog, { type RestoreOutcome } from "$lib/components/system/backup/RestoreBackupDialog.svelte";
-  import { Plus, RefreshCw, Upload } from "lucide-svelte";
+  import { Plus, Upload } from "lucide-svelte";
   import OffsiteCopy from "./OffsiteCopy.svelte";
 
   let backups = $state<BackupInfo[]>([]);
@@ -32,7 +32,8 @@
     $t("backup.size.bytes"),
     $t("backup.size.kilobytes"),
     $t("backup.size.megabytes"),
-    $t("backup.size.gigabytes")
+    $t("backup.size.gigabytes"),
+    $t("backup.size.terabytes")
   ]);
 
   // A 401 has already ended the session and the sign-in page is on its way.
@@ -160,8 +161,14 @@
 </script>
 
 <div class="space-y-4">
-  <div class="flex flex-wrap items-center justify-between gap-3">
-    <h2 class="text-xl font-semibold">{$t("backup.title")}</h2>
+  <div class="flex flex-wrap items-start justify-between gap-3">
+    <div class="min-w-0">
+      <h2 class="text-xl font-semibold">{$t("system.tabs.backup")}</h2>
+      <p class="page-subtitle">
+        {$t("backup.subtitle")}
+        <a href="#scheduler" class="link whitespace-nowrap">{$t("backup.schedule")}</a>
+      </p>
+    </div>
     <div class="flex flex-wrap gap-2">
       <!-- Encrypted backups (.tar.gz.enc) are checked with their passphrase when restored. -->
       <input
@@ -171,26 +178,10 @@
         bind:this={fileInput}
         onchange={handleFileSelected}
       />
-      <Button variant="secondary" size="sm"
-        onclick={handleUploadClick}
-        disabled={uploading}
-      >
-        {#if uploading}
-          <RefreshCw class="w-4 h-4 animate-spin" />
-        {:else}
-          <Upload class="w-4 h-4" />
-        {/if}
+      <Button variant="secondary" icon={Upload} loading={uploading} onclick={handleUploadClick}>
         {$t("backup.upload")}
       </Button>
-      <Button variant="primary" size="sm"
-        onclick={handleCreate}
-        disabled={creating}
-      >
-        {#if creating}
-          <RefreshCw class="w-4 h-4 animate-spin" />
-        {:else}
-          <Plus class="w-4 h-4" />
-        {/if}
+      <Button variant="primary" icon={Plus} loading={creating} onclick={handleCreate}>
         {$t("backup.create")}
       </Button>
     </div>

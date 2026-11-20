@@ -5,9 +5,19 @@ import type { Translation } from '../translate';
 
 export const en = {
 	'power.title': 'Power Management',
+	// The tab's one time zone, the NAS's: its settings and its plan are on that clock.
+	'power.zone': "Times on this tab are on the NAS's clock: {zone}.",
+	'power.hostError': "The host's power state could not be read",
+	'power.unavailable': "Not available until the host's power state can be read.",
+	'power.status.title': 'Status',
+	'power.status.off': 'Off',
+	'power.status.notPlanned': 'Not planned yet',
+	'power.status.noWake': 'Not promised',
+	'power.details': 'Details',
+	'power.actions.unavailable': "Unavailable: the host's power state could not be read.",
 	'power.actions.title': 'Reboot, shutdown and suspend',
 	'power.actions.hint':
-		'Reboot and Shutdown act on the host one minute after you confirm, and you can cancel them here until then. Suspend acts at once.',
+		'Reboot and shutdown wait one minute, so that you can cancel them; suspend acts at once.',
 
 	'power.reboot.button': 'Reboot',
 	'power.reboot.title': 'Reboot the host?',
@@ -15,7 +25,7 @@ export const en = {
 		'The host reboots one minute after you confirm; until then you can cancel the reboot here. Shares, apps and this page are unavailable until the host is back.',
 	'power.reboot.confirm': 'Reboot in 1 minute',
 	'power.reboot.failed': 'The reboot was not scheduled',
-	'power.shutdown.button': 'Shutdown',
+	'power.shutdown.button': 'Shut down',
 	'power.shutdown.title': 'Shut down the host?',
 	'power.shutdown.text':
 		'The host shuts down one minute after you confirm; until then you can cancel the shutdown here. It starts again with its power button, or with a Wake-on-LAN packet where the board supports that.',
@@ -39,6 +49,9 @@ export const en = {
 	'power.pending.cancelShutdown': 'Cancel shutdown',
 
 	'power.wol.title': 'Wake-on-LAN',
+	'power.wol.hint':
+		'A magic packet to the MAC address starts the NAS, but only where the board keeps the network card powered while the NAS is off.',
+	'power.wol.more': 'How to wake the NAS',
 	'power.wol.loadError': 'The network interfaces could not be read',
 	'power.wol.none': 'The host has no Ethernet interface',
 	'power.wol.interface': 'Interface',
@@ -56,47 +69,49 @@ export const en = {
 	'power.wol.turnedOff': 'Wake-on-LAN is off for {name}',
 	// The hint around the example command, power.wol.command.
 	'power.wol.hintBefore':
-		"With Wake-on-LAN on, a magic packet to the interface's MAC address, sent from a computer on the same network (for example",
+		'Send it from a computer on the same network, for example with',
 	'power.wol.command': 'wakeonlan <MAC address>',
 	'power.wol.hintAfter':
-		'), starts the host after a shutdown and wakes it from suspend, but only where the board keeps the network card powered while the host is off: many single-board computers do not. UNOS sets your choice again whenever it starts.',
+		"; it starts the NAS after a shutdown and wakes it from suspend. Many single-board computers cut the network card's power, and then it cannot. UNOS sets your choice again whenever it starts.",
 	// The card of the power settings' schedule (ADR-0407). {zone} is the host's time zone; {time},
 	// {since} and {at} are times in the browser's zone; {reason} and {detail} are the server's English.
 	'power.schedule.title': 'Shutdown and wake schedule',
 	'power.schedule.hint':
-		'UNOS announces each of these shutdowns 10 minutes ahead in the health banner and to every notification channel. A running job (a backup, a restore, a scrub, a balance, an app install) postpones the daily shutdown until it ends.',
-	'power.schedule.zone': "The times are on the host's clock: {zone}.",
+		'UNOS announces each shutdown 10 minutes ahead, and a running job postpones it.',
+	'power.schedule.more': 'More about the schedule',
+	'power.schedule.moreJobs':
+		'The announcement shows in the health banner and goes to every notification channel. A backup, a restore, a scrub, a balance or an app install that runs postpones the daily shutdown until it ends; the idle shutdown waits until nothing uses the NAS.',
+	'power.schedule.unchanged': 'No changes',
 	'power.schedule.configError': 'The power settings could not be read',
 	'power.schedule.readError': 'The schedule could not be read',
-	'power.schedule.shutdownEvery': 'Shut down every day at',
+	'power.schedule.shutdownEvery': 'Daily shutdown',
+	'power.schedule.shutdownHint': 'Shuts the NAS down every day at this time.',
 	'power.schedule.shutdownTime': 'Time of the daily shutdown',
-	'power.schedule.wakeEvery': 'Wake every day at',
+	'power.schedule.wakeEvery': 'Daily wake',
+	'power.schedule.wakeHint': "The board's RTC alarm powers the NAS on every day at this time.",
 	'power.schedule.wakeTime': 'Time of the daily wake',
-	'power.schedule.idleAfter': 'Shut down after the host has been idle for',
+	'power.schedule.idleAfter': 'Idle shutdown',
+	'power.schedule.idleHint': 'Shuts the NAS down once it has been idle this long, 20 to 1440 minutes.',
 	'power.schedule.idleMinutes': 'Idle minutes before the shutdown',
-	'power.schedule.minutes': 'minutes (20 to 1440)',
+	'power.schedule.minutes': 'min',
 	'power.schedule.save': 'Save schedule',
 	'power.schedule.saved': 'The power schedule is saved',
 	'power.schedule.saveFailed': 'The schedule was not saved',
 	'power.schedule.badTime': 'Enter each time as HH:MM, and the idle time as 20 to 1440 minutes.',
 	'power.schedule.planLabel': 'What the schedule does next',
-	'power.schedule.browserZone': "The plan's times below are in this browser's time zone: {zone}.",
 	'power.schedule.nextShutdown': 'Next shutdown',
-	'power.schedule.noShutdown': 'None: the daily shutdown is off',
 	'power.schedule.state.planned': 'Planned',
 	'power.schedule.state.announced': 'Announced',
 	'power.schedule.state.postponed': 'Postponed',
 	'power.schedule.state.issued': 'Shutting down',
 	'power.schedule.heldBy': 'It waits for:',
 	'power.schedule.nextWake': 'Next wake',
-	'power.schedule.noWake': 'None: the daily wake is off',
-	'power.schedule.noWakePromised': 'No wake is promised: {reason}',
+	'power.schedule.rtcCannotWake': "This host's clock (RTC) cannot wake it, so no wake is promised.",
 	'power.schedule.alarmAt': "The RTC's wake alarm is set for {time}.",
 	'power.schedule.noAlarm': 'The RTC holds no wake alarm.',
 	'power.schedule.rtcReady':
 		"The host's RTC takes a wake alarm, but whether the board powers on from it is the board's: try it once before you rely on it.",
 	'power.schedule.idleTitle': 'Idle shutdown',
-	'power.schedule.idleOff': 'The idle shutdown is off.',
 	'power.schedule.idleSince': 'The host is idle since {since} and shuts down at {at} at the earliest.',
 	'power.schedule.idleNow': 'The host is idle now.',
 	'power.schedule.notIdle': 'The host is not idle:',
@@ -105,7 +120,10 @@ export const en = {
 		one: '{n} open page of the web interface',
 		other: '{n} open pages of the web interface'
 	},
-	'power.found.login_session': 'A login session of {subject} on the host',
+	'power.found.login_session': {
+		one: 'A login session of {subject} on the host',
+		other: '{n} login sessions of {subject} on the host'
+	},
 	'power.found.smb_client': 'The SMB client {subject}',
 	'power.found.nfs_client': 'The NFS client {subject}',
 	'power.found.disk_activity': 'Disk {subject}: {mib} MiB read and written in the last minute',
@@ -126,14 +144,25 @@ export const en = {
 	'power.found.share_repair': 'A permissions repair of the share {subject} is running',
 	'power.found.update': 'An update of UNOS is running',
 	'power.found.wake_alarm': 'The RTC does not hold the wake alarm: {detail}',
-	'power.found.unreadable': 'Not checked: {detail}'
+	'power.found.unreadable': 'Not checked: {detail}',
+	// A reason listed more than once, with how often ({text} is the reason's text).
+	'power.found.repeated': { one: '{text}', other: '{text} ({n} times)' }
 };
 
 export const ru: Translation<typeof en> = {
-	'power.title': 'Управление питанием',
+	'power.title': 'Питание',
+	'power.zone': 'Время на этой вкладке — по часам NAS: {zone}.',
+	'power.hostError': 'Не удалось прочитать состояние питания хоста',
+	'power.unavailable': 'Недоступно, пока не удастся прочитать состояние питания хоста.',
+	'power.status.title': 'Состояние',
+	'power.status.off': 'Выключено',
+	'power.status.notPlanned': 'Пока не запланировано',
+	'power.status.noWake': 'Не обещано',
+	'power.details': 'Подробнее',
+	'power.actions.unavailable': 'Недоступно: не удалось прочитать состояние питания хоста.',
 	'power.actions.title': 'Перезагрузка, выключение и спящий режим',
 	'power.actions.hint':
-		'Перезагрузка и выключение выполняются через минуту после подтверждения, и до этого их можно отменить здесь. Спящий режим включается сразу.',
+		'Перезагрузка и выключение ждут минуту, чтобы их можно было отменить; спящий режим включается сразу.',
 
 	'power.reboot.button': 'Перезагрузить',
 	'power.reboot.title': 'Перезагрузить хост?',
@@ -165,6 +194,9 @@ export const ru: Translation<typeof en> = {
 	'power.pending.cancelShutdown': 'Отменить выключение',
 
 	'power.wol.title': 'Wake-on-LAN',
+	'power.wol.hint':
+		'«Магический» пакет на MAC-адрес включает NAS, но только если плата не отключает питание сетевой карты, пока NAS выключен.',
+	'power.wol.more': 'Как разбудить NAS',
 	'power.wol.loadError': 'Не удалось прочитать сетевые интерфейсы',
 	'power.wol.none': 'У хоста нет интерфейса Ethernet',
 	'power.wol.interface': 'Интерфейс',
@@ -180,45 +212,47 @@ export const ru: Translation<typeof en> = {
 	'power.wol.turnedOn': 'Wake-on-LAN включён для {name}',
 	'power.wol.turnedOff': 'Wake-on-LAN выключен для {name}',
 	'power.wol.hintBefore':
-		'Когда Wake-on-LAN включён, «магический» пакет на MAC-адрес интерфейса, отправленный с компьютера в той же сети (например,',
+		'Отправьте его с компьютера в той же сети, например командой',
 	'power.wol.command': 'wakeonlan <MAC-адрес>',
 	'power.wol.hintAfter':
-		'), включает хост после выключения и будит его из спящего режима, но только если плата не отключает питание сетевой карты, пока хост выключен: многие одноплатные компьютеры его отключают. UNOS заново применяет ваш выбор при каждом запуске.',
+		'; он включает NAS после выключения и будит его из спящего режима. Многие одноплатные компьютеры отключают питание сетевой карты, и тогда это невозможно. UNOS заново применяет ваш выбор при каждом запуске.',
 	'power.schedule.title': 'Расписание выключения и включения',
 	'power.schedule.hint':
-		'UNOS объявляет о каждом таком выключении за 10 минут в баннере состояния и во все каналы уведомлений. Выполняющееся задание (резервная копия, восстановление, проверка, балансировка, установка приложения) откладывает ежедневное выключение до своего завершения.',
-	'power.schedule.zone': 'Время указано по часам хоста: {zone}.',
+		'UNOS объявляет о каждом выключении за 10 минут, а выполняющееся задание его откладывает.',
+	'power.schedule.more': 'Подробнее о расписании',
+	'power.schedule.moreJobs':
+		'Объявление появляется в баннере состояния и уходит во все каналы уведомлений. Выполняющиеся резервная копия, восстановление, проверка, балансировка или установка приложения откладывают ежедневное выключение до своего завершения; выключение при простое ждёт, пока NAS никто не использует.',
+	'power.schedule.unchanged': 'Нет изменений',
 	'power.schedule.configError': 'Не удалось прочитать настройки питания',
 	'power.schedule.readError': 'Не удалось прочитать расписание',
-	'power.schedule.shutdownEvery': 'Выключать каждый день в',
+	'power.schedule.shutdownEvery': 'Ежедневное выключение',
+	'power.schedule.shutdownHint': 'Выключает NAS каждый день в это время.',
 	'power.schedule.shutdownTime': 'Время ежедневного выключения',
-	'power.schedule.wakeEvery': 'Включать каждый день в',
+	'power.schedule.wakeEvery': 'Ежедневное включение',
+	'power.schedule.wakeHint': 'Будильник RTC платы включает NAS каждый день в это время.',
 	'power.schedule.wakeTime': 'Время ежедневного включения',
-	'power.schedule.idleAfter': 'Выключать после простоя хоста в течение',
+	'power.schedule.idleAfter': 'Выключение при простое',
+	'power.schedule.idleHint': 'Выключает NAS после простоя такой длительности, от 20 до 1440 минут.',
 	'power.schedule.idleMinutes': 'Минут простоя до выключения',
-	'power.schedule.minutes': 'минут (от 20 до 1440)',
+	'power.schedule.minutes': 'мин',
 	'power.schedule.save': 'Сохранить расписание',
 	'power.schedule.saved': 'Расписание питания сохранено',
 	'power.schedule.saveFailed': 'Расписание не сохранено',
 	'power.schedule.badTime': 'Укажите каждое время как ЧЧ:ММ, а время простоя — от 20 до 1440 минут.',
 	'power.schedule.planLabel': 'Что расписание сделает дальше',
-	'power.schedule.browserZone': 'Время плана ниже указано в часовом поясе этого браузера: {zone}.',
 	'power.schedule.nextShutdown': 'Следующее выключение',
-	'power.schedule.noShutdown': 'Нет: ежедневное выключение отключено',
 	'power.schedule.state.planned': 'Запланировано',
 	'power.schedule.state.announced': 'Объявлено',
 	'power.schedule.state.postponed': 'Отложено',
 	'power.schedule.state.issued': 'Выключается',
 	'power.schedule.heldBy': 'Ждёт завершения:',
 	'power.schedule.nextWake': 'Следующее включение',
-	'power.schedule.noWake': 'Нет: ежедневное включение отключено',
-	'power.schedule.noWakePromised': 'Включение не обещано: {reason}',
+	'power.schedule.rtcCannotWake': 'Часы хоста (RTC) не могут его включить, поэтому включение не обещано.',
 	'power.schedule.alarmAt': 'Будильник RTC установлен на {time}.',
 	'power.schedule.noAlarm': 'В RTC не установлен будильник.',
 	'power.schedule.rtcReady':
 		'RTC хоста принимает будильник, но включится ли от него плата, зависит от платы: проверьте один раз, прежде чем на это полагаться.',
 	'power.schedule.idleTitle': 'Выключение при простое',
-	'power.schedule.idleOff': 'Выключение при простое отключено.',
 	'power.schedule.idleSince': 'Хост простаивает с {since} и выключится не раньше {at}.',
 	'power.schedule.idleNow': 'Хост сейчас простаивает.',
 	'power.schedule.notIdle': 'Хост не простаивает:',
@@ -227,7 +261,11 @@ export const ru: Translation<typeof en> = {
 		few: '{n} открытые страницы веб-интерфейса',
 		many: '{n} открытых страниц веб-интерфейса'
 	},
-	'power.found.login_session': 'Сеанс входа {subject} на хосте',
+	'power.found.login_session': {
+		one: '{n} сеанс входа {subject} на хосте',
+		few: '{n} сеанса входа {subject} на хосте',
+		many: '{n} сеансов входа {subject} на хосте'
+	},
 	'power.found.smb_client': 'SMB-клиент {subject}',
 	'power.found.nfs_client': 'NFS-клиент {subject}',
 	'power.found.disk_activity': 'Диск {subject}: {mib} МиБ прочитано и записано за последнюю минуту',
@@ -248,5 +286,6 @@ export const ru: Translation<typeof en> = {
 	'power.found.share_repair': 'Исправляются права общей папки {subject}',
 	'power.found.update': 'Выполняется обновление UNOS',
 	'power.found.wake_alarm': 'RTC не хранит будильник: {detail}',
-	'power.found.unreadable': 'Не проверено: {detail}'
+	'power.found.unreadable': 'Не проверено: {detail}',
+	'power.found.repeated': { one: '{text} ({n} раз)', few: '{text} ({n} раза)', many: '{text} ({n} раз)' }
 };

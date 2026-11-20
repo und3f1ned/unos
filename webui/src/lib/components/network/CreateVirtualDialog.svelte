@@ -28,6 +28,11 @@
 		bridge: 'virtual.dialog.bridge'
 	};
 
+	let kindOptions = $derived([
+		{ value: 'bond', label: $t('virtual.kind.bond') },
+		{ value: 'vlan', label: $t('virtual.kind.vlan') },
+		{ value: 'bridge', label: $t('virtual.kind.bridge') }
+	]);
 	let modeOptions = $derived([
 		{ value: '802.3ad', label: $t('virtual.mode.lacp') },
 		{ value: 'balance-rr', label: $t('virtual.mode.roundRobin') }
@@ -77,6 +82,12 @@
 				onsubmit();
 			}}
 		>
+			<Select
+				label={$t('virtual.kindLabel')}
+				options={kindOptions}
+				value={form.creating}
+				onchange={(kind) => form.open(kind as VirtualKind)}
+			/>
 			{#if form.creating === 'vlan'}
 				<Select label={$t('virtual.parent')} options={parentOptions} bind:value={form.parent} />
 				<Input label={$t('virtual.vlanId')} type="number" hint={$t('virtual.vlanIdHint')} bind:value={form.vlanId} />

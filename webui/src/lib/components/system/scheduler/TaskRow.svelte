@@ -1,10 +1,10 @@
 <script lang="ts">
-  import { CheckCircle, Clock, Edit3, History, Pause, Play, RefreshCw, Trash2, XCircle, Zap } from "lucide-svelte";
+  import { Edit3, History, Play, Trash2 } from "lucide-svelte";
   import type { ScheduledTask, TaskType } from "$lib/api/scheduler";
-  import { Button } from "$lib/components/ui";
+  import { Badge, Button } from "$lib/components/ui";
   import { intlLocale, t } from "$lib/i18n";
   import { formatDateTime } from "$lib/time";
-  import { DAYS_OF_WEEK, TASK_TYPES, getStatusColor, getTaskTypeIcon } from "./tasks";
+  import { DAYS_OF_WEEK, TASK_TYPES, getTaskTypeIcon } from "./tasks";
 
   // A task of the list: its switch, type, name, target, schedule and next run, and its actions.
   type Props = {
@@ -16,9 +16,11 @@
     onhistory: (task: ScheduledTask) => void;
     onedit: (task: ScheduledTask) => void;
     ondelete: (task: ScheduledTask) => void;
+    // The NAS's time zone, whose clock the schedules and the next run are on; undefined while unknown.
+    timeZone: string | undefined;
   };
 
-  let { task, running, ontoggle, onrun, onhistory, onedit, ondelete }: Props = $props();
+  let { task, running, ontoggle, onrun, onhistory, onedit, ondelete, timeZone }: Props = $props();
 
   let TypeIcon = $derived(getTaskTypeIcon(task.task_type));
 
@@ -50,40 +52,35 @@
   });
 </script>
 
-<!-- Below sm the actions wrap below the task, which keeps the row's width (ADR-0302). -->
-<div class="flex flex-wrap gap-y-2 items-center justify-between p-3 bg-surface-overlay rounded-lg">
-  <div class="flex items-center gap-3 flex-1 max-sm:basis-full min-w-0">
-    <!-- Enable/Disable Toggle -->
-    <Button variant="plain"
-      onclick={() => ontoggle(task)}
-      class="p-1.5 rounded hover:bg-surface-hover transition-colors {task.enabled
-        ? 'text-status-success'
-        : 'text-content-muted'}"
+<!-- Below sm the actions wrap below the task, which keeps the row's width (ADR-0302). The on/off
+     is a checkbox, the place of the Switch of the design system: an action icon no longer doubles as
+     the state. Action icons are neutral, each with its name as a tooltip. -->
+<div class="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 py-3">
+  <div class="flex min-w-0 flex-1 items-start gap-3 max-sm:basis-full">
+    <input
+      type="checkbox"
+      class="form-checkbox mt-1 h-4 w-4 shrink-0"
+      checked={task.enabled}
       title={task.enabled ? $t("scheduler.task.disable") : $t("scheduler.task.enable")}
-    >
-      {#if task.enabled}
-        <Play class="w-5 h-5" />
-      {:else}
-        <Pause class="w-5 h-5" />
-      {/if}
-    </Button>
+      aria-label={$t("scheduler.task.onOff", { name: task.name })}
+      onchange={(e) => {
+        // The box shows the stored state: it changes once the server took the change.
+        e.currentTarget.checked = task.enabled;
+        ontoggle(task);
+      }}
+    />
 
-    <!-- Task Info -->
-    <div class="flex-1 min-w-0">
-      <div class="flex items-center gap-2">
-        <TypeIcon class="w-4 h-4 text-status-info flex-shrink-0" />
-        <p class="font-medium text-sm truncate">{task.name}</p>
-        {#if task.last_status}
-          <span class={getStatusColor(task.last_status)}>
-            {#if task.last_status === "success"}
-              <CheckCircle class="w-3.5 h-3.5" />
-            {:else if task.last_status === "failed"}
-              <XCircle class="w-3.5 h-3.5" />
-            {/if}
-          </span>
+    <div class="min-w-0 flex-1">
+      <div class="flex flex-wrap items-center gap-2">
+        <TypeIcon class="h-4 w-4 shrink-0 text-content-secondary" aria-hidden="true" />
+        <p class="min-w-0 truncate text-sm font-medium" title={task.name}>{task.name}</p>
+        {#if !task.enabled}
+          <Badge variant="neutral">{$t("scheduler.task.paused")}</Badge>
+        {:else if task.last_status === "failed"}
+          <Badge variant="error" dot>{$t("scheduler.task.lastFailed")}</Badge>
         {/if}
       </div>
-      <p class="text-xs text-content-secondary truncate">
+      <p class="truncate text-xs text-content-secondary">
         {getTaskTypeLabel(task.task_type)}
         {#if task.target_pool}
           {$t("scheduler.task.on", { target: task.target_pool })}
@@ -92,50 +89,39 @@
         {/if}
         &bull; {formatSchedule(task)}
       </p>
+      {#if task.enabled && task.next_run}
+        <p class="mt-0.5 text-xs text-content-muted tabular">
+          <span>{$t("scheduler.task.nextRun")}</span>
+          <span>{formatDateTime(task.next_run, $intlLocale, { dateStyle: "medium", timeStyle: "short", timeZone })}</span>
+        </p>
+      {/if}
     </div>
-
-    <!-- Next Run -->
-    {#if task.enabled && task.next_run}
-      <div class="hidden sm:flex flex-col items-end text-xs text-content-muted">
-        <span class="flex items-center gap-1">
-          <Clock class="w-3 h-3" />
-          {$t("scheduler.task.nextRun")}
-        </span>
-        <span>{formatDateTime(task.next_run, $intlLocale)}</span>
-      </div>
-    {/if}
   </div>
 
-  <!-- Actions -->
-  <div class="flex items-center gap-1 ml-2 max-sm:ml-auto">
-    <Button variant="ghost" size="icon" class="text-status-warning hover:text-status-warning"
+  <div class="ml-auto flex shrink-0 items-center gap-1">
+    <Button variant="ghost" size="icon-sm" icon={Play} loading={running}
       onclick={() => onrun(task)}
-      disabled={running}
       title={$t("scheduler.task.runNow")}
     >
-      {#if running}
-        <RefreshCw class="w-4 h-4 animate-spin" />
-      {:else}
-        <Zap class="w-4 h-4" />
-      {/if}
+      <span class="sr-only">{$t("scheduler.task.runNow")}</span>
     </Button>
-    <Button variant="ghost" size="icon" class="text-content-secondary"
+    <Button variant="ghost" size="icon-sm" icon={History}
       onclick={() => onhistory(task)}
       title={$t("scheduler.task.viewHistory")}
     >
-      <History class="w-4 h-4" />
+      <span class="sr-only">{$t("scheduler.task.viewHistory")}</span>
     </Button>
-    <Button variant="ghost" size="icon"
+    <Button variant="ghost" size="icon-sm" icon={Edit3}
       onclick={() => onedit(task)}
       title={$t("scheduler.task.edit")}
     >
-      <Edit3 class="w-4 h-4" />
+      <span class="sr-only">{$t("scheduler.task.edit")}</span>
     </Button>
-    <Button variant="ghost-danger" size="icon"
+    <Button variant="ghost-danger" size="icon-sm" icon={Trash2}
       onclick={() => ondelete(task)}
       title={$t("scheduler.task.delete")}
     >
-      <Trash2 class="w-4 h-4" />
+      <span class="sr-only">{$t("scheduler.task.delete")}</span>
     </Button>
   </div>
 </div>

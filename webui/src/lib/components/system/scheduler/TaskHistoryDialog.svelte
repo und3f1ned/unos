@@ -8,9 +8,11 @@
   // The runs of every task, or of one, newest first: drawn while the history is open.
   type Props = {
     history: TaskHistory;
+    // The NAS's time zone, whose clock the run times are on; undefined: the browser's.
+    timeZone?: string | undefined;
   };
 
-  let { history }: Props = $props();
+  let { history, timeZone = undefined }: Props = $props();
 
   // The status of a run (TaskRun.status), by value.
   const RUN_STATUSES: Record<string, string> = {
@@ -86,7 +88,7 @@
                 <span class="text-xs text-content-muted">{formatDuration(run.started_at, run.finished_at)}</span>
               </div>
               <div class="flex flex-wrap gap-x-3 text-xs text-content-secondary">
-                <span>{formatDateTime(run.started_at, $intlLocale)}</span>
+                <span>{formatDateTime(run.started_at, $intlLocale, { dateStyle: "medium", timeStyle: "short", timeZone })}</span>
                 {#if typeof run.exit_code === "number"}
                   <span>{$t("scheduler.runs.exitStatus", { code: run.exit_code })}</span>
                 {/if}

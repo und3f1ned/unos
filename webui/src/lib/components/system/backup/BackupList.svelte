@@ -2,10 +2,10 @@
   // The backups of System > Backup & Restore, newest first as the server lists them, each with
   // Restore, Download and Delete.
   import { formatBytes, type BackupInfo } from "$lib/api/backup";
-  import { Button, Skeleton } from "$lib/components/ui";
+  import { Button, EmptyState, Skeleton } from "$lib/components/ui";
   import { intlLocale, t } from "$lib/i18n";
   import { formatDateTime } from "$lib/time";
-  import { Archive, Clock, Download, Lock, RotateCcw, Trash2 } from "lucide-svelte";
+  import { Archive, Download, Lock, RotateCcw, Trash2 } from "lucide-svelte";
 
   type Props = {
     backups: BackupInfo[];
@@ -22,53 +22,48 @@
 
 <div class="card">
   {#if loading}
-    <div aria-busy="true"><Skeleton count={3} /></div>
+    <div aria-busy="true"><Skeleton shape="row" count={3} /></div>
   {:else if backups.length === 0}
-    <div class="text-center py-8 text-content-secondary">
-      <Archive class="w-10 h-10 mx-auto mb-2 opacity-50" />
-      <p>{$t("backup.empty")}</p>
-      <p class="text-sm mt-1">{$t("backup.emptyHint")}</p>
-    </div>
+    <EmptyState compact icon={Archive} title={$t("backup.empty")} description={$t("backup.emptyHint")} />
   {:else}
-    <div class="space-y-2">
+    <ul class="divide-y divide-border" aria-label={$t("backup.list")}>
       {#each backups as backup}
-        <div class="flex items-center justify-between gap-2 p-3 bg-surface-overlay rounded-lg">
-          <div class="flex items-center gap-3 min-w-0">
-            <Archive class="w-8 h-8 text-status-info shrink-0" />
+        <li class="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 py-3 first:pt-0 last:pb-0">
+          <div class="flex min-w-0 flex-1 basis-64 items-start gap-3">
+            <Archive class="mt-0.5 h-5 w-5 shrink-0 text-content-secondary" aria-hidden="true" />
             <div class="min-w-0">
               <p class="font-medium text-sm break-all">{backup.filename}</p>
-              <p class="text-xs text-content-secondary flex flex-wrap items-center gap-x-2">
-                <Clock class="w-3 h-3" />
-                {formatDateTime(backup.created, $intlLocale)}
-                <span class="text-content-muted">|</span>
-                {formatBytes(backup.size, $intlLocale, sizeUnits)}
-                <span class="text-content-muted">|</span>
-                {backup.version === "unknown"
-                  ? $t("backup.versionUnknown")
-                  : $t("backup.version", { version: backup.version })}
+              <p class="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-content-secondary tabular">
+                <span>{formatDateTime(backup.created, $intlLocale, { dateStyle: "medium", timeStyle: "short" })}</span>
+                <span>{formatBytes(backup.size, $intlLocale, sizeUnits)}</span>
+                <span>
+                  {backup.version === "unknown"
+                    ? $t("backup.versionUnknown")
+                    : $t("backup.version", { version: backup.version })}
+                </span>
                 {#if backup.encrypted}
-                  <span class="text-content-muted">|</span>
-                  <span class="flex items-center gap-1"><Lock class="w-3 h-3" />{$t("backup.encrypted")}</span>
+                  <span class="inline-flex items-center gap-1"><Lock class="h-3 w-3" aria-hidden="true" />{$t("backup.encrypted")}</span>
                 {/if}
               </p>
             </div>
           </div>
+          <!-- Restore in words, so that its icon is not taken for Refresh; Download and Delete as
+               icons with their names as tooltips. -->
           <div class="flex shrink-0 items-center gap-1">
-            <Button variant="ghost" size="icon" class="text-status-success hover:text-status-success"
+            <Button variant="secondary" size="sm" icon={RotateCcw}
               onclick={() => onrestore(backup)}
-              title={$t("backup.restore")}
               aria-label={$t("backup.restoreOne", { name: backup.filename })}
             >
-              <RotateCcw class="w-4 h-4" />
+              {$t("backup.restoreAction")}
             </Button>
-            <Button variant="ghost" size="icon"
+            <Button variant="ghost" size="icon-sm"
               onclick={() => ondownload(backup.filename)}
               title={$t("backup.download")}
               aria-label={$t("backup.downloadOne", { name: backup.filename })}
             >
               <Download class="w-4 h-4" />
             </Button>
-            <Button variant="ghost-danger" size="icon"
+            <Button variant="ghost-danger" size="icon-sm"
               onclick={() => ondelete(backup.filename)}
               title={$t("backup.delete")}
               aria-label={$t("backup.deleteOne", { name: backup.filename })}
@@ -76,8 +71,8 @@
               <Trash2 class="w-4 h-4" />
             </Button>
           </div>
-        </div>
+        </li>
       {/each}
-    </div>
+    </ul>
   {/if}
 </div>

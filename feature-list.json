@@ -4772,6 +4772,37 @@
       "notes": "Built on main 89ca9fc. The ADR's number is 0431, after the ADR of the boot screen and the loaders (another branch), which takes 0430; while that one is not on this branch the ADR tests refuse the gap, so this branch numbers its ADR 0430, and the merge after the boot screen renames the file and its citations to 0431. The ADR lists every move and each removed duplicate with the place it keeps (38, from an inventory of every menu item and place). The specs that reached a moved setting open its new place and assert what they did; where a page's structure changed, the page-ready marker follows it (the h2 Security Settings became Sign-in and security, Security of the NAS or File sharing), and where an element was removed as a duplicate the spec checks its one place (monitor.spec.ts and network.spec.ts the sidebar's connection line for the Live badges, files.spec.ts the sidebar's Files for the Trash's button, containers.spec.ts that the drawer has no actions, dashboard-layout.spec.ts 8 widgets without Quick Actions). account-smb.spec.ts's canned-answer tests sign in as a regular account, since an administrator has no File sharing tab. Step 3: the login audits each refused second step (test_totp_once.py, test_recovery_codes.py, test_security_keys.py), mine=true limits an administrator's history as a user's (test_authz.py TestLoginHistory), information-architecture.spec.ts finds another account's failed sign-in in the Audit Log and not in the own history. Fresh-context review (17 findings): all BLOCKING and RISK fixed; left, a nit: with three wide widgets the dashboard's last one is half a row wide, as when a user hid one of four before; the layout is each user's (ADR-0395). Web UI and a supervisor query parameter plus audit lines of failed sign-ins: not host-level (GLOSSARY.md)."
     },
     {
+      "id": "webui.ux-system",
+      "category": "webui",
+      "description": "The System tabs other than Security show status before settings, one primary action, one time zone and one pattern per job, and offer only settings that work",
+      "steps": [
+        "System > Power Management shows a Status card first (pending action, next shutdown, next wake, idle shutdown), then Reboot, Shut down and Suspend as secondary buttons, then the schedule's three on/off rows whose fields stand in one column, every time on the NAS's clock, whose zone the tab names once",
+        "When the host's power state cannot be read, Power says so once with Retry, the cards say they wait and the actions are disabled with the reason; a shutdown's reasons to wait show only while it is on, each once with its count",
+        "System > Notifications has one Add channel whose dialog asks for the kind and offers no events, tabs for Channels and History, no stat tiles, and an on/off per channel",
+        "Backup & Restore's off-device copy shows its state and snapshots in one card and its settings in another, with Snapshots to keep and Integrity check as compact fields on one line and a disabled Save that says what it waits for",
+        "Scheduler, Disk Health, System Logs, Resource Monitor, Network, Remote Access and Updates use page tabs, neutral icon actions with tooltips, one badge that reads alone, charts with a scale and a time axis, and sentence case, in English and Russian, at 375 px too"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0432"
+      ],
+      "verified_by": [
+        "webui/tests/power.spec.ts",
+        "webui/tests/notifications.spec.ts",
+        "webui/tests/backup.spec.ts",
+        "webui/tests/offsite.spec.ts",
+        "webui/tests/scheduler.spec.ts",
+        "webui/tests/health.spec.ts",
+        "webui/tests/logs.spec.ts",
+        "webui/tests/monitor.spec.ts",
+        "webui/tests/network-virtual.spec.ts",
+        "webui/tests/remote-access.spec.ts",
+        "webui/tests/updates.spec.ts",
+        "webui/tests/mobile-layout.spec.ts"
+      ],
+      "notes": "Chunk 5 of the web UI's UX work, built on mvp.batch-18 69dfae5 beside chunk 1 (the design foundations), which builds the shared Switch, FieldGroup, ActionMenu, ConfirmDialog, Toast and Tabs: until then checkboxes, legends, secondary buttons and the hand-made restore and delete dialogs stand in for them, each a one-line swap; the window.confirm and alert() calls of these tabs are left for chunk 1, which replaces them all. A peer gets no Show config: its private key is shown once (ADR-0420). The ADR's final number is 0437; on this branch it is 0432 so that the numbering stays contiguous, and the merge renames it. E2E of the area (25 specs with mobile-layout, command-palette, navigation and roles): 619 of 625 passed in one run under load, the three timing failures (command-palette Reboot, backup upload button, network gone interface) passed on a rerun and the three spec misses were fixed and pass. Review: this builder's session had no subagent tool, so the review was the builder's own pass over the diff's risky parts (alert routing, channel and task on/off, the power form's Save, the copy's Save gating); it found offsite snapshot sizes of 1 TiB and more shown as \"1 undefined\" (fixed: TB and the largest unit for larger sizes). Not host-level: the web UI only."
+    },
+    {
       "id": "ci.btrfs-loop-device-tests",
       "category": "ci",
       "description": "CI runs the storage scenarios against real btrfs on loop devices in a privileged container",

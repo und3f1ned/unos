@@ -5,7 +5,6 @@
   import { HostSettings, HostSettingsCard } from "$lib/components/system/general";
   import { t } from "$lib/i18n";
   import { apiTime } from "$lib/time";
-  import { Server } from "lucide-svelte";
 
   // System > General (ADR-0431): the facts of the host and its name and time zone. The host name is
   // shown by its field alone, the version by Updates, the signed-in account by the sidebar.
@@ -80,11 +79,7 @@
   </div>
   {:else}
   <!-- System Info -->
-  <Card>
-    <h3 class="card-title mb-4">
-      <Server class="w-5 h-5 text-content-secondary" aria-hidden="true" />
-      {$t("general.info.title")}
-    </h3>
+  <Card title={$t("general.info.title")}>
 
     {#if systemInfo}
       <div class="kv">

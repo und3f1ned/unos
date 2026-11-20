@@ -7,15 +7,18 @@
   import type { WakeOnLan } from "./wol.svelte";
 
   // The host's network interfaces, each with its Wake-on-LAN and a button that turns it on or off.
+  // On a phone the MAC address and the state go under the name, so that the button stays in view.
   type Props = {
     wol: WakeOnLan;
+    // The interfaces cannot be read, for the reason the page shows once.
+    unavailable: boolean;
     // Wake-on-LAN changed: what the page says.
     onnotice: (message: string) => void;
     // The host refused the change: why.
     onfailure: (message: string) => void;
   };
 
-  let { wol, onnotice, onfailure }: Props = $props();
+  let { wol, unavailable, onnotice, onfailure }: Props = $props();
 
   async function setWol(iface: WolInterface, on: boolean) {
     if (wol.busy) return;
@@ -34,43 +37,50 @@
   }
 </script>
 
-<Card>
-  <h3 class="card-title mb-4">
-    <Network class="w-5 h-5 text-content-secondary" />
-    {$t("power.wol.title")}
-  </h3>
-  {#if wol.loading}
-    <div aria-busy="true"><Skeleton count={2} /></div>
+<!-- The state of an interface's Wake-on-LAN: a badge that reads alone. -->
+{#snippet state(iface: WolInterface)}
+  {#if !iface.supported}
+    <Badge variant="neutral">{$t("power.wol.notSupported")}</Badge>
+  {:else if iface.enabled}
+    <Badge variant="success" dot>{$t("power.wol.on")}</Badge>
+  {:else}
+    <Badge variant="neutral">{$t("power.wol.off")}</Badge>
+  {/if}
+{/snippet}
+
+<Card title={$t("power.wol.title")} description={$t("power.wol.hint")}>
+  {#if unavailable}
+    <p class="text-sm text-content-muted">{$t("power.unavailable")}</p>
+  {:else if wol.loading}
+    <div aria-busy="true"><Skeleton shape="row" count={2} /></div>
   {:else if wol.error}
-    <Alert variant="error" title={$t("power.wol.loadError")}>{wol.error}</Alert>
+    <Alert variant="error" size="sm" title={$t("power.wol.loadError")}>{wol.error}</Alert>
   {:else if wol.interfaces.length === 0}
-    <EmptyState icon={Network} title={$t("power.wol.none")} />
+    <EmptyState compact icon={Network} title={$t("power.wol.none")} />
   {:else}
     <div class="table-frame">
       <table class="table">
         <thead class="table-header">
           <tr>
             <th>{$t("power.wol.interface")}</th>
-            <th>{$t("power.wol.mac")}</th>
-            <th>{$t("power.wol.title")}</th>
-            <th><span class="sr-only">{$t("power.wol.change")}</span></th>
+            <th class="hidden sm:table-cell">{$t("power.wol.mac")}</th>
+            <th class="hidden sm:table-cell">{$t("power.wol.title")}</th>
+            <th class="w-px"><span class="sr-only">{$t("power.wol.change")}</span></th>
           </tr>
         </thead>
         <tbody>
           {#each wol.interfaces as iface (iface.name)}
             <tr class="table-row">
-              <td class="mono">{iface.name}</td>
-              <td class="mono">{iface.mac_address ?? $t("power.wol.unknownMac")}</td>
-              <td>
-                {#if !iface.supported}
-                  <Badge variant="neutral">{$t("power.wol.notSupported")}</Badge>
-                {:else if iface.enabled}
-                  <Badge variant="success">{$t("power.wol.on")}</Badge>
-                {:else}
-                  <Badge variant="neutral">{$t("power.wol.off")}</Badge>
-                {/if}
+              <td class="align-middle">
+                <span class="mono break-all">{iface.name}</span>
+                <span class="mono block text-xs text-content-muted sm:hidden">{iface.mac_address ?? $t("power.wol.unknownMac")}</span>
+                <span class="mt-1 block sm:hidden">{@render state(iface)}</span>
               </td>
-              <td class="text-right">
+              <td class="mono hidden align-middle sm:table-cell">{iface.mac_address ?? $t("power.wol.unknownMac")}</td>
+              <td class="hidden align-middle sm:table-cell">
+                {@render state(iface)}
+              </td>
+              <td class="align-middle text-right whitespace-nowrap">
                 {#if iface.supported}
                   <Button
                     variant="secondary"
@@ -90,9 +100,12 @@
         </tbody>
       </table>
     </div>
-    <p class="text-sm text-muted mt-3">
-      {$t("power.wol.hintBefore")}
-      <span class="mono">{$t("power.wol.command")}</span>{$t("power.wol.hintAfter")}
-    </p>
+    <details class="mt-3 text-[13px] leading-[18px] text-content-secondary">
+      <summary class="link w-fit cursor-pointer">{$t("power.wol.more")}</summary>
+      <p class="mt-2">
+        {$t("power.wol.hintBefore")}
+        <span class="mono">{$t("power.wol.command")}</span>{$t("power.wol.hintAfter")}
+      </p>
+    </details>
   {/if}
 </Card>

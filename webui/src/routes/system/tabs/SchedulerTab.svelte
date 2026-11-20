@@ -9,10 +9,11 @@
     type ScheduledTask,
   } from "$lib/api/scheduler";
   import { getPools, getDisks, type Pool, type Disk } from "$lib/api/storage";
-  import { Button, Skeleton } from "$lib/components/ui";
+  import { Button, EmptyState, Skeleton } from "$lib/components/ui";
   import { TaskFormDialog, TaskHistory, TaskHistoryDialog, TaskRow } from "$lib/components/system/scheduler";
   import { t } from "$lib/i18n";
   import { Calendar, RefreshCw, Plus, History } from "lucide-svelte";
+  import { knownZone } from "$lib/components/system/power";
 
   // State
   let tasks = $state<ScheduledTask[]>([]);
@@ -21,6 +22,8 @@
   let disksLoaded = $state(false);
   // The time zone whose clock the schedules follow (the NAS's); empty until it is known.
   let timeZone = $state("");
+  // The NAS's zone when this browser knows it: the next runs and the history are on its clock.
+  let zone = $derived(knownZone(timeZone));
   let loading = $state(true);
   // The first load has answered: a reload keeps the list (ADR-0430).
   let loaded = $state(false);
@@ -129,42 +132,39 @@
 </script>
 
 <div class="space-y-4">
-  <!-- Header -->
-  <div class="flex flex-wrap items-center justify-between gap-3">
-    <h2 class="text-xl font-semibold">{$t("scheduler.title")}</h2>
+  <!-- The header: one time zone for the tab, the NAS's, named once. -->
+  <div class="flex flex-wrap items-start justify-between gap-3">
+    <div class="min-w-0">
+      <h2 class="text-xl font-semibold">{$t("scheduler.title")}</h2>
+      {#if timeZone}
+        <p class="page-subtitle">{$t("scheduler.timeZone", { zone: timeZone })}</p>
+      {/if}
+    </div>
     <div class="flex flex-wrap gap-2">
-      <Button variant="secondary" size="sm" onclick={() => history.show()}>
-        <History class="w-4 h-4" />
+      <Button variant="ghost" size="icon" icon={RefreshCw} loading={loading} onclick={loadTasks} title={$t("common.refresh")}>
+        <span class="sr-only">{$t("common.refresh")}</span>
+      </Button>
+      <Button variant="secondary" icon={History} onclick={() => history.show()}>
         {$t("scheduler.history")}
       </Button>
-      <Button variant="secondary" size="icon" onclick={loadTasks} title={$t("common.refresh")}>
-        <RefreshCw class="w-4 h-4 {loading ? 'animate-spin' : ''}" />
-      </Button>
-      <Button variant="primary" size="sm" onclick={openCreateModal}>
-        <Plus class="w-4 h-4" />
+      <Button variant="primary" icon={Plus} onclick={openCreateModal}>
         {$t("scheduler.newTask")}
       </Button>
     </div>
   </div>
-  {#if timeZone}
-    <p class="text-sm text-content-secondary">{$t("scheduler.timeZone", { zone: timeZone })}</p>
-  {/if}
 
   <!-- Task List -->
   <div class="card">
     {#if !loaded}
-      <div aria-busy="true"><Skeleton count={3} size="control" /></div>
+      <div aria-busy="true"><Skeleton shape="row" count={3} /></div>
     {:else if tasks.length === 0}
-      <div class="text-center py-8 text-content-secondary">
-        <Calendar class="w-10 h-10 mx-auto mb-2 opacity-50" />
-        <p>{$t("scheduler.empty")}</p>
-        <p class="text-sm mt-1">{$t("scheduler.emptyHint")}</p>
-      </div>
+      <EmptyState compact icon={Calendar} title={$t("scheduler.empty")} description={$t("scheduler.emptyHint")} />
     {:else}
-      <div class="space-y-2">
+      <div class="divide-y divide-border -my-3">
         {#each tasks as task}
           <TaskRow
             {task}
+            timeZone={zone}
             running={runningTaskId === task.id}
             ontoggle={handleToggleTask}
             onrun={handleRunNow}
@@ -185,5 +185,5 @@
 
 <!-- History Modal -->
 {#if history.open}
-  <TaskHistoryDialog {history} />
+  <TaskHistoryDialog {history} timeZone={zone} />
 {/if}

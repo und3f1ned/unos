@@ -2677,8 +2677,10 @@ last hour, and the processes that use the most CPU:
   the server sends every 2 seconds, as the dashboard's cards show them (see
   [System Stats](#system-stats): network and disks are the host's interfaces
   and physical disks), and a chart of each over the time range chosen with
-  **5 min**, **15 min** or **1 hour**, with its peak in that range below it. A
-  network or disk chart scales to its peak.
+  **5 min**, **15 min** or **1 hour**, with its peak in that range below it.
+  Each chart names its scale (the value of its top line) and its time axis,
+  from the start of the range to now. A network or disk chart scales to its
+  peak.
 - The history comes from the NAS: every 10 seconds it notes the averages of
   CPU, network and disks over those 10 seconds and the memory in use, and
   keeps the last hour in memory, also while no page is open; the tab reads
@@ -2686,8 +2688,8 @@ last hour, and the processes that use the most CPU:
   it starts empty after the NAS or UNOS restarts; a gap in a chart is a time
   without data. When the history cannot be read, the tab says so and shows
   the live values.
-- **CPU Cores**: the current use of each core.
-- **Top Processes**: the ten processes of the host that use the most CPU,
+- **CPU cores**: the current use of each core, as a bar and in numbers.
+- **Top processes**: the ten processes of the host that use the most CPU,
   those of apps included, read every 10 seconds: name, PID, the user as the
   host names it (its number when the host has no name for it), CPU as a share
   of one core (above 100% for a process on several cores) and resident
@@ -2756,16 +2758,17 @@ host and lists the ones UNOS made, with their state, ports and addresses
 network, as on Ubuntu Server and Armbian's minimal images; on a host with
 NetworkManager (Raspberry Pi OS, desktops) or `/etc/network/interfaces`
 (Debian's own server install) the card names that manager and offers nothing.
+**Create…** opens a dialog whose first field is the kind:
 
-- **Create bond**: a name, the mode (**LACP (802.3ad)**, which needs LACP on
+- **Bond**: a name, the mode (**LACP (802.3ad)**, which needs LACP on
   the switch's ports, or **Round robin (balance-rr)**) and two to eight wired
   network cards that are in no other bond or bridge and carry no VLAN. A card
   loses its own addresses in a bond, so only the one through which you reach
   UNOS may have any; unplug another card's cable, or remove its addresses on
   the host, first.
-- **Create VLAN**: a wired network card or a bond, a VLAN id from 1 to 4094 and
+- **VLAN**: a wired network card or a bond, a VLAN id from 1 to 4094 and
   a name (empty: `<interface>.<id>`, such as `eth0.100`).
-- **Create bridge**: a name and no port, or up to eight ports (wired cards,
+- **Bridge**: a name and no port, or up to eight ports (wired cards,
   bonds or VLANs), for containers and virtual machines.
 
 Each can take an MTU from 1280 to 9216 bytes and its addresses: none, DHCP
@@ -2807,8 +2810,14 @@ interfaces: configure them on the host or in your router.
 
 ### Power Management
 
-**Reboot** and **Shutdown** ask for confirmation, then act on the host one
-minute later. Until then the tab shows the pending reboot or shutdown with its
+The tab opens with **Status**: the pending reboot or shutdown, the next
+scheduled shutdown and what it waits for, the next wake, and whether the host
+is idle. Every time on the tab is on the NAS's clock, whose time zone the tab
+names once under its title. When the host's power state cannot be read, the
+tab says so once with **Retry**, and the cards and actions wait for it.
+
+**Reboot** and **Shut down** ask for confirmation, then act on the host one
+minute later. Until then the Status card shows the pending reboot or shutdown with its
 time and a **Cancel reboot** or **Cancel shutdown** button, also after a
 reload; a shutdown or reboot scheduled on the host's console shows there too.
 **Suspend** asks for confirmation and suspends the host at once, if its kernel
@@ -2827,13 +2836,15 @@ packet from a computer on the same network, for example with
 the board keeps the network card powered then; many single-board computers
 cut its power, and then only the power button starts the host.
 
-**Shutdown and wake schedule** sets three things, each off until you turn it
-on and press **Save schedule**. The times are on the host's clock, in the
-host's time zone, which the card names (System → General sets it); a time
+**Shutdown and wake schedule** sets three things, each a row with its box,
+off until you tick it and press **Save schedule**, which waits until something
+changed (**No changes**). Its field shows while the row is on. The times are on
+the host's clock, in the host's time zone, which the tab names (System →
+General sets it); a time
 that the change to summer time skips comes at the end of the skip, and one
 that the change to winter time shows twice comes the first time.
 
-- **Shut down every day at** shuts the host down at that time. Ten minutes
+- **Daily shutdown** shuts the host down at that time. Ten minutes
   before, UNOS announces it in the health banner and to every notification
   channel. A running job postpones it until the job ends: a run of a
   scheduled task (and a task due within two minutes), a backup, a restore, a
@@ -2848,23 +2859,25 @@ that the change to winter time shows twice comes the first time.
   a shutdown that would come less than ten minutes before the next wake is
   skipped. When the host's clock is set (by NTP after a boot without an RTC, or
   by hand), the schedule starts over from the new time.
-- **Wake every day at** sets the alarm of the host's real-time clock (RTC,
+- **Daily wake** sets the alarm of the host's real-time clock (RTC,
   `/sys/class/rtc/rtc0/wakealarm`) to the next wake time, and again after each
   wake, also when the host was shut down by its button or the tab. The card
   shows the alarm the RTC holds. A host without an RTC, an RTC without a wake
   alarm, or an RTC whose clock is more than five minutes off the system clock
   (one kept in local time, or without its battery) cannot take the wake: the
-  card says why, and **Save schedule** refuses to turn the wake on. Whether the
+  row says so (**Details** shows the host's reason), and **Save schedule**
+  refuses to turn the wake on. Whether the
   board powers on from its RTC is the board's, as with Wake-on-LAN: try it once
   before you rely on it. The wake time must come at least ten minutes after the
   shutdown time. Turning the wake off clears the alarm.
-- **Shut down after the host has been idle for** (20 to 1440 minutes) shuts the
+- **Idle shutdown** (20 to 1440 minutes) shuts the
   host down after it has been idle that long, announced ten minutes before. The
   host is not idle while a page of the web interface is open (this one too),
   someone is logged in on the host (SSH or the console), an SMB or NFS client
   is connected, a job of the list above runs, or a disk other than the boot SD
   card or eMMC reads and writes more than 1 MiB a minute; what UNOS cannot
-  check counts as use. The card lists why the host is not idle. The idle time
+  check counts as use. While the idle shutdown is on, the Status card lists why
+the host is not idle, each reason once with its count. The idle time
   starts again after each use, after each start of UNOS (so after every boot)
   and when the wake time passes. After an announcement that use withdrew, the
   next one comes an hour later at the earliest.
@@ -2873,7 +2886,7 @@ Nothing here writes to the system disk while UNOS checks: the schedule comes
 from the saved settings, and after a reboot or an update UNOS follows it again
 and announces a shutdown that is still due once more; a postponed shutdown is
 forgotten. The card shows the plan as it was when the tab opened or the
-schedule was saved, in this browser's time zone, which it names.
+schedule was saved, on the NAS's clock.
 `GET /api/v1/power/schedule` answers the next shutdown and what holds it, the
 next wake with the RTC's answer, and whether the host is idle and why not.
 
@@ -2911,14 +2924,15 @@ NUT server on another machine).
 
 ### Disk Health
 
-- SMART health status and temperature of each disk, its SMART data under
-  **SMART data**, and the **Replace soon** mark (see
-  [SMART Monitoring](#smart-monitoring))
+- One badge per disk: **Replace soon** (with what to do, and smartctl's
+  reasons under **Why**), or else **Failing**, **Healthy**, **Not read** or
+  **Asleep** from smartctl's overall health; the temperature; and the disk's
+  SMART data under **SMART data** (see [SMART Monitoring](#smart-monitoring))
 
 ### Logs
 
 **System Logs** lists the entries of the host's systemd journal, the newest
-first. The buttons above the filters choose what it lists:
+first. The tabs above the filters choose what it lists:
 
 - **System Journal**: everything in the journal
 - **Kernel**: the kernel's messages since the host started
@@ -2933,10 +2947,10 @@ first. The buttons above the filters choose what it lists:
 Each entry shows its time in your browser's time zone, its level, the program
 that logged it and its message. The filters narrow the list:
 
-- **Priority Level**: the entries at that level or a more severe one; for
+- **Level**: the entries at that level or a more severe one; for
   example, **Warning** lists warnings, errors and worse. An entry's level is
   the one its program gave it: sshd logs a failed password as Info.
-- **Time Range**: the entries of the last 5 minutes, 15 minutes, hour,
+- **Time range**: the entries of the last 5 minutes, 15 minutes, hour,
   6 hours, 24 hours or 7 days, or of all time.
 - **Limit**: at most 50, 100, 200 (at first), 500 or 1000 entries.
 - **Search**: type a text and press Enter or click **Search**: the tab lists
@@ -2946,12 +2960,12 @@ that logged it and its message. The filters narrow the list:
   not matter. The matches are highlighted in the messages, also while you
   type; log messages are always shown as text.
 
-**Auto** follows the journal: the tab lists the newest entries again and then
+**Follow** follows the journal: the tab lists the newest entries again and then
 adds each new entry of the chosen source, level and search at the top as the
 journal gets it, keeping the newest entries of the limit, and says
-**Following new entries**. A filter or source changed while Auto is on is
-followed from then on; clicking Auto again stops it and keeps the list. When
-the connection to UNOS is lost, Auto stops with **Auto stopped: the
+**Following new entries**. A filter or source changed while Follow is on is
+followed from then on; clearing Follow stops it and keeps the list. When
+the connection to UNOS is lost, Follow stops with **Following stopped: the
 connection to the server was lost** and the list stays. **Search** waits
 while an answer is still coming. When the journal cannot be read, the tab
 shows why instead of the list. A search through a large journal can take long: after
@@ -2994,7 +3008,7 @@ pool, SMART tests of a disk, system backups (see
 off-device copies (see [Off-Device Copy](#off-device-copy)) and custom commands. Only administrators see the tab, and only they can use
 its API.
 
-- **New Task** asks for the task's type, its target and when it runs: every
+- **New task** asks for the task's type, its target and when it runs: every
   hour at a minute, every day, week or month at a time, or a cron expression
   (minute, hour, day of the month, month, day of the week). **Run now** runs a
   task at once. **History**, or a task's history button, lists the last 100
@@ -3008,8 +3022,8 @@ its API.
   hour that repeats runs once, the first time, and an hourly task skips the
   repeated hour; on the night they go forward, a time that the clock skips
   runs when the clock passes it, once (a task for 02:30 runs at 03:00 in
-  central Europe). Next runs and the times in the history show in your
-  browser's time zone.
+  central Europe). Next runs and the times in the history show on the same
+  clock.
 - A task runs while UNOS runs: a time that passes while the NAS is off or
   suspended is not made up for, and when the clock is set forward, only the
   tasks of its last 5 minutes run. A run that a restart or shutdown of UNOS
@@ -3594,9 +3608,9 @@ nothing.
 ### Adding a Channel
 
 1. Go to **System** → **Notifications**
-2. Click **Add Email**, **Add Telegram**, **Add Webhook**, **Add Discord** or
-   **Add Slack**
-3. Fill in the form: a channel name, and
+2. Click **Add channel**
+3. Fill in the form: its kind (Email, Telegram, Webhook, Discord or Slack), a
+   channel name, and
    - for Email the SMTP host, its port (usually 587; 465 for SMTPS), the
      username and password, the sender and the recipients (separated by
      commas). Leave the username and password empty for a mail server that
@@ -3623,8 +3637,8 @@ nothing.
    certificate error, Telegram's answer, or `HTTP 404: ...` from a webhook.
    A webhook, Discord or Slack channel counts as sent only when the service
    answers with success (2xx); a redirect is a failure, so give the final URL.
-   While a channel's test runs, its **Edit** and **Disable** (or **Enable**)
-   buttons wait, so that the outcome shown is that of the settings the test
+   While a channel's test runs, its **Edit** button and its **Send alerts**
+   box wait, so that the outcome shown is that of the settings the test
    was sent with.
 
 Telegram, webhook, Discord and Slack messages leave from the supervisor's
@@ -3644,16 +3658,14 @@ of Discord and Slack channels.
 **History** lists the latest 100 notifications sent, newest first: the
 tests, the alerts and what `POST /api/v1/notifications/send` sends, each with
 the channel it went to, its time and **Delivered** or **Failed**; click an
-entry for the error. Filter it by the kind of channel and by the result. The
-summary above counts the active channels and the notifications sent,
-delivered and failed. An entry that UNOS cannot read, for example one
+entry for the error. Filter it by the kind of channel and by the result. An entry that UNOS cannot read, for example one
 damaged from outside, is left out, and the supervisor's log says so.
 
 ### Notification Events
 
-The form's **Notify on events** choices are stored, but they have no effect
-yet: every enabled channel receives every alert, and no other event
-(container status, temperatures, backups) sends a notification.
+Every enabled channel receives every alert, so a channel has no choice of
+events; no other event (container status, temperatures, backups) sends a
+notification. A channel's **Send alerts** box turns it on and off.
 
 ---
 

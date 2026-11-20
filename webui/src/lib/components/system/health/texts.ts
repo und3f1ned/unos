@@ -1,6 +1,4 @@
-import { AlertTriangle, Check, Moon, X } from "lucide-svelte";
 import type { DiskPrediction, SmartInfo } from "$lib/api/health";
-import type { IconComponent } from "$lib/components/ui";
 import type { Translate } from "$lib/i18n";
 
 // What System > Health shows of a disk's health, in the language of the page (ADR-0287). The
@@ -31,18 +29,26 @@ export function predictionOf(disk: SmartInfo, predictions: DiskPrediction[]): Di
   return predictions.find((prediction) => prediction.serial === disk.serial);
 }
 
-export function healthIcon(status: string): IconComponent {
-  if (status === "PASSED") return Check;
-  if (status === "FAILED") return X;
-  if (status === "STANDBY") return Moon;
-  return AlertTriangle;
-}
-
 export function healthClass(status: string): string {
   if (status === "PASSED") return "text-success";
   if (status === "FAILED") return "text-error";
-  if (status === "STANDBY") return "text-info";
+  if (status === "STANDBY") return "text-content-secondary";
   return "text-warning";
+}
+
+/**
+ * The one badge of a disk in the list: a prediction to replace it soon comes first, then
+ * smartctl's overall health in plain words. Keys of the catalog and the badge's look.
+ */
+export function diskState(
+  disk: SmartInfo,
+  prediction: DiskPrediction | undefined
+): { key: string; variant: "success" | "warning" | "error" | "neutral" } {
+  if (prediction) return { key: "health.replaceSoon", variant: "error" };
+  if (disk.health_status === "FAILED") return { key: "health.state.failing", variant: "error" };
+  if (disk.health_status === "PASSED") return { key: "health.state.healthy", variant: "success" };
+  if (disk.health_status === "STANDBY") return { key: "health.state.asleep", variant: "neutral" };
+  return { key: "health.state.unknown", variant: "warning" };
 }
 
 /** The text of `value` by its key in `keys`, in the language of the page; else `value`. */

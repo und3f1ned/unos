@@ -1,5 +1,4 @@
 <script lang="ts">
-  import { Globe } from "lucide-svelte";
   import { setHostname } from "$lib/api/network";
   import { setTimezone } from "$lib/api/system";
   import { Alert, Button, Card, Input, Select, Skeleton } from "$lib/components/ui";
@@ -50,11 +49,7 @@
 </script>
 
 <!-- The name and time zone of the host, set on the host (ADR-0331) -->
-<Card>
-  <h3 class="card-title mb-4">
-    <Globe class="w-5 h-5 text-content-secondary" />
-    {$t("general.host.title")}
-  </h3>
+<Card title={$t("general.host.title")}>
 
   {#if host.loading}
     <!-- Loading (ADR-0430): the two fields with their buttons and hints. -->
@@ -77,11 +72,13 @@
             <div class="min-w-0 flex-1 basis-56">
               <Input id="general-hostname" label={$t("general.host.hostname")} bind:value={host.hostname} maxlength={63} />
             </div>
+            <!-- Disabled only while there is nothing to save, and it says so. -->
             <Button
               type="submit"
               variant="secondary"
               loading={savingHostname}
               disabled={!host.hostname.trim() || host.hostname.trim() === host.savedHostname}
+              title={!host.hostname.trim() || host.hostname.trim() === host.savedHostname ? $t("general.host.unchanged") : undefined}
             >
               {$t("general.host.saveHostname")}
             </Button>
@@ -102,7 +99,8 @@
                 disabled={host.zones.length === 0}
               />
             </div>
-            <Button variant="secondary" loading={savingZone} disabled={!host.zone || host.zone === host.savedZone} onclick={saveZone}>
+            <Button variant="secondary" loading={savingZone} disabled={!host.zone || host.zone === host.savedZone}
+              title={!host.zone || host.zone === host.savedZone ? $t("general.host.unchanged") : undefined} onclick={saveZone}>
               {$t("general.host.saveZone")}
             </Button>
           </div>

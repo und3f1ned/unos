@@ -119,7 +119,7 @@ test.describe('Resource Monitor', () => {
     const { send } = await openWithFakes(page);
     // Until the first stats come, the cards are skeletons in their places (ADR-0430).
     await expect(page.locator('main [aria-busy="true"] [data-skeleton]').first()).toBeVisible();
-    await expect(page.getByText('Waiting for WebSocket data...')).toHaveCount(0);
+    await expect(page.getByText('Waiting for the first statistics…')).toHaveCount(0);
     await send();
     // The connection's one place is the sidebar's line (ADR-0431).
     await expect(page.locator('aside').getByText('Connected', { exact: true })).toBeVisible();
@@ -129,10 +129,10 @@ test.describe('Resource Monitor', () => {
     await expect(card(page, 'Memory').getByText('2.5 GB / 8 GB', { exact: true })).toBeVisible();
     await expect(card(page, 'Network').getByText('↓ 1.5 KB/s', { exact: true })).toBeVisible();
     await expect(card(page, 'Network').getByText('↑ 1 KB/s', { exact: true })).toBeVisible();
-    await expect(card(page, 'Disk I/O').getByText('R: 512 B/s', { exact: true })).toBeVisible();
-    await expect(card(page, 'Disk I/O').getByText('W: 3.25 MB/s', { exact: true })).toBeVisible();
+    await expect(card(page, 'Disk I/O').getByText('Read 512 B/s', { exact: true })).toBeVisible();
+    await expect(card(page, 'Disk I/O').getByText('Write 3.25 MB/s', { exact: true })).toBeVisible();
 
-    const processes = card(page, 'Top Processes');
+    const processes = card(page, 'Top processes');
     await expect(processes.getByText(/ten processes of the host that use the most CPU/)).toBeVisible();
     await expect(processes.getByRole('columnheader')).toHaveText(['Name', 'PID', 'User', 'CPU', 'Memory']);
     await expect(processes.getByRole('row').filter({ hasText: 'smbd' }).getByRole('cell')).toHaveText([
@@ -161,7 +161,7 @@ test.describe('Resource Monitor', () => {
     await expect(cpu.getByText('Peak 25.0%', { exact: true })).toBeVisible();
     await expect(memory.getByText('Peak 45.0%', { exact: true })).toBeVisible();
     await expect(network.getByText('Peak ↓ 2 KB/s ↑ 1 KB/s', { exact: true })).toBeVisible();
-    await expect(disk.getByText('Peak R: 1 KB/s W: 3.25 MB/s', { exact: true })).toBeVisible();
+    await expect(disk.getByText('Peak: read 1 KB/s, write 3.25 MB/s', { exact: true })).toBeVisible();
     // The chart spans the 5 minutes up to the newest point; a line breaks where two points are
     // more than 30 s apart (here 100 and 20 s ago), and CPU is drawn from 0 (y 40) to 100% (y 0).
     const cpuChart = cpu.getByRole('img', { name: /^CPU over/ });
@@ -177,7 +177,7 @@ test.describe('Resource Monitor', () => {
     expectDrawn(await drawn(cpuChart), [['M', 33.33, 16], ['M', 88.89, 30], ['M', 97.78, 32], ['L', 100, 35]]);
     await expect(memory.getByText('Peak 50.0%', { exact: true })).toBeVisible();
     await expect(network.getByText('Peak ↓ 2 MB/s ↑ 1 MB/s', { exact: true })).toBeVisible();
-    await expect(disk.getByText('Peak R: 5 MB/s W: 6 MB/s', { exact: true })).toBeVisible();
+    await expect(disk.getByText('Peak: read 5 MB/s, write 6 MB/s', { exact: true })).toBeVisible();
 
     await range.getByRole('button', { name: '1 hour', exact: true }).click();
     await expect(memory.getByRole('img', { name: 'Memory over the last hour' })).toBeVisible();
@@ -192,7 +192,7 @@ test.describe('Resource Monitor', () => {
     expectDrawn((await drawn(network.getByRole('img', { name: /^Network over/ }))).slice(0, 1), [['M', 50, 0]]);
     await expect(memory.getByText('Peak 70.0%', { exact: true })).toBeVisible();
     await expect(network.getByText('Peak ↓ 8 MB/s ↑ 4 MB/s', { exact: true })).toBeVisible();
-    await expect(disk.getByText('Peak R: 50 MB/s W: 60 MB/s', { exact: true })).toBeVisible();
+    await expect(disk.getByText('Peak: read 50 MB/s, write 60 MB/s', { exact: true })).toBeVisible();
 
     await range.getByRole('button', { name: '5 min', exact: true }).click();
     await expect(cpu.getByText('Peak 25.0%', { exact: true })).toBeVisible();
@@ -277,7 +277,7 @@ test.describe('Resource Monitor', () => {
 
     // The connection's one place is the sidebar's line (ADR-0431).
     await expect(page.locator('aside').getByText('Connected', { exact: true })).toBeVisible();
-    const rows = card(page, 'Top Processes').getByRole('row').filter({ has: page.getByRole('cell') });
+    const rows = card(page, 'Top processes').getByRole('row').filter({ has: page.getByRole('cell') });
     await expect(rows.first()).toBeVisible();
     expect(await rows.count()).toBeGreaterThan(0);
     expect(await rows.count()).toBeLessThanOrEqual(10);
@@ -314,8 +314,8 @@ test.describe('Resource Monitor', () => {
     await expect(network.getByText('↑ 1 КБ/с', { exact: true })).toBeVisible();
     await expect(network.getByText('Пик ↓ 2 КБ/с ↑ 1 КБ/с', { exact: true })).toBeVisible();
     const disk = card(page, 'Дисковый ввод-вывод');
-    await expect(disk.getByText('Чтение: 512 Б/с', { exact: true })).toBeVisible();
-    await expect(disk.getByText('Запись: 3,25 МБ/с', { exact: true })).toBeVisible();
+    await expect(disk.getByText('Чтение 512 Б/с', { exact: true })).toBeVisible();
+    await expect(disk.getByText('Запись 3,25 МБ/с', { exact: true })).toBeVisible();
     await expect(disk.getByText('Пик: чтение 1 КБ/с, запись 3,25 МБ/с', { exact: true })).toBeVisible();
 
     await range.getByRole('button', { name: '1 час', exact: true }).click();
@@ -333,7 +333,7 @@ test.describe('Resource Monitor', () => {
     ]);
     // No English label or unit is left, in the cards or the table.
     for (const english of [
-      'Resource Monitor', 'Live', 'CPU', 'Memory', 'Network', 'Disk I/O', 'Top Processes', '5 min', '1 hour',
+      'Resource Monitor', 'Live', 'CPU', 'Memory', 'Network', 'Disk I/O', 'Top processes', '5 min', '1 hour',
     ]) {
       await expect(page.getByText(english, { exact: true })).toHaveCount(0);
     }

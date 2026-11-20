@@ -100,12 +100,12 @@
       <!-- Live rates from the WebSocket -->
       {#if wsIface && ifaceIsUp}
         <div class="flex items-center gap-4 text-sm">
-          <span class="flex items-center gap-1 text-status-success">
-            <ArrowDown class="w-3 h-3" />
+          <span class="flex items-center gap-1 text-content-secondary tabular">
+            <ArrowDown class="w-3 h-3" aria-hidden="true" />
             {formatRate(wsIface.bytes_recv_rate)}
           </span>
-          <span class="flex items-center gap-1 text-status-info">
-            <ArrowUp class="w-3 h-3" />
+          <span class="flex items-center gap-1 text-content-secondary tabular">
+            <ArrowUp class="w-3 h-3" aria-hidden="true" />
             {formatRate(wsIface.bytes_sent_rate)}
           </span>
         </div>
@@ -156,19 +156,19 @@
           <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
             <div>
               <p class="text-xs text-content-muted">{$t("network.interface.rxBytes")}</p>
-              <p class="text-sm text-status-success">{formatSize(wsIface.bytes_recv)}</p>
+              <p class="text-sm tabular">{formatSize(wsIface.bytes_recv)}</p>
             </div>
             <div>
               <p class="text-xs text-content-muted">{$t("network.interface.txBytes")}</p>
-              <p class="text-sm text-status-info">{formatSize(wsIface.bytes_sent)}</p>
+              <p class="text-sm tabular">{formatSize(wsIface.bytes_sent)}</p>
             </div>
             <div>
               <p class="text-xs text-content-muted">{$t("network.interface.rxRate")}</p>
-              <p class="text-sm text-status-success">{formatRate(wsIface.bytes_recv_rate)}</p>
+              <p class="text-sm tabular">{formatRate(wsIface.bytes_recv_rate)}</p>
             </div>
             <div>
               <p class="text-xs text-content-muted">{$t("network.interface.txRate")}</p>
-              <p class="text-sm text-status-info">{formatRate(wsIface.bytes_sent_rate)}</p>
+              <p class="text-sm tabular">{formatRate(wsIface.bytes_sent_rate)}</p>
             </div>
           </div>
         </div>
@@ -177,8 +177,9 @@
       <!-- Actions -->
       <div class="mt-4 pt-4 border-t border-border flex gap-2">
         {#if iface.enabled}
+          <!-- Routine, so secondary: the dialog that asks first carries the danger. -->
           <Button
-            variant="danger"
+            variant="secondary"
             size="sm"
             icon={PowerOff}
             disabled={busy !== null}
@@ -188,7 +189,7 @@
           </Button>
         {:else}
           <Button
-            variant="success"
+            variant="secondary"
             size="sm"
             icon={Power}
             loading={busy === iface.name}

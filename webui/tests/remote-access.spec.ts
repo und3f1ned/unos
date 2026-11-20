@@ -49,7 +49,10 @@ test.describe('Remote access', () => {
     // The defaults are offered; the public address is the administrator's.
     await expect(card.getByLabel('UDP port')).toHaveValue('51820');
     await expect(card.getByLabel('Tunnel network')).toHaveValue('10.99.0.0/24');
-    await expect(card.getByRole('button', { name: 'Turn on' })).toBeDisabled();
+    // Turn on says at the field what it waits for.
+    await card.getByRole('button', { name: 'Turn on' }).click();
+    await expect(card.getByText('Enter the public address that your devices connect to.')).toBeVisible();
+    await expect(page.getByRole('dialog', { name: 'Turn remote access on' })).toHaveCount(0);
     await card.getByLabel('Public address').fill('nas.example.org');
     await card.getByRole('button', { name: 'Turn on' }).click();
 

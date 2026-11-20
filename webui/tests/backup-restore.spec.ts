@@ -76,14 +76,14 @@ const restoreDialog = (page: Page) => page.getByRole('dialog', { name: 'Restore 
 
 /** The "encrypted" mark in the details of backup `name` in the list. */
 const encryptedMark = (page: Page, name: string) =>
-  page.getByText(name, { exact: true }).locator('..').getByText('encrypted', { exact: true });
+  page.getByText(name, { exact: true }).locator('..').getByText('Encrypted', { exact: true });
 
-/** The file input behind "Upload Backup"; it offers encrypted backups too. */
+/** The file input behind "Upload backup"; it offers encrypted backups too. */
 const uploadInput = (page: Page) => page.locator('input[type="file"][accept=".tar.gz,.tar.gz.enc"]');
 
 async function openBackupTab(page: Page) {
   await page.goto('/system#backup');
-  await expect(page.getByRole('heading', { name: 'Backup and Restore' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Backup & Restore' })).toBeVisible();
 }
 
 /**
@@ -221,7 +221,7 @@ test.describe('Restoring backups', () => {
   test('restores a backup created in the UI', async ({ authenticatedPage: page }) => {
     await openBackupTab(page);
     const created = page.waitForResponse((response) => isApi('/backup/create')(response.request()));
-    await page.getByRole('button', { name: 'Create Backup' }).click();
+    await page.getByRole('button', { name: 'Create backup' }).click();
     const createResponse = await created;
     expect(createResponse.status()).toBe(200);
     const name: string = (await createResponse.json()).backup.filename;
@@ -244,8 +244,8 @@ test.describe('Restoring backups', () => {
     expect(request.method()).toBe('POST');
     expect(request.postDataJSON()).toEqual({});
     expect((await request.response())?.status()).toBe(200);
-    await expect(dialog.getByText('Restore Complete')).toBeVisible();
-    await expect(dialog.getByText('- database')).toBeVisible();
+    await expect(dialog.getByText('Restore complete')).toBeVisible();
+    await expect(dialog.getByText('database', { exact: true })).toBeVisible();
     // The database is the one from the backup: the user added since is gone.
     expect(await usernames(page)).not.toContain(later);
     expect(await usernames(page)).toContain('admin');
@@ -272,7 +272,7 @@ test.describe('Restoring backups', () => {
 
     await dialog.getByLabel('Passphrase of the encrypted backup').fill('wrong passphrase');
     await restoreButton.click();
-    await expect(dialog.getByText('Restore Failed')).toBeVisible();
+    await expect(dialog.getByText('Restore failed')).toBeVisible();
     await expect(dialog.getByText('Invalid passphrase or corrupted backup')).toBeVisible();
     expect(await usernames(page)).toContain(later);
     await dialog.getByRole('button', { name: 'Close' }).click();
@@ -284,7 +284,7 @@ test.describe('Restoring backups', () => {
     await restoreButton.click();
     const request = await requestSent;
     expect(request.postDataJSON()).toEqual({ passphrase });
-    await expect(dialog.getByText('Restore Complete')).toBeVisible();
+    await expect(dialog.getByText('Restore complete')).toBeVisible();
     expect(await usernames(page)).not.toContain(later);
   });
 
@@ -335,8 +335,8 @@ test.describe('Restoring backups', () => {
     const requestSent = page.waitForRequest(isApi(`/backup/restore/${stored}`));
     await dialog.getByRole('button', { name: 'Restore', exact: true }).click();
     expect((await requestSent).postDataJSON()).toEqual({ passphrase });
-    await expect(dialog.getByText('Restore Complete')).toBeVisible();
-    await expect(dialog.getByText('- database')).toBeVisible();
+    await expect(dialog.getByText('Restore complete')).toBeVisible();
+    await expect(dialog.getByText('database', { exact: true })).toBeVisible();
     expect(await usernames(page)).not.toContain(later);
   });
 
@@ -347,15 +347,15 @@ test.describe('Restoring backups', () => {
 
     // A backup task with a passphrase, made in System > Scheduler and run now.
     await page.goto('/system#scheduler');
-    await page.getByRole('button', { name: 'New Task' }).click();
-    await page.getByLabel('Task Name', { exact: true }).fill(taskName);
-    await page.getByLabel('Task Type', { exact: true }).selectOption('backup');
+    await page.getByRole('button', { name: 'New task' }).click();
+    await page.getByLabel('Task name', { exact: true }).fill(taskName);
+    await page.getByLabel('Task type', { exact: true }).selectOption('backup');
     await page.getByLabel('Passphrase', { exact: true }).fill(passphrase);
-    await page.getByLabel('Confirm Passphrase', { exact: true }).fill(passphrase);
+    await page.getByLabel('Confirm passphrase', { exact: true }).fill(passphrase);
     const created = page.waitForResponse(
       (response) => isApi('/scheduler/tasks')(response.request()) && response.request().method() === 'POST',
     );
-    await page.getByRole('button', { name: 'Create Task' }).click();
+    await page.getByRole('button', { name: 'Create task' }).click();
     const task = await (await created).json();
     tasks.push(task.id);
     expect(task).not.toHaveProperty('passphrase');
@@ -387,7 +387,7 @@ test.describe('Restoring backups', () => {
     await expect(restoreButton).toBeDisabled();
     await dialog.getByLabel('Passphrase of the encrypted backup').fill('not the passphrase');
     await restoreButton.click();
-    await expect(dialog.getByText('Restore Failed')).toBeVisible();
+    await expect(dialog.getByText('Restore failed')).toBeVisible();
     await expect(dialog.getByText('Invalid passphrase or corrupted backup')).toBeVisible();
     expect(await usernames(page)).toContain(later);
     await dialog.getByRole('button', { name: 'Close' }).click();
@@ -398,8 +398,8 @@ test.describe('Restoring backups', () => {
     const requestSent = page.waitForRequest(isApi(`/backup/restore/${name}`));
     await restoreButton.click();
     expect((await requestSent).postDataJSON()).toEqual({ passphrase });
-    await expect(dialog.getByText('Restore Complete')).toBeVisible();
-    await expect(dialog.getByText('- database')).toBeVisible();
+    await expect(dialog.getByText('Restore complete')).toBeVisible();
+    await expect(dialog.getByText('database', { exact: true })).toBeVisible();
     // The database is the one the task backed up: the user added since is gone.
     expect(await usernames(page)).not.toContain(later);
   });

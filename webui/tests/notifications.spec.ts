@@ -11,9 +11,9 @@ import {
   type Channel,
 } from './notifications-fakes';
 
-// System > Notifications (system.notification-channels; ADR-0045, ADR-0326). The tab has no
-// heading of its own: it starts with summary cards ("Active Channels", ...) above its Channels
-// and History views. The stand-in reaches no mail server, Telegram or webhook receiver, so the
+// System > Notifications (system.notification-channels; ADR-0045, ADR-0326). The tab's
+// heading says which channels receive alerts, with one Add channel for every kind, above its
+// Channels and History views. The stand-in reaches no mail server, Telegram or webhook receiver, so the
 // tests of deliveries answer the page with the route fakes of notifications-fakes.ts; the last
 // test sends a real one, to a mail server that is not there.
 
@@ -58,7 +58,22 @@ const LOWER_CASE_PUT: Channel = {
 
 async function openTab(page: Page) {
   await page.goto('/system#notifications');
-  await expect(page.getByText('Active Channels', { exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { level: 2, name: 'Notifications' })).toBeVisible();
+}
+
+/**
+ * Open the dialog for a new channel of ``kind``: one Add channel for every kind, whose dialog asks
+ * for the kind.
+ */
+async function openAdd(page: Page, kind: string): Promise<Locator> {
+  await page.locator('main').getByRole('button', { name: 'Add channel', exact: true }).first().click();
+  if (kind !== 'Email') {
+    await page.getByRole('dialog').getByRole('combobox', { name: 'Kind' }).click();
+    await page.getByRole('option', { name: kind, exact: true }).click();
+  }
+  const dialog = page.getByRole('dialog', { name: `Add ${kind} channel` });
+  await expect(dialog).toBeVisible();
+  return dialog;
 }
 
 /** The field of ``scope`` labelled ``label``, with the mark of a required field or without. */
@@ -76,33 +91,32 @@ function historyItems(page: Page): Locator {
 
 /** Open the dialog for a new channel of ``kind``, fill in ``fields`` (label: value) and add it. */
 async function addChannel(page: Page, kind: string, fields: Record<string, string>) {
-  await page.getByRole('button', { name: `Add ${kind}` }).click();
-  const dialog = page.getByRole('dialog', { name: `Add ${kind} channel` });
-  await expect(dialog).toBeVisible();
+  const dialog = await openAdd(page, kind);
   for (const [label, value] of Object.entries(fields)) await field(dialog, label).fill(value);
-  await dialog.getByRole('button', { name: 'Add Channel' }).click();
+  await dialog.getByRole('button', { name: 'Add channel' }).click();
   await expect(dialog).toBeHidden();
 }
 
-/** The number of a summary card: the line above its label. */
-function stat(page: Page, label: string): Locator {
-  return page.getByText(label, { exact: true }).locator('xpath=preceding-sibling::p');
-}
-
 test.describe('Notifications', () => {
-  test('shows the summary, every kind of channel to add, and the history with its filters', async ({
+  test('says which channels receive alerts, adds every kind from one button, and shows the history with its filters', async ({
     authenticatedPage: page,
   }) => {
     await fakeNotificationsApi(page);
     await openTab(page);
 
-    for (const label of ['Active Channels', 'Total Sent', 'Delivered', 'Failed']) {
-      await expect(stat(page, label)).toHaveText('0');
-    }
+    // No tiles of zeros above the views, one button that adds a channel of any kind, and one line
+    // that says what the channels receive.
+    await expect(page.getByText('Every enabled channel, of any kind, receives the health alerts and the power announcements.'))
+      .toBeVisible();
+    for (const label of ['Active Channels', 'Total Sent']) await expect(page.getByText(label)).toHaveCount(0);
     await expect(page.getByRole('button', { name: 'Channels', exact: true })).toHaveAttribute('aria-pressed', 'true');
-    for (const kind of ['Email', 'Telegram', 'Webhook', 'Discord', 'Slack']) {
-      await expect(page.getByRole('button', { name: `Add ${kind}` })).toBeVisible();
-    }
+    await expect(page.getByRole('button', { name: /^Add (Email|Telegram|Webhook|Discord|Slack)$/ })).toHaveCount(0);
+    const dialog = await openAdd(page, 'Email');
+    await dialog.getByRole('combobox', { name: 'Kind' }).click();
+    await expect(page.getByRole('option')).toHaveText(['Email', 'Telegram', 'Webhook', 'Discord', 'Slack']);
+    await page.keyboard.press('Escape');
+    await dialog.getByRole('button', { name: 'Cancel' }).click();
+    await expect(dialog).toBeHidden();
     await expect(page.getByText('No notification channels')).toBeVisible();
     await expect(page.getByRole('button', { name: 'Refresh' })).toBeVisible();
 
@@ -121,8 +135,7 @@ test.describe('Notifications', () => {
     const fake = await fakeNotificationsApi(page);
     await openTab(page);
 
-    await page.getByRole('button', { name: 'Add Email' }).click();
-    const dialog = page.getByRole('dialog', { name: 'Add Email channel' });
+    const dialog = await openAdd(page, 'Email');
     await expect(dialog.getByText('Leave both empty for a mail server that takes mail without a login')).toBeVisible();
     await expect(dialog.getByRole('checkbox', { name: "Verify the server's certificate" })).toBeChecked();
     await expect(dialog.getByRole('checkbox', { name: 'Use TLS/STARTTLS' })).toBeChecked();
@@ -137,14 +150,14 @@ test.describe('Notifications', () => {
     await expect(plain).toBeHidden();
     await expect(dialog.getByRole('checkbox', { name: "Verify the server's certificate" })).toBeEnabled();
     // The mail server, the sender and a recipient are needed.
-    await expect(dialog.getByRole('button', { name: 'Add Channel' })).toBeDisabled();
+    await expect(dialog.getByRole('button', { name: 'Add channel' })).toBeDisabled();
     await field(dialog, 'Channel name').fill('Admin mail');
     await field(dialog, 'SMTP host').fill('mail.example.com');
     await field(dialog, 'Username').fill('nas@example.com');
     await field(dialog, 'Password').fill('mail-pass');
     await field(dialog, 'From address').fill('nas@example.com');
     await field(dialog, 'To addresses').fill('me@example.com, you@example.com');
-    await dialog.getByRole('button', { name: 'Add Channel' }).click();
+    await dialog.getByRole('button', { name: 'Add channel' }).click();
     await expect(dialog).toBeHidden();
 
     expect(fake.saved[0]).toEqual({
@@ -162,14 +175,14 @@ test.describe('Notifications', () => {
     await expect(channelItem(page, 'Admin mail')).toContainText('me@example.com, you@example.com via mail.example.com:587');
 
     // A mail server with a self-signed certificate, on the SMTPS port.
-    await page.getByRole('button', { name: 'Add Email' }).click();
+    await openAdd(page, 'Email');
     await field(dialog, 'Channel name').fill('Self-signed mail');
     await field(dialog, 'SMTP host').fill('mail.lan');
     await field(dialog, 'Port').fill('465');
     await field(dialog, 'From address').fill('nas@example.com');
     await field(dialog, 'To addresses').fill('me@example.com');
     await dialog.getByRole('checkbox', { name: "Verify the server's certificate" }).uncheck();
-    await dialog.getByRole('button', { name: 'Add Channel' }).click();
+    await dialog.getByRole('button', { name: 'Add channel' }).click();
     await expect(dialog).toBeHidden();
     // Without a username and password: the server sends without a login.
     expect(fake.saved[1].body.email_config).toMatchObject({
@@ -199,9 +212,6 @@ test.describe('Notifications', () => {
     await expect(channel.getByRole('alert')).toContainText(sendFailed(UNTRUSTED_CERTIFICATE));
     await expect(channel.getByRole('status')).toHaveCount(0);
     expect(fake.tests).toEqual([ADMIN_MAIL.id, ADMIN_MAIL.id]);
-    await expect(stat(page, 'Total Sent')).toHaveText('2');
-    await expect(stat(page, 'Delivered')).toHaveText('1');
-    await expect(stat(page, 'Failed')).toHaveText('1');
 
     // Newest first, without a reload.
     await page.getByRole('button', { name: 'History', exact: true }).click();
@@ -252,7 +262,7 @@ test.describe('Notifications', () => {
     await channel.getByRole('button', { name: 'Send test to Admin mail' }).click();
     await expect(channel.getByRole('button', { name: 'Send test to Admin mail' })).toBeDisabled();
     await expect(channel.getByRole('button', { name: 'Edit Admin mail' })).toBeDisabled();
-    await expect(channel.getByRole('button', { name: 'Disable Admin mail' })).toBeDisabled();
+    await expect(channel.getByRole('checkbox', { name: 'Send alerts to Admin mail' })).toBeDisabled();
     // The other channels can be changed meanwhile; their tests wait for this one.
     const other = channelItem(page, 'Home hook');
     await expect(other.getByRole('button', { name: 'Edit Home hook' })).toBeEnabled();
@@ -261,34 +271,34 @@ test.describe('Notifications', () => {
     answer();
     await expect(channel.getByRole('status')).toHaveText('Test notification sent');
     await expect(channel.getByRole('button', { name: 'Edit Admin mail' })).toBeEnabled();
-    await expect(channel.getByRole('button', { name: 'Disable Admin mail' })).toBeEnabled();
+    await expect(channel.getByRole('checkbox', { name: 'Send alerts to Admin mail' })).toBeEnabled();
     expect(fake.tests).toEqual([ADMIN_MAIL.id]);
   });
 
-  test('a channel lists the events it is for by their names, in English and in Russian', async ({
+  test('a channel offers no events, since every alert reaches every enabled channel, and a save keeps the stored ones', async ({
     authenticatedPage: page,
   }) => {
-    // Three events of the server's list and one that the server does not know: up to three show, and
-    // a count of the rest.
+    // Events that the server stored but does not act on: neither the list nor the dialog shows them,
+    // and a save sends them back as they were.
     const events = ['disk_warning', 'smart_error', 'ups_on_battery', 'backup_failed'];
-    await fakeNotificationsApi(page, [{ ...HOOK_WITH_HEADERS, events }]);
+    const fake = await fakeNotificationsApi(page, [{ ...HOOK_WITH_HEADERS, events }]);
     await openTab(page);
     const channel = channelItem(page, 'Home hook');
-
+    await expect(channel).toContainText('POST to hooks.example.com');
     for (const text of ['Disk Space Warning', 'SMART Error', 'ups_on_battery', '+1 more']) {
-      await expect(channel.getByText(text, { exact: true })).toBeVisible();
+      await expect(channel.getByText(text)).toHaveCount(0);
     }
-    await expect(channel).not.toContainText('disk_warning');
 
-    // The language that the Account page keeps in this browser (ADR-0287).
-    await page.evaluate(() => localStorage.setItem('unos-locale', 'ru'));
-    await page.reload();
-    const russian = page.getByRole('list', { name: 'Каналы уведомлений' }).getByRole('listitem')
-      .filter({ hasText: 'Home hook' });
-    for (const text of ['Мало места на диске', 'Ошибка SMART', 'ups_on_battery', 'ещё 1']) {
-      await expect(russian.getByText(text, { exact: true })).toBeVisible();
-    }
-    await expect(russian).not.toContainText('smart_error');
+    await channel.getByRole('button', { name: 'Edit Home hook' }).click();
+    const dialog = page.getByRole('dialog', { name: 'Edit Webhook channel' });
+    await expect(dialog.getByText('Notify on events')).toHaveCount(0);
+    await expect(dialog.getByRole('checkbox')).toHaveCount(1);
+    // An existing channel keeps its kind.
+    await expect(dialog.getByRole('combobox', { name: 'Kind' })).toHaveCount(0);
+    await field(dialog, 'Channel name').fill('Home hook 2');
+    await dialog.getByRole('button', { name: 'Save changes' }).click();
+    await expect(dialog).toBeHidden();
+    expect(fake.saved.map((saved) => saved.body.events)).toEqual([events]);
   });
 
   test('a disabled channel can be tested before it receives notifications', async ({ authenticatedPage: page }) => {
@@ -296,14 +306,16 @@ test.describe('Notifications', () => {
     await openTab(page);
     const channel = channelItem(page, 'Admin mail');
     await expect(channel).toContainText('Disabled');
-    await expect(stat(page, 'Active Channels')).toHaveText('0');
 
     await channel.getByRole('button', { name: 'Send test to Admin mail' }).click();
     await expect(channel.getByRole('status')).toHaveText('Test notification sent');
     expect(fake.tests).toEqual([ADMIN_MAIL.id]);
 
-    await channel.getByRole('button', { name: 'Enable Admin mail' }).click();
-    await expect(stat(page, 'Active Channels')).toHaveText('1');
+    const toggle = channel.getByRole('checkbox', { name: 'Send alerts to Admin mail' });
+    await expect(toggle).not.toBeChecked();
+    await toggle.click();
+    await expect(toggle).toBeChecked();
+    await expect(channel).not.toContainText('Disabled');
     expect(fake.saved).toEqual([
       { method: 'PUT', path: `/configs/${ADMIN_MAIL.id}`, body: { ...ADMIN_MAIL, enabled: true } },
     ]);
@@ -316,13 +328,12 @@ test.describe('Notifications', () => {
     await openTab(page);
 
     await addChannel(page, 'Telegram', { 'Channel name': 'Phone', 'Bot token': '123456:ABC-DEF', 'Chat ID': '42' });
-    await page.getByRole('button', { name: 'Add Webhook' }).click();
-    const hookDialog = page.getByRole('dialog', { name: 'Add Webhook channel' });
+    const hookDialog = await openAdd(page, 'Webhook');
     await field(hookDialog, 'Channel name').fill('Home hook');
     await field(hookDialog, 'URL').fill('https://hooks.example.com/unos?key=k1');
     await hookDialog.getByRole('combobox', { name: 'Method' }).click();
     await hookDialog.getByRole('option', { name: 'PUT' }).click();
-    await hookDialog.getByRole('button', { name: 'Add Channel' }).click();
+    await hookDialog.getByRole('button', { name: 'Add channel' }).click();
     await expect(hookDialog).toBeHidden();
     await addChannel(page, 'Discord', { 'Channel name': 'Discord', 'Webhook URL': 'https://discord.com/api/webhooks/1/abc' });
     await addChannel(page, 'Slack', { 'Channel name': 'Team', 'Webhook URL': 'https://hooks.slack.com/services/T1/B1/xyz' });
@@ -377,7 +388,7 @@ test.describe('Notifications', () => {
     const dialog = page.getByRole('dialog', { name: 'Edit Webhook channel' });
     await expect(field(dialog, 'URL')).toHaveValue('https://hooks.example.com/unos');
     await field(dialog, 'URL').fill('https://hooks.example.com/unos2');
-    await dialog.getByRole('button', { name: 'Save Changes' }).click();
+    await dialog.getByRole('button', { name: 'Save changes' }).click();
     await expect(dialog).toBeHidden();
 
     expect(fake.saved).toEqual([{
@@ -397,7 +408,7 @@ test.describe('Notifications', () => {
     const put = page.getByRole('dialog', { name: 'Edit Webhook channel' });
     await expect(put.getByRole('combobox', { name: 'Method' })).toHaveText('PUT');
     await field(put, 'Channel name').fill('Upload hook');
-    await put.getByRole('button', { name: 'Save Changes' }).click();
+    await put.getByRole('button', { name: 'Save changes' }).click();
     await expect(put).toBeHidden();
     expect(fake.saved[1].body).toEqual({
       name: 'Upload hook', channel: 'webhook', enabled: true, events: [],
@@ -413,23 +424,20 @@ test.describe('Notifications', () => {
     const fake = await fakeNotificationsApi(page, [ADMIN_MAIL]);
     await page.goto('/system#notifications');
 
-    for (const label of ['Активные каналы', 'Всего отправлено', 'Доставлено', 'Не доставлено']) {
-      await expect(page.getByText(label, { exact: true })).toBeVisible();
-    }
+    await expect(page.getByText('Каждый включённый канал любого вида получает оповещения о состоянии и объявления о питании.'))
+      .toBeVisible();
     await expect(page.getByRole('button', { name: 'Каналы', exact: true })).toHaveAttribute('aria-pressed', 'true');
-    for (const add of ['Добавить эл. почту', 'Добавить Telegram', 'Добавить вебхук', 'Добавить Discord', 'Добавить Slack']) {
-      await expect(page.getByRole('button', { name: add, exact: true })).toBeVisible();
-    }
+    await expect(page.locator('main').getByRole('button', { name: 'Добавить канал', exact: true })).toHaveCount(1);
     const channel = page.getByRole('list', { name: 'Каналы уведомлений' }).getByRole('listitem')
       .filter({ hasText: 'Admin mail' });
     await expect(channel).toContainText('Эл. почта');
     await expect(channel).toContainText('me@example.com через mail.example.com:587');
-    await expect(channel.getByRole('button', { name: 'Выключить канал «Admin mail»' })).toBeVisible();
+    await expect(channel.getByRole('checkbox', { name: 'Отправлять оповещения в канал «Admin mail»' })).toBeVisible();
 
-    // A new channel's dialog, with its default name, and an existing one's with the events of the
-    // server's list by their names in Russian.
-    await page.getByRole('button', { name: 'Добавить эл. почту' }).click();
+    // A new channel's dialog, with its kind and default name, and an existing one's, without events.
+    await page.locator('main').getByRole('button', { name: 'Добавить канал', exact: true }).click();
     const create = page.getByRole('dialog', { name: 'Новый канал: Эл. почта' });
+    await expect(create.getByRole('combobox', { name: 'Вид' })).toHaveText('Эл. почта');
     await expect(field(create, 'Название канала')).toHaveValue('Уведомления: Эл. почта');
     await expect(create.getByRole('checkbox', { name: 'Проверять сертификат сервера' })).toBeChecked();
     await expect(create.getByRole('button', { name: 'Добавить канал' })).toBeDisabled();
@@ -438,8 +446,7 @@ test.describe('Notifications', () => {
     await channel.getByRole('button', { name: 'Изменить канал «Admin mail»' }).click();
     const edit = page.getByRole('dialog', { name: 'Изменение канала: Эл. почта' });
     await expect(field(edit, 'SMTP-сервер')).toHaveValue('mail.example.com');
-    await expect(edit.getByText('Мало места на диске', { exact: true })).toBeVisible();
-    await expect(edit.getByText('Когда на диске заканчивается место', { exact: true })).toBeVisible();
+    await expect(edit.getByText('Уведомлять о событиях')).toHaveCount(0);
     await edit.getByRole('button', { name: 'Отмена' }).click();
     await expect(edit).toBeHidden();
 

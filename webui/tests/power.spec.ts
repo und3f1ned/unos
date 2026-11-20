@@ -207,11 +207,14 @@ async function openPowerTab(page: Page) {
   await expect(page.getByRole('heading', { name: 'Power Management' })).toBeVisible();
 }
 
-/** The time of `at` as the tab shows it, in the browser's locale and time zone. */
+/** The NAS's time zone, which the fakes' schedule names: the tab shows its times on that clock. */
+const NAS_ZONE = 'Europe/Berlin';
+
+/** The time of `at` as the tab shows it, in the browser's locale and the NAS's time zone. */
 async function shownTime(page: Page, at: string): Promise<string> {
   return page.evaluate(
-    (value) => new Date(value).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-    at,
+    ([value, timeZone]) => new Date(value).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', timeZone }),
+    [at, NAS_ZONE],
   );
 }
 
@@ -228,20 +231,32 @@ test.describe('Power Management', () => {
     await openPowerTab(page);
 
     const card = (title: string) => page.locator('.card', { has: page.getByRole('heading', { name: title }) });
-    await expect(card('Reboot, shutdown and suspend').getByText(POWER_OFF)).toBeVisible();
-    await expect(card('Wake-on-LAN').getByText(POWER_OFF)).toBeVisible();
+    // One reason for the pending action, the plan and the interfaces, said once with Retry;
+    // the actions wait for it and say why.
+    const reason = page.getByRole('alert').filter({ hasText: "The host's power state could not be read" });
+    await expect(reason).toContainText(POWER_OFF);
+    await expect(reason.getByRole('button', { name: 'Retry' })).toBeVisible();
+    await expect(page.getByText(POWER_OFF)).toHaveCount(1);
+    const actions = card('Reboot, shutdown and suspend');
+    for (const name of ['Reboot', 'Shut down', 'Suspend']) {
+      await expect(actions.getByRole('button', { name, exact: true })).toBeDisabled();
+    }
+    await expect(actions.getByText("Unavailable: the host's power state could not be read.")).toBeVisible();
+    await expect(card('Status').getByText("Not available until the host's power state can be read.")).toBeVisible();
+    await expect(card('Wake-on-LAN').getByText("Not available until the host's power state can be read.")).toBeVisible();
 
-    // The schedule cannot be read there, and settings that would act on the host are refused
-    // (ADR-0407); the settings stay as they were.
+    // Settings that would act on the host are refused (ADR-0407); the settings stay as they were.
+    // Save waits for a change.
     const schedule = card('Shutdown and wake schedule');
-    await expect(schedule.getByText(POWER_OFF)).toBeVisible();
-    await schedule.getByLabel('Shut down every day at').check();
+    await expect(schedule.getByRole('button', { name: 'Save schedule' })).toBeDisabled();
+    await expect(schedule.getByText('No changes')).toBeVisible();
+    await schedule.getByLabel('Daily shutdown', { exact: true }).check();
     await schedule.getByRole('button', { name: 'Save schedule' }).click();
     await expect(schedule.getByRole('alert')).toContainText('The schedule was not saved');
     await expect(schedule.getByRole('alert')).toContainText(POWER_OFF);
     await page.reload();
     await expect(page.getByRole('heading', { name: 'Power Management' })).toBeVisible();
-    await expect(card('Shutdown and wake schedule').getByLabel('Shut down every day at')).not.toBeChecked();
+    await expect(card('Shutdown and wake schedule').getByLabel('Daily shutdown', { exact: true })).not.toBeChecked();
   });
 
   test('Reboot asks for confirmation, and Cancel in the dialog changes nothing', async ({
@@ -289,7 +304,7 @@ test.describe('Power Management', () => {
     const host = await fakePowerApi(page);
     await openPowerTab(page);
 
-    await button(page, 'Shutdown').click();
+    await button(page, 'Shut down').click();
     const dialog = page.getByRole('dialog', { name: 'Shut down the host?' });
     await expect(dialog).toContainText('It starts again with its power button, or with a Wake-on-LAN packet where the board supports that');
     await dialog.getByRole('button', { name: 'Shut down in 1 minute' }).click();
@@ -460,7 +475,7 @@ test.describe('Power Management', () => {
     const host = await fakePowerApi(page);
     await page.goto('/system#power');
 
-    await expect(page.getByRole('heading', { name: 'Управление питанием' })).toBeVisible();
+    await expect(page.getByRole('heading', { level: 2, name: 'Питание', exact: true })).toBeVisible();
     await expect(page.getByRole('heading', { name: 'Перезагрузка, выключение и спящий режим' })).toBeVisible();
     await expect(button(page, 'Выключить')).toBeVisible();
     await expect(button(page, 'Спящий режим')).toBeVisible();
@@ -474,8 +489,8 @@ test.describe('Power Management', () => {
     await expect(page.getByText('Запланирована перезагрузка')).toBeVisible();
     const at = host.pending.at as string;
     const time = await page.evaluate(
-      (value) => new Date(value).toLocaleTimeString('ru', { hour: '2-digit', minute: '2-digit' }),
-      at,
+      ([value, timeZone]) => new Date(value).toLocaleTimeString('ru', { hour: '2-digit', minute: '2-digit', timeZone }),
+      [at, NAS_ZONE],
     );
     await expect(page.getByText(`Хост перезагрузится в ${time}.`)).toBeVisible();
     await button(page, 'Отменить перезагрузку').click();
@@ -484,10 +499,10 @@ test.describe('Power Management', () => {
 
     const row = (name: string) => page.getByRole('row').filter({ has: page.getByRole('cell', { name, exact: true }) });
     await expect(page.getByRole('columnheader')).toHaveText(['Интерфейс', 'MAC-адрес', 'Wake-on-LAN', 'Изменить']);
-    await expect(row('eth0').locator('.badge')).toHaveText('Выключен');
-    await expect(row('eth1').locator('.badge')).toHaveText('Не поддерживается');
+    await expect(row('eth0').locator('.badge:visible')).toHaveText('Выключен');
+    await expect(row('eth1').locator('.badge:visible')).toHaveText('Не поддерживается');
     await button(page, 'Включить Wake-on-LAN для eth0').click();
-    await expect(row('eth0').locator('.badge')).toHaveText('Включён');
+    await expect(row('eth0').locator('.badge:visible')).toHaveText('Включён');
     await expect(page.getByRole('status')).toContainText('Wake-on-LAN включён для eth0');
     await expect(button(page, 'Выключить Wake-on-LAN для eth0')).toBeVisible();
     expect(host.changes).toEqual(['POST /reboot', 'POST /cancel', 'POST /wol/eth0/enable']);
@@ -524,17 +539,22 @@ const IDLE_ANNOUNCED = {
   since: '2026-11-18T10:21:01+00:00',
 };
 
-/** A time of the API as the schedule card shows it, in the browser's zone and locale. */
+/** A time of the API as the Status card shows it, in the browser's locale and the NAS's zone. */
 async function shownWhen(page: Page, at: string): Promise<string> {
   return page.evaluate(
-    (value) =>
-      new Date(value).toLocaleString([], { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }),
-    at,
+    ([value, timeZone]) =>
+      new Date(value).toLocaleString([], {
+        weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', timeZone,
+      }),
+    [at, NAS_ZONE],
   );
 }
 
+// The settings and the plan they make are two cards: the Schedule card holds the
+// settings, the Status card what the NAS does next.
 const scheduleCard = (page: Page) =>
   page.locator('.card', { has: page.getByRole('heading', { name: 'Shutdown and wake schedule' }) });
+const statusCard = (page: Page) => page.locator('.card', { has: page.getByRole('heading', { name: 'Status', exact: true }) });
 
 test.describe('The power schedule', () => {
   test('shows the next shutdown, the next wake with the RTC alarm, and why the host is not idle', async ({
@@ -560,16 +580,25 @@ test.describe('The power schedule', () => {
     const config = { ...SETTINGS_OFF, auto_shutdown: true, auto_wakeup: true, idle_shutdown: true, idle_timeout_minutes: 45 };
     const host = await fakePowerApi(page, { schedule, config });
     await openPowerTab(page);
-    const card = scheduleCard(page);
+    const settings = scheduleCard(page);
+    const card = statusCard(page);
 
-    await expect(card.getByText("The times are on the host's clock: Europe/Berlin.")).toBeVisible();
-    const browserZone = await page.evaluate(() => Intl.DateTimeFormat().resolvedOptions().timeZone);
-    await expect(card.getByText(`The plan's times below are in this browser's time zone: ${browserZone}.`)).toBeVisible();
-    await expect(card.getByLabel('Shut down every day at')).toBeChecked();
-    await expect(card.getByLabel('Time of the daily shutdown')).toHaveValue('23:00');
-    await expect(card.getByLabel('Wake every day at')).toBeChecked();
-    await expect(card.getByLabel('Time of the daily wake')).toHaveValue('07:00');
-    await expect(card.getByLabel('Idle minutes before the shutdown')).toHaveValue('45');
+    // One time zone, the NAS's, named once for the tab; the plan's times are on its clock.
+    await expect(page.getByText("Times on this tab are on the NAS's clock: Europe/Berlin.")).toHaveCount(1);
+    await expect(page.getByText(/browser's time zone/)).toHaveCount(0);
+    await expect(settings.getByLabel('Daily shutdown', { exact: true })).toBeChecked();
+    await expect(settings.getByLabel('Time of the daily shutdown')).toHaveValue('23:00');
+    await expect(settings.getByLabel('Daily wake', { exact: true })).toBeChecked();
+    await expect(settings.getByLabel('Time of the daily wake')).toHaveValue('07:00');
+    await expect(settings.getByLabel('Idle minutes before the shutdown')).toHaveValue('45');
+    // The three fields stand in one column.
+    const lefts = await Promise.all(
+      ['Time of the daily shutdown', 'Time of the daily wake', 'Idle minutes before the shutdown'].map(
+        async (label) => (await settings.getByLabel(label).boundingBox())?.x,
+      ),
+    );
+    expect(new Set(lefts).size).toBe(1);
+    await expect(settings.getByRole('button', { name: 'Save schedule' })).toBeDisabled();
 
     const next = card.getByTestId('power-next-shutdown');
     await expect(next).toContainText(await shownWhen(page, '2026-11-18T22:00:00Z'));
@@ -577,7 +606,6 @@ test.describe('The power schedule', () => {
     const wake = card.getByTestId('power-next-wake');
     await expect(wake).toContainText(await shownWhen(page, '2026-11-19T06:00:00Z'));
     await expect(wake).toContainText(`The RTC's wake alarm is set for ${await shownWhen(page, '2026-11-19T06:00:00Z')}.`);
-    await expect(wake).toContainText('whether the board powers on from it is the board');
     await expect(card.getByTestId('power-idle').getByRole('listitem')).toHaveText([
       '2 open pages of the web interface',
       'A login session of root on the host',
@@ -590,6 +618,30 @@ test.describe('The power schedule', () => {
     expect(host.puts).toEqual([]);
   });
 
+  test('a shutdown that is off lists no reasons, and a reason found twice shows once with its count', async ({
+    authenticatedPage: page,
+  }) => {
+    const schedule = scheduleOff();
+    schedule.idle.found = [
+      finding('login_session', 'root'), finding('login_session', 'root'), finding('smb_client', '192.168.1.20'),
+      finding('smb_client', '192.168.1.20'),
+    ];
+    const host = await fakePowerApi(page, { schedule });
+    await openPowerTab(page);
+    const idle = statusCard(page).getByTestId('power-idle');
+    // The idle shutdown is off: what keeps the host busy does not matter.
+    await expect(idle).toHaveText('Off');
+    await expect(idle.getByRole('listitem')).toHaveCount(0);
+
+    host.schedule.idle.enabled = true;
+    host.config.idle_shutdown = true;
+    await page.reload();
+    await expect(statusCard(page).getByTestId('power-idle').getByRole('listitem')).toHaveText([
+      '2 login sessions of root on the host',
+      'The SMB client 192.168.1.20 (2 times)',
+    ]);
+  });
+
   test('an idle host says when it shuts down', async ({ authenticatedPage: page }) => {
     const schedule = scheduleOff();
     schedule.idle = {
@@ -599,7 +651,7 @@ test.describe('The power schedule', () => {
     await fakePowerApi(page, { schedule, config: { ...SETTINGS_OFF, idle_shutdown: true } });
     await openPowerTab(page);
 
-    await expect(scheduleCard(page).getByTestId('power-idle')).toHaveText(
+    await expect(statusCard(page).getByTestId('power-idle')).toHaveText(
       `The host is idle since ${await shownWhen(page, '2026-11-18T10:01:01Z')} and shuts down at ` +
         `${await shownWhen(page, '2026-11-18T10:31:01Z')} at the earliest.`,
     );
@@ -619,13 +671,15 @@ test.describe('The power schedule', () => {
     });
     await openPowerTab(page);
     const card = scheduleCard(page);
-    await expect(card.getByTestId('power-next-shutdown')).toHaveText('None: the daily shutdown is off');
+    await expect(statusCard(page).getByTestId('power-next-shutdown')).toHaveText('Off');
+    // A row's field shows while the row is on.
+    await expect(card.getByLabel('Time of the daily shutdown')).toHaveCount(0);
 
-    await card.getByLabel('Shut down every day at').check();
+    await card.getByLabel('Daily shutdown', { exact: true }).check();
     await card.getByLabel('Time of the daily shutdown').fill('22:30');
-    await card.getByLabel('Wake every day at').check();
+    await card.getByLabel('Daily wake', { exact: true }).check();
     await card.getByLabel('Time of the daily wake').fill('06:45');
-    await card.getByLabel('Shut down after the host has been idle for').check();
+    await card.getByLabel('Idle shutdown', { exact: true }).check();
     await card.getByLabel('Idle minutes before the shutdown').fill('45');
     await card.getByRole('button', { name: 'Save schedule' }).click();
 
@@ -634,8 +688,9 @@ test.describe('The power schedule', () => {
       wake_on_lan: true, auto_shutdown: true, shutdown_hour: 22, shutdown_minute: 30, auto_wakeup: true,
       wakeup_hour: 6, wakeup_minute: 45, idle_shutdown: true, idle_timeout_minutes: 45,
     }]);
-    await expect(card.getByTestId('power-next-shutdown')).toContainText(await shownWhen(page, '2026-11-18T21:30:00Z'));
-    await expect(card.getByTestId('power-next-wake')).toContainText(
+    await expect(card.getByRole('button', { name: 'Save schedule' })).toBeDisabled();
+    await expect(statusCard(page).getByTestId('power-next-shutdown')).toContainText(await shownWhen(page, '2026-11-18T21:30:00Z'));
+    await expect(statusCard(page).getByTestId('power-next-wake')).toContainText(
       `The RTC's wake alarm is set for ${await shownWhen(page, '2026-11-19T05:45:00Z')}.`,
     );
     expect(host.changes).toEqual([]);
@@ -653,8 +708,16 @@ test.describe('The power schedule', () => {
     await openPowerTab(page);
     const card = scheduleCard(page);
 
-    await expect(card.getByTestId('power-next-wake')).toHaveText(`No wake is promised: ${NO_RTC}`);
-    await card.getByLabel('Wake every day at').check();
+    // The wake is off: the status says so, and the RTC's problem shows only once the wake is chosen.
+    await expect(statusCard(page).getByTestId('power-next-wake')).toHaveText('Off');
+    await expect(card.getByTestId('power-rtc-problem')).toHaveCount(0);
+    await card.getByLabel('Daily wake', { exact: true }).check();
+    // A plain sentence, and the host's reason on demand.
+    const problem = card.getByTestId('power-rtc-problem');
+    await expect(problem).toContainText("This host's clock (RTC) cannot wake it, so no wake is promised.");
+    await expect(problem.getByText(NO_RTC)).toBeHidden();
+    await problem.getByText('Details', { exact: true }).click();
+    await expect(problem.getByText(NO_RTC)).toBeVisible();
     await card.getByRole('button', { name: 'Save schedule' }).click();
 
     await expect(card.getByRole('alert')).toContainText('The schedule was not saved');
@@ -670,14 +733,15 @@ test.describe('The power schedule', () => {
     await openPowerTab(page);
     const card = scheduleCard(page);
 
+    await card.getByLabel('Idle shutdown', { exact: true }).check();
     await card.getByLabel('Idle minutes before the shutdown').fill('10');
     await card.getByRole('button', { name: 'Save schedule' }).click();
     await expect(card.getByRole('alert')).toContainText('Enter each time as HH:MM, and the idle time as 20 to 1440 minutes.');
     expect(host.puts).toEqual([]);
 
     await card.getByLabel('Idle minutes before the shutdown').fill('30');
-    await card.getByLabel('Shut down every day at').check();
-    await card.getByLabel('Wake every day at').check();
+    await card.getByLabel('Daily shutdown', { exact: true }).check();
+    await card.getByLabel('Daily wake', { exact: true }).check();
     await card.getByLabel('Time of the daily wake').fill('23:05');
     await card.getByRole('button', { name: 'Save schedule' }).click();
     await expect(card.getByRole('alert')).toContainText(WAKE_TOO_CLOSE);
@@ -700,7 +764,7 @@ test.describe('The power schedule', () => {
     };
     await fakePowerApi(page, { schedule, config: { ...SETTINGS_OFF, auto_shutdown: true } });
     await openPowerTab(page);
-    const next = scheduleCard(page).getByTestId('power-next-shutdown');
+    const next = statusCard(page).getByTestId('power-next-shutdown');
 
     await expect(next).toContainText('Postponed');
     await expect(next).toContainText('It waits for:');
@@ -748,22 +812,30 @@ test.describe('The power schedule', () => {
   test('in Russian: the schedule, its findings and its save', async ({ authenticatedPage: page }) => {
     await page.evaluate((key) => localStorage.setItem(key, 'ru'), LOCALE_KEY);
     const schedule = scheduleOff();
-    schedule.shutdown = { enabled: true, time: '23:00', next: '2026-11-18T22:00:00Z', state: 'planned', held_by: [] };
-    schedule.idle.found = [finding('web_session', null, { amount: 2 }), finding('smb_client', '192.168.1.20')];
+    schedule.shutdown = {
+      enabled: true, time: '23:00', next: '2026-11-18T22:00:00Z', state: 'postponed',
+      held_by: [finding('web_session', null, { amount: 2 }), finding('login_session', 'root'), finding('login_session', 'root')],
+    };
     schedule.wake.rtc = { available: false, reason: NO_RTC, alarm: null };
     const host = await fakePowerApi(page, { schedule, config: { ...SETTINGS_OFF, auto_shutdown: true } });
     await page.goto('/system#power');
 
     const card = page.locator('.card', { has: page.getByRole('heading', { name: 'Расписание выключения и включения' }) });
-    await expect(card.getByText('Время указано по часам хоста: Europe/Berlin.')).toBeVisible();
-    await expect(card.getByLabel('Выключать каждый день в')).toBeChecked();
-    await expect(card.getByTestId('power-next-shutdown')).toContainText('Запланировано');
-    await expect(card.getByTestId('power-next-wake')).toHaveText(`Включение не обещано: ${NO_RTC}`);
-    await expect(card.getByTestId('power-idle').getByRole('listitem')).toHaveText([
+    const status = page.locator('.card', { has: page.getByRole('heading', { name: 'Состояние', exact: true }) });
+    await expect(page.getByText('Время на этой вкладке — по часам NAS: Europe/Berlin.')).toBeVisible();
+    await expect(card.getByLabel('Ежедневное выключение', { exact: true })).toBeChecked();
+    await expect(status.getByTestId('power-next-shutdown')).toContainText('Отложено');
+    await expect(status.getByTestId('power-next-shutdown').getByRole('listitem')).toHaveText([
       '2 открытые страницы веб-интерфейса',
-      'SMB-клиент 192.168.1.20',
+      '2 сеанса входа root на хосте',
     ]);
-    await card.getByLabel('Выключать после простоя хоста в течение').check();
+    await expect(status.getByTestId('power-next-wake')).toHaveText('Выключено');
+    await card.getByLabel('Ежедневное включение', { exact: true }).check();
+    await expect(card.getByTestId('power-rtc-problem')).toContainText(
+      'Часы хоста (RTC) не могут его включить, поэтому включение не обещано.',
+    );
+    await card.getByLabel('Ежедневное включение', { exact: true }).uncheck();
+    await card.getByLabel('Выключение при простое', { exact: true }).check();
     await card.getByRole('button', { name: 'Сохранить расписание' }).click();
     await expect(page.getByRole('status')).toContainText('Расписание питания сохранено');
     expect(host.puts.map((put) => put.idle_shutdown)).toEqual([true]);

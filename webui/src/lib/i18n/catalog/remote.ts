@@ -14,11 +14,17 @@ export const en = {
 	'remote.notInstalled': 'Not installed',
 	'remote.description':
 		"A WireGuard tunnel lets your own devices reach the NAS from outside the LAN: the web UI, the shares, SSH and the apps' ports at the NAS's address in the tunnel, and no other computer of your LAN.",
+	// One line of help under the title; the description and the router's part on demand.
+	'remote.summary': 'Your own devices reach the NAS from outside the LAN through a WireGuard tunnel.',
+	'remote.more': 'How it works',
+	// A peer whose last handshake is less than 3 minutes old.
+	'remote.online': 'Connected',
 	'remote.missing':
 		'wireguard-tools is not installed on the host. Install the package wireguard-tools on the host (sudo apt install wireguard-tools), then open this page again.',
 	'remote.loadFailed': 'Remote access could not be read',
 	'remote.endpoint': 'Public address',
 	'remote.endpointHint': "Your router's public IP address or a dynamic DNS name, which your devices connect to from outside",
+	'remote.endpointNeeded': 'Enter the public address that your devices connect to.',
 	'remote.endpointPlaceholder': 'nas.example.org',
 	'remote.port': 'UDP port',
 	'remote.portHint': 'Your router forwards this UDP port to the NAS',
@@ -123,11 +129,15 @@ export const ru: Translation<typeof en> = {
 	'remote.notInstalled': 'Не установлен',
 	'remote.description':
 		'Туннель WireGuard позволяет вашим устройствам подключаться к NAS извне локальной сети: к веб-интерфейсу, общим папкам, SSH и портам приложений по адресу NAS в туннеле, и больше ни к одному компьютеру вашей сети.',
+	'remote.summary': 'Ваши устройства подключаются к NAS извне локальной сети через туннель WireGuard.',
+	'remote.more': 'Как это работает',
+	'remote.online': 'Подключён',
 	'remote.missing':
 		'На хосте не установлен wireguard-tools. Установите на хосте пакет wireguard-tools (sudo apt install wireguard-tools) и снова откройте эту страницу.',
 	'remote.loadFailed': 'Не удалось прочитать настройки удалённого доступа',
 	'remote.endpoint': 'Внешний адрес',
 	'remote.endpointHint': 'Внешний IP-адрес вашего маршрутизатора или имя динамического DNS, к которому устройства подключаются извне',
+	'remote.endpointNeeded': 'Введите публичный адрес, к которому подключаются ваши устройства.',
 	'remote.endpointPlaceholder': 'nas.example.org',
 	'remote.port': 'UDP-порт',
 	'remote.portHint': 'Маршрутизатор перенаправляет этот UDP-порт на NAS',

@@ -14,20 +14,7 @@
   import LogFilters from "$lib/components/system/journal/LogFilters.svelte";
   import { textOf } from "$lib/components/system/journal/logs";
   import { t } from "$lib/i18n";
-  import {
-    FileText,
-    RefreshCw,
-    Filter,
-    Terminal,
-    Server,
-    Shield,
-    Box,
-    Calendar,
-    ChevronDown,
-    ChevronUp,
-    Pause,
-    Play
-  } from "lucide-svelte";
+  import { RefreshCw } from "lucide-svelte";
 
   // Replaced whole, never changed in place: up to 1000 entries need no deep proxy.
   let entries = $state.raw<LogEntry[]>([]);
@@ -65,20 +52,9 @@
   let stream: JournalStream | null = null;
   // Why Auto stopped by itself: the connection was lost, or the server refused it (4403).
   let autoStopped = $state<"" | "lost" | "forbidden">("");
-  let showFilters = $state(true);
   // The number of the newest request: the answer of an older one (a source picked
   // before, an earlier refresh) arrives too late to be shown.
   let latestRequest = 0;
-
-  // Source icons mapping
-  const sourceIcons: Record<string, typeof FileText> = {
-    journal: Server,
-    dmesg: Terminal,
-    docker: Box,
-    samba: FileText,
-    auth: Shield,
-    cron: Calendar
-  };
 
   onMount(async () => {
     await loadSources();
@@ -206,90 +182,53 @@
   let currentSource = $derived(sources.find(s => s.name === source));
 </script>
 
+<!-- One look of tabs for the sources, Follow as an on/off, the filters always shown, and one
+     refresh. -->
 <div class="space-y-4">
-  <!-- Header -->
-  <div class="flex flex-wrap items-center justify-between gap-3">
-    <div class="flex flex-wrap items-center gap-x-3 gap-y-1">
-      <h2 class="text-xl font-bold flex items-center gap-2">
-        <FileText class="w-5 h-5 text-info" />
-        {$t("logs.title")}
-      </h2>
+  <div class="flex flex-wrap items-start justify-between gap-3">
+    <div class="min-w-0">
+      <h2 class="text-xl font-semibold">{$t("logs.title")}</h2>
       {#if currentSource}
-        <span class="text-sm text-secondary">
-          {textOf($t, SOURCE_DESCRIPTIONS, currentSource.name, currentSource.description)}
-        </span>
+        <p class="page-subtitle">{textOf($t, SOURCE_DESCRIPTIONS, currentSource.name, currentSource.description)}</p>
       {/if}
     </div>
-    <div class="flex flex-wrap items-center gap-2">
-      <Button
-        variant={autoRefresh ? "primary" : "secondary"}
-        size="sm"
-        onclick={toggleAutoRefresh}
-        title={autoRefresh ? $t("logs.autoStop") : $t("logs.autoStart")}
-      >
-        {#if autoRefresh}
-          <Pause class="w-4 h-4" />
-        {:else}
-          <Play class="w-4 h-4" />
-        {/if}
-        <span class="ml-1">{$t("logs.auto")}</span>
-      </Button>
-      <Button
-        variant="secondary"
-        size="sm"
-        onclick={() => showFilters = !showFilters}
-      >
-        <Filter class="w-4 h-4" />
-        <span class="ml-1">{$t("logs.filters")}</span>
-        {#if showFilters}
-          <ChevronUp class="w-3 h-3 ml-1" />
-        {:else}
-          <ChevronDown class="w-3 h-3 ml-1" />
-        {/if}
-      </Button>
-      <Button
-        variant="secondary"
-        size="sm"
-        onclick={loadLogs}
-        disabled={loading}
-      >
-        <RefreshCw class="w-4 h-4 {loading ? 'animate-spin' : ''}" />
+    <div class="flex flex-wrap items-center gap-3">
+      <!-- The place of the design system's Switch: follow the journal as it gets new entries. -->
+      <label class="flex cursor-pointer items-center gap-2 text-sm text-content-secondary" title={autoRefresh ? $t("logs.autoStop") : $t("logs.autoStart")}>
+        <input type="checkbox" class="form-checkbox h-4 w-4" checked={autoRefresh} onchange={toggleAutoRefresh} />
+        {$t("logs.auto")}
+      </label>
+      <Button variant="ghost" size="icon" icon={RefreshCw} loading={loading} title={$t("common.refresh")} onclick={loadLogs}>
+        <span class="sr-only">{$t("common.refresh")}</span>
       </Button>
     </div>
   </div>
 
-  <!-- Source Tabs -->
-  <div class="flex flex-wrap gap-2">
+  <div class="tab-bar">
     {#each sources as s}
-      {@const Icon = sourceIcons[s.name] || FileText}
-      <Button variant="plain"
-        class="px-3 py-1.5 rounded-lg text-sm font-medium flex items-center gap-2 transition-colors
-          {source === s.name
-            ? 'bg-brand text-content-on-brand'
-            : 'bg-surface-overlay text-secondary hover:text-content hover:bg-surface-muted'}"
+      <Button
+        variant="plain"
+        class="tab-underline {source === s.name ? 'tab-underline-active' : ''}"
+        pressed={source === s.name}
         onclick={() => { source = s.name; handleSourceChange(); }}
       >
-        <Icon class="w-4 h-4" />
         {textOf($t, SOURCE_LABELS, s.name, s.label)}
       </Button>
     {/each}
   </div>
 
-  <!-- Filters Panel -->
-  {#if showFilters}
-    <LogFilters
-      bind:search
-      bind:priority
-      bind:since
-      bind:limitStr
-      {loading}
-      {hasActiveFilters}
-      onsearch={handleSearch}
-      onclearsearch={clearSearch}
-      onfilterchange={handleFilterChange}
-      onclear={clearFilters}
-    />
-  {/if}
+  <LogFilters
+    bind:search
+    bind:priority
+    bind:since
+    bind:limitStr
+    {loading}
+    {hasActiveFilters}
+    onsearch={handleSearch}
+    onclearsearch={clearSearch}
+    onfilterchange={handleFilterChange}
+    onclear={clearFilters}
+  />
 
   <!-- Error Alert, instead of the list: no entries belong to the request that failed -->
   <LogEntries {entries} {loading} {error} {search} {hasActiveFilters} {autoRefresh} {autoStopped} />
