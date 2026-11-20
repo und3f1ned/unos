@@ -188,9 +188,12 @@
     unavailable={hostError !== "" && plan.scheduleError === hostError}
     {cancelling}
     oncancel={cancelPending}
+    onretry={loadPending}
   />
 
-  <PowerActionsCard unavailable={pendingError !== ""} onask={ask} />
+  <!-- The actions wait only for the reason that the page says once, with Retry: a pending action
+       that alone could not be read is the Status card's, with its own Retry. -->
+  <PowerActionsCard unavailable={hostError !== "" && pendingError === hostError} onask={ask} />
 
   <PowerScheduleCard {plan} unavailable={hostError !== "" && plan.configError === hostError} onnotice={showNotice} />
 

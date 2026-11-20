@@ -11,6 +11,8 @@
     task: ScheduledTask;
     // Run Now was asked and the server has not answered yet.
     running: boolean;
+    // The on/off was changed and the server has not answered yet: the box shows the new state.
+    toggling: boolean;
     ontoggle: (task: ScheduledTask) => void;
     onrun: (task: ScheduledTask) => void;
     onhistory: (task: ScheduledTask) => void;
@@ -20,7 +22,7 @@
     timeZone: string | undefined;
   };
 
-  let { task, running, ontoggle, onrun, onhistory, onedit, ondelete, timeZone }: Props = $props();
+  let { task, running, toggling, ontoggle, onrun, onhistory, onedit, ondelete, timeZone }: Props = $props();
 
   let TypeIcon = $derived(getTaskTypeIcon(task.task_type));
 
@@ -61,13 +63,10 @@
       type="checkbox"
       class="form-checkbox mt-1 h-4 w-4 shrink-0"
       checked={task.enabled}
+      disabled={toggling}
       title={task.enabled ? $t("scheduler.task.disable") : $t("scheduler.task.enable")}
       aria-label={$t("scheduler.task.onOff", { name: task.name })}
-      onchange={(e) => {
-        // The box shows the stored state: it changes once the server took the change.
-        e.currentTarget.checked = task.enabled;
-        ontoggle(task);
-      }}
+      onchange={() => ontoggle(task)}
     />
 
     <div class="min-w-0 flex-1">

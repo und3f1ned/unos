@@ -1,6 +1,7 @@
 <script lang="ts">
   import { messageOf } from "$lib/errors";
   import { onMount } from "svelte";
+  import { SvelteSet } from "svelte/reactivity";
   import { Plus, RefreshCw } from "lucide-svelte";
   import { Alert, Button } from "$lib/components/ui";
   import {
@@ -27,6 +28,9 @@
 
   let logs = $state<NotificationLog[]>([]);
   let configs = $state<NotificationConfig[]>([]);
+  // The channels whose on/off the server has not answered yet: each shows its new state, and takes
+  // no second change until the answer.
+  const toggling = new SvelteSet<string>();
   let loading = $state(true);
   let loadError = $state("");
   let activeView = $state<View>("channels");
@@ -120,12 +124,20 @@
   }
 
   async function toggleEnabled(config: NotificationConfig) {
-    if (!config.id) return;
+    const id = config.id;
+    if (!id || toggling.has(id)) return;
+    // The new state at once; the stored one comes back with the reload if the server refused it.
+    const stored = { ...config };
+    config.enabled = !stored.enabled;
+    toggling.add(id);
     try {
-      await updateConfig(config.id, { ...config, enabled: !config.enabled });
+      await updateConfig(id, { ...stored, enabled: !stored.enabled });
       actionError = "";
     } catch (e) {
+      config.enabled = stored.enabled;
       actionError = messageOf(e);
+    } finally {
+      toggling.delete(id);
     }
     await loadData();
   }
@@ -185,6 +197,7 @@
       {loading}
       {results}
       {testing}
+      {toggling}
       oncreate={openCreate}
       ontest={handleTest}
       ontoggle={toggleEnabled}

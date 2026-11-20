@@ -24,9 +24,11 @@
     unavailable: boolean;
     cancelling: boolean;
     oncancel: () => void;
+    // Read the pending action again, after its read alone failed.
+    onretry: () => void;
   };
 
-  let { pending, pendingKnown, pendingError, schedule, scheduleError, zone, unavailable, cancelling, oncancel }: Props =
+  let { pending, pendingKnown, pendingError, schedule, scheduleError, zone, unavailable, cancelling, oncancel, onretry }: Props =
     $props();
 
   let describe = $derived((finding: PowerFinding, count: number): string => {
@@ -64,7 +66,10 @@
 <Card title={$t("power.status.title")}>
   <div class="space-y-4">
     {#if pendingError}
-      <Alert variant="error" size="sm" title={$t("power.pending.readError")}>{pendingError}</Alert>
+      <Alert variant="error" size="sm" title={$t("power.pending.readError")}>
+        <p class="break-words">{pendingError}</p>
+        <Button variant="secondary" size="sm" class="mt-2" onclick={onretry}>{$t("common.retry")}</Button>
+      </Alert>
     {:else if pending?.action}
       {@const reboot = pending.action === "reboot"}
       <Alert variant="warning" size="sm" title={reboot ? $t("power.pending.reboot") : $t("power.pending.shutdown")}>

@@ -240,18 +240,19 @@
     {/if}
   </fieldset></div>
 
-  <!-- Two groups side by side from md: what restic keeps, and how much a check reads. The fields
-       are compact, with short labels, so that they stand on one line. -->
+  <!-- Two groups side by side from md: what restic keeps, and how much a check reads; below md the
+       check under the counts. The three counts share one line at every width, as columns of one
+       width (at most 7rem) that narrow with the card. -->
   <div class="grid gap-x-10 gap-y-5 py-5 md:grid-cols-[auto_auto] md:justify-start">
-    <fieldset class="space-y-3">
+    <fieldset class="min-w-0 space-y-3">
       {@render legend($t("offsite.form.keep"), $t("offsite.form.keepHint"))}
-      <div class="flex flex-wrap gap-3">
-        <Input id="offsite-keep-daily" class="w-28" type="number" label={$t("offsite.form.keepDaily")} bind:value={form.keepDaily} />
-        <Input id="offsite-keep-weekly" class="w-28" type="number" label={$t("offsite.form.keepWeekly")} bind:value={form.keepWeekly} />
-        <Input id="offsite-keep-monthly" class="w-28" type="number" label={$t("offsite.form.keepMonthly")} bind:value={form.keepMonthly} />
+      <div class="grid grid-cols-[repeat(3,minmax(0,7rem))] gap-3">
+        <Input id="offsite-keep-daily" type="number" label={$t("offsite.form.keepDaily")} bind:value={form.keepDaily} />
+        <Input id="offsite-keep-weekly" type="number" label={$t("offsite.form.keepWeekly")} bind:value={form.keepWeekly} />
+        <Input id="offsite-keep-monthly" type="number" label={$t("offsite.form.keepMonthly")} bind:value={form.keepMonthly} />
       </div>
     </fieldset>
-    <fieldset class="space-y-3">
+    <fieldset class="min-w-0 space-y-3">
       {@render legend($t("offsite.form.check"), $t("offsite.form.checkHint"))}
       <div class="flex items-end gap-2">
         <Input id="offsite-check-percent" class="w-28" type="number" label={$t("offsite.form.checkPercent")} bind:value={form.checkPercent} />
@@ -260,12 +261,13 @@
     </fieldset>
   </div>
 
-  <div class="flex flex-wrap items-center gap-3 pt-5">
+  <!-- What a disabled Save waits for stands beside it, also on a phone, where it wraps in its column. -->
+  <div class="flex flex-wrap items-center gap-x-3 gap-y-2 pt-5">
     <Button type="submit" loading={saving} disabled={!canSave} aria-describedby={canSave ? undefined : "offsite-save-why"}>
       {saving ? $t("offsite.form.saving") : $t("offsite.form.save")}
     </Button>
     {#if !canSave && !saving && missing}
-      <p id="offsite-save-why" class="text-[13px] text-content-muted">{$t("offsite.form.needs", { what: missing })}</p>
+      <p id="offsite-save-why" class="min-w-0 flex-1 basis-40 text-[13px] text-content-muted">{$t("offsite.form.needs", { what: missing })}</p>
     {/if}
     {#if answer.configured}
       <Button variant="secondary" class="sm:ml-auto" icon={Trash2} disabled={running !== null} onclick={onforget}>{$t("offsite.form.forget")}</Button>

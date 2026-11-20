@@ -34,14 +34,23 @@ export class ChannelForm {
   port = $derived(Number(this.emailPort));
   // Plain SMTP: no TLS, so no certificate to check, and the password crosses the network as it is.
   plainSmtp = $derived(!this.emailTls && this.port !== 465);
-  complete = $derived(
-    this.kind === "email"
-      ? this.emailHost.trim() !== "" && Number.isInteger(this.port) && this.port > 0 && this.port < 65536 &&
-        this.emailFrom.trim() !== "" && this.recipients.length > 0
-      : this.kind === "telegram"
-        ? this.telegramToken.trim() !== "" && this.telegramChatId.trim() !== ""
-        : this.hookUrl.trim() !== ""
-  );
+  // What Save still waits for, as keys of the catalog: the dialog says it beside a disabled Save.
+  missing = $derived.by(() => {
+    const keys: string[] = [];
+    if (this.kind === "email") {
+      if (this.emailHost.trim() === "") keys.push("notifications.form.need.host");
+      if (!(Number.isInteger(this.port) && this.port > 0 && this.port < 65536)) keys.push("notifications.form.need.port");
+      if (this.emailFrom.trim() === "") keys.push("notifications.form.need.from");
+      if (this.recipients.length === 0) keys.push("notifications.form.need.recipient");
+    } else if (this.kind === "telegram") {
+      if (this.telegramToken.trim() === "") keys.push("notifications.form.need.token");
+      if (this.telegramChatId.trim() === "") keys.push("notifications.form.need.chat");
+    } else if (this.hookUrl.trim() === "") {
+      keys.push("notifications.form.need.url");
+    }
+    return keys;
+  });
+  complete = $derived(this.missing.length === 0);
   hookField = $derived(HOOK_FIELDS[this.kind === "discord" || this.kind === "slack" ? this.kind : "webhook"]);
 
   /** A new channel of `kind`, named `name`. */

@@ -115,6 +115,34 @@ test.describe('Disk Health', () => {
     await expect(page.getByText("Could not list the host's disks: lsblk failed")).toHaveCount(0);
   });
 
+  test('while the disks are read, the skeleton is the list: one flush card of rows, where the list will be', async ({
+    authenticatedPage: page,
+  }) => {
+    await fakeHealthApi(page);
+    let release = () => {};
+    const held = new Promise<void>((resolve) => (release = resolve));
+    await page.route(
+      (url) => url.pathname === '/api/v1/health/disks',
+      async (route) => {
+        await held;
+        await route.fallback();
+      },
+    );
+    await page.goto('/system#health');
+    const skeleton = page.locator('main .card-flush[aria-busy="true"]');
+    await expect(skeleton).toHaveCount(1);
+    await expect(skeleton.locator('> div')).toHaveCount(3);
+    await expect(skeleton.locator('.card')).toHaveCount(0);
+    const before = (await skeleton.boundingBox())!;
+
+    release();
+    const list = page.getByRole('list', { name: 'Disks' });
+    await expect(list).toBeVisible();
+    await expect(skeleton).toHaveCount(0);
+    const after = (await list.boundingBox())!;
+    expect([after.x, after.y, after.width]).toEqual([before.x, before.y, before.width]);
+  });
+
   // storage.smart: open a disk. The dialog shows what GET /health/disks
   // returned, so opening it runs no smartctl (ADR-0235).
   test('opens a disk with its SMART attributes, temperature and overall health', async ({

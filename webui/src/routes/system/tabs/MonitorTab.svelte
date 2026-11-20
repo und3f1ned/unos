@@ -139,7 +139,7 @@
 {#snippet chart(metric: string, svgClass: string, max: number, top: string, lines: { cls?: string; value: Series }[])}
   <div class="mt-3">
     <div class="relative">
-      <span class="absolute right-0 top-0 text-[11px] leading-none text-content-muted tabular" aria-hidden="true">{top}</span>
+      <span class="absolute right-0 top-0 text-[11px] leading-none text-content-muted tabular" aria-hidden="true" data-testid="chart-scale">{top}</span>
       <svg viewBox="0 0 100 40" preserveAspectRatio="none" class="h-16 w-full border-b border-l border-border {svgClass}" role="img" aria-label={chartName(metric)}>
         <line x1="0" y1="0.5" x2="100" y2="0.5" class="text-border" stroke="currentColor" stroke-width="1" stroke-dasharray="2 2" vector-effect="non-scaling-stroke" />
         {#each lines as line}
@@ -147,7 +147,7 @@
         {/each}
       </svg>
     </div>
-    <div class="mt-1 flex justify-between text-[11px] leading-none text-content-muted" aria-hidden="true">
+    <div class="mt-1 flex justify-between text-[11px] leading-none text-content-muted" aria-hidden="true" data-testid="chart-axis">
       <span>{$t(range.ago)}</span>
       <span>{$t("monitor.axis.now")}</span>
     </div>

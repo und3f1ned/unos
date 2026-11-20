@@ -8,9 +8,12 @@
 	import { intlLocale, t } from '$lib/i18n';
 	import { formatDateTime } from '$lib/time';
 	import { Plus, Trash2 } from 'lucide-svelte';
+	import { onMount } from 'svelte';
 
 	type Props = {
 		peers: RemotePeer[];
+		// How far the NAS's clock is ahead of the browser's, in milliseconds (getRemoteAccess).
+		clockAhead: number;
 		busy: boolean;
 		// The units of the traffic in the language of the page (formatBytes).
 		sizeUnits: string[];
@@ -18,14 +21,20 @@
 		onrevoke: (peer: RemotePeer) => void;
 	};
 
-	let { peers, busy, sizeUnits, onadd, onrevoke }: Props = $props();
+	let { peers, clockAhead, busy, sizeUnits, onadd, onrevoke }: Props = $props();
 
 	// WireGuard renews a live session's handshake every 2 minutes: a peer whose last one is younger
-	// than 3 minutes is connected now.
+	// than 3 minutes on the NAS's clock is connected now. The age is read again every 15 seconds,
+	// from the clock alone: the API is not asked again.
 	const ONLINE_MS = 180_000;
-	function online(peer: RemotePeer): boolean {
+	let now = $state(Date.now());
+	onMount(() => {
+		const timer = setInterval(() => (now = Date.now()), 15_000);
+		return () => clearInterval(timer);
+	});
+	function online(peer: RemotePeer, now: number): boolean {
 		const at = apiTime(peer.latest_handshake);
-		return at !== null && Date.now() - at.getTime() < ONLINE_MS;
+		return at !== null && now + clockAhead - at.getTime() < ONLINE_MS;
 	}
 </script>
 
@@ -46,7 +55,7 @@
 					<p class="flex flex-wrap items-center gap-x-2 font-medium">
 						<span>{peer.name}</span>
 						<span class="text-content-secondary font-normal">{peer.address}</span>
-						{#if online(peer)}<Badge variant="success" dot>{$t('remote.online')}</Badge>{/if}
+						{#if online(peer, now)}<Badge variant="success" dot>{$t('remote.online')}</Badge>{/if}
 					</p>
 					<p class="text-sm text-content-secondary">
 						{peer.latest_handshake

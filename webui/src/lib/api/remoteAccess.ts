@@ -1,4 +1,4 @@
-import { api } from "./client";
+import { api, apiFetch } from "./client";
 
 // System > Remote access (ADR-0420): the WireGuard tunnel on the host and the local names of apps.
 
@@ -71,8 +71,21 @@ export interface AppNamesStatus {
   apps: { name: string; port: number }[];
 }
 
-export async function getRemoteAccess(): Promise<RemoteAccessStatus> {
-  return api.get<RemoteAccessStatus>("/network/remote-access");
+export interface RemoteAccessAnswer {
+  status: RemoteAccessStatus;
+  /**
+   * How far the NAS's clock is ahead of this browser's, in milliseconds, from the answer's Date
+   * header (0 without one): the age of a handshake is the NAS's now minus its time, whatever the
+   * browser's clock says.
+   */
+  clockAhead: number;
+}
+
+export async function getRemoteAccess(): Promise<RemoteAccessAnswer> {
+  const response = await apiFetch("/network/remote-access");
+  const status = (await response.json()) as RemoteAccessStatus;
+  const sent = Date.parse(response.headers.get("date") ?? "");
+  return { status, clockAhead: Number.isNaN(sent) ? 0 : sent - Date.now() };
 }
 
 export async function enableRemoteAccess(settings: RemoteAccessSettings): Promise<{ changed: boolean }> {

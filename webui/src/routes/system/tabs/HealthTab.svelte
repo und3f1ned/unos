@@ -73,8 +73,21 @@
   </div>
 
   {#if !loaded}
-    <div class="space-y-3" aria-busy="true">
-      <Skeleton shape="card" count={3} />
+    <!-- The list's shape (ADR-0430): one flush card of divided rows, each the icon, the model over
+         the device, and the badge and button on the right. -->
+    <div class="card card-flush divide-y divide-border" aria-busy="true">
+      {#each [0, 1, 2] as row (row)}
+        <div class="flex items-center justify-between gap-4 px-5 py-4">
+          <div class="flex min-w-0 flex-1 items-center gap-3">
+            <Skeleton shape="block" class="h-5 w-5 shrink-0 rounded" />
+            <div class="min-w-0 flex-1">
+              <Skeleton size="base" class="w-48 max-w-full" />
+              <Skeleton class="w-32 max-w-full" />
+            </div>
+          </div>
+          <Skeleton shape="block" class="h-8 w-40 shrink-0 rounded" />
+        </div>
+      {/each}
     </div>
   {:else if error}
     <Alert variant="error" title={$t("health.loadError")}>{error}</Alert>

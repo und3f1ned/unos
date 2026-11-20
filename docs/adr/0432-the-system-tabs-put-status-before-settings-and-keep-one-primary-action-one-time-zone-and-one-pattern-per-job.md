@@ -34,7 +34,8 @@ built so that each becomes a one-line swap.
   know the NAS's). This amends the web UI part of ADR-0407, whose plan showed the browser's zone.
 - **One reason, said once.** When the host's power state cannot be read, Power says it once with
   Retry; the cards say they wait, and Reboot, Shut down and Suspend are disabled with that reason
-  beside them. A shutdown's reasons to wait show only while that shutdown is on, each once with
+  beside them. A pending action that alone could not be read is the Status card's, with its own
+  Retry, and leaves the actions usable. A shutdown's reasons to wait show only while that shutdown is on, each once with
   its count ("2 login sessions of root"). Technical text (restic's error, the RTC's sysfs path,
   smartctl's attribute names) follows a plain sentence behind a Details or Why disclosure.
 - **One primary action per view, routine actions secondary.** The page header holds the primary
@@ -46,7 +47,8 @@ built so that each becomes a one-line swap.
   Notifications, System Logs); filters are the segmented control. Families of add buttons become
   one: Add channel and Create… ask for the kind in their dialog. An on/off is a checkbox standing in
   for the Switch: a channel's alerts, a task's schedule, the power schedule's three rows, Logs'
-  Follow (formerly Auto). Icon actions are neutral with their names as tooltips, and an action icon
+  Follow (formerly Auto). A changed on/off shows its new state at once and takes no second change
+  until the server answered; a refusal puts the stored state back. Icon actions are neutral with their names as tooltips, and an action icon
   is never a state: a task shows Paused or Last run failed as a badge, a backup's Restore is a
   word. Badges read alone in sentence case (Disk Health: one badge per disk, Replace soon,
   Failing, Healthy, Not read or Asleep; the SMART dialog keeps smartctl's overall health).
@@ -54,7 +56,7 @@ built so that each becomes a one-line swap.
   units sit beside the field; compact numbers are compact fields (Backup's Snapshots to keep and
   Integrity check, Power's idle minutes). A Save disabled while nothing changed says "No changes";
   one that waits says for what (the off-device copy's target, folders and password, a task's
-  passphrase); Remote access's Turn on stays enabled and names the missing address at its field.
+  passphrase, a channel's server, addresses, token or URL); Remote access's Turn on stays enabled and names the missing address at its field.
 - **Notifications offer only what works.** Every enabled channel receives every alert
   (`_deliver_alert` of `supervisor/src/health/router.py`, ADR-0332), so the dialog offers no
   events and a channel shows none; the events a channel was stored with are sent back unchanged.
@@ -62,6 +64,10 @@ built so that each becomes a one-line swap.
 - **Charts and numbers.** Resource Monitor's charts have their scale (the top line's value) and a
   time axis (the start of the range, Now); values are plain text with a swatch per line; each core
   shows its share; Read and Write are words. Rates elsewhere (Network) are plain text too.
+- **Ages on the NAS's clock.** Remote access marks a peer Connected while its last handshake is
+  younger than 3 minutes on the NAS's clock (the Date header of the answer gives its offset from
+  the browser's), and reads that age again every 15 seconds from the clock alone, without asking
+  the API.
 - **Casing and names.** The catalogs of these tabs are in sentence case, and each tab's title is
   its name in the navigation (Scheduler, Backup & Restore, Updates).
 - Checked by the specs of the tabs (`webui/tests/power.spec.ts`, `notifications.spec.ts`,
@@ -82,4 +88,6 @@ built so that each becomes a one-line swap.
   shows once when the peer is added and the server never answers again (ADR-0420); a lost one is a
   new peer.
 - Specs that clicked Auto, the Disable of a channel or the play icon of a task now use the on/off
-  checkboxes; texts that changed case changed in the specs with them.
+  checkboxes (`logs.spec.ts`' Follow, `notifications.spec.ts`' Send alerts to, `scheduler.spec.ts`'
+  Run … on its schedule, with its Paused and Last run failed badges); texts that changed case
+  changed in the specs with them.

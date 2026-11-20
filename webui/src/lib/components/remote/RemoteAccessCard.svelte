@@ -26,6 +26,8 @@
 	// QR code that the browser draws, and the page keeps it only until its dialog closes.
 
 	let status = $state<RemoteAccessStatus | null>(null);
+	// How far the NAS's clock is ahead of the browser's (getRemoteAccess): a peer's handshake ages on it.
+	let clockAhead = $state(0);
 	let loading = $state(false);
 	let loadError = $state('');
 	let busy = $state(false);
@@ -64,7 +66,9 @@
 	async function load() {
 		loading = true;
 		try {
-			status = await getRemoteAccess();
+			const answer = await getRemoteAccess();
+			status = answer.status;
+			clockAhead = answer.clockAhead;
 			loadError = '';
 			settings = {
 				endpoint: status.endpoint ?? settings.endpoint,
@@ -287,7 +291,7 @@
 		{/if}
 
 		{#if status.configured}
-			<PeerList peers={status.peers} {busy} {sizeUnits} onadd={openAdd} onrevoke={(peer) => (revoking = peer)} />
+			<PeerList peers={status.peers} {clockAhead} {busy} {sizeUnits} onadd={openAdd} onrevoke={(peer) => (revoking = peer)} />
 		{/if}
 	{/if}
 </Card>

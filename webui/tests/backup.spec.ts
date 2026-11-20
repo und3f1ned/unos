@@ -228,8 +228,11 @@ test.describe('Backup & Restore in Russian', () => {
     await page.getByRole('button', { name: `Восстановить ${encrypted.filename}`, exact: true }).click();
     const dialog = page.getByRole('dialog', { name: 'Восстановление из резервной копии' });
     await expect(dialog.getByText('Восстановление заменит то, что сейчас есть на этом NAS:')).toBeVisible();
-    // The name to type stands above an empty field.
+    // What the restore replaces is a warning, in the warning's colours.
+    await expect(dialog.locator('.alert-warning')).toContainText('Восстановление заменит то, что сейчас есть на этом NAS:');
+    // The name to type stands above an empty field, and is one to type: no click selects it all.
     await expect(dialog.getByTestId('restore-expected')).toHaveText(encrypted.filename);
+    expect(await dialog.getByTestId('restore-expected').evaluate((name) => getComputedStyle(name).userSelect)).not.toBe('all');
     await expect(dialog.getByLabel('Для подтверждения введите имя файла резервной копии:')).not.toHaveAttribute('placeholder');
     await expect(dialog.getByLabel('Парольная фраза зашифрованной резервной копии')).toBeVisible();
     await dialog.getByLabel('Для подтверждения введите имя файла резервной копии:').fill(encrypted.filename);

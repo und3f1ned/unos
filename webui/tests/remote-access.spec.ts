@@ -153,6 +153,35 @@ test.describe('Remote access', () => {
     expect(fake.writes).toEqual([{ method: 'DELETE', path: '/peers/wg-000000000001' }]);
   });
 
+  test("a peer is Connected while its handshake is younger than 3 minutes on the NAS's clock, which ages it without asking again", async ({
+    authenticatedPage: page,
+  }) => {
+    // This browser's clock is 2 hours ahead of the NAS's: the handshake's age is the NAS's now
+    // minus its time, 1 minute, not the 2 hours and 1 minute that the browser's clock would make of it.
+    const nasNow = Math.floor(Date.now() / 1000) * 1000;
+    const iso = (ms: number) => new Date(ms).toISOString().replace(/\.\d{3}Z$/, 'Z');
+    await page.clock.install({ time: new Date(nasNow + 2 * 3600_000) });
+    const fake = await fakeRemoteApi(page, {
+      enabled: true,
+      serverNow: iso(nasNow),
+      // 2 PiB received, beyond the largest unit (TB), in that unit: not "2 undefined".
+      peers: [fakePeer(1, 'phone', { latest_handshake: iso(nasNow - 60_000), received: 2 * 1024 ** 5, sent: 2048 }),
+              fakePeer(2, 'laptop', { latest_handshake: iso(nasNow - 3600_000) })],
+    });
+    await page.goto('/system#remote');
+    const card = tunnelCard(page);
+    const phone = card.getByRole('listitem').filter({ hasText: 'phone' });
+    const laptop = card.getByRole('listitem').filter({ hasText: 'laptop' });
+    await expect(phone.locator('.badge')).toHaveText('Connected');
+    await expect(laptop.locator('.badge')).toHaveCount(0);
+    await expect(phone).toContainText('Received 2048 TB, sent 2 KB');
+
+    // 3 minutes later the handshake is 4 minutes old: no longer Connected, with no new read.
+    await page.clock.fastForward('03:00');
+    await expect(phone.locator('.badge')).toHaveCount(0);
+    expect(fake.reads).toBe(1);
+  });
+
   test('the public address changes, and turning it off asks first and keeps the peers', async ({
     authenticatedPage: page,
   }) => {

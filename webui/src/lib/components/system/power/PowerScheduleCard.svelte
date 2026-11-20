@@ -27,11 +27,17 @@
   }
 
   async function saveSchedule() {
-    if (!plan.config || plan.saving) return;
-    const shutdownAt = parseTime(plan.form.shutdownTime);
-    const wakeAt = parseTime(plan.form.wakeTime);
-    const minutes = Number(plan.form.idleMinutes);
-    if (!shutdownAt || !wakeAt || !Number.isInteger(minutes) || minutes < 20 || minutes > 1440) {
+    const config = plan.config;
+    if (!config || plan.saving) return;
+    // Only the fields shown are checked: a row that is off hides its field, which keeps the stored
+    // value when what it holds is not one.
+    const { autoShutdown, autoWakeup, idleShutdown } = plan.form;
+    const shutdownAt = parseTime(plan.form.shutdownTime) ?? (autoShutdown ? null : [config.shutdown_hour, config.shutdown_minute]);
+    const wakeAt = parseTime(plan.form.wakeTime) ?? (autoWakeup ? null : [config.wakeup_hour, config.wakeup_minute]);
+    const typed = Number(plan.form.idleMinutes);
+    const minutesValid = String(plan.form.idleMinutes ?? "") !== "" && Number.isInteger(typed) && typed >= 20 && typed <= 1440;
+    const minutes = minutesValid ? typed : idleShutdown ? null : config.idle_timeout_minutes;
+    if (!shutdownAt || !wakeAt || minutes === null) {
       plan.saveError = $t("power.schedule.badTime");
       return;
     }
@@ -39,14 +45,14 @@
     plan.saveError = "";
     try {
       plan.config = await updatePowerConfig({
-        ...plan.config,
-        auto_shutdown: plan.form.autoShutdown,
+        ...config,
+        auto_shutdown: autoShutdown,
         shutdown_hour: shutdownAt[0],
         shutdown_minute: shutdownAt[1],
-        auto_wakeup: plan.form.autoWakeup,
+        auto_wakeup: autoWakeup,
         wakeup_hour: wakeAt[0],
         wakeup_minute: wakeAt[1],
-        idle_shutdown: plan.form.idleShutdown,
+        idle_shutdown: idleShutdown,
         idle_timeout_minutes: minutes,
       });
       plan.fillForm(plan.config);
@@ -147,7 +153,10 @@
       <details class="mt-3 text-[13px] leading-[18px] text-content-secondary">
         <summary class="link w-fit cursor-pointer">{$t("power.schedule.more")}</summary>
         <p class="mt-2">{$t("power.schedule.moreJobs")}</p>
-        <p class="mt-2">{$t("power.schedule.rtcReady")}</p>
+        {#if plan.schedule?.wake.rtc.available}
+          <!-- Only for an RTC that takes the alarm: one that cannot is said under the wake's row. -->
+          <p class="mt-2">{$t("power.schedule.rtcReady")}</p>
+        {/if}
       </details>
 
       {#if plan.saveError}

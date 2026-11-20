@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import { SvelteSet } from "svelte/reactivity";
   import {
     getTasks,
     deleteTask,
@@ -28,6 +29,9 @@
   // The first load has answered: a reload keeps the list (ADR-0430).
   let loaded = $state(false);
   let runningTaskId = $state<string | null>(null);
+  // The tasks whose on/off the server has not answered yet: each shows its new state, and takes no
+  // second change until the answer.
+  const toggling = new SvelteSet<string>();
 
   // Modal state: the task dialog, with the task being edited (null for a new one), and the history.
   let showTaskModal = $state(false);
@@ -104,14 +108,22 @@
   }
 
   async function handleToggleTask(task: ScheduledTask) {
-    if (!task.id) return;
+    const id = task.id;
+    if (!id || toggling.has(id)) return;
 
+    // The new state at once; the stored one again if the server refuses it.
+    const was = task.enabled;
+    task.enabled = !was;
+    toggling.add(id);
     try {
-      await toggleTask(task.id);
+      task.enabled = (await toggleTask(id)).enabled;
       await loadTasks();
     } catch (e: any) {
+      task.enabled = was;
       console.error("Failed to toggle task:", e);
       alert(e.message || $t("scheduler.task.toggleFailed"));
+    } finally {
+      toggling.delete(id);
     }
   }
 
@@ -136,8 +148,9 @@
   <div class="flex flex-wrap items-start justify-between gap-3">
     <div class="min-w-0">
       <h2 class="text-xl font-semibold">{$t("scheduler.title")}</h2>
-      {#if timeZone}
-        <p class="page-subtitle">{$t("scheduler.timeZone", { zone: timeZone })}</p>
+      <!-- Only a zone this browser knows: the times are on its clock then, else on the browser's. -->
+      {#if zone}
+        <p class="page-subtitle">{$t("scheduler.timeZone", { zone })}</p>
       {/if}
     </div>
     <div class="flex flex-wrap gap-2">
@@ -166,6 +179,7 @@
             {task}
             timeZone={zone}
             running={runningTaskId === task.id}
+            toggling={toggling.has(task.id ?? "")}
             ontoggle={handleToggleTask}
             onrun={handleRunNow}
             onhistory={(task) => history.show(task.id, task.name)}

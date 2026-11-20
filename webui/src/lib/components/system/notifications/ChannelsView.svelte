@@ -14,6 +14,8 @@
     results: Record<string, { success: boolean; message: string }>;
     // The id of the channel whose test runs.
     testing: string | null;
+    // The ids of the channels whose on/off the server has not answered yet.
+    toggling: ReadonlySet<string>;
     oncreate: () => void;
     ontest: (config: NotificationConfig) => void;
     ontoggle: (config: NotificationConfig) => void;
@@ -22,7 +24,7 @@
     ondismissresult: (id: string) => void;
   };
 
-  let { configs, loading, results, testing, oncreate, ontest, ontoggle, onedit, ondelete, ondismissresult }: Props =
+  let { configs, loading, results, testing, toggling, oncreate, ontest, ontoggle, onedit, ondelete, ondismissresult }: Props =
     $props();
 </script>
 
@@ -50,6 +52,7 @@
             {config}
             result={results[config.id ?? ""]}
             {testing}
+            toggling={toggling.has(config.id ?? "")}
             {ontest}
             {ontoggle}
             {onedit}

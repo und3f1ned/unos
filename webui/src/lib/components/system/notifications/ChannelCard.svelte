@@ -13,6 +13,8 @@
     result: { success: boolean; message: string } | undefined;
     // The id of the channel whose test runs.
     testing: string | null;
+    // The channel's on/off was changed and the server has not answered yet: the box shows the new state.
+    toggling: boolean;
     ontest: (config: NotificationConfig) => void;
     ontoggle: (config: NotificationConfig) => void;
     onedit: (config: NotificationConfig) => void;
@@ -20,7 +22,7 @@
     ondismissresult: (id: string) => void;
   };
 
-  let { config, result, testing, ontest, ontoggle, onedit, ondelete, ondismissresult }: Props = $props();
+  let { config, result, testing, toggling, ontest, ontoggle, onedit, ondelete, ondismissresult }: Props = $props();
 
   let id = $derived(config.id ?? "");
   let name = $derived(nameOf($t, config));
@@ -60,13 +62,9 @@
           type="checkbox"
           class="form-checkbox h-4 w-4"
           checked={config.enabled}
-          disabled={testing === id}
+          disabled={testing === id || toggling}
           aria-label={$t("notifications.channels.toggle", { name })}
-          onchange={(e) => {
-            // The box shows the stored state: it changes once the server took the change.
-            e.currentTarget.checked = config.enabled;
-            ontoggle(config);
-          }}
+          onchange={() => ontoggle(config)}
         />
         {$t("notifications.channels.sendAlerts")}
       </label>

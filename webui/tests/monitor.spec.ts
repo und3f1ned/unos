@@ -167,6 +167,15 @@ test.describe('Resource Monitor', () => {
     const cpuChart = cpu.getByRole('img', { name: /^CPU over/ });
     await expect.poll(async () => (await drawn(cpuChart)).length).toBe(3);
     expectDrawn(await drawn(cpuChart), [['M', 66.67, 30], ['M', 93.33, 32], ['L', 100, 35]]);
+    // Each chart has its scale, the value of its top line, and its time axis: the start of the
+    // range and Now. Percentages scale to 100, rates to the range's peak.
+    await expect(cpu.getByTestId('chart-scale')).toHaveText('100.0%');
+    await expect(memory.getByTestId('chart-scale')).toHaveText('100.0%');
+    await expect(network.getByTestId('chart-scale')).toHaveText('2 KB/s');
+    await expect(disk.getByTestId('chart-scale')).toHaveText('3.25 MB/s');
+    for (const chartCard of [cpu, memory, network, disk]) {
+      await expect(chartCard.getByTestId('chart-axis').locator('span')).toHaveText(['5 min ago', 'Now']);
+    }
 
     await range.getByRole('button', { name: '15 min', exact: true }).click();
     await expect(range.getByRole('button', { name: '15 min', exact: true })).toHaveAttribute('aria-pressed', 'true');
@@ -178,6 +187,9 @@ test.describe('Resource Monitor', () => {
     await expect(memory.getByText('Peak 50.0%', { exact: true })).toBeVisible();
     await expect(network.getByText('Peak ↓ 2 MB/s ↑ 1 MB/s', { exact: true })).toBeVisible();
     await expect(disk.getByText('Peak: read 5 MB/s, write 6 MB/s', { exact: true })).toBeVisible();
+    await expect(cpu.getByTestId('chart-axis').locator('span')).toHaveText(['15 min ago', 'Now']);
+    await expect(network.getByTestId('chart-scale')).toHaveText('2 MB/s');
+    await expect(disk.getByTestId('chart-scale')).toHaveText('6 MB/s');
 
     await range.getByRole('button', { name: '1 hour', exact: true }).click();
     await expect(memory.getByRole('img', { name: 'Memory over the last hour' })).toBeVisible();
@@ -193,6 +205,8 @@ test.describe('Resource Monitor', () => {
     await expect(memory.getByText('Peak 70.0%', { exact: true })).toBeVisible();
     await expect(network.getByText('Peak ↓ 8 MB/s ↑ 4 MB/s', { exact: true })).toBeVisible();
     await expect(disk.getByText('Peak: read 50 MB/s, write 60 MB/s', { exact: true })).toBeVisible();
+    await expect(cpu.getByTestId('chart-axis').locator('span')).toHaveText(['1 hour ago', 'Now']);
+    await expect(network.getByTestId('chart-scale')).toHaveText('8 MB/s');
 
     await range.getByRole('button', { name: '5 min', exact: true }).click();
     await expect(cpu.getByText('Peak 25.0%', { exact: true })).toBeVisible();

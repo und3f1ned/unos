@@ -8,7 +8,7 @@
   // for an encrypted one (.tar.gz.enc), then sees what the restore did. The page shows it while
   // it is open, so that its fields start empty every time.
   import type { BackupInfo } from "$lib/api/backup";
-  import { Button, Input } from "$lib/components/ui";
+  import { Alert, Button, Input } from "$lib/components/ui";
   import { t } from "$lib/i18n";
   import { AlertTriangle, CheckCircle, RefreshCw, RotateCcw } from "lucide-svelte";
 
@@ -86,14 +86,13 @@
         </div>
       </div>
 
-      <!-- What the restore replaces: the consequences, as a list. -->
-      <div class="mb-4 text-sm">
-        <p class="text-content-secondary">{$t("backup.dialog.warning")}</p>
+      <!-- What the restore replaces, as a warning: the consequences, as a list. -->
+      <Alert variant="warning" size="sm" class="mb-4" title={$t("backup.dialog.warning")}>
         <ul class="mt-1 list-disc space-y-1 pl-5">
           <li>{$t("backup.dialog.database")}</li>
           <li>{$t("backup.dialog.shares")}</li>
         </ul>
-      </div>
+      </Alert>
 
       {#if target.encrypted}
         <Input
@@ -108,12 +107,12 @@
       {/if}
 
       <!-- The name to type stands above the field, which starts empty: a placeholder would look
-           like a value already typed. -->
+           like a value already typed. A name to type, not one click to copy: no select-all. -->
       <div class="mb-4">
         <label for="confirmName" class="form-label">
           {$t("backup.dialog.confirm")}
         </label>
-        <p class="mb-2 font-mono text-xs break-all select-all text-content" data-testid="restore-expected">{target.filename}</p>
+        <p class="mb-2 font-mono text-xs break-all text-content" data-testid="restore-expected">{target.filename}</p>
         <input
           type="text"
           id="confirmName"

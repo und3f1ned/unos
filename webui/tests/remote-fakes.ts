@@ -33,6 +33,8 @@ export interface FakeRemoteStart {
   address?: string;
   announced?: string | null;
   announcer?: boolean;
+  /** The NAS's clock, sent as the Date header of GET /network/remote-access; none without it. */
+  serverNow?: string;
 }
 
 export function fakePeer(n: number, name: string, extra: Partial<FakePeer> = {}): FakePeer {
@@ -60,6 +62,8 @@ export async function fakeRemoteApi(page: Page, start: FakeRemoteStart = {}) {
     apps: [{ name: 'jellyfin', port: 8096 }, { name: 'immich-server', port: 2283 }, { name: 'transmission', port: 9091 },
            { name: 'transmission', port: 51413 }],
     writes: [] as { method: string; path: string; body?: unknown }[],
+    /** The reads of GET /network/remote-access. */
+    reads: 0,
     configs: [] as string[],
   };
   const remote = () => ({
@@ -77,7 +81,11 @@ export async function fakeRemoteApi(page: Page, start: FakeRemoteStart = {}) {
     const request = route.request();
     const path = new URL(request.url()).pathname.replace('/api/v1/network/remote-access', '');
     const method = request.method();
-    if (method === 'GET' && path === '') return route.fulfill({ json: remote() });
+    if (method === 'GET' && path === '') {
+      fake.reads += 1;
+      const headers: Record<string, string> = start.serverNow ? { date: new Date(start.serverNow).toUTCString() } : {};
+      return route.fulfill({ json: remote(), headers });
+    }
     const body = request.postData() ? request.postDataJSON() : undefined;
     fake.writes.push(body === undefined ? { method, path } : { method, path, body });
     if (method === 'POST' && path === '/enable') {

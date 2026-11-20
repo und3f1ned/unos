@@ -1,7 +1,7 @@
 <script lang="ts">
   import type { ChannelKind } from "$lib/api/notifications";
   import { Alert, Button, Input, Modal, Select } from "$lib/components/ui";
-  import { t } from "$lib/i18n";
+  import { intlLocale, t } from "$lib/i18n";
   import type { ChannelForm } from "./channelForm.svelte";
   import { EXAMPLES, KIND_ORDER, METHODS, kindName } from "./channels";
 
@@ -18,6 +18,11 @@
   let { form, defaultName, onsave }: Props = $props();
 
   let kindOptions = $derived(KIND_ORDER.map((kind) => ({ value: kind, label: kindName($t, kind) })));
+
+  // What a disabled Save waits for, in the words of the page: said beside it.
+  let missing = $derived(
+    new Intl.ListFormat($intlLocale, { type: "conjunction" }).format(form.missing.map((key) => $t(key)))
+  );
 </script>
 
 <Modal
@@ -142,11 +147,15 @@
         <Alert variant="error" title={$t("notifications.form.saveError")}>{form.saveError}</Alert>
       </div>
     {/if}
+    {#if !form.complete}
+      <p id="channel-save-why" class="text-[13px] text-content-muted">{$t("notifications.form.needs", { what: missing })}</p>
+    {/if}
   </div>
 
   {#snippet footer()}
     <Button variant="secondary" class="flex-1" disabled={form.saving} onclick={() => form.close()}>{$t("common.cancel")}</Button>
-    <Button class="flex-1" loading={form.saving} disabled={!form.complete} onclick={onsave}>
+    <Button class="flex-1" loading={form.saving} disabled={!form.complete}
+      aria-describedby={form.complete ? undefined : "channel-save-why"} onclick={onsave}>
       {$t(form.editing ? "notifications.form.save" : "notifications.form.add")}
     </Button>
   {/snippet}

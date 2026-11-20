@@ -25,6 +25,10 @@ const NO_RTC = 'The host has no RTC: /sys/class/rtc/rtc0 does not exist';
 const NO_WAKE_PROMISED = 'No wake can be promised: The host has no RTC: /sys/class/rtc/rtc0 does not exist';
 const WAKE_TOO_CLOSE = 'The wake time must come at least 10 minutes after the shutdown time';
 const SS_MISSING = 'Could not read the connections: ss: not found';
+// A pending action that alone could not be read (supervisor/src/power/router.py).
+const NO_PENDING = 'Could not read the pending reboot or shutdown: Failed to connect to bus: Connection timed out';
+// The caveat of an RTC that takes the alarm, behind More.
+const RTC_READY = "The host's RTC takes a wake alarm, but whether the board powers on from it is the board's: try it once before you rely on it.";
 
 type Action = 'reboot' | 'shutdown';
 
@@ -336,6 +340,33 @@ test.describe('Power Management', () => {
     expect(host.changes).toEqual(['POST /cancel']);
   });
 
+  test('a pending action that alone could not be read leaves the actions usable, and its Retry reads it again', async ({
+    authenticatedPage: page,
+  }) => {
+    const host = await fakePowerApi(page, { answers: { 'GET /pending': { status: 500, json: { detail: NO_PENDING } } } });
+    await openPowerTab(page);
+    const status = page.locator('.card', { has: page.getByRole('heading', { name: 'Status', exact: true }) });
+    const actions = page.locator('.card', { has: page.getByRole('heading', { name: 'Reboot, shutdown and suspend' }) });
+
+    // One read failed: the Status card says so with its Retry, and nothing waits for it.
+    const failed = status.locator('.alert-error');
+    await expect(failed).toContainText('The pending reboot or shutdown could not be read');
+    await expect(failed).toContainText(NO_PENDING);
+    await expect(page.getByText("The host's power state could not be read")).toHaveCount(0);
+    for (const name of ['Reboot', 'Shut down', 'Suspend']) {
+      await expect(actions.getByRole('button', { name, exact: true })).toBeEnabled();
+    }
+    await expect(actions.getByText(/^Unavailable/)).toHaveCount(0);
+
+    // The host answers again: Retry reads the pending action, and the error goes.
+    delete host.answers['GET /pending'];
+    host.pending = { action: 'shutdown', at: inOneMinute() };
+    await failed.getByRole('button', { name: 'Retry' }).click();
+    await expect(failed).toHaveCount(0);
+    await expect(status.getByText('A shutdown is pending')).toBeVisible();
+    expect(host.changes).toEqual([]);
+  });
+
   test('a cancel that finds nothing pending says so', async ({ authenticatedPage: page }) => {
     // Cancelled meanwhile on the host's console.
     const host = await fakePowerApi(page, { pending: { action: 'shutdown', at: inOneMinute() } });
@@ -599,6 +630,10 @@ test.describe('The power schedule', () => {
     );
     expect(new Set(lefts).size).toBe(1);
     await expect(settings.getByRole('button', { name: 'Save schedule' })).toBeDisabled();
+    // The RTC takes the alarm: whether the board powers on from it is said behind More.
+    await expect(settings.getByText(RTC_READY)).toBeHidden();
+    await settings.getByText('More about the schedule', { exact: true }).click();
+    await expect(settings.getByText(RTC_READY)).toBeVisible();
 
     const next = card.getByTestId('power-next-shutdown');
     await expect(next).toContainText(await shownWhen(page, '2026-11-18T22:00:00Z'));
@@ -718,6 +753,10 @@ test.describe('The power schedule', () => {
     await expect(problem.getByText(NO_RTC)).toBeHidden();
     await problem.getByText('Details', { exact: true }).click();
     await expect(problem.getByText(NO_RTC)).toBeVisible();
+    // More promises nothing of an RTC that cannot wake the host.
+    await card.getByText('More about the schedule', { exact: true }).click();
+    await expect(card.getByText(/^The announcement shows in the health banner/)).toBeVisible();
+    await expect(card.getByText(RTC_READY)).toHaveCount(0);
     await card.getByRole('button', { name: 'Save schedule' }).click();
 
     await expect(card.getByRole('alert')).toContainText('The schedule was not saved');
@@ -746,6 +785,25 @@ test.describe('The power schedule', () => {
     await card.getByRole('button', { name: 'Save schedule' }).click();
     await expect(card.getByRole('alert')).toContainText(WAKE_TOO_CLOSE);
     expect(host.puts).toHaveLength(1);
+  });
+
+  test('a field that is off is not checked: its row hidden, the stored value is sent', async ({ authenticatedPage: page }) => {
+    const host = await fakePowerApi(page, { config: { ...SETTINGS_OFF, idle_timeout_minutes: 45 } });
+    await openPowerTab(page);
+    const card = scheduleCard(page);
+
+    // Idle shutdown on, 10 minutes typed, off again: no field is shown, so none is refused.
+    await card.getByLabel('Idle shutdown', { exact: true }).check();
+    await card.getByLabel('Idle minutes before the shutdown').fill('10');
+    await card.getByLabel('Idle shutdown', { exact: true }).uncheck();
+    await expect(card.getByLabel('Idle minutes before the shutdown')).toHaveCount(0);
+    await card.getByLabel('Daily shutdown', { exact: true }).check();
+    await card.getByRole('button', { name: 'Save schedule' }).click();
+
+    await expect(page.getByRole('status')).toContainText('The power schedule is saved');
+    await expect(card.getByRole('alert')).toHaveCount(0);
+    expect(host.puts).toHaveLength(1);
+    expect(host.puts[0]).toMatchObject({ auto_shutdown: true, idle_shutdown: false, idle_timeout_minutes: 45 });
   });
 
   test('a postponed shutdown names what it waits for', async ({ authenticatedPage: page }) => {

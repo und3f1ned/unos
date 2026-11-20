@@ -605,6 +605,104 @@ test.describe('Scheduler: the time zone of the schedules', () => {
   });
 });
 
+// The on/off of a task is its checkbox (ADR-0432): the new state shows at once, the box takes no
+// second change until the server answered, and a refusal puts the stored state back. A task shows
+// one badge: Paused, or Last run failed.
+interface ToggleApi {
+  /** The ids of the tasks whose on/off was asked (POST /scheduler/tasks/<id>/toggle). */
+  toggles: string[];
+  /** Answer the toggles only once `release` is called. */
+  hold(): void;
+  release(): void;
+  /** Refuse the toggles with this text. */
+  refuse: string | null;
+}
+
+async function fakeToggleApi(page: Page, tasks: { id: string; enabled: boolean }[], zone = NAS_ZONE): Promise<ToggleApi> {
+  await fakeStorageApi(page);
+  let released: Promise<void> = Promise.resolve();
+  let release = () => {};
+  const api: ToggleApi = {
+    toggles: [],
+    hold: () => (released = new Promise<void>((resolve) => (release = resolve))),
+    release: () => release(),
+    refuse: null,
+  };
+  await page.route(
+    (url) => url.pathname.startsWith('/api/v1/scheduler/'),
+    async (route) => {
+      const request = route.request();
+      const path = new URL(request.url()).pathname.slice('/api/v1/scheduler'.length);
+      if (request.method() === 'GET' && path === '/tasks') return route.fulfill({ json: tasks });
+      if (request.method() === 'GET' && path === '/timezone') return route.fulfill({ json: { timezone: zone } });
+      const toggle = path.match(/^\/tasks\/([^/]+)\/toggle$/);
+      const task = toggle && tasks.find((t) => t.id === toggle[1]);
+      if (request.method() === 'POST' && task) {
+        api.toggles.push(task.id);
+        await released;
+        if (api.refuse) return route.fulfill({ status: 500, json: { detail: api.refuse } });
+        task.enabled = !task.enabled;
+        return route.fulfill({ json: { status: 'toggled', enabled: task.enabled } });
+      }
+      return route.abort();
+    },
+  );
+  return api;
+}
+
+test.describe('Scheduler: the on/off of a task and its badge', () => {
+  const PAUSED_TASK = { ...SNAPSHOT_TASK, id: 'task_e2e_paused', name: 'E2E paused snapshot', enabled: false, last_status: 'success' };
+  const row = (page: Page, name: string) => page.locator('div.py-3', { has: page.getByText(name, { exact: true }) });
+  const onOff = (page: Page, name: string) => page.getByRole('checkbox', { name: `Run ${name} on its schedule`, exact: true });
+
+  test('a task shows Paused or Last run failed, and its checkbox shows the change at once and takes it once', async ({
+    authenticatedPage: page,
+  }) => {
+    const api = await fakeToggleApi(page, [{ ...SNAPSHOT_TASK, enabled: true }, { ...PAUSED_TASK }]);
+    await openSchedulerTab(page, SNAPSHOT_TASK.name);
+
+    const failed = row(page, SNAPSHOT_TASK.name);
+    const paused = row(page, PAUSED_TASK.name);
+    await expect(onOff(page, SNAPSHOT_TASK.name)).toBeChecked();
+    await expect(failed.locator('.badge')).toHaveText(['Last run failed']);
+    await expect(onOff(page, PAUSED_TASK.name)).not.toBeChecked();
+    await expect(paused.locator('.badge')).toHaveText(['Paused']);
+    await expect(paused.getByText('Next run')).toHaveCount(0);
+
+    // Off: unchecked and Paused while the server has not answered, and no second change meanwhile.
+    api.hold();
+    await onOff(page, SNAPSHOT_TASK.name).click();
+    await expect(onOff(page, SNAPSHOT_TASK.name)).not.toBeChecked();
+    await expect(onOff(page, SNAPSHOT_TASK.name)).toBeDisabled();
+    await expect(failed.locator('.badge')).toHaveText(['Paused']);
+    api.release();
+    await expect(onOff(page, SNAPSHOT_TASK.name)).toBeEnabled();
+    await expect(onOff(page, SNAPSHOT_TASK.name)).not.toBeChecked();
+    expect(api.toggles).toEqual([SNAPSHOT_TASK.id]);
+
+    // A refused change puts the stored state back and says why.
+    api.refuse = 'Task not found';
+    const said = page.waitForEvent('dialog').then(async (dialog) => {
+      const message = dialog.message();
+      await dialog.dismiss();
+      return message;
+    });
+    await onOff(page, PAUSED_TASK.name).click();
+    expect(await said).toBe('Task not found');
+    await expect(onOff(page, PAUSED_TASK.name)).not.toBeChecked();
+    await expect(paused.locator('.badge')).toHaveText(['Paused']);
+    expect(api.toggles).toEqual([SNAPSHOT_TASK.id, PAUSED_TASK.id]);
+  });
+
+  test("a zone this browser does not know is not named: the times are on the browser's clock", async ({
+    authenticatedPage: page,
+  }) => {
+    await fakeToggleApi(page, [{ ...SNAPSHOT_TASK }], 'Mars/Olympus_Mons');
+    await openSchedulerTab(page, SNAPSHOT_TASK.name);
+    await expect(page.getByText(/Times are on the NAS's clock/)).toHaveCount(0);
+  });
+});
+
 // Against the stand-in's supervisor: custom tasks made in the form run there (Run now), as the
 // user who runs the stand-in, with harmless commands. The tasks are deleted afterwards.
 test.describe('Scheduler: custom tasks', () => {

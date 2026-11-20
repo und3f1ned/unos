@@ -149,14 +149,18 @@ test.describe('Notifications', () => {
     await dialog.getByRole('checkbox', { name: 'Use TLS/STARTTLS' }).check();
     await expect(plain).toBeHidden();
     await expect(dialog.getByRole('checkbox', { name: "Verify the server's certificate" })).toBeEnabled();
-    // The mail server, the sender and a recipient are needed.
-    await expect(dialog.getByRole('button', { name: 'Add channel' })).toBeDisabled();
+    // The mail server, the sender and a recipient are needed: the disabled Add channel says so.
+    const add = dialog.getByRole('button', { name: 'Add channel' });
+    await expect(add).toBeDisabled();
+    await expect(add).toHaveAccessibleDescription('Still needed: the SMTP host, the From address, and a To address.');
     await field(dialog, 'Channel name').fill('Admin mail');
     await field(dialog, 'SMTP host').fill('mail.example.com');
+    await expect(add).toHaveAccessibleDescription('Still needed: the From address and a To address.');
     await field(dialog, 'Username').fill('nas@example.com');
     await field(dialog, 'Password').fill('mail-pass');
     await field(dialog, 'From address').fill('nas@example.com');
     await field(dialog, 'To addresses').fill('me@example.com, you@example.com');
+    await expect(dialog.getByText(/^Still needed/)).toHaveCount(0);
     await dialog.getByRole('button', { name: 'Add channel' }).click();
     await expect(dialog).toBeHidden();
 
@@ -313,7 +317,21 @@ test.describe('Notifications', () => {
 
     const toggle = channel.getByRole('checkbox', { name: 'Send alerts to Admin mail' });
     await expect(toggle).not.toBeChecked();
+    // The new state shows at once, and the box takes no second change until the server answered.
+    let release = () => {};
+    const held = new Promise<void>((resolve) => (release = resolve));
+    await page.route(
+      (url) => url.pathname === `/api/v1/notifications/configs/${ADMIN_MAIL.id}`,
+      async (route) => {
+        if (route.request().method() === 'PUT') await held;
+        await route.fallback();
+      },
+    );
     await toggle.click();
+    await expect(toggle).toBeChecked();
+    await expect(toggle).toBeDisabled();
+    release();
+    await expect(toggle).toBeEnabled();
     await expect(toggle).toBeChecked();
     await expect(channel).not.toContainText('Disabled');
     expect(fake.saved).toEqual([

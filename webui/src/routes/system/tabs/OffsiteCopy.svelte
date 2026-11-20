@@ -301,5 +301,8 @@
         onforget={forget}
       />
     </Card>
+  {:else if loading}
+    <!-- The settings' card while the first load runs (ADR-0430), where it will be. -->
+    <div aria-busy="true"><Skeleton shape="card" count={4} /></div>
   {/if}
 </section>
