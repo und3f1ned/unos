@@ -3,10 +3,10 @@
   // its level, its program and its message, in which the search is marked. With Auto, the tab
   // follows the journal and says so, or why it stopped.
   import type { LogEntry, LogPriority } from "$lib/api/logs";
-  import { Alert, Badge, Card, EmptyState } from "$lib/components/ui";
+  import { Alert, Badge, Card, EmptyState, Skeleton } from "$lib/components/ui";
   import { intlLocale, t } from "$lib/i18n";
   import { apiTime } from "$lib/time";
-  import { FileText, RefreshCw } from "lucide-svelte";
+  import { FileText } from "lucide-svelte";
   import { priorityVariant, splitByMatch, textOf } from "./logs";
 
   type Props = {
@@ -66,8 +66,8 @@
   <Card>
     <div class="flex flex-wrap items-center justify-between gap-2 mb-3">
       <span class="text-sm text-secondary">
-        {#if loading}
-          {$t("common.loading")}
+        {#if loading && entries.length === 0}
+          <Skeleton class="w-24" />
         {:else}
           {$t("logs.count", { n: entries.length })}
         {/if}
@@ -87,10 +87,8 @@
     <div class="bg-surface-muted rounded-lg overflow-hidden">
       <div class="max-h-[600px] overflow-y-auto scrollbar-thin">
         {#if loading && entries.length === 0}
-          <div class="flex items-center justify-center py-12">
-            <RefreshCw class="w-6 h-6 animate-spin text-secondary" />
-            <span class="ml-2 text-secondary">{$t("logs.loadingEntries")}</span>
-          </div>
+          <!-- The first entries have not come (ADR-0430): their lines; a reload keeps them. -->
+          <div class="p-3 space-y-1" aria-busy="true"><Skeleton count={8} size="xs" /></div>
         {:else if entries.length === 0}
           <EmptyState
             icon={FileText}

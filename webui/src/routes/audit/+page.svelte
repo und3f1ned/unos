@@ -3,7 +3,7 @@
 	import { onDestroy, onMount, untrack } from 'svelte';
 	import { Download, ScrollText } from 'lucide-svelte';
 	import { exportAuditLog, type AuditExportFormat, type AuditFilters as Filters } from '$lib/api/audit';
-	import { Alert, Button, Card, EmptyState } from '$lib/components/ui';
+	import { Alert, Button, Card, EmptyState, Skeleton } from '$lib/components/ui';
 	import { AuditFilters, AuditLog, AuditTimeline } from '$lib/components/audit';
 	import { dayBound, textOf, today } from '$lib/components/audit/timeline';
 	import { intlLocale, t } from '$lib/i18n';
@@ -272,7 +272,18 @@
 			>
 		</Alert>
 	{:else if !log.loaded}
-		<p class="loading-text">{$t('common.loading')}</p>
+		<!-- The first load (ADR-0430): a day of the timeline, its entries in their places. -->
+		<div class="card" aria-busy="true">
+			<Skeleton size="eyebrow" class="w-28 py-1.5 mb-2" />
+			<div class="ml-1.5 border-l border-border">
+				{#each [0, 1, 2, 3, 4] as entry (entry)}
+					<div class="pb-5 pl-6 last:pb-1">
+						<Skeleton class="w-1/2" />
+						<Skeleton class="mt-1 w-3/4" />
+					</div>
+				{/each}
+			</div>
+		</div>
 	{:else if log.entries.length === 0}
 		<Card>
 			{#if filtered}

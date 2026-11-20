@@ -66,6 +66,9 @@
 		--shadow-raised: 0 0 rgb(var(--color-shadow) / 0);
 		--shadow-popover: 0 12px 32px -8px rgb(var(--color-shadow) / 0.6);
 		--shadow-dialog: 0 24px 48px -12px rgb(var(--color-shadow) / 0.7);
+		/* A skeleton's bones and the light that sweeps over them (ADR-0430): no colour of their own. */
+		--skeleton-bone: var(--color-surface-overlay);
+		--skeleton-shine: var(--color-surface-hover);
 	}
 
 	[data-theme='light'] {
@@ -121,6 +124,9 @@
 		--shadow-raised: 0 1px 2px rgb(var(--color-shadow) / 0.06), 0 1px 3px rgb(var(--color-shadow) / 0.04);
 		--shadow-popover: 0 8px 24px -6px rgb(var(--color-shadow) / 0.18), 0 2px 6px rgb(var(--color-shadow) / 0.08);
 		--shadow-dialog: 0 24px 48px -12px rgb(var(--color-shadow) / 0.25);
+		/* A skeleton's bones and the light that sweeps over them (ADR-0430): no colour of their own. */
+		--skeleton-bone: var(--color-surface-hover);
+		--skeleton-shine: var(--color-surface-overlay);
 	}
 
 	/* Motion (ADR-0428): colours, then the drawer, lists and the palette, then dialogs. */
@@ -168,8 +174,19 @@
 			animation-duration: 2s !important;
 		}
 
-		.animate-pulse {
+		.animate-pulse,
+		.skeleton {
 			animation: none !important;
+		}
+
+		/* No light stands still over the bones either. */
+		.skeleton {
+			background-image: none;
+		}
+
+		/* The boot screen's bar still says "busy", without moving (ADR-0430). */
+		.boot-progress::after {
+			animation: boot-breathe 2s ease-in-out infinite alternate !important;
 		}
 	}
 }
@@ -883,13 +900,22 @@
 		@apply animate-spin;
 	}
 
-	.loading-text {
-		@apply text-center text-content-muted py-8;
-	}
-
-	/* A bar of a skeleton, in a card that waits (aria-busy on the card). */
+	/* A bone of a skeleton (the Skeleton component of ui, ADR-0430), in a region that waits
+	   (aria-busy on it). One light sweeps over every bone of the page at once: the gradient is fixed
+	   to the window, and each bone shows its part of it. */
 	.skeleton {
-		@apply h-3 rounded bg-surface-overlay animate-pulse;
+		@apply rounded;
+		background-color: rgb(var(--skeleton-bone));
+		background-image: linear-gradient(
+			100deg,
+			transparent 20%,
+			rgb(var(--skeleton-shine)) 50%,
+			transparent 80%
+		);
+		background-size: 60vw 100%;
+		background-repeat: no-repeat;
+		background-attachment: fixed;
+		animation: skeleton-sweep 1.8s var(--ease) infinite;
 	}
 
 	/* ----------------------------------------
@@ -1020,5 +1046,121 @@
 
 	.scrollbar-thin::-webkit-scrollbar-thumb:hover {
 		background-color: rgb(var(--color-status-neutral));
+	}
+}
+
+/* ============================================
+   Loading (ADR-0430)
+   ============================================ */
+
+/* A skeleton's light, from the left edge of the window past the right one, then a rest. */
+@keyframes skeleton-sweep {
+	0% {
+		background-position: -60vw 0;
+	}
+	70%,
+	100% {
+		background-position: 100vw 0;
+	}
+}
+
+/* The boot screen of app.html: the page's own background, the logo of the sidebar, larger, and
+   under it a thin bar that shows only when the start takes a while. It covers the page from the
+   first frame, drawn by this style sheet alone (no script: the CSP allows only SvelteKit's own),
+   until $lib/boot.ts marks it done: it then fades out in 160 ms, no longer catches the pointer,
+   and is removed. Outside the layers, so that it is in the style sheet whatever the build finds. */
+.boot {
+	position: fixed;
+	inset: 0;
+	z-index: 100;
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	justify-content: center;
+	gap: 28px;
+	background-color: rgb(var(--color-surface));
+	transition:
+		opacity 160ms var(--ease),
+		visibility 0s linear 160ms;
+}
+
+.boot[data-done] {
+	opacity: 0;
+	visibility: hidden;
+	pointer-events: none;
+}
+
+.boot-mark {
+	display: flex;
+	align-items: center;
+	gap: 14px;
+}
+
+.boot-logo {
+	display: grid;
+	place-items: center;
+	width: 44px;
+	height: 44px;
+	border-radius: 11px;
+	background-color: rgb(var(--color-brand));
+	color: rgb(var(--color-content-on-brand));
+}
+
+.boot-logo svg {
+	width: 24px;
+	height: 24px;
+}
+
+/* The product's name, the same in every language, as generated content: no text of the page. */
+.boot-word::after {
+	content: 'UNOS';
+	font-size: 24px;
+	font-weight: 700;
+	letter-spacing: 0.04em;
+	color: rgb(var(--color-content));
+}
+
+.boot-progress {
+	position: relative;
+	width: 148px;
+	height: 3px;
+	overflow: hidden;
+	border-radius: 3px;
+	background-color: rgb(var(--color-border));
+	opacity: 0;
+	animation: boot-appear 240ms var(--ease) 400ms forwards;
+}
+
+.boot-progress::after {
+	content: '';
+	position: absolute;
+	inset: 0 auto 0 0;
+	width: 40%;
+	border-radius: inherit;
+	background-color: rgb(var(--color-brand-ring));
+	animation: boot-slide 1.2s cubic-bezier(0.65, 0, 0.35, 1) infinite;
+}
+
+@keyframes boot-appear {
+	to {
+		opacity: 1;
+	}
+}
+
+@keyframes boot-slide {
+	from {
+		transform: translateX(-100%);
+	}
+	to {
+		transform: translateX(250%);
+	}
+}
+
+@keyframes boot-breathe {
+	from {
+		opacity: 0.35;
+	}
+	to {
+		opacity: 1;
 	}
 }

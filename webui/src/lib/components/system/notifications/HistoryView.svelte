@@ -1,7 +1,7 @@
 <script lang="ts">
   import { Bell, ChevronDown, ChevronUp } from "lucide-svelte";
   import type { NotificationLog } from "$lib/api/notifications";
-  import { Badge, Button, Card, EmptyState, Select } from "$lib/components/ui";
+  import { Badge, Button, Card, EmptyState, Select, Skeleton } from "$lib/components/ui";
   import { intlLocale, t } from "$lib/i18n";
   import { formatDateTime } from "$lib/time";
   import { KIND_ORDER, TYPES, colorOf, iconOf, kindName, labelOf, sentWhen } from "./channels";
@@ -53,7 +53,7 @@
 
   <Card>
     {#if loading && logs.length === 0}
-      <p class="loading-text">{$t("common.loading")}</p>
+      <div aria-busy="true"><Skeleton count={4} /></div>
     {:else if filteredLogs.length === 0}
       <EmptyState
         icon={Bell}

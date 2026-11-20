@@ -12,6 +12,8 @@
 
   let backups = $state<BackupInfo[]>([]);
   let loading = $state(true);
+  // The first load has answered: a reload keeps the list (ADR-0430).
+  let loaded = $state(false);
   let creating = $state(false);
   let uploading = $state(false);
   let restoring = $state<string | null>(null);
@@ -65,6 +67,7 @@
       showError($t("backup.loadFailed"), e);
     }
     loading = false;
+    loaded = true;
   }
 
   async function handleCreate() {
@@ -204,7 +207,7 @@
 
   <BackupList
     {backups}
-    {loading}
+    loading={!loaded}
     {sizeUnits}
     onrestore={openRestoreModal}
     ondownload={handleDownload}

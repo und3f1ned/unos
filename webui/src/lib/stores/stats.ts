@@ -107,6 +107,14 @@ const STABLE_CONNECTION_MS = 10000;
 /** The server refused the stream for this account (close code 4403). */
 export const wsForbidden = writable(false);
 
+/**
+ * The first attempt of this session has ended: the socket was up, refused, or closed before it was
+ * up. Until then the page is connecting, and says so instead of "disconnected", and a stats card
+ * waits as a skeleton (ADR-0430); after a failed attempt the page says it is not connected. False
+ * again after a sign-out.
+ */
+export const wsSettled = writable(false);
+
 let ws: WebSocket | null = null;
 // The session (currentSession()) that the socket was opened in.
 let wsSession: number | null = null;
@@ -191,6 +199,7 @@ export function connectWebSocket() {
     if (message.type === 'auth_ok') {
       authenticatedAt = Date.now();
       wsConnected.set(true);
+      wsSettled.set(true);
       // A new socket, maybe to a supervisor that restarted: the scrubs the last one sent need not
       // run any more, and this one sends those that its supervisor saw running (ADR-0367); the
       // balances likewise (ADR-0379), the removals of disks (ADR-0411), and the installs of apps
@@ -202,6 +211,7 @@ export function connectWebSocket() {
     } else if (message.type === 'stats' && message.data) {
       if (!authenticatedAt) authenticatedAt = Date.now();
       wsConnected.set(true);
+      wsSettled.set(true);
       stats.set(message.data as WebSocketStats);
     } else if (message.type === 'problems' && Array.isArray(message.data)) {
       // Administrators only: the problems that are still there (ADR-0332).
@@ -233,6 +243,7 @@ export function connectWebSocket() {
     wsSession = null;
     wsConnected.set(false);
     problemsKnown.set(false);
+    wsSettled.set(true);
 
     if (event.code === WS_CLOSE_UNAUTHORIZED) {
       // The session ended or the account is gone: same as an HTTP 401.
@@ -259,6 +270,7 @@ export function disconnectWebSocket() {
   closeSocket();
   wsConnected.set(false);
   wsForbidden.set(false);
+  wsSettled.set(false);
   stats.set(null);
   problems.set([]);
   problemsKnown.set(false);

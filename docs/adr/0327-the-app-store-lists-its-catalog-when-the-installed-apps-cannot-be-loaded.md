@@ -1,5 +1,6 @@
 ---
-status: accepted
+status: superseded
+superseded-by: ADR-0430
 date: 2026-11-10
 area: apps
 decided-by: agent
@@ -8,6 +9,8 @@ decided-by: agent
 # ADR-0327: The App Store lists its catalog when the installed apps cannot be loaded
 
 ## Context
+
+Superseded by ADR-0430: on its first load the catalog waits for the installed apps' answer up to 1 s after its own, so that the page is drawn once; the rest of this decision stays.
 
 `webui/src/routes/apps/+page.svelte` loaded the app catalog and the installed apps with one `Promise.all`. The catalog comes from the supervisor alone; the installed apps come from Docker, for which the supervisor answers 503 when it cannot be reached (ADR-0323). So a Docker that was down hid the whole catalog behind one error, and the page said "0 apps available, 0 installed" and "No apps found" under it (`apps.catalog-without-docker`). On the stand-in, which has no Docker, `webui/tests/appstore.spec.ts` skipped its check of the catalog's cards. The agent decided this under the owner's delegation ("work on through the features, ask no questions; I allow everything", in translation).
 

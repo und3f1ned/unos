@@ -99,7 +99,7 @@ test.describe('Security Settings', () => {
     await card.getByRole('button', { name: 'View History' }).click();
 
     // The list, once loaded: the administrator's own sign-in of this test is in it.
-    await expect(card.getByText('Loading...')).toHaveCount(0);
+    await expect(card.locator('[aria-busy="true"]')).toHaveCount(0);
     await expect(card.getByText('Total Attempts', { exact: true })).toBeVisible();
     const rows = card.getByRole('list', { name: 'Login history' }).getByRole('listitem');
     await expect(rows.first()).toBeVisible();

@@ -7,7 +7,7 @@
   import { SelectionBar, TrashTable } from "$lib/components/files";
   import { messageOf, signedOut } from "$lib/components/files/errors";
   import { toggled } from "$lib/components/files/selection";
-  import { Alert, Button, Card, EmptyState, Modal } from "$lib/components/ui";
+  import { Alert, Button, Card, EmptyState, Modal, Skeleton } from "$lib/components/ui";
   import { t } from "$lib/i18n";
   import { ArrowLeft, RefreshCw, RotateCcw, Trash, Trash2 } from "lucide-svelte";
 
@@ -181,7 +181,9 @@
     </SelectionBar>
 
     {#if loading && items.length === 0}
-      <p class="loading-text">{$t("common.loading")}</p>
+      <div class="card" aria-busy="true">
+        <Skeleton shape="row" columns={5} count={4} />
+      </div>
     {:else if items.length === 0}
       <EmptyState icon={Trash} title={$t("files.trash.emptyTitle")} description={$t("files.trash.emptyHint")} />
     {:else}

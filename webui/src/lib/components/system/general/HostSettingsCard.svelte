@@ -2,7 +2,7 @@
   import { Globe } from "lucide-svelte";
   import { setHostname } from "$lib/api/network";
   import { setTimezone } from "$lib/api/system";
-  import { Alert, Button, Card, Input, Select } from "$lib/components/ui";
+  import { Alert, Button, Card, Input, Select, Skeleton } from "$lib/components/ui";
   import { t } from "$lib/i18n";
   import type { HostSettings } from "./host.svelte";
 
@@ -60,7 +60,16 @@
   </h3>
 
   {#if host.loading}
-    <p class="text-sm text-muted">{$t("common.loading")}</p>
+    <!-- Loading (ADR-0430): the two fields with their buttons and hints. -->
+    <div class="space-y-4" aria-busy="true">
+      {#each [0, 1] as field (field)}
+        <div>
+          <Skeleton size="xs" class="w-24 mb-1" />
+          <Skeleton shape="block" class="h-9 w-full" />
+          <Skeleton size="xs" class="mt-1 w-2/3" />
+        </div>
+      {/each}
+    </div>
   {:else if host.loadFailed}
     <p class="text-sm text-muted">{$t("general.host.loadFailed")}</p>
   {:else}

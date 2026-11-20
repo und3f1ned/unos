@@ -4,7 +4,7 @@
 	// the jobs of PoolJobs) and which dialog is open, and follows the events socket.
 	import { onMount, untrack } from 'svelte';
 	import { Plus } from 'lucide-svelte';
-	import { Alert, Button } from '$lib/components/ui';
+	import { Alert, Button, Skeleton } from '$lib/components/ui';
 	import type { BalanceStatus, Disk, DiskRemovalStatus, ImportableFilesystem, Pool } from '$lib/api/storage';
 	import { scaleBytes } from '$lib/format';
 	import { intlLocale, t } from '$lib/i18n';
@@ -245,7 +245,11 @@
 	{/if}
 
 	{#if lists.loading}
-		<p class="loading-text">{$t('common.loading')}</p>
+		<!-- The first load (ADR-0430): the disks' table and the pools, swapped for them at once. -->
+		<div class="space-y-6" aria-busy="true">
+			<Skeleton shape="table" columns={8} count={3} />
+			<Skeleton shape="card" count={3} />
+		</div>
 	{:else}
 		<DiskTable
 			disks={lists.disks}

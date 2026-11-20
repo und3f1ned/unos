@@ -2,7 +2,7 @@
 	import { onDestroy, onMount, untrack } from 'svelte';
 	import { getContainers, createContainer, type Container } from '$lib/api/containers';
 	import { Plus, RefreshCw } from 'lucide-svelte';
-	import { Button, Alert } from '$lib/components/ui';
+	import { Button, Alert, Skeleton } from '$lib/components/ui';
 	import {
 		BulkStatus,
 		BulkToolbar,
@@ -29,6 +29,9 @@
 
 	let containers = $state<Container[]>([]);
 	let loading = $state(true);
+	// The first load has answered: until then the tab is its skeleton, and a reload keeps what is
+	// shown (ADR-0430).
+	let loaded = $state(false);
 	let error = $state('');
 	// Why the list could not be loaded (Docker did not answer: 503, ADR-0323). The tab then shows
 	// this error alone: no counts, search or empty list, and no Create button. The actions' and the
@@ -110,15 +113,17 @@
 	async function loadData() {
 		loading = true;
 		error = '';
-		loadError = '';
 		try {
 			containers = await getContainers();
+			// The error stays until a load succeeds: a reload does not blank it (ADR-0430).
+			loadError = '';
 			const listed = new Set(containers.map((c) => c.id));
 			selection.set([...selection.ids].filter((id) => listed.has(id)));
 		} catch (e: any) {
 			loadError = e.message;
 		} finally {
 			loading = false;
+			loaded = true;
 		}
 	}
 
@@ -235,7 +240,18 @@
 		hidden={activeTab !== 'containers'}
 		class="space-y-6"
 	>
-		{#if loadError}
+		{#if !loaded}
+			<!-- The first load (ADR-0430): the counts, the toolbar and the list, swapped at once. -->
+			<div class="space-y-6" aria-busy="true">
+				<div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+					{#each [0, 1, 2] as stat (stat)}
+						<Skeleton shape="block" class="h-[66px] w-full rounded-card" />
+					{/each}
+				</div>
+				<Skeleton shape="block" class="h-9 w-full" />
+				<div class="card"><Skeleton shape="row" columns={6} count={4} size="control" /></div>
+			</div>
+		{:else if loadError}
 			<Alert variant="error">{loadError}</Alert>
 		{:else}
 		<!-- Stats Cards -->
@@ -274,7 +290,6 @@
 		<!-- Container List -->
 		<ContainerList
 			containers={filteredContainers}
-			{loading}
 			filtered={!!(searchQuery || stateFilter)}
 			view={viewMode}
 			selected={selection.ids}

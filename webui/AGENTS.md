@@ -54,7 +54,7 @@ adapter, strict TypeScript and TailwindCSS (ADR-0012). Caddy serves the built fi
 ## Design system (ADR-0012)
 
 - Pages are built from `$lib/components/ui`: `Button`, `Card`, `Badge`, `Input`, `Select`,
-  `Modal`, `Alert`, `ProgressBar`, `EmptyState`, `StatusDot`. `Input` and `Select` take a
+  `Modal`, `Alert`, `ProgressBar`, `EmptyState`, `StatusDot`, `Skeleton`. `Input` and `Select` take a
   `label`, and dialogs, lists and hints work with the keyboard and screen readers (ADR-0361).
   A dialog asked from a dialog opens over it, which stays open: `Modal` keeps the stack of open
   dialogs, and Escape closes only the top one, whatever the markup order.
@@ -98,6 +98,20 @@ adapter, strict TypeScript and TailwindCSS (ADR-0012). Caddy serves the built fi
   `form-*` class, and a raw palette class in a class attribute, a `class:` directive or a string
   literal, outside `src/lib/components/ui`, and names the token to use (ADR-0400; the mapping is
   in the ADR). `// design-ignore: <reason>` (an HTML comment above an element) exempts a use.
+
+## Loading (ADR-0430)
+
+- The boot screen of `src/app.html` covers the page until the root layout calls `finishBoot` of
+  `$lib/boot.ts`: once the account is known (or the page needs none) and the page has drawn. The
+  shell is drawn with the account's role; while the account is unknown the sidebar draws skeletons.
+- A page's first load shows a `Skeleton` of its final layout (`line`, `block`, `circle`, `row`,
+  `tile`, `card`, `table`) in place of everything that load brings, under `aria-busy="true"`, and
+  swaps it for the data at once: nothing drawn before is pushed down. No "Loading…" text. A part
+  that loads on its own later sits last or keeps its height. A refresh, or a reload after an
+  action, keeps what is shown (a `loaded` flag; the skeleton only before the first answer). What a
+  page needs at once is fetched in parallel. A skeleton has no text and no role, so that the specs'
+  roles and texts find only the page. `tests/loading.spec.ts` checks the main pages with the API
+  slowed: no "Loading", no empty frame, the navigation drawn once, a layout shift below 0.05.
 
 ## Data
 

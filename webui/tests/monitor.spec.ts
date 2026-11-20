@@ -117,7 +117,9 @@ test.describe('Resource Monitor', () => {
   // decimals, and the percentages with one decimal.
   test('the live stats in English: CPU, memory, network, disk I/O and the processes', async ({ authenticatedPage: page }) => {
     const { send } = await openWithFakes(page);
-    await expect(page.getByText('Waiting for WebSocket data...')).toBeVisible();
+    // Until the first stats come, the cards are skeletons in their places (ADR-0430).
+    await expect(page.locator('main [aria-busy="true"] [data-skeleton]').first()).toBeVisible();
+    await expect(page.getByText('Waiting for WebSocket data...')).toHaveCount(0);
     await send();
     await expect(page.getByText('Live', { exact: true })).toBeVisible();
 
@@ -289,8 +291,10 @@ test.describe('Resource Monitor', () => {
     const { send } = await openWithFakes(page);
 
     await expect(page.getByRole('heading', { name: 'Монитор ресурсов' })).toBeVisible();
-    await expect(page.getByText('Ожидание данных WebSocket...')).toBeVisible();
-    await expect(page.getByText('Нет связи', { exact: true })).toBeVisible();
+    // Until the first stats come: connecting, and the cards are skeletons in their places (ADR-0430).
+    await expect(page.locator('main [aria-busy="true"] [data-skeleton]').first()).toBeVisible();
+    await expect(page.getByText('Подключение…', { exact: true }).first()).toBeVisible();
+    await expect(page.getByText('Нет связи', { exact: true })).toHaveCount(0);
 
     await send();
     await expect(page.getByText('Онлайн', { exact: true })).toBeVisible();

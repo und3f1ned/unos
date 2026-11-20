@@ -3,6 +3,7 @@
 	import type { NotificationLog } from '$lib/api/notifications';
 	import type { Pool } from '$lib/api/storage';
 	import { t } from '$lib/i18n';
+	import { Skeleton } from '$lib/components/ui';
 	import type { WebSocketStats } from '$lib/stores/stats';
 	import {
 		ContainersWidget,
@@ -20,7 +21,7 @@
 		pools: Pool[];
 		containers: Container[];
 		notificationLogs: NotificationLog[];
-		/** The last message of the live stats; the stats cards show nothing without one. */
+		/** The last message of the live stats; until the first, a stats card is a skeleton of its tile (ADR-0430). */
 		stats: WebSocketStats | null;
 	};
 
@@ -93,4 +94,6 @@
 		temperature={wholeDegrees(stats.cpu?.temperature)}
 		cpuCores={stats.cpu?.cores ?? 0}
 	/>
+{:else}
+	<Skeleton shape="tile" />
 {/if}

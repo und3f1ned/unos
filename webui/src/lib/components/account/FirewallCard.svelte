@@ -12,7 +12,7 @@
 		type FirewallRule,
 		type FirewallStatus
 	} from '$lib/api/security';
-	import { Alert, Badge, Button, Card } from '$lib/components/ui';
+	import { Alert, Badge, Button, Card, Skeleton } from '$lib/components/ui';
 	import { t } from '$lib/i18n';
 	import { Flame, ShieldCheck, ShieldX } from 'lucide-svelte';
 	import FirewallAddRuleDialog from './FirewallAddRuleDialog.svelte';
@@ -268,6 +268,9 @@
 				<Badge variant="success"><ShieldCheck class="w-4 h-4 inline" /> {$t('firewall.active')}</Badge>
 			{:else if status}
 				<Badge variant="warning"><ShieldX class="w-4 h-4 inline" /> {$t('firewall.inactive')}</Badge>
+			{:else if !loadError}
+				<!-- The badge's place until the status comes (ADR-0430). -->
+				<span aria-busy="true"><Skeleton shape="block" class="h-6 w-24 rounded-full" /></span>
 			{/if}
 			<Button variant="primary" aria-expanded={showDetails} onclick={() => (showDetails = !showDetails)}
 				>{$t('firewall.configure')}</Button

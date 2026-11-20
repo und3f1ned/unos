@@ -14,7 +14,9 @@
 		signOut,
 		TWO_FACTOR_SETUP_PATH
 	} from '$lib/stores/auth';
-	import { connectWebSocket, disconnectWebSocket } from '$lib/stores/stats';
+	import { connectWebSocket, disconnectWebSocket, wsConnected, wsForbidden, wsSettled } from '$lib/stores/stats';
+	import { problemsKnown } from '$lib/stores/problems';
+	import { finishBoot } from '$lib/boot';
 	import { applyTheme, loadAccountTheme } from '$lib/stores/theme';
 	import ProblemsBanner from '$lib/components/ProblemsBanner.svelte';
 	import CommandPalette from '$lib/components/palette/CommandPalette.svelte';
@@ -31,7 +33,7 @@
 		setUnauthorizedHandler
 	} from '$lib/api/client';
 	import type { User } from '$lib/api/auth';
-	import { Alert, Button } from '$lib/components/ui';
+	import { Alert, Button, Skeleton } from '$lib/components/ui';
 	import { t } from '$lib/i18n';
 
 	type Props = {
@@ -45,8 +47,12 @@
 	// The theme that the signed-in user chose (ADR-0405), once per session; an account that can only
 	// set up two-factor authentication cannot ask, and keeps the theme of this browser. Whoever
 	// signs in (this layout, the sign-in page, another tab), $user tells it.
+	// The boot screen waits for it (ADR-0430), so that the page is not drawn in the other theme first.
+	let themeKnown = $state(false);
 	$effect(() => {
-		if (browser && $user && !setupOnly) untrack(() => void loadAccountTheme());
+		if (browser && $user && !setupOnly) {
+			untrack(() => void loadAccountTheme().finally(() => (themeKnown = true)));
+		}
 	});
 	// Whose links the sidebar shows.
 	const navRole = $derived(!$user || setupOnly ? null : $user.is_admin ? 'admin' : 'user');
@@ -153,6 +159,29 @@
 			});
 	}
 
+	// The boot screen of app.html (ADR-0430) goes once the page is drawn, its skeleton at least: for
+	// the account, for nobody (sign-in, first run), or with the error of the account. A signed-in
+	// page also waits a moment, 1 s at most, for the account's theme, and an administrator's for the
+	// problems banner above it, which comes with the events socket's first message: neither then
+	// changes the page once it is drawn.
+	const BOOT_WAIT_MS = 1000;
+	let bootWaitOver = $state(false);
+	const pageDrawn = $derived((gate !== 'blocked' && showSlot) || userLoadError !== '');
+	const accountShown = $derived(
+		gate !== 'allowed' ||
+			setupOnly ||
+			(themeKnown && (!$isAdmin || $problemsKnown || $wsForbidden || ($wsSettled && !$wsConnected)))
+	);
+	$effect(() => {
+		if (!pageDrawn) return;
+		if (accountShown || bootWaitOver) {
+			untrack(finishBoot);
+			return;
+		}
+		const timer = setTimeout(() => (bootWaitOver = true), BOOT_WAIT_MS);
+		return () => clearTimeout(timer);
+	});
+
 	// Every page, the sign-in and first-run pages too, shows the theme of the theme store.
 	onMount(applyTheme);
 
@@ -208,7 +237,11 @@
 					<Button variant="secondary" size="sm" class="mt-3" onclick={ensureUser}>{$t('common.retry')}</Button>
 				</Alert>
 			{:else}
-				<p class="loading-text">{$t('common.loading')}</p>
+				<!-- The account is not known yet: the shape of a page, under the boot screen (ADR-0430). -->
+				<div class="page-container" aria-busy="true">
+					<Skeleton size="title" class="w-56 max-w-full" />
+					<div class="card"><Skeleton count={4} /></div>
+				</div>
 			{/if}
 		</main>
 	</div>

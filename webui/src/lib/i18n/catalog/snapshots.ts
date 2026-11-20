@@ -21,7 +21,6 @@ export const en = {
 	// Before the path of the copy.
 	'snapshots.restoredAt': 'The copy is at',
 	'snapshots.of': 'Snapshots of {name}',
-	'snapshots.loading': 'Loading snapshots...',
 	'snapshots.loadError': 'Could not load the snapshots',
 	'snapshots.empty': 'No snapshots yet',
 	'snapshots.emptyHint': 'A snapshot keeps the files as they are now, read-only.',
@@ -86,7 +85,6 @@ export const en = {
 	'snapshots.copies.of': 'Restored copies in {name}',
 	'snapshots.copies.hint':
 		'Writable copies that Restore made here. Copy what you need from one, then delete it: a volume cannot be deleted while it holds one.',
-	'snapshots.copies.loading': 'Loading restored copies...',
 	'snapshots.copies.loadError': 'Could not load the restored copies',
 	'snapshots.copies.empty': 'No restored copies here.',
 	'snapshots.copies.list': 'Restored copies',
@@ -117,7 +115,6 @@ export const ru: Translation<typeof en> = {
 	'snapshots.restored': 'Снимок восстановлен',
 	'snapshots.restoredAt': 'Путь к копии:',
 	'snapshots.of': 'Снимки {name}',
-	'snapshots.loading': 'Загрузка снимков...',
 	'snapshots.loadError': 'Не удалось загрузить снимки',
 	'snapshots.empty': 'Снимков пока нет',
 	'snapshots.emptyHint': 'Снимок сохраняет файлы в их нынешнем виде, только для чтения.',
@@ -175,7 +172,6 @@ export const ru: Translation<typeof en> = {
 	'snapshots.copies.of': 'Восстановленные копии в {name}',
 	'snapshots.copies.hint':
 		'Копии, доступные для записи, которые создало восстановление снимка. Скопируйте из копии нужное, затем удалите её: том нельзя удалить, пока в нём есть копия.',
-	'snapshots.copies.loading': 'Загрузка восстановленных копий...',
 	'snapshots.copies.loadError': 'Не удалось загрузить восстановленные копии',
 	'snapshots.copies.empty': 'Восстановленных копий здесь нет.',
 	'snapshots.copies.list': 'Восстановленные копии',

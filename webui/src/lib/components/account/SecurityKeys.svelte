@@ -8,7 +8,7 @@
 		getSecurityKeys,
 		type SecurityKey
 	} from '$lib/api/auth';
-	import { Alert, Button } from '$lib/components/ui';
+	import { Alert, Button, Skeleton } from '$lib/components/ui';
 	import { intlLocale, t } from '$lib/i18n';
 	import { formatDateTime } from '$lib/time';
 	import { browserErrorKey, createCredential, openedByIpAddress, securityKeysSupported } from '$lib/webauthn';
@@ -155,7 +155,7 @@
 	{/if}
 
 	{#if loading}
-		<p class="text-sm text-content-muted">{$t('common.loading')}</p>
+		<div aria-busy="true"><Skeleton count={2} /></div>
 	{:else if loadError}
 		<Alert variant="error" title={$t('securitykeys.loadError')}>{loadError}</Alert>
 	{:else if keys.length === 0}

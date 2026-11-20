@@ -1,11 +1,11 @@
 <script lang="ts">
 	import { AlertTriangle, Check, CheckCircle, RefreshCw, SlidersHorizontal } from 'lucide-svelte';
 	import type { SystemInfo } from '$lib/api/system';
-	import { Button, StatusDot } from '$lib/components/ui';
+	import { Button, Skeleton, StatusDot } from '$lib/components/ui';
 	import { intlLocale, t } from '$lib/i18n';
 	import { isAdmin } from '$lib/stores/auth';
 	import { problems, problemsKnown } from '$lib/stores/problems';
-	import { wsConnected, wsForbidden } from '$lib/stores/stats';
+	import { wsConnected, wsForbidden, wsSettled } from '$lib/stores/stats';
 	import { apiTime } from '$lib/time';
 
 	// The head of the dashboard: the host's name, system and uptime, a chip that says how fresh the
@@ -18,8 +18,10 @@
 		systemInfo: SystemInfo | null;
 		/** When the last message of the live stats came. */
 		lastUpdate: Date | null;
-		/** Whether the layout of the widgets can be changed: it was read, and nothing loads. */
+		/** Whether the layout of the widgets can be changed: it was read (or is being read). */
 		customizable: boolean;
+		/** The page's first load: the host's name and system are not known yet (ADR-0430). */
+		pending: boolean;
 		/** The widgets are being arranged. */
 		arranging: boolean;
 		loading: boolean;
@@ -29,7 +31,9 @@
 		onrefresh: () => void;
 	};
 
-	let { systemInfo, lastUpdate, customizable, arranging, loading, saving, oncustomize, onrefresh }: Props = $props();
+	let { systemInfo, lastUpdate, customizable, pending, arranging, loading, saving, oncustomize, onrefresh }: Props =
+		$props();
+
 
 	// The functions that read $t or $intlLocale do it where the markup calls them: the texts follow
 	// the language.
@@ -54,8 +58,14 @@
 
 <div class="page-header">
 	<div class="min-w-0">
-		<h1 class="page-title">{systemInfo?.hostname || $t('common.product')}</h1>
-		{#if systemInfo}
+		{#if pending}
+			<!-- The host's name and system, as tall as they will be (ADR-0430). -->
+			<Skeleton size="title" class="w-56 max-w-full" />
+			<Skeleton class="mt-0.5 w-72 max-w-full" />
+		{:else}
+			<h1 class="page-title">{systemInfo?.hostname || $t('common.product')}</h1>
+		{/if}
+		{#if systemInfo && !pending}
 			<p class="page-subtitle">
 				{$t('dashboard.osUptime', { os: systemInfo.os, uptime: formatUptime(systemInfo.boot_time) })}
 			</p>
@@ -66,6 +76,13 @@
 			<span class="chip text-status-warning">
 				<AlertTriangle class="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
 				<span>{$t('dashboard.liveStatsForbidden')}</span>
+			</span>
+		{:else if !$wsSettled}
+			<!-- The first attempt of the live connection has not ended: connecting, not disconnected
+			     (ADR-0430). -->
+			<span class="chip">
+				<StatusDot status="neutral" />
+				<span>{$t('dashboard.connecting')}</span>
 			</span>
 		{:else if !$wsConnected}
 			<span class="chip text-status-warning">
@@ -91,6 +108,7 @@
 					size="sm"
 					icon={arranging ? Check : SlidersHorizontal}
 					pressed={arranging}
+					disabled={loading}
 					onclick={oncustomize}
 				>
 					{arranging ? $t('dashboard.layout.done') : $t('dashboard.layout.customize')}

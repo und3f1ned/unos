@@ -119,7 +119,7 @@ test.describe('Login History', () => {
     await page.goto('/system#security');
     const card = page.locator('div:has(> div > h3:has-text("Login History"))');
     await card.getByRole('button', { name: 'View History' }).click();
-    await expect(card.getByText('Loading...')).toHaveCount(0);
+    await expect(card.locator('[aria-busy="true"]')).toHaveCount(0);
     const rows = card.getByRole('list', { name: 'Login history' }).getByRole('listitem');
     await expect(rows).toHaveCount(2);
 

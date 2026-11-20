@@ -25,7 +25,9 @@
   export async function ask() {
     leftovers.ask();
     await tick();
-    leftoversCancelSlot?.querySelector("button")?.focus();
+    // Without scrolling, as Modal focuses itself: a dialog taller than the window (long paths on a
+    // phone held sideways) opens at its top, its title shown, not scrolled down to Cancel.
+    leftoversCancelSlot?.querySelector("button")?.focus({ preventScroll: true });
   }
 
   async function closeLeftovers() {

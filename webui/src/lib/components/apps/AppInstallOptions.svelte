@@ -2,7 +2,7 @@
 	// The install form's options above an app's tabs: the pool for its data (or why none can be
 	// chosen), and the group unos-smb, the only way to give it a share's folder (ADR-0274).
 	import { HardDrive } from 'lucide-svelte';
-	import { Alert, Button, Select } from '$lib/components/ui';
+	import { Alert, Button, Select, Skeleton } from '$lib/components/ui';
 	import { UNOS_SMB_IDS, type AppTemplate } from '$lib/api/apps';
 	import { intlLocale, t } from '$lib/i18n';
 	import type { PoolChoice } from './pools.svelte';
@@ -37,7 +37,7 @@
 {#if needsPool && !isInstalled}
 	<div class="mb-4">
 		{#if pools.loading}
-			<p class="text-sm text-muted">{$t('apps.detail.loadingPools')}</p>
+			<div aria-busy="true"><Skeleton shape="block" class="h-9 w-full" /></div>
 		{:else if pools.error}
 			<Alert variant="error" title={$t('apps.detail.poolsError')}>{pools.error}</Alert>
 		{:else if pools.pools.length === 0}

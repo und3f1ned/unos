@@ -12,6 +12,7 @@
 		Users,
 		Wrench
 	} from 'lucide-svelte';
+	import { Skeleton } from '$lib/components/ui';
 	import { t } from '$lib/i18n';
 	import { isActive } from './routes';
 
@@ -21,13 +22,19 @@
 	type Props = {
 		/** Whose links: none while the account is unknown or can only set up two-factor authentication. */
 		role: 'admin' | 'user' | null;
+		/** The account is not known yet: the links' shape, without links (ADR-0430). */
+		pending?: boolean;
 		/** The path of the page shown: its link is marked. */
 		pathname: string;
 		/** A link was clicked. */
 		onnavigate: () => void;
 	};
 
-	let { role, pathname, onnavigate }: Props = $props();
+	let { role, pending = false, pathname, onnavigate }: Props = $props();
+
+	// The shape of an administrator's links while the account loads: the top link, then each
+	// group's label and links.
+	const PENDING_GROUPS = [1, 4, 2, 3].map((links) => Array.from({ length: links }, (_, i) => i));
 
 	type Link = { href: string; icon: typeof LayoutDashboard; label: string };
 	type Group = { id: string; label: string | null; links: Link[] };
@@ -84,7 +91,24 @@
 
 <!-- A group label is a paragraph that names its list, not a heading and not a link: `aside nav a`
      is still exactly the pages. -->
-<nav class="flex-1 min-h-0 px-3 pt-2 pb-3 overflow-y-auto scrollbar-thin" aria-label={$t('layout.nav.label')}>
+<nav
+	class="flex-1 min-h-0 px-3 pt-2 pb-3 overflow-y-auto scrollbar-thin"
+	aria-label={$t('layout.nav.label')}
+	aria-busy={pending ? 'true' : undefined}
+>
+	{#if pending}
+		{#each PENDING_GROUPS as links, group (group)}
+			{#if group > 0}
+				<Skeleton size="eyebrow" class="mx-2.5 mt-[18px] mb-1.5 w-16" />
+			{/if}
+			{#each links as link (link)}
+				<div class="nav-item" aria-hidden="true">
+					<Skeleton shape="block" class="w-[18px] h-[18px]" />
+					<Skeleton class="flex-1 max-w-24" />
+				</div>
+			{/each}
+		{/each}
+	{/if}
 	{#each groups as group (group.id)}
 		{#if group.label}
 			<p id="nav-group-{group.id}" class="eyebrow mx-2.5 mt-[18px] mb-1.5">{group.label}</p>

@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount, tick } from "svelte";
   import { SlidersHorizontal } from "lucide-svelte";
-  import { Alert, EmptyState } from "$lib/components/ui";
+  import { Alert, EmptyState, Skeleton } from "$lib/components/ui";
   import {
     AccountNotice, DashboardHeader, DashboardWidget, HiddenWidgets, ReplaceDisksAlert, WidgetToolbar
   } from "$lib/components/dashboard";
@@ -17,7 +17,7 @@
   import {
     defaultLayout, isDefaultLayout, moveTo, resolveLayout, setHidden, step, widgetDef
   } from "$lib/dashboard-layout";
-  import { stats, type WebSocketStats } from "$lib/stores/stats";
+  import { stats, wsConnected, wsForbidden, wsSettled, type WebSocketStats } from "$lib/stores/stats";
   import { user } from "$lib/stores/auth";
   import { t } from "$lib/i18n";
 
@@ -33,6 +33,9 @@
   let toReplace = $state.raw<DiskPrediction[]>([]);
   let predictionsError = $state("");
   let loading = $state(true);
+  // The first load has answered: until then the page is its skeleton, in the default layout of the
+  // widgets; a refresh keeps what is shown (ADR-0430).
+  let loaded = $state(false);
   let lastUpdate = $state<Date | null>(null);
 
   // Subscribe to WebSocket stats
@@ -110,6 +113,7 @@
       notificationLogs = Array.isArray(logsData) ? logsData : [];
     } finally {
       loading = false;
+      loaded = true;
     }
   }
 
@@ -117,8 +121,15 @@
     await loadData();
   }
 
-  // A widget shows when it is not hidden and has its data: the stats cards come with the live stats.
-  const shown = $derived(layout.filter((e) => !e.hidden && (currentStats !== null || widgetDef(e.id)?.adminOnly)));
+  // A stats card waits for the live stats as a skeleton of its tile, so that they arrive in its
+  // place (ADR-0430): while the socket's first attempt runs, or the socket is up and its first stats
+  // have not come. Without stats it is left out: for an account the socket refuses, or once the
+  // attempt ended without them.
+  const waitingForStats = $derived(currentStats === null && !$wsForbidden && ($wsConnected || !$wsSettled));
+  // A widget shows when it is not hidden, a stats card with the live stats or while it waits.
+  const shown = $derived(layout.filter((e) => !e.hidden && (currentStats !== null || waitingForStats || widgetDef(e.id)?.adminOnly)));
+  // The skeleton of the first load: the default layout of the account's widgets.
+  const skeleton = $derived(defaultLayout(isAdmin).map((entry) => widgetDef(entry.id)?.size ?? "small"));
   const hiddenWidgets = $derived(layout.filter((e) => e.hidden));
   // Every widget hidden by the user, not only waiting for its data (ADR-0428).
   const allHidden = $derived(layout.length > 0 && layout.every((e) => e.hidden));
@@ -224,7 +235,8 @@
   <DashboardHeader
     {systemInfo}
     {lastUpdate}
-    customizable={!layoutFailed && !loading}
+    customizable={!layoutFailed}
+    pending={!loaded}
     {arranging}
     {loading}
     {saving}
@@ -232,17 +244,25 @@
     onrefresh={handleRefresh}
   />
 
-  {#if loading && !currentStats}
-    <!-- Skeleton tiles while the page's data loads; the text stays for screen readers. -->
+  {#if !loaded}
+    <!-- The first load (ADR-0430): the widgets of the default layout as skeletons, in their places;
+         the page's data replaces them all at once. -->
     <div class="grid grid-cols-2 md:grid-cols-6 xl:grid-cols-10 gap-4" aria-busy="true">
-      {#each [0, 1, 2, 3, 4] as tile (tile)}
-        <div class="col-span-1 md:col-span-2 space-y-3 bg-surface-elevated border border-border rounded-card p-5">
-          <div class="skeleton w-1/2"></div>
-          <div class="skeleton h-6 w-2/3"></div>
-          <div class="skeleton w-full"></div>
-        </div>
+      {#each skeleton as size, index (index)}
+        {#if size === "wide"}
+          <div class="col-span-2 md:col-span-6 xl:col-span-5 card min-h-64" data-skeleton aria-hidden="true">
+            <div class="card-header">
+              <Skeleton size="base" class="w-40" />
+              <Skeleton class="w-16" />
+            </div>
+            <Skeleton count={3} />
+          </div>
+        {:else}
+          <div class="col-span-1 md:col-span-2 flex flex-col">
+            <Skeleton shape="tile" class="flex-1" />
+          </div>
+        {/if}
       {/each}
-      <p class="sr-only">{$t("common.loading")}</p>
     </div>
   {:else}
     <!-- The disks to replace stay above the widgets, always: a warning is not one of them. -->
@@ -281,7 +301,10 @@
     <!-- The widgets: small cards five to a row on a wide screen, wide ones two to a row (ADR-0395).
          While they are arranged each has a dashed outline and its toolbar in room of its own at the
          top right, so that it covers nothing of the widget. -->
-    <div class="grid grid-cols-2 md:grid-cols-6 xl:grid-cols-10 gap-4">
+    <div
+      class="grid grid-cols-2 md:grid-cols-6 xl:grid-cols-10 gap-4"
+      aria-busy={waitingForStats ? "true" : undefined}
+    >
       {#each shown as entry, index (entry.id)}
         {@const def = widgetDef(entry.id)}
         <div

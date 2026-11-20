@@ -19,7 +19,6 @@
 	type Props = {
 		/** The containers that the search and the filter let through. */
 		containers: Container[];
-		loading: boolean;
 		/** A search or a filter is set: an empty list offers to clear them, else to create one. */
 		filtered: boolean;
 		view: 'table' | 'cards';
@@ -38,7 +37,6 @@
 
 	let {
 		containers,
-		loading,
 		filtered,
 		view,
 		selected,
@@ -119,9 +117,7 @@
 	{@render quick(container, 'remove')}
 {/snippet}
 
-{#if loading}
-	<p class="loading-text">{$t('containers.loading')}</p>
-{:else if containers.length === 0}
+{#if containers.length === 0}
 	<EmptyState
 		icon={ContainerIcon}
 		title={$t('containers.empty.title')}

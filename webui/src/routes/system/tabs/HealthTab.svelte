@@ -7,7 +7,7 @@
     type DiskPrediction,
     type SmartInfo
   } from "$lib/api/health";
-  import { Alert, Badge, Button } from "$lib/components/ui";
+  import { Alert, Badge, Button, Skeleton } from "$lib/components/ui";
   import { SmartDataDialog } from "$lib/components/system/health";
   import {
     HEALTH_STATUS,
@@ -25,6 +25,8 @@
   // The predictions that say replace soon (ADR-0235).
   let toReplace = $state<DiskPrediction[]>([]);
   let loading = $state(true);
+  // The first load has answered: a refresh keeps what is shown (ADR-0430).
+  let loaded = $state(false);
   let error = $state("");
   let predictionsError = $state("");
   // The disk whose SMART data the dialog shows: the data of GET /health/disks,
@@ -59,6 +61,7 @@
       predictionsError = messageOf(predictions.reason, $t("health.predictionsError"));
     }
     loading = false;
+    loaded = true;
   }
 
   // The predictions to replace soon that match no listed disk: smartctl could
@@ -76,8 +79,11 @@
     </Button>
   </div>
 
-  {#if loading}
-    <p class="loading-text">{$t("common.loading")}</p>
+  {#if !loaded}
+    <div class="space-y-4" aria-busy="true">
+      <Skeleton shape="card" count={3} />
+      <Skeleton shape="card" count={3} />
+    </div>
   {:else if error}
     <Alert variant="error" title={$t("health.loadError")}>{error}</Alert>
   {:else if disks.length === 0}

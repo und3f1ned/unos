@@ -1,7 +1,7 @@
 <script lang="ts">
   import { Bell } from "lucide-svelte";
   import type { ChannelKind, NotificationConfig } from "$lib/api/notifications";
-  import { Button, Card, EmptyState } from "$lib/components/ui";
+  import { Button, Card, EmptyState, Skeleton } from "$lib/components/ui";
   import { t } from "$lib/i18n";
   import ChannelCard from "./ChannelCard.svelte";
   import { KINDS, KIND_ORDER } from "./channels";
@@ -36,7 +36,10 @@
   </div>
 
   {#if loading && configs.length === 0}
-    <p class="loading-text">{$t("common.loading")}</p>
+    <div class="space-y-4" aria-busy="true">
+      <Skeleton shape="card" count={2} />
+      <Skeleton shape="card" count={2} />
+    </div>
   {:else if configs.length === 0}
     <Card>
       <EmptyState

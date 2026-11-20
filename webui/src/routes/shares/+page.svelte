@@ -2,7 +2,7 @@
 	import { onMount, untrack } from 'svelte';
 	import { Plus } from 'lucide-svelte';
 	import { getSharePaths, type NfsExport, type RepairResult, type SharePath, type SmbShare } from '$lib/api/shares';
-	import { Alert, Button } from '$lib/components/ui';
+	import { Alert, Button, Skeleton } from '$lib/components/ui';
 	import {
 		BulkDeleteDialog,
 		DeleteNfsExportDialog,
@@ -173,7 +173,11 @@
 		<ShareOutcomeAlerts {outcome} />
 
 		{#if loading}
-			<p class="loading-text">{$t('common.loading')}</p>
+			<!-- The first load (ADR-0430): the shares' table and the card under it. -->
+			<div class="space-y-6" aria-busy="true">
+				<Skeleton shape="table" columns={5} count={3} />
+				<Skeleton shape="card" count={2} />
+			</div>
 		{:else if activeTab === 'smb'}
 			<SmbStatusAlerts
 				status={smb.status}

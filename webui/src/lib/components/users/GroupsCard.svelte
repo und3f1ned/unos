@@ -4,13 +4,13 @@
 	import type { User } from '$lib/api/auth';
 	import { ApiError } from '$lib/api/client';
 	import { deleteGroup, type Group } from '$lib/api/groups';
-	import { Alert, Button, Card } from '$lib/components/ui';
+	import { Alert, Button, Card, Skeleton } from '$lib/components/ui';
 	import { SmbStateBadge } from '$lib/components/shares';
 	import { t } from '$lib/i18n';
 	import ConfirmDialog from './ConfirmDialog.svelte';
 	import { messageOf } from './errors';
 	import GroupDialog from './GroupDialog.svelte';
-	import { GroupDirectory } from './groups.svelte';
+	import type { GroupDirectory } from './groups.svelte';
 	import OutcomeAlerts from './OutcomeAlerts.svelte';
 
 	type Props = {
@@ -22,19 +22,25 @@
 		 * member list older than the group.
 		 */
 		users?: User[];
+		/** The groups, which the page loads with its users when it opens (ADR-0430). */
+		directory: GroupDirectory;
 	};
 
-	let { users = [] }: Props = $props();
-
-	const directory = new GroupDirectory();
+	let { users = [], directory }: Props = $props();
 
 	// The dialog of a new group or of a group's name and members.
 	let groupDialog: ReturnType<typeof GroupDialog> | undefined;
 
-	// Once mounted, and again with each new list of users (no polling: only after a load of the
-	// page's own).
+	// Again with each new list of users (no polling: only after a load of the page's own). The
+	// page loaded the groups with the first list.
+	let usersLoaded: User[] | null = null;
 	$effect(() => {
-		void users;
+		const current = users;
+		if (usersLoaded === null || current === usersLoaded) {
+			usersLoaded = current;
+			return;
+		}
+		usersLoaded = current;
 		untrack(() => void directory.load());
 	});
 
@@ -100,7 +106,7 @@
 	<OutcomeAlerts outcome={directory.outcome} failureTitle={$t('groups.actionFailed')} />
 
 	{#if directory.loading}
-		<p class="loading-text">{$t('common.loading')}</p>
+		<div aria-busy="true"><Skeleton count={2} /></div>
 	{:else if directory.groups.length === 0 && !directory.loadError}
 		<p class="text-muted">{$t('groups.empty')}</p>
 	{:else}
