@@ -41,6 +41,17 @@ manager, encrypted backup uploads, health checks, CI checks).
   `app_names_changed` in the audit log, ADR-0420).
 
 ### Changed
+- The web UI's shared components (ADR-0432, the first chunk of the UX work): a destructive action
+  asks in a confirmation of the page, with the action named on its button, instead of the browser's
+  dialog, and the outcome of a backup's deletion and of the Scheduler's actions comes as a toast; a failed load says so with Retry instead of an empty
+  list, its technical reason folded under "Technical details"; a row's actions stay on one line, the
+  rest in a "⋯" menu, and on a phone System > Backup & Restore's list becomes cards; a disabled
+  button says why on hover and focus; fields show their unit and bounds, related fields line up in a
+  group, and settings that are on or off are switches; dialogs are 420, 560, 720 or 880 px wide with
+  a header and buttons that stay in view, and a long list opens in a side panel; badges are in
+  sentence case; the Scheduler shows every time on the NAS's clock and names its zone once. The
+  design check refuses `window.confirm`, `alert`, `prompt` and `uppercase`, and new raw checkboxes
+  and filled primary buttons in a card's header or a table's row.
 - The web UI loads without flicker (ADR-0430): from the first frame a boot screen (the logo, and
   a thin bar after 400 ms) in the user's theme covers the page until the account is known and the
   page has drawn its skeleton, then fades out in 160 ms; the sidebar is drawn once with the

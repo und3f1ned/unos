@@ -1,0 +1,33 @@
+{
+  "//": "The uses of the rules raw-choice and primary-in-card of scripts/design-check.mjs that were left when the rules came (ADR-0432): file and count. A file may have up to its count, a new file none; a count is lowered as the file is fixed, and a file whose count is too high fails too, so that the baseline only shrinks. The UX work's chunks 2 to 5 empty it: 2 Data (storage, files), 3 Sharing and people (shares, users), 4 Applications (apps, containers), 5 System tabs (network, notifications, power, updates, offsite, remote).",
+  "raw-choice": {
+    "src/lib/components/apps/AppInstallOptions.svelte": 1,
+    "src/lib/components/containers/BulkToolbar.svelte": 1,
+    "src/lib/components/containers/ContainerList.svelte": 1,
+    "src/lib/components/files/FileList.svelte": 1,
+    "src/lib/components/files/TrashTable.svelte": 1,
+    "src/lib/components/network/CreateVirtualDialog.svelte": 1,
+    "src/lib/components/shares/IscsiCreateDialog.svelte": 1,
+    "src/lib/components/shares/IscsiEditDialog.svelte": 3,
+    "src/lib/components/shares/ShareCard.svelte": 1,
+    "src/lib/components/shares/ShareSettingsFields.svelte": 3,
+    "src/lib/components/shares/SmbInterfacesDialog.svelte": 3,
+    "src/lib/components/shares/SmbShareList.svelte": 1,
+    "src/lib/components/storage/AddDiskDialog.svelte": 2,
+    "src/lib/components/storage/BalanceDialog.svelte": 1,
+    "src/lib/components/storage/CreatePoolDialog.svelte": 2,
+    "src/lib/components/storage/RemoveDiskDialog.svelte": 1,
+    "src/lib/components/system/notifications/ChannelDialog.svelte": 4,
+    "src/lib/components/system/power/PowerScheduleCard.svelte": 3,
+    "src/lib/components/users/CreateUserDialog.svelte": 1,
+    "src/lib/components/users/EditUserDialog.svelte": 3,
+    "src/lib/components/users/GroupDialog.svelte": 1,
+    "src/routes/system/tabs/UpdateTab.svelte": 1
+  },
+  "primary-in-card": {
+    "src/lib/components/remote/AppNamesCard.svelte": 1,
+    "src/lib/components/remote/PeerList.svelte": 1,
+    "src/lib/components/shares/IscsiTab.svelte": 1,
+    "src/lib/components/system/offsite/OffsiteState.svelte": 1
+  }
+}

@@ -2348,7 +2348,7 @@ account's). An administrator's list there is the administrator's own too. The
 sign-ins of every account, also of deleted accounts, of names given up by a
 rename and with names that do not exist, each failed one with its reason (a
 wrong password or a refused second step), are in the [Audit Log](#audit-log),
-for administrators. Each entry shows **SUCCESS** or **FAILED** with the
+for administrators. Each entry shows **Success** or **Failed** with the
 reason (such as "Incorrect username or password" or "Invalid 2FA code"), the
 account, the time in your browser's time zone, the address of the computer
 that signed in (not that of the web interface's proxy) and the browser. Above
@@ -2391,7 +2391,9 @@ offset, in UTC (`2026-11-07T14:30:12Z`, or `+00:00` at the end), such as
 started; only a scheduled task's `next_run` is in the NAS's time zone, with
 that zone's offset. A time that the API takes, such as a bound of the audit
 log, may carry an offset; one without an offset is UTC. The web interface
-shows every time in your browser's time zone.
+shows times in your browser's time zone, except those of what the NAS runs
+by its own clock (the Scheduler's next runs and runs), which it shows on the
+NAS's clock and names that zone.
 
 **What a limited token can do.** An area is the part of a path after
 `/api/v1/`, as the API is organised: `apps`, `audit`, `auth` (your account,
@@ -2996,9 +2998,13 @@ its API.
 
 - **New Task** asks for the task's type, its target and when it runs: every
   hour at a minute, every day, week or month at a time, or a cron expression
-  (minute, hour, day of the month, month, day of the week). **Run now** runs a
-  task at once. **History**, or a task's history button, lists the last 100
-  runs with their status, start and duration, and the output or error of each.
+  (minute, hour, day of the month, month, day of the week). A task's switch
+  turns it on or off; its pencil edits it and its bin deletes it, after a
+  question. Its **⋯** menu holds **Run now**, which runs it at once, and
+  **View history**. **History**, or a task's **View history**, lists the last
+  100 runs in a side panel, with their status, start and duration, and the
+  output or error of each. What an action did, or why it failed, shows for a
+  few seconds at the bottom of the page.
 - The schedules follow the clock of the NAS's time zone, which the tab names:
   the time zone set on the host (`timedatectl set-timezone`), or UTC when the
   host has none that UNOS can use; when the host cannot be asked for a moment,
@@ -3008,8 +3014,8 @@ its API.
   hour that repeats runs once, the first time, and an hourly task skips the
   repeated hour; on the night they go forward, a time that the clock skips
   runs when the clock passes it, once (a task for 02:30 runs at 03:00 in
-  central Europe). Next runs and the times in the history show in your
-  browser's time zone.
+  central Europe). Next runs and the times in the history show on the NAS's
+  clock too, so that every time of the tab is in the one zone it names.
 - A task runs while UNOS runs: a time that passes while the NAS is off or
   suspended is not made up for, and when the clock is set forward, only the
   tasks of its last 5 minutes run. A run that a restart or shutdown of UNOS
@@ -3054,8 +3060,8 @@ of UNOS, issues from its own certificate authority for the name in
 [HTTPS and the Certificate Warning](INSTALL.md#https-and-the-certificate-warning)),
 or the name of the stored certificate that it serves (**Not known** when the web
 server did not answer). **Manage** says so again and lists the **Stored
-Certificates**, each with its type, issuer, end date, **VALID** or **EXPIRED**,
-**SERVED** or **NOT SERVED**, and **EXPIRES SOON** when it ends within 30 days.
+Certificates**, each with its type, issuer, end date, **Valid** or **Expired**,
+**Served** or **Not served**, and **Expires soon** when it ends within 30 days.
 
 **Serve this certificate** makes a valid stored certificate the one that every
 browser gets, after a confirmation: browsers see a new certificate, and one that
@@ -3071,7 +3077,7 @@ again. Deleting the served certificate does that first and asks with its own
 question. The choice stays across restarts and reboots. If the web server
 cannot load the chosen certificate, it keeps the certificate it served; when it
 starts and cannot load it, it serves the local CA's, and the card marks the
-chosen certificate **NOT LOADED** with a warning. A certificate stored under the
+chosen certificate **Not loaded** with a warning. A certificate stored under the
 name of the served one is refused until another one, or the local CA, is
 served. Every upload, generation, delete and change of the served certificate
 is in the audit log.
@@ -3309,7 +3315,8 @@ interfaces that SMB listens on. It does not
 hold the files in your pools, Samba's own password database, nor settings
 kept elsewhere, such as notification channels, scheduled tasks, firewall
 rules, UPS settings, the network settings and the host's `/etc/fstab`. Each
-backup in the list has **Restore**, **Download** and **Delete** buttons.
+backup in the list has a **Delete** button, which asks first, and a **⋯** menu
+with **Restore** and **Download**. On a phone each backup is a card.
 
 - **Create Backup** - Makes an unencrypted backup (`.tar.gz`). The database may be up to 48 MiB: a
   larger one is refused with the limit in the message, since a restore could not hold it in memory

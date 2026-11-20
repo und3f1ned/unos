@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { TOKEN_AREAS } from '$lib/api/auth';
-	import { Alert, Button, Input, Modal, Select } from '$lib/components/ui';
+	import { Alert, Button, Checkbox, Input, Modal, RadioGroup, Select } from '$lib/components/ui';
 	import { t } from '$lib/i18n';
 	import type { ApiTokenForm } from './apiTokenForm.svelte';
 	import { AREA_LABELS, pathOf } from './apiTokens';
@@ -51,80 +51,45 @@
 		/>
 		<Select id="api-token-lifetime" label={$t('tokens.form.expiry')} bind:value={form.lifetime} options={lifetimeOptions} />
 
-		<fieldset class="space-y-2 min-w-0">
-			<legend class="form-label">{$t('tokens.form.access')}</legend>
-			<label class="flex items-start gap-2 cursor-pointer">
-				<input
-					type="radio"
-					name="api-token-access"
-					class="mt-1 border-border bg-surface-overlay text-brand focus:ring-brand-ring"
-					value={true}
-					bind:group={form.readOnly}
-					disabled={saving}
-				/>
-				<span>
-					<span class="block">{$t('tokens.access.read')}</span>
-					<span class="block text-sm text-muted">{$t('tokens.form.readHint')}</span>
-				</span>
-			</label>
-			<label class="flex items-start gap-2 cursor-pointer">
-				<input
-					type="radio"
-					name="api-token-access"
-					class="mt-1 border-border bg-surface-overlay text-brand focus:ring-brand-ring"
-					value={false}
-					bind:group={form.readOnly}
-					disabled={saving}
-				/>
-				<span>
-					<span class="block">{$t('tokens.access.change')}</span>
-					<span class="block text-sm text-muted">{$t('tokens.form.changeHint')}</span>
-				</span>
-			</label>
-		</fieldset>
+		<!-- The theme's radio buttons and checkboxes (ADR-0432); the form keeps booleans. -->
+		<RadioGroup
+			name="api-token-access"
+			legend={$t('tokens.form.access')}
+			value={form.readOnly ? 'read' : 'change'}
+			disabled={saving}
+			options={[
+				{ value: 'read', label: $t('tokens.access.read'), description: $t('tokens.form.readHint') },
+				{ value: 'change', label: $t('tokens.access.change'), description: $t('tokens.form.changeHint') }
+			]}
+			onchange={(value) => (form.readOnly = value === 'read')}
+		/>
 
-		<fieldset class="space-y-2 min-w-0">
-			<legend class="form-label">{$t('tokens.form.areas')}</legend>
-			<label class="flex items-start gap-2 cursor-pointer">
-				<input
-					type="radio"
-					name="api-token-areas"
-					class="mt-1 border-border bg-surface-overlay text-brand focus:ring-brand-ring"
-					value={true}
-					bind:group={form.everyArea}
-					disabled={saving}
-				/>
-				<span>
-					<span class="block">{$t('tokens.areas.every')}</span>
-					<span class="block text-sm text-muted">{$t('tokens.form.everyHint')}</span>
-				</span>
-			</label>
-			<label class="flex items-start gap-2 cursor-pointer">
-				<input
-					type="radio"
-					name="api-token-areas"
-					class="mt-1 border-border bg-surface-overlay text-brand focus:ring-brand-ring"
-					value={false}
-					bind:group={form.everyArea}
-					disabled={saving}
-				/>
-				<span>{$t('tokens.form.someAreas')}</span>
-			</label>
+		<div class="space-y-2 min-w-0">
+			<RadioGroup
+				name="api-token-areas"
+				legend={$t('tokens.form.areas')}
+				value={form.everyArea ? 'every' : 'some'}
+				disabled={saving}
+				options={[
+					{ value: 'every', label: $t('tokens.areas.every'), description: $t('tokens.form.everyHint') },
+					{ value: 'some', label: $t('tokens.form.someAreas') }
+				]}
+				onchange={(value) => (form.everyArea = value === 'every')}
+			/>
 			{#if !form.everyArea}
-				<ul class="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1 pl-6">
+				<ul class="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1.5 pl-7" aria-label={$t('tokens.form.someAreas')}>
 					{#each TOKEN_AREAS as area (area)}
 						<li class="min-w-0">
-							<label class="flex flex-wrap items-center gap-x-2 cursor-pointer">
-								<input
-									type="checkbox"
-									class="form-checkbox"
-									checked={form.chosen[area] === true}
-									disabled={saving}
-									onchange={(event) => (form.chosen = { ...form.chosen, [area]: event.currentTarget.checked })}
-								/>
-								<span>{$t(AREA_LABELS[area])}</span>
-								<span class="mono text-xs text-muted break-all">{pathOf(area)}</span>
-							</label>
+							<Checkbox
+								checked={form.chosen[area] === true}
+								disabled={saving}
+								onchange={(on) => (form.chosen = { ...form.chosen, [area]: on })}
+							>
+								<span class="flex flex-wrap items-center gap-x-2">
+									<span>{$t(AREA_LABELS[area])}</span>
+									<span class="mono text-xs text-muted break-all">{pathOf(area)}</span>
+								</span>
+							</Checkbox>
 						</li>
 					{/each}
 				</ul>
@@ -132,7 +97,7 @@
 					<p class="form-hint">{$t('tokens.form.chooseArea')}</p>
 				{/if}
 			{/if}
-		</fieldset>
+		</div>
 
 		{#if form.readOnly || !form.everyArea}
 			<p class="form-hint">{$t('tokens.form.limitedNote')}</p>

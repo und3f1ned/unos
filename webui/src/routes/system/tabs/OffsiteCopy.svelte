@@ -22,7 +22,7 @@
     type OffsiteStatus,
   } from "$lib/api/offsite";
   import { getTasks, type ScheduledTask } from "$lib/api/scheduler";
-  import { Alert, Card, Skeleton } from "$lib/components/ui";
+  import { Alert, Card, Skeleton, confirm } from "$lib/components/ui";
   import { OffsiteForm } from "$lib/components/system/offsite/form.svelte";
   import { restorePoolsOf } from "$lib/components/system/offsite/offsite";
   import OffsiteSettingsForm from "$lib/components/system/offsite/OffsiteSettingsForm.svelte";
@@ -145,7 +145,15 @@
   }
 
   async function makeKeyPair() {
-    if (answer?.sftp_public_key && !confirm($t("offsite.sftp.confirmNewKey"))) return;
+    if (answer?.sftp_public_key) {
+      const yes = await confirm({
+        title: $t("offsite.sftp.newKeyTitle"),
+        message: $t("offsite.sftp.confirmNewKey"),
+        confirmLabel: $t("offsite.sftp.newKeyAction"),
+        tone: "warning",
+      });
+      if (!yes) return;
+    }
     makingKey = true;
     error = null;
     notice = "";
@@ -160,7 +168,12 @@
   }
 
   async function forget() {
-    if (!confirm($t("offsite.form.confirmForget"))) return;
+    const yes = await confirm({
+      title: $t("offsite.form.forgetTitle"),
+      message: $t("offsite.form.confirmForget"),
+      confirmLabel: $t("offsite.form.forgetAction"),
+    });
+    if (!yes) return;
     error = null;
     notice = "";
     try {

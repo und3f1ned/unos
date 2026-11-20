@@ -12,7 +12,7 @@ export const en = {
 	// as "unknown" for an encrypted backup; and whether it is encrypted.
 	'backup.version': 'v{version}',
 	'backup.versionUnknown': 'version unknown',
-	'backup.encrypted': 'encrypted',
+	'backup.encrypted': 'Encrypted',
 	// The units of a backup's size, each 1024 times the one before (formatBytes of
 	// src/lib/api/backup.ts).
 	'backup.size.bytes': 'B',
@@ -26,6 +26,16 @@ export const en = {
 	'backup.delete': 'Delete',
 	'backup.deleteOne': 'Delete {name}',
 	'backup.confirmDelete': 'Delete backup {name}?',
+	'backup.deleteMessage': 'The file is removed from this NAS. A copy you downloaded and the off-device copies stay.',
+	'backup.deleteAction': 'Delete backup',
+	'backup.deleted': 'Backup {name} deleted',
+	'backup.listLabel': 'Backups',
+	'backup.column.name': 'Backup',
+	'backup.column.created': 'Created',
+	'backup.column.size': 'Size',
+	'backup.column.version': 'UNOS version',
+	'backup.column.actions': 'Actions',
+	'backup.technical': 'The server gave a technical reason.',
 
 	// The titles of the errors above the list; the server's message follows.
 	'backup.loadFailed': 'Could not load the backups',
@@ -62,7 +72,7 @@ export const ru: Translation<typeof en> = {
 	'backup.emptyHint': 'Создайте резервную копию, чтобы сохранить конфигурацию UNOS',
 	'backup.version': 'версия {version}',
 	'backup.versionUnknown': 'версия неизвестна',
-	'backup.encrypted': 'зашифрована',
+	'backup.encrypted': 'Зашифрована',
 	'backup.size.bytes': 'Б',
 	'backup.size.kilobytes': 'КБ',
 	'backup.size.megabytes': 'МБ',
@@ -74,6 +84,16 @@ export const ru: Translation<typeof en> = {
 	'backup.delete': 'Удалить',
 	'backup.deleteOne': 'Удалить {name}',
 	'backup.confirmDelete': 'Удалить резервную копию {name}?',
+	'backup.deleteMessage': 'Файл будет удалён с этого NAS. Скачанная копия и копии вне устройства останутся.',
+	'backup.deleteAction': 'Удалить копию',
+	'backup.deleted': 'Резервная копия {name} удалена',
+	'backup.listLabel': 'Резервные копии',
+	'backup.column.name': 'Резервная копия',
+	'backup.column.created': 'Создана',
+	'backup.column.size': 'Размер',
+	'backup.column.version': 'Версия UNOS',
+	'backup.column.actions': 'Действия',
+	'backup.technical': 'Сервер назвал техническую причину.',
 
 	'backup.loadFailed': 'Не удалось загрузить список резервных копий',
 	'backup.createFailed': 'Не удалось создать резервную копию',

@@ -1,14 +1,18 @@
 <script lang="ts">
-  import { CheckCircle, Clock, Edit3, History, Pause, Play, RefreshCw, Trash2, XCircle, Zap } from "lucide-svelte";
+  import { untrack } from "svelte";
+  import { CheckCircle, Clock, Edit3, History, Trash2, XCircle, Zap } from "lucide-svelte";
   import type { ScheduledTask, TaskType } from "$lib/api/scheduler";
-  import { Button } from "$lib/components/ui";
+  import { ActionMenu, Button, Switch } from "$lib/components/ui";
   import { intlLocale, t } from "$lib/i18n";
   import { formatDateTime } from "$lib/time";
   import { DAYS_OF_WEEK, TASK_TYPES, getStatusColor, getTaskTypeIcon } from "./tasks";
 
-  // A task of the list: its switch, type, name, target, schedule and next run, and its actions.
+  // A task of the list (ADR-0432): its switch, type, name, target, schedule and next run on the
+  // NAS's clock; Edit and Delete as icons, Run now and its history in its ⋯ menu.
   type Props = {
     task: ScheduledTask;
+    // The NAS's time zone, whose clock the times are on; null while it is not known.
+    zone: string | null;
     // Run Now was asked and the server has not answered yet.
     running: boolean;
     ontoggle: (task: ScheduledTask) => void;
@@ -18,9 +22,17 @@
     ondelete: (task: ScheduledTask) => void;
   };
 
-  let { task, running, ontoggle, onrun, onhistory, onedit, ondelete }: Props = $props();
+  let { task, zone, running, ontoggle, onrun, onhistory, onedit, ondelete }: Props = $props();
 
   let TypeIcon = $derived(getTaskTypeIcon(task.task_type));
+
+  // The switch's state: the task's, again after each load (a new task object), so that a toggle
+  // that failed shows the stored state once the list is read again.
+  let on = $state(untrack(() => task.enabled));
+  $effect.pre(() => {
+    const current = task;
+    untrack(() => (on = current.enabled));
+  });
 
   // The functions below that give texts are reactive, so that the list follows a change of the
   // language.
@@ -48,31 +60,29 @@
     if (task.frequency === "monthly") return $t("scheduler.schedule.monthly", { day: task.day_of_month ?? 1, time });
     return task.frequency;
   });
+
+  const nextRun = $derived(
+    task.enabled && task.next_run
+      ? formatDateTime(task.next_run, $intlLocale, { dateStyle: "medium", timeStyle: "short", zone })
+      : ""
+  );
 </script>
 
 <!-- Below sm the actions wrap below the task, which keeps the row's width (ADR-0302). -->
-<div class="flex flex-wrap gap-y-2 items-center justify-between p-3 bg-surface-overlay rounded-lg">
+<div class="flex flex-wrap gap-y-2 items-center justify-between p-3 bg-surface-overlay rounded-lg" data-task={task.name}>
   <div class="flex items-center gap-3 flex-1 max-sm:basis-full min-w-0">
-    <!-- Enable/Disable Toggle -->
-    <Button variant="plain"
-      onclick={() => ontoggle(task)}
-      class="p-1.5 rounded hover:bg-surface-hover transition-colors {task.enabled
-        ? 'text-status-success'
-        : 'text-content-muted'}"
-      title={task.enabled ? $t("scheduler.task.disable") : $t("scheduler.task.enable")}
-    >
-      {#if task.enabled}
-        <Play class="w-5 h-5" />
-      {:else}
-        <Pause class="w-5 h-5" />
-      {/if}
-    </Button>
+    <!-- On or off: a switch, which is no action icon (ADR-0432). -->
+    <Switch
+      bind:checked={on}
+      label={$t("scheduler.task.enabledLabel", { name: task.name })}
+      onchange={() => ontoggle(task)}
+    />
 
     <!-- Task Info -->
     <div class="flex-1 min-w-0">
       <div class="flex items-center gap-2">
-        <TypeIcon class="w-4 h-4 text-status-info flex-shrink-0" />
-        <p class="font-medium text-sm truncate">{task.name}</p>
+        <TypeIcon class="w-4 h-4 text-content-secondary flex-shrink-0" aria-hidden="true" />
+        <p class="font-medium text-sm truncate" title={task.name}>{task.name}</p>
         {#if task.last_status}
           <span class={getStatusColor(task.last_status)}>
             {#if task.last_status === "success"}
@@ -94,48 +104,28 @@
       </p>
     </div>
 
-    <!-- Next Run -->
-    {#if task.enabled && task.next_run}
+    <!-- Next Run, on the NAS's clock -->
+    {#if nextRun}
       <div class="hidden sm:flex flex-col items-end text-xs text-content-muted">
         <span class="flex items-center gap-1">
           <Clock class="w-3 h-3" />
           {$t("scheduler.task.nextRun")}
         </span>
-        <span>{formatDateTime(task.next_run, $intlLocale)}</span>
+        <span class="tabular">{nextRun}</span>
       </div>
     {/if}
   </div>
 
-  <!-- Actions -->
-  <div class="flex items-center gap-1 ml-2 max-sm:ml-auto">
-    <Button variant="ghost" size="icon" class="text-status-warning hover:text-status-warning"
-      onclick={() => onrun(task)}
-      disabled={running}
-      title={$t("scheduler.task.runNow")}
-    >
-      {#if running}
-        <RefreshCw class="w-4 h-4 animate-spin" />
-      {:else}
-        <Zap class="w-4 h-4" />
-      {/if}
-    </Button>
-    <Button variant="ghost" size="icon" class="text-content-secondary"
-      onclick={() => onhistory(task)}
-      title={$t("scheduler.task.viewHistory")}
-    >
-      <History class="w-4 h-4" />
-    </Button>
-    <Button variant="ghost" size="icon"
-      onclick={() => onedit(task)}
-      title={$t("scheduler.task.edit")}
-    >
-      <Edit3 class="w-4 h-4" />
-    </Button>
-    <Button variant="ghost-danger" size="icon"
-      onclick={() => ondelete(task)}
-      title={$t("scheduler.task.delete")}
-    >
-      <Trash2 class="w-4 h-4" />
-    </Button>
+  <!-- Actions: one line, the two icons and the menu. -->
+  <div class="table-actions ml-2 max-sm:ml-auto">
+    <Button variant="ghost" size="icon-sm" icon={Edit3} onclick={() => onedit(task)} title={$t("scheduler.task.edit")} aria-label={$t("scheduler.task.editOne", { name: task.name })}></Button>
+    <Button variant="ghost-danger" size="icon-sm" icon={Trash2} onclick={() => ondelete(task)} title={$t("scheduler.task.delete")} aria-label={$t("scheduler.task.deleteOne", { name: task.name })}></Button>
+    <ActionMenu
+      name={task.name}
+      items={[
+        { label: $t("scheduler.task.runNow"), icon: Zap, disabled: running, onclick: () => onrun(task) },
+        { label: $t("scheduler.task.viewHistory"), icon: History, onclick: () => onhistory(task) },
+      ]}
+    />
   </div>
 </div>

@@ -1,5 +1,6 @@
 import type { Page, Request, Route } from '@playwright/test';
 import { test, expect } from './fixtures';
+import { answerConfirmation } from './ui';
 import { answerInstall, catalogCard, fakeInstallEvents, oneContainerApp } from './apps-fakes';
 
 test.describe('App Store', () => {
@@ -243,17 +244,16 @@ test.describe('Installed apps', () => {
     await page.goto('/apps');
     await page.getByRole('button', { name: /^Installed/ }).click();
 
-    let question = '';
-    page.once('dialog', (dialog) => {
-      question = dialog.message();
-      void dialog.accept();
-    });
     await card(page, 'e2e-jellyfin').getByRole('button', { name: 'Uninstall' }).click();
+    await answerConfirmation(page, {
+      title: 'Uninstall e2e-jellyfin?',
+      message: 'Its container is removed; its data folders are kept.',
+      action: 'Uninstall app',
+    });
 
     await expect(card(page, 'e2e-jellyfin')).toHaveCount(0);
     await expect(card(page, 'e2e-transmission')).toBeVisible();
     await expect(page.getByRole('button', { name: 'Installed (1)' })).toBeVisible();
-    expect(question).toBe('Uninstall e2e-jellyfin? This removes its container and keeps its data folders.');
     expect(requests).toContain('DELETE /api/v1/apps/installed/e2e-jellyfin-id');
   });
 });
@@ -697,15 +697,12 @@ test.describe('The App Store in Russian', () => {
     await expect(syncthing.getByRole('button', { name: 'Запустить', exact: true })).toBeVisible();
     await expect(syncthing.getByText('Папки с данными недоступны')).toBeVisible();
 
-    let question = '';
-    page.once('dialog', (dialog) => {
-      question = dialog.message();
-      void dialog.dismiss();
-    });
     await jellyfin.getByRole('button', { name: 'Удалить', exact: true }).click();
-    await expect
-      .poll(() => question)
-      .toBe('Удалить приложение e2e-jellyfin? Его контейнер будет удалён, а папки с данными останутся.');
+    await answerConfirmation(page, {
+      title: 'Удалить приложение e2e-jellyfin?',
+      message: 'Его контейнер будет удалён, а папки с данными останутся.',
+      cancel: 'Отмена',
+    });
     await expect(jellyfin).toBeVisible();
 
     // Nothing of the English page is left.

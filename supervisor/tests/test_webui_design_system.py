@@ -3,9 +3,12 @@
 webui/scripts/design-check.mjs reads the .svelte files of src/ outside src/lib/components/ui with
 Svelte's and TypeScript's parsers. It fails for a raw <button>, an <a> styled as a button, a text
 field, select or textarea without a `form-*` class, and a raw Tailwind palette colour (bg-slate-700,
-hover:text-red-400) in a class attribute, a `class:` directive or a string literal; a comment
-`design-ignore: <reason>` exempts one use. Each test builds a small web UI in tmp_path and checks
-it, and the real one passes.
+hover:text-red-400) in a class attribute, a `class:` directive or a string literal; and since
+ADR-0432 for the browser's own dialogs (window.confirm, alert, prompt, also in a .ts module), the
+class `uppercase`, and, against a baseline of file counts that only shrinks
+(scripts/design-baseline.json), a raw checkbox or radio button and a filled primary Button in a
+card's header or a table's row. A comment `design-ignore: <reason>` exempts one use. Each test
+builds a small web UI in tmp_path and checks it, and the real one passes.
 
 Without node, or without webui/node_modules (make setup), the tests skip.
 """
@@ -106,9 +109,8 @@ class TestRawControls:
             <input type="password" class="form-input" />
             <select class="form-select"></select>
             <textarea class="form-input"></textarea>
-            <input type="checkbox" />
-            <input type="radio" />
             <input type="file" class="hidden" />
+            <input type="range" />
             """,
         )
         assert result.returncode == 0, result.stderr
@@ -209,6 +211,157 @@ class TestRawColors:
         result = run_check(node, webui)
         assert result.returncode == 1
         assert "lacks" in result.stderr
+
+
+def with_baseline(webui: Path, baseline: dict) -> Path:
+    (webui / "scripts").mkdir(parents=True, exist_ok=True)
+    (webui / "scripts" / "design-baseline.json").write_text(json.dumps(baseline))
+    return webui
+
+
+class TestFoundations:
+    """The rules of webui.design-foundations (ADR-0432)."""
+
+    @pytest.mark.parametrize(
+        "script,called",
+        [
+            ("function go() { if (!confirm('Sure?')) return; }\n", "confirm()"),
+            ("function go() { window.confirm('Sure?'); }\n", "window.confirm()"),
+            ("function go() { alert('Failed'); }\n", "alert()"),
+            ("function go() { globalThis.prompt('Name?'); }\n", "globalThis.prompt()"),
+        ],
+    )
+    def test_the_browsers_dialogs_fail_in_a_component(self, node, tmp_path, script, called):
+        result = check(node, tmp_path, "<p>x</p>\n", script)
+        assert result.returncode == 1, result.stdout
+        assert f"the browser's {called}" in result.stderr
+        assert "confirm() and toast of $lib/components/ui" in result.stderr
+
+    def test_a_browser_dialog_fails_in_the_markup_and_in_a_ts_module(self, node, tmp_path):
+        webui = demo(
+            tmp_path,
+            {
+                "routes/a/+page.svelte": "<Button onclick={() => alert('x')}>Go</Button>\n",
+                "lib/helpers.ts": "export function ask(): boolean {\n  return window.confirm('Sure?');\n}\n",
+            },
+        )
+        result = run_check(node, webui)
+        assert result.returncode == 1
+        assert "src/routes/a/+page.svelte:1:" in result.stderr and "alert()" in result.stderr
+        assert "src/lib/helpers.ts:2:10: the browser's window.confirm()" in result.stderr
+
+    def test_the_ui_confirm_and_a_components_own_confirm_pass(self, node, tmp_path):
+        webui = demo(
+            tmp_path,
+            {
+                "routes/a/+page.svelte": (
+                    '<script lang="ts">\nimport { confirm, toast } from "$lib/components/ui";\n'
+                    "async function go() { if (await confirm({ title: 't', confirmLabel: 'c' })) toast.success('ok'); }\n"
+                    "</script>\n<p>x</p>\n"
+                ),
+                "routes/b/+page.svelte": (
+                    '<script lang="ts">\nasync function confirm() { return true; }\n</script>\n'
+                    "<Button onclick={() => confirm()}>Go</Button>\n"
+                ),
+            },
+        )
+        result = run_check(node, webui)
+        assert result.returncode == 0, result.stderr
+
+    def test_the_uppercase_class_fails(self, node, tmp_path):
+        result = check(node, tmp_path, '<span class="badge uppercase">On</span>\n<p class="sm:uppercase">x</p>\n')
+        assert result.returncode == 1
+        assert result.stderr.count("class 'uppercase'") == 1 and "class 'sm:uppercase'" in result.stderr
+        assert "eyebrow" in result.stderr
+
+    def test_a_raw_checkbox_or_radio_fails_without_a_baseline(self, node, tmp_path):
+        result = check(node, tmp_path, '<input type="checkbox" bind:checked={a} />\n<input type="radio" />\n', "let a = $state(false);\n")
+        assert result.returncode == 1
+        assert "raw <input type=\"checkbox\">: use Checkbox or Switch" in result.stderr
+        assert "raw <input type=\"radio\">: use RadioGroup" in result.stderr
+        assert "[2 in the file, baseline 0]" in result.stderr
+
+    def test_the_baseline_admits_its_count_and_only_shrinks(self, node, tmp_path):
+        name = "src/routes/a/+page.svelte"
+        markup = '<input type="checkbox" />\n<input type="checkbox" />\n'
+        webui = demo(tmp_path, {"routes/a/+page.svelte": markup})
+
+        assert run_check(node, with_baseline(webui, {"raw-choice": {name: 2}})).returncode == 0
+        more = run_check(node, with_baseline(webui, {"raw-choice": {name: 1}}))
+        assert more.returncode == 1 and "[2 in the file, baseline 1]" in more.stderr
+        fewer = run_check(node, with_baseline(webui, {"//": "a note", "raw-choice": {"//": "a note", name: 3}}))
+        assert fewer.returncode == 1
+        assert f"raw-choice of {name} is 3, the file has 2: lower it to 2" in fewer.stderr
+
+    def test_the_components_choices_pass(self, node, tmp_path):
+        result = check(
+            node,
+            tmp_path,
+            '<Checkbox bind:checked={a} label="A" />\n<Switch bind:checked={a} label="B" />\n'
+            '<RadioGroup legend="C" options={[]} />\n',
+            "import { Checkbox, RadioGroup, Switch } from '$lib/components/ui';\nlet a = $state(false);\n",
+        )
+        assert result.returncode == 0, result.stderr
+
+    @pytest.mark.parametrize(
+        "markup,where",
+        [
+            ("<Card title=\"T\">{#snippet actions()}<Button>Add</Button>{/snippet}</Card>\n", "a card's header (Card actions)"),
+            ('<div class="card-header"><h3>T</h3><Button variant="primary">Add</Button></div>\n', "a card's header"),
+            ('<div class="flex justify-between"><h3 class="card-title">T</h3><Button size="sm">Add</Button></div>\n', "a card's header"),
+            ("<table><tr><td><Button>Edit</Button></td></tr></table>\n", "a table's row"),
+            ('<div class="table-actions"><Button>Edit</Button></div>\n', "a table's row"),
+        ],
+    )
+    def test_a_primary_button_in_a_card_header_or_a_row_fails(self, node, tmp_path, markup, where):
+        result = check(node, tmp_path, markup, "import { Button, Card } from '$lib/components/ui';\n")
+        assert result.returncode == 1, result.stdout
+        assert f"a filled primary Button in {where}" in result.stderr
+        assert "CardAction" in result.stderr
+
+    def test_secondary_buttons_there_and_primaries_elsewhere_pass(self, node, tmp_path):
+        result = check(
+            node,
+            tmp_path,
+            """\
+            <div class="page-header"><h1 class="page-title">P</h1><Button>Create</Button></div>
+            <Card title="T">{#snippet actions()}<CardAction onclick={go}>Add</CardAction>{/snippet}</Card>
+            <div class="card-header"><h3>T</h3><Button variant="secondary" size="sm">Add</Button></div>
+            <table><tr><td><Button variant="ghost">Edit</Button></td></tr></table>
+            <Modal open title="M"><div class="card-header"><h3>S</h3></div>{#snippet footer()}<Button>Save</Button>{/snippet}</Modal>
+            <form><Button type="submit">Save</Button></form>
+            """,
+            "import { Button, Card, CardAction, Modal } from '$lib/components/ui';\nfunction go() {}\n",
+        )
+        assert result.returncode == 0, result.stderr
+
+    def test_a_comment_with_a_reason_exempts_a_choice_and_a_button(self, node, tmp_path):
+        result = check(
+            node,
+            tmp_path,
+            """\
+            <!-- design-ignore: a choice card that styles its own radio -->
+            <input type="radio" />
+            <div class="card-header"><h3>T</h3>
+              <!-- design-ignore: the page's one main action sits here -->
+              <Button>Add</Button>
+            </div>
+            """,
+            "import { Button } from '$lib/components/ui';\n",
+        )
+        assert result.returncode == 0, result.stderr
+        assert "2 use(s) exempted" in result.stdout
+
+    def test_the_real_baseline_names_only_files_that_exist(self):
+        baseline = json.loads((WEBUI / "scripts" / "design-baseline.json").read_text(encoding="utf-8"))
+        assert set(baseline) == {"//", "raw-choice", "primary-in-card"}
+        for rule in ("raw-choice", "primary-in-card"):
+            for name, count in baseline[rule].items():
+                assert (WEBUI / name).is_file(), name
+                assert isinstance(count, int) and count > 0, name
+        # The foundations' own areas are not in it: ui, security, the account.
+        names = [name for rule in ("raw-choice", "primary-in-card") for name in baseline[rule]]
+        assert not [n for n in names if "/components/ui/" in n or "/security/" in n or "/account/" in n]
 
 
 def test_make_frontend_runs_the_check():

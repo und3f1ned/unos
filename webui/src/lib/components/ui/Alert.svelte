@@ -1,11 +1,12 @@
 <script lang="ts">
 	import type { Snippet } from 'svelte';
-	import { AlertCircle, CheckCircle, AlertTriangle, Info, X } from 'lucide-svelte';
+	import { AlertCircle, CheckCircle, AlertTriangle, ChevronDown, ChevronUp, Info, X } from 'lucide-svelte';
 	import { t } from '$lib/i18n';
 
 	// An alert (ADR-0428): the 10 % tint of its colour with a bar on the left; the icon and the
 	// title in the colour, the body in the text's colour, which reads better. `sm` for a note that
-	// informs and does not warn.
+	// informs and does not warn, and the size inside a card. `details` is folded behind "Show
+	// details" (ADR-0432): the plain sentence first, the commands and the server's text on demand.
 	type Props = {
 		variant?: 'error' | 'warning' | 'success' | 'info';
 		size?: 'md' | 'sm';
@@ -15,6 +16,7 @@
 		// The alert's close button was pressed (dismissible).
 		ondismiss?: () => void;
 		children?: Snippet;
+		details?: Snippet;
 	};
 
 	let {
@@ -24,8 +26,12 @@
 		title = '',
 		class: className = '',
 		ondismiss,
-		children
+		children,
+		details
 	}: Props = $props();
+
+	let detailsOpen = $state(false);
+	const detailsId = `alert-details-${Math.random().toString(36).slice(2, 9)}`;
 
 	const variantClasses = {
 		error: 'alert-error',
@@ -57,6 +63,23 @@
 				<p class="alert-title alert-tone">{title}</p>
 			{/if}
 			{@render children?.()}
+			{#if details}
+				<button
+					type="button"
+					class="alert-details-toggle"
+					aria-expanded={detailsOpen}
+					aria-controls={detailsId}
+					onclick={() => (detailsOpen = !detailsOpen)}
+				>
+					{detailsOpen ? $t('ui.alert.hideDetails') : $t('ui.alert.showDetails')}
+					{#if detailsOpen}
+						<ChevronUp class="w-3.5 h-3.5" aria-hidden="true" />
+					{:else}
+						<ChevronDown class="w-3.5 h-3.5" aria-hidden="true" />
+					{/if}
+				</button>
+				<div id={detailsId} class="mt-1.5" hidden={!detailsOpen}>{@render details()}</div>
+			{/if}
 		</div>
 		{#if dismissible}
 			<button

@@ -73,7 +73,7 @@ test.describe('Language', () => {
     expect(await savedLanguage(page)).toBe('ru');
     await page.getByRole('button', { name: 'Показать историю' }).click();
     const history = page.getByRole('list', { name: 'История входов' });
-    await expect(history.getByRole('listitem').first()).toContainText('УСПЕШНО');
+    await expect(history.getByRole('listitem').first()).toContainText('Успешно');
     await expect(history.locator('time').first()).toHaveText(/^\d{2}\.\d{2}\.\d{4}, \d{2}:\d{2}:\d{2}$/);
     await expect(page.getByRole('button', { name: 'Скрыть' })).toBeVisible();
 
@@ -163,14 +163,15 @@ test.describe('Language', () => {
       // English: the firewall's words as before the catalogs; what browsers get and a certificate's
       // type by their labels, and its dates in the browser's format, not as the server answers them.
       await expect(main.getByText('Default: Incoming deny, Outgoing allow', { exact: true })).toBeVisible();
-      expect(await rule.locator('span').first().innerText()).toBe('DENY');
+      // A badge in sentence case (ADR-0432).
+      expect(await rule.locator('.badge').first().innerText()).toBe('Deny');
       await expect(rule.getByText('IN | TCP | Port: 22 | From: 192.168.1.0/24', { exact: true })).toBeVisible();
       // Text, not a regular expression: Playwright compares text with its white space collapsed,
       // the space before AM included.
       await expect(main.getByText("Caddy's local CA", { exact: true })).toBeVisible();
       await expect(main.getByText("HTTPS for browsers: Caddy's local CA", { exact: true })).toBeVisible();
-      await expect(main.getByText('NOT SERVED', { exact: true })).toBeVisible();
-      await expect(main.getByText('EXPIRES SOON', { exact: true })).toBeVisible();
+      await expect(main.getByText('Not served', { exact: true })).toBeVisible();
+      await expect(main.getByText('Expires soon', { exact: true })).toBeVisible();
       await expect(main.getByRole('button', { name: 'Serve nas.local' })).toHaveText('Serve this certificate');
       await expect(main.getByText('Self-signed | Issuer: nas.local | Until: 11/8/2027, 1:47:31 AM', { exact: true }))
         .toBeVisible();
@@ -192,13 +193,13 @@ test.describe('Language', () => {
       await main.getByRole('button', { name: 'Управление', exact: true }).click();
       await expect(main.getByText('По умолчанию: входящие — запрещены, исходящие — разрешены', { exact: true }))
         .toBeVisible();
-      expect(await rule.locator('span').first().innerText()).toBe('ЗАПРЕТИТЬ');
+      expect(await rule.locator('.badge').first().innerText()).toBe('Запретить');
       await expect(rule.getByText('Входящие | TCP | Порт: 22 | Источник: 192.168.1.0/24', { exact: true }))
         .toBeVisible();
       await expect(main.getByText('Локальный ЦС Caddy', { exact: true })).toBeVisible();
       await expect(main.getByText('HTTPS для браузеров: Локальный ЦС Caddy', { exact: true })).toBeVisible();
-      await expect(main.getByText('НЕ ОТДАЁТСЯ', { exact: true })).toBeVisible();
-      await expect(main.getByText('СКОРО ИСТЕЧЁТ', { exact: true })).toBeVisible();
+      await expect(main.getByText('Не отдаётся', { exact: true })).toBeVisible();
+      await expect(main.getByText('Скоро истечёт', { exact: true })).toBeVisible();
       await expect(main.getByRole('button', { name: 'Отдавать nas.local' })).toHaveText('Отдавать этот сертификат');
       await expect(main.getByText('Самоподписанный | Издатель: nas.local | До: 08.11.2027, 01:47:31', { exact: true }))
         .toBeVisible();

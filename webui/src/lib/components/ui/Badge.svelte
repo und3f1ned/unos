@@ -1,8 +1,11 @@
 <script lang="ts">
 	import type { Snippet } from 'svelte';
 
+	// A badge (ADR-0432): a state in a few words of sentence case ("SMB off", never "OFF": the design
+	// check refuses `uppercase`), readable without its column. `outline` is for a category or a
+	// feature, which is no state: no colour.
 	type Props = {
-		variant?: 'success' | 'warning' | 'error' | 'info' | 'neutral' | 'purple' | 'cyan' | 'orange';
+		variant?: 'success' | 'warning' | 'error' | 'info' | 'neutral' | 'outline' | 'purple' | 'cyan' | 'orange';
 		/** A 6 px dot of the colour before the text, for a state (running, healthy). */
 		dot?: boolean;
 		class?: string;
@@ -17,6 +20,7 @@
 		error: 'badge-error',
 		info: 'badge-info',
 		neutral: 'badge-neutral',
+		outline: 'badge-outline',
 		purple: 'badge-purple',
 		cyan: 'badge-cyan',
 		orange: 'badge-orange'

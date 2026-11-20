@@ -1,5 +1,6 @@
 import type { Page, Route } from '@playwright/test';
 import { test, expect } from './fixtures';
+import { chooseAction, confirmWith } from './ui';
 
 test.describe('Backup & Restore', () => {
   test('should display backup tab', async ({ authenticatedPage: page }) => {
@@ -104,8 +105,8 @@ test.describe('Backup errors', () => {
     const detail = 'Failed to delete backup: [Errno 30] Read-only file system';
     await failBackupApi(page, 'DELETE', `/${FAKE_BACKUP.filename}`, detail);
     await openBackupTab(page);
-    page.once('dialog', (dialog) => dialog.accept());
     await page.getByRole('button', { name: `Delete ${FAKE_BACKUP.filename}` }).click();
+    await confirmWith(page, 'Delete backup', `Delete backup ${FAKE_BACKUP.filename}?`);
     await expectErrorShown(page, `Could not delete ${FAKE_BACKUP.filename}`, detail);
     await expect(page.getByText(FAKE_BACKUP.filename, { exact: true })).toBeVisible();
   });
@@ -126,7 +127,7 @@ test.describe('Backup errors', () => {
     const detail = 'Backup not found';
     await failBackupApi(page, 'GET', `/download/${FAKE_BACKUP.filename}`, detail);
     await openBackupTab(page);
-    await page.getByRole('button', { name: `Download ${FAKE_BACKUP.filename}` }).click();
+    await chooseAction(page, FAKE_BACKUP.filename, 'Download');
     await expectErrorShown(page, `Could not download ${FAKE_BACKUP.filename}`, detail);
   });
 
@@ -139,8 +140,8 @@ test.describe('Backup errors', () => {
     const detail = 'Failed to delete backup: [Errno 30] Read-only file system';
     await failBackupApi(page, 'DELETE', `/${last}`, detail, backups);
     await openBackupTab(page);
-    page.once('dialog', (dialog) => dialog.accept());
     await page.getByRole('button', { name: `Delete ${last}` }).click();
+    await confirmWith(page, 'Delete backup');
 
     await expect(page.locator('.alert-error')).toBeInViewport();
     // A live region: screen readers read the message out when it appears.
@@ -160,7 +161,7 @@ test.describe('Backup errors', () => {
     const detail = 'Failed to restore backup: database is locked';
     await failBackupApi(page, 'POST', `/restore/${FAKE_BACKUP.filename}`, detail);
     await openBackupTab(page);
-    await page.getByRole('button', { name: `Restore ${FAKE_BACKUP.filename}` }).click();
+    await chooseAction(page, FAKE_BACKUP.filename, 'Restore');
     const dialog = page.getByRole('dialog', { name: 'Restore backup' });
     await dialog.getByLabel('Type the backup filename to confirm:').fill(FAKE_BACKUP.filename);
     await dialog.getByRole('button', { name: 'Restore', exact: true }).click();
@@ -176,7 +177,7 @@ test.describe('Backup & Restore in Russian', () => {
   // UTC+05:45 all year: the server's UTC times are shown in the browser's time zone.
   test.use({ timezoneId: 'Asia/Kathmandu' });
   const row = (page: Page, filename: string) =>
-    page.locator('div.justify-between').filter({ has: page.getByText(filename, { exact: true }) });
+    page.locator('tr').filter({ has: page.getByText(filename, { exact: true }) });
 
   test('the tab, an error and the restore dialog are in Russian', async ({ authenticatedPage: page }) => {
     const detail = 'Failed to create backup: [Errno 28] No space left on device';
@@ -195,7 +196,7 @@ test.describe('Backup & Restore in Russian', () => {
     await openBackupTab(page);
     await expect(row(page, FAKE_BACKUP.filename).getByText(/v1\.0/)).toBeVisible();
     await expect(row(page, encrypted.filename).getByText(/version unknown/)).toBeVisible();
-    await expect(row(page, encrypted.filename).getByText('encrypted', { exact: true })).toBeVisible();
+    await expect(row(page, encrypted.filename).getByText('Encrypted', { exact: true })).toBeVisible();
     // The sizes, 2048 bytes and 1536000 bytes, as before the catalogs.
     await expect(row(page, FAKE_BACKUP.filename).getByText(/(^|\s)2 KB(\s|$)/)).toBeVisible();
     await expect(row(page, encrypted.filename).getByText(/(^|\s)1\.46 MB(\s|$)/)).toBeVisible();
@@ -215,7 +216,7 @@ test.describe('Backup & Restore in Russian', () => {
     await expect(row(page, encrypted.filename).getByText(/(^|\s)1,46 МБ(\s|$)/)).toBeVisible();
     await expect(row(page, FAKE_BACKUP.filename).getByText(/версия 1\.0/)).toBeVisible();
     await expect(row(page, encrypted.filename).getByText(/версия неизвестна/)).toBeVisible();
-    await expect(row(page, encrypted.filename).getByText('зашифрована', { exact: true })).toBeVisible();
+    await expect(row(page, encrypted.filename).getByText('Зашифрована', { exact: true })).toBeVisible();
 
     await page.getByRole('button', { name: 'Создать резервную копию', exact: true }).click();
     const alert = page.locator('.alert-error');
@@ -224,7 +225,7 @@ test.describe('Backup & Restore in Russian', () => {
     await alert.getByRole('button', { name: 'Закрыть' }).click();
     await expect(alert).toHaveCount(0);
 
-    await page.getByRole('button', { name: `Восстановить ${encrypted.filename}`, exact: true }).click();
+    await chooseAction(page, encrypted.filename, 'Восстановить', true);
     const dialog = page.getByRole('dialog', { name: 'Восстановление из резервной копии' });
     await expect(dialog.getByText('Внимание: текущие настройки будут перезаписаны, в том числе:')).toBeVisible();
     await expect(dialog.getByLabel('Парольная фраза зашифрованной резервной копии')).toBeVisible();
@@ -266,7 +267,7 @@ test.describe('Backup & Restore in Russian', () => {
 
     // In English, the items as the server names them.
     await openBackupTab(page);
-    await page.getByRole('button', { name: `Restore ${FAKE_BACKUP.filename}` }).click();
+    await chooseAction(page, FAKE_BACKUP.filename, 'Restore');
     let dialog = page.getByRole('dialog', { name: 'Restore backup' });
     await dialog.getByLabel('Type the backup filename to confirm:').fill(FAKE_BACKUP.filename);
     await dialog.getByRole('button', { name: 'Restore', exact: true }).click();
@@ -280,7 +281,7 @@ test.describe('Backup & Restore in Russian', () => {
     // As the Language card of the Account page leaves it.
     await page.evaluate(() => localStorage.setItem('unos-locale', 'ru'));
     await page.reload();
-    await page.getByRole('button', { name: `Восстановить ${FAKE_BACKUP.filename}`, exact: true }).click();
+    await chooseAction(page, FAKE_BACKUP.filename, 'Восстановить', true);
     dialog = page.getByRole('dialog', { name: 'Восстановление из резервной копии' });
     await dialog.getByLabel('Для подтверждения введите имя файла резервной копии:').fill(FAKE_BACKUP.filename);
     await dialog.getByRole('button', { name: 'Восстановить', exact: true }).click();

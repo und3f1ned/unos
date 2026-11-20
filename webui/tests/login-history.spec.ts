@@ -76,7 +76,7 @@ function shownAddress(address: string): RegExp {
   return new RegExp(`^\\s*(${forms.map((form) => form.replaceAll('.', '\\.')).join('|')})\\s*$`);
 }
 
-async function expectRow(row: Locator, badge: 'SUCCESS' | 'FAILED', times: string[], address: string) {
+async function expectRow(row: Locator, badge: 'Success' | 'Failed', times: string[], address: string) {
   await expect(row.getByText(badge, { exact: true })).toBeVisible();
   await expect(row.getByText(USER.username, { exact: true })).toBeVisible();
   expect(times).toContain((await row.locator('time').innerText()).trim());
@@ -124,8 +124,8 @@ test.describe('Login History', () => {
     await expect(rows).toHaveCount(2);
 
     // Newest first: the sign-in, then the failed attempt with its reason.
-    await expectRow(rows.nth(0), 'SUCCESS', await shownTimes(page, failedTo, signedInTo), address);
-    await expectRow(rows.nth(1), 'FAILED', await shownTimes(page, failedFrom, failedTo), address);
+    await expectRow(rows.nth(0), 'Success', await shownTimes(page, failedTo, signedInTo), address);
+    await expectRow(rows.nth(1), 'Failed', await shownTimes(page, failedFrom, failedTo), address);
     await expect(rows.nth(1).getByText('Incorrect username or password')).toBeVisible();
     await expect(rows.nth(0).getByText('Incorrect username or password')).toHaveCount(0);
     await expectCount(card, 'Total Attempts', 2);

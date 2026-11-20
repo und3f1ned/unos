@@ -1,7 +1,7 @@
 <script lang="ts">
   import { FileKey, Plus, Trash2 } from "lucide-svelte";
   import { deleteCertificate, type Certificate } from "$lib/api/security";
-  import { Alert, Badge, Button, Skeleton } from "$lib/components/ui";
+  import { Alert, Badge, Button, CardAction, Skeleton, confirm } from "$lib/components/ui";
   import { intlLocale, t } from "$lib/i18n";
   import { formatDateTime } from "$lib/time";
   import { CERTIFICATE_TYPES, SERVED_BADGES, SERVED_BY, storedCertificate } from "./certificates";
@@ -43,10 +43,12 @@
   );
 
   async function handleDeleteCert(cert: Certificate) {
-    const question = cert.chosen
-      ? $t("account.certs.confirmDeleteServed", { domain: cert.domain })
-      : $t("account.certs.confirmDelete");
-    if (!confirm(question)) return;
+    const yes = await confirm({
+      title: $t("account.certs.deleteTitle", { domain: cert.domain }),
+      message: cert.chosen ? $t("account.certs.confirmDeleteServed") : undefined,
+      confirmLabel: $t("account.certs.deleteAction"),
+    });
+    if (!yes) return;
 
     certificates.loading = true;
     certificates.error = "";
@@ -77,9 +79,9 @@
         <!-- The badge's place until the status comes (ADR-0430). -->
         <span aria-busy="true"><Skeleton shape="block" class="h-6 w-28 rounded-full" /></span>
       {/if}
-      <Button variant="primary" onclick={() => (showCertModal = !showCertModal)}>
+      <CardAction aria-expanded={showCertModal} onclick={() => (showCertModal = !showCertModal)}>
         {$t("account.certs.manage")}
-      </Button>
+      </CardAction>
     </div>
   </div>
 
@@ -133,8 +135,7 @@
 
       <div class="flex flex-wrap justify-between items-center gap-2">
         <h4 class="font-medium">{$t("account.certs.stored")}</h4>
-        <Button variant="primary" size="sm" onclick={() => certificates.openGenerate()}>
-          <Plus class="w-4 h-4" />
+        <Button variant="secondary" size="sm" icon={Plus} onclick={() => certificates.openGenerate()}>
           {$t("account.certs.generateSelfSigned")}
         </Button>
       </div>

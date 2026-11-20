@@ -21,15 +21,10 @@
 <li>
 	<div class="flex items-center justify-between gap-2 p-3 bg-surface-overlay rounded-lg">
 		<div class="flex flex-wrap items-center gap-x-3 gap-y-1 min-w-0">
-			<span
-				class="px-2 py-1 rounded text-xs font-medium uppercase {rule.action === 'allow'
-					? 'bg-status-success/20 text-status-success'
-					: rule.action === 'limit'
-						? 'bg-status-warning/20 text-status-warning'
-						: 'bg-status-error/20 text-status-error'}"
-			>
+			<!-- The action in sentence case, readable alone ("Allow"), in its colour (ADR-0432). -->
+			<Badge variant={rule.action === 'allow' ? 'success' : rule.action === 'limit' ? 'warning' : 'error'}>
 				{labelOf(RULE_ACTIONS, rule.action, $t)}
-			</span>
+			</Badge>
 			<div class="min-w-0 break-words">
 				<p class="font-medium">
 					{rule.comment ?? rule.app ?? $t('firewall.ruleNumber', { n: rule.number })}

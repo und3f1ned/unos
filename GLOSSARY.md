@@ -56,6 +56,24 @@ values will be until its first load has answered, in the page's final layout, so
 take their places without moving the page (`Skeleton` of `webui/src/lib/components/ui`,
 ADR-0430). Avoid: placeholder, loading state, shimmer.
 
+**Confirmation**: The dialog in which the web UI asks before an action that deletes, removes or
+cannot be undone: the question as its title, what will happen, Cancel and the action named by its
+verb and object (`confirm()` and `ConfirmDialog` of `webui/src/lib/components/ui`, ADR-0432). Never
+the browser's own `window.confirm`. Avoid: prompt, alert, are-you-sure.
+
+**Toast**: A short message in the corner of the page after an action, which says what it did or why
+it failed and goes after a few seconds (`toast` of `webui/src/lib/components/ui`, ADR-0432). An
+outcome the user must read before going on stays on the page instead. Avoid: snackbar,
+notification (a notification is what a channel sends).
+
+**Action menu**: The "⋯" button of an object, such as a table's row, that lists its actions beyond
+the one or two shown as buttons, the destructive ones last (`ActionMenu`, ADR-0432). Avoid: kebab,
+overflow menu, dropdown.
+
+**NAS's clock**: The time zone of the host, whose clock the schedules follow. The times of what the
+NAS runs by it (a task's next run, its runs) are shown on it, and the page names the zone once
+(`nasTimeZone`, ADR-0432). Avoid: server time, local time.
+
 **Table frame**: The element of the class `table-frame` around a table that can be wider than a
 phone's screen: the table scrolls sideways inside it, while the page never does (ADR-0302).
 Avoid: scroll wrapper, responsive table.

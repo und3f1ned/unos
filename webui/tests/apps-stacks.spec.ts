@@ -1,5 +1,6 @@
 import type { Locator, Page, Route } from '@playwright/test';
 import { test, expect } from './fixtures';
+import { answerConfirmation } from './ui';
 import {
   answerInstall,
   catalogCard,
@@ -141,16 +142,6 @@ function containersList(dialog: Locator, heading = 'Containers') {
 
 async function installedTab(page: Page, count: number, label = 'Installed') {
   await page.getByRole('button', { name: `${label} (${count})`, exact: true }).click();
-}
-
-/** Accept the confirmation that the next click asks for; returns its question once asked. */
-function confirmNext(page: Page): () => string {
-  let question = '';
-  page.once('dialog', (dialog) => {
-    question = dialog.message();
-    void dialog.accept();
-  });
-  return () => question;
 }
 
 test.describe('Apps of several containers', () => {
@@ -364,10 +355,13 @@ test.describe('An installed app of several containers', () => {
     await immich.getByRole('button', { name: 'Start', exact: true }).click();
     await expect(immich.getByText('Running', { exact: true })).toBeVisible();
 
-    const question = confirmNext(page);
     await immich.getByRole('button', { name: 'Uninstall', exact: true }).click();
+    await answerConfirmation(page, {
+      title: 'Uninstall immich?',
+      message: 'Its 4 containers are removed; its data folders are kept.',
+      action: 'Uninstall app',
+    });
     await expect(immich).toHaveCount(0);
-    expect(question()).toBe('Uninstall immich? This removes its 4 containers and keeps its data folders.');
     expect(requests).toEqual([
       'POST /api/v1/apps/installed/e2e-immich-id/stop',
       'POST /api/v1/apps/installed/e2e-immich-id/start',
@@ -415,10 +409,13 @@ test.describe('An installed app of several containers', () => {
     await expect(catalogCard(page, 'Immich').getByText('Incomplete', { exact: true })).toBeVisible();
     await installedTab(page, 1);
 
-    const question = confirmNext(page);
     await immich.getByRole('button', { name: 'Uninstall', exact: true }).click();
+    await answerConfirmation(page, {
+      title: 'Uninstall immich?',
+      message: 'Its 3 containers are removed; its data folders are kept.',
+      action: 'Uninstall app',
+    });
     await expect(immich).toHaveCount(0);
-    expect(question()).toBe('Uninstall immich? This removes its 3 containers and keeps its data folders.');
     expect(requests).toEqual(['DELETE /api/v1/apps/installed/e2e-immich-id']);
   });
 
@@ -462,10 +459,13 @@ test.describe('An installed app of several containers', () => {
     await expect(immich.locator('.alert-warning')).toHaveText(incomplete('immich'));
     await expect(immich.getByRole('button', { name: 'Start', exact: true })).toHaveCount(0);
 
-    const question = confirmNext(page);
     await immich.getByRole('button', { name: 'Uninstall', exact: true }).click();
+    await answerConfirmation(page, {
+      title: 'Uninstall immich?',
+      message: 'Its 3 containers are removed; its data folders are kept.',
+      action: 'Uninstall app',
+    });
     await expect(immich).toHaveCount(0);
-    expect(question()).toBe('Uninstall immich? This removes its 3 containers and keeps its data folders.');
     expect(requests).toEqual(['DELETE /api/v1/apps/installed/e2e-immich-database-id']);
   });
 
@@ -558,15 +558,12 @@ test.describe('Apps of several containers in Russian', () => {
       'Приложение Immich работает без immich-machine-learning. Перезапустите Immich, чтобы запустить все его ' +
         'контейнеры; журнал контейнера, который снова останавливается, есть на странице «Контейнеры».',
     );
-    let question = '';
-    page.once('dialog', (dialog) => {
-      question = dialog.message();
-      void dialog.dismiss();
-    });
     await immich.getByRole('button', { name: 'Удалить', exact: true }).click();
-    await expect
-      .poll(() => question)
-      .toBe('Удалить приложение immich? Его 4 контейнера будут удалены, а папки с данными останутся.');
+    await answerConfirmation(page, {
+      title: 'Удалить приложение immich?',
+      message: 'Его 4 контейнера будут удалены, а папки с данными останутся.',
+      cancel: 'Отмена',
+    });
   });
 
   for (const status of ['exited', 'running']) {

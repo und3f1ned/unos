@@ -15,7 +15,7 @@
 		type InstalledApp
 	} from '$lib/api/apps';
 	import { Package, RefreshCw, Grid3X3, CheckCircle2 } from 'lucide-svelte';
-	import { Button, Alert, EmptyState, Skeleton } from '$lib/components/ui';
+	import { Button, Alert, EmptyState, Skeleton, confirm } from '$lib/components/ui';
 	import {
 		AppCatalog,
 		AppDetailModal,
@@ -94,7 +94,13 @@
 	}
 
 	async function handleRollback(app: InstalledApp) {
-		if (!confirm($t('appUpdates.confirmRollback', { name: nameOf(app) }))) return;
+		const name = nameOf(app);
+		const yes = await confirm({
+			title: $t('appUpdates.rollbackTitle', { name }),
+			message: $t('appUpdates.confirmRollback', { name }),
+			confirmLabel: $t('appUpdates.rollbackAction')
+		});
+		if (!yes) return;
 		error = '';
 		try {
 			await rollbackApp(app.container_id);
@@ -104,7 +110,12 @@
 	}
 
 	async function handleRemoveEarlier(app: InstalledApp) {
-		if (!confirm($t('appUpdates.confirmRemove', { name: nameOf(app) }))) return;
+		const yes = await confirm({
+			title: $t('appUpdates.removeTitle', { name: nameOf(app) }),
+			message: $t('appUpdates.confirmRemove'),
+			confirmLabel: $t('appUpdates.removeAction')
+		});
+		if (!yes) return;
 		error = '';
 		try {
 			await removeEarlierVersion(app.container_id);
@@ -115,8 +126,15 @@
 	}
 
 	async function cancel(job: AppInstallJob) {
-		const question = job.kind === 'update' ? 'appUpdates.confirmCancel' : 'apps.job.confirmCancel';
-		if (!confirm($t(question, { name: job.name }))) return;
+		const update = job.kind === 'update';
+		const yes = await confirm({
+			title: $t(update ? 'appUpdates.cancelTitle' : 'apps.job.cancelTitle', { name: job.name }),
+			message: $t(update ? 'appUpdates.confirmCancel' : 'apps.job.confirmCancel'),
+			confirmLabel: $t(update ? 'appUpdates.cancelAction' : 'apps.job.cancelAction'),
+			cancelLabel: $t(update ? 'appUpdates.keepGoing' : 'apps.job.keepGoing'),
+			tone: 'warning'
+		});
+		if (!yes) return;
 		cancelling = new Set([...cancelling, job.id]);
 		try {
 			await cancelInstallJob(job.id);
@@ -167,8 +185,12 @@
 	}
 
 	async function handleUninstall(app: InstalledApp) {
-		const question = $t('apps.installed.confirmUninstall', { name: app.name, n: containerNames(app).length });
-		if (!confirm(question)) return;
+		const yes = await confirm({
+			title: $t('apps.installed.uninstallTitle', { name: app.name }),
+			message: $t('apps.installed.confirmUninstall', { n: containerNames(app).length }),
+			confirmLabel: $t('apps.installed.uninstallAction')
+		});
+		if (!yes) return;
 		await act(uninstallApp, app, 'apps.installed.uninstallFailed');
 	}
 

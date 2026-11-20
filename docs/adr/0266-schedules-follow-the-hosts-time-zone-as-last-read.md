@@ -1,5 +1,6 @@
 ---
-status: accepted
+status: superseded
+superseded-by: ADR-0432
 date: 2026-11-08
 area: system
 decided-by: agent
@@ -9,6 +10,8 @@ supersedes: [ADR-0264]
 # ADR-0266: Schedules follow the host's time zone as last read from its /etc/localtime link, with fixed rules for the changes of daylight saving time
 
 ## Context
+
+Superseded by ADR-0432: only in part, the Scheduler tab's next runs and run times, now shown on the clock of the NAS's time zone that the tab names once; every other rule here stays in force.
 
 ADR-0264 had the schedules follow the clock of the host's time zone, read on the host at each pass of the scheduler loop, and UTC whenever a read failed, with the reason logged once in the supervisor's life (`system.scheduler-time-zone`). One read that failed for a moment (a timeout during heavy I/O on the SD card, no new process under memory pressure, nsenter refused) checked that pass's minute on the clock of UTC: in Berlin, the pass at 03:00 missed the night's 03:00 backup and ran the task of 02:00 a second time, and a later failure with the same reason left no trace in the log.
 

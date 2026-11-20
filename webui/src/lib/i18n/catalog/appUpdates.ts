@@ -37,10 +37,13 @@ export const en = {
 	'appUpdates.earlierVersion': 'Earlier version: {version}.',
 	'appUpdates.rollback': 'Roll back',
 	'appUpdates.removeEarlier': 'Remove earlier version',
+	'appUpdates.rollbackTitle': 'Roll {name} back to its earlier version?',
 	'appUpdates.confirmRollback':
-		'Roll {name} back to its earlier version? Its database returns to the copy made before the update: what {name} stored since then is lost.',
-	'appUpdates.confirmRemove':
-		'Remove the earlier version of {name} and the copy of its database? A rollback is then no longer possible.',
+		'Its database returns to the copy made before the update: what {name} stored since then is lost.',
+	'appUpdates.rollbackAction': 'Roll back',
+	'appUpdates.removeTitle': 'Remove the earlier version of {name}?',
+	'appUpdates.confirmRemove': 'The copy of its database goes with it, and a rollback is then no longer possible.',
+	'appUpdates.removeAction': 'Remove earlier version',
 	'appUpdates.rollbackFailed': 'The rollback could not be started: {error}',
 	'appUpdates.removeFailed': 'The earlier version could not be removed: {error}',
 	'appUpdates.job.update': 'Update of {name}',
@@ -59,8 +62,10 @@ export const en = {
 	'appUpdates.updateFailed': 'Update failed',
 	'appUpdates.rollbackFailedTitle': 'Rollback failed',
 	'appUpdates.cancelUpdate': 'Cancel update',
-	'appUpdates.confirmCancel':
-		'Cancel the update of {name}? Once the app was stopped, UNOS returns it to its earlier version.',
+	'appUpdates.cancelTitle': 'Cancel the update of {name}?',
+	'appUpdates.confirmCancel': 'Once the app was stopped, UNOS returns it to its earlier version.',
+	'appUpdates.cancelAction': 'Cancel update',
+	'appUpdates.keepGoing': 'Keep updating',
 	'appUpdates.cancelledTitle': 'The update was cancelled'
 };
 
@@ -97,10 +102,13 @@ export const ru: Translation<typeof en> = {
 	'appUpdates.earlierVersion': 'Прежняя версия: {version}.',
 	'appUpdates.rollback': 'Откатить',
 	'appUpdates.removeEarlier': 'Удалить прежнюю версию',
+	'appUpdates.rollbackTitle': 'Вернуть {name} к прежней версии?',
 	'appUpdates.confirmRollback':
-		'Вернуть {name} к прежней версии? База данных вернётся к копии, сделанной перед обновлением: всё, что {name} сохранило после него, будет потеряно.',
-	'appUpdates.confirmRemove':
-		'Удалить прежнюю версию {name} и копию её базы данных? После этого откат будет невозможен.',
+		'База данных вернётся к копии, сделанной перед обновлением: всё, что {name} сохранило после него, будет потеряно.',
+	'appUpdates.rollbackAction': 'Откатить',
+	'appUpdates.removeTitle': 'Удалить прежнюю версию {name}?',
+	'appUpdates.confirmRemove': 'Вместе с ней удаляется копия базы данных, и откат станет невозможен.',
+	'appUpdates.removeAction': 'Удалить прежнюю версию',
 	'appUpdates.rollbackFailed': 'Не удалось начать откат: {error}',
 	'appUpdates.removeFailed': 'Не удалось удалить прежнюю версию: {error}',
 	'appUpdates.job.update': 'Обновление {name}',
@@ -119,7 +127,9 @@ export const ru: Translation<typeof en> = {
 	'appUpdates.updateFailed': 'Не удалось обновить',
 	'appUpdates.rollbackFailedTitle': 'Не удалось откатить',
 	'appUpdates.cancelUpdate': 'Отменить обновление',
-	'appUpdates.confirmCancel':
-		'Отменить обновление {name}? Если приложение уже остановлено, UNOS вернёт его к прежней версии.',
+	'appUpdates.cancelTitle': 'Отменить обновление {name}?',
+	'appUpdates.confirmCancel': 'Если приложение уже остановлено, UNOS вернёт его к прежней версии.',
+	'appUpdates.cancelAction': 'Отменить обновление',
+	'appUpdates.keepGoing': 'Продолжить обновление',
 	'appUpdates.cancelledTitle': 'Обновление отменено'
 };

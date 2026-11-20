@@ -1,11 +1,12 @@
 <script lang="ts">
-  // The backups of System > Backup & Restore, newest first as the server lists them, each with
-  // Restore, Download and Delete.
+  // The backups of System > Backup & Restore, newest first as the server lists them (ADR-0432): a
+  // table whose rows become cards on a phone (table-stack); each row's actions in one line, Delete
+  // as an icon and Restore and Download in its ⋯ menu.
   import { formatBytes, type BackupInfo } from "$lib/api/backup";
-  import { Button, Skeleton } from "$lib/components/ui";
+  import { ActionMenu, Badge, Button, EmptyState, Skeleton } from "$lib/components/ui";
   import { intlLocale, t } from "$lib/i18n";
   import { formatDateTime } from "$lib/time";
-  import { Archive, Clock, Download, Lock, RotateCcw, Trash2 } from "lucide-svelte";
+  import { Archive, Download, Lock, RotateCcw, Trash2 } from "lucide-svelte";
 
   type Props = {
     backups: BackupInfo[];
@@ -20,64 +21,67 @@
   let { backups, loading, sizeUnits, onrestore, ondownload, ondelete }: Props = $props();
 </script>
 
-<div class="card">
+<section class="card card-flush" aria-label={$t("backup.listLabel")}>
   {#if loading}
-    <div aria-busy="true"><Skeleton count={3} /></div>
+    <div class="p-5" aria-busy="true"><Skeleton count={3} /></div>
   {:else if backups.length === 0}
-    <div class="text-center py-8 text-content-secondary">
-      <Archive class="w-10 h-10 mx-auto mb-2 opacity-50" />
-      <p>{$t("backup.empty")}</p>
-      <p class="text-sm mt-1">{$t("backup.emptyHint")}</p>
-    </div>
+    <EmptyState icon={Archive} compact title={$t("backup.empty")} description={$t("backup.emptyHint")} />
   {:else}
-    <div class="space-y-2">
-      {#each backups as backup}
-        <div class="flex items-center justify-between gap-2 p-3 bg-surface-overlay rounded-lg">
-          <div class="flex items-center gap-3 min-w-0">
-            <Archive class="w-8 h-8 text-status-info shrink-0" />
-            <div class="min-w-0">
-              <p class="font-medium text-sm break-all">{backup.filename}</p>
-              <p class="text-xs text-content-secondary flex flex-wrap items-center gap-x-2">
-                <Clock class="w-3 h-3" />
-                {formatDateTime(backup.created, $intlLocale)}
-                <span class="text-content-muted">|</span>
-                {formatBytes(backup.size, $intlLocale, sizeUnits)}
-                <span class="text-content-muted">|</span>
-                {backup.version === "unknown"
-                  ? $t("backup.versionUnknown")
-                  : $t("backup.version", { version: backup.version })}
-                {#if backup.encrypted}
-                  <span class="text-content-muted">|</span>
-                  <span class="flex items-center gap-1"><Lock class="w-3 h-3" />{$t("backup.encrypted")}</span>
-                {/if}
-              </p>
-            </div>
-          </div>
-          <div class="flex shrink-0 items-center gap-1">
-            <Button variant="ghost" size="icon" class="text-status-success hover:text-status-success"
-              onclick={() => onrestore(backup)}
-              title={$t("backup.restore")}
-              aria-label={$t("backup.restoreOne", { name: backup.filename })}
-            >
-              <RotateCcw class="w-4 h-4" />
-            </Button>
-            <Button variant="ghost" size="icon"
-              onclick={() => ondownload(backup.filename)}
-              title={$t("backup.download")}
-              aria-label={$t("backup.downloadOne", { name: backup.filename })}
-            >
-              <Download class="w-4 h-4" />
-            </Button>
-            <Button variant="ghost-danger" size="icon"
-              onclick={() => ondelete(backup.filename)}
-              title={$t("backup.delete")}
-              aria-label={$t("backup.deleteOne", { name: backup.filename })}
-            >
-              <Trash2 class="w-4 h-4" />
-            </Button>
-          </div>
-        </div>
-      {/each}
+    <div class="table-frame">
+      <table class="table table-stack">
+        <thead class="table-header">
+          <tr>
+            <th scope="col">{$t("backup.column.name")}</th>
+            <th scope="col">{$t("backup.column.created")}</th>
+            <th scope="col" class="num">{$t("backup.column.size")}</th>
+            <th scope="col">{$t("backup.column.version")}</th>
+            <th scope="col"><span class="sr-only">{$t("backup.column.actions")}</span></th>
+          </tr>
+        </thead>
+        <tbody>
+          {#each backups as backup (backup.filename)}
+            <tr class="table-row">
+              <td class="min-w-[16ch]">
+                <span class="flex items-start gap-2 min-w-0">
+                  <Archive class="w-4 h-4 mt-0.5 shrink-0 text-content-secondary" aria-hidden="true" />
+                  <span class="min-w-0 break-all">{backup.filename}</span>
+                </span>
+              </td>
+              <td data-label={$t("backup.column.created")} class="whitespace-nowrap">{formatDateTime(backup.created, $intlLocale)}</td>
+              <td data-label={$t("backup.column.size")} class="num">{formatBytes(backup.size, $intlLocale, sizeUnits)}</td>
+              <td data-label={$t("backup.column.version")}>
+                <span class="inline-flex flex-wrap items-center gap-1.5">
+                  {backup.version === "unknown"
+                    ? $t("backup.versionUnknown")
+                    : $t("backup.version", { version: backup.version })}
+                  {#if backup.encrypted}
+                    <Badge variant="outline"><Lock class="w-3 h-3" aria-hidden="true" />{$t("backup.encrypted")}</Badge>
+                  {/if}
+                </span>
+              </td>
+              <td>
+                <div class="table-actions">
+                  <Button
+                    variant="ghost-danger"
+                    size="icon-sm"
+                    icon={Trash2}
+                    onclick={() => ondelete(backup.filename)}
+                    title={$t("backup.delete")}
+                    aria-label={$t("backup.deleteOne", { name: backup.filename })}
+                  ></Button>
+                  <ActionMenu
+                    name={backup.filename}
+                    items={[
+                      { label: $t("backup.restore"), icon: RotateCcw, onclick: () => onrestore(backup) },
+                      { label: $t("backup.download"), icon: Download, onclick: () => ondownload(backup.filename) },
+                    ]}
+                  />
+                </div>
+              </td>
+            </tr>
+          {/each}
+        </tbody>
+      </table>
     </div>
   {/if}
-</div>
+</section>

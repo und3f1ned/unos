@@ -9,7 +9,8 @@
     type ScheduleFrequency,
   } from "$lib/api/scheduler";
   import type { Disk, Pool } from "$lib/api/storage";
-  import { Input, Button } from "$lib/components/ui";
+  import { Alert, Input, Button, SwitchRow } from "$lib/components/ui";
+  import { messageOf } from "$lib/errors";
   import { t } from "$lib/i18n";
   import { DAYS_OF_WEEK, FREQUENCIES, MIN_PASSPHRASE_LENGTH, TASK_TYPES, getDefaultFormData } from "./tasks";
 
@@ -45,6 +46,9 @@
   let passphrase = $state("");
   let passphraseConfirm = $state("");
   let saving = $state(false);
+  // Why the form was not saved: the name it lacks (by its field), or the server's reason (ADR-0432).
+  let nameError = $state("");
+  let saveError = $state("");
 
   // The placeholder of a custom task's command: a path, the same in every language.
   const COMMAND_EXAMPLE = "/usr/local/bin/my-script.sh";
@@ -74,10 +78,13 @@
   );
 
   async function handleSaveTask() {
+    saveError = "";
     if (!formData.name?.trim()) {
-      alert($t("scheduler.form.nameRequired"));
+      nameError = $t("scheduler.form.nameRequired");
+      document.getElementById("task-name")?.focus();
       return;
     }
+    nameError = "";
 
     saving = true;
     try {
@@ -107,8 +114,7 @@
 
       await onsaved();
     } catch (e: any) {
-      console.error("Failed to save task:", e);
-      alert(e.message || $t("scheduler.form.saveFailed"));
+      saveError = messageOf(e);
     }
     saving = false;
   }
@@ -135,7 +141,14 @@
           bind:value={formData.name}
           placeholder={$t("scheduler.form.namePlaceholder")}
           class="form-input"
+          class:border-status-error={nameError}
+          aria-invalid={nameError ? "true" : undefined}
+          aria-describedby={nameError ? "task-name-error" : undefined}
+          oninput={() => (nameError = "")}
         />
+        {#if nameError}
+          <p id="task-name-error" class="form-error">{nameError}</p>
+        {/if}
       </div>
 
       <!-- Task Type -->
@@ -363,16 +376,14 @@
         <p id="task-time-zone-hint" class="text-xs text-content-muted">{$t("scheduler.form.onTheClock", { zone: timeZone })}</p>
       {/if}
 
-      <!-- Enabled Toggle -->
-      <div class="flex items-center gap-3">
-        <input
-          type="checkbox"
-          id="task-enabled"
-          bind:checked={formData.enabled}
-          class="w-4 h-4 rounded bg-surface border-border-strong text-brand-ring focus:ring-brand-ring"
-        />
-        <label for="task-enabled" class="text-sm">{$t("scheduler.task.enable")}</label>
-      </div>
+      <!-- Enabled: a switch (ADR-0432) -->
+      <SwitchRow id="task-enabled" title={$t("scheduler.task.enable")} bind:checked={formData.enabled} />
+
+      {#if saveError}
+        <div role="alert">
+          <Alert variant="error" size="sm" title={$t("scheduler.form.saveFailed")}>{saveError}</Alert>
+        </div>
+      {/if}
     </div>
 
     <!-- Modal Footer -->

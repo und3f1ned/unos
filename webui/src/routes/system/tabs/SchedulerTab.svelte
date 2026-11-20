@@ -1,29 +1,26 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import {
-    getTasks,
-    deleteTask,
-    runTaskNow,
-    toggleTask,
-    getScheduleTimezone,
-    type ScheduledTask,
-  } from "$lib/api/scheduler";
+  import { getTasks, deleteTask, runTaskNow, toggleTask, type ScheduledTask } from "$lib/api/scheduler";
+  import { ApiError } from "$lib/api/client";
   import { getPools, getDisks, type Pool, type Disk } from "$lib/api/storage";
-  import { Button, Skeleton } from "$lib/components/ui";
+  import { Button, EmptyState, HelpText, LoadState, Skeleton, confirm, toast } from "$lib/components/ui";
   import { TaskFormDialog, TaskHistory, TaskHistoryDialog, TaskRow } from "$lib/components/system/scheduler";
+  import { messageOf } from "$lib/errors";
   import { t } from "$lib/i18n";
+  import { nasTimeZone } from "$lib/stores/nasTime";
   import { Calendar, RefreshCw, Plus, History } from "lucide-svelte";
 
-  // State
+  // The tasks of the Scheduler, on the NAS's clock (ADR-0432): the tab names the zone once, and
+  // every time it shows is the NAS's. A failed load says so in place of the list, never "no tasks";
+  // what an action did or why it failed comes as a toast.
   let tasks = $state<ScheduledTask[]>([]);
   let pools = $state<Pool[]>([]);
   let disks = $state<Disk[]>([]);
   let disksLoaded = $state(false);
-  // The time zone whose clock the schedules follow (the NAS's); empty until it is known.
-  let timeZone = $state("");
   let loading = $state(true);
   // The first load has answered: a reload keeps the list (ADR-0430).
   let loaded = $state(false);
+  let loadError = $state("");
   let runningTaskId = $state<string | null>(null);
 
   // Modal state: the task dialog, with the task being edited (null for a new one), and the history.
@@ -32,25 +29,18 @@
   const history = new TaskHistory();
 
   onMount(async () => {
-    await Promise.all([loadTasks(), loadResources(), loadTimeZone()]);
+    await Promise.all([loadTasks(), loadResources()]);
   });
-
-  async function loadTimeZone() {
-    try {
-      timeZone = (await getScheduleTimezone()).timezone;
-    } catch (e) {
-      console.error("Failed to load the time zone of the schedules:", e);
-    }
-  }
 
   async function loadTasks() {
     loading = true;
     try {
       const result = await getTasks();
       tasks = Array.isArray(result) ? result : [];
+      loadError = "";
     } catch (e) {
-      console.error("Failed to load tasks:", e);
-      tasks = [];
+      // A 401 has already ended the session.
+      if (!(e instanceof ApiError && e.status === 401)) loadError = messageOf(e);
     }
     loading = false;
     loaded = true;
@@ -87,16 +77,27 @@
     await loadTasks();
   }
 
+  /** A failed action as a toast: the action's title and the server's reason. */
+  function failed(titleKey: string, e: unknown) {
+    if (e instanceof ApiError && e.status === 401) return;
+    toast.error(messageOf(e), { title: $t(titleKey) });
+  }
+
   async function handleDeleteTask(task: ScheduledTask) {
     if (!task.id) return;
-    if (!confirm($t("scheduler.task.confirmDelete", { name: task.name }))) return;
+    const yes = await confirm({
+      title: $t("scheduler.task.confirmDelete", { name: task.name }),
+      message: $t("scheduler.task.deleteMessage"),
+      confirmLabel: $t("scheduler.task.deleteAction"),
+    });
+    if (!yes) return;
 
     try {
       await deleteTask(task.id);
+      toast.success($t("scheduler.task.deleted", { name: task.name }));
       await loadTasks();
-    } catch (e: any) {
-      console.error("Failed to delete task:", e);
-      alert(e.message || $t("scheduler.task.deleteFailed"));
+    } catch (e) {
+      failed("scheduler.task.deleteFailed", e);
     }
   }
 
@@ -104,11 +105,13 @@
     if (!task.id) return;
 
     try {
-      await toggleTask(task.id);
+      const { enabled } = await toggleTask(task.id);
+      toast.success($t(enabled ? "scheduler.task.enabledNow" : "scheduler.task.disabledNow", { name: task.name }));
       await loadTasks();
-    } catch (e: any) {
-      console.error("Failed to toggle task:", e);
-      alert(e.message || $t("scheduler.task.toggleFailed"));
+    } catch (e) {
+      failed("scheduler.task.toggleFailed", e);
+      // The switch shows the stored state again.
+      await loadTasks();
     }
   }
 
@@ -118,11 +121,12 @@
     runningTaskId = task.id;
     try {
       await runTaskNow(task.id);
-      // Show brief success indicator, then reload
-      setTimeout(() => loadTasks(), 1000);
-    } catch (e: any) {
-      console.error("Failed to run task:", e);
-      alert(e.message || $t("scheduler.task.runFailed"));
+      toast.success($t("scheduler.task.started", { name: task.name }), {
+        action: { label: $t("scheduler.task.viewHistory"), run: () => history.show(task.id, task.name) },
+      });
+      await loadTasks();
+    } catch (e) {
+      failed("scheduler.task.runFailed", e);
     }
     runningTaskId = null;
   }
@@ -133,38 +137,46 @@
   <div class="flex flex-wrap items-center justify-between gap-3">
     <h2 class="text-xl font-semibold">{$t("scheduler.title")}</h2>
     <div class="flex flex-wrap gap-2">
-      <Button variant="secondary" size="sm" onclick={() => history.show()}>
-        <History class="w-4 h-4" />
+      <Button variant="secondary" size="sm" icon={History} onclick={() => history.show()}>
         {$t("scheduler.history")}
       </Button>
-      <Button variant="secondary" size="icon" onclick={loadTasks} title={$t("common.refresh")}>
-        <RefreshCw class="w-4 h-4 {loading ? 'animate-spin' : ''}" />
+      <Button variant="secondary" size="icon" onclick={loadTasks} title={$t("common.refresh")} aria-label={$t("common.refresh")}>
+        <RefreshCw class="w-4 h-4 {loading && loaded ? 'animate-spin' : ''}" />
       </Button>
-      <Button variant="primary" size="sm" onclick={openCreateModal}>
-        <Plus class="w-4 h-4" />
+      <Button variant="primary" size="sm" icon={Plus} onclick={openCreateModal}>
         {$t("scheduler.newTask")}
       </Button>
     </div>
   </div>
-  {#if timeZone}
-    <p class="text-sm text-content-secondary">{$t("scheduler.timeZone", { zone: timeZone })}</p>
-  {/if}
+  <!-- The zone of every time of the tab, once; its line keeps its height until it is known. -->
+  <div class="min-h-[18px]">
+    {#if $nasTimeZone}
+      <HelpText text={$t("scheduler.timeZone", { zone: $nasTimeZone })}>
+        {#snippet more()}<p>{$t("scheduler.timeZoneMore")}</p>{/snippet}
+      </HelpText>
+    {/if}
+  </div>
 
   <!-- Task List -->
-  <div class="card">
-    {#if !loaded}
-      <div aria-busy="true"><Skeleton count={3} size="control" /></div>
-    {:else if tasks.length === 0}
-      <div class="text-center py-8 text-content-secondary">
-        <Calendar class="w-10 h-10 mx-auto mb-2 opacity-50" />
-        <p>{$t("scheduler.empty")}</p>
-        <p class="text-sm mt-1">{$t("scheduler.emptyHint")}</p>
-      </div>
-    {:else}
+  <section class="card" aria-label={$t("scheduler.tasksLabel")}>
+    <LoadState
+      loading={!loaded}
+      error={loadError}
+      errorTitle={$t("scheduler.loadFailed")}
+      keepOnError={tasks.length > 0}
+      empty={tasks.length === 0}
+      onretry={loadTasks}
+      retrying={loading && loaded}
+    >
+      {#snippet skeleton()}<Skeleton count={3} size="control" />{/snippet}
+      {#snippet emptyState()}
+        <EmptyState icon={Calendar} compact title={$t("scheduler.empty")} description={$t("scheduler.emptyHint")} />
+      {/snippet}
       <div class="space-y-2">
-        {#each tasks as task}
+        {#each tasks as task (task.id)}
           <TaskRow
             {task}
+            zone={$nasTimeZone}
             running={runningTaskId === task.id}
             ontoggle={handleToggleTask}
             onrun={handleRunNow}
@@ -174,16 +186,14 @@
           />
         {/each}
       </div>
-    {/if}
-  </div>
+    </LoadState>
+  </section>
 </div>
 
 <!-- Create/Edit Task Modal -->
 {#if showTaskModal}
-  <TaskFormDialog task={editingTask} {pools} {disks} {disksLoaded} {timeZone} onclose={closeTaskModal} onsaved={taskSaved} />
+  <TaskFormDialog task={editingTask} {pools} {disks} {disksLoaded} timeZone={$nasTimeZone ?? ""} onclose={closeTaskModal} onsaved={taskSaved} />
 {/if}
 
-<!-- History Modal -->
-{#if history.open}
-  <TaskHistoryDialog {history} />
-{/if}
+<!-- History of the runs -->
+<TaskHistoryDialog {history} zone={$nasTimeZone} />

@@ -3,7 +3,7 @@
   // tests the target. The fields are those of `form`; the section saves, makes the key pair and
   // forgets the settings.
   import type { OffsiteSettingsAnswer, OffsiteStatus } from "$lib/api/offsite";
-  import { Alert, Button, Input } from "$lib/components/ui";
+  import { Alert, Button, Checkbox, FieldGroup, Input, RadioGroup } from "$lib/components/ui";
   import { t } from "$lib/i18n";
   import { Key, Plus, Trash2 } from "lucide-svelte";
   import type { OffsiteForm } from "./form.svelte";
@@ -22,12 +22,20 @@
   };
 
   let { form, answer, running, saving, canSave, makingKey, onsave, onmakekey, onforget }: Props = $props();
+
+  // The server's bounds (supervisor/src/offsite/service.py): MAX_KEEP snapshots of a period, and
+  // MAX_LIMIT_KIB KiB/s.
+  const MAX_KEEP = 10_000;
+  const MAX_LIMIT_KIB = 10_000_000;
 </script>
 
-<!-- The limits of a target that copies over the network: the same fields for every kind. -->
+<!-- The limits of a target that copies over the network: the same fields for every kind, a group
+     of two with their unit (ADR-0432). -->
 {#snippet limits()}
-  <Input id="offsite-limit-upload" type="number" label={$t("offsite.form.limitUpload")} bind:value={form.limitUpload} hint={$t("offsite.form.limitHint")} />
-  <Input id="offsite-limit-download" type="number" label={$t("offsite.form.limitDownload")} bind:value={form.limitDownload} hint={$t("offsite.form.limitHint")} />
+  <FieldGroup legend={$t("offsite.form.limits")} description={$t("offsite.form.limitHint")} minWidth="10rem" class="md:col-span-2">
+    <Input id="offsite-limit-upload" type="number" label={$t("offsite.form.upload")} bind:value={form.limitUpload} suffix={$t("offsite.form.kibps")} min={0} max={MAX_LIMIT_KIB} boundsHint={false} width="sm" />
+    <Input id="offsite-limit-download" type="number" label={$t("offsite.form.download")} bind:value={form.limitDownload} suffix={$t("offsite.form.kibps")} min={0} max={MAX_LIMIT_KIB} boundsHint={false} width="sm" />
+  </FieldGroup>
 {/snippet}
 
 <form
@@ -38,25 +46,19 @@
   }}
 >
   <h4 class="font-medium text-sm">{$t("offsite.form.title")}</h4>
-  <fieldset class="flex flex-wrap gap-x-6 gap-y-2 text-sm">
-    <legend class="sr-only">{$t("offsite.form.kind")}</legend>
-    <label class="flex items-center gap-2">
-      <input type="radio" name="offsite-kind" value="disk" bind:group={form.kind} />
-      {$t("offsite.form.disk")}
-    </label>
-    <label class="flex items-center gap-2">
-      <input type="radio" name="offsite-kind" value="s3" bind:group={form.kind} />
-      {$t("offsite.form.s3")}
-    </label>
-    <label class="flex items-center gap-2">
-      <input type="radio" name="offsite-kind" value="rest" bind:group={form.kind} />
-      {$t("offsite.form.rest")}
-    </label>
-    <label class="flex items-center gap-2">
-      <input type="radio" name="offsite-kind" value="sftp" bind:group={form.kind} />
-      {$t("offsite.form.sftp")}
-    </label>
-  </fieldset>
+  <RadioGroup
+    name="offsite-kind"
+    legend={$t("offsite.form.kind")}
+    legendHidden
+    inline
+    bind:value={form.kind}
+    options={[
+      { value: "disk", label: $t("offsite.form.disk") },
+      { value: "s3", label: $t("offsite.form.s3") },
+      { value: "rest", label: $t("offsite.form.rest") },
+      { value: "sftp", label: $t("offsite.form.sftp") },
+    ]}
+  />
 
   {#if form.kind === "disk"}
     <Input id="offsite-path" label={$t("offsite.form.path")} bind:value={form.path} hint={$t("offsite.form.pathHint")} spellcheck={false} />
@@ -132,10 +134,7 @@
       <div class="space-y-2 text-sm">
         <p class="break-all" data-testid="sftp-pinned">{$t("offsite.sftp.pinned", { fingerprint: answer.host_key_fingerprint ?? "" })}</p>
         <p class="form-hint">{$t("offsite.sftp.pinnedHint")}</p>
-        <label class="flex items-center gap-2">
-          <input type="checkbox" bind:checked={form.trustNewHostKey} />
-          {$t("offsite.sftp.trustNewKey")}
-        </label>
+        <Checkbox bind:checked={form.trustNewHostKey} label={$t("offsite.sftp.trustNewKey")} />
       </div>
     {/if}
     {#if form.fingerprintShown}
@@ -168,11 +167,10 @@
 
   <fieldset class="space-y-2 text-sm">
     <legend class="form-label">{$t("offsite.form.sources")}</legend>
-    {#each answer.pools as pool}
-      <label class="flex items-center gap-2 break-all">
-        <input type="checkbox" value={pool.path} bind:group={form.poolSources} />
+    {#each answer.pools as pool (pool.path)}
+      <Checkbox value={pool.path} bind:group={form.poolSources} class="break-all">
         <span class="font-mono text-xs">{pool.path}</span>
-      </label>
+      </Checkbox>
     {/each}
     {#each form.extraSources as source}
       <div class="flex items-center gap-2">
@@ -212,15 +210,25 @@
     />
   </div>
 
-  <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
-    <Input id="offsite-keep-daily" type="number" label={$t("offsite.form.keepDaily")} bind:value={form.keepDaily} />
-    <Input id="offsite-keep-weekly" type="number" label={$t("offsite.form.keepWeekly")} bind:value={form.keepWeekly} />
-    <Input id="offsite-keep-monthly" type="number" label={$t("offsite.form.keepMonthly")} bind:value={form.keepMonthly} />
-    <Input id="offsite-check-percent" type="number" label={$t("offsite.form.checkPercent")} bind:value={form.checkPercent} />
+  <!-- Retention and the check: two groups, each field with its unit, aligned on a subgrid (ADR-0432). -->
+  <div class="grid grid-cols-1 lg:grid-cols-[3fr_2fr] gap-x-8 gap-y-5">
+    <FieldGroup legend={$t("offsite.form.retention")} description={$t("offsite.form.retentionHelp")} minWidth="7.5rem">
+      <Input id="offsite-keep-daily" type="number" label={$t("offsite.form.daily")} bind:value={form.keepDaily} min={0} max={MAX_KEEP} boundsHint={false} steppers width="xs" />
+      <Input id="offsite-keep-weekly" type="number" label={$t("offsite.form.weekly")} bind:value={form.keepWeekly} min={0} max={MAX_KEEP} boundsHint={false} steppers width="xs" />
+      <Input id="offsite-keep-monthly" type="number" label={$t("offsite.form.monthly")} bind:value={form.keepMonthly} min={0} max={MAX_KEEP} boundsHint={false} steppers width="xs" />
+    </FieldGroup>
+    <FieldGroup legend={$t("offsite.form.check")} description={$t("offsite.form.checkHelp")} minWidth="9rem">
+      <Input id="offsite-check-percent" type="number" label={$t("offsite.form.checkShare")} bind:value={form.checkPercent} suffix="%" min={0} max={100} steppers width="xs" />
+    </FieldGroup>
   </div>
 
   <div class="flex flex-wrap gap-2">
-    <Button type="submit" loading={saving} disabled={!canSave}>
+    <Button
+      type="submit"
+      loading={saving}
+      disabled={!canSave}
+      disabledReason={saving ? "" : $t("offsite.form.incomplete")}
+    >
       {saving ? $t("offsite.form.saving") : $t("offsite.form.save")}
     </Button>
     {#if answer.configured}
