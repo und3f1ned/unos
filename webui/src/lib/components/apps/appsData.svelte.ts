@@ -1,4 +1,5 @@
 import { messageOf } from '$lib/errors';
+import { ApiError } from '$lib/api/client';
 import { getAppCatalog, getInstalledApps, type AppTemplate, type InstalledApp } from '$lib/api/apps';
 
 export type LoadState = 'loading' | 'loaded' | 'failed';
@@ -20,6 +21,8 @@ export class AppsData {
 	installedState = $state<LoadState>('loading');
 	catalogError = $state('');
 	installedError = $state('');
+	// The installed apps failed because Docker did not answer (503, ADR-0323), not for another reason.
+	installedDockerDown = $state(false);
 	// The last load of each list succeeded: its list and count stay while a refresh runs (ADR-0430).
 	catalogKnown = $state(false);
 	installedKnown = $state(false);
@@ -46,11 +49,13 @@ export class AppsData {
 		try {
 			this.installed = await getInstalledApps();
 			this.installedError = '';
+			this.installedDockerDown = false;
 			this.installedState = 'loaded';
 			this.installedKnown = true;
 		} catch (e) {
 			this.installed = [];
 			this.installedError = reasonOf(e);
+			this.installedDockerDown = e instanceof ApiError && e.status === 503;
 			this.installedState = 'failed';
 			this.installedKnown = false;
 		}

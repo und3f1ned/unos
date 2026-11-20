@@ -36,12 +36,40 @@ test.describe('App Store', () => {
     await expect(page.getByRole('heading', { name: 'Jellyfin' }).first()).toBeVisible();
     await expect(page.getByText(/^\d+ apps available$/)).toBeVisible();
     await expect(page.getByRole('button', { name: 'Installed', exact: true })).toBeVisible();
+    // While the installed apps are not known no app offers Install (webui.ux-apps): one of them
+    // may be the app, and Docker may not answer.
+    const jellyfin = page.locator('.card[role="button"]', { has: page.locator('h3', { hasText: /^Jellyfin$/ }) });
+    await expect(jellyfin).toBeVisible();
+    await expect(jellyfin.getByText('Install', { exact: true })).toHaveCount(0);
+    await jellyfin.click();
+    const details = page.getByRole('dialog', { name: 'Jellyfin' });
+    await expect(details.getByRole('button', { name: 'Install Jellyfin' })).toBeDisabled();
+    await expect(details.getByRole('button', { name: 'Install Jellyfin' })).toHaveAccessibleDescription(
+      /The installed apps are not loaded yet, so no app can be installed now\./,
+    );
+    await details.getByRole('button', { name: 'Cancel' }).click();
 
     release();
-    await expect(
-      page.getByText('The installed apps could not be loaded: Docker is not available: held by the test'),
-    ).toBeVisible();
+    const alert = page.locator('.alert', { hasText: 'The installed apps could not be loaded' });
+    await expect(alert.getByText('Docker is not available: held by the test')).toBeVisible();
     await expect(page.getByRole('heading', { name: 'Jellyfin' }).first()).toBeVisible();
+  });
+
+  test('installed apps that fail for another reason than Docker say so plainly', async ({ authenticatedPage: page }) => {
+    // A 500 of the server, not Docker's 503 (ADR-0323): no "Docker is not answering".
+    await page.route('**/api/v1/apps/installed', (route) =>
+      route.fulfill({ status: 500, json: { detail: 'Docker failed: held by the test' } }),
+    );
+    await page.goto('/apps');
+
+    const alert = page.locator('.alert', { hasText: 'Docker failed: held by the test' });
+    await expect(alert.getByText('The installed apps could not be loaded', { exact: true })).toBeVisible();
+    await expect(page.getByText(/Docker is not answering/)).toHaveCount(0);
+    await expect(alert.getByRole('button', { name: 'Retry' })).toBeVisible();
+    // The catalog is listed, without Install: the installed apps are not known.
+    const jellyfin = page.locator('.card[role="button"]', { has: page.locator('h3', { hasText: /^Jellyfin$/ }) });
+    await expect(jellyfin).toBeVisible();
+    await expect(jellyfin.getByText('Install', { exact: true })).toHaveCount(0);
   });
 
   test('should show app cards in catalog', async ({ authenticatedPage: page }) => {
@@ -70,15 +98,24 @@ test.describe('App Store', () => {
     
     // The categories are buttons in the "Categories" list next to the catalog.
     await expect(page.locator('h3:has-text("Categories")')).toBeVisible();
-    await expect(page.locator('main nav').getByRole('button', { name: /^All Apps/ })).toBeVisible();
+    await expect(page.locator('main nav').getByRole('button', { name: /^All apps/ })).toBeVisible();
   });
 
-  test('should show install button on app card', async ({ authenticatedPage: page }) => {
+  test('an app card says that a click installs it, and holds no button of its own', async ({
+    authenticatedPage: page,
+  }) => {
+    // Docker answers (the stand-in has none): an app can be installed.
+    await page.route('**/api/v1/apps/installed', (route) => route.fulfill({ json: [] }));
     await page.goto('/apps');
-    await page.waitForTimeout(2000);
-    
-    const installButton = page.locator('button:has-text("Install")').first();
-    await expect(installButton).toBeVisible();
+
+    // The card is the one control: no Install button inside it, and no primary button among the
+    // catalog's cards (webui.ux-apps).
+    const card = page.locator('.card[role="button"]').first();
+    await expect(card.getByText('Install', { exact: true })).toBeVisible();
+    await expect(card.getByRole('button')).toHaveCount(0);
+    await expect(page.locator('main .card[role="button"] .btn-primary')).toHaveCount(0);
+    // Sources are categories, not states: neutral badges.
+    await expect(page.locator('main .card[role="button"] .badge-warning, main .card[role="button"] .badge-success')).toHaveCount(0);
   });
 
   test('should switch to installed tab', async ({ authenticatedPage: page }) => {

@@ -1,11 +1,12 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { Download, Layers, Trash2 } from 'lucide-svelte';
+	import { Download, Layers, RotateCw, Trash2 } from 'lucide-svelte';
 	import { Alert, Button, Card, EmptyState, Input, Modal, Skeleton } from '$lib/components/ui';
 	import { getImages, pullImage, removeImage, type Image } from '$lib/api/containers';
 	import { formatBytes } from '$lib/stores/stats';
 	import { intlLocale, t } from '$lib/i18n';
 	import { formatDateTime } from '$lib/time';
+	import { NO_SECONDS } from './labels';
 
 	// The Images tab of the Containers page: the images Docker has, a pull by
 	// name and the removal of an image that no container uses, with all its
@@ -98,7 +99,7 @@
 
 	// It reads $intlLocale, so that the list follows a change of the language.
 	function formatDate(value: string): string {
-		return formatDateTime(value, $intlLocale);
+		return formatDateTime(value, $intlLocale, NO_SECONDS);
 	}
 </script>
 
@@ -151,7 +152,12 @@
 			<Skeleton shape="row" columns={5} count={4} />
 		</div>
 	{:else if loadError}
-		<Alert variant="error" title={$t('containers.images.loadError')}>{loadError}</Alert>
+		<Alert variant="error" title={$t('containers.images.loadError')}>
+			<p class="mono-xs break-words">{loadError}</p>
+			<Button variant="secondary" size="sm" icon={RotateCw} class="mt-3" {loading} onclick={refresh}>
+				{$t('common.retry')}
+			</Button>
+		</Alert>
 	{:else if images.length === 0}
 		<EmptyState
 			icon={Layers}
@@ -159,16 +165,16 @@
 			description={$t('containers.images.emptyHint')}
 		/>
 	{:else}
-		<Card>
+		<Card flush>
 			<div class="table-frame">
 				<table class="table" aria-label={$t('containers.images.list')}>
 					<thead class="table-header">
 						<tr>
 							<th>{$t('containers.images.column.image')}</th>
 							<th>{$t('containers.images.column.id')}</th>
-							<th>{$t('containers.images.column.size')}</th>
+							<th class="text-right">{$t('containers.images.column.size')}</th>
 							<th>{$t('containers.images.column.created')}</th>
-							<th><span class="sr-only">{$t('containers.images.column.actions')}</span></th>
+							<th class="w-px"><span class="sr-only">{$t('containers.images.column.actions')}</span></th>
 						</tr>
 					</thead>
 					<tbody>
@@ -184,12 +190,17 @@
 									{/if}
 								</td>
 								<td class="mono-xs text-content-secondary">{image.id}</td>
-								<td class="whitespace-nowrap">{formatBytes(image.size)}</td>
+								<td class="num">{formatBytes(image.size)}</td>
 								<td class="whitespace-nowrap">{formatDate(image.created)}</td>
 								<td>
 									<div class="flex justify-end">
-										<Button variant="ghost-danger" size="icon-sm" onclick={() => askRemove(image)}>
-											<Trash2 class="w-4 h-4" />
+										<Button
+											variant="ghost-danger"
+											size="icon-sm"
+											onclick={() => askRemove(image)}
+											title={$t('containers.images.removeOne', { name: nameOf(image) })}
+										>
+											<Trash2 class="w-4 h-4" aria-hidden="true" />
 											<span class="sr-only">
 												{$t('containers.images.removeOne', { name: nameOf(image) })}
 											</span>

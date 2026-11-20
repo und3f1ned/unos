@@ -132,6 +132,18 @@ async function openInstalled(page: Page) {
 }
 
 test.describe('Updating an installed app', () => {
+  test('the summary says one container gets a new image in the singular (webui.ux-apps)', async ({
+    authenticatedPage: page,
+  }) => {
+    const fakes = await fakeApps(page, withUpdate());
+    const containers = PLAN.containers.map((c) => (c.name === 'immich' ? c : { ...c, changed: false }));
+    fakes.plan = { status: 200, json: { ...PLAN, containers } };
+    const card = await openInstalled(page);
+    await card.getByRole('button', { name: 'Update to v3.5.0' }).click();
+    const dialog = page.getByRole('dialog', { name: 'Update Immich' });
+    await expect(dialog.locator('[data-field="containers"]')).toHaveText('1 of 4 gets a new image');
+  });
+
   test('the update shows what it writes and copies, runs as a job, and keeps the earlier version until a rollback', async ({
     authenticatedPage: page,
   }) => {
@@ -142,12 +154,16 @@ test.describe('Updating an installed app', () => {
     await card.getByRole('button', { name: 'Update to v3.5.0' }).click();
     const dialog = page.getByRole('dialog', { name: 'Update Immich' });
     await expect(dialog.getByText('From v3.4.1 to v3.5.0')).toBeVisible();
+    // The summary first: what changes, the space it needs, the safety net (webui.ux-apps).
+    await expect(dialog.locator('[data-field="containers"]')).toHaveText('2 of 4 get a new image');
+    await expect(dialog.locator('[data-field="download"]')).toHaveText('300 MB');
+    await expect(dialog.locator('[data-field="system-disk"]')).toHaveText('About 700 MB, of 20 GB free');
+    // Each container's image on demand.
+    await expect(dialog.getByRole('listitem')).toHaveCount(0);
+    await dialog.getByText("What stays, and each container's image").click();
     await expect(dialog.getByRole('listitem').filter({ hasText: 'immich-database' })).toContainText('New image');
     await expect(dialog.getByRole('listitem').filter({ hasText: 'immich-redis' })).toContainText('Same image');
     await expect(dialog.getByRole('listitem').filter({ hasText: 'immich-server:v3.5.0' })).toContainText('New image');
-    await expect(dialog).toContainText(
-      'The download is 300 MB; the update writes about 700 MB to the system disk, which has 20 GB free.',
-    );
     await expect(dialog).toContainText(
       `Before the new version starts, ${DATABASE} (512 MB) is copied to ${DATABASE}.previous on the pool "e2e_data", which has 900 GB free.`,
     );

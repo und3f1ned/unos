@@ -114,51 +114,43 @@
 			<div role="alert"><Alert variant="error"><p class="break-words">{error}</p></Alert></div>
 		{/if}
 		{#if plan}
-			<p class="text-sm">
+			{@const changed = plan.containers.filter((container) => container.changed).length}
+			<!-- The summary first: what changes, the space it needs, the safety net; the details of
+			     each container on demand (webui.ux-apps). -->
+			<p class="text-base font-medium">
 				{$t('appUpdates.versions', {
 					from: plan.version_from ?? $t('appUpdates.versionUnknown'),
 					to: plan.version_to
 				})}
 			</p>
-			<div>
-				<h3 class="text-sm font-medium mb-2">{$t('appUpdates.containers')}</h3>
-				<ul class="space-y-2">
-					{#each plan.containers as container (container.name)}
-						{@const look = change(container)}
-						<li class="rounded-md bg-surface-muted px-3 py-2">
-							<div class="flex flex-wrap items-center gap-2">
-								<span class="text-sm mono break-all">{container.name}</span>
-								<Badge variant={look.variant}>{$t(look.key)}</Badge>
-							</div>
-							{#if container.changed && container.image_to}
-								<p class="text-xs text-muted mono break-all mt-1">
-									{#if container.image_from}{shortName(container.image_from)} → {/if}{shortName(container.image_to)}
-								</p>
-							{/if}
-						</li>
-					{/each}
-				</ul>
-			</div>
-			<div>
-				<h3 class="text-sm font-medium mb-1">{$t('appUpdates.systemDisk')}</h3>
-				<p class="text-sm text-secondary">
-					{plan.system_disk_free_bytes !== null
-						? $t('appUpdates.writes', {
-								download: formatSize(plan.download_bytes),
-								writes: formatSize(plan.system_disk_bytes),
-								free: formatSize(plan.system_disk_free_bytes)
-							})
-						: $t('appUpdates.writesNoFree', {
-								download: formatSize(plan.download_bytes),
-								writes: formatSize(plan.system_disk_bytes)
-							})}
-				</p>
+			<div class="kv">
+				<div>
+					<span class="kv-label">{$t('appUpdates.containers')}</span>
+					<span class="kv-value" data-field="containers">
+						{$t('appUpdates.changedCount', { n: changed, total: plan.containers.length })}
+					</span>
+				</div>
+				<div>
+					<span class="kv-label">{$t('appUpdates.download')}</span>
+					<span class="kv-value" data-field="download">{formatSize(plan.download_bytes)}</span>
+				</div>
+				<div>
+					<span class="kv-label">{$t('appUpdates.systemDisk')}</span>
+					<span class="kv-value" data-field="system-disk">
+						{plan.system_disk_free_bytes !== null
+							? $t('appUpdates.writes', {
+									writes: formatSize(plan.system_disk_bytes),
+									free: formatSize(plan.system_disk_free_bytes)
+								})
+							: $t('appUpdates.writesNoFree', { writes: formatSize(plan.system_disk_bytes) })}
+					</span>
+				</div>
 			</div>
 			{#if plan.copies.length > 0}
 				<div>
 					<h3 class="text-sm font-medium mb-1">{$t('appUpdates.copies')}</h3>
 					{#each plan.copies as copy (copy.folder)}
-						<p class="text-sm text-secondary break-words">
+						<p class="text-sm text-content-secondary break-words">
 							{$t('appUpdates.copy', {
 								folder: copy.folder,
 								size: formatSize(copy.bytes),
@@ -170,10 +162,31 @@
 					{/each}
 				</div>
 			{/if}
-			<Alert variant="info">
-				<p>{$t('appUpdates.kept')}</p>
-				<p class="mt-1">{$t('appUpdates.failureNote')}</p>
-			</Alert>
+			<p class="text-sm">{$t('appUpdates.failureNote')}</p>
+			<details class="rounded-lg border border-border">
+				<summary class="cursor-pointer select-none px-4 py-2.5 text-sm font-medium text-content-secondary hover:text-content">
+					{$t('appUpdates.details')}
+				</summary>
+				<div class="space-y-3 border-t border-border px-4 py-3">
+					<p class="text-sm text-content-secondary">{$t('appUpdates.kept')}</p>
+					<ul class="space-y-2">
+						{#each plan.containers as container (container.name)}
+							{@const look = change(container)}
+							<li>
+								<div class="flex flex-wrap items-center gap-2">
+									<span class="text-sm mono break-all">{container.name}</span>
+									<Badge variant={look.variant}>{$t(look.key)}</Badge>
+								</div>
+								{#if container.changed && container.image_to}
+									<p class="text-xs text-content-muted mono break-all mt-1">
+										{#if container.image_from}{shortName(container.image_from)} → {/if}{shortName(container.image_to)}
+									</p>
+								{/if}
+							</li>
+						{/each}
+					</ul>
+				</div>
+			</details>
 		{/if}
 	</div>
 	{#snippet footer()}

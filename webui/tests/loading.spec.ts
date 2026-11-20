@@ -261,6 +261,86 @@ test.describe('Loading without flicker', () => {
   });
 });
 
+// A phone (ADR-0302): the skeleton is the layout of the page at this width, so that the data
+// arriving moves nothing that was drawn (webui.ux-apps). The API answers once the skeleton has been
+// measured; the first box of the list must then be where the skeleton's first box was.
+const PHONE = { width: 375, height: 812 };
+
+/** The answer of `path` (the server's, or `json`) is held until the returned function is called. */
+async function hold(page: Page, path: string, json?: unknown): Promise<() => void> {
+  let release = () => {};
+  const held = new Promise<void>((resolve) => (release = resolve));
+  await page.route(
+    (url) => url.pathname === path,
+    async (route) => {
+      await held;
+      await (json === undefined ? route.continue() : route.fulfill({ json })).catch(() => undefined);
+    },
+  );
+  return release;
+}
+
+async function topOf(page: Page, selector: string): Promise<number> {
+  const box = await page.locator(selector).first().boundingBox();
+  if (!box) throw new Error(`${selector} is not drawn`);
+  return box.y;
+}
+
+test.describe('Loading without flicker on a phone', () => {
+  test('App Store: the skeleton has the category menu beside the search, not the categories list', async ({
+    authenticatedPage: page,
+  }) => {
+    await page.setViewportSize(PHONE);
+    // No installed app and no error above the catalog: the skeleton's place alone.
+    await page.route(
+      (url) => url.pathname === '/api/v1/apps/installed',
+      (route) => route.fulfill({ json: [] }),
+    );
+    const release = await hold(page, '/api/v1/apps/catalog');
+    await page.goto('/apps');
+    const tile = 'main [aria-busy="true"] .grid > [data-skeleton]';
+    await expect(page.locator(tile).first()).toBeAttached();
+    const skeleton = await topOf(page, tile);
+
+    release();
+    const card = 'main .card[role="button"]';
+    await expect(page.locator(card).first()).toBeVisible();
+    await expect(page.locator('main [aria-busy="true"]')).toHaveCount(0);
+    expect(Math.abs((await topOf(page, card)) - skeleton)).toBeLessThanOrEqual(1);
+  });
+
+  test('Containers in Russian: the filter stays one line, and the cards start where their skeleton did', async ({
+    authenticatedPage: page,
+  }) => {
+    await page.setViewportSize(PHONE);
+    await page.addInitScript(() => localStorage.setItem('unos-locale', 'ru'));
+    const container = (id: string, name: string, state: string) => ({
+      id, name, image: 'nginx:1.27', status: state, state, created: '2026-11-01T10:00:00Z', ports: [], labels: {},
+    });
+    // A paused container: the filter shows Other, its longest row.
+    const release = await hold(page, '/api/v1/containers', [
+      container('0d1f2e3c4b5a', 'e2e-web', 'running'),
+      container('1a2b3c4d5e6f', 'e2e-db', 'exited'),
+      container('2b3c4d5e6f70', 'e2e-cache', 'paused'),
+    ]);
+    await page.goto('/containers');
+    const first = 'main [aria-busy="true"] .card[data-skeleton]';
+    await expect(page.locator(first).first()).toBeAttached();
+    const skeleton = await topOf(page, first);
+
+    release();
+    const card = 'main .card[role="button"]';
+    await expect(page.locator(card).first()).toBeVisible();
+    const filter = page.getByRole('group', { name: 'Состояние' });
+    await expect(filter.getByRole('button', { name: /^Другие/ })).toBeVisible();
+    const box = (await filter.boundingBox())!;
+    const pill = (await filter.getByRole('button').first().boundingBox())!;
+    expect(box.height, 'the filter is one line').toBeLessThan(pill.height * 1.5);
+    expect(box.x + box.width).toBeLessThanOrEqual(PHONE.width);
+    expect(Math.abs((await topOf(page, card)) - skeleton)).toBeLessThanOrEqual(1);
+  });
+});
+
 test.describe('Loading without flicker, for a regular user', () => {
   const USER = { username: `e2e_loading_${Date.now().toString(36)}`, password: 'e2e-Loading-Password-1' };
   let account: Account | undefined;

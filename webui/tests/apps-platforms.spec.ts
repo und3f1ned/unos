@@ -40,18 +40,19 @@ async function fakeDocker(page: Page, installs: string[]) {
 
 test.describe('Apps whose image lacks the host platform', () => {
   test('on a riscv64 host the cards of the other apps say so and offer no Install', async ({ authenticatedPage: page }) => {
+    await fakeDocker(page, []);
     await onPlatform(page, RISCV64);
     await page.goto('/apps');
 
     const plex = card(page, 'Plex Media Server');
     await expect(plex.getByText('Not available for linux/riscv64')).toBeVisible();
-    await expect(plex.getByRole('button', { name: 'Install', exact: true })).toBeDisabled();
+    await expect(plex.getByText('Install', { exact: true })).toHaveCount(0);
     // The page's count is of the apps that can be installed here.
     await expect(page.getByText(/^6 apps available/)).toBeVisible();
     // The apps with a riscv64 build stay offered.
     for (const name of ['Prometheus', 'Navidrome', 'Traefik', 'Gitea', 'Pi-hole', 'Zigbee2MQTT']) {
       await expect(card(page, name).getByText('Not available for linux/riscv64')).toHaveCount(0);
-      await expect(card(page, name).getByRole('button', { name: 'Install', exact: true })).toBeEnabled();
+      await expect(card(page, name).getByText('Install', { exact: true })).toBeVisible();
     }
     // Exactly the six are offered: the count of the cards that are not marked.
     const all = await card(page, '.*').count();
@@ -88,11 +89,12 @@ test.describe('Apps whose image lacks the host platform', () => {
   test('on an arm64 host every app of the catalog is available', async ({ authenticatedPage: page }) => {
     // Every pinned image publishes linux/arm64; Readarr, whose tag published no platform at all,
     // left the catalog (ADR-0410).
+    await fakeDocker(page, []);
     await onPlatform(page, 'linux/arm64');
     await page.goto('/apps');
 
-    await expect(card(page, 'Plex Media Server').getByRole('button', { name: 'Install', exact: true })).toBeEnabled();
-    await expect(card(page, 'Gitea').getByRole('button', { name: 'Install', exact: true })).toBeEnabled();
+    await expect(card(page, 'Plex Media Server').getByText('Install', { exact: true })).toBeVisible();
+    await expect(card(page, 'Gitea').getByText('Install', { exact: true })).toBeVisible();
     await expect(page.getByText('Not available for linux/arm64')).toHaveCount(0);
     await expect(page.getByText('Readarr')).toHaveCount(0);
   });
@@ -105,7 +107,8 @@ test.describe('Apps whose image lacks the host platform', () => {
 
     const plex = card(page, 'Plex Media Server');
     await expect(plex.getByText('Недоступно для linux/riscv64')).toBeVisible();
-    await expect(plex.getByRole('button', { name: 'Установить', exact: true })).toBeDisabled();
+    // The card offers no Install of its own (webui.ux-apps): its foot gives the reason.
+    await expect(plex.getByText('Установить', { exact: true })).toHaveCount(0);
     await plex.click();
     const dialog = page.getByRole('dialog');
     await expect(

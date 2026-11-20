@@ -14,7 +14,7 @@
 		type ContainerResources,
 		type InstalledApp
 	} from '$lib/api/apps';
-	import { Package, RefreshCw, Grid3X3, CheckCircle2 } from 'lucide-svelte';
+	import { Package, RefreshCw, RotateCw, Grid3X3, CheckCircle2 } from 'lucide-svelte';
 	import { Button, Alert, EmptyState, Skeleton, confirm } from '$lib/components/ui';
 	import {
 		AppCatalog,
@@ -153,6 +153,8 @@
 	let drawn = $state(false);
 
 	onMount(async () => {
+		// The Containers page links an app's container to its card here (webui.ux-apps).
+		if (window.location.hash === '#installed') activeTab = 'installed';
 		const installed = data.loadInstalled();
 		await data.loadCatalog();
 		await Promise.race([installed, new Promise((resolve) => setTimeout(resolve, INSTALLED_GRACE_MS))]);
@@ -256,21 +258,41 @@
 
 	<!-- The lists' errors under the tabs, drawn with the lists: they push nothing that was shown
 	     (ADR-0430). -->
+	<!-- Each failed load: a plain title, what it means, the server's reason and Retry
+	     (webui.ux-apps). Docker's answer is the installed apps': without it no app is installed,
+	     started or stopped. "Docker is not answering" only for Docker's own 503 (ADR-0323); any
+	     other failure says that the installed apps could not be loaded. -->
 	{#if drawn && data.catalogError}
-		<Alert variant="error">{$t('apps.catalogLoadError', { error: data.catalogError })}</Alert>
+		<Alert variant="error" title={$t('apps.catalogLoadError')}>
+			<p class="mono-xs break-words">{data.catalogError}</p>
+			<Button variant="secondary" size="sm" icon={RotateCw} class="mt-3" loading={data.catalogState === 'loading'} onclick={() => data.loadCatalog()}>
+				{$t('common.retry')}
+			</Button>
+		</Alert>
 	{/if}
 
 	{#if drawn && data.installedError}
-		<Alert variant="error">{$t('apps.installed.loadError', { error: data.installedError })}</Alert>
+		<Alert variant="error" title={$t(data.installedDockerDown ? 'apps.installed.loadErrorTitle' : 'apps.installed.loadFailedTitle')}>
+			<p>{$t(data.installedDockerDown ? 'apps.installed.loadError' : 'apps.installed.loadFailed')}</p>
+			<p class="mt-1 mono-xs break-words text-content-secondary">{data.installedError}</p>
+			<Button variant="secondary" size="sm" icon={RotateCw} class="mt-3" loading={data.installedState === 'loading'} onclick={() => data.loadInstalled()}>
+				{$t('common.retry')}
+			</Button>
+		</Alert>
 	{/if}
 
 	{#if activeTab === 'catalog' && !drawn}
 		<!-- The first load: the categories and the grid of apps (ADR-0430), as the catalog draws them
-		     (no featured apps: ADR-0431). -->
+		     at each width (no featured apps: ADR-0431): the list of categories from lg, below it the
+		     category menu beside the search (on a phone under it). -->
 		<div class="flex flex-col lg:flex-row gap-6" aria-busy="true">
-			<div class="lg:w-56 flex-shrink-0"><Skeleton shape="card" count={6} size="control" /></div>
-			<div class="flex-1 min-w-0 space-y-5">
-				<Skeleton shape="block" class="h-9 w-full" />
+			<div class="hidden lg:block lg:w-56 flex-shrink-0"><Skeleton shape="card" count={6} size="control" /></div>
+			<div class="flex-1 min-w-0">
+				<div class="mb-5 flex flex-col sm:flex-row gap-3">
+					<Skeleton shape="block" class="h-9 w-full sm:flex-1" />
+					<!-- Select's field is 38 px high, Input's 36. -->
+					<Skeleton shape="block" class="h-[38px] w-full sm:w-60 lg:hidden" />
+				</div>
 				<div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
 					{#each [0, 1, 2, 3, 4, 5] as tile (tile)}
 						<Skeleton shape="block" class="h-40 w-full rounded-card" />
@@ -283,6 +305,7 @@
 	{:else if activeTab === 'catalog'}
 		<AppCatalog
 			catalog={data.catalog}
+			canInstall={data.installedKnown}
 			installed={data.installed}
 			{installing}
 			bind:search={searchQuery}
@@ -348,5 +371,8 @@
 	app={selectedApp}
 	isInstalled={selectedApp ? getInstalledInfo(selectedApp.id) !== undefined : false}
 	installedApp={selectedApp ? (getInstalledInfo(selectedApp.id) ?? null) : null}
+	installBlocked={data.installedKnown
+		? ''
+		: $t(data.installedDockerDown ? 'apps.detail.dockerDown' : 'apps.detail.installedUnknown')}
 	onclose={closeDetail}
 />

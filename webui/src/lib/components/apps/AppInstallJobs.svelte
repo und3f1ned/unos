@@ -1,4 +1,8 @@
 <script lang="ts">
+	// The card of each install, update or rollback of an app (ADR-0384, ADR-0408): its state and
+	// step, while it downloads one line of its whole download (how many images are on the NAS, and
+	// a bar in which each image is an equal share), each image and each container, and its result.
+	// No layers: Docker's word for a part of an image says nothing to a person (webui.ux-apps).
 	import { Ban, X } from 'lucide-svelte';
 	import { Alert, Badge, Button, Card, ProgressBar } from '$lib/components/ui';
 	import { intlLocale, t } from '$lib/i18n';
@@ -102,6 +106,27 @@
 		return catalog.find((app) => app.id === job.template_id);
 	}
 
+	/**
+	 * The whole download of a job: the images on the NAS, and the percent of the download, in which
+	 * each image is an equal share: one on the NAS is whole, one that downloads its part done of the
+	 * layers Docker reported so far, any other none. Bytes are not added up across the images: an
+	 * image's size is known only as Docker reports its layers (ADR-0384), so a sum of them would near
+	 * 100% and drop as each next image starts.
+	 */
+	function download(job: AppInstallJob): { percent: number; ready: number } {
+		let shares = 0;
+		let ready = 0;
+		for (const image of job.images) {
+			if (image.state === 'pulled' || image.state === 'present') {
+				ready++;
+				shares += 1;
+			} else if (image.state === 'pulling' && image.bytes_total > 0) {
+				shares += Math.min(1, image.bytes_done / image.bytes_total);
+			}
+		}
+		return { percent: Math.floor((shares / job.images.length) * 100), ready };
+	}
+
 	/** The image's name without its digest: the tag tells the version; the digest is in the details. */
 	function shortName(image: string): string {
 		return image.split('@')[0];
@@ -184,6 +209,20 @@
 				</Alert>
 			{/if}
 
+			{#if job.state === 'running' && job.step === 'pulling' && job.images.length > 0}
+				{@const whole = download(job)}
+				<div class="mt-4">
+					<p class="text-sm">{$t('apps.job.imagesReady', { done: whole.ready, n: job.images.length })}</p>
+					<ProgressBar
+						class="mt-1.5"
+						variant="info"
+						value={whole.percent}
+						max={100}
+						label={$t('apps.job.downloadAll', { name: job.name })}
+					/>
+				</div>
+			{/if}
+
 			{#if job.images.length > 0}
 				<h3 class="text-sm font-medium mt-4 mb-2">{$t('apps.job.images')}</h3>
 				<ul class="space-y-3">
@@ -202,17 +241,14 @@
 									max={image.bytes_total}
 									label={$t('apps.job.download', { image: shortName(image.image) })}
 								/>
-								<p class="flex flex-wrap gap-x-3 text-xs text-muted mt-1">
-									{#if image.bytes_total > 0}
-										<span>
-											{$t('apps.job.bytes', {
-												done: formatSize(image.bytes_done),
-												total: formatSize(image.bytes_total)
-											})}
-										</span>
-									{/if}
-									<span>{$t('apps.job.layers', { done: image.layers_done, n: image.layers })}</span>
-								</p>
+								{#if image.bytes_total > 0}
+									<p class="text-xs text-content-muted mt-1 tabular">
+										{$t('apps.job.bytes', {
+											done: formatSize(image.bytes_done),
+											total: formatSize(image.bytes_total)
+										})}
+									</p>
+								{/if}
 							{/if}
 						</li>
 					{/each}

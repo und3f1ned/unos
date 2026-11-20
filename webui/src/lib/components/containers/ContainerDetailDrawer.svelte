@@ -58,9 +58,10 @@
 {#snippet tab(id: Tab, Icon: IconComponent, label: string)}
 	<Button variant="plain"
 	 class="tab-underline py-3 {activeTab === id ? 'tab-underline-active' : ''}"
+		pressed={activeTab === id}
 		onclick={() => (activeTab = id)}
 	>
-		<Icon class="w-4 h-4" />
+		<Icon class="w-4 h-4" aria-hidden="true" />
 		{label}
 	</Button>
 {/snippet}
@@ -84,8 +85,9 @@
 		aria-labelledby="container-drawer-title"
 	>
 		<!-- Header -->
-		<div class="flex items-center justify-between p-5 border-b border-border">
-			<div class="flex items-center gap-4 min-w-0">
+		<!-- The name wraps, never cut; the state once, beside it (webui.ux-apps). -->
+		<div class="flex items-start justify-between gap-3 p-5 border-b border-border">
+			<div class="flex items-start gap-4 min-w-0">
 				<div
 					class="w-10 h-10 rounded-card bg-surface-overlay flex items-center justify-center flex-shrink-0"
 					aria-hidden="true"
@@ -93,25 +95,25 @@
 					<Box class="w-5 h-5 text-content-secondary" />
 				</div>
 				<div class="min-w-0">
-					<h2 id="container-drawer-title" class="font-semibold text-lg truncate">
+					<h2 id="container-drawer-title" class="font-semibold text-lg break-words">
 						{container.name}
 					</h2>
-					<p class="text-sm text-secondary truncate">{container.image}</p>
+					<div class="mt-1">
+						<Badge variant={stateVariant(container.state)} dot>{labelOf(STATES, container.state, $t)}</Badge>
+					</div>
 				</div>
 			</div>
-			<div class="flex items-center gap-3">
-				<Badge variant={stateVariant(container.state)}>{labelOf(STATES, container.state, $t)}</Badge>
-				<Button variant="ghost" size="icon" onclick={close}>
-					<X class="w-5 h-5" />
-				</Button>
-			</div>
+			<Button variant="ghost" size="icon" class="flex-shrink-0" onclick={close} title={$t('containers.drawer.close')}>
+				<X class="w-5 h-5" aria-hidden="true" />
+				<span class="sr-only">{$t('containers.drawer.close')}</span>
+			</Button>
 		</div>
 
 		<!-- Tabs -->
 		<div class="flex border-b border-border px-2">
 			{@render tab('overview', Info, $t('containers.drawer.overview'))}
 			{@render tab('logs', Terminal, $t('containers.drawer.logs'))}
-			{@render tab('network', Network, $t('containers.drawer.network'))}
+			{@render tab('network', Network, $t('containers.drawer.ports'))}
 		</div>
 
 		<!-- Tab Content -->

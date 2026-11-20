@@ -1550,9 +1550,17 @@ containers (`unos-supervisor`, `unos-webui`) and images are not listed.
 ### Viewing Containers
 
 The **Containers** tab lists every container with its name, image, state
-(running, exited, paused and so on) and the ports it publishes, under the counts
-of the **Running**, **Stopped** and all containers. The state menu shows only the
-containers in that state, and the search box finds containers by name or image.
+(**Running**, **Stopped**, **Paused**, **Restarting** and so on) and the ports it
+publishes. The filter above the list, **All**, **Running**, **Stopped** and
+**Other** (paused, restarting, created and the rest), shows each group's count,
+which add up to **All**, and shows only the containers of the group you click;
+the search box finds containers by name or image, and the counts follow it. A
+container that an app of the App Store made names its app, a link to the app's
+card on the App Store's **Installed** tab. On a phone the containers show as
+cards; the buttons beside the search switch between the table and the cards.
+When Docker does not answer, the tab says so, with Docker's reason and
+**Retry**; when the list cannot be loaded for another reason, it says that the
+containers could not be loaded, with the reason and **Retry**.
 
 ### Container Actions
 
@@ -1560,11 +1568,15 @@ containers in that state, and the search box finds containers by name or image.
   container, and the list shows
   its new state. An app from the App Store does not start while its data folders
   are not on a mounted pool: the message names the pool to mount.
-- **Remove** deletes the container, also a running one, after a confirmation.
+- **Remove** (the bin) deletes the container, also a running one, after a
+  confirmation. A container of an app of the App Store has no **Remove**: the
+  app would no longer start; uninstall the app on the App Store instead.
 - To act on several containers, tick their checkboxes (in the table or on the
-  cards), or **Select all shown** for every container the search and the state
-  filter show; a container they hide is unselected. **Start selected**, **Stop
-  selected** and **Restart selected** act on each of them in turn, and the page
+  cards), or **Select all shown** (the table's head, or above the cards) for
+  every container the search and the filter show; a container they hide is
+  unselected. While containers are selected, a bar at the foot of the list
+  counts them and offers **Start selected**, **Stop selected**, **Restart
+  selected** and **Clear selection**; they act on each of them in turn, and the page
   shows which one it is at; meanwhile the containers' own buttons wait.
   **Restart selected** restarts the running ones only, as a container's own
   **Restart** does: one that does not run is listed as not restarted. Then the
@@ -1572,7 +1584,8 @@ containers in that state, and the search box finds containers by name or image.
   container's failure does not stop the others, and what was not done stays
   selected for another try. Leaving the page stops the run after the container
   it is at. Removal is one container at a time.
-- Click a container for its details: **Overview**, **Logs** and **Network**; its
+- Click a container for its details: **Overview** (its ID, creation, image, its
+  app, and its Docker labels behind a disclosure), **Logs** and **Ports**; its
   actions are those of its row or card.
   **Logs** shows the last 200 lines of its log and then each new line as the
   container writes it, each line with the time Docker received it. When the log
@@ -1596,11 +1609,14 @@ creation time.
 
 ### Creating Containers
 
-1. Click **Create Container**
-2. Enter the container name and the image name (e.g., `nginx:latest`); Docker
-   pulls the image if it is missing
-3. Choose the restart policy and add port mappings and environment variables
-4. Click **Create Container**
+1. Click **Create container**
+2. Enter the container's **Name** and its **Image** (e.g., `nginx:latest`);
+   Docker pulls the image if it is missing. A field left empty says so under it
+   when you click **Create container**
+3. Choose the **Restart policy**, add **Ports** (a host port, a container port
+   and the protocol, then **Add port**) and **Variables** (a name and a value,
+   then **Add variable**)
+4. Click **Create container**
 
 ---
 
@@ -1613,14 +1629,15 @@ and of their settings, and their memory recommendations, are in English.
 
 ### Available Categories
 
-The list of categories filters the catalog, and each app's card and details
-name its category the same way. Some of them:
+The list of categories beside the catalog (a menu above it on a narrower
+screen) filters the catalog, and each app's card and details name its category
+the same way. Some of them:
 
 - **Media** - Plex, Jellyfin, Emby, Immich
 - **Downloads** - qBittorrent, Transmission
 - **Productivity** - Nextcloud, Syncthing
 - **Documents** - Stirling PDF, Wiki.js, BookStack, Paperless-ngx
-- **Smart Home** - Home Assistant
+- **Smart home** - Home Assistant
 - **Development** - Gitea, Code Server
 - **Monitoring** - Grafana, Uptime Kuma
 
@@ -1628,7 +1645,10 @@ name its category the same way. Some of them:
 
 1. Go to **App Store**
 2. Browse or search for an app
-3. Click **Install**
+3. Click its card: its details open. The card's foot says **Install** while
+   apps can be installed; when Docker does not answer, the App Store says so with
+   **Retry**, and no app can be installed until it does. Until the installed
+   apps have been loaded (or when they cannot be), no card says **Install**
 4. Choose the **Storage pool** for the app's data (apps that keep data need a
    mounted pool; create or mount one on the **Storage** page first) and
    configure settings if prompted
@@ -1639,9 +1659,11 @@ name its category the same way. Some of them:
    checks the pool, the ports and the free space, and show why it is refused
    if it is, so that you can change the settings and try again
 7. Once the checks have passed, the details close, and a card at the top of
-   the **App Store** follows the install: each image with its download (a bar
-   of its size, and how many of its layers are there), each container as it is
-   created and started, and at the end the result, or why the install failed.
+   the **App Store** follows the install: while it downloads, how many of its
+   images are on the NAS and one bar of the whole download, in which each image
+   counts the same (an image's size is known only as its download goes on), then
+   each image with its download, each container as it is created and started, and at the
+   end the result, or why the install failed.
    You can leave the page or reload it meanwhile: the install goes on in the
    background, and the card shows where it is when you come back. **Cancel
    install** stops an install that runs, after a question: what it made so far
@@ -1877,9 +1899,9 @@ the app (its data is kept) and install it again in the group.
 ### Managing Installed Apps
 
 Go to **App Store** → **Installed** to see the installed apps with their state,
-the pool that holds their data and, for the apps that run in the group
-`unos-smb`, **Runs in the group unos-smb**, and to act on them. An app of
-several containers has one card, which names its containers. When the app's
+their **Port**, the **Pool** that holds their data and, for the apps that run in
+the group `unos-smb`, **Group** `unos-smb`, and to act on them. An app of
+several containers has one card, which names its **Containers**. When the app's
 image checks its own health, the card shows **Starting**, **Healthy** or
 **Unhealthy**.
 
@@ -1890,8 +1912,9 @@ image checks its own health, the card shows **Starting**, **Healthy** or
   first and the main one once those it needs are ready (Immich's server once
   its database and Valkey are), a stop stops them in the reverse order, and a
   restart stops them all and starts them again.
-- **Uninstall** removes the app's containers, and the network of an app of
-  several, after a confirmation and keeps its data folders. Installing the app
+- **Uninstall** (the last of the card's buttons) removes the app's
+  containers, and the network of an app of several, after a confirmation and
+  keeps its data folders. Installing the app
   again on the same pool uses them again.
 
 The **Containers** page lists the containers of an app of several containers
@@ -1916,15 +1939,17 @@ pinned `ghcr.io/linuxserver/<name>` image, and with the digest that the catalog
 pins it already runs that image and is offered nothing. **Roll back** returns it
 to the image it ran, under its `lscr.io` name, without a download.
 
-**Update to** opens a dialog that shows, before anything changes:
+**Update to** opens a dialog that shows, before anything changes, the versions
+and then:
 
-- each container with **New image** or **Same image**: the update reads the
-  catalog's image for this NAS's platform from its registry and accepts it only
-  when it was built after the image that runs, so an app never moves to an
-  older image;
-- what the update downloads and about what it writes to the system disk, where
-  Docker keeps its images: only the layers that the NAS does not have yet. At
-  least 2 GB of the system disk must stay free;
+- how many containers get a new image; the disclosure **What stays, and each
+  container's image** lists each container with **New image** or **Same
+  image**: the update reads the catalog's image for this NAS's platform from its
+  registry and accepts it only when it was built after the image that runs, so
+  an app never moves to an older image;
+- what the update downloads, and about what it writes to the system disk, where
+  Docker keeps its images, of what is free there: only what the NAS does not have
+  yet. At least 2 GB of the system disk must stay free;
 - the copy of the app's database: Immich's `apps/immich/postgres/data` is
   copied to `data.previous` beside it on the same pool, never on the system
   disk. The pool must have the database's size and 1 GB more free; on a btrfs
@@ -1969,8 +1994,11 @@ time.
 Each card on the **Installed** tab has **Resources**: every container of the
 app with the memory and the CPUs it uses, as UNOS last read them from the
 kernel (about every 30 seconds; open the tab again for newer values), and its
-limits, with a bar of the use against each limit. A container without limits
-shows its use alone; a stopped one shows only its limits.
+limits, with a bar of the use against each limit: a line per container, with
+**Memory** and **CPU** in columns of their own. A container without limits shows
+its use with "no limit"; a stopped one shows only its limits, or **No limit**.
+The use of running containers that UNOS has not read yet is said once, under
+the lines.
 
 **Limits** on a container's line sets its own limits; an app of several
 containers has one per container (Immich's server, database, Valkey and machine

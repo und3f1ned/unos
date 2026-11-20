@@ -3,7 +3,7 @@
 	// group option, its ports, folders and variables (one tab each), and Install, which starts its
 	// job and follows the job's checks (ADR-0384).
 	import { untrack } from 'svelte';
-	import { Download, Check } from 'lucide-svelte';
+	import { Download } from 'lucide-svelte';
 	import { Button, Modal, Alert } from '$lib/components/ui';
 	import { t } from '$lib/i18n';
 	import { appInstalls } from '$lib/stores/appInstalls';
@@ -50,6 +50,9 @@
 		isInstalled?: boolean;
 		/** The installed instance of the app, if any: its real host folders are shown. */
 		installedApp?: InstalledApp | null;
+		/** Why no app can be installed now, '' when one can: the installed apps are not known, as
+		 * while Docker does not answer (webui.ux-apps). */
+		installBlocked?: string;
 		/** Cancel, Escape or the backdrop asked to close the dialog, or its install was handed on. */
 		onclose?: () => void;
 		/** The install's checks have passed (or it ended): the App Store's card follows its job. */
@@ -61,6 +64,7 @@
 		open = $bindable(false),
 		isInstalled = false,
 		installedApp = null,
+		installBlocked = '',
 		onclose,
 		onstarted
 	}: Props = $props();
@@ -195,7 +199,8 @@
 			? [$t('apps.detail.invalidVolumes', { paths: invalidVolumes.join(', ') })]
 			: []),
 		...(app && !app.available ? [$t('apps.detail.notAvailable', { name: app.name, platform: app.host_platform ?? '' })] : []),
-		...(otherInstall ? [$t('apps.detail.installRunning', { name: otherInstall.name })] : [])
+		...(otherInstall ? [$t('apps.detail.installRunning', { name: otherInstall.name })] : []),
+		...(installBlocked ? [installBlocked] : [])
 	]);
 	const canInstall = $derived(
 		!!app &&
@@ -291,7 +296,16 @@
 	}
 </script>
 
-<Modal {open} size="xl" title="" onclose={close}>
+<!-- The app's name and icon are the dialog's title: no empty band above them (webui.ux-apps). -->
+<Modal {open} size="xl" title={app?.name ?? ''} onclose={close}>
+	{#snippet titleIcon()}
+		{#if app}
+			<span
+				class="w-9 h-9 rounded-lg bg-surface-overlay flex items-center justify-center text-xl flex-shrink-0"
+				aria-hidden="true">{app.icon}</span
+			>
+		{/if}
+	{/snippet}
 	{#if app}
 		<AppDetailHeader {app} {isInstalled} />
 
@@ -325,8 +339,6 @@
 					{needsPool}
 					{selectedPool}
 					{dataLocations}
-					{volumeCount}
-					{variableCount}
 				/>
 			{:else if activeTab === 'ports'}
 				<AppPortsTab {app} bind:portValues {inHostNetwork} {isInstalled} {invalidPorts} />
@@ -358,11 +370,14 @@
 		</div>
 
 		{#if !isInstalled && blockers.length > 0}
-			<Alert variant="warning" class="mt-4">
-				{#each blockers as blocker}
-					<p>{blocker}</p>
-				{/each}
-			</Alert>
+			<!-- Why Install is disabled: the button names this text (aria-describedby). -->
+			<div id="app-install-blockers">
+				<Alert variant="warning" class="mt-4">
+					{#each blockers as blocker}
+						<p>{blocker}</p>
+					{/each}
+				</Alert>
+			</div>
 		{/if}
 
 		{#if pending}
@@ -375,18 +390,18 @@
 	{/if}
 
 	{#snippet footer()}
-		<Button variant="secondary" class="flex-1" onclick={close}>{$t('common.cancel')}</Button>
 		{#if isInstalled}
-			<Button variant="success" class="flex-1" disabled>
-				<Check class="w-4 h-4" />
-				{$t('apps.detail.alreadyInstalled')}
-			</Button>
+			<!-- Installed (the header's badge says so): nothing to do here; the Installed tab manages it. -->
+			<Button variant="secondary" class="flex-1" onclick={close}>{$t('apps.detail.close')}</Button>
 		{:else}
+			<Button variant="secondary" class="flex-1" onclick={close}>{$t('common.cancel')}</Button>
 			<Button
 				variant="primary"
 				class="flex-1"
 				loading={installing}
 				disabled={!canInstall}
+				aria-describedby={!canInstall && blockers.length > 0 ? 'app-install-blockers' : undefined}
+				title={!canInstall && blockers.length > 0 ? blockers.join(' ') : undefined}
 				onclick={handleInstall}
 				icon={Download}
 			>

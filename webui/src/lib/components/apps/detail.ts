@@ -21,6 +21,16 @@ export type DetailTab = 'overview' | 'ports' | 'volumes' | 'environment';
 // The apps whose database and jobs keep the pool's hard disks awake while they run (ADR-0381, ADR-0415).
 export const DISK_AWAKE: ReadonlySet<string> = new Set(['immich', 'bookstack', 'paperless-ngx', 'linkwarden']);
 
+// The units of Docker's memory sizes (the catalog's min_memory and recommended_memory: "512m", "6g"),
+// by powers of 1024.
+const MEMORY_UNITS: Record<string, number> = { '': 1, b: 1, k: 2 ** 10, m: 2 ** 20, g: 2 ** 30, t: 2 ** 40 };
+
+/** A memory size as Docker writes it ("6g") in bytes, to be shown with the catalog's units; null for another text. */
+export function memoryBytes(value: string | undefined): number | null {
+	const match = /^\s*(\d+(?:\.\d+)?)\s*([bkmgt]?)(?:i?b)?\s*$/i.exec(value ?? '');
+	return match ? Number(match[1]) * MEMORY_UNITS[match[2].toLowerCase()] : null;
+}
+
 /** Whether `template` runs in the host's network, where Docker discards its port bindings. */
 export function isInHostNetwork(template: AppTemplate): boolean {
 	return template.network_mode === 'host';

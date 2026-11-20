@@ -1,5 +1,6 @@
 ---
-status: accepted
+status: superseded
+superseded-by: ADR-0437
 date: 2026-11-17
 area: apps
 decided-by: agent
@@ -9,6 +10,8 @@ supersedes: [ADR-0381]
 # ADR-0384: An app's install runs as a background job whose progress the App Store shows
 
 ## Context
+
+Superseded by ADR-0437: only in part, what an install's card shows while it downloads: how many images are on the NAS and one bar of the whole download in which each image is an equal share, without the layers; every other rule here stays in force.
 
 ADR-0381 kept the install of an app one request that answered after its pulls: Immich's four images took 299 s on the dev device, during which the App Store showed only a spinner, a browser could give up on the request, and nothing said how far the pulls had come. The ledger entry `apps.install-progress` asks that `POST /api/v1/apps/install` answer at once with a job, that the checks, pulls, creates and starts run in the background, and that the App Store show each image's pull, each container's start and the result, also after a reload. The owner delegated the choices, asking above all that it be safe. This ADR supersedes only the part of ADR-0381 that made the install one request and named `scripts/dev/api.py --timeout 3600` for it; every other rule of ADR-0381 (the model, the identity, the password on the pool, the pinned images, the checks before the first pull and their order, the readiness waits, the clean-up of a failed install, the system disk, Immich) stays in force as written there. It also replaces ADR-0254's statement that the pull of an app's install has no deadline, for that pull alone: the Images tab's pull keeps ADR-0254's rule, which stays in force otherwise.
 

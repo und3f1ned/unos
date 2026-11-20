@@ -226,13 +226,22 @@ test.describe('Containers without Docker (stand-in)', () => {
     await page.goto('/containers');
 
     expect((await answer).status()).toBe(503);
-    await expect(page.locator('.alert').getByText(NO_DOCKER_ANSWER)).toBeVisible();
+    // A plain title, what it means, Docker's reason, and Retry (webui.ux-apps).
+    const alert = page.locator('.alert');
+    await expect(alert.getByText('Docker is not answering', { exact: true })).toBeVisible();
+    await expect(alert.getByText(NO_DOCKER_ANSWER)).toBeVisible();
     // The error alone: no counts of 0, search, empty list or Create button.
     const panel = page.getByRole('tabpanel', { name: 'Containers' });
-    await expect(panel.getByText('Running', { exact: true })).toHaveCount(0);
-    await expect(panel.getByPlaceholder('Search containers...')).toHaveCount(0);
-    await expect(page.getByText('No containers found')).toHaveCount(0);
-    await expect(page.getByRole('button', { name: 'Create Container' })).toHaveCount(0);
+    await expect(panel.getByRole('group', { name: 'State' })).toHaveCount(0);
+    await expect(panel.getByPlaceholder('Search by name or image')).toHaveCount(0);
+    await expect(page.getByText('No containers yet')).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Create container' })).toHaveCount(0);
+
+    // Retry asks again, and the error stays while Docker still does not answer.
+    const again = page.waitForResponse((response) => new URL(response.url()).pathname === '/api/v1/containers');
+    await alert.getByRole('button', { name: 'Retry' }).click();
+    expect((await again).status()).toBe(503);
+    await expect(alert.getByText(NO_DOCKER_ANSWER)).toBeVisible();
   });
 
   test('the Images tab says that Docker is not available', async ({ authenticatedPage: page }) => {
@@ -252,11 +261,26 @@ test.describe('Containers without Docker (stand-in)', () => {
 
     expect((await answer).status()).toBe(503);
     const alert = page.locator('.alert', { hasText: 'The installed apps could not be loaded' });
+    await expect(alert.getByText('Docker is not answering', { exact: true })).toBeVisible();
     await expect(alert.getByText(NO_DOCKER_ANSWER)).toBeVisible();
+    await expect(alert.getByRole('button', { name: 'Retry' })).toBeVisible();
     // The catalog does not wait for Docker (apps.catalog-without-docker).
     await expect(page.getByRole('heading', { name: 'Jellyfin' }).first()).toBeVisible();
     await expect(page.getByText(/^\d+ apps available$/)).toBeVisible();
     await expect(page.getByText(/installed$/)).toHaveCount(0);
+
+    // No app offers to be installed while Docker does not answer (webui.ux-apps): no card says
+    // Install, and the details' Install is disabled and says why.
+    const jellyfin = page.locator('.card[role="button"]', { has: page.locator('h3', { hasText: /^Jellyfin$/ }) });
+    await expect(jellyfin.getByText('Install', { exact: true })).toHaveCount(0);
+    await jellyfin.click();
+    const details = page.getByRole('dialog', { name: 'Jellyfin' });
+    await expect(details.getByRole('button', { name: 'Install Jellyfin' })).toBeDisabled();
+    await expect(details.getByText('Docker is not answering, so no app can be installed now.', { exact: false })).toBeVisible();
+    await expect(details.getByRole('button', { name: 'Install Jellyfin' })).toHaveAccessibleDescription(
+      /Docker is not answering, so no app can be installed now\./,
+    );
+    await details.getByRole('button', { name: 'Cancel' }).click();
 
     // The Installed tab has no count, and says why it lists nothing, instead of "No apps installed".
     await page.getByRole('button', { name: 'Installed', exact: true }).click();
@@ -267,22 +291,133 @@ test.describe('Containers without Docker (stand-in)', () => {
 
 test.describe('Containers', () => {
   test('lists every container with its state and filters by state', async ({ authenticatedPage: page }) => {
+    const restarting = container('4d5e6f708192', 'e2e-worker', 'busybox:1', 'restarting');
+    await fakeContainersApi(page, { containers: [WEB, DB, CACHE, restarting] });
+    await page.goto('/containers');
+
+    await expect(rows(page)).toHaveCount(4);
+    // States in sentence case, exited as Stopped, the filter's word (webui.ux-apps).
+    await expect(rowOf(page, 'e2e-web').getByText('Running', { exact: true })).toBeVisible();
+    await expect(rowOf(page, 'e2e-web').getByText('nginx:1.27')).toBeVisible();
+    await expect(rowOf(page, 'e2e-db').getByText('Stopped', { exact: true })).toBeVisible();
+    await expect(rowOf(page, 'e2e-cache').getByText('Paused', { exact: true })).toBeVisible();
+    await expect(rowOf(page, 'e2e-worker').getByText('Restarting', { exact: true })).toBeVisible();
+    // A container that keeps restarting is stopped like a running one, not offered Start.
+    await expect(rowOf(page, 'e2e-worker').getByRole('button', { name: 'Stop', exact: true })).toBeVisible();
+    await expect(rowOf(page, 'e2e-worker').getByRole('button', { name: 'Start', exact: true })).toHaveCount(0);
+
+    // One segmented filter whose counts add up to All: paused and restarting are Other. No count
+    // cards and no second, native state menu.
+    const filter = page.getByRole('group', { name: 'State' });
+    const segment = (name: RegExp) => filter.getByRole('button', { name });
+    await expect(filter.getByRole('button')).toHaveText([/^\s*All\s*4$/, /^\s*Running\s*1$/, /^\s*Stopped\s*1$/, /^\s*Other\s*2$/]);
+    await expect(segment(/^All/)).toHaveAttribute('aria-pressed', 'true');
+    await expect(page.locator('#docker-panel-containers select')).toHaveCount(0);
+    for (const [name, shown] of [
+      [/^Running/, ['e2e-web']],
+      [/^Stopped/, ['e2e-db']],
+      [/^Other/, ['e2e-cache', 'e2e-worker']],
+    ] as const) {
+      await segment(name).click();
+      await expect(segment(name)).toHaveAttribute('aria-pressed', 'true');
+      await expect(rows(page)).toHaveCount(shown.length);
+      for (const container of shown) await expect(rowOf(page, container)).toBeVisible();
+    }
+    await segment(/^All/).click();
+    await expect(rows(page)).toHaveCount(4);
+
+    // The counts follow the search; a filter that shows none offers to clear both.
+    await page.getByPlaceholder('Search by name or image').fill('e2e-w');
+    await expect(filter.getByRole('button')).toHaveText([/^\s*All\s*2$/, /^\s*Running\s*1$/, /^\s*Stopped\s*0$/, /^\s*Other\s*1$/]);
+    await segment(/^Stopped/).click();
+    await expect(rows(page)).toHaveCount(0);
+    await expect(page.getByText('No containers match')).toBeVisible();
+    await page.getByRole('button', { name: 'Clear filters' }).click();
+    await expect(rows(page)).toHaveCount(4);
+    await expect(segment(/^All/)).toHaveAttribute('aria-pressed', 'true');
+  });
+
+  test('a failed load that is not Docker\'s says so plainly', async ({ authenticatedPage: page }) => {
+    // A 500 of the server, not Docker's 503 (ADR-0323): no "Docker is not answering".
+    await page.route(
+      (url) => url.pathname === '/api/v1/containers',
+      (route) => route.fulfill({ status: 500, json: { detail: 'Docker failed: held by the test' } }),
+    );
+    await page.goto('/containers');
+
+    const alert = page.locator('.alert', { hasText: 'Docker failed: held by the test' });
+    await expect(alert.getByText('The containers could not be loaded', { exact: true })).toBeVisible();
+    await expect(page.getByText(/Docker is not answering/)).toHaveCount(0);
+    await expect(alert.getByRole('button', { name: 'Retry' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Create container' })).toHaveCount(0);
+  });
+
+  test('Create container says under each field what is missing, and sends nothing', async ({
+    authenticatedPage: page,
+  }) => {
+    const requests = await fakeContainersApi(page);
+    await page.goto('/containers');
+    await page.getByRole('button', { name: 'Create container' }).click();
+    const form = page.getByRole('dialog', { name: 'Create container' });
+    await expect(form.getByText('Enter a name for the container.')).toHaveCount(0);
+    // Enter in a field submits as the button does: the messages, not the browser's bubble.
+    await form.getByLabel('Name *', { exact: true }).press('Enter');
+    await expect(form.getByText('Enter a name for the container.')).toBeVisible();
+    await expect(form.getByText('Enter the image to create the container from.')).toBeVisible();
+    await form.getByRole('button', { name: 'Create container' }).click();
+    await expect(form.getByText('Enter a name for the container.')).toBeVisible();
+    await form.getByLabel('Name *', { exact: true }).fill('e2e-new');
+    await expect(form.getByText('Enter a name for the container.')).toHaveCount(0);
+    expect(requests.filter((r) => r.startsWith('POST'))).toEqual([]);
+    // Opened again, the form starts without them.
+    await form.getByRole('button', { name: 'Cancel' }).click();
+    await page.getByRole('button', { name: 'Create container' }).click();
+    await expect(form.getByText('Enter the image to create the container from.')).toHaveCount(0);
+  });
+
+  test("a row's buttons stay on one line, and an app's container links to the App Store without Remove", async ({
+    authenticatedPage: page,
+  }) => {
+    const web = { ...WEB, ports: [{ host_port: 8080, container_port: 80, protocol: 'tcp' }] };
+    await fakeContainersApi(page, { containers: [web, DB, MEDIA] });
+    await page.goto('/containers');
+
+    // Every row's buttons on one line, of the same height as one button (webui.ux-apps).
+    for (const name of ['e2e-web', 'e2e-db', 'e2e-media']) {
+      const actions = rowOf(page, name).locator('.table-actions');
+      const box = await actions.boundingBox();
+      expect(box?.height, `the buttons of ${name}`).toBeLessThanOrEqual(36);
+    }
+    await expect(rowOf(page, 'e2e-web').getByRole('link', { name: 'Open in browser' })).toHaveAttribute(
+      'href',
+      /:8080$/,
+    );
+
+    // Jellyfin made e2e-media: its row says so and links to the App Store's Installed tab, and
+    // offers no Remove, which would break the app; Uninstall is the App Store's.
+    const media = rowOf(page, 'e2e-media');
+    await expect(media.getByRole('link', { name: 'jellyfin app' })).toHaveAttribute('href', '/apps#installed');
+    await expect(media.getByRole('button', { name: 'Remove', exact: true })).toHaveCount(0);
+    await expect(rowOf(page, 'e2e-db').getByRole('button', { name: 'Remove', exact: true })).toBeVisible();
+    await media.getByRole('link', { name: 'jellyfin app' }).click();
+    await expect(page).toHaveURL('/apps#installed');
+    await expect(page.getByRole('button', { name: /^Installed/ })).toHaveClass(/tab-underline-active/);
+  });
+
+  test('a phone shows the containers as cards, with their state and buttons on the screen', async ({
+    authenticatedPage: page,
+  }) => {
+    await page.setViewportSize({ width: 375, height: 812 });
     await fakeContainersApi(page);
     await page.goto('/containers');
 
-    await expect(rows(page)).toHaveCount(3);
-    await expect(rowOf(page, 'e2e-web').getByText('running', { exact: true })).toBeVisible();
-    await expect(rowOf(page, 'e2e-web').getByText('nginx:1.27')).toBeVisible();
-    await expect(rowOf(page, 'e2e-db').getByText('exited', { exact: true })).toBeVisible();
-    await expect(rowOf(page, 'e2e-cache').getByText('paused', { exact: true })).toBeVisible();
-
-    const stateFilter = page.locator('#docker-panel-containers select');
-    for (const [state, name] of [['running', 'e2e-web'], ['exited', 'e2e-db'], ['paused', 'e2e-cache']]) {
-      await stateFilter.selectOption(state);
-      await expect(rows(page)).toHaveCount(1);
-      await expect(rowOf(page, name)).toBeVisible();
-    }
-    await stateFilter.selectOption('');
+    const panel = page.locator('#docker-panel-containers');
+    await expect(panel.locator('table')).toHaveCount(0);
+    const card = panel.locator('.card[role="button"]').filter({ hasText: 'e2e-web' });
+    await expect(card.getByText('Running', { exact: true })).toBeInViewport();
+    await expect(card.getByRole('button', { name: 'Stop', exact: true })).toBeInViewport();
+    // The table is still a choice.
+    await page.getByRole('button', { name: 'Table view' }).click();
     await expect(rows(page)).toHaveCount(3);
   });
 
@@ -292,16 +427,16 @@ test.describe('Containers', () => {
     const web = rowOf(page, 'e2e-web');
 
     await web.getByRole('button', { name: 'Stop' }).click();
-    await expect(web.getByText('exited', { exact: true })).toBeVisible();
+    await expect(web.getByText('Stopped', { exact: true })).toBeVisible();
     await web.getByRole('button', { name: 'Start' }).click();
-    await expect(web.getByText('running', { exact: true })).toBeVisible();
+    await expect(web.getByText('Running', { exact: true })).toBeVisible();
     await web.getByRole('button', { name: 'Restart' }).click();
     await expect.poll(() => requests.filter((r) => r.startsWith('POST'))).toEqual([
       `POST /api/v1/containers/${WEB.id}/stop`,
       `POST /api/v1/containers/${WEB.id}/start`,
       `POST /api/v1/containers/${WEB.id}/restart`,
     ]);
-    await expect(web.getByText('running', { exact: true })).toBeVisible();
+    await expect(web.getByText('Running', { exact: true })).toBeVisible();
   });
 
   test('a UNOS app whose pool is not mounted is not started, and the page says which pool to mount', async ({
@@ -314,7 +449,7 @@ test.describe('Containers', () => {
     await media.getByRole('button', { name: 'Start' }).click();
 
     await expect(page.getByText(MEDIA_REFUSED)).toBeVisible();
-    await expect(media.getByText('exited', { exact: true })).toBeVisible();
+    await expect(media.getByText('Stopped', { exact: true })).toBeVisible();
   });
 
   test('the log of a container streams live over the WebSocket', async ({ authenticatedPage: page }) => {
@@ -481,9 +616,9 @@ test.describe('Images', () => {
 
     // Remove an image that no container uses: the dialog names the tag that goes with it.
     await page.getByRole('button', { name: 'Remove image alpine:3.19' }).click();
-    const dialog = page.getByRole('dialog', { name: 'Remove Image' });
+    const dialog = page.getByRole('dialog', { name: 'Remove image' });
     await expect(dialog).toContainText('Its other tags go with it: alpine:3.');
-    await dialog.getByRole('button', { name: 'Remove Image' }).click();
+    await dialog.getByRole('button', { name: 'Remove image' }).click();
     await expect(dialog).toBeHidden();
     await expect(page.getByText('Removed alpine:3.19.')).toBeVisible();
     await expect(table.locator('tbody tr').filter({ hasText: ALPINE_OLD.id })).toHaveCount(0);
@@ -492,7 +627,7 @@ test.describe('Images', () => {
     // An image that a container uses stays, and the answer names the container; it is never forced.
     await page.getByRole('button', { name: 'Remove image nginx:1.27' }).click();
     await expect(dialog).not.toContainText('Its other tags go with it');
-    await dialog.getByRole('button', { name: 'Remove Image' }).click();
+    await dialog.getByRole('button', { name: 'Remove image' }).click();
     await expect(dialog.getByText('The image was not removed')).toBeVisible();
     await expect(dialog.getByText(IN_USE)).toBeVisible();
     await dialog.getByRole('button', { name: 'Cancel' }).click();
@@ -520,7 +655,8 @@ test.describe('In Russian', () => {
   // The language chosen in this browser, as the Account page keeps it (ADR-0287).
   const LOCALE_KEY = 'unos-locale';
   // A date in Russian: the day first and a 24-hour clock, not the en-US browser's own format.
-  const RUSSIAN_DATE = /^\d{2}\.\d{2}\.\d{4}, \d{2}:\d{2}:\d{2}$/;
+  // No seconds (webui.ux-apps).
+  const RUSSIAN_DATE = /^\d{2}\.\d{2}\.\d{4}, \d{2}:\d{2}$/;
 
   test('the page, the drawer and the Images tab come from the catalog', async ({ authenticatedPage: page }) => {
     // e2e-web publishes a TCP and a UDP port, for the drawer's Network tab.
@@ -538,47 +674,59 @@ test.describe('In Russian', () => {
     await expect(page.getByRole('tab')).toHaveText(['Контейнеры', 'Образы']);
     const panel = page.locator('#docker-panel-containers');
     await expect(panel.locator('thead th')).toHaveText(['', 'Имя', 'Образ', 'Состояние', 'Порты', 'Действия']);
+    await expect(panel.getByRole('group', { name: 'Состояние' }).getByRole('button')).toHaveText([
+      /^\s*Все\s*3$/,
+      /^\s*Работают\s*1$/,
+      /^\s*Остановлены\s*1$/,
+      /^\s*Другие\s*1$/,
+    ]);
     // A state is the server's word, shown through its key; the buttons are named by their titles.
     const web = rowOf(page, 'e2e-web');
-    await expect(web.getByText('работает', { exact: true })).toBeVisible();
-    await expect(rowOf(page, 'e2e-db').getByText('остановлен', { exact: true })).toBeVisible();
-    await expect(rowOf(page, 'e2e-cache').getByText('приостановлен', { exact: true })).toBeVisible();
+    await expect(web.getByText('Работает', { exact: true })).toBeVisible();
+    await expect(rowOf(page, 'e2e-db').getByText('Остановлен', { exact: true })).toBeVisible();
+    await expect(rowOf(page, 'e2e-cache').getByText('Приостановлен', { exact: true })).toBeVisible();
     await expect(panel.getByText('running', { exact: true })).toHaveCount(0);
     await expect(web.getByRole('button', { name: 'Остановить' })).toBeVisible();
 
     // The cards show the states through their keys too. A card is a button that opens the drawer.
     await page.getByRole('button', { name: 'Карточки' }).click();
     const card = (name: string) => panel.getByRole('button').filter({ hasText: name });
-    await expect(card('e2e-web').getByText('работает', { exact: true })).toBeVisible();
-    await expect(card('e2e-db').getByText('остановлен', { exact: true })).toBeVisible();
-    await expect(card('e2e-cache').getByText('приостановлен', { exact: true })).toBeVisible();
+    await expect(card('e2e-web').getByText('Работает', { exact: true })).toBeVisible();
+    await expect(card('e2e-db').getByText('Остановлен', { exact: true })).toBeVisible();
+    await expect(card('e2e-cache').getByText('Приостановлен', { exact: true })).toBeVisible();
     await expect(panel.getByText('running', { exact: true })).toHaveCount(0);
     await page.getByRole('button', { name: 'Таблица' }).click();
     await expect(web).toBeVisible();
 
-    // The form of a new container.
+    // The form of a new container: each port field with its own label.
     await page.getByRole('button', { name: 'Создать контейнер' }).click();
     const form = page.getByRole('dialog', { name: 'Новый контейнер' });
-    await expect(form.getByLabel('Имя контейнера')).toBeVisible();
+    await expect(form.getByLabel('Имя *', { exact: true })).toBeVisible();
+    await expect(form.getByLabel('Переменная', { exact: true })).toBeVisible();
     await expect(form.getByLabel('Политика перезапуска')).toBeVisible();
+    await expect(form.getByLabel('Порт хоста')).toBeVisible();
+    await expect(form.getByLabel('Порт контейнера')).toBeVisible();
+    await expect(form.getByLabel('Протокол')).toBeVisible();
     await form.getByRole('button', { name: 'Отмена' }).click();
     await expect(form).toBeHidden();
 
-    // The drawer: its tabs, the state in its header and the status (Docker's words) in the
-    // page's language, the date day first, the ports' protocols, and the state of the log.
+    // The drawer: its tabs, the state once, in its header, in the page's language, the date day
+    // first and without seconds, the ports' protocols, and the state of the log.
     await web.getByText('e2e-web').click();
     const drawer = page.getByRole('dialog', { name: 'e2e-web' });
     await expect(drawer.getByRole('button', { name: 'Сведения' })).toBeVisible();
-    await expect(drawer.locator('.badge')).toHaveText(['работает']);
-    await expect(drawer.locator('.card-nested').filter({ hasText: 'Статус' })).toContainText('работает');
-    await expect(drawer.locator('.card-nested').filter({ hasText: 'Создан' }).locator('div').last()).toHaveText(
-      RUSSIAN_DATE,
-    );
+    await expect(drawer.locator('.badge')).toHaveText(['Работает']);
+    await expect(drawer.getByText('Работает', { exact: true })).toHaveCount(1);
+    await expect(drawer.locator('[data-field="created"]')).toHaveText(RUSSIAN_DATE);
     await expect(drawer.getByText('running', { exact: true })).toHaveCount(0);
-    await drawer.getByRole('button', { name: 'Сеть' }).click();
-    await expect(drawer.getByText('Проброс портов', { exact: true })).toBeVisible();
+    await drawer.getByRole('button', { name: 'Порты' }).click();
+    await expect(drawer.getByRole('table', { name: 'Порты' }).getByRole('columnheader')).toHaveText([
+      'Хост',
+      'Контейнер',
+      'Протокол',
+    ]);
     // The header's state, then a badge per port with its protocol (Docker's tcp and udp).
-    await expect(drawer.locator('.badge')).toHaveText(['работает', 'TCP', 'UDP']);
+    await expect(drawer.locator('.badge')).toHaveText(['Работает', 'TCP', 'UDP']);
     await drawer.getByRole('button', { name: 'Журнал' }).click();
     await expect(
       drawer.getByText('В реальном времени: новые строки появляются, как только контейнер их записывает'),
@@ -626,16 +774,21 @@ test.describe('Several containers at once', () => {
     });
     await page.goto('/containers');
     await expect(rows(page)).toHaveCount(3);
-    await expect(toolbar(page)).toContainText('0 containers selected');
-    for (const name of ['Start selected', 'Stop selected', 'Restart selected']) {
-      await expect(button(page, name)).toBeDisabled();
-    }
+    // Nothing selected: no bar of disabled buttons (webui.ux-apps).
+    await expect(toolbar(page)).toHaveCount(0);
 
     await checkbox(page, 'e2e-web').check();
     await checkbox(page, 'e2e-cache').check();
     // A checkbox selects; it does not open the container's drawer.
     await expect(page.getByRole('dialog')).toHaveCount(0);
     await expect(toolbar(page)).toContainText('2 containers selected');
+    // The head's Select all shown is part-checked; Clear selection empties it and hides the bar.
+    await expect(selectAll(page)).toHaveJSProperty('indeterminate', true);
+    await button(page, 'Clear selection').click();
+    await expect(toolbar(page)).toHaveCount(0);
+    await expect(checkbox(page, 'e2e-web')).not.toBeChecked();
+    await checkbox(page, 'e2e-web').check();
+    await checkbox(page, 'e2e-cache').check();
 
     await button(page, 'Stop selected').click();
     // In the order of the list, and the next only after the answer for the one before.
@@ -660,18 +813,18 @@ test.describe('Several containers at once', () => {
     gates.shift()!();
 
     const result = page.getByRole('list', { name: 'Stopped 2 of 2 containers' });
-    await expect(result.getByRole('listitem')).toHaveText(['e2e-web: exited', 'e2e-cache: exited']);
+    await expect(result.getByRole('listitem')).toHaveText(['e2e-web: Stopped', 'e2e-cache: Stopped']);
     expect(posts(requests)).toEqual([
       `POST /api/v1/containers/${WEB.id}/stop`,
       `POST /api/v1/containers/${CACHE.id}/stop`,
     ]);
-    await expect(rowOf(page, 'e2e-web').getByText('exited', { exact: true })).toBeVisible();
-    await expect(rowOf(page, 'e2e-cache').getByText('exited', { exact: true })).toBeVisible();
-    await expect(rowOf(page, 'e2e-db').getByText('exited', { exact: true })).toBeVisible();
+    await expect(rowOf(page, 'e2e-web').getByText('Stopped', { exact: true })).toBeVisible();
+    await expect(rowOf(page, 'e2e-cache').getByText('Stopped', { exact: true })).toBeVisible();
+    await expect(rowOf(page, 'e2e-db').getByText('Stopped', { exact: true })).toBeVisible();
     // Once it ended, a row's own actions are back.
     await expect(rowOf(page, 'e2e-db').getByRole('button', { name: 'Start', exact: true })).toBeEnabled();
-    // What was done leaves the selection.
-    await expect(toolbar(page)).toContainText('0 containers selected');
+    // What was done leaves the selection, and the bar goes with it.
+    await expect(toolbar(page)).toHaveCount(0);
     await expect(checkbox(page, 'e2e-web')).not.toBeChecked();
   });
 
@@ -688,16 +841,16 @@ test.describe('Several containers at once', () => {
 
     const started = page.getByRole('list', { name: 'Started 3 of 4 containers' });
     await expect(started.getByRole('listitem')).toHaveText([
-      'e2e-web: running',
-      'e2e-db: running',
+      'e2e-web: Running',
+      'e2e-db: Running',
       `e2e-media: failed: ${MEDIA_REFUSED}`,
-      'e2e-cache: running',
+      'e2e-cache: Running',
     ]);
     expect(posts(requests)).toEqual(
       [WEB, DB, MEDIA, CACHE].map((c) => `POST /api/v1/containers/${c.id}/start`),
     );
-    await expect(rowOf(page, 'e2e-db').getByText('running', { exact: true })).toBeVisible();
-    await expect(rowOf(page, 'e2e-media').getByText('exited', { exact: true })).toBeVisible();
+    await expect(rowOf(page, 'e2e-db').getByText('Running', { exact: true })).toBeVisible();
+    await expect(rowOf(page, 'e2e-media').getByText('Stopped', { exact: true })).toBeVisible();
     // The one that failed stays selected, for another try; the others leave the selection.
     await expect(toolbar(page)).toContainText('1 container selected');
     await expect(checkbox(page, 'e2e-media')).toBeChecked();
@@ -709,7 +862,7 @@ test.describe('Several containers at once', () => {
     await button(page, 'Restart selected').click();
     const restarted = page.getByRole('list', { name: 'Restarted 1 of 2 containers' });
     await expect(restarted.getByRole('listitem')).toHaveText([
-      'e2e-db: running',
+      'e2e-db: Running',
       'e2e-media: not restarted: it is not running',
     ]);
     expect(posts(requests).slice(4)).toEqual([`POST /api/v1/containers/${DB.id}/restart`]);
@@ -726,11 +879,11 @@ test.describe('Several containers at once', () => {
     await page.goto('/containers');
 
     // Select all shown selects what the search shows; what it hides leaves the selection.
-    await page.getByPlaceholder('Search containers...').fill('e2e-d');
+    await page.getByPlaceholder('Search by name or image').fill('e2e-d');
     await expect(rows(page)).toHaveCount(1);
     await selectAll(page).check();
     await expect(toolbar(page)).toContainText('1 container selected');
-    await page.getByPlaceholder('Search containers...').fill('');
+    await page.getByPlaceholder('Search by name or image').fill('');
     await expect(rows(page)).toHaveCount(3);
     await expect(checkbox(page, 'e2e-db')).toBeChecked();
     await expect(selectAll(page)).not.toBeChecked();
@@ -738,17 +891,17 @@ test.describe('Several containers at once', () => {
     // All three selected, then the state filter shows only e2e-web: an action reaches it alone.
     await selectAll(page).check();
     await expect(toolbar(page)).toContainText('3 containers selected');
-    await page.locator('#docker-panel-containers select').selectOption('running');
+    await page.getByRole('group', { name: 'State' }).getByRole('button', { name: /^Running/ }).click();
     await expect(rows(page)).toHaveCount(1);
     await expect(toolbar(page)).toContainText('1 container selected');
     await button(page, 'Stop selected').click();
     await expect(page.getByRole('list', { name: 'Stopped 1 of 1 container' }).getByRole('listitem')).toHaveText([
-      'e2e-web: exited',
+      'e2e-web: Stopped',
     ]);
     expect(posts(requests)).toEqual([`POST /api/v1/containers/${WEB.id}/stop`]);
-    await page.locator('#docker-panel-containers select').selectOption('');
+    await page.getByRole('group', { name: 'State' }).getByRole('button', { name: /^All/ }).click();
     await expect(rows(page)).toHaveCount(3);
-    await expect(toolbar(page)).toContainText('0 containers selected');
+    await expect(toolbar(page)).toHaveCount(0);
 
     // The cards have the same checkboxes, which do not open the drawer either.
     await page.getByRole('button', { name: 'Card view' }).click();
@@ -763,11 +916,11 @@ test.describe('Several containers at once', () => {
     await button(page, 'Start selected').click();
     const result = page.getByRole('list', { name: 'Started 1 of 2 containers' });
     await expect(result.getByRole('listitem')).toHaveText([
-      'e2e-web: running',
+      'e2e-web: Running',
       `e2e-db: failed: Container ${DB.id} not found`,
     ]);
     await expect(page.locator('#docker-panel-containers').getByText('e2e-db', { exact: true })).toHaveCount(0);
-    await expect(toolbar(page)).toContainText('0 containers selected');
+    await expect(toolbar(page)).toHaveCount(0);
   });
 
   test('leaving the page ends a run after the container it is at', async ({ authenticatedPage: page }) => {
@@ -815,7 +968,7 @@ test.describe('Several containers at once', () => {
     await page.goto('/containers');
 
     const bar = page.getByRole('toolbar', { name: 'Выбранные контейнеры' });
-    await expect(bar).toContainText('Выбрано 0 контейнеров');
+    await expect(bar).toHaveCount(0);
     await page.getByRole('checkbox', { name: 'Выбрать e2e-web', exact: true }).check();
     await expect(bar).toContainText('Выбран 1 контейнер');
     await page.getByRole('checkbox', { name: 'Выбрать все показанные', exact: true }).check();
@@ -823,9 +976,8 @@ test.describe('Several containers at once', () => {
     await page.getByRole('checkbox', { name: 'Выбрать e2e-cache', exact: true }).uncheck();
     await bar.getByRole('button', { name: 'Остановить выбранные', exact: true }).click();
     const result = page.getByRole('list', { name: 'Остановлено 2 из 2 контейнеров' });
-    await expect(result.getByRole('listitem')).toHaveText(['e2e-web: остановлен', 'e2e-db: остановлен']);
-    await expect(bar.getByRole('button', { name: 'Запустить выбранные', exact: true })).toBeDisabled();
-    await expect(bar.getByRole('button', { name: 'Перезапустить выбранные', exact: true })).toBeDisabled();
+    await expect(result.getByRole('listitem')).toHaveText(['e2e-web: Остановлен', 'e2e-db: Остановлен']);
+    await expect(bar).toHaveCount(0);
 
     await page.getByRole('checkbox', { name: 'Выбрать e2e-web', exact: true }).check();
     await bar.getByRole('button', { name: 'Перезапустить выбранные', exact: true }).click();
