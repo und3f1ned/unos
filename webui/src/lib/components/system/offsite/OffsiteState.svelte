@@ -60,7 +60,7 @@
     <h4 class="font-medium">{$t("offsite.state.title")}</h4>
     <div class="flex flex-wrap gap-2">
       <Button size="sm" variant="secondary" icon={RefreshCw} onclick={onrefresh}>{$t("offsite.refresh")}</Button>
-      <Button size="sm" icon={Play} loading={starting} disabled={running !== null} onclick={onrunnow}>
+      <Button size="sm" variant="secondary" icon={Play} loading={starting} disabled={running !== null} onclick={onrunnow}>
         {$t("offsite.state.runNow")}
       </Button>
     </div>
@@ -105,10 +105,14 @@
       </span>
     </p>
     {#if lastCopy.error}
-      <!-- One line: Svelte 5 keeps a line break between two expressions as it is written. -->
-      <p class="text-status-error break-words">
-        {$t("offsite.state.failedAt", { step: stepText(lastCopy.step) })} {lastCopy.error}
-      </p>
+      <!-- A plain sentence, and restic's own words on demand. -->
+      <div data-testid="copy-error">
+        <p class="text-status-error break-words">{$t("offsite.state.failedAt", { step: stepText(lastCopy.step) })}</p>
+        <details class="text-content-secondary">
+          <summary class="link w-fit cursor-pointer text-xs">{$t("offsite.details")}</summary>
+          <p class="mt-1 font-mono text-xs break-words select-all">{lastCopy.error}</p>
+        </details>
+      </div>
     {/if}
     {#if lastCopy.note}
       <p class="text-status-warning break-words" data-testid="copy-note">{lastCopy.note}</p>

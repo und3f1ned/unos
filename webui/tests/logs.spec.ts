@@ -134,7 +134,7 @@ async function fakeLogsApi(page: Page) {
 type JournalSocket = { query: URLSearchParams; route: WebSocketRoute; closedByPage: boolean };
 
 /**
- * Stand in for the journal socket of Auto, /ws/v1/journal (supervisor/src/websocket/events.py,
+ * Stand in for the journal socket of Follow, /ws/v1/journal (supervisor/src/websocket/events.py,
  * ADR-0366): it answers the auth message with auth_ok and the newest entries of the query of its
  * URL, as GET /entries lists them; a test sends the new ones with `send`. Returns the sockets the
  * page opened, the latest last.
@@ -195,7 +195,7 @@ test.describe('System Logs', () => {
   test('should have severity filter', async ({ authenticatedPage: page }) => {
     await page.goto('/system#logs');
     await page.waitForTimeout(1000);
-    await expect(page.getByRole('combobox', { name: 'Priority Level', exact: true })).toBeVisible();
+    await expect(page.getByRole('combobox', { name: 'Level', exact: true })).toBeVisible();
   });
 
   test('should display log entries or empty state', async ({ authenticatedPage: page }) => {
@@ -233,7 +233,7 @@ test.describe('System Logs', () => {
   // Each filter's <label> names its combobox (Select: label id, aria-labelledby).
   test('filters are comboboxes named by their labels', async ({ authenticatedPage: page }) => {
     await page.goto('/system#logs');
-    for (const name of ['Priority Level', 'Time Range', 'Limit']) {
+    for (const name of ['Level', 'Time range', 'Limit']) {
       await expect(page.getByRole('combobox', { name, exact: true })).toBeVisible();
     }
   });
@@ -292,9 +292,9 @@ test.describe('System Logs with a fake journal', () => {
     ]);
 
     // A severity: the entries at that level and the more severe ones, still newest first.
-    await choose(page, 'Priority Level', 'Warning');
+    await choose(page, 'Level', 'Warning');
     await expect(cells(page, 4)).toHaveText([OOM, EXT4, USB_ERROR]);
-    await expect(cells(page, 2)).toHaveText(['err', 'warning', 'err']);
+    await expect(cells(page, 2)).toHaveText(['Error', 'Warning', 'Error']);
     await expect(cells(page, 3)).toHaveText(['kernel', 'kernel', 'kernel']);
     await expect(page.getByText('Showing 3 log entries, newest first')).toBeVisible();
     const last = api.requests[api.requests.length - 1];
@@ -309,14 +309,14 @@ test.describe('System Logs with a fake journal', () => {
     await choose(page, 'Limit', '50');
     await expect.poll(() => api.requests[api.requests.length - 1].get('limit')).toBe('50');
 
-    await choose(page, 'Time Range', 'Last hour');
+    await choose(page, 'Time range', 'Last hour');
     await expect.poll(() => api.requests[api.requests.length - 1].get('since')).toBe('1 hour ago');
     expect(api.requests[api.requests.length - 1].get('limit')).toBe('50');
   });
 
-  // webui.no-http-polling (ADR-0366): Auto follows the journal over a WebSocket, not by asking
+  // webui.no-http-polling (ADR-0366): Follow follows the journal over a WebSocket, not by asking
   // GET /entries again.
-  test('Auto follows new entries over the journal socket and never asks the API again', async ({
+  test('Follow shows new entries over the journal socket and never asks the API again', async ({
     authenticatedPage: page,
   }) => {
     await page.clock.install();
@@ -326,7 +326,7 @@ test.describe('System Logs with a fake journal', () => {
     await expect(cells(page, 4)).toHaveText([OOM, FAILED_PASSWORD, NO_EXIT]);
     expect(api.requests).toHaveLength(1);
 
-    const auto = page.getByRole('button', { name: 'Auto', exact: true });
+    const auto = page.getByRole('switch', { name: 'Follow', exact: true });
     await auto.click();
     await expect(page.getByText('Following new entries')).toBeVisible();
     await expect.poll(() => sockets.length).toBe(1);
@@ -344,8 +344,8 @@ test.describe('System Logs with a fake journal', () => {
     await page.waitForTimeout(300);
     expect(api.requests).toHaveLength(1);
 
-    // A filter changed while Auto is on: the socket of the new query lists its entries.
-    await choose(page, 'Priority Level', 'Error');
+    // A filter changed while Follow is on: the socket of the new query lists its entries.
+    await choose(page, 'Level', 'Error');
     await expect.poll(() => sockets.length).toBe(2);
     await expect.poll(() => sockets[0].closedByPage).toBe(true);
     expect(Object.fromEntries(sockets[1].query)).toEqual({ source: 'journal', limit: '200', priority: 'err' });
@@ -369,7 +369,7 @@ test.describe('System Logs with a fake journal', () => {
     await expect(cells(page, 4)).toHaveCount(50);
     await expect(cells(page, 4).last()).toHaveText('usb 1-1: error 48');
 
-    // Auto off: the socket closes, and the list stays.
+    // Follow off: the socket closes, and the list stays.
     await auto.click();
     await expect.poll(() => sockets[3].closedByPage).toBe(true);
     await expect(page.getByText('Following new entries')).toHaveCount(0);
@@ -377,12 +377,12 @@ test.describe('System Logs with a fake journal', () => {
     expect(api.requests).toHaveLength(1);
   });
 
-  test('Auto stops when the journal socket ends, and says why', async ({ authenticatedPage: page }) => {
+  test('Follow stops when the journal socket ends, and says why', async ({ authenticatedPage: page }) => {
     await fakeLogsApi(page);
     const sockets = await fakeJournalSocket(page);
     await page.goto('/system#logs');
     await expect(cells(page, 4)).toHaveText([OOM, FAILED_PASSWORD, NO_EXIT]);
-    const auto = page.getByRole('button', { name: 'Auto', exact: true });
+    const auto = page.getByRole('switch', { name: 'Follow', exact: true });
 
     // The server's error, as GET /entries would answer it, instead of the entries.
     await auto.click();
@@ -399,15 +399,15 @@ test.describe('System Logs with a fake journal', () => {
     await expect.poll(() => sockets.length).toBe(2);
     await expect(cells(page, 4)).toHaveText([OOM, FAILED_PASSWORD, NO_EXIT]);
     await sockets[1].route.close({ code: 1011, reason: 'gone' });
-    await expect(page.getByText('Auto stopped: the connection to the server was lost')).toBeVisible();
+    await expect(page.getByText('Following stopped: the connection to the server was lost')).toBeVisible();
     await expect(cells(page, 4)).toHaveText([OOM, FAILED_PASSWORD, NO_EXIT]);
     await expect(page.getByText('Following new entries')).toHaveCount(0);
 
-    // Auto again starts a new stream, and the notice goes.
+    // Follow again starts a new stream, and the notice goes.
     await auto.click();
     await expect.poll(() => sockets.length).toBe(3);
     await expect(page.getByText('Following new entries')).toBeVisible();
-    await expect(page.getByText('Auto stopped: the connection to the server was lost')).toHaveCount(0);
+    await expect(page.getByText('Following stopped: the connection to the server was lost')).toHaveCount(0);
   });
 
   test('a late answer for the source picked before does not replace the entries of the one picked last', async ({
@@ -441,7 +441,7 @@ test.describe('System Logs with a fake journal', () => {
     await page.getByRole('button', { name: 'Samba', exact: true }).click();
     await expect(page.getByText('The SMB file server: smbd, and nmbd where NetBIOS is on')).toBeVisible();
     await expect(cells(page, 4)).toHaveText([UNKNOWN_FAILED, ALICE_FAILED, BOB_FAILED, ALICE_FAILED, SMBD_STARTED]);
-    await expect(cells(page, 2)).toHaveText(['notice', 'notice', 'notice', 'notice', 'notice']);
+    await expect(cells(page, 2)).toHaveText(['Notice', 'Notice', 'Notice', 'Notice', 'Notice']);
     await expect(cells(page, 3)).toHaveText(['smbd', 'smbd', 'smbd', 'smbd', 'smbd']);
 
     // Only the failed sign-ins: Samba's lines start with "Auth:".
@@ -558,13 +558,13 @@ test.describe('System Logs with a fake journal', () => {
     }
     await expect(page.getByRole('columnheader')).toHaveText(['Время', 'Уровень', 'Источник', 'Сообщение']);
     await expect(cells(page, 4)).toHaveText([OOM, FAILED_PASSWORD, NO_EXIT]);
-    await expect(cells(page, 2)).toHaveText(['ошибка', 'информация', 'предупреждение']);
+    await expect(cells(page, 2)).toHaveText(['Ошибка', 'Информация', 'Предупреждение']);
     await expect(cells(page, 1)).toHaveText(['07.11.2026, 12:59:00', '07.11.2026, 12:55:00', '07.11.2026, 12:40:00']);
     await expect(page.getByText('Показаны 3 записи, сначала новые')).toBeVisible();
 
     await page.getByRole('button', { name: 'Samba', exact: true }).click();
     await expect(page.getByText('Файловый сервер SMB: smbd, а также nmbd, если включён NetBIOS')).toBeVisible();
-    await expect(cells(page, 2)).toHaveText(['уведомление', 'уведомление', 'уведомление', 'уведомление', 'уведомление']);
+    await expect(cells(page, 2)).toHaveText(['Уведомление', 'Уведомление', 'Уведомление', 'Уведомление', 'Уведомление']);
     await expect(page.getByText('Показано 5 записей, сначала новые')).toBeVisible();
 
     // A level that Samba's entries do not reach: nothing is listed, and the tab says so.

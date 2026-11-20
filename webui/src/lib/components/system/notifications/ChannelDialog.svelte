@@ -1,20 +1,28 @@
 <script lang="ts">
-  import type { EventType } from "$lib/api/notifications";
+  import type { ChannelKind } from "$lib/api/notifications";
   import { Alert, Button, Input, Modal, Select } from "$lib/components/ui";
-  import { t } from "$lib/i18n";
+  import { intlLocale, t } from "$lib/i18n";
   import type { ChannelForm } from "./channelForm.svelte";
-  import { EVENTS, EXAMPLES, METHODS, kindName, own } from "./channels";
+  import { EXAMPLES, KIND_ORDER, METHODS, kindName } from "./channels";
 
-  // The dialog that adds or edits a channel: the settings of its kind, its events, and whether
-  // it is on.
+  // The dialog that adds or edits a channel: its kind (a new channel's only), the settings of its
+  // kind, and whether it is on. Every enabled channel receives every alert, so no events are chosen
+  //.
   type Props = {
     form: ChannelForm;
-    // The events of the server's list, to choose from.
-    eventTypes: EventType[];
+    // The name a new channel of a kind gets until it is given one.
+    defaultName: (kind: ChannelKind) => string;
     onsave: () => void;
   };
 
-  let { form, eventTypes, onsave }: Props = $props();
+  let { form, defaultName, onsave }: Props = $props();
+
+  let kindOptions = $derived(KIND_ORDER.map((kind) => ({ value: kind, label: kindName($t, kind) })));
+
+  // What a disabled Save waits for, in the words of the page: said beside it.
+  let missing = $derived(
+    new Intl.ListFormat($intlLocale, { type: "conjunction" }).format(form.missing.map((key) => $t(key)))
+  );
 </script>
 
 <Modal
@@ -25,6 +33,14 @@
   onclose={() => form.close()}
 >
   <div class="space-y-4">
+    {#if !form.editing}
+      <Select
+        label={$t("notifications.form.kind")}
+        value={form.kind}
+        options={kindOptions}
+        onchange={(kind) => form.changeKind(kind as ChannelKind, defaultName)}
+      />
+    {/if}
     <Input
       label={$t("notifications.form.name")}
       bind:value={form.name}
@@ -32,9 +48,8 @@
     />
 
     {#if form.kind === "email"}
-      <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+      <div class="grid grid-cols-[minmax(0,1fr)_6.5rem] gap-3 items-start">
         <Input
-          class="sm:col-span-2"
           label={$t("notifications.email.host")}
           bind:value={form.emailHost}
           placeholder={EXAMPLES.host}
@@ -119,30 +134,6 @@
       {/if}
     {/if}
 
-    {#if eventTypes.length > 0}
-      <fieldset>
-        <legend class="form-label">{$t("notifications.form.events")}</legend>
-        <p class="form-hint mb-2">{$t("notifications.form.eventsHint")}</p>
-        <div class="card-nested grid grid-cols-1 gap-2 max-h-48 overflow-y-auto">
-          {#each eventTypes as event}
-            {@const keys = own(EVENTS, event.id) ? EVENTS[event.id] : null}
-            <label class="flex items-start gap-3 cursor-pointer">
-              <input
-                type="checkbox"
-                class="form-checkbox mt-1"
-                checked={form.events.includes(event.id)}
-                onchange={() => form.toggleEvent(event.id)}
-              />
-              <span>
-                <span class="block text-sm font-medium">{keys ? $t(keys.name) : event.name}</span>
-                <span class="block text-xs text-muted">{keys ? $t(keys.when) : event.description}</span>
-              </span>
-            </label>
-          {/each}
-        </div>
-      </fieldset>
-    {/if}
-
     <div>
       <label class="flex items-center gap-2 cursor-pointer">
         <input type="checkbox" class="form-checkbox" bind:checked={form.enabled} />
@@ -156,11 +147,15 @@
         <Alert variant="error" title={$t("notifications.form.saveError")}>{form.saveError}</Alert>
       </div>
     {/if}
+    {#if !form.complete}
+      <p id="channel-save-why" class="text-[13px] text-content-muted">{$t("notifications.form.needs", { what: missing })}</p>
+    {/if}
   </div>
 
   {#snippet footer()}
     <Button variant="secondary" class="flex-1" disabled={form.saving} onclick={() => form.close()}>{$t("common.cancel")}</Button>
-    <Button class="flex-1" loading={form.saving} disabled={!form.complete} onclick={onsave}>
+    <Button class="flex-1" loading={form.saving} disabled={!form.complete}
+      aria-describedby={form.complete ? undefined : "channel-save-why"} onclick={onsave}>
       {$t(form.editing ? "notifications.form.save" : "notifications.form.add")}
     </Button>
   {/snippet}

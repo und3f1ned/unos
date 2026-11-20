@@ -115,6 +115,34 @@ test.describe('Disk Health', () => {
     await expect(page.getByText("Could not list the host's disks: lsblk failed")).toHaveCount(0);
   });
 
+  test('while the disks are read, the skeleton is the list: one flush card of rows, where the list will be', async ({
+    authenticatedPage: page,
+  }) => {
+    await fakeHealthApi(page);
+    let release = () => {};
+    const held = new Promise<void>((resolve) => (release = resolve));
+    await page.route(
+      (url) => url.pathname === '/api/v1/health/disks',
+      async (route) => {
+        await held;
+        await route.fallback();
+      },
+    );
+    await page.goto('/system#health');
+    const skeleton = page.locator('main .card-flush[aria-busy="true"]');
+    await expect(skeleton).toHaveCount(1);
+    await expect(skeleton.locator('> div')).toHaveCount(3);
+    await expect(skeleton.locator('.card')).toHaveCount(0);
+    const before = (await skeleton.boundingBox())!;
+
+    release();
+    const list = page.getByRole('list', { name: 'Disks' });
+    await expect(list).toBeVisible();
+    await expect(skeleton).toHaveCount(0);
+    const after = (await list.boundingBox())!;
+    expect([after.x, after.y, after.width]).toEqual([before.x, before.y, before.width]);
+  });
+
   // storage.smart: open a disk. The dialog shows what GET /health/disks
   // returned, so opening it runs no smartctl (ADR-0235).
   test('opens a disk with its SMART attributes, temperature and overall health', async ({
@@ -131,7 +159,7 @@ test.describe('Disk Health', () => {
 
     await disk(page, '/dev/e2e-sda').getByRole('button', { name: 'SMART data of /dev/e2e-sda' }).click();
     const sata = page.getByRole('dialog', { name: 'E2E HDD 4TB (/dev/e2e-sda)' });
-    await expect(field(sata, 'Overall health')).toHaveText('PASSED');
+    await expect(field(sata, 'Overall health')).toHaveText('Passed');
     await expect(field(sata, 'Capacity')).toHaveText('3.64 TB');
     await expect(field(sata, 'Temperature')).toHaveText('34 °C');
     await expect(field(sata, 'Power-on hours')).toHaveText('51775 (5 years, 332 days)');
@@ -156,7 +184,7 @@ test.describe('Disk Health', () => {
       .getByRole('button', { name: 'SMART data of /dev/e2e-nvme0n1' })
       .click();
     const nvme = page.getByRole('dialog', { name: 'E2E NVMe 1TB (/dev/e2e-nvme0n1)' });
-    await expect(field(nvme, 'Overall health')).toHaveText('PASSED');
+    await expect(field(nvme, 'Overall health')).toHaveText('Passed');
     await expect(field(nvme, 'Temperature')).toHaveText('40 °C');
     await expect(nvme.getByRole('columnheader')).toHaveText(['Health information', 'Value']);
     await expect(row(nvme, 'Available spare threshold')).toHaveText(['Available spare threshold', '10']);
@@ -169,7 +197,7 @@ test.describe('Disk Health', () => {
     // Without SMART data the health is unknown, and the dialog says so.
     await disk(page, '/dev/e2e-sdb').getByRole('button', { name: 'SMART data of /dev/e2e-sdb' }).click();
     const usb = page.getByRole('dialog', { name: 'E2E USB Disk (/dev/e2e-sdb)' });
-    await expect(field(usb, 'Overall health')).toHaveText('UNKNOWN');
+    await expect(field(usb, 'Overall health')).toHaveText('Unknown');
     await expect(field(usb, 'Temperature')).toHaveText('Not reported');
     await expect(usb.getByText('smartctl reported no SMART attributes for this disk.')).toBeVisible();
     await expect(usb.getByRole('table')).toHaveCount(0);
@@ -182,11 +210,11 @@ test.describe('Disk Health', () => {
   test('a disk that sleeps is listed as asleep, without SMART data', async ({ authenticatedPage: page }) => {
     await fakeHealthApi(page, { disks: () => ({ json: { disks: [...FAKE_SMART_DISKS, SLEEPING_DISK] } }) });
     await page.goto('/system#health');
-    await expect(disk(page, '/dev/e2e-sdd')).toContainText('STANDBY');
-    await expect(disk(page, '/dev/e2e-sdd').locator('.text-info')).toHaveText('STANDBY');
+    // One badge that reads alone.
+    await expect(disk(page, '/dev/e2e-sdd').locator('.badge')).toHaveText('Asleep');
     await disk(page, '/dev/e2e-sdd').getByRole('button', { name: 'SMART data of /dev/e2e-sdd' }).click();
     const dialog = page.getByRole('dialog', { name: 'E2E HDD 640GB (/dev/e2e-sdd)' });
-    await expect(field(dialog, 'Overall health')).toHaveText('STANDBY');
+    await expect(field(dialog, 'Overall health')).toHaveText('Asleep');
     await expect(field(dialog, 'Serial')).toHaveText('E2E-HDD-3');
     await expect(dialog).toContainText(
       'The disk sleeps: its SMART data is read once it is awake, so as not to spin it up.',
@@ -207,6 +235,12 @@ test.describe('Disk Health', () => {
     await expect(failing).toContainText('Reallocated_Sector_Ct: 3 (was 0)');
     await expect(failing).toContainText('Reallocated_Sector_Ct increasing rapidly');
     await expect(failing).toContainText('Disk showing signs of failure. Replace within 30 days.');
+    // The plan in plain words is shown; smartctl's attributes wait behind Why.
+    await expect(failing.getByText('Disk showing signs of failure. Replace within 30 days.')).toBeVisible();
+    await expect(failing.getByText('Reallocated_Sector_Ct increasing rapidly')).toBeHidden();
+    await failing.getByText('Why', { exact: true }).click();
+    await expect(failing.getByText('Reallocated_Sector_Ct increasing rapidly')).toBeVisible();
+    await expect(failing.locator('.badge')).toHaveText('Replace soon');
     // A healthy prediction, and the disks without one, get no mark.
     await expect(replaceSoonMark(page)).toHaveCount(1);
 
@@ -319,15 +353,15 @@ test.describe('Disk Health', () => {
     await expect(failing).toContainText('/dev/e2e-sda · 3,64 ТБ');
     await expect(disks.filter({ hasText: '/dev/e2e-nvme0n1' })).toContainText('/dev/e2e-nvme0n1 · 931,51 ГБ');
     await expect(failing.locator('.badge')).toHaveText('Пора заменить');
-    await expect(failing).toContainText('ИСПРАВЕН');
-    await expect(failing).not.toContainText('НЕИСПРАВЕН');
+    // One badge per disk: the plan to replace it, not also smartctl's overall health.
+    await expect(failing.locator('.badge')).toHaveCount(1);
     await expect(failing).toContainText('34 °C');
     await expect(failing).toContainText('Reallocated_Sector_Ct increasing rapidly');
-    await expect(disks.filter({ hasText: '/dev/e2e-sdb' })).toContainText('НЕИЗВЕСТНО');
+    await expect(disks.filter({ hasText: '/dev/e2e-sdb' }).locator('.badge')).toHaveText('Не прочитан');
 
     await failing.getByRole('button', { name: 'Данные SMART диска /dev/e2e-sda' }).click();
     const sata = page.getByRole('dialog', { name: 'E2E HDD 4TB (/dev/e2e-sda)' });
-    await expect(field(sata, 'Общее состояние')).toHaveText('ИСПРАВЕН');
+    await expect(field(sata, 'Общее состояние')).toHaveText('Исправен');
     await expect(field(sata, 'Ёмкость')).toHaveText('3,64 ТБ');
     await expect(field(sata, 'Часы работы')).toHaveText('51775 (5 лет, 332 дня)');
     await expect(field(sata, 'Циклы включения')).toHaveText('120');
@@ -352,7 +386,7 @@ test.describe('Disk Health', () => {
 
     await disks.filter({ hasText: '/dev/e2e-sdb' }).getByRole('button', { name: 'Данные SMART диска /dev/e2e-sdb' }).click();
     const usb = page.getByRole('dialog', { name: 'E2E USB Disk (/dev/e2e-sdb)' });
-    await expect(field(usb, 'Общее состояние')).toHaveText('НЕИЗВЕСТНО');
+    await expect(field(usb, 'Общее состояние')).toHaveText('Неизвестно');
     await expect(field(usb, 'Температура')).toHaveText('Нет данных');
     await expect(field(usb, 'Серийный номер')).toHaveText('Неизвестно');
     await expect(field(usb, 'Последняя самопроверка')).toHaveText('Не проводилась');

@@ -24,16 +24,16 @@
 
   let { entries, loading, error, search, hasActiveFilters, autoRefresh, autoStopped }: Props = $props();
 
-  // An entry's level in the list.
+  // An entry's level in the list: the words of the level filter, in sentence case.
   const LEVELS: Record<LogPriority, string> = {
-    emerg: "logs.level.emerg",
-    alert: "logs.level.alert",
-    crit: "logs.level.crit",
-    err: "logs.level.err",
-    warning: "logs.level.warning",
-    notice: "logs.level.notice",
-    info: "logs.level.info",
-    debug: "logs.level.debug"
+    emerg: "logs.priority.emerg",
+    alert: "logs.priority.alert",
+    crit: "logs.priority.crit",
+    err: "logs.priority.err",
+    warning: "logs.priority.warning",
+    notice: "logs.priority.notice",
+    info: "logs.priority.info",
+    debug: "logs.priority.debug"
   };
 
   // The server gives UTC times with their offset; the browser shows them in its own time zone,
@@ -65,7 +65,7 @@
   <!-- Logs Display -->
   <Card>
     <div class="flex flex-wrap items-center justify-between gap-2 mb-3">
-      <span class="text-sm text-secondary">
+      <span class="text-sm text-content-secondary">
         {#if loading && entries.length === 0}
           <Skeleton class="w-24" />
         {:else}
@@ -73,8 +73,8 @@
         {/if}
       </span>
       {#if autoRefresh}
-        <span class="text-xs text-success flex items-center gap-1">
-          <span class="w-2 h-2 bg-success rounded-full animate-pulse"></span>
+        <span class="text-xs text-content-secondary flex items-center gap-1.5">
+          <span class="w-2 h-2 bg-status-success rounded-full animate-pulse" aria-hidden="true"></span>
           {$t("logs.following")}
         </span>
       {:else if autoStopped}
@@ -130,7 +130,7 @@
                     {/if}
                   </td>
                   <td class="px-3 py-2 text-content max-sm:w-full max-sm:p-0 max-sm:pt-1">
-                    <span class="break-all"
+                    <span class="break-words [overflow-wrap:anywhere]"
                       >{#each splitByMatch(entry.message ?? "", search) as part}{#if part.match}<mark
                             class="bg-status-warning/20 text-status-warning rounded-sm">{part.text}</mark
                           >{:else}{part.text}{/if}{/each}</span

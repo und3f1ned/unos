@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import { SvelteSet } from "svelte/reactivity";
   import { getTasks, deleteTask, runTaskNow, toggleTask, type ScheduledTask } from "$lib/api/scheduler";
   import { ApiError } from "$lib/api/client";
   import { getPools, getDisks, type Pool, type Disk } from "$lib/api/storage";
@@ -8,6 +9,7 @@
   import { messageOf } from "$lib/errors";
   import { t } from "$lib/i18n";
   import { nasTimeZone } from "$lib/stores/nasTime";
+  import { knownZone } from "$lib/time";
   import { Calendar, RefreshCw, Plus, History } from "lucide-svelte";
 
   // The tasks of the Scheduler, on the NAS's clock (ADR-0432): the tab names the zone once, and
@@ -17,11 +19,17 @@
   let pools = $state<Pool[]>([]);
   let disks = $state<Disk[]>([]);
   let disksLoaded = $state(false);
+  // The NAS's zone when this browser knows it: the next runs and the history are on its clock, and
+  // the tab names it; else the browser's clock, unnamed.
+  let zone = $derived(knownZone($nasTimeZone) ? $nasTimeZone : null);
   let loading = $state(true);
   // The first load has answered: a reload keeps the list (ADR-0430).
   let loaded = $state(false);
   let loadError = $state("");
   let runningTaskId = $state<string | null>(null);
+  // The tasks whose on/off the server has not answered yet: each shows its new state, and takes no
+  // second change until the answer.
+  const toggling = new SvelteSet<string>();
 
   // Modal state: the task dialog, with the task being edited (null for a new one), and the history.
   let showTaskModal = $state(false);
@@ -102,16 +110,23 @@
   }
 
   async function handleToggleTask(task: ScheduledTask) {
-    if (!task.id) return;
+    const id = task.id;
+    if (!id || toggling.has(id)) return;
 
+    // The new state at once; the stored one again if the server refuses it.
+    const was = task.enabled;
+    task.enabled = !was;
+    toggling.add(id);
     try {
-      const { enabled } = await toggleTask(task.id);
+      const { enabled } = await toggleTask(id);
+      task.enabled = enabled;
       toast.success($t(enabled ? "scheduler.task.enabledNow" : "scheduler.task.disabledNow", { name: task.name }));
       await loadTasks();
     } catch (e) {
+      task.enabled = was;
       failed("scheduler.task.toggleFailed", e);
-      // The switch shows the stored state again.
-      await loadTasks();
+    } finally {
+      toggling.delete(id);
     }
   }
 
@@ -133,25 +148,25 @@
 </script>
 
 <div class="space-y-4">
-  <!-- Header -->
+  <!-- The header; the zone of the tab's times is named once, under it. -->
   <div class="flex flex-wrap items-center justify-between gap-3">
     <h2 class="text-xl font-semibold">{$t("scheduler.title")}</h2>
     <div class="flex flex-wrap gap-2">
-      <Button variant="secondary" size="sm" icon={History} onclick={() => history.show()}>
+      <Button variant="ghost" size="icon" icon={RefreshCw} loading={loading} onclick={loadTasks} title={$t("common.refresh")}>
+        <span class="sr-only">{$t("common.refresh")}</span>
+      </Button>
+      <Button variant="secondary" icon={History} onclick={() => history.show()}>
         {$t("scheduler.history")}
       </Button>
-      <Button variant="secondary" size="icon" onclick={loadTasks} title={$t("common.refresh")} aria-label={$t("common.refresh")}>
-        <RefreshCw class="w-4 h-4 {loading && loaded ? 'animate-spin' : ''}" />
-      </Button>
-      <Button variant="primary" size="sm" icon={Plus} onclick={openCreateModal}>
+      <Button variant="primary" icon={Plus} onclick={openCreateModal}>
         {$t("scheduler.newTask")}
       </Button>
     </div>
   </div>
   <!-- The zone of every time of the tab, once; its line keeps its height until it is known. -->
   <div class="min-h-[18px]">
-    {#if $nasTimeZone}
-      <HelpText text={$t("scheduler.timeZone", { zone: $nasTimeZone })}>
+    {#if zone}
+      <HelpText text={$t("scheduler.timeZone", { zone })}>
         {#snippet more()}<p>{$t("scheduler.timeZoneMore")}</p>{/snippet}
       </HelpText>
     {/if}
@@ -172,12 +187,13 @@
       {#snippet emptyState()}
         <EmptyState icon={Calendar} compact title={$t("scheduler.empty")} description={$t("scheduler.emptyHint")} />
       {/snippet}
-      <div class="space-y-2">
+      <div class="divide-y divide-border -my-3">
         {#each tasks as task (task.id)}
           <TaskRow
             {task}
-            zone={$nasTimeZone}
+            {zone}
             running={runningTaskId === task.id}
+            toggling={toggling.has(task.id ?? "")}
             ontoggle={handleToggleTask}
             onrun={handleRunNow}
             onhistory={(task) => history.show(task.id, task.name)}
@@ -192,8 +208,8 @@
 
 <!-- Create/Edit Task Modal -->
 {#if showTaskModal}
-  <TaskFormDialog task={editingTask} {pools} {disks} {disksLoaded} timeZone={$nasTimeZone ?? ""} onclose={closeTaskModal} onsaved={taskSaved} />
+  <TaskFormDialog task={editingTask} {pools} {disks} {disksLoaded} timeZone={zone ?? ""} onclose={closeTaskModal} onsaved={taskSaved} />
 {/if}
 
 <!-- History of the runs -->
-<TaskHistoryDialog {history} zone={$nasTimeZone} />
+<TaskHistoryDialog {history} {zone} />

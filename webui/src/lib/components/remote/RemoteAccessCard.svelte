@@ -26,6 +26,8 @@
 	// QR code that the browser draws, and the page keeps it only until its dialog closes.
 
 	let status = $state<RemoteAccessStatus | null>(null);
+	// How far the NAS's clock is ahead of the browser's (getRemoteAccess): a peer's handshake ages on it.
+	let clockAhead = $state(0);
 	let loading = $state(false);
 	let loadError = $state('');
 	let busy = $state(false);
@@ -33,6 +35,8 @@
 	let success = $state('');
 
 	let settings = $state({ endpoint: '', port: '', network: '' });
+	// Turn on stays enabled and says, at the field, what it waits for.
+	let settingsError = $state('');
 	let showEnable = $state(false);
 	let showDisable = $state(false);
 	let showEndpoint = $state(false);
@@ -62,7 +66,9 @@
 	async function load() {
 		loading = true;
 		try {
-			status = await getRemoteAccess();
+			const answer = await getRemoteAccess();
+			status = answer.status;
+			clockAhead = answer.clockAhead;
 			loadError = '';
 			settings = {
 				endpoint: status.endpoint ?? settings.endpoint,
@@ -178,20 +184,28 @@
 	}
 </script>
 
+<!-- The header: the title with its state, and while the tunnel is on its two actions,
+     secondary; the colour of danger is Turn off's dialog's. The state comes first, the settings
+     under it, the peers last, each part once. -->
 <Card>
-	<div class="flex flex-wrap items-center justify-between gap-2 mb-4">
-		<h3 class="card-title min-w-0">
-			<Globe class="w-5 h-5 shrink-0" />
-			{$t('remote.title')}
-		</h3>
-		{#if status && !status.installed}
-			<Badge variant="neutral">{$t('remote.notInstalled')}</Badge>
-		{:else if status?.enabled && status.active}
-			<Badge variant="success">{$t('remote.on')}</Badge>
-		{:else if status?.enabled}
-			<Badge variant="error">{$t('remote.down')}</Badge>
-		{:else if status}
-			<Badge variant="neutral">{$t('remote.off')}</Badge>
+	<div class="card-header">
+		<div class="flex min-w-0 flex-wrap items-center gap-2">
+			<h3 class="card-title min-w-0">{$t('remote.title')}</h3>
+			{#if status && !status.installed}
+				<Badge variant="neutral">{$t('remote.notInstalled')}</Badge>
+			{:else if status?.enabled && status.active}
+				<Badge variant="success" dot>{$t('remote.on')}</Badge>
+			{:else if status?.enabled}
+				<Badge variant="error" dot>{$t('remote.down')}</Badge>
+			{:else if status}
+				<Badge variant="neutral">{$t('remote.off')}</Badge>
+			{/if}
+		</div>
+		{#if status?.installed && on}
+			<div class="flex flex-wrap gap-2">
+				<Button variant="secondary" size="sm" disabled={busy} onclick={openEndpoint}>{$t('remote.changeEndpoint')}</Button>
+				<Button variant="secondary" size="sm" disabled={busy} onclick={() => (showDisable = true)}>{$t('remote.turnOff')}</Button>
+			</div>
 		{/if}
 	</div>
 
@@ -208,7 +222,12 @@
 		</Alert>
 	{/if}
 
-	<p class="text-sm text-content-secondary">{$t('remote.description')}</p>
+	<p class="text-sm text-content-secondary">{$t('remote.summary')}</p>
+	<details class="mt-2 text-[13px] leading-[18px] text-content-secondary">
+		<summary class="link w-fit cursor-pointer">{$t('remote.more')}</summary>
+		<p class="mt-2">{$t('remote.description')}</p>
+		{#if status?.port}<p class="mt-2">{$t('remote.outside', { port: status.port })}</p>{/if}
+	</details>
 
 	{#if status && !status.installed}
 		<Alert variant="info" class="mt-4">{$t('remote.missing')}</Alert>
@@ -224,9 +243,11 @@
 			<form
 				id="remote-access-settings"
 				class="mt-4 space-y-4"
+				novalidate
 				onsubmit={(e) => {
 					e.preventDefault();
-					showEnable = true;
+					settingsError = settings.endpoint.trim() ? '' : $t('remote.endpointNeeded');
+					if (!settingsError) showEnable = true;
 				}}
 			>
 				<Input
@@ -234,16 +255,18 @@
 					hint={$t('remote.endpointHint')}
 					placeholder={$t('remote.endpointPlaceholder')}
 					bind:value={settings.endpoint}
+					error={settings.endpoint.trim() ? '' : settingsError}
 					required
 				/>
-				<div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+				<!-- The port is a short number: a compact field beside the network's. -->
+				<div class="grid grid-cols-1 gap-4 sm:grid-cols-[9rem_minmax(0,1fr)]">
 					<Input label={$t('remote.port')} hint={$t('remote.portHint')} bind:value={settings.port} required />
 					<Input label={$t('remote.network')} hint={$t('remote.networkHint')} bind:value={settings.network} required />
 				</div>
-				<Button variant="success" type="submit" disabled={busy || !settings.endpoint.trim()}>{$t('remote.turnOn')}</Button>
+				<Button variant="primary" type="submit" disabled={busy}>{$t('remote.turnOn')}</Button>
 			</form>
 		{:else}
-			<dl class="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
+			<dl class="mt-4 grid grid-cols-1 gap-x-6 gap-y-3 text-sm sm:grid-cols-2">
 				<div class="min-w-0">
 					<dt class="text-content-muted">{$t('remote.endpoint')}</dt>
 					<dd class="font-medium break-all">{status.endpoint}</dd>
@@ -265,15 +288,10 @@
 					<dd class="font-mono text-xs break-all">{status.public_key}</dd>
 				</div>
 			</dl>
-			<div class="mt-4 flex flex-wrap gap-2">
-				<Button variant="secondary" disabled={busy} onclick={openEndpoint}>{$t('remote.changeEndpoint')}</Button>
-				<Button variant="danger" disabled={busy} onclick={() => (showDisable = true)}>{$t('remote.turnOff')}</Button>
-			</div>
-			<p class="mt-4 text-sm text-content-secondary">{$t('remote.outside', { port: status.port ?? '' })}</p>
 		{/if}
 
 		{#if status.configured}
-			<PeerList peers={status.peers} {busy} {sizeUnits} onadd={openAdd} onrevoke={(peer) => (revoking = peer)} />
+			<PeerList peers={status.peers} {clockAhead} {busy} {sizeUnits} onadd={openAdd} onrevoke={(peer) => (revoking = peer)} />
 		{/if}
 	{/if}
 </Card>

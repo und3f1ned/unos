@@ -12,7 +12,7 @@ test.describe('Backup & Restore', () => {
   test('should have create backup button', async ({ authenticatedPage: page }) => {
     await page.goto('/system#backup');
     await page.waitForTimeout(1000);
-    await expect(page.locator('button:has-text("Create Backup")')).toBeVisible();
+    await expect(page.locator('button:has-text("Create backup")')).toBeVisible();
   });
 
   test('should show backup list or empty state', async ({ authenticatedPage: page }) => {
@@ -25,7 +25,7 @@ test.describe('Backup & Restore', () => {
   test('should have upload backup button', async ({ authenticatedPage: page }) => {
     await page.goto('/system#backup');
     await page.waitForTimeout(1000);
-    await expect(page.locator('button:has-text("Upload Backup")')).toBeVisible();
+    await expect(page.locator('button:has-text("Upload backup")')).toBeVisible();
   });
 
   test('should show backup section header', async ({ authenticatedPage: page }) => {
@@ -39,7 +39,7 @@ test.describe('Backup & Restore', () => {
     await page.goto('/system#backup');
     await page.waitForTimeout(2000);
     // Page should work - download buttons appear when backups exist
-    await expect(page.locator('button:has-text("Create Backup")')).toBeVisible();
+    await expect(page.locator('button:has-text("Create backup")')).toBeVisible();
   });
 
   test('should have restore functionality', async ({ authenticatedPage: page }) => {
@@ -80,7 +80,7 @@ async function failBackupApi(page: Page, method: string, path: string, detail: s
 
 async function openBackupTab(page: Page) {
   await page.goto('/system#backup');
-  await expect(page.getByRole('heading', { name: 'Backup and Restore' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Backup & Restore' })).toBeVisible();
 }
 
 /** The error alert shows `title` and the server's `detail` until it is dismissed. */
@@ -97,7 +97,7 @@ test.describe('Backup errors', () => {
     const detail = 'Failed to create backup: [Errno 28] No space left on device';
     await failBackupApi(page, 'POST', '/create', detail);
     await openBackupTab(page);
-    await page.getByRole('button', { name: 'Create Backup' }).click();
+    await page.getByRole('button', { name: 'Create backup' }).click();
     await expectErrorShown(page, 'Could not create a backup', detail);
   });
 
@@ -165,7 +165,7 @@ test.describe('Backup errors', () => {
     const dialog = page.getByRole('dialog', { name: 'Restore backup' });
     await dialog.getByLabel('Type the backup filename to confirm:').fill(FAKE_BACKUP.filename);
     await dialog.getByRole('button', { name: 'Restore', exact: true }).click();
-    await expect(dialog.getByText('Restore Failed')).toBeVisible();
+    await expect(dialog.getByText('Restore failed')).toBeVisible();
     await expect(dialog.getByText(detail, { exact: true })).toBeVisible();
   });
 });
@@ -205,13 +205,14 @@ test.describe('Backup & Restore in Russian', () => {
     await page.evaluate(() => localStorage.setItem('unos-locale', 'ru'));
     await page.reload();
     await expect(
-      page.getByRole('heading', { name: 'Резервное копирование и восстановление', exact: true }),
+      page.getByRole('heading', { name: 'Резервные копии', exact: true }),
     ).toBeVisible();
-    await expect(page.getByRole('heading', { name: 'Backup and Restore' })).toHaveCount(0);
-    // A backup's date (made at 03:04:05 UTC on 2 January, 08:49:05 in Kathmandu) in the Russian format, its size
+    await expect(page.getByRole('heading', { name: 'Backup & Restore' })).toHaveCount(0);
+    // A backup's date (made at 03:04:05 UTC on 2 January, 08:49:05 in Kathmandu) in the Russian format,
+    // without seconds, its size
     // in Russian units with the Russian decimal separator, and the version of its format; an
     // encrypted one is marked so.
-    await expect(row(page, FAKE_BACKUP.filename).getByText(/02\.01\.2026, 08:49:05/)).toBeVisible();
+    await expect(row(page, FAKE_BACKUP.filename).getByText(/2 янв\. 2026( г\.)?,? 08:49(?!:)/)).toBeVisible();
     await expect(row(page, FAKE_BACKUP.filename).getByText(/(^|\s)2 КБ(\s|$)/)).toBeVisible();
     await expect(row(page, encrypted.filename).getByText(/(^|\s)1,46 МБ(\s|$)/)).toBeVisible();
     await expect(row(page, FAKE_BACKUP.filename).getByText(/версия 1\.0/)).toBeVisible();
@@ -227,7 +228,13 @@ test.describe('Backup & Restore in Russian', () => {
 
     await chooseAction(page, encrypted.filename, 'Восстановить', true);
     const dialog = page.getByRole('dialog', { name: 'Восстановление из резервной копии' });
-    await expect(dialog.getByText('Внимание: текущие настройки будут перезаписаны, в том числе:')).toBeVisible();
+    await expect(dialog.getByText('Восстановление заменит то, что сейчас есть на этом NAS:')).toBeVisible();
+    // What the restore replaces is a warning, in the warning's colours.
+    await expect(dialog.locator('.alert-warning')).toContainText('Восстановление заменит то, что сейчас есть на этом NAS:');
+    // The name to type stands above an empty field, and is one to type: no click selects it all.
+    await expect(dialog.getByTestId('restore-expected')).toHaveText(encrypted.filename);
+    expect(await dialog.getByTestId('restore-expected').evaluate((name) => getComputedStyle(name).userSelect)).not.toBe('all');
+    await expect(dialog.getByLabel('Для подтверждения введите имя файла резервной копии:')).not.toHaveAttribute('placeholder');
     await expect(dialog.getByLabel('Парольная фраза зашифрованной резервной копии')).toBeVisible();
     await dialog.getByLabel('Для подтверждения введите имя файла резервной копии:').fill(encrypted.filename);
     await expect(dialog.getByRole('button', { name: 'Восстановить', exact: true })).toBeDisabled();
@@ -271,10 +278,10 @@ test.describe('Backup & Restore in Russian', () => {
     let dialog = page.getByRole('dialog', { name: 'Restore backup' });
     await dialog.getByLabel('Type the backup filename to confirm:').fill(FAKE_BACKUP.filename);
     await dialog.getByRole('button', { name: 'Restore', exact: true }).click();
-    await expect(dialog.getByText('Restore Complete', { exact: true })).toBeVisible();
+    await expect(dialog.getByText('Restore complete', { exact: true })).toBeVisible();
     await expect(dialog.getByText(message, { exact: true })).toBeVisible();
     await expect(dialog.getByText('Restored items:', { exact: true })).toBeVisible();
-    await expect(dialog.locator('li')).toHaveText(['- database', '- smb_config']);
+    await expect(dialog.locator('li')).toHaveText(['database', 'smb_config']);
     await dialog.getByRole('button', { name: 'Close', exact: true }).click();
     await expect(dialog).toHaveCount(0);
 
@@ -289,7 +296,7 @@ test.describe('Backup & Restore in Russian', () => {
     // The server's message stays as it comes.
     await expect(dialog.getByText(message, { exact: true })).toBeVisible();
     await expect(dialog.getByText('Восстановлено:', { exact: true })).toBeVisible();
-    await expect(dialog.locator('li')).toHaveText(['- база данных', '- настройки SMB']);
+    await expect(dialog.locator('li')).toHaveText(['база данных', 'настройки SMB']);
     await dialog.getByRole('button', { name: 'Закрыть', exact: true }).click();
     await expect(dialog).toHaveCount(0);
   });

@@ -17,7 +17,7 @@
     "src/lib/components/storage/BalanceDialog.svelte": 1,
     "src/lib/components/storage/CreatePoolDialog.svelte": 2,
     "src/lib/components/storage/RemoveDiskDialog.svelte": 1,
-    "src/lib/components/system/notifications/ChannelDialog.svelte": 4,
+    "src/lib/components/system/notifications/ChannelDialog.svelte": 3,
     "src/lib/components/system/power/PowerScheduleCard.svelte": 3,
     "src/lib/components/users/CreateUserDialog.svelte": 1,
     "src/lib/components/users/EditUserDialog.svelte": 3,
@@ -25,8 +25,5 @@
     "src/routes/system/tabs/UpdateTab.svelte": 1
   },
   "primary-in-card": {
-    "src/lib/components/remote/AppNamesCard.svelte": 1,
-    "src/lib/components/remote/PeerList.svelte": 1,
-    "src/lib/components/system/offsite/OffsiteState.svelte": 1
   }
 }

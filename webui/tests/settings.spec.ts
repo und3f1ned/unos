@@ -11,7 +11,7 @@ test.describe('Settings', () => {
   test('should display general settings', async ({ authenticatedPage: page }) => {
     await page.goto('/system');
     await page.waitForTimeout(2000);
-    await expect(page.locator('h2:has-text("General Settings")')).toBeVisible();
+    await expect(page.locator('h2:text-is("General")')).toBeVisible();
   });
 
   test('should have system info section', async ({ authenticatedPage: page }) => {

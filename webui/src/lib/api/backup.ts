@@ -83,7 +83,8 @@ export async function deleteBackup(filename: string): Promise<{ status: string }
 export function formatBytes(bytes: number, locale: string, units: readonly string[]): string {
   if (bytes === 0) return `0 ${units[0]}`;
   const k = 1024;
-  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  // The largest unit there is, also for sizes beyond it.
+  const i = Math.min(Math.floor(Math.log(bytes) / Math.log(k)), units.length - 1);
   const size = (bytes / Math.pow(k, i)).toLocaleString(locale, { maximumFractionDigits: 2, useGrouping: false });
   return `${size} ${units[i]}`;
 }

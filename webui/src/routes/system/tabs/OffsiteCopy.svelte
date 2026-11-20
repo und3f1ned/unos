@@ -29,7 +29,6 @@
   import OffsiteSnapshots from "$lib/components/system/offsite/OffsiteSnapshots.svelte";
   import OffsiteState from "$lib/components/system/offsite/OffsiteState.svelte";
   import { t } from "$lib/i18n";
-  import { UploadCloud } from "lucide-svelte";
 
   type Props = {
     // The units of sizes in the language of the page (formatBytes).
@@ -234,13 +233,16 @@
   }
 </script>
 
-<section aria-labelledby="offsite-title">
+<!-- Status first, settings apart: the state and the snapshots in one card, the target
+     and what is copied in a second one under it. -->
+<section aria-labelledby="offsite-title" class="space-y-4">
   <Card>
-    <h3 id="offsite-title" class="section-title mb-2">
-      <UploadCloud class="w-5 h-5" />
-      {$t("offsite.title")}
-    </h3>
-    <p class="text-sm text-content-secondary mb-4">{$t("offsite.intro")}</p>
+    <div class="card-header">
+      <div class="min-w-0">
+        <h3 id="offsite-title" class="card-title">{$t("offsite.title")}</h3>
+        <p class="card-description">{$t("offsite.intro")}</p>
+      </div>
+    </div>
 
     {#if error}
       <!-- role="alert": screen readers announce the message when it appears. -->
@@ -294,8 +296,12 @@
           oncancelfiles={() => (filesOf = null)}
         />
       {/if}
+    {/if}
+  </Card>
 
-      <!-- The target and what is copied: saving tests the target. -->
+  {#if answer}
+    <!-- The target and what is copied: saving tests the target. -->
+    <Card title={$t("offsite.settings.title")}>
       <OffsiteSettingsForm
         {form}
         {answer}
@@ -307,6 +313,9 @@
         onmakekey={makeKeyPair}
         onforget={forget}
       />
-    {/if}
-  </Card>
+    </Card>
+  {:else if loading}
+    <!-- The settings' card while the first load runs (ADR-0430), where it will be. -->
+    <div aria-busy="true"><Skeleton shape="card" count={4} /></div>
+  {/if}
 </section>

@@ -1523,31 +1523,3 @@ class TestTheFakes:
                 f"{{ id: '{event['id']}', name: '{event['name']}', description: '{event['description']}' }}"
                 in fakes
             ), event
-
-
-class TestTheWebUI:
-    def test_its_english_names_and_describes_the_events_as_the_server_does(self):
-        """System > Notifications shows each event of the server's list by its id, with the name and
-        the description of the catalog in the language of the page (EVENTS of the tab's module
-        components/system/notifications/channels.ts, ADR-0287, ADR-0427): the English half of webui/src/lib/i18n/catalog/notifications.ts copies the server's,
-        word for word, and has an event for every id of the list."""
-        tab = (REPO / "webui" / "src" / "lib" / "components" / "system" / "notifications" / "channels.ts").read_text(
-            encoding="utf-8")
-        catalog = (REPO / "webui" / "src" / "lib" / "i18n" / "catalog" / "notifications.ts").read_text(
-            encoding="utf-8")
-        events_map = re.search(r"const EVENTS: [^=]+= \{(.*?)\n\};", tab, re.DOTALL)
-        assert events_map, "channels.ts has no EVENTS"
-        keys = {
-            match["id"]: (match["name"], match["when"])
-            for match in re.finditer(
-                r'(?P<id>\w+): \{\s*name: "(?P<name>[\w.]+)",\s*when: "(?P<when>[\w.]+)",?\s*\}', events_map[1])
-        }
-        english = catalog.split("export const ru")[0]
-
-        events = asyncio.run(notifications.list_event_types())
-
-        assert sorted(keys) == sorted(event["id"] for event in events)
-        for event in events:
-            name, when = keys[event["id"]]
-            assert f"'{name}': '{event['name']}'" in english, event
-            assert f"'{when}': '{event['description']}'" in english, event

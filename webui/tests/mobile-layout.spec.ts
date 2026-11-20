@@ -1650,7 +1650,7 @@ const VIEWS: View[] = [
     path: '/system#network',
     fake: (page) => fakeNetworkApi(page),
     open: async (page) => {
-      await page.getByRole('button', { name: /^(Create bond|Создать агрегат)$/ }).click();
+      await page.getByRole('button', { name: /^(Create…|Создать…)$/ }).click();
       await page.getByRole('dialog').getByRole('checkbox', { name: 'eth0' }).check();
       // Checking the box scrolled the dialog to it: back to its title, as it opens.
       await dialogTitle(page).scrollIntoViewIfNeeded();
@@ -1663,7 +1663,11 @@ const VIEWS: View[] = [
     name: 'Dialog: create a VLAN',
     path: '/system#network',
     fake: (page) => fakeNetworkApi(page),
-    open: (page) => page.getByRole('button', { name: /^(Create VLAN|Создать VLAN)$/ }).click(),
+    open: async (page) => {
+      await page.getByRole('button', { name: /^(Create…|Создать…)$/ }).click();
+      await page.getByRole('dialog').getByRole('combobox', { name: /^(Kind|Вид)$/ }).click();
+      await page.getByRole('option', { name: 'VLAN', exact: true }).click();
+    },
     shows: (page) => page.getByRole('dialog'),
     start: dialogTitle,
     end: dialogEnd,
@@ -1869,16 +1873,16 @@ const VIEWS: View[] = [
       await fakeStorageApi(page);
       await serve(page, SCHEDULER);
     },
-    open: (page) => page.getByRole('button', { name: /^(New Task|Новая задача)$/ }).click(),
+    open: (page) => page.getByRole('button', { name: /^(New task|Новая задача)$/ }).click(),
     shows: (page) => page.locator('#task-name'),
-    start: (page) => page.getByRole('heading', { name: /^(Create Task|Новая задача)$/ }),
-    end: (page) => page.getByRole('button', { name: /^(Create Task|Создать задачу)$/ }),
+    start: (page) => page.getByRole('heading', { name: /^(Create task|Новая задача)$/ }),
+    end: (page) => page.getByRole('button', { name: /^(Create task|Создать задачу)$/ }),
   },
   {
     name: 'Dialog: a mail channel',
     path: '/system#notifications',
     fake: (page) => fakeNotificationsApi(page, CHANNELS),
-    open: (page) => page.getByRole('button', { name: /^(Add Email|Добавить эл\. почту)$/ }).click(),
+    open: (page) => page.locator('main').getByRole('button', { name: /^(Add channel|Добавить канал)$/ }).click(),
     shows: (page) => page.getByRole('dialog'),
     start: dialogTitle,
     end: dialogEnd,
@@ -2222,7 +2226,7 @@ test.describe('The menu on a phone', () => {
     // device copy's link to the Scheduler is such a link (General's Check for Updates is gone,
     // ADR-0431).
     await page.goto('/system#backup');
-    const toScheduler = page.locator('main').getByRole('link', { name: 'Add a task of the type Off-device Copy in the Scheduler.' });
+    const toScheduler = page.locator('main').getByRole('link', { name: 'Add a task of the type Off-device copy in the Scheduler.' });
     await toScheduler.click();
     await expect(page).toHaveURL('/system#scheduler');
     await expect(toScheduler).toBeHidden();

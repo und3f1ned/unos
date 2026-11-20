@@ -132,7 +132,7 @@ test.describe('Off-device copy', () => {
       const section = await openSection(page);
       await expect(section.getByText('No off-device copy is set up')).toBeVisible();
 
-      await section.getByLabel('A disk').check();
+      await section.getByLabel('Disk', { exact: true }).check();
       await section.getByLabel('Folder of the copy').fill(target);
       await section.getByLabel('Another folder to copy').fill(source);
       await section.getByRole('button', { name: 'Add folder' }).click();
@@ -150,13 +150,13 @@ test.describe('Off-device copy', () => {
       // No task runs the copy yet: one is made in the Scheduler, the one place of tasks (ADR-0431),
       // which the card links to.
       await expect(section.getByText('No scheduled task: copies run only on Run now')).toBeVisible();
-      await section.getByRole('link', { name: 'Add a task of the type Off-device Copy in the Scheduler.' }).click();
+      await section.getByRole('link', { name: 'Add a task of the type Off-device copy in the Scheduler.' }).click();
       await expect(page).toHaveURL(/\/system#scheduler$/);
-      await page.getByRole('button', { name: 'New Task', exact: true }).click();
-      await page.getByLabel('Task Name', { exact: true }).fill('Off-device copy');
-      await page.getByLabel('Task Type', { exact: true }).selectOption('offsite_copy');
-      await page.getByRole('button', { name: 'Create Task' }).click();
-      await expect(page.getByRole('heading', { name: 'Create Task' })).toHaveCount(0);
+      await page.getByRole('button', { name: 'New task', exact: true }).click();
+      await page.getByLabel('Task name', { exact: true }).fill('Off-device copy');
+      await page.getByLabel('Task type', { exact: true }).selectOption('offsite_copy');
+      await page.getByRole('button', { name: 'Create task' }).click();
+      await expect(page.getByRole('heading', { name: 'Create task' })).toHaveCount(0);
       await page.locator('main nav').getByRole('button', { name: 'Backup & Restore' }).click();
       await expect(section.getByText(/A scheduled task copies: Off-device copy/)).toBeVisible();
 
@@ -253,7 +253,7 @@ test.describe('Off-device copy', () => {
     const source = await makeSource(request, headers, `e2e-offsite-${run}`);
     try {
       const section = await openSection(page);
-      await section.getByLabel('A restic REST server').check();
+      await section.getByLabel('restic REST server', { exact: true }).check();
       await section.getByLabel('Address of the REST server').fill(`https://rest-${run}.example.com:8000`);
       await section.getByLabel('Folders on the server').fill('unos');
       await section.getByLabel('User of the REST server').fill('family');
@@ -306,7 +306,7 @@ test.describe('Off-device copy', () => {
     const source = await makeSource(request, headers, `e2e-offsite-${run}`);
     try {
       const section = await openSection(page);
-      await section.getByLabel('An SFTP server').check();
+      await section.getByLabel('SFTP server', { exact: true }).check();
       await expect(section.getByText('No key pair is made yet.')).toBeVisible();
       await section.getByLabel('Host of the SFTP server').fill(host);
       await section.getByLabel('SSH port').fill('2222');
@@ -342,7 +342,10 @@ test.describe('Off-device copy', () => {
       writeFileSync(join(server, 'host_key'), `${second}\n`);
       await section.getByRole('button', { name: 'Run now' }).click();
       await refreshUntil(section, 'Last copy: failed');
-      await expect(section.getByText(/^Failed at removing stale locks: .*Host key verification failed/)).toBeVisible();
+      const failure = section.getByTestId('copy-error');
+      await expect(failure.getByText('The copy failed at removing stale locks.')).toBeVisible();
+      await failure.getByText('Details', { exact: true }).click();
+      await expect(failure.getByText(/Host key verification failed/)).toBeVisible();
       // The listing of the snapshots meets the same refusal.
       await expect(section.getByText(/^The snapshots could not be read: .*Host key verification failed/)).toBeVisible();
       await save.click();
@@ -363,6 +366,78 @@ test.describe('Off-device copy', () => {
     }
   });
 
+  test('the state and the settings are two cards; the counts to keep, the check and the reason of a disabled Save stand in line at 1440 and 375 px', async ({
+    authenticatedPage: page,
+    request,
+  }) => {
+    const token = await loginToken(request);
+    await cleanUp(request, token, []);
+    // The settings are read only once released: meanwhile each card shows its skeleton.
+    let release = () => {};
+    const held = new Promise<void>((resolve) => (release = resolve));
+    await page.route('**/api/v1/offsite/settings', async (route) => {
+      if (route.request().method() === 'GET') await held;
+      await route.fallback();
+    });
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto('/system#backup');
+    const section = page.getByRole('region', { name: 'Off-device copy' });
+    await expect(section.locator('[aria-busy="true"]')).toHaveCount(2);
+    await expect(section.locator('.card[data-skeleton]')).toHaveCount(1);
+    release();
+
+    const state = section.locator('.card', { has: page.getByRole('heading', { name: 'Off-device copy' }) });
+    const settings = section.locator('.card', { has: page.getByRole('heading', { name: 'Settings of the copy' }) });
+    await expect(state).toContainText('No off-device copy is set up');
+    await expect(section.locator('[aria-busy="true"]')).toHaveCount(0);
+    const box = async (locator: Locator) => (await locator.boundingBox())!;
+    const counts = ['#offsite-keep-daily', '#offsite-keep-weekly', '#offsite-keep-monthly'].map((id) => settings.locator(id));
+    const percent = settings.locator('#offsite-check-percent');
+    const save = settings.getByRole('button', { name: 'Save and test' });
+    const why = settings.locator('#offsite-save-why');
+
+    for (const width of [1440, 375]) {
+      await page.setViewportSize({ width, height: 900 });
+      // Two cards, the state's above; the fields are all the settings'.
+      const [stateBox, card] = [await box(state), await box(settings)];
+      expect(card.y).toBeGreaterThanOrEqual(stateBox.y + stateBox.height);
+      await expect(state.locator('input')).toHaveCount(0);
+      expect(card.x + card.width).toBeLessThanOrEqual(width);
+
+      // Daily, Weekly and Monthly on one line, left to right, of one width, inside the card.
+      const [daily, weekly, monthly] = await Promise.all(counts.map(box));
+      expect([weekly.y, monthly.y].map(Math.round), `${width} px`).toEqual([Math.round(daily.y), Math.round(daily.y)]);
+      expect(daily.x + daily.width).toBeLessThan(weekly.x);
+      expect(weekly.x + weekly.width).toBeLessThan(monthly.x);
+      expect(new Set([daily.width, weekly.width, monthly.width].map(Math.round)).size).toBe(1);
+      expect(monthly.x + monthly.width).toBeLessThanOrEqual(card.x + card.width);
+      const check = await box(percent);
+      const keepLegend = await box(settings.getByText('Snapshots to keep', { exact: true }));
+      const checkLegend = await box(settings.getByText('Integrity check', { exact: true }));
+      if (width === 1440) {
+        // Snapshots to keep and Integrity check side by side: legends and fields on one line.
+        expect(Math.round(checkLegend.y)).toBe(Math.round(keepLegend.y));
+        expect(Math.round(check.y)).toBe(Math.round(daily.y));
+        expect(check.x).toBeGreaterThan(monthly.x + monthly.width);
+      } else {
+        // On a phone, Integrity check below the counts, its field under Daily.
+        expect(checkLegend.y).toBeGreaterThan(daily.y + daily.height);
+        expect(Math.round(check.x)).toBe(Math.round(daily.x));
+      }
+      expect(check.x + check.width).toBeLessThanOrEqual(card.x + card.width);
+
+      // The disabled Save says beside it, inside the card, what it waits for.
+      await expect(save).toBeDisabled();
+      await expect(why).toHaveText(/^Still needed: .*the password, typed twice\.$/);
+      await expect(save).toHaveAccessibleDescription(/^Still needed: /);
+      const [button, reason] = [await box(save), await box(why)];
+      expect(reason.x, `${width} px`).toBeGreaterThan(button.x + button.width);
+      expect(reason.y).toBeLessThan(button.y + button.height);
+      expect(reason.y + reason.height).toBeGreaterThan(button.y);
+      expect(reason.x + reason.width).toBeLessThanOrEqual(card.x + card.width);
+    }
+  });
+
   test('the form refuses a short password, passwords that differ and a folder outside /mnt', async ({
     authenticatedPage: page,
     request,
@@ -370,7 +445,7 @@ test.describe('Off-device copy', () => {
     const token = await loginToken(request);
     try {
       const section = await openSection(page);
-      await section.getByLabel('A disk').check();
+      await section.getByLabel('Disk', { exact: true }).check();
       await section.getByLabel('Folder of the copy').fill('/etc/unos-copy');
       await section.getByLabel('Another folder to copy').fill(`${POOLS}/testpool`);
       await section.getByRole('button', { name: 'Add folder' }).click();

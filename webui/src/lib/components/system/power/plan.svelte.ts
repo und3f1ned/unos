@@ -5,6 +5,18 @@ function clockTime(hour: number, minute: number): string {
   return `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
 }
 
+/** The form of the stored settings. */
+function formOf(settings: PowerConfig) {
+  return {
+    autoShutdown: settings.auto_shutdown,
+    shutdownTime: clockTime(settings.shutdown_hour, settings.shutdown_minute),
+    autoWakeup: settings.auto_wakeup,
+    wakeTime: clockTime(settings.wakeup_hour, settings.wakeup_minute),
+    idleShutdown: settings.idle_shutdown,
+    idleMinutes: settings.idle_timeout_minutes,
+  };
+}
+
 /**
  * The scheduled shutdown, the wake by the RTC and the idle shutdown of the power settings
  * (ADR-0407): their times are on the host's clock, and the server acts on them. The settings, their
@@ -19,15 +31,30 @@ export class PowerPlan {
   saving = $state(false);
   saveError = $state("");
 
+  // The form differs from the stored settings: only then is there something to save. A field
+  // emptied or typed back to its value counts as what it reads.
+  changed = $derived.by(() => {
+    if (!this.config) return false;
+    const stored = formOf(this.config);
+    const form = this.form;
+    return (
+      form.autoShutdown !== stored.autoShutdown ||
+      form.shutdownTime !== stored.shutdownTime ||
+      form.autoWakeup !== stored.autoWakeup ||
+      form.wakeTime !== stored.wakeTime ||
+      form.idleShutdown !== stored.idleShutdown ||
+      Number(form.idleMinutes) !== stored.idleMinutes ||
+      String(form.idleMinutes ?? "") === ""
+    );
+  });
+
   fillForm(settings: PowerConfig) {
-    this.form = {
-      autoShutdown: settings.auto_shutdown,
-      shutdownTime: clockTime(settings.shutdown_hour, settings.shutdown_minute),
-      autoWakeup: settings.auto_wakeup,
-      wakeTime: clockTime(settings.wakeup_hour, settings.wakeup_minute),
-      idleShutdown: settings.idle_shutdown,
-      idleMinutes: settings.idle_timeout_minutes,
-    };
+    this.form = formOf(settings);
+  }
+
+  /** The settings and the plan, again after a read failed. */
+  async reload() {
+    await Promise.all([this.loadConfig(), this.loadSchedule()]);
   }
 
   async loadConfig() {

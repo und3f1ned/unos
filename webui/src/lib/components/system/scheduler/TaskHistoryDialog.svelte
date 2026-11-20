@@ -78,7 +78,7 @@
             <span class="text-xs text-content-muted tabular">{formatDuration(run.started_at, run.finished_at)}</span>
           </div>
           <div class="flex flex-wrap gap-x-3 text-xs text-content-secondary">
-            <span class="tabular">{formatDateTime(run.started_at, $intlLocale, { zone })}</span>
+            <span class="tabular">{formatDateTime(run.started_at, $intlLocale, { dateStyle: "medium", timeStyle: "short", zone })}</span>
             {#if typeof run.exit_code === "number"}
               <span>{$t("scheduler.runs.exitStatus", { code: run.exit_code })}</span>
             {/if}

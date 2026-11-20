@@ -1,7 +1,7 @@
 <script lang="ts">
   import { messageOf } from "$lib/errors";
   import { onMount } from "svelte";
-  import { ArrowUpCircle, ExternalLink, Package, RefreshCw, Terminal } from "lucide-svelte";
+  import { ArrowRight, ExternalLink, RefreshCw } from "lucide-svelte";
   import { checkForUpdates, getCurrentVersion, type CurrentVersion, type UpdateCheck } from "$lib/api/updates";
   import { Alert, Badge, Button, Card, Skeleton } from "$lib/components/ui";
   import { intlLocale, t } from "$lib/i18n";
@@ -59,55 +59,53 @@
   let versionLabel = $derived((version: string): string => (version === "unknown" ? $t("updates.current.unknown") : version));
 </script>
 
+<!-- One card: the version that runs, the newest release and how to update to it, in
+     place of a card for the current version alone, one for the release and one of instructions. -->
 <div class="space-y-6">
   <h2 class="text-xl font-semibold">{$t("updates.title")}</h2>
 
-  <Card>
-    <h3 class="card-title mb-4">
-      <Package class="w-5 h-5 text-content-secondary" />
-      {$t("updates.current.title")}
-    </h3>
-    {#if currentError}
-      <Alert variant="error" title={$t("updates.current.error")}>{currentError}</Alert>
-    {:else if current}
-      <p class="text-sm flex flex-wrap items-center gap-2">
-        <span class="text-secondary">{$t("updates.current.version")}</span>
-        <span class="mono">{versionLabel(current.version)}</span>
-        {#if current.is_development}
-          <Badge variant="warning">{$t("updates.current.dev")}</Badge>
+  <Card title={$t("updates.card.title")}>
+    <div class="space-y-5">
+      <div class="flex flex-wrap items-center gap-x-3 gap-y-2 text-sm">
+        <span class="text-content-secondary">{$t("updates.current.version")}</span>
+        {#if currentError}
+          <div role="alert" class="basis-full">
+            <Alert variant="error" size="sm" title={$t("updates.current.error")}>{currentError}</Alert>
+          </div>
+        {:else if current}
+          <span class="mono text-content">{versionLabel(current.version)}</span>
+          {#if current.is_development}
+            <Badge variant="neutral">{$t("updates.current.dev")}</Badge>
+          {/if}
+          {#if check?.update_available && release}
+            <ArrowRight class="h-4 w-4 text-content-muted" aria-hidden="true" />
+            <span class="mono text-content">{release.tag_name}</span>
+          {/if}
+        {:else}
+          <span aria-busy="true"><Skeleton class="w-40" /></span>
         {/if}
-      </p>
-    {:else}
-      <div aria-busy="true"><Skeleton class="w-48" /></div>
-    {/if}
-  </Card>
+      </div>
 
-  <Card>
-    <h3 class="card-title mb-4">
-      <ArrowUpCircle class="w-5 h-5 text-content-secondary" />
-      {$t("updates.latest.title")}
-    </h3>
-    <div class="space-y-4">
       {#if checking && !check && !checkError}
-        <p class="text-sm text-muted">{$t("updates.latest.checking")}</p>
+        <div aria-busy="true" class="space-y-2"><Skeleton count={3} /></div>
       {:else if checkError}
         <div role="alert">
-          <Alert variant="error" title={$t("updates.latest.checkFailed")}>{checkError}</Alert>
+          <Alert variant="error" size="sm" title={$t("updates.latest.checkFailed")}>{checkError}</Alert>
         </div>
       {:else if check && !release}
         <p class="text-sm">{$t("updates.latest.none")}</p>
       {:else if check && release}
         {#if check.update_available}
-          <!-- The version that runs is the card above's (ADR-0431). -->
-          <Alert variant="info" title={$t("updates.latest.available", { tag: release.tag_name })}>
-            <p>{$t("updates.latest.howTo")}</p>
-          </Alert>
+          <div>
+            <p class="text-sm font-medium text-content">{$t("updates.latest.available", { tag: release.tag_name })}</p>
+            <p class="text-sm text-content-secondary">{$t("updates.latest.howTo")}</p>
+          </div>
         {:else}
           <p class="text-sm">{$t("updates.latest.upToDate", { tag: release.tag_name })}</p>
         {/if}
-        <div class="card-nested p-4 space-y-2">
+        <div class="card-nested space-y-2">
           <div class="flex flex-wrap items-center justify-between gap-2">
-            <h4 class="card-title">{release.name || release.tag_name}</h4>
+            <h4 class="text-sm font-semibold text-content">{release.name || release.tag_name}</h4>
             <a
               href={release.html_url}
               target="_blank"
@@ -117,17 +115,18 @@
               {$t("updates.latest.github")} <ExternalLink class="w-3 h-3" />
             </a>
           </div>
-          <p class="text-xs text-muted flex flex-wrap items-center gap-2">
+          <p class="text-xs text-content-muted flex flex-wrap items-center gap-2">
             {$t("updates.latest.published", { date: formatShownDate(release.published_at) })}
             {#if release.prerelease}
               <Badge variant="warning">{$t("updates.latest.prerelease")}</Badge>
             {/if}
           </p>
           {#if release.body}
-            <p class="text-sm text-secondary whitespace-pre-wrap max-h-48 overflow-y-auto scrollbar-thin">{release.body}</p>
+            <p class="text-sm text-content-secondary whitespace-pre-wrap max-h-48 overflow-y-auto scrollbar-thin">{release.body}</p>
           {/if}
         </div>
       {/if}
+
       <div class="flex flex-wrap items-center gap-4">
         <Button variant="secondary" size="sm" icon={RefreshCw} loading={checking} onclick={runCheck}>
           {$t("updates.latest.checkAgain")}
@@ -138,23 +137,21 @@
             bind:checked={includePrereleases}
             onchange={runCheck}
             disabled={checking}
-            class="w-4 h-4 rounded"
+            class="form-checkbox h-4 w-4"
           />
           {$t("updates.latest.includePrereleases")}
         </label>
       </div>
-    </div>
-  </Card>
 
-  <Card>
-    <h3 class="card-title mb-4">
-      <Terminal class="w-5 h-5 text-content-secondary" />
-      {$t("updates.how.title")}
-    </h3>
-    <div class="space-y-3 text-sm">
-      <p>{$t("updates.how.run")}</p>
-      <p class="card-nested p-3"><code class="mono">{UPDATE_COMMAND}</code></p>
-      <p class="text-secondary">{$t("updates.how.details")}</p>
+      <section class="border-t border-border pt-4 space-y-2 text-sm" aria-labelledby="updates-how-title">
+        <h4 id="updates-how-title" class="font-semibold text-content">{$t("updates.how.title")}</h4>
+        <p class="text-content-secondary">{$t("updates.how.run")}</p>
+        <p class="card-nested py-2"><code class="mono select-all break-all">{UPDATE_COMMAND}</code></p>
+        <details class="text-[13px] leading-[18px] text-content-secondary">
+          <summary class="link w-fit cursor-pointer">{$t("updates.how.more")}</summary>
+          <p class="mt-2">{$t("updates.how.details")}</p>
+        </details>
+      </section>
     </div>
   </Card>
 </div>

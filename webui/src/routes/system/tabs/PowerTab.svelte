@@ -2,14 +2,16 @@
   import { messageOf } from "$lib/errors";
   import { onMount, untrack } from "svelte";
   import { cancelShutdown, getPendingAction, type PendingAction } from "$lib/api/power";
-  import { Alert } from "$lib/components/ui";
+  import { Alert, Button } from "$lib/components/ui";
   import {
     ACTIONS,
     PowerActionsCard,
     PowerConfirmDialog,
     PowerPlan,
     PowerScheduleCard,
+    PowerStatusCard,
     REQUESTED,
+    knownZone,
     WakeOnLan,
     WakeOnLanCard,
     type Action
@@ -22,6 +24,7 @@
   // still be cancelled here; suspend at once.
 
   let pending = $state<PendingAction | null>(null);
+  let pendingKnown = $state(false);
   let pendingError = $state("");
   const wol = new WakeOnLan();
 
@@ -61,7 +64,14 @@
       pendingError = "";
     } catch (e) {
       pendingError = messageOf(e);
+    } finally {
+      pendingKnown = true;
     }
+  }
+
+  /** Every read again, after the host's power state could not be read. */
+  async function retry() {
+    await Promise.all([loadPending(), wol.load(), plan.reload()]);
   }
 
   function ask(action: Action) {
@@ -128,11 +138,35 @@
   }
 
   let confirmation = $derived(asking ? ACTIONS[asking] : null);
+
+  // One reason for every card: when the host's power state cannot be read (no host commands, a
+  // host that does not answer), the pending action, the plan, the settings and the interfaces fail
+  // alike. The
+  // page says it once, with Retry, and the cards only that they wait.
+  let hostError = $derived.by(() => {
+    const failed = [pendingError, plan.scheduleError, plan.configError, wol.error].filter(Boolean);
+    return failed.length >= 2 && failed.every((message) => message === failed[0]) ? failed[0] : "";
+  });
+  // The times of the tab are on the NAS's clock, the one its settings are on; named once.
+  let zone = $derived(knownZone(plan.schedule?.timezone));
 </script>
 
 <div class="space-y-6">
-  <h2 class="text-xl font-semibold">{$t("power.title")}</h2>
+  <div>
+    <h2 class="text-xl font-semibold">{$t("power.title")}</h2>
+    {#if zone}
+      <p class="page-subtitle" data-testid="power-zone">{$t("power.zone", { zone })}</p>
+    {/if}
+  </div>
 
+  {#if hostError}
+    <div role="alert">
+      <Alert variant="error" title={$t("power.hostError")}>
+        <p class="break-words">{hostError}</p>
+        <Button variant="secondary" size="sm" class="mt-2" onclick={retry}>{$t("common.retry")}</Button>
+      </Alert>
+    </div>
+  {/if}
   {#if notice}
     <div role="status">
       <Alert variant="success" dismissible ondismiss={() => (notice = "")}>{notice}</Alert>
@@ -144,11 +178,26 @@
     </div>
   {/if}
 
-  <PowerActionsCard {pending} {pendingError} {cancelling} oncancel={cancelPending} onask={ask} />
+  <PowerStatusCard
+    {pending}
+    {pendingKnown}
+    pendingError={hostError ? "" : pendingError}
+    schedule={plan.schedule}
+    scheduleError={hostError ? "" : plan.scheduleError}
+    {zone}
+    unavailable={hostError !== "" && plan.scheduleError === hostError}
+    {cancelling}
+    oncancel={cancelPending}
+    onretry={loadPending}
+  />
 
-  <PowerScheduleCard {plan} onnotice={showNotice} />
+  <!-- The actions wait only for the reason that the page says once, with Retry: a pending action
+       that alone could not be read is the Status card's, with its own Retry. -->
+  <PowerActionsCard unavailable={hostError !== "" && pendingError === hostError} onask={ask} />
 
-  <WakeOnLanCard {wol} onnotice={showNotice} onfailure={showFailure} />
+  <PowerScheduleCard {plan} unavailable={hostError !== "" && plan.configError === hostError} onnotice={showNotice} />
+
+  <WakeOnLanCard {wol} unavailable={hostError !== "" && wol.error === hostError} onnotice={showNotice} onfailure={showFailure} />
 </div>
 
 <PowerConfirmDialog {confirmation} {busy} error={confirmError} onclose={closeConfirm} onconfirm={confirmAction} />

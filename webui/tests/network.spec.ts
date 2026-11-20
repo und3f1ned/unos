@@ -498,7 +498,7 @@ test.describe('System > Network', () => {
     await expect(eth1).toContainText('IP-адреса');
 
     // Disable asks first, counts down and offers to keep the change.
-    await eth1.getByRole('button', { name: 'Выключить', exact: true }).click();
+    await eth1.getByRole('button', { name: 'Выключить…', exact: true }).click();
     const dialog = page.getByRole('dialog', { name: 'Выключение eth1' });
     await expect(dialog).toContainText('Выключение eth1 может прервать ваше подключение к UNOS');
     await expect(dialog).toContainText('Если вы не сохраните изменение в течение 60 секунд, eth1 сам включится снова');

@@ -1,32 +1,36 @@
 <script lang="ts">
   import { messageOf } from "$lib/errors";
   import { onMount } from "svelte";
-  import { Clock, RefreshCw, Settings } from "lucide-svelte";
-  import { Alert, Button, type IconComponent } from "$lib/components/ui";
+  import { SvelteSet } from "svelte/reactivity";
+  import { Plus, RefreshCw } from "lucide-svelte";
+  import { Alert, Button } from "$lib/components/ui";
   import {
     ChannelDialog,
     ChannelForm,
     ChannelsView,
     DeleteChannelDialog,
     HistoryFilter,
-    HistoryView,
-    NotificationStats
+    HistoryView
   } from "$lib/components/system/notifications";
   import { kindName } from "$lib/components/system/notifications/channels";
   import { t } from "$lib/i18n";
   import {
-    createConfig, getConfigs, getEventTypes, getLogs, testNotification, updateConfig,
-    type ChannelKind, type EventType, type NotificationConfig, type NotificationLog
+    createConfig, getConfigs, getLogs, testNotification, updateConfig,
+    type ChannelKind, type NotificationConfig, type NotificationLog
   } from "$lib/api/notifications";
 
-  // Channels of five kinds (ADR-0326). A test reports next to its channel whether the server
-  // delivered it, or why not, and the history lists every notification sent, newest first.
+  // Channels of five kinds (ADR-0326), each of which receives every alert. A test reports next to
+  // its channel whether the server delivered it, or why not, and the history lists every
+  // notification sent, newest first. A channel's events are not offered: the server sends every
+  // alert to every enabled channel whatever they name.
 
   type View = "channels" | "history";
 
   let logs = $state<NotificationLog[]>([]);
   let configs = $state<NotificationConfig[]>([]);
-  let eventTypes = $state<EventType[]>([]);
+  // The channels whose on/off the server has not answered yet: each shows its new state, and takes
+  // no second change until the answer.
+  const toggling = new SvelteSet<string>();
   let loading = $state(true);
   let loadError = $state("");
   let activeView = $state<View>("channels");
@@ -43,16 +47,12 @@
 
   const filter = new HistoryFilter();
 
-  let successCount = $derived(logs.filter((l) => l.success).length);
-  let failedCount = $derived(logs.filter((l) => !l.success).length);
-  let activeChannels = $derived(configs.filter((c) => c.enabled).length);
-
   onMount(() => loadData());
 
   async function loadData() {
     loading = true;
     try {
-      [logs, configs, eventTypes] = await Promise.all([getLogs(), getConfigs(), getEventTypes()]);
+      [logs, configs] = await Promise.all([getLogs(), getConfigs()]);
       loadError = "";
     } catch (e) {
       loadError = messageOf(e);
@@ -69,8 +69,13 @@
     }
   }
 
-  function openCreate(kind: ChannelKind) {
-    form.openCreate(kind, $t("notifications.form.defaultName", { kind: kindName($t, kind) }));
+  /** The name a new channel of `kind` gets until it is given one. */
+  function defaultName(kind: ChannelKind): string {
+    return $t("notifications.form.defaultName", { kind: kindName($t, kind) });
+  }
+
+  function openCreate() {
+    form.openCreate("email", defaultName("email"));
   }
 
   async function handleSave() {
@@ -119,12 +124,20 @@
   }
 
   async function toggleEnabled(config: NotificationConfig) {
-    if (!config.id) return;
+    const id = config.id;
+    if (!id || toggling.has(id)) return;
+    // The new state at once; the stored one comes back with the reload if the server refused it.
+    const stored = { ...config };
+    config.enabled = !stored.enabled;
+    toggling.add(id);
     try {
-      await updateConfig(config.id, { ...config, enabled: !config.enabled });
+      await updateConfig(id, { ...stored, enabled: !stored.enabled });
       actionError = "";
     } catch (e) {
+      config.enabled = stored.enabled;
       actionError = messageOf(e);
+    } finally {
+      toggling.delete(id);
     }
     await loadData();
   }
@@ -136,11 +149,11 @@
   }
 </script>
 
-<!-- A toggle of the view shown. -->
-{#snippet viewButton(view: View, icon: IconComponent, label: string)}
+<!-- A view of the tab: Channels or History. -->
+{#snippet viewTab(view: View, label: string)}
   <Button
-    variant={activeView === view ? "primary" : "secondary"}
-    {icon}
+    variant="plain"
+    class="tab-underline {activeView === view ? 'tab-underline-active' : ''}"
     pressed={activeView === view}
     onclick={() => (activeView = view)}
   >
@@ -150,16 +163,19 @@
 
 <!-- A tab of System's Settings: the channels the NAS notifies through, and what it sent (ADR-0431). -->
 <div class="space-y-6">
-  <h2 class="text-xl font-semibold">{$t("system.tabs.notifications")}</h2>
-
-  <NotificationStats active={activeChannels} sent={logs.length} delivered={successCount} failed={failedCount} />
-
-  <div class="flex items-center justify-between gap-3">
-    <div class="flex gap-2">
-      {@render viewButton("channels", Settings, $t("notifications.views.channels"))}
-      {@render viewButton("history", Clock, $t("notifications.views.history"))}
+  <div class="flex flex-wrap items-start justify-between gap-3">
+    <div class="min-w-0">
+      <h2 class="text-xl font-semibold">{$t("system.tabs.notifications")}</h2>
+      <p class="page-subtitle">{$t("notifications.subtitle")}</p>
     </div>
-    <Button variant="ghost" size="icon" icon={RefreshCw} loading={loading} onclick={loadData}>
+    <Button variant="primary" icon={Plus} onclick={openCreate}>{$t("notifications.addChannel")}</Button>
+  </div>
+
+  <div class="tab-bar items-center">
+    {@render viewTab("channels", $t("notifications.views.channels"))}
+    {@render viewTab("history", $t("notifications.views.history"))}
+    <Button variant="ghost" size="icon-sm" class="ml-auto" icon={RefreshCw} loading={loading}
+      title={$t("common.refresh")} onclick={loadData}>
       <span class="sr-only">{$t("common.refresh")}</span>
     </Button>
   </div>
@@ -181,6 +197,7 @@
       {loading}
       {results}
       {testing}
+      {toggling}
       oncreate={openCreate}
       ontest={handleTest}
       ontoggle={toggleEnabled}
@@ -195,6 +212,6 @@
   {/if}
 </div>
 
-<ChannelDialog {form} {eventTypes} onsave={handleSave} />
+<ChannelDialog {form} {defaultName} onsave={handleSave} />
 
 <DeleteChannelDialog channel={deleting} onclose={() => (deleting = null)} ondeleted={deleted} />

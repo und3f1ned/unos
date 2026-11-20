@@ -1,12 +1,12 @@
 <script lang="ts">
-  import { Bell } from "lucide-svelte";
-  import type { ChannelKind, NotificationConfig } from "$lib/api/notifications";
+  import { Bell, Plus } from "lucide-svelte";
+  import type { NotificationConfig } from "$lib/api/notifications";
   import { Button, Card, EmptyState, Skeleton } from "$lib/components/ui";
   import { t } from "$lib/i18n";
   import ChannelCard from "./ChannelCard.svelte";
-  import { KINDS, KIND_ORDER } from "./channels";
 
-  // The Channels view: a button that adds a channel of each kind, and the channels.
+  // The Channels view: the channels, or an empty state that adds the first one (the tab's header
+  // adds the others).
   type Props = {
     configs: NotificationConfig[];
     loading: boolean;
@@ -14,7 +14,9 @@
     results: Record<string, { success: boolean; message: string }>;
     // The id of the channel whose test runs.
     testing: string | null;
-    oncreate: (kind: ChannelKind) => void;
+    // The ids of the channels whose on/off the server has not answered yet.
+    toggling: ReadonlySet<string>;
+    oncreate: () => void;
     ontest: (config: NotificationConfig) => void;
     ontoggle: (config: NotificationConfig) => void;
     onedit: (config: NotificationConfig) => void;
@@ -22,19 +24,11 @@
     ondismissresult: (id: string) => void;
   };
 
-  let { configs, loading, results, testing, oncreate, ontest, ontoggle, onedit, ondelete, ondismissresult }: Props =
+  let { configs, loading, results, testing, toggling, oncreate, ontest, ontoggle, onedit, ondelete, ondismissresult }: Props =
     $props();
 </script>
 
 <div class="space-y-4">
-  <div class="flex flex-wrap gap-3">
-    {#each KIND_ORDER as kind}
-      <Button variant="secondary" icon={KINDS[kind].icon} onclick={() => oncreate(kind)}>
-        {$t(KINDS[kind].add)}
-      </Button>
-    {/each}
-  </div>
-
   {#if loading && configs.length === 0}
     <div class="space-y-4" aria-busy="true">
       <Skeleton shape="card" count={2} />
@@ -46,7 +40,9 @@
         icon={Bell}
         title={$t("notifications.channels.none")}
         description={$t("notifications.channels.noneHint")}
-      />
+      >
+        <Button variant="secondary" icon={Plus} onclick={oncreate}>{$t("notifications.addFirst")}</Button>
+      </EmptyState>
     </Card>
   {:else}
     <ul class="space-y-3" aria-label={$t("notifications.channels.list")}>
@@ -56,6 +52,7 @@
             {config}
             result={results[config.id ?? ""]}
             {testing}
+            toggling={toggling.has(config.id ?? "")}
             {ontest}
             {ontoggle}
             {onedit}

@@ -58,8 +58,8 @@ test.describe('System > General: the name and time zone of the NAS', () => {
     // The field, the name's one place, keeps the new name: System Information shows no second copy
     // of it (ADR-0431).
     await expect(field).toHaveValue('nas-new');
-    const info = page.locator('.card').filter({ has: page.getByRole('heading', { name: 'System Information' }) });
-    await expect(info.getByText('Kernel:')).toBeVisible();
+    const info = page.locator('.card').filter({ has: page.getByRole('heading', { name: 'System information' }) });
+    await expect(info.getByText('Kernel', { exact: true })).toBeVisible();
     await expect(info.getByText('Hostname:')).toHaveCount(0);
   });
 

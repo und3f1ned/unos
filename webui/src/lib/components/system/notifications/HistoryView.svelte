@@ -27,8 +27,8 @@
 <!-- A toggle of the outcome to filter by. -->
 {#snippet statusButton(status: HistoryFilter["status"], label: string)}
   <Button
-    variant={filter.status === status ? "primary" : "secondary"}
-    size="sm"
+    variant="plain"
+    class="tab-pill {filter.status === status ? 'tab-pill-active' : ''}"
     pressed={filter.status === status}
     onclick={() => (filter.status = status)}
   >
@@ -44,7 +44,7 @@
       bind:value={filter.channel}
       options={channelOptions}
     />
-    <div class="flex gap-2" role="group" aria-label={$t("notifications.history.status")}>
+    <div class="segmented" role="group" aria-label={$t("notifications.history.status")}>
       {@render statusButton("all", $t("notifications.history.all"))}
       {@render statusButton("success", $t("notifications.delivered"))}
       {@render statusButton("failed", $t("notifications.failed"))}

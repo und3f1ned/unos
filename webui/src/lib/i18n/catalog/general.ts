@@ -3,9 +3,9 @@ import type { Translation } from '../translate';
 // System > General: src/routes/system/tabs/GeneralTab.svelte.
 
 export const en = {
-	'general.title': 'General Settings',
+	'general.title': 'General',
 
-	'general.info.title': 'System Information',
+	'general.info.title': 'System information',
 
 	// The name and time zone of the host (ADR-0331).
 	'general.host.title': 'Name and time zone',
@@ -20,12 +20,13 @@ export const en = {
 	'general.host.saveZone': 'Save time zone',
 	'general.host.zoneSaved': 'The time zone is now {zone}. Scheduled tasks follow it.',
 	'general.host.saveFailed': 'The change was not saved.',
+	'general.host.unchanged': 'No changes to save',
 	'general.host.loadFailed': 'The hostname and the time zone could not be read.',
-	'general.info.os': 'Operating System:',
-	'general.info.kernel': 'Kernel:',
-	'general.info.architecture': 'Architecture:',
-	'general.info.uptime': 'Uptime:',
-	'general.info.loadFailed': 'Failed to load system info',
+	'general.info.os': 'Operating system',
+	'general.info.kernel': 'Kernel',
+	'general.info.architecture': 'Architecture',
+	'general.info.uptime': 'Uptime',
+	'general.info.loadFailed': 'The system information could not be read.',
 	// The uptime, as long as it is.
 	'general.uptime.days': '{days}d {hours}h {minutes}m',
 	'general.uptime.hours': '{hours}h {minutes}m',
@@ -33,7 +34,7 @@ export const en = {
 };
 
 export const ru: Translation<typeof en> = {
-	'general.title': 'Общие настройки',
+	'general.title': 'Общие',
 
 	'general.info.title': 'Сведения о системе',
 
@@ -49,12 +50,13 @@ export const ru: Translation<typeof en> = {
 	'general.host.saveZone': 'Сохранить часовой пояс',
 	'general.host.zoneSaved': 'Часовой пояс изменён на {zone}. Задачи планировщика теперь выполняются по нему.',
 	'general.host.saveFailed': 'Изменение не сохранено.',
+	'general.host.unchanged': 'Нет изменений для сохранения',
 	'general.host.loadFailed': 'Не удалось прочитать имя хоста и часовой пояс.',
-	'general.info.os': 'Операционная система:',
-	'general.info.kernel': 'Ядро:',
-	'general.info.architecture': 'Архитектура:',
-	'general.info.uptime': 'Время работы:',
-	'general.info.loadFailed': 'Не удалось загрузить сведения о системе',
+	'general.info.os': 'Операционная система',
+	'general.info.kernel': 'Ядро',
+	'general.info.architecture': 'Архитектура',
+	'general.info.uptime': 'Время работы',
+	'general.info.loadFailed': 'Не удалось прочитать сведения о системе.',
 	'general.uptime.days': '{days} д {hours} ч {minutes} мин',
 	'general.uptime.hours': '{hours} ч {minutes} мин',
 	'general.uptime.minutes': '{minutes} мин',

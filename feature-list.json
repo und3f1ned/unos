@@ -4833,6 +4833,37 @@
       "notes": "Chunk 3 of the web UI's UX work, built on mvp.batch-18 69dfae5 beside chunk 1 (the design foundations), which owns lib/components/ui, app.css and the common and ui catalogs. The ADR is 0435: 0432 on its branch, renumbered when it was merged into mvp.batch-18. The pages use the ui components that exist now; the places that switch to chunk 1's ConfirmDialog, Sheet, Menu and Toast are listed in the ADR's consequences. NFS exports still have no Edit: the API has none. The Save question counts only what smb.conf has (a user whose SMB is active, a group with such a member, a guest access or Previous Versions that smb.conf did not leave out, on a share someone can connect to), as smbconf.shrunk_shares closes connections only then. Fresh-context review (10 findings): fixed the BLOCKING one (the Save question listed users not in smb.conf) and the RISKs: the header Add target said no volume while the paths loaded or failed; the access table links lost the open form (now a new tab) and /users#groups did not reach the Groups card (scrolled to after the load); a failed copy of a Connect address said nothing (now said, also to screen readers); a failed critical audit entry lost Critical; the specs did not cover setup validation, Show, the users load error, the audit entry words or the forced setup card (tests added in first-run, auth, users, audit and mandatory-two-factor specs). Left: a disabled Save with nothing to change (Edit user, SMB interfaces) and Export after a failed audit load give their reason as hover text only, until chunk 1 adds Button disabledReason (a one-line change each); the users page hides the groups while the users cannot be read, and a groups load error has no Retry of its own (Retry of the page reads both); UsersCard formats its dates itself instead of lib/time (chunk 1 owns it)."
     },
     {
+      "id": "webui.ux-system",
+      "category": "webui",
+      "description": "The System tabs other than Security show status before settings, one primary action, one time zone and one pattern per job, and offer only settings that work",
+      "steps": [
+        "System > Power Management shows a Status card first (pending action, next shutdown, next wake, idle shutdown), then Reboot, Shut down and Suspend as secondary buttons, then the schedule's three on/off rows whose fields stand in one column, every time on the NAS's clock, whose zone the tab names once",
+        "When the host's power state cannot be read, Power says so once with Retry, the cards say they wait and the actions are disabled with the reason; a shutdown's reasons to wait show only while it is on, each once with its count",
+        "System > Notifications has one Add channel whose dialog asks for the kind and offers no events, tabs for Channels and History, no stat tiles, and an on/off per channel",
+        "Backup & Restore's off-device copy shows its state and snapshots in one card and its settings in another, with Snapshots to keep and Integrity check as compact fields on one line and a disabled Save that says what it waits for",
+        "Scheduler, Disk Health, System Logs, Resource Monitor, Network, Remote Access and Updates use page tabs, neutral icon actions with tooltips, one badge that reads alone, charts with a scale and a time axis, and sentence case, in English and Russian, at 375 px too"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0436"
+      ],
+      "verified_by": [
+        "webui/tests/power.spec.ts",
+        "webui/tests/notifications.spec.ts",
+        "webui/tests/backup.spec.ts",
+        "webui/tests/offsite.spec.ts",
+        "webui/tests/scheduler.spec.ts",
+        "webui/tests/health.spec.ts",
+        "webui/tests/logs.spec.ts",
+        "webui/tests/monitor.spec.ts",
+        "webui/tests/network-virtual.spec.ts",
+        "webui/tests/remote-access.spec.ts",
+        "webui/tests/updates.spec.ts",
+        "webui/tests/mobile-layout.spec.ts"
+      ],
+      "notes": "Chunk 5 of the web UI's UX work, built on mvp.batch-18 69dfae5 beside chunk 1 (the design foundations), which builds the shared Switch, FieldGroup, ActionMenu, ConfirmDialog, Toast and Tabs: until then checkboxes, legends, secondary buttons and the hand-made restore and delete dialogs stand in for them, each a one-line swap; the window.confirm and alert() calls of these tabs are left for chunk 1, which replaces them all. A peer gets no Show config: its private key is shown once (ADR-0420). The ADR is 0436: 0432 on its branch, renumbered when it was merged into mvp.batch-18. E2E of the area (25 specs with mobile-layout, command-palette, navigation and roles): 619 of 625 passed in one run under load, the three timing failures (command-palette Reboot, backup upload button, network gone interface) passed on a rerun and the three spec misses were fixed and pass. Review: this builder's session had no subagent tool, so the review was the builder's own pass over the diff's risky parts (alert routing, channel and task on/off, the power form's Save, the copy's Save gating); it found offsite snapshot sizes of 1 TiB and more shown as \"1 undefined\" (fixed: TB and the largest unit for larger sizes). Not host-level: the web UI only. Fresh-context review of f3c9e7c (1 blocking, 6 risks, 5 minor), all taken: (1) offsite.spec checks the state and settings cards and, by positions at 1440 and 375 px, Daily, Weekly and Monthly on one line in columns of one width (they wrapped at 375 px: now a grid of three), Integrity check beside them at 1440 and below at 375, and Still needed beside the disabled Save; (2) Power's actions wait only for the reason said once with Retry: a pending action that alone failed has its own Retry in the Status card and leaves them usable; (3) a task's on/off, and a channel's alike, shows the new state at once, is disabled until the answer and puts the stored state back on a refusal; (4) specs click the task's and the channel's checkboxes and check Paused, Last run failed, the charts' scale and time axis and Remote access's Connected, and the ADR names them; (5) Disk Health's skeleton is the list's flush card of rows, where the list appears; (6) the copy's settings card has its skeleton; (7) the restore's warning is a warning Alert again and the filename is no longer select-all; (8) TestTheWebUI checked only the EVENTS map that the page no longer has: the events kept on save are in notifications.spec, the routing to every enabled channel in test_alert_events.py, and no doc claims a backend change; (9) Scheduler names only a zone the browser knows; (10) the power schedule checks only the fields shown (a hidden one keeps the stored value), and the RTC caveat behind More shows, checked, only for an RTC that takes the alarm; (11) a disabled Add channel or Save changes says what it waits for; (12) the API gives no handshake age, so Connected ages on the NAS's clock (the offset of the answer's Date header) and is read again every 15 s without asking the API; formatBytes of lib/api/backup.ts serves Backup, the off-device copy and Remote access only (Storage and Network have their own), and remote-access.spec checks a size beyond TB. After the fixes: make check passed (10716 tests); E2E of power, offsite, backup, scheduler, health, monitor, remote-access, notifications, loading and mobile-layout: 397 of 397 passed."
+    },
+    {
       "id": "ci.btrfs-loop-device-tests",
       "category": "ci",
       "description": "CI runs the storage scenarios against real btrfs on loop devices in a privileged container",

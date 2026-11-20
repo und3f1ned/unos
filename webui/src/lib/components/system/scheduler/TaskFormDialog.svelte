@@ -1,6 +1,5 @@
 <script lang="ts">
   import { untrack } from "svelte";
-  import { RefreshCw, X } from "lucide-svelte";
   import {
     createTask,
     updateTask,
@@ -9,7 +8,7 @@
     type ScheduleFrequency,
   } from "$lib/api/scheduler";
   import type { Disk, Pool } from "$lib/api/storage";
-  import { Alert, Input, Button, SwitchRow } from "$lib/components/ui";
+  import { Alert, Input, Button, Modal, SwitchRow } from "$lib/components/ui";
   import { messageOf } from "$lib/errors";
   import { t } from "$lib/i18n";
   import { DAYS_OF_WEEK, FREQUENCIES, MIN_PASSPHRASE_LENGTH, TASK_TYPES, getDefaultFormData } from "./tasks";
@@ -120,18 +119,10 @@
   }
 </script>
 
-<div class="modal-overlay p-4">
-  <div class="bg-surface-elevated border border-border rounded-dialog shadow-dialog w-full max-w-lg max-h-[90vh] overflow-y-auto">
-    <!-- Modal Header -->
-    <div class="flex items-center justify-between gap-3 px-5 py-4 border-b border-border">
-      <h3 class="modal-title">{task ? $t("scheduler.form.editTitle") : $t("scheduler.form.createTitle")}</h3>
-      <Button variant="ghost" size="icon-sm" aria-label={$t("ui.modal.close")} onclick={onclose}>
-        <X class="w-4 h-4" />
-      </Button>
-    </div>
-
-    <!-- Modal Body -->
-    <div class="p-4 space-y-4">
+<!-- The design system's Modal: its header, its close button and Escape, and a dialog
+     taller than the window scrolls with its overlay (ADR-0302). -->
+<Modal open size="md" title={task ? $t("scheduler.form.editTitle") : $t("scheduler.form.createTitle")} {onclose}>
+    <div class="space-y-4">
       <!-- Task Name -->
       <div>
         <label for="task-name" class="form-label">{$t("scheduler.form.name")}</label>
@@ -157,7 +148,7 @@
         <select
           id="task-type"
           bind:value={formData.task_type}
-          class="form-input"
+          class="form-select"
         >
           {#each TASK_TYPES as type}
             <option value={type.value}>{$t(type.key)}</option>
@@ -175,7 +166,7 @@
             <select
               id="task-target-pool"
               bind:value={formData.target_pool}
-              class="form-input"
+              class="form-select"
             >
               {#each pools as pool}
                 <option value={pool.name}>{pool.name}</option>
@@ -199,7 +190,7 @@
               <select
                 id="task-target-disk"
                 bind:value={formData.target_disk}
-                class="form-input"
+                class="form-select"
               >
                 {#if storedDisk}
                   <option value={storedDisk}>{disksLoaded ? $t("scheduler.form.notConnected", { disk: storedDisk }) : storedDisk}</option>
@@ -244,7 +235,7 @@
             bind:value={formData.keep_count}
             min="1"
             max="100"
-            class="form-input"
+            class="form-input w-28 tabular"
           />
           <p class="text-xs text-content-muted mt-1">
             {formData.task_type === "backup" ? $t("scheduler.form.keepBackups") : $t("scheduler.form.keepSnapshots")}
@@ -274,6 +265,9 @@
           error={passphraseConfirm && passphraseMismatch ? $t("scheduler.form.passphraseMismatch") : ""}
           hint={$t("scheduler.form.typeAgain")}
         />
+        {#if waitsForPassphrase}
+          <p id="task-passphrase-wait" class="sr-only">{$t("scheduler.form.passphraseWait")}</p>
+        {/if}
       {/if}
 
       <hr class="border-border" />
@@ -284,7 +278,7 @@
         <select
           id="task-frequency"
           bind:value={formData.frequency}
-          class="form-input"
+          class="form-select"
         >
           {#each FREQUENCIES as freq}
             <option value={freq.value}>{$t(freq.key)}</option>
@@ -307,37 +301,29 @@
           <p class="text-xs text-content-muted mt-1">{$t("scheduler.form.cronFormat")}</p>
         </div>
       {:else}
-        <!-- Time Selection -->
-        <div class="grid grid-cols-2 gap-4">
-          {#if formData.frequency !== "hourly"}
-            <div>
-              <label for="task-hour" class="form-label">{$t("scheduler.form.hour")}</label>
-              <select
-                id="task-hour"
-                aria-describedby={timeZoneHint}
-                bind:value={formData.hour}
-                class="form-input"
-              >
+        <!-- The time as one group, hour and minute side by side on the NAS's clock. -->
+        <fieldset>
+          <legend class="form-label">{$t("scheduler.form.time")}</legend>
+          <div class="flex items-center gap-2">
+            {#if formData.frequency !== "hourly"}
+              <label for="task-hour" class="sr-only">{$t("scheduler.form.hour")}</label>
+              <select id="task-hour" aria-describedby={timeZoneHint} bind:value={formData.hour} class="form-select w-24 tabular">
                 {#each Array(24) as _, i}
-                  <option value={i}>{String(i).padStart(2, "0")}:00</option>
+                  <option value={i}>{String(i).padStart(2, "0")}</option>
                 {/each}
               </select>
-            </div>
-          {/if}
-          <div>
-            <label for="task-minute" class="form-label">{$t("scheduler.form.minute")}</label>
-            <select
-              id="task-minute"
-              aria-describedby={timeZoneHint}
-              bind:value={formData.minute}
-              class="form-input"
-            >
+              <span class="text-content-secondary" aria-hidden="true">:</span>
+            {:else}
+              <span class="text-sm text-content-secondary">{$t("scheduler.form.everyHourAt")}</span>
+            {/if}
+            <label for="task-minute" class="sr-only">{$t("scheduler.form.minute")}</label>
+            <select id="task-minute" aria-describedby={timeZoneHint} bind:value={formData.minute} class="form-select w-24 tabular">
               {#each [0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55] as m}
                 <option value={m}>{String(m).padStart(2, "0")}</option>
               {/each}
             </select>
           </div>
-        </div>
+        </fieldset>
 
         <!-- Day Selection -->
         {#if formData.frequency === "weekly"}
@@ -347,7 +333,7 @@
               id="task-day-of-week"
               aria-describedby={timeZoneHint}
               bind:value={formData.day_of_week}
-              class="form-input"
+              class="form-select"
             >
               {#each DAYS_OF_WEEK as day}
                 <option value={day.value}>{$t(day.key)}</option>
@@ -363,7 +349,7 @@
               id="task-day-of-month"
               aria-describedby={timeZoneHint}
               bind:value={formData.day_of_month}
-              class="form-input"
+              class="form-select"
             >
               {#each Array(28) as _, i}
                 <option value={i + 1}>{i + 1}</option>
@@ -386,19 +372,14 @@
       {/if}
     </div>
 
-    <!-- Modal Footer -->
-    <div class="flex gap-3 p-4 border-t border-border">
-      <Button variant="secondary" class="flex-1" onclick={onclose}>
-        {$t("common.cancel")}
-      </Button>
-      <Button variant="primary" class="flex-1" onclick={handleSaveTask} disabled={saving || waitsForPassphrase}>
-        {#if saving}
-          <RefreshCw class="w-4 h-4 animate-spin" />
-          {$t("scheduler.form.saving")}
-        {:else}
-          {task ? $t("scheduler.form.save") : $t("scheduler.form.create")}
-        {/if}
-      </Button>
-    </div>
-  </div>
-</div>
+  {#snippet footer()}
+    <Button variant="secondary" class="flex-1" onclick={onclose}>
+      {$t("common.cancel")}
+    </Button>
+    <Button variant="primary" class="flex-1" onclick={handleSaveTask} loading={saving} disabled={waitsForPassphrase}
+      title={waitsForPassphrase ? $t("scheduler.form.passphraseWait") : undefined}
+      aria-describedby={waitsForPassphrase ? "task-passphrase-wait" : undefined}>
+      {saving ? $t("scheduler.form.saving") : task ? $t("scheduler.form.save") : $t("scheduler.form.create")}
+    </Button>
+  {/snippet}
+</Modal>

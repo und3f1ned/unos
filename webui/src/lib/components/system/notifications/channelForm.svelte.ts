@@ -11,6 +11,7 @@ export class ChannelForm {
   kind = $state<ChannelKind>("email");
   name = $state("");
   enabled = $state(true);
+  // The events a channel was stored with, sent back as they were: the dialog does not offer them.
   events = $state<string[]>([]);
   saving = $state(false);
   saveError = $state("");
@@ -33,14 +34,23 @@ export class ChannelForm {
   port = $derived(Number(this.emailPort));
   // Plain SMTP: no TLS, so no certificate to check, and the password crosses the network as it is.
   plainSmtp = $derived(!this.emailTls && this.port !== 465);
-  complete = $derived(
-    this.kind === "email"
-      ? this.emailHost.trim() !== "" && Number.isInteger(this.port) && this.port > 0 && this.port < 65536 &&
-        this.emailFrom.trim() !== "" && this.recipients.length > 0
-      : this.kind === "telegram"
-        ? this.telegramToken.trim() !== "" && this.telegramChatId.trim() !== ""
-        : this.hookUrl.trim() !== ""
-  );
+  // What Save still waits for, as keys of the catalog: the dialog says it beside a disabled Save.
+  missing = $derived.by(() => {
+    const keys: string[] = [];
+    if (this.kind === "email") {
+      if (this.emailHost.trim() === "") keys.push("notifications.form.need.host");
+      if (!(Number.isInteger(this.port) && this.port > 0 && this.port < 65536)) keys.push("notifications.form.need.port");
+      if (this.emailFrom.trim() === "") keys.push("notifications.form.need.from");
+      if (this.recipients.length === 0) keys.push("notifications.form.need.recipient");
+    } else if (this.kind === "telegram") {
+      if (this.telegramToken.trim() === "") keys.push("notifications.form.need.token");
+      if (this.telegramChatId.trim() === "") keys.push("notifications.form.need.chat");
+    } else if (this.hookUrl.trim() === "") {
+      keys.push("notifications.form.need.url");
+    }
+    return keys;
+  });
+  complete = $derived(this.missing.length === 0);
   hookField = $derived(HOOK_FIELDS[this.kind === "discord" || this.kind === "slack" ? this.kind : "webhook"]);
 
   /** A new channel of `kind`, named `name`. */
@@ -96,14 +106,17 @@ export class ChannelForm {
     if (config.channel === "slack" && config.slack_config) this.hookUrl = config.slack_config.webhook_url;
   }
 
+  /** A new channel's kind, chosen in its dialog: a name it was given stays, the default follows the kind. */
+  changeKind(kind: ChannelKind, defaultName: (kind: ChannelKind) => string) {
+    if (this.editing || kind === this.kind) return;
+    if (this.name === defaultName(this.kind)) this.name = defaultName(kind);
+    this.kind = kind;
+  }
+
   close() {
     if (this.saving) return;
     this.open = false;
     this.editing = null;
-  }
-
-  toggleEvent(eventId: string) {
-    this.events = this.events.includes(eventId) ? this.events.filter((e) => e !== eventId) : [...this.events, eventId];
   }
 
   // The channel as the form describes it. Settings that only the API sets (a webhook's headers and

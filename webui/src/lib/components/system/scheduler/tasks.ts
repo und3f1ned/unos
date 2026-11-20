@@ -59,16 +59,3 @@ export function getDefaultFormData(): Partial<ScheduledTask> {
 export function getTaskTypeIcon(type: TaskType): IconComponent {
   return TASK_TYPES.find((option) => option.value === type)?.icon || Terminal;
 }
-
-export function getStatusColor(status?: string): string {
-  switch (status) {
-    case "success":
-      return "text-status-success";
-    case "failed":
-      return "text-status-error";
-    case "running":
-      return "text-status-warning";
-    default:
-      return "text-content-muted";
-  }
-}

@@ -1,18 +1,20 @@
 <script lang="ts">
   import { Pencil, Trash2, Zap } from "lucide-svelte";
   import type { NotificationConfig } from "$lib/api/notifications";
-  import { Alert, Badge, Button, Card } from "$lib/components/ui";
+  import { Alert, Badge, Button, Card, Switch } from "$lib/components/ui";
   import { t } from "$lib/i18n";
-  import { KINDS, eventName, kindName, nameOf, summaryOf } from "./channels";
+  import { KINDS, kindName, nameOf, summaryOf } from "./channels";
 
-  // A channel of the list: its kind, name, settings and events, its actions, and the outcome of
-  // its last test.
+  // A channel of the list: its kind, name and settings, its actions, and the outcome of its last
+  // test. Its events are not shown: alerts go to every enabled channel whatever they name.
   type Props = {
     config: NotificationConfig;
     // The outcome of the channel's last test, until dismissed.
     result: { success: boolean; message: string } | undefined;
     // The id of the channel whose test runs.
     testing: string | null;
+    // The channel's on/off was changed and the server has not answered yet: the box shows the new state.
+    toggling: boolean;
     ontest: (config: NotificationConfig) => void;
     ontoggle: (config: NotificationConfig) => void;
     onedit: (config: NotificationConfig) => void;
@@ -20,7 +22,7 @@
     ondismissresult: (id: string) => void;
   };
 
-  let { config, result, testing, ontest, ontoggle, onedit, ondelete, ondismissresult }: Props = $props();
+  let { config, result, testing, toggling, ontest, ontoggle, onedit, ondelete, ondismissresult }: Props = $props();
 
   let id = $derived(config.id ?? "");
   let name = $derived(nameOf($t, config));
@@ -30,28 +32,16 @@
 <Card>
   <div class="flex flex-wrap items-center justify-between gap-3">
     <div class="flex items-center gap-4 min-w-0">
-      <Icon
-        class="w-6 h-6 flex-shrink-0 {config.enabled ? 'text-info' : 'text-muted'}"
-      />
+      <Icon class="w-5 h-5 flex-shrink-0 {config.enabled ? 'text-content-secondary' : 'text-content-muted'}" aria-hidden="true" />
       <div class="min-w-0">
         <div class="flex flex-wrap items-center gap-2">
           <h3 class="font-medium">{name}</h3>
           <Badge variant="neutral">{kindName($t, config.channel)}</Badge>
           {#if !config.enabled}
-            <Badge variant="warning">{$t("notifications.channels.disabled")}</Badge>
+            <Badge variant="neutral">{$t("notifications.channels.disabled")}</Badge>
           {/if}
         </div>
-        <p class="text-sm text-secondary break-all">{summaryOf($t, config)}</p>
-        {#if config.events && config.events.length > 0}
-          <div class="flex flex-wrap gap-1 mt-2">
-            {#each config.events.slice(0, 3) as event}
-              <Badge variant="neutral">{eventName($t, event)}</Badge>
-            {/each}
-            {#if config.events.length > 3}
-              <Badge variant="neutral">{$t("notifications.channels.more", { n: config.events.length - 3 })}</Badge>
-            {/if}
-          </div>
-        {/if}
+        <p class="text-sm text-content-secondary break-words">{summaryOf($t, config)}</p>
       </div>
     </div>
     <div class="flex flex-wrap items-center gap-2">
@@ -65,20 +55,28 @@
       >
         {$t("notifications.channels.sendTest")}<span class="sr-only"> {$t("notifications.channels.sendTestTo", { name })}</span>
       </Button>
-      <!-- Not while the channel's test runs: its outcome would show under the new settings. -->
-      <Button variant="ghost" size="sm" disabled={testing === id} onclick={() => ontoggle(config)}>
-        {$t(config.enabled ? "notifications.channels.disable" : "notifications.channels.enable")}<span class="sr-only"> {$t("notifications.channels.named", { name })}</span>
-      </Button>
+      <!-- The channel's on/off, a Switch (ADR-0432). Not while the channel's test runs: its outcome
+           would show under the new settings. -->
+      <label class="flex items-center gap-2 px-2 text-sm text-content-secondary {testing === id ? 'opacity-50' : 'cursor-pointer'}">
+        <Switch
+          checked={config.enabled}
+          disabled={testing === id || toggling}
+          label={$t("notifications.channels.toggle", { name })}
+          onchange={() => ontoggle(config)}
+        />
+        {$t("notifications.channels.sendAlerts")}
+      </label>
       <Button
         variant="ghost"
         size="icon-sm"
         icon={Pencil}
         disabled={testing === id}
+        title={$t("notifications.channels.edit", { name })}
         onclick={() => onedit(config)}
       >
         <span class="sr-only">{$t("notifications.channels.edit", { name })}</span>
       </Button>
-      <Button variant="ghost" size="icon-sm" icon={Trash2} onclick={() => ondelete(config)}>
+      <Button variant="ghost-danger" size="icon-sm" icon={Trash2} title={$t("notifications.channels.delete", { name })} onclick={() => ondelete(config)}>
         <span class="sr-only">{$t("notifications.channels.delete", { name })}</span>
       </Button>
     </div>

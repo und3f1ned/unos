@@ -58,7 +58,7 @@
               <p class="text-xs text-content-secondary mb-2">{$t("backup.dialog.restored")}</p>
               <ul class="text-sm space-y-1">
                 {#each result.restored as item}
-                  <li>- {itemLabel(item)}</li>
+                  <li class="list-inside list-disc">{itemLabel(item)}</li>
                 {/each}
               </ul>
             </div>
@@ -86,8 +86,9 @@
         </div>
       </div>
 
+      <!-- What the restore replaces, as a warning: the consequences, as a list. -->
       <Alert variant="warning" size="sm" class="mb-4" title={$t("backup.dialog.warning")}>
-        <ul class="text-content-soft mt-1 space-y-1">
+        <ul class="mt-1 list-disc space-y-1 pl-5">
           <li>{$t("backup.dialog.database")}</li>
           <li>{$t("backup.dialog.shares")}</li>
         </ul>
@@ -105,15 +106,19 @@
         />
       {/if}
 
+      <!-- The name to type stands above the field, which starts empty: a placeholder would look
+           like a value already typed. A name to type, not one click to copy: no select-all. -->
       <div class="mb-4">
         <label for="confirmName" class="form-label">
           {$t("backup.dialog.confirm")}
         </label>
+        <p class="mb-2 font-mono text-xs break-all text-content" data-testid="restore-expected">{target.filename}</p>
         <input
           type="text"
           id="confirmName"
           bind:value={confirmName}
-          placeholder={target.filename}
+          autocomplete="off"
+          spellcheck="false"
           class="form-input text-sm"
         />
       </div>
@@ -122,7 +127,7 @@
         <Button variant="secondary" class="flex-1" onclick={onclose}>
           {$t("common.cancel")}
         </Button>
-        <Button variant="warning" class="flex-1"
+        <Button variant="danger" class="flex-1"
           onclick={() => onrestore(passphrase)}
           disabled={confirmName !== target.filename ||
             (target.encrypted && !passphrase) ||

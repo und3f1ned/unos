@@ -21,10 +21,17 @@ export const en = {
 	'health.smartDataOf': 'of {device}',
 
 	// A disk's overall health (SmartInfo.health_status), as the server answers it.
-	'health.status.passed': 'PASSED',
-	'health.status.failed': 'FAILED',
-	'health.status.unknown': 'UNKNOWN',
-	'health.status.standby': 'STANDBY',
+	'health.status.passed': 'Passed',
+	'health.status.failed': 'Failed',
+	'health.status.unknown': 'Unknown',
+	'health.status.standby': 'Asleep',
+	// The one badge of a disk in the list (diskState of components/system/health/texts.ts).
+	'health.state.healthy': 'Healthy',
+	'health.state.failing': 'Failing',
+	'health.state.unknown': 'Not read',
+	'health.state.asleep': 'Asleep',
+	'health.why': 'Why',
+	'health.noDisksHint': 'Connect a disk to the NAS and refresh.',
 
 	'health.overall': 'Overall health',
 	'health.temperature': 'Temperature',
@@ -99,10 +106,16 @@ export const ru: Translation<typeof en> = {
 	'health.smartData': 'Данные SMART',
 	'health.smartDataOf': 'диска {device}',
 
-	'health.status.passed': 'ИСПРАВЕН',
-	'health.status.failed': 'НЕИСПРАВЕН',
-	'health.status.unknown': 'НЕИЗВЕСТНО',
-	'health.status.standby': 'СПИТ',
+	'health.status.passed': 'Исправен',
+	'health.status.failed': 'Неисправен',
+	'health.status.unknown': 'Неизвестно',
+	'health.status.standby': 'Спит',
+	'health.state.healthy': 'Исправен',
+	'health.state.failing': 'Неисправен',
+	'health.state.unknown': 'Не прочитан',
+	'health.state.asleep': 'Спит',
+	'health.why': 'Почему',
+	'health.noDisksHint': 'Подключите диск к NAS и обновите страницу.',
 
 	'health.overall': 'Общее состояние',
 	'health.temperature': 'Температура',

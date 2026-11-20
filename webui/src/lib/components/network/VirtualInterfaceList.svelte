@@ -62,13 +62,14 @@
 				</p>
 			</div>
 			<Button
-				variant="danger"
-				size="sm"
+				variant="ghost-danger"
+				size="icon-sm"
 				icon={Trash2}
 				{disabled}
+				title={$t('virtual.deleteLabel', { name: item.name })}
 				aria-label={$t('virtual.deleteLabel', { name: item.name })}
-				onclick={() => ondelete(item)}>{$t('virtual.delete')}</Button
-			>
+				onclick={() => ondelete(item)}
+			></Button>
 		</li>
 	{/each}
 </ul>

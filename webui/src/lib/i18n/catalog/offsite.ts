@@ -6,18 +6,19 @@ import type { Translation } from '../translate';
 export const en = {
 	'offsite.title': 'Off-device copy',
 	'offsite.intro':
-		'Copies of the configuration and of the pools’ folders on a disk of its own, in an S3-compatible store, on a restic REST server or on an SFTP server, encrypted with a password that only this NAS keeps.',
+		'Encrypted copies of the configuration and of chosen folders, kept off this device.',
 	'offsite.notSetUp': 'No off-device copy is set up.',
 	'offsite.loadFailed': 'Could not load the off-device copy',
 	'offsite.refresh': 'Refresh',
 
 	// The target.
 	'offsite.form.title': 'Where the copies go',
+	'offsite.settings.title': 'Settings of the copy',
 	'offsite.form.kind': 'Kind of target',
-	'offsite.form.disk': 'A disk',
-	'offsite.form.s3': 'An S3-compatible store',
-	'offsite.form.rest': 'A restic REST server',
-	'offsite.form.sftp': 'An SFTP server',
+	'offsite.form.disk': 'Disk',
+	'offsite.form.s3': 'S3-compatible store',
+	'offsite.form.rest': 'restic REST server',
+	'offsite.form.sftp': 'SFTP server',
 	'offsite.form.path': 'Folder of the copy',
 	'offsite.form.pathHint':
 		'A folder on a disk mounted below /mnt (such as a USB disk added as a pool), made when it is missing. Not the system disk.',
@@ -29,8 +30,6 @@ export const en = {
 	'offsite.form.accessKeyId': 'Access key ID',
 	'offsite.form.secretKey': 'Secret access key',
 	'offsite.form.secretKept': 'Leave it empty to keep the stored key.',
-	'offsite.form.limitUpload': 'Upload limit, KiB/s',
-	'offsite.form.limitDownload': 'Download limit, KiB/s',
 	'offsite.form.limitHint': '0: no limit; at most 10,000,000.',
 
 	// A REST server.
@@ -86,11 +85,12 @@ export const en = {
 	'offsite.form.newSource': 'Another folder to copy',
 	'offsite.form.addSource': 'Add folder',
 	'offsite.form.removeSource': 'Remove {path}',
-	'offsite.form.noSources': 'Choose at least one folder to copy.',
+	'offsite.form.noPools': 'No pools yet: add a folder below.',
 
 	// The password.
 	'offsite.form.password': 'Password of the copy repository',
 	'offsite.form.passwordAgain': 'Password again',
+	'offsite.form.encryption': 'Encryption',
 	'offsite.form.passwordWarning':
 		'Without this password nobody, UNOS included, can read the copies, and it is not in the configuration backups: keep it somewhere outside this device.',
 	'offsite.form.passwordTooShort': 'At least {n} characters',
@@ -99,10 +99,20 @@ export const en = {
 	'offsite.form.passwordNeeded': 'At least {n} characters, typed twice.',
 
 	// The retention and the checks.
-	'offsite.form.keepDaily': 'Daily snapshots kept',
-	'offsite.form.keepWeekly': 'Weekly snapshots kept',
-	'offsite.form.keepMonthly': 'Monthly snapshots kept',
-	'offsite.form.checkPercent': 'Share of the data each check reads, %',
+	'offsite.form.keepDaily': 'Daily',
+	'offsite.form.keepWeekly': 'Weekly',
+	'offsite.form.keepMonthly': 'Monthly',
+	'offsite.form.checkPercent': 'Data read',
+	'offsite.form.keep': 'Snapshots to keep',
+	'offsite.form.keepHint': 'Older snapshots are removed after each copy.',
+	'offsite.form.check': 'Integrity check',
+	'offsite.form.checkHint': 'After each copy restic reads this share of the data, in percent.',
+	// What Save still waits for: {what} lists the offsite.form.need texts.
+	'offsite.form.needs': 'Still needed: {what}.',
+	'offsite.form.need.target': "the target's fields",
+	'offsite.form.need.key': 'a key pair of UNOS',
+	'offsite.form.need.sources': 'a folder to copy',
+	'offsite.form.need.password': 'the password, typed twice',
 
 	'offsite.form.save': 'Save and test',
 	'offsite.form.saving': 'Testing...',
@@ -112,19 +122,10 @@ export const en = {
 	'offsite.form.forgetTitle': 'Forget the target of the copy?',
 	'offsite.form.confirmForget': 'Its settings and password are removed from this NAS; the copies stay where they are.',
 	'offsite.form.forgetAction': 'Forget target',
-	'offsite.form.retention': 'Snapshots kept',
-	'offsite.form.retentionHelp': 'How many of the newest daily, weekly and monthly snapshots each copy keeps, 0 to 10,000.',
-	'offsite.form.daily': 'Daily',
-	'offsite.form.weekly': 'Weekly',
-	'offsite.form.monthly': 'Monthly',
-	'offsite.form.check': 'Integrity check',
-	'offsite.form.checkHelp': 'After each copy, restic reads this share of the data to check it.',
-	'offsite.form.checkShare': 'Data read per check',
 	'offsite.form.limits': 'Bandwidth',
 	'offsite.form.upload': 'Upload',
 	'offsite.form.download': 'Download',
 	'offsite.form.kibps': 'KiB/s',
-	'offsite.form.incomplete': 'Fill in the target, at least one folder to copy and the password, twice the same, first.',
 	'offsite.form.forgetFailed': 'Could not forget the target',
 
 	// The warnings of the settings, by the kind the server names.
@@ -146,7 +147,8 @@ export const en = {
 	'offsite.state.restoreTestPassed': 'Restore test: passed',
 	'offsite.state.restoreTestFailed': 'Restore test: failed',
 	'offsite.state.restoreTestNotRun': 'Restore test: not run',
-	'offsite.state.failedAt': 'Failed at {step}:',
+	'offsite.state.failedAt': 'The copy failed at {step}.',
+	'offsite.details': 'Details',
 	'offsite.state.runNow': 'Run now',
 	'offsite.state.runFailed': 'Could not start a copy',
 	'offsite.state.runStarted': 'The copy runs in the background: Refresh shows how far it is.',
@@ -169,7 +171,7 @@ export const en = {
 
 	// The scheduled task.
 	'offsite.task.none': 'No scheduled task: copies run only on Run now.',
-	'offsite.task.schedule': 'Add a task of the type Off-device Copy in the Scheduler.',
+	'offsite.task.schedule': 'Add a task of the type Off-device copy in the Scheduler.',
 	'offsite.task.some': 'A scheduled task copies: {names}',
 	'offsite.task.next': 'Next run {time}.',
 
@@ -198,12 +200,13 @@ export const en = {
 export const ru: Translation<typeof en> = {
 	'offsite.title': 'Копия вне устройства',
 	'offsite.intro':
-		'Копии конфигурации и папок пулов на отдельном диске, в S3-совместимом хранилище, на REST-сервере restic или на SFTP-сервере, зашифрованные паролем, который хранится только на этом NAS.',
+		'Зашифрованные копии конфигурации и выбранных папок вне этого устройства.',
 	'offsite.notSetUp': 'Копия вне устройства не настроена.',
 	'offsite.loadFailed': 'Не удалось загрузить копию вне устройства',
 	'offsite.refresh': 'Обновить',
 
 	'offsite.form.title': 'Куда сохраняются копии',
+	'offsite.settings.title': 'Настройки копирования',
 	'offsite.form.kind': 'Тип хранилища',
 	'offsite.form.disk': 'Диск',
 	'offsite.form.s3': 'S3-совместимое хранилище',
@@ -220,8 +223,6 @@ export const ru: Translation<typeof en> = {
 	'offsite.form.accessKeyId': 'ID ключа доступа',
 	'offsite.form.secretKey': 'Секретный ключ доступа',
 	'offsite.form.secretKept': 'Оставьте поле пустым, чтобы сохранить прежний ключ.',
-	'offsite.form.limitUpload': 'Ограничение отправки, КиБ/с',
-	'offsite.form.limitDownload': 'Ограничение загрузки, КиБ/с',
 	'offsite.form.limitHint': '0 — без ограничения; не больше 10 000 000.',
 
 	'offsite.rest.endpoint': 'Адрес REST-сервера',
@@ -274,10 +275,11 @@ export const ru: Translation<typeof en> = {
 	'offsite.form.newSource': 'Ещё одна папка для копирования',
 	'offsite.form.addSource': 'Добавить папку',
 	'offsite.form.removeSource': 'Убрать {path}',
-	'offsite.form.noSources': 'Выберите хотя бы одну папку для копирования.',
+	'offsite.form.noPools': 'Пулов пока нет: добавьте папку ниже.',
 
 	'offsite.form.password': 'Пароль хранилища копий',
 	'offsite.form.passwordAgain': 'Пароль ещё раз',
+	'offsite.form.encryption': 'Шифрование',
 	'offsite.form.passwordWarning':
 		'Без этого пароля никто, включая UNOS, не сможет прочитать копии, и в резервных копиях конфигурации его нет: храните его где-нибудь вне этого устройства.',
 	'offsite.form.passwordTooShort': 'Не менее {n} символов',
@@ -285,10 +287,19 @@ export const ru: Translation<typeof en> = {
 	'offsite.form.passwordKept': 'Оставьте оба поля пустыми, чтобы сохранить прежний пароль.',
 	'offsite.form.passwordNeeded': 'Не менее {n} символов, дважды.',
 
-	'offsite.form.keepDaily': 'Хранить ежедневных снимков',
-	'offsite.form.keepWeekly': 'Хранить еженедельных снимков',
-	'offsite.form.keepMonthly': 'Хранить ежемесячных снимков',
-	'offsite.form.checkPercent': 'Доля данных, читаемая при проверке, %',
+	'offsite.form.keepDaily': 'Ежедневных',
+	'offsite.form.keepWeekly': 'Еженедельных',
+	'offsite.form.keepMonthly': 'Ежемесячных',
+	'offsite.form.checkPercent': 'Доля данных',
+	'offsite.form.keep': 'Хранить снимков',
+	'offsite.form.keepHint': 'Более старые снимки удаляются после каждой копии.',
+	'offsite.form.check': 'Проверка целостности',
+	'offsite.form.checkHint': 'После каждой копии restic читает такую долю данных, в процентах.',
+	'offsite.form.needs': 'Ещё нужно: {what}.',
+	'offsite.form.need.target': 'поля хранилища',
+	'offsite.form.need.key': 'пара ключей UNOS',
+	'offsite.form.need.sources': 'папка для копирования',
+	'offsite.form.need.password': 'пароль, введённый дважды',
 
 	'offsite.form.save': 'Сохранить и проверить',
 	'offsite.form.saving': 'Проверка...',
@@ -298,19 +309,10 @@ export const ru: Translation<typeof en> = {
 	'offsite.form.forgetTitle': 'Забыть хранилище копий?',
 	'offsite.form.confirmForget': 'Его настройки и пароль будут удалены с этого NAS; сами копии останутся на месте.',
 	'offsite.form.forgetAction': 'Забыть хранилище',
-	'offsite.form.retention': 'Хранить снимков',
-	'offsite.form.retentionHelp': 'Сколько последних ежедневных, еженедельных и ежемесячных снимков хранит копия, от 0 до 10 000.',
-	'offsite.form.daily': 'Ежедневных',
-	'offsite.form.weekly': 'Еженедельных',
-	'offsite.form.monthly': 'Ежемесячных',
-	'offsite.form.check': 'Проверка целостности',
-	'offsite.form.checkHelp': 'После каждой копии restic читает эту долю данных, чтобы проверить их.',
-	'offsite.form.checkShare': 'Читать данных за проверку',
 	'offsite.form.limits': 'Скорость',
 	'offsite.form.upload': 'Отправка',
 	'offsite.form.download': 'Загрузка',
 	'offsite.form.kibps': 'КиБ/с',
-	'offsite.form.incomplete': 'Сначала укажите хранилище, хотя бы одну папку и пароль, дважды одинаково.',
 	'offsite.form.forgetFailed': 'Не удалось забыть хранилище',
 
 	'offsite.warning.sameDisk':
@@ -330,7 +332,8 @@ export const ru: Translation<typeof en> = {
 	'offsite.state.restoreTestPassed': 'Проверка восстановления: пройдена',
 	'offsite.state.restoreTestFailed': 'Проверка восстановления: ошибка',
 	'offsite.state.restoreTestNotRun': 'Проверка восстановления: не выполнялась',
-	'offsite.state.failedAt': 'Ошибка на шаге «{step}»:',
+	'offsite.state.failedAt': 'Копирование прервалось на шаге «{step}».',
+	'offsite.details': 'Подробнее',
 	'offsite.state.runNow': 'Запустить сейчас',
 	'offsite.state.runFailed': 'Не удалось запустить копирование',
 	'offsite.state.runStarted': 'Копирование идёт в фоне: кнопка «Обновить» покажет, как далеко оно продвинулось.',

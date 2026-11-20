@@ -116,6 +116,19 @@ export class OffsiteForm {
       (this.password !== "" || this.keepsPassword)
   );
 
+  // What Save still waits for, as keys of the catalog: said beside the disabled button.
+  missing = $derived.by(() => {
+    const keys: string[] = [];
+    if (!this.targetGiven) {
+      keys.push(this.kind === "sftp" && !this.#answer()?.sftp_public_key ? "offsite.form.need.key" : "offsite.form.need.target");
+    }
+    if (this.sources.length === 0) keys.push("offsite.form.need.sources");
+    if ((this.password === "" && !this.keepsPassword) || this.passwordTooShort || this.passwordsDiffer) {
+      keys.push("offsite.form.need.password");
+    }
+    return keys;
+  });
+
   /** The form from the stored settings, or the defaults: every managed pool, the retention of restic's. */
   fill(found: OffsiteSettingsAnswer) {
     const settings = found.settings;

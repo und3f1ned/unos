@@ -41,7 +41,7 @@
       {#if left > 0}
         <p>{$t("network.pending.countdown", { name, seconds: left })}</p>
         <Button
-          variant="warning"
+          variant="secondary"
           size="sm"
           class="mt-3"
           loading={busy === name}

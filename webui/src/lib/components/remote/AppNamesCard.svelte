@@ -11,7 +11,7 @@
 	} from '$lib/api/remoteAccess';
 	import { Alert, Button, Card, Input, Select } from '$lib/components/ui';
 	import { t } from '$lib/i18n';
-	import { Plus, Tag, Trash2 } from 'lucide-svelte';
+	import { Plus, Trash2 } from 'lucide-svelte';
 	import ConfirmDialog from './ConfirmDialog.svelte';
 	import FormDialog from './FormDialog.svelte';
 
@@ -140,14 +140,15 @@
 </script>
 
 <Card>
-	<div class="flex flex-wrap items-center justify-between gap-2 mb-4">
-		<h3 class="card-title min-w-0">
-			<Tag class="w-5 h-5 shrink-0" />
-			{$t('remote.names.title')}
-		</h3>
+	<!-- The header: an action that opens a dialog is a secondary button. -->
+	<div class="card-header">
+		<div class="min-w-0">
+			<h3 class="card-title">{$t('remote.names.title')}</h3>
+			<p class="card-description break-words">{$t('remote.names.description', { host })}</p>
+		</div>
 		{#if status?.volume && status.announcer}
-			<Button variant="primary" size="sm" disabled={busy || status.apps.length === 0} onclick={openAdd}>
-				<Plus class="w-4 h-4" />
+			<Button variant="secondary" size="sm" icon={Plus} disabled={busy || status.apps.length === 0}
+				title={status.apps.length === 0 ? $t('remote.names.noApps') : undefined} onclick={openAdd}>
 				{$t('remote.names.add')}
 			</Button>
 		{/if}
@@ -165,8 +166,6 @@
 			<Button variant="secondary" size="sm" class="mt-3" {loading} onclick={load}>{$t('common.retry')}</Button>
 		</Alert>
 	{/if}
-
-	<p class="text-sm text-content-secondary break-words">{$t('remote.names.description', { host })}</p>
 
 	{#if status && !status.volume}
 		<Alert variant="info" class="mt-4">{$t('remote.names.noVolume')}</Alert>
@@ -196,8 +195,9 @@
 						</div>
 						<Button
 							variant="ghost-danger"
-							size="icon"
+							size="icon-sm"
 							disabled={busy}
+							title={$t('remote.names.removeLabel', { name: name.name })}
 							aria-label={$t('remote.names.removeLabel', { name: name.name })}
 							onclick={() => (removing = name)}
 						>

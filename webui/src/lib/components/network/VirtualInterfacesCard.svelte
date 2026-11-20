@@ -13,9 +13,9 @@
 		type VirtualStatus,
 		type WaitingChange
 	} from '$lib/api/network';
-	import { Alert, Button } from '$lib/components/ui';
+	import { Alert, Button, EmptyState } from '$lib/components/ui';
 	import { t } from '$lib/i18n';
-	import { GitMerge, Plus } from 'lucide-svelte';
+	import { Network, Plus } from 'lucide-svelte';
 	import CreateVirtualDialog from './CreateVirtualDialog.svelte';
 	import DeleteVirtualDialog from './DeleteVirtualDialog.svelte';
 	import { labelOf, messageOf } from './network';
@@ -70,12 +70,6 @@
 		bridge: 'virtual.kindWord.bridge'
 	};
 	const CHANGES: Record<string, string> = { create: 'virtual.change.create', delete: 'virtual.change.delete' };
-	// The buttons that open the dialog, one for each kind.
-	const CREATE: { kind: VirtualKind; key: string }[] = [
-		{ kind: 'bond', key: 'virtual.createBond' },
-		{ kind: 'vlan', key: 'virtual.createVlan' },
-		{ kind: 'bridge', key: 'virtual.createBridge' }
-	];
 
 	let hosts = $derived(status?.host_interfaces ?? []);
 	let protectedNames = $derived(new Set(hosts.filter((iface) => iface.protected).map((iface) => iface.name)));
@@ -281,23 +275,18 @@
 </script>
 
 <section class="card" aria-labelledby="virtual-title">
-	<div class="flex flex-wrap items-center justify-between gap-2 mb-3">
-		<h3 id="virtual-title" class="card-title">
-			<GitMerge class="w-4 h-4 text-content-secondary" />
-			{$t('virtual.title')}
-		</h3>
+	<!-- One Create, whose dialog asks for the kind, in place of a button per kind. -->
+	<div class="card-header">
+		<div class="min-w-0">
+			<h3 id="virtual-title" class="card-title">{$t('virtual.title')}</h3>
+			<p class="card-description">{$t('virtual.description')}</p>
+		</div>
 		{#if status?.supported}
-			<div class="flex flex-wrap gap-2">
-				{#each CREATE as button (button.kind)}
-					<Button size="sm" variant="secondary" icon={Plus} disabled={busy || waits} onclick={() => form.open(button.kind)}>
-						{$t(button.key)}
-					</Button>
-				{/each}
-			</div>
+			<Button size="sm" variant="secondary" icon={Plus} disabled={busy || waits} onclick={() => form.open('bond')}>
+				{$t('virtual.createAny')}
+			</Button>
 		{/if}
 	</div>
-
-	<p class="text-sm text-content-secondary mb-3">{$t('virtual.description')}</p>
 
 	{#if success}
 		<Alert variant="success" class="mb-3">{success}</Alert>
@@ -350,7 +339,7 @@
 			<Alert variant="warning" class="mb-3">{$t('virtual.unreadable', { n: status.unreadable.length })}</Alert>
 		{/if}
 		{#if status.interfaces.length === 0}
-			<p class="text-sm text-content-muted">{$t('virtual.none')}</p>
+			<EmptyState compact icon={Network} title={$t('virtual.none')} description={$t('virtual.noneHint')} />
 		{:else}
 			<VirtualInterfaceList items={status.interfaces} disabled={busy || waits} ondelete={(item) => (deleting = item)} />
 		{/if}

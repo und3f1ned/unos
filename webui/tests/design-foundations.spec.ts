@@ -300,7 +300,7 @@ test.describe('States and settings', () => {
     // The history is a Sheet: a dialog at the right edge as tall as the window.
     await actionsFor(page, TASK.name).click();
     await page.getByRole('menu').getByRole('menuitem', { name: 'View history' }).click();
-    const sheet = page.getByRole('dialog', { name: `Run History: ${TASK.name}` });
+    const sheet = page.getByRole('dialog', { name: `Run history: ${TASK.name}` });
     await expect(sheet).toBeVisible();
     const panel = sheet.locator('.modal-panel');
     // Once it has slid in.
@@ -332,14 +332,14 @@ test.describe('States and settings', () => {
     const section = page.getByRole('region', { name: 'Off-device copy' });
 
     // The kind of target: a RadioGroup, which the arrow keys move.
-    const disk = section.getByRole('radio', { name: 'A disk' });
+    const disk = section.getByRole('radio', { name: 'Disk', exact: true });
     await disk.check();
     await disk.press('ArrowRight');
-    await expect(section.getByRole('radio', { name: 'An S3-compatible store' })).toBeChecked();
+    await expect(section.getByRole('radio', { name: 'S3-compatible store' })).toBeChecked();
     await disk.check();
 
     // Retention: one group with a legend, its fields in one line whatever their labels.
-    const kept = section.getByRole('group', { name: 'Snapshots kept' });
+    const kept = section.getByRole('group', { name: 'Snapshots to keep' });
     await expect(kept).toBeVisible();
     const tops = await Promise.all(
       ['Daily', 'Weekly', 'Monthly'].map(async (label) => (await kept.getByLabel(label, { exact: true }).boundingBox())?.y ?? 0),
@@ -351,20 +351,21 @@ test.describe('States and settings', () => {
     await kept.getByRole('button', { name: 'Increase Daily' }).click();
     await expect(daily).toHaveValue(String(before + 1));
     // The unit and the bounds describe the field.
-    const share = section.getByLabel('Data read per check', { exact: true });
+    const share = section.getByLabel('Data read', { exact: true });
     await expect(share).toHaveAccessibleDescription(/%.*From 0 to 100/);
     // A target over the network has its bandwidth, in KiB/s.
-    await section.getByRole('radio', { name: 'An S3-compatible store' }).check();
+    await section.getByRole('radio', { name: 'S3-compatible store' }).check();
     await expect(section.getByRole('group', { name: 'Bandwidth' })).toBeVisible();
     await expect(section.getByLabel('Upload', { exact: true })).toHaveAccessibleDescription(/KiB\/s/);
     await disk.check();
 
-    // Save waits for a complete form and says why, as a tooltip and the button's description; it
-    // keeps the focus, and pressing it sends nothing.
+    // Save waits for a complete form and says why, beside it, as a tooltip and as the button's
+    // description; it keeps the focus, and pressing it sends nothing.
     const save = section.getByRole('button', { name: 'Save and test' });
-    const reason = 'Fill in the target, at least one folder to copy and the password, twice the same, first.';
+    const reason = /^Still needed: .*the password, typed twice\.$/;
     await expect(save).toBeDisabled();
     await expect(save).toHaveAccessibleDescription(reason);
+    await expect(section.locator('#offsite-save-why')).toHaveText(reason);
     let sent = 0;
     page.on('request', (request) => {
       if (request.method() === 'PUT' && new URL(request.url()).pathname.startsWith('/api/v1/offsite/')) sent += 1;

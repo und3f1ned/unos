@@ -257,8 +257,8 @@ test.describe('Regular user account', () => {
     await openAs(page, userToken, '/system#scheduler');
 
     await expect(page).toHaveURL('/');
-    await expect(page.getByRole('heading', { name: 'Scheduled Tasks' })).toHaveCount(0);
-    await expect(page.getByRole('button', { name: 'New Task' })).toHaveCount(0);
+    await expect(page.getByRole('heading', { level: 2, name: 'Scheduler', exact: true })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'New task' })).toHaveCount(0);
     expect(forbidden).toEqual([]);
 
     const asUser = { Authorization: `Bearer ${userToken}` };

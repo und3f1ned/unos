@@ -1,11 +1,11 @@
 <script lang="ts">
   import { untrack } from "svelte";
-  import { CheckCircle, Clock, Edit3, History, Trash2, XCircle, Zap } from "lucide-svelte";
+  import { Edit3, History, Trash2, Zap } from "lucide-svelte";
   import type { ScheduledTask, TaskType } from "$lib/api/scheduler";
-  import { ActionMenu, Button, Switch } from "$lib/components/ui";
+  import { ActionMenu, Badge, Button, Switch } from "$lib/components/ui";
   import { intlLocale, t } from "$lib/i18n";
   import { formatDateTime } from "$lib/time";
-  import { DAYS_OF_WEEK, TASK_TYPES, getStatusColor, getTaskTypeIcon } from "./tasks";
+  import { DAYS_OF_WEEK, TASK_TYPES, getTaskTypeIcon } from "./tasks";
 
   // A task of the list (ADR-0432): its switch, type, name, target, schedule and next run on the
   // NAS's clock; Edit and Delete as icons, Run now and its history in its ⋯ menu.
@@ -15,6 +15,8 @@
     zone: string | null;
     // Run Now was asked and the server has not answered yet.
     running: boolean;
+    // The on/off was changed and the server has not answered yet: the switch shows the new state.
+    toggling: boolean;
     ontoggle: (task: ScheduledTask) => void;
     onrun: (task: ScheduledTask) => void;
     onhistory: (task: ScheduledTask) => void;
@@ -22,16 +24,16 @@
     ondelete: (task: ScheduledTask) => void;
   };
 
-  let { task, zone, running, ontoggle, onrun, onhistory, onedit, ondelete }: Props = $props();
+  let { task, zone, running, toggling, ontoggle, onrun, onhistory, onedit, ondelete }: Props = $props();
 
   let TypeIcon = $derived(getTaskTypeIcon(task.task_type));
 
-  // The switch's state: the task's, again after each load (a new task object), so that a toggle
-  // that failed shows the stored state once the list is read again.
+  // The switch's state: the task's, again whenever it changes (a load, or the page putting the stored
+  // state back after a refused toggle).
   let on = $state(untrack(() => task.enabled));
   $effect.pre(() => {
-    const current = task;
-    untrack(() => (on = current.enabled));
+    const enabled = task.enabled;
+    untrack(() => (on = enabled));
   });
 
   // The functions below that give texts are reactive, so that the list follows a change of the
@@ -69,31 +71,28 @@
 </script>
 
 <!-- Below sm the actions wrap below the task, which keeps the row's width (ADR-0302). -->
-<div class="flex flex-wrap gap-y-2 items-center justify-between p-3 bg-surface-overlay rounded-lg" data-task={task.name}>
-  <div class="flex items-center gap-3 flex-1 max-sm:basis-full min-w-0">
-    <!-- On or off: a switch, which is no action icon (ADR-0432). -->
+<div class="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 py-3" data-task={task.name}>
+  <div class="flex min-w-0 flex-1 items-start gap-3 max-sm:basis-full">
+    <!-- On or off: a switch, which is no action icon (ADR-0432); it takes no second change until
+         the server has answered the first. -->
     <Switch
       bind:checked={on}
+      disabled={toggling}
       label={$t("scheduler.task.enabledLabel", { name: task.name })}
       onchange={() => ontoggle(task)}
     />
 
-    <!-- Task Info -->
-    <div class="flex-1 min-w-0">
-      <div class="flex items-center gap-2">
-        <TypeIcon class="w-4 h-4 text-content-secondary flex-shrink-0" aria-hidden="true" />
-        <p class="font-medium text-sm truncate" title={task.name}>{task.name}</p>
-        {#if task.last_status}
-          <span class={getStatusColor(task.last_status)}>
-            {#if task.last_status === "success"}
-              <CheckCircle class="w-3.5 h-3.5" />
-            {:else if task.last_status === "failed"}
-              <XCircle class="w-3.5 h-3.5" />
-            {/if}
-          </span>
+    <div class="min-w-0 flex-1">
+      <div class="flex flex-wrap items-center gap-2">
+        <TypeIcon class="h-4 w-4 shrink-0 text-content-secondary" aria-hidden="true" />
+        <p class="min-w-0 truncate text-sm font-medium" title={task.name}>{task.name}</p>
+        {#if !task.enabled}
+          <Badge variant="neutral">{$t("scheduler.task.paused")}</Badge>
+        {:else if task.last_status === "failed"}
+          <Badge variant="error" dot>{$t("scheduler.task.lastFailed")}</Badge>
         {/if}
       </div>
-      <p class="text-xs text-content-secondary truncate">
+      <p class="truncate text-xs text-content-secondary">
         {getTaskTypeLabel(task.task_type)}
         {#if task.target_pool}
           {$t("scheduler.task.on", { target: task.target_pool })}
@@ -102,22 +101,17 @@
         {/if}
         &bull; {formatSchedule(task)}
       </p>
+      {#if nextRun}
+        <p class="mt-0.5 text-xs text-content-muted tabular">
+          <span>{$t("scheduler.task.nextRun")}</span>
+          <span>{nextRun}</span>
+        </p>
+      {/if}
     </div>
-
-    <!-- Next Run, on the NAS's clock -->
-    {#if nextRun}
-      <div class="hidden sm:flex flex-col items-end text-xs text-content-muted">
-        <span class="flex items-center gap-1">
-          <Clock class="w-3 h-3" />
-          {$t("scheduler.task.nextRun")}
-        </span>
-        <span class="tabular">{nextRun}</span>
-      </div>
-    {/if}
   </div>
 
   <!-- Actions: one line, the two icons and the menu. -->
-  <div class="table-actions ml-2 max-sm:ml-auto">
+  <div class="table-actions ml-auto">
     <Button variant="ghost" size="icon-sm" icon={Edit3} onclick={() => onedit(task)} title={$t("scheduler.task.edit")} aria-label={$t("scheduler.task.editOne", { name: task.name })}></Button>
     <Button variant="ghost-danger" size="icon-sm" icon={Trash2} onclick={() => ondelete(task)} title={$t("scheduler.task.delete")} aria-label={$t("scheduler.task.deleteOne", { name: task.name })}></Button>
     <ActionMenu
