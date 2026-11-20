@@ -10,7 +10,8 @@ export const en = {
 	'dashboard.uptime.hours': '{hours}h {minutes}m',
 	'dashboard.uptime.minutes': '{minutes}m',
 	'dashboard.liveStatsForbidden': 'Live stats are not available for this account',
-	'dashboard.disconnected': 'WebSocket disconnected',
+	'dashboard.disconnected': 'Disconnected from the NAS',
+	'dashboard.noProblems': 'No problems',
 	'dashboard.updated': 'Updated {time}',
 	'dashboard.notification': 'Notification',
 
@@ -26,6 +27,7 @@ export const en = {
 	'dashboard.user.accountLink': 'Account',
 
 	'dashboard.stats.cpu': 'CPU',
+	'dashboard.stats.cores': { one: '{n} core', other: '{n} cores' },
 	'dashboard.stats.memory': 'Memory',
 	'dashboard.stats.network': 'Network',
 	'dashboard.stats.diskIo': 'Disk I/O',
@@ -56,6 +58,8 @@ export const en = {
 	'dashboard.layout.show': 'Show {name}',
 	'dashboard.layout.hiddenTitle': 'Hidden widgets',
 	'dashboard.layout.noneHidden': 'No hidden widgets',
+	'dashboard.layout.allHidden': 'All widgets are hidden',
+	'dashboard.layout.allHiddenHint': 'Customize shows them again.',
 	'dashboard.layout.reset': 'Reset to default',
 	'dashboard.layout.moved': '{name} moved to position {position} of {total}',
 	'dashboard.layout.hidden': '{name} hidden',
@@ -119,7 +123,8 @@ export const ru: Translation<typeof en> = {
 	'dashboard.uptime.hours': '{hours} ч {minutes} мин',
 	'dashboard.uptime.minutes': '{minutes} мин',
 	'dashboard.liveStatsForbidden': 'Статистика в реальном времени недоступна для этой учётной записи',
-	'dashboard.disconnected': 'WebSocket отключён',
+	'dashboard.disconnected': 'Нет связи с NAS',
+	'dashboard.noProblems': 'Проблем нет',
 	'dashboard.updated': 'Обновлено {time}',
 	'dashboard.notification': 'Уведомление',
 
@@ -136,6 +141,7 @@ export const ru: Translation<typeof en> = {
 	'dashboard.user.accountLink': 'Учётная запись',
 
 	'dashboard.stats.cpu': 'Процессор',
+	'dashboard.stats.cores': { one: '{n} ядро', few: '{n} ядра', many: '{n} ядер' },
 	'dashboard.stats.memory': 'Память',
 	'dashboard.stats.network': 'Сеть',
 	'dashboard.stats.diskIo': 'Дисковый ввод-вывод',
@@ -165,6 +171,8 @@ export const ru: Translation<typeof en> = {
 	'dashboard.layout.show': 'Показать «{name}»',
 	'dashboard.layout.hiddenTitle': 'Скрытые виджеты',
 	'dashboard.layout.noneHidden': 'Скрытых виджетов нет',
+	'dashboard.layout.allHidden': 'Все виджеты скрыты',
+	'dashboard.layout.allHiddenHint': 'Кнопка «Настроить» снова их покажет.',
 	'dashboard.layout.reset': 'Сбросить по умолчанию',
 	'dashboard.layout.moved': 'Виджет «{name}» теперь на месте {position} из {total}',
 	'dashboard.layout.hidden': 'Виджет «{name}» скрыт',

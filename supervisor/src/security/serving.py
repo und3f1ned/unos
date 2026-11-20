@@ -24,7 +24,7 @@ import os
 import socket
 import ssl
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, UTC
 from pathlib import Path
 
 import requests
@@ -178,7 +178,7 @@ def prepare(certificate: bytes, key: bytes, chain: bytes | None, now: datetime |
     certificate, its chain in order and the key (PKCS #8), each as cryptography writes it, so that
     the same stored files make the same bytes. Raises CertificateRefused with the reason.
     """
-    now = now or datetime.now(timezone.utc)
+    now = now or datetime.now(UTC)
     try:
         certificates = x509.load_pem_x509_certificates(certificate)
     except ValueError:

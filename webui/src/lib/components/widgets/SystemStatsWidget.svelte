@@ -2,32 +2,45 @@
 	import { Cpu, HardDrive, MemoryStick, Network, Thermometer } from 'lucide-svelte';
 	import { Card, ProgressBar } from '$lib/components/ui';
 	import { t } from '$lib/i18n';
+	import { formatBytes } from './bytes';
 
-	export let cpuPercent: number = 0;
-	export let memoryPercent: number = 0;
-	export let memoryUsed: number = 0;
-	export let memoryTotal: number = 0;
-	export let networkUp: number = 0;
-	export let networkDown: number = 0;
-	// The bytes per second read from and written to the host's disks (ADR-0388).
-	export let diskRead: number = 0;
-	export let diskWrite: number = 0;
-	export let temperature: number | null = null;
-	export let compact: boolean = false;
-	// One card of the stats, by its widget id, for the dashboard's grid of widgets (ADR-0395); the dashboard lays the cards out itself.
-	export let only: 'cpu' | 'memory' | 'network' | 'disk-io' | 'temperature' = 'cpu';
-
-	// The units of a size, from bytes up: keys of the catalog (ADR-0297).
-	const UNITS = ['dashboard.unit.b', 'dashboard.unit.kb', 'dashboard.unit.mb', 'dashboard.unit.gb', 'dashboard.unit.tb'];
-
-	$: formatBytes = (bytes: number): string => {
-		if (bytes === 0) return `0 ${$t(UNITS[0])}`;
-		const k = 1024;
-		const i = Math.floor(Math.log(bytes) / Math.log(k));
-		return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + $t(UNITS[i]);
+	type Props = {
+		cpuPercent?: number;
+		memoryPercent?: number;
+		memoryUsed?: number;
+		memoryTotal?: number;
+		networkUp?: number;
+		networkDown?: number;
+		// The bytes per second read from and written to the host's disks (ADR-0388).
+		diskRead?: number;
+		diskWrite?: number;
+		temperature?: number | null;
+		/** The CPU's cores, when the server knows them: the CPU tile's context word. */
+		cpuCores?: number;
+		compact?: boolean;
+		// One card of the stats, by its widget id, for the dashboard's grid of widgets (ADR-0395); the dashboard lays the cards out itself.
+		only?: 'cpu' | 'memory' | 'network' | 'disk-io' | 'temperature';
 	};
 
-	$: formatRate = (bytes: number): string => $t('dashboard.rate', { size: formatBytes(bytes) });
+	let {
+		cpuPercent = 0,
+		memoryPercent = 0,
+		memoryUsed = 0,
+		memoryTotal = 0,
+		networkUp = 0,
+		networkDown = 0,
+		diskRead = 0,
+		diskWrite = 0,
+		temperature = null,
+		cpuCores = 0,
+		compact = false,
+		only = 'cpu'
+	}: Props = $props();
+
+	// The functions that read $t do it where the markup calls them: the texts follow the language.
+	function formatRate(bytes: number): string {
+		return $t('dashboard.rate', { size: formatBytes(bytes, $t) });
+	}
 
 	function getPercentColor(percent: number): string {
 		if (percent < 70) return 'text-success';
@@ -60,78 +73,82 @@
 		{/if}
 	</div>
 {:else}
+	<!-- A stat tile (ADR-0428): an icon chip in the widget's accent, the label and a context word;
+	     the value in the text's colour in the normal range (the class text-success stays) and in
+	     the status colour above the thresholds; a thin meter, or the rates with a plain arrow. -->
+	{#snippet header(Icon: typeof Cpu, chip: string, label: string, context: string)}
+		<div class="stat-card-header">
+			<span class="stat-chip {chip}" aria-hidden="true"><Icon class="w-4 h-4" /></span>
+			<span class="stat-card-label">{label}</span>
+			{#if context}<span class="stat-card-context">{context}</span>{/if}
+		</div>
+	{/snippet}
 	<div class="stat-cell">
 		<!-- CPU -->
 		{#if only === 'cpu'}
-		<Card>
-			<div class="stat-card-header">
-				<Cpu class="w-5 h-5 icon-cpu" />
-				<span class="stat-card-label">{$t('dashboard.stats.cpu')}</span>
-			</div>
+		<Card padding="sm" class="stat-card">
+			{@render header(Cpu, 'chip-cpu', $t('dashboard.stats.cpu'), cpuCores > 0 ? $t('dashboard.stats.cores', { n: cpuCores }) : '')}
 			<p class="stat-card-value {getPercentColor(cpuPercent)}">{cpuPercent.toFixed(1)}%</p>
-			<ProgressBar value={cpuPercent} size="sm" class="mt-2" />
+			<ProgressBar value={cpuPercent} size="sm" class="mt-auto pt-1" label={$t('dashboard.stats.cpu')} />
 		</Card>
 		{/if}
 
 		<!-- Memory -->
 		{#if only === 'memory'}
-		<Card>
-			<div class="stat-card-header">
-				<MemoryStick class="w-5 h-5 icon-memory" />
-				<span class="stat-card-label">{$t('dashboard.stats.memory')}</span>
-			</div>
+		<Card padding="sm" class="stat-card">
+			{@render header(MemoryStick, 'chip-memory', $t('dashboard.stats.memory'), '')}
 			<p class="stat-card-value {getPercentColor(memoryPercent)}">{memoryPercent.toFixed(1)}%</p>
-			<p class="stat-card-sublabel">{formatBytes(memoryUsed)} / {formatBytes(memoryTotal)}</p>
-			<ProgressBar value={memoryPercent} size="sm" class="mt-2" />
+			<ProgressBar value={memoryPercent} size="sm" class="mt-auto pt-1" label={$t('dashboard.stats.memory')} />
+			<p class="stat-card-sublabel">{formatBytes(memoryUsed, $t)} / {formatBytes(memoryTotal, $t)}</p>
 		</Card>
 		{/if}
 
-		<!-- Network -->
+		<!-- Network: received, then sent -->
 		{#if only === 'network'}
-		<Card>
-			<div class="stat-card-header">
-				<Network class="w-5 h-5 icon-network" />
-				<span class="stat-card-label">{$t('dashboard.stats.network')}</span>
-			</div>
-			<div class="flex items-center gap-2">
-				<span class="text-success">↓</span>
-				<span class="text-lg font-semibold">{formatRate(networkDown)}</span>
-			</div>
-			<div class="flex items-center gap-2">
-				<span class="icon-temperature">↑</span>
-				<span class="text-lg font-semibold">{formatRate(networkUp)}</span>
-			</div>
+		<Card padding="sm" class="stat-card">
+			{@render header(Network, 'chip-network', $t('dashboard.stats.network'), '')}
+			<p class="flex items-baseline gap-2">
+				<span class="w-4 text-xs text-content-muted" aria-hidden="true">↓</span>
+				<span class="text-lg font-semibold tabular">{formatRate(networkDown)}</span>
+			</p>
+			<p class="flex items-baseline gap-2">
+				<span class="w-4 text-xs text-content-muted" aria-hidden="true">↑</span>
+				<span class="text-lg font-semibold tabular">{formatRate(networkUp)}</span>
+			</p>
 		</Card>
 		{/if}
 
 		<!-- Disk I/O: read, then written. A label goes above its rate where the card has no room for
 		     both (ADR-0302). -->
 		{#if only === 'disk-io'}
-		<Card>
-			<div class="stat-card-header">
-				<HardDrive class="w-5 h-5 icon-storage flex-shrink-0" />
-				<span class="stat-card-label">{$t('dashboard.stats.diskIo')}</span>
-			</div>
+		<Card padding="sm" class="stat-card">
+			{@render header(HardDrive, 'chip-storage', $t('dashboard.stats.diskIo'), '')}
 			<p class="flex flex-wrap items-baseline gap-x-2">
 				<span class="stat-card-sublabel">{$t('dashboard.stats.read')}</span>
-				<span class="text-lg font-semibold">{formatRate(diskRead)}</span>
+				<span class="text-lg font-semibold tabular">{formatRate(diskRead)}</span>
 			</p>
 			<p class="flex flex-wrap items-baseline gap-x-2">
 				<span class="stat-card-sublabel">{$t('dashboard.stats.write')}</span>
-				<span class="text-lg font-semibold">{formatRate(diskWrite)}</span>
+				<span class="text-lg font-semibold tabular">{formatRate(diskWrite)}</span>
 			</p>
 		</Card>
 		{/if}
 
-		<!-- Temperature -->
+		<!-- Temperature, its meter against 90 °C -->
 		{#if only === 'temperature'}
-		<Card>
-			<div class="stat-card-header">
-				<Thermometer class="w-5 h-5 icon-temperature" />
-				<span class="stat-card-label">{$t('dashboard.stats.temperature')}</span>
-			</div>
+		<Card padding="sm" class="stat-card">
+			{@render header(Thermometer, 'chip-temperature', $t('dashboard.stats.temperature'), '')}
 			{#if temperature !== null}
 				<p class="stat-card-value {getTempColor(temperature)}">{$t('dashboard.celsius', { value: temperature })}</p>
+				<ProgressBar
+					value={temperature}
+					max={90}
+					size="sm"
+					variant={temperature < 50 ? 'success' : temperature < 70 ? 'warning' : 'error'}
+					class="mt-auto pt-1"
+					label={$t('dashboard.stats.temperature')}
+					valueText={$t('dashboard.celsius', { value: temperature })}
+				/>
 			{:else}
 				<p class="stat-card-value text-muted">{$t('dashboard.stats.none')}</p>
 			{/if}

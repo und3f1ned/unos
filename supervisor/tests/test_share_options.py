@@ -17,6 +17,7 @@ from src.shares.service import ShareRender
 
 from .test_share_api import ALICE, API, access, section
 from .test_share_api import api as share_api  # noqa: F401  (a fixture: the share API on the real app)
+from datetime import UTC
 
 PATH = "/mnt/pools/data/shared"
 FRUIT = ("catia", "fruit", "streams_xattr")
@@ -640,13 +641,13 @@ def test_unos_s_snapshot_names_are_the_ones_previous_versions_list():
     with shadow:snapprefix (a POSIX basic regular expression) and reads the rest, delimiter included,
     with shadow:format: the names of the Snapshots page (snap_) and of the Scheduler (auto_)."""
     import re
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     from src.snapshots.router import AUTO_SNAPSHOT_PREFIX, RESTORE_PREFIX, SNAPSHOT_PREFIX, utc_stamp
 
     settings = dict(smbconf._SNAPSHOT_LINES)
     prefix = re.compile(settings["shadow:snapprefix"].replace("\\(", "(").replace("\\)", ")").replace("\\|", "|"))
-    before = datetime.now(timezone.utc).replace(microsecond=0, tzinfo=None)
+    before = datetime.now(UTC).replace(microsecond=0, tzinfo=None)
     for name in (SNAPSHOT_PREFIX + utc_stamp(), AUTO_SNAPSHOT_PREFIX + utc_stamp()):
         head, delimiter, rest = name.partition(settings["shadow:delimiter"])
         assert prefix.search(head), name

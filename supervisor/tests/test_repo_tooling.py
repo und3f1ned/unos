@@ -99,7 +99,7 @@ def test_help_is_the_default_target():
 
 @pytest.mark.parametrize("target, commands", [
     ("setup", ["scripts/setup.sh"]),
-    ("lint", ["/opt/lint/bin/ruff check --select F,E9 supervisor scripts .claude/hooks", "bash -n",
+    ("lint", ["/opt/lint/bin/ruff check supervisor scripts .claude/hooks", "bash -n",
               "deploy scripts .claude/hooks", "/opt/py/bin/python -m json.tool",
               "feature-list.json .claude/settings.json"]),
     ("test", ["cd supervisor &&", "/opt/py/bin/python -m pytest tests/ -q --tb=short "
@@ -195,7 +195,7 @@ def test_the_defaults_are_the_environments_of_make_setup(tmp_path):
 
     assert "python3 -m pytest" in plain and "\nruff check" in "\n" + plain
     assert f"{tmp_path.resolve()}/supervisor/.venv/bin/python -m pytest" in installed
-    assert ".venv-lint/bin/ruff check --select F,E9 supervisor scripts .claude/hooks" in installed
+    assert ".venv-lint/bin/ruff check supervisor scripts .claude/hooks" in installed
 
 
 def test_check_runs_every_part_even_when_one_fails(tmp_path):
@@ -212,6 +212,73 @@ def test_check_runs_every_part_even_when_one_fails(tmp_path):
     # Each part starts with the line that .claude/hooks/stop-check.sh looks for.
     assert [line for line in result.stdout.splitlines() if line.startswith("== make check: ")] == [
         "== make check: lint", "== make check: test", "== make check: frontend"]
+
+
+def _ruff() -> str:
+    """The ruff of make lint: make setup's, else the one on PATH, of the version that
+    .github/lint-requirements.in pins."""
+    installed = REPO_ROOT / ".venv-lint" / "bin" / "ruff"
+    found = str(installed) if installed.exists() else shutil.which("ruff")
+    if found is None:
+        pytest.skip("ruff is not installed (make setup puts it in .venv-lint)")
+    pinned = re.search(r"^ruff==(\S+)$", (REPO_ROOT / ".github" / "lint-requirements.in").read_text(), re.M)
+    version = subprocess.run([found, "--version"], capture_output=True, text=True, check=True).stdout.split()
+    if version[-1:] != [pinned.group(1)]:
+        pytest.skip(f"{found} is {' '.join(version)}, not the pinned ruff {pinned.group(1)}")
+    return found
+
+
+# One defect of each kind that ruff.toml selects beyond F and E9 (ADR-0425), and the code it gets.
+RUFF_BUGS = {
+    "B006": "def add(item, items=[]):\n    items.append(item)\n    return items\n",
+    "B023": "def late():\n    calls = []\n    for i in range(3):\n        calls.append(lambda: i)\n    return calls\n",
+    "W605": 'PATTERN = "\\d+"\n',
+    "E402": "import os\n\nos.umask(0o022)\nimport sys\n\nPATH = sys.path\n",
+    "E711": "def missing(value):\n    return value == None\n",
+    "UP017": "import datetime\n\nZONE = datetime.timezone.utc\n",
+    "S202": "import tarfile\n\n\ndef unpack(path):\n    with tarfile.open(path) as tar:\n"
+            "        tar.extractall('/tmp/out')\n",
+    "S602": "import subprocess\n\n\ndef run(name):\n    subprocess.run('ls ' + name, shell=True, check=False)\n",
+    "PLW0127": "def same(value):\n    value = value\n    return value\n",
+    "RUF006": "import asyncio\n\n\nasync def start(work):\n    asyncio.create_task(work())\n",
+    "RUF100": "import os  # noqa: E501\n\nCWD = os.getcwd()\n",
+    "SIM115": "def first(path):\n    handle = open(path)\n    return handle.readline()\n",
+    "T100": "def stop():\n    breakpoint()\n",
+    "LOG015": "import logging\n\n\ndef say():\n    logging.info('to the root logger')\n",
+}
+
+
+def test_ruff_finds_bugs_beyond_pyflakes(tmp_path):
+    # make lint runs ruff over the supervisor and the repository's tooling with the rules of
+    # ruff.toml, not a --select of its own: the CI workflow's Lint job runs make lint.
+    lint = make("-n", "lint-ruff", "RUFF=ruff").stdout
+    assert lint.splitlines() == ["ruff check supervisor scripts .claude/hooks"]
+    shutil.copy(REPO_ROOT / "ruff.toml", tmp_path / "ruff.toml")
+    src = tmp_path / "supervisor" / "src"
+    src.mkdir(parents=True)
+    for code, text in RUFF_BUGS.items():
+        (src / f"{code.lower()}.py").write_text(text)
+    # main.py imports after it pins tempfile and configures logging (ADR-0171, ADR-0398).
+    (src / "main.py").write_text(RUFF_BUGS["E402"])
+    # The workstation's python3 runs the tooling: an annotation that Python 3.9 cannot evaluate is
+    # a finding there (FA102), in the supervisor's Python 3.11 none. Tests may run shells (S).
+    union = "def pick(value: int | None) -> int:\n    return value or 0\n"
+    (src / "union.py").write_text(union)
+    for tooling in ("scripts", ".claude/hooks"):
+        (tmp_path / tooling).mkdir(parents=True)
+        (tmp_path / tooling / "union.py").write_text(union)
+    tests = tmp_path / "supervisor" / "tests"
+    tests.mkdir()
+    (tests / "test_shell.py").write_text(RUFF_BUGS["S602"])
+
+    result = subprocess.run([_ruff(), "check", "--no-cache", "--output-format", "json", "supervisor", "scripts",
+                             ".claude/hooks"], cwd=tmp_path, capture_output=True, text=True, check=False)
+
+    assert result.returncode == 1, result.stderr
+    found = {(Path(item["filename"]).relative_to(tmp_path).as_posix(), item["code"])
+             for item in json.loads(result.stdout)}
+    assert found == {(f"supervisor/src/{code.lower()}.py", code) for code in RUFF_BUGS} | {
+        ("scripts/union.py", "FA102"), (".claude/hooks/union.py", "FA102")}
 
 
 def test_lint_and_frontend_run_every_part_even_when_one_fails(tmp_path):
@@ -1446,7 +1513,7 @@ def test_dependabot_proposes_the_next_commit_of_every_pinned_action():
 
 
 def test_dependabot_leaves_major_npm_versions_and_playwright_alone():
-    """Majors of the web UI's toolchain are features; Playwright moves with its image by hand (ADR-0231)."""
+    """Majors of the web UI's toolchain are features; Playwright moves with its image by hand (ADR-0427)."""
     config = yaml.safe_load((REPO_ROOT / ".github" / "dependabot.yml").read_text())
     updates = {update["package-ecosystem"]: update for update in config["updates"]}
     npm_ignored = {rule["dependency-name"]: rule.get("update-types") for rule in updates["npm"]["ignore"]}
@@ -1604,7 +1671,7 @@ def _literal(value: str):
     return value
 
 
-def secret_shapes(text: str, name: str = "", used: set = None) -> list:
+def secret_shapes(text: str, name: str = "", used: set | None = None) -> list:
     """(line number, shape) of every secret-shaped literal of a text; the value is never returned.
     `name` is the file's path in the repository: the mapping shape applies to YAML and JSON files,
     and a value that ALLOWED_SECRET_VALUES allows in that file is left out and added to `used`."""

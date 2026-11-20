@@ -8,14 +8,14 @@
 
 	const options = LANGUAGES.map((language) => ({ value: language.code, label: language.name }));
 
-	function choose(event: CustomEvent<{ value: string }>) {
-		if (isLocale(event.detail.value)) locale.set(event.detail.value);
+	function choose(value: string) {
+		if (isLocale(value)) locale.set(value);
 	}
 </script>
 
 <Card>
-	<h3 class="section-title mb-4">
-		<Languages class="w-5 h-5" />
+	<h3 class="card-title mb-4">
+		<Languages class="w-5 h-5 text-content-secondary" />
 		{$t('account.language.title')}
 	</h3>
 	<Select
@@ -25,6 +25,6 @@
 		hint={$t('account.language.hint')}
 		value={$locale}
 		{options}
-		on:change={choose}
+		onchange={choose}
 	/>
 </Card>

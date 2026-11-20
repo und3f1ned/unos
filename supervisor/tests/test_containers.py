@@ -320,6 +320,27 @@ class TestImageOperations:
             call(image.id, force=False),
         ]
 
+    def test_remove_image_waits_longer_than_other_requests(self, mock_docker_client):
+        """Docker removed a BookStack image of 480 MiB from the dev device's SD card in more than the
+        60 s that docker-py waits for an answer: the route answered 500 Read timed out, the image went
+        all the same, and nothing was audited (device check of 2026-11-19). A removal's client
+        waits IMAGE_REMOVE_TIMEOUT_SECONDS."""
+        image = MagicMock(id="sha256:abc123".ljust(71, "0"), short_id="sha256:abc123", tags=["nginx:latest"])
+        mock_docker_client.images.get.return_value = image
+        mock_docker_client.containers.list.return_value = []
+        timeouts = []
+        mock_docker_client.images.remove.side_effect = lambda *a, **k: timeouts.append(mock_docker_client.api.timeout)
+
+        with patch("src.containers.docker.get_client", return_value=mock_docker_client):
+            docker_module.remove_image("sha256:abc123")
+        assert timeouts == [docker_module.IMAGE_REMOVE_TIMEOUT_SECONDS] * 2
+        assert docker_module.IMAGE_REMOVE_TIMEOUT_SECONDS >= 600 > docker_module.DOCKER_TIMEOUT_SECONDS
+        # docker-py reads the timeout of its APIClient at every request.
+        import docker
+        api = docker.APIClient(base_url="unix:///nonexistent.sock", version="1.44")
+        api.timeout = 600
+        assert api._set_request_timeout({}) == {"timeout": 600}
+
     def test_remove_image_not_found(self, mock_docker_client):
         """Test removing non-existent image."""
         from docker.errors import NotFound

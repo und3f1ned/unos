@@ -1,7 +1,8 @@
 // Stand-in for the web UI container's Caddy (webui/Caddyfile) on this machine,
 // for the local E2E runs of scripts/standin/e2e.sh. Node.js standard library only.
 //
-//   HTTPS: the static build with the SPA fallback (try_files {path} /index.html),
+//   HTTPS: HTTP/2, and HTTP/1.1 for a client that asks for it (WebSockets), as
+//          Caddy serves; the static build with the SPA fallback (try_files {path} /index.html),
 //          /api/* and /ws/* (WebSocket upgrades included) proxied to the
 //          supervisor, and the Caddyfile's security headers on every answer,
 //          proxied ones included ("defer").
@@ -18,7 +19,7 @@
 // Usage: node front.mjs <buildDir> <httpsPort> <httpPort> <backendPort> <certFile> <keyFile> <servedFile>
 import fs from 'node:fs';
 import http from 'node:http';
-import https from 'node:https';
+import http2 from 'node:http2';
 import net from 'node:net';
 import path from 'node:path';
 import tls from 'node:tls';
@@ -61,11 +62,19 @@ function log(...parts) {
 	console.log(new Date().toISOString().slice(11, 19), ...parts);
 }
 
+// Headers of one HTTP/1.1 connection, which HTTP/2 does not have (RFC 9113, 8.2.2).
+const CONNECTION_HEADERS = new Set(['connection', 'keep-alive', 'proxy-connection', 'transfer-encoding', 'upgrade']);
+
+/** The host and port the request names: Host in HTTP/1.1, :authority in HTTP/2. */
+function hostOf(req) {
+	return req.headers.host || req.headers[':authority'] || '';
+}
+
 /** Lower-case names, so that they replace the upstream's headers of the same name. */
 function securityHeaders(req) {
 	const headers = {};
 	for (const [name, value] of Object.entries(SECURITY_HEADERS)) {
-		headers[name.toLowerCase()] = value.replace('{hostport}', req.headers.host || '');
+		headers[name.toLowerCase()] = value.replace('{hostport}', hostOf(req));
 	}
 	return headers;
 }
@@ -73,12 +82,15 @@ function securityHeaders(req) {
 /** The request's headers for the supervisor: X-Forwarded-* are set here, never passed on (Caddy's default). */
 function forwardedHeaders(req, proto) {
 	const headers = {};
+	// HTTP/2's pseudo-headers (:method, :path, :authority) are not headers of the upstream's request.
 	for (const [name, value] of Object.entries(req.headers)) {
-		if (!name.startsWith('x-forwarded-')) headers[name] = value;
+		if (!name.startsWith('x-forwarded-') && !name.startsWith(':')) headers[name] = value;
 	}
+	const host = hostOf(req);
+	if (host) headers.host = host;
 	headers['x-forwarded-for'] = req.socket.remoteAddress;
 	headers['x-forwarded-proto'] = proto;
-	if (req.headers.host) headers['x-forwarded-host'] = req.headers.host;
+	if (host) headers['x-forwarded-host'] = host;
 	return headers;
 }
 
@@ -86,7 +98,9 @@ function proxy(req, res, proto, withSecurityHeaders) {
 	const upstream = http.request(
 		{ host: '127.0.0.1', port: backendPort, method: req.method, path: req.url, headers: forwardedHeaders(req, proto) },
 		(ures) => {
-			res.writeHead(ures.statusCode, { ...ures.headers, ...(withSecurityHeaders ? securityHeaders(req) : {}) });
+			const headers = { ...ures.headers };
+			if (req.httpVersionMajor === 2) for (const name of CONNECTION_HEADERS) delete headers[name];
+			res.writeHead(ures.statusCode, { ...headers, ...(withSecurityHeaders ? securityHeaders(req) : {}) });
 			ures.pipe(res);
 		},
 	);
@@ -190,7 +204,9 @@ function followServedFile() {
 }
 
 for (const [address, required] of [['127.0.0.1', true], ['::1', false]]) {
-	const secure = https.createServer(ownTls, httpsHandler);
+	// HTTP/2 as Caddy, so that a page's many module preloads share one connection; HTTP/1.1 for a
+	// client that asks for it, and for the WebSockets' upgrades.
+	const secure = http2.createSecureServer({ ...ownTls, allowHTTP1: true }, httpsHandler);
 	// Before the TLS socket is made with the server's context, which it takes at once.
 	secure.prependListener('connection', followServedFile);
 	secure.on('upgrade', upgradeHandler);

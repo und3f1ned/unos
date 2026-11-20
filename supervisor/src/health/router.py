@@ -12,7 +12,7 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks, Query
 from fastapi import Path as PathParam
 from pydantic import BaseModel, ConfigDict, Field
-from typing import Annotated, Optional
+from typing import Annotated
 
 from . import problems
 from .. import host, paths, state_files
@@ -54,20 +54,20 @@ class SmartInfo(BaseModel):
     firmware: str = Field(description="The firmware version; Unknown when smartctl reports none.")
     capacity: str = Field(description="The size, such as 3.64 TB or 476.94 GB; Unknown when smartctl reports none "
                           "(GET /health/disks then gives lsblk's).")
-    temperature: Optional[int] = Field(description="The temperature in degrees Celsius; null when the disk reports none.")
-    power_on_hours: Optional[int] = Field(description="The hours the disk has been powered on; null when it reports none.")
-    power_cycle_count: Optional[int] = Field(description="How often the disk was powered on; null when it reports none.")
+    temperature: int | None = Field(description="The temperature in degrees Celsius; null when the disk reports none.")
+    power_on_hours: int | None = Field(description="The hours the disk has been powered on; null when it reports none.")
+    power_cycle_count: int | None = Field(description="How often the disk was powered on; null when it reports none.")
     # ADR-0378: smartctl -n standby leaves a disk that sleeps alone.
     health_status: str = Field(description=(
         "PASSED or FAILED: the disk's overall health self-assessment; UNKNOWN when smartctl cannot tell; "
         "STANDBY when the disk sleeps: it is left asleep, and no SMART data is read."))
     attributes: list[SmartAttribute] = Field(description="The disk's ATA SMART attributes; none for NVMe disks.")
-    nvme_health: Optional[dict[str, int]] = Field(None, description=(
+    nvme_health: dict[str, int] | None = Field(None, description=(
         "An NVMe disk's SMART/Health Information log: its numbers by smartctl's names and in its order, such as "
         "critical_warning, available_spare and media_errors; null for other disks."))
-    self_test_status: Optional[str] = Field(description=(
+    self_test_status: str | None = Field(description=(
         "The type of the newest self-test in the disk's log, such as Short offline; null when the log has none."))
-    last_test_result: Optional[str] = Field(description=(
+    last_test_result: str | None = Field(description=(
         "The result of the newest self-test, such as Completed without error; null when the log has none."))
 
 
@@ -107,7 +107,7 @@ class RaidHealthInfo(BaseModel):
 
     pool: str = Field(description="The pool's name.")
     mount_point: str = Field(description="Where the pool is mounted when it is, such as /mnt/pools/data.")
-    profile: Optional[str] = Field(description=(
+    profile: str | None = Field(description=(
         "The data profile, such as single, raid1 or raid10; null when the pool is not mounted or btrfs does not tell."))
     # The pool's health as the Storage page reports it (storage.pools).
     status: str = Field(description=(
@@ -126,7 +126,7 @@ class RaidHealthInfo(BaseModel):
 
 # In-memory state for RAID monitoring
 _raid_monitor_running = False
-_raid_monitor_task: Optional[asyncio.Task] = None
+_raid_monitor_task: asyncio.Task | None = None
 RAID_CHECK_INTERVAL = 300  # Check every 5 minutes
 RAID_STATUS_FILE = str(paths.RAID_STATUS)
 SMART_HISTORY_FILE = str(paths.SMART_HISTORY)
@@ -161,7 +161,7 @@ CRITICAL_ATTRIBUTES = {
 
 # SMART trend monitoring state
 _smart_monitor_running = False
-_smart_monitor_task: Optional[asyncio.Task] = None
+_smart_monitor_task: asyncio.Task | None = None
 
 
 class SmartHistoryEntry(BaseModel):
@@ -171,17 +171,17 @@ class SmartHistoryEntry(BaseModel):
     device: str = Field(description="The disk's path then, such as /dev/sda.")
     serial: str = Field(description="The disk's serial as smartctl reports it: the key of its history; unknown without one.")
     # Tells which connected disk the history belongs to (ADR-0235).
-    lsblk_serial: Optional[str] = Field(None, description=(
+    lsblk_serial: str | None = Field(None, description=(
         "The disk's serial as lsblk reported it then; null when lsblk reports none, as behind some USB bridges."))
     attributes: dict[int, int] = Field(description=(
         "The raw values of the counters 5, 187, 188, 197, 198 and 199 that the disk reports, by attribute id."))
-    temperature: Optional[int] = Field(None, description="The temperature in degrees Celsius; null when the disk reports none.")
-    power_on_hours: Optional[int] = Field(None, description="The hours the disk has been powered on; null when it reports none.")
+    temperature: int | None = Field(None, description="The temperature in degrees Celsius; null when the disk reports none.")
+    power_on_hours: int | None = Field(None, description="The hours the disk has been powered on; null when it reports none.")
     # What smartctl said of the disk's health with this snapshot, which the SMART monitor keeps in
     # RAM for the disk problems (ADR-0332); never stored in the history (exclude).
     health_failed: bool = Field(default=False, exclude=True, description=(
         "Whether the disk's overall health self-assessment FAILED."))
-    failed_self_test: Optional[str] = Field(default=None, exclude=True, description=(
+    failed_self_test: str | None = Field(default=None, exclude=True, description=(
         "The result of the newest self-test when it failed; null otherwise."))
 
 
@@ -218,7 +218,7 @@ class _SmartHistoryState:
     lists, so that the endpoints can read the one they got without a lock.
     """
 
-    history: Optional[dict[str, list[dict]]] = None  # None until the monitor's first pass
+    history: dict[str, list[dict]] | None = None  # None until the monitor's first pass
     unsaved: bool = False  # holds snapshots that SMART_HISTORY_FILE does not
     changed: bool = False  # one of them changed the history: written at the next pass if not yet
     stopped: bool = False  # written at shutdown: a pass that ends later keeps nothing
@@ -295,7 +295,7 @@ def save_smart_history(history: dict[str, list[dict]]):
     state_files.write_json(Path(SMART_HISTORY_FILE), history, sync=True)
 
 
-def collect_smart_snapshot(device: str) -> Optional[SmartHistoryEntry]:
+def collect_smart_snapshot(device: str) -> SmartHistoryEntry | None:
     """Collect current SMART data for trend tracking (blocking).
 
     ``-n standby`` leaves disks that sleep alone: reading SMART data would
@@ -365,7 +365,7 @@ _NVME_SELF_TEST_FAILURES = {5, 6, 7}
 _NVME_TOO_HOT = 0x02
 
 
-def _health_verdicts(data: dict) -> tuple[bool, Optional[str]]:
+def _health_verdicts(data: dict) -> tuple[bool, str | None]:
     """Whether ``smartctl -j -a`` says the overall health self-assessment FAILED, and the result of
     the newest self-test when it failed, as smartctl names it (ADR-0332).
 
@@ -441,7 +441,7 @@ def _latest_counters(entries: list[dict]) -> dict[int, int]:
     return latest
 
 
-def _snapshots_of_one_disk(serial: str, entries: list[dict], device: Optional[str]) -> list[dict]:
+def _snapshots_of_one_disk(serial: str, entries: list[dict], device: str | None) -> list[dict]:
     """The snapshots of the disk at ``device`` in the history of ``serial`` (ADR-0270).
 
     A serial names one disk wherever it was: all of its snapshots. The disks
@@ -636,9 +636,9 @@ class _DiskVerdict:
     """What the SMART monitor's last read of a disk said of its health (ADR-0332)."""
 
     serial: str  # smartctl's
-    lsblk_serial: Optional[str]  # lsblk's, of the disk at the path then
+    lsblk_serial: str | None  # lsblk's, of the disk at the path then
     health_failed: bool  # the overall health self-assessment FAILED
-    failed_self_test: Optional[str]  # the result of the newest self-test, when it failed
+    failed_self_test: str | None  # the result of the newest self-test, when it failed
 
 
 # The verdict of each disk of the host by its path, from the SMART monitor's passes: one that
@@ -787,8 +787,6 @@ def save_unsaved_smart_history() -> None:
 
 async def smart_monitor_loop():
     """Background loop for SMART trend monitoring, and the problems of the disks (ADR-0332)."""
-    global _smart_monitor_running
-
     while _smart_monitor_running:
         try:
             # smartctl takes seconds per disk: never run it on the event loop.
@@ -802,7 +800,7 @@ async def smart_monitor_loop():
         await asyncio.sleep(SMART_CHECK_INTERVAL)
 
 
-def parse_btrfs_device_stats(pool_path: str) -> Optional[list[RaidDeviceStats]]:
+def parse_btrfs_device_stats(pool_path: str) -> list[RaidDeviceStats] | None:
     """Parse btrfs device stats output for error counts.
 
     Returns None when the counters cannot be read (the command failed, e.g.
@@ -883,12 +881,12 @@ class _PoolsRead:
     """What a check of the RAID health read of the pools (storage.pools.pools_and_managed_names)."""
 
     pools: list[PoolInfo]
-    managed: Optional[set[str]]  # the names in the host's fstab; None when it could not be read
+    managed: set[str] | None  # the names in the host's fstab; None when it could not be read
 
 
 # The pools that the latest check read, until the RAID monitor takes them for the problems of the
 # pools (ADR-0332): its check and the pool problems come from one read of the host.
-_pools_read: Optional[_PoolsRead] = None
+_pools_read: _PoolsRead | None = None
 
 
 def _raid_health_and_pools() -> tuple[list[RaidHealthInfo], _PoolsRead]:
@@ -912,7 +910,7 @@ async def check_raid_health() -> list[RaidHealthInfo]:
     return health
 
 
-def _take_pools_read() -> Optional[_PoolsRead]:
+def _take_pools_read() -> _PoolsRead | None:
     global _pools_read
     read, _pools_read = _pools_read, None
     return read
@@ -930,7 +928,7 @@ POOL_LOW_SPACE_CLEARED = 0.85
 
 
 def pool_problems(
-    pools: list[PoolInfo], managed: Optional[set[str]], earlier: dict[str, problems.Problem]
+    pools: list[PoolInfo], managed: set[str] | None, earlier: dict[str, problems.Problem]
 ) -> dict[str, problems.Problem]:
     """The problems of the pools that UNOS manages, by key, from one read of the pools (ADR-0332).
 
@@ -1047,7 +1045,7 @@ def _raid_status(data: object) -> dict:
     return {pool: entry for pool, entry in data.items() if isinstance(entry, dict)}
 
 
-def raid_status_or_none() -> Optional[dict]:
+def raid_status_or_none() -> dict | None:
     """The RAID status the last check kept (only well-formed pool entries); None without one.
 
     A file that cannot be read as a status is kept as raid_status.json.bad (ADR-0324), and there
@@ -1073,7 +1071,7 @@ def load_previous_raid_status() -> dict:
 # keeps the state the next check compares with for its alerts; it is on the
 # system disk (an SD card on small boards), so it is written only when that
 # state changes, not after every check.
-_latest_raid_status: Optional[dict] = None
+_latest_raid_status: dict | None = None
 
 
 def _raid_state(status: dict) -> dict:
@@ -1104,8 +1102,6 @@ async def raid_monitor_loop():
     the same check names them, and a state that could not be read. For the other pools it alerts new
     errors, a filesystem forced read-only, and a status that turned from healthy.
     """
-    global _raid_monitor_running
-
     while _raid_monitor_running:
         read = None
         try:
@@ -1868,7 +1864,7 @@ MIN_PREDICTION_SNAPSHOTS = 24
 REPLACE_SOON_SCORE = 50
 
 
-def predict_disk_failure(serial: str, entries: list[dict], device: str) -> Optional[DiskPrediction]:
+def predict_disk_failure(serial: str, entries: list[dict], device: str) -> DiskPrediction | None:
     """The failure prediction of the disk now at ``device`` from its SMART history (ADR-0235).
 
     None with fewer than MIN_PREDICTION_SNAPSHOTS snapshots, or when no
@@ -2045,8 +2041,7 @@ async def start_health_monitors():
 
 async def stop_health_monitors():
     """Stop health monitors on app shutdown."""
-    global _raid_monitor_running, _raid_monitor_task
-    global _smart_monitor_running, _smart_monitor_task
+    global _raid_monitor_running, _smart_monitor_running
 
     _raid_monitor_running = False
     if _raid_monitor_task:

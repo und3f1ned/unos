@@ -1,5 +1,6 @@
 ---
-status: accepted
+status: superseded
+superseded-by: ADR-0428
 date: 2026-11-08
 area: webui
 decided-by: agent
@@ -8,6 +9,8 @@ decided-by: agent
 # ADR-0302: Below the md breakpoint the sidebar is a drawer, and on a phone only a table scrolls sideways
 
 ## Context
+
+Superseded by ADR-0428: only in part, that from `md` System's tabs are a sidebar beside the open tab (from `xl` they are a column of three groups, below it rows of chips above the tab) and that Logout is a page's first button from `md` (the sidebar's Search button now comes first); every other rule here stays in force.
 
 The web UI was desktop-only (ADR-0023): the `w-56` sidebar of `webui/src/routes/+layout.svelte`
 stayed beside the page and left it about 150 px of a 375 px phone, and System's tab sidebar took

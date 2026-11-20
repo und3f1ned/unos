@@ -475,7 +475,7 @@ def test_a_disk_smartctl_cannot_open_is_listed_with_what_lsblk_reports(board_api
     assert board.smartctl == smartctl_reads("/dev/sda", "/dev/nvme0n1")
 
 
-# What a disk's dialog in Disk Health shows (webui/src/routes/system/tabs/HealthTab.svelte):
+# What a disk's dialog in Disk Health shows (webui/src/lib/components/system/health/SmartDataDialog.svelte):
 # the data of GET /health/disks, so that opening it runs no smartctl.
 ATA_ATTRIBUTES = [
     # Within 10 of its threshold: a warning.
@@ -684,7 +684,8 @@ def test_a_label_that_is_not_utf8_hides_no_disk(board_api, board):
     assert board.smartctl == snapshots("/dev/sda", "/dev/nvme0n1", "/dev/sdb")
 
 
-HEALTH_TAB = REPO / "webui" / "src" / "routes" / "system" / "tabs" / "HealthTab.svelte"
+# The texts of the Disk Health tab (HealthTab.svelte) are in its module (ADR-0427).
+HEALTH_TEXTS = REPO / "webui" / "src" / "lib" / "components" / "system" / "health" / "texts.ts"
 
 
 @pytest.mark.parametrize("size", [1, 512 * 1024**2, 1_000_204_886_016, 1024**4 - 1, 1024**4, 4_000_787_030_016,
@@ -696,7 +697,7 @@ def test_disk_health_shows_each_capacity_the_server_writes_in_the_page_s_units(s
     capacity = health_router._format_capacity(size)
     number, unit = capacity.split(" ")
     assert number.replace(".", "", 1).isdigit()  # the number form that the tab reads
-    units = key_map(HEALTH_TAB, "CAPACITY_UNITS")
+    units = key_map(HEALTH_TEXTS, "CAPACITY_UNITS")
     assert unit in units, capacity
 
     catalog = read_catalog("health")  # skips without node

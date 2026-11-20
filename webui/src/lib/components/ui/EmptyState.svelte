@@ -1,23 +1,47 @@
 <script lang="ts">
-	import type { ComponentType } from 'svelte';
+	import type { Snippet } from 'svelte';
 	import { Inbox } from 'lucide-svelte';
 	import { t } from '$lib/i18n';
+	import type { IconComponent } from './types';
 
-	export let icon: ComponentType = Inbox;
-	// Without a title: "No data" in the language of the page.
-	export let title: string | undefined = undefined;
-	export let description: string = '';
+	type Props = {
+		icon?: IconComponent;
+		// Without a title: "No data" in the language of the page.
+		title?: string | undefined;
+		description?: string;
+		/** A list inside a card, whose heading names it: less room, and a title that is no heading. */
+		compact?: boolean;
+		class?: string;
+		children?: Snippet;
+	};
+
+	let {
+		icon = Inbox,
+		title = undefined,
+		description = '',
+		compact = false,
+		class: className = '',
+		children
+	}: Props = $props();
+
+	const Icon = $derived(icon);
 </script>
 
-<div class="empty-state {$$props.class || ''}">
-	<svelte:component this={icon} class="empty-state-icon" />
-	<h3 class="empty-state-title">{title ?? $t('ui.emptyState.title')}</h3>
+<div class="empty-state {compact ? 'empty-state-compact' : ''} {className || ''}">
+	<span class="empty-state-icon-wrap" aria-hidden="true">
+		<Icon class="empty-state-icon" />
+	</span>
+	{#if compact}
+		<p class="empty-state-title">{title ?? $t('ui.emptyState.title')}</p>
+	{:else}
+		<h3 class="empty-state-title">{title ?? $t('ui.emptyState.title')}</h3>
+	{/if}
 	{#if description}
 		<p class="empty-state-description">{description}</p>
 	{/if}
-	{#if $$slots.default}
-		<div class="mt-4">
-			<slot />
+	{#if children}
+		<div class="mt-4 flex flex-wrap justify-center gap-2">
+			{@render children()}
 		</div>
 	{/if}
 </div>

@@ -6,36 +6,48 @@
 	import SmbStateBadge from './SmbStateBadge.svelte';
 	import { accessKey, canBeGivenAccess, groupKey, pickableUsers, type AccessChoice } from './access';
 
-	/** Every UNOS user (GET /auth/users); administrators are not listed. */
-	export let users: User[] = [];
-	/** The choice per user, by accessKey(). Missing: no access. */
-	export let levels: Record<string, AccessChoice> = {};
-	/**
-	 * Access can only be removed, never given (a share that is not served):
-	 * "No access", "Clear" and each user's saved level work, so that a removal
-	 * can be undone; the other levels and the bulk grants do not.
-	 */
-	export let reduceOnly = false;
-	/** Shown while access can only be removed. */
-	export let reduceOnlyHint = '';
-	/** The levels the share has saved, by accessKey(). Missing: no access. */
-	export let savedLevels: Record<string, AccessChoice> = {};
-	/** Every group (GET /groups), sorted by name. */
-	export let groups: Group[] = [];
-	/** The choice per group, by groupKey(). Missing: no access. */
-	export let groupLevels: Record<string, AccessChoice> = {};
-	/** The levels the share has saved for groups, by groupKey(). */
-	export let savedGroupLevels: Record<string, AccessChoice> = {};
+	type Props = {
+		/** Every UNOS user (GET /auth/users); administrators are not listed. */
+		users?: User[];
+		/** The choice per user, by accessKey(). Missing: no access. */
+		levels?: Record<string, AccessChoice>;
+		/**
+		 * Access can only be removed, never given (a share that is not served):
+		 * "No access", "Clear" and each user's saved level work, so that a removal
+		 * can be undone; the other levels and the bulk grants do not.
+		 */
+		reduceOnly?: boolean;
+		/** Shown while access can only be removed. */
+		reduceOnlyHint?: string;
+		/** The levels the share has saved, by accessKey(). Missing: no access. */
+		savedLevels?: Record<string, AccessChoice>;
+		/** Every group (GET /groups), sorted by name. */
+		groups?: Group[];
+		/** The choice per group, by groupKey(). Missing: no access. */
+		groupLevels?: Record<string, AccessChoice>;
+		/** The levels the share has saved for groups, by groupKey(). */
+		savedGroupLevels?: Record<string, AccessChoice>;
+	};
+
+	let {
+		users = [],
+		levels = $bindable({}),
+		reduceOnly = false,
+		reduceOnlyHint = '',
+		savedLevels = {},
+		groups = [],
+		groupLevels = $bindable({}),
+		savedGroupLevels = {}
+	}: Props = $props();
 
 	type Option = { value: AccessChoice; label: string; disabled?: boolean };
 
 	// Reactive: the labels follow the language of the page.
-	let options: Option[];
-	$: options = [
+	const options: Option[] = $derived([
 		{ value: 'none', label: $t('shares.level.none') },
 		{ value: 'read', label: $t('shares.level.read') },
 		{ value: 'write', label: $t('shares.level.write') }
-	];
+	]);
 
 	function reducedTo(all: Option[], saved: AccessChoice): Option[] {
 		return all.map((option) => ({
@@ -45,18 +57,18 @@
 	}
 
 	// While access can only be removed: "No access" and the saved level, by saved level.
-	let reducedOptions: Record<AccessChoice, Option[]>;
-	$: reducedOptions = {
+	const reducedOptions: Record<AccessChoice, Option[]> = $derived({
 		none: reducedTo(options, 'none'),
 		read: reducedTo(options, 'read'),
 		write: reducedTo(options, 'write')
-	};
+	});
 
-	$: rows = pickableUsers(users);
-	$: selectable = rows.filter(canBeGivenAccess);
-	$: someAccess =
+	const rows = $derived(pickableUsers(users));
+	const selectable = $derived(rows.filter(canBeGivenAccess));
+	const someAccess = $derived(
 		selectable.some((user) => (levels[accessKey(user.id, user.username)] ?? 'none') !== 'none') ||
-		groups.some((group) => (groupLevels[groupKey(group.id, group.name)] ?? 'none') !== 'none');
+			groups.some((group) => (groupLevels[groupKey(group.id, group.name)] ?? 'none') !== 'none')
+	);
 
 	function choice(value: unknown): AccessChoice {
 		return value === 'read' || value === 'write' ? value : 'none';
@@ -114,7 +126,7 @@
 				variant="secondary"
 				size="sm"
 				disabled={reduceOnly || selectable.length === 0}
-				on:click={() => setAll('read')}
+				onclick={() => setAll('read')}
 			>
 				{$t('shares.access.everyoneRead')}
 			</Button>
@@ -122,7 +134,7 @@
 				variant="secondary"
 				size="sm"
 				disabled={reduceOnly || selectable.length === 0}
-				on:click={() => setAll('write')}
+				onclick={() => setAll('write')}
 			>
 				{$t('shares.access.everyoneWrite')}
 			</Button>
@@ -130,7 +142,7 @@
 				variant="ghost"
 				size="sm"
 				disabled={(selectable.length === 0 && groups.length === 0) || (reduceOnly && !someAccess)}
-				on:click={() => setAll('none')}
+				onclick={() => setAll('none')}
 			>
 				{$t('shares.access.clear')}
 			</Button>
@@ -152,7 +164,7 @@
 						value={level}
 						disabled={unavailable || (reduceOnly && level === 'none' && saved === 'none')}
 						hint={unavailable ? user.smb?.reason ?? '' : ''}
-						on:change={(event) => setLevel(user, event.detail?.value)}
+						onchange={(value) => setLevel(user, value)}
 					/>
 					{#if user.smb && user.smb.state !== 'active'}
 						<div class="pt-0.5 flex-shrink-0">
@@ -185,7 +197,7 @@
 							value={level}
 							disabled={reduceOnly && level === 'none' && saved === 'none'}
 							hint={membersText(group)}
-							on:change={(event) => setGroupLevel(group, event.detail?.value)}
+							onchange={(value) => setGroupLevel(group, value)}
 						/>
 					</li>
 				{/each}

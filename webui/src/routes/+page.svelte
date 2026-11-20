@@ -1,12 +1,10 @@
 <script lang="ts">
-  import { Server, RefreshCw, Clock, UserCog, SlidersHorizontal, Check, GripVertical, ArrowUp, ArrowDown, EyeOff, Eye, RotateCcw } from "lucide-svelte";
   import { onMount, tick } from "svelte";
-  import { Alert, Button, Card } from "$lib/components/ui";
-  import SystemStatsWidget from "$lib/components/widgets/SystemStatsWidget.svelte";
-  import StorageWidget from "$lib/components/widgets/StorageWidget.svelte";
-  import ContainersWidget from "$lib/components/widgets/ContainersWidget.svelte";
-  import QuickActionsWidget from "$lib/components/widgets/QuickActionsWidget.svelte";
-  import RecentActivityWidget from "$lib/components/widgets/RecentActivityWidget.svelte";
+  import { SlidersHorizontal } from "lucide-svelte";
+  import { Alert, EmptyState } from "$lib/components/ui";
+  import {
+    AccountNotice, DashboardHeader, DashboardWidget, HiddenWidgets, ReplaceDisksAlert, WidgetToolbar
+  } from "$lib/components/dashboard";
 
   import { getSystemInfo, type SystemInfo } from "$lib/api/system";
   import { getPools, type Pool } from "$lib/api/storage";
@@ -17,41 +15,46 @@
     getDashboardLayout, saveDashboardLayout, resetDashboardLayout, type LayoutEntry
   } from "$lib/api/dashboard";
   import {
-    WIDGETS, defaultLayout, isDefaultLayout, moveTo, resolveLayout, setHidden, step, widgetDef
+    defaultLayout, isDefaultLayout, moveTo, resolveLayout, setHidden, step, widgetDef
   } from "$lib/dashboard-layout";
-  import { stats, wsConnected, wsForbidden, type WebSocketStats } from "$lib/stores/stats";
+  import { stats, type WebSocketStats } from "$lib/stores/stats";
   import { user } from "$lib/stores/auth";
-  import { intlLocale, t } from "$lib/i18n";
-  import { apiTime } from "$lib/time";
+  import { t } from "$lib/i18n";
 
-  let systemInfo: SystemInfo | null = null;
-  let pools: Pool[] = [];
-  let containers: Container[] = [];
-  let notificationLogs: NotificationLog[] = [];
+  // The dashboard (ADR-0395): it reads its data on opening and on Refresh, and keeps the user's
+  // layout of the widgets, which the user arranges here.
+
+  // The answers of the API, each only ever replaced whole.
+  let systemInfo = $state.raw<SystemInfo | null>(null);
+  let pools = $state.raw<Pool[]>([]);
+  let containers = $state.raw<Container[]>([]);
+  let notificationLogs = $state.raw<NotificationLog[]>([]);
   // The disks whose SMART trend says replace soon (ADR-0235).
-  let toReplace: DiskPrediction[] = [];
-  let predictionsError = "";
-  let loading = true;
-  let lastUpdate: Date | null = null;
+  let toReplace = $state.raw<DiskPrediction[]>([]);
+  let predictionsError = $state("");
+  let loading = $state(true);
+  let lastUpdate = $state<Date | null>(null);
 
   // Subscribe to WebSocket stats
-  let currentStats: WebSocketStats | null = null;
-  $: currentStats = $stats;
-  $: if ($stats) {
-    lastUpdate = new Date();
-  }
+  const currentStats: WebSocketStats | null = $derived($stats);
+  // Every message of the socket, before the markup updates; the time of the last one stays while
+  // the store is empty.
+  $effect.pre(() => {
+    if ($stats) lastUpdate = new Date();
+  });
 
   // The user's layout of the widgets, kept on the server (ADR-0395). It is read with the rest of the
   // page's data, on opening and on Refresh, and written only when the user changes it: nothing polls.
-  let layout: LayoutEntry[] = defaultLayout(false);
-  let layoutFailed = false;
-  let layoutError = "";
-  let arranging = false;
-  let saving = false;
+  // Only ever replaced whole: apply compares the next layout with it.
+  let layout = $state.raw<LayoutEntry[]>(defaultLayout(false));
+  let layoutFailed = $state(false);
+  let layoutError = $state("");
+  let arranging = $state(false);
+  let saving = $state(false);
   // What a screen reader is told after a move, a hide or a show.
-  let announcement = "";
-  let draggedId: string | null = null;
-  let overId: string | null = null;
+  let announcement = $state("");
+  let draggedId = $state<string | null>(null);
+  let overId = $state<string | null>(null);
 
   onMount(async () => {
     await loadData();
@@ -60,7 +63,7 @@
   // The layout renders this page only after the user is known. Pools,
   // containers and notifications are administrator-only APIs; regular
   // accounts get the system overview and the live stats only.
-  $: isAdmin = $user?.is_admin === true;
+  const isAdmin = $derived($user?.is_admin === true);
 
   // The predictions read the stored SMART history only: no disk is woken. A
   // failure is shown, unlike those of the widgets, so that a disk to replace is
@@ -114,66 +117,16 @@
     await loadData();
   }
 
-  $: formatUptime = (bootTime: string): string => {
-    // bootTime is when the host booted, ISO 8601 with its offset (ADR-0401)
-    const booted = apiTime(bootTime);
-    if (!booted) return bootTime;
-    const seconds = Math.floor((Date.now() - booted.getTime()) / 1000);
-    const days = Math.floor(seconds / 86400);
-    const hours = Math.floor((seconds % 86400) / 3600);
-    const minutes = Math.floor((seconds % 3600) / 60);
-    if (days > 0) return $t("dashboard.uptime.days", { days, hours });
-    if (hours > 0) return $t("dashboard.uptime.hours", { hours, minutes });
-    return $t("dashboard.uptime.minutes", { minutes });
-  };
-
-  // In the language of the page.
-  $: formatTime = (date: Date): string => date.toLocaleTimeString($intlLocale);
-
-  // The CPU's temperature, which the server chooses among the host's sensors (ADR-0346), in whole
-  // degrees; null on a host without sensors.
-  function wholeDegrees(celsius: number | null | undefined): number | null {
-    return celsius == null ? null : Math.round(celsius);
-  }
-
-  // Transform pools for widget
-  $: poolsForWidget = pools.map(p => ({
-    name: p.name,
-    size: p.total_size || 0,
-    used: p.used_size || 0,
-    free: (p.total_size || 0) - (p.used_size || 0),
-    health: p.health ?? "unknown",
-    mounted: p.mounted ?? !!p.mountpoint,
-    missingDevices: p.missing_devices ?? 0,
-    deviceErrors: p.device_errors ?? 0,
-    readOnly: p.read_only ?? false,
-    forcedReadOnly: p.forced_read_only ?? false
-  }));
-
-  // Transform containers for widget
-  $: containersForWidget = containers.map(c => ({
-    id: c.id,
-    name: c.name,
-    state: c.state,
-    image: c.image
-  }));
-
-  // Transform notification logs for widget
-  $: notificationsForWidget = notificationLogs.map(log => ({
-    id: log.id,
-    type: log.event?.type || "info",
-    title: log.event?.title || $t("dashboard.notification"),
-    message: log.event?.message || "",
-    created_at: log.sent_at,
-    read: log.success
-  }));
   // A widget shows when it is not hidden and has its data: the stats cards come with the live stats.
-  $: shown = layout.filter((e) => !e.hidden && (currentStats !== null || widgetDef(e.id)?.adminOnly));
-  $: hiddenWidgets = layout.filter((e) => e.hidden);
-  $: nameOf = (id: string): string => {
+  const shown = $derived(layout.filter((e) => !e.hidden && (currentStats !== null || widgetDef(e.id)?.adminOnly)));
+  const hiddenWidgets = $derived(layout.filter((e) => e.hidden));
+  // Every widget hidden by the user, not only waiting for its data (ADR-0428).
+  const allHidden = $derived(layout.length > 0 && layout.every((e) => e.hidden));
+  // The name of a widget in the language of the page; it reads $t where it is called.
+  function nameOf(id: string): string {
     const def = widgetDef(id);
     return def ? $t(def.nameKey) : id;
-  };
+  }
 
   async function apply(next: LayoutEntry[], message: string, reset = false): Promise<boolean> {
     if (saving || next === layout) return false;
@@ -267,189 +220,98 @@
   }
 </script>
 
-<div class="space-y-6">
-  <!-- Header: on a narrow screen the live stats' time and Refresh go below the host name, and a
-       long host name breaks (ADR-0302). -->
-  <div class="flex flex-wrap items-center justify-between gap-3">
-    <div class="flex items-center gap-3 min-w-0">
-      <Server class="w-8 h-8 text-brand-ring flex-shrink-0" />
-      <div class="min-w-0">
-        <h1 class="text-2xl font-bold break-words">{systemInfo?.hostname || $t("common.product")}</h1>
-        {#if systemInfo}
-          <p class="text-sm text-content-secondary">
-            {$t("dashboard.osUptime", { os: systemInfo.os, uptime: formatUptime(systemInfo.boot_time) })}
-          </p>
-        {/if}
-      </div>
-    </div>
-    <div class="flex items-center gap-4">
-      {#if $wsForbidden}
-        <span class="text-xs text-warning">{$t("dashboard.liveStatsForbidden")}</span>
-      {:else if !$wsConnected}
-        <span class="text-xs text-warning">{$t("dashboard.disconnected")}</span>
-      {:else if lastUpdate}
-        <span class="text-xs text-content-muted flex items-center gap-1">
-          <Clock class="w-3 h-3" />
-          {$t("dashboard.updated", { time: formatTime(lastUpdate) })}
-        </span>
-      {/if}
-      {#if !layoutFailed && !loading}
-        <span data-customize>
-          <Button variant="secondary" size="sm" icon={arranging ? Check : SlidersHorizontal} pressed={arranging}
-            on:click={() => (arranging = !arranging)}>
-            {arranging ? $t("dashboard.layout.done") : $t("dashboard.layout.customize")}
-          </Button>
-        </span>
-      {/if}
-      <Button variant="secondary" size="icon" on:click={handleRefresh} disabled={loading || saving}>
-        <RefreshCw class="w-4 h-4 {loading ? 'animate-spin' : ''}" />
-        <span class="sr-only">{$t("common.refresh")}</span>
-      </Button>
-    </div>
-  </div>
+<div class="page-container">
+  <DashboardHeader
+    {systemInfo}
+    {lastUpdate}
+    customizable={!layoutFailed && !loading}
+    {arranging}
+    {loading}
+    {saving}
+    oncustomize={() => (arranging = !arranging)}
+    onrefresh={handleRefresh}
+  />
 
   {#if loading && !currentStats}
-    <div class="flex items-center justify-center py-12">
-      <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-brand-ring"></div>
+    <!-- Skeleton tiles while the page's data loads; the text stays for screen readers. -->
+    <div class="grid grid-cols-2 md:grid-cols-6 xl:grid-cols-10 gap-4" aria-busy="true">
+      {#each [0, 1, 2, 3, 4] as tile (tile)}
+        <div class="col-span-1 md:col-span-2 space-y-3 bg-surface-elevated border border-border rounded-card p-5">
+          <div class="skeleton w-1/2"></div>
+          <div class="skeleton h-6 w-2/3"></div>
+          <div class="skeleton w-full"></div>
+        </div>
+      {/each}
+      <p class="sr-only">{$t("common.loading")}</p>
     </div>
   {:else}
     <!-- The disks to replace stay above the widgets, always: a warning is not one of them. -->
     {#if isAdmin}
-      {#if toReplace.length > 0}
-        <Alert variant="error" title={$t("dashboard.replace.title")}>
-          <ul class="space-y-1 text-sm">
-            {#each toReplace as prediction}
-              <li>
-                <span class="mono">{prediction.device}</span>
-                {$t("dashboard.replace.disk", { serial: prediction.serial, reasons: prediction.risk_factors.join("; ") })}
-              </li>
-            {/each}
-          </ul>
-          <a href="/system#health" class="text-sm text-info hover:underline">{$t("dashboard.replace.diskHealth")}</a>
-        </Alert>
-      {:else if predictionsError}
-        <Alert variant="warning" title={$t("dashboard.replace.checkFailed")}>
-          {predictionsError}
-        </Alert>
-      {/if}
+      <ReplaceDisksAlert {toReplace} error={predictionsError} />
     {/if}
 
     {#if layoutFailed}
       <Alert variant="warning">{$t("dashboard.layout.loadFailed")}</Alert>
     {/if}
     {#if layoutError}
-      <Alert variant="error" dismissible on:dismiss={() => (layoutError = "")}>{layoutError}</Alert>
+      <Alert variant="error" dismissible ondismiss={() => (layoutError = "")}>{layoutError}</Alert>
     {/if}
 
     <p class="sr-only" role="status" data-layout-status>{announcement}</p>
 
     {#if arranging}
-      <Card>
-        <p class="text-sm text-secondary mb-3">{$t("dashboard.layout.hint")}</p>
-        <section aria-label={$t("dashboard.layout.hiddenTitle")} class="mb-3" data-hidden-list>
-          <h2 class="section-title mb-2">{$t("dashboard.layout.hiddenTitle")}</h2>
-          {#if hiddenWidgets.length === 0}
-            <p class="text-sm text-muted">{$t("dashboard.layout.noneHidden")}</p>
-          {:else}
-            <div class="flex flex-wrap gap-2">
-              {#each hiddenWidgets as entry (entry.id)}
-                <Button variant="secondary" size="sm" icon={Eye} disabled={saving} on:click={() => show(entry.id)}>
-                  {$t("dashboard.layout.show", { name: nameOf(entry.id) })}
-                </Button>
-              {/each}
-            </div>
-          {/if}
-        </section>
-        <Button variant="ghost" size="sm" icon={RotateCcw} disabled={saving || isDefaultLayout(layout, isAdmin)}
-          on:click={resetLayout}>
-          {$t("dashboard.layout.reset")}
-        </Button>
-      </Card>
+      <HiddenWidgets
+        widgets={hiddenWidgets.map((entry) => ({ id: entry.id, name: nameOf(entry.id) }))}
+        {saving}
+        resetDisabled={isDefaultLayout(layout, isAdmin)}
+        onshow={show}
+        onreset={resetLayout}
+      />
     {/if}
 
-    <!-- The widgets: small cards five to a row on a wide screen, wide ones two to a row (ADR-0395). -->
+    {#if allHidden && !arranging}
+      <!-- Every widget hidden: say so, and where the way back is, the header's Customize (ADR-0428). -->
+      <EmptyState
+        icon={SlidersHorizontal}
+        title={$t("dashboard.layout.allHidden")}
+        description={$t("dashboard.layout.allHiddenHint")}
+      />
+    {/if}
+
+    <!-- The widgets: small cards five to a row on a wide screen, wide ones two to a row (ADR-0395).
+         While they are arranged each has a dashed outline and its toolbar in room of its own at the
+         top right, so that it covers nothing of the widget. -->
     <div class="grid grid-cols-2 md:grid-cols-6 xl:grid-cols-10 gap-4">
       {#each shown as entry, index (entry.id)}
         {@const def = widgetDef(entry.id)}
         <div
           data-widget={entry.id}
-          class="widget min-w-0 flex flex-col {def?.size === 'wide' ? 'col-span-2 md:col-span-6 xl:col-span-5' : 'col-span-1 md:col-span-2'}
-            {arranging ? 'rounded-lg border border-dashed border-border p-1' : ''}
+          class="widget relative min-w-0 flex flex-col {def?.size === 'wide' ? 'col-span-2 md:col-span-6 xl:col-span-5' : 'col-span-1 md:col-span-2'}
+            {arranging ? 'pt-10 rounded-card outline-dashed outline-1 outline-offset-[3px] outline-border-strong' : ''}
             {overId === entry.id && draggedId !== entry.id ? 'ring-2 ring-brand-ring' : ''}
             {draggedId === entry.id ? 'opacity-50' : ''}"
-          on:dragover={(e) => onDragOver(e, entry.id)}
-          on:drop={(e) => onDrop(e, entry.id)}
+          ondragover={(e) => onDragOver(e, entry.id)}
+          ondrop={(e) => onDrop(e, entry.id)}
         >
           {#if arranging}
-            <div data-toolbar class="flex flex-wrap items-center gap-1 mb-1">
-              <!-- Dragging is for a mouse; the buttons are for the keyboard and a finger. -->
-              <span
-                data-drag-handle
-                draggable="true"
-                role="presentation"
-                title={$t("dashboard.layout.drag")}
-                class="p-1.5 cursor-grab text-secondary"
-                on:dragstart={(e) => onDragStart(e, entry.id)}
-                on:dragend={onDragEnd}
-              >
-                <GripVertical class="w-4 h-4" />
-              </span>
-              <Button variant="secondary" size="icon-sm" disabled={saving || index === 0}
-                on:click={() => move(entry.id, -1)}>
-                <ArrowUp class="w-4 h-4" />
-                <span class="sr-only">{$t("dashboard.layout.moveUp", { name: nameOf(entry.id) })}</span>
-              </Button>
-              <Button variant="secondary" size="icon-sm" disabled={saving || index === shown.length - 1}
-                on:click={() => move(entry.id, 1)}>
-                <ArrowDown class="w-4 h-4" />
-                <span class="sr-only">{$t("dashboard.layout.moveDown", { name: nameOf(entry.id) })}</span>
-              </Button>
-              <Button variant="secondary" size="icon-sm" disabled={saving} on:click={() => hide(entry.id)}>
-                <EyeOff class="w-4 h-4" />
-                <span class="sr-only">{$t("dashboard.layout.hide", { name: nameOf(entry.id) })}</span>
-              </Button>
-            </div>
-          {/if}
-          {#if entry.id === "storage"}
-            <StorageWidget pools={poolsForWidget} />
-          {:else if entry.id === "containers"}
-            <ContainersWidget containers={containersForWidget} limit={5} />
-          {:else if entry.id === "quick-actions"}
-            <QuickActionsWidget />
-          {:else if entry.id === "recent-activity"}
-            <RecentActivityWidget notifications={notificationsForWidget} limit={5} />
-          {:else if currentStats}
-            <SystemStatsWidget
-              only={entry.id === "memory" || entry.id === "network" || entry.id === "disk-io" || entry.id === "temperature" ? entry.id : "cpu"}
-              cpuPercent={currentStats.cpu?.percent || 0}
-              memoryPercent={currentStats.memory?.percent || 0}
-              memoryUsed={currentStats.memory?.used || 0}
-              memoryTotal={currentStats.memory?.total || 0}
-              networkUp={currentStats.network?.bytes_sent_rate || 0}
-              networkDown={currentStats.network?.bytes_recv_rate || 0}
-              diskRead={currentStats.disk_io?.read_rate || 0}
-              diskWrite={currentStats.disk_io?.write_rate || 0}
-              temperature={wholeDegrees(currentStats.cpu?.temperature)}
+            <WidgetToolbar
+              name={nameOf(entry.id)}
+              first={index === 0}
+              last={index === shown.length - 1}
+              {saving}
+              ondragstart={(e) => onDragStart(e, entry.id)}
+              ondragend={onDragEnd}
+              onmove={(direction) => move(entry.id, direction)}
+              onhide={() => hide(entry.id)}
             />
           {/if}
+          <DashboardWidget id={entry.id} {pools} {containers} {notificationLogs} stats={currentStats} />
         </div>
       {/each}
     </div>
 
     {#if !isAdmin}
-      <Card>
-        <div class="flex items-start gap-3">
-          <UserCog class="w-5 h-5 text-info mt-0.5" />
-          <div>
-            <p class="font-medium">{$t("dashboard.user.signedInAs", { name: $user?.username ?? "" })}</p>
-            <p class="text-sm text-secondary">
-              {$t("dashboard.user.managed")}
-              {$t("dashboard.user.account")}
-              <a href="/system#security" class="text-info hover:underline">{$t("dashboard.user.accountLink")}</a>.
-            </p>
-          </div>
-        </div>
-      </Card>
+      <AccountNotice username={$user?.username ?? ""} />
     {/if}
   {/if}
 </div>

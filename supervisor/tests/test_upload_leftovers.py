@@ -20,7 +20,7 @@ import subprocess
 import sys
 import threading
 import tracemalloc
-from datetime import datetime, timezone
+from datetime import datetime, UTC
 from pathlib import Path
 from types import SimpleNamespace
 from urllib.parse import urlencode
@@ -39,7 +39,7 @@ files_router = importlib.import_module("src.files.router")
 ADMIN = SimpleNamespace(id=1, username="admin", is_admin=True)
 API = "/api/v1/files/upload-leftovers"
 # The supervisor's clock in these tests, and an hour before it.
-NOW = datetime(2026, 11, 12, 12, 0, tzinfo=timezone.utc)
+NOW = datetime(2026, 11, 12, 12, 0, tzinfo=UTC)
 HOUR_AGO = NOW.timestamp() - 3600
 NOTHING_CHECKED = {"files": [], "checked": None, "checking": False, "problems": []}
 
@@ -708,7 +708,7 @@ def test_the_hidden_file_of_a_killed_supervisor_is_found_and_removed(env, tmp_pa
             conn.close()
     (left,) = env.pool.iterdir()
     # The next supervisor checks UPLOAD_LEFTOVER_AGE after its start, or when asked.
-    monkeypatch.setattr(files_router, "_now", lambda: datetime.now(timezone.utc).replace(year=2100))
+    monkeypatch.setattr(files_router, "_now", lambda: datetime.now(UTC).replace(year=2100))
 
     answer = _check(env)
 

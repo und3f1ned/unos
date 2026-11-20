@@ -7,7 +7,7 @@
 </script>
 
 <div class="space-y-6">
-  <h2 class="text-xl font-bold">{$t('remote.tab')}</h2>
+  <h2 class="text-xl font-semibold">{$t('remote.tab')}</h2>
   <RemoteAccessCard />
   <AppNamesCard />
 </div>

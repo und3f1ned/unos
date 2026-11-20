@@ -1,6 +1,6 @@
 import { writable } from 'svelte/store';
 import { currentSession, currentSessionKey, handleSetupRequired, handleUnauthorized } from '$lib/api/client';
-import { problems, type Problem } from '$lib/stores/problems';
+import { problems, problemsKnown, type Problem } from '$lib/stores/problems';
 import { scrubs, type ScrubUpdate } from '$lib/stores/scrubs';
 import { balances, type BalanceUpdate } from '$lib/stores/balances';
 import { diskRemovals, type DiskRemovalUpdate } from '$lib/stores/diskRemovals';
@@ -206,6 +206,7 @@ export function connectWebSocket() {
     } else if (message.type === 'problems' && Array.isArray(message.data)) {
       // Administrators only: the problems that are still there (ADR-0332).
       problems.set(message.data as Problem[]);
+      problemsKnown.set(true);
     } else if (message.type === 'scrubs' && Array.isArray(message.data)) {
       // Administrators only: the scrubs that run, until they end (ADR-0367).
       scrubs.set(message.data as ScrubUpdate[]);
@@ -231,6 +232,7 @@ export function connectWebSocket() {
     ws = null;
     wsSession = null;
     wsConnected.set(false);
+    problemsKnown.set(false);
 
     if (event.code === WS_CLOSE_UNAUTHORIZED) {
       // The session ended or the account is gone: same as an HTTP 401.
@@ -259,6 +261,7 @@ export function disconnectWebSocket() {
   wsForbidden.set(false);
   stats.set(null);
   problems.set([]);
+  problemsKnown.set(false);
   scrubs.set([]);
   balances.set([]);
   diskRemovals.set([]);

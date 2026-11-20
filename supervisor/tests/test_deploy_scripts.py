@@ -1581,9 +1581,8 @@ class TestInstallScript:
         # PCIe late in the boot, so udev turns them off as each drive appears: ASPM L1 with the
         # PCIe function, APST with the drive's disk, since the driver adds the controller's APST
         # setting only after it has identified the drive. udev applies the rule to the drives
-        # there are now. The rule touches NVMe drives only, and fstrim.timer stays as it is:
-        # SATA and USB disks keep TRIM, and the fstab entries of the pools with an NVMe drive keep
-        # fstrim off those (ADR-0370).
+        # there are now. The rule touches the power saving of NVMe drives only, and fstrim.timer
+        # stays as it is: every pool keeps TRIM, also one on an NVMe drive (ADR-0370, ADR-0429).
         result, calls = _run_install_main(tmp_path, system=DEBIAN_13_RISCV64, compatible=SPACEMIT_K1)
 
         script = tmp_path / "usr-local-sbin" / "unos-k1-nvme"
@@ -4814,7 +4813,7 @@ class TestContinuousIntegration:
         assert not [command for command in commands if "pip-audit" in command]
         # make lint runs ruff from PATH there, where the hashed install put it, over the supervisor
         # and the repository's tooling.
-        assert "ruff check --select F,E9 supervisor scripts .claude/hooks" in _make_dry_run(
+        assert "ruff check supervisor scripts .claude/hooks" in _make_dry_run(
             "lint", "RUFF=ruff").splitlines()
 
     def test_lint_requirements_pin_every_package_with_its_hashes(self):

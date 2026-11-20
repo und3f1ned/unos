@@ -212,7 +212,7 @@ anyone who can reach the page can create it.
 - docker-py, psutil
 
 ### Frontend (WebUI)
-- SvelteKit 2.x, TypeScript
+- SvelteKit 2 with Svelte 5 (runes), TypeScript
 - TailwindCSS, Lucide Icons
 - Caddy (reverse proxy)
 

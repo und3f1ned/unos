@@ -9,3 +9,4 @@ export { default as Alert } from './Alert.svelte';
 export { default as ProgressBar } from './ProgressBar.svelte';
 export { default as EmptyState } from './EmptyState.svelte';
 export { default as StatusDot } from './StatusDot.svelte';
+export type { IconComponent } from './types';

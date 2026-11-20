@@ -24,7 +24,8 @@ import os
 import tarfile
 import tempfile
 import tracemalloc
-from typing import Callable, NamedTuple
+from typing import NamedTuple
+from collections.abc import Callable
 
 import pytest
 import starlette.formparsers

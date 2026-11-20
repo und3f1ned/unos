@@ -11,7 +11,7 @@ import queue
 import subprocess
 import threading
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, UTC
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -166,10 +166,10 @@ class TestEventsSocket:
             lambda: "not-a-jwt",
             lambda: "unos_" + "x" * 40,  # unknown API token
             lambda: jwt.encode(  # forged with the old public default secret
-                {"sub": "ws_admin", "exp": datetime.now(timezone.utc) + timedelta(hours=1)},
+                {"sub": "ws_admin", "exp": datetime.now(UTC) + timedelta(hours=1)},
                 "change-me-in-production", algorithm="HS256"),
             lambda: jwt.encode(  # expired
-                {"sub": "ws_admin", "exp": datetime.now(timezone.utc) - timedelta(minutes=1)},
+                {"sub": "ws_admin", "exp": datetime.now(UTC) - timedelta(minutes=1)},
                 get_settings().jwt_secret, algorithm="HS256"),
             lambda: jwt.encode(  # no expiry
                 {"sub": "ws_admin"}, get_settings().jwt_secret, algorithm="HS256"),
@@ -1154,8 +1154,8 @@ class TestTheDiskRemovalsOnTheEventsSocket:
 def _repair_job(state: str = "running", visited: int = 0) -> repair.RepairResult:
     """The job as repair_router publishes it: the running repair, then its end."""
     return repair.RepairResult(
-        share="Media", state=state, started_at=datetime(2026, 11, 12, 10, 0, tzinfo=timezone.utc),
-        finished_at=None if state == "running" else datetime(2026, 11, 12, 11, 0, tzinfo=timezone.utc),
+        share="Media", state=state, started_at=datetime(2026, 11, 12, 10, 0, tzinfo=UTC),
+        finished_at=None if state == "running" else datetime(2026, 11, 12, 11, 0, tzinfo=UTC),
         visited=visited, changed=visited // 2, skipped=dict.fromkeys(repair.SKIP_REASONS, 0), skipped_paths=[],
         errors=0, error_samples=[], message="" if state == "running" else "Permissions repaired.",
     )
@@ -1238,8 +1238,8 @@ def _install_job(state: str = "running", **changes) -> AppInstallJob:
     """An install job as install_jobs publishes it (ADR-0384): Dozzle pulling its image, then its end."""
     return AppInstallJob(
         id="job1", template_id="dozzle", name="Dozzle", state=state, step="pulling",
-        started_at=datetime(2026, 11, 17, 10, 0, tzinfo=timezone.utc),
-        finished_at=None if state == "running" else datetime(2026, 11, 17, 10, 5, tzinfo=timezone.utc),
+        started_at=datetime(2026, 11, 17, 10, 0, tzinfo=UTC),
+        finished_at=None if state == "running" else datetime(2026, 11, 17, 10, 5, tzinfo=UTC),
         images=[ImagePull(image="amir20/dozzle:latest", state="pulling", layers=3, layers_done=1,
                           bytes_total=9000, bytes_done=4000)],
         containers=[ContainerStart(name="dozzle")],
@@ -1492,7 +1492,7 @@ class TestTheJournalSocket:
             assert [entry["message"] for entry in newest] == NEWEST_FIRST[:3]
             _wait_for(lambda: journal.followers)
 
-            journal.now = datetime(2026, 11, 12, 10, 0, 0, tzinfo=timezone.utc).timestamp()
+            journal.now = datetime(2026, 11, 12, 10, 0, 0, tzinfo=UTC).timestamp()
             started = journal.add("Started Session 4 of User admin.", minutes_ago=0, identifier="systemd",
                                   unit="init.scope", facility=3)
             journal.add("Accepted publickey for admin from 192.0.2.10", minutes_ago=0, identifier="sshd",

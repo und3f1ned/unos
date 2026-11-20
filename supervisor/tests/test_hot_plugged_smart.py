@@ -366,7 +366,7 @@ def _smartctl_names(tree: ast.AST) -> list[ast.Constant]:
         parent = parents.get(node)
         if isinstance(parent, ast.Subscript):
             continue
-        if isinstance(parent, ast.Call) and node is not (parent.args or [None])[0] or (
+        if (isinstance(parent, ast.Call) and node is not (parent.args or [None])[0]) or (
                 isinstance(parent, ast.Call) and isinstance(parent.func, ast.Attribute) and parent.func.attr == "get"):
             continue
         names.append(node)

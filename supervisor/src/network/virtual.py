@@ -273,7 +273,7 @@ WantedBy=systemd-networkd.service
 """
 
 # One lock per event loop (cf. network.links).
-_locks: "weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Lock]" = weakref.WeakKeyDictionary()
+_locks: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Lock] = weakref.WeakKeyDictionary()
 
 
 def _lock() -> asyncio.Lock:

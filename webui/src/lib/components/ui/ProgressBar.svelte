@@ -1,20 +1,33 @@
 <script lang="ts">
 	type Variant = 'success' | 'warning' | 'error' | 'info';
 
-	export let value: number = 0;
-	export let max: number = 100;
-	export let size: 'sm' | 'md' = 'md';
-	export let variant: Variant | 'auto' = 'auto';
-	export let showLabel: boolean = false;
-	/** What the bar measures, for screen readers (ADR-0197). */
-	export let label: string | undefined = undefined;
+	type Props = {
+		value?: number;
+		max?: number;
+		size?: 'sm' | 'md';
+		variant?: Variant | 'auto';
+		showLabel?: boolean;
+		/** What the bar measures, for screen readers (ADR-0197). */
+		label?: string | undefined;
+		/** The value as words, where a percent of max would mislead (a temperature). */
+		valueText?: string | undefined;
+		class?: string;
+	};
 
-	$: percent = max > 0 ? Math.min(100, (value / max) * 100) : 0;
+	let {
+		value = 0,
+		max = 100,
+		size = 'md',
+		variant = 'auto',
+		showLabel = false,
+		label = undefined,
+		valueText = undefined,
+		class: className = ''
+	}: Props = $props();
 
-	let autoVariant: Variant;
-	$: autoVariant = percent < 70 ? 'success' : percent < 90 ? 'warning' : 'error';
-	let actualVariant: Variant;
-	$: actualVariant = variant === 'auto' ? autoVariant : variant;
+	const percent = $derived(max > 0 ? Math.min(100, (value / max) * 100) : 0);
+	const autoVariant: Variant = $derived(percent < 70 ? 'success' : percent < 90 ? 'warning' : 'error');
+	const actualVariant: Variant = $derived(variant === 'auto' ? autoVariant : variant);
 
 	const fillClasses: Record<Variant, string> = {
 		success: 'progress-fill-success',
@@ -23,22 +36,23 @@
 		info: 'progress-fill-info'
 	};
 
-	$: sizeClass = size === 'sm' ? 'progress-bar-sm' : '';
+	const sizeClass = $derived(size === 'sm' ? 'progress-bar-sm' : '');
 </script>
 
-<div class={$$props.class || ''}>
+<div class={className || ''}>
 	<div class="progress-bar {sizeClass}">
 		<div
 			class="progress-bar-fill {fillClasses[actualVariant]}"
 			style="width: {percent}%"
 			role="progressbar"
 			aria-label={label}
+			aria-valuetext={valueText}
 			aria-valuenow={value}
 			aria-valuemin="0"
 			aria-valuemax={max}
-		/>
+		></div>
 	</div>
 	{#if showLabel}
-		<span class="text-xs text-secondary mt-1">{percent.toFixed(1)}%</span>
+		<span class="block mt-1 text-right text-xs text-secondary tabular">{percent.toFixed(1)}%</span>
 	{/if}
 </div>

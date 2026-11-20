@@ -88,17 +88,25 @@ cannot mark it as used; a code of your authenticator app does.
 ### Interface Overview
 
 The UNOS interface consists of:
-- **Sidebar** - Navigation menu on the left, with your account and **Logout**
-  at the bottom. Regular users see **Dashboard** and **Account** only (see
-  [User Roles](#user-roles)).
-- **Main Content** - Current page content
+- **Sidebar** - Navigation menu on the left. Under the logo, **Search** opens the
+  [command palette](#command-palette). The pages follow, **Dashboard** on top
+  and the others in three groups: **Data** (Storage, Snapshots, Shares, Files),
+  **Applications** (Containers, App Store) and **Administration** (Users, Audit
+  Log, System). At the bottom a line says whether the page is **Connected** to
+  the NAS's live data, then your name and role, and **Logout**. For an
+  administrator the name is a link to **Your account**: **System** →
+  **Security**, with your own password, two-factor authentication, theme and
+  language. Regular users see **Dashboard** and **Account** only, without
+  groups (see [User Roles](#user-roles)).
+- **Main Content** - Current page content, under the page's title and its
+  buttons.
 
 On a phone, or in a window narrower than 768 pixels, a bar at the top replaces
 the sidebar: its menu button (☰) opens the navigation, with your account and
-**Logout**, over the page. Choosing a page, going back, pressing Escape or
+**Logout**, sliding in over the page. Choosing a page, going back, pressing Escape or
 tapping beside the menu closes it. Every page fits a screen 375 pixels wide:
 buttons move to the next line where a row has no room, **System**'s tabs are
-listed above the open tab, and a wide table, such as the list of disks or of
+listed in their three groups above the open tab, and a wide table, such as the list of disks or of
 users, scrolls sideways on its own while the page stays put. A dialog taller
 than the screen, as on a phone held sideways, scrolls to its buttons. Narrower
 than 640 pixels, the File Browser leaves out the **Modified** column, and each
@@ -114,8 +122,8 @@ takes neither the focus nor clicks: Tab skips its fields and buttons.
 ### Command Palette
 
 Press **Ctrl+K** (on a Mac **Cmd+K**) on any page after signing in to open the
-command palette; on a phone, tap the search button at the right end of the bar
-at the top. Type part of the name of a page or an action, in English or in
+command palette, or click **Search** at the top of the sidebar; on a phone, tap
+the search button at the right end of the bar at the top. Type part of the name of a page or an action, in English or in
 Russian: the list keeps what matches, names that start with what you typed
 first. **↓** and **↑** choose, **Enter** or a click opens the chosen page or
 starts the action, and **Escape** closes the palette. Ctrl+K also works while
@@ -175,7 +183,10 @@ The dashboard provides an at-a-glance view of your NAS. Above it, as above
 every page, administrators see the health banner while UNOS knows of a
 problem: a pool not mounted, degraded or almost full, a volume near its
 quota, a failing disk, a task that failed or missed its run (see
-[Alerts](#alerts)).
+[Alerts](#alerts)). The banner lists three problems; **Show all** lists the
+rest. While there is none, an administrator's dashboard says **No problems**
+beside the time of the last statistics, or **Disconnected from the NAS** while
+the page has lost its live connection.
 
 ### Arranging the Dashboard
 Each widget (the five stats cards below and, for administrators, **Storage
@@ -188,7 +199,8 @@ moved and hidden. Click **Customize** beside **Refresh**:
 - **Hide** removes a widget from the page. **Hidden widgets** lists the hidden
   ones with a **Show** button each, which puts the widget back where it was.
 - **Reset to default** restores the default order and shows every widget.
-- Click **Done** when you have finished. Each change is saved at once.
+- Click **Done** when you have finished. Each change is saved at once. With
+  every widget hidden, the dashboard says so; **Customize** shows them again.
 
 The layout is yours: it is kept on the NAS for your account, so it is the same
 in every browser you sign in with, and it is not shared with other users. A
@@ -220,10 +232,8 @@ Right after the page opens, the CPU can show 0% and the network and disk rates
   a disk's; **N/A** on a host without sensors.
 
 ### Storage Overview
-Shows all your storage pools with:
-- Used/total space
-- Health status
-- Quick access to pool details
+Shows the used and total space of the mounted pools, then each pool with its
+health, its use and a bar, and its problems; **Manage →** opens **Storage**.
 
 ### Disks to Replace
 When a disk is marked **Replace soon**, administrators see an alert above the
@@ -494,9 +504,7 @@ For each pool, you can:
   RAID1 and so on): new data goes to the new disk too, and a full **Balance**
   spreads the data that is there already. When the path names another disk
   than the one listed (disks change names when they are reconnected), the
-  add is refused: open the dialog again. On a board that hangs on the TRIM of
-  an NVMe drive (ADR-0370), an NVMe drive joins only a pool that has one
-  already
+  add is refused: open the dialog again
 - **Remove Disk** - (the same pools) Remove a disk from the pool: select it
   and type its path again. Its data moves to the other disks first, which can
   take hours on a hard disk; the pool stays usable meanwhile, and the disk
@@ -1509,7 +1517,8 @@ creation time.
 
 - **Pull**: enter an image name such as `nginx:latest` (without a tag, Docker
   pulls `latest`) and click **Pull**. A large image can take several minutes;
-  the image is listed once Docker has it.
+  the image is listed once Docker has it. Any registry is accepted, `lscr.io`
+  too; should its downloads stall, `ghcr.io/linuxserver/<name>` is the same image.
 - **Remove**: click the bin of an image and confirm. The image goes with all
   its tags, and only if no container uses it, running or stopped: otherwise the
   dialog names the containers that use it, and the image keeps its tags. Remove
@@ -1580,7 +1589,10 @@ reason and no **Install**: the server refuses its install before it downloads an
 Every app's image is pinned: UNOS installs the version that its catalog names
 (the version on the app's card and in its details), by its digest, whatever
 the publisher's tags name later. A newer UNOS that pins a newer version offers
-it as an update (see [Updating an App](#updating-an-app)).
+it as an update (see [Updating an App](#updating-an-app)). LinuxServer.io's
+images come from GitHub's registry, `ghcr.io/linuxserver/<name>`, where
+LinuxServer publishes them, not through `lscr.io`, its redirector to the same
+images, whose downloads did not complete on the network of UNOS's test device.
 
 Only one app installs at a time: while an install runs, the App Store offers
 no other install until it has ended.
@@ -1829,7 +1841,11 @@ An installed app can be updated in place when a newer UNOS brings a catalog
 that pins newer images for it: its card on the **Installed** tab then shows
 **Update to** and the version. Every app of the catalog pins its images by
 digest; an app installed from a floating tag (`latest`) before its catalog
-pinned it is offered the pinned version the same way.
+pinned it is offered the pinned version the same way. An app installed from
+`lscr.io/linuxserver/<name>` is still that app: with a tag it is offered the
+pinned `ghcr.io/linuxserver/<name>` image, and with the digest that the catalog
+pins it already runs that image and is offered nothing. **Roll back** returns it
+to the image it ran, under its `lscr.io` name, without a download.
 
 **Update to** opens a dialog that shows, before anything changes:
 
@@ -2572,7 +2588,14 @@ same forms.
 
 ## System Settings
 
-Access via **System** in the sidebar.
+Access via **System** in the sidebar. Its tabs come in three groups:
+**Settings** (General, Network, Remote Access, Security), **Monitoring**
+(Resource Monitor, System Logs, Disk Health, Notifications) and
+**Maintenance** (Updates, Backup & Restore, Scheduler, Power Management). In a
+window 1280 pixels wide or more they are a column beside the open tab, in a
+narrower one rows of buttons above it. **Security** lists your own settings
+under **Your account** and, for an administrator, those of the NAS (the
+two-factor requirement, the firewall and the certificates) under **This NAS**.
 
 ### General
 

@@ -345,30 +345,25 @@ class TestCreatePoolGuards:
         mkfs_index = next(i for i, call in enumerate(nas.calls) if call[0] == "mkfs.btrfs")
         assert sum(call[0] == "lsblk" for call in nas.calls[:mkfs_index]) == 2
 
-    @pytest.mark.parametrize("devices", [["/dev/nvme0n1"], ["/dev/sdb", "/dev/nvme0n1"]], ids=["nvme", "sata-and-nvme"])
-    def test_on_a_spacemit_k1_a_pool_with_an_nvme_drive_is_made_without_trim(self, nas, devices):
-        # mkfs.btrfs first TRIMs every device that supports it, and a TRIM of a whole device
-        # hangs the K1's NVMe controller: a pool with an NVMe drive among its devices is made
-        # with --nodiscard and mounted with nodiscard there (ADR-0370).
-        nas.files["/proc/device-tree/compatible"] = "spacemit,k1-x\0"
+    @pytest.mark.parametrize(
+        "compatible", ["spacemit,k1-x\0", "bananapi,bpi-f3\0spacemit,k1\0"], ids=["vendor-kernel", "mainline-kernel"])
+    @pytest.mark.parametrize(
+        "devices", [["/dev/nvme0n1"], ["/dev/sdb"], ["/dev/sdb", "/dev/nvme0n1"]], ids=["nvme", "sata", "sata-and-nvme"])
+    def test_on_a_spacemit_k1_a_pool_is_made_and_mounted_with_trim(self, nas, compatible, devices):
+        # mkfs.btrfs first TRIMs every device that supports it, btrfs mounts an SSD with
+        # discard=async from kernel 6.2 on, and fstrim.timer trims every filesystem whose fstab
+        # entry does not exclude it. A pool gets all three on the K1 as everywhere, also on an NVMe
+        # drive: no --nodiscard, nodiscard or X-fstrim.notrim, and the board's device tree is not
+        # read (ADR-0429).
+        nas.files["/proc/device-tree/compatible"] = compatible
         profile = "single" if len(devices) == 1 else "raid1"
 
         create(devices, raid_level=profile)
 
-        assert nas.changes[0] == [
-            "mkfs.btrfs", "-L", "tank", "-d", profile, "-m", profile, "--nodiscard", *devices]
-        assert ["mount", "-t", "btrfs", "-o", "noatime,nodiscard", f"UUID={NEW_UUID}",
-                "/mnt/pools/tank"] in nas.changes
-
-    def test_on_a_spacemit_k1_a_sata_pool_is_made_with_trim(self, nas):
-        # SATA (through an M.2-to-SATA adapter) and USB disks are what the K1 should use: their
-        # pools are made and mounted as everywhere else (ADR-0370).
-        nas.files["/proc/device-tree/compatible"] = "spacemit,k1-x\0"
-
-        create(["/dev/sdb"])
-
-        assert nas.changes[0] == ["mkfs.btrfs", "-L", "tank", "-d", "single", "-m", "single", "/dev/sdb"]
+        assert nas.changes[0] == ["mkfs.btrfs", "-L", "tank", "-d", profile, "-m", profile, *devices]
         assert ["mount", "-t", "btrfs", "-o", "noatime", f"UUID={NEW_UUID}", "/mnt/pools/tank"] in nas.changes
+        assert nas.fstab == BASE_FSTAB + marker("tank") + entry("tank", NEW_UUID)
+        assert not any("/proc/device-tree/compatible" in call for call in nas.calls)
 
     @pytest.mark.parametrize(
         ("device", "refusal", "message"),
@@ -393,10 +388,10 @@ class TestCreatePoolGuards:
             assert fake_host.calls == []
 
     @pytest.mark.parametrize("disk", ["sda", "nvme0n1"], ids=["sata", "nvme"])
-    def test_on_a_bpi_w3_a_pool_gets_none_of_the_k1s_workarounds(self, fake_host, disk):
-        # Nothing of the K1's workarounds on the RK3588: a SATA disk behind an AHCI controller and
-        # an NVMe drive in the M.2 Key M slot are formatted and mounted as on every host, without
-        # --nodiscard, nodiscard or X-fstrim.notrim (ADR-0370, ADR-0376).
+    def test_on_a_bpi_w3_a_pool_is_made_and_mounted_as_on_every_host(self, fake_host, disk):
+        # The RK3588 has no rule of its own: a SATA disk behind an AHCI controller and an NVMe drive
+        # in the M.2 Key M slot are formatted and mounted as on every host, without --nodiscard,
+        # nodiscard or X-fstrim.notrim, and the board's device tree is not read (ADR-0376, ADR-0429).
         bpi_w3(fake_host)
         fake_host.add_disk("nvme0n1", size=512_110_190_592, rota=False, model="Samsung SSD 980")
 
@@ -405,6 +400,7 @@ class TestCreatePoolGuards:
         assert fake_host.changes[0] == ["mkfs.btrfs", "-L", "tank", "-d", "single", "-m", "single", f"/dev/{disk}"]
         assert ["mount", "-t", "btrfs", "-o", "noatime", f"UUID={NEW_UUID}", "/mnt/pools/tank"] in fake_host.changes
         assert fake_host.fstab == BASE_FSTAB + marker("tank") + entry("tank", NEW_UUID)
+        assert not any("/proc/device-tree/compatible" in call for call in fake_host.calls)
 
     def test_raid1_on_two_blank_disks(self, nas):
         nas.add_disk("sdd")

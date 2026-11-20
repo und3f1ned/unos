@@ -12,7 +12,7 @@ import asyncio
 import importlib
 import os
 import subprocess
-from datetime import datetime, timezone
+from datetime import datetime, UTC
 from types import SimpleNamespace
 
 import pytest
@@ -57,7 +57,7 @@ def _release(tag: str, *, prerelease: bool = False) -> ReleaseInfo:
         tag_name=tag,
         name=f"UNOS {tag}",
         body="Fixes and features.",
-        published_at=datetime(2026, 12, 1, 10, 0, tzinfo=timezone.utc),
+        published_at=datetime(2026, 12, 1, 10, 0, tzinfo=UTC),
         html_url=f"https://github.com/und3f1ned/unos/releases/tag/{tag}",
         prerelease=prerelease,
     )

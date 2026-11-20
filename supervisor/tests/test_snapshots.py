@@ -7,10 +7,10 @@ import re
 import shutil
 import subprocess
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, UTC
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Callable
+from collections.abc import Callable
 from unittest.mock import patch, MagicMock
 
 import pytest
@@ -704,12 +704,12 @@ class TestCreateSnapshot:
 
     async def test_a_snapshot_without_a_name_is_named_after_the_time_in_utc(self, pools, btrfs, clock_in_utc_plus_9):
         """As the page and the guide say: the container's clock could be set to another time zone."""
-        before = datetime.now(timezone.utc).replace(microsecond=0)
+        before = datetime.now(UTC).replace(microsecond=0)
 
         result = await create_snapshot(SnapshotCreate(subvolume=str(pools.pool)), REQUEST, ADMIN)
 
-        named = datetime.strptime(result.name, "snap_%Y%m%d_%H%M%S").replace(tzinfo=timezone.utc)
-        assert before <= named <= datetime.now(timezone.utc)
+        named = datetime.strptime(result.name, "snap_%Y%m%d_%H%M%S").replace(tzinfo=UTC)
+        assert before <= named <= datetime.now(UTC)
 
     async def test_create_snapshot_of_a_volume(self, pools, btrfs):
         """A volume (a subvolume in the pool's top folder) keeps its snapshots in its own .snapshots."""
@@ -757,13 +757,13 @@ class TestCreateSnapshot:
         assert list(photos.iterdir()) == []
 
     async def test_create_snapshot_answers_its_time_with_the_offset(self, pools, btrfs):
-        before = datetime.now(timezone.utc).replace(microsecond=0)
+        before = datetime.now(UTC).replace(microsecond=0)
 
         result = await create_snapshot(SnapshotCreate(subvolume=str(pools.pool), name="x"), REQUEST, ADMIN)
 
         created = datetime.fromisoformat(result.created)
         assert created.utcoffset() == timedelta(0)
-        assert before <= created <= datetime.now(timezone.utc)
+        assert before <= created <= datetime.now(UTC)
 
     async def test_snapshot_folder_that_cannot_be_made_is_reported(self, pools, btrfs, monkeypatch):
         """A pool that btrfs made read-only after an error answered 500 without a reason."""
@@ -1091,12 +1091,12 @@ class TestRestoreSnapshot:
     async def test_a_restored_copy_is_named_after_the_time_in_utc(self, pools, btrfs, clock_in_utc_plus_9):
         """As the page and the guide say: the container's clock could be set to another time zone."""
         snap = btrfs.snapshot(pools.pool, "snap_test")
-        before = datetime.now(timezone.utc).replace(microsecond=0)
+        before = datetime.now(UTC).replace(microsecond=0)
 
         result = await restore_snapshot(SnapshotRestore(snapshot_path=str(snap)), REQUEST, ADMIN)
 
-        named = datetime.strptime(Path(result["target"]).name, "restore_%Y%m%d_%H%M%S").replace(tzinfo=timezone.utc)
-        assert before <= named <= datetime.now(timezone.utc)
+        named = datetime.strptime(Path(result["target"]).name, "restore_%Y%m%d_%H%M%S").replace(tzinfo=UTC)
+        assert before <= named <= datetime.now(UTC)
 
     async def test_restore_a_snapshot_of_a_volume_next_to_its_files(self, pools, btrfs):
         volume = btrfs.subvolume(pools.pool / "documents")
@@ -1312,7 +1312,8 @@ class TestTheWebUI:
         # Names on the disk are the same in every language (ADR-0296): the Snapshots page has
         # them as constants, the server's, and no text of its catalog holds one, so that no
         # translation can change what the page says a folder or a copy is called.
-        page = (REPO / "webui" / "src" / "routes" / "snapshots" / "+page.svelte").read_text(encoding="utf-8")
+        # The Snapshots page's names are in its module (ADR-0427).
+        page = (REPO / "webui" / "src" / "lib" / "components" / "snapshots" / "names.ts").read_text(encoding="utf-8")
         catalog = REPO / "webui" / "src" / "lib" / "i18n" / "catalog" / "snapshots.ts"
         names = {
             "SNAPSHOTS_FOLDER": SNAPSHOT_DIR_NAME,
@@ -1322,7 +1323,7 @@ class TestTheWebUI:
         }
 
         for constant, name in names.items():
-            assert f"const {constant} = '{name}';" in page
+            assert f"export const {constant} = '{name}';" in page
         texts = catalog_strings(catalog)
         assert {"Restore Snapshot", "Восстановление снимка"} <= set(texts)
         assert [text for text in texts if any(name in text for name in names.values())] == []

@@ -1,6 +1,13 @@
 <script lang="ts">
-	export let status: 'success' | 'warning' | 'error' | 'neutral' = 'neutral';
-	export let pulse: boolean = false;
+	type Props = {
+		status?: 'success' | 'warning' | 'error' | 'neutral';
+		pulse?: boolean;
+		/** The state the dot shows, for screen readers: a dot is never the only carrier of a state. */
+		label?: string;
+		class?: string;
+	};
+
+	let { status = 'neutral', pulse = false, label = '', class: className = '' }: Props = $props();
 
 	const statusClasses = {
 		success: 'status-dot-success',
@@ -10,6 +17,8 @@
 	};
 </script>
 
+<!-- The pulse stops under reduced motion (app.css). -->
 <span
-	class="status-dot {statusClasses[status]} {pulse ? 'animate-pulse' : ''} {$$props.class || ''}"
-/>
+	class="status-dot {statusClasses[status]} {pulse ? 'animate-pulse' : ''} {className || ''}"
+	aria-hidden={label ? undefined : 'true'}
+></span>{#if label}<span class="sr-only">{label}</span>{/if}

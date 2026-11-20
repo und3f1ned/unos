@@ -41,6 +41,43 @@ manager, encrypted backup uploads, health checks, CI checks).
   `app_names_changed` in the audit log, ADR-0420).
 
 ### Changed
+- A pool on an NVMe drive of a SpacemiT K1 (Banana Pi BPI-F3) gets TRIM like every other pool:
+  `mkfs.btrfs` and `btrfs device add` trim it, it is mounted without `nodiscard` and its fstab entry
+  without `nodiscard,X-fstrim.notrim`, so the weekly `fstrim.timer` trims it, and Add Disk no longer
+  refuses an NVMe drive for a pool with TRIM there; `docs/INSTALL.md` no longer advises against NVMe
+  on the K1. A Kingston A1000 on the K1 ran `fstrim`, `discard=async` and a warm reboot without an
+  error; the Patriot P300 that hung on a TRIM had also hung under load and did not come back after a
+  warm reboot. The K1's udev rule that turns off the power saving of NVMe drives stays (ADR-0429).
+- The web interface is redesigned (ADR-0428): a calm graphite look in both themes with an indigo
+  brand, the system's own fonts at 14 px, cards set apart by a border, one focus ring for the
+  keyboard, and status colours that mean status only. The sidebar groups its links under **Data**,
+  **Applications** and **Administration**, offers **Search** (the command palette) from 768 pixels
+  up, says whether the page is connected, and links an administrator's name to **Your account**.
+  **System** has its title and its tabs in the groups **Settings**, **Monitoring** and
+  **Maintenance**; **Security** lists your own settings before those of the NAS. The dashboard
+  says when it is disconnected and, for an administrator, that there are no problems; the problems
+  banner lists three and shows the rest on request. Pages share one header, underline tabs, flush
+  tables and toolbars of grouped buttons; the hand-written cards and the certificate dialog take
+  the shared components.
+- `make lint`, and with it `make check`, the pre-commit hook and the CI workflow's Lint job, checks
+  the rules of ruff that find bugs, set in `ruff.toml`, beyond pyflakes findings and syntax errors:
+  bugbear, pycodestyle's imports and statements, pyupgrade, bandit (not in the tests), pylint's
+  errors and warnings, ruff's own rules and a few single ones, less the rules of style and the
+  noisy ones that ADR-0425 lists. The supervisor, `scripts/` and `.claude/hooks/` were fixed first, without a change of
+  behaviour; a finding kept in the code carries `# noqa: <code>` with its reason.
+- The App Store's 22 LinuxServer.io apps (BookStack, transmission, Sonarr, Nextcloud and the others) are
+  pinned and pulled as `ghcr.io/linuxserver/<name>`, with the same tags and digests, instead of through
+  `lscr.io`, LinuxServer's redirector, whose image downloads did not complete on the dev device's network. An app
+  installed from `lscr.io` stays that app: one installed from a tag is offered the pinned GHCR image
+  as its update, and its rollback returns to the image it ran (ADR-0426).
+- The web UI runs on Svelte 5 (with SvelteKit 2.70, @sveltejs/vite-plugin-svelte 4, svelte-check 4
+  and lucide-svelte 0.321), every component in runes mode: the build fails for a component of
+  Svelte 4's legacy mode, and `make check` for one that uses the rest of Svelte 4's syntax
+  (`webui/scripts/runes-check.mjs`). The large pages are composed of components of their area under
+  `webui/src/lib/components/`, with what they share in modules beside them; the pages look and work
+  as before (ADR-0427). On a phone, a tap beside the menu or a container's drawer closes it on iOS
+  Safari too.
+- The local stand-in of the E2E specs serves HTTP/2, as Caddy does (ADR-0427).
 - The supervisor keeps its whole data directory (the database, unless `UNOS_DB_PATH` names another
   file, its JWT secret, the audit log, the state files, the stored certificates and the backups)
   where `UNOS_DATA_DIR` names, `/data` by default as before, and refuses to start when the value is
@@ -1584,6 +1621,9 @@ manager, encrypted backup uploads, health checks, CI checks).
   installed once, under its id, and a request with `name` answers 422.
 
 ### Fixed
+- Removing a large image no longer answers 500 after a minute while Docker still deletes it: the
+  removal waits up to ten minutes for Docker, and the audit log gets its image_removed. BookStack's
+  estimate of the system disk is what its pull took, plus about 5%: it was a quarter short.
 - `scripts/dev/check.sh` no longer warns of a thermal zone whose trips drive only a fan or are
   bound to nothing, such as the BPI-F3's top_thermal and gpu_thermal at their first passive trip
   of 40 C: it measures the margin in the zones that slow a processor, and warns of every zone 5 C

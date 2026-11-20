@@ -1,5 +1,6 @@
 ---
-status: accepted
+status: superseded
+superseded-by: ADR-0428
 date: 2026-11-18
 area: webui
 decided-by: agent
@@ -8,6 +9,8 @@ decided-by: agent
 # ADR-0405: Each user chooses a dark, light or system theme, and the colour tokens have a value per theme
 
 ## Context
+
+Superseded by ADR-0428: only in part, the listed values of the light theme and the dark values that this ADR moved, now ADR-0428's graphite base and indigo brand; every other rule here stays in force.
 
 The entry `webui.light-theme` (ADR-0023 listed the dark-only web UI as debt) says that the Account
 page offers Dark, Light and System, that the choice stays across sign-ins, and that every page uses

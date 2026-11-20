@@ -6,6 +6,9 @@ import type { Translation } from '../translate';
 export const en = {
 	'system.heading.admin': 'System',
 	'system.heading.user': 'Account',
+	'system.group.settings': 'Settings',
+	'system.group.monitoring': 'Monitoring',
+	'system.group.maintenance': 'Maintenance',
 	'system.tabs.general': 'General',
 	'system.tabs.updates': 'Updates',
 	'system.tabs.security': 'Security',
@@ -22,6 +25,9 @@ export const en = {
 export const ru: Translation<typeof en> = {
 	'system.heading.admin': 'Система',
 	'system.heading.user': 'Учётная запись',
+	'system.group.settings': 'Настройки',
+	'system.group.monitoring': 'Мониторинг',
+	'system.group.maintenance': 'Обслуживание',
 	'system.tabs.general': 'Общие',
 	'system.tabs.updates': 'Обновления',
 	'system.tabs.security': 'Безопасность',

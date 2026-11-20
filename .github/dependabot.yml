@@ -10,7 +10,7 @@
 # by hand in the monthly maintenance pass; Playwright, that is
 # @playwright/test and the image of webui/Dockerfile.test, which carries its version, moved together
 # by hand in the monthly maintenance pass; and new major versions of npm packages, which change the
-# web UI's toolchain and come as features of feature-list.json (ADR-0231).
+# web UI's toolchain and come as features of feature-list.json (ADR-0427).
 version: 2
 updates:
   - package-ecosystem: pip

@@ -14,7 +14,7 @@ import json
 import logging
 import subprocess
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, UTC
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -39,7 +39,6 @@ from .test_scheduler_validation import make_env
 health_router = importlib.import_module("src.health.router")
 scheduler = importlib.import_module("src.scheduler.router")
 
-UTC = timezone.utc
 
 
 def _problem(key: str = "pool_degraded:data", severity: str = "error", title: str = "Pool 'data' is degraded",

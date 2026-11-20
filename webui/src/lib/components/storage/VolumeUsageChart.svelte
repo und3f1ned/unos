@@ -7,20 +7,24 @@
 	// hour of the last 30 days that the supervisor kept, the current reading last, drawn as a line
 	// below the quota's, with its first and last time and use written out for every reader.
 
-	export let points: VolumeUsagePoint[];
-	/** A size in the units of the page. */
-	export let formatBytes: (bytes: number) => string;
+	type Props = {
+		points: VolumeUsagePoint[];
+		/** A size in the units of the page. */
+		formatBytes: (bytes: number) => string;
+	};
+
+	let { points, formatBytes }: Props = $props();
 
 	const WIDTH = 300;
 	const HEIGHT = 80;
 
-	$: times = points.map((point) => apiTime(point.time)?.getTime() ?? NaN);
-	$: first = times[0] ?? 0;
-	$: last = times[times.length - 1] ?? 0;
+	let times = $derived(points.map((point) => apiTime(point.time)?.getTime() ?? NaN));
+	let first = $derived(times[0] ?? 0);
+	let last = $derived(times[times.length - 1] ?? 0);
 	// The top of the chart: the highest quota or use, so that the quota's line is in view.
-	$: top = Math.max(1, ...points.map((point) => Math.max(point.used, point.quota ?? 0)));
-	$: x = (time: number): number => (last > first ? ((time - first) / (last - first)) * WIDTH : 0);
-	$: y = (bytes: number): number => HEIGHT - (bytes / top) * HEIGHT;
+	let top = $derived(Math.max(1, ...points.map((point) => Math.max(point.used, point.quota ?? 0))));
+	const x = (time: number): number => (last > first ? ((time - first) / (last - first)) * WIDTH : 0);
+	const y = (bytes: number): number => HEIGHT - (bytes / top) * HEIGHT;
 
 	/** An SVG path through the values, broken where a point has none. */
 	function path(values: (number | null)[], at: (index: number) => number, height: (value: number) => number): string {
@@ -38,15 +42,17 @@
 		return drawn.trim();
 	}
 
-	$: usedPath = path(points.map((point) => point.used), (index) => x(times[index]), y);
-	$: quotaPath = path(points.map((point) => point.quota), (index) => x(times[index]), y);
-	$: quota = points[points.length - 1]?.quota ?? null;
-	$: dateFormat = new Intl.DateTimeFormat($intlLocale, {
-		day: 'numeric',
-		month: 'short',
-		hour: '2-digit',
-		minute: '2-digit'
-	});
+	let usedPath = $derived(path(points.map((point) => point.used), (index) => x(times[index]), y));
+	let quotaPath = $derived(path(points.map((point) => point.quota), (index) => x(times[index]), y));
+	let quota = $derived(points[points.length - 1]?.quota ?? null);
+	let dateFormat = $derived(
+		new Intl.DateTimeFormat($intlLocale, {
+			day: 'numeric',
+			month: 'short',
+			hour: '2-digit',
+			minute: '2-digit'
+		})
+	);
 </script>
 
 {#if points.length < 2}

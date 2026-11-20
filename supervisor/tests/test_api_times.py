@@ -23,7 +23,7 @@ import tarfile
 import time
 import typing
 from contextlib import contextmanager
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, UTC
 from pathlib import Path, PurePath
 
 import httpx
@@ -236,7 +236,7 @@ def local_zone(name: str):
 # wrote them, without an offset, in UTC.
 OLD = "2026-11-07 12:00:00"
 OLD_ISO = "2026-11-07T12:00:00"
-OLD_UTC = datetime(2026, 11, 7, 12, 0, tzinfo=timezone.utc)
+OLD_UTC = datetime(2026, 11, 7, 12, 0, tzinfo=UTC)
 TASK_ID = "task_20261107120000_abcd1234"
 SERIAL = "WD-OLD1"
 
@@ -489,7 +489,7 @@ class TestStoredTimesReadBackAsUtc:
                                    headers=admin_headers)
             assert response.status_code == 200, response.text
             answered = response.json()
-            now = datetime.now(timezone.utc).replace(tzinfo=None)
+            now = datetime.now(UTC).replace(tzinfo=None)
         with authz_db.engine.connect() as conn:
             created, expires = conn.exec_driver_sql(
                 "SELECT created_at, expires_at FROM api_tokens WHERE name = 'new'").one()
@@ -534,7 +534,7 @@ class TestAuditLogAcrossTheChange:
         before = old_log.audit_file.read_bytes()
         with local_zone("Asia/Kathmandu"):
             asyncio_run(audit_router.log_action(AuditAction.OTHER, details="new"))
-            now = datetime.now(timezone.utc)
+            now = datetime.now(UTC)
             entries = self.listed(old_log)
 
         assert old_log.audit_file.read_bytes().startswith(before)  # nothing written before is rewritten
@@ -632,8 +632,8 @@ class TestTimesOfTools:
     def test_btrfs_prints_the_start_of_a_scrub_in_its_containers_clock_utc(self):
         from src.storage.pools import btrfs_time
 
-        assert btrfs_time("Fri Nov  6 10:00:00 2026") == datetime(2026, 11, 6, 10, tzinfo=timezone.utc)
-        assert btrfs_time("Fri Nov 16 10:00:00 2026 ") == datetime(2026, 11, 16, 10, tzinfo=timezone.utc)
+        assert btrfs_time("Fri Nov  6 10:00:00 2026") == datetime(2026, 11, 6, 10, tzinfo=UTC)
+        assert btrfs_time("Fri Nov 16 10:00:00 2026 ") == datetime(2026, 11, 16, 10, tzinfo=UTC)
         assert btrfs_time("Mon Feb 30 10:00:00 2026") is None  # no such day
         assert btrfs_time("2026-11-06 10:00:00") is None
 
@@ -650,7 +650,7 @@ class TestTimesOfTools:
     def test_openssl_prints_a_certificates_dates_in_gmt(self):
         from src.security.router import openssl_time
 
-        assert openssl_time("Nov  8 01:47:31 2027 GMT\n") == datetime(2027, 11, 8, 1, 47, 31, tzinfo=timezone.utc)
+        assert openssl_time("Nov  8 01:47:31 2027 GMT\n") == datetime(2027, 11, 8, 1, 47, 31, tzinfo=UTC)
         assert openssl_time("2027-11-08 01:47:31Z") is None
 
     def test_a_notification_event_takes_a_time_without_an_offset_as_utc(self):
@@ -661,7 +661,7 @@ class TestTimesOfTools:
         assert _event_time(event) == "2026-11-07T12:00:00Z"
         with local_zone("Asia/Kathmandu"):
             now = times.parse_time(_event_time(NotificationEvent(type="info", title="t", message="m")))
-        assert abs(now - datetime.now(timezone.utc)) < timedelta(minutes=1)
+        assert abs(now - datetime.now(UTC)) < timedelta(minutes=1)
 
 
 def test_a_utc_field_assigned_a_time_without_a_zone_is_answered_in_utc():

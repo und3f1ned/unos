@@ -18,8 +18,8 @@ import re
 import subprocess
 from concurrent.futures import ThreadPoolExecutor
 from collections.abc import Mapping
-from datetime import datetime, timezone
-from typing import Literal, NamedTuple, Optional
+from datetime import datetime, UTC
+from typing import Literal, NamedTuple
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
@@ -158,7 +158,7 @@ def _text(value) -> str:
 def _timestamp(value) -> str:
     """__REALTIME_TIMESTAMP, microseconds since the epoch, as a UTC time with its offset."""
     try:
-        return datetime.fromtimestamp(int(value) / 1_000_000, tz=timezone.utc).isoformat(timespec="seconds")
+        return datetime.fromtimestamp(int(value) / 1_000_000, tz=UTC).isoformat(timespec="seconds")
     except (TypeError, ValueError, OverflowError, OSError):
         return ""
 
@@ -172,7 +172,7 @@ def _priority(value) -> str:
     return PRIORITY_LEVELS[level] if 0 <= level < len(PRIORITY_LEVELS) else "info"
 
 
-def journal_entry(line: str, source: str) -> Optional[LogEntry]:
+def journal_entry(line: str, source: str) -> LogEntry | None:
     """One line of journalctl's JSON as an entry; None for a line that is not one."""
     try:
         fields = json.loads(line)
@@ -202,9 +202,9 @@ def _journalctl(
     source: str,
     *,
     start: tuple[str, ...],
-    priority: Optional[str] = None,
-    since: Optional[str] = None,
-    search: Optional[str] = None,
+    priority: str | None = None,
+    since: str | None = None,
+    search: str | None = None,
 ) -> list[str]:
     """journalctl with JSON output, the options ``start`` that say where it starts, the filters and
     the source's matches."""
@@ -228,9 +228,9 @@ async def read_journal(
     source: str,
     *,
     limit: int,
-    priority: Optional[str] = None,
-    since: Optional[str] = None,
-    search: Optional[str] = None,
+    priority: str | None = None,
+    since: str | None = None,
+    search: str | None = None,
 ) -> LogsResponse:
     """The newest ``limit`` entries of ``source`` in the host's journal, newest first: at
     ``priority`` or a more severe level, since ``since``, and with ``search`` in their
@@ -266,14 +266,14 @@ class JournalQuery(BaseModel):
 
     source: str = Field("journal", description="A source of GET /logs/sources.")
     limit: int = Field(100, ge=1, le=1000, description="How many of the newest entries to read, from 1 to 1000.")
-    priority: Optional[Priority] = Field(None, description="Only this level and the more severe ones; null for all.")
-    search: Optional[str] = Field(
+    priority: Priority | None = Field(None, description="Only this level and the more severe ones; null for all.")
+    search: str | None = Field(
         None, max_length=MAX_SEARCH_CHARS, description="Only the entries with this text in their message, in any case."
     )
-    since: Optional[str] = Field(None, description="<N> minutes ago, <N> hours ago or <N> days ago; null for all.")
+    since: str | None = Field(None, description="<N> minutes ago, <N> hours ago or <N> days ago; null for all.")
 
 
-def _check_query(source: str, since: Optional[str], search: Optional[str]) -> None:
+def _check_query(source: str, since: str | None, search: str | None) -> None:
     """400 for a value that journalctl must not get; the types and ranges are checked already."""
     if source not in LOG_SOURCES:
         raise HTTPException(400, f"Unknown log source: {source}")
@@ -298,7 +298,7 @@ def journal_query(params: Mapping[str, str]) -> JournalQuery:
     return query
 
 
-async def follow_journal(query: JournalQuery, *, after: Optional[str], since: float) -> host.HostStream:
+async def follow_journal(query: JournalQuery, *, after: str | None, since: float) -> host.HostStream:
     """``journalctl --follow`` on the host (ADR-0366): each entry of the query's source, level and
     search after the entry whose cursor is ``after``, or, without one, since the time ``since``
     (seconds since the epoch, before the read of the newest entries found none), and then each new
@@ -354,9 +354,9 @@ async def get_log_sources(_: dict = Depends(verify_token)):
 async def get_log_entries(
     source: str = Query("journal", description="A source of GET /sources"),
     limit: int = Query(100, ge=1, le=1000, description="How many of the newest entries to read, from 1 to 1000."),
-    priority: Optional[Priority] = Query(None, description="This level and the more severe ones"),
-    search: Optional[str] = Query(None, max_length=MAX_SEARCH_CHARS, description="Text of the message, in any case"),
-    since: Optional[str] = Query(None, description="<N> minutes ago, <N> hours ago or <N> days ago"),
+    priority: Priority | None = Query(None, description="This level and the more severe ones"),
+    search: str | None = Query(None, max_length=MAX_SEARCH_CHARS, description="Text of the message, in any case"),
+    since: str | None = Query(None, description="<N> minutes ago, <N> hours ago or <N> days ago"),
     _: dict = Depends(verify_token)
 ):
     """The newest entries of a source of the host's journal, newest first: at the level asked for or

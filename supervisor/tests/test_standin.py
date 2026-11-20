@@ -45,6 +45,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from datetime import UTC
 
 REPO = Path(__file__).resolve().parents[2]
 STANDIN = REPO / "scripts" / "standin"
@@ -1226,7 +1227,7 @@ class TestSpecsAndRunner:
 
 def _made_certificate(common_name: str):
     """A self-signed certificate and its key in PEM, and its SHA-256 fingerprint."""
-    from datetime import datetime, timedelta, timezone
+    from datetime import datetime, timedelta
 
     from cryptography import x509
     from cryptography.hazmat.primitives import hashes, serialization
@@ -1237,7 +1238,7 @@ def _made_certificate(common_name: str):
 
     key = ec.generate_private_key(ec.SECP256R1())
     name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, common_name)])
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     cert = (x509.CertificateBuilder().subject_name(name).issuer_name(name).public_key(key.public_key())
             .serial_number(x509.random_serial_number()).not_valid_before(now - timedelta(days=1))
             .not_valid_after(now + timedelta(days=30)).sign(key, hashes.SHA256()))

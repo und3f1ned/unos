@@ -1,5 +1,6 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
+	import { messageOf } from '$lib/errors';
+	import { onMount, untrack } from 'svelte';
 	import {
 		addAppName,
 		applyAppNames,
@@ -8,30 +9,34 @@
 		type AppName,
 		type AppNamesStatus
 	} from '$lib/api/remoteAccess';
-	import { Alert, Button, Card, Input, Modal, Select } from '$lib/components/ui';
+	import { Alert, Button, Card, Input, Select } from '$lib/components/ui';
 	import { t } from '$lib/i18n';
 	import { Plus, Tag, Trash2 } from 'lucide-svelte';
+	import ConfirmDialog from './ConfirmDialog.svelte';
+	import FormDialog from './FormDialog.svelte';
 
 	// System > Remote access, administrators only: the local names of apps (ADR-0420), routed by the
 	// web UI's Caddy to a published port of the app and announced by avahi on the LAN.
 
-	let status: AppNamesStatus | null = null;
-	let loading = false;
-	let loadError = '';
-	let busy = false;
-	let error = '';
-	let success = '';
-	let showAdd = false;
+	let status = $state<AppNamesStatus | null>(null);
+	let loading = $state(false);
+	let loadError = $state('');
+	let busy = $state(false);
+	let error = $state('');
+	let success = $state('');
+	let showAdd = $state(false);
 	// The chosen published port: its index in status.apps, each app's web port first.
-	let choice = '';
-	let label = '';
-	let addError = '';
-	let removing: AppName | null = null;
+	let choice = $state('');
+	let label = $state('');
+	let addError = $state('');
+	let removing = $state<AppName | null>(null);
 
-	$: host = status?.host_name ?? '';
-	$: appOptions = (status?.apps ?? []).map((a, i) => ({ value: String(i), label: $t('remote.names.port', { app: a.name, port: a.port }) }));
-	$: chosen = status?.apps[Number(choice)] ?? null;
-	$: moved = !!status && status.names.length > 0 && !!status.announced && status.address !== status.announced;
+	let host = $derived(status?.host_name ?? '');
+	let appOptions = $derived(
+		(status?.apps ?? []).map((a, i) => ({ value: String(i), label: $t('remote.names.port', { app: a.name, port: a.port }) }))
+	);
+	let chosen = $derived(status?.apps[Number(choice)] ?? null);
+	let moved = $derived(!!status && status.names.length > 0 && !!status.announced && status.address !== status.announced);
 
 	onMount(() => {
 		void load();
@@ -41,10 +46,6 @@
 	function urlOf(name: AppName): string {
 		// i18n-ignore: a URL
 		return `https://${name.name}`;
-	}
-
-	function messageOf(e: unknown): string {
-		return e instanceof Error ? e.message : String(e);
 	}
 
 	async function load() {
@@ -75,8 +76,14 @@
 		showAdd = true;
 	}
 
-	// A new choice of app proposes its label.
-	$: proposeLabel(chosen?.name ?? '');
+	// A new choice of app proposes its label, and so does a new status (its apps are new objects),
+	// as the statement of Svelte 4 did. It runs when the page updates, before it is drawn: add()
+	// still reads the typed label after it set the status, which a label derived from the choice
+	// would already have replaced.
+	$effect.pre(() => {
+		const name = chosen?.name ?? '';
+		untrack(() => proposeLabel(name));
+	});
 
 	function proposeLabel(name: string) {
 		label = labelOf(name);
@@ -134,12 +141,12 @@
 
 <Card>
 	<div class="flex flex-wrap items-center justify-between gap-2 mb-4">
-		<h3 class="text-lg font-semibold flex items-center gap-2 min-w-0">
+		<h3 class="card-title min-w-0">
 			<Tag class="w-5 h-5 shrink-0" />
 			{$t('remote.names.title')}
 		</h3>
 		{#if status?.volume && status.announcer}
-			<Button variant="primary" size="sm" disabled={busy || status.apps.length === 0} on:click={openAdd}>
+			<Button variant="primary" size="sm" disabled={busy || status.apps.length === 0} onclick={openAdd}>
 				<Plus class="w-4 h-4" />
 				{$t('remote.names.add')}
 			</Button>
@@ -155,7 +162,7 @@
 	{#if loadError}
 		<Alert variant="error" title={$t('remote.names.loadFailed')} class="mb-4">
 			<p class="break-words">{loadError}</p>
-			<Button variant="secondary" size="sm" class="mt-3" {loading} on:click={load}>{$t('common.retry')}</Button>
+			<Button variant="secondary" size="sm" class="mt-3" {loading} onclick={load}>{$t('common.retry')}</Button>
 		</Alert>
 	{/if}
 
@@ -169,7 +176,7 @@
 		{#if moved}
 			<Alert variant="warning" class="mt-4">
 				<p class="break-words">{$t('remote.names.addressChanged', { announced: status.announced ?? '', address: status.address ?? '' })}</p>
-				<Button variant="secondary" size="sm" class="mt-3" disabled={busy} on:click={applyAgain}>{$t('remote.names.apply')}</Button>
+				<Button variant="secondary" size="sm" class="mt-3" disabled={busy} onclick={applyAgain}>{$t('remote.names.apply')}</Button>
 			</Alert>
 		{/if}
 		{#if status.names.length === 0}
@@ -188,12 +195,11 @@
 							{/if}
 						</div>
 						<Button
-							variant="ghost"
+							variant="ghost-danger"
 							size="icon"
-							class="text-status-error hover:text-status-error"
 							disabled={busy}
 							aria-label={$t('remote.names.removeLabel', { name: name.name })}
-							on:click={() => (removing = name)}
+							onclick={() => (removing = name)}
 						>
 							<Trash2 class="w-4 h-4" />
 						</Button>
@@ -205,33 +211,36 @@
 	{/if}
 </Card>
 
-<Modal open={showAdd} title={$t('remote.names.addTitle')} closable={!busy} on:close={() => (showAdd = false)}>
-	<form id="app-name-add" class="space-y-4" on:submit|preventDefault={add}>
-		<Select label={$t('remote.names.app')} options={appOptions} bind:value={choice} />
-		<Input
-			label={$t('remote.names.label')}
-			hint={$t('remote.names.labelHint', { name: label.trim(), host })}
-			bind:value={label}
-			maxlength={32}
-			spellcheck={false}
-			required
-		/>
-		{#if addError}
-			<Alert variant="error"><p class="break-words">{addError}</p></Alert>
-		{/if}
-	</form>
-	<svelte:fragment slot="footer">
-		<Button variant="secondary" type="button" disabled={busy} on:click={() => (showAdd = false)}>{$t('common.cancel')}</Button>
-		<Button variant="primary" type="submit" form="app-name-add" disabled={busy || !label.trim() || !chosen}>
-			{busy ? $t('remote.names.adding') : $t('remote.names.add')}
-		</Button>
-	</svelte:fragment>
-</Modal>
+<FormDialog
+	open={showAdd}
+	title={$t('remote.names.addTitle')}
+	formId="app-name-add"
+	{busy}
+	error={addError}
+	submitLabel={busy ? $t('remote.names.adding') : $t('remote.names.add')}
+	submitDisabled={busy || !label.trim() || !chosen}
+	oncancel={() => (showAdd = false)}
+	onsubmit={add}
+>
+	<Select label={$t('remote.names.app')} options={appOptions} bind:value={choice} />
+	<Input
+		label={$t('remote.names.label')}
+		hint={$t('remote.names.labelHint', { name: label.trim(), host })}
+		bind:value={label}
+		maxlength={32}
+		spellcheck={false}
+		required
+	/>
+</FormDialog>
 
-<Modal open={removing !== null} title={$t('remote.names.remove')} danger on:close={() => (removing = null)}>
+<ConfirmDialog
+	open={removing !== null}
+	title={$t('remote.names.remove')}
+	danger
+	confirmLabel={$t('remote.names.remove')}
+	{busy}
+	oncancel={() => (removing = null)}
+	onconfirm={remove}
+>
 	<p class="text-sm break-words">{$t('remote.names.removeLabel', { name: removing?.name ?? '' })}</p>
-	<svelte:fragment slot="footer">
-		<Button variant="secondary" on:click={() => (removing = null)}>{$t('common.cancel')}</Button>
-		<Button variant="danger" disabled={busy} on:click={remove}>{$t('remote.names.remove')}</Button>
-	</svelte:fragment>
-</Modal>
+</ConfirmDialog>

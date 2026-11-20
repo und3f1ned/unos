@@ -5,6 +5,8 @@ import type { Translation } from '../translate';
 
 export const en = {
 	'account.title': 'Security Settings',
+	'account.group.mine': 'Your account',
+	'account.group.nas': 'This NAS',
 
 	'account.language.title': 'Language',
 	'account.language.label': 'Interface language',
@@ -196,6 +198,8 @@ export const en = {
 
 export const ru: Translation<typeof en> = {
 	'account.title': 'Настройки безопасности',
+	'account.group.mine': 'Ваша учётная запись',
+	'account.group.nas': 'Этот NAS',
 
 	'account.language.title': 'Язык',
 	'account.language.label': 'Язык интерфейса',

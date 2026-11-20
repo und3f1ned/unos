@@ -136,7 +136,7 @@ OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
 def call(url: str, body: bytes | None, content_type: str | None, timeout: float) -> tuple[int, float, bytes]:
     """(HTTP status, seconds, answer) of a request; status 0 when none came, with the reason."""
-    request = urllib.request.Request(url, data=body, method="POST" if body is not None else "GET")
+    request = urllib.request.Request(url, data=body, method="POST" if body is not None else "GET")  # noqa: S310 - http://
     if content_type:
         request.add_header("Content-Type", content_type)
     start = time.monotonic()

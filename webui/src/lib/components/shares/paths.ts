@@ -9,6 +9,11 @@ export interface FolderMessages {
 	apps: (pool: string) => string;
 }
 
+/** The locations that a share or an export can use: the server refuses a folder of a pool that UNOS does not manage (ADR-0293). */
+export function managedLocations(paths: SharePath[]): SharePath[] {
+	return paths.filter((location) => location.managed);
+}
+
 /**
  * The components of a folder typed below a pool or volume. Empty and "."
  * components are dropped, as the server normalizes paths ("a//b/" and

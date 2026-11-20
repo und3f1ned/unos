@@ -218,7 +218,7 @@ def _installed_app(app: stacks.InstalledContainers, pools: list[AppPool], bases:
 
     web_port = None
     ports = ((main.attrs.get("NetworkSettings") or {}).get("Ports") or {}) if main is not None else {}
-    for port_str, bindings in ports.items():
+    for bindings in ports.values():
         if bindings and bindings[0].get("HostPort"):
             web_port = int(bindings[0]["HostPort"])
             break

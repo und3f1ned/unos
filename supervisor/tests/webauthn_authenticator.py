@@ -124,7 +124,7 @@ class SoftKey:
 
     def assertion(
         self, challenge: bytes | str, origin: str, rp_id: str, *, type_: str = "webauthn.get", flags: int = UP,
-        counter: int | None = None, client_extra: dict | None = None, signer: "SoftKey | None" = None,
+        counter: int | None = None, client_extra: dict | None = None, signer: SoftKey | None = None,
         extensions: bytes = b"",
     ) -> dict:
         """The security_key of a sign-in: a touch of the key. The counter goes up by one unless given."""

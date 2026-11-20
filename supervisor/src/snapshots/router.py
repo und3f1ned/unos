@@ -41,7 +41,7 @@ import re
 import stat
 import subprocess
 from contextlib import ExitStack
-from datetime import datetime, timezone
+from datetime import datetime, UTC
 from pathlib import Path
 from typing import Annotated
 
@@ -117,7 +117,7 @@ def run_cmd(cmd: list[str], *, pass_fds: tuple[int, ...] = ()) -> tuple[str, str
 
 def utc_stamp() -> str:
     """``<date>_<time>`` in UTC, as the names snap_, restore_ and the scheduler's auto_ give them (ADR-0243)."""
-    return datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    return datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
 
 
 def _is_real_dir(path: Path) -> bool:
@@ -342,7 +342,7 @@ def _creation_time(show_output: str) -> str:
                 created = datetime.strptime(raw_date, "%Y-%m-%d %H:%M:%S %z")
             except ValueError:
                 return raw_date
-            return created.astimezone(timezone.utc).isoformat()
+            return created.astimezone(UTC).isoformat()
     return ""
 
 
@@ -558,7 +558,7 @@ async def create_snapshot(req: SnapshotCreate, request: Request, user: User = De
         subvolume=str(subvol_path),
         path=str(snap_path),
         # As the list gives it (_creation_time): UTC, with the offset.
-        created=datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
+        created=datetime.now(UTC).replace(microsecond=0).isoformat(),
     )
 
 

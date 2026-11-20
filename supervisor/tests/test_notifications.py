@@ -326,7 +326,7 @@ class TestTheMailServersCertificate:
         message = email.message_from_string(text)
         assert message["Date"] and message["Message-ID"], text
         sent_at = email.utils.parsedate_to_datetime(message["Date"])
-        assert abs(sent_at - datetime.datetime.now(datetime.timezone.utc)) < datetime.timedelta(minutes=1)
+        assert abs(sent_at - datetime.datetime.now(datetime.UTC)) < datetime.timedelta(minutes=1)
         assert re.fullmatch(r"<[^<>@\s]+@example>", message["Message-ID"]), message["Message-ID"]
 
     @pytest.mark.parametrize("server", ["untrusted"], indirect=True)
@@ -1528,15 +1528,15 @@ class TestTheFakes:
 class TestTheWebUI:
     def test_its_english_names_and_describes_the_events_as_the_server_does(self):
         """System > Notifications shows each event of the server's list by its id, with the name and
-        the description of the catalog in the language of the page (EVENTS of NotificationsTab.svelte,
-        ADR-0287): the English half of webui/src/lib/i18n/catalog/notifications.ts copies the server's,
+        the description of the catalog in the language of the page (EVENTS of the tab's module
+        components/system/notifications/channels.ts, ADR-0287, ADR-0427): the English half of webui/src/lib/i18n/catalog/notifications.ts copies the server's,
         word for word, and has an event for every id of the list."""
-        tab = (REPO / "webui" / "src" / "routes" / "system" / "tabs" / "NotificationsTab.svelte").read_text(
+        tab = (REPO / "webui" / "src" / "lib" / "components" / "system" / "notifications" / "channels.ts").read_text(
             encoding="utf-8")
         catalog = (REPO / "webui" / "src" / "lib" / "i18n" / "catalog" / "notifications.ts").read_text(
             encoding="utf-8")
-        events_map = re.search(r"const EVENTS: [^=]+= \{(.*?)\n  \};", tab, re.DOTALL)
-        assert events_map, "NotificationsTab.svelte has no EVENTS"
+        events_map = re.search(r"const EVENTS: [^=]+= \{(.*?)\n\};", tab, re.DOTALL)
+        assert events_map, "channels.ts has no EVENTS"
         keys = {
             match["id"]: (match["name"], match["when"])
             for match in re.finditer(

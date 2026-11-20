@@ -15,7 +15,7 @@ import errno
 import json
 import logging
 import sqlite3
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, UTC
 
 import pyotp
 import pytest
@@ -166,11 +166,11 @@ class TestSignInWhileDataIsFull:
 
     def test_the_records_it_could_not_write_are_reported_in_the_log(self, world, monkeypatch):
         fill_data(world, monkeypatch)
-        before = datetime.now(timezone.utc).replace(microsecond=0)
+        before = datetime.now(UTC).replace(microsecond=0)
 
         sign_in(world, headers={"user-agent": "backup-script/1.0"})
 
-        after = datetime.now(timezone.utc)
+        after = datetime.now(UTC)
         [(entry, message)] = reported(world, ENTRY_LOST)
         assert (entry["action"], entry["username"], entry["success"]) == ("login_success", "alice", True)
         assert (entry["ip_address"], entry["user_agent"]) == ("testclient", "backup-script/1.0")

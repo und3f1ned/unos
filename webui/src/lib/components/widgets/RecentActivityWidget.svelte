@@ -1,20 +1,24 @@
 <script lang="ts">
-	import { Bell, AlertTriangle, Info, CheckCircle, Clock } from 'lucide-svelte';
-	import { Card } from '$lib/components/ui';
+	import { Bell, AlertTriangle, Info, CheckCircle } from 'lucide-svelte';
+	import { Card, EmptyState } from '$lib/components/ui';
 	import { t } from '$lib/i18n';
 	import { apiTime } from '$lib/time';
 
-	export let notifications: Array<{
-		id: string;
-		type: string;
-		title: string;
-		message: string;
-		created_at: string;
-		read: boolean;
-	}> = [];
-	export let limit: number = 5;
+	type Props = {
+		notifications?: Array<{
+			id: string;
+			type: string;
+			title: string;
+			message: string;
+			created_at: string;
+			read: boolean;
+		}>;
+		limit?: number;
+	};
 
-	$: displayNotifications = notifications.slice(0, limit);
+	let { notifications = [], limit = 5 }: Props = $props();
+
+	const displayNotifications = $derived(notifications.slice(0, limit));
 
 	function getTypeIcon(type: string) {
 		switch (type) {
@@ -43,7 +47,7 @@
 	}
 
 	// How long ago, in the language of the page.
-	$: formatTime = (iso: string): string => {
+	function formatTime(iso: string): string {
 		const date = apiTime(iso);
 		if (!date) return iso;
 		const now = new Date();
@@ -56,41 +60,36 @@
 		if (minutes < 60) return $t('dashboard.activity.minutesAgo', { n: minutes });
 		if (hours < 24) return $t('dashboard.activity.hoursAgo', { n: hours });
 		return $t('dashboard.activity.daysAgo', { n: days });
-	};
+	}
 </script>
 
-<Card>
+<!-- Unread rows have a bar in brand-ring on their left, in place of a fill (ADR-0428). -->
+<Card class="h-full flex flex-col">
 	<div class="card-header">
 		<h3 class="card-title">
-			<Bell class="w-5 h-5 text-warning" />
+			<Bell class="w-5 h-5 text-content-secondary" aria-hidden="true" />
 			{$t('dashboard.activity.title')}
 		</h3>
-		<a
-			href="/system#notifications"
-			class="text-sm text-info hover:text-status-info transition-colors">{$t('dashboard.activity.viewAll')}</a
-		>
+		<a href="/system#notifications" class="link text-[13px]">{$t('dashboard.activity.viewAll')}</a>
 	</div>
 
 	{#if notifications.length === 0}
-		<p class="text-secondary text-sm text-center py-4">{$t('dashboard.activity.none')}</p>
+		<EmptyState compact icon={Bell} title={$t('dashboard.activity.none')} />
 	{:else}
-		<div class="space-y-2">
+		<div class="flex flex-col">
 			{#each displayNotifications as notification}
+				{@const Icon = getTypeIcon(notification.type)}
 				<div
-					class="flex items-start gap-3 p-2 rounded-lg {notification.read
+					class="flex items-start gap-3 py-2 border-b border-border-muted last:border-b-0 {notification.read
 						? ''
-						: 'bg-surface-muted'}"
+						: 'pl-2.5 shadow-[inset_2px_0_0_rgb(var(--color-brand-ring))]'}"
 				>
-					<svelte:component
-						this={getTypeIcon(notification.type)}
-						class="w-4 h-4 mt-0.5 {getTypeColor(notification.type)}"
-					/>
+					<Icon class="w-4 h-4 mt-0.5 shrink-0 {getTypeColor(notification.type)}" aria-hidden="true" />
 					<div class="flex-1 min-w-0">
 						<p class="text-sm font-medium truncate">{notification.title}</p>
 						<p class="text-xs text-secondary truncate">{notification.message}</p>
 					</div>
-					<span class="text-xs text-muted whitespace-nowrap flex items-center gap-1">
-						<Clock class="w-3 h-3" />
+					<span class="text-xs text-muted whitespace-nowrap tabular">
 						{formatTime(notification.created_at)}
 					</span>
 				</div>

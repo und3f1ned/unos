@@ -12,12 +12,19 @@
 //   through the modules that module imports in turn; so is a namespace import of a module that
 //   exports one.
 // - The callback reaches what its body names, and the bodies of the functions of its file that it
-//   names, again and again: a function declared with `function`, a variable or a `$:` statement
-//   whose value is a function. A function literal inside a body counts as run (a .map() or a
-//   .forEach() runs it at once, and the check cannot tell one that runs later).
-// - A callback that assigns a variable (also `name.field = ...`, `name++`) that a `$:` statement
-//   reaching the API reads fails: Svelte runs that statement again. So does one that assigns a
-//   variable read by a `$:` statement that assigns what such a statement reads, and so on.
+//   names, again and again: a function declared with `function`, or a variable whose value is a
+//   function. A function literal inside a body counts as run (a .map() or a .forEach() runs it at
+//   once, and the check cannot tell one that runs later).
+// - A call `obj.method()` reaches the API when a class of a .ts module of src/ (a page's state in
+//   a .svelte.ts module) has a method of that name that reaches it, also through its other
+//   methods (`this.load()`): by name, whatever `obj` is, as the check has no types.
+// - A callback that assigns a variable of a component's state (`$state`, `$state.raw`, `$derived`,
+//   a prop of `$props()`; also `name.field = ...`, `name++`) that an `$effect` or `$effect.pre`
+//   (anywhere in the script, also given by name) or a `$derived` reaching the API reads fails:
+//   Svelte runs it again (ADR-0427). It reads what its function reads, also a variable that it
+//   assigns too, and what the functions of its file that it calls read, again and again, but not
+//   inside untrack(...) nor the target of a plain `name = value`. So does a callback that assigns
+//   a variable that a `$derived` reads whose value such an effect reads, and so on.
 // - A callback that changes a store fails: `name.set(...)`, `name.update(...)` or `$name = ...`,
 //   where name is declared with writable, readable or derived in its file or in the .ts module it
 //   comes from, or read as `$name` in its file. What reads a store can be in any file.
@@ -27,6 +34,7 @@
 // that counts down and asks the server once when its time has run out is no polling. Review reads
 // the reasons; the summary counts the exempted timers. Out of the check's reach, for review: a loop
 // of setTimeout calls; the markup of a component ({#await}, {#key} on a variable a timer changes);
+// a `$state` field of a class that a timer changes and an effect reads;
 // a function of another module that changes a store; objects and stores that a module exports
 // with methods that reach the API; and, in a cycle of imports, the module that the cycle comes
 // back to, which is taken as reaching nothing while its importers are read.
@@ -41,6 +49,8 @@ const SRC = path.join(WEBUI, 'src');
 const API_DIR = path.join(SRC, 'lib', 'api');
 const EXEMPTION = /polling-ignore:\s*\S/;
 const STORE_FACTORIES = new Set(['writable', 'readable', 'derived']);
+// Svelte's runes: a `$` name that is not a store.
+const RUNES = new Set(['$state', '$derived', '$effect', '$props', '$bindable', '$inspect', '$host']);
 const SCRIPT = /(<script\b[^>]*>)([\s\S]*?)<\/script>/g;
 const relative = (file) => path.relative(WEBUI, file).split(path.sep).join('/');
 const parse = (text) => ts.createSourceFile('script.ts', text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
@@ -83,11 +93,6 @@ function localFunctions(sourceFile) {
 		if (ts.isFunctionDeclaration(node) && node.name && node.body) functions.set(node.name.text, node);
 		if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && isFunction(node.initializer)) {
 			functions.set(node.name.text, node.initializer);
-		}
-		// $: name = (...) => ...
-		if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
-			ts.isIdentifier(node.left) && isFunction(node.right)) {
-			functions.set(node.left.text, node.right);
 		}
 		ts.forEachChild(node, visit);
 	};
@@ -166,11 +171,57 @@ function walk(start, { imports, functions, stores }, via = []) {
 			}
 			const store = storeCall(child, stores);
 			if (store && !result.stores.has(store)) result.stores.set(store, via);
+			// obj.method(), where a class of src/ has a method of that name that reaches the API.
+			if (ts.isCallExpression(child) && ts.isPropertyAccessExpression(child.expression)) {
+				const found = classMethods().get(child.expression.name.text);
+				if (found) result.api ??= { name: `${child.expression.expression.getText()}.${child.expression.name.text}`, module: found.module, via };
+			}
 			ts.forEachChild(child, visit);
 		};
 		ts.forEachChild(node, visit);
 	}
 	return result;
+}
+
+let methods = null;
+
+/**
+ * The methods of the classes of src/'s .ts modules (a page's state in a .svelte.ts module,
+ * ADR-0427) that reach the API, by name, each with its class's file and what it reaches: methods,
+ * properties whose value is a function, and getters; through each other too (this.load()). By
+ * name, whatever the object it is called on: the check has no types.
+ */
+function classMethods() {
+	if (methods !== null) return methods;
+	methods = new Map();
+	const candidates = [];
+	for (const file of sourceFiles().filter((name) => name.endsWith('.ts'))) {
+		const sourceFile = parse(readFileSync(file, 'utf8'));
+		const context = scriptContext(sourceFile, file);
+		const visit = (node) => {
+			if (ts.isClassDeclaration(node) || ts.isClassExpression(node)) {
+				for (const member of node.members) {
+					if (!member.name || !ts.isIdentifier(member.name)) continue;
+					const body = ts.isMethodDeclaration(member) || ts.isGetAccessorDeclaration(member) ? member.body
+						: ts.isPropertyDeclaration(member) && isFunction(member.initializer) ? member.initializer : null;
+					if (body) candidates.push({ name: member.name.text, body, file, context });
+				}
+			}
+			ts.forEachChild(node, visit);
+		};
+		visit(sourceFile);
+	}
+	for (let grown = true; grown;) {
+		grown = false;
+		for (const { name, body, file, context } of candidates) {
+			if (methods.has(name)) continue;
+			const found = walk(body, context).api;
+			if (!found) continue;
+			methods.set(name, { module: `${relative(file)}, which reaches ${describe(found)}` });
+			grown = true;
+		}
+	}
+	return methods;
 }
 
 const NOTHING = { api: new Map(), stores: new Set(), apiModules: [] };
@@ -292,48 +343,123 @@ function scriptContext(sourceFile, file, markup = '') {
 		if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer &&
 			ts.isCallExpression(node.initializer) && ts.isIdentifier(node.initializer.expression) &&
 			STORE_FACTORIES.has(node.initializer.expression.text)) stores.add(node.name.text);
-		if (ts.isIdentifier(node) && node.text.length > 1 && node.text.startsWith('$')) stores.add(node.text.slice(1));
+		if (ts.isIdentifier(node) && node.text.length > 1 && node.text.startsWith('$') && !RUNES.has(node.text)) {
+			stores.add(node.text.slice(1));
+		}
 		ts.forEachChild(node, visit);
 	};
 	visit(sourceFile);
-	for (const match of markup.matchAll(/\$([A-Za-z_]\w*)/g)) stores.add(match[1]);
+	for (const match of markup.matchAll(/\$([A-Za-z_]\w*)/g)) if (!RUNES.has(match[0])) stores.add(match[1]);
 	return { imports, functions: localFunctions(sourceFile), stores };
 }
 
-/** The names a `$:` statement reads: Svelte runs it again when one changes, except those it assigns. */
-function reads(statement) {
+/** The rune that `node` calls (`$effect`, `$derived.by`), or null. */
+function runeOf(node) {
+	if (!node || !ts.isCallExpression(node)) return null;
+	const callee = node.expression;
+	if (ts.isIdentifier(callee) && RUNES.has(callee.text)) return callee.text;
+	if (ts.isPropertyAccessExpression(callee) && ts.isIdentifier(callee.expression) && RUNES.has(callee.expression.text)) {
+		return `${callee.expression.text}.${callee.name.text}`;
+	}
+	return null;
+}
+
+/** The names that a binding (`a`, `{ a, b: c = 1, ...rest }`, `[a, b]`) declares. */
+function boundNames(name) {
+	if (ts.isIdentifier(name)) return [name.text];
+	return name.elements.flatMap((element) => (ts.isOmittedExpression(element) ? [] : boundNames(element.name)));
+}
+
+/** The variables of the component's state: declared with $state, $state.raw, $derived or $props(). */
+function stateVariables(sourceFile) {
+	const names = new Set();
+	for (const statement of sourceFile.statements) {
+		if (!ts.isVariableStatement(statement)) continue;
+		for (const declaration of statement.declarationList.declarations) {
+			const rune = runeOf(declaration.initializer);
+			if (rune && /^\$(state|derived|props)\b/.test(rune)) for (const name of boundNames(declaration.name)) names.add(name);
+		}
+	}
+	return names;
+}
+
+const isUntrack = (node) => ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === 'untrack';
+
+/**
+ * The variables of `state` that running `start` reads, as Svelte tracks them: in its body and in
+ * the functions of its file that it names, again and again, but not inside untrack(...); and the
+ * variables it assigns.
+ */
+function reads(start, { functions }, state) {
 	const names = new Set();
 	const writes = new Set();
-	const visit = (node) => {
-		if (ts.isIdentifier(node) && isReference(node)) names.add(node.text);
-		for (const name of assigned(node)) writes.add(name);
-		ts.forEachChild(node, visit);
-	};
-	ts.forEachChild(statement, visit);
-	return { names: [...names].filter((name) => !writes.has(name)), writes };
+	const seen = new Set([start]);
+	const queue = [start];
+	while (queue.length > 0) {
+		const visit = (node) => {
+			if (isUntrack(node)) return;
+			// name = value assigns name without reading it; name += 1 reads it.
+			if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+				ts.isIdentifier(node.left)) {
+				writes.add(node.left.text);
+				visit(node.right);
+				return;
+			}
+			if (ts.isIdentifier(node) && isReference(node)) {
+				if (state.has(node.text)) names.add(node.text);
+				const local = functions.get(node.text);
+				if (local && !seen.has(local)) {
+					seen.add(local);
+					queue.push(local);
+				}
+			}
+			for (const name of assigned(node)) writes.add(name);
+			ts.forEachChild(node, visit);
+		};
+		ts.forEachChild(queue.shift(), visit);
+	}
+	// Svelte 5 runs an effect again for a variable that it read, also one that it assigns.
+	return { names: [...names], writes };
 }
 
 /**
- * The variables whose change makes a `$:` statement of the script reach the API, each with that
- * statement's line, its use of the API and the variables between them (chain).
+ * The variables whose change makes an `$effect` of the script reach the API, each with that
+ * effect's line and rune, its use of the API and the `$derived` variables between them (chain).
  */
 function reactiveTriggers(sourceFile, context, lineOf) {
-	const statements = sourceFile.statements
-		.filter((statement) => ts.isLabeledStatement(statement) && statement.label.text === '$')
-		.map((statement) => ({ statement, line: lineOf(statement), ...reads(statement.statement) }));
+	const state = stateVariables(sourceFile);
+	// What runs again: every $effect of the script, wherever it is and also given by name, and
+	// every $derived, whose value is read again.
+	const reactive = [];
+	const derived = [];
+	const visit = (node) => {
+		const rune = runeOf(node);
+		if (rune === '$effect' || rune === '$effect.pre') {
+			const [given] = node.arguments;
+			const run = given && ts.isIdentifier(given) ? context.functions.get(given.text) : given;
+			if (run) reactive.push({ rune, run, line: lineOf(node), ...reads(run, context, state) });
+		}
+		if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name)) {
+			const declared = runeOf(node.initializer);
+			const [value] = node.initializer?.arguments ?? [];
+			if ((declared === '$derived' || declared === '$derived.by') && value) {
+				const { names } = reads(node.initializer, context, state);
+				derived.push({ names, writes: new Set([node.name.text]) });
+				reactive.push({ rune: '$derived', run: value, line: lineOf(node), names });
+			}
+		}
+		ts.forEachChild(node, visit);
+	};
+	visit(sourceFile);
 	const triggers = new Map();
-	for (const { statement, line, names } of statements) {
-		const body = statement.statement;
-		// $: name = (...) => ...: defines a function, which runs only where it is called.
-		if (ts.isExpressionStatement(body) && ts.isBinaryExpression(body.expression) &&
-			body.expression.operatorToken.kind === ts.SyntaxKind.EqualsToken && isFunction(body.expression.right)) continue;
-		const found = walk(body, context).api;
+	for (const { rune, run, line, names } of reactive) {
+		const found = walk(run, context).api;
 		if (!found) continue;
-		for (const name of names) if (!triggers.has(name)) triggers.set(name, { line, found, chain: [] });
+		for (const name of names) if (!triggers.has(name)) triggers.set(name, { rune, line, found, chain: [] });
 	}
 	for (let grown = true; grown;) {
 		grown = false;
-		for (const { names, writes } of statements) {
+		for (const { names, writes } of derived) {
 			const hit = [...writes].find((name) => triggers.has(name));
 			if (hit === undefined) continue;
 			const trigger = triggers.get(hit);
@@ -393,8 +519,8 @@ function problemOf(callback, context, triggers) {
 		const trigger = triggers.get(name);
 		if (!trigger) continue;
 		const chain = trigger.chain.length > 0 ? ` through ${trigger.chain.join(' -> ')}` : '';
-		return `setInterval changes ${name}${through(via)}, which the $: statement of line ${trigger.line} reads${chain}; ` +
-			`that statement reaches the API: ${describe(trigger.found)}`;
+		return `setInterval changes ${name}${through(via)}, which the ${trigger.rune} of line ${trigger.line} reads${chain}; ` +
+			`it reaches the API: ${describe(trigger.found)}`;
 	}
 	return null;
 }
@@ -417,7 +543,9 @@ for (const file of files) {
 		const sourceFile = parse(script.body);
 		const lineOf = (node) => source.slice(0, script.offset + node.getStart(sourceFile)).split('\n').length;
 		const context = scriptContext(sourceFile, file, markup);
-		const triggers = file.endsWith('.svelte') ? reactiveTriggers(sourceFile, context, lineOf) : new Map();
+		const triggers = file.endsWith('.svelte') || file.endsWith('.svelte.ts')
+			? reactiveTriggers(sourceFile, context, lineOf)
+			: new Map();
 		const visit = (node) => {
 			if (isSetInterval(node)) {
 				timers += 1;

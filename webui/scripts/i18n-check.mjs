@@ -13,8 +13,9 @@
 //      alt, aria-label, label, hint, description, error, a prop named ...Label, ...Hint, ...Text
 //      and the like) or in any prop of a component whose value does not look like code;
 //    - no string literal in the <script> or in an expression of the markup (blocks, {@const},
-//      directives, props), wherever it goes: to a variable, a property, an argument, a return
-//      value, a thrown error or a placeholder of $t. A literal is not a text where it is compared
+//      {@render}, the defaults of a {#snippet}'s parameters, directives, props), wherever it
+//      goes: to a variable, a property, an argument, a return value, a thrown error or a
+//      placeholder of $t. A literal is not a text where it is compared
 //      or looked up (x === 'Escape', ua.includes('Chrome'), case 'tcp':), where it names a module,
 //      a type, a key of an object, an argument of console.* or the key of $t, where it goes to a
 //      class or a style, and where it looks like code: a name (primary, self_signed), an id or a
@@ -31,14 +32,16 @@
 // 3. Every key that a $t('...') call names exists in English, and a text with plural forms gets
 //    its count: $t('area.key', { n }). A literal that starts with the name of a catalog and a dot
 //    is a key too, as in a map from values to keys ({ allow: 'account.firewall.allow' }): it
-//    exists.
+//    exists. The same holds in the .ts modules of src/ (but $lib/i18n), whose helpers take $t
+//    (`t('area.key')`); their other texts are for review.
 // 4. scripts/i18n-untranslated.txt lists the .svelte files not translated yet. Their texts are
 //    not reported, and a listed file without such texts fails until it leaves the list.
 
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { parse, walk } from 'svelte/compiler';
+import { parse } from 'svelte/compiler';
+import { walk } from './svelte-walk.mjs';
 import ts from 'typescript';
 
 const LOCALES = ['en', 'ru'];
@@ -497,6 +500,14 @@ function readMarkup(html, markup, into) {
 		const root = statement && ts.isExpressionStatement(statement) ? statement.expression : file;
 		readLiterals(root, root === file ? 'code' : context, file, node.start - 1, into);
 	};
+	// The parameters of a {#snippet}, read as those of an arrow function: their defaults.
+	const parameters = (list) => {
+		if (!Array.isArray(list) || list.length === 0) return;
+		const start = list[0].start;
+		const file = ts.createSourceFile('parameters.ts', `((${markup.slice(start, list.at(-1).end)}) => 0)`,
+			ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+		readLiterals(file, 'code', file, start - 2, into);
+	};
 	walk(html, {
 		enter(node, parent) {
 			switch (node.type) {
@@ -528,16 +539,22 @@ function readMarkup(html, markup, into) {
 					break;
 				}
 				case 'Spread':
-				case 'EventHandler':
 				case 'Binding':
 				case 'Action':
 				case 'Transition':
 				case 'Animation':
 				case 'Class':
-				case 'Let':
 				case 'ConstTag':
 					expression(node.expression, 'code');
 					this.skip();
+					break;
+				case 'RenderTag':
+				case 'AttachTag':
+					expression(node.expression, 'code');
+					this.skip();
+					break;
+				case 'SnippetBlock':
+					parameters(node.parameters);
 					break;
 				case 'IfBlock':
 				case 'AwaitBlock':
@@ -642,6 +659,46 @@ function readList() {
 	return entries;
 }
 
+/** The .ts modules of src/, but the catalogs and $lib/i18n, which define the keys. */
+function moduleFiles() {
+	const i18n = path.join(SRC, 'lib', 'i18n') + path.sep;
+	return readdirSync(SRC, { recursive: true })
+		.filter((name) => name.endsWith('.ts') && !name.endsWith('.d.ts'))
+		.map((name) => path.join(SRC, name))
+		.filter((file) => !file.startsWith(i18n))
+		.sort();
+}
+
+/**
+ * The keys that a .ts module names: every literal that starts with the name of a catalog and a
+ * dot, each with its offset and, when it is the first argument of a call (t('key'), $t('key')),
+ * the callee and whether a count goes with it (see hasCount).
+ */
+function moduleKeys(source, areas) {
+	const file = ts.createSourceFile('module.ts', source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+	const found = [];
+	const visit = (node) => {
+		if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) {
+			const area = /^([a-z][a-zA-Z0-9]*)\.[\w.]*\w$/.exec(node.text)?.[1];
+			if (areas.has(area)) {
+				const parent = node.parent;
+				const call = ts.isCallExpression(parent) && parent.arguments[0] === node ? parent : null;
+				const callee = call && ts.isIdentifier(call.expression) ? call.expression.text : null;
+				const second = call?.arguments[1];
+				const count = second === undefined ? false : ts.isObjectLiteralExpression(second)
+					? hasCount(second.properties, (property) =>
+						property.name && (ts.isIdentifier(property.name) || ts.isStringLiteral(property.name))
+							? property.name.text : undefined)
+					: null;
+				found.push({ start: node.getStart(file), key: node.text, call: callee, count });
+			}
+		}
+		ts.forEachChild(node, visit);
+	};
+	visit(file);
+	return found;
+}
+
 // --- The check ---------------------------------------------------------------------------------
 
 const { areas, english } = await checkCatalogs();
@@ -695,6 +752,20 @@ for (const file of files) {
 			errors.push(`${at}: $t('${key}'): no such key in the catalogs`);
 		} else if (isObject(english.get(key).message) && count === false) {
 			errors.push(`${at}: $t('${key}'): a text with plural forms needs its count, $t('${key}', { n })`);
+		}
+	}
+}
+
+// The .ts modules of src/: the helpers of an area that take $t name its keys too (ADR-0427).
+for (const file of moduleFiles()) {
+	const name = relative(file);
+	const source = readFileSync(file, 'utf8');
+	for (const { start, key, call, count } of moduleKeys(source, areas)) {
+		const at = `${name}:${position(source, start)}`;
+		if (!english.has(key)) {
+			errors.push(`${at}: '${key}': no such key in the catalogs`);
+		} else if (call && isObject(english.get(key).message) && count === false) {
+			errors.push(`${at}: ${call}('${key}'): a text with plural forms needs its count, ${call}('${key}', { n })`);
 		}
 	}
 }

@@ -20,7 +20,7 @@ import os
 import re
 import subprocess
 import time
-from datetime import datetime, timezone
+from datetime import datetime, UTC
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -255,7 +255,7 @@ class TestRebootAndShutdown:
          ("halt", "shutdown")],
     )
     def test_the_pending_action_is_loginds(self, client, fake_host, logind, action):
-        at = datetime(2026, 11, 7, 14, 5, tzinfo=timezone.utc)
+        at = datetime(2026, 11, 7, 14, 5, tzinfo=UTC)
         fake_host.scheduled = (logind, _usec(at))
 
         response = client.get(f"{API}/pending")

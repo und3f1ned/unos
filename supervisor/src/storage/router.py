@@ -831,9 +831,9 @@ async def add_pool_device_endpoint(request: Request, name: PoolName, body: DiskA
     disk; a scrub, a balance (also a paused one) or a disk removal of the pool; a path that now
     holds another disk than ``identity``, or other data than ``contents``; a disk that is a boot or
     virtual device, the system disk, in use, holds a btrfs filesystem or is the pool's already;
-    data without ``force``; an NVMe disk for a pool with TRIM on a board that hangs on its TRIM.
+    data without ``force``.
     \f
-    ADR-0411, ADR-0370 (the NVMe disk on a board that hangs on its TRIM).
+    ADR-0411, ADR-0429 (every disk is added with TRIM).
     """
     pool = validate_pool_name(name)
     try:

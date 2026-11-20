@@ -19,7 +19,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, UTC
 from pathlib import Path
 from types import SimpleNamespace
 from urllib.parse import urlsplit
@@ -695,7 +695,7 @@ class TestApiTokenUse:
     def test_a_token_works_until_its_lifetime_is_over(self, client, alice_headers, monkeypatch):
         created = self._create(client, alice_headers, expires_in_days=1)
         # Answered in UTC with its offset; checked against UTC without a zone (_token_time).
-        expires_at = datetime.fromisoformat(created["expires_at"]).astimezone(timezone.utc).replace(tzinfo=None)
+        expires_at = datetime.fromisoformat(created["expires_at"]).astimezone(UTC).replace(tzinfo=None)
         token_headers = _auth(created["token"])
 
         monkeypatch.setattr(auth_utils, "_token_time", lambda: expires_at - timedelta(seconds=1))
@@ -879,7 +879,7 @@ class TestApiTokenExpiry:
         assert response.status_code == 200, response.text
         expires_at = datetime.fromisoformat(response.json()["expires_at"])
         assert expires_at.utcoffset() == timedelta(0)  # in UTC with its offset (ADR-0401)
-        assert abs(expires_at - (datetime.now(timezone.utc) + timedelta(days=days))) < timedelta(minutes=1)
+        assert abs(expires_at - (datetime.now(UTC) + timedelta(days=days))) < timedelta(minutes=1)
 
     @pytest.mark.parametrize("body", [{"name": "t"}, {"name": "t", "expires_in_days": None}])
     def test_no_expiry_by_default(self, client, alice_headers, body):
@@ -927,7 +927,7 @@ class TestLoginHistory:
             with pytest.MonkeyPatch.context() as zone:
                 zone.setenv("TZ", "Asia/Kathmandu")  # UTC+05:45
                 time.tzset()
-                now = datetime.now(timezone.utc).replace(tzinfo=None)
+                now = datetime.now(UTC).replace(tzinfo=None)
                 with Session(authz_db.engine) as session:
                     session.add(LoginAttempt(username="alice", success=True,
                                              timestamp=now - timedelta(days=30, hours=-1)))
@@ -945,9 +945,9 @@ class TestLoginHistory:
     def test_times_are_answered_in_utc_with_their_offset(self, client, alice_headers):
         # SQLite stores CURRENT_TIMESTAMP in UTC, to the second. Without an offset, a browser
         # reads the time as its own local time (ADR-0262).
-        before = datetime.now(timezone.utc).replace(microsecond=0)
+        before = datetime.now(UTC).replace(microsecond=0)
         assert client.post(f"{API}/auth/login", json={"username": "alice", "password": PASSWORD}).status_code == 200
-        after = datetime.now(timezone.utc)
+        after = datetime.now(UTC)
 
         [attempt] = client.get(f"{API}/security/login-history", headers=alice_headers).json()["attempts"]
 
@@ -979,7 +979,7 @@ class TestLoginHistory:
         # The history is kept by name: attempts on "bob" before his new account, a sign-in of the bob
         # deleted below two days ago and a failed attempt a second ago. The administrators still see
         # them; the new bob's history starts with his account (ADR-0263).
-        now = datetime.now(timezone.utc).replace(tzinfo=None, microsecond=0)
+        now = datetime.now(UTC).replace(tzinfo=None, microsecond=0)
         with Session(authz_db.engine) as session:
             session.add_all([
                 LoginAttempt(username="bob", ip_address="203.0.113.7", success=True, timestamp=now - timedelta(days=2)),

@@ -1,5 +1,6 @@
 ---
-status: accepted
+status: superseded
+superseded-by: ADR-0428
 date: 2026-11-18
 area: webui
 decided-by: agent
@@ -8,6 +9,8 @@ decided-by: agent
 # ADR-0400: A check fails for raw controls and raw colours in the web UI's pages
 
 ## Context
+
+Superseded by ADR-0428: only in part, the line that the new tokens have the hex values of the Tailwind colours they replace, whose values are now ADR-0428's; every other rule here stays in force.
 
 ADR-0012 gives the web UI a design system, the components of `webui/src/lib/components/ui` and
 the colour tokens of `webui/tailwind.config.js`, but older pages kept about 90 raw `<button>`

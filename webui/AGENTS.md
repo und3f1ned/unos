@@ -1,8 +1,55 @@
 # webui/: the SvelteKit web UI and the E2E specs
 
-SvelteKit 2 with Svelte 4 (`<script lang="ts">`, props through `export let`, `$:` statements),
-the static adapter, strict TypeScript and TailwindCSS (ADR-0012). Caddy serves the built files
-and proxies `/api/*` and `/ws/*` to the supervisor (`webui/Caddyfile`).
+SvelteKit 2 with Svelte 5 in runes mode only (ADR-0427), `<script lang="ts">`, the static
+adapter, strict TypeScript and TailwindCSS (ADR-0012). Caddy serves the built files and proxies
+`/api/*` and `/ws/*` to the supervisor (`webui/Caddyfile`).
+
+## Components and state (ADR-0427)
+
+- Every component is in runes mode: `svelte.config.js` compiles `src/` with `runes: true`
+  (`export let` and `$:` fail the build), and `scripts/runes-check.mjs` (`npm run runes`, run by
+  `make frontend`, tested by `supervisor/tests/test_webui_runes.py`) fails for
+  `<svelte:options runes={false} />` and the syntax of Svelte 4: `on:`, `let:`, `<slot>`,
+  `$$slots`, `slot=`, `<svelte:fragment>`, `<svelte:component>`, `<svelte:self>`,
+  `<script context="module">`, the options accessors and immutable, `svelte/legacy`,
+  `createEventDispatcher`, `$app/stores` (use `$app/state`), and for a plain `let` that the
+  markup shows and that changes (it is no state in runes mode). The icons of lucide-svelte 0.x,
+  a library's, are the one part compiled in legacy mode.
+- Props: `type Props = { ... }` and `let { a = 1, class: className = '', children, onsaved }: Props
+  = $props();`; `$bindable()` only for a value the parent binds (a form field). Events are
+  attributes (`onclick={...}`, a modifier is code: `e.preventDefault()`) and callback props `on` +
+  the event in lower case, whose argument is the value (`onsaved(share)`, Select's
+  `onchange(value)`). Markup passed in is a snippet: `children`, Modal's `footer` and
+  `titleIcon`. An icon prop is an `IconComponent` of `$lib/components/ui`.
+- State: `$state` for what the markup, a `$derived` or an `$effect` reads (a deep proxy: copy it
+  with `$state.snapshot`, compare by id), `$state.raw` for what is only replaced whole, a plain
+  `let` for the rest. A computed value is `$derived`; a user's action is handled in its handler.
+  An `$effect` (or `$effect.pre`, before the DOM update) only follows a store or a prop: it reads
+  its dependencies first and runs its body in `untrack(...)`, since Svelte 5 tracks every read
+  of a run, also in the functions it calls. A `Set` or an array is replaced, not mutated and
+  assigned to itself. Stores (`$lib/stores`, `$t`) stay stores.
+- Whitespace: Svelte 5 keeps the line break and indentation between two expressions of a text
+  as they are written (`{a}` and `{b}` on two lines), where Svelte 4 wrote one space, and drops
+  the whitespace between the iterations of an `{#each}`. Neither shows on the page, but a spec
+  reads `textContent`: a text that a spec matches with a regular expression keeps its parts on
+  one line, and a cell whose items a spec reads as one text keeps a space between them.
+- Svelte 5 delegates `onclick`, `onkeydown`, `oninput` and their kin to the app's root: a
+  listener that `addEventListener` puts on an element of the page runs before them, one on
+  `document` or `window` after them, and `stopPropagation` in a delegated handler stops the
+  delegated ones above it and those of `document` and `window`.
+- A page is composed of area components: the route file holds the page's state and loads and
+  passes data down and callbacks up; each card, table, tab, and dialog with its form is a
+  component of `src/lib/components/<area>/` with typed props. Pure helpers of an area are `.ts`
+  files beside its components; state with its loading and error that several components share
+  is a `.svelte.ts` module with runes; sizes go through `src/lib/format.ts`, the message of a
+  failed request through `messageOf` of `src/lib/errors.ts`, and a helper that needs texts takes
+  `$t` as a `Translate` of `$lib/i18n` (its keys are checked, its other literals are not: keep
+  texts in the components). A file above about 400 lines is one concern or is split; duplicated
+  markup becomes a component or a snippet.
+- A backdrop or scrim that closes on a click listens for it itself,
+  `{@attach (node) => on(node, 'click', close)}` with `on` of `svelte/events`, as `Modal` and
+  the phone drawer do: iOS Safari makes a tap a click only where an element listens, and a
+  delegated `onclick` never sees a click that does not bubble.
 
 ## Design system (ADR-0012)
 
@@ -20,9 +67,15 @@ and proxies `/api/*` and `/ws/*` to the supervisor (`webui/Caddyfile`).
   a value in both themes or a pair that text or a control uses below WCAG AA (4.5:1, 3:1). Icons take the classes of
   `src/app.css`: `icon-cpu`, `icon-memory`, `icon-network`, `icon-storage`, `icon-container`,
   `icon-temperature`.
-- Layout uses the classes of `src/app.css`: `page-container`, `page-header`, `page-title`,
-  `section-title`, `card`, `card-header`, `card-title`, `card-nested`, `table`, `table-header`,
-  `table-row`, `table-frame`.
+- Layout uses the classes of `src/app.css` (the shapes of ADR-0428): `page-container`,
+  `page-header` (`page-title`, `page-subtitle`, `page-actions`), `section-title`, `card`,
+  `card-header`, `card-title`, `card-nested`, `card-flush` (a table to the card's edges; `Card
+  flush`), `table` with `num`, `table-compact` and `table-actions`, `table-header`, `table-row`,
+  `table-frame`; `kv` (a label over its value, `div > span.kv-label + span.kv-value`), `toolbar`
+  of `toolbar-group`s, `chip`, `eyebrow` (group labels), `content-narrow` (forms), `link` (a text
+  link, `content-link`). Page tabs are `tab-bar` with `tab-underline`; filters and views a
+  `segmented` control of `tab-pill`s. Focus is the one `:focus-visible` ring of `app.css`: do not
+  remove an outline without a ring of its own. A delete icon button is `Button variant="ghost-danger"`.
 - Every page fits a 375 px phone (ADR-0302): below `md` the sidebar is the drawer of the header
   bar's menu button. The page never scrolls sideways: a table that can be wider than the screen
   sits in a `table-frame` and scrolls inside it, rows of buttons and fields wrap (`flex-wrap`),
@@ -38,7 +91,7 @@ and proxies `/api/*` and `/ws/*` to the supervisor (`webui/Caddyfile`).
   `Select`, or a raw field with a `form-input` or `form-select` class when it needs an attribute
   they lack. No `.svelte` file outside `ui` uses a palette colour (`bg-slate-700`, `text-red-400`, `text-white`; the classes a `.ts` module returns are for review): the
   tokens above are the colours, and `brand`, `brand-hover`, `brand-ring`, `brand-disabled`,
-  `surface-hover`, `border-strong`, `content-soft`, `content-on-brand` and `status-neutral` cover
+  `surface-hover`, `border-strong`, `content-soft`, `content-on-brand`, `content-link` and `status-neutral` cover
   the rest; a dialog's backdrop is the class `scrim`. `npm run design` (`scripts/design-check.mjs`,
   run by `make frontend`, tested by `supervisor/tests/test_webui_design_system.py`) fails for a
   raw `<button>`, a raw `<a>` styled as a button, a raw text field, select or textarea without a
@@ -61,8 +114,11 @@ and proxies `/api/*` and `/ws/*` to the supervisor (`webui/Caddyfile`).
   `/ws/v1/events` into a store, as the scrubs that run do (`$lib/stores/scrubs`, ADR-0367).
   `scripts/polling-check.mjs`, which `supervisor/tests/test_webui_polling.py` runs, fails for a
   `setInterval` whose callback reaches the API, also through an exported function of another
-  module under `src/`, or changes a store or a variable that an API-reaching `$:` statement reads; `// polling-ignore: <reason>` above it exempts a
-  countdown that asks once when its time has run out (ADR-0365).
+  module under `src/` or a method of a class of a `.ts` module (`lists.load()`, by name), or
+  changes a store or a variable of `$state`, `$derived` or `$props()` that an API-reaching
+  `$effect` or `$derived` reads, also through a `$derived` and outside `untrack` (ADR-0427);
+  `// polling-ignore: <reason>` above it exempts a countdown that asks once when its time has run
+  out (ADR-0365).
 - The session is in the HttpOnly session cookie, which no script reads (ADR-0397): the page never
   holds a token, only the session key, which `$lib/api/client.ts` keeps in the tab and sends with
   every request; the server takes the cookie only from the web UI's own origin and with the key.
@@ -105,8 +161,10 @@ and proxies `/api/*` and `/ws/*` to the supervisor (`webui/Caddyfile`).
 ## Checks and build
 
 - `make frontend` runs `npm run check` (svelte-kit sync, then svelte-check `--threshold error`:
-  errors fail, warnings do not), `npm run i18n` (the texts, above), `npm run design` (the design
-  system, above) and `npm run build` (into `webui/build`).
+  errors fail, warnings do not), `npm run runes` (the runes check above), `npm run i18n` (the
+  texts, above, and the keys that the `.ts` modules name),
+  `npm run design` (the design system, above) and `npm run build` (into `webui/build`). The
+  checks read components with Svelte's parser and walk its tree with `scripts/svelte-walk.mjs`.
 - `webui/node_modules` comes from `make setup` (`npm ci` from `package-lock.json`). A new
   dependency is the owner's call: it needs the network and a lockfile change.
 - The Node.js version of `webui/Dockerfile`, of `engines` in `package.json` and of CI agree;

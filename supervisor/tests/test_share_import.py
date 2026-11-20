@@ -10,7 +10,7 @@ import os
 import re
 import sqlite3
 from contextlib import closing
-from datetime import datetime, timezone
+from datetime import datetime, UTC
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -395,7 +395,7 @@ class TestMapping:
                                "guest only was removed: people with access now sign in with their own account"]
 
     async def test_guest_share_from_a_restore_is_not_guest(self, env):
-        text = "[x]\n path = {pool}/x\n guest ok = yes\n write list = carol\n".format(pool=env.pool)
+        text = f"[x]\n path = {env.pool}/x\n guest ok = yes\n write list = carol\n"
         write_conf(env, text)
         with closing(sqlite3.connect(env.db_path)) as conn:
             conn.execute("INSERT INTO smb_state (id, next_uid, pending_import_source) VALUES (1, 70000, 'live')")
@@ -1008,9 +1008,9 @@ class TestCopy:
         write_conf(env, DEVICE_CONF)
         earlier = env.samba / "smb.conf.unos-import-backup-20261101_120000_000000"
         earlier.write_bytes(b"older copy")
-        before = datetime.now(timezone.utc).replace(tzinfo=None)
+        before = datetime.now(UTC).replace(tzinfo=None)
         await run_import(env)
-        after = datetime.now(timezone.utc).replace(tzinfo=None)
+        after = datetime.now(UTC).replace(tzinfo=None)
         first, new = backups(env)
         assert first == earlier and earlier.read_bytes() == b"older copy"
         assert new.read_bytes() == env.conf.read_bytes()

@@ -66,12 +66,9 @@ TRANSLATED = """\
 <script lang="ts">
 	import { t } from '$lib/i18n';
 	import Widget from './Widget.svelte';
-	export let count: number = 2;
-	export let busy = false;
-	export let level = 'write';
-	export let mode: 'primary' | 'Read only' = 'primary';
-	export let user = '';
-	let error = '';
+	type Props = { count?: number; busy?: boolean; level?: string; mode?: 'primary' | 'Read only'; user?: string };
+	let { count = 2, busy = false, level = 'write', mode = 'primary', user = '' }: Props = $props();
+	let error = $state('');
 	// Classes by variant: an error or a success here names a variant, not a text.
 	const classes = { error: 'text-red-400 bg-red-500/20', success: 'text-green-400 font-medium' };
 	const badgeClass = 'btn btn-primary';
@@ -80,9 +77,9 @@ TRANSLATED = """\
 	const LABELS: Record<string, string> = { allow: 'demo.title', deny: 'demo.greeting' };
 	const headers = { 'Content-Type': 'application/json', Accept: 'text/plain' };
 	console.error('Logged for developers only');
-	$: label = busy ? $t('demo.title') : $t('demo.greeting', { name: user });
-	$: path = `/api/v1/shares/${count}#top`;
-	$: inputId = `select-${count}`;
+	const label = $derived(busy ? $t('demo.title') : $t('demo.greeting', { name: user }));
+	const path = $derived(`/api/v1/shares/${count}#top`);
+	const inputId = $derived.by(() => `select-${count}`);
 	function fail() {
 		error = $t('demo.title');
 	}
@@ -95,7 +92,7 @@ TRANSLATED = """\
 		return new Intl.DateTimeFormat('en-GB', { month: 'long' }).format(new Date());
 	}
 	// i18n-ignore: a command, the same in every language
-	$: command = `sudo mount -t cifs //nas/${level}`;
+	const command = $derived(`sudo mount -t cifs //nas/${level}`);
 </script>
 
 <!-- A comment in English. -->
@@ -103,12 +100,19 @@ TRANSLATED = """\
 <p>{$t('demo.files', { n: count })} · 42% {count}</p>
 <p class={classes.error}>{level === 'write' ? $t('demo.title') : label}</p>
 <input aria-describedby={ZONE_HINT} placeholder="000000" aria-label={$t('demo.title')} />
-<Input label={$t('demo.title')} variant="secondary" on:click={() => fail()} />
+<Input label={$t('demo.title')} variant="secondary" onclick={() => fail()} />
 <a href="/storage">&rarr;</a>
 {#if mode === 'Read only'}
 	<p>{$t(LABELS[level])}</p>
 {/if}
-<Widget variant={busy ? 'success' : 'error'} size="sm" class="mt-3 flex" on:close={() => fail()} />
+<Widget variant={busy ? 'success' : 'error'} size="sm" class="mt-3 flex" onclose={() => fail()} />
+{#snippet row(id: string, variant = 'secondary')}
+	<p id="row-{id}" class={variant}>{$t('demo.title')}</p>
+{/snippet}
+{@render row('demo-row')}
+<Widget>
+	{#snippet footer()}<span>{$t('demo.title')}</span>{/snippet}
+</Widget>
 <a href={`/shares/${count}`} class={busy ? 'nav-item nav-item-active' : 'nav-item'}>{$t('demo.title')}</a>
 <input type={busy ? 'text' : 'password'} autocomplete="one-time-code" />
 
@@ -147,7 +151,7 @@ class TestTheWebUI:
         makefile = (REPO / "Makefile").read_text(encoding="utf-8")
 
         assert package["scripts"]["i18n"] == "node scripts/i18n-check.mjs"
-        assert "frontend-check frontend-i18n frontend-design frontend-build" in makefile
+        assert "frontend-check frontend-runes frontend-i18n frontend-design frontend-build" in makefile
         assert "frontend-i18n:\n\tcd webui && $(NPM_BIN) run i18n\n" in makefile
 
     def test_a_small_web_ui_passes(self, node, tmp_path):
@@ -180,8 +184,8 @@ UNTRANSLATED = [
     ("<script lang=\"ts\">\n\tlet error = '';\n\terror = 'Passwords do not match';\n</script>", "Passwords do not match"),
     ("<script lang=\"ts\">\n\tconst items = [{ href: '/', label: 'Dashboard' }];\n</script>", "Dashboard"),
     ("<script lang=\"ts\">\n\tconst REFUSED_TITLE = 'Nothing was made';\n</script>", "Nothing was made"),
-    ("<script lang=\"ts\">\n\texport let title: string = 'No data';\n</script>", "No data"),
-    ("<script lang=\"ts\">\n\t$: leftText = `${n} codes left`;\n</script>", "codes left"),
+    ("<script lang=\"ts\">\n\tlet { title = 'No data' }: { title?: string } = $props();\n</script>", "No data"),
+    ("<script lang=\"ts\">\n\tconst leftText = $derived(`${n} codes left`);\n</script>", "codes left"),
     ("<script lang=\"ts\">\n\tlet notice = '';\n\tnotice = ok ? $t('demo.title') : 'Failed';\n</script>", "Failed"),
     ("<script lang=\"ts\">\n\tif (!confirm('Delete this rule?')) {}\n</script>", "Delete this rule?"),
     # A literal of a script is a text wherever it goes, unless it is code (TRANSLATED).
@@ -206,7 +210,13 @@ UNTRANSLATED = [
     ("<p>{{ allow: 'Allowed' }[action]}</p>", "Allowed"),
     ("{#if ok}\n\t{@const note = 'Free space'}\n\t<p>{note}</p>\n{/if}", "Free space"),
     ("{#each ['Disks'] as tab}\n\t<p>{tab}</p>\n{/each}", "Disks"),
-    ("<button on:click={() => (notice = 'Saved')}>{$t('demo.title')}</button>", "Saved"),
+    ("<button onclick={() => (notice = 'Saved')}>{$t('demo.title')}</button>", "Saved"),
+    # Snippets: their markup, the defaults of their parameters and what {@render} gives them.
+    ("{#snippet row()}\n\t<p>Plain words</p>\n{/snippet}", "Plain words"),
+    ("{#snippet row(name = 'Guest user')}\n\t<p>{name}</p>\n{/snippet}", "Guest user"),
+    ("{@render row('Free space')}", "Free space"),
+    ("<Modal>\n\t{#snippet footer()}Close now{/snippet}\n</Modal>", "Close now"),
+    ("<p {@attach tooltip('Copy the address')}>{$t('demo.title')}</p>", "Copy the address"),
     ("<Tabs items={[{ id: 'disks', name: 'Disks' }]} />", "Disks"),
     ('<ConfirmDialog confirm="Delete the share" />', "Delete the share"),
 ]
@@ -306,6 +316,29 @@ class TestKeys:
 
         assert (result.returncode == 1) is reported, result.stderr
         assert ("a text with plural forms needs its count" in result.stderr) is reported
+
+
+    @pytest.mark.parametrize(("module", "reported"), [
+        ("export const LABELS = { allow: 'demo.title', deny: 'demo.missing' };\n", "'demo.missing': no such key"),
+        ("export const label = (t: (key: string) => string) => t(`demo.missing`);\n", "'demo.missing': no such key"),
+        ("export const count = (t: (key: string) => string) => t('demo.files');\n",
+         "t('demo.files'): a text with plural forms needs its count"),
+        ("export const count = (t: (key: string, p?: object) => string) => t('demo.files', { n: 2 });\n", None),
+        ("export const known = 'demo.title';\n// demo.missing in a comment is no key\n", None),
+    ], ids=["map", "template", "plural", "plural-with-count", "existing"])
+    def test_the_keys_of_a_ts_module_must_exist(self, node, tmp_path, module, reported):
+        # The helpers of an area take $t and name its keys in .ts modules (ADR-0427).
+        webui = make_webui(tmp_path, files={"src/lib/components/demo/labels.ts": module})
+
+        result = run_check(node, webui)
+
+        assert (result.returncode == 1) is (reported is not None), result.stderr
+        if reported:
+            assert "src/lib/components/demo/labels.ts:1:" in result.stderr and reported in result.stderr
+
+    def test_the_keys_of_the_catalogs_themselves_are_not_read_as_uses(self, node, tmp_path):
+        result = run_check(node, make_webui(tmp_path))
+        assert result.returncode == 0, result.stderr
 
 
 def replace(catalog: str, old: str, new: str) -> str:
@@ -444,12 +477,12 @@ def test_the_check_reads_scripts_with_typescript(node, tmp_path):
     # A <script lang="ts"> with types, generics and a module script parses: Svelte's parser
     # reads only the markup.
     script = textwrap.dedent("""\
-        <script context="module" lang="ts">
+        <script module lang="ts">
         	export type Row = { id: number };
         </script>
         <script lang="ts">
         	import type { Writable } from 'svelte/store';
-        	export let rows: Array<Row> = [];
+        	let { rows = [] }: { rows?: Array<Row> } = $props();
         	let store: Writable<number> | null = null;
         	const pick = <T,>(items: T[]): T | undefined => items[0];
         </script>

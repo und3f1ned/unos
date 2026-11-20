@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { messageOf } from "$lib/errors";
   import { onMount } from "svelte";
   import { ArrowUpCircle, ExternalLink, Package, RefreshCw, Terminal } from "lucide-svelte";
   import { checkForUpdates, getCurrentVersion, type CurrentVersion, type UpdateCheck } from "$lib/api/updates";
@@ -13,21 +14,17 @@
   // i18n-ignore: a command, the same in every language
   const UPDATE_COMMAND = "sudo /opt/unos/deploy/update.sh";
 
-  let current: CurrentVersion | null = null;
-  let currentError = "";
-  let check: UpdateCheck | null = null;
-  let checkError = "";
-  let checking = false;
-  let includePrereleases = false;
+  let current = $state<CurrentVersion | null>(null);
+  let currentError = $state("");
+  let check = $state<UpdateCheck | null>(null);
+  let checkError = $state("");
+  let checking = $state(false);
+  let includePrereleases = $state(false);
 
   onMount(() => {
     void loadCurrent();
     void runCheck();
   });
-
-  function messageOf(e: unknown): string {
-    return e instanceof Error ? e.message : String(e);
-  }
 
   async function loadCurrent() {
     try {
@@ -52,21 +49,21 @@
   }
 
   // Reactive, so that the date follows a change of the language.
-  $: formatShownDate = (date: string): string => formatDate(date, $intlLocale);
+  let formatShownDate = $derived((date: string): string => formatDate(date, $intlLocale));
 
-  $: release = check?.release_info ?? null;
+  let release = $derived(check?.release_info ?? null);
 
   // A version in the language of the page: the server answers "unknown" when UNOS was built
   // without one (get_current_version of supervisor/src/updates/updater.py).
-  $: versionLabel = (version: string): string => (version === "unknown" ? $t("updates.current.unknown") : version);
+  let versionLabel = $derived((version: string): string => (version === "unknown" ? $t("updates.current.unknown") : version));
 </script>
 
 <div class="space-y-6">
-  <h2 class="text-xl font-bold">{$t("updates.title")}</h2>
+  <h2 class="text-xl font-semibold">{$t("updates.title")}</h2>
 
   <Card>
-    <h3 class="section-title mb-4">
-      <Package class="w-5 h-5" />
+    <h3 class="card-title mb-4">
+      <Package class="w-5 h-5 text-content-secondary" />
       {$t("updates.current.title")}
     </h3>
     {#if currentError}
@@ -85,8 +82,8 @@
   </Card>
 
   <Card>
-    <h3 class="section-title mb-4">
-      <ArrowUpCircle class="w-5 h-5" />
+    <h3 class="card-title mb-4">
+      <ArrowUpCircle class="w-5 h-5 text-content-secondary" />
       {$t("updates.latest.title")}
     </h3>
     <div class="space-y-4">
@@ -117,7 +114,7 @@
               href={release.html_url}
               target="_blank"
               rel="noopener noreferrer"
-              class="flex items-center gap-1 text-sm text-status-info hover:underline"
+              class="link flex items-center gap-1 text-sm"
             >
               {$t("updates.latest.github")} <ExternalLink class="w-3 h-3" />
             </a>
@@ -134,14 +131,14 @@
         </div>
       {/if}
       <div class="flex flex-wrap items-center gap-4">
-        <Button variant="secondary" size="sm" icon={RefreshCw} loading={checking} on:click={runCheck}>
+        <Button variant="secondary" size="sm" icon={RefreshCw} loading={checking} onclick={runCheck}>
           {$t("updates.latest.checkAgain")}
         </Button>
         <label class="flex items-center gap-2 text-sm">
           <input
             type="checkbox"
             bind:checked={includePrereleases}
-            on:change={runCheck}
+            onchange={runCheck}
             disabled={checking}
             class="w-4 h-4 rounded"
           />
@@ -152,8 +149,8 @@
   </Card>
 
   <Card>
-    <h3 class="section-title mb-4">
-      <Terminal class="w-5 h-5" />
+    <h3 class="card-title mb-4">
+      <Terminal class="w-5 h-5 text-content-secondary" />
       {$t("updates.how.title")}
     </h3>
     <div class="space-y-3 text-sm">

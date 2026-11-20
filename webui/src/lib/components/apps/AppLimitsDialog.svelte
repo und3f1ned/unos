@@ -1,9 +1,10 @@
 <script lang="ts">
+	import { messageOf } from '$lib/errors';
 	// The memory and CPU limits of one container of an app (ADR-0390): an empty field is no limit.
 	// The server checks the bounds and refuses a memory limit below what a running container uses
 	// now; its message shows here as it comes. Docker applies the limits at once, and UNOS keeps
 	// them for the app's next install.
-	import { createEventDispatcher } from 'svelte';
+	import { untrack } from 'svelte';
 	import { Alert, Button, Input, Modal } from '$lib/components/ui';
 	import { intlLocale, t } from '$lib/i18n';
 	import {
@@ -14,25 +15,42 @@
 		type LimitBounds
 	} from '$lib/api/apps';
 
-	export let open = false;
-	/** The container's Docker name. */
-	export let container = '';
-	/** Its limits and use as the installed list gave them. */
-	export let resources: ContainerResources | null = null;
+	type Props = {
+		open?: boolean;
+		/** The container's Docker name. */
+		container?: string;
+		/** Its limits and use as the installed list gave them. */
+		resources?: ContainerResources | null;
+		/** Cancel, Escape or the backdrop asked to close the dialog. */
+		onclose?: () => void;
+		/** The server took the limits: what it keeps now. */
+		onsaved?: (limits: ContainerLimits) => void;
+	};
 
-	const dispatch = createEventDispatcher<{ close: void; saved: ContainerLimits }>();
+	let { open = false, container = '', resources = null, onclose, onsaved }: Props = $props();
+
 	const MIB = 1024 * 1024;
 
-	let memory = '';
-	let cpus = '';
-	let bounds: LimitBounds | null = null;
-	let error = '';
-	let saving = false;
-	// The container whose limits the fields were filled with, while the dialog is open.
+	let memory = $state('');
+	let cpus = $state('');
+	let bounds = $state<LimitBounds | null>(null);
+	let error = $state('');
+	let saving = $state(false);
+	// The container whose limits the fields were filled with, while the dialog is open. Only the
+	// effect below reads it.
 	let filledFor = '';
 
-	$: if (open && container !== filledFor) void fill();
-	$: if (!open) filledFor = '';
+	// The fields are filled when the dialog opens or shows another container, before the dialog's
+	// markup updates, as Svelte 4's statements did; only `open` and `container` make it run again
+	// (a change of `resources` while it is open leaves what the user typed).
+	$effect.pre(() => {
+		const isOpen = open;
+		const name = container;
+		untrack(() => {
+			if (!isOpen) filledFor = '';
+			else if (name !== filledFor) void fill();
+		});
+	});
 
 	async function fill() {
 		filledFor = container;
@@ -47,8 +65,9 @@
 		}
 	}
 
-	$: formatNumber = (value: number, digits: number): string =>
-		new Intl.NumberFormat($intlLocale, { maximumFractionDigits: digits }).format(value);
+	function formatNumber(value: number, digits: number): string {
+		return new Intl.NumberFormat($intlLocale, { maximumFractionDigits: digits }).format(value);
+	}
 
 	// Text fields, not number fields: a browser's number field gives "" for what it cannot read
 	// ("1,5" in an English one, "512MB"), which would remove the limit; here it is refused.
@@ -73,9 +92,9 @@
 				memory_limit: memoryMib === null ? null : Math.round(memoryMib * MIB),
 				cpu_limit: cpuLimit
 			});
-			dispatch('saved', result);
+			onsaved?.(result);
 		} catch (e) {
-			error = e instanceof Error ? e.message : String(e);
+			error = messageOf(e);
 		} finally {
 			saving = false;
 		}
@@ -86,9 +105,16 @@
 	{open}
 	title={$t('apps.limits.title', { name: container })}
 	closable={!saving}
-	on:close={() => dispatch('close')}
+	onclose={() => onclose?.()}
 >
-	<form id="app-limits-form" class="space-y-4" on:submit|preventDefault={save}>
+	<form
+		id="app-limits-form"
+		class="space-y-4"
+		onsubmit={(e) => {
+			e.preventDefault();
+			void save();
+		}}
+	>
 		<p class="text-sm text-secondary">{$t('apps.limits.intro')}</p>
 		<Input
 			type="text"
@@ -121,12 +147,12 @@
 			<div role="alert"><Alert variant="error">{error}</Alert></div>
 		{/if}
 	</form>
-	<svelte:fragment slot="footer">
-		<Button variant="secondary" disabled={saving} on:click={() => dispatch('close')}>
+	{#snippet footer()}
+		<Button variant="secondary" disabled={saving} onclick={() => onclose?.()}>
 			{$t('common.cancel')}
 		</Button>
-		<Button variant="primary" loading={saving} on:click={save}>
+		<Button variant="primary" loading={saving} onclick={save}>
 			{$t('apps.limits.save')}
 		</Button>
-	</svelte:fragment>
+	{/snippet}
 </Modal>

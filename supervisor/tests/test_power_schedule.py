@@ -16,7 +16,7 @@ import json
 import logging
 import os
 import subprocess
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, UTC
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -41,7 +41,6 @@ offsite = importlib.import_module("src.offsite.service")
 repair_router = importlib.import_module("src.shares.repair_router")
 
 API = "/api/v1/power"
-UTC = timezone.utc
 
 SCHEDULED = ["shutdown", "-h", "+1", "UNOS: scheduled shutdown (power settings)"]
 IDLE = ["shutdown", "-h", "+1", "UNOS: idle shutdown (power settings)"]
@@ -509,7 +508,7 @@ class TestWhatPostponesAScheduledShutdown:
         running = SimpleNamespace(state="running", name="Immich", kind=kind, started_at=world.clock.now)
         monkeypatch.setattr(install_jobs, "current", lambda: [running])
 
-        found = [f for f in schedule._jobs(world.clock.now, timezone.utc) if f.subject == "Immich"]
+        found = [f for f in schedule._jobs(world.clock.now, UTC) if f.subject == "Immich"]
 
         assert [f.kind for f in found] == [f"app_{kind}"]
         assert schedule._describe(found[0]) == {

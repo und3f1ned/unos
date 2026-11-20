@@ -230,13 +230,13 @@ class FakeNetworkdHost:
         if cmd == ["systemctl", "daemon-reload"]:
             return self._ok()
         if cmd == ["ip", "-d", "-j", "link", "show"]:
-            return self._ok(json.dumps([self._link_json(n, l) for n, l in self.links.items()]))
+            return self._ok(json.dumps([self._link_json(n, link) for n, link in self.links.items()]))
         if cmd == ["ip", "-j", "addr", "show"]:
             return self._ok(json.dumps([
                 {"ifname": n, "addr_info": [
                     {"family": "inet6" if ":" in a else "inet", "local": a.split("/")[0],
-                     "prefixlen": int(a.split("/")[1]), "scope": "global"} for a in l["addrs"]]}
-                for n, l in self.links.items()]))
+                     "prefixlen": int(a.split("/")[1]), "scope": "global"} for a in link["addrs"]]}
+                for n, link in self.links.items()]))
         if cmd[:1] == ["ip"] and cmd[-3:] == ["route", "show", "default"]:
             family = 6 if cmd[1] == "-6" else 4
             return self._ok(json.dumps([{"dst": "default", "dev": d} for d in self.defaults[family]]))
@@ -247,9 +247,9 @@ class FakeNetworkdHost:
             return self._delete_link(cmd[4])
         if cmd == ["networkctl", "list", "--no-legend", "--no-pager"]:
             return self._ok("".join(
-                f"{l['index'] + 1:3} {n} ether routable "
+                f"{link['index'] + 1:3} {n} ether routable "
                 f"{'failed' if n in self.setup_failed else 'configured' if self.network_file(n) else 'unmanaged'}\n"
-                for n, l in self.links.items()))
+                for n, link in self.links.items()))
         if cmd[:2] == ["networkctl", "status"]:
             assert cmd[3:] == ["--no-pager"], cmd
             if cmd[2] not in self.links:
@@ -422,8 +422,8 @@ class FakeNetworkdHost:
 
     def _sysfs(self, _rest, _input):
         return self._ok("".join(
-            f"{n} {'physical' if l['kind'] == 'physical' else 'virtual'} {'wireless' if l['wireless'] else 'wired'}\n"
-            for n, l in self.links.items()))
+            f"{n} {'physical' if link['kind'] == 'physical' else 'virtual'} {'wireless' if link['wireless'] else 'wired'}\n"
+            for n, link in self.links.items()))
 
 
 @pytest.fixture

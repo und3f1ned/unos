@@ -55,9 +55,9 @@ jobs:
       - name: Run tests
         run: make test
 
-  # make lint: ruff's pyflakes findings (undefined names, unused imports and
-  # variables, ...) and syntax errors (E9) in the supervisor, scripts/ and
-  # .claude/hooks/, bash -n on the shell scripts, and the JSON syntax of
+  # make lint: ruff with the rules of ruff.toml (pyflakes findings, syntax
+  # errors and the rules that find bugs, ADR-0425) in the supervisor, scripts/
+  # and .claude/hooks/, bash -n on the shell scripts, and the JSON syntax of
   # feature-list.json and .claude/settings.json; each of the three runs even
   # when another one failed (ADR-0190). Then the known vulnerabilities of the supervisor's
   # runtime dependencies. ruff and pip-audit, and every package they depend on,

@@ -24,7 +24,7 @@ import json
 import re
 import textwrap
 import types
-from typing import Any, Optional, get_args, get_origin
+from typing import Any, get_args, get_origin
 
 import pytest
 from fastapi import Depends, FastAPI, HTTPException, Request, status
@@ -110,7 +110,7 @@ def _operation(spec: dict, method: str, path: str) -> dict:
 _STATUS_NAME = re.compile(r"HTTP_(\d{3})_")
 
 
-def _status(node: ast.AST) -> Optional[int]:
+def _status(node: ast.AST) -> int | None:
     if isinstance(node, ast.Constant) and type(node.value) is int:
         return node.value
     if isinstance(node, ast.Attribute):
@@ -154,7 +154,7 @@ class _Deriver:
         return (inspect.isfunction(obj) or inspect.isclass(obj)) and in_package
 
     @staticmethod
-    def parse(obj: Any) -> Optional[ast.AST]:
+    def parse(obj: Any) -> ast.AST | None:
         try:
             return ast.parse(textwrap.dedent(inspect.getsource(obj)))
         except (OSError, TypeError, SyntaxError):
@@ -323,7 +323,7 @@ def field_problems(spec: dict) -> list[str]:
     return problems
 
 
-def _model_name(schema: Optional[dict]) -> Optional[str]:
+def _model_name(schema: dict | None) -> str | None:
     """The component that a body or an answer is, or whose items or values it holds."""
     if not schema:
         return None
@@ -422,7 +422,7 @@ def model_example_problems(models: list[type[BaseModel]]) -> list[str]:
             where = f"{model.__module__}.{model.__qualname__}, example {number}"
             try:
                 taken = model.model_validate_json(json.dumps(example))
-            except Exception as exc:  # noqa: BLE001 - every refusal is the problem
+            except Exception as exc:  # every refusal is the problem
                 problems.append(f"{where}: the model refuses it: {str(exc).splitlines()[0]}")
                 continue
             dumped = taken.model_dump(mode="json")
@@ -453,7 +453,7 @@ DOCUMENTATION_DOMAINS = ("example.com", "example.net", "example.org", "example")
 DOCUMENTATION_HOST_NAMES = {"jellyfin-nas.local"}
 # Public hosts that UNOS itself talks to: a URL of theirs in an example names no one's NAS. A URL
 # of the chat services carries its secret in the path, which must then be a placeholder.
-PUBLIC_HOSTS = {"github.com", "api.github.com", "ghcr.io", "docker.io", "lscr.io", "host.docker.internal"}
+PUBLIC_HOSTS = {"github.com", "api.github.com", "ghcr.io", "docker.io", "host.docker.internal"}
 SECRET_PATH_HOSTS = {"hooks.slack.com", "discord.com", "discordapp.com", "api.telegram.org"}
 # RFC 7042's documentation block of MAC addresses.
 DOCUMENTATION_MAC = "00:00:5e:00:53:"
@@ -899,7 +899,7 @@ class TestTheChecks:
         assert value_problems({"target": "iqn.2003-01.org.linux-iscsi.unos:backup",
                                "initiator": "iqn.2026-11.com.example:client-1"}) == []
         assert value_problems({"address": "192.0.2.10/24", "netmask": "255.255.255.0", "v6": "2001:db8::10",
-                               "lan": "10.0.0.20", "ula": "fd00::20", "image": "lscr.io/linuxserver/x:1",
+                               "lan": "10.0.0.20", "ula": "fd00::20", "image": "ghcr.io/linuxserver/x:1",
                                "file": "backup_2026-11-18.tar.gz", "gateway": "host.docker.internal",
                                "slack": "https://hooks.slack.com/services/EXAMPLE/EXAMPLE/EXAMPLE",
                                "link": "fe80::1", "mac": "00:00:5e:00:53:01", "mail": "admin@example.com",

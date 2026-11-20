@@ -82,7 +82,7 @@ import signal
 import stat
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import datetime, UTC
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -474,7 +474,7 @@ def _stale(lock: dict) -> bool:
         taken = datetime.fromisoformat(str(lock["time"]).replace("Z", "+00:00"))
     except (KeyError, ValueError):
         return False
-    if (datetime.now(timezone.utc) - taken).total_seconds() > STALE_AFTER:
+    if (datetime.now(UTC) - taken).total_seconds() > STALE_AFTER:
         return True
     return lock.get("hostname") == _hostname and not _alive(int(lock.get("pid", 0)))
 
@@ -526,7 +526,7 @@ def find_snapshot(repo: Path, prefix: str) -> dict:
 
 
 def now() -> str:
-    return datetime.now(timezone.utc).astimezone().isoformat()
+    return datetime.now(UTC).astimezone().isoformat()
 
 
 # --- the commands -------------------------------------------------------------------------------

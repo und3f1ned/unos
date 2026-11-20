@@ -97,8 +97,8 @@ class TestPolling:
 
     def test_a_callback_given_by_name_is_followed(self, node, tmp_path):
         result = check(node, tmp_path, """\
-            let status = '';
-            $: tick = async () => { status = await getStatus(); };
+            let status = $state('');
+            const tick = async () => { status = await getStatus(); };
             setInterval(tick, 1000);
             """)
         assert result.returncode == 1
@@ -204,38 +204,122 @@ class TestOtherModules:
 
 
 class TestWhatATimerChanges:
-    """A timer that changes what an API-reaching `$:` statement reads, or a store, polls through it."""
+    """A timer that changes what an API-reaching `$effect` reads, or a store, polls through it."""
 
     @pytest.mark.parametrize("bump, through", [
         ("tick += 1", ""), ("tick = tick + 1", ""), ("tick++", ""), ("bump()", " through bump"),
-        ("[tick] = [tick + 1]", ""), ("state.tick = 1", ""),
+        ("[tick] = [tick + 1]", ""), ("counter.tick = 1", ""),
     ])
-    def test_a_variable_that_an_api_reaching_reactive_statement_reads(self, node, tmp_path, bump, through):
-        changed = "state" if bump.startswith("state") else "tick"
+    @pytest.mark.parametrize("rune", ["$effect", "$effect.pre"])
+    def test_a_variable_that_an_api_reaching_effect_reads(self, node, tmp_path, bump, through, rune):
+        changed = "counter" if bump.startswith("counter") else "tick"
         result = check(node, tmp_path, f"""\
-            let tick = 0;
-            let state = {{ tick: 0 }};
-            let status = '';
+            let tick = $state(0);
+            let counter = $state({{ tick: 0 }});
+            let status = $state('');
             async function load() {{ status = await getStatus(); }}
             function bump() {{ tick += 1; }}
-            $: tick, state, load();
+            {rune}(() => {{ tick; counter; load(); }});
             setInterval(() => {{ {bump}; }}, 5000);
             """)
         assert result.returncode == 1
-        assert (f"+page.svelte:9: setInterval changes {changed}{through}, which the $: statement of line 8 reads; "
-                "that statement reaches the API: getStatus (from $lib/api/demo) through load") in result.stderr
+        assert (f"+page.svelte:9: setInterval changes {changed}{through}, which the {rune} of line 8 reads; "
+                "it reaches the API: getStatus (from $lib/api/demo) through load") in result.stderr
 
-    def test_a_variable_read_through_other_reactive_statements(self, node, tmp_path):
+    def test_what_the_functions_that_an_effect_calls_read_counts(self, node, tmp_path):
+        # Svelte 5 tracks every read of a run, also in the functions it calls.
         result = check(node, tmp_path, """\
-            let now = Date.now();
-            $: minute = Math.floor(now / 60000);
-            $: run = () => getStatus();
-            $: if (minute >= 0) run();
-            setInterval(() => { now = Date.now(); }, 1000);
+            let tick = $state(0);
+            function refresh() { if (tick > 0) getStatus(); }
+            $effect(() => { refresh(); });
+            setInterval(() => { tick += 1; }, 5000);
             """)
         assert result.returncode == 1
-        assert ("+page.svelte:7: setInterval changes now, which the $: statement of line 6 reads through minute; "
-                "that statement reaches the API: getStatus (from $lib/api/demo) through run") in result.stderr
+        assert ("+page.svelte:6: setInterval changes tick, which the $effect of line 5 reads; "
+                "it reaches the API: getStatus (from $lib/api/demo) through refresh") in result.stderr
+
+    def test_what_an_effect_reads_untracked_does_not_count(self, node, tmp_path):
+        script = """\
+            import { untrack } from 'svelte';
+            let tick = $state(0);
+            let pool = $state('tank');
+            $effect(() => { const chosen = pool; untrack(() => { if (tick > 0) getStatus(); }); });
+            setInterval(() => { {changed} = {value}; }, 5000);
+            """
+        passes = check(node, tmp_path / "tick", script.replace("{changed}", "tick").replace("{value}", "1"))
+        assert passes.returncode == 0, passes.stderr
+        fails = check(node, tmp_path / "pool", script.replace("{changed}", "pool").replace("{value}", "'other'"))
+        assert fails.returncode == 1
+        assert "setInterval changes pool, which the $effect of line 6 reads; it reaches the API" in fails.stderr
+
+    @pytest.mark.parametrize("derived", ["$derived(Math.floor(now / 60000))", "$derived.by(() => Math.floor(now / 60000))"])
+    def test_a_variable_read_through_a_derived_value(self, node, tmp_path, derived):
+        result = check(node, tmp_path, f"""\
+            let now = $state(Date.now());
+            const minute = {derived};
+            const run = () => getStatus();
+            $effect(() => {{ if (minute >= 0) run(); }});
+            setInterval(() => {{ now = Date.now(); }}, 1000);
+            """)
+        assert result.returncode == 1
+        assert ("+page.svelte:7: setInterval changes now, which the $effect of line 6 reads through minute; "
+                "it reaches the API: getStatus (from $lib/api/demo) through run") in result.stderr
+
+    def test_a_variable_that_an_effect_reads_and_assigns_counts(self, node, tmp_path):
+        # Svelte 5 runs an effect again when a variable that it read changes, also one it assigns.
+        result = check(node, tmp_path, """\
+            let page = $state(1);
+            $effect(() => { if (page < 1) page = 1; getEntries(); });
+            setInterval(() => { page++; }, 5000);
+            """)
+        assert result.returncode == 1
+        assert "+page.svelte:5: setInterval changes page, which the $effect of line 4 reads" in result.stderr
+
+    def test_a_derived_value_that_reaches_the_api_counts(self, node, tmp_path):
+        result = check(node, tmp_path, """\
+            let tick = $state(0);
+            const status = $derived(getStatus().then((s) => s + tick));
+            setInterval(() => { tick++; }, 5000);
+            """)
+        assert result.returncode == 1
+        assert "+page.svelte:5: setInterval changes tick, which the $derived of line 4 reads" in result.stderr
+
+    @pytest.mark.parametrize("effect", [
+        "function refresh() { if (tick > 0) getStatus(); }\n$effect(refresh);",
+        "if (true) { $effect(() => { if (tick > 0) getStatus(); }); }",
+        "function follow() { $effect(() => { if (tick > 0) getStatus(); }); }\nfollow();",
+    ], ids=["by-name", "in-a-block", "in-a-function"])
+    def test_an_effect_anywhere_in_the_script_counts(self, node, tmp_path, effect):
+        result = check(node, tmp_path, "let tick = $state(0);\n" + effect + "\nsetInterval(() => { tick++; }, 5000);\n")
+        assert result.returncode == 1
+        assert "setInterval changes tick, which the $effect of line" in result.stderr
+
+    def test_a_method_of_a_class_that_reaches_the_api_counts(self, node, tmp_path):
+        # The state of a page in a .svelte.ts module (ADR-0427): a timer that calls a method of it
+        # that reaches the API, directly or through another method, polls.
+        module = """\
+            import { getStatus } from '$lib/api/demo';
+            export class Lists {
+              status = $state('');
+              async load() { this.status = await getStatus(); }
+              reload = () => this.load();
+              count() { return 1; }
+            }
+            """
+        script = """\
+            import { Lists } from '$lib/components/demo/lists.svelte';
+            const lists = new Lists();
+            setInterval(() => { {call}; }, 5000);
+            """
+        for call, found in [("lists.load()", "lists.load"), ("void lists.reload()", "lists.reload")]:
+            webui = demo(tmp_path / found, {"lib/components/demo/lists.svelte.ts": module,
+                                            "routes/a/+page.svelte": page(script.replace("{call}", call))})
+            result = run_check(node, webui)
+            assert result.returncode == 1, result.stdout
+            assert f"setInterval reaches the API: {found} (from src/lib/components/demo/lists.svelte.ts" in result.stderr
+        webui = demo(tmp_path / "count", {"lib/components/demo/lists.svelte.ts": module,
+                                          "routes/a/+page.svelte": page(script.replace("{call}", "lists.count()"))})
+        assert run_check(node, webui).returncode == 0
 
     @pytest.mark.parametrize("script, store", [
         ("import { writable } from 'svelte/store';\nconst tick = writable(0);\n"
@@ -243,7 +327,7 @@ class TestWhatATimerChanges:
         ("import { writable } from 'svelte/store';\nconst tick = writable(0);\n"
          "setInterval(() => { $tick = Date.now(); }, 1000);\n", "tick"),
         ("import { feed } from '$lib/stores/feed';\nsetInterval(() => feed.set([]), 1000);\n", "feed"),
-        ("import { custom } from '$lib/custom';\n$: shown = $custom;\nsetInterval(() => custom.set(1), 1000);\n",
+        ("import { custom } from '$lib/custom';\nconst shown = $derived($custom);\nsetInterval(() => custom.set(1), 1000);\n",
          "custom"),
     ], ids=["local-update", "local-dollar-assignment", "imported-writable", "read-with-a-dollar"])
     def test_a_store(self, node, tmp_path, script, store):
@@ -253,16 +337,27 @@ class TestWhatATimerChanges:
         assert result.returncode == 1
         assert f"setInterval changes the store {store}: " in result.stderr
 
-    def test_what_no_api_reaching_reactive_statement_reads_passes(self, node, tmp_path):
+    def test_the_runes_are_no_stores(self, node, tmp_path):
         result = check(node, tmp_path, """\
-            let now = Date.now();
-            let pool = 'tank';
-            let status = '';
+            let { props = { set(n: number) {} } }: { props?: { set(n: number): void } } = $props();
+            let effect = { set(n: number) {} };
+            $effect(() => {});
+            setInterval(() => { props.set(1); effect.set(1); }, 1000);
+            """)
+        assert result.returncode == 0, result.stderr
+
+    def test_what_no_api_reaching_effect_reads_passes(self, node, tmp_path):
+        result = check(node, tmp_path, """\
+            let now = $state(Date.now());
+            let pool = $state('tank');
+            let status = $state('');
+            let plain = 0;
             const cache = new Map<string, number>();
-            $: seconds = Math.round(now / 1000);
-            $: refreshPool = () => getStatus().then((s) => { status = s + now; });
-            $: if (pool) getStatus().then((s) => { status = s; });
-            setInterval(() => { now = Date.now(); cache.set('now', now); }, 1000);
+            const seconds = $derived(Math.round(now / 1000));
+            const refreshPool = () => getStatus().then((s) => { status = s + now; });
+            $effect(() => { if (pool) getStatus().then((s) => { status = s; }); });
+            $effect(() => { if (plain > 0) getStatus(); });
+            setInterval(() => { now = Date.now(); plain += 1; cache.set('now', now); }, 1000);
             """)
         assert result.returncode == 0, result.stderr
 

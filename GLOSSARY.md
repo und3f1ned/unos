@@ -30,14 +30,26 @@ server keeps the choice per user (ADR-0405). Avoid: skin, colour mode.
 (`webui/src/lib/i18n/catalog/<area>.ts`), which the pages show in the language chosen on the
 Account page; the server's messages stay English (ADR-0287). Avoid: dictionary, locale file.
 
-**Command palette**: The dialog that Ctrl+K (Cmd+K on macOS), or the search button of a phone's
-header bar, opens over a signed-in page: typing narrows the pages and actions of the user's role,
-and Enter opens the chosen one. It runs only the actions that change nothing on the NAS; the
-others open their page's own dialog (ADR-0393). Avoid: quick switcher, command bar, search.
+**Command palette**: The dialog that Ctrl+K (Cmd+K on macOS), the sidebar's Search button from
+the md breakpoint, or the search button of a phone's header bar, opens over a signed-in page:
+typing narrows the pages and actions of the user's role, and Enter opens the chosen one. It runs
+only the actions that change nothing on the NAS; the others open their page's own dialog
+(ADR-0393). Avoid: quick switcher, command bar, search.
 
 **Table frame**: The element of the class `table-frame` around a table that can be wider than a
 phone's screen: the table scrolls sideways inside it, while the page never does (ADR-0302).
 Avoid: scroll wrapper, responsive table.
+
+**Runes mode**: How every component of the web UI is compiled, Svelte 5's: its props, state and
+reactions are written with runes (`$props`, `$state`, `$derived`, `$effect`), its content with
+snippets and its events as attributes and callback props. A component of Svelte 4's legacy mode
+(`export let`, `$:`) fails the build, and one with its other syntax (slots, `on:`) fails
+`make check` (ADR-0427). Avoid: Svelte 5 syntax, new syntax.
+
+**Area component**: A component of `webui/src/lib/components/<area>/` that draws one part of a page
+of that area, such as a card, a table, a tab or a dialog with its form, from typed props and
+callbacks; the page's route file composes them and holds the page's state (ADR-0427). Avoid:
+widget (a Dashboard card), partial, subview.
 
 **Bulk action**: An action that an administrator takes at once on the containers or SMB shares
 selected on their page: Start, Stop or Restart of containers, each through its own endpoint, and
@@ -522,7 +534,9 @@ that data without the file is refused (ADR-0381, ADR-0415). Avoid: password vari
 **Pinned image**: An image of the catalog named by a version tag and the digest of its index
 (`name:tag@sha256:...`), pulled and run by that digest, with its size on the system disk
 estimated for the install's space check and the `VOLUME`s it declares (`PINNED_IMAGES`,
-`APP_IMAGES`, ADR-0381, ADR-0410). Every image of the catalog is one. Avoid: locked image.
+`APP_IMAGES`, ADR-0381, ADR-0410). Every image of the catalog is one; LinuxServer's are named on
+ghcr.io, where LinuxServer publishes them, never on lscr.io, its redirector (ADR-0426). Avoid:
+locked image.
 
 **Moved tag**: The tag of a pinned image that names another index at its registry than the one
 pinned, because the publisher pushed that version again or a line tag (Traefik's `v3.7`) moved on

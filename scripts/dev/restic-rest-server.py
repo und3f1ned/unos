@@ -70,7 +70,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
     root = ""
     credentials = b""
 
-    def log_message(self, format: str, *args) -> None:  # noqa: A002  only refusals and failures, below
+    def log_message(self, format: str, *args) -> None:  # only refusals and failures, below
         pass
 
     def _answer(self, status: int, body: bytes = b"", content_type: str = "application/octet-stream",
@@ -144,16 +144,16 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self._answer(500, b"500 Internal Server Error\n", "text/plain", head=method == "HEAD")
             sys.stderr.write(f"{method} {self.path}: 500 {e}\n")
 
-    def do_HEAD(self) -> None:  # noqa: N802
+    def do_HEAD(self) -> None:
         self._handle("HEAD")
 
-    def do_GET(self) -> None:  # noqa: N802
+    def do_GET(self) -> None:
         self._handle("GET")
 
-    def do_POST(self) -> None:  # noqa: N802
+    def do_POST(self) -> None:
         self._handle("POST")
 
-    def do_DELETE(self) -> None:  # noqa: N802
+    def do_DELETE(self) -> None:
         self._handle("DELETE")
 
     def _head(self, repo, what, name) -> None:
@@ -232,7 +232,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self._answer(200)
 
     def _delete(self, repo, what, name) -> None:
-        if what == "repository" or name is None and what != "config":
+        if what == "repository" or (name is None and what != "config"):
             raise Refused(400, "a file's name is needed")
         path = self._file(repo, what, name)
         try:

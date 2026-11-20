@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { messageOf } from '$lib/errors';
 	import { onMount } from 'svelte';
 	import { ApiError } from '$lib/api/client';
 	import { generateRecoveryCodes, getRecoveryCodesStatus, type RecoveryCodesStatus } from '$lib/api/auth';
@@ -9,28 +10,24 @@
 	// authentication is on (ADR-0238). Each code signs in once in place of a
 	// code of the authenticator app.
 
-	let status: RecoveryCodesStatus | null = null;
-	let loading = true;
-	let loadError = '';
+	let status = $state<RecoveryCodesStatus | null>(null);
+	let loading = $state(true);
+	let loadError = $state('');
 
 	// The codes just generated: shown only now, until Done. The server keeps
 	// their hashes and never answers them again.
-	let codes: string[] = [];
-	let busy = false;
-	let error = '';
+	let codes = $state<string[]>([]);
+	let busy = $state(false);
+	let error = $state('');
 	// The last generation failed without a refusal (a server error, an unreadable answer or
 	// none): the server may have stored new codes that never reached the page, and then the
 	// saved ones no longer work. Its warning stays until a generation succeeds or is refused.
-	let outcomeUnknown = false;
-	let confirmNew = false;
+	let outcomeUnknown = $state(false);
+	let confirmNew = $state(false);
 
 	onMount(() => {
 		void load();
 	});
-
-	function messageOf(e: unknown): string {
-		return e instanceof Error ? e.message : String(e);
-	}
 
 	async function load() {
 		try {
@@ -82,8 +79,8 @@
 		}
 	}
 
-	$: left = status?.remaining ?? 0;
-	$: errorTitle = outcomeUnknown ? $t('account.recovery.unknown') : $t('account.recovery.refused');
+	const left = $derived(status?.remaining ?? 0);
+	const errorTitle = $derived(outcomeUnknown ? $t('account.recovery.unknown') : $t('account.recovery.refused'));
 </script>
 
 <section aria-labelledby="recovery-codes-title" class="mt-4 pt-4 border-t border-border space-y-3">
@@ -98,21 +95,21 @@
 				<li>{code}</li>
 			{/each}
 		</ul>
-		<Button on:click={() => (codes = [])}>{$t('common.done')}</Button>
+		<Button onclick={() => (codes = [])}>{$t('common.done')}</Button>
 	{:else if loading}
 		<p class="text-sm text-muted">{$t('common.loading')}</p>
 	{:else if loadError || !status}
 		<Alert variant="error" title={$t('account.recovery.loadError')}>{loadError}</Alert>
 	{:else if !status.generated}
 		<p class="text-sm text-secondary">{$t('account.recovery.none')}</p>
-		<Button loading={busy} on:click={generate}>{$t('account.recovery.generate')}</Button>
+		<Button loading={busy} onclick={generate}>{$t('account.recovery.generate')}</Button>
 	{:else}
 		{#if left === 0}
 			<Alert variant="warning">{$t('account.recovery.noneLeft')}</Alert>
 		{:else}
 			<p class="text-sm">{$t('account.recovery.left', { n: left })}</p>
 		{/if}
-		<Button variant="secondary" loading={busy && !confirmNew} on:click={askForNewCodes}>
+		<Button variant="secondary" loading={busy && !confirmNew} onclick={askForNewCodes}>
 			{$t('account.recovery.generateNew')}
 		</Button>
 	{/if}
@@ -130,7 +127,7 @@
 	title={$t('account.recovery.confirmTitle')}
 	size="md"
 	closable={!busy}
-	on:close={closeConfirm}
+	onclose={closeConfirm}
 >
 	<p>{$t('account.recovery.confirmText')}</p>
 	{#if error}
@@ -140,10 +137,10 @@
 		</Alert>
 	{/if}
 
-	<svelte:fragment slot="footer">
-		<Button variant="secondary" class="flex-1" disabled={busy} on:click={closeConfirm}>
+	{#snippet footer()}
+		<Button variant="secondary" class="flex-1" disabled={busy} onclick={closeConfirm}>
 			{$t('common.cancel')}
 		</Button>
-		<Button class="flex-1" loading={busy} on:click={generate}>{$t('account.recovery.generateNew')}</Button>
-	</svelte:fragment>
+		<Button class="flex-1" loading={busy} onclick={generate}>{$t('account.recovery.generateNew')}</Button>
+	{/snippet}
 </Modal>

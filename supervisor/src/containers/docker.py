@@ -41,6 +41,9 @@ RUNNING_STATES = ("running", "restarting", "paused")
 # stop also waits for the container's stop timeout. Pulls are sent without a
 # timeout by docker-py: their length depends on the image (ADR-0254).
 DOCKER_TIMEOUT_SECONDS = 60
+# What an image's removal may take: Docker deletes its layers before it answers, which took more
+# than a minute for an image of 480 MiB on the dev device's SD card (2026-11-19).
+IMAGE_REMOVE_TIMEOUT_SECONDS = 600
 
 
 def is_system_container(name: str) -> bool:
@@ -431,9 +434,11 @@ def remove_image(image_id: str, force: bool = False) -> str:
     one tag by its ID only when forced ("image is referenced in multiple
     repositories"), so each tag is removed on its own, without force: the last one
     takes the image with it, and what is left of it is then removed by its ID
-    (ADR-0255). Docker's own refusals still reach the caller as docker-py errors.
+    (ADR-0255). Docker's own refusals still reach the caller as docker-py errors. Its client waits
+    IMAGE_REMOVE_TIMEOUT_SECONDS: Docker answers once the layers are deleted.
     """
     client = get_client()
+    client.api.timeout = IMAGE_REMOVE_TIMEOUT_SECONDS  # docker-py's every request reads it
     try:
         img = client.images.get(image_id)
         if is_system_image(img.tags):

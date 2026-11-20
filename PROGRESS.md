@@ -180,6 +180,14 @@ significant step. Features and their state live in `feature-list.json`, decision
   it yourself"): `apps.manage-installed`, `storage.edge-cases`, `shares.rollback-era-safeguards`,
   `shares.nfs-exports-parser` and `apps.docker-calls-off-event-loop` pass; Paperless-ngx and
   Linkwarden installed and ran, BookStack's pull and transmission's update failed at lscr.io.
+- On 2026-11-19 to 20 (Log): the seventeenth batch on the branch `mvp.batch-17`, merged into
+  `main` with its record: ruff's rules that find bugs (`ci.wider-ruff-rules`, ADR-0425), the
+  catalog's LinuxServer images pulled from ghcr.io instead of lscr.io
+  (`apps.linuxserver-images-from-ghcr`, ADR-0426), the web UI on Svelte 5 in runes mode and
+  composed of area components (`webui.svelte-5`, ADR-0427), the web UI redesigned at the owner's
+  word (`webui.redesign`, ADR-0428), and TRIM for every pool, NVMe drives of a K1 included
+  (`storage.nvme-trim-on-k1`, ADR-0429). The ghcr.io images, the update in place and the floating
+  paths pass. The owner's BPI-F3 moved to its eMMC and one M.2 NVMe drive (Log).
 - On 2026-11-19 (Log): the sixteenth batch on the branch `mvp.batch-16`, merged into `main` with
   its record: off-device copies to a restic REST server and over SFTP through the host's ssh
   (`backup.off-device-copies-over-sftp`, ADR-0422), the workflows' actions pinned by commit and the
@@ -238,7 +246,7 @@ significant step. Features and their state live in `feature-list.json`, decision
 
 ## Dev device
 
-State on 2026-11-19, 16:20 UTC. A Banana Pi BPI-W3 (ArmSoM W3, Rockchip RK3588, 8 GB), running
+State on 2026-11-20, 00:30 UTC. A Banana Pi BPI-W3 (ArmSoM W3, Rockchip RK3588, 8 GB), running
 Armbian's community image for `armsom-w3`, upgraded on 2026-11-15 from 26.2.0-trunk.151 to
 26.11.0-trunk.133 (Debian 13, kernel 6.1.172-vendor-rk35xx);
 its address and logins are in `dev.env` (ADR-0212). This journal called it a UGREEN board, after
@@ -249,7 +257,14 @@ the UGREEN firmware on its eMMC, until the owner set that right on 2026-11-15 (A
   since boot, its own wear estimate 0 to 10%. Nothing writes to it.
 - SSH by key only, root by the workstation's key `~/.ssh/unos_dev_ed25519`; root's and the UNOS
   administrator's passwords were rotated and live only in `dev.env` (ADR-0226).
-- Runs 988bf19 of the branch `mvp.batch-16` (the sixteenth batch, ADR-0422 to ADR-0424), merged
+- Runs e00008b of the branch `mvp.batch-17` (the seventeenth batch, ADR-0425 to ADR-0429), merged
+  into `main` with its record, whose commits on top of it change no runtime file. Its backend was
+  deployed on 2026-11-19 in three steps (fc42813: sync 9.027, build-supervisor 18.461, up 3.293
+  SD MiB; d907d94 with the web UI: sync 6.348, build-supervisor 15.016, build-webui 17.820, up
+  3.461; e00008b: sync 2.523, build-supervisor 15.047, up 2.797), a reboot from the API at
+  18:10:24 UTC. transmission runs the catalog's pin from ghcr.io, its `transmission.previous` on
+  lscr.io's `latest`; BookStack's data folders stay on the pool after its uninstall.
+- Before it, 988bf19 of the branch `mvp.batch-16` (the sixteenth batch, ADR-0422 to ADR-0424), merged
   into `main` with the record of its device check, whose commits on top of it change no runtime
   file. Deployed on 2026-11-19 (SD MiB sync 4.562, build-supervisor 15.062, build-webui 20.875, up
   5.719), a reboot from the API at 14:41:15 UTC (all containers healthy by about 14:43). No
@@ -672,11 +687,10 @@ Open owner actions:
     second install refused with 409 meanwhile; (3b) Cancel install on the card during the pulls;
     (4) a restart of the supervisor during Immich's wait for its database. The agent reads the job's
     API, the SD MiB and the audit log meanwhile.
-16. The BPI-F3's second SATA SSD (ADR-0372): its pool `data` is a RAID1 of two SSDs, and the
-    second (devid 2) has had no link on either port of the adapter since 2026-11-19. The pool runs
-    degraded, mounted by hand, until the next boot; after a reboot it stays unmounted, and Docker
-    and UNOS down, until it is mounted again. Open: a new or repaired second disk added to the
-    pool and a balance back to RAID1, or the pool converted to one disk so that it mounts at boot.
+16. The BPI-F3's old SATA SSD (the pool's devid 1 until 2026-11-19): it still holds a full copy of
+    the pool as it was; the owner keeps or wipes it. The board's open checks of
+    `deploy.riscv64-bpi-f3` and `storage.nvme-trim-on-k1` need this tree deployed there and a
+    dev.env for the board with its UNOS administrator (the owner's).
 17. A kernel with LIO's file backstore (`target_core_file`) on a board, for the device check of
     `shares.iscsi-targets`: neither the BPI-W3's vendor kernel nor the BPI-F3's has one.
 18. `system.remote-access`, step 1: a port forward of UDP 51820 on the router to the dev device,
@@ -685,11 +699,49 @@ Open owner actions:
 20. A second network card on the dev device (a USB NIC), for a real bond of
     `system.network-bonding-and-vlans`'s step 1, and `make audit` in the owner's terminal for
     `ci.pinned-check-tools` (pip cannot reach the index from the agents' sessions).
-19. The pulls from lscr.io on the dev device's network: Docker's downloads of its blobs fail with
-    "timeout awaiting response headers" (four times since 2026-11-18) while curl on the device
-    fetches the same blob in 0.3 s. BookStack's install and transmission's update wait for it.
+19. Done on 2026-11-19: the pulls from lscr.io failed on the dev device's network, those from
+    ghcr.io of the same images do not; the catalog takes LinuxServer's images from ghcr.io
+    (ADR-0426). BookStack's login page after an install is still to read (one install, about 1
+    GB on the SD card).
 
 ## Log
+
+### 2026-11-20: A seventeenth batch: ruff, ghcr.io, Svelte 5, the redesign, TRIM; the BPI-F3 moved
+
+- A diagnosis first: the transmission image of the catalog's pin came from ghcr.io in 10 s
+  (147.820 SD MiB) where every pull from lscr.io had failed. Three builders in parallel worktrees
+  from main 2ac1cbb (ruff's rules, the LinuxServer images on ghcr.io, Svelte 5), then, at the
+  owner's word ("together with Svelte, refactor and redesign the interface"), a design proposal
+  with a mockup shown to the owner, its implementation on top of Svelte 5, and TRIM for NVMe
+  drives of a K1 after the BPI-F3's check below. Each reviewed in a fresh context by its own
+  builder, which fixed its findings. Recorded, not fixed: the updater's rollback reports success
+  when its build or up failed, and 51 findings of ruff's ASYNC rules (`ci.wider-ruff-rules`); the
+  two catalog tags that moved upstream (traefik v3.7, Linkwarden's postgres 16.16-alpine) need a
+  re-pin; the redesign keeps six confirmation dialogs as their pages had them, Button's touch
+  size for coarse pointers only, and the Security split and Disk Health's move for later
+  (`webui.redesign`); ADR-0370 and the F3's other docs still describe its SATA pool.
+- Fixed at the merge: an image's removal answered 500 after 60 s on the SD card while Docker
+  removed it (3b0ba0b: it waits up to 600 s); BookStack's disk estimate was a quarter short; the
+  ML probe's test collided with a timing of 0.012 s; a stray `node_modules/node_modules` link
+  loaded Playwright twice; the deploy tree's `webui/node_modules` was Svelte 4's (`npm ci`). The
+  builders' E2E port prefixes 71 and 72 were above 65535. `make check` 10707 passed, 124
+  skipped, 1 xfailed; the full E2E run 1100 passed, 14 skipped.
+- Device check of fc42813 before and after a reboot from the API at 18:10:24 UTC: no lscr.io
+  image in the catalog; BookStack installed from ghcr.io (968.223 SD MiB) and uninstalled;
+  transmission updated to the pin, rolled back and updated again. The new web UI's pages and
+  scripts answer 200 on the device.
+- The owner's BPI-F3, at the owner's word ("the F3 goes onto one M.2 SSD, the system onto the
+  eMMC, ..., the SD wiped", in translation): the system copied by `armbian-install` to the eMMC
+  (its built-in check of OpenZFS's versions hung on the board's broken IPv6 until wget was made
+  IPv4-only; it wrote the SD's root UUID into extlinux.conf, dropped the pool's fstab line and
+  copied no `/mnt`: fixed by hand), booted from the eMMC with the SD out; the SD wiped and the
+  pool's apps (52 MB), Docker's volumes with UNOS's database and the needed images (5.4 GB) saved
+  to it, checked by sha256 read back from the card; the owner put a Kingston A1000 M.2 NVMe drive
+  in place of the SATA adapter; its exFAT partition (a 16 GB installer folder) wiped at the
+  owner's word; the pool `data` made on it (btrfs, one disk) with UNOS's fstab entry and restored;
+  TRIM checked (256 MiB, all free space, a 4 GiB write with a parallel fstrim, a warm reboot: no
+  NVMe error) and turned on (`discard=async`, `fstrim.timer`); the SD erased with blkdiscard.
+  The board's UNOS is still the older version of 2026-11-13.
 
 ### 2026-11-19: A sixteenth batch: off-device copies over REST and SFTP, pinned actions and tools, virtual interfaces
 

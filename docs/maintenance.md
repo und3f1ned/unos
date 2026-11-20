@@ -10,7 +10,7 @@ nothing is not a result.
 | Pass | Who runs it | What it checks | What follows |
 | --- | --- | --- | --- |
 | Dependency audit | GitHub Actions: `.github/workflows/audit.yml`, every week and on demand (`workflow_dispatch`) | `scripts/audit-python.sh` (pip-audit of `supervisor/requirements.txt`, resolved in the audit environment, ADR-0423), and `npm audit --omit=dev --audit-level=high` in `webui/` | A failed run: the owner updates the dependency, or a feature-list entry when the update needs work |
-| Dependency updates | Dependabot: `.github/dependabot.yml` | New versions for pip, npm, GitHub Actions (the commit of a newer release and its version comment, ADR-0423) and the Docker base images, grouped, after a cooldown, with Conventional Commit prefixes; no new major npm versions and no Playwright (ADR-0231) | Pull requests that the owner reviews and merges by hand after `make check` passes in a checkout set up from the pull request's branch, since CI is off (ADR-0230): never automatically, because the supervisor runs privileged with the Docker socket |
+| Dependency updates | Dependabot: `.github/dependabot.yml` | New versions for pip, npm, GitHub Actions (the commit of a newer release and its version comment, ADR-0423) and the Docker base images, grouped, after a cooldown, with Conventional Commit prefixes; no new major npm versions and no Playwright (ADR-0427) | Pull requests that the owner reviews and merges by hand after `make check` passes in a checkout set up from the pull request's branch, since CI is off (ADR-0230): never automatically, because the supervisor runs privileged with the Docker socket |
 | Catalog image platforms | GitHub Actions: the `platforms` job of `audit.yml` | `scripts/catalog-platforms.py check`: the platforms recorded for every pinned image of the app catalog against the registries' manifests of its index (ADR-0403, ADR-0410) | A failed run: a pin whose record was not rewritten, or an index that its registry no longer serves; the owner runs `make catalog-platforms`, then `scripts/catalog-platforms.py record` and reviews the diff |
 | Catalog image tags | GitHub Actions: the `tags` job of `audit.yml` | `scripts/catalog-platforms.py tags`: the tag of every pinned image of the app catalog against the index its registry names now (ADR-0410) | A failed run: a publisher pushed a pinned version again or a line tag (Traefik's `v3.7`) moved on (`MOVED`, with the templates and both digests), or a pinned index is gone; the owner reviews the new index and pins it in `supervisor/src/apps/catalog.py` with its `VOLUME`s and size, then runs `scripts/catalog-platforms.py record`, or keeps the pin. Immich's five pins move only together with an Immich release: a re-pin offers the dev device's Immich an update |
 
@@ -61,13 +61,13 @@ and proposes the changes, and the owner reviews them.
    and modes (`ls -lR tmp/dev/backup`), never at the contents (ADR-0212): at most 3 backup
    folders, each with mode 700 and its files with mode 600. Anything else is a bug of
    `deploy.sh`, fixed with a test in `supervisor/tests/test_dev_scripts.py`.
-9. **Playwright.** Dependabot leaves it alone (ADR-0231). Move `@playwright/test` in
+9. **Playwright.** Dependabot leaves it alone (ADR-0427). Move `@playwright/test` in
    `webui/package.json` and `webui/package-lock.json` to its newest release, together with the
    tag of the image in `webui/Dockerfile.test` and the digest that tag names (ADR-0305;
    `test_image_has_the_playwright_version_of_package_lock` checks that they match), then
    `make setup` for the browsers (the network: the owner's machine) and `make e2e-local`.
 10. **Outdated majors and the dev dependencies.** `npm outdated` in `webui/` names the new major
-    versions that Dependabot leaves out (ADR-0231), and `npm audit --audit-level=high` there
+    versions that Dependabot leaves out (ADR-0427), and `npm audit --audit-level=high` there
     covers the dev dependencies that the weekly audit skips. Each finding becomes, or updates, an
     entry of `feature-list.json` (such as `webui.toolchain-major-versions`).
 11. **The base images.** Every `FROM` line names its tag and a digest (ADR-0305). Dependabot

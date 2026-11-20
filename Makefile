@@ -38,8 +38,8 @@ SMOKE = tests/test_lifespan.py tests/test_auth.py::TestFirstRunSetup \
 E2E_ARGS ?=
 
 SHELL_SCRIPT_DIRS = deploy scripts .claude/hooks
-# The Python that make lint checks with ruff: the supervisor and the repository's own tooling
-# (the guard, scripts/dev, the stand-in, the commit checker).
+# The Python that make lint checks with ruff, with the rules of ruff.toml (ADR-0425): the supervisor
+# and the repository's own tooling (the guard, scripts/dev, the stand-in, the commit checker).
 PYTHON_DIRS = supervisor scripts .claude/hooks
 JSON_FILES = feature-list.json .claude/settings.json
 
@@ -83,7 +83,7 @@ run_all = failed=; for target in $(1); do echo "== make $@: $$target"; \
 
 .DEFAULT_GOAL := help
 .PHONY: help setup check check-fast lint lint-ruff lint-shell lint-json test test-fast smoke
-.PHONY: frontend frontend-check frontend-i18n frontend-design frontend-build e2e-local audit catalog-platforms catalog-tags
+.PHONY: frontend frontend-check frontend-runes frontend-i18n frontend-design frontend-build e2e-local audit catalog-platforms catalog-tags
 
 help: ## List the targets and the variables
 	@echo "UNOS: make <target> [VARIABLE=value ...], from the repository root"
@@ -102,11 +102,11 @@ check: ## The quality gate: lint, test and frontend, as CI runs them, without th
 check-fast: ## lint and test-fast: what the pre-commit hook and the Stop hook run
 	+@$(call green_run,lint test-fast)
 
-lint: ## ruff (pyflakes, syntax errors), bash -n on the shell scripts, JSON syntax; all three run
+lint: ## ruff (the rules of ruff.toml), bash -n on the shell scripts, JSON syntax; all three run
 	+@$(call run_all,lint-ruff lint-shell lint-json)
 
 lint-ruff:
-	$(RUFF) check --select F,E9 $(PYTHON_DIRS)
+	$(RUFF) check $(PYTHON_DIRS)
 
 lint-shell:
 	@n=0; bad=; for f in $$(find $(SHELL_SCRIPT_DIRS) -type f 2> /dev/null | sort); do \
@@ -129,11 +129,14 @@ test-fast: ## The convention tests: ADRs, ledger, guard, repo tooling and secret
 smoke: ## A few seconds: the app starts and serves health, first-run setup and login (backend tests)
 	cd supervisor && $(PY) -m pytest $(SMOKE) -q --tb=short $(PYTEST_ARGS)
 
-frontend: ## svelte-check, the checks of the web UI's texts (ADR-0287) and design system (ADR-0400), the production build; all run
-	+@$(call run_all,frontend-check frontend-i18n frontend-design frontend-build)
+frontend: ## svelte-check, the runes check (ADR-0427), the checks of the web UI's texts (ADR-0287) and design system (ADR-0400), the production build; all run
+	+@$(call run_all,frontend-check frontend-runes frontend-i18n frontend-design frontend-build)
 
 frontend-check:
 	cd webui && $(NPM_BIN) run check
+
+frontend-runes:
+	cd webui && $(NPM_BIN) run runes
 
 frontend-i18n:
 	cd webui && $(NPM_BIN) run i18n

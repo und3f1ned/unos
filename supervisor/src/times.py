@@ -10,7 +10,7 @@ the DATETIME columns (``db_now``), and the times that it wrote into its files wi
 ADR-0401 (the audit log, the update history) are the clock of its container, which runs in UTC.
 Nothing stored is rewritten: a reader takes such a time as UTC (``as_utc``, ``parse_time``).
 """
-from datetime import datetime, timezone
+from datetime import datetime, UTC
 from typing import Annotated
 
 from pydantic import AfterValidator, WrapSerializer
@@ -18,7 +18,7 @@ from pydantic import AfterValidator, WrapSerializer
 
 def utc_now() -> datetime:
     """The current time in UTC, with its zone."""
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def db_now() -> datetime:
@@ -36,16 +36,16 @@ def as_utc(value: datetime) -> datetime:
     ValueError for a time whose UTC falls outside the calendar (year 1 or 9999 with an offset).
     """
     if value.tzinfo is None:
-        return value.replace(tzinfo=timezone.utc)
+        return value.replace(tzinfo=UTC)
     try:
-        return value.astimezone(timezone.utc)
+        return value.astimezone(UTC)
     except OverflowError:
         raise ValueError(f"{value.isoformat()} is outside the calendar in UTC") from None
 
 
 def from_epoch(seconds: float) -> datetime:
     """A time in seconds since the epoch (a file's mtime, psutil's boot time) in UTC."""
-    return datetime.fromtimestamp(seconds, timezone.utc)
+    return datetime.fromtimestamp(seconds, UTC)
 
 
 def parse_time(text: str) -> datetime:
@@ -84,7 +84,7 @@ def with_offset(value: object) -> object:
         moment = datetime.fromisoformat(value)
     except ValueError:
         return value
-    return value if moment.tzinfo is not None else moment.replace(tzinfo=timezone.utc).isoformat()
+    return value if moment.tzinfo is not None else moment.replace(tzinfo=UTC).isoformat()
 
 
 # A time that a model keeps as text, as its file holds it: read, and so answered and written back, with

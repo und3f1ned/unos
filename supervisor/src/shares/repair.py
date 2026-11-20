@@ -53,7 +53,7 @@ import threading
 import time
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, UTC
 from pathlib import PurePosixPath
 from typing import Literal
 
@@ -175,7 +175,7 @@ def repair_tree(
     Blocking: run it in a worker thread. ``share`` of the result is empty; the
     caller sets it.
     """
-    started_at = datetime.now(timezone.utc)
+    started_at = datetime.now(UTC)
     deadline = time.monotonic() + time_limit
     o_path = getattr(os, "O_PATH", None)
     if o_path is None:
@@ -288,7 +288,7 @@ class _Tally:
             share="",
             state=state,
             started_at=started_at,
-            finished_at=None if state == "running" else datetime.now(timezone.utc),
+            finished_at=None if state == "running" else datetime.now(UTC),
             visited=self.visited,
             changed=self.changed,
             skipped=dict(self.skipped),

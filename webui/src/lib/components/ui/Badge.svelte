@@ -1,5 +1,15 @@
 <script lang="ts">
-	export let variant: 'success' | 'warning' | 'error' | 'info' | 'neutral' | 'purple' | 'cyan' | 'orange' = 'neutral';
+	import type { Snippet } from 'svelte';
+
+	type Props = {
+		variant?: 'success' | 'warning' | 'error' | 'info' | 'neutral' | 'purple' | 'cyan' | 'orange';
+		/** A 6 px dot of the colour before the text, for a state (running, healthy). */
+		dot?: boolean;
+		class?: string;
+		children?: Snippet;
+	};
+
+	let { variant = 'neutral', dot = false, class: className = '', children }: Props = $props();
 
 	const variantClasses = {
 		success: 'badge-success',
@@ -12,9 +22,9 @@
 		orange: 'badge-orange'
 	};
 
-	$: classes = `badge ${variantClasses[variant]} ${$$props.class || ''}`;
+	const classes = $derived(`badge ${variantClasses[variant]} ${className || ''}`);
 </script>
 
 <span class={classes}>
-	<slot />
+	{#if dot}<span class="badge-dot" aria-hidden="true"></span>{/if}{@render children?.()}
 </span>

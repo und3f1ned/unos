@@ -1,21 +1,43 @@
 <script lang="ts">
-	import type { ComponentType } from 'svelte';
+	import type { Snippet } from 'svelte';
+	import type { HTMLAnchorAttributes, HTMLButtonAttributes } from 'svelte/elements';
 	import { Loader2 } from 'lucide-svelte';
+	import type { IconComponent } from './types';
 
-	// `plain` brings no look of its own: a control that styles itself through `class` (a tab, a
-	// clickable card or row, the classes `tab-*` of app.css).
-	export let variant: 'primary' | 'secondary' | 'danger' | 'warning' | 'success' | 'ghost' | 'plain' = 'primary';
-	export let size: 'sm' | 'md' | 'lg' | 'icon' | 'icon-sm' = 'md';
-	export let type: 'button' | 'submit' | 'reset' = 'button';
-	export let disabled: boolean = false;
-	export let loading: boolean = false;
-	export let icon: ComponentType | null = null;
-	export let href: string | null = null;
-	// A toggle button (aria-pressed): true while what it shows or turns on is active.
-	export let pressed: boolean | undefined = undefined;
+	// The attributes of a button, and of a link for one with `href` (target, rel).
+	type Props = Omit<HTMLButtonAttributes, 'type'> & Pick<HTMLAnchorAttributes, 'target' | 'rel'> & {
+		// `plain` brings no look of its own: a control that styles itself through `class` (a tab, a
+		// clickable card or row, the classes `tab-*` of app.css). `ghost-danger`: an icon button that
+		// deletes or removes (ADR-0428).
+		variant?: 'primary' | 'secondary' | 'danger' | 'warning' | 'success' | 'ghost' | 'ghost-danger' | 'plain';
+		size?: 'sm' | 'md' | 'lg' | 'icon' | 'icon-sm';
+		type?: 'button' | 'submit' | 'reset';
+		disabled?: boolean;
+		loading?: boolean;
+		icon?: IconComponent | null;
+		href?: string | null;
+		// A toggle button (aria-pressed): true while what it shows or turns on is active.
+		pressed?: boolean | undefined;
+		// The button element, for a page that moves the focus or measures it: bind:el.
+		el?: HTMLButtonElement | null;
+		class?: string;
+		children?: Snippet;
+	};
 
-	// The button element, for a page that moves the focus or measures it: bind:el.
-	export let el: HTMLButtonElement | null = null;
+	let {
+		variant = 'primary',
+		size = 'md',
+		type = 'button',
+		disabled = false,
+		loading = false,
+		icon = null,
+		href = null,
+		pressed = undefined,
+		el = $bindable(null),
+		class: className = '',
+		children,
+		...rest
+	}: Props = $props();
 
 	const variantClasses = {
 		primary: 'btn-primary',
@@ -24,6 +46,7 @@
 		warning: 'btn-warning',
 		success: 'btn-success',
 		ghost: 'btn-ghost',
+		'ghost-danger': 'btn-ghost-danger',
 		plain: ''
 	};
 
@@ -35,36 +58,37 @@
 		'icon-sm': 'btn-icon-sm'
 	};
 
-	$: classes = variant === 'plain'
-		? `${$$props.class || ''}`
-		: `btn ${variantClasses[variant]} ${sizeClasses[size]} ${$$props.class || ''}`;
+	const classes = $derived(
+		variant === 'plain'
+			? `${className || ''}`
+			: `btn ${variantClasses[variant]} ${sizeClasses[size]} ${className || ''}`
+	);
 </script>
 
+{#snippet content()}
+	{#if loading}
+		<Loader2 class="w-4 h-4 loading-spinner" aria-hidden="true" />
+	{:else if icon}
+		{@const Icon = icon}
+		<Icon class="w-4 h-4 shrink-0" aria-hidden="true" />
+	{/if}
+	{@render children?.()}
+{/snippet}
+
 {#if href}
-	<a {...$$restProps} {href} class={classes} class:disabled>
-		{#if loading}
-			<Loader2 class="w-4 h-4 loading-spinner" />
-		{:else if icon}
-			<svelte:component this={icon} class="w-4 h-4" />
-		{/if}
-		<slot />
+	<a {...rest as Record<string, unknown>} {href} class={classes} class:disabled>
+		{@render content()}
 	</a>
 {:else}
 	<button
 		bind:this={el}
-		{...$$restProps}
+		{...rest}
 		{type}
 		disabled={disabled || loading}
 		aria-pressed={pressed}
+		aria-busy={loading || undefined}
 		class={classes}
-		on:click
-		on:keydown
 	>
-		{#if loading}
-			<Loader2 class="w-4 h-4 loading-spinner" />
-		{:else if icon}
-			<svelte:component this={icon} class="w-4 h-4" />
-		{/if}
-		<slot />
+		{@render content()}
 	</button>
 {/if}

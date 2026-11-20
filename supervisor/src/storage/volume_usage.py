@@ -36,7 +36,7 @@ import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, UTC
 from pathlib import Path
 from typing import Annotated
 
@@ -284,7 +284,7 @@ def history_of(uuid: str, subvol_id: int) -> list[Point]:
 
 
 def _iso(seconds: float) -> str:
-    return datetime.fromtimestamp(int(seconds), timezone.utc).isoformat()
+    return datetime.fromtimestamp(int(seconds), UTC).isoformat()
 
 
 def usage_history(pool_name: str, volume_name: str) -> VolumeUsageHistory:
@@ -449,7 +449,7 @@ def _destroy_stale_groups(state: _State, pool: str, target: str, uuid: str, tree
         if outcome == "destroyed":
             logger.info("Destroyed the quota group 0/%s of pool %s, whose subvolume is gone", subvol_id, pool)
             with state.lock:
-                _forget_groups(state, lambda other, gone_id: (other, gone_id) == key)
+                _forget_groups(state, lambda other, gone_id: (other, gone_id) == key)  # noqa: B023 - called at once
             continue
         with state.lock:
             attempts = state.destroy_attempts[key] = state.destroy_attempts.get(key, 0) + 1

@@ -83,24 +83,26 @@ ADR-0373).
   that says `[Unit]` and `RequiresMountsFor=<the data root>`, a disk missing at
   boot keeps Docker down instead of letting it start on an empty data root on
   the card.
-- **Disks for pools.** Use SATA disks behind an M.2-to-SATA adapter in the M.2
-  slot (a JMB582, which the kernel drives as AHCI, ran two SATA SSDs with TRIM),
-  or USB SSDs. They need nothing special: TRIM and the weekly `fstrim.timer`
-  work as on every host.
-- **NVMe is not recommended.** An NVMe drive in the M.2 slot hung under load
-  ("QID 0 timeout, disable controller") and on a TRIM of the whole drive, and
-  after a warm reboot its controller did not come back ("Device not ready;
-  aborting initialisation, CSTS=0x0"), even after 30 seconds without power; the
-  K1's PCIe driver does not switch the slot's power. For an NVMe drive used
-  anyway, `install.sh` adds the udev rule `60-unos-k1-nvme.rules`, which turns
-  off the drive's power saving (APST) and its PCIe link's ASPM L1 whenever it
-  appears, and UNOS makes a pool with an NVMe drive with `mkfs.btrfs --nodiscard`,
-  mounts it with `nodiscard` and keeps the weekly fstrim off it
-  (`X-fstrim.notrim`). That stopped the hangs under load, not the failure after a
-  reboot. Give an NVMe filesystem that UNOS does not manage the options
-  `nodiscard,X-fstrim.notrim` in `/etc/fstab` yourself. Do not add
-  `pcie_aspm=off` or `nvme_core.default_ps_max_latency_us=0` to the kernel's
-  command line instead: the board does not boot with them.
+- **Disks for pools.** An NVMe drive in the M.2 slot, SATA disks behind an
+  M.2-to-SATA adapter there (a JMB582, which the kernel drives as AHCI, ran two
+  SATA SSDs with TRIM) or USB SSDs. Their pools get TRIM as on every host
+  (ADR-0429): `mkfs.btrfs` trims an SSD when the pool is made, btrfs then
+  discards freed space as it goes (`discard=async`, its default on an SSD from
+  kernel 6.2), and the weekly `fstrim.timer` trims the pool. A Kingston A1000
+  (Phison controller) on the slot's PCIe Gen2 x2 link ran an `fstrim` of all its
+  free space, a 4 GiB write beside an `fstrim`, `discard=async` and a warm
+  reboot without an NVMe timeout, reset or error in the kernel's log.
+- **NVMe power saving stays off.** `install.sh` adds the udev rule
+  `60-unos-k1-nvme.rules`, which turns off an NVMe drive's power saving (APST)
+  and its PCIe link's ASPM L1 whenever it appears: without it, a Patriot P300
+  (MAXIO MAP1202) hung under load ("QID 0 timeout, disable controller"). Do not
+  add `pcie_aspm=off` or `nvme_core.default_ps_max_latency_us=0` to the kernel's
+  command line instead: the board does not boot with them. Replace a drive that
+  still hangs in the slot under load, on a TRIM or after a reboot: the same P300
+  also hung on a TRIM of the whole drive, and after a warm reboot its controller
+  did not come back ("Device not ready; aborting initialisation, CSTS=0x0"),
+  even after 30 seconds without power, since the K1's PCIe driver does not
+  switch the slot's power, while it worked in a USB enclosure.
 - **Apps.** Most images of the App Store publish no RISCV64 build, and their
   installation fails when Docker pulls them.
 - **Temperature.** The dashboard shows the CPU's first cluster

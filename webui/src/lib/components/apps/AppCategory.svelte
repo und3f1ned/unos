@@ -1,8 +1,12 @@
 <script lang="ts">
 	import { t } from '$lib/i18n';
 
-	/** A category as the server answers it (AppCategory of supervisor/src/apps/schemas.py); '' is every app. */
-	export let category: string;
+	type Props = {
+		/** A category as the server answers it (AppCategory of supervisor/src/apps/schemas.py); '' is every app. */
+		category: string;
+	};
+
+	let { category }: Props = $props();
 
 	// One label per category, the category list's, also on the cards and in the details (ADR-0291).
 	const LABELS: Record<string, string> = {

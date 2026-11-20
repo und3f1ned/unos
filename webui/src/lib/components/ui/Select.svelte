@@ -1,30 +1,53 @@
 <script lang="ts">
 	import { ChevronDown, Check } from 'lucide-svelte';
-	import { createEventDispatcher, onMount, onDestroy } from 'svelte';
+	import { onMount, onDestroy } from 'svelte';
 	import { fly } from 'svelte/transition';
 	import { t } from '$lib/i18n';
 
-	export let id: string = '';
-	export let value: string = '';
-	export let label: string = '';
-	export let hint: string = '';
-	export let error: string = '';
-	export let required: boolean = false;
-	export let disabled: boolean = false;
-	// Without a placeholder: "Select an option" in the language of the page.
-	export let placeholder: string | undefined = undefined;
-	export let options: Array<{ value: string; label: string; disabled?: boolean }> = [];
+	type Option = { value: string; label: string; disabled?: boolean };
 
-	const dispatch = createEventDispatcher();
+	type Props = {
+		id?: string;
+		value?: string;
+		label?: string;
+		hint?: string;
+		error?: string;
+		required?: boolean;
+		disabled?: boolean;
+		// Without a placeholder: "Select an option" in the language of the page.
+		placeholder?: string | undefined;
+		options?: Option[];
+		class?: string;
+		// An option was chosen, after `value` took it.
+		onchange?: (value: string) => void;
+	};
 
-	let open = false;
+	let {
+		id = '',
+		value = $bindable(''),
+		label = '',
+		hint = '',
+		error = '',
+		required = false,
+		disabled = false,
+		placeholder = undefined,
+		options = [],
+		class: className = '',
+		onchange
+	}: Props = $props();
+
+	// The list drops in over --dur-base, at once under reduced motion (ADR-0428).
+	// i18n-ignore: a CSS media query, the same in every language
+	const reducedMotion = typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+	let open = $state(false);
 	let container: HTMLDivElement;
-	let listbox: HTMLUListElement;
-	let highlightedIndex = -1;
+	let listbox: HTMLUListElement | undefined = $state();
+	let highlightedIndex = $state(-1);
 
-	$: inputId = id || `select-${Math.random().toString(36).slice(2, 9)}`;
-	$: selectedOption = options.find((opt) => opt.value === value);
-	$: displayValue = selectedOption?.label || (placeholder ?? $t('ui.select.placeholder'));
+	const inputId = $derived(id || `select-${Math.random().toString(36).slice(2, 9)}`);
+	const selectedOption = $derived(options.find((opt) => opt.value === value));
+	const displayValue = $derived(selectedOption?.label || (placeholder ?? $t('ui.select.placeholder')));
 
 	function toggle() {
 		if (disabled) return;
@@ -35,11 +58,11 @@
 		}
 	}
 
-	function selectOption(option: { value: string; label: string; disabled?: boolean }) {
+	function selectOption(option: Option) {
 		if (option.disabled) return;
 		value = option.value;
 		open = false;
-		dispatch('change', { value: option.value });
+		onchange?.(option.value);
 	}
 
 	function handleKeydown(e: KeyboardEvent) {
@@ -183,7 +206,7 @@
 	});
 </script>
 
-<div class="relative {$$props.class || ''}" bind:this={container}>
+<div class="relative {className || ''}" bind:this={container}>
 	{#if label}
 		<label id="{inputId}-label" for={inputId} class="form-label">
 			{label}
@@ -205,8 +228,8 @@
 		class:select-trigger-error={error}
 		class:select-trigger-open={open}
 		class:select-trigger-disabled={disabled}
-		on:click={toggle}
-		on:keydown={handleKeydown}
+		onclick={toggle}
+		onkeydown={handleKeydown}
 	>
 		<span class="select-value" class:select-placeholder={!selectedOption}>
 			{displayValue}
@@ -221,7 +244,7 @@
 			role="listbox"
 			aria-labelledby={label ? `${inputId}-label` : undefined}
 			class="select-dropdown scrollbar-thin"
-			in:fly={{ y: -8, duration: 150 }}
+			in:fly={{ y: -8, duration: reducedMotion ? 0 : 180 }}
 		>
 			{#each options as option, index}
 				<li
@@ -233,14 +256,14 @@
 					class:select-option-selected={option.value === value}
 					class:select-option-highlighted={index === highlightedIndex}
 					class:select-option-disabled={option.disabled}
-					on:click={() => selectOption(option)}
-					on:mouseenter={() => {
+					onclick={() => selectOption(option)}
+					onmouseenter={() => {
 						if (!option.disabled) highlightedIndex = index;
 					}}
 				>
 					<span class="select-option-label">{option.label}</span>
 					{#if option.value === value}
-						<Check class="w-4 h-4 text-info" />
+						<Check class="w-4 h-4 text-brand-ring" aria-hidden="true" />
 					{/if}
 				</li>
 			{/each}
@@ -255,16 +278,20 @@
 </div>
 
 <style>
+	/* The trigger looks like Input's field (ADR-0428); the list is a popover. */
 	.select-trigger {
-		@apply w-full px-3 py-2 bg-surface-overlay border border-border-strong rounded-lg text-content
+		@apply w-full min-h-9 px-3 py-1.5 bg-surface-overlay border border-border-strong rounded text-content
 		       text-left flex items-center justify-between gap-2
-		       transition-all duration-150 ease-in-out
-		       hover:border-content-muted
-		       focus:outline-none focus:border-brand-ring focus:ring-1 focus:ring-brand-ring;
+		       hover:border-content-muted;
+		transition: border-color var(--dur-fast), box-shadow var(--dur-fast);
 	}
 
+	.select-trigger:focus,
 	.select-trigger-open {
-		@apply border-brand-ring ring-1 ring-brand-ring;
+		@apply outline-none border-brand-ring;
+		box-shadow:
+			0 0 0 1px rgb(var(--color-brand-ring)),
+			0 0 0 4px rgb(var(--color-brand-ring) / 0.25);
 	}
 
 	.select-trigger-error {
@@ -284,7 +311,8 @@
 	}
 
 	.select-icon {
-		@apply w-4 h-4 text-content-secondary flex-shrink-0 transition-transform duration-150;
+		@apply w-4 h-4 text-content-secondary flex-shrink-0;
+		transition: transform var(--dur-base) var(--ease);
 	}
 
 	.select-icon-open {
@@ -292,13 +320,13 @@
 	}
 
 	.select-dropdown {
-		@apply absolute z-50 w-full mt-1 py-1 bg-surface-elevated border border-border
-		       rounded-lg shadow-lg max-h-60 overflow-auto;
+		@apply absolute z-50 w-full mt-1 p-1 bg-surface-elevated border border-border
+		       rounded-card shadow-popover max-h-60 overflow-auto;
 	}
 
 	.select-option {
-		@apply px-3 py-2 flex items-center justify-between gap-2 cursor-pointer
-		       transition-colors duration-75;
+		@apply min-h-8 px-2.5 py-1.5 rounded flex items-center justify-between gap-2 cursor-pointer;
+		transition: background-color var(--dur-fast);
 	}
 
 	.select-option-highlighted {

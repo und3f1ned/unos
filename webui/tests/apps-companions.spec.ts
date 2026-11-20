@@ -47,7 +47,7 @@ const APPS: Expected[] = [
     id: 'bookstack',
     name: 'BookStack',
     companion: 'database',
-    size: '772.48 MB',
+    size: '987.05 MB',
     secrets: ['database/password', 'database/root-password', 'app-key'],
     wiring: [
       ['DB_HOST', 'database'],

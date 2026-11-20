@@ -1,4 +1,4 @@
-<script context="module" lang="ts">
+<script module lang="ts">
 	import { get, writable } from 'svelte/store';
 
 	// Numbers the title ids: every dialog is labelled by its own title.
@@ -14,17 +14,39 @@
 </script>
 
 <script lang="ts">
-	import { X } from 'lucide-svelte';
-	import { createEventDispatcher, onDestroy } from 'svelte';
+	import type { Snippet } from 'svelte';
+	import { AlertTriangle, X } from 'lucide-svelte';
+	import { onDestroy, untrack } from 'svelte';
+	import { on } from 'svelte/events';
 	import { t } from '$lib/i18n';
 
-	export let open: boolean = false;
-	export let title: string = '';
-	export let size: 'sm' | 'md' | 'lg' | 'xl' = 'md';
-	export let closable: boolean = true;
-	export let danger: boolean = false;
+	type Props = {
+		open?: boolean;
+		title?: string;
+		size?: 'sm' | 'md' | 'lg' | 'xl';
+		closable?: boolean;
+		danger?: boolean;
+		// Escape, the backdrop or the close button asked to close a closable dialog.
+		onclose?: () => void;
+		// Drawn before the title, such as the icon of a dangerous action (in the tinted circle of a
+		// danger dialog, whose default icon is a warning triangle).
+		titleIcon?: Snippet;
+		footer?: Snippet;
+		children?: Snippet;
+	};
 
-	const dispatch = createEventDispatcher();
+	let {
+		open = false,
+		title = '',
+		size = 'md',
+		closable = true,
+		danger = false,
+		onclose,
+		titleIcon,
+		footer,
+		children
+	}: Props = $props();
+
 	const titleId = `modal-title-${++titleCount}`;
 
 	const sizeClasses = {
@@ -36,21 +58,25 @@
 
 	function handleClose() {
 		if (closable) {
-			dispatch('close');
+			onclose?.();
 		}
 	}
 
 	// The element that had the keyboard focus when the dialog opened, and the dialog's overlay.
 	let opener: HTMLElement | null = null;
-	let overlay: HTMLDivElement | null = null;
+	let overlay: HTMLDivElement | null = $state(null);
 	let stacked = false;
 	// One more than the highest depth of the dialogs open when it opened: its overlay is drawn
 	// over theirs (z-index 50, the z-50 of .modal-overlay, plus the depth), whatever the markup
 	// order, also after a dialog under the top one closed.
-	let depth = 0;
+	let depth = $state(0);
 
 	// Runs before the dialog's markup is added or removed, while the focus is still where it was.
-	$: track(open);
+	// Only `open` makes it run again: what track reads and writes is its own business.
+	$effect.pre(() => {
+		const isOpen = open;
+		untrack(() => track(isOpen));
+	});
 
 	function track(isOpen: boolean) {
 		if (isOpen === stacked) return;
@@ -59,8 +85,9 @@
 			const active = document.activeElement;
 			opener = active instanceof HTMLElement && active !== document.body ? active : null;
 			const stack = get(openModals);
-			depth = stack.reduce((highest, modal) => Math.max(highest, modal.depth + 1), 0);
-			openModals.set([...stack, { id: titleId, depth }]);
+			const below = stack.reduce((highest, modal) => Math.max(highest, modal.depth + 1), 0);
+			depth = below;
+			openModals.set([...stack, { id: titleId, depth: below }]);
 		} else {
 			leave();
 		}
@@ -117,16 +144,19 @@
 	}
 </script>
 
-<svelte:window on:keydown={handleKeydown} />
+<svelte:window onkeydown={handleKeydown} />
 
 {#if open}
 	<!-- A dialog taller than the window scrolls with the overlay, so that its buttons stay
-	     reachable; my-auto centers it while it fits (items-center would cut off its top). -->
+	     reachable; my-auto centers it while it fits (items-center would cut off its top). The
+	     overlay listens for the click itself, not through Svelte's delegated listener at the
+	     app's root, as the drawer's scrim of layout/AppSidebar.svelte does: iOS Safari makes a tap a click
+	     only where an element listens, and a click that does not bubble closes it too. -->
 	<div
 		bind:this={overlay}
 		use:inStack
 		class="modal-overlay items-start overflow-y-auto p-4 outline-none"
-		on:click={handleBackdropClick}
+		{@attach (node) => on(node, 'click', handleBackdropClick)}
 		role="dialog"
 		aria-modal="true"
 		aria-labelledby={titleId}
@@ -135,32 +165,41 @@
 	>
 		<div class="modal my-auto {sizeClasses[size]}">
 			<div class="modal-header">
-				<h2
-					id={titleId}
-					class="modal-title {danger ? 'text-error flex items-center gap-2' : ''}"
-				>
-					<slot name="title-icon" />
-					{title}
+				<!-- A danger dialog's title stays in the text's colour: its icon carries the warning. -->
+				<h2 id={titleId} class="modal-title {danger || titleIcon ? 'flex items-center gap-3' : ''}">
+					{#if danger}
+						<span class="modal-danger-icon" aria-hidden="true">
+							{#if titleIcon}
+								{@render titleIcon()}
+							{:else}
+								<AlertTriangle class="w-4 h-4" />
+							{/if}
+						</span>
+					{:else}
+						{@render titleIcon?.()}
+					{/if}
+					<span class="min-w-0">{title}</span>
 				</h2>
 				{#if closable}
+					<!-- A 32 px ghost icon button, as Button's icon-sm draws it. -->
 					<button
 						type="button"
-						class="modal-close"
-						on:click={handleClose}
+						class="btn btn-ghost btn-icon-sm modal-close shrink-0"
+						onclick={handleClose}
 						aria-label={$t('ui.modal.close')}
 					>
-						<X class="w-5 h-5" />
+						<X class="w-4 h-4" />
 					</button>
 				{/if}
 			</div>
 
 			<div class="modal-body">
-				<slot />
+				{@render children?.()}
 			</div>
 
-			{#if $$slots.footer}
+			{#if footer}
 				<div class="modal-footer">
-					<slot name="footer" />
+					{@render footer()}
 				</div>
 			{/if}
 		</div>
