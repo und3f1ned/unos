@@ -3,8 +3,10 @@
   import { SlidersHorizontal } from "lucide-svelte";
   import { Alert, EmptyState, Skeleton } from "$lib/components/ui";
   import {
-    AccountNotice, DashboardHeader, DashboardWidget, HiddenWidgets, ReplaceDisksAlert, WidgetToolbar
+    AccountNotice, DashboardHeader, DashboardWidget, HiddenWidgets, WidgetToolbar
   } from "$lib/components/dashboard";
+  import { dashboardIssues } from "$lib/components/dashboard/issues";
+  import ProblemsBanner from "$lib/components/ProblemsBanner.svelte";
 
   import { getSystemInfo, type SystemInfo } from "$lib/api/system";
   import { getPools, type Pool } from "$lib/api/storage";
@@ -19,7 +21,9 @@
   } from "$lib/dashboard-layout";
   import { stats, wsConnected, wsForbidden, wsSettled, type WebSocketStats } from "$lib/stores/stats";
   import { user } from "$lib/stores/auth";
+  import { problems } from "$lib/stores/problems";
   import { t } from "$lib/i18n";
+  import { messageOf } from "$lib/errors";
 
   // The dashboard (ADR-0395): it reads its data on opening and on Refresh, and keeps the user's
   // layout of the widgets, which the user arranges here.
@@ -32,6 +36,9 @@
   // The disks whose SMART trend says replace soon (ADR-0235).
   let toReplace = $state.raw<DiskPrediction[]>([]);
   let predictionsError = $state("");
+  // Why the pools could not be read: an issue of its own, so that the header never says
+  // "No problems" about pools it does not know.
+  let poolsError = $state("");
   let loading = $state(true);
   // The first load has answered: until then the page is its skeleton, in the default layout of the
   // widgets; a refresh keeps what is shown (ADR-0430).
@@ -68,6 +75,17 @@
   // accounts get the system overview and the live stats only.
   const isAdmin = $derived($user?.is_admin === true);
 
+  // What the dashboard knows besides the socket's problems: the pools that are not
+  // healthy, the disks to replace soon and a failed check of them. With the socket's problems they
+  // are one banner under the header, and the header counts them: never "No problems" beside them.
+  const extraIssues = $derived(
+    isAdmin && loaded ? dashboardIssues($t, pools, poolsError, $problems, toReplace, predictionsError) : []
+  );
+  // How many issues the header's chip counts, as the banner lists them; null until the page has
+  // loaded. "No problems" also waits for the socket's list (the header reads problemsKnown).
+  const issueCount = $derived(isAdmin && loaded ? $problems.length + extraIssues.length : null);
+
+
   // The predictions read the stored SMART history only: no disk is woken. A
   // failure is shown, unlike those of the widgets, so that a disk to replace is
   // not taken for one without a mark.
@@ -91,7 +109,18 @@
           console.error("Failed to load system info:", e);
           return null;
         }),
-        isAdmin ? getPools().catch(() => []) : [],
+        isAdmin
+          ? getPools().then(
+              (answer) => {
+                poolsError = "";
+                return answer;
+              },
+              (e) => {
+                poolsError = messageOf(e) || $t("dashboard.issue.poolsFailed");
+                return [];
+              }
+            )
+          : [],
         isAdmin ? getContainers().catch(() => []) : [],
         isAdmin ? getLogs().catch(() => []) : [],
         loadPredictions(),
@@ -238,6 +267,8 @@
     customizable={!layoutFailed}
     pending={!loaded}
     {arranging}
+    {issueCount}
+    issueError={$problems.some((p) => p.severity === "error") || extraIssues.some((i) => i.severity === "error")}
     {loading}
     {saving}
     oncustomize={() => (arranging = !arranging)}
@@ -265,9 +296,10 @@
       {/each}
     </div>
   {:else}
-    <!-- The disks to replace stay above the widgets, always: a warning is not one of them. -->
+    <!-- The problems of the NAS, the disks to replace soon and the pools that are not healthy, in
+         one banner above the widgets, always: a warning is not one of them. -->
     {#if isAdmin}
-      <ReplaceDisksAlert {toReplace} error={predictionsError} />
+      <ProblemsBanner dashboard extra={extraIssues} />
     {/if}
 
     {#if layoutFailed}
@@ -328,7 +360,7 @@
               onhide={() => hide(entry.id)}
             />
           {/if}
-          <DashboardWidget id={entry.id} {pools} {containers} {notificationLogs} stats={currentStats} />
+          <DashboardWidget id={entry.id} {pools} poolsFailed={poolsError !== ""} {containers} {notificationLogs} stats={currentStats} />
         </div>
       {/each}
     </div>

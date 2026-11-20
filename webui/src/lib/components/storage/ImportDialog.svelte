@@ -127,7 +127,7 @@
 			disabled={!canImport}
 			onclick={handleImport}
 		>
-			{$t('storage.found.import')}
+			{$t('storage.import.confirm')}
 		</Button>
 	{/snippet}
 </Modal>

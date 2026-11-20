@@ -4772,6 +4772,36 @@
       "notes": "Built on main 89ca9fc. The ADR's number is 0431, after the ADR of the boot screen and the loaders (another branch), which takes 0430; while that one is not on this branch the ADR tests refuse the gap, so this branch numbers its ADR 0430, and the merge after the boot screen renames the file and its citations to 0431. The ADR lists every move and each removed duplicate with the place it keeps (38, from an inventory of every menu item and place). The specs that reached a moved setting open its new place and assert what they did; where a page's structure changed, the page-ready marker follows it (the h2 Security Settings became Sign-in and security, Security of the NAS or File sharing), and where an element was removed as a duplicate the spec checks its one place (monitor.spec.ts and network.spec.ts the sidebar's connection line for the Live badges, files.spec.ts the sidebar's Files for the Trash's button, containers.spec.ts that the drawer has no actions, dashboard-layout.spec.ts 8 widgets without Quick Actions). account-smb.spec.ts's canned-answer tests sign in as a regular account, since an administrator has no File sharing tab. Step 3: the login audits each refused second step (test_totp_once.py, test_recovery_codes.py, test_security_keys.py), mine=true limits an administrator's history as a user's (test_authz.py TestLoginHistory), information-architecture.spec.ts finds another account's failed sign-in in the Audit Log and not in the own history. Fresh-context review (17 findings): all BLOCKING and RISK fixed; left, a nit: with three wide widgets the dashboard's last one is half a row wide, as when a user hid one of four before; the layout is each user's (ADR-0395). Web UI and a supervisor query parameter plus audit lines of failed sign-ins: not host-level (GLOSSARY.md)."
     },
     {
+      "id": "webui.ux-data",
+      "category": "webui",
+      "description": "The data pages (Dashboard, Storage, Snapshots, Files, Trash) say only what is true, count every issue once and keep one primary action each, with the rarer actions behind More",
+      "steps": [
+        "With a pool degraded and the socket reporting no problem, the dashboard's banner under its header lists \"Pool <name> is degraded\" as a link to /storage, the header's chip reads \"1 issue\" and \"No problems\" is nowhere; a disk to replace soon is an issue linked to Disk Health with the server's reasons",
+        "The dashboard's header says \"Live\" with the last update's time in its tooltip, nothing on it ticks, and the Containers widget's counts add up to the total",
+        "Each pool card shows Volumes and Scrub (Mount when not mounted) and a More that holds Balance…, Add disk…, Remove disk…, Unmount… and Remove pool…; a disabled action says why, and Remove pool is one dialog whose typed name starts empty",
+        "At 375 px no snapshot or trash name breaks one letter per line, and Snapshots has no About card, its picker in the header and Restore… in words",
+        "The sidebar lists Trash under Files and marks it alone on its page; Files' header has Upload as its one primary and New folder in words, and the selection's actions show only while something is selected",
+        "Every new or changed text is in English and Russian, in sentence case"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0434"
+      ],
+      "verified_by": [
+        "webui/tests/redesign.spec.ts",
+        "webui/tests/dashboard.spec.ts",
+        "webui/tests/health-banner.spec.ts",
+        "webui/tests/storage.spec.ts",
+        "webui/tests/snapshots.spec.ts",
+        "webui/tests/files.spec.ts",
+        "webui/tests/navigation.spec.ts",
+        "webui/tests/command-palette.spec.ts",
+        "webui/tests/loading.spec.ts",
+        "webui/tests/mobile-layout.spec.ts"
+      ],
+      "notes": "Chunk 2 of the UX audit's order of work, built from mvp.batch-18 (69dfae5) beside the design-system foundations (chunk 1). The ADR's final number is 0434; this branch names it 0432 so that the ADR numbering test passes, and the merge renumbers it. Places that switch to a foundations component once it lands: PoolActions' More (ActionMenu), SelectionBar (BulkBar), DeletePoolDialog (ConfirmDialog), the disabled reasons of Create pool, Scrub and More's actions (Button disabledReason), the empty states (EmptyState action), Create pool's dialog (Modal size), the snapshot dates (nasTime), the storage page's unreadable lists (ErrorState with Retry; the header's Refresh reads them again meanwhile). Fresh-context review (10 findings): fixed the BLOCKING one (a pool's low-space problem hid its degraded health on the dashboard: only a socket problem of the same sense hides the dashboard's issue, and a disk the socket reports failing is not listed again as replace soon) and the RISK ones (the empty storage card's second link to Storage, Create snapshot's reason while the pools load, a disk that a new list no longer offers left in Create pool's selection, the empty state's free-disk count now shares the dialog's rule, Enter submitting Remove pool twice, the temporary screenshot spec removed); the nits too (a paused balance asks to be resumed or cancelled, a dead helper and a stale comment removed; the snapshot name prefixes stay, test_snapshots.py keeps them as the page's constants). Web UI only: not host-level (GLOSSARY.md)."
+    },
+    {
       "id": "ci.btrfs-loop-device-tests",
       "category": "ci",
       "description": "CI runs the storage scenarios against real btrfs on loop devices in a privileged container",

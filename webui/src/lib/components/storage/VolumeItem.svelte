@@ -41,6 +41,7 @@
 					variant="ghost"
 					size="icon-sm"
 					pressed={volumes.usageOf === volume.name}
+					title={$t('storage.volumes.chartShow', { name: volume.name })}
 					onclick={() => volumes.toggleUsage(volume)}
 				>
 					<LineChart class="w-4 h-4" />
@@ -51,6 +52,7 @@
 				variant="ghost-danger"
 				size="icon-sm"
 				disabled={volumes.busy || volumes.readOnly}
+				title={$t('storage.volumes.deleteOne', { name: volume.name })}
 				onclick={() => volumes.askDelete(volume)}
 			>
 				<Trash2 class="w-4 h-4" />

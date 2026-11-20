@@ -1,7 +1,12 @@
 <script lang="ts">
-	// The Create Pool dialog: a name, a RAID profile and the disks of a new pool, which erases them;
+	// The Create pool dialog: a name, a RAID profile and the disks of a new pool, which erases them;
 	// a disk with data needs the erase confirmed, and the name is typed again. The page loads the
 	// disk list again when it opens the dialog, and again here after a disk changed under its path.
+	// It lists the disks a pool can take; the others wait behind "N disks not available", each with
+	// its reason. The dialog scrolls as a whole, with no box that scrolls inside it, and says what is
+	// still missing while Create is disabled.
+	import { untrack } from 'svelte';
+	import { ChevronDown } from 'lucide-svelte';
 	import { Alert, Badge, Button, Input, Modal, Select } from '$lib/components/ui';
 	import { ApiError } from '$lib/api/client';
 	import {
@@ -13,7 +18,7 @@
 		type RaidLevel
 	} from '$lib/api/storage';
 	import { t } from '$lib/i18n';
-	import { messageOf } from './pools';
+	import { messageOf, usableForPool } from './pools';
 
 	type Props = {
 		open: boolean;
@@ -71,9 +76,9 @@
 
 	/** Why a disk cannot be used for a new pool, or null if it can. */
 	const unavailableReason = (disk: Disk): string | null => {
+		if (usableForPool(disk)) return null;
 		if (disk.is_system) return disk.in_use_reason || $t('storage.create.systemDisk');
-		if (disk.in_use) return disk.in_use_reason || $t('storage.create.inUse');
-		return null;
+		return disk.in_use_reason || $t('storage.create.inUse');
 	};
 
 	let raidOptions = $derived(
@@ -86,6 +91,31 @@
 	let selectedDisks = $derived(disks.filter((d) => poolForm.devices.includes(d.path)));
 	let selectedWithData = $derived(selectedDisks.filter((d) => d.has_data));
 	let confirmNameMatches = $derived(poolForm.name !== '' && poolForm.confirm_name === poolForm.name);
+	// The disks a pool can take, and the others with their reasons.
+	let usable = $derived(disks.filter((d) => unavailableReason(d) === null));
+	let unusable = $derived(disks.filter((d) => unavailableReason(d) !== null));
+	let showUnusable = $state(false);
+	// What Create still waits for, in the order of the form: said under the form while it is
+	// disabled.
+	let missing = $derived(
+		[
+			!poolForm.name ? $t('storage.create.needName') : null,
+			!hasEnoughDevices ? $t('storage.create.needDisks', { n: requiredDevices }) : null,
+			selectedWithData.length > 0 && !poolForm.force ? $t('storage.create.needErase') : null,
+			!confirmNameMatches ? $t('storage.create.needConfirm') : null
+		].filter((text): text is string => text !== null)
+	);
+	// A selected disk that a new list of the disks no longer offers (gone, or now in use) leaves the
+	// selection: it has no checkbox left to clear, and Create then says what it waits for.
+	$effect(() => {
+		const list = disks;
+		untrack(() => {
+			const kept = poolForm.devices.filter((path) =>
+				list.some((d) => d.path === path && unavailableReason(d) === null)
+			);
+			if (kept.length !== poolForm.devices.length) poolForm.devices = kept;
+		});
+	});
 	let canCreate = $derived(
 		!!poolForm.name &&
 			hasEnoughDevices &&
@@ -100,6 +130,7 @@
 		poolForm = { name: '', devices: [], raid_level: 'single', confirm_name: '', force: false };
 		selectedIdentities = {};
 		selectionCleared = false;
+		showUnusable = false;
 		createError = '';
 	}
 
@@ -167,14 +198,14 @@
 	closable={!saving}
 	onclose={closeCreateModal}
 >
-	<!-- Scrolls inside the dialog so the buttons stay reachable on small screens. -->
+	<!-- The dialog scrolls as a whole, so that the typed confirmation is never hidden. -->
 	<form
+		id="create-pool-form"
 		onsubmit={(e) => { e.preventDefault(); handleCreatePool(); }}
-		class="space-y-4 max-h-[60vh] overflow-y-auto scrollbar-thin pr-1"
+		class="space-y-4"
 	>
-		<Alert variant="error" title={$t('storage.create.eraseTitle')}>
+		<Alert variant="error" size="sm" title={$t('storage.create.eraseTitle')}>
 			{$t('storage.create.erase')}
-			<strong>{$t('storage.create.eraseAll')}</strong>
 		</Alert>
 
 		<Input
@@ -194,22 +225,21 @@
 			{#if disksLoading}
 				<p class="text-muted text-sm">{$t('storage.create.checkingDisks')}</p>
 			{:else if disksError}
-				<Alert variant="error" title={$t('storage.disks.loadError')}>{disksError}</Alert>
+				<Alert variant="error" size="sm" title={$t('storage.disks.loadError')}>{disksError}</Alert>
 			{:else if disks.length === 0}
 				<p class="text-muted text-sm">{$t('storage.disks.none')}</p>
 			{:else}
-				<div class="space-y-2 max-h-48 overflow-y-auto scrollbar-thin">
-					{#each disks as disk}
-						{@const reason = unavailableReason(disk)}
+				{#if usable.length === 0}
+					<p class="text-muted text-sm">{$t('storage.create.noneUsable')}</p>
+				{/if}
+				<div class="space-y-2">
+					{#each usable as disk}
 						<label
-							class="flex items-start gap-3 p-2 bg-surface-muted rounded-lg transition-colors {reason
-								? 'opacity-60 cursor-not-allowed'
-								: 'cursor-pointer hover:bg-surface-overlay'}"
+							class="flex items-start gap-3 p-2 bg-surface-muted rounded-lg transition-colors cursor-pointer hover:bg-surface-overlay"
 						>
 							<input
 								type="checkbox"
 								checked={poolForm.devices.includes(disk.path)}
-								disabled={reason !== null}
 								onchange={() => toggleDevice(disk)}
 								class="form-checkbox mt-1"
 							/>
@@ -229,15 +259,38 @@
 										? ` · ${$t('storage.create.memberOf', { pool: disk.pool })}`
 										: ''}
 								</p>
-								{#if reason}
-									<Badge variant="error" class="mt-1">{$t('storage.create.unavailable', { reason })}</Badge>
-								{:else if disk.has_data}
+								{#if disk.has_data}
 									<Badge variant="warning" class="mt-1">{$t('storage.create.containsData')}</Badge>
 								{/if}
 							</div>
 						</label>
 					{/each}
 				</div>
+				{#if unusable.length > 0}
+					<!-- The disks a pool cannot take, such as the system disk: folded, each with its reason. -->
+					<Button
+						variant="ghost"
+						size="sm"
+						class="mt-2 -ml-2"
+						aria-expanded={showUnusable}
+						aria-controls="create-pool-unusable"
+						onclick={() => (showUnusable = !showUnusable)}
+					>
+						{$t('storage.create.unusable', { n: unusable.length })}
+						<ChevronDown class="w-4 h-4 transition-transform {showUnusable ? 'rotate-180' : ''}" aria-hidden="true" />
+					</Button>
+					{#if showUnusable}
+						<ul id="create-pool-unusable" class="mt-1 space-y-1 text-sm">
+							{#each unusable as disk}
+								<li class="px-2 text-secondary">
+									<span class="mono">{disk.path}</span>
+									<span class="text-xs text-muted">{formatBytes(disk.size)}{disk.model ? ` · ${disk.model}` : ''}</span>
+									<span class="block text-xs">{$t('storage.create.unavailable', { reason: unavailableReason(disk) ?? '' })}</span>
+								</li>
+							{/each}
+						</ul>
+					{/if}
+				{/if}
 			{/if}
 			{#if poolForm.devices.length > 0}
 				<p class="text-sm text-secondary mt-2">
@@ -245,7 +298,7 @@
 				</p>
 			{/if}
 			{#if poolForm.devices.length > 0 && !hasEnoughDevices}
-				<Alert variant="warning">
+				<Alert variant="warning" size="sm" class="mt-2">
 					{$t('storage.create.tooFew', {
 						level: poolForm.raid_level.toUpperCase(),
 						required: requiredDevices,
@@ -274,10 +327,11 @@
 			</Alert>
 		{/if}
 
+		<!-- The name to type is said in the label, and the field starts empty: a placeholder with
+		     the name would look filled in. -->
 		<Input
-			label={$t('storage.create.confirm')}
+			label={poolForm.name ? $t('storage.create.confirmName', { name: poolForm.name }) : $t('storage.create.confirm')}
 			bind:value={poolForm.confirm_name}
-			placeholder={poolForm.name || $t('storage.create.confirmPlaceholder')}
 			autocomplete="off"
 			error={poolForm.confirm_name && !confirmNameMatches ? $t('storage.create.mismatch') : ''}
 		/>
@@ -292,6 +346,12 @@
 				{/if}
 			</Alert>
 		{/if}
+
+		{#if !canCreate && missing.length > 0}
+			<p id="create-pool-missing" class="text-xs text-secondary">
+				{$t('storage.create.missing', { list: missing.join(', ') })}
+			</p>
+		{/if}
 	</form>
 
 	{#snippet footer()}
@@ -303,6 +363,7 @@
 			class="flex-1"
 			loading={saving}
 			disabled={!canCreate}
+			aria-describedby={!canCreate && missing.length > 0 ? 'create-pool-missing' : undefined}
 			onclick={handleCreatePool}
 		>
 			{$t('storage.create.submit')}

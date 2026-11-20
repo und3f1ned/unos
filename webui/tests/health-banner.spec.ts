@@ -2,6 +2,8 @@ import type { Page, WebSocketRoute } from '@playwright/test';
 import { test, expect } from './fixtures';
 import { createAccount, deleteAccount, type Account } from './accounts';
 import { signInPage } from './session';
+import { fakeHealthApi } from './health-fakes';
+import { HEALTHY_POOL, fakeStorageApi } from './storage-fakes';
 
 // The health banner (feature system.alert-events, ADR-0332). The server sends administrators the
 // problems of the NAS that are still there over /ws/v1/events (supervisor/src/websocket/events.py),
@@ -59,6 +61,10 @@ test.describe('The health banner', () => {
     authenticatedPage: page,
   }) => {
     const sockets = await fakeEvents(page, [DEGRADED, MISSED]);
+    // The dashboard lists its own issues in the banner too: here it has none, with its
+    // one pool healthy (the stand-in cannot read pools on every machine).
+    await fakeHealthApi(page);
+    await fakeStorageApi(page, { pools: [HEALTHY_POOL] });
     await page.goto('/');
 
     const shown = banner(page, '2 problems need attention');
@@ -97,6 +103,8 @@ test.describe('The health banner', () => {
 
     test('says the problems in the language of the page', async ({ authenticatedPage: page }) => {
       const sockets = await fakeEvents(page, [DEGRADED, MISSED]);
+      await fakeHealthApi(page);
+      await fakeStorageApi(page, { pools: [HEALTHY_POOL] });
       await page.goto('/');
 
       const shown = banner(page, '2 проблемы требуют внимания');

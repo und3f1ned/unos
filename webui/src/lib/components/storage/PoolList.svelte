@@ -1,6 +1,7 @@
 <script lang="ts">
-	// The Pools card of the Storage page: a warning for the profiles that btrfs does not keep safe,
-	// and a card for each pool with the jobs on it.
+	// The Pools card of the Storage page, first on the page: a card for each pool with the jobs on
+	// it, or, without a pool, how many disks are free for one: the header's Create pool makes it,
+	// and the empty state repeats no button (ADR-0431).
 	import { Database } from 'lucide-svelte';
 	import { Alert, Card, EmptyState } from '$lib/components/ui';
 	import type { Pool } from '$lib/api/storage';
@@ -18,9 +19,11 @@
 		formatBytes: (bytes: number) => string;
 		percentFormat: Intl.NumberFormat;
 		profileLabel: (profile: string) => string;
+		/** The disks that a new pool can take; null when the disks could not be read. */
+		freeDisks: number | null;
 	};
 
-	let { pools, error, jobs, formatBytes, percentFormat, profileLabel, ...handlers }: Props = $props();
+	let { pools, error, jobs, formatBytes, percentFormat, profileLabel, freeDisks, ...handlers }: Props = $props();
 </script>
 
 <Card class="space-y-4">
@@ -29,14 +32,20 @@
 		{$t('storage.pools.title')}
 	</h2>
 
-	{#if pools.some(p => p.raid_level === 'raid5' || p.raid_level === 'raid6')}
-		<Alert variant="warning" title={$t('storage.pools.unsafeTitle')}>{$t('storage.pools.unsafe')}</Alert>
-	{/if}
-
 	{#if error}
-		<Alert variant="error" title={$t('storage.pools.loadError')}>{error}</Alert>
+		<!-- A plain title, the server's reason under it; the header's Refresh tries again. -->
+		<Alert variant="error" size="sm" title={$t('storage.pools.loadError')}>
+			<span class="text-xs text-content-secondary break-words">{error}</span>
+		</Alert>
 	{:else if pools.length === 0}
-		<EmptyState compact icon={Database} title={$t('storage.pools.none')} />
+		<EmptyState
+			compact
+			icon={Database}
+			title={$t('storage.pools.none')}
+			description={freeDisks === null
+				? $t('storage.pools.noneHint')
+				: $t('storage.pools.freeDisks', { n: freeDisks })}
+		/>
 	{:else}
 		<div class="space-y-4">
 			{#each pools as pool}

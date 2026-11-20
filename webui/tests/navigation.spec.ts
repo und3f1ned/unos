@@ -26,14 +26,16 @@ test.describe('Navigation', () => {
     authenticatedPage: page,
   }) => {
     // webui.redesign (ADR-0428): Dashboard alone on top, then Data, Applications and Administration;
-    // a label is no link and no heading, so the navigation's links are still the ten pages.
+    // a label is no link and no heading, so the navigation's links are the pages: the ten and Files'
+    // Trash, under Files.
     await page.goto('/');
     const nav = page.getByRole('navigation', { name: 'Main' });
     await expect(nav.locator('a')).toHaveText([
-      'Dashboard', 'Storage', 'Snapshots', 'Shares', 'Files', 'Containers', 'App Store', 'Users', 'Audit Log', 'System',
+      'Dashboard', 'Storage', 'Snapshots', 'Shares', 'Files', 'Trash', 'Containers', 'App Store', 'Users', 'Audit Log',
+      'System',
     ]);
     const groups: [string, string[]][] = [
-      ['Data', ['Storage', 'Snapshots', 'Shares', 'Files']],
+      ['Data', ['Storage', 'Snapshots', 'Shares', 'Files', 'Trash']],
       ['Applications', ['Containers', 'App Store']],
       ['Administration', ['Users', 'Audit Log', 'System']],
     ];
@@ -69,6 +71,13 @@ test.describe('Navigation', () => {
     // Active link should have different style (nav-item-active: blue background)
     await expect(sidebarLink(page, '/storage')).toHaveClass(/\bnav-item-active\b/);
     await expect(sidebarLink(page, '/')).not.toHaveClass(/\bnav-item-active\b/);
+
+    // The Trash is marked on its page, and Files, whose page it is, is not.
+    await page.goto('/files/trash');
+    await expect(sidebarLink(page, '/files/trash')).toHaveClass(/\bnav-item-active\b/);
+    await expect(sidebarLink(page, '/files/trash')).toHaveAttribute('aria-current', 'page');
+    await expect(sidebarLink(page, '/files')).not.toHaveClass(/\bnav-item-active\b/);
+    await expect(page.locator('aside nav [aria-current="page"]')).toHaveCount(1);
   });
 
   test('should display UNOS logo', async ({ authenticatedPage: page }) => {

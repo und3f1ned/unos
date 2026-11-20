@@ -166,7 +166,8 @@ test.describe('Loading without flicker', () => {
       // The boot screen covered the page until it was drawn; no frame says "Loading" or is empty;
       // once the boot screen goes, the navigation has all its links and the Search button, and none
       // appears or disappears later.
-      expectDrawnOnce(samples, 10);
+      // An administrator's eleven links, Trash under Files among them.
+      expectDrawnOnce(samples, 11);
 
       // The data arriving moves nothing.
       expect(cls, JSON.stringify(shifts, null, 1)).toBeLessThan(MAX_CLS);

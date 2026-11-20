@@ -1325,5 +1325,5 @@ class TestTheWebUI:
         for constant, name in names.items():
             assert f"export const {constant} = '{name}';" in page
         texts = catalog_strings(catalog)
-        assert {"Restore Snapshot", "Восстановление снимка"} <= set(texts)
+        assert {"Restore snapshot", "Восстановление снимка"} <= set(texts)
         assert [text for text in texts if any(name in text for name in names.values())] == []

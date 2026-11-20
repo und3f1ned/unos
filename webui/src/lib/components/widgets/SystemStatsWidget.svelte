@@ -111,21 +111,20 @@
 		</Card>
 		{/if}
 
-		<!-- Network: received, then sent -->
+		<!-- Network: received, then sent, each with its word as Disk I/O's rates have. -->
 		{#if only === 'network'}
 		<Card padding="sm" class="stat-card">
 			{@render header(Network, 'chip-network', $t('dashboard.stats.network'), '')}
-			<p class="flex items-baseline gap-2">
-				<span class="w-4 text-xs text-content-muted" aria-hidden="true">↓</span>
+			<p class="flex flex-wrap items-baseline gap-x-2">
+				<span class="stat-card-sublabel">{$t('dashboard.stats.received')}</span>
 				<span class="text-lg font-semibold tabular">{formatRate(networkDown)}</span>
 			</p>
-			<p class="flex items-baseline gap-2">
-				<span class="w-4 text-xs text-content-muted" aria-hidden="true">↑</span>
+			<p class="flex flex-wrap items-baseline gap-x-2">
+				<span class="stat-card-sublabel">{$t('dashboard.stats.sent')}</span>
 				<span class="text-lg font-semibold tabular">{formatRate(networkUp)}</span>
 			</p>
 		</Card>
 		{/if}
-
 		<!-- Disk I/O: read, then written. A label goes above its rate where the card has no room for
 		     both (ADR-0302). -->
 		{#if only === 'disk-io'}
@@ -158,7 +157,8 @@
 					valueText={$t('dashboard.celsius', { value: temperature })}
 				/>
 			{:else}
-				<p class="stat-card-value text-muted">{$t('dashboard.stats.none')}</p>
+				<!-- No sensor answered: a quiet line, not a big grey value. -->
+				<p class="text-sm text-content-muted">{$t('dashboard.stats.none')}</p>
 			{/if}
 		</Card>
 		{/if}

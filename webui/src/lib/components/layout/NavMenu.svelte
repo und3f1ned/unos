@@ -8,6 +8,7 @@
 		Package,
 		ScrollText,
 		Share2,
+		Trash2,
 		UserCog,
 		Users,
 		Wrench
@@ -34,9 +35,10 @@
 
 	// The shape of an administrator's links while the account loads: the top link, then each
 	// group's label and links.
-	const PENDING_GROUPS = [1, 4, 2, 3].map((links) => Array.from({ length: links }, (_, i) => i));
+	const PENDING_GROUPS = [1, 5, 2, 3].map((links) => Array.from({ length: links }, (_, i) => i));
 
-	type Link = { href: string; icon: typeof LayoutDashboard; label: string };
+	/** A link; `sub` is a page of the link above it, drawn indented under it (Files' Trash). */
+	type Link = { href: string; icon: typeof LayoutDashboard; label: string; sub?: boolean };
 	type Group = { id: string; label: string | null; links: Link[] };
 
 	// Reactive: the labels follow the language of the page. The links keep their order, which the
@@ -51,7 +53,9 @@
 				{ href: '/storage', icon: HardDrive, label: $t('layout.nav.storage') },
 				{ href: '/snapshots', icon: Archive, label: $t('layout.nav.snapshots') },
 				{ href: '/shares', icon: Share2, label: $t('layout.nav.shares') },
-				{ href: '/files', icon: FolderOpen, label: $t('layout.nav.files') }
+				{ href: '/files', icon: FolderOpen, label: $t('layout.nav.files') },
+				// The trash is Files' own page, and in the navigation under it.
+				{ href: '/files/trash', icon: Trash2, label: $t('files.trash.title'), sub: true }
 			]
 		},
 		{
@@ -87,6 +91,15 @@
 	]);
 
 	const groups = $derived(role === null ? [] : role === 'admin' ? adminGroups : userGroups);
+
+	// The marked link: the most specific one the page is at or under, so that Files is not marked
+	// on its Trash.
+	const current = $derived(
+		groups
+			.flatMap((group) => group.links.map((link) => link.href))
+			.filter((href) => isActive(href, pathname))
+			.sort((a, b) => b.length - a.length)[0]
+	);
 </script>
 
 <!-- A group label is a paragraph that names its list, not a heading and not a link: `aside nav a`
@@ -119,8 +132,8 @@
 					<a
 						href={item.href}
 						onclick={onnavigate}
-						aria-current={isActive(item.href, pathname) ? 'page' : undefined}
-						class="nav-item {isActive(item.href, pathname) ? 'nav-item-active' : 'nav-item-inactive'}"
+						aria-current={item.href === current ? 'page' : undefined}
+						class="nav-item {item.sub ? 'pl-[38px]' : ''} {item.href === current ? 'nav-item-active' : 'nav-item-inactive'}"
 					>
 						<item.icon aria-hidden="true" />
 						{item.label}

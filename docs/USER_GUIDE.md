@@ -213,20 +213,25 @@ print in the tables of the **Network** tab, such as a connection's state
 
 ## Dashboard
 
-The dashboard provides an at-a-glance view of your NAS. Above it, as above
-every page, administrators see the health banner while UNOS knows of a
-problem: a pool not mounted, degraded or almost full, a volume near its
-quota, a failing disk, a task that failed or missed its run (see
-[Alerts](#alerts)). The banner lists three problems; **Show all** lists the
-rest. While there is none, an administrator's dashboard says **No problems**
-beside the time of the last statistics, **Connecting…** until the page's live
-connection has been up once, or **Disconnected from the NAS** while the page
-has lost it. Until the statistics come, each stats card is a grey shape in its
-place.
+The dashboard provides an at-a-glance view of your NAS. Above every other
+page, administrators see the health banner while UNOS knows of a problem: a
+pool not mounted, degraded or almost full, a volume near its quota, a failing
+disk, a task that failed or missed its run (see [Alerts](#alerts)). On the
+dashboard the same banner sits under the header and also lists what the
+dashboard knows: each pool that is not healthy or is mounted read-only, each
+disk to replace soon (see [Disks to Replace](#disks-to-replace)), and a failed
+check of them. Each problem is a link to the page where it is dealt with. The
+banner lists three problems, errors first; **Show all** lists the rest. The
+header counts them ("3 issues", a link to the banner); while there is none, an
+administrator's dashboard says **No problems**. The header says **Live** while
+the statistics come (the time of the last one in its tooltip), **Connecting…**
+until the page's live connection has been up once, or **Disconnected from the
+NAS** while the page has lost it. Until the statistics come, each stats card is
+a grey shape in its place.
 
 ### Arranging the Dashboard
 Each widget (the five stats cards below and, for administrators, **Storage
-Overview**, **Containers** and **Recent Activity**) can be
+pools**, **Containers** and **Recent activity**) can be
 moved and hidden. Click **Customize** beside **Refresh**:
 - Drag a widget by the handle at the left of its toolbar to the place of
   another widget. On a phone and with the keyboard, use the toolbar's
@@ -240,18 +245,19 @@ moved and hidden. Click **Customize** beside **Refresh**:
 
 The layout is yours: it is kept on the NAS for your account, so it is the same
 in every browser you sign in with, and it is not shared with other users. A
-regular user arranges the stats cards, which are all that they see. The alert
-**Disks to Replace** and the health banner are not widgets and cannot be
-hidden. Each change is an entry **Dashboard layout changed** in the audit log.
+regular user arranges the stats cards, which are all that they see. The health
+banner is not a widget and cannot be hidden. Each change is an entry **Dashboard layout changed** in the audit log.
 
 ### System Stats
 The cards follow the live statistics, which the server sends every 2 seconds
-while the page is open; the time of the last one is shown beside **Refresh**.
+while the page is open; the time of the last one is the tooltip of **Live**
+beside **Refresh**.
 Right after the page opens, the CPU can show 0% and the network and disk rates
 0 B/s until the next statistics arrive.
 - **CPU** - Current processor usage
 - **Memory** - RAM usage and total
-- **Network** - The bytes per second the NAS receives (↓) and sends (↑), over
+- **Network** - The bytes per second the NAS receives (**Received**) and sends
+  (**Sent**), over
   the interfaces that **System** → **Network** lists: not the loopback,
   `dummy0` or Docker's bridges and virtual interfaces. Traffic through a
   bridge, bond or VLAN that you set up on the host counts on both the port
@@ -265,22 +271,25 @@ Right after the page opens, the CPU can show 0% and the network and disk rates
 - **Temperature** - The temperature of the CPU (Intel, AMD) or of the SoC of
   an ARM board, such as a Raspberry Pi or an RK3588. On a host where UNOS does
   not recognize the CPU's sensor, the first sensor the host lists, which may be
-  a disk's; **N/A** on a host without sensors.
+  a disk's; **No reading** on a host without sensors.
 
-### Storage Overview
+### Storage pools
 Shows the used and total space of the mounted pools, then each pool with its
-health, its use and a bar, and its problems; **Manage →** opens **Storage**.
+health and its share used, a bar, and under it its problems and its used and
+total space; a pool that is not mounted has its badge only. **Manage →** opens
+**Storage**, also when there is no pool yet, which the card says.
 
 ### Disks to Replace
-When a disk is marked **Replace soon**, administrators see an alert above the
-widgets that lists each such disk with its path, serial number and the
-reasons, and links to **System** → **Disk Health** (see
-[Replace Soon](#replace-soon)). When UNOS cannot read the predictions, a
-warning says why instead.
+When a disk is marked **Replace soon**, the dashboard's banner lists it as
+"Replace disk /dev/sda soon (serial …)", with the reasons under it, linked to
+**System** → **Disk Health** (see [Replace Soon](#replace-soon)). When UNOS
+cannot read the predictions, the banner says so, with the reason.
 
 ### Containers
 Counts the running and the stopped containers, as the **Containers** page does,
-and lists the first five with their state; **Manage →** opens **Containers**.
+and **Other** (paused, restarting, created or dead) when there are any, so that
+the counts add up to the total; it lists the first five with their state.
+**Manage →** opens **Containers**.
 
 ### Recent Activity
 Latest system events and notifications
@@ -295,15 +304,15 @@ UNOS uses BTRFS for storage management. A **storage pool** combines one or more 
 
 ### Viewing Disks
 
-**Storage** → **Physical Disks** lists every whole disk of the host, the
+**Storage** → **Disks**, under the pools, lists every whole disk of the host, the
 system disk included, but not SD cards and eMMC (the boot medium of ARM
 boards), flash, RAM, loop, optical and floppy devices. For each disk it
 shows the device, the model and serial number, the size, HDD or SSD, what
 it holds (a filesystem with its label, a partition table and its
-partitions), where it is mounted, and its status:
+partitions), its status and its power:
 
 - **System**: it holds the host's root filesystem, `/boot` or active swap,
-  or the host boots from it;
+  or the host boots from it (no fault: it is just not for pools);
 - **In use**: it is mounted, a member of a mounted pool, or used by an md
   RAID array, LVM or LUKS;
 - **Pool "name"**: it belongs to a pool that is not mounted;
@@ -311,7 +320,8 @@ partitions), where it is mounted, and its status:
   signature;
 - **Free**: it is empty.
 
-The reason, such as "Mounted at /srv/backup", is shown below the badge, in
+The reason, such as "Mounted at /srv/backup", where a disk is mounted
+included, is shown below the badge, in
 English in every language, like the other messages of the server. Sizes are
 written with one decimal in powers of 1024, in the number format of the
 interface's language as the browser writes it, such as 59.6 GB.
@@ -333,8 +343,8 @@ SMART records include it.
 
 ### Idle Timeouts (Spin-Down)
 
-The **Power** column shows whether each disk is **Active** (spinning, or
-idle) or in **Standby** (spun down), or **Unknown** when the disk cannot say,
+The **Power** column shows whether each disk is **Awake** (spinning, or
+idle) or **Asleep** (spun down), or **Unknown** when the disk cannot say,
 as behind some USB bridges, or does not answer: after a power read of a disk
 that did not answer, UNOS shows it Unknown without asking again until that
 read has ended on the host. UNOS asks the disk for its power mode with
@@ -346,12 +356,13 @@ the disk sleeps" unless the host already knows its filesystem or partitions.
 Disks with the Extended Power Conditions (EPC) of many NAS drives answer with
 power conditions that `hdparm` does not name; UNOS then asks with
 `smartctl -n idle`, which also sends only CHECK POWER MODE and shows them
-Active (idle_a, idle_b, idle_c) or Standby (standby_y). On a host without
+Awake (idle_a, idle_b, idle_c) or Asleep (standby_y). On a host without
 `hdparm`, and for an NVMe disk, UNOS asks with `smartctl` instead, which also
 leaves a sleeping disk asleep but starts an awake one's timer again.
 
-Below the state, the button with the disk's idle timeout (**Off** by
-default) opens **Idle Timeout**: choose **Off**, 5, 10, 20 or 30 minutes, or
+Below the state, **Idle timeout** with its value (**Off** by default) and a
+pencil is the button that opens **Idle timeout**: choose **Off**, 5, 10, 20 or
+30 minutes, or
 1 to 5 hours, and **Save**. The disk spins down after that time without
 access, or later when it has a minimum of its own: a WD6400AACS given 5
 minutes spins down after about 10. UNOS sets it at once with `hdparm -S` on
@@ -429,9 +440,12 @@ opened.
 ### Creating a Storage Pool
 
 1. Go to **Storage**
-2. Click **Create Pool**
+2. Click **Create pool** (when the disks could not be read, it is disabled
+   and says why)
 3. Enter a pool name (e.g., "data", "media")
-4. Select disks to include. System disks and disks in use cannot be selected.
+4. Select disks to include. Only the disks a pool can take are listed; the
+   system disk and disks in use are folded under **N disks not available**,
+   each with its reason.
 5. Choose a RAID profile:
 
 | Profile | Min Disks | Redundancy | Space Efficiency |
@@ -448,9 +462,10 @@ opened.
 > UNOS prioritizes data safety. Use RAID 1C3 (3 copies) or RAID 1C4 (4 copies)
 > for multi-disk redundancy beyond RAID 1.
 
-6. Type the pool name again to confirm. If a selected disk already contains
-   data, also tick **Erase the existing data on these disks**.
-7. Click **Erase Disks & Create Pool**
+6. Type the pool name again into the empty field whose label names it. If a
+   selected disk already contains data, also tick **Erase the existing data on
+   these disks**. While something is missing, the dialog says what.
+7. Click **Erase disks and create pool**
 
 UNOS mounts the new pool at `/mnt/pools/<name>` and adds it to the host's
 `/etc/fstab`, so it is mounted again after a reboot.
@@ -462,8 +477,8 @@ from another system, become a pool without being formatted:
 
 - A filesystem whose label is a valid pool name (letters, digits, `-` and `_`,
   up to 63 characters, starting with a letter or digit) that no other
-  filesystem has is listed under **Storage Pools** as **Not mounted**. Click
-  **Mount**: UNOS mounts it at `/mnt/pools/<label>` by its UUID and adds it to
+  filesystem has is listed under **Pools** as **Not mounted**. Click
+  **Mount…**: UNOS mounts it at `/mnt/pools/<label>` by its UUID and adds it to
   the host's `/etc/fstab`, so it is mounted again after a reboot. This is how
   the pools of an earlier installation come back.
 - Any other btrfs filesystem, one without a label, with a label that is not a
@@ -472,7 +487,7 @@ from another system, become a pool without being formatted:
   two filesystems with one label, the one mounted as that pool, or else the
   one that UNOS mounts at every boot under that name, stays the pool; when
   neither is, both are listed under **Found on the disks** and neither under
-  **Storage Pools**. Click **Import**, enter a pool name and click
+  **Pools**. Click **Import…**, enter a pool name and click
   **Import**: UNOS mounts it at `/mnt/pools/<name>` by its UUID, makes the
   name the filesystem's label and adds it to `/etc/fstab`. The name cannot be
   the name of a pool or the label of another filesystem of the host. Nor can
@@ -499,9 +514,17 @@ the host has assembled or opened it.
 
 ### Pool Operations
 
-For each pool, you can:
-- **View Details** - Space usage, devices, status
-- **Mount / Unmount** - Mount the pool (and mount it at every boot), or unmount
+Each pool shows its name and badges on the left and its actions on the right:
+**Volumes** and **Scrub** for a mounted pool (**Mount…** for one that is not),
+and **More**, which shows the rarer ones: **Balance…**, **Add disk…**,
+**Remove disk…**, **Unmount…** and **Remove pool…**. An action that cannot
+run now is disabled and says why (its tooltip, and a line under the actions).
+A scrub, balance or disk removal that runs shows its progress right under the
+pool's name with its own buttons; how the last one ended is at the foot of the
+pool. Under its facts (RAID, such as "RAID 1 (2 copies)", disks, mount point
+and use) one note lists what is wrong with the pool, worst first. For each
+pool, you can:
+- **Mount… / Unmount…** - Mount the pool (and mount it at every boot), or unmount
   it after confirming; the data on the disks is not touched. Mounting is
   refused when the pool's filesystem mounts a subvolume other than its top
   level by default (see [Importing an Existing Pool](#importing-an-existing-pool)).
@@ -524,7 +547,7 @@ For each pool, you can:
   are closed, and the **Shares** page marks them **Not served** and **Pool
   not mounted**. They keep their access, and mounting the pool serves them
   again
-- **Add Disk** - (mounted pools that are not read-only and have all their
+- **Add disk…** - (mounted pools that are not read-only and have all their
   disks) Add a free disk to the pool: the dialog lists the whole disks that
   are not the system disk, hold no other pool or btrfs filesystem (also one
   that is not mounted) and are not mounted or in use; when there is none, it
@@ -539,11 +562,11 @@ For each pool, you can:
   spreads the data that is there already. When the path names another disk
   than the one listed (disks change names when they are reconnected), the
   add is refused: open the dialog again
-- **Remove Disk** - (the same pools) Remove a disk from the pool: select it
+- **Remove disk…** - (the same pools) Remove a disk from the pool: select it
   and type its path again. Its data moves to the other disks first, which can
   take hours on a hard disk; the pool stays usable meanwhile, and the disk
   leaves it at the end, without its btrfs signature, and is offered by
-  **Add Disk** again. The dialog says why a disk cannot leave: the pool's
+  **Add disk…** again. The dialog says why a disk cannot leave: the pool's
   only disk; a profile that would keep too few disks (RAID1 and RAID0 keep 2,
   RAID1C3 3, RAID1C4 and RAID10 4); RAID5 and RAID6, from which UNOS removes
   no disk; or too little space on the disks left, which UNOS estimates on the
@@ -558,7 +581,7 @@ For each pool, you can:
   move, sent to the open page as it changes. It runs on the host, so a
   restart of UNOS does not stop it, and the pool shows it again once the page
   is loaded; a restart or shutdown of the host stops it with the disk still
-  in the pool, whose data is safe, and **Remove Disk** starts it again.
+  in the pool, whose data is safe, and **Remove disk…** starts it again.
   Afterwards the pool says that the disk left it, or that the removal failed,
   with btrfs's error; after a restart of the host, or a removal stopped
   without an error of btrfs, it shows none. No disk is
@@ -569,7 +592,7 @@ For each pool, you can:
 - **Scrub** - (mounted pools) Check data integrity. While the scrub runs,
   the pool shows its progress (bytes, percent, rate and duration), which UNOS
   sends the open page as it changes, about every 2 seconds, also for a
-  scheduled scrub, and **Cancel Scrub** stops it. At the end it shows the
+  scheduled scrub, and **Cancel scrub** stops it. At the end it shows the
   result with the time the scrub started, in your browser's time zone and the
   date format of the interface's language: **Last scrub: No errors**, the
   number of errors btrfs counted (read, super, verify and checksum errors),
@@ -586,32 +609,32 @@ For each pool, you can:
   scheduled scrub of a pool that is not mounted fails without scrubbing
   anything. No scrub starts, scheduled or not, while a balance of the pool
   runs. For a pool that does not answer, see below
-- **Balance** - (mounted pools that are not read-only) Rewrite the pool's
+- **Balance…** - (mounted pools that are not read-only) Rewrite the pool's
   chunks, the blocks of space btrfs gives to data and metadata, to free the
   space of partly empty ones. By default only the chunks less full than the
   **Usage limit (%)**, 20, are rewritten, which takes minutes; enter another
   whole number from 1 to 99. **Every chunk (full balance)** rewrites all the
   data of the pool, hours on a hard disk, and starts only after you tick
   **Rewrite every chunk of <pool>**. While the balance runs, the pool shows
-  how many chunks it balanced of about how many, and the time left that UNOS
-  estimates from the chunks balanced so far, sent to the open page as it
-  changes; **Pause Balance** pauses it after the chunk it moves, **Resume
-  Balance** goes on, and **Cancel Balance** stops it. While a pause still
-  waits for its chunk, **Cancel Balance** waits too (btrfs would pause the
+  how far it is in percent, and the time left that UNOS estimates from the
+  work done so far, sent to the open page as it changes; **Pause** pauses it
+  after the chunk it moves, **Resume** goes on, and **Cancel balance** stops
+  it. While a pause still waits for its chunk, **Cancel balance** waits too
+  (btrfs would pause the
   balance all the same): cancel it once it is paused. A paused balance also
   goes on by itself when the pool is mounted again, for example at the next
   start of the NAS: cancel it to stop it for good. A restart or shutdown of
   the host pauses a balance that runs, which then goes on after the start in
   the same way. A full balance that goes on after a pause, by
-  **Resume Balance** or at a mount, rewrites only the chunks less than 90%
+  **Resume** or at a mount, rewrites only the chunks less than 90%
   full, a rule of the Linux kernel for a resumed balance without a usage
   limit: the chunks at least 90% full that it had not reached stay as they
   are. To rewrite every chunk, cancel it and start a new full balance; a
   balance with a usage limit keeps its limit when it goes on.
-  **Resume Balance** waits for a scrub of the pool to end, and the paused
+  **Resume** waits for a scrub of the pool to end, and the paused
   balance of a read-only pool can be resumed or cancelled only once
   the pool is mounted read-write again. Afterwards the pool says
-  whether the last balance finished (with the chunks it rewrote), was
+  whether the last balance finished, was
   cancelled or failed (with btrfs's error, such as no space left); after a
   restart of the host it shows none. The balance runs on the host, so a
   restart of UNOS does not stop it, and the pool shows it again once the page
@@ -667,10 +690,10 @@ For each pool, you can:
   since the last stop. A renamed volume keeps its points; a deleted one loses
   them. A volume that reaches 80, 90 or 95% of its quota is alerted (see
   [Alerts](#alerts)); a restart keeps the level it reached.
-- **Balance** - Redistribute data across devices
-- **Remove pool** (the trash button) - After **Continue**, type the pool's
-  name to enable **Remove Pool**. UNOS unmounts the pool, removes it from
-  `/etc/fstab` and deletes its empty mountpoint. The disks are not wiped: the
+- **Remove pool…** - The dialog says what happens (the pool is unmounted,
+  its data stays on its disks, shares and apps on it stop working); type the
+  pool's name into the empty field to enable **Remove pool**. UNOS unmounts
+  the pool, removes it from `/etc/fstab` and deletes its empty mountpoint. The disks are not wiped: the
   data stays on them, and the pool is listed again as **Not mounted**, ready
   to be mounted later. Like Unmount, it is refused while the pool is in use,
   and the dialog says why. As after an unmount, its SMB shares are no longer
@@ -680,9 +703,9 @@ UNOS waits 60 seconds for btrfs to start a scrub, report its progress or
 cancel it. When btrfs does not answer in that time, for example because a
 disk of the pool stopped responding, UNOS stops that btrfs command:
 
-- **Scrub** and **Cancel Scrub** show `btrfs scrub start did not answer within
+- **Scrub** and **Cancel scrub** show `btrfs scrub start did not answer within
   60 seconds: pool <name> may not be responding` (`btrfs scrub cancel` for
-  Cancel Scrub).
+  Cancel scrub).
 - A scrub in progress stops updating: the pool shows **Could not read the
   scrub status** with `btrfs scrub status did not answer within 60 seconds:
   pool <name> may not be responding` instead of its progress. Until UNOS
@@ -988,7 +1011,7 @@ encryption required loses guest access at the restore, with a note.
 
 UNOS creates share folders with the group `unos-smb` and the mode 2770, and
 files created over SMB get that group and the mode 660. In such a folder,
-folders made with **New Folder** in the File Browser get the mode 2770 and
+folders made with **New folder** in the File Browser get the mode 2770 and
 uploaded files 660 as well, and items copied there, or moved there from
 another pool or volume, get the permissions that a repair gives (see
 [File Browser](#file-browser)). Files that came in another way (from an app,
@@ -1348,7 +1371,9 @@ in your storage pools from the web interface. It starts in the pools directory
   name.
 - **Select** - Click a row or its checkbox to select the item, and again to
   deselect it. You can select several items. Opening another folder clears
-  the selection.
+  the selection. The bar above the list counts the selected items, and shows
+  **Download**, **Copy**, **Move**, **Rename** and **Delete** only while
+  something is selected.
 - **Download** - Select one file and click **Download**, or double-click the
   file. Folders cannot be downloaded. The browser shows the download once the
   whole file has arrived; until then it holds the file in its memory, so a
@@ -1380,7 +1405,7 @@ in your storage pools from the web interface. It starts in the pools directory
   left for them), the dialog then also offers **Delete for good**, which
   deletes them at once and frees their space; that cannot be undone, so
   Cancel has the keyboard focus.
-- **Upload** - Click the upload arrow at the top right and choose one or more
+- **Upload** - Click **Upload** at the top right and choose one or more
   files. They go to the folder that was open when you chose them, also if you
   open another folder while they upload. A file with the same name is
   replaced. An upload that gets no data for 2 minutes (the network dropped,
@@ -1391,7 +1416,7 @@ in your storage pools from the web interface. It starts in the pools directory
   whose filesystem cannot do this (vfat or exfat, for example) it stays as
   a hidden `.unos-upload-...` file (see
   [Leftovers of interrupted uploads](#leftovers-of-interrupted-uploads)).
-- **New Folder** - Click **+** at the top right, type the name, then press
+- **New folder** - Click **New folder** at the top right, type the name, then press
   Enter or click **Create**.
 - **Keyboard and screen readers** - The name of each folder and file is a
   button: Tab to it, then press Enter or Space to open the folder or download
@@ -1403,7 +1428,7 @@ in your storage pools from the web interface. It starts in the pools directory
 In a folder with the permissions of share folders, the group `unos-smb` and
 the mode 2770 (a share's folder that UNOS created or repaired, and the
 folders in it that SMB users, **Repair permissions** or the File Browser
-made; see [Repair Permissions](#repair-permissions)), **New Folder** gives the
+made; see [Repair Permissions](#repair-permissions)), **New folder** gives the
 new folder the mode 2770 and **Upload** gives the file the mode 660, also a
 file that replaces one, both in the group `unos-smb`: the users with **Read &
 write** access to the share can change them, and add files to the new
@@ -1472,7 +1497,7 @@ in the middle of it. It holds only part of the file, and nothing uses it.
 
 ### Trash
 
-**Trash** at the top right of the File Browser opens the trash: the items
+**Trash**, under **Files** in the sidebar, opens the trash: the items
 deleted in the File Browser, in every pool and volume, newest first, with the
 folder each was deleted from, when it was deleted, the day it is kept until,
 and the size of files.
@@ -1482,13 +1507,13 @@ and the size of files.
   item with the same name is there again, or the folder is gone (or is now on
   another filesystem, such as a disk mounted there), nothing is restored and
   the message says why. Restore the folder first, or create it again with
-  **New Folder**, then restore the item.
+  **New folder**, then restore the item.
 - Deleted items stay in the trash for 30 days. When UNOS starts, and then once
   a day, it deletes for good the items that were deleted 30 or more days ago.
   It passes over a pool whose disks sleep, so as not to wake them, and clears
   out its trash at the first hourly check after they woke.
-- Until then they still take up space in their pool. **Delete for good**
-  deletes the selected items at once, and **Empty trash** everything in the
+- Until then they still take up space in their pool. **Delete for good…**
+  deletes the selected items at once, and **Empty trash…** everything in the
   trash of every pool and volume. Both ask first, and neither can be undone.
 - Each pool and each volume keeps its trash in a hidden folder,
   `.unos-trash`, at its top (for example `/mnt/pools/data/.unos-trash` and
@@ -1504,7 +1529,9 @@ and the size of files.
   (vfat, for example): the Delete dialog says so, and they can only be
   deleted for good.
 - Screen readers read each item's checkbox with the folder it was deleted
-  from and the time, so that items of the same name can be told apart.
+  from and the time to the second, so that items of the same name can be told
+  apart; the table shows the time to the minute. On a phone the folder goes
+  under the name and the day it is kept until is left out.
 
 ---
 
@@ -3236,12 +3263,16 @@ when each snapshot was made in your browser's time zone.
 #### Creating a Snapshot
 
 1. Go to **Snapshots**
-2. In **Pool or volume**, choose a mounted pool or one of its volumes. Its
-   snapshots are listed, newest first, with the time each was made in your
-   browser's time zone. When the volumes of a pool cannot be read (btrfs
+2. In **Pool or volume**, at the top of the page, choose a mounted pool or one
+   of its volumes. Its snapshots are listed, newest first, with the time each
+   was made in your browser's time zone, to the minute; the card names the
+   folder they are kept in once, and a long name ends in "…" with its full
+   path in its tooltip. **Schedule snapshots →** opens **System** →
+   **Scheduler**, where pools get snapshots on a schedule. When the volumes of
+   a pool cannot be read (btrfs
    fails on the pool or does not answer, as after its disk dropped off), the
    pool is offered without them, and a warning says why.
-3. Click **Create Snapshot**
+3. Click **Create snapshot**
 4. Enter a name (optional; without one it is `snap_<date>_<time>`, in UTC)
 5. Click **Create**: the new snapshot appears in the list.
 
@@ -3255,7 +3286,7 @@ taken of (for a snapshot of a pool, `/mnt/pools/<pool>/restore_<date>_<time>`).
 
 1. Go to **Snapshots** and choose the pool or volume
 2. Find the snapshot to restore
-3. Click its **Restore** button and confirm. A message shows where the copy is.
+3. Click its **Restore…** button and confirm. A message shows where the copy is.
 
 Copy what you need from it, for example in the **File Browser**. The copy of
 a pool snapshot is also a volume of the pool. The copy of a volume's snapshot
@@ -3265,8 +3296,8 @@ holds the copy.
 #### Restored Copies
 
 Below the snapshots, **Restored copies in** the pool or volume you chose lists
-the copies that Restore made right in it, newest first, with their folder and
-the time of the restore (from the name, shown in your browser's time zone).
+the copies that Restore made right in it, newest first, with the time of the
+restore (from the name, shown in your browser's time zone).
 Only such copies are listed: a writable snapshot named
 `restore_<date>_<time>` right in the pool or the volume.
 
@@ -3513,9 +3544,9 @@ the repository locked by another program waits up to 10 minutes for it. A
 copy that ends hard, at a power cut say, leaves the repository locked for up
 to 30 minutes: a copy in that time fails, and the next one runs again.
 
-While a copy or a restore runs, the disks it uses stay mounted: **Unmount** and
-**Remove Pool** on **Storage** refuse for its pools, and so does a plain
-`umount` on the host, until it ends. **Delete Volume** refuses for a volume
+While a copy or a restore runs, the disks it uses stay mounted: **Unmount…**
+and **Remove pool…** on **Storage** refuse for its pools, and so does a plain
+`umount` on the host, until it ends. **Delete volume** refuses for a volume
 that holds its target, a folder it copies or the folder a restore writes.
 
 A copy on the disk of a folder it copies, such as a folder of the same pool,

@@ -1,6 +1,7 @@
 <script lang="ts">
-	// The dialog that removes a pool in two steps: what it holds, then its name typed again. The
-	// data stays on the disks.
+	// The dialog that removes a pool, in one step: what it does, as a short list of
+	// consequences, then the pool's name typed into an empty field. The data stays on the disks.
+	// The ConfirmDialog of the design system takes it over when it comes.
 	import { AlertTriangle } from 'lucide-svelte';
 	import { Alert, Button, Input, Modal } from '$lib/components/ui';
 	import { deletePool, type Pool } from '$lib/api/storage';
@@ -20,13 +21,11 @@
 
 	let { pool, formatBytes, quoted, onclose, ondeleted }: Props = $props();
 
-	let deleteStep: 1 | 2 = $state(1);
 	let deleteConfirmName = $state('');
 	let deleting = $state(false);
 	let deleteError = $state('');
 
 	function reset() {
-		deleteStep = 1;
 		deleteConfirmName = '';
 		deleteError = '';
 	}
@@ -37,12 +36,9 @@
 		onclose();
 	}
 
-	function proceedToStep2() {
-		deleteStep = 2;
-	}
-
 	async function handleDeletePool() {
-		if (!pool || deleteConfirmName !== pool.name) return;
+		// Enter in the field submits too: one request at a time.
+		if (!pool || deleting || deleteConfirmName !== pool.name) return;
 		deleting = true;
 		deleteError = '';
 		try {
@@ -71,84 +67,50 @@
 	{/snippet}
 
 	{#if pool}
-		{#if deleteStep === 1}
-			<div class="space-y-4">
-				<Alert variant="warning" title={$t('storage.remove.warningTitle')}>
-					<p>
-						{$t('storage.remove.about')}
-						<strong class="text-content">{quoted(pool.name)}</strong>.
-					</p>
-					<p class="mt-2 text-sm">{$t('storage.remove.kept')}</p>
-				</Alert>
-
-				<div class="card-nested text-sm">
-					<p class="text-secondary">{$t('storage.remove.details')}</p>
-					<ul class="mt-2 space-y-1">
-						<li>{$t('storage.remove.size', { size: formatBytes(pool.total_size) })}</li>
-						<li>
-							{$t('storage.remove.used', {
-								used: pool.mounted ? formatBytes(pool.used_size) : $t('storage.pool.unknown')
-							})}
-						</li>
-						<li>{$t('storage.remove.devices', { devices: pool.devices.join(', ') || '-' })}</li>
-						<li>
-							{$t('storage.remove.mount', {
-								mount: pool.mounted ? pool.mountpoint || '-' : $t('storage.pool.notMounted')
-							})}
-						</li>
-					</ul>
-				</div>
-			</div>
-		{:else}
-			<div class="space-y-4">
-				<Alert variant="error" title={$t('storage.remove.finalTitle')}>
-					<p>{$t('storage.remove.typeName')}</p>
-					<p class="font-mono text-lg mt-2 bg-surface-overlay px-3 py-2 rounded-lg">
-						{pool.name}
-					</p>
-				</Alert>
-
-				<Input
-					label={$t('storage.remove.confirm')}
-					bind:value={deleteConfirmName}
-					placeholder={$t('storage.remove.confirmPlaceholder')}
-					autocomplete="off"
-				/>
-			</div>
-		{/if}
-		{#if deleteError}
-			<Alert variant="error" title={$t('storage.remove.failed')}>{deleteError}</Alert>
-		{/if}
+		<form class="space-y-4" onsubmit={(e) => { e.preventDefault(); handleDeletePool(); }}>
+			<p>
+				{$t('storage.remove.about')}
+				<strong class="text-content">{quoted(pool.name)}</strong>{$t('storage.remove.aboutEnd')}
+			</p>
+			<ul class="list-disc ml-5 space-y-1 text-sm text-secondary">
+				<li>
+					{$t('storage.remove.unmounted')}
+					<span class="mono-xs break-all">{pool.mounted ? pool.mountpoint || '-' : $t('storage.pool.notMounted')}</span>
+				</li>
+				<li>
+					{$t('storage.remove.kept', {
+						used: pool.mounted ? formatBytes(pool.used_size) : $t('storage.pool.unknown')
+					})}
+					<span class="mono-xs break-all">{pool.devices.join(', ') || '-'}</span>
+				</li>
+				<li>{$t('storage.remove.users')}</li>
+			</ul>
+			<!-- The name to type is in the label; the field starts empty. -->
+			<Input
+				label={$t('storage.remove.confirm', { name: pool.name })}
+				bind:value={deleteConfirmName}
+				autocomplete="off"
+			/>
+			{#if deleteError}
+				<Alert variant="error" size="sm" title={$t('storage.remove.failed')}>{deleteError}</Alert>
+			{/if}
+		</form>
 	{/if}
 
 	{#snippet footer()}
 		{#if pool}
-			{#if deleteStep === 1}
-				<Button variant="secondary" class="flex-1" onclick={closeDeleteModal}
-					>{$t('common.cancel')}</Button
-				>
-				<Button variant="danger" class="flex-1" onclick={proceedToStep2}
-					>{$t('storage.remove.continue')}</Button
-				>
-			{:else}
-				<Button
-					variant="secondary"
-					class="flex-1"
-					disabled={deleting}
-					onclick={() => (deleteStep = 1)}
-				>
-					{$t('storage.remove.back')}
-				</Button>
-				<Button
-					variant="danger"
-					class="flex-1"
-					loading={deleting}
-					disabled={deleteConfirmName !== pool.name}
-					onclick={handleDeletePool}
-				>
-					{$t('storage.remove.submit')}
-				</Button>
-			{/if}
+			<Button variant="secondary" class="flex-1" disabled={deleting} onclick={closeDeleteModal}>
+				{$t('common.cancel')}
+			</Button>
+			<Button
+				variant="danger"
+				class="flex-1"
+				loading={deleting}
+				disabled={deleteConfirmName !== pool.name}
+				onclick={handleDeletePool}
+			>
+				{$t('storage.remove.submit')}
+			</Button>
 		{/if}
 	{/snippet}
 </Modal>

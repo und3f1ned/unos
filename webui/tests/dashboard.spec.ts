@@ -224,12 +224,15 @@ test.describe('Dashboard', () => {
     await expectCards(page, {
       cpu: '12.5%', memory: '768 MB / 2 GB', network: ['1.2 MB/s', '512 B/s'], disks: ['3.5 MB/s', '640 KB/s'],
     });
-    await expect(page.getByRole('heading', { name: 'Storage Pools' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Storage pools' })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Refresh', exact: true })).toBeEnabled();
     await page.waitForLoadState('networkidle');
     const loaded = requests.length;
-    const updated = page.locator('main').getByText(/^\s*Updated \d/);
-    const firstUpdate = (await updated.textContent())?.trim();
+    // The header says "Live", with the time of the last stats in its tooltip: nothing on the page
+    // ticks every 2 seconds.
+    await expect(page.locator('main').getByText('Live', { exact: true })).toBeVisible();
+    const updated = page.locator('main span[title^="Updated "]');
+    const firstUpdate = await updated.getAttribute('title');
 
     // A busy host 2 seconds later: a copy to a share, written to the pool.
     await page.clock.fastForward('00:02');
@@ -243,7 +246,7 @@ test.describe('Dashboard', () => {
     await expect(statsCard(page, 'CPU').locator('.stat-card-value')).toHaveClass(/text-warning/);
     await expect(statsCard(page, 'Memory').locator('.stat-card-value')).toHaveText('75.0%');
     await expect(statsCard(page, 'Temperature').locator('.stat-card-value')).toHaveText('61°C');
-    await expect(updated).not.toHaveText(firstUpdate ?? '');
+    await expect(updated).not.toHaveAttribute('title', firstUpdate ?? '');
 
     // A minute without a message: the cards keep the last one, and nothing asks the API.
     await page.clock.fastForward('01:00');
@@ -308,15 +311,15 @@ test.describe('Dashboard', () => {
   });
 
   // system.temperatures: on a host without sensors the server sends no temperature, and the card
-  // says that none is available.
-  test('the temperature card says N/A on a host without sensors', async ({ authenticatedPage: page }) => {
+  // says so in a quiet line, not as a big grey value.
+  test('the temperature card says there is no reading on a host without sensors', async ({ authenticatedPage: page }) => {
     await fakeLiveStats(page, { ...LIVE_STATS, cpu: { ...LIVE_STATS.cpu, temperature: null } });
     await page.goto('/');
 
     const card = (label: string) => page.locator('main .card', { has: page.getByText(label, { exact: true }) });
     await expect(card('CPU').locator('.stat-card-value')).toHaveText('12.5%');
-    await expect(card('Temperature').locator('.stat-card-value')).toHaveText('N/A');
-    await expect(card('Temperature').locator('.stat-card-value')).toHaveClass(/text-muted/);
+    await expect(card('Temperature').getByText('No reading', { exact: true })).toBeVisible();
+    await expect(card('Temperature').locator('.stat-card-value')).toHaveCount(0);
   });
 
   test('storage widget shows the health the API reports', async ({ authenticatedPage: page }) => {
@@ -325,31 +328,33 @@ test.describe('Dashboard', () => {
     await fakeStorageApi(page);
     await page.goto('/');
 
-    const widget = page.locator('.card', { has: page.locator('h3', { hasText: 'Storage Pools' }) });
+    const widget = page.locator('.card', { has: page.locator('h3', { hasText: 'Storage pools' }) });
     const pool = (name: string) =>
       widget
         .locator('.space-y-3 > div')
         .filter({ has: page.locator('span', { hasText: new RegExp(`^${name}$`) }) });
     const badge = (name: string, label: string) =>
       pool(name).locator('.badge', { hasText: new RegExp(`^${label}$`) });
-    const issues = (name: string) => pool(name).locator('p');
+    const issues = (name: string) => pool(name).locator('[data-field="issues"]');
 
+    // A pool that is not mounted: its badge says so, and no line repeats it; no use, no bar.
     await expect(badge('e2e_tank', 'Not mounted')).toBeVisible();
-    await expect(pool('e2e_tank').getByText('Data not accessible')).toBeVisible();
+    await expect(pool('e2e_tank').locator('[data-field="used"]')).toHaveCount(0);
+    await expect(pool('e2e_tank').getByRole('progressbar')).toHaveCount(0);
     await expect(badge('e2e_media', 'Degraded')).toBeVisible();
-    await expect(issues('e2e_media')).toHaveText('1 device missing • 2 device errors');
+    await expect(issues('e2e_media')).toHaveText('1 disk missing · 2 disk errors');
     // btrfs made the filesystem read-only after an error.
     await expect(badge('e2e_frozen', 'Error')).toBeVisible();
-    await expect(issues('e2e_frozen')).toHaveText('forced read-only');
+    await expect(issues('e2e_frozen')).toHaveText('Read-only after an error');
     await expect(issues('e2e_frozen')).toHaveClass(/text-error/);
     await expect(badge('e2e_unread', 'Unknown')).toBeVisible();
     // Mounted read-only on purpose: a warning only.
     await expect(badge('e2e_archive', 'Healthy')).toBeVisible();
-    await expect(issues('e2e_archive')).toHaveText('read-only');
+    await expect(issues('e2e_archive')).toHaveText('Read-only');
     await expect(issues('e2e_archive')).toHaveClass(/text-warning/);
     // Mounted read-only on purpose, with device errors: an error, but nothing forced.
     await expect(badge('e2e_vault', 'Error')).toBeVisible();
-    await expect(issues('e2e_vault')).toHaveText('3 device errors • read-only');
+    await expect(issues('e2e_vault')).toHaveText('3 disk errors · Read-only');
     await expect(issues('e2e_vault')).toHaveClass(/text-error/);
     await expect(widget.locator('.badge', { hasText: /^Healthy$/ })).toHaveCount(1);
   });
@@ -378,23 +383,24 @@ test.describe('Dashboard', () => {
     );
     await page.goto('/');
 
-    const widget = page.locator('.card', { has: page.locator('h3', { hasText: 'Storage Pools' }) });
+    const widget = page.locator('.card', { has: page.locator('h3', { hasText: 'Storage pools' }) });
     const pool = (name: string) =>
       widget.locator('.space-y-3 > div').filter({ has: page.locator('span', { hasText: new RegExp(`^${name}$`) }) });
     await expect(pool('e2e_data').locator('.badge')).toHaveText('Healthy');
     await expect(pool('e2e_media').locator('.badge')).toHaveText('Healthy');
-    await expect(pool('e2e_media')).toContainText('931.3 GB / 3.6 TB');
-    await expect(pool('e2e_media').locator('p')).toHaveCount(0);
+    // The share on the name's line, the sizes on the line under the bar.
+    await expect(pool('e2e_media').locator('[data-field="used"]')).toHaveText('931.3 GB of 3.6 TB');
+    await expect(pool('e2e_media').locator('[data-field="issues"]')).toHaveCount(0);
 
     await refresh(page);
     await expect(pool('e2e_media').locator('.badge')).toHaveText('Degraded');
-    await expect(pool('e2e_media').locator('p')).toHaveText('1 device missing');
-    await expect(pool('e2e_media').locator('p')).toHaveClass(/text-error/);
+    await expect(pool('e2e_media').locator('[data-field="issues"]')).toHaveText('1 disk missing');
+    await expect(pool('e2e_media').locator('[data-field="issues"]')).toHaveClass(/text-error/);
     await expect(pool('e2e_data').locator('.badge')).toHaveText('Healthy');
 
     await refresh(page);
     await expect(pool('e2e_media').locator('.badge')).toHaveText('Not mounted');
-    await expect(pool('e2e_media').getByText('Data not accessible')).toBeVisible();
+    await expect(pool('e2e_media').locator('[data-field="used"]')).toHaveCount(0);
     await expect(pool('e2e_media').getByRole('progressbar')).toHaveCount(0);
     await expect(pool('e2e_data').locator('.badge')).toHaveText('Healthy');
     // The total counts the mounted pool only.
@@ -402,8 +408,9 @@ test.describe('Dashboard', () => {
     expect(read).toBe(3);
   });
 
-  // storage.smart-replace-soon (ADR-0235): the dashboard shows no disks, so
-  // the disks to replace soon get an alert of their own.
+  // storage.smart-replace-soon (ADR-0235): the dashboard shows no disks, so the disks to replace
+  // soon are issues of the problems banner under its header, each a link to Disk Health with the
+  // server's reasons under it, and the header counts them: never "No problems" beside them.
   test('lists the disks to replace soon with the reason, until the prediction changes', async ({
     authenticatedPage: page,
   }) => {
@@ -411,24 +418,34 @@ test.describe('Dashboard', () => {
     const requested = await fakeHealthApi(page, { predictions: () => predictions });
     await page.goto('/');
 
-    const alert = page.locator('.alert', { has: page.getByText('Replace soon', { exact: true }) });
-    await expect(alert.getByRole('listitem')).toHaveText([
-      '/dev/e2e-sda (serial E2E-HDD-1): Reallocated_Sector_Ct: 3 (was 0); Reallocated_Sector_Ct increasing rapidly',
-    ]);
-    await expect(alert.getByRole('link', { name: 'Disk Health' })).toHaveAttribute('href', '/system#health');
+    const banner = page.locator('main #problems-banner');
+    const replaceLinks = banner.getByRole('link', { name: /^Replace disk / });
+    const item = (device: string) => banner.getByRole('listitem').filter({ hasText: `Replace disk ${device} soon` });
+    await expect(replaceLinks).toHaveText(['Replace disk /dev/e2e-sda soon (serial E2E-HDD-1)']);
+    await expect(replaceLinks).toHaveAttribute('href', '/system#health');
+    await expect(item('/dev/e2e-sda')).toContainText(
+      'Reallocated_Sector_Ct: 3 (was 0); Reallocated_Sector_Ct increasing rapidly',
+    );
+    // The banner sits under the header, and the header's chip counts what it lists.
+    const title = await page.locator('main h1').boundingBox();
+    const box = await banner.boundingBox();
+    expect(box!.y).toBeGreaterThan(title!.y);
+    await expect(page.locator('main a[href="#problems-banner"]')).toHaveText(/^\s*\d+ issues?\s*$/);
+    await expect(page.getByText('No problems', { exact: true })).toHaveCount(0);
 
     // A day later the first disk's rise is no longer fast, and the second disk is the one to replace.
     predictions = predictionsAnswer(REPLACE_SOON_HDD_2, MONITOR_CLOSELY);
     await refresh(page);
-    await expect(alert.getByRole('listitem')).toHaveText([
-      '/dev/e2e-sdc (serial E2E-HDD-2): Current_Pending_Sector: 8 (was 0); Current_Pending_Sector increasing rapidly',
-    ]);
+    await expect(replaceLinks).toHaveText(['Replace disk /dev/e2e-sdc soon (serial E2E-HDD-2)']);
+    await expect(item('/dev/e2e-sdc')).toContainText(
+      'Current_Pending_Sector: 8 (was 0); Current_Pending_Sector increasing rapidly',
+    );
 
-    // No prediction says replace soon: the alert goes.
+    // No prediction says replace soon: the issue goes.
     predictions = predictionsAnswer(MONITOR_CLOSELY, HEALTHY_HDD_2);
     await refresh(page);
-    await expect(page.getByRole('heading', { name: 'Storage Pools' })).toBeVisible();
-    await expect(alert).toHaveCount(0);
+    await expect(page.getByRole('heading', { name: 'Storage pools' })).toBeVisible();
+    await expect(replaceLinks).toHaveCount(0);
     // The dashboard reads the predictions only: it runs no smartctl (GET /health/disks).
     expect(requested).toEqual(Array(3).fill('GET /smart/predictions'));
   });
@@ -441,14 +458,16 @@ test.describe('Dashboard', () => {
     await fakeHealthApi(page, { predictions: () => predictions });
     await page.goto('/');
 
-    const warning = page.locator('.alert', {
-      has: page.getByText('Could not check the disks for a predicted failure', { exact: true }),
+    // An issue of the banner, the server's reason under it, linked to Disk Health.
+    const warning = page.locator('main #problems-banner').getByRole('listitem').filter({
+      has: page.getByRole('link', { name: 'Could not check the disks for a predicted failure', exact: true }),
     });
     await expect(warning).toContainText(detail);
+    await expect(warning.getByRole('link')).toHaveAttribute('href', '/system#health');
 
     predictions = predictionsAnswer(HEALTHY_HDD_2);
     await refresh(page);
-    await expect(page.getByRole('heading', { name: 'Storage Pools' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Storage pools' })).toBeVisible();
     await expect(warning).toHaveCount(0);
   });
 
@@ -487,33 +506,36 @@ test.describe('Dashboard', () => {
     await expect(card('Дисковый ввод-вывод').getByText('Чтение', { exact: true })).toBeVisible();
     await expect(card('Дисковый ввод-вывод').getByText('Запись', { exact: true })).toBeVisible();
     await expect(card('Температура').locator('.stat-card-value')).toHaveText('46 °C');
-    await expect(main.getByText(/^\s*Обновлено \d{2}:\d{2}:\d{2}\s*$/)).toBeVisible();
-    await expect(main.getByText(/ • Время работы: (\d+ дн\. \d+ ч|\d+ ч \d+ мин|\d+ мин)\s*$/)).toBeVisible();
+    await expect(main.getByText('Онлайн', { exact: true })).toBeVisible();
+    await expect(main.locator('span[title^="Обновлено "]')).toHaveAttribute('title', /^Обновлено \d{2}:\d{2}:\d{2}$/);
+    await expect(main.getByText(/ · Время работы (\d+ дн\. \d+ ч|\d+ ч \d+ мин|\d+ мин)\s*$/)).toBeVisible();
 
     // The pools: their health through a map, their problems counted in Russian.
     const storage = main.locator('.card', { has: page.getByRole('heading', { name: 'Пулы хранения' }) });
     const pool = (name: string) =>
       storage.locator('.space-y-3 > div').filter({ has: page.locator('span', { hasText: new RegExp(`^${name}$`) }) });
     await expect(pool('e2e_tank').locator('.badge')).toHaveText('Не смонтирован');
-    await expect(pool('e2e_tank').getByText('Данные недоступны', { exact: true })).toBeVisible();
+    await expect(pool('e2e_tank').locator('[data-field="used"]')).toHaveCount(0);
     await expect(pool('e2e_media').locator('.badge')).toHaveText('Деградирован');
-    await expect(pool('e2e_media').locator('p')).toHaveText('1 устройство отсутствует • 2 ошибки устройств');
-    await expect(pool('e2e_media')).toContainText('465.7 ГБ / 1.8 ТБ');
+    await expect(pool('e2e_media').locator('[data-field="issues"]')).toHaveText('Не хватает 1 диска · 2 ошибки дисков');
+    await expect(pool('e2e_media').locator('[data-field="used"]')).toHaveText('465.7 ГБ из 1.8 ТБ');
     await expect(pool('e2e_frozen').locator('.badge')).toHaveText('Ошибка');
-    await expect(pool('e2e_frozen').locator('p')).toHaveText('принудительно только для чтения');
+    await expect(pool('e2e_frozen').locator('[data-field="issues"]')).toHaveText('Только для чтения после ошибки');
     await expect(pool('e2e_unread').locator('.badge')).toHaveText('Неизвестно');
     await expect(pool('e2e_archive').locator('.badge')).toHaveText('Исправен');
-    await expect(pool('e2e_archive').locator('p')).toHaveText('только для чтения');
-    await expect(pool('e2e_vault').locator('p')).toHaveText('3 ошибки устройств • только для чтения');
+    await expect(pool('e2e_archive').locator('[data-field="issues"]')).toHaveText('Только для чтения');
+    await expect(pool('e2e_vault').locator('[data-field="issues"]')).toHaveText('3 ошибки дисков · Только для чтения');
     await expect(storage.getByText('Общий объём', { exact: true })).toBeVisible();
     await expect(storage.getByText('1.9 ТБ / 11.8 ТБ (16.2%)', { exact: true })).toBeVisible();
 
     // A disk to replace soon: the words of the page in Russian, the reasons as the server gives them.
-    const alert = main.locator('.alert', { has: page.getByText('Заменить в ближайшее время', { exact: true }) });
-    await expect(alert.getByRole('listitem')).toHaveText([
-      '/dev/e2e-sda (серийный номер E2E-HDD-1): Reallocated_Sector_Ct: 3 (was 0); Reallocated_Sector_Ct increasing rapidly',
-    ]);
-    await expect(alert.getByRole('link', { name: 'Состояние дисков' })).toHaveAttribute('href', '/system#health');
+    // The banner lists the pools' issues too, errors first: the rest is behind "Show all".
+    await main.locator('#problems-banner').getByRole('button', { name: /^Показать все/ }).click();
+    const replace = main.locator('#problems-banner').getByRole('listitem').filter({
+      has: page.getByRole('link', { name: 'Скоро замените диск /dev/e2e-sda (серийный номер E2E-HDD-1)', exact: true }),
+    });
+    await expect(replace).toContainText('Reallocated_Sector_Ct: 3 (was 0); Reallocated_Sector_Ct increasing rapidly');
+    await expect(replace.getByRole('link')).toHaveAttribute('href', '/system#health');
 
     // The containers: Docker's states through a map.
     const containers = main.locator('.card', { has: page.getByRole('heading', { name: 'Контейнеры' }) });
@@ -522,8 +544,8 @@ test.describe('Dashboard', () => {
     // Its rows are no links: the card's one link is Manage (ADR-0431).
     const state = (name: string) =>
       containers.locator('div.border-b').filter({ hasText: name }).locator('.badge');
-    await expect(state('e2e-web')).toHaveText('работает');
-    await expect(state('e2e-db')).toHaveText('остановлен');
+    await expect(state('e2e-web')).toHaveText('Работает');
+    await expect(state('e2e-db')).toHaveText('Остановлен');
 
     // The recent activity, with the time of a notification. Quick Actions are gone: they only
     // repeated the sidebar's links (ADR-0431).
@@ -536,10 +558,10 @@ test.describe('Dashboard', () => {
     await expect(activity.getByText('5 мин назад', { exact: true })).toBeVisible();
 
     // Nothing of the English dashboard is left.
-    for (const heading of ['Storage Pools', 'Containers', 'Recent Activity']) {
+    for (const heading of ['Storage pools', 'Containers', 'Recent activity']) {
       await expect(main.getByRole('heading', { name: heading })).toHaveCount(0);
     }
-    await expect(main.getByText('Replace soon')).toHaveCount(0);
+    await expect(main.getByText(/Replace disk|Replace soon/)).toHaveCount(0);
   });
 
   test.describe('a regular user', () => {

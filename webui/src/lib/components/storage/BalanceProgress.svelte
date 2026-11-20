@@ -1,21 +1,30 @@
 <script lang="ts">
-	// A mounted pool's balance (ADR-0379): its progress while it runs or is paused, then how it
-	// ended; or why its status could not be read.
-	import { AlertTriangle, CheckCircle, Loader2, Pause } from 'lucide-svelte';
-	import { Alert, ProgressBar } from '$lib/components/ui';
-	import type { BalanceStatus } from '$lib/api/storage';
+	// A mounted pool's balance (ADR-0379): its progress while it runs or is paused, with its Pause,
+	// Resume and Cancel (`part` running, under the pool's header), then how it ended, or why its
+	// status could not be read (`part` result, at the foot of the pool).
+	import { AlertTriangle, CheckCircle, Loader2, Pause, Play } from 'lucide-svelte';
+	import { Alert, Button, ProgressBar } from '$lib/components/ui';
+	import type { BalanceStatus, Pool } from '$lib/api/storage';
 	import { t } from '$lib/i18n';
-	import { balanceProgress } from './pools';
+	import { balanceProgress, type BalanceAction } from './pools';
 
 	type Props = {
-		mounted: boolean;
+		/** The balance that runs or is paused, or how the last one ended. */
+		part: 'running' | 'result';
+		pool: Pool;
+		/** A scrub of the pool runs: a paused balance does not resume beside it (ADR-0379). */
+		scrubRunning?: boolean;
 		status: BalanceStatus | undefined;
 		/** Why the status could not be read: shown instead of the last one. */
 		error: string | undefined;
 		percentFormat: Intl.NumberFormat;
+		/** A pause, resume or cancel is on its way. */
+		busy?: boolean;
+		onaction?: (action: BalanceAction) => void;
 	};
 
-	let { mounted, status, error, percentFormat }: Props = $props();
+	let { part, pool, scrubRunning = false, status, error, percentFormat, busy = false, onaction }: Props = $props();
+	const mounted = $derived(pool.mounted);
 
 	// What a balance that runs or is paused does, by its status.
 	const BALANCE_STATES: Record<string, string> = {
@@ -34,64 +43,79 @@
 	};
 </script>
 
-{#if mounted && error}
-	<Alert variant="warning" title={$t('storage.balance.statusError')} class="mt-3">
+{#if part === 'result' && mounted && error}
+	<Alert variant="warning" size="sm" title={$t('storage.balance.statusError')}>
 		{error}
 	</Alert>
-{:else if mounted && status && status.status !== 'idle'}
-	<div class="mt-3 pt-3 border-t border-border space-y-2">
+{:else if part === 'running' && mounted && !error && status && status.status !== 'idle'}
+	{@const paused = status.status === 'paused'}
+	<div class="space-y-2">
 		<div class="flex flex-wrap items-center justify-between gap-2 text-sm">
-			<span
-				class="flex items-center gap-2 {status.status === 'paused'
-					? 'text-warning'
-					: 'text-info'}"
-			>
-				{#if status.status === 'paused'}
-					<Pause class="w-4 h-4" />
+			<span class="flex items-center gap-2 {paused ? 'text-warning' : 'text-info'}">
+				{#if paused}
+					<Pause class="w-4 h-4" aria-hidden="true" />
 				{:else}
-					<Loader2 class="w-4 h-4 loading-spinner" />
+					<Loader2 class="w-4 h-4 loading-spinner" aria-hidden="true" />
 				{/if}
 				{$t(BALANCE_STATES[status.status] ?? 'storage.balance.running')}
 			</span>
-			{#if status.status === 'running' && status.seconds_left !== null}
-				<span class="text-secondary">{timeLeft(status.seconds_left)}</span>
-			{/if}
+			<span class="flex flex-wrap items-center gap-2">
+				{#if status.status === 'running' || paused}
+					<!-- A resume is refused on a read-only pool and beside a scrub that runs (ADR-0379). -->
+					<Button
+						variant="secondary"
+						size="sm"
+						icon={paused ? Play : Pause}
+						disabled={busy || (paused && (pool.read_only || scrubRunning))}
+						onclick={() => onaction?.(paused ? 'resume' : 'pause')}
+					>
+						{$t(paused ? 'storage.pool.resumeBalance' : 'storage.pool.pauseBalance')}
+					</Button>
+				{/if}
+				<!-- A cancel waits for a pause that waits for its chunk, which the kernel would make all
+				     the same, and the kernel keeps a paused balance of a read-only pool for its next
+				     read-write mount (ADR-0379). -->
+				<Button
+					variant="secondary"
+					size="sm"
+					disabled={busy ||
+						status.status === 'cancelling' ||
+						status.status === 'pausing' ||
+						(paused && pool.read_only)}
+					onclick={() => onaction?.('cancel')}
+				>
+					{$t('storage.pool.cancelBalance')}
+				</Button>
+			</span>
 		</div>
 		{#if status.expected && status.completed !== null}
-			<ProgressBar
-				value={balanceProgress(status)}
-				variant="info"
-				label={$t('storage.balance.progress')}
-			/>
-			<div class="flex flex-wrap justify-between gap-x-2 text-xs text-secondary">
-				<span
-					>{$t('storage.balance.chunks', {
-						done: status.completed,
-						n: status.expected
-					})}</span
-				>
-				<span>{percentFormat.format(balanceProgress(status) / 100)}</span>
-			</div>
+			<ProgressBar value={balanceProgress(status)} variant="info" label={$t('storage.balance.progress')} />
 		{/if}
-		{#if status.status === 'paused'}
+		<!-- How far, and how long it needs still: no chunk counts. -->
+		<div class="flex flex-wrap justify-between gap-x-3 text-xs text-secondary tabular">
+			{#if status.expected && status.completed !== null}
+				<span>{$t('storage.balance.done', { percent: percentFormat.format(balanceProgress(status) / 100) })}</span>
+			{/if}
+			{#if status.status === 'running' && status.seconds_left !== null}
+				<span>{timeLeft(status.seconds_left)}</span>
+			{/if}
+		</div>
+		{#if paused}
 			<p class="text-xs text-secondary">{$t('storage.balance.pausedNote')}</p>
 		{/if}
 	</div>
-{:else if mounted && status?.result === 'finished'}
-	<div class="mt-3 pt-3 border-t border-border flex items-center gap-2 text-sm text-success">
-		<CheckCircle class="w-4 h-4" />
-		{$t('storage.balance.finished', {
-			done: status.completed ?? 0,
-			n: status.considered ?? 0
-		})}
+{:else if part === 'result' && mounted && !error && status?.status === 'idle' && status.result === 'finished'}
+	<div class="pt-3 border-t border-border flex items-center gap-2 text-sm text-success">
+		<CheckCircle class="w-4 h-4" aria-hidden="true" />
+		{$t('storage.balance.finished')}
 	</div>
-{:else if mounted && status?.result === 'cancelled'}
-	<div class="mt-3 pt-3 border-t border-border flex items-center gap-2 text-sm text-warning">
-		<AlertTriangle class="w-4 h-4" />
+{:else if part === 'result' && mounted && !error && status?.status === 'idle' && status.result === 'cancelled'}
+	<div class="pt-3 border-t border-border flex items-center gap-2 text-sm text-warning">
+		<AlertTriangle class="w-4 h-4" aria-hidden="true" />
 		{$t('storage.balance.cancelled')}
 	</div>
-{:else if mounted && status?.result === 'failed'}
-	<Alert variant="error" title={$t('storage.balance.failed')} class="mt-3">
+{:else if part === 'result' && mounted && !error && status?.status === 'idle' && status.result === 'failed'}
+	<Alert variant="error" size="sm" title={$t('storage.balance.failed')}>
 		<span class="break-words">{status.error}</span>
 	</Alert>
 {/if}

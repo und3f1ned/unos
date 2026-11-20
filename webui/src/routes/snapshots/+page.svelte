@@ -1,6 +1,8 @@
 <script lang="ts">
 	// The Snapshots page: the snapshots of a mounted pool or volume and the copies that restores
 	// made in it, with the dialogs that take, restore and delete them. Its lists are SnapshotLists.
+	// The pool or volume is chosen in the header; each card names its folder once, and the rules
+	// that the About card listed are where they apply.
 	import { onMount } from 'svelte';
 	import { Archive, Copy, Plus, Trash2, RotateCcw, RefreshCw } from 'lucide-svelte';
 	import { Alert, Button, Card, EmptyState, Select, Skeleton } from '$lib/components/ui';
@@ -12,6 +14,7 @@
 		type Subvolume
 	} from '$lib/api/snapshots';
 	import { intlLocale, t } from '$lib/i18n';
+	import { DATE_TIME_MINUTES } from '$lib/format';
 	import { formatDateTime } from '$lib/time';
 	import {
 		CreateSnapshotDialog,
@@ -20,7 +23,7 @@
 		SnapshotTable
 	} from '$lib/components/snapshots';
 	import { SnapshotLists } from '$lib/components/snapshots/lists.svelte';
-	import { AUTO_PREFIX, RESTORE_PREFIX, SNAP_PREFIX, SNAPSHOTS_FOLDER } from '$lib/components/snapshots/names';
+	import { SNAPSHOTS_FOLDER } from '$lib/components/snapshots/names';
 
 	const lists = new SnapshotLists();
 
@@ -42,7 +45,7 @@
 
 	// The server gives UTC times with their offset; the browser shows them in its own time zone,
 	// in the language of the page (ADR-0287).
-	const formatDate = (value: string): string => (value ? formatDateTime(value, $intlLocale) : '-');
+	const formatDate = (value: string): string => (value ? formatDateTime(value, $intlLocale, DATE_TIME_MINUTES) : '-');
 
 	let options = $derived(lists.subvolumes.map((sv) => ({ value: sv.path, label: label(sv) })));
 
@@ -85,13 +88,39 @@
 
 <div class="page-container">
 	<div class="page-header">
-		<h1 class="page-title">{$t('snapshots.title')}</h1>
-		<div class="flex flex-wrap items-center gap-2">
-			<Button icon={Plus} disabled={!lists.selected} onclick={openCreate}>{$t('snapshots.create')}</Button>
-			<Button variant="secondary" size="icon" disabled={lists.busy} onclick={() => lists.refresh()}>
-				<RefreshCw class="w-4 h-4 {lists.busy ? 'animate-spin' : ''}" />
+		<div class="min-w-0">
+			<h1 class="page-title">{$t('snapshots.title')}</h1>
+			<p class="page-subtitle">{$t('snapshots.subtitle')}</p>
+		</div>
+		<!-- The pool or volume, then Refresh and the page's one primary action, last (ADR-0428). -->
+		<div class="page-actions items-end">
+			{#if lists.subvolumes.length > 0}
+				<Select
+					label={$t('snapshots.picker')}
+					{options}
+					bind:value={lists.selectedPath}
+					onchange={choose}
+					class="w-64 max-w-full"
+				/>
+			{:else if lists.subvolumesLoading}
+				<!-- The picker's label and field, in their place until the pools answer (ADR-0430). -->
+				<div class="w-64 max-w-full" aria-hidden="true" data-skeleton>
+					<Skeleton class="w-28 mb-1.5" />
+					<Skeleton shape="block" class="h-9 w-full" />
+				</div>
+			{/if}
+			<Button variant="secondary" size="icon" disabled={lists.busy} title={$t('common.refresh')} onclick={() => lists.refresh()}>
+				<RefreshCw class="w-4 h-4 {lists.busy ? 'animate-spin' : ''}" aria-hidden="true" />
 				<span class="sr-only">{$t('common.refresh')}</span>
 			</Button>
+			<!-- Without a mounted pool there is nothing to take a snapshot of: the button says why, once the
+			     pools have answered (while they load, or when they could not be read, no reason is true). -->
+			<span
+				class="flex"
+				title={lists.selected || lists.subvolumesLoading || lists.subvolumesError ? undefined : $t('snapshots.createBlocked')}
+			>
+				<Button icon={Plus} disabled={!lists.selected} onclick={openCreate}>{$t('snapshots.create')}</Button>
+			</span>
 		</div>
 	</div>
 
@@ -99,33 +128,23 @@
 		<Alert variant="error" title={$t('snapshots.loadPoolsError')}>{lists.subvolumesError}</Alert>
 	{/if}
 
-	{#if lists.subvolumes.length > 0}
-		<Card>
-			<Select
-				label={$t('snapshots.picker')}
-				{options}
-				bind:value={lists.selectedPath}
-				onchange={choose}
-				class="max-w-md"
-			/>
-			{#each lists.unreadVolumes as sv (sv.path)}
-				<Alert variant="warning" title={$t('snapshots.volumesError', { pool: sv.pool })} class="mt-4">
-					{sv.volumes_error}
-					{$t('snapshots.volumesErrorHint')}
-				</Alert>
-			{/each}
-		</Card>
-	{:else if lists.subvolumesLoading}
+	{#each lists.unreadVolumes as sv (sv.path)}
+		<Alert variant="warning" size="sm" title={$t('snapshots.volumesError', { pool: sv.pool })}>
+			{sv.volumes_error}
+			{$t('snapshots.volumesErrorHint')}
+		</Alert>
+	{/each}
+
+	{#if lists.subvolumes.length === 0 && lists.subvolumesLoading}
 		<div class="space-y-6" aria-busy="true">
-			<Skeleton shape="card" count={2} />
-			<Skeleton shape="table" columns={4} count={3} />
+			<Skeleton shape="table" columns={3} count={3} />
+			<Skeleton shape="card" />
 		</div>
-	{:else if !lists.subvolumesError}
+	{:else if lists.subvolumes.length === 0 && !lists.subvolumesError}
 		<Card>
-			<p class="text-muted">
-				{$t('snapshots.noPool')}
-				<a href="/storage" class="link">{$t('snapshots.storagePage')}</a>.
-			</p>
+			<EmptyState compact icon={Archive} title={$t('snapshots.noPoolTitle')} description={$t('snapshots.noPool')}>
+				<a href="/storage" class="link text-sm">{$t('snapshots.storagePage')}</a>
+			</EmptyState>
 		</Card>
 	{/if}
 
@@ -141,23 +160,31 @@
 	{/if}
 
 	{#if lists.selected}
-		<Card>
-			<h2 class="section-title mb-4">
-				<Archive class="w-5 h-5 text-content-secondary" />
-				{$t('snapshots.of', { name: label(lists.selected) })}
-			</h2>
+		<Card flush>
+			<div class="card-header">
+				<div class="min-w-0">
+					<h2 class="section-title">
+						<Archive class="w-5 h-5 text-content-secondary" aria-hidden="true" />
+						{$t('snapshots.of', { name: label(lists.selected) })}
+					</h2>
+					<p class="card-description break-all">
+						{$t('snapshots.keptIn')} <span class="mono-xs">{lists.selected.path}/{SNAPSHOTS_FOLDER}</span>
+					</p>
+				</div>
+				<!-- Where they are taken on a schedule: the Scheduler's snapshot tasks, of pools only. -->
+				<a href="/system#scheduler" class="link text-[13px] whitespace-nowrap">{$t('snapshots.schedule')}</a>
+			</div>
 			{#if lists.snapshots.loading && lists.snapshots.shownPath !== lists.selectedPath}
-				<div aria-busy="true">
-					<Skeleton shape="row" columns={4} count={3} size="control" />
+				<div class="px-5 pb-5" aria-busy="true">
+					<Skeleton shape="row" columns={3} count={3} size="control" />
 				</div>
 			{:else if lists.snapshots.error}
-				<Alert variant="error" title={$t('snapshots.loadError')}>{lists.snapshots.error}</Alert>
+				<div class="px-5 pb-5">
+					<Alert variant="error" size="sm" title={$t('snapshots.loadError')}>{lists.snapshots.error}</Alert>
+				</div>
 			{:else if lists.snapshots.items.length === 0}
-				<EmptyState
-					icon={Archive}
-					title={$t('snapshots.empty')}
-					description={$t('snapshots.emptyHint')}
-				/>
+				<!-- Create snapshot is the header's: the empty state says where they come from. -->
+				<EmptyState compact icon={Archive} title={$t('snapshots.empty')} description={$t('snapshots.emptyHint')} />
 			{:else}
 				<SnapshotTable
 					rows={lists.snapshots.items}
@@ -166,33 +193,49 @@
 					{formatDate}
 				>
 					{#snippet actions(snap)}
-						<Button variant="ghost" size="icon-sm" onclick={() => (snapshotToRestore = snap)}>
-							<RotateCcw class="w-4 h-4" />
-							<span class="sr-only">{$t('snapshots.restoreOne', { name: snap.name })}</span>
+						<!-- Restore in words, so that its icon is never taken for Refresh; Delete an icon with
+						     its tooltip. -->
+						<Button
+							variant="secondary"
+							size="sm"
+							icon={RotateCcw}
+							aria-label={$t('snapshots.restoreOne', { name: snap.name })}
+							onclick={() => (snapshotToRestore = snap)}
+						>
+							{$t('snapshots.restoreAction')}
 						</Button>
-						<Button variant="ghost-danger" size="icon-sm" onclick={() => (snapshotToDelete = snap)}>
-							<Trash2 class="w-4 h-4" />
+						<Button
+							variant="ghost-danger"
+							size="icon-sm"
+							title={$t('snapshots.deleteOne', { name: snap.name })}
+							onclick={() => (snapshotToDelete = snap)}
+						>
+							<Trash2 class="w-4 h-4" aria-hidden="true" />
 							<span class="sr-only">{$t('snapshots.deleteOne', { name: snap.name })}</span>
 						</Button>
 					{/snippet}
 				</SnapshotTable>
 			{/if}
 		</Card>
-	{/if}
 
-	{#if lists.selected}
-		<Card>
-			<h2 class="section-title mb-2">
-				<Copy class="w-5 h-5 text-content-secondary" />
-				{$t('snapshots.copies.of', { name: label(lists.selected) })}
-			</h2>
-			<p class="text-sm text-secondary mb-4">{$t('snapshots.copies.hint')}</p>
+		<Card flush>
+			<div class="card-header">
+				<div class="min-w-0">
+					<h2 class="section-title">
+						<Copy class="w-5 h-5 text-content-secondary" aria-hidden="true" />
+						{$t('snapshots.copies.of', { name: label(lists.selected) })}
+					</h2>
+					<p class="card-description">{$t('snapshots.copies.hint')}</p>
+				</div>
+			</div>
 			{#if lists.copies.loading && lists.copies.shownPath !== lists.selectedPath}
-				<div aria-busy="true"><Skeleton count={2} /></div>
+				<div class="px-5 pb-5" aria-busy="true"><Skeleton count={2} /></div>
 			{:else if lists.copies.error}
-				<Alert variant="error" title={$t('snapshots.copies.loadError')}>{lists.copies.error}</Alert>
+				<div class="px-5 pb-5">
+					<Alert variant="error" size="sm" title={$t('snapshots.copies.loadError')}>{lists.copies.error}</Alert>
+				</div>
 			{:else if lists.copies.items.length === 0}
-				<p class="text-sm text-muted">{$t('snapshots.copies.empty')}</p>
+				<p class="px-5 pb-5 text-sm text-muted">{$t('snapshots.copies.empty')}</p>
 			{:else}
 				<SnapshotTable
 					rows={lists.copies.items}
@@ -201,8 +244,13 @@
 					{formatDate}
 				>
 					{#snippet actions(copy)}
-						<Button variant="ghost-danger" size="icon-sm" onclick={() => (copyToDelete = copy)}>
-							<Trash2 class="w-4 h-4" />
+						<Button
+							variant="ghost-danger"
+							size="icon-sm"
+							title={$t('snapshots.copies.deleteOne', { name: copy.name })}
+							onclick={() => (copyToDelete = copy)}
+						>
+							<Trash2 class="w-4 h-4" aria-hidden="true" />
 							<span class="sr-only">{$t('snapshots.copies.deleteOne', { name: copy.name })}</span>
 						</Button>
 					{/snippet}
@@ -210,26 +258,6 @@
 			{/if}
 		</Card>
 	{/if}
-
-	<!-- Sentences with a name, a path or a link inside are translated in parts around them, and a
-	     part that starts with punctuation follows its element without a space (ADR-0296). -->
-	<Card>
-		<h2 class="section-title mb-2">{$t('snapshots.about.title')}</h2>
-		<p class="text-sm text-secondary">
-			{$t('snapshots.about.kept')}
-			<span class="mono-xs">{SNAPSHOTS_FOLDER}</span>
-			{$t('snapshots.about.folder')}
-			{$t('snapshots.about.btrfs')}
-			{$t('snapshots.about.volumes')}
-			{$t('snapshots.about.restore')}
-			{$t('snapshots.about.scheduled')}
-			<span class="mono-xs">{AUTO_PREFIX}{$t('snapshots.dateTime')}</span>. {$t('snapshots.about.names')}
-			<span class="mono-xs">{SNAP_PREFIX}</span>,
-			<span class="mono-xs">{RESTORE_PREFIX}</span>
-			{$t('snapshots.about.and')}
-			<span class="mono-xs">{AUTO_PREFIX}</span>{$t('snapshots.about.utc')}
-		</p>
-	</Card>
 </div>
 
 <CreateSnapshotDialog

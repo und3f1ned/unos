@@ -93,6 +93,22 @@ manager, encrypted backup uploads, health checks, CI checks).
   page's, with the current one), and the command palette's General (System opens it), language
   and Logout entries. The dashboard's stats tiles and its host line link to Resource Monitor and
   General for administrators.
+- The data pages say only what is true and keep one primary action each (ADR-0434). The
+  dashboard's problems banner sits under its header and also lists the pools that are not healthy,
+  the disks to replace soon (with the server's reasons) and a failed check of them, each a link to
+  where it is dealt with; the header counts them ("3 issues") and says "No problems" only when there
+  are none, and "Live" replaces a time that ticked every 2 seconds. The Containers widget's counts
+  add up to the total (Other), with state badges and no play or stop icons; the Network tile names
+  Received and Sent. A pool card keeps Volumes and Scrub (Mount…) and puts Balance…, Add disk…,
+  Remove disk…, Unmount… and Remove pool… behind More; a disabled action says why; a running job's
+  progress and controls sit under the pool's name; what is wrong with a pool is one note; profiles
+  read "RAID 1 (2 copies)"; disks are Awake or Asleep with their idle timeout. Create pool lists
+  only usable disks and says what is missing, Remove pool is one step with its consequences, and
+  typed confirmations start empty. Snapshots and Trash fit a phone (names end in "…", dates to the
+  minute), Snapshots' picker is in the header and its About card is gone, Restore is a word. Files'
+  header has Upload as its primary and New folder in words, the selection's actions show only while
+  something is selected, Delete and Empty trash are no longer solid red, and Trash is in the sidebar
+  under Files. Titles and buttons of these pages are in sentence case, in English and Russian.
 - A pool on an NVMe drive of a SpacemiT K1 (Banana Pi BPI-F3) gets TRIM like every other pool:
   `mkfs.btrfs` and `btrfs device add` trim it, it is mounted without `nodiscard` and its fstab entry
   without `nodiscard,X-fstrim.notrim`, so the weekly `fstrim.timer` trims it, and Add Disk no longer
