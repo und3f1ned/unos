@@ -141,7 +141,7 @@
     <div class="relative">
       <span class="absolute right-0 top-0 text-[11px] leading-none text-content-muted tabular" aria-hidden="true" data-testid="chart-scale">{top}</span>
       <svg viewBox="0 0 100 40" preserveAspectRatio="none" class="h-16 w-full border-b border-l border-border {svgClass}" role="img" aria-label={chartName(metric)}>
-        <line x1="0" y1="0.5" x2="100" y2="0.5" class="text-border" stroke="currentColor" stroke-width="1" stroke-dasharray="2 2" vector-effect="non-scaling-stroke" />
+        <line x1="0" y1="0.5" x2="100" y2="0.5" class="stroke-border" stroke-width="1" stroke-dasharray="2 2" vector-effect="non-scaling-stroke" />
         {#each lines as line}
           <path class={line.cls} d={path(shown, line.value, max, start, range.seconds * 1000)} fill="none" stroke="currentColor" stroke-width="1.5" vector-effect="non-scaling-stroke" />
         {/each}
@@ -157,7 +157,7 @@
 <!-- A rate of a card: the swatch of its line, its name and its value, in plain text. -->
 {#snippet rate(swatch: string, name: string, value: string)}
   <p class="flex items-center gap-2 text-sm">
-    <span class="h-0.5 w-3 rounded-full {swatch}" aria-hidden="true"></span>
+    <span class="w-3 border-t-2 border-current {swatch}" aria-hidden="true"></span>
     <span class="text-content-secondary">{name}</span>
     <span class="font-semibold tabular">{value}</span>
   </p>
@@ -230,8 +230,8 @@
           <Network class="w-5 h-5 icon-network" />
           <h3 class="stat-card-label">{$t("monitor.network")}</h3>
         </div>
-        {@render rate("bg-brand", "↓", amount(currentStats.network.bytes_recv_rate, RATE_UNITS))}
-        {@render rate("bg-content-muted", "↑", amount(currentStats.network.bytes_sent_rate, RATE_UNITS))}
+        {@render rate("text-brand", "↓", amount(currentStats.network.bytes_recv_rate, RATE_UNITS))}
+        {@render rate("text-content-muted", "↑", amount(currentStats.network.bytes_sent_rate, RATE_UNITS))}
         {@render chart("monitor.network", "", networkMax, amount(networkMax, RATE_UNITS), [
           { cls: "text-brand", value: recvOf },
           { cls: "text-content-muted", value: sentOf }
@@ -244,8 +244,8 @@
           <HardDrive class="w-5 h-5 icon-storage" />
           <h3 class="stat-card-label">{$t("monitor.diskIo")}</h3>
         </div>
-        {@render rate("bg-brand", $t("monitor.read"), amount(currentStats.disk_io.read_rate, RATE_UNITS))}
-        {@render rate("bg-content-muted", $t("monitor.write"), amount(currentStats.disk_io.write_rate, RATE_UNITS))}
+        {@render rate("text-brand", $t("monitor.read"), amount(currentStats.disk_io.read_rate, RATE_UNITS))}
+        {@render rate("text-content-muted", $t("monitor.write"), amount(currentStats.disk_io.write_rate, RATE_UNITS))}
         {@render chart("monitor.diskIo", "", diskMax, amount(diskMax, RATE_UNITS), [
           { cls: "text-brand", value: readOf },
           { cls: "text-content-muted", value: writeOf }

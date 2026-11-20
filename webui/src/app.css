@@ -564,7 +564,7 @@
 	}
 
 	.switch-knob {
-		@apply pointer-events-none absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-content-secondary;
+		@apply pointer-events-none absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-border-strong;
 		transition: transform var(--dur-base) var(--ease), background-color var(--dur-fast);
 	}
 

@@ -67,14 +67,18 @@ test.describe('Times with their time zone', () => {
     // In UTC with its offset, though the database keeps it without one (SQLite's CURRENT_TIMESTAMP).
     expect(created).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|\+00:00)$/);
 
-    const shown = await page.evaluate((value) => new Date(value).toLocaleString('en-US'), created);
+    // The list shows the day, and the moment in the browser's zone as the cell's tooltip.
+    const shown = await page.evaluate(
+      (value) => new Date(value).toLocaleString('en-US', { dateStyle: 'long', timeStyle: 'short' }),
+      created,
+    );
     const asUtc = await page.evaluate(
-      (value) => new Date(value).toLocaleString('en-US', { timeZone: 'UTC' }),
+      (value) => new Date(value).toLocaleString('en-US', { dateStyle: 'long', timeStyle: 'short', timeZone: 'UTC' }),
       created,
     );
     expect(shown).not.toBe(asUtc); // 5:45 apart
     const row = page.getByRole('row').filter({ has: page.getByText(USER.username, { exact: true }) });
-    await expect(row).toContainText(shown);
+    await expect(row.locator('td.users-created')).toHaveAttribute('title', shown);
   });
 
   test('the answers of the API that the pages read carry their offset', async ({ authenticatedPage: page }) => {

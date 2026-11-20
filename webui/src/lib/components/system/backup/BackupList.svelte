@@ -47,7 +47,7 @@
                   <span class="min-w-0 break-all">{backup.filename}</span>
                 </span>
               </td>
-              <td data-label={$t("backup.column.created")} class="whitespace-nowrap">{formatDateTime(backup.created, $intlLocale)}</td>
+              <td data-label={$t("backup.column.created")} class="whitespace-nowrap">{formatDateTime(backup.created, $intlLocale, { dateStyle: "medium", timeStyle: "short" })}</td>
               <td data-label={$t("backup.column.size")} class="num">{formatBytes(backup.size, $intlLocale, sizeUnits)}</td>
               <td data-label={$t("backup.column.version")}>
                 <span class="inline-flex flex-wrap items-center gap-1.5">

@@ -6,7 +6,6 @@ import {
   fakeShare,
   fakeSmbApi,
   fakeUser,
-  notServedProblem,
   setPoolMounted,
   unmanagedPoolProblem,
 } from './shares-fakes';
@@ -1673,8 +1672,8 @@ test.describe('Pool disks (fake data)', () => {
 
 // Canned API data (storage-fakes.ts): these tests must never touch real disks.
 test.describe('Storage pools (fake data)', () => {
-  /** A share's card on the Shares page (shares.spec.ts), which has the markup of a pool's card. */
-  const shareCard = poolCard;
+  /** A share's card on the Shares page, as shares.spec.ts finds it. */
+  const shareCard = (page: Page, name: string) => page.locator(`[data-share="${name}"]`);
 
   test('shows pool health and mount state', async ({ authenticatedPage: page }) => {
     await fakeStorageApi(page);
@@ -1803,14 +1802,12 @@ test.describe('Storage pools (fake data)', () => {
     await expect(docs.locator('.badge', { hasText: /^Pool not mounted$/ })).toBeVisible();
     await expect(docs.getByText(unmanagedPoolProblem('e2e_data'), { exact: true })).toBeVisible();
     await expect(docs.getByText(/^Connect:/)).toHaveCount(0);
-    // alice keeps her access, but it does not count while the share is not served.
-    await expect(docs.locator('.line-through')).toHaveText(['alice']);
-    // The status names both shares of the pool, and lists no guest share.
-    await expect(alerts).toHaveCount(1);
-    await expect(alerts.locator('p')).toHaveText([
-      notServedProblem('docs', unmanagedPoolProblem('e2e_data')),
-      notServedProblem('public', unmanagedPoolProblem('e2e_data')),
-    ]);
+    // alice keeps her access, but it does not count while the share is not served: muted.
+    await expect(docs.locator('[data-inactive]')).toHaveText(['alice']);
+    // Each share of the pool says why on its own card, and only there (ADR-0435); the status above
+    // the shares repeats neither and lists no guest share.
+    await expect(shareCard(page, 'public').getByText(unmanagedPoolProblem('e2e_data'), { exact: true })).toBeVisible();
+    await expect(alerts).toHaveCount(0);
 
     await page.goto('/storage');
     await pool.getByRole('button', { name: 'Mount…', exact: true }).click();
@@ -1822,7 +1819,7 @@ test.describe('Storage pools (fake data)', () => {
     await page.goto('/shares');
     await expect(docs.getByText(/^Connect:/)).toBeVisible();
     await expect(docs.locator('.badge', { hasText: /^(Not served|Pool not mounted)$/ })).toHaveCount(0);
-    await expect(docs.locator('.line-through')).toHaveCount(0);
+    await expect(docs.locator('[data-inactive]')).toHaveCount(0);
     await expect(alerts).toHaveCount(1);
     await expect(alerts).toContainText(guestWarning);
     expect(writes).toEqual([
