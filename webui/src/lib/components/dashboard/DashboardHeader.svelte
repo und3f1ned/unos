@@ -66,8 +66,15 @@
 			<h1 class="page-title">{systemInfo?.hostname || $t('common.product')}</h1>
 		{/if}
 		{#if systemInfo && !pending}
+			<!-- A summary of System > General, which an administrator opens from it (ADR-0431). -->
 			<p class="page-subtitle">
-				{$t('dashboard.osUptime', { os: systemInfo.os, uptime: formatUptime(systemInfo.boot_time) })}
+				{#if $isAdmin}
+					<a href="/system#general" class="hover:underline">
+						{$t('dashboard.osUptime', { os: systemInfo.os, uptime: formatUptime(systemInfo.boot_time) })}
+					</a>
+				{:else}
+					{$t('dashboard.osUptime', { os: systemInfo.os, uptime: formatUptime(systemInfo.boot_time) })}
+				{/if}
 			</p>
 		{/if}
 	</div>

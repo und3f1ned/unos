@@ -17,7 +17,7 @@ test.describe('App Store', () => {
 
   test('should display installed apps tab', async ({ authenticatedPage: page }) => {
     await page.goto('/apps');
-    // The tab button; the page header ("N apps available, M installed") matches text=Installed too.
+    // The tab button, which counts the installed apps (ADR-0431).
     await expect(page.locator('button:has-text("Installed")')).toBeVisible();
   });
 

@@ -19,14 +19,13 @@
 
   let { browser, leftovers, units, onclosed }: Props = $props();
 
-  // The dialog's Cancel, which takes the keyboard focus: a removal cannot be undone.
+  // The dialog's Cancel, which takes the keyboard focus: a removal cannot be undone. Without
+  // scrolling: a dialog taller than the screen opens at its title (ADR-0302).
   let leftoversCancelSlot: HTMLSpanElement | null = null;
 
   export async function ask() {
     leftovers.ask();
     await tick();
-    // Without scrolling, as Modal focuses itself: a dialog taller than the window (long paths on a
-    // phone held sideways) opens at its top, its title shown, not scrolled down to Cancel.
     leftoversCancelSlot?.querySelector("button")?.focus({ preventScroll: true });
   }
 

@@ -97,7 +97,7 @@
 			</p>
 			<p class="text-sm text-content-secondary">{$t('twofactor.doneHint')}</p>
 			<div class="flex flex-wrap gap-3">
-				<Button href="/system#security">{$t('twofactor.recoveryCodes')}</Button>
+				<Button href="/account#security">{$t('twofactor.recoveryCodes')}</Button>
 				<Button variant="secondary" href="/">{$t('twofactor.continue')}</Button>
 			</div>
 		</Card>

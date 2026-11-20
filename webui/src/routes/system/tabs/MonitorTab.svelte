@@ -2,8 +2,8 @@
   import { messageOf } from "$lib/errors";
   import { onMount, untrack } from "svelte";
   import { get } from "svelte/store";
-  import { Cpu, MemoryStick, Network, HardDrive, Activity, Wifi, WifiOff } from "lucide-svelte";
-  import { Alert, Badge, Button, Card, Skeleton } from "$lib/components/ui";
+  import { Cpu, MemoryStick, Network, HardDrive, Activity } from "lucide-svelte";
+  import { Alert, Button, Card, Skeleton } from "$lib/components/ui";
   import { stats, wsConnected, wsForbidden, wsSettled, type WebSocketStats } from "$lib/stores/stats";
   import { getMonitorHistory } from "$lib/api/monitor";
   import {
@@ -149,7 +149,8 @@
   <div class="flex flex-wrap items-center justify-between gap-3">
     <h2 class="text-xl font-semibold">{$t("monitor.title")}</h2>
     <div class="flex flex-wrap items-center gap-3">
-      <!-- The ranges as a segmented control (ADR-0428). -->
+      <!-- The ranges as a segmented control (ADR-0428). Whether the charts are live is the
+           sidebar's connection line (ADR-0431). -->
       <div class="segmented" role="group" aria-label={$t("monitor.range")}>
         {#each RANGES as option (option.seconds)}
           <Button
@@ -162,19 +163,6 @@
           </Button>
         {/each}
       </div>
-      <Badge variant={$wsConnected ? "success" : $wsSettled ? "error" : "neutral"} class="flex items-center gap-1">
-        {#if $wsConnected}
-          <Wifi class="w-4 h-4" />
-          {$t("monitor.live")}
-        {:else if !$wsSettled}
-          <!-- The first attempt has not ended: connecting, not disconnected (ADR-0430). -->
-          <Wifi class="w-4 h-4" />
-          {$t("monitor.connecting")}
-        {:else}
-          <WifiOff class="w-4 h-4" />
-          {$t("monitor.disconnected")}
-        {/if}
-      </Badge>
     </div>
   </div>
 

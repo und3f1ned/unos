@@ -1,5 +1,6 @@
 import type { APIRequestContext, Locator, Page, WebSocketRoute } from '@playwright/test';
 import { E2E_ADMIN, test, expect } from './fixtures';
+import { createAccount, deleteAccount } from './accounts';
 import {
   FAKE_PATHS,
   GUEST_WARNING,
@@ -1360,7 +1361,7 @@ test.describe('SMB shares page (fake data)', () => {
     await expect(dialog.getByLabel('Comment')).toHaveCSS('opacity', '1');
   });
 
-  test('connection hints of a page opened by an IPv6 address', async ({ page, baseURL }) => {
+  test('connection hints of a page opened by an IPv6 address', async ({ page, baseURL, request }) => {
     // Needs the stand-in on this machine, reached as [::1].
     const base = new URL(baseURL ?? 'https://localhost');
     test.skip(!['localhost', '127.0.0.1'].includes(base.hostname), 'only for a stand-in on this machine');
@@ -1394,14 +1395,29 @@ test.describe('SMB shares page (fake data)', () => {
     await expect(shareCard(page, 'docs').getByText(/^Connect:/)).toHaveText(
       'Connect: \\\\--1.ipv6-literal.net\\docs · smb://[::1]/docs',
     );
-    await page.goto(`${origin}/system#security`);
-    const card = page.locator('.card').filter({ has: page.getByRole('heading', { name: 'Network file access (SMB)' }) });
-    await expect(card.getByRole('listitem').filter({ hasText: 'Windows:' })).toHaveText(
-      'Windows: \\\\--1.ipv6-literal.net\\docs',
-    );
-    await expect(card.getByRole('listitem').filter({ hasText: 'macOS:' })).toHaveText(
-      'macOS: Finder → Go → Connect to Server → smb://[::1]/docs',
-    );
+
+    // An account's own hints are on its File sharing tab, a regular account's (ADR-0117, ADR-0431):
+    // signed in again as one, made for this test.
+    const hintUser = { username: `e2e_hints_${Date.now().toString(36)}`, password: 'e2e-Hints-Password-1' };
+    const hintAccount = await createAccount(request, hintUser);
+    try {
+      await page.getByRole('button', { name: 'Logout' }).click();
+      await expect(page).toHaveURL(`${origin}/login`);
+      await page.fill('input[type="text"]', hintUser.username);
+      await page.fill('input[type="password"]', hintUser.password);
+      await page.click('button[type="submit"]');
+      await expect(page).toHaveURL(`${origin}/`);
+      await page.goto(`${origin}/account#sharing`);
+      const card = page.locator('.card').filter({ has: page.getByRole('heading', { name: 'Network file access (SMB)' }) });
+      await expect(card.getByRole('listitem').filter({ hasText: 'Windows:' })).toHaveText(
+        'Windows: \\\\--1.ipv6-literal.net\\docs',
+      );
+      await expect(card.getByRole('listitem').filter({ hasText: 'macOS:' })).toHaveText(
+        'macOS: Finder → Go → Connect to Server → smb://[::1]/docs',
+      );
+    } finally {
+      await deleteAccount(request, hintAccount, hintUser.username);
+    }
   });
 });
 

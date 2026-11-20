@@ -2,8 +2,8 @@ import type { Page } from '@playwright/test';
 import { test, expect } from './fixtures';
 import { fakePeer, fakeRemoteApi, NAMES_LOCAL, REMOTE_LOCAL, SERVER_KEY } from './remote-fakes';
 
-// System > Remote access (system.remote-access, ADR-0420): the WireGuard tunnel on the host and the
-// local names of apps. The stand-in and the compose test stack run their host commands on their own
+// System > Remote access (system.remote-access, ADR-0420): the WireGuard tunnel on the host; and the
+// local names of apps, which reach the LAN only, in System > Network (ADR-0431). The stand-in and the compose test stack run their host commands on their own
 // machine (UNOS_HOST_EXEC=local), so their routes refuse everything (the first test checks that answer
 // of the real supervisor); the other tests answer the cards' requests with the route fakes of
 // remote-fakes.ts, which keep the state as the server reports it.
@@ -22,6 +22,7 @@ test.describe('Remote access', () => {
     await page.goto('/system#remote');
     await expect(tunnelCard(page).getByText('Remote access could not be read')).toBeVisible();
     await expect(tunnelCard(page).getByText(REMOTE_LOCAL, { exact: true })).toBeVisible();
+    await page.goto('/system#network');
     await expect(namesCard(page).getByText(NAMES_LOCAL, { exact: true })).toBeVisible();
   });
 
@@ -178,7 +179,7 @@ test.describe('Local names for apps', () => {
     authenticatedPage: page,
   }) => {
     const fake = await fakeRemoteApi(page);
-    await page.goto('/system#remote');
+    await page.goto('/system#network');
     const card = namesCard(page);
     await expect(card.getByText('No app has a name yet.')).toBeVisible();
     await card.getByRole('button', { name: 'Add name' }).click();
@@ -199,7 +200,7 @@ test.describe('Local names for apps', () => {
 
   test("another app's label follows the choice of the app", async ({ authenticatedPage: page }) => {
     await fakeRemoteApi(page);
-    await page.goto('/system#remote');
+    await page.goto('/system#network');
     await namesCard(page).getByRole('button', { name: 'Add name' }).click();
     const dialog = page.getByRole('dialog', { name: 'Give an app a name' });
     await dialog.getByLabel('App').click();
@@ -209,7 +210,7 @@ test.describe('Local names for apps', () => {
 
   test("an app's other published port can get a name of its own", async ({ authenticatedPage: page }) => {
     const fake = await fakeRemoteApi(page);
-    await page.goto('/system#remote');
+    await page.goto('/system#network');
     const card = namesCard(page);
     await card.getByRole('button', { name: 'Add name' }).click();
     const dialog = page.getByRole('dialog', { name: 'Give an app a name' });
@@ -223,7 +224,7 @@ test.describe('Local names for apps', () => {
 
   test('without avahi-utils the card says to install it and offers no name', async ({ authenticatedPage: page }) => {
     await fakeRemoteApi(page, { announcer: false });
-    await page.goto('/system#remote');
+    await page.goto('/system#network');
     const card = namesCard(page);
     await expect(card.getByText(
       'avahi-utils is not installed on the host, which announces the names on the LAN. Install the package avahi-utils on the host (sudo apt install avahi-utils), then open this page again.',
@@ -237,7 +238,7 @@ test.describe('Local names for apps', () => {
     const fake = await fakeRemoteApi(page, {
       names: [{ label: 'jellyfin', app: 'jellyfin', port: 8096 }], address: '192.168.1.77', announced: '192.168.1.20',
     });
-    await page.goto('/system#remote');
+    await page.goto('/system#network');
     const card = namesCard(page);
     await expect(card.getByText(
       'avahi announces the names with 192.168.1.20, but the host has the address 192.168.1.77 now.',

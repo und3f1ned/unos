@@ -1,5 +1,6 @@
 ---
-status: accepted
+status: superseded
+superseded-by: ADR-0431
 date: 2026-11-07
 area: auth
 decided-by: agent
@@ -8,6 +9,8 @@ decided-by: agent
 # ADR-0238: Ten recovery codes each sign in once in place of a two-factor code, and end with two-factor authentication
 
 ## Context
+
+Superseded by ADR-0431: only in part, a refused code that went to the login history only: it is a `login_failed` warning in the audit log too, without the code; every other rule here stays in force.
 
 A user with two-factor authentication who lost the authenticator app could not sign in again: codes could be generated through the API, but the sign-in took none (ADR-0033 left the design open), and no administrator can reset two-factor authentication. A code that works twice, also when two sign-ins send it at the same moment, is a way around 2FA, and codes that outlive 2FA come back with its next setup. This settles the recovery codes of ADR-0033 for the entry `auth.recovery-codes`.
 

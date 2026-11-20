@@ -23,7 +23,6 @@ export const WIDGETS: WidgetDef[] = [
   { id: "temperature", nameKey: "dashboard.stats.temperature", adminOnly: false, size: "small" },
   { id: "storage", nameKey: "dashboard.storage.title", adminOnly: true, size: "wide" },
   { id: "containers", nameKey: "dashboard.containers.title", adminOnly: true, size: "wide" },
-  { id: "quick-actions", nameKey: "dashboard.actions.title", adminOnly: true, size: "wide" },
   { id: "recent-activity", nameKey: "dashboard.activity.title", adminOnly: true, size: "wide" },
 ];
 

@@ -53,7 +53,7 @@ async function expectRefused(request: APIRequestContext, code: string) {
 /** Go on in USER's session in the browser's session cookie (ADR-0397), then open the Account page. */
 async function openAccount(page: Page) {
   await useSessionCookie(page, userToken);
-  await page.goto('/system#security');
+  await page.goto('/account#security');
 }
 
 /** Sign in with the password: the code step of two-factor authentication follows. */
@@ -252,7 +252,7 @@ test.describe('Recovery codes', () => {
     await expect(page).toHaveURL('/');
     await expect(page.getByText(`Signed in as ${USER.username}`)).toBeVisible();
 
-    await page.goto('/system#security');
+    await page.goto('/account#security');
     const part = page.getByRole('region', { name: 'Recovery codes' });
     await expect(part.getByText('9 recovery codes left')).toBeVisible();
 
@@ -277,7 +277,7 @@ test.describe('Recovery codes', () => {
     await page.getByLabel('Recovery code').fill(codes[1].toLowerCase());
     await page.click('button[type="submit"]');
     await expect(page).toHaveURL('/');
-    await page.goto('/system#security');
+    await page.goto('/account#security');
     await expect(part.getByText('8 recovery codes left')).toBeVisible();
   });
 });
@@ -285,7 +285,7 @@ test.describe('Recovery codes', () => {
 test('without two-factor authentication the Account page offers no recovery codes', async ({
   authenticatedPage: page,
 }) => {
-  await page.goto('/system#security');
+  await page.goto('/account#security');
   const twoFactor = page.locator('div:has(> h3:has-text("Two-Factor Authentication"))');
   await expect(twoFactor.getByRole('button', { name: 'Enable', exact: true })).toBeVisible();
   await expect(page.getByRole('region', { name: 'Recovery codes' })).toHaveCount(0);

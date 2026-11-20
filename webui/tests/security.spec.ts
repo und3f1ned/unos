@@ -1,6 +1,9 @@
 import { test, expect } from './fixtures';
 import { browserSession } from './session';
 
+// The account's own sign-in settings (Account > Sign-in and security, /account#security) and the
+// NAS's (System > Security, /system#security), ADR-0431.
+
 // What the server answers for an error it did not handle; the page shows "Request failed".
 const SERVER_ERROR = { status: 500, contentType: 'text/plain', body: 'Internal Server Error' };
 
@@ -8,19 +11,19 @@ test.describe('Security Settings', () => {
   test('should navigate to security tab', async ({ authenticatedPage: page }) => {
     await page.goto('/system#security');
     await page.waitForTimeout(1000);
-    await expect(page.locator('text=Security Settings')).toBeVisible();
+    await expect(page.locator('text=Security of the NAS')).toBeVisible();
   });
 
   test('should display Two-Factor Authentication section', async ({ authenticatedPage: page }) => {
-    await page.goto('/system#security');
+    await page.goto('/account#security');
     await page.waitForTimeout(1000);
-    // The section heading, by its whole name: the SMB card below it mentions two-factor
-    // authentication too, and an administrator's card "Two-factor authentication for every account".
+    // The section heading, by its whole name: System > Security's card "Two-factor authentication
+    // for every account" has the words too.
     await expect(page.getByRole('heading', { name: 'Two-Factor Authentication', exact: true })).toBeVisible();
   });
 
   test('should display Change Password section', async ({ authenticatedPage: page }) => {
-    await page.goto('/system#security');
+    await page.goto('/account#security');
     await page.waitForTimeout(1000);
     // The section heading; its submit button says "Change Password" too.
     await expect(page.locator('h3:has-text("Change Password")')).toBeVisible();
@@ -40,7 +43,7 @@ test.describe('Security Settings', () => {
   });
 
   test('should display Login History section', async ({ authenticatedPage: page }) => {
-    await page.goto('/system#security');
+    await page.goto('/account#security');
     await page.waitForTimeout(1000);
     await expect(page.locator('text=Login History')).toBeVisible();
   });
@@ -62,14 +65,14 @@ test.describe('Security Settings', () => {
   });
 
   test('should have View History button for Login History', async ({ authenticatedPage: page }) => {
-    await page.goto('/system#security');
+    await page.goto('/account#security');
     await page.waitForTimeout(1000);
     const historySection = page.locator('div:has(h3:has-text("Login History"))');
     await expect(historySection.locator('button:has-text("View History")')).toBeVisible();
   });
 
   test('should show password fields for changing password', async ({ authenticatedPage: page }) => {
-    await page.goto('/system#security');
+    await page.goto('/account#security');
     await page.waitForTimeout(1000);
     await expect(page.locator('label:has-text("Current Password")')).toBeVisible();
     // Exact text: "Confirm New Password" contains "New Password".
@@ -79,7 +82,7 @@ test.describe('Security Settings', () => {
 
   // The labels name the masked inputs shown by default (and the unmasked ones).
   test('password inputs are reachable through their labels', async ({ authenticatedPage: page }) => {
-    await page.goto('/system#security');
+    await page.goto('/account#security');
     for (const label of ['Current Password', 'New Password', 'Confirm New Password']) {
       await expect(page.getByLabel(label, { exact: true })).toBeVisible();
     }
@@ -87,13 +90,13 @@ test.describe('Security Settings', () => {
   });
 
   test('should show change password button', async ({ authenticatedPage: page }) => {
-    await page.goto('/system#security');
+    await page.goto('/account#security');
     await page.waitForTimeout(1000);
     await expect(page.locator('button:has-text("Change Password")')).toBeVisible();
   });
 
   test('should toggle login history visibility', async ({ authenticatedPage: page }) => {
-    await page.goto('/system#security');
+    await page.goto('/account#security');
     const card = page.locator('div:has(> div > h3:has-text("Login History"))');
 
     await card.getByRole('button', { name: 'View History' }).click();
@@ -115,7 +118,7 @@ test.describe('Security Settings', () => {
       (url) => url.pathname === '/api/v1/security/login-history',
       (route) => (failing ? route.fulfill(SERVER_ERROR) : route.continue()),
     );
-    await page.goto('/system#security');
+    await page.goto('/account#security');
     const card = page.locator('div:has(> div > h3:has-text("Login History"))');
     await card.getByRole('button', { name: 'View History' }).click();
 
@@ -142,7 +145,7 @@ test.describe('Security Settings', () => {
       (url) => url.pathname === '/api/v1/auth/totp/status',
       (route) => (failing ? route.fulfill(SERVER_ERROR) : route.continue()),
     );
-    await page.goto('/system#security');
+    await page.goto('/account#security');
     const card = page.locator('div:has(> h3:has-text("Two-Factor Authentication"))');
 
     const alert = card.locator('.alert-error');
@@ -458,7 +461,7 @@ test.describe('Security Settings', () => {
   });
 
   test('should display 2FA enable button when disabled', async ({ authenticatedPage: page }) => {
-    await page.goto('/system#security');
+    await page.goto('/account#security');
     await page.waitForTimeout(1000);
 
     // 2FA section should have Enable or Disable button
@@ -471,7 +474,7 @@ test.describe('Security Settings', () => {
     page.on('request', (request) => {
       if (new URL(request.url()).pathname === '/api/v1/auth/change-password') sent.push(request.method());
     });
-    await page.goto('/system#security');
+    await page.goto('/account#security');
 
     // Only the current password: the form is not sent (change-password.spec.ts goes through
     // each field, and the change itself, with an account of its own).

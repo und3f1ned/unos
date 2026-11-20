@@ -47,7 +47,6 @@ export const FAKE_INTERFACES: readonly FakeInterface[] = [
 ];
 
 export const FAKE_DNS = { nameservers: ['192.168.1.1', '2001:db8:1::1'], search_domains: ['home.arpa', 'lan'] };
-export const FAKE_GATEWAY = { gateway: '192.168.1.1', interface: 'eth0' };
 export const FAKE_ROUTES = [
   { dst: 'default', gateway: '192.168.1.1', dev: 'eth0', protocol: 'dhcp', metric: 100, flags: [] },
   { dst: '192.168.1.0/24', dev: 'eth0', protocol: 'kernel', scope: 'link', prefsrc: '192.168.1.10', flags: [] },
@@ -218,6 +217,9 @@ export async function fakeNetworkApi(page: Page, options: FakeNetworkOptions = {
     (url) => url.pathname.startsWith('/api/v1/network/'),
     async (route) => {
       const request = route.request();
+      // The apps' local names, on the Network tab too (ADR-0431), are remote-fakes.ts's or the
+      // server's.
+      if (new URL(request.url()).pathname.startsWith('/api/v1/network/app-names')) return route.fallback();
       const method = request.method();
       const path = new URL(request.url()).pathname.slice('/api/v1/network'.length);
       if (method !== 'GET') writes.push({ method, path, body: request.postDataJSON() ?? undefined });
@@ -239,7 +241,6 @@ export async function fakeNetworkApi(page: Page, options: FakeNetworkOptions = {
           });
         }
         if (path === '/dns') return answer({ json: FAKE_DNS });
-        if (path === '/gateway') return answer({ json: FAKE_GATEWAY });
         if (path === '/routes') return answer({ json: { routes: FAKE_ROUTES } });
         if (path === '/connections') return answer({ json: { connections: options.connections ?? FAKE_CONNECTIONS } });
         if (path === '/virtual-interfaces') return answer({ json: virtualStatus() });

@@ -193,17 +193,6 @@
 		showDrawer = false;
 		selectedContainer = null;
 	}
-
-	async function handleDrawerAction() {
-		await loadData();
-		// Refresh selected container if it still exists
-		if (selectedContainer) {
-			const updated = containers.find((c) => c.id === selectedContainer?.id);
-			if (updated) {
-				selectedContainer = updated;
-			}
-		}
-	}
 </script>
 
 <div class="page-container">
@@ -259,8 +248,6 @@
 			running={runningCount}
 			stopped={stoppedCount}
 			total={containers.length}
-			filter={stateFilter}
-			onfilter={(state) => (stateFilter = state)}
 		/>
 
 		{#if error}
@@ -297,7 +284,6 @@
 			onopen={openDrawer}
 			onselect={(id, on) => selection.toggle(id, on)}
 			onaction={handleQuickAction}
-			oncreate={openCreateModal}
 			onclear={() => {
 				searchQuery = '';
 				stateFilter = '';
@@ -332,7 +318,5 @@
 <ContainerDetailDrawer
 	bind:open={showDrawer}
 	container={selectedContainer}
-	busy={bulk.running}
 	onclose={closeDrawer}
-	onaction={handleDrawerAction}
 />

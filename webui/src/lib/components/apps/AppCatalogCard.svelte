@@ -1,13 +1,13 @@
 <script lang="ts">
 	// An app of the App Store's catalog: its source, category and hardware, and, once installed,
-	// its state and address; a click (or Enter) opens its details, where it is installed.
-	import { Cpu, Download, ExternalLink } from 'lucide-svelte';
+	// its state; a click (or Enter) opens its details, where it is installed. Opening an installed
+	// app is its card's on the Installed tab (ADR-0431).
+	import { Cpu, Download } from 'lucide-svelte';
 	import { Badge, Button } from '$lib/components/ui';
 	import { allProfiles, missingHardware, type AppTemplate, type InstalledApp } from '$lib/api/apps';
 	import { t } from '$lib/i18n';
 	import AppCategory from './AppCategory.svelte';
-	import AppRunningDot from './AppRunningDot.svelte';
-	import { stateOf, webUrl } from './installed';
+	import { stateOf } from './installed';
 	import { sourceBadge } from './labels';
 
 	type Props = {
@@ -41,9 +41,6 @@
 		<div class="flex-1 min-w-0">
 			<div class="flex items-center gap-2 mb-0.5">
 				<h3 class="font-semibold truncate">{app.name}</h3>
-				{#if installedInfo}
-					<AppRunningDot running={installedInfo.status === 'running'} />
-				{/if}
 			</div>
 			<div class="flex flex-wrap items-center gap-2">
 				<Badge variant={source.variant} class="text-xs">{$t(source.key)}</Badge>
@@ -67,22 +64,7 @@
 	<div class="flex items-center justify-between pt-3 border-t border-border">
 		{#if installedInfo}
 			{@const state = stateOf(installedInfo)}
-			{@const href = webUrl(installedInfo)}
 			<Badge variant={state.variant}>{$t(state.key)}</Badge>
-			<div class="flex items-center gap-1">
-				{#if href && installedInfo.missing.length === 0}
-					<a
-						{href}
-						target="_blank"
-						rel="noopener"
-						onclick={(e) => e.stopPropagation()}
-						class="p-1.5 rounded hover:bg-surface-muted text-info transition-colors"
-						title={$t('apps.open')}
-					>
-						<ExternalLink class="w-4 h-4" />
-					</a>
-				{/if}
-			</div>
 		{:else if installing}
 			<span class="text-xs text-muted mono">{app.version || ''}</span>
 			<Badge variant="info">{$t('apps.job.state.running')}</Badge>

@@ -146,9 +146,17 @@ test.describe('Off-device copy', () => {
       await expect(section.getByText('This copy is on a disk it copies')).toBeVisible();
       await expect(section.getByText('Last copy: never')).toBeVisible();
 
-      // No task runs the copy yet: one is added for 03:00 every day.
+      // No task runs the copy yet: one is made in the Scheduler, the one place of tasks (ADR-0431),
+      // which the card links to.
       await expect(section.getByText('No scheduled task: copies run only on Run now')).toBeVisible();
-      await section.getByRole('button', { name: 'Add a daily copy at 03:00' }).click();
+      await section.getByRole('link', { name: 'Add a task of the type Off-device Copy in the Scheduler.' }).click();
+      await expect(page).toHaveURL(/\/system#scheduler$/);
+      await page.getByRole('button', { name: 'New Task', exact: true }).click();
+      await page.getByLabel('Task Name', { exact: true }).fill('Off-device copy');
+      await page.getByLabel('Task Type', { exact: true }).selectOption('offsite_copy');
+      await page.getByRole('button', { name: 'Create Task' }).click();
+      await expect(page.getByRole('heading', { name: 'Create Task' })).toHaveCount(0);
+      await page.locator('main nav').getByRole('button', { name: 'Backup & Restore' }).click();
       await expect(section.getByText(/A scheduled task copies: Off-device copy/)).toBeVisible();
 
       await section.getByRole('button', { name: 'Run now' }).click();

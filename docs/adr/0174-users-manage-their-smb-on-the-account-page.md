@@ -1,5 +1,6 @@
 ---
-status: accepted
+status: superseded
+superseded-by: ADR-0431
 date: 2026-11-06
 area: webui
 decided-by: agent
@@ -8,6 +9,8 @@ decided-by: agent
 # ADR-0174: Regular users manage their own SMB access on the Account page
 
 ## Context
+
+Superseded by ADR-0431: only in part, the card's place: the SMB card is the Account page's File sharing tab (`/account#sharing`), for regular accounts only; every other rule here stays in force.
 
 SMB is opt-in per user: an administrator allows it, and the account becomes active only when Samba gets the user's current password (ADR-0118). Turning it on oneself keeps the password with its user, so users need a place to turn their access on and off and to see which shares they can use. The card must also stay correct when two-factor authentication, the allowance or the password rules change while the page is open.
 

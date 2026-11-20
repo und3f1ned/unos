@@ -5,10 +5,10 @@
 	import { t } from '$lib/i18n';
 	import { wsConnected, wsForbidden, wsSettled } from '$lib/stores/stats';
 
-	// The foot of the sidebar: whether the live connection is up, who is signed in, and Logout. An
-	// administrator's own password, two-factor authentication and theme are in System > Security:
-	// the name is a link there, "Your account" (ADR-0428). It sits outside the navigation, whose
-	// links are the pages.
+	// The foot of the sidebar: whether the live connection is up, who is signed in, and Logout. For
+	// an administrator the name is the link to the Account page, "Your account" (ADR-0431); a
+	// regular account has that link in the navigation, so its name is no second one. It sits
+	// outside the navigation, whose links are the pages.
 
 	type Props = {
 		user: User | null;
@@ -71,7 +71,7 @@
 	<div class="flex items-center gap-1 px-3 pt-1 pb-3">
 		{#if user.is_admin}
 			<a
-				href="/system#security"
+				href="/account"
 				title={$t('layout.yourAccount')}
 				onclick={onnavigate}
 				class="relative flex-1 min-w-0 flex items-center gap-2.5 p-1.5 rounded hover:bg-surface-overlay"

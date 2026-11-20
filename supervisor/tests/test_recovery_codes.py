@@ -277,6 +277,18 @@ class TestSignIn:
                 assert form not in world.audit_file.read_text(), "a recovery code in the audit log"
                 assert form not in logged, "a recovery code in the log"
 
+    def test_a_refused_code_is_audited_as_a_failed_sign_in_without_the_code(self, world):
+        """As a wrong password is (ADR-0431): the audit log holds every refused second factor."""
+        world.set_totp("alice", SECRET)
+        wrong = a_code_not_in(generate(world))
+
+        login(world, "alice", ALICE_PW, recovery_code=wrong)
+
+        failed = [(e["username"], e["details"], e["severity"]) for e in world.audit() if e["action"] == "login_failed"]
+        assert failed == [("alice", INVALID, "warning")]
+        for form in (wrong, wrong.replace("-", "")):
+            assert form not in world.audit_file.read_text(), "a recovery code in the audit log"
+
     async def test_two_sign_ins_with_one_code_at_the_same_moment(self, world, monkeypatch):
         """Both requests read the codes before either uses one up: exactly one signs in."""
         world.set_totp("alice", SECRET)

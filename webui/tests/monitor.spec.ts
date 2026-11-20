@@ -121,7 +121,8 @@ test.describe('Resource Monitor', () => {
     await expect(page.locator('main [aria-busy="true"] [data-skeleton]').first()).toBeVisible();
     await expect(page.getByText('Waiting for WebSocket data...')).toHaveCount(0);
     await send();
-    await expect(page.getByText('Live', { exact: true })).toBeVisible();
+    // The connection's one place is the sidebar's line (ADR-0431).
+    await expect(page.locator('aside').getByText('Connected', { exact: true })).toBeVisible();
 
     await expect(card(page, 'CPU').getByText('12.5%', { exact: true })).toBeVisible();
     await expect(card(page, 'Memory').getByText('31.3%', { exact: true })).toBeVisible();
@@ -274,7 +275,8 @@ test.describe('Resource Monitor', () => {
     expect(body.interval_seconds).toBe(10);
     expect(Array.isArray(body.points)).toBe(true);
 
-    await expect(page.getByText('Live', { exact: true })).toBeVisible();
+    // The connection's one place is the sidebar's line (ADR-0431).
+    await expect(page.locator('aside').getByText('Connected', { exact: true })).toBeVisible();
     const rows = card(page, 'Top Processes').getByRole('row').filter({ has: page.getByRole('cell') });
     await expect(rows.first()).toBeVisible();
     expect(await rows.count()).toBeGreaterThan(0);
@@ -293,11 +295,12 @@ test.describe('Resource Monitor', () => {
     await expect(page.getByRole('heading', { name: 'Монитор ресурсов' })).toBeVisible();
     // Until the first stats come: connecting, and the cards are skeletons in their places (ADR-0430).
     await expect(page.locator('main [aria-busy="true"] [data-skeleton]').first()).toBeVisible();
-    await expect(page.getByText('Подключение…', { exact: true }).first()).toBeVisible();
+    // The connection's one place is the sidebar's line (ADR-0431).
+    await expect(page.locator('aside').getByText('Подключение…', { exact: true })).toBeVisible();
     await expect(page.getByText('Нет связи', { exact: true })).toHaveCount(0);
 
     await send();
-    await expect(page.getByText('Онлайн', { exact: true })).toBeVisible();
+    await expect(page.locator('aside').getByText('Подключено', { exact: true })).toBeVisible();
     const range = page.getByRole('group', { name: 'Период' });
     await expect(range.getByRole('button')).toHaveText(['5 мин', '15 мин', '1 час']);
     const cpu = card(page, 'Процессор');

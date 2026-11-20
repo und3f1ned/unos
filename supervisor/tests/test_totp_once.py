@@ -119,6 +119,21 @@ class TestLogin:
             reasons = [a.failure_reason for a in session.query(LoginAttempt).order_by(LoginAttempt.id)]
         assert reasons == [None, "Reused 2FA code"]
 
+    def test_a_wrong_or_reused_code_is_audited_as_a_failed_sign_in(self, world, clock):
+        """Every refused second factor is in the audit log, as a wrong password is: an administrator
+        sees an account whose password is known being probed there (ADR-0431). Without the code."""
+        world.set_totp("alice", SECRET)
+        code = clock.code()
+        wrong = f"{(int(code) + 1) % 1_000_000:06d}"
+        login(world, "alice", ALICE_PW, wrong)
+        login(world, "alice", ALICE_PW, code)
+        login(world, "alice", ALICE_PW, code)
+
+        failed = [(e["username"], e["details"], e["severity"], e["success"])
+                  for e in world.audit() if e["action"] == "login_failed"]
+        assert failed == [("alice", "Invalid 2FA code", "warning", False), ("alice", "Reused 2FA code", "warning", False)]
+        assert wrong not in world.audit_file.read_text()
+
 
 class TestSmbSelfActivation:
     def test_the_code_of_the_login_does_not_turn_smb_on(self, world, clock):

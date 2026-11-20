@@ -249,6 +249,5 @@
 		bind:this={commandPalette}
 		enabled={paletteEnabled}
 		admin={$user?.is_admin === true}
-		onlogout={handleLogout}
 	/>
 {/if}

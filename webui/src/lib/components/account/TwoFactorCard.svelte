@@ -1,8 +1,8 @@
 <script lang="ts">
   import { toDataURL } from "qrcode";
   import { CheckCircle, Smartphone } from "lucide-svelte";
-  import RecoveryCodes from "$lib/components/account/RecoveryCodes.svelte";
-  import SecurityKeys from "$lib/components/account/SecurityKeys.svelte";
+  import RecoveryCodes from "./RecoveryCodes.svelte";
+  import SecurityKeys from "./SecurityKeys.svelte";
   import { setupTOTP } from "$lib/api/auth";
   import { Alert, Button, Skeleton } from "$lib/components/ui";
   import { t } from "$lib/i18n";

@@ -18,9 +18,19 @@ API and WebSocket calls to the supervisor (ADR-0002, ADR-0025). Avoid: frontend 
 (the Dashboard is one page).
 
 **Widget**: One card or section of the Dashboard that a user can move, hide and show: the CPU,
-Memory, Network, Disk I/O and Temperature cards and, for administrators, Storage Pools, Containers,
-Quick Actions and Recent Activity. Its order and hidden state are the user's dashboard layout, kept
+Memory, Network, Disk I/O and Temperature cards and, for administrators, Storage Pools, Containers
+and Recent Activity. Its order and hidden state are the user's dashboard layout, kept
 per user on the server (ADR-0395). Avoid: tile, panel.
+
+**Account page**: The page `/account` of every signed-in account's own settings, in three tabs:
+Sign-in and security (password, two-factor authentication, API tokens, own login history), File
+sharing (own SMB access, regular accounts only) and Appearance and language (theme, language).
+What applies to the whole NAS is in System, for administrators (ADR-0431). Avoid: Security
+Settings, System > Security (for an account's own settings), settings page.
+
+**One place**: The rule that a setting, an action or a fact of the web UI is shown and changed in
+one place of the navigation; the Dashboard may summarize a fact and link to its place, and the
+command palette is an index that opens places (ADR-0431). Avoid: shortcut, duplicate.
 
 **Theme**: The colours of the web UI, dark or light: the values that the colour tokens take. Each
 user chooses Dark, Light or System (the device's light or dark setting) on the Account page, and the
@@ -32,9 +42,9 @@ Account page; the server's messages stay English (ADR-0287). Avoid: dictionary, 
 
 **Command palette**: The dialog that Ctrl+K (Cmd+K on macOS), the sidebar's Search button from
 the md breakpoint, or the search button of a phone's header bar, opens over a signed-in page:
-typing narrows the pages and actions of the user's role, and Enter opens the chosen one. It runs
-only the actions that change nothing on the NAS; the others open their page's own dialog
-(ADR-0393). Avoid: quick switcher, command bar, search.
+typing narrows the pages, tabs and actions of the user's role, and Enter opens the chosen one. It
+changes nothing itself: an action opens its page's own dialog (ADR-0393, ADR-0431). Avoid: quick
+switcher, command bar, search.
 
 **Boot screen**: What the web UI shows from the first frame until it knows the account and the
 page has drawn itself or its skeleton: the logo on the page's background, in the user's theme, and

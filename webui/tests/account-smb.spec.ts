@@ -1,9 +1,12 @@
 import type { APIRequestContext, Page } from '@playwright/test';
 import { E2E_ADMIN, test, expect } from './fixtures';
 import { ADMIN_REASON, COMMON_PASSWORD_RULE, fakeSmbApi, smbStatus, type FakeMySmb } from './shares-fakes';
-import { signInPage } from './session';
+import { signInPage, useSessionCookie } from './session';
+import { apiLogin as accountLogin, createAccount, deleteAccount, type Account } from './accounts';
 
-// The "Network file access (SMB)" card of the Account page (System → Security).
+// The "Network file access (SMB)" card of the Account page (Account → File sharing, ADR-0431). The
+// tab is a regular account's: an administrator never has SMB (ADR-0117). The canned answers' tests
+// sign in as a regular account made for this file through the API.
 
 const smbCard = (page: Page) =>
   page.locator('.card').filter({ has: page.getByRole('heading', { name: 'Network file access (SMB)' }) });
@@ -25,14 +28,32 @@ function mySmb(state: 'active' | 'password_needed' | 'off' | 'unavailable', extr
   };
 }
 
-async function openAccount(page: Page) {
-  await page.goto('/system#security');
-  await expect(page.locator('h2:has-text("Security Settings")')).toBeVisible();
+// The regular account of the canned answers' tests.
+const FAKE_USER = { username: `e2e_smbcard_${Date.now().toString(36)}`, password: 'e2e-Card-Password-1' };
+let fakeUserToken = '';
+
+async function openAccount(page: Page, tab: 'sharing' | 'security' = 'sharing') {
+  if (fakeUserToken) await useSessionCookie(page, fakeUserToken);
+  await page.goto(`/account#${tab}`);
+  const heading = tab === 'sharing' ? 'File sharing' : 'Sign-in and security';
+  await expect(page.getByRole('heading', { level: 2, name: heading })).toBeVisible();
 }
 
 // ---- Canned API answers (shares-fakes.ts): no SMB account is changed ----
 
 test.describe('Account SMB card (fake data)', () => {
+  let created: Account | undefined;
+
+  test.beforeAll(async ({ request }) => {
+    created = await createAccount(request, FAKE_USER);
+    fakeUserToken = await accountLogin(request, FAKE_USER);
+  });
+
+  test.afterAll(async ({ request }) => {
+    fakeUserToken = '';
+    await deleteAccount(request, created, FAKE_USER.username);
+  });
+
   test('without SMB for the account: the reason, or how to get it, and its guest shares', async ({
     authenticatedPage: page,
   }) => {
@@ -209,11 +230,11 @@ test.describe('Account SMB card (fake data)', () => {
     });
   });
 
-  test('two-factor authentication turned off above: the code is no longer asked for', async ({
+  test('two-factor authentication turned off on Sign-in and security: the code is no longer asked for', async ({
     authenticatedPage: page,
   }) => {
     const fake = await fakeSmbApi(page, { mySmb: mySmb('password_needed', { totp_required: true }) });
-    // The 2FA card above, with canned answers.
+    // The 2FA card of Sign-in and security, with canned answers.
     await page.route('**/api/v1/auth/totp/status', (route) => route.fulfill({ status: 200, json: { enabled: true } }));
     await page.route('**/api/v1/auth/totp/disable', (route) => {
       fake.mySmb.totp_required = false;
@@ -223,11 +244,13 @@ test.describe('Account SMB card (fake data)', () => {
     const card = smbCard(page);
     await expect(card.getByLabel('Two-factor code')).toBeVisible();
 
+    await page.locator('main nav').getByRole('button', { name: 'Sign-in and security' }).click();
     await page.getByRole('button', { name: 'Disable', exact: true }).click();
     await page.fill('#disableCode', '123456');
     await page.getByRole('button', { name: 'Disable 2FA' }).click();
     await expect(page.getByText('Two-Factor Authentication disabled')).toBeVisible();
 
+    await page.locator('main nav').getByRole('button', { name: 'File sharing' }).click();
     await expect(card.getByLabel('Two-factor code')).toHaveCount(0);
     await card.getByLabel('Password', { exact: true }).fill(fake.myPassword);
     await card.getByRole('button', { name: 'Turn on SMB' }).click();
@@ -256,7 +279,7 @@ test.describe('Account SMB card (fake data)', () => {
     await expect(card.getByRole('button', { name: 'Turn on SMB' })).toHaveCount(0);
   });
 
-  test('a password that SMB cannot use: the card says to change it above', async ({ authenticatedPage: page }) => {
+  test('a password that SMB cannot use: the card says where to change it', async ({ authenticatedPage: page }) => {
     // E.g. a 6-character password from before the SMB rules.
     const fake = await fakeSmbApi(page, { mySmb: mySmb('password_needed') });
     fake.intercept = ({ path }) =>
@@ -271,13 +294,13 @@ test.describe('Account SMB card (fake data)', () => {
     const refused = card.locator('.alert', { hasText: 'SMB was not turned on' });
     await expect(refused).toContainText('SMB passwords must have at least 8 characters');
     await expect(refused).toContainText(
-      'Change your password above (Change Password) so that it meets this rule, then turn SMB on.',
+      'Change your password under Sign-in and security (Change Password) so that it meets this rule, then turn SMB on.',
     );
     // Other refusals have no such hint.
     fake.intercept = null;
     await card.getByRole('button', { name: 'Turn on SMB' }).click();
     await expect(refused).toContainText('Current password is incorrect');
-    await expect(refused).not.toContainText('Change your password above');
+    await expect(refused).not.toContainText('Change your password under');
   });
 
   test("the server's reasons for not turning SMB on are shown", async ({ authenticatedPage: page }) => {
@@ -305,6 +328,34 @@ test.describe('Account SMB card (fake data)', () => {
     await expect(card.getByRole('button', { name: 'Turn on SMB' })).toBeVisible();
     expect(answers).toEqual([]);
   });
+
+  test('with SMB on, a common password is refused with the reason and nothing changes', async ({
+    authenticatedPage: page,
+  }) => {
+    // The server refuses a password of its list of common passwords for an account with SMB
+    // (ADR-0279), and its answer does not carry the password.
+    await fakeSmbApi(page, { mySmb: mySmb('active') });
+    const sent: unknown[] = [];
+    await page.route('**/api/v1/auth/change-password', (route) => {
+      sent.push(route.request().postDataJSON());
+      return route.fulfill({ status: 400, json: { detail: COMMON_PASSWORD_RULE } });
+    });
+    // A regular account's, whose SMB is on File sharing (ADR-0431); the password is Sign-in and
+    // security's.
+    await openAccount(page, 'sharing');
+    await expect(smbCard(page).getByText('Active', { exact: true })).toBeVisible();
+    await page.locator('main nav').getByRole('button', { name: 'Sign-in and security' }).click();
+
+    await page.fill('#currentPassword', E2E_ADMIN.password);
+    await page.fill('#newPassword', 'Iloveyou1');
+    await page.fill('#confirmPassword', 'Iloveyou1');
+    await page.getByRole('button', { name: 'Change Password' }).click();
+    await expect(page.getByText(COMMON_PASSWORD_RULE)).toBeVisible();
+    await expect(page.getByText('Password changed successfully')).toHaveCount(0);
+    // The form keeps what was typed, so that a better password can be entered.
+    await expect(page.locator('#newPassword')).toHaveValue('Iloveyou1');
+    expect(sent).toEqual([{ current_password: E2E_ADMIN.password, new_password: 'Iloveyou1' }]);
+  });
 });
 
 test.describe('Change Password (fake answer)', () => {
@@ -319,7 +370,7 @@ test.describe('Change Password (fake answer)', () => {
         json: { status: 'ok', message: 'Password changed successfully', warnings: [warning] },
       });
     });
-    await openAccount(page);
+    await openAccount(page, 'security');
 
     await page.fill('#currentPassword', E2E_ADMIN.password);
     await page.fill('#newPassword', 'e2e-Changed-Password-1');
@@ -335,30 +386,6 @@ test.describe('Change Password (fake answer)', () => {
     await expect(shown).toHaveCount(0);
   });
 
-  test('with SMB on, a common password is refused with the reason and nothing changes', async ({
-    authenticatedPage: page,
-  }) => {
-    // The server refuses a password of its list of common passwords for an account with SMB
-    // (ADR-0279), and its answer does not carry the password.
-    await fakeSmbApi(page, { mySmb: mySmb('active') });
-    const sent: unknown[] = [];
-    await page.route('**/api/v1/auth/change-password', (route) => {
-      sent.push(route.request().postDataJSON());
-      return route.fulfill({ status: 400, json: { detail: COMMON_PASSWORD_RULE } });
-    });
-    await openAccount(page);
-    await expect(smbCard(page).getByText('Active', { exact: true })).toBeVisible();
-
-    await page.fill('#currentPassword', E2E_ADMIN.password);
-    await page.fill('#newPassword', 'Iloveyou1');
-    await page.fill('#confirmPassword', 'Iloveyou1');
-    await page.getByRole('button', { name: 'Change Password' }).click();
-    await expect(page.getByText(COMMON_PASSWORD_RULE)).toBeVisible();
-    await expect(page.getByText('Password changed successfully')).toHaveCount(0);
-    // The form keeps what was typed, so that a better password can be entered.
-    await expect(page.locator('#newPassword')).toHaveValue('Iloveyou1');
-    expect(sent).toEqual([{ current_password: E2E_ADMIN.password, new_password: 'Iloveyou1' }]);
-  });
 });
 
 // ---- Turning SMB on where E2E_STAND_IN=1: the stand-in or the compose test stack, which have no Samba ----
@@ -455,7 +482,7 @@ test.describe('A common password on the Account page (stand-in)', () => {
     const refused = card.locator('.alert', { hasText: 'SMB was not turned on' });
     await expect(refused).toContainText(COMMON_PASSWORD_RULE);
     await expect(refused).toContainText(
-      'Change your password above (Change Password) so that it meets this rule, then turn SMB on.',
+      'Change your password under Sign-in and security (Change Password) so that it meets this rule, then turn SMB on.',
     );
     // SMB stays off until the user has another password.
     await expect(card.getByRole('button', { name: 'Turn on SMB' })).toBeVisible();

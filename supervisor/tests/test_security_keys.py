@@ -767,6 +767,7 @@ class TestSignIn:
 
         assert (replay.status_code, replay.json()["detail"]) == (401, EXPIRED)
         assert attempts(alice)[-1] == ("alice", False, "Expired security key request")
+        assert entries(alice, "login_failed") == [("alice", "Expired security key request", "warning")]
 
     def test_a_challenge_expires_after_two_minutes(self, alice, ticks):
         key = SoftKey()
@@ -896,6 +897,8 @@ class TestSignIn:
         assert (response.status_code, response.json()["detail"]) == (401, INVALID)
         assert attempts(alice)[-1] == ("alice", False, "Invalid security key")
         assert entries(alice, "login_success") == []
+        # Every refused second factor is audited, as a wrong password is (ADR-0431).
+        assert entries(alice, "login_failed") == [("alice", "Invalid security key", "warning")]
 
     def test_the_origin_and_the_rp_id_are_the_keys_own(self, alice):
         key = SoftKey()

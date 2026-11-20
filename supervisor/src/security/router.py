@@ -64,18 +64,19 @@ MAX_HISTORY_DAYS = 36500
 
 # ==================== Login History ====================
 
-def _visible_attempts(current_user: User, username: str | None) -> list:
+def _visible_attempts(current_user: User, username: str | None, mine: bool = False) -> list:
     """The conditions that pick the login attempts ``current_user`` may see.
 
-    Administrators see every attempt, or those with ``username``. The history is kept by
-    name, also for names without an account, so a regular user sees the attempts on their
-    name since their account was created (ADR-0263) and since a rename last gave them the
-    name (usernames_taken, ADR-0368): not those of a deleted or renamed account whose name
-    was given to them. The times are SQLite's CURRENT_TIMESTAMP, text to the second;
-    datetime() compares them so, and a sign-in in the second of the account's creation is
-    the account's (a time bound from Python has microseconds and, as text, comes later).
+    Administrators see every attempt, or those with ``username``; with ``mine``, their own, as a
+    regular user always does (the Account page, ADR-0431). The history is kept by name, also for
+    names without an account, so the own attempts are those on the account's name since the
+    account was created (ADR-0263) and since a rename last gave it the name (usernames_taken,
+    ADR-0368): not those of a deleted or renamed account whose name was given to it. The times
+    are SQLite's CURRENT_TIMESTAMP, text to the second; datetime() compares them so, and a
+    sign-in in the second of the account's creation is the account's (a time bound from Python
+    has microseconds and, as text, comes later).
     """
-    if current_user.is_admin:
+    if current_user.is_admin and not mine:
         return [LoginAttempt.username == username] if username else []
     since = func.datetime(current_user.created_at)
     taken = (
@@ -103,16 +104,20 @@ async def get_login_history(
     success: Annotated[
         bool | None, Query(description="Only the attempts that signed in (true) or that failed (false).")
     ] = None,
+    mine: Annotated[
+        bool, Query(description="Only the caller's own attempts, as a regular user always gets them; then "
+                                "username is ignored.")
+    ] = False,
     current_user: User = Depends(verify_token),
     db: AsyncSession = Depends(get_db)
 ):
     """The sign-in attempts, newest first, with the counts of those the caller may see. Any
     signed-in user: a regular user gets the attempts on their own username since their account
-    has had it, an administrator everyone's, or one username's.
+    has had it, an administrator everyone's, or one username's, or with mine their own.
     \f
-    _visible_attempts: ADR-0263, ADR-0368.
+    _visible_attempts: ADR-0263, ADR-0368, ADR-0431.
     """
-    visible = _visible_attempts(current_user, username)
+    visible = _visible_attempts(current_user, username, mine)
     query = select(LoginAttempt).where(*visible)
 
     if success is not None:

@@ -6,7 +6,7 @@ import { apiLogin } from './accounts';
 
 // Regular (non-administrator) accounts. Every API except live stats and the
 // account's own settings is administrator-only, so the UI offers them only the
-// dashboard and the Security tab. Also: a tab follows logouts and logins in
+// dashboard and the Account page (ADR-0431). Also: a tab follows logouts and logins in
 // other tabs. The account is created through the API for this file and
 // deleted afterwards.
 
@@ -15,7 +15,7 @@ const REGULAR = {
   password: 'e2e-Regular-Password-1',
 };
 const ADMIN_ONLY_PAGES = [
-  '/storage', '/snapshots', '/shares', '/files', '/files/trash', '/containers', '/apps', '/users', '/audit',
+  '/storage', '/snapshots', '/shares', '/files', '/files/trash', '/containers', '/apps', '/users', '/audit', '/system',
 ];
 
 let adminToken = '';
@@ -95,7 +95,7 @@ test.describe('Regular user account', () => {
     const links = page.locator('aside nav a');
     await expect(links).toHaveCount(2);
     await expect(links.nth(0)).toHaveAttribute('href', '/');
-    await expect(links.nth(1)).toHaveAttribute('href', '/system#security');
+    await expect(links.nth(1)).toHaveAttribute('href', '/account');
     await expect(links.nth(1)).toHaveText(/Account/);
     await expect(page.locator('aside').getByText('User', { exact: true })).toBeVisible();
     // No storage, container or notification widgets (and no calls for them).
@@ -179,8 +179,8 @@ test.describe('Regular user account', () => {
 
   test('a logout in another tab ends the session in this one', async ({ page, context, request }) => {
     // A session of its own: the Logout ends it on the server, and the other tests go on in userToken's.
-    await openAs(page, await apiLogin(request, REGULAR), '/system#security');
-    await expect(page.locator('h2:has-text("Security Settings")')).toBeVisible();
+    await openAs(page, await apiLogin(request, REGULAR), '/account');
+    await expect(page.locator('h2:has-text("Sign-in and security")')).toBeVisible();
 
     // The other tab shares the session cookie.
     const other = await context.newPage();
@@ -224,22 +224,29 @@ test.describe('Regular user account', () => {
     await other.close();
   });
 
-  test('the system page shows only the Security tab', async ({ page }) => {
+  test('the system page is not a regular account\'s: its own settings are on the Account page', async ({ page }) => {
     const forbidden = recordForbidden(page);
-    // An administrator tab in the URL falls back to Security.
+    // System is the NAS's (ADR-0431): an administrator tab in the URL leads to the dashboard.
     await openAs(page, userToken, '/system#logs');
-
-    await expect(page.locator('h2:has-text("Security Settings")')).toBeVisible();
-    const tabs = page.locator('main nav').getByRole('button');
-    await expect(tabs).toHaveCount(1);
-    await expect(tabs).toHaveText('Security');
+    await expect(page).toHaveURL('/');
     await expect(page.locator('h2:has-text("System Logs")')).toHaveCount(0);
+
+    await page.goto('/account');
+    await expect(page.locator('h2:has-text("Sign-in and security")')).toBeVisible();
+    const tabs = page.locator('main nav').getByRole('button');
+    await expect(tabs).toHaveText(['Sign-in and security', 'File sharing', 'Appearance and language']);
     // Firewall and certificates are administrator-only; 2FA, password and
     // login history are the account's own.
     await expect(page.locator('h3:has-text("Two-Factor Authentication")')).toBeVisible();
     await expect(page.locator('h3:has-text("Login History")')).toBeVisible();
     await expect(page.locator('h3:has-text("Firewall")')).toHaveCount(0);
     await expect(page.locator('h3:has-text("SSL/TLS Certificates")')).toHaveCount(0);
+    // The other tabs ask the API nothing a regular account may not have either.
+    await tabs.getByText('File sharing', { exact: true }).click();
+    await expect(page.locator('h3:has-text("Network file access (SMB)")')).toBeVisible();
+    await tabs.getByText('Appearance and language', { exact: true }).click();
+    await expect(page.getByRole('group', { name: 'Colour theme' })).toBeVisible();
+    await page.waitForLoadState('networkidle');
     expect(forbidden).toEqual([]);
   });
 
@@ -248,7 +255,7 @@ test.describe('Regular user account', () => {
     const forbidden = recordForbidden(page);
     await openAs(page, userToken, '/system#scheduler');
 
-    await expect(page.locator('h2:has-text("Security Settings")')).toBeVisible();
+    await expect(page).toHaveURL('/');
     await expect(page.getByRole('heading', { name: 'Scheduled Tasks' })).toHaveCount(0);
     await expect(page.getByRole('button', { name: 'New Task' })).toHaveCount(0);
     expect(forbidden).toEqual([]);
@@ -276,7 +283,7 @@ test.describe('Regular user account', () => {
         foreign.push(request.url());
       }
     });
-    await openAs(page, userToken, '/system#security');
+    await openAs(page, userToken, '/account#security');
 
     const twoFactor = page.locator('div:has(> h3:has-text("Two-Factor Authentication"))');
     await twoFactor.getByRole('button', { name: 'Enable', exact: true }).click();

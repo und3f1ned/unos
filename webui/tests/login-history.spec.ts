@@ -4,7 +4,7 @@ import { test, expect, E2E_ADMIN } from './fixtures';
 import { createAccount, deleteAccount, type Account } from './accounts';
 import type { APIRequestContext, Locator, Page } from '@playwright/test';
 
-// A user sees the recent sign-ins of their account under System > Security > Login History
+// A user sees the recent sign-ins of their account under Account > Sign-in and security > Login History
 // (feature auth.login-history, ADR-0048, ADR-0262), against the real supervisor: no route
 // fakes. A regular account is created for this file through the API and deleted afterwards.
 // The browser runs in a time zone far from UTC, where a time read without its offset is hours
@@ -116,7 +116,7 @@ test.describe('Login History', () => {
     await expect(page).toHaveURL('/');
     const signedInTo = Date.now();
 
-    await page.goto('/system#security');
+    await page.goto('/account#security');
     const card = page.locator('div:has(> div > h3:has-text("Login History"))');
     await card.getByRole('button', { name: 'View History' }).click();
     await expect(card.locator('[aria-busy="true"]')).toHaveCount(0);

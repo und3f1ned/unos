@@ -127,7 +127,11 @@
 		</div>
 
 		{#if !ownTwoFactor}
-			<Alert variant="info" class="mt-4">{$t('twofactor.requirement.ownFirst')}</Alert>
+			<!-- The account's own two-factor authentication is on the Account page (ADR-0431). -->
+			<Alert variant="info" class="mt-4">
+				<p>{$t('twofactor.requirement.ownFirst')}</p>
+				<p class="mt-2"><a href="/account#security" class="link">{$t('account.tabs.security')}</a></p>
+			</Alert>
 		{:else}
 			<form
 				class="mt-4 flex flex-wrap items-end gap-3"

@@ -21,7 +21,7 @@
     type OffsiteSnapshot,
     type OffsiteStatus,
   } from "$lib/api/offsite";
-  import { createTask, getTasks, type ScheduledTask } from "$lib/api/scheduler";
+  import { getTasks, type ScheduledTask } from "$lib/api/scheduler";
   import { Alert, Card, Skeleton } from "$lib/components/ui";
   import { OffsiteForm } from "$lib/components/system/offsite/form.svelte";
   import { restorePoolsOf } from "$lib/components/system/offsite/offsite";
@@ -59,7 +59,6 @@
   let makingKey = $state(false);
   let saving = $state(false);
   let starting = $state(false);
-  let addingTask = $state(false);
   let restoring = $state<string | null>(null);
   // The snapshot whose Restore files form is open, with its pool and folder.
   let filesOf = $state<string | null>(null);
@@ -186,25 +185,6 @@
     starting = false;
   }
 
-  async function addDailyTask() {
-    addingTask = true;
-    error = null;
-    try {
-      await createTask({
-        name: $t("offsite.task.name"),
-        task_type: "offsite_copy",
-        enabled: true,
-        frequency: "daily",
-        hour: 3,
-        minute: 0,
-      });
-      await loadTasks();
-    } catch (e) {
-      showError($t("offsite.task.addFailed"), e);
-    }
-    addingTask = false;
-  }
-
   async function restoreConfiguration(snapshot: OffsiteSnapshot) {
     restoring = snapshot.id;
     error = null;
@@ -280,10 +260,8 @@
           {tasks}
           {sizeUnits}
           {starting}
-          {addingTask}
           onrefresh={refresh}
           onrunnow={runNow}
-          onaddtask={addDailyTask}
         />
 
         <!-- The snapshots, with their restores. -->

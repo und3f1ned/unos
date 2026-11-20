@@ -57,7 +57,7 @@ async function openAccount(page: Page, base?: string) {
     ]);
     await page.evaluate(({ store, value }) => sessionStorage.setItem(store, value), { store: SESSION_KEY_STORE, value: userKey });
   }
-  await page.goto(`${base ?? ''}/system#security`);
+  await page.goto(`${base ?? ''}/account#security`);
   return page.getByRole('region', { name: 'Security keys' });
 }
 
@@ -158,7 +158,7 @@ test.describe('Security keys', () => {
     expect((await cdp.send('WebAuthn.getCredentials', { authenticatorId })).credentials[0].signCount).toBe(counted + 1);
 
     // Removed with the password, the key signs in no more: the code step no longer offers it.
-    await page.goto('/system#security');
+    await page.goto('/account#security');
     await expect(item).toContainText('Last used');
     await item.getByRole('button', { name: 'Remove Blue key' }).click();
     const confirm = page.getByRole('dialog', { name: 'Remove security key' });

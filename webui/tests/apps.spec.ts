@@ -634,9 +634,10 @@ test.describe('The App Store in Russian', () => {
     await expect(page.locator('html')).toHaveAttribute('lang', 'ru');
     const main = page.locator('main');
     await expect(main.getByRole('heading', { name: 'Магазин приложений', level: 1 })).toBeVisible();
-    await expect(main.getByText(/^Доступно приложений: \d+, установлено: 2$/)).toBeVisible();
+    // The installed apps are counted by their tab, and the catalog lists each app once (ADR-0431).
+    await expect(main.getByText(/^Доступно приложений: \d+$/)).toBeVisible();
     await expect(main.getByRole('button', { name: 'Каталог', exact: true })).toBeVisible();
-    await expect(main.getByRole('heading', { name: 'Рекомендуемые приложения' })).toBeVisible();
+    await expect(main.getByRole('button', { name: 'Установленные (2)', exact: true })).toBeVisible();
     await expect(main.getByRole('heading', { name: 'Категории' })).toBeVisible();
     await expect(main.locator('nav').getByRole('button', { name: /^Все приложения \d+$/ })).toBeVisible();
     await expect(main.locator('nav').getByRole('button', { name: /^Умный дом \d+$/ })).toBeVisible();

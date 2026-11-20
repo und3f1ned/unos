@@ -1,6 +1,6 @@
 <script lang="ts">
-	// The Catalog tab of the App Store: the featured apps, the categories with their counts, the
-	// search and the apps they let through. The page keeps the search and the category, so that
+	// The Catalog tab of the App Store: the categories with their counts, the search and the apps
+	// they let through, each app once (no second, featured copy: ADR-0431). The page keeps the search and the category, so that
 	// they stay while the Installed tab is shown.
 	import {
 		Activity,
@@ -15,15 +15,13 @@
 		LayoutGrid,
 		Lock,
 		Package,
-		Search,
-		Sparkles
+		Search
 	} from 'lucide-svelte';
 	import { Button, Card, EmptyState } from '$lib/components/ui';
 	import type { AppTemplate, InstalledApp } from '$lib/api/apps';
 	import { t } from '$lib/i18n';
 	import AppCatalogCard from './AppCatalogCard.svelte';
 	import AppCategory from './AppCategory.svelte';
-	import AppRunningDot from './AppRunningDot.svelte';
 	import { installedOf } from './installed';
 
 	type Props = {
@@ -85,53 +83,7 @@
 			return matchesSearch && matchesCategory;
 		})
 	);
-
-	// Featured apps - popular apps that users actually use
-	const featuredApps = $derived(
-		catalog
-			.filter((app) =>
-				['homeassistant', 'frigate', 'jellyfin', 'nextcloud', 'immich', 'ollama'].includes(app.id)
-			)
-			.slice(0, 6)
-	);
 </script>
-
-<!-- Featured Apps Section -->
-{#if featuredApps.length > 0 && !search && !category}
-	<Card>
-		<div class="flex items-center gap-2 mb-5">
-			<Sparkles class="w-5 h-5 text-content-secondary" aria-hidden="true" />
-			<h2 class="section-title">{$t('apps.featured')}</h2>
-		</div>
-		<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-			{#each featuredApps as app}
-				{@const installedInfo = installedOf(installed, app.id)}
-				<Button variant="plain"
-				 class="bg-surface-muted border border-border-muted rounded-card p-4 text-left hover:bg-surface-overlay hover:border-border-strong transition-colors"
-					onclick={() => onopen(app)}
-				>
-					<div class="flex items-center gap-4 mb-3">
-						<div
-							class="w-12 h-12 rounded-xl bg-surface-overlay flex items-center justify-center text-2xl flex-shrink-0"
-						>
-							{app.icon}
-						</div>
-						<div class="min-w-0 flex-1">
-							<div class="flex items-center gap-2">
-								<h3 class="font-semibold text-base truncate">{app.name}</h3>
-								{#if installedInfo}
-									<AppRunningDot running={installedInfo.status === 'running'} />
-								{/if}
-							</div>
-							<p class="text-sm text-secondary"><AppCategory category={app.category} /></p>
-						</div>
-					</div>
-					<p class="text-sm text-secondary line-clamp-2">{app.description}</p>
-				</Button>
-			{/each}
-		</div>
-	</Card>
-{/if}
 
 <!-- Search and Categories -->
 <div class="flex flex-col lg:flex-row gap-6">

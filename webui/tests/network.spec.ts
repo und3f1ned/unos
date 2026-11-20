@@ -81,7 +81,7 @@ test.describe('System > Network', () => {
     await fakeNetworkApi(page);
     await openNetworkTab(page);
 
-    await expect(page.getByText('via eth0')).toBeVisible();
+    // The default gateway is the default route of Routes, its one place (ADR-0431).
     const dns = page.getByRole('region', { name: 'DNS Configuration' });
     for (const text of ['192.168.1.1', '2001:db8:1::1', 'home.arpa', 'lan']) {
       await expect(dns).toContainText(text);
@@ -474,18 +474,16 @@ test.describe('System > Network', () => {
   }) => {
     // The language that the Account page keeps in this browser (ADR-0287).
     await page.evaluate(() => localStorage.setItem('unos-locale', 'ru'));
-    const gatewayFailed = 'Failed to get gateway: RTNETLINK answers: Permission denied';
+    const dnsFailed = 'Failed to read /etc/resolv.conf: Permission denied';
     const network = await fakeNetworkApi(page, {
-      failures: { 'GET /gateway': { status: 500, detail: gatewayFailed } },
+      failures: { 'GET /dns': { status: 500, detail: dnsFailed } },
     });
     await page.goto('/system#network');
     await expect(page.getByRole('heading', { name: 'Сеть', exact: true })).toBeVisible();
 
     // The part that could not be loaded by its name in Russian, the server's message as it comes.
     const problems = page.getByText('Не удалось загрузить часть сведений о сети').locator('..');
-    await expect(problems).toContainText(`Шлюз: ${gatewayFailed}`);
-    await expect(page.getByText('Шлюз по умолчанию').locator('..')).toContainText('Не задан');
-    await expect(page.getByText('DNS-серверы').locator('..')).toContainText('ещё 1');
+    await expect(problems).toContainText(`DNS: ${dnsFailed}`);
 
     // An interface's state, its speed in the page's units and number format, and its details.
     const eth0 = page.getByRole('region', { name: 'Интерфейс eth0' });
@@ -540,7 +538,8 @@ test.describe('System > Network', () => {
     await fakeNetworkApi(page);
     await fakeLiveTraffic(page, { eth0: TRAFFIC });
     await page.goto('/system#network');
-    await expect(page.getByText('В реальном времени', { exact: true })).toBeVisible();
+    // The connection's one place is the sidebar's line (ADR-0431).
+    await expect(page.locator('aside').getByText('Подключено', { exact: true })).toBeVisible();
     const eth0 = page.getByRole('region', { name: 'Интерфейс eth0' });
 
     // Beside the link speed, which is written the same way.
@@ -569,6 +568,7 @@ test.describe('System > Network', () => {
     const problems = page.getByText('Some network information could not be loaded').locator('..');
     await expect(problems).toContainText('Interfaces: Failed to get network interfaces: RTNETLINK answers: Permission denied');
     await expect(problems).toContainText('Routes: Failed to get routes: RTNETLINK answers: Permission denied');
-    await expect(page.getByText('via eth0')).toBeVisible();
+    // The parts that could be read are shown: the DNS servers (the gateway is the routes' part).
+    await expect(page.getByRole('region', { name: 'DNS Configuration' })).toContainText('192.168.1.1');
   });
 });

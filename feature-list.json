@@ -651,7 +651,7 @@
       "category": "auth",
       "description": "A user sees the recent sign-ins of their account with the client's real address",
       "steps": [
-        "Sign in from a client: System > Security > Login History lists it with its time and the client's address, not the proxy's",
+        "Sign in from a client: Account > Sign-in and security > Login History lists it with its time and the client's address, not the proxy's",
         "Failed sign-ins are listed as failed"
       ],
       "verified_by": [
@@ -664,7 +664,8 @@
       "adr": [
         "ADR-0048",
         "ADR-0262",
-        "ADR-0263"
+        "ADR-0263",
+        "ADR-0431"
       ],
       "notes": "webui/tests/login-history.spec.ts on the stand-in's real supervisor, for a regular test user, with the browser in Asia/Kathmandu (UTC+05:45): a wrong password, then the right one. Login History, once loaded, lists exactly those two, newest first: SUCCESS, then FAILED with \"Incorrect username or password\", each with the time of its sign-in in the browser's time zone and the address that the server recorded for the test process's own sign-in through the API from the same machine (127.0.0.1 and ::1 count as one), and the counts 2, 1 and 1 (steps 1 and 2). On the compose test stack that address is the test-runner's, and the spec also checks that it is not the proxy's (Caddy, the host webui). Fixed with it (ADR-0262): the times were answered without their UTC offset and shown hours off, the attempts of one second came in any order, and clearing the history counted its days in the server's local time. On the stand-in the browser and the proxy share an address; that the list shows the browser's address and not the proxy's is TestRealClientAddress of test_authz.py, through the proxy layer of deploy/docker-compose.yml. The history is kept by name: a regular user sees the attempts on their name since their account was created (ADR-0263), so a user created again with the name of a deleted one does not see that account's rows, which administrators still see (TestLoginHistory). A history that cannot be loaded is reported with its reason and Retry, not shown as empty with counts of 0 (security.spec.ts). DELETE /api/v1/security/login-history takes older_than_days from 0 to 36500 and answers 422 otherwise. Database only: not host-level (GLOSSARY.md)."
     },
@@ -3384,14 +3385,17 @@
       "description": "The tabs of the System page follow the URL",
       "steps": [
         "Each tab of System opens with its hash in the URL",
-        "/settings opens General, and the other tabs still switch",
+        "/system opens General, and the other tabs still switch",
         "Back returns to the tab that was open"
       ],
       "verified_by": [
         "webui/tests/system.spec.ts",
         "webui/tests/settings.spec.ts"
       ],
-      "passes": true
+      "passes": true,
+      "adr": [
+        "ADR-0431"
+      ]
     },
     {
       "id": "webui.expired-session",
@@ -4734,6 +4738,38 @@
         "ADR-0427"
       ],
       "notes": "After webui.svelte-5, which moved to Svelte 5 with SvelteKit 2.70, @sveltejs/vite-plugin-svelte 4 (the last for Vite 5), svelte-check 4 and lucide-svelte 0.321 and left SvelteKit 3 here: it accepts TypeScript ^6 only (ADR-0427). lucide-svelte 1 replaces the type IconComponent of webui/src/lib/components/ui/types.ts. Dependabot's npm group of 2026-11-07 (pull request 26, closed) proposed SvelteKit 3.1.1, @sveltejs/adapter-static 4, @sveltejs/vite-plugin-svelte 7, Vite 8, Tailwind CSS 4, TypeScript 7, svelte-check 4 and lucide-svelte 1 at once, and npm ci failed on it: SvelteKit 3.1.1 accepts TypeScript ^6 only. Tailwind CSS 4 replaces tailwind.config.js and the PostCSS setup."
+    },
+    {
+      "id": "webui.information-architecture",
+      "category": "webui",
+      "description": "Every account's own settings are on the Account page, System holds the NAS's, and each setting, action and fact of the menus has one place",
+      "steps": [
+        "The account block at the foot of the sidebar (a regular account's Account link) opens /account, whose tabs Sign-in and security (#security), File sharing (#sharing, regular accounts only) and Appearance and language (#appearance) hold the password, two-factor authentication, API tokens and own login history, the own SMB access, and the theme and language",
+        "System is an administrator's: its tabs are grouped as Settings (General, Network, Remote Access, Security, Notifications), Monitoring (Resource Monitor, System Logs, Disk Health) and Maintenance (Updates, Backup & Restore, Scheduler, Power Management), and Security holds only the NAS's two-factor requirement, firewall and certificates",
+        "An administrator's login history on the Account page lists only the administrator's own sign-ins; every account's are in the Audit Log, which records each wrong password and each refused second step (two-factor code, recovery code, security key) as a failed sign-in",
+        "No setting, action or fact has a second place: the dashboard has no Quick Actions, General shows no version, signed-in account or second host name, /settings is gone, and the command palette has one entry per place and changes nothing itself",
+        "Every text is in English and Russian, and the Account page and its tabs fit a 375 px phone in both languages"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0431"
+      ],
+      "verified_by": [
+        "webui/tests/information-architecture.spec.ts",
+        "webui/tests/command-palette.spec.ts",
+        "webui/tests/navigation.spec.ts",
+        "webui/tests/roles.spec.ts",
+        "webui/tests/mobile-layout.spec.ts",
+        "webui/tests/language.spec.ts",
+        "webui/tests/dashboard.spec.ts",
+        "webui/tests/updates.spec.ts",
+        "webui/tests/network.spec.ts",
+        "supervisor/tests/test_authz.py",
+        "supervisor/tests/test_totp_once.py",
+        "supervisor/tests/test_recovery_codes.py",
+        "supervisor/tests/test_security_keys.py"
+      ],
+      "notes": "Built on main 89ca9fc. The ADR's number is 0431, after the ADR of the boot screen and the loaders (another branch), which takes 0430; while that one is not on this branch the ADR tests refuse the gap, so this branch numbers its ADR 0430, and the merge after the boot screen renames the file and its citations to 0431. The ADR lists every move and each removed duplicate with the place it keeps (38, from an inventory of every menu item and place). The specs that reached a moved setting open its new place and assert what they did; where a page's structure changed, the page-ready marker follows it (the h2 Security Settings became Sign-in and security, Security of the NAS or File sharing), and where an element was removed as a duplicate the spec checks its one place (monitor.spec.ts and network.spec.ts the sidebar's connection line for the Live badges, files.spec.ts the sidebar's Files for the Trash's button, containers.spec.ts that the drawer has no actions, dashboard-layout.spec.ts 8 widgets without Quick Actions). account-smb.spec.ts's canned-answer tests sign in as a regular account, since an administrator has no File sharing tab. Step 3: the login audits each refused second step (test_totp_once.py, test_recovery_codes.py, test_security_keys.py), mine=true limits an administrator's history as a user's (test_authz.py TestLoginHistory), information-architecture.spec.ts finds another account's failed sign-in in the Audit Log and not in the own history. Fresh-context review (17 findings): all BLOCKING and RISK fixed; left, a nit: with three wide widgets the dashboard's last one is half a row wide, as when a user hid one of four before; the layout is each user's (ADR-0395). Web UI and a supervisor query parameter plus audit lines of failed sign-ins: not host-level (GLOSSARY.md)."
     },
     {
       "id": "ci.btrfs-loop-device-tests",

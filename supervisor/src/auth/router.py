@@ -251,6 +251,15 @@ async def _audit_sign_in(**entry) -> None:
         pass  # log_action reported the entry
 
 
+async def _audit_refused_second_factor(request: Request, username: str, details: str) -> None:
+    """A refused second factor is audited as a wrong password is, with the login history's reason
+    and never the code: the audit log holds every failed sign-in of every account (ADR-0431)."""
+    await _audit_sign_in(
+        action=AuditAction.LOGIN_FAILED, request=request, username=username, details=details,
+        success=False, severity=AuditSeverity.WARNING,
+    )
+
+
 @router.post(
     "/login",
     response_model=Token,
@@ -277,10 +286,10 @@ async def login(
     answer holds no token, only the session key that the page sends with the cookie; only the web UI's
     own page may ask for it, which is checked before the password. Without it (programs) the answer
     carries the token, for a Bearer header. A wrong password, a refused second factor and a completed
-    sign-in go into the login history; the step that asks for the second factor does not. Public: it
-    needs no credential.
+    sign-in go into the login history and the audit log; the step that asks for the second factor
+    does not. Public: it needs no credential.
     \f
-    ADR-0397, ADR-0238, ADR-0409.
+    ADR-0397, ADR-0238, ADR-0409, ADR-0431.
     """
     if login_request.cookie and not from_own_origin(request, origin_required=True):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=CROSS_ORIGIN)
@@ -320,6 +329,7 @@ async def login(
             await record_login_attempt(
                 db, login_request.username, False, request, failure_reason=RECOVERY_CODE_INVALID
             )
+            await _audit_refused_second_factor(request, login_request.username, RECOVERY_CODE_INVALID)
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=RECOVERY_CODE_INVALID)
         used_recovery_code = True
     elif user.totp_enabled and login_request.security_key is not None:
@@ -327,11 +337,7 @@ async def login(
             used_key = await security_keys.verify_sign_in(db, user, login_request.security_key)
         except security_keys.KeyRefused as refused:
             await record_login_attempt(db, login_request.username, False, request, failure_reason=refused.reason)
-            if refused.audit is not None:
-                await _audit_sign_in(
-                    action=AuditAction.LOGIN_FAILED, request=request, username=login_request.username,
-                    details=refused.audit, success=False, severity=AuditSeverity.WARNING,
-                )
+            await _audit_refused_second_factor(request, login_request.username, refused.audit or refused.reason)
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=refused.detail) from None
     elif user.totp_enabled:
         if not login_request.totp_code:
@@ -342,11 +348,9 @@ async def login(
         check = check_totp_code(user.id, user.totp_secret, login_request.totp_code)
         if check is not TotpCheck.OK:
             reused = check is TotpCheck.REUSED
-            # Record failed 2FA attempt
-            await record_login_attempt(
-                db, login_request.username, False, request,
-                failure_reason="Reused 2FA code" if reused else "Invalid 2FA code"
-            )
+            reason = "Reused 2FA code" if reused else "Invalid 2FA code"
+            await record_login_attempt(db, login_request.username, False, request, failure_reason=reason)
+            await _audit_refused_second_factor(request, login_request.username, reason)
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail=TOTP_CODE_REUSED if reused else "Invalid 2FA code",

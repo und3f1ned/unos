@@ -1,54 +1,32 @@
 <script lang="ts">
 	import { onDestroy, untrack } from 'svelte';
 	import { on } from 'svelte/events';
-	import {
-		X,
-		Play,
-		Square,
-		RotateCw,
-		Trash2,
-		Terminal,
-		Info,
-		Network,
-		ExternalLink,
-		Box
-	} from 'lucide-svelte';
+	import { X, Terminal, Info, Network, Box } from 'lucide-svelte';
 	import { Button, Badge, type IconComponent } from '$lib/components/ui';
 	import type { Container } from '$lib/api/containers';
 	import { t } from '$lib/i18n';
-	import { containerAction } from './actions';
 	import { ContainerLog } from './containerLog.svelte';
-	import { labelOf, stateVariant, STATES, webUrl, type QuickAction } from './labels';
+	import { labelOf, stateVariant, STATES } from './labels';
 	import ContainerLogsTab from './ContainerLogsTab.svelte';
 	import ContainerNetworkTab from './ContainerNetworkTab.svelte';
 	import ContainerOverviewTab from './ContainerOverviewTab.svelte';
 
+	// The details of a container: its overview, log and ports. Starting, stopping, removing and
+	// opening it in the browser are its row's in the list, not a second copy here (ADR-0431).
 	type Props = {
 		container?: Container | null;
 		open?: boolean;
-		/** An action on several containers runs (ADR-0389): the drawer's own actions wait for its end. */
-		busy?: boolean;
-		/** Escape, the backdrop, the close button or the container's removal asked to close it. */
+		/** Escape, the backdrop or the close button asked to close it. */
 		onclose?: () => void;
-		/** An action on the container succeeded. */
-		onaction?: (done: { action: QuickAction; containerId: string }) => void;
 	};
 
-	let { container = null, open = $bindable(false), busy = false, onclose, onaction }: Props = $props();
+	let { container = null, open = $bindable(false), onclose }: Props = $props();
 
-	// What an action that failed without a message from the server says.
-	const ACTION_FAILED_KEYS: Record<QuickAction, string> = {
-		start: 'containers.drawer.startFailed',
-		stop: 'containers.drawer.stopFailed',
-		restart: 'containers.drawer.restartFailed',
-		remove: 'containers.drawer.removeFailed'
-	};
 
 	type Tab = 'overview' | 'logs' | 'network';
 
 	let activeTab = $state<Tab>('overview');
 	const log = new ContainerLog();
-	let actionLoading = $state('');
 	let copiedId = $state(false);
 
 	// The log streams while the Logs tab of an open drawer shows it, and only then.
@@ -66,28 +44,6 @@
 
 	function close() {
 		onclose?.();
-	}
-
-	async function handleAction(action: QuickAction) {
-		// The container the action is for: a prop reads the page's value at once, and close()
-		// makes the page drop it before the action is reported.
-		const target = container;
-		if (!target) return;
-
-		if (action === 'remove') {
-			if (!confirm($t('containers.drawer.confirmRemove', { name: target.name }))) return;
-		}
-
-		actionLoading = action;
-		try {
-			await containerAction(target.id, action);
-			if (action === 'remove') close();
-			onaction?.({ action, containerId: target.id });
-		} catch (e: any) {
-			alert(e.message || $t(ACTION_FAILED_KEYS[action]));
-		} finally {
-			actionLoading = '';
-		}
 	}
 
 	function copyId() {
@@ -116,7 +72,6 @@
 />
 
 {#if open && container}
-	{@const href = webUrl(container)}
 	<!-- Backdrop: it listens for the click itself, not through Svelte's delegated listener at the
 	     app's root, as Modal's overlay does (iOS Safari, and a click that does not bubble). -->
 	<div class="fixed inset-0 scrim z-40" {@attach (node) => on(node, 'click', close)} role="presentation"></div>
@@ -146,70 +101,10 @@
 			</div>
 			<div class="flex items-center gap-3">
 				<Badge variant={stateVariant(container.state)}>{labelOf(STATES, container.state, $t)}</Badge>
-				{#if href}
-					<Button
-						{href}
-						target="_blank"
-						rel="noopener"
-						variant="secondary"
-						size="icon"
-						title={$t('containers.openInBrowser')}
-					>
-						<ExternalLink class="w-4 h-4" />
-					</Button>
-				{/if}
 				<Button variant="ghost" size="icon" onclick={close}>
 					<X class="w-5 h-5" />
 				</Button>
 			</div>
-		</div>
-
-		<!-- Quick Actions -->
-		<div class="flex items-center gap-3 p-5 border-b border-border bg-surface-muted">
-			{#if container.state === 'running'}
-				<Button
-					variant="warning"
-					size="sm"
-					icon={Square}
-					loading={actionLoading === 'stop'}
-					disabled={busy}
-					onclick={() => handleAction('stop')}
-				>
-					{$t('containers.action.stop')}
-				</Button>
-				<Button
-					variant="secondary"
-					size="sm"
-					icon={RotateCw}
-					loading={actionLoading === 'restart'}
-					disabled={busy}
-					onclick={() => handleAction('restart')}
-				>
-					{$t('containers.action.restart')}
-				</Button>
-			{:else}
-				<Button
-					variant="success"
-					size="sm"
-					icon={Play}
-					loading={actionLoading === 'start'}
-					disabled={busy}
-					onclick={() => handleAction('start')}
-				>
-					{$t('containers.action.start')}
-				</Button>
-			{/if}
-			<div class="flex-1"></div>
-			<Button
-				variant="danger"
-				size="sm"
-				icon={Trash2}
-				loading={actionLoading === 'remove'}
-				disabled={busy}
-				onclick={() => handleAction('remove')}
-			>
-				{$t('containers.action.remove')}
-			</Button>
 		</div>
 
 		<!-- Tabs -->

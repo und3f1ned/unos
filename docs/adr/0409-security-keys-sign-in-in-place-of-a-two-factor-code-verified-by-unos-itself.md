@@ -1,5 +1,6 @@
 ---
-status: accepted
+status: superseded
+superseded-by: ADR-0431
 date: 2026-11-18
 area: auth
 decided-by: agent
@@ -9,6 +10,8 @@ supersedes: [ADR-0239]
 # ADR-0409: Security keys sign in in place of a two-factor code, beside the authenticator app, verified by UNOS itself
 
 ## Context
+
+Superseded by ADR-0431: only in part, the refused answers that went to the login history only: every refused answer is a `login_failed` warning in the audit log too, a counter that went backwards with its own text; every other rule here stays in force.
 
 The entry `auth.security-keys` asks that a user register a hardware security key (WebAuthn) on the
 Account page and that a touch of the key open the session at the code step of the sign-in, as an

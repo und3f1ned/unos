@@ -9,11 +9,9 @@
   // The host's name and time zone, each saved on its own; what the host answered.
   type Props = {
     host: HostSettings;
-    // The host took the new name.
-    onrenamed: (hostname: string) => void;
   };
 
-  let { host, onrenamed }: Props = $props();
+  let { host }: Props = $props();
 
   let savingHostname = $state(false);
   let savingZone = $state(false);
@@ -27,7 +25,6 @@
     try {
       const answer = await setHostname(name);
       host.hostname = host.savedHostname = answer.hostname;
-      onrenamed(answer.hostname);
       hostNotice = $t("general.host.hostnameSaved", { name: answer.hostname });
     } catch (e) {
       hostError = e instanceof Error ? e.message : $t("general.host.saveFailed");

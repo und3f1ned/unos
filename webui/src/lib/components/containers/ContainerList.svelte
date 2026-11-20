@@ -6,7 +6,6 @@
 		Container as ContainerIcon,
 		ExternalLink,
 		Play,
-		Plus,
 		RotateCw,
 		Square,
 		Trash2
@@ -30,7 +29,6 @@
 		onselect: (id: string, on: boolean) => void;
 		/** A container's own button; the page stops the click from opening the drawer. */
 		onaction: (event: MouseEvent, id: string, action: QuickAction) => void;
-		oncreate: () => void;
 		/** Clear the search and the filter. */
 		onclear: () => void;
 	};
@@ -44,7 +42,6 @@
 		onopen,
 		onselect,
 		onaction,
-		oncreate,
 		onclear
 	}: Props = $props();
 
@@ -104,13 +101,12 @@
 	</Button>
 {/snippet}
 
-<!-- A container's own buttons: a card has no Restart. -->
-{#snippet actions(container: Container, restart: boolean)}
-	{#if container.state === 'running' && restart}
+<!-- A container's own buttons, the same in a row and a card: its one place of them, the drawer
+     has none (ADR-0431). -->
+{#snippet actions(container: Container)}
+	{#if container.state === 'running'}
 		{@render quick(container, 'stop')}
 		{@render quick(container, 'restart')}
-	{:else if container.state === 'running'}
-		{@render quick(container, 'stop')}
 	{:else}
 		{@render quick(container, 'start')}
 	{/if}
@@ -125,11 +121,8 @@
 			? $t('containers.empty.filtered')
 			: $t('containers.empty.none')}
 	>
-		{#if !filtered}
-			<Button variant="primary" icon={Plus} onclick={oncreate}
-				>{$t('containers.create.button')}</Button
-			>
-		{:else}
+		<!-- Create Container is the page header's (ADR-0431). -->
+		{#if filtered}
 			<Button
 				variant="secondary"
 				onclick={onclear}>{$t('containers.empty.clear')}</Button
@@ -183,7 +176,7 @@
 							</td>
 							<td>
 								<div class="table-actions">
-									{@render actions(container, true)}
+									{@render actions(container)}
 								</div>
 							</td>
 						</tr>
@@ -240,7 +233,7 @@
 						{#if href}
 							{@render webLink(href, 'p-1.5 rounded hover:bg-surface-muted text-info transition-colors', 'w-4 h-4')}
 						{/if}
-						{@render actions(container, false)}
+						{@render actions(container)}
 					</div>
 				</div>
 			</div>

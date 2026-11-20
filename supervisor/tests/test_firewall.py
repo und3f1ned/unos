@@ -1165,7 +1165,7 @@ def test_the_web_ui_repeats_the_servers_texts_and_networks():
     for text in (firewall.FIREWALL_OFF_DETAIL, firewall.CHANGE_WAITS, firewall.NOTHING_TO_KEEP,
                  firewall.WEB_SSH_SMB, firewall.DISCOVERY):
         assert text in spec, text
-    card = (REPO / "webui" / "src" / "lib" / "components" / "account" / "FirewallCard.svelte").read_text(encoding="utf-8")
+    card = (REPO / "webui" / "src" / "lib" / "components" / "system" / "security" / "FirewallCard.svelte").read_text(encoding="utf-8")
     networks = [str(network) for network in firewall.LOCAL_NETWORKS]
     assert networks == LOCAL_V4 + LOCAL_V6
     assert "const LOCAL_NETWORKS = [" + ", ".join(f"'{n}'" for n in networks) + "];" in card

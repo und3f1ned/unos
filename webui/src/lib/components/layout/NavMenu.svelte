@@ -73,15 +73,15 @@
 		}
 	]);
 
-	// Regular accounts only get live system stats and their own account settings; every other API
-	// is administrator-only. Two links need no groups.
+	// Regular accounts only get live system stats and their own account settings (the Account
+	// page, ADR-0431); every other API is administrator-only. Two links need no groups.
 	const userGroups: Group[] = $derived([
 		{
 			id: 'top',
 			label: null,
 			links: [
 				{ href: '/', icon: LayoutDashboard, label: $t('layout.nav.dashboard') },
-				{ href: '/system#security', icon: UserCog, label: $t('layout.nav.account') }
+				{ href: '/account', icon: UserCog, label: $t('layout.nav.account') }
 			]
 		}
 	]);

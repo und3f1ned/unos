@@ -14,7 +14,7 @@
 		type ContainerResources,
 		type InstalledApp
 	} from '$lib/api/apps';
-	import { Package, Download, RefreshCw, Grid3X3, CheckCircle2 } from 'lucide-svelte';
+	import { Package, RefreshCw, Grid3X3, CheckCircle2 } from 'lucide-svelte';
 	import { Button, Alert, EmptyState, Skeleton } from '$lib/components/ui';
 	import {
 		AppCatalog,
@@ -184,12 +184,11 @@
 	<div class="page-header">
 		<div class="min-w-0">
 			<h1 class="page-title">{$t('apps.title')}</h1>
-			<!-- One line, always: the counts come without moving the page; a refresh keeps them. -->
+			<!-- One line, always: the count comes without moving the page; a refresh keeps it. The
+			     installed apps are counted by their tab (ADR-0431). -->
 			<p class="page-subtitle min-h-5">
 				{#if !drawn}
 					<Skeleton class="w-56 max-w-full" />
-				{:else if data.catalogKnown && data.installedKnown}
-					{$t('apps.summary', { available: data.availableCount, installed: data.installed.length })}
 				{:else if data.catalogKnown}
 					{$t('apps.summaryAvailable', { available: data.availableCount })}
 				{/if}
@@ -288,15 +287,8 @@
 		{:else if data.installedState === 'failed' || (data.installedState === 'loading' && !data.installedKnown)}
 			<!-- The error above says why nothing is listed. -->
 		{:else if data.installed.length === 0}
-			<EmptyState
-				icon={Package}
-				title={$t('apps.noneInstalled')}
-				description={$t('apps.noneInstalledHint')}
-			>
-				<Button variant="primary" onclick={() => (activeTab = 'catalog')} icon={Download}>
-					{$t('apps.browseCatalog')}
-				</Button>
-			</EmptyState>
+			<!-- The Catalog is the tab beside this one: no second way there (ADR-0431). -->
+			<EmptyState icon={Package} title={$t('apps.noneInstalled')} description={$t('apps.noneInstalledHint')} />
 		{:else}
 			<div class="space-y-4">
 				{#each data.installed as app}

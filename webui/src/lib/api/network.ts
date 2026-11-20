@@ -62,11 +62,6 @@ export interface Route {
   prefsrc?: string;
 }
 
-export interface GatewayInfo {
-  gateway: string | null;
-  interface: string | null;
-}
-
 export interface Connection {
   protocol: string;
   state: string;
@@ -104,10 +99,6 @@ export async function setHostname(hostname: string): Promise<{ status: string; h
 
 export async function getRoutes(): Promise<{ routes: Route[] }> {
   return api.get<{ routes: Route[] }>("/network/routes");
-}
-
-export async function getDefaultGateway(): Promise<GatewayInfo> {
-  return api.get<GatewayInfo>("/network/gateway");
 }
 
 /** Enable an interface, with the addresses and routes its disable saved. */

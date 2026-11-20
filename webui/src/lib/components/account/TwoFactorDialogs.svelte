@@ -11,7 +11,7 @@
   type Props = {
     twoFactor: TwoFactor;
     // Two-factor authentication turned on or off.
-    onchange: () => void;
+    onchange?: () => void;
   };
 
   let { twoFactor, onchange }: Props = $props();
@@ -28,7 +28,7 @@
       await enableTOTP(twoFactor.code);
       twoFactor.enabled = true;
       twoFactor.success = $t("account.totp.enabled");
-      onchange();
+      onchange?.();
       twoFactor.setupOpen = false;
       twoFactor.setupData = null;
       twoFactor.qrDataUrl = "";
@@ -52,7 +52,7 @@
       await disableTOTP(twoFactor.disableCode);
       twoFactor.enabled = false;
       twoFactor.success = $t("account.totp.disabled");
-      onchange();
+      onchange?.();
       twoFactor.disableOpen = false;
       twoFactor.disableCode = "";
       // While it is required, an account past its grace period can now only set it up again: the

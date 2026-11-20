@@ -87,7 +87,6 @@ export const en = {
 	'files.unit.tb': 'TB',
 
 	'files.trash.title': 'Trash',
-	'files.trash.files': 'Files',
 	'files.trash.empty': 'Empty trash',
 	'files.trash.kept': {
 		one: 'Items deleted in Files wait here, in the trash of their pool or volume, and are deleted for good {n} day after they were deleted.',
@@ -217,7 +216,6 @@ export const ru: Translation<typeof en> = {
 	'files.unit.tb': 'ТБ',
 
 	'files.trash.title': 'Корзина',
-	'files.trash.files': 'Файлы',
 	'files.trash.empty': 'Очистить корзину',
 	'files.trash.kept': {
 		one: 'Элементы, удалённые в «Файлах», ждут здесь, в корзине своего пула или тома, и удаляются навсегда через {n} день после удаления.',

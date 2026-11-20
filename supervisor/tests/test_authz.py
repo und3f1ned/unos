@@ -915,6 +915,29 @@ class TestLoginHistory:
         assert {a["username"] for a in everyone["attempts"]} == {"alice", "bob", "admin"}
         assert {a["username"] for a in bob_only["attempts"]} == {"bob"}
 
+    def test_an_administrators_own_history_is_kept_as_a_users(self, client, authz_db, attempts, admin_headers):
+        # The Account page asks with mine (ADR-0431): the administrator's own attempts, since the
+        # account has had its name, as a regular user's history is kept (ADR-0263, ADR-0368); a
+        # username is then ignored. Without mine an administrator still sees everyone's.
+        now = datetime.now(UTC).replace(tzinfo=None, microsecond=0)
+        with Session(authz_db.engine) as session:
+            session.get(User, authz_db.admin_id).created_at = now - timedelta(days=1)
+            session.add(LoginAttempt(username="admin", ip_address="203.0.113.9", success=False,
+                                     failure_reason="Incorrect username or password", timestamp=now - timedelta(days=2)))
+            session.commit()
+
+        own = client.get(f"{API}/security/login-history?mine=true&username=bob", headers=admin_headers).json()
+        everyone = client.get(f"{API}/security/login-history", headers=admin_headers).json()
+
+        assert [(a["username"], a["ip_address"]) for a in own["attempts"]] == [("admin", "10.0.0.1")]
+        assert (own["total"], own["failed_count"]) == (1, 0)
+        assert {a["ip_address"] for a in everyone["attempts"]} == {"10.0.0.1", "10.0.0.2", "10.0.0.3", "203.0.113.9"}
+
+    def test_mine_changes_nothing_for_a_user(self, client, attempts, alice_headers):
+        own = client.get(f"{API}/security/login-history?mine=true", headers=alice_headers).json()
+
+        assert {a["username"] for a in own["attempts"]} == {"alice"}
+
     def test_only_admins_clear_history(self, client, attempts, alice_headers, admin_headers):
         assert client.delete(f"{API}/security/login-history", headers=alice_headers).status_code == 403
         assert client.delete(

@@ -3,7 +3,7 @@ import { getTOTPStatus, type TOTPSetupResponse } from "$lib/api/auth";
 
 /**
  * The account's two-factor authentication: its status, and the setup or the turning off in
- * progress, which the card of System > Security and its dialogs share. The page creates it and
+ * progress, which the card of the Account page's Sign-in and security and its dialogs share. The page creates it and
  * loads the status.
  */
 export class TwoFactor {

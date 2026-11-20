@@ -1,5 +1,6 @@
 ---
-status: accepted
+status: superseded
+superseded-by: ADR-0431
 date: 2026-11-11
 area: backup
 decided-by: agent
@@ -9,6 +10,8 @@ supersedes: [ADR-0041]
 # ADR-0337: Off-device copies go to one restic repository on a disk or an S3 store, and each copy is checked and its restore tested
 
 ## Context
+
+Superseded by ADR-0431: only in part, the button that adds a daily `offsite_copy` task at 03:00: tasks are made in the Scheduler, which the card links to; every other rule here stays in force.
 
 Configuration backups live in `/data/backups` on the system disk, the dev device's SD card, which wears out, and the pools' data has no copy at all: one failed disk loses the configuration or the data (ADR-0041, `backup.off-device-copies`). ADR-0041 proposed a slice that would design btrfs send/receive to a USB disk or a second NAS and restic or rclone to the cloud. The agent decided this slice under the owner's standing instruction, "work on the features, ask no questions; I allow everything", with the goal "a safe, working MVP as soon as possible" (both in translation).
 
