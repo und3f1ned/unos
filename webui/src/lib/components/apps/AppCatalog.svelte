@@ -1,7 +1,10 @@
 <script lang="ts">
 	// The Catalog tab of the App Store: the categories with their counts, the search and the apps
-	// they let through, each app once (no second, featured copy: ADR-0431). The page keeps the search and the category, so that
-	// they stay while the Installed tab is shown.
+	// they let through, each app once (no second, featured copy: ADR-0431). The page keeps the
+	// search and the category, so that they stay while the Installed tab is shown. The categories
+	// are a list beside the apps from lg, selected as the sidebar's links are, and a menu above
+	// them on a narrower screen, where twelve rows would push the apps off the first screen
+	// (webui.ux-apps).
 	import {
 		Activity,
 		Code,
@@ -17,15 +20,18 @@
 		Package,
 		Search
 	} from 'lucide-svelte';
-	import { Button, Card, EmptyState } from '$lib/components/ui';
+	import { Button, Card, EmptyState, Input, Select } from '$lib/components/ui';
 	import type { AppTemplate, InstalledApp } from '$lib/api/apps';
 	import { t } from '$lib/i18n';
 	import AppCatalogCard from './AppCatalogCard.svelte';
 	import AppCategory from './AppCategory.svelte';
 	import { installedOf } from './installed';
+	import { categoryLabel } from './labels';
 
 	type Props = {
 		catalog: AppTemplate[];
+		/** Apps can be installed: Docker answered the installed apps. */
+		canInstall: boolean;
 		installed: InstalledApp[];
 		/** The catalog's ids of the apps whose install runs. */
 		installing: ReadonlySet<string>;
@@ -38,6 +44,7 @@
 
 	let {
 		catalog,
+		canInstall,
 		installed,
 		installing,
 		search = $bindable(),
@@ -72,6 +79,16 @@
 		}))
 	);
 
+	// The menu of a narrow screen: each category with its count.
+	const categoryOptions = $derived(
+		categoriesWithCounts
+			.filter((cat) => cat.count > 0 || cat.value === '')
+			.map((cat) => ({
+				value: cat.value,
+				label: $t('apps.categoryCount', { name: categoryLabel(cat.value, $t), count: cat.count })
+			}))
+	);
+
 	// Filtered catalog
 	const filteredCatalog = $derived(
 		catalog.filter((app) => {
@@ -85,33 +102,30 @@
 	);
 </script>
 
+{#snippet categoryName(value: string)}<AppCategory category={value} />{/snippet}
+
 <!-- Search and Categories -->
 <div class="flex flex-col lg:flex-row gap-6">
-	<!-- Category Sidebar -->
-	<div class="lg:w-56 flex-shrink-0">
-		<Card>
-			<h3 class="font-semibold mb-4">{$t('apps.categories')}</h3>
-			<nav class="space-y-1">
-				{#each categoriesWithCounts as cat}
+	<!-- Category list, from lg -->
+	<div class="hidden lg:block lg:w-56 flex-shrink-0">
+		<Card padding="sm">
+			<h3 class="eyebrow px-2.5 mb-2">{$t('apps.categories')}</h3>
+			<nav class="space-y-0.5" aria-label={$t('apps.categories')}>
+				{#each categoriesWithCounts as cat (cat.value)}
 					{#if cat.count > 0 || cat.value === ''}
-						<Button variant="plain"
-						 class="w-full flex items-center justify-between px-3 py-2.5 rounded-lg text-sm transition-colors
-									{category === cat.value
-								? 'bg-brand text-content-on-brand'
-								: 'text-secondary hover:text-content hover:bg-surface-overlay'}"
+						<Button
+							variant="plain"
+							class="nav-item w-full justify-between {category === cat.value
+								? 'nav-item-active'
+								: 'text-content-secondary hover:text-content hover:bg-surface-overlay'}"
+							pressed={category === cat.value}
 							onclick={() => (category = cat.value)}
 						>
-							<span class="flex items-center gap-2.5">
-								<cat.icon class="w-4 h-4" />
-								<AppCategory category={cat.value} />
+							<span class="flex items-center gap-2.5 min-w-0">
+								<cat.icon aria-hidden="true" />
+								<span class="truncate">{@render categoryName(cat.value)}</span>
 							</span>
-							<span
-								class="text-xs px-1.5 py-0.5 rounded {category === cat.value
-									? 'bg-brand-hover text-content-on-brand'
-									: 'bg-surface-overlay text-muted'}"
-							>
-								{cat.count}
-							</span>
+							<span class="tabular text-xs text-content-muted">{cat.count}</span>
 						</Button>
 					{/if}
 				{/each}
@@ -121,18 +135,17 @@
 
 	<!-- App Grid -->
 	<div class="flex-1 min-w-0">
-		<!-- Search -->
-		<div class="mb-5">
-			<div class="relative">
-				<Search
-					class="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-content-muted pointer-events-none"
-				/>
-				<input
-					type="text"
-					placeholder={$t('apps.search')}
-					bind:value={search}
-					class="form-input pl-10"
-				/>
+		<!-- Search, and the category menu below lg -->
+		<div class="mb-5 flex flex-col sm:flex-row gap-3">
+			<Input
+				icon={Search}
+				placeholder={$t('apps.search')}
+				ariaLabel={$t('apps.search')}
+				bind:value={search}
+				class="flex-1"
+			/>
+			<div class="lg:hidden sm:w-60">
+				<Select bind:value={category} options={categoryOptions} placeholder={$t('apps.categories')} />
 			</div>
 		</div>
 
@@ -152,9 +165,10 @@
 			</EmptyState>
 		{:else}
 			<div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-				{#each filteredCatalog as app}
+				{#each filteredCatalog as app (app.id)}
 					<AppCatalogCard
 						{app}
+						{canInstall}
 						installedInfo={installedOf(installed, app.id)}
 						installing={installing.has(app.id)}
 						{onopen}

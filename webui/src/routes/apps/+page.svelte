@@ -14,7 +14,7 @@
 		type ContainerResources,
 		type InstalledApp
 	} from '$lib/api/apps';
-	import { Package, RefreshCw, Grid3X3, CheckCircle2 } from 'lucide-svelte';
+	import { Package, RefreshCw, RotateCw, Grid3X3, CheckCircle2 } from 'lucide-svelte';
 	import { Button, Alert, EmptyState, Skeleton } from '$lib/components/ui';
 	import {
 		AppCatalog,
@@ -135,6 +135,8 @@
 	let drawn = $state(false);
 
 	onMount(async () => {
+		// The Containers page links an app's container to its card here (webui.ux-apps).
+		if (window.location.hash === '#installed') activeTab = 'installed';
 		const installed = data.loadInstalled();
 		await data.loadCatalog();
 		await Promise.race([installed, new Promise((resolve) => setTimeout(resolve, INSTALLED_GRACE_MS))]);
@@ -234,12 +236,26 @@
 
 	<!-- The lists' errors under the tabs, drawn with the lists: they push nothing that was shown
 	     (ADR-0430). -->
+	<!-- Each failed load: a plain title, what it means, the server's reason and Retry
+	     (webui.ux-apps). Docker's answer is the installed apps': without it no app is installed,
+	     started or stopped, and the catalog's apps say so where they are installed. -->
 	{#if drawn && data.catalogError}
-		<Alert variant="error">{$t('apps.catalogLoadError', { error: data.catalogError })}</Alert>
+		<Alert variant="error" title={$t('apps.catalogLoadError')}>
+			<p class="mono-xs break-words">{data.catalogError}</p>
+			<Button variant="secondary" size="sm" icon={RotateCw} class="mt-3" loading={data.catalogState === 'loading'} onclick={() => data.loadCatalog()}>
+				{$t('common.retry')}
+			</Button>
+		</Alert>
 	{/if}
 
 	{#if drawn && data.installedError}
-		<Alert variant="error">{$t('apps.installed.loadError', { error: data.installedError })}</Alert>
+		<Alert variant="error" title={$t('apps.installed.loadErrorTitle')}>
+			<p>{$t('apps.installed.loadError')}</p>
+			<p class="mt-1 mono-xs break-words text-content-secondary">{data.installedError}</p>
+			<Button variant="secondary" size="sm" icon={RotateCw} class="mt-3" loading={data.installedState === 'loading'} onclick={() => data.loadInstalled()}>
+				{$t('common.retry')}
+			</Button>
+		</Alert>
 	{/if}
 
 	{#if activeTab === 'catalog' && !drawn}
@@ -261,6 +277,7 @@
 	{:else if activeTab === 'catalog'}
 		<AppCatalog
 			catalog={data.catalog}
+			canInstall={!data.installedError}
 			installed={data.installed}
 			{installing}
 			bind:search={searchQuery}
@@ -326,5 +343,6 @@
 	app={selectedApp}
 	isInstalled={selectedApp ? getInstalledInfo(selectedApp.id) !== undefined : false}
 	installedApp={selectedApp ? (getInstalledInfo(selectedApp.id) ?? null) : null}
+	dockerDown={!!data.installedError}
 	onclose={closeDetail}
 />

@@ -2,6 +2,7 @@
 	// The Create Container dialog of the Containers page: a name, an image, a restart policy, the
 	// ports to publish and the variables to set. The page owns the form (it empties it when the
 	// dialog opens), the request and its error, which the page's list shows too.
+	import { untrack } from 'svelte';
 	import { Plus, Trash2 } from 'lucide-svelte';
 	import { Alert, Button, Input, Modal, Select } from '$lib/components/ui';
 	import { t } from '$lib/i18n';
@@ -19,27 +20,37 @@
 	};
 
 	let { open, form, error, submitting, onclose, oncreate }: Props = $props();
+
+	// Create was asked once: an empty name or image says so under its field (webui.ux-apps), and
+	// Create stays enabled. Opened again, the form starts without them.
+	let tried = $state(false);
+	$effect.pre(() => {
+		const isOpen = open;
+		untrack(() => {
+			if (isOpen) tried = false;
+		});
+	});
+
+	function submit() {
+		tried = true;
+		oncreate();
+	}
 </script>
 
 <!-- The ports or variables added, each with its remove button. -->
-{#snippet added(texts: string[], remove: (index: number) => void)}
+{#snippet added(texts: string[], remove: (index: number) => void, removeKey: string)}
 	{#if texts.length > 0}
-		<div class="space-y-1">
-			{#each texts as text, i}
-				<div
-					class="flex items-center justify-between py-1.5 px-3 bg-surface-muted rounded text-sm"
-				>
-					<span class="mono">{text}</span>
-					<Button variant="plain"
-						type="button"
-						onclick={() => remove(i)}
-					 class="text-error hover:text-status-error"
-					>
-						<Trash2 class="w-4 h-4" />
+		<ul class="space-y-1 mt-2">
+			{#each texts as text, i (i)}
+				<li class="flex items-center justify-between gap-2 py-1 pl-3 pr-1 bg-surface-muted rounded text-sm">
+					<span class="mono break-all">{text}</span>
+					<Button variant="ghost-danger" size="icon-sm" onclick={() => remove(i)} title={$t(removeKey, { name: text })}>
+						<Trash2 class="w-4 h-4" aria-hidden="true" />
+						<span class="sr-only">{$t(removeKey, { name: text })}</span>
 					</Button>
-				</div>
+				</li>
 			{/each}
-		</div>
+		</ul>
 	{/if}
 {/snippet}
 
@@ -47,7 +58,7 @@
 	<form
 		onsubmit={(e) => {
 			e.preventDefault();
-			oncreate();
+			submit();
 		}}
 		class="space-y-4"
 	>
@@ -55,6 +66,7 @@
 			label={$t('containers.create.name')}
 			bind:value={form.formData.name}
 			placeholder={$t('containers.create.namePlaceholder')}
+			error={tried && !form.formData.name.trim() ? $t('containers.create.nameRequired') : ''}
 			required
 		/>
 
@@ -63,6 +75,7 @@
 			bind:value={form.formData.image}
 			placeholder={$t('containers.create.imagePlaceholder')}
 			hint={$t('containers.create.imageHint')}
+			error={tried && !form.formData.image.trim() ? $t('containers.create.imageRequired') : ''}
 			required
 		/>
 
@@ -77,64 +90,68 @@
 			]}
 		/>
 
-		<!-- Port Mappings -->
-		<div>
-			<label class="form-label">{$t('containers.create.ports')}</label>
-			<!-- The fields and Add wrap on a narrow screen (ADR-0302). -->
-			<div class="flex flex-wrap gap-2 mb-2">
-				<input
+		<!-- Ports: each field with its own label, in one row from sm, two per row on a phone
+		     (webui.ux-apps). -->
+		<fieldset>
+			<legend class="form-label">{$t('containers.create.ports')}</legend>
+			<div class="grid grid-cols-2 sm:grid-cols-[1fr_1fr_7rem_auto] items-end gap-2">
+				<Input
 					type="number"
+					label={$t('containers.create.hostPort')}
 					bind:value={form.portMapping.host}
-					placeholder={$t('containers.create.hostPort')}
-					class="form-input w-24"
+					placeholder={$t('containers.create.hostPortExample')}
 				/>
-				<span class="text-secondary self-center">:</span>
-				<input
+				<Input
 					type="number"
+					label={$t('containers.create.containerPort')}
 					bind:value={form.portMapping.container}
-					placeholder={$t('containers.create.containerPort')}
-					class="form-input w-24"
+					placeholder={$t('containers.create.containerPortExample')}
 				/>
-				<select bind:value={form.portMapping.protocol} class="form-select w-24">
-					<option value="tcp">{$t('containers.protocol.tcp')}</option>
-					<option value="udp">{$t('containers.protocol.udp')}</option>
-				</select>
-				<Button variant="secondary" size="sm" onclick={() => form.addPort()} type="button"
-					>{$t('containers.create.add')}</Button
-				>
+				<Select
+					label={$t('containers.create.protocol')}
+					bind:value={form.portMapping.protocol}
+					options={[
+						{ value: 'tcp', label: $t('containers.protocol.tcp') },
+						{ value: 'udp', label: $t('containers.protocol.udp') }
+					]}
+				/>
+				<Button variant="secondary" icon={Plus} onclick={() => form.addPort()} type="button">
+					{$t('containers.create.addPort')}
+				</Button>
 			</div>
 			{@render added(
 				form.portsList.map((port) => `${port.host}:${port.container}/${port.protocol}`),
-				(i) => form.removePort(i)
+				(i) => form.removePort(i),
+				'containers.create.removeItem'
 			)}
-		</div>
+		</fieldset>
 
-		<!-- Environment Variables -->
-		<div>
-			<label class="form-label">{$t('containers.create.environment')}</label>
-			<div class="flex flex-wrap gap-2 mb-2">
-				<input
-					type="text"
+		<!-- Variables: a name and a value, then Add. -->
+		<fieldset>
+			<legend class="form-label">{$t('containers.create.environment')}</legend>
+			<div class="grid grid-cols-2 sm:grid-cols-[1fr_1fr_auto] items-end gap-2">
+				<Input
+					label={$t('containers.create.envKey')}
 					bind:value={form.envVar.key}
-					placeholder={$t('containers.create.envKey')}
-					class="form-input flex-1 min-w-[7rem]"
+					placeholder={$t('containers.create.envKeyExample')}
+					spellcheck={false}
 				/>
-				<span class="text-secondary self-center">=</span>
-				<input
-					type="text"
+				<Input
+					label={$t('containers.create.envValue')}
 					bind:value={form.envVar.value}
-					placeholder={$t('containers.create.envValue')}
-					class="form-input flex-1 min-w-[7rem]"
+					placeholder={$t('containers.create.envValueExample')}
+					spellcheck={false}
 				/>
-				<Button variant="secondary" size="sm" onclick={() => form.addEnvVar()} type="button"
-					>{$t('containers.create.add')}</Button
-				>
+				<Button variant="secondary" icon={Plus} onclick={() => form.addEnvVar()} type="button" class="col-span-2 sm:col-span-1 justify-self-start">
+					{$t('containers.create.addVariable')}
+				</Button>
 			</div>
 			{@render added(
 				form.envList.map((env) => `${env.key}=${env.value}`),
-				(i) => form.removeEnvVar(i)
+				(i) => form.removeEnvVar(i),
+				'containers.create.removeItem'
 			)}
-		</div>
+		</fieldset>
 
 		{#if error}
 			<Alert variant="error">{error}</Alert>
@@ -149,7 +166,7 @@
 			variant="primary"
 			class="flex-1"
 			loading={submitting}
-			onclick={oncreate}
+			onclick={submit}
 			icon={Plus}
 		>
 			{$t('containers.create.button')}

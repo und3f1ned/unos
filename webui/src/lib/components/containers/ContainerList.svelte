@@ -1,10 +1,14 @@
 <script lang="ts">
 	// The containers that the Containers page shows, as a table or as cards: a click opens the
 	// container's drawer, the checkbox selects it for an action on several (ADR-0389), and the
-	// buttons act on it alone. While the list loads, and when it shows none, it says so.
+	// buttons act on it alone. When it shows none, it says so. A row's buttons stay on one line in
+	// a column as narrow as they are, the name keeps a width, and an image cut short shows whole on
+	// hover (webui.ux-apps). A container that an app of the App Store made says so and links there;
+	// it has no Remove: removing one container breaks its app, whose Uninstall is the App Store's.
 	import {
 		Container as ContainerIcon,
 		ExternalLink,
+		Package,
 		Play,
 		RotateCw,
 		Square,
@@ -13,12 +17,12 @@
 	import { Badge, Button, Card, EmptyState, type IconComponent } from '$lib/components/ui';
 	import type { Container } from '$lib/api/containers';
 	import { t } from '$lib/i18n';
-	import { labelOf, stateVariant, STATES, webUrl, type QuickAction } from './labels';
+	import { appOf, labelOf, stateVariant, STATES, webUrl, type QuickAction } from './labels';
 
 	type Props = {
 		/** The containers that the search and the filter let through. */
 		containers: Container[];
-		/** A search or a filter is set: an empty list offers to clear them, else to create one. */
+		/** A search or a filter is set: an empty list offers to clear them. */
 		filtered: boolean;
 		view: 'table' | 'cards';
 		/** The ids of the selected containers. */
@@ -27,6 +31,8 @@
 		busy: boolean;
 		onopen: (container: Container) => void;
 		onselect: (id: string, on: boolean) => void;
+		/** Select every container shown, or none. */
+		ontoggleall: (on: boolean) => void;
 		/** A container's own button; the page stops the click from opening the drawer. */
 		onaction: (event: MouseEvent, id: string, action: QuickAction) => void;
 		/** Clear the search and the filter. */
@@ -41,24 +47,32 @@
 		busy,
 		onopen,
 		onselect,
+		ontoggleall,
 		onaction,
 		onclear
 	}: Props = $props();
 
-	// The look of a container's own buttons.
-	const QUICK: Record<QuickAction, { hover: string; Icon: IconComponent; key: string }> = {
-		stop: { hover: 'hover:text-status-warning', Icon: Square, key: 'containers.action.stop' },
-		restart: { hover: 'hover:text-status-info', Icon: RotateCw, key: 'containers.action.restart' },
-		start: { hover: 'hover:text-status-success', Icon: Play, key: 'containers.action.start' },
-		remove: { hover: 'hover:text-status-error', Icon: Trash2, key: 'containers.action.remove' }
+	const allSelected = $derived(containers.length > 0 && containers.every((c) => selected.has(c.id)));
+	const someSelected = $derived(!allSelected && containers.some((c) => selected.has(c.id)));
+
+	// The look of a container's own buttons: no status colours on an action (webui.ux-apps).
+	const QUICK: Record<QuickAction, { Icon: IconComponent; key: string; danger?: boolean }> = {
+		stop: { Icon: Square, key: 'containers.action.stop' },
+		restart: { Icon: RotateCw, key: 'containers.action.restart' },
+		start: { Icon: Play, key: 'containers.action.start' },
+		remove: { Icon: Trash2, key: 'containers.action.remove', danger: true }
 	};
 
-	function formatPorts(container: Container): string {
-		if (container.ports.length === 0) return '-';
-		return container.ports
-			.filter((p) => p.host_port)
-			.map((p) => `${p.host_port}:${p.container_port}`)
-			.join(', ');
+	// i18n-ignore: a dash for no port, the same in every language
+	const NO_PORTS = '–';
+
+	function hostPorts(container: Container): string[] {
+		return container.ports.filter((p) => p.host_port).map((p) => `${p.host_port}:${p.container_port}`);
+	}
+
+	function appName(container: Container): string | null {
+		const app = appOf(container);
+		return app === null ? null : (container.labels['unos.app.name'] ?? app);
 	}
 </script>
 
@@ -76,57 +90,101 @@
 	/>
 {/snippet}
 
-{#snippet webLink(href: string, className: string, iconClass: string)}
-	<a
+<!-- Every container shown, or none; part of them shows as indeterminate. -->
+{#snippet selectAll(withLabel: boolean)}
+	<input
+		type="checkbox"
+		class="form-checkbox"
+		checked={allSelected}
+		disabled={busy}
+		aria-label={withLabel ? undefined : $t('containers.bulk.selectAll')}
+		{@attach (node) => {
+			node.indeterminate = someSelected;
+		}}
+		onchange={(event) => ontoggleall(event.currentTarget.checked)}
+	/>
+{/snippet}
+
+{#snippet webLink(href: string)}
+	<Button
+		variant="ghost"
+		size="icon-sm"
 		{href}
 		target="_blank"
 		rel="noopener"
 		onclick={(e) => e.stopPropagation()}
-		class={className}
 		title={$t('containers.openInBrowser')}
 	>
-		<ExternalLink class={iconClass} />
+		<ExternalLink class="w-4 h-4" aria-hidden="true" />
+		<span class="sr-only">{$t('containers.openInBrowser')}</span>
+	</Button>
+{/snippet}
+
+<!-- The app of the App Store that made the container: a link to its card there. -->
+{#snippet appLink(name: string)}
+	<a
+		href="/apps#installed"
+		class="inline-flex items-center gap-1 text-xs text-content-secondary hover:text-content-link hover:underline"
+		onclick={(e) => e.stopPropagation()}
+	>
+		<Package class="w-3 h-3" aria-hidden="true" />
+		{$t('containers.app', { name })}
 	</a>
 {/snippet}
 
 <!-- A container's own button. -->
 {#snippet quick(container: Container, action: QuickAction)}
 	{@const look = QUICK[action]}
-	<Button variant="ghost" size="icon-sm" class="text-secondary {look.hover}"
+	<Button
+		variant={look.danger ? 'ghost-danger' : 'ghost'}
+		size="icon-sm"
 		disabled={busy}
 		onclick={(e) => onaction(e, container.id, action)}
 		title={$t(look.key)}
 	>
-		<look.Icon class="w-4 h-4" />
+		<look.Icon class="w-4 h-4" aria-hidden="true" />
+		<span class="sr-only">{$t(look.key)}</span>
 	</Button>
 {/snippet}
 
 <!-- A container's own buttons, the same in a row and a card: its one place of them, the drawer
      has none (ADR-0431). -->
-{#snippet actions(container: Container)}
-	{#if container.state === 'running'}
+{#snippet actions(container: Container, href: string | null)}
+	<!-- Each button keeps its column, so that the rows' buttons line up: an empty slot of the same
+	     size where a container has no web page, no Restart (it does not run) or no Remove (an
+	     app's). -->
+	{#if href}{@render webLink(href)}{:else}{@render slot()}{/if}
+	<!-- A container that restarts over and over is stopped like a running one: Start would do
+	     nothing to it. -->
+	{#if container.state === 'running' || container.state === 'restarting'}
 		{@render quick(container, 'stop')}
 		{@render quick(container, 'restart')}
 	{:else}
 		{@render quick(container, 'start')}
+		{@render slot()}
 	{/if}
-	{@render quick(container, 'remove')}
+	{#if appOf(container) === null}
+		{@render quick(container, 'remove')}
+	{:else}
+		{@render slot()}
+	{/if}
+{/snippet}
+
+{#snippet slot()}<span class="inline-block w-8 h-8 shrink-0" aria-hidden="true"></span>{/snippet}
+
+{#snippet state(container: Container)}
+	<Badge variant={stateVariant(container.state)} dot>{labelOf(STATES, container.state, $t)}</Badge>
 {/snippet}
 
 {#if containers.length === 0}
 	<EmptyState
 		icon={ContainerIcon}
-		title={$t('containers.empty.title')}
-		description={filtered
-			? $t('containers.empty.filtered')
-			: $t('containers.empty.none')}
+		title={filtered ? $t('containers.empty.filteredTitle') : $t('containers.empty.title')}
+		description={filtered ? $t('containers.empty.filtered') : $t('containers.empty.none')}
 	>
-		<!-- Create Container is the page header's (ADR-0431). -->
+		<!-- Create container is the page header's (ADR-0431). -->
 		{#if filtered}
-			<Button
-				variant="secondary"
-				onclick={onclear}>{$t('containers.empty.clear')}</Button
-			>
+			<Button variant="secondary" onclick={onclear}>{$t('containers.empty.clear')}</Button>
 		{/if}
 	</EmptyState>
 {:else if view === 'table'}
@@ -136,47 +194,42 @@
 			<table class="table">
 				<thead class="table-header">
 					<tr>
-						<th class="w-12"></th>
+						<th class="w-10">{@render selectAll(false)}</th>
 						<th>{$t('containers.column.name')}</th>
 						<th>{$t('containers.column.image')}</th>
 						<th>{$t('containers.column.state')}</th>
 						<th>{$t('containers.column.ports')}</th>
-						<th class="text-right">{$t('containers.column.actions')}</th>
+						<th class="w-px text-right"><span class="sr-only">{$t('containers.column.actions')}</span></th>
 					</tr>
 				</thead>
 				<tbody>
-					{#each containers as container}
+					{#each containers as container (container.id)}
 						{@const href = webUrl(container)}
+						{@const app = appName(container)}
 						<tr
-							class="table-row hover:bg-surface-overlay cursor-pointer transition-colors"
+							class="table-row cursor-pointer {selected.has(container.id) ? 'bg-surface-overlay/60' : ''}"
 							onclick={() => onopen(container)}
 						>
 							<td>
 								{@render selectBox(container, 'form-checkbox', false)}
 							</td>
-							<td>
-								<div class="font-medium">{container.name}</div>
-								<div class="text-xs text-muted mono-xs truncate max-w-48">
-									{container.id.substring(0, 12)}
+							<td class="min-w-[16ch]">
+								<div class="font-medium break-words">{container.name}</div>
+								<div class="flex flex-wrap items-center gap-x-3 gap-y-0.5">
+									<span class="mono-xs text-content-muted">{container.id.substring(0, 12)}</span>
+									{#if app}{@render appLink(app)}{/if}
 								</div>
 							</td>
 							<td>
-								<div class="mono text-sm truncate max-w-48">{container.image}</div>
+								<div class="mono text-sm truncate max-w-[24ch]" title={container.image}>{container.image}</div>
 							</td>
+							<td class="whitespace-nowrap">{@render state(container)}</td>
 							<td>
-								<Badge variant={stateVariant(container.state)} dot>{labelOf(STATES, container.state, $t)}</Badge>
+								<span class="mono-xs text-content-secondary">{hostPorts(container).join(', ') || NO_PORTS}</span>
 							</td>
-							<td>
-								<div class="flex items-center gap-2">
-									<span class="text-sm text-secondary mono-xs">{formatPorts(container)}</span>
-									{#if href}
-										{@render webLink(href, 'text-content-link', 'w-3.5 h-3.5')}
-									{/if}
-								</div>
-							</td>
-							<td>
-								<div class="table-actions">
-									{@render actions(container)}
+							<td class="w-px whitespace-nowrap">
+								<div class="table-actions flex-nowrap">
+									{@render actions(container, href)}
 								</div>
 							</td>
 						</tr>
@@ -186,57 +239,52 @@
 		</div>
 	</Card>
 {:else}
-	<!-- Cards View -->
-	<div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-		{#each containers as container}
-			{@const href = webUrl(container)}
-			<div
-				class="card hover:bg-surface-overlay cursor-pointer transition-colors"
-				onclick={() => onopen(container)}
-				role="button"
-				tabindex="0"
-				onkeypress={(e) => e.key === 'Enter' && onopen(container)}
-			>
-				<div class="flex items-start justify-between mb-3">
-					<div class="flex items-center gap-3 min-w-0">
-						{@render selectBox(container, 'form-checkbox flex-shrink-0', true)}
-						<div
-							class="w-10 h-10 rounded-lg bg-surface-overlay flex items-center justify-center flex-shrink-0"
-							aria-hidden="true"
-						>
-							<ContainerIcon class="w-5 h-5 text-content-secondary" />
+	<!-- Cards View: the phone's default; every card of a row as tall as the tallest. -->
+	<div class="space-y-3">
+		<label class="flex items-center gap-2 text-sm text-content-secondary w-fit">
+			{@render selectAll(true)}
+			{$t('containers.bulk.selectAll')}
+		</label>
+		<div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+			{#each containers as container (container.id)}
+				{@const href = webUrl(container)}
+				{@const app = appName(container)}
+				{@const ports = hostPorts(container)}
+				<div
+					class="card flex h-full flex-col gap-3 hover:bg-surface-overlay cursor-pointer transition-colors {selected.has(
+						container.id
+					)
+						? 'ring-1 ring-brand-ring'
+						: ''}"
+					onclick={() => onopen(container)}
+					role="button"
+					tabindex="0"
+					onkeypress={(e) => e.key === 'Enter' && onopen(container)}
+				>
+					<div class="flex items-start gap-3">
+						{@render selectBox(container, 'form-checkbox mt-1 flex-shrink-0', true)}
+						<div class="min-w-0 flex-1">
+							<h3 class="font-semibold break-words">{container.name}</h3>
+							<p class="mono-xs text-content-secondary truncate" title={container.image}>{container.image}</p>
 						</div>
-						<div class="min-w-0">
-							<h3 class="font-semibold truncate">{container.name}</h3>
-							<p class="text-sm text-secondary truncate">{container.image}</p>
-						</div>
+						<div class="flex-shrink-0">{@render state(container)}</div>
 					</div>
-					<Badge variant={stateVariant(container.state)}>{labelOf(STATES, container.state, $t)}</Badge>
-				</div>
-
-				{#if container.ports.length > 0}
-					<div class="mb-3">
-						<p class="text-xs text-muted mb-1">{$t('containers.column.ports')}</p>
-						<div class="flex flex-wrap gap-1">
-							{#each container.ports.filter((p) => p.host_port) as port}
-								<span class="badge badge-info">
-									{port.host_port}:{port.container_port}
-								</span>
-							{/each}
+					{#if ports.length > 0 || app}
+						<div class="flex flex-wrap items-center gap-x-3 gap-y-1">
+							{#if ports.length > 0}
+								<span class="mono-xs text-content-secondary">{ports.join(', ')}</span>
+							{/if}
+							{#if app}{@render appLink(app)}{/if}
 						</div>
-					</div>
-				{/if}
-
-				<div class="flex items-center justify-between pt-3 border-t border-border">
-					<span class="mono-xs text-muted">{container.id.substring(0, 12)}</span>
-					<div class="flex items-center gap-1">
-						{#if href}
-							{@render webLink(href, 'p-1.5 rounded hover:bg-surface-muted text-info transition-colors', 'w-4 h-4')}
-						{/if}
-						{@render actions(container)}
+					{/if}
+					<div class="mt-auto flex items-center justify-between gap-2 pt-3 border-t border-border">
+						<span class="mono-xs text-content-muted">{container.id.substring(0, 12)}</span>
+						<div class="table-actions flex-nowrap">
+							{@render actions(container, href)}
+						</div>
 					</div>
 				</div>
-			</div>
-		{/each}
+			{/each}
+		</div>
 	</div>
 {/if}

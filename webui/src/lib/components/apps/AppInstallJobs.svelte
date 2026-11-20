@@ -1,4 +1,8 @@
 <script lang="ts">
+	// The card of each install, update or rollback of an app (ADR-0384, ADR-0408): its state and
+	// step, while it downloads one line of its whole download (the bytes of every image whose size
+	// is known, and how many images are on the NAS), each image and each container, and its result.
+	// No layers: Docker's word for a part of an image says nothing to a person (webui.ux-apps).
 	import { Ban, X } from 'lucide-svelte';
 	import { Alert, Badge, Button, Card, ProgressBar } from '$lib/components/ui';
 	import { intlLocale, t } from '$lib/i18n';
@@ -102,6 +106,19 @@
 		return catalog.find((app) => app.id === job.template_id);
 	}
 
+	/** The whole download of a job: the bytes of the images whose size is known, and the images on the NAS. */
+	function download(job: AppInstallJob): { done: number; total: number; ready: number } {
+		let done = 0;
+		let total = 0;
+		let ready = 0;
+		for (const image of job.images) {
+			done += image.bytes_done;
+			total += image.bytes_total;
+			if (image.state === 'pulled' || image.state === 'present') ready++;
+		}
+		return { done, total, ready };
+	}
+
 	/** The image's name without its digest: the tag tells the version; the digest is in the details. */
 	function shortName(image: string): string {
 		return image.split('@')[0];
@@ -184,6 +201,27 @@
 				</Alert>
 			{/if}
 
+			{#if job.state === 'running' && job.step === 'pulling' && job.images.length > 0}
+				{@const whole = download(job)}
+				<div class="mt-4">
+					<div class="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 text-sm">
+						<span>{$t('apps.job.imagesReady', { done: whole.ready, n: job.images.length })}</span>
+						{#if whole.total > 0}
+							<span class="text-content-secondary tabular">
+								{$t('apps.job.bytes', { done: formatSize(whole.done), total: formatSize(whole.total) })}
+							</span>
+						{/if}
+					</div>
+					<ProgressBar
+						class="mt-1.5"
+						variant="info"
+						value={whole.total > 0 ? whole.done : whole.ready}
+						max={whole.total > 0 ? whole.total : job.images.length}
+						label={$t('apps.job.downloadAll', { name: job.name })}
+					/>
+				</div>
+			{/if}
+
 			{#if job.images.length > 0}
 				<h3 class="text-sm font-medium mt-4 mb-2">{$t('apps.job.images')}</h3>
 				<ul class="space-y-3">
@@ -202,17 +240,14 @@
 									max={image.bytes_total}
 									label={$t('apps.job.download', { image: shortName(image.image) })}
 								/>
-								<p class="flex flex-wrap gap-x-3 text-xs text-muted mt-1">
-									{#if image.bytes_total > 0}
-										<span>
-											{$t('apps.job.bytes', {
-												done: formatSize(image.bytes_done),
-												total: formatSize(image.bytes_total)
-											})}
-										</span>
-									{/if}
-									<span>{$t('apps.job.layers', { done: image.layers_done, n: image.layers })}</span>
-								</p>
+								{#if image.bytes_total > 0}
+									<p class="text-xs text-content-muted mt-1 tabular">
+										{$t('apps.job.bytes', {
+											done: formatSize(image.bytes_done),
+											total: formatSize(image.bytes_total)
+										})}
+									</p>
+								{/if}
 							{/if}
 						</li>
 					{/each}

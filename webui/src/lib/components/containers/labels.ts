@@ -23,27 +23,64 @@ export const PROTOCOLS: Record<string, string> = {
 	sctp: 'containers.protocol.sctp'
 };
 
+/** A date and time without seconds, in the language of the page (webui.ux-apps). */
+export const NO_SECONDS: Intl.DateTimeFormatOptions = {
+	year: 'numeric',
+	month: '2-digit',
+	day: '2-digit',
+	hour: '2-digit',
+	minute: '2-digit'
+};
+
 /** The label of `value` in the language of the page; a value without one as it comes. */
 export function labelOf(labels: Record<string, string>, value: string, t: Translate): string {
 	return Object.prototype.hasOwnProperty.call(labels, value) ? t(labels[value]) : value;
 }
 
-/** The badge of a container's state. */
-export function stateVariant(
-	state: string
-): 'success' | 'error' | 'warning' | 'info' | 'neutral' | 'purple' | 'cyan' | 'orange' {
+/**
+ * The badge of a container's state: green while it runs, neutral when it is stopped or was never
+ * started (a normal state, not an error), yellow while paused, blue while it restarts, red for a
+ * dead one (webui.ux-apps).
+ */
+export function stateVariant(state: string): 'success' | 'error' | 'warning' | 'info' | 'neutral' {
 	switch (state) {
 		case 'running':
 			return 'success';
-		case 'exited':
-			return 'error';
 		case 'paused':
 			return 'warning';
 		case 'restarting':
 			return 'info';
+		case 'dead':
+			return 'error';
 		default:
 			return 'neutral';
 	}
+}
+
+/**
+ * The groups of the state filter, which split every container once: running, stopped (exited, as
+ * the dashboard counts it) and every other state (paused, restarting, created, removing, dead),
+ * so that the counts add up to All.
+ */
+export type StateGroup = 'running' | 'stopped' | 'other';
+export type StateFilter = 'all' | StateGroup;
+
+export function groupOf(state: string): StateGroup {
+	if (state === 'running') return 'running';
+	if (state === 'exited') return 'stopped';
+	return 'other';
+}
+
+/** The number of containers in each group, and all of them. */
+export function countByGroup(containers: Container[]): Record<StateFilter, number> {
+	const counts = { all: containers.length, running: 0, stopped: 0, other: 0 };
+	for (const container of containers) counts[groupOf(container.state)]++;
+	return counts;
+}
+
+/** The app of the App Store that made the container, by the label UNOS gives it (ADR-0381). */
+export function appOf(container: Container): string | null {
+	return container.labels?.['unos.app'] ?? null;
 }
 
 /** The address of the container's first port published on the host, on this host's name. */

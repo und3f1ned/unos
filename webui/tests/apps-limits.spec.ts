@@ -80,6 +80,9 @@ async function openInstalled(page: Page) {
 /** The row of a container in the Resources of its app's card. */
 const row = (page: Page, container: string) =>
   installedCard(page, 'immich').getByRole('listitem', { name: container, exact: true });
+/** The memory and the CPU of a container's row: a column each (webui.ux-apps). */
+const memory = (page: Page, container: string) => row(page, container).locator('[data-field="memory"]');
+const cpu = (page: Page, container: string) => row(page, container).locator('[data-field="cpu"]');
 
 test.describe('The limits of an app\'s containers', () => {
   test('the Installed tab shows each container\'s use against its limits', async ({ authenticatedPage: page }) => {
@@ -93,8 +96,8 @@ test.describe('The limits of an app\'s containers', () => {
     await expect(card.getByRole('listitem').first()).toHaveAccessibleName('immich');
 
     const database = row(page, 'immich-database');
-    await expect(database).toContainText('Memory: 470 MB of 512 MB');
-    await expect(database).toContainText('CPU: 0.5 of 2 CPUs');
+    await expect(memory(page, 'immich-database')).toHaveText('470 MB of 512 MB');
+    await expect(cpu(page, 'immich-database')).toHaveText('0.5 of 2 CPUs');
     // The bars of the use against the limits: 470 of 512 MB is past 90%, an error's colour.
     const memoryBar = database.getByRole('progressbar', { name: 'Memory of immich-database against its limit' });
     await expect(memoryBar).toHaveAttribute('aria-valuenow', String(470 * MIB));
@@ -107,8 +110,8 @@ test.describe('The limits of an app\'s containers', () => {
 
     // Without a limit: the use alone, and no bar.
     const server = row(page, 'immich');
-    await expect(server).toContainText('Memory: 577 MB, no limit');
-    await expect(server).toContainText('CPU: 0.06 CPUs, no limit');
+    await expect(memory(page, 'immich')).toHaveText('577 MB, no limit');
+    await expect(cpu(page, 'immich')).toHaveText('0.06 CPUs, no limit');
     await expect(server.getByRole('progressbar')).toHaveCount(0);
   });
 
@@ -119,10 +122,12 @@ test.describe('The limits of an app\'s containers', () => {
     await fakeLimits(page, [app]);
     await openInstalled(page);
 
-    await expect(row(page, 'immich-database')).toContainText('Memory limit: 512 MB');
-    await expect(row(page, 'immich-database')).toContainText('CPU limit: 2 CPUs');
-    await expect(row(page, 'immich')).toContainText('No memory limit');
-    await expect(row(page, 'immich')).toContainText('No CPU limit');
+    await expect(memory(page, 'immich-database')).toHaveText('Limit 512 MB');
+    await expect(cpu(page, 'immich-database')).toHaveText('Limit 2 CPUs');
+    await expect(memory(page, 'immich')).toHaveText('No limit');
+    await expect(cpu(page, 'immich')).toHaveText('No limit');
+    // Nothing runs, so nothing waits to be read: no note of it.
+    await expect(installedCard(page, 'immich').getByText(/has not been read yet/)).toHaveCount(0);
     await expect(installedCard(page, 'immich').getByRole('progressbar')).toHaveCount(0);
   });
 
@@ -150,8 +155,8 @@ test.describe('The limits of an app\'s containers', () => {
     await expect(dialog).toBeHidden();
     expect(changes).toEqual([['immich-machine-learning', { memory_limit: 2048 * MIB, cpu_limit: 1.5 }]]);
     // The list is read again: the new limits against the use.
-    await expect(row(page, 'immich-machine-learning')).toContainText('Memory: 145 MB of 2 GB');
-    await expect(row(page, 'immich-machine-learning')).toContainText('CPU: 0.41 of 1.5 CPUs');
+    await expect(memory(page, 'immich-machine-learning')).toHaveText('145 MB of 2 GB');
+    await expect(cpu(page, 'immich-machine-learning')).toHaveText('0.41 of 1.5 CPUs');
   });
 
   test('emptied fields remove the limits', async ({ authenticatedPage: page }) => {
@@ -168,7 +173,7 @@ test.describe('The limits of an app\'s containers', () => {
 
     await expect(dialog).toBeHidden();
     expect(changes).toEqual([['immich-database', { memory_limit: null, cpu_limit: null }]]);
-    await expect(row(page, 'immich-database')).toContainText('Memory: 470 MB, no limit');
+    await expect(memory(page, 'immich-database')).toHaveText('470 MB, no limit');
   });
 
   test('a refusal of the server stays in the dialog with its reason', async ({ authenticatedPage: page }) => {
@@ -184,7 +189,7 @@ test.describe('The limits of an app\'s containers', () => {
     await expect(dialog).toBeVisible();
     await dialog.getByRole('button', { name: 'Cancel' }).click();
     await expect(dialog).toBeHidden();
-    await expect(row(page, 'immich-database')).toContainText('Memory: 470 MB of 512 MB');
+    await expect(memory(page, 'immich-database')).toHaveText('470 MB of 512 MB');
   });
 
   test('a value that is no number is refused before it is sent, never taken for no limit', async ({

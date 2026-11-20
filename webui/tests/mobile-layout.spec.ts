@@ -1687,7 +1687,7 @@ const VIEWS: View[] = [
     name: 'Dialog: create a container',
     path: '/containers',
     fake: (page) => serve(page, DOCKER),
-    open: (page) => page.getByRole('button', { name: /^(Create Container|Создать контейнер)$/ }).click(),
+    open: (page) => page.getByRole('button', { name: /^(Create container|Создать контейнер)$/ }).click(),
     shows: (page) => page.getByRole('dialog'),
     start: dialogTitle,
     end: dialogEnd,
@@ -1696,7 +1696,9 @@ const VIEWS: View[] = [
     name: 'Dialog: a container',
     path: '/containers',
     fake: (page) => serve(page, DOCKER),
-    open: (page) => page.locator('tr', { hasText: 'e2e-immich-machine-learning' }).click(),
+    // A phone shows the containers as cards and one held sideways (667 px) as the table (webui.ux-apps):
+    // the container's name opens its drawer in both.
+    open: (page) => page.getByText('e2e-immich-machine-learning', { exact: true }).first().click(),
     shows: (page) => page.getByRole('dialog'),
     start: dialogTitle,
     // A drawer without buttons at its end: the container's image ends its Overview.
@@ -1719,7 +1721,7 @@ const VIEWS: View[] = [
     fake: (page) => serve(page, { '/api/v1/apps/installed': [INSTALLED_JELLYFIN] }),
     open: async (page) => {
       await page.getByRole('button', { name: /Immich/ }).first().click();
-      await page.getByRole('dialog').getByRole('button', { name: /^(Environment|Окружение) \(\d+\)$/ }).click();
+      await page.getByRole('dialog').getByRole('button', { name: /^(Variables|Переменные) \(\d+\)$/ }).click();
     },
     shows: (page) => page.getByRole('dialog').getByLabel('MACHINE_LEARNING_MODEL_REVISION'),
     // Opened on a tab that the click scrolled to: the view above checks the title as the dialog opens.

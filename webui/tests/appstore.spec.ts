@@ -38,9 +38,8 @@ test.describe('App Store', () => {
     await expect(page.getByRole('button', { name: 'Installed', exact: true })).toBeVisible();
 
     release();
-    await expect(
-      page.getByText('The installed apps could not be loaded: Docker is not available: held by the test'),
-    ).toBeVisible();
+    const alert = page.locator('.alert', { hasText: 'The installed apps could not be loaded' });
+    await expect(alert.getByText('Docker is not available: held by the test')).toBeVisible();
     await expect(page.getByRole('heading', { name: 'Jellyfin' }).first()).toBeVisible();
   });
 
@@ -70,15 +69,24 @@ test.describe('App Store', () => {
     
     // The categories are buttons in the "Categories" list next to the catalog.
     await expect(page.locator('h3:has-text("Categories")')).toBeVisible();
-    await expect(page.locator('main nav').getByRole('button', { name: /^All Apps/ })).toBeVisible();
+    await expect(page.locator('main nav').getByRole('button', { name: /^All apps/ })).toBeVisible();
   });
 
-  test('should show install button on app card', async ({ authenticatedPage: page }) => {
+  test('an app card says that a click installs it, and holds no button of its own', async ({
+    authenticatedPage: page,
+  }) => {
+    // Docker answers (the stand-in has none): an app can be installed.
+    await page.route('**/api/v1/apps/installed', (route) => route.fulfill({ json: [] }));
     await page.goto('/apps');
-    await page.waitForTimeout(2000);
-    
-    const installButton = page.locator('button:has-text("Install")').first();
-    await expect(installButton).toBeVisible();
+
+    // The card is the one control: no Install button inside it, and no primary button among the
+    // catalog's cards (webui.ux-apps).
+    const card = page.locator('.card[role="button"]').first();
+    await expect(card.getByText('Install', { exact: true })).toBeVisible();
+    await expect(card.getByRole('button')).toHaveCount(0);
+    await expect(page.locator('main .card[role="button"] .btn-primary')).toHaveCount(0);
+    // Sources are categories, not states: neutral badges.
+    await expect(page.locator('main .card[role="button"] .badge-warning, main .card[role="button"] .badge-success')).toHaveCount(0);
   });
 
   test('should switch to installed tab', async ({ authenticatedPage: page }) => {

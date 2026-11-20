@@ -1,64 +1,53 @@
 <script lang="ts">
-	// The selection for an action on several containers (ADR-0389); it wraps on a phone.
-	import { Play, RotateCw, Square } from 'lucide-svelte';
+	// The bar of an action on several containers (ADR-0389). It shows only while containers are
+	// selected (webui.ux-apps): their count, Start, Stop and Restart selected, and Clear; no
+	// disabled buttons wait above the list. It sits after the list and sticks to the bottom of the
+	// window while the list scrolls, so that it pushes no row from under the pointer; it wraps on a
+	// phone.
+	import { Play, RotateCw, Square, X } from 'lucide-svelte';
 	import { Button } from '$lib/components/ui';
 	import { t } from '$lib/i18n';
 	import type { BulkAction } from './bulk.svelte';
 
 	type Props = {
-		/** Every container that the list shows is selected. */
-		allSelected: boolean;
-		/** The list shows none: nothing to select. */
-		empty: boolean;
 		selectedCount: number;
 		/** An action on several containers runs. */
 		busy: boolean;
-		ontoggleall: (on: boolean) => void;
+		onclear: () => void;
 		onbulk: (action: BulkAction) => void;
 	};
 
-	let { allSelected, empty, selectedCount, busy, ontoggleall, onbulk }: Props = $props();
+	let { selectedCount, busy, onclear, onbulk }: Props = $props();
+
+	const ACTIONS: { id: BulkAction; Icon: typeof Play; key: string }[] = [
+		{ id: 'start', Icon: Play, key: 'containers.bulk.start' },
+		{ id: 'stop', Icon: Square, key: 'containers.bulk.stop' },
+		{ id: 'restart', Icon: RotateCw, key: 'containers.bulk.restart' }
+	];
 </script>
 
-<div
-	class="flex flex-wrap items-center gap-x-4 gap-y-2"
-	role="toolbar"
-	aria-label={$t('containers.bulk.toolbar')}
->
-	<label class="flex items-center gap-2 text-sm">
-		<input
-			type="checkbox"
-			class="form-checkbox"
-			checked={allSelected}
-			disabled={busy || empty}
-			onchange={(event) => ontoggleall(event.currentTarget.checked)}
-		/>
-		{$t('containers.bulk.selectAll')}
-	</label>
-	<span class="text-sm text-content-secondary">
-		{$t('containers.bulk.selected', { n: selectedCount })}
-	</span>
-	<div class="flex flex-wrap items-center gap-2">
-		<Button
-			variant="secondary"
-			size="sm"
-			icon={Play}
-			disabled={busy || selectedCount === 0}
-			onclick={() => onbulk('start')}>{$t('containers.bulk.start')}</Button
-		>
-		<Button
-			variant="secondary"
-			size="sm"
-			icon={Square}
-			disabled={busy || selectedCount === 0}
-			onclick={() => onbulk('stop')}>{$t('containers.bulk.stop')}</Button
-		>
-		<Button
-			variant="secondary"
-			size="sm"
-			icon={RotateCw}
-			disabled={busy || selectedCount === 0}
-			onclick={() => onbulk('restart')}>{$t('containers.bulk.restart')}</Button
-		>
+{#if selectedCount > 0}
+	<div
+		class="sticky bottom-4 z-10 flex flex-wrap items-center gap-x-4 gap-y-2 rounded-card border border-border-strong bg-surface-elevated px-4 py-2.5 shadow-popover"
+		role="toolbar"
+		aria-label={$t('containers.bulk.toolbar')}
+	>
+		<span class="text-sm font-medium" aria-live="polite">
+			{$t('containers.bulk.selected', { n: selectedCount })}
+		</span>
+		<div class="flex flex-wrap items-center gap-2 sm:ml-auto">
+			{#each ACTIONS as action (action.id)}
+				<Button
+					variant="secondary"
+					size="sm"
+					icon={action.Icon}
+					disabled={busy}
+					onclick={() => onbulk(action.id)}>{$t(action.key)}</Button
+				>
+			{/each}
+			<Button variant="ghost" size="sm" icon={X} disabled={busy} onclick={onclear}>
+				{$t('containers.bulk.clear')}
+			</Button>
+		</div>
 	</div>
-</div>
+{/if}

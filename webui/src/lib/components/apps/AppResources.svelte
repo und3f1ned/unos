@@ -1,7 +1,10 @@
 <script lang="ts">
 	// The containers of an installed app with their use against their limits (ADR-0390): the
 	// limits as Docker keeps them, the use as UNOS last read it from the kernel, about every 30
-	// seconds; Limits opens the dialog that changes a container's.
+	// seconds; Limits opens the dialog that changes a container's. A table in all but its markup:
+	// a row per container, the memory and the CPU in columns of their own and Limits always at
+	// the row's end; on a phone the name and Limits share a line, the use goes under them. What
+	// was not read yet is said once, under the rows (webui.ux-apps).
 	import { SlidersHorizontal } from 'lucide-svelte';
 	import { Button, ProgressBar } from '$lib/components/ui';
 	import { intlLocale, t } from '$lib/i18n';
@@ -44,6 +47,9 @@
 		}))
 	]);
 
+	// The running containers whose use was not read yet: said once, under the rows.
+	const unread = $derived(rows.filter((row) => row.running && row.resources.memory_used === null).length);
+
 	// A size with one decimal in the language of the page (formatSize of ./size).
 	function formatSize(bytes: number): string {
 		return formatSizeIn(bytes, $intlLocale, $t, 1);
@@ -65,7 +71,7 @@
 		}
 		return limit !== null
 			? $t('apps.resources.memoryLimit', { limit: formatSize(limit) })
-			: $t('apps.resources.memoryNoLimit');
+			: $t('apps.resources.noLimit');
 	}
 
 	function cpuText(row: Row): string {
@@ -77,53 +83,70 @@
 		}
 		return limit !== null
 			? $t('apps.resources.cpuLimit', { limit: formatCpus(limit) })
-			: $t('apps.resources.cpuNoLimit');
+			: $t('apps.resources.noLimit');
 	}
 </script>
 
-<div class="mt-4 pt-4 border-t border-border {className || ''}">
-	<h4 class="text-sm font-medium">{$t('apps.resources.title')}</h4>
-	<p class="text-xs text-muted mb-3">{$t('apps.resources.hint')}</p>
-	<ul class="space-y-3">
+{#snippet use(label: string, text: string, field: string, value: number | null, max: number | null, bar: string)}
+	<div class="min-w-0">
+		<span class="block text-xs text-content-secondary md:sr-only">{label}</span>
+		<span class="block text-sm tabular" data-field={field}>{text}</span>
+		{#if value !== null && max !== null}
+			<ProgressBar size="sm" class="mt-1" {value} {max} label={bar} />
+		{/if}
+	</div>
+{/snippet}
+
+<section class="mt-4 pt-4 border-t border-border {className || ''}">
+	<h4 class="text-sm font-medium mb-2">{$t('apps.resources.title')}</h4>
+	<!-- The columns' heads, from md; on a phone each value carries its label. -->
+	<div
+		class="hidden md:grid md:grid-cols-[minmax(0,14rem)_1fr_1fr_auto] gap-x-6 pb-2 text-xs text-content-secondary"
+		aria-hidden="true"
+	>
+		<span>{$t('apps.resources.container')}</span>
+		<span>{$t('apps.resources.memory')}</span>
+		<span>{$t('apps.resources.cpu')}</span>
+		<span class="w-[5.5rem]"></span>
+	</div>
+	<ul class="divide-y divide-border-muted">
 		{#each rows as row (row.name)}
-			<li class="flex flex-wrap items-center gap-x-4 gap-y-2" aria-label={row.name}>
-				<span class="mono text-sm break-all w-full md:w-56 flex-shrink-0">{row.name}</span>
-				<div class="flex-1 min-w-[10rem]">
-					<p class="text-xs text-secondary">{memoryText(row)}</p>
-					{#if read(row, row.resources.memory_used) && row.resources.memory_limit !== null}
-						<ProgressBar
-							size="sm"
-							class="mt-1"
-							value={row.resources.memory_used}
-							max={row.resources.memory_limit}
-							label={$t('apps.resources.memoryBar', { name: row.name })}
-						/>
-					{/if}
+			<li
+				class="grid grid-cols-2 md:grid-cols-[minmax(0,14rem)_1fr_1fr_auto] items-center gap-x-6 gap-y-2 py-2.5"
+				aria-label={row.name}
+			>
+				<span class="mono text-sm break-all">{row.name}</span>
+				<div class="justify-self-end md:order-last">
+					<Button
+						variant="secondary"
+						size="sm"
+						icon={SlidersHorizontal}
+						onclick={() => onlimits?.({ container: row.name, resources: row.resources })}
+					>
+						{$t('apps.resources.limits')}
+					</Button>
 				</div>
-				<div class="flex-1 min-w-[10rem]">
-					<p class="text-xs text-secondary">{cpuText(row)}</p>
-					{#if read(row, row.resources.cpu_used) && row.resources.cpu_limit !== null}
-						<ProgressBar
-							size="sm"
-							class="mt-1"
-							value={row.resources.cpu_used}
-							max={row.resources.cpu_limit}
-							label={$t('apps.resources.cpuBar', { name: row.name })}
-						/>
-					{/if}
-				</div>
-				{#if row.running && row.resources.memory_used === null}
-					<p class="text-xs text-muted w-full">{$t('apps.resources.notRead')}</p>
-				{/if}
-				<Button
-					variant="secondary"
-					size="sm"
-					icon={SlidersHorizontal}
-					onclick={() => onlimits?.({ container: row.name, resources: row.resources })}
-				>
-					{$t('apps.resources.limits')}
-				</Button>
+				{@render use(
+					$t('apps.resources.memory'),
+					memoryText(row),
+					'memory',
+					read(row, row.resources.memory_used) ? row.resources.memory_used : null,
+					row.resources.memory_limit,
+					$t('apps.resources.memoryBar', { name: row.name })
+				)}
+				{@render use(
+					$t('apps.resources.cpu'),
+					cpuText(row),
+					'cpu',
+					read(row, row.resources.cpu_used) ? row.resources.cpu_used : null,
+					row.resources.cpu_limit,
+					$t('apps.resources.cpuBar', { name: row.name })
+				)}
 			</li>
 		{/each}
 	</ul>
-</div>
+	<p class="mt-2 text-xs text-content-muted">
+		{$t('apps.resources.hint')}
+		{#if unread > 0}{$t('apps.resources.notRead', { n: unread })}{/if}
+	</p>
+</section>

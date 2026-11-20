@@ -177,22 +177,22 @@ test.describe('Apps that came back with companions', () => {
       const images = [template.image, template.companions[0].image];
       for (const image of images) expect(image).toMatch(PINNED);
 
-      await expect(catalogCard(page, app.name).getByRole('button', { name: 'Install', exact: true })).toBeVisible();
+      await expect(catalogCard(page, app.name).getByText('Install', { exact: true })).toBeVisible();
       const dialog = await details(page, app.name);
 
       // Overview: its two containers with their images, what they take on the system disk, and
       // what keeps the pool's disks awake.
-      const list = dialog.locator('.card-nested', { has: page.getByRole('heading', { name: 'Containers', exact: true }) });
+      const list = dialog.locator('section', { has: page.getByRole('heading', { name: 'Containers and images', exact: true }) });
       const items = list.getByRole('listitem');
       await expect(items).toHaveCount(2);
       for (const [i, name] of [app.id, `${app.id}-${app.companion}`].entries()) {
         await expect(items.nth(i).locator('p')).toHaveText(name);
         await expect(items.nth(i).locator('code')).toHaveText(images[i]);
       }
-      await expect(list).toContainText(`${app.name}'s images take about ${app.size} on the system disk.`);
+      await expect(dialog.locator('.kv', { hasText: 'System disk' })).toContainText(`About ${app.size} for its images`);
       await expect(dialog.getByText(diskAwake(app.name))).toBeVisible();
       // Its passwords and keys: files on the pool that UNOS generates, never their values.
-      const locations = dialog.locator('.card-nested', { hasText: `Data locations on ${POOL.name}` });
+      const locations = dialog.locator('section', { hasText: `Data locations on ${POOL.name}` });
       for (const secret of app.secrets) {
         await expect(locations.getByText(`${POOL.path}/apps/${app.id}/${secret}`, { exact: true })).toHaveCount(1);
       }
@@ -200,7 +200,7 @@ test.describe('Apps that came back with companions', () => {
       expect((await dialog.innerText()).replace(/sha256:[0-9a-f]{64}/g, '')).not.toMatch(/[0-9a-f]{32}/);
 
       // Environment: the wiring is UNOS's and cannot be changed.
-      await dialog.getByRole('button', { name: /^Environment \(\d+\)$/ }).click();
+      await dialog.getByRole('button', { name: /^Variables \(\d+\)$/ }).click();
       for (const [name, value] of app.wiring) {
         await expect(dialog.getByLabel(name, { exact: true })).toBeDisabled();
         await expect(dialog.getByLabel(name, { exact: true })).toHaveValue(value);
@@ -221,7 +221,7 @@ test.describe('Apps that came back with companions', () => {
     const install = dialog.getByRole('button', { name: 'Install BookStack' });
     await expect(install).toBeDisabled();
     await expect(dialog.getByText('Set the required variable APP_URL.')).toBeVisible();
-    await dialog.getByRole('button', { name: /^Environment \(\d+\)$/ }).click();
+    await dialog.getByRole('button', { name: /^Variables \(\d+\)$/ }).click();
     // A required variable's label is marked with an asterisk.
     await dialog.getByRole('textbox', { name: 'APP_URL *', exact: true }).fill('http://nas.local:6875');
     await install.click();

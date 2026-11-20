@@ -1,7 +1,8 @@
 <script lang="ts">
 	import { onDestroy, onMount, untrack } from 'svelte';
+	import { MediaQuery } from 'svelte/reactivity';
 	import { getContainers, createContainer, type Container } from '$lib/api/containers';
-	import { Plus, RefreshCw } from 'lucide-svelte';
+	import { Plus, RefreshCw, RotateCw } from 'lucide-svelte';
 	import { Button, Alert, Skeleton } from '$lib/components/ui';
 	import {
 		BulkStatus,
@@ -9,7 +10,6 @@
 		ContainerCreateDialog,
 		ContainerDetailDrawer,
 		ContainerList,
-		ContainerStats,
 		ContainerTabs,
 		ContainerToolbar,
 		ImageList,
@@ -18,7 +18,12 @@
 	import { containerAction } from '$lib/components/containers/actions';
 	import { BulkRun, Selection, type BulkAction } from '$lib/components/containers/bulk.svelte';
 	import { ContainerForm } from '$lib/components/containers/containerForm.svelte';
-	import type { QuickAction } from '$lib/components/containers/labels';
+	import {
+		countByGroup,
+		groupOf,
+		type QuickAction,
+		type StateFilter
+	} from '$lib/components/containers/labels';
 	import { t } from '$lib/i18n';
 
 	let activeTab = $state<TabId>('containers');
@@ -42,8 +47,13 @@
 
 	// Search & Filter
 	let searchQuery = $state('');
-	let stateFilter = $state('');
-	let viewMode = $state<'table' | 'cards'>('table');
+	let stateFilter = $state<StateFilter>('all');
+	// The view the user chose; until then cards on a phone, where a table's state and buttons would
+	// be off the screen, and the table on a wider screen (webui.ux-apps).
+	let chosenView = $state<'table' | 'cards' | null>(null);
+	// i18n-ignore: a CSS media query, the same in every language
+	const narrow = new MediaQuery('(max-width: 639px)', false);
+	const viewMode = $derived(chosenView ?? (narrow.current ? 'cards' : 'table'));
 
 	// Drawer state
 	let selectedContainer = $state<Container | null>(null);
@@ -62,20 +72,17 @@
 	let left = false;
 	onDestroy(() => (left = true));
 
-	// Computed stats
-	const runningCount = $derived(containers.filter((c) => c.state === 'running').length);
-	const stoppedCount = $derived(containers.filter((c) => c.state === 'exited').length);
-
-	// Filtered containers
-	const filteredContainers = $derived(
+	// The containers that the search lets through, and their counts by state, which the filter's
+	// segments show and which add up to All.
+	const searched = $derived(
 		containers.filter((c) => {
-			const matchesSearch =
-				searchQuery === '' ||
-				c.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-				c.image.toLowerCase().includes(searchQuery.toLowerCase());
-			const matchesState = stateFilter === '' || c.state === stateFilter;
-			return matchesSearch && matchesState;
+			const query = searchQuery.toLowerCase();
+			return query === '' || c.name.toLowerCase().includes(query) || c.image.toLowerCase().includes(query);
 		})
+	);
+	const counts = $derived(countByGroup(searched));
+	const filteredContainers = $derived(
+		stateFilter === 'all' ? searched : searched.filter((c) => groupOf(c.state) === stateFilter)
 	);
 
 	// What the list does not show leaves the selection: after a search, a filter or a load, before
@@ -84,9 +91,6 @@
 		const shown = filteredContainers;
 		untrack(() => selection.keep(new Set(shown.map((c) => c.id))));
 	});
-	const allShownSelected = $derived(
-		filteredContainers.length > 0 && filteredContainers.every((c) => selection.has(c.id))
-	);
 
 	/**
 	 * Start, stop or restart every selected container through its own endpoint, in the order of the
@@ -148,10 +152,8 @@
 	}
 
 	async function handleCreate() {
-		if (!form.formData.name || !form.formData.image) {
-			error = $t('containers.create.required');
-			return;
-		}
+		// The dialog says under each field what is missing.
+		if (!form.formData.name.trim() || !form.formData.image.trim()) return;
 
 		submitting = true;
 		error = '';
@@ -200,7 +202,6 @@
 	<div class="page-header">
 		<div class="min-w-0">
 			<h1 class="page-title">{$t('containers.title')}</h1>
-			<p class="page-subtitle">{$t('containers.subtitle')}</p>
 		</div>
 		<div class="page-actions">
 			<Button
@@ -208,6 +209,7 @@
 				size="icon"
 				onclick={refresh}
 				disabled={activeTab === 'containers' && loading}
+				title={$t('common.refresh')}
 			>
 				<RefreshCw class="w-4 h-4 {activeTab === 'containers' && loading ? 'animate-spin' : ''}" />
 				<span class="sr-only">{$t('common.refresh')}</span>
@@ -230,27 +232,35 @@
 		class="space-y-6"
 	>
 		{#if !loaded}
-			<!-- The first load (ADR-0430): the counts, the toolbar and the list, swapped at once. -->
+			<!-- The first load (ADR-0430): the toolbar (on a phone the filter has a row of its own)
+			     and the list, swapped at once. -->
 			<div class="space-y-6" aria-busy="true">
-				<!-- The counts, each as tall as its card (ContainerStats, ADR-0431). -->
-				<div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
-					{#each [0, 1, 2] as stat (stat)}
-						<Skeleton shape="block" class="h-[78px] w-full rounded-card" />
-					{/each}
+				<div class="space-y-3">
+					<Skeleton shape="block" class="h-9 w-full" />
+					<Skeleton shape="block" class="h-8 w-full sm:hidden" />
 				</div>
-				<Skeleton shape="block" class="h-9 w-full" />
-				<div class="card"><Skeleton shape="row" columns={6} count={4} size="control" /></div>
+				{#if viewMode === 'cards'}
+					<!-- A phone's cards (the view it starts in). -->
+					<div class="space-y-3">
+						{#each [0, 1, 2] as card (card)}
+							<Skeleton shape="card" count={2} />
+						{/each}
+					</div>
+				{:else}
+					<div class="card"><Skeleton shape="row" columns={6} count={4} size="control" /></div>
+				{/if}
 			</div>
 		{:else if loadError}
-			<Alert variant="error">{loadError}</Alert>
+			<!-- Docker did not answer: a plain title, the server's reason, and Retry; no counts, list
+			     or Create (webui.ux-apps). -->
+			<Alert variant="error" title={$t('containers.loadError.title')}>
+				<p>{$t('containers.loadError.hint')}</p>
+				<p class="mt-1 mono-xs break-words text-content-secondary">{loadError}</p>
+				<Button variant="secondary" size="sm" icon={RotateCw} class="mt-3" loading={loading} onclick={loadData}>
+					{$t('common.retry')}
+				</Button>
+			</Alert>
 		{:else}
-		<!-- Stats Cards -->
-		<ContainerStats
-			running={runningCount}
-			stopped={stoppedCount}
-			total={containers.length}
-		/>
-
 		{#if error}
 			<Alert variant="error">{error}</Alert>
 		{/if}
@@ -260,35 +270,33 @@
 		<ContainerToolbar
 			bind:search={searchQuery}
 			bind:filter={stateFilter}
+			{counts}
 			view={viewMode}
-			onview={(view) => (viewMode = view)}
+			onview={(view) => (chosenView = view)}
 		/>
-
-		{#if containers.length > 0}
-			<BulkToolbar
-				allSelected={allShownSelected}
-				empty={filteredContainers.length === 0}
-				selectedCount={selection.size}
-				busy={bulk.running}
-				ontoggleall={(on) => selection.set(on ? filteredContainers.map((c) => c.id) : [])}
-				onbulk={runBulk}
-			/>
-		{/if}
 
 		<!-- Container List -->
 		<ContainerList
 			containers={filteredContainers}
-			filtered={!!(searchQuery || stateFilter)}
+			filtered={!!searchQuery || stateFilter !== 'all'}
 			view={viewMode}
 			selected={selection.ids}
 			busy={bulk.running}
 			onopen={openDrawer}
 			onselect={(id, on) => selection.toggle(id, on)}
+			ontoggleall={(on) => selection.set(on ? filteredContainers.map((c) => c.id) : [])}
 			onaction={handleQuickAction}
 			onclear={() => {
 				searchQuery = '';
-				stateFilter = '';
+				stateFilter = 'all';
 			}}
+		/>
+
+		<BulkToolbar
+			selectedCount={selection.size}
+			busy={bulk.running}
+			onclear={() => selection.set([])}
+			onbulk={runBulk}
 		/>
 		{/if}
 	</div>

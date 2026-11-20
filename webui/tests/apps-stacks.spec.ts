@@ -48,7 +48,7 @@ const RKMPP =
 const INSTALLED_WITHOUT =
   'Immich was installed without the hardware of this NAS that it can use, so hardware acceleration does not work ' +
   'in it. To give it the hardware, uninstall Immich (its data folders are kept) and install it again on the same pool.';
-const CONTAINERS_LINE = `Containers: ${CONTAINERS.join(', ')}`;
+const CONTAINERS_LINE = CONTAINERS.join(', ');
 const WITHOUT_ML =
   'Immich runs without immich-machine-learning. Restart Immich to start all its containers; the Containers page ' +
   'shows the log of one that keeps stopping.';
@@ -135,8 +135,8 @@ async function details(page: Page, name = 'Immich') {
 }
 
 /** The list of an app's containers in its details' Overview. */
-function containersList(dialog: Locator, heading = 'Containers') {
-  return dialog.locator('.card-nested', { has: dialog.page().getByRole('heading', { name: heading, exact: true }) });
+function containersList(dialog: Locator, heading = 'Containers and images') {
+  return dialog.locator('section', { has: dialog.page().getByRole('heading', { name: heading, exact: true }) });
 }
 
 async function installedTab(page: Page, count: number, label = 'Installed') {
@@ -164,7 +164,7 @@ test.describe('Apps of several containers', () => {
     for (const image of images) expect(image).toMatch(PINNED);
 
     const card = catalogCard(page, 'Immich');
-    await expect(card.getByRole('button', { name: 'Install', exact: true })).toBeVisible();
+    await expect(card.getByText('Install', { exact: true })).toBeVisible();
     const dialog = await details(page);
 
     // Overview: each container with the image it is created from, and what keeps the disks awake.
@@ -177,9 +177,14 @@ test.describe('Apps of several containers', () => {
       await expect(items.nth(i).locator('code')).toHaveText(images[i]);
     }
     await expect(dialog.getByText(DISK_AWAKE)).toBeVisible();
-    await expect(dialog.getByText('Docker Image', { exact: true })).toHaveCount(0);
+    await expect(dialog.getByRole('heading', { name: 'Image', exact: true })).toHaveCount(0);
+    // At a glance, before the images: the memory in the page's units, not Docker's "6g", the
+    // containers' count; no tiles that repeat the tabs' counts (webui.ux-apps).
+    await expect(dialog.locator('[data-field="recommended-memory"]')).toHaveText(/^\d+ GB$/);
+    await expect(dialog.getByText(/^\d+(\.\d+)?[gm]$/)).toHaveCount(0);
+    await expect(dialog.getByText('4, run together', { exact: true })).toBeVisible();
     // The data of every container on the selected pool, the password file among it once.
-    const locations = dialog.locator('.card-nested', { hasText: `Data locations on ${POOL.name}` });
+    const locations = dialog.locator('section', { hasText: `Data locations on ${POOL.name}` });
     for (const folder of ['library', 'postgres/data', 'redis', 'model-cache']) {
       await expect(locations.getByText(`${APP_DATA}/${folder}`, { exact: true })).toBeVisible();
     }
@@ -189,7 +194,7 @@ test.describe('Apps of several containers', () => {
 
     // Ports: the server's only.
     await dialog.getByRole('button', { name: 'Ports (1)', exact: true }).click();
-    await expect(dialog.getByLabel('Host Port')).toHaveValue('2283');
+    await expect(dialog.getByLabel('Host port')).toHaveValue('2283');
 
     // Volumes: per container; only the server's data folder can be moved, the password file never.
     await dialog.getByRole('button', { name: 'Volumes (7)', exact: true }).click();
@@ -197,16 +202,16 @@ test.describe('Apps of several containers', () => {
     await expect(groups).toHaveCount(4);
     for (const [i, name] of CONTAINERS.entries()) await expect(groups.nth(i)).toHaveAccessibleName(name);
     const server = dialog.getByRole('group', { name: 'immich', exact: true });
-    await expect(server.getByLabel('Host Path')).toHaveCount(1);
-    await expect(server.getByLabel('Host Path')).toHaveValue(`${APP_DATA}/library`);
-    await expect(server.getByLabel('Host Path')).toBeEnabled();
+    await expect(server.getByLabel('Host path')).toHaveCount(1);
+    await expect(server.getByLabel('Host path')).toHaveValue(`${APP_DATA}/library`);
+    await expect(server.getByLabel('Host path')).toBeEnabled();
     for (const name of ['immich', 'immich-database']) {
       const password = dialog.getByRole('group', { name, exact: true }).locator('.card-nested', { hasText: PASSWORD });
       await expect(password).toContainText('/run/secrets/db-password');
       await expect(password).toContainText(GENERATED_SECRET);
     }
     for (const name of CONTAINERS.slice(1)) {
-      await expect(dialog.getByRole('group', { name, exact: true }).getByLabel('Host Path')).toHaveCount(0);
+      await expect(dialog.getByRole('group', { name, exact: true }).getByLabel('Host path')).toHaveCount(0);
     }
     await expect(dialog.getByRole('group', { name: 'immich-database', exact: true })).toContainText(
       `${APP_DATA}/postgres/data`,
@@ -215,7 +220,7 @@ test.describe('Apps of several containers', () => {
     expect(await dialog.innerText()).not.toMatch(/[0-9a-f]{64}/);
 
     // Environment: the wiring of the containers is UNOS's, and the companions take no change.
-    await dialog.getByRole('button', { name: 'Environment (12)', exact: true }).click();
+    await dialog.getByRole('button', { name: 'Variables (12)', exact: true }).click();
     for (const [name, value] of [
       ['DB_HOSTNAME', 'database'],
       ['DB_PASSWORD_FILE', '/run/secrets/db-password'],
@@ -351,11 +356,11 @@ test.describe('An installed app of several containers', () => {
     await expect(immich).toHaveCount(1);
     await expect(immich.getByText('Running', { exact: true })).toBeVisible();
     await expect(immich.getByText('Healthy', { exact: true })).toBeVisible();
-    await expect(immich.getByText(CONTAINERS_LINE)).toBeVisible();
+    await expect(immich.locator('[data-field="containers"]')).toHaveText(CONTAINERS_LINE);
     await expect(immich.getByRole('link', { name: 'Open' })).toBeVisible();
     await expect(immich.locator('.alert')).toHaveCount(0);
     // An app of one container has no containers line.
-    await expect(installedCard(page, 'jellyfin').getByText('Containers:')).toHaveCount(0);
+    await expect(installedCard(page, 'jellyfin').locator('[data-field="containers"]')).toHaveCount(0);
 
     await immich.getByRole('button', { name: 'Stop', exact: true }).click();
     await expect(immich.getByText('Stopped', { exact: true })).toBeVisible();
@@ -409,7 +414,7 @@ test.describe('An installed app of several containers', () => {
       await expect(immich.getByRole('button', { name: action, exact: true })).toHaveCount(0);
     }
     await expect(immich.getByRole('link', { name: 'Open' })).toHaveCount(0);
-    await expect(immich.getByText('Containers: immich, immich-database, immich-machine-learning')).toBeVisible();
+    await expect(immich.locator('[data-field="containers"]')).toHaveText('immich, immich-database, immich-machine-learning');
     // Its card in the catalog says so too.
     await page.getByRole('button', { name: 'Catalog', exact: true }).click();
     await expect(catalogCard(page, 'Immich').getByText('Incomplete', { exact: true })).toBeVisible();
@@ -509,7 +514,7 @@ test.describe('Apps of several containers in Russian', () => {
     await expect(page.locator('html')).toHaveAttribute('lang', 'ru');
 
     const dialog = await details(page);
-    const list = containersList(dialog, 'Контейнеры');
+    const list = containersList(dialog, 'Контейнеры и образы');
     await expect(list).toContainText(
       'Приложение Immich работает в 4 контейнерах в собственной сети: UNOS устанавливает, запускает, останавливает ' +
         'и удаляет их вместе. Каждый образ закреплён по дайджесту.',
@@ -530,7 +535,7 @@ test.describe('Apps of several containers in Russian', () => {
         'Transcoding Settings > Hardware Acceleration (так пункты названы в английском интерфейсе Immich).',
     );
     await expect(
-      dialog.locator('.card-nested', { hasText: 'Расположение данных в пуле e2e_data' }).getByText(
+      dialog.locator('section', { hasText: 'Расположение данных в пуле e2e_data' }).getByText(
         'монтируется в /var/lib/postgresql/data в контейнере immich-database',
       ),
     ).toBeVisible();
@@ -538,7 +543,7 @@ test.describe('Apps of several containers in Russian', () => {
     await expect(
       dialog.getByText('Пароль, который UNOS создаёт при установке и хранит в этом файле; он нигде не показывается.'),
     ).toHaveCount(2);
-    await dialog.getByRole('button', { name: 'Окружение (12)', exact: true }).click();
+    await dialog.getByRole('button', { name: 'Переменные (12)', exact: true }).click();
     await expect(dialog.getByText('Задаётся UNOS.', { exact: true })).toHaveCount(12);
 
     await dialog.getByRole('button', { name: 'Установить Immich' }).click();
@@ -552,7 +557,8 @@ test.describe('Apps of several containers in Russian', () => {
     // The installed app: its containers, a stopped companion, its state and the uninstall's question.
     await page.getByRole('button', { name: 'Установленные (1)', exact: true }).click();
     const immich = installedCard(page, 'immich');
-    await expect(immich.getByText(`Контейнеры: ${CONTAINERS.join(', ')}`)).toBeVisible();
+    await expect(immich.locator('[data-field="containers"]')).toHaveText(CONTAINERS.join(', '));
+    await expect(immich.getByText('Контейнеры', { exact: true })).toBeVisible();
     await expect(immich.getByText('Запускается', { exact: true })).toBeVisible();
     await expect(immich.locator('.alert-warning')).toHaveText(
       'Приложение Immich работает без immich-machine-learning. Перезапустите Immich, чтобы запустить все его ' +

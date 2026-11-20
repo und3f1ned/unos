@@ -34,7 +34,7 @@ test.describe('App Store', () => {
     await page.waitForTimeout(1000);
     // The categories are buttons in the "Categories" list next to the catalog.
     await expect(page.locator('h3:has-text("Categories")')).toBeVisible();
-    await expect(page.locator('main nav').getByRole('button', { name: /^All Apps/ })).toBeVisible();
+    await expect(page.locator('main nav').getByRole('button', { name: /^All apps/ })).toBeVisible();
   });
 
   test('should show apps in catalog', async ({ authenticatedPage: page }) => {
@@ -211,6 +211,10 @@ test.describe('Installed apps', () => {
     await page.getByRole('button', { name: /^Installed/ }).click();
     const jellyfin = card(page, 'e2e-jellyfin');
     await expect(jellyfin.getByText('Running', { exact: true })).toBeVisible();
+    // Quiet buttons: no solid colour on an app's routine actions, Uninstall a trash icon with its
+    // name (webui.ux-apps).
+    await expect(jellyfin.locator('.btn-primary, .btn-warning, .btn-danger, .btn-success')).toHaveCount(0);
+    await expect(jellyfin.getByRole('button', { name: 'Uninstall', exact: true })).toHaveClass(/btn-ghost-danger/);
 
     await jellyfin.getByRole('button', { name: 'Stop' }).click();
     await expect(jellyfin.getByText('Stopped', { exact: true })).toBeVisible();
@@ -322,7 +326,7 @@ test.describe('Install in the group unos-smb', () => {
       /^Sets PUID to 80000, PGID to 70000 \(unos-smb\) and UMASK to 007\./,
     );
 
-    await dialog.getByRole('button', { name: /^Environment/ }).click();
+    await dialog.getByRole('button', { name: /^Variables/ }).click();
     await dialog.getByLabel('USER').fill('e2e');
     await dialog.getByLabel('PASS').fill('k7-Unique-pass');
     // PUID and PGID are UNOS's to set: the option sets them, the Environment tab does not.
@@ -334,7 +338,7 @@ test.describe('Install in the group unos-smb', () => {
     await expect(pgid).toHaveValue('1000');
 
     await dialog.getByRole('button', { name: /^Volumes/ }).click();
-    await dialog.locator('.card-nested', { hasText: '/downloads' }).getByLabel('Host Path').fill(FAMILY);
+    await dialog.locator('.card-nested', { hasText: '/downloads' }).getByLabel('Host path').fill(FAMILY);
 
     // Without the option the server refuses the share's folder.
     await dialog.getByRole('button', { name: 'Install Transmission' }).click();
@@ -342,7 +346,7 @@ test.describe('Install in the group unos-smb', () => {
 
     await option.check();
     await expect(dialog.getByText('Transmission can read and change the files of every share folder')).toBeVisible();
-    await dialog.getByRole('button', { name: /^Environment/ }).click();
+    await dialog.getByRole('button', { name: /^Variables/ }).click();
     await expect(puid).toHaveValue('80000');
     await expect(pgid).toHaveValue('70000');
 
@@ -368,7 +372,7 @@ test.describe('Install in the group unos-smb', () => {
 
     await expect(dialog.getByRole('button', { name: 'Install Jellyfin' })).toBeEnabled();
     await expect(dialog.getByRole('checkbox', { name: 'Run in the group unos-smb' })).toHaveCount(0);
-    await dialog.getByRole('button', { name: /^Environment/ }).click();
+    await dialog.getByRole('button', { name: /^Variables/ }).click();
     for (const name of ['PUID', 'PGID']) {
       await expect(dialog.getByLabel(name)).toBeDisabled();
       await expect(dialog.getByLabel(name)).toHaveValue('1000');
@@ -393,7 +397,7 @@ test.describe('Install in the group unos-smb', () => {
 // has no Docker and no mounted pool); the catalog is the stand-in's own.
 test.describe('Ports of an app', () => {
   const POOL = { name: 'e2e_data', path: '/mnt/pools/e2e_data', free_bytes: 2 ** 34, total_bytes: 2 ** 35 };
-  const PORTS_HINT = 'Configure port mappings. Modify host ports if they conflict with existing services.';
+  const PORTS_HINT = 'The host ports where the app answers; change one that another service already uses.';
   const hostNetwork = (name: string) =>
     `${name} runs in the host's network: it listens on these ports of the host itself, so they cannot be changed.`;
 
@@ -439,7 +443,7 @@ test.describe('Ports of an app', () => {
       const installs = await fakeInstall(page, name, oneContainerApp(id, POOL.path, { port }));
       const dialog = await portsOf(page, name);
 
-      const host = dialog.getByLabel('Host Port');
+      const host = dialog.getByLabel('Host port');
       await expect(host).toHaveValue(String(port));
       await expect(host).toBeDisabled();
       await expect(dialog.getByText(hostNetwork(name))).toBeVisible();
@@ -455,7 +459,7 @@ test.describe('Ports of an app', () => {
     const installs = await fakeInstall(page, 'Jellyfin', oneContainerApp('jellyfin', POOL.path, { port: 8097 }));
     const dialog = await portsOf(page, 'Jellyfin');
 
-    const host = dialog.getByLabel('Host Port');
+    const host = dialog.getByLabel('Host port');
     await expect(host).toHaveValue('8096');
     await expect(host).toBeEnabled();
     await expect(dialog.getByText(PORTS_HINT)).toBeVisible();
@@ -510,9 +514,10 @@ test.describe('Installed apps in the group unos-smb', () => {
     await page.getByRole('button', { name: /^Installed/ }).click();
 
     const card = (name: string) => page.locator('.card', { has: page.locator('h3', { hasText: name }) });
-    await expect(card('e2e-transmission').getByText('Runs in the group unos-smb')).toBeVisible();
+    await expect(card('e2e-transmission').locator('[data-field="group"]')).toHaveText('unos-smb');
+    await expect(card('e2e-transmission').getByText('Group', { exact: true })).toBeVisible();
     await expect(card('e2e-syncthing')).toBeVisible();
-    await expect(card('e2e-syncthing').getByText('Runs in the group unos-smb')).toHaveCount(0);
+    await expect(card('e2e-syncthing').locator('[data-field="group"]')).toHaveCount(0);
   });
 
   test('details show the PUID and PGID the installed app runs with', async ({ authenticatedPage: page }) => {
@@ -521,19 +526,19 @@ test.describe('Installed apps in the group unos-smb', () => {
     await page.locator('h3', { hasText: 'Transmission' }).first().click();
     let dialog = page.getByRole('dialog');
     await expect(dialog.getByText('Transmission runs in the group unos-smb (PUID 80000, PGID 70000)')).toBeVisible();
-    await dialog.getByRole('button', { name: /^Environment/ }).click();
+    await dialog.getByRole('button', { name: /^Variables/ }).click();
     await expect(dialog.getByLabel('PUID')).toHaveValue('80000');
     await expect(dialog.getByLabel('PGID')).toHaveValue('70000');
     // The hint of each of the two fields.
     await expect(dialog.getByText('Set by UNOS: Transmission runs in the group unos-smb.')).toHaveCount(2);
-    await dialog.getByRole('button', { name: 'Cancel' }).click();
+    await dialog.getByRole('button', { name: 'Close', exact: true }).click();
     await expect(dialog).toHaveCount(0);
 
     await page.locator('h3', { hasText: 'Syncthing' }).first().click();
     dialog = page.getByRole('dialog');
     await expect(dialog.getByRole('heading', { name: 'Syncthing', exact: true })).toBeVisible();
     await expect(dialog.getByText('runs in the group unos-smb (PUID')).toHaveCount(0);
-    await dialog.getByRole('button', { name: /^Environment/ }).click();
+    await dialog.getByRole('button', { name: /^Variables/ }).click();
     await expect(dialog.getByLabel('PUID')).toHaveValue('1000');
     await expect(dialog.getByLabel('PGID')).toHaveValue('1000');
     await expect(dialog.getByText('Set by UNOS: Syncthing runs outside the group unos-smb.')).toHaveCount(2);
@@ -572,7 +577,7 @@ test.describe('App details', () => {
     await expect(dialog.getByRole('heading', { name: 'Transmission', exact: true })).toBeVisible();
     await expect(dialog.getByText('LinuxServer.io', { exact: true })).toBeVisible();
     await expect(dialog.getByText('Community', { exact: true })).toHaveCount(0);
-    await expect(dialog.getByText('📥 Downloads', { exact: true })).toBeVisible();
+    await expect(dialog.locator('.badge', { hasText: /^Downloads$/ })).toBeVisible();
     await expect(dialog.getByRole('combobox', { name: 'Storage pool' })).toHaveText('e2e_data — 1.5 GB free of 32 GB');
   });
 });
@@ -641,7 +646,7 @@ test.describe('The App Store in Russian', () => {
     await expect(main.getByRole('heading', { name: 'Категории' })).toBeVisible();
     await expect(main.locator('nav').getByRole('button', { name: /^Все приложения \d+$/ })).toBeVisible();
     await expect(main.locator('nav').getByRole('button', { name: /^Умный дом \d+$/ })).toBeVisible();
-    await expect(main.getByPlaceholder('Поиск приложений...')).toBeVisible();
+    await expect(main.getByPlaceholder('Поиск приложений')).toBeVisible();
 
     // The cards of the catalog: the state of an installed app, the source of the image, the category.
     const card = (name: string) =>
@@ -650,13 +655,15 @@ test.describe('The App Store in Russian', () => {
     await expect(card('Jellyfin').getByText('Официальный', { exact: true })).toBeVisible();
     await expect(card('Jellyfin').getByText('Медиа', { exact: true })).toBeVisible();
     await expect(card('Transmission').getByText('Загрузки', { exact: true })).toBeVisible();
-    await expect(card('Transmission').getByRole('button', { name: 'Установить', exact: true })).toBeVisible();
+    // The card is the one control: its foot says Install, no button of its own (webui.ux-apps).
+    await expect(card('Transmission').getByText('Установить', { exact: true })).toBeVisible();
+    await expect(card('Transmission').getByRole('button', { name: 'Установить', exact: true })).toHaveCount(0);
 
     // The details of an app that is not installed, with the pool for its data.
     await card('Transmission').click();
     const dialog = page.getByRole('dialog');
     await expect(dialog.getByRole('heading', { name: 'Transmission', exact: true })).toBeVisible();
-    await expect(dialog.getByText('📥 Загрузки', { exact: true })).toBeVisible();
+    await expect(dialog.locator('.badge', { hasText: /^Загрузки$/ })).toBeVisible();
     await expect(dialog.getByText('Документация', { exact: true })).toBeVisible();
     await expect(dialog.getByRole('combobox', { name: 'Пул хранения' })).toHaveText(
       'e2e_data — свободно 1,5 ГБ из 32 ГБ',
@@ -665,15 +672,17 @@ test.describe('The App Store in Russian', () => {
     await expect(dialog.getByRole('checkbox', { name: 'Запускать в группе unos-smb' })).not.toBeChecked();
     await expect(dialog.getByText('Задайте обязательные переменные USER, PASS.')).toBeVisible();
     await expect(dialog.getByRole('heading', { name: 'Расположение данных в пуле e2e_data' })).toBeVisible();
-    await expect(dialog.getByText('Образ Docker', { exact: true })).toBeVisible();
-    await expect(dialog.getByRole('heading', { name: 'Рекомендуемые ресурсы' })).toBeVisible();
-    for (const tab of ['Обзор', 'Порты (3)', 'Тома (3)', 'Окружение (5)']) {
+    await expect(dialog.getByRole('heading', { name: 'Образ', exact: true })).toBeVisible();
+    // The memory first, in the page's units (webui.ux-apps).
+    await expect(dialog.locator('.kv').getByText('Рекомендуемая память', { exact: true })).toBeVisible();
+    await expect(dialog.locator('[data-field="recommended-memory"]')).toHaveText(/^[\d,]+ (ГБ|МБ)$/);
+    for (const tab of ['Обзор', 'Порты (3)', 'Тома (3)', 'Переменные (5)']) {
       await expect(dialog.getByRole('button', { name: tab, exact: true })).toBeVisible();
     }
     await expect(dialog.getByRole('button', { name: 'Установить Transmission' })).toBeDisabled();
     await expect(dialog.getByRole('button', { name: 'Install Transmission' })).toHaveCount(0);
 
-    await dialog.getByRole('button', { name: 'Окружение (5)', exact: true }).click();
+    await dialog.getByRole('button', { name: 'Переменные (5)', exact: true }).click();
     await expect(dialog.getByLabel('USER')).toHaveAttribute('placeholder', 'Введите USER');
     await expect(dialog.getByLabel('PASS')).toHaveAttribute('placeholder', 'Придумайте уникальное значение');
     await expect(dialog.getByText('Обязательно', { exact: true })).toHaveCount(2);
@@ -688,7 +697,8 @@ test.describe('The App Store in Russian', () => {
     const installedCard = (name: string) => main.locator('.card', { has: page.locator('h3', { hasText: name }) });
     const jellyfin = installedCard('e2e-jellyfin');
     await expect(jellyfin.getByText('Работает', { exact: true })).toBeVisible();
-    await expect(jellyfin.getByText('Данные в пуле: e2e_data')).toBeVisible();
+    await expect(jellyfin.getByText('Пул', { exact: true })).toBeVisible();
+    await expect(jellyfin.locator('[data-field="pool"]')).toHaveText('e2e_data');
     for (const action of ['Остановить', 'Перезапустить', 'Удалить']) {
       await expect(jellyfin.getByRole('button', { name: action, exact: true })).toBeVisible();
     }

@@ -82,6 +82,23 @@ manager, encrypted backup uploads, health checks, CI checks).
   page's, with the current one), and the command palette's General (System opens it), language
   and Logout entries. The dashboard's stats tiles and its host line link to Resource Monitor and
   General for administrators.
+- Containers and the App Store are calmer and say true things (ADR-0432). Containers: one filter,
+  **All · Running · Stopped · Other**, each with its count, which add up to All (paused, restarting
+  and created containers were counted nowhere before), in place of the count cards and the state
+  menu; a row's buttons stay on one line as quiet icons with their names as tooltips; a phone shows
+  cards (with Restart) unless the table is chosen; the selection's bar appears only with a
+  selection; states are in sentence case and a stopped container is neutral, not red; when Docker
+  does not answer the page says so with the reason and Retry. A container of an app links to its
+  app and has no Remove: Uninstall on the App Store removes an app's containers. The drawer shows
+  its facts as labels over values and the state once; the create dialog has sentence-case labels
+  and a field each for the host port, the container port and the protocol. App Store: a catalog
+  card is the one control (no Install button on each of 69 cards), publishers are neutral badges,
+  nothing offers Install while Docker is down, an app's details lead with its memory (in GB, not
+  "6g"), disk and containers instead of image digests, an installed app's Stop and Uninstall are
+  no longer orange and red, its resources are one table that says once what is not read yet, an
+  install shows one bar for the whole download instead of Docker's layers, and the update dialog
+  opens with a summary (versions, changed containers, download, disk, the database copy) and keeps
+  each container's images behind a disclosure.
 - A pool on an NVMe drive of a SpacemiT K1 (Banana Pi BPI-F3) gets TRIM like every other pool:
   `mkfs.btrfs` and `btrfs device add` trim it, it is mounted without `nodiscard` and its fstab entry
   without `nodiscard,X-fstrim.notrim`, so the weekly `fstrim.timer` trims it, and Add Disk no longer

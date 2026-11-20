@@ -167,7 +167,13 @@ test.describe('The progress of an install', () => {
     const first = card.getByRole('listitem').filter({ hasText: shortName(images[0]) });
     await expect(first).toContainText('Downloading');
     await expect(first).toContainText('1.5 MB of 3 MB');
-    await expect(first).toContainText('1 of 2 layers');
+    // No layers, Docker's word for a part of an image (webui.ux-apps); one line of the whole
+    // download above the images instead.
+    await expect(card.getByText(/layers?\b/)).toHaveCount(0);
+    await expect(card.getByText('0 of 4 images on the NAS', { exact: true })).toBeVisible();
+    const whole = card.getByRole('progressbar', { name: 'Download of the images of Immich' });
+    await expect(whole).toHaveAttribute('aria-valuenow', String(1.5 * MIB));
+    await expect(whole).toHaveAttribute('aria-valuemax', String(3 * MIB));
     const bar = first.getByRole('progressbar', { name: `Download of ${shortName(images[0])}` });
     await expect(bar).toHaveAttribute('aria-valuenow', String(1.5 * MIB));
     await expect(bar).toHaveAttribute('aria-valuemax', String(3 * MIB));
@@ -176,7 +182,7 @@ test.describe('The progress of an install', () => {
     }
     // No second install of the app while its install runs.
     await expect(catalogCard(page, 'Immich').getByText('Installing', { exact: true })).toBeVisible();
-    await expect(catalogCard(page, 'Immich').getByRole('button', { name: 'Install', exact: true })).toHaveCount(0);
+    await expect(catalogCard(page, 'Immich').getByText('Install', { exact: true })).toHaveCount(0);
 
     // Each container's start, in their order.
     await events.update(starting(started[0], images));
@@ -214,12 +220,13 @@ test.describe('The progress of an install', () => {
     const images = await openAppStore(page);
     const job = newInstallJob('immich', 'Immich', ['database', 'redis', 'machine-learning']);
     await events.update(pulling(job, images));
-    await expect(jobCard(page).getByText('1 of 2 layers')).toBeVisible();
+    await expect(jobCard(page).getByText('1.5 MB of 3 MB').first()).toBeVisible();
 
     await page.reload();
     await expect.poll(() => events.signIns()).toBe(2);
     await expect(jobCard(page).getByText('Installing', { exact: true })).toBeVisible();
-    await expect(jobCard(page).getByText('1.5 MB of 3 MB')).toBeVisible();
+    // The whole download's line and the first image's say the same, the only bytes known so far.
+    await expect(jobCard(page).getByText('1.5 MB of 3 MB')).toHaveCount(2);
 
     installed.push(installedImmich(POOL.path));
     await events.update(endedJob(job, installedImmich(POOL.path)));
@@ -402,7 +409,9 @@ test.describe('The progress of an install in Russian', () => {
     const first = card.getByRole('listitem').filter({ hasText: shortName(images[0]) });
     await expect(first).toContainText('Загружается');
     await expect(first).toContainText('1,5 МБ из 3 МБ');
-    await expect(first).toContainText('1 из 2 слоёв');
+    // No layers; the whole download in one line (webui.ux-apps).
+    await expect(card.getByText(/сло(й|я|ёв)\b/)).toHaveCount(0);
+    await expect(card.getByText('На NAS 0 из 4 образов', { exact: true })).toBeVisible();
     await expect(card.getByRole('listitem').filter({ hasText: 'immich-database' })).toContainText('Ожидает');
 
     await events.update(endedJob(job, { status: 503, detail: 'Docker is not available: held by the test' }));
