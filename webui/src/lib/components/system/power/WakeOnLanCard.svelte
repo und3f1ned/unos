@@ -2,7 +2,7 @@
   import { messageOf } from "$lib/errors";
   import { Network } from "lucide-svelte";
   import { disableWol, enableWol, type WolInterface } from "$lib/api/power";
-  import { Alert, Badge, Button, Card, EmptyState } from "$lib/components/ui";
+  import { Alert, Badge, Button, Card, EmptyState, Skeleton } from "$lib/components/ui";
   import { t } from "$lib/i18n";
   import type { WakeOnLan } from "./wol.svelte";
 
@@ -40,7 +40,7 @@
     {$t("power.wol.title")}
   </h3>
   {#if wol.loading}
-    <p class="text-sm text-muted">{$t("common.loading")}</p>
+    <div aria-busy="true"><Skeleton count={2} /></div>
   {:else if wol.error}
     <Alert variant="error" title={$t("power.wol.loadError")}>{wol.error}</Alert>
   {:else if wol.interfaces.length === 0}

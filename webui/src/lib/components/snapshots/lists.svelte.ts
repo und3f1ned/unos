@@ -15,6 +15,9 @@ export class PathList<Item> {
 	items: Item[] = $state.raw([]);
 	loading = $state(false);
 	error = $state('');
+	// The path whose answer the list shows: a reload of the same path keeps it on the page, a load
+	// of another one shows its skeleton (ADR-0430).
+	shownPath = $state<string | null>(null);
 	// Only the latest request updates the list: another pool or volume may have been chosen meanwhile.
 	#request = 0;
 	readonly #read: (path: string) => Promise<Item[]>;
@@ -25,19 +28,25 @@ export class PathList<Item> {
 
 	async load(path: string) {
 		const request = ++this.#request;
-		this.error = '';
 		if (!path) {
 			this.items = [];
+			this.error = '';
+			this.shownPath = path;
 			this.loading = false;
 			return;
 		}
 		this.loading = true;
 		try {
 			const list = await this.#read(path);
-			if (request === this.#request) this.items = list;
+			if (request === this.#request) {
+				this.items = list;
+				this.shownPath = path;
+				this.error = '';
+			}
 		} catch (e) {
 			if (request === this.#request) {
 				this.items = [];
+				this.shownPath = path;
 				this.error = messageOf(e);
 			}
 		} finally {

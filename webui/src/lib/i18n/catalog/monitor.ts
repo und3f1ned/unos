@@ -6,6 +6,7 @@ import type { Translation } from '../translate';
 export const en = {
 	'monitor.title': 'Resource Monitor',
 	'monitor.live': 'Live',
+	'monitor.connecting': 'Connecting…',
 	'monitor.disconnected': 'Disconnected',
 	'monitor.waiting': 'Waiting for WebSocket data...',
 	'monitor.cpu': 'CPU',
@@ -53,6 +54,7 @@ export const en = {
 export const ru: Translation<typeof en> = {
 	'monitor.title': 'Монитор ресурсов',
 	'monitor.live': 'Онлайн',
+	'monitor.connecting': 'Подключение…',
 	'monitor.disconnected': 'Нет связи',
 	'monitor.waiting': 'Ожидание данных WebSocket...',
 	'monitor.cpu': 'Процессор',

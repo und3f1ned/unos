@@ -4,7 +4,7 @@
 	import { deleteUser, endSessions, type User } from '$lib/api/auth';
 	import { user as currentUser } from '$lib/stores/auth';
 	import { UserPlus } from 'lucide-svelte';
-	import { Alert, Button } from '$lib/components/ui';
+	import { Alert, Button, Skeleton } from '$lib/components/ui';
 	import {
 		ConfirmDialog,
 		CreateUserDialog,
@@ -15,10 +15,13 @@
 		UsersCard
 	} from '$lib/components/users';
 	import { UserDirectory } from '$lib/components/users/directory.svelte';
+	import { GroupDirectory } from '$lib/components/users/groups.svelte';
 	import { messageOf } from '$lib/components/users/errors';
 	import { t } from '$lib/i18n';
 
 	const directory = new UserDirectory(() => $t('users.loadFailed'));
+	// The groups (ADR-0385), loaded with the users, so that the page is drawn once (ADR-0430).
+	const groups = new GroupDirectory();
 
 	// The dialogs that the page's buttons open (raw state: they come and go with the admin's view).
 	let createDialog = $state.raw<ReturnType<typeof CreateUserDialog>>();
@@ -30,7 +33,7 @@
 			goto('/');
 			return;
 		}
-		await directory.load();
+		await Promise.all([directory.load(), groups.load()]);
 	});
 
 	// Also watch for user changes (in case they navigate here before user loads). Before the
@@ -111,8 +114,13 @@
 		{/if}
 		<OutcomeAlerts outcome={directory.outcome} />
 
-		{#if directory.loading}
-			<p class="loading-text">{$t('common.loading')}</p>
+		{#if directory.loading || groups.loading}
+			<!-- The first load (ADR-0430): the users' table, the groups and the card under them. -->
+			<div class="space-y-6" aria-busy="true">
+				<Skeleton shape="table" columns={6} count={3} />
+				<Skeleton shape="card" count={3} />
+				<Skeleton shape="card" count={3} />
+			</div>
 		{:else}
 			<UsersCard
 				users={directory.users}
@@ -121,7 +129,7 @@
 				onendsessions={endUserSessions}
 				ondelete={openDelete}
 			/>
-			<GroupsCard users={directory.users} />
+			<GroupsCard users={directory.users} directory={groups} />
 			<UsersAboutCard />
 		{/if}
 	</div>

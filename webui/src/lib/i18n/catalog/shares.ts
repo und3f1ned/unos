@@ -207,7 +207,6 @@ export const en = {
 	'shares.form.option.previousVersions': 'Previous Versions from snapshots',
 	'shares.form.option.previousVersionsHint':
 		"Windows lists the snapshots of the share's pool, or of its volume when the share is in one, under Previous Versions of its files and folders: those made on the Snapshots page without a name of your own, and for a pool those of scheduled tasks too, which snapshot pools only. Open connections get it when they reconnect; turning it off disconnects them.",
-	'shares.form.loadingUsers': 'Loading users...',
 	'shares.form.usersError': 'The users could not be loaded',
 	'shares.form.notServedHint': 'Fix the folder first: a share that is not served cannot be given access',
 	// Only removed or lowered access disconnects (ADR-0103).
@@ -556,7 +555,6 @@ export const ru: Translation<typeof en> = {
 	'shares.form.option.previousVersions': 'Предыдущие версии из снимков',
 	'shares.form.option.previousVersionsHint':
 		'Windows показывает в «Предыдущих версиях» файлов и папок общей папки снимки её пула, а если она в томе, то снимки тома: сделанные на странице «Снимки» без заданного вами имени, а для пула ещё и задачами по расписанию, которые снимают только пулы. Открытые подключения получат их после переподключения; выключение разрывает их.',
-	'shares.form.loadingUsers': 'Загрузка пользователей...',
 	'shares.form.usersError': 'Не удалось загрузить пользователей',
 	'shares.form.notServedHint': 'Сначала исправьте папку: общей папке, которая не раздаётся, нельзя выдать доступ',
 	'shares.form.accessChangeNote':

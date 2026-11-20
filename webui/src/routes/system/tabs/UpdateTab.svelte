@@ -3,7 +3,7 @@
   import { onMount } from "svelte";
   import { ArrowUpCircle, ExternalLink, Package, RefreshCw, Terminal } from "lucide-svelte";
   import { checkForUpdates, getCurrentVersion, type CurrentVersion, type UpdateCheck } from "$lib/api/updates";
-  import { Alert, Badge, Button, Card } from "$lib/components/ui";
+  import { Alert, Badge, Button, Card, Skeleton } from "$lib/components/ui";
   import { intlLocale, t } from "$lib/i18n";
   import { formatDate } from "$lib/time";
 
@@ -77,7 +77,7 @@
         {/if}
       </p>
     {:else}
-      <p class="text-sm text-muted">{$t("common.loading")}</p>
+      <div aria-busy="true"><Skeleton class="w-48" /></div>
     {/if}
   </Card>
 

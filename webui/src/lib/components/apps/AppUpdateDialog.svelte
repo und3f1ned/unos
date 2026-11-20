@@ -107,7 +107,7 @@
 >
 	<div class="space-y-4">
 		{#if loading}
-			<p class="loading-text">{$t('appUpdates.loading')}</p>
+			<p class="text-center text-content-muted py-8">{$t('appUpdates.loading')}</p>
 		{/if}
 		{#if error}
 			<!-- Read out as it appears: the server's reason why the update cannot run. -->

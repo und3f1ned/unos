@@ -12,7 +12,6 @@ export const en = {
 	'apps.tabs.catalog': 'Catalog',
 	'apps.tabs.installed': 'Installed ({count})',
 	'apps.tabs.installedUnknown': 'Installed',
-	'apps.loading': 'Loading apps...',
 	'apps.featured': 'Featured Apps',
 	'apps.categories': 'Categories',
 	'apps.search': 'Search apps...',
@@ -137,7 +136,6 @@ export const en = {
 	'apps.detail.website': 'Website',
 	'apps.detail.github': 'GitHub',
 	'apps.detail.docs': 'Docs',
-	'apps.detail.loadingPools': 'Loading storage pools...',
 	'apps.detail.poolsError': 'Could not load storage pools',
 	'apps.detail.noPoolTitle': 'No mounted storage pool',
 	'apps.detail.noPool':
@@ -304,7 +302,6 @@ export const ru: Translation<typeof en> = {
 	'apps.tabs.catalog': 'Каталог',
 	'apps.tabs.installed': 'Установленные ({count})',
 	'apps.tabs.installedUnknown': 'Установленные',
-	'apps.loading': 'Загрузка приложений...',
 	'apps.featured': 'Рекомендуемые приложения',
 	'apps.categories': 'Категории',
 	'apps.search': 'Поиск приложений...',
@@ -411,7 +408,6 @@ export const ru: Translation<typeof en> = {
 	'apps.detail.website': 'Сайт',
 	'apps.detail.github': 'GitHub',
 	'apps.detail.docs': 'Документация',
-	'apps.detail.loadingPools': 'Загрузка пулов хранения...',
 	'apps.detail.poolsError': 'Не удалось загрузить пулы хранения',
 	'apps.detail.noPoolTitle': 'Нет смонтированного пула хранения',
 	'apps.detail.noPool':

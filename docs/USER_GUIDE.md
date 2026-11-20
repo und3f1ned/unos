@@ -101,6 +101,13 @@ The UNOS interface consists of:
 - **Main Content** - Current page content, under the page's title and its
   buttons.
 
+While UNOS starts in the browser, it shows its logo on the page's background
+(a thin bar under it says it is still working when that takes a moment), and
+then the page at once, with the sidebar as it stays. Until a page's data has
+come, grey shapes stand where its cards, tables and values will be, and the
+data take their places without moving the page. **Refresh** keeps what is
+shown while it reads the data again.
+
 On a phone, or in a window narrower than 768 pixels, a bar at the top replaces
 the sidebar: its menu button (☰) opens the navigation, with your account and
 **Logout**, sliding in over the page. Choosing a page, going back, pressing Escape or
@@ -185,8 +192,10 @@ problem: a pool not mounted, degraded or almost full, a volume near its
 quota, a failing disk, a task that failed or missed its run (see
 [Alerts](#alerts)). The banner lists three problems; **Show all** lists the
 rest. While there is none, an administrator's dashboard says **No problems**
-beside the time of the last statistics, or **Disconnected from the NAS** while
-the page has lost its live connection.
+beside the time of the last statistics, **Connecting…** until the page's live
+connection has been up once, or **Disconnected from the NAS** while the page
+has lost it. Until the statistics come, each stats card is a grey shape in its
+place.
 
 ### Arranging the Dashboard
 Each widget (the five stats cards below and, for administrators, **Storage
@@ -654,7 +663,7 @@ disk of the pool stopped responding, UNOS stops that btrfs command:
   pool <name> may not be responding` instead of its progress. Until UNOS
   stops btrfs, other requests to UNOS, sign-ins among them, can be slow to
   answer as well.
-- Opening the page shows **Loading...** until each mounted pool has reported
+- Opening the page shows its grey shapes until each mounted pool has reported
   its scrub, one pool after the other: up to 60 seconds for each pool that
   does not answer, which then shows that message.
 

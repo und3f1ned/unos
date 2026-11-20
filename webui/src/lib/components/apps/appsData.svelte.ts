@@ -8,9 +8,10 @@ export const reasonOf = (reason: unknown) => (messageOf(reason));
 
 /**
  * The catalog and the installed apps of the App Store. They load each on its own: the catalog
- * needs no Docker, and is listed as soon as it came, while the installed apps wait for Docker's
- * answer, or fail as when Docker cannot be reached (503, ADR-0323). A count is shown only from a
- * load that succeeded, and each failed load says so (ADR-0327).
+ * needs no Docker, and the page lists it without waiting for the installed apps beyond a moment of
+ * its first load (ADR-0430), while those wait for Docker's answer, or fail as when Docker cannot be
+ * reached (503, ADR-0323). A count is shown only from a load that succeeded, and each failed load
+ * says so (ADR-0327).
  */
 export class AppsData {
 	catalog = $state<AppTemplate[]>([]);
@@ -19,6 +20,9 @@ export class AppsData {
 	installedState = $state<LoadState>('loading');
 	catalogError = $state('');
 	installedError = $state('');
+	// The last load of each list succeeded: its list and count stay while a refresh runs (ADR-0430).
+	catalogKnown = $state(false);
+	installedKnown = $state(false);
 	loading = $derived(this.catalogState === 'loading' || this.installedState === 'loading');
 	// The apps of the catalog that have an image for this host's platform (ADR-0403).
 	availableCount = $derived(this.catalog.filter((app) => app.available).length);
@@ -29,9 +33,11 @@ export class AppsData {
 			this.catalog = await getAppCatalog();
 			this.catalogError = '';
 			this.catalogState = 'loaded';
+			this.catalogKnown = true;
 		} catch (e) {
 			this.catalogError = reasonOf(e);
 			this.catalogState = 'failed';
+			this.catalogKnown = false;
 		}
 	}
 
@@ -41,10 +47,12 @@ export class AppsData {
 			this.installed = await getInstalledApps();
 			this.installedError = '';
 			this.installedState = 'loaded';
+			this.installedKnown = true;
 		} catch (e) {
 			this.installed = [];
 			this.installedError = reasonOf(e);
 			this.installedState = 'failed';
+			this.installedKnown = false;
 		}
 	}
 

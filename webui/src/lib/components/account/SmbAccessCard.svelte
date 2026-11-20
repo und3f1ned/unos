@@ -4,7 +4,7 @@
 	import { Share2 } from 'lucide-svelte';
 	import { disableMySmb, enableMySmb, getMySmb, type MySmbStatus } from '$lib/api/auth';
 	import { user } from '$lib/stores/auth';
-	import { Alert, Badge, Button, Card, Input, Modal } from '$lib/components/ui';
+	import { Alert, Badge, Button, Card, Input, Modal, Skeleton } from '$lib/components/ui';
 	import { t } from '$lib/i18n';
 	import SmbConnectHelp from './SmbConnectHelp.svelte';
 	import SmbSharesTable from './SmbSharesTable.svelte';
@@ -126,7 +126,7 @@
 	</h3>
 
 	{#if loading}
-		<p class="text-sm text-muted">{$t('common.loading')}</p>
+		<div aria-busy="true"><Skeleton count={2} /></div>
 	{:else if loadError || !status || !account}
 		<Alert variant="error" title={$t('account.smb.loadError')}>{loadError}</Alert>
 	{:else}

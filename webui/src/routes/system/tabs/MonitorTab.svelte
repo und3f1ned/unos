@@ -3,8 +3,8 @@
   import { onMount, untrack } from "svelte";
   import { get } from "svelte/store";
   import { Cpu, MemoryStick, Network, HardDrive, Activity, Wifi, WifiOff } from "lucide-svelte";
-  import { Alert, Badge, Button, Card } from "$lib/components/ui";
-  import { stats, wsConnected, type WebSocketStats } from "$lib/stores/stats";
+  import { Alert, Badge, Button, Card, Skeleton } from "$lib/components/ui";
+  import { stats, wsConnected, wsForbidden, wsSettled, type WebSocketStats } from "$lib/stores/stats";
   import { getMonitorHistory } from "$lib/api/monitor";
   import {
     cpuOf,
@@ -162,10 +162,14 @@
           </Button>
         {/each}
       </div>
-      <Badge variant={$wsConnected ? "success" : "error"} class="flex items-center gap-1">
+      <Badge variant={$wsConnected ? "success" : $wsSettled ? "error" : "neutral"} class="flex items-center gap-1">
         {#if $wsConnected}
           <Wifi class="w-4 h-4" />
           {$t("monitor.live")}
+        {:else if !$wsSettled}
+          <!-- The first attempt has not ended: connecting, not disconnected (ADR-0430). -->
+          <Wifi class="w-4 h-4" />
+          {$t("monitor.connecting")}
         {:else}
           <WifiOff class="w-4 h-4" />
           {$t("monitor.disconnected")}
@@ -178,7 +182,17 @@
     <Alert variant="warning" title={$t("monitor.historyError")}><p>{historyError}</p></Alert>
   {/if}
 
-  {#if !currentStats?.cpu}
+  {#if !currentStats?.cpu && !$wsForbidden && ($wsConnected || !$wsSettled)}
+    <!-- The first stats have not come (ADR-0430): the four cards and the charts in their places. -->
+    <div class="space-y-4" aria-busy="true">
+      <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+        {#each [0, 1, 2, 3] as tile (tile)}
+          <Skeleton shape="tile" />
+        {/each}
+      </div>
+      <Skeleton shape="block" class="h-64 w-full rounded-card" />
+    </div>
+  {:else if !currentStats?.cpu}
     <div class="flex items-center justify-center py-12">
       <p class="text-muted">{$t("monitor.waiting")}</p>
     </div>

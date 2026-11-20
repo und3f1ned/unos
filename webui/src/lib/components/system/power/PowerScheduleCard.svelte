@@ -2,7 +2,7 @@
   import { messageOf } from "$lib/errors";
   import { CalendarClock } from "lucide-svelte";
   import { updatePowerConfig } from "$lib/api/power";
-  import { Alert, Button, Card } from "$lib/components/ui";
+  import { Alert, Button, Card, Skeleton } from "$lib/components/ui";
   import { t } from "$lib/i18n";
   import PowerPlanList from "./PowerPlanList.svelte";
   import type { PowerPlan } from "./plan.svelte";
@@ -69,7 +69,10 @@
     {#if plan.configError}
       <Alert variant="error" title={$t("power.schedule.configError")}>{plan.configError}</Alert>
     {:else if !plan.config}
-      <p class="text-sm text-muted">{$t("common.loading")}</p>
+      <div class="space-y-3" aria-busy="true">
+        <Skeleton shape="block" class="h-9 w-full" />
+        <Skeleton count={2} />
+      </div>
     {:else}
       <form class="space-y-3" novalidate onsubmit={(e) => { e.preventDefault(); saveSchedule(); }}>
         {#if plan.schedule}

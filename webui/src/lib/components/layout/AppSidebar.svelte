@@ -5,7 +5,7 @@
 	import { browser } from '$app/environment';
 	import { afterNavigate } from '$app/navigation';
 	import type { User } from '$lib/api/auth';
-	import { Button } from '$lib/components/ui';
+	import { Button, Skeleton } from '$lib/components/ui';
 	import { t } from '$lib/i18n';
 	import NavMenu from './NavMenu.svelte';
 	import SidebarUser from './SidebarUser.svelte';
@@ -197,8 +197,13 @@
 					<kbd aria-hidden="true">{keyHint}</kbd>
 				</Button>
 			</div>
+		{:else if user === null}
+			<!-- The account is not known yet (ADR-0430): the button's place, so that nothing moves. -->
+			<div class="hidden md:block px-3 pt-1 pb-1">
+				<Skeleton shape="block" class="h-9 w-full" />
+			</div>
 		{/if}
-		<NavMenu {role} {pathname} onnavigate={() => closeMenu(false)} />
+		<NavMenu {role} pending={user === null} {pathname} onnavigate={() => closeMenu(false)} />
 		<SidebarUser {user} {onlogout} onnavigate={() => closeMenu(false)} />
 	</div>
 

@@ -15,7 +15,7 @@
 		type InstalledApp
 	} from '$lib/api/apps';
 	import { Package, Download, RefreshCw, Grid3X3, CheckCircle2 } from 'lucide-svelte';
-	import { Button, Alert, EmptyState } from '$lib/components/ui';
+	import { Button, Alert, EmptyState, Skeleton } from '$lib/components/ui';
 	import {
 		AppCatalog,
 		AppDetailModal,
@@ -128,8 +128,17 @@
 		}
 	}
 
+	// The first load draws the page once (ADR-0430): the catalog with the installed apps' answer, when
+	// it comes within a moment of the catalog's; a Docker that takes longer does not hold the catalog
+	// (ADR-0327), which is then listed alone. Until then the page is its skeleton.
+	const INSTALLED_GRACE_MS = 1000;
+	let drawn = $state(false);
+
 	onMount(async () => {
-		await refresh();
+		const installed = data.loadInstalled();
+		await data.loadCatalog();
+		await Promise.race([installed, new Promise((resolve) => setTimeout(resolve, INSTALLED_GRACE_MS))]);
+		drawn = true;
 	});
 
 	async function refresh() {
@@ -175,10 +184,13 @@
 	<div class="page-header">
 		<div class="min-w-0">
 			<h1 class="page-title">{$t('apps.title')}</h1>
-			<p class="page-subtitle">
-				{#if data.catalogState === 'loaded' && data.installedState === 'loaded'}
+			<!-- One line, always: the counts come without moving the page; a refresh keeps them. -->
+			<p class="page-subtitle min-h-5">
+				{#if !drawn}
+					<Skeleton class="w-56 max-w-full" />
+				{:else if data.catalogKnown && data.installedKnown}
 					{$t('apps.summary', { available: data.availableCount, installed: data.installed.length })}
-				{:else if data.catalogState === 'loaded'}
+				{:else if data.catalogKnown}
 					{$t('apps.summaryAvailable', { available: data.availableCount })}
 				{/if}
 			</p>
@@ -193,13 +205,6 @@
 		<Alert variant="error">{error}</Alert>
 	{/if}
 
-	{#if data.catalogError}
-		<Alert variant="error">{$t('apps.catalogLoadError', { error: data.catalogError })}</Alert>
-	{/if}
-
-	{#if data.installedError}
-		<Alert variant="error">{$t('apps.installed.loadError', { error: data.installedError })}</Alert>
-	{/if}
 
 	<!-- The installs that run in the background and the last of each app, with their ends (ADR-0384). -->
 	<AppInstallJobs jobs={$appInstalls} catalog={data.catalog} {cancelling} ondismiss={dismiss} oncancel={cancel} />
@@ -221,15 +226,46 @@
 		>
 			<span class="flex items-center gap-2">
 				<CheckCircle2 class="w-4 h-4" />
-				{data.installedState === 'loaded'
+				{data.installedKnown
 					? $t('apps.tabs.installed', { count: data.installed.length })
 					: $t('apps.tabs.installedUnknown')}
 			</span>
 		</Button>
 	</div>
 
-	{#if activeTab === 'catalog' && data.catalogState === 'loading' && data.catalog.length === 0}
-		<p class="loading-text">{$t('apps.loading')}</p>
+	<!-- The lists' errors under the tabs, drawn with the lists: they push nothing that was shown
+	     (ADR-0430). -->
+	{#if drawn && data.catalogError}
+		<Alert variant="error">{$t('apps.catalogLoadError', { error: data.catalogError })}</Alert>
+	{/if}
+
+	{#if drawn && data.installedError}
+		<Alert variant="error">{$t('apps.installed.loadError', { error: data.installedError })}</Alert>
+	{/if}
+
+	{#if activeTab === 'catalog' && !drawn}
+		<!-- The first load: the featured apps, the categories and the grid of apps (ADR-0430). -->
+		<div class="space-y-6" aria-busy="true">
+			<div class="card">
+				<Skeleton size="base" class="w-36 mb-5" />
+				<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+					{#each [0, 1, 2] as tile (tile)}
+						<Skeleton shape="block" class="h-[118px] w-full rounded-card" />
+					{/each}
+				</div>
+			</div>
+			<div class="flex flex-col lg:flex-row gap-6">
+				<div class="lg:w-56 flex-shrink-0"><Skeleton shape="card" count={6} size="control" /></div>
+				<div class="flex-1 min-w-0 space-y-5">
+					<Skeleton shape="block" class="h-9 w-full" />
+					<div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+						{#each [0, 1, 2, 3, 4, 5] as tile (tile)}
+							<Skeleton shape="block" class="h-40 w-full rounded-card" />
+						{/each}
+					</div>
+				</div>
+			</div>
+		</div>
 	{:else if activeTab === 'catalog' && data.catalogState === 'failed' && data.catalog.length === 0}
 		<!-- The error above says why nothing is listed. -->
 	{:else if activeTab === 'catalog'}
@@ -243,9 +279,13 @@
 		/>
 	{:else}
 		<!-- Installed Apps -->
-		{#if data.installedState === 'loading'}
-			<p class="loading-text">{$t('apps.loading')}</p>
-		{:else if data.installedState === 'failed'}
+		{#if !drawn || (data.installedState === 'loading' && !data.installedKnown && !data.installedError)}
+			<!-- Not answered yet (ADR-0430); a refresh keeps the list. -->
+			<div class="space-y-4" aria-busy="true">
+				<Skeleton shape="card" count={2} />
+				<Skeleton shape="card" count={2} />
+			</div>
+		{:else if data.installedState === 'failed' || (data.installedState === 'loading' && !data.installedKnown)}
 			<!-- The error above says why nothing is listed. -->
 		{:else if data.installed.length === 0}
 			<EmptyState

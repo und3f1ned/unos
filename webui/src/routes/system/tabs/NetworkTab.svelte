@@ -9,7 +9,7 @@
     type NetworkInterface,
   } from "$lib/api/network";
   import { ApiError } from "$lib/api/client";
-  import { Alert, Button, EmptyState, type IconComponent } from "$lib/components/ui";
+  import { Alert, Button, EmptyState, Skeleton, type IconComponent } from "$lib/components/ui";
   import ConnectionsTable from "$lib/components/network/ConnectionsTable.svelte";
   import { NetworkData } from "$lib/components/network/data.svelte";
   import DisableInterfaceDialog from "$lib/components/network/DisableInterfaceDialog.svelte";
@@ -319,7 +319,13 @@
           onenable={() => enable(iface.name)}
         />
       {:else}
-        {#if !net.loading && !net.loadErrors.interfaces}
+        {#if net.loading && !net.loadErrors.interfaces}
+          <!-- The first load (ADR-0430): the interfaces' cards; a reload keeps them. -->
+          <div class="space-y-3" aria-busy="true">
+            <Skeleton shape="block" class="h-[72px] w-full rounded-card" />
+            <Skeleton shape="block" class="h-[72px] w-full rounded-card" />
+          </div>
+        {:else if !net.loadErrors.interfaces}
           <EmptyState icon={Network} title={$t("network.interface.none")} />
         {/if}
       {/each}

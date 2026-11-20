@@ -2,10 +2,10 @@
   // The backups of System > Backup & Restore, newest first as the server lists them, each with
   // Restore, Download and Delete.
   import { formatBytes, type BackupInfo } from "$lib/api/backup";
-  import { Button } from "$lib/components/ui";
+  import { Button, Skeleton } from "$lib/components/ui";
   import { intlLocale, t } from "$lib/i18n";
   import { formatDateTime } from "$lib/time";
-  import { Archive, Clock, Download, Lock, RefreshCw, RotateCcw, Trash2 } from "lucide-svelte";
+  import { Archive, Clock, Download, Lock, RotateCcw, Trash2 } from "lucide-svelte";
 
   type Props = {
     backups: BackupInfo[];
@@ -22,9 +22,7 @@
 
 <div class="card">
   {#if loading}
-    <div class="flex justify-center py-8">
-      <RefreshCw class="w-6 h-6 animate-spin text-brand-ring" />
-    </div>
+    <div aria-busy="true"><Skeleton count={3} /></div>
   {:else if backups.length === 0}
     <div class="text-center py-8 text-content-secondary">
       <Archive class="w-10 h-10 mx-auto mb-2 opacity-50" />

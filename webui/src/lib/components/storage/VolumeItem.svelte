@@ -2,7 +2,7 @@
 	// A volume of the Volumes dialog: its name and path, the use of its quota (ADR-0243), and its use
 	// over time when it is opened.
 	import { LineChart, Trash2 } from 'lucide-svelte';
-	import { Alert, Button, ProgressBar } from '$lib/components/ui';
+	import { Alert, Button, ProgressBar, Skeleton } from '$lib/components/ui';
 	import type { Volume } from '$lib/api/storage';
 	import { t } from '$lib/i18n';
 	import { quotaVariant } from './pools';
@@ -78,7 +78,7 @@
 		<div class="space-y-1">
 			<p class="text-xs font-medium text-secondary">{$t('storage.volumes.chartTitle')}</p>
 			{#if volumes.usageLoading}
-				<p class="loading-text text-xs">{$t('storage.volumes.chartLoading')}</p>
+				<div aria-busy="true"><Skeleton shape="block" class="h-32 w-full" /></div>
 			{:else if volumes.usageError}
 				<Alert variant="error" title={$t('storage.volumes.chartError')}>{volumes.usageError}</Alert>
 			{:else}

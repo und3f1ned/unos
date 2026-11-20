@@ -6,7 +6,7 @@
 	import { onMount } from 'svelte';
 	import { Network, RotateCw } from 'lucide-svelte';
 	import { getSmbInterfaces, type SmbInterfaces } from '$lib/api/shares';
-	import { Alert, Button, Card } from '$lib/components/ui';
+	import { Alert, Button, Card, Skeleton } from '$lib/components/ui';
 	import { t } from '$lib/i18n';
 	import { messageOf } from './errors';
 	import SmbInterfacesDialog from './SmbInterfacesDialog.svelte';
@@ -124,7 +124,12 @@
 			</div>
 		</div>
 	{:else}
-		<p class="loading-text">{$t('common.loading')}</p>
+		<!-- Loading (ADR-0430): the two lines and the button, as they will be. -->
+		<div class="space-y-3" aria-busy="true">
+			<Skeleton size="base" class="w-3/4" />
+			<Skeleton class="w-1/2" />
+			<Skeleton shape="block" class="h-9 w-44" />
+		</div>
 	{/if}
 </Card>
 

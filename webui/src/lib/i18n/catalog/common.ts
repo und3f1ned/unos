@@ -4,7 +4,6 @@ import type { Translation } from '../translate';
 
 export const en = {
 	'common.product': 'UNOS',
-	'common.loading': 'Loading...',
 	'common.retry': 'Retry',
 	'common.cancel': 'Cancel',
 	'common.refresh': 'Refresh',
@@ -16,7 +15,6 @@ export const en = {
 
 export const ru: Translation<typeof en> = {
 	'common.product': 'UNOS',
-	'common.loading': 'Загрузка...',
 	'common.retry': 'Повторить',
 	'common.cancel': 'Отмена',
 	'common.refresh': 'Обновить',

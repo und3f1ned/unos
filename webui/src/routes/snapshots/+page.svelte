@@ -3,7 +3,7 @@
 	// made in it, with the dialogs that take, restore and delete them. Its lists are SnapshotLists.
 	import { onMount } from 'svelte';
 	import { Archive, Copy, Plus, Trash2, RotateCcw, RefreshCw } from 'lucide-svelte';
-	import { Button, Card, Alert, Select, EmptyState } from '$lib/components/ui';
+	import { Alert, Button, Card, EmptyState, Select, Skeleton } from '$lib/components/ui';
 	import {
 		deleteRestoreCopy,
 		deleteSnapshot,
@@ -116,7 +116,10 @@
 			{/each}
 		</Card>
 	{:else if lists.subvolumesLoading}
-		<p class="loading-text">{$t('common.loading')}</p>
+		<div class="space-y-6" aria-busy="true">
+			<Skeleton shape="card" count={2} />
+			<Skeleton shape="table" columns={4} count={3} />
+		</div>
 	{:else if !lists.subvolumesError}
 		<Card>
 			<p class="text-muted">
@@ -143,8 +146,10 @@
 				<Archive class="w-5 h-5 text-content-secondary" />
 				{$t('snapshots.of', { name: label(lists.selected) })}
 			</h2>
-			{#if lists.snapshots.loading}
-				<p class="loading-text">{$t('snapshots.loading')}</p>
+			{#if lists.snapshots.loading && lists.snapshots.shownPath !== lists.selectedPath}
+				<div aria-busy="true">
+					<Skeleton shape="row" columns={4} count={3} size="control" />
+				</div>
 			{:else if lists.snapshots.error}
 				<Alert variant="error" title={$t('snapshots.loadError')}>{lists.snapshots.error}</Alert>
 			{:else if lists.snapshots.items.length === 0}
@@ -182,8 +187,8 @@
 				{$t('snapshots.copies.of', { name: label(lists.selected) })}
 			</h2>
 			<p class="text-sm text-secondary mb-4">{$t('snapshots.copies.hint')}</p>
-			{#if lists.copies.loading}
-				<p class="loading-text">{$t('snapshots.copies.loading')}</p>
+			{#if lists.copies.loading && lists.copies.shownPath !== lists.selectedPath}
+				<div aria-busy="true"><Skeleton count={2} /></div>
 			{:else if lists.copies.error}
 				<Alert variant="error" title={$t('snapshots.copies.loadError')}>{lists.copies.error}</Alert>
 			{:else if lists.copies.items.length === 0}

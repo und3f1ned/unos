@@ -12,6 +12,8 @@ export class UploadLeftovers {
   removing = $state.raw<UploadLeftover[] | null>(null);
   sending = $state(false);
   error = $state("");
+  // The first answer has come (or failed): the page draws the notice with the list (ADR-0430).
+  loaded = $state(false);
   size = $derived(this.files.reduce((sum, file) => sum + file.size, 0));
 
   // Without an answer the page shows no notice; the rest of it works as before.
@@ -20,6 +22,8 @@ export class UploadLeftovers {
       this.files = (await listUploadLeftovers()).files;
     } catch {
       this.files = [];
+    } finally {
+      this.loaded = true;
     }
   }
 

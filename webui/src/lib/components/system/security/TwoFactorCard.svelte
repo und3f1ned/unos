@@ -4,7 +4,7 @@
   import RecoveryCodes from "$lib/components/account/RecoveryCodes.svelte";
   import SecurityKeys from "$lib/components/account/SecurityKeys.svelte";
   import { setupTOTP } from "$lib/api/auth";
-  import { Alert, Button } from "$lib/components/ui";
+  import { Alert, Button, Skeleton } from "$lib/components/ui";
   import { t } from "$lib/i18n";
   import Notice from "./Notice.svelte";
   import type { TwoFactor } from "./twoFactor.svelte";
@@ -75,7 +75,7 @@
     <div class="flex flex-wrap items-center gap-3">
       {#if !twoFactor.statusLoaded}
         {#if !twoFactor.statusError}
-          <span class="text-sm text-content-muted">{$t("common.loading")}</span>
+          <span aria-busy="true"><Skeleton shape="block" class="h-7 w-28" /></span>
         {/if}
       {:else if twoFactor.enabled}
         <span class="px-3 py-1 bg-status-success/20 text-status-success rounded-lg text-sm flex items-center gap-1">

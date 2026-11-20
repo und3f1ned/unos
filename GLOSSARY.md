@@ -36,6 +36,16 @@ typing narrows the pages and actions of the user's role, and Enter opens the cho
 only the actions that change nothing on the NAS; the others open their page's own dialog
 (ADR-0393). Avoid: quick switcher, command bar, search.
 
+**Boot screen**: What the web UI shows from the first frame until it knows the account and the
+page has drawn itself or its skeleton: the logo on the page's background, in the user's theme, and
+after a moment a thin progress bar. It is in `webui/src/app.html` and drawn by the style sheet
+alone, then fades out and is removed (ADR-0430). Avoid: splash, loader, spinner.
+
+**Skeleton**: The grey shapes, without text, that stand where a page's cards, tables, lines and
+values will be until its first load has answered, in the page's final layout, so that the data
+take their places without moving the page (`Skeleton` of `webui/src/lib/components/ui`,
+ADR-0430). Avoid: placeholder, loading state, shimmer.
+
 **Table frame**: The element of the class `table-frame` around a table that can be wider than a
 phone's screen: the table scrolls sideways inside it, while the page never does (ADR-0302).
 Avoid: scroll wrapper, responsive table.

@@ -3,7 +3,7 @@
   import { getSystemInfo, type SystemInfo } from "$lib/api/system";
   import { getCurrentVersion, type CurrentVersion } from "$lib/api/updates";
   import { user } from "$lib/stores/auth";
-  import { Badge, Button, Card } from "$lib/components/ui";
+  import { Badge, Button, Card, Skeleton } from "$lib/components/ui";
   import { HostSettings, HostSettingsCard } from "$lib/components/system/general";
   import { t } from "$lib/i18n";
   import { apiTime } from "$lib/time";
@@ -62,9 +62,47 @@
   </div>
 {/snippet}
 
+<!-- A card's title as it will be, and its facts. -->
+{#snippet pendingCard(facts: number, button: boolean)}
+  <div class="card">
+    <Skeleton size="base" class="w-40 mb-4" />
+    <div class="kv">
+      {#each Array.from({ length: facts }, (_, i) => i) as fact (fact)}
+        <div>
+          <Skeleton size="xs" class="w-16" />
+          <Skeleton class="w-28" />
+        </div>
+      {/each}
+    </div>
+    {#if button}
+      <Skeleton shape="block" class="mt-3 h-8 w-36" />
+    {/if}
+  </div>
+{/snippet}
+
 <div class="space-y-4">
   <h2 class="text-xl font-semibold">{$t("general.title")}</h2>
 
+  {#if loading || host.loading}
+  <!-- The first load (ADR-0430): the four cards in their places, swapped for them at once. -->
+  <div class="space-y-4" aria-busy="true">
+    {@render pendingCard(5, false)}
+    <div class="card">
+      <Skeleton size="base" class="w-40 mb-4" />
+      <div class="space-y-4">
+        {#each [0, 1] as field (field)}
+          <div>
+            <Skeleton size="xs" class="w-24 mb-1" />
+            <Skeleton shape="block" class="h-9 w-full" />
+            <Skeleton size="xs" class="mt-1 w-2/3" />
+          </div>
+        {/each}
+      </div>
+    </div>
+    {@render pendingCard(1, true)}
+    {@render pendingCard(2, true)}
+  </div>
+  {:else}
   <!-- System Info -->
   <Card>
     <h3 class="card-title mb-4">
@@ -72,9 +110,7 @@
       {$t("general.info.title")}
     </h3>
 
-    {#if loading}
-      <p class="text-content-muted">{$t("common.loading")}</p>
-    {:else if systemInfo}
+    {#if systemInfo}
       <div class="kv">
         {@render info($t("general.info.hostname"), systemInfo.hostname, "font-medium break-words")}
         {@render info($t("general.info.os"), systemInfo.os, "")}
@@ -96,9 +132,7 @@
       {$t("general.version.title")}
     </h3>
 
-    {#if loading}
-      <p class="text-sm text-muted">{$t("common.loading")}</p>
-    {:else if currentVersion}
+    {#if currentVersion}
       <p class="text-sm flex flex-wrap items-center gap-2">
         <span class="text-secondary">{$t("general.version.label")}</span>
         <span class="mono">{versionLabel(currentVersion.version)}</span>
@@ -143,4 +177,5 @@
       <p class="text-content-muted">{$t("general.user.signedOut")}</p>
     {/if}
   </Card>
+  {/if}
 </div>

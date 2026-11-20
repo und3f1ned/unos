@@ -22,7 +22,7 @@
     type OffsiteStatus,
   } from "$lib/api/offsite";
   import { createTask, getTasks, type ScheduledTask } from "$lib/api/scheduler";
-  import { Alert, Card } from "$lib/components/ui";
+  import { Alert, Card, Skeleton } from "$lib/components/ui";
   import { OffsiteForm } from "$lib/components/system/offsite/form.svelte";
   import { restorePoolsOf } from "$lib/components/system/offsite/offsite";
   import OffsiteSettingsForm from "$lib/components/system/offsite/OffsiteSettingsForm.svelte";
@@ -263,8 +263,9 @@
       </div>
     {/if}
 
-    {#if loading}
-      <p class="text-sm text-content-muted">{$t("common.loading")}</p>
+    {#if loading && !answer}
+      <!-- The first load (ADR-0430); a reload keeps what is shown. -->
+      <div aria-busy="true"><Skeleton count={3} /></div>
     {:else if answer}
       {#if !answer.configured}
         <p class="text-sm mb-4">{$t("offsite.notSetUp")}</p>

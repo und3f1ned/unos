@@ -19,6 +19,8 @@ export class PoolVolumes {
 	pool: Pool | null = $state.raw(null);
 	list: Volume[] = $state.raw([]);
 	loading = $state(false);
+	// The pool's list has answered since the dialog opened: a reload keeps it (ADR-0430).
+	loaded = $state(false);
 	error = $state('');
 	newName = $state('');
 	// In GiB, as typed; empty for no limit (ADR-0243).
@@ -71,6 +73,8 @@ export class PoolVolumes {
 	async open(pool: Pool) {
 		this.pool = pool;
 		this.list = [];
+		this.loaded = false;
+		this.error = '';
 		this.usageOf = null;
 		this.#usageRequest++;
 		this.newName = '';
@@ -94,15 +98,20 @@ export class PoolVolumes {
 		if (!pool) return;
 		const request = ++this.#request;
 		this.loading = true;
-		this.error = '';
 		try {
 			const list = await getVolumes(pool);
-			if (request === this.#request) this.list = list;
+			if (request === this.#request) {
+				this.list = list;
+				this.error = '';
+			}
 		} catch (e) {
 			// e.g. 409 when the pool was unmounted meanwhile
 			if (request === this.#request) this.error = messageOf(e);
 		} finally {
-			if (request === this.#request) this.loading = false;
+			if (request === this.#request) {
+				this.loading = false;
+				this.loaded = true;
+			}
 		}
 	}
 

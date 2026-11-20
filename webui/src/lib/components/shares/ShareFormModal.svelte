@@ -13,7 +13,7 @@
 		type SmbShare,
 		type SmbShareUpdate
 	} from '$lib/api/shares';
-	import { Alert, Button, Input, Modal } from '$lib/components/ui';
+	import { Alert, Button, Input, Modal, Skeleton } from '$lib/components/ui';
 	import { t } from '$lib/i18n';
 	import LocationFields from './LocationFields.svelte';
 	import ShareAccessPicker from './ShareAccessPicker.svelte';
@@ -348,7 +348,7 @@
 		<ShareSettingsFields bind:browseable bind:guestOk bind:options {guestLocked} {encryptionLocked} />
 
 		{#if usersLoading}
-			<p class="text-sm text-muted">{$t('shares.form.loadingUsers')}</p>
+			<div aria-busy="true"><Skeleton count={3} /></div>
 		{:else if usersError}
 			<Alert variant="error" title={$t('shares.form.usersError')}>{usersError}</Alert>
 		{:else}

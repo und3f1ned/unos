@@ -40,7 +40,8 @@
     deleteError = "";
     offerForGood = false;
     await tick();
-    moveToTrashSlot?.querySelector("button")?.focus();
+    // Without scrolling: a dialog taller than the window opens at its top (LeftoversDialog).
+    moveToTrashSlot?.querySelector("button")?.focus({ preventScroll: true });
   }
 
   async function closeDelete() {

@@ -13,7 +13,7 @@
 		type IscsiTargetCreate
 	} from '$lib/api/iscsi';
 	import type { SharePath } from '$lib/api/shares';
-	import { Alert, Button, Card, EmptyState } from '$lib/components/ui';
+	import { Alert, Button, Card, EmptyState, Skeleton } from '$lib/components/ui';
 	import { t } from '$lib/i18n';
 	import { messageOf } from './errors';
 	import IscsiCreateDialog from './IscsiCreateDialog.svelte';
@@ -140,7 +140,10 @@
 		{#if loadError}
 			<Alert variant="error" title={$t('iscsi.loadError')}>{loadError}</Alert>
 		{:else if !iscsiState}
-			<p class="loading-text">{$t('common.loading')}</p>
+			<div class="space-y-4" aria-busy="true">
+				<Skeleton shape="card" count={2} />
+				<Skeleton shape="table" columns={4} count={2} />
+			</div>
 		{:else}
 			<div class="space-y-4">
 				{#if !iscsiState.kernel_support}

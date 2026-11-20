@@ -2,7 +2,7 @@
   import { messageOf } from "$lib/errors";
   import { Clock, History, MapPin, Monitor, RefreshCw, User } from "lucide-svelte";
   import { getLoginHistory, type LoginAttempt } from "$lib/api/security";
-  import { Alert, Badge, Button } from "$lib/components/ui";
+  import { Alert, Badge, Button, Skeleton } from "$lib/components/ui";
   import { intlLocale, t } from "$lib/i18n";
   import { formatDateTime } from "$lib/time";
 
@@ -12,15 +12,17 @@
   let loginHistoryFailed = $state(0);
   let loginHistorySuccess = $state(0);
   let loginHistoryLoading = $state(false);
+  // The history has answered once: a refresh keeps it on the page (ADR-0430).
+  let loginHistoryLoaded = $state(false);
   // Why the last load failed: shown in place of the counts and the list.
   let loginHistoryError = $state("");
   let showLoginHistory = $state(false);
 
   async function loadLoginHistory() {
     loginHistoryLoading = true;
-    loginHistoryError = "";
     try {
       const response = await getLoginHistory(50, 0);
+      loginHistoryError = "";
       loginHistory = response.attempts;
       loginHistoryTotal = response.total;
       loginHistoryFailed = response.failed_count;
@@ -31,6 +33,7 @@
       loginHistoryError = messageOf(e);
     } finally {
       loginHistoryLoading = false;
+      loginHistoryLoaded = true;
     }
   }
 
@@ -76,8 +79,8 @@
 
   {#if showLoginHistory}
     <div class="mt-4 space-y-4">
-      {#if loginHistoryLoading}
-        <div class="text-center py-4 text-content-secondary">{$t("common.loading")}</div>
+      {#if loginHistoryLoading && !loginHistoryLoaded}
+        <div aria-busy="true"><Skeleton count={3} /></div>
       {:else if loginHistoryError}
         <Alert variant="error" title={$t("account.history.loadError")}>
           <p>{loginHistoryError}</p>

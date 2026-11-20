@@ -3,7 +3,7 @@
 	import { onMount } from 'svelte';
 	import { ApiError } from '$lib/api/client';
 	import { generateRecoveryCodes, getRecoveryCodesStatus, type RecoveryCodesStatus } from '$lib/api/auth';
-	import { Alert, Button, Modal } from '$lib/components/ui';
+	import { Alert, Button, Modal, Skeleton } from '$lib/components/ui';
 	import { t } from '$lib/i18n';
 
 	// The recovery codes of the signed-in account, shown while two-factor
@@ -97,7 +97,7 @@
 		</ul>
 		<Button onclick={() => (codes = [])}>{$t('common.done')}</Button>
 	{:else if loading}
-		<p class="text-sm text-muted">{$t('common.loading')}</p>
+		<div aria-busy="true"><Skeleton count={2} /></div>
 	{:else if loadError || !status}
 		<Alert variant="error" title={$t('account.recovery.loadError')}>{loadError}</Alert>
 	{:else if !status.generated}

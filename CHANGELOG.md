@@ -41,6 +41,20 @@ manager, encrypted backup uploads, health checks, CI checks).
   `app_names_changed` in the audit log, ADR-0420).
 
 ### Changed
+- The web UI loads without flicker (ADR-0430): from the first frame a boot screen (the logo, and
+  a thin bar after 400 ms) in the user's theme covers the page until the account is known and the
+  page has drawn its skeleton, then fades out in 160 ms; the sidebar is drawn once with the
+  account's role; every page's first load shows skeletons (the new `Skeleton` of the design
+  system) in its final layout instead of "Loading…" or nothing, and swaps them for the data at
+  once; a refresh keeps what is shown. Measured with the API slowed: the dashboard's layout shift
+  went from 0.09 to 0.002, System > General's from 0.085 to 0. The Users page loads its groups with
+  its users; the dashboard, System > Resource Monitor and the sidebar say "Connecting…" until the
+  live connection's first attempt has ended (then "Disconnected" or "Not connected" if it failed,
+  instead of waiting cards and "Connecting…" forever), and the dashboard keeps Customize in place while it loads; on its first load the App
+  Store draws its catalog with the installed apps' answer when it comes within 1 s, and the lists'
+  errors sit under the tabs; the Files page draws its breadcrumbs, buttons and list at once.
+  The Files page's dialogs to remove leftovers of uploads and to delete open at their top, their
+  title shown, also when they are taller than the window (long paths on a phone held sideways).
 - A pool on an NVMe drive of a SpacemiT K1 (Banana Pi BPI-F3) gets TRIM like every other pool:
   `mkfs.btrfs` and `btrfs device add` trim it, it is mounted without `nodiscard` and its fstab entry
   without `nodiscard,X-fstrim.notrim`, so the weekly `fstrim.timer` trims it, and Add Disk no longer

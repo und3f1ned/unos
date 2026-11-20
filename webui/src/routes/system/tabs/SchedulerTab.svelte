@@ -9,7 +9,7 @@
     type ScheduledTask,
   } from "$lib/api/scheduler";
   import { getPools, getDisks, type Pool, type Disk } from "$lib/api/storage";
-  import { Button } from "$lib/components/ui";
+  import { Button, Skeleton } from "$lib/components/ui";
   import { TaskFormDialog, TaskHistory, TaskHistoryDialog, TaskRow } from "$lib/components/system/scheduler";
   import { t } from "$lib/i18n";
   import { Calendar, RefreshCw, Plus, History } from "lucide-svelte";
@@ -22,6 +22,8 @@
   // The time zone whose clock the schedules follow (the NAS's); empty until it is known.
   let timeZone = $state("");
   let loading = $state(true);
+  // The first load has answered: a reload keeps the list (ADR-0430).
+  let loaded = $state(false);
   let runningTaskId = $state<string | null>(null);
 
   // Modal state: the task dialog, with the task being edited (null for a new one), and the history.
@@ -51,6 +53,7 @@
       tasks = [];
     }
     loading = false;
+    loaded = true;
   }
 
   async function loadResources() {
@@ -149,10 +152,8 @@
 
   <!-- Task List -->
   <div class="card">
-    {#if loading}
-      <div class="flex justify-center py-8">
-        <RefreshCw class="w-6 h-6 animate-spin text-brand-ring" />
-      </div>
+    {#if !loaded}
+      <div aria-busy="true"><Skeleton count={3} size="control" /></div>
     {:else if tasks.length === 0}
       <div class="text-center py-8 text-content-secondary">
         <Calendar class="w-10 h-10 mx-auto mb-2 opacity-50" />

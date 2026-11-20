@@ -10,7 +10,7 @@
 		type ApiToken,
 		type CreatedApiToken
 	} from '$lib/api/auth';
-	import { Alert, Button, Card, EmptyState } from '$lib/components/ui';
+	import { Alert, Button, Card, EmptyState, Skeleton } from '$lib/components/ui';
 	import { t } from '$lib/i18n';
 	import ApiTokenItem from './ApiTokenItem.svelte';
 	import ApiTokenShownDialog from './ApiTokenShownDialog.svelte';
@@ -163,7 +163,7 @@
 		{/if}
 
 		{#if loading}
-			<p class="text-sm text-muted">{$t('common.loading')}</p>
+			<div aria-busy="true"><Skeleton count={2} /></div>
 		{:else if loadError}
 			<Alert variant="error" title={$t('tokens.loadError')}>
 				{loadError}

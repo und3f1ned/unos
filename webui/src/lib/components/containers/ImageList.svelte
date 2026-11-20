@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { Download, Layers, Trash2 } from 'lucide-svelte';
-	import { Alert, Button, Card, EmptyState, Input, Modal } from '$lib/components/ui';
+	import { Alert, Button, Card, EmptyState, Input, Modal, Skeleton } from '$lib/components/ui';
 	import { getImages, pullImage, removeImage, type Image } from '$lib/api/containers';
 	import { formatBytes } from '$lib/stores/stats';
 	import { intlLocale, t } from '$lib/i18n';
@@ -33,9 +33,10 @@
 	/** Load the list again. */
 	export async function refresh() {
 		loading = true;
-		loadError = '';
 		try {
 			images = await getImages();
+			// The error stays until a load succeeds: a reload does not blank it (ADR-0430).
+			loadError = '';
 		} catch (e) {
 			loadError = messageOf(e);
 		} finally {
@@ -144,8 +145,11 @@
 		<Alert variant="success" dismissible ondismiss={() => (notice = '')}>{notice}</Alert>
 	{/if}
 
-	{#if loading && images.length === 0}
-		<p class="loading-text">{$t('containers.images.loading')}</p>
+	{#if loading && images.length === 0 && !loadError}
+		<!-- The first load (ADR-0430): the table's rows; a refresh keeps the list. -->
+		<div class="card" aria-busy="true">
+			<Skeleton shape="row" columns={5} count={4} />
+		</div>
 	{:else if loadError}
 		<Alert variant="error" title={$t('containers.images.loadError')}>{loadError}</Alert>
 	{:else if images.length === 0}

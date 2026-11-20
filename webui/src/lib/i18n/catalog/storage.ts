@@ -381,7 +381,6 @@ export const en = {
 		'that can be shared on its own. Snapshots of the pool do not include the files in its volumes: take snapshots of each volume as well, on the Snapshots page. Scheduled snapshot tasks take pools only.',
 	'storage.volumes.readOnly': 'Volumes cannot be created or deleted while the pool is mounted read-only.',
 	'storage.volumes.forcedReadOnly': 'btrfs made it read-only after an error; check the kernel log (dmesg).',
-	'storage.volumes.loading': 'Loading volumes...',
 	'storage.volumes.loadError': 'Could not load the volumes',
 	'storage.volumes.none': 'No volumes yet',
 	'storage.volumes.deleteOne': 'Delete volume {name}',
@@ -419,7 +418,6 @@ export const en = {
 	// The use over time: one point per hour of the last 30 days, the current reading last.
 	'storage.volumes.chartShow': 'Use over time of {name}',
 	'storage.volumes.chartTitle': 'Use over time',
-	'storage.volumes.chartLoading': 'Loading the use over time...',
 	'storage.volumes.chartError': 'Could not load the use over time',
 	'storage.volumes.chartTooFew': 'Not enough points yet: UNOS keeps one per hour, for 30 days.',
 	// {from} and {to} are dates and times; {start} and {end} the sizes used then.
@@ -773,7 +771,6 @@ export const ru: Translation<typeof en> = {
 	'storage.volumes.readOnly': 'Тома нельзя создавать и удалять, пока пул смонтирован только для чтения.',
 	'storage.volumes.forcedReadOnly':
 		'btrfs перевёл его в режим только для чтения после ошибки; проверьте журнал ядра (dmesg).',
-	'storage.volumes.loading': 'Загрузка томов...',
 	'storage.volumes.loadError': 'Не удалось загрузить тома',
 	'storage.volumes.none': 'Томов пока нет',
 	'storage.volumes.deleteOne': 'Удалить том {name}',
@@ -804,7 +801,6 @@ export const ru: Translation<typeof en> = {
 	'storage.volumes.rescan': 'btrfs сообщает, что заполнение в этом пуле может быть посчитано неверно, пока его не пересчитают. Выполните на хосте:',
 	'storage.volumes.chartShow': 'Заполнение тома {name} во времени',
 	'storage.volumes.chartTitle': 'Заполнение во времени',
-	'storage.volumes.chartLoading': 'Загрузка заполнения во времени...',
 	'storage.volumes.chartError': 'Не удалось загрузить заполнение во времени',
 	'storage.volumes.chartTooFew': 'Пока мало точек: UNOS хранит по одной в час за 30 дней.',
 	'storage.volumes.chartSummary': 'Занято {start} на {from} и {end} на {to}.',

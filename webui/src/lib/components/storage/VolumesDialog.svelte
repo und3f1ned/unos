@@ -3,7 +3,7 @@
 	// their quotas, and the forms that delete one and create one. Its state is the page's
 	// PoolVolumes, which opens it for a pool.
 	import { Plus } from 'lucide-svelte';
-	import { Alert, Button, Input, Modal } from '$lib/components/ui';
+	import { Alert, Button, Input, Modal, Skeleton } from '$lib/components/ui';
 	import { MAX_QUOTA_GIB } from '$lib/api/storage';
 	import { t } from '$lib/i18n';
 	import { poolMountpoint } from './pools';
@@ -63,8 +63,11 @@
 				</Alert>
 			{/if}
 
-			{#if volumes.loading}
-				<p class="loading-text">{$t('storage.volumes.loading')}</p>
+			{#if volumes.loading && !volumes.loaded}
+				<div class="space-y-3" aria-busy="true">
+					<Skeleton shape="block" class="h-16 w-full rounded-lg" />
+					<Skeleton shape="block" class="h-16 w-full rounded-lg" />
+				</div>
 			{:else if volumes.error}
 				<Alert variant="error" title={$t('storage.volumes.loadError')}>{volumes.error}</Alert>
 			{:else if volumes.list.length === 0}
