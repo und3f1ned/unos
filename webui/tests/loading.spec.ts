@@ -238,8 +238,9 @@ test.describe('Loading without flicker', () => {
     await page.evaluate(SAMPLER);
     await page.getByRole('button', { name: 'Refresh', exact: true }).click();
     await page.waitForTimeout(API_DELAY / 2);
-    // Midway through the refresh: the widgets are still there, no skeleton replaced them.
-    await expect(page.locator('main [data-widget]')).toHaveCount(9);
+    // Midway through the refresh: the widgets are still there, no skeleton replaced them (an
+    // administrator's eight: the dashboard has no Quick Actions, ADR-0431).
+    await expect(page.locator('main [data-widget]')).toHaveCount(8);
     await expect(page.locator('main [data-skeleton]')).toHaveCount(0);
     await page.waitForLoadState('networkidle');
     const { samples } = await recorded(page);

@@ -243,25 +243,16 @@
 	{/if}
 
 	{#if activeTab === 'catalog' && !drawn}
-		<!-- The first load: the featured apps, the categories and the grid of apps (ADR-0430). -->
-		<div class="space-y-6" aria-busy="true">
-			<div class="card">
-				<Skeleton size="base" class="w-36 mb-5" />
-				<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-					{#each [0, 1, 2] as tile (tile)}
-						<Skeleton shape="block" class="h-[118px] w-full rounded-card" />
+		<!-- The first load: the categories and the grid of apps (ADR-0430), as the catalog draws them
+		     (no featured apps: ADR-0431). -->
+		<div class="flex flex-col lg:flex-row gap-6" aria-busy="true">
+			<div class="lg:w-56 flex-shrink-0"><Skeleton shape="card" count={6} size="control" /></div>
+			<div class="flex-1 min-w-0 space-y-5">
+				<Skeleton shape="block" class="h-9 w-full" />
+				<div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+					{#each [0, 1, 2, 3, 4, 5] as tile (tile)}
+						<Skeleton shape="block" class="h-40 w-full rounded-card" />
 					{/each}
-				</div>
-			</div>
-			<div class="flex flex-col lg:flex-row gap-6">
-				<div class="lg:w-56 flex-shrink-0"><Skeleton shape="card" count={6} size="control" /></div>
-				<div class="flex-1 min-w-0 space-y-5">
-					<Skeleton shape="block" class="h-9 w-full" />
-					<div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-						{#each [0, 1, 2, 3, 4, 5] as tile (tile)}
-							<Skeleton shape="block" class="h-40 w-full rounded-card" />
-						{/each}
-					</div>
 				</div>
 			</div>
 		</div>

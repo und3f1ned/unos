@@ -232,9 +232,10 @@
 		{#if !loaded}
 			<!-- The first load (ADR-0430): the counts, the toolbar and the list, swapped at once. -->
 			<div class="space-y-6" aria-busy="true">
+				<!-- The counts, each as tall as its card (ContainerStats, ADR-0431). -->
 				<div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
 					{#each [0, 1, 2] as stat (stat)}
-						<Skeleton shape="block" class="h-[66px] w-full rounded-card" />
+						<Skeleton shape="block" class="h-[78px] w-full rounded-card" />
 					{/each}
 				</div>
 				<Skeleton shape="block" class="h-9 w-full" />
