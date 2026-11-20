@@ -246,7 +246,7 @@ significant step. Features and their state live in `feature-list.json`, decision
 
 ## Dev device
 
-State on 2026-11-20, 13:10 UTC. A Banana Pi BPI-W3 (ArmSoM W3, Rockchip RK3588, 8 GB), running
+State on 2026-11-20, evening. A Banana Pi BPI-W3 (ArmSoM W3, Rockchip RK3588, 8 GB), running
 Armbian's community image for `armsom-w3`, upgraded on 2026-11-15 from 26.2.0-trunk.151 to
 26.11.0-trunk.133 (Debian 13, kernel 6.1.172-vendor-rk35xx);
 its address and logins are in `dev.env` (ADR-0212). This journal called it a UGREEN board, after
@@ -257,7 +257,14 @@ the UGREEN firmware on its eMMC, until the owner set that right on 2026-11-15 (A
   since boot, its own wear estimate 0 to 10%. Nothing writes to it.
 - SSH by key only, root by the workstation's key `~/.ssh/unos_dev_ed25519`; root's and the UNOS
   administrator's passwords were rotated and live only in `dev.env` (ADR-0226).
-- Runs 69dfae5 of the branch `mvp.batch-18` (the eighteenth batch, in progress: loading without
+- Runs 9daf179a of the branch `mvp.batch-18` (the eighteenth batch: loading without flicker,
+  ADR-0430; every setting in one place, ADR-0431; the shared components, ADR-0432; area E2E per
+  feature and the full suite once per batch, ADR-0433; the data, sharing, System and apps pages,
+  ADR-0434 to ADR-0437), deployed on 2026-11-20 at the owner's request after `make check` and the
+  batch's full E2E (1166 passed) on that commit (SD MiB sync 7.469, build-supervisor 15.824,
+  build-webui 19.148, up 5.934, check 1.289; total 49.922). Both containers healthy,
+  `post-up check: OK`.
+- Before it, 69dfae5 of the branch `mvp.batch-18` (the eighteenth batch, in progress: loading without
   flicker, ADR-0430, and every setting in one place, ADR-0431), deployed on 2026-11-20 at about
   13:04 UTC at the owner's request before the batch's other UX changes (SD MiB sync 6.012,
   build-supervisor 14.750, build-webui 17.590, up 6.184, check 0.254; total 45.496). Both
