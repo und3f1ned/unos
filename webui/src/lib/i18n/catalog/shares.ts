@@ -11,10 +11,12 @@ export const en = {
 	'shares.title': 'Shares',
 	'shares.tabs.label': 'Share types',
 	'shares.pathsError': 'The pools and volumes could not be read',
-	'shares.noPools': 'No storage pools available. Create a storage pool first before adding shares.',
+	// Under the header's Add button while no pool can hold one.
+	'shares.noPoolsShort': 'Create a storage pool first',
+	// The empty tab's next step when the button above cannot be used yet.
+	'shares.toStorage': 'Go to Storage →',
 
 	// The access levels (ShareAccessLevel), and none.
-	'shares.level.none': 'No access',
 	'shares.level.read': 'Read only',
 	'shares.level.write': 'Read & write',
 
@@ -32,7 +34,7 @@ export const en = {
 	'shares.smb.title': 'SMB shares',
 	'shares.smb.loadError': 'The shares could not be loaded',
 	'shares.smb.empty': 'No SMB shares yet',
-	'shares.smb.emptyHint': 'Share a folder of a pool, or a volume, with the users you choose.',
+	'shares.smb.emptyHint': 'Use Add SMB share above to share a folder of a pool, or a volume, with the users you choose.',
 	// The networks that smb.conf answers (HOSTS_ALLOW of supervisor/src/shares/smbconf.py, ADR-0095).
 	'shares.smb.networkNote':
 		'SMB answers only addresses of your local network (private IPv4, IPv6 ULA and link-local, VPN ranges such as 100.64.0.0/10); public addresses are refused.',
@@ -54,7 +56,7 @@ export const en = {
 	'shares.interfaces.every': 'SMB listens on every network interface of the NAS.',
 	'shares.interfaces.only': 'SMB listens only on {names}, and on the NAS itself (the loopback).',
 	'shares.interfaces.onlyLoopback': 'SMB listens only on the NAS itself (the loopback).',
-	'shares.interfaces.listening': 'smbd answers on:',
+	'shares.interfaces.listening': 'SMB answers on:',
 	'shares.interfaces.listeningUnknown': 'unknown',
 	'shares.interfaces.listeningNone': 'no address',
 	'shares.interfaces.everyIpv4': 'every IPv4 address',
@@ -82,6 +84,8 @@ export const en = {
 	'shares.interfaces.discoveryNote':
 		'Computers on the networks of other interfaces may still list the NAS, but cannot connect.',
 	'shares.interfaces.pickOne': 'Choose at least one interface, or every interface.',
+	'shares.interfaces.more': 'How SMB listens',
+	'shares.interfaces.noChanges': 'No changes to save',
 	'shares.interfaces.restartWarning': {
 		one: 'Saving restarts SMB: the {n} open SMB connection is closed, and its computer connects again.',
 		other: 'Saving restarts SMB: the {n} open SMB connections are closed, and their computers connect again.'
@@ -109,7 +113,8 @@ export const en = {
 	'shares.status.missing': 'Missing: {tools}',
 	'shares.status.guestShares':
 		'Guest access is on for: {shares}. Anyone on your network can read these shares without a password, and connections to this server are not required to be signed.',
-	'shares.status.imported': 'Shares imported from the previous smb.conf',
+	'shares.status.imported': { one: 'Shares imported from the previous smb.conf: {n} note', other: 'Shares imported from the previous smb.conf: {n} notes' },
+	'shares.status.dismissImport': 'Dismiss the notes',
 	'shares.status.unmanagedUsers':
 		'These Samba accounts were not created by UNOS and cannot use UNOS shares: {users}',
 	'shares.status.nobody': 'Nobody can connect yet: allow SMB on the Users page, then grant access here.',
@@ -121,10 +126,13 @@ export const en = {
 	'shares.nfs.statusError': 'The NFS status could not be read',
 	'shares.nfs.loadError': 'The NFS exports could not be loaded',
 	'shares.nfs.empty': 'No NFS exports yet',
-	'shares.nfs.emptyHint': 'Export a folder of a pool, or a volume, to the computers of a network.',
+	'shares.nfs.emptyHint': 'Use Add NFS export above to export a folder of a pool, or a volume, to the computers of a network.',
 	'shares.nfs.clientsOf': 'Clients of {path}',
 	// A client whose options differ by security flavor (sec=): neither read only nor read & write.
 	'shares.nfs.perFlavor': 'Per security flavor',
+	// An export that another program or the owner wrote; and the raw options of exportfs, under Details.
+	'shares.nfs.notUnos': 'Not from UNOS',
+	'shares.nfs.options': 'Options',
 	'shares.nfs.notAddedInUnos': 'In {file}, line {line}: not added in UNOS, so change it on the NAS',
 	'shares.nfs.deleteOne': 'Delete export {path}',
 	// What an NFS client may do: NFS checks no password (supervisor/src/shares/nfs.py, ADR-0293).
@@ -193,58 +201,82 @@ export const en = {
 	'shares.form.comment': 'Comment',
 	'shares.form.browseable': 'Show in network browsing',
 	'shares.form.guest': 'Guests can read this share without a password',
+	'shares.form.guestShort': 'Anyone on your network can read this share without a password.',
+	'shares.form.details': 'Details',
 	// As the server words its warning about a guest share (ADR-0096).
 	'shares.form.guestWarning':
 		'Anyone on your network can read this share without a password, and its name is visible to anyone on your network. Guests can never write. While a guest share exists, connections to this server are not required to be signed. Windows 11 refuses guest access by default, and guest connections are neither signed nor encrypted.',
 	// The protocol options of a share (ADR-0380).
 	'shares.form.options': 'Protocol options',
 	'shares.form.option.encryption': 'Require encryption',
-	'shares.form.option.encryptionHint':
+	'shares.form.option.encryptionHint': 'Only clients that encrypt (SMB 3) can connect; guests cannot.',
+	'shares.form.option.encryptionMore':
 		"Only clients that encrypt the connection (SMB 3) can open the share; older ones, such as SMB 2 clients, are refused. Guests' connections are never encrypted, so a guest share cannot require it.",
 	'shares.form.option.timeMachine': 'Time Machine backups of Macs',
-	'shares.form.option.timeMachineHint':
+	'shares.form.option.timeMachineHint': 'Macs back up here; whoever backs up needs read & write.',
+	'shares.form.option.timeMachineMore':
 		"Macs find the share in the Time Machine settings and back up to it; whoever backs up needs read & write access. Time Machine takes the free space of the pool. While a share offers Time Machine, every share loads Apple's SMB extensions.",
 	'shares.form.option.previousVersions': 'Previous Versions from snapshots',
-	'shares.form.option.previousVersionsHint':
+	'shares.form.option.previousVersionsHint': 'Windows lists the snapshots of the share\'s pool or volume.',
+	'shares.form.option.previousVersionsMore':
 		"Windows lists the snapshots of the share's pool, or of its volume when the share is in one, under Previous Versions of its files and folders: those made on the Snapshots page without a name of your own, and for a pool those of scheduled tasks too, which snapshot pools only. Open connections get it when they reconnect; turning it off disconnects them.",
 	'shares.form.usersError': 'The users could not be loaded',
 	'shares.form.notServedHint': 'Fix the folder first: a share that is not served cannot be given access',
-	// Only removed or lowered access disconnects (ADR-0103).
-	'shares.form.accessChangeNote':
-		'Removing or lowering access, turning guest access off, requiring encryption or turning Previous Versions off disconnects open connections to that share (clients reconnect); adding access disconnects nobody.',
 	'shares.form.notSaved': 'Share was not saved',
 	'shares.form.notCreated': 'Share was not created',
 	'shares.form.save': 'Save',
 	'shares.form.create': 'Create share',
 	'shares.form.reloaded': 'The form now shows the current settings of the share: make your changes again.',
 	'shares.form.reloadFailed': 'The share could not be loaded again: {message}',
+	// The question before a save that lowers access: what is lowered, one line each.
+	'shares.form.lower.title': 'Close open connections?',
+	'shares.form.lower.intro': 'Saving closes the open connections to {name}:',
+	'shares.form.lower.list': 'What the save takes away',
+	'shares.form.lower.user': '{name}: {from} → {to}',
+	'shares.form.lower.group': 'Group {name}: {from} → {to}',
+	'shares.form.lower.guest': 'Guest access turned off',
+	'shares.form.lower.encryption': 'Encryption required',
+	'shares.form.lower.previousVersions': 'Previous Versions turned off',
+	'shares.form.lower.reconnect': 'Computers connect again on their own, with the new access.',
+	'shares.form.lower.confirm': 'Save and disconnect',
 
 	// The access picker of the share form: src/lib/components/shares/ShareAccessPicker.svelte.
 	'shares.access.title': 'Access',
-	'shares.access.noUsers': 'No users can be given access yet: add users on the Users page.',
-	'shares.access.everyoneRead': 'Everyone: Read only',
-	'shares.access.everyoneWrite': 'Everyone: Read & write',
-	'shares.access.clear': 'Clear',
+	// The access table: the columns' heads, its two parts, the All users row, the levels.
+	'shares.access.who': 'Who',
+	'shares.access.level': 'Access',
+	'shares.access.users': 'Users',
+	'shares.access.allUsers': 'All users',
+	'shares.access.allUsersHint': 'Sets the level of every user below',
+	'shares.access.none': 'None',
+	'shares.access.read': 'Read',
+	'shares.access.write': 'Read & write',
+	'shares.access.addUser': 'Add a user →',
+	'shares.access.createGroup': 'Create a group →',
+	// The links of the table open Users in a new tab, so that the share's form stays as it is.
+	'shares.access.newTab': '(opens in a new tab)',
+	// Under a user's name: the kind, or why the access does not count yet.
+	'shares.access.kindUser': 'User',
+	'shares.access.smbOff': 'SMB off',
+	'shares.access.turnOnSmb': 'Turn SMB on in Users →',
+	'shares.access.smbPending': 'SMB not on yet',
+	'shares.access.smbPendingHint': 'counts once they turn it on',
+	'shares.access.smbUnavailable': 'No SMB',
+	'shares.access.groupNoMembers': 'Group · no members yet',
+	'shares.access.noUsers': 'No users yet.',
 	'shares.access.adminsNotListed': 'Administrators are not listed: they cannot use SMB.',
-	// Why a user's access does not count yet, by the SMB state of the user.
-	'shares.access.passwordNeeded':
-		'SMB is allowed, but the user has not turned it on yet: the access counts once SMB is on',
-	'shares.access.off':
-		'SMB is off for this user: the access counts once SMB is allowed on the Users page and turned on',
 	// The groups of the picker: "Group family", and its members under the level.
 	'shares.access.groups': 'Groups',
-	'shares.access.noGroups': 'No groups yet: make them on the Users page.',
+	'shares.access.noGroups': 'No groups yet.',
 	'shares.access.groupLabel': 'Group {name}',
-	'shares.access.groupMembers': 'Members: {names}',
-	'shares.access.groupEmpty': 'No members yet',
-	'shares.access.groupsHint':
-		'Every member of a group gets its level once their SMB is on, and so does every user added to the group later. A user who also has a level of their own, or through another group, gets the higher one.',
+	'shares.access.groupMembers': { one: 'Group · {n} member: {names}', other: 'Group · {n} members: {names}' },
+	'shares.access.groupsHint': 'A group\'s members get its level once their SMB is on; whoever has several levels gets the highest.',
 
 	// The SMB state of a user (SmbAccountState of supervisor/src/shares/account_state.py).
-	'shares.smbState.active': 'Active',
-	'shares.smbState.passwordNeeded': 'Password needed',
-	'shares.smbState.off': 'Off',
-	'shares.smbState.unavailable': 'Not available',
+	'shares.smbState.active': 'SMB on',
+	'shares.smbState.passwordNeeded': 'SMB: password needed',
+	'shares.smbState.off': 'SMB off',
+	'shares.smbState.unavailable': 'No SMB',
 
 	// A share's card: src/lib/components/shares/ShareCard.svelte.
 	'shares.card.notServed': 'Not served',
@@ -254,10 +286,10 @@ export const en = {
 	'shares.card.timeMachine': 'Time Machine',
 	'shares.card.previousVersions': 'Previous Versions',
 	// A stored setting that smb.conf leaves out, with the server's reason (ADR-0380).
-	'shares.card.off.guest': 'Guest access is off: {reason}',
-	'shares.card.off.timeMachine': 'Time Machine is off: {reason}',
-	'shares.card.off.previousVersions': 'Previous Versions are off: {reason}',
-	'shares.card.noAccess': 'No access',
+	'shares.card.off.guest': 'Guest access does not work here',
+	'shares.card.off.timeMachine': 'Time Machine does not work here',
+	'shares.card.off.previousVersions': 'Previous Versions shows nothing here',
+	'shares.card.noAccess': 'Nobody can connect yet',
 	'shares.card.poolNotMounted': 'Pool not mounted',
 	'shares.card.permissions': 'Permissions need repair',
 	'shares.card.repairing': 'Repairing permissions',
@@ -267,6 +299,12 @@ export const en = {
 	'shares.card.repair': 'Repair permissions',
 	'shares.card.repairOf': 'of {name}',
 	'shares.card.delete': 'Delete share {name}',
+	'shares.card.deleteShort': 'Delete',
+	// The copy buttons of the addresses.
+	'shares.card.copyWindows': 'Copy the Windows address',
+	'shares.card.copyUrl': 'Copy the smb:// address',
+	'shares.card.copied': 'Copied',
+	'shares.card.copyFailed': 'Could not copy: select the address and copy it yourself.',
 	'shares.card.dismiss': 'Dismiss',
 	'shares.card.dismissOf': 'the notes of {name}',
 	'shares.card.nobody': 'No user has access.',
@@ -280,10 +318,6 @@ export const en = {
 	'shares.card.raised': '{username} also writes through a group: the higher level counts.',
 	// After an entry that does not count yet, for screen readers.
 	'shares.card.notActive': '(not active yet: {reason})',
-	'shares.card.crossedOut':
-		'Crossed-out users cannot connect yet: their SMB access is not active (see the Users page).',
-	'shares.card.crossedOutNotServed':
-		'Crossed-out users cannot connect yet: their SMB access is not active (see the Users page), or the share is not served.',
 	// Before the share's Windows and smb:// addresses.
 	'shares.card.connect': 'Connect:',
 	'shares.card.importNotes': 'Notes from importing the previous smb.conf',
@@ -293,6 +327,11 @@ export const en = {
 	'shares.card.reason.off': 'SMB is off for {username}: allow it on the Users page',
 	'shares.card.reason.unavailable': '{username} cannot use SMB',
 	'shares.card.reason.other': '{username} cannot connect yet',
+	// The short tag after a name whose access does not count yet.
+	'shares.card.tag.passwordNeeded': 'SMB not on yet',
+	'shares.card.tag.off': 'SMB off',
+	'shares.card.tag.unavailable': 'No SMB',
+	'shares.card.tag.other': 'not active',
 
 	// Repair permissions: src/lib/components/shares/RepairPermissionsModal.svelte (ADR-0363).
 	'shares.repair.title': 'Repair permissions of {name}',
@@ -376,10 +415,9 @@ export const ru: Translation<typeof en> = {
 	'shares.title': 'Общие папки',
 	'shares.tabs.label': 'Виды общего доступа',
 	'shares.pathsError': 'Не удалось прочитать пулы и тома',
-	'shares.noPools':
-		'Нет доступных пулов хранения. Сначала создайте пул хранения, затем добавляйте общие папки.',
+	'shares.noPoolsShort': 'Сначала создайте пул хранения',
+	'shares.toStorage': 'Перейти в «Хранилище» →',
 
-	'shares.level.none': 'Нет доступа',
 	'shares.level.read': 'Только чтение',
 	'shares.level.write': 'Чтение и запись',
 
@@ -396,7 +434,7 @@ export const ru: Translation<typeof en> = {
 	'shares.smb.title': 'Общие папки SMB',
 	'shares.smb.loadError': 'Не удалось загрузить общие папки',
 	'shares.smb.empty': 'Общих папок SMB пока нет',
-	'shares.smb.emptyHint': 'Откройте выбранным пользователям доступ к папке пула или к тому.',
+	'shares.smb.emptyHint': 'Кнопка «Добавить общую папку SMB» выше открывает выбранным пользователям доступ к папке пула или к тому.',
 	'shares.smb.networkNote':
 		'SMB отвечает только адресам вашей локальной сети (частные IPv4, IPv6 ULA и link-local, диапазоны VPN, например 100.64.0.0/10); публичные адреса отклоняются.',
 	'shares.smb.created': 'Общая папка «{name}» создана',
@@ -413,7 +451,7 @@ export const ru: Translation<typeof en> = {
 	'shares.interfaces.every': 'SMB принимает подключения на всех сетевых интерфейсах NAS.',
 	'shares.interfaces.only': 'SMB принимает подключения только на {names} и на самом NAS (loopback).',
 	'shares.interfaces.onlyLoopback': 'SMB принимает подключения только на самом NAS (loopback).',
-	'shares.interfaces.listening': 'smbd отвечает на:',
+	'shares.interfaces.listening': 'SMB отвечает на:',
 	'shares.interfaces.listeningUnknown': 'неизвестно',
 	'shares.interfaces.listeningNone': 'ни одном адресе',
 	'shares.interfaces.everyIpv4': 'всех адресах IPv4',
@@ -441,6 +479,8 @@ export const ru: Translation<typeof en> = {
 	'shares.interfaces.discoveryNote':
 		'Компьютеры в сетях других интерфейсов могут по-прежнему видеть NAS, но не смогут подключиться.',
 	'shares.interfaces.pickOne': 'Выберите хотя бы один интерфейс или все интерфейсы.',
+	'shares.interfaces.more': 'Как SMB принимает подключения',
+	'shares.interfaces.noChanges': 'Нет изменений для сохранения',
 	'shares.interfaces.restartWarning': {
 		one: 'Сохранение перезапустит SMB: {n} открытое подключение SMB будет закрыто, и компьютер подключится заново.',
 		few: 'Сохранение перезапустит SMB: {n} открытых подключения SMB будут закрыты, и компьютеры подключатся заново.',
@@ -469,7 +509,8 @@ export const ru: Translation<typeof en> = {
 	'shares.status.missing': 'Не найдены: {tools}',
 	'shares.status.guestShares':
 		'Гостевой доступ включён для: {shares}. Любой в вашей сети может читать эти общие папки без пароля, и подпись подключений к этому серверу не требуется.',
-	'shares.status.imported': 'Общие папки, импортированные из прежнего smb.conf',
+	'shares.status.imported': { one: 'Общие папки, импортированные из прежнего smb.conf: {n} заметка', few: 'Общие папки, импортированные из прежнего smb.conf: {n} заметки', many: 'Общие папки, импортированные из прежнего smb.conf: {n} заметок' },
+	'shares.status.dismissImport': 'Скрыть заметки',
 	'shares.status.unmanagedUsers':
 		'Эти учётные записи Samba созданы не в UNOS и не могут пользоваться общими папками UNOS: {users}',
 	'shares.status.nobody':
@@ -482,9 +523,11 @@ export const ru: Translation<typeof en> = {
 	'shares.nfs.statusError': 'Не удалось прочитать состояние NFS',
 	'shares.nfs.loadError': 'Не удалось загрузить экспорты NFS',
 	'shares.nfs.empty': 'Экспортов NFS пока нет',
-	'shares.nfs.emptyHint': 'Экспортируйте папку пула или том для компьютеров сети.',
+	'shares.nfs.emptyHint': 'Кнопка «Добавить экспорт NFS» выше экспортирует папку пула или том для компьютеров сети.',
 	'shares.nfs.clientsOf': 'Клиенты {path}',
 	'shares.nfs.perFlavor': 'Зависит от метода защиты',
+	'shares.nfs.notUnos': 'Не из UNOS',
+	'shares.nfs.options': 'Параметры',
 	'shares.nfs.notAddedInUnos': 'В {file}, строка {line}: добавлен не в UNOS, поэтому изменяйте его на NAS',
 	'shares.nfs.deleteOne': 'Удалить экспорт {path}',
 	'shares.nfs.note':
@@ -543,51 +586,73 @@ export const ru: Translation<typeof en> = {
 	'shares.form.comment': 'Комментарий',
 	'shares.form.browseable': 'Показывать в сетевом окружении',
 	'shares.form.guest': 'Гости могут читать эту общую папку без пароля',
+	'shares.form.guestShort': 'Любой в вашей сети может читать эту общую папку без пароля.',
+	'shares.form.details': 'Подробнее',
 	'shares.form.guestWarning':
 		'Любой в вашей сети может читать эту общую папку без пароля, и её имя видно всем в вашей сети. Гости никогда не могут записывать. Пока существует гостевая общая папка, подпись подключений к этому серверу не требуется. Windows 11 по умолчанию отказывает в гостевом доступе, а гостевые подключения не подписываются и не шифруются.',
 	'shares.form.options': 'Параметры протокола',
 	'shares.form.option.encryption': 'Требовать шифрование',
-	'shares.form.option.encryptionHint':
+	'shares.form.option.encryptionHint': 'Подключиться могут только клиенты с шифрованием (SMB 3); гости не могут.',
+	'shares.form.option.encryptionMore':
 		'Открыть общую папку могут только клиенты, которые шифруют подключение (SMB 3); более старым, например клиентам SMB 2, отказывается. Гостевые подключения никогда не шифруются, поэтому гостевая общая папка не может требовать шифрования.',
 	'shares.form.option.timeMachine': 'Резервные копии Time Machine с Mac',
-	'shares.form.option.timeMachineHint':
+	'shares.form.option.timeMachineHint': 'Mac сохраняют сюда резервные копии; тому, кто их делает, нужны чтение и запись.',
+	'shares.form.option.timeMachineMore':
 		'Mac находит общую папку в настройках Time Machine и сохраняет в неё резервные копии; тому, кто их делает, нужен доступ на чтение и запись. Time Machine занимает свободное место пула. Пока хотя бы одна общая папка предлагает Time Machine, все общие папки загружают расширения SMB от Apple.',
 	'shares.form.option.previousVersions': 'Предыдущие версии из снимков',
-	'shares.form.option.previousVersionsHint':
+	'shares.form.option.previousVersionsHint': 'Windows показывает снимки пула или тома этой общей папки.',
+	'shares.form.option.previousVersionsMore':
 		'Windows показывает в «Предыдущих версиях» файлов и папок общей папки снимки её пула, а если она в томе, то снимки тома: сделанные на странице «Снимки» без заданного вами имени, а для пула ещё и задачами по расписанию, которые снимают только пулы. Открытые подключения получат их после переподключения; выключение разрывает их.',
 	'shares.form.usersError': 'Не удалось загрузить пользователей',
 	'shares.form.notServedHint': 'Сначала исправьте папку: общей папке, которая не раздаётся, нельзя выдать доступ',
-	'shares.form.accessChangeNote':
-		'Если убрать или понизить доступ, выключить гостевой доступ, потребовать шифрование или выключить предыдущие версии, открытые подключения к этой общей папке разрываются (клиенты подключатся снова); добавление доступа никого не отключает.',
 	'shares.form.notSaved': 'Общая папка не сохранена',
 	'shares.form.notCreated': 'Общая папка не создана',
 	'shares.form.save': 'Сохранить',
 	'shares.form.create': 'Создать общую папку',
 	'shares.form.reloaded': 'Теперь форма показывает текущие настройки общей папки: внесите изменения ещё раз.',
 	'shares.form.reloadFailed': 'Не удалось снова загрузить общую папку: {message}',
+	'shares.form.lower.title': 'Разорвать открытые подключения?',
+	'shares.form.lower.intro': 'При сохранении открытые подключения к {name} разрываются:',
+	'shares.form.lower.list': 'Что сохранение отнимает',
+	'shares.form.lower.user': '{name}: {from} → {to}',
+	'shares.form.lower.group': 'Группа {name}: {from} → {to}',
+	'shares.form.lower.guest': 'Гостевой доступ выключен',
+	'shares.form.lower.encryption': 'Шифрование обязательно',
+	'shares.form.lower.previousVersions': 'Предыдущие версии выключены',
+	'shares.form.lower.reconnect': 'Компьютеры подключатся снова сами, уже с новым доступом.',
+	'shares.form.lower.confirm': 'Сохранить и разорвать',
 
 	'shares.access.title': 'Доступ',
-	'shares.access.noUsers': 'Пока некому выдать доступ: добавьте пользователей на странице «Пользователи».',
-	'shares.access.everyoneRead': 'Всем: только чтение',
-	'shares.access.everyoneWrite': 'Всем: чтение и запись',
-	'shares.access.clear': 'Сбросить',
+	'shares.access.who': 'Кто',
+	'shares.access.level': 'Доступ',
+	'shares.access.users': 'Пользователи',
+	'shares.access.allUsers': 'Все пользователи',
+	'shares.access.allUsersHint': 'Задаёт уровень всем пользователям ниже',
+	'shares.access.none': 'Нет',
+	'shares.access.read': 'Чтение',
+	'shares.access.write': 'Чтение и запись',
+	'shares.access.addUser': 'Добавить пользователя →',
+	'shares.access.createGroup': 'Создать группу →',
+	'shares.access.newTab': '(откроется в новой вкладке)',
+	'shares.access.kindUser': 'Пользователь',
+	'shares.access.smbOff': 'SMB выключен',
+	'shares.access.turnOnSmb': 'Включить SMB в «Пользователях» →',
+	'shares.access.smbPending': 'SMB ещё не включён',
+	'shares.access.smbPendingHint': 'доступ заработает, когда пользователь его включит',
+	'shares.access.smbUnavailable': 'Без SMB',
+	'shares.access.groupNoMembers': 'Группа · участников пока нет',
+	'shares.access.noUsers': 'Пользователей пока нет.',
 	'shares.access.adminsNotListed': 'Администраторы не показаны: они не могут пользоваться SMB.',
-	'shares.access.passwordNeeded':
-		'SMB разрешён, но пользователь ещё не включил его: доступ начнёт действовать, когда SMB будет включён',
-	'shares.access.off':
-		'SMB для этого пользователя выключен: доступ начнёт действовать, когда SMB разрешат на странице «Пользователи» и включат',
 	'shares.access.groups': 'Группы',
-	'shares.access.noGroups': 'Групп пока нет: создайте их на странице «Пользователи».',
+	'shares.access.noGroups': 'Групп пока нет.',
 	'shares.access.groupLabel': 'Группа {name}',
-	'shares.access.groupMembers': 'Участники: {names}',
-	'shares.access.groupEmpty': 'Участников пока нет',
-	'shares.access.groupsHint':
-		'Каждый участник группы получает её уровень, как только у него включён SMB, как и любой пользователь, добавленный в группу позже. Пользователь, у которого есть и собственный уровень или уровень через другую группу, получает более высокий.',
+	'shares.access.groupMembers': { one: 'Группа · {n} участник: {names}', few: 'Группа · {n} участника: {names}', many: 'Группа · {n} участников: {names}' },
+	'shares.access.groupsHint': 'Участники группы получают её уровень, как только у них включён SMB; у кого несколько уровней, действует самый высокий.',
 
-	'shares.smbState.active': 'Включён',
-	'shares.smbState.passwordNeeded': 'Нужен пароль',
-	'shares.smbState.off': 'Выключен',
-	'shares.smbState.unavailable': 'Недоступен',
+	'shares.smbState.active': 'SMB включён',
+	'shares.smbState.passwordNeeded': 'SMB: нужен пароль',
+	'shares.smbState.off': 'SMB выключен',
+	'shares.smbState.unavailable': 'Без SMB',
 
 	'shares.card.notServed': 'Не раздаётся',
 	'shares.card.guest': 'Гости: только чтение',
@@ -595,10 +660,10 @@ export const ru: Translation<typeof en> = {
 	'shares.card.encryption': 'Шифрование обязательно',
 	'shares.card.timeMachine': 'Time Machine',
 	'shares.card.previousVersions': 'Предыдущие версии',
-	'shares.card.off.guest': 'Гостевой доступ выключен: {reason}',
-	'shares.card.off.timeMachine': 'Time Machine выключена: {reason}',
-	'shares.card.off.previousVersions': 'Предыдущие версии выключены: {reason}',
-	'shares.card.noAccess': 'Нет доступа',
+	'shares.card.off.guest': 'Гостевой доступ здесь не работает',
+	'shares.card.off.timeMachine': 'Time Machine здесь не работает',
+	'shares.card.off.previousVersions': 'Предыдущие версии здесь ничего не покажут',
+	'shares.card.noAccess': 'Пока никто не может подключиться',
 	'shares.card.poolNotMounted': 'Пул не смонтирован',
 	'shares.card.permissions': 'Нужно исправить права',
 	'shares.card.repairing': 'Исправление прав',
@@ -607,6 +672,11 @@ export const ru: Translation<typeof en> = {
 	'shares.card.repair': 'Исправить права',
 	'shares.card.repairOf': 'общей папки {name}',
 	'shares.card.delete': 'Удалить общую папку {name}',
+	'shares.card.deleteShort': 'Удалить',
+	'shares.card.copyWindows': 'Скопировать адрес для Windows',
+	'shares.card.copyUrl': 'Скопировать адрес smb://',
+	'shares.card.copied': 'Скопировано',
+	'shares.card.copyFailed': 'Не удалось скопировать: выделите адрес и скопируйте его сами.',
 	'shares.card.dismiss': 'Скрыть',
 	'shares.card.dismissOf': 'заметки общей папки {name}',
 	'shares.card.nobody': 'Ни у одного пользователя нет доступа.',
@@ -616,10 +686,6 @@ export const ru: Translation<typeof en> = {
 	'shares.card.groupEmpty': 'нет участников',
 	'shares.card.raised': '{username} может и записывать через группу: действует более высокий уровень.',
 	'shares.card.notActive': '(ещё не действует: {reason})',
-	'shares.card.crossedOut':
-		'Зачёркнутые пользователи пока не могут подключиться: их доступ по SMB не включён (см. страницу «Пользователи»).',
-	'shares.card.crossedOutNotServed':
-		'Зачёркнутые пользователи пока не могут подключиться: их доступ по SMB не включён (см. страницу «Пользователи») или общая папка не раздаётся.',
 	'shares.card.connect': 'Подключение:',
 	'shares.card.importNotes': 'Заметки об импорте прежнего smb.conf',
 	'shares.card.reason.notServed': 'Общая папка не раздаётся',
@@ -627,6 +693,10 @@ export const ru: Translation<typeof en> = {
 	'shares.card.reason.off': 'SMB для {username} выключен: разрешите его на странице «Пользователи»',
 	'shares.card.reason.unavailable': '{username} не может пользоваться SMB',
 	'shares.card.reason.other': '{username} пока не может подключиться',
+	'shares.card.tag.passwordNeeded': 'SMB ещё не включён',
+	'shares.card.tag.off': 'SMB выключен',
+	'shares.card.tag.unavailable': 'Без SMB',
+	'shares.card.tag.other': 'не действует',
 
 	'shares.repair.title': 'Исправление прав общей папки {name}',
 	'shares.repair.lastError': 'Не удалось прочитать последний результат',

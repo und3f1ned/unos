@@ -35,7 +35,7 @@ const OWNER_EXPORT: FakeNfsExport = {
 async function openNfsTab(page: Page) {
   await page.goto('/shares');
   await page.getByRole('tab', { name: 'NFS' }).click();
-  await expect(page.getByRole('heading', { name: 'NFS exports', exact: true })).toBeVisible();
+  await expect(page.getByRole('region', { name: 'NFS exports', exact: true })).toBeVisible();
 }
 
 const exportList = (page: Page) => page.getByRole('list', { name: 'NFS exports', exact: true });
@@ -72,9 +72,12 @@ test.describe('NFS exports', () => {
     // The export written on the NAS is listed with its clients, file and line, and cannot be deleted here.
     const owner = exportItem(page, OWNER_EXPORT.path);
     await expect(clientsOf(owner, OWNER_EXPORT.path)).toHaveText([
-      '10.0.0.5 · Read & write (rw,no_root_squash)',
-      '192.168.1.0/24 · Read only (ro)',
+      '10.0.0.5 · Read & write',
+      '192.168.1.0/24 · Read only',
     ]);
+    // The raw options of exportfs are under Options.
+    await expect(owner.locator('details')).toContainText('10.0.0.5: rw,no_root_squash');
+    await expect(owner.locator('details')).toContainText('192.168.1.0/24: ro');
     await expect(owner.getByText(`In /etc/exports, line 2: ${NOT_UNOS}`)).toBeVisible();
     await expect(owner.getByRole('button')).toHaveCount(0);
 
@@ -96,8 +99,11 @@ test.describe('NFS exports', () => {
     ]);
     const created = exportItem(page, folder);
     await expect(clientsOf(created, folder)).toHaveText([
-      `192.168.1.0/24 · Read & write (rw,sync,no_subtree_check,root_squash,secure,mp=${POOLS}/tank)`,
+      `192.168.1.0/24 · Read & write`,
     ]);
+    await expect(created.locator('details')).toContainText(
+      `192.168.1.0/24: rw,sync,no_subtree_check,root_squash,secure,mp=${POOLS}/tank`,
+    );
     await expect(created.getByText(NOT_UNOS)).toHaveCount(0);
 
     await created.getByRole('button', { name: `Delete export ${folder}` }).click();
@@ -140,7 +146,7 @@ test.describe('NFS exports', () => {
     };
     await fakeSmbApi(page, { nfsExports: [first, second] });
     await openNfsTab(page);
-    const paths = exportList(page).locator(':scope > li > div > p.mono');
+    const paths = exportList(page).locator(':scope > li > .nfs-head p.mono');
     await expect(paths).toHaveText(['/srv/a', '/srv/b']);
 
     // A change reloads the list: both exports of line 4 stay, each with its own clients.
@@ -151,8 +157,8 @@ test.describe('NFS exports', () => {
     await expect(dialog).toBeHidden();
 
     await expect(paths).toHaveText(['/srv/a', '/srv/b', `${POOLS}/tank/projects`]);
-    await expect(clientsOf(exportItem(page, '/srv/a'), '/srv/a')).toHaveText(['10.0.0.1 · Read & write (rw)']);
-    await expect(clientsOf(exportItem(page, '/srv/b'), '/srv/b')).toHaveText(['10.0.0.2 · Read only (ro)']);
+    await expect(clientsOf(exportItem(page, '/srv/a'), '/srv/a')).toHaveText(['10.0.0.1 · Read & write']);
+    await expect(clientsOf(exportItem(page, '/srv/b'), '/srv/b')).toHaveText(['10.0.0.2 · Read only']);
   });
 
   test('a whole volume can be exported, and a pool only with a folder inside it', async ({
@@ -179,8 +185,11 @@ test.describe('NFS exports', () => {
       { method: 'POST', path: '/shares/nfs', body: { path: `${POOLS}/tank/media`, client: 'fd00::/64', access: 'read' } },
     ]);
     await expect(clientsOf(exportItem(page, `${POOLS}/tank/media`), `${POOLS}/tank/media`)).toHaveText([
-      `fd00::/64 · Read only (ro,sync,no_subtree_check,root_squash,secure,mp=${POOLS}/tank)`,
+      `fd00::/64 · Read only`,
     ]);
+    await expect(exportItem(page, `${POOLS}/tank/media`).locator('details')).toContainText(
+      `fd00::/64: ro,sync,no_subtree_check,root_squash,secure,mp=${POOLS}/tank`,
+    );
   });
 
   test('what the server refuses is shown in the dialog, and nothing is exported', async ({
@@ -283,7 +292,7 @@ test.describe('In Russian', () => {
     await page.goto('/shares');
     await page.getByRole('tab', { name: 'NFS' }).click();
 
-    await expect(page.getByRole('heading', { name: 'Экспорты NFS', exact: true })).toBeVisible();
+    await expect(page.getByRole('region', { name: 'Экспорты NFS', exact: true })).toBeVisible();
     await expect(
       page.getByText('NFS-сервер не установлен на хосте: ни один компьютер не может смонтировать экспорты'),
     ).toBeVisible();
@@ -292,8 +301,8 @@ test.describe('In Russian', () => {
     const list = page.getByRole('list', { name: 'Экспорты NFS', exact: true });
     const owner = list.locator(':scope > li').filter({ hasText: OWNER_EXPORT.path });
     await expect(owner.getByRole('list', { name: `Клиенты ${OWNER_EXPORT.path}` }).getByRole('listitem')).toHaveText([
-      '10.0.0.5 · Чтение и запись (rw,no_root_squash)',
-      '192.168.1.0/24 · Только чтение (ro)',
+      '10.0.0.5 · Чтение и запись',
+      '192.168.1.0/24 · Только чтение',
     ]);
     await expect(
       owner.getByText('В /etc/exports, строка 2: добавлен не в UNOS, поэтому изменяйте его на NAS'),
@@ -334,7 +343,7 @@ test.describe('In Russian', () => {
     expect(fake.writes.map((write) => write.method)).toEqual(['POST', 'DELETE']);
 
     // Nothing of the English page is left.
-    await expect(page.getByRole('heading', { name: 'NFS exports' })).toHaveCount(0);
+    await expect(page.getByRole('region', { name: 'NFS exports' })).toHaveCount(0);
     await expect(page.getByRole('button', { name: 'Add NFS export' })).toHaveCount(0);
   });
 });

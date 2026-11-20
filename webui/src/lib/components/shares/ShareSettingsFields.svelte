@@ -27,16 +27,23 @@
 		time_machine: 'shares.form.option.timeMachine',
 		previous_versions: 'shares.form.option.previousVersions'
 	};
+	// One line under each option, and the whole of it under Details.
 	const OPTION_HINT_KEYS: Record<ShareOption, string> = {
 		encryption_required: 'shares.form.option.encryptionHint',
 		time_machine: 'shares.form.option.timeMachineHint',
 		previous_versions: 'shares.form.option.previousVersionsHint'
+	};
+	const OPTION_MORE_KEYS: Record<ShareOption, string> = {
+		encryption_required: 'shares.form.option.encryptionMore',
+		time_machine: 'shares.form.option.timeMachineMore',
+		previous_versions: 'shares.form.option.previousVersionsMore'
 	};
 	const optionChoices = $derived(
 		SHARE_OPTIONS.map((name) => ({
 			name,
 			label: $t(OPTION_KEYS[name]),
 			hint: $t(OPTION_HINT_KEYS[name]),
+			more: $t(OPTION_MORE_KEYS[name]),
 			locked: name === 'encryption_required' && encryptionLocked
 		}))
 	);
@@ -52,7 +59,13 @@
 		{$t('shares.form.guest')}
 	</label>
 	{#if guestOk}
-		<Alert variant="warning">{$t('shares.form.guestWarning')}</Alert>
+		<!-- The one line that matters, and the server's whole warning (ADR-0096) under Details. -->
+		<Alert variant="warning" size="sm" title={$t('shares.form.guestShort')}>
+			<details>
+				<summary class="cursor-pointer">{$t('shares.form.details')}</summary>
+				<p class="mt-1">{$t('shares.form.guestWarning')}</p>
+			</details>
+		</Alert>
 	{/if}
 </div>
 
@@ -70,7 +83,13 @@
 				/>
 				{choice.label}
 			</label>
-			<p id="share-option-{choice.name}" class="form-hint ml-6">{choice.hint}</p>
+			<div id="share-option-{choice.name}" class="form-hint ml-6">
+				{choice.hint}
+				<details class="mt-0.5">
+					<summary class="cursor-pointer text-content-secondary">{$t('shares.form.details')}</summary>
+					<p class="mt-1">{choice.more}</p>
+				</details>
+			</div>
 		</div>
 	{/each}
 </fieldset>

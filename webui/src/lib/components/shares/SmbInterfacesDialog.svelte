@@ -136,12 +136,18 @@
 			{/if}
 		</fieldset>
 
-		<p class="form-hint">{$t('shares.interfaces.loopbackNote')}</p>
-		<p class="form-hint">{$t('shares.interfaces.addressNote')}</p>
-		<p class="form-hint">{$t('shares.interfaces.discoveryNote')}</p>
+		<!-- What else to know, on demand: one line of help, not three paragraphs. -->
+		<details class="form-hint">
+			<summary class="cursor-pointer text-content-secondary">{$t('shares.interfaces.more')}</summary>
+			<div class="mt-1 space-y-1">
+				<p>{$t('shares.interfaces.loopbackNote')}</p>
+				<p>{$t('shares.interfaces.addressNote')}</p>
+				<p>{$t('shares.interfaces.discoveryNote')}</p>
+			</div>
+		</details>
 
 		{#if nothingPicked}
-			<p class="text-sm text-warning">{$t('shares.interfaces.pickOne')}</p>
+			<p id="smb-interfaces-pick-one" class="text-sm text-warning">{$t('shares.interfaces.pickOne')}</p>
 		{:else if !unchanged}
 			<Alert variant="warning">{sessionsWarning(current)}</Alert>
 		{/if}
@@ -155,7 +161,15 @@
 		<Button variant="secondary" class="flex-1" disabled={saving} onclick={close}>
 			{$t('common.cancel')}
 		</Button>
-		<Button class="flex-1" loading={saving} disabled={nothingPicked || unchanged} onclick={save}>
+		<!-- Disabled only with nothing to save, and then it says why. -->
+		<Button
+			class="flex-1"
+			loading={saving}
+			disabled={nothingPicked || unchanged}
+			title={unchanged && !nothingPicked ? $t('shares.interfaces.noChanges') : undefined}
+			aria-describedby={nothingPicked ? 'smb-interfaces-pick-one' : undefined}
+			onclick={save}
+		>
 			{$t('shares.interfaces.save')}
 		</Button>
 	{/snippet}

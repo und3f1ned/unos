@@ -27,7 +27,6 @@
   "primary-in-card": {
     "src/lib/components/remote/AppNamesCard.svelte": 1,
     "src/lib/components/remote/PeerList.svelte": 1,
-    "src/lib/components/shares/IscsiTab.svelte": 1,
     "src/lib/components/system/offsite/OffsiteState.svelte": 1
   }
 }

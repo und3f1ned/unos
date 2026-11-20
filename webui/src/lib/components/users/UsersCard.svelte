@@ -1,10 +1,10 @@
 <script lang="ts">
-	import { Edit, LogOut, Shield, ShieldOff, Trash2, Users } from 'lucide-svelte';
+	import { Edit, LogOut, Shield, Trash2, User as UserIcon, Users } from 'lucide-svelte';
 	import type { User } from '$lib/api/auth';
-	import { Badge, Button, Card, EmptyState } from '$lib/components/ui';
+	import { Badge, Button, Card } from '$lib/components/ui';
 	import { SmbStateBadge } from '$lib/components/shares';
 	import { intlLocale, t } from '$lib/i18n';
-	import { formatDateTime } from '$lib/time';
+	import { apiTime } from '$lib/time';
 
 	type Props = {
 		users: User[];
@@ -17,11 +17,16 @@
 
 	let { users, currentUserId, onedit, onendsessions, ondelete }: Props = $props();
 
-	// The texts that the functions below make follow a change of the language: the markup that
-	// calls them reads $t and $intlLocale through them. Dates are in the language of the page
-	// (ADR-0287).
-	function formatDate(date: string | null): string {
-		return date ? formatDateTime(date, $intlLocale) : $t('common.unknown');
+	// The day a user was made, in the language of the page (ADR-0287), without the time: the
+	// exact moment is the hover text.
+	function formatDay(date: string | null): string {
+		const moment = date ? apiTime(date) : null;
+		return moment ? moment.toLocaleDateString($intlLocale, { dateStyle: 'medium' }) : $t('common.unknown');
+	}
+
+	function formatMoment(date: string | null): string | undefined {
+		const moment = date ? apiTime(date) : null;
+		return moment ? moment.toLocaleString($intlLocale, { dateStyle: 'long', timeStyle: 'short' }) : undefined;
 	}
 
 	function smbHint(user: User): string {
@@ -31,8 +36,9 @@
 	}
 </script>
 
-<!-- The users, each with their role, two-factor and SMB state, and what can be done to them. -->
-<!-- A flush card: the table reaches its edges (ADR-0428). -->
+<!-- The users, each with their role, two-factor and SMB state, and what can be done to them. A
+     flush card: the table reaches its edges (ADR-0428). On a phone each row stacks: the name and
+     its actions, then the role and the states under it, so that nothing is off-screen. -->
 <Card flush>
 	<div class="card-header">
 		<h2 class="section-title">
@@ -41,82 +47,136 @@
 		</h2>
 	</div>
 
-	{#if users.length === 0}
-		<EmptyState compact icon={Users} title={$t('users.empty')} />
-	{:else}
-		<div class="table-frame">
-			<table class="table">
-				<thead class="table-header">
-					<tr>
-						<th>{$t('common.username')}</th>
-						<th>{$t('users.role')}</th>
-						<th>{$t('users.twoFactor')}</th>
-						<th>{$t('users.smb')}</th>
-						<th>{$t('users.created')}</th>
-						<th class="text-right">{$t('users.actions')}</th>
-					</tr>
-				</thead>
-				<tbody>
-					{#each users as user (user.id)}
-						<tr class="table-row">
-							<td>
-								<div class="flex items-center gap-2">
-									<span class="font-medium">{user.username}</span>
-									{#if currentUserId === user.id}
-										<Badge variant="info">{$t('users.you')}</Badge>
-									{/if}
-								</div>
-							</td>
-							<td>
+	<div class="table-frame">
+		<table class="table users-table">
+			<thead class="table-header">
+				<tr>
+					<th>{$t('common.username')}</th>
+					<th>{$t('users.role')}</th>
+					<th>{$t('users.twoFactor')}</th>
+					<th>{$t('users.smb')}</th>
+					<th>{$t('users.created')}</th>
+					<th class="text-right"><span class="sr-only">{$t('users.actions')}</span></th>
+				</tr>
+			</thead>
+			<tbody>
+				{#each users as user (user.id)}
+					<tr class="table-row">
+						<td class="users-name">
+							<div class="flex flex-wrap items-center gap-2">
+								<span class="font-medium break-all">{user.username}</span>
+								{#if currentUserId === user.id}
+									<Badge variant="info">{$t('users.you')}</Badge>
+								{/if}
+							</div>
+						</td>
+						<td class="users-meta">
+							<span class="inline-flex items-center gap-1.5 whitespace-nowrap {user.is_admin ? 'text-content' : 'text-secondary'}">
 								{#if user.is_admin}
-									<span class="flex items-center gap-1.5 text-content">
-										<Shield class="w-4 h-4 text-content-secondary" aria-hidden="true" />
-										{$t('users.admin')}
-									</span>
+									<Shield class="w-4 h-4 text-content-secondary" aria-hidden="true" />
+									{$t('users.admin')}
 								{:else}
-									<span class="flex items-center gap-1.5 text-secondary">
-										<ShieldOff class="w-4 h-4" aria-hidden="true" />
-										{$t('users.user')}
-									</span>
+									<UserIcon class="w-4 h-4" aria-hidden="true" />
+									{$t('users.user')}
 								{/if}
-							</td>
-							<td>
-								{#if user.totp_enabled}
-									<Badge variant="success" dot>{$t('users.twoFactorOn')}</Badge>
-								{:else}
-									<Badge variant="neutral">{$t('users.twoFactorOff')}</Badge>
-								{/if}
-							</td>
-							<td>
-								{#if user.smb}
-									<SmbStateBadge state={user.smb.state} hint={smbHint(user)} />
-								{:else}
-									<span class="text-muted">-</span>
-								{/if}
-							</td>
-							<td class="text-secondary">{formatDate(user.created_at)}</td>
-							<td>
-								<div class="table-actions">
-									<Button variant="ghost" size="icon-sm" onclick={() => onedit(user)}>
-										<Edit class="w-4 h-4" />
-										<span class="sr-only">{$t('users.editUser', { name: user.username })}</span>
+							</span>
+						</td>
+						<td class="users-meta">
+							{#if user.totp_enabled}
+								<Badge variant="success" dot>{$t('users.twoFactorOn')}</Badge>
+							{:else}
+								<Badge variant="neutral">{$t('users.twoFactorOff')}</Badge>
+							{/if}
+						</td>
+						<td class="users-meta">
+							{#if user.smb}
+								<SmbStateBadge state={user.smb.state} hint={smbHint(user)} />
+							{:else}
+								<span class="text-muted">-</span>
+							{/if}
+						</td>
+						<td class="users-created text-secondary whitespace-nowrap" title={formatMoment(user.created_at)}>
+							{formatDay(user.created_at)}
+						</td>
+						<td class="users-actions">
+							<div class="table-actions flex-nowrap">
+								<Button variant="ghost" size="icon-sm" title={$t('users.editShort')} onclick={() => onedit(user)}>
+									<Edit class="w-4 h-4" />
+									<span class="sr-only">{$t('users.editUser', { name: user.username })}</span>
+								</Button>
+								{#if currentUserId !== user.id}
+									<Button
+										variant="ghost"
+										size="icon-sm"
+										title={$t('users.endSessionsShort')}
+										onclick={() => onendsessions(user)}
+									>
+										<LogOut class="w-4 h-4" />
+										<span class="sr-only">{$t('users.endSessionsOf', { name: user.username })}</span>
 									</Button>
-									{#if currentUserId !== user.id}
-										<Button variant="ghost" size="icon-sm" onclick={() => onendsessions(user)}>
-											<LogOut class="w-4 h-4" />
-											<span class="sr-only">{$t('users.endSessionsOf', { name: user.username })}</span>
-										</Button>
-										<Button variant="ghost-danger" size="icon-sm" onclick={() => ondelete(user)}>
-											<Trash2 class="w-4 h-4" />
-											<span class="sr-only">{$t('users.deleteUser', { name: user.username })}</span>
-										</Button>
-									{/if}
-								</div>
-							</td>
-						</tr>
-					{/each}
-				</tbody>
-			</table>
-		</div>
-	{/if}
+									<Button
+										variant="ghost-danger"
+										size="icon-sm"
+										title={$t('users.deleteShort')}
+										onclick={() => ondelete(user)}
+									>
+										<Trash2 class="w-4 h-4" />
+										<span class="sr-only">{$t('users.deleteUser', { name: user.username })}</span>
+									</Button>
+								{/if}
+							</div>
+						</td>
+					</tr>
+				{/each}
+			</tbody>
+		</table>
+	</div>
 </Card>
+
+<style>
+	.users-actions {
+		@apply w-px whitespace-nowrap;
+	}
+
+	/* A phone: a row is the name with its actions on the right, and its role, two-factor and SMB
+	   state wrapped under it; the date is the desktop's. */
+	@media (max-width: 639px) {
+		.users-table thead {
+			@apply sr-only;
+		}
+
+		.users-table tr {
+			@apply flex flex-wrap items-center gap-x-2 gap-y-1.5 px-5 py-3;
+		}
+
+		.users-table tr::after {
+			content: '';
+			order: 3;
+			flex-basis: 100%;
+		}
+
+		.users-table td {
+			@apply block p-0;
+		}
+
+		.users-name {
+			order: 1;
+			flex: 1 1 0;
+			min-width: 0;
+		}
+
+		.users-actions {
+			order: 2;
+			@apply w-auto;
+		}
+
+		.users-meta {
+			order: 4;
+		}
+
+		/* Above .users-table td, which makes every cell a block. */
+		.users-table .users-created {
+			@apply hidden;
+		}
+	}
+</style>

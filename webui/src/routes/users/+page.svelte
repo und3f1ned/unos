@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onMount, untrack } from 'svelte';
+	import { onMount, tick, untrack } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { deleteUser, endSessions, type User } from '$lib/api/auth';
 	import { user as currentUser } from '$lib/stores/auth';
@@ -11,7 +11,6 @@
 		EditUserDialog,
 		GroupsCard,
 		OutcomeAlerts,
-		UsersAboutCard,
 		UsersCard
 	} from '$lib/components/users';
 	import { UserDirectory } from '$lib/components/users/directory.svelte';
@@ -34,6 +33,11 @@
 			return;
 		}
 		await Promise.all([directory.load(), groups.load()]);
+		// A link to a card of the page (/users#groups, from a share's access table) finds it only
+		// now that the page has drawn it.
+		await tick();
+		const target = location.hash ? document.getElementById(decodeURIComponent(location.hash.slice(1))) : null;
+		if (target) requestAnimationFrame(() => target.scrollIntoView({ block: 'start' }));
 	});
 
 	// Also watch for user changes (in case they navigate here before user loads). Before the
@@ -42,6 +46,14 @@
 		const current = $currentUser;
 		if (current !== null && !current.is_admin) untrack(() => goto('/'));
 	});
+
+	let retrying = $state(false);
+
+	async function retry() {
+		retrying = true;
+		await Promise.all([directory.load(false), groups.load()]);
+		retrying = false;
+	}
 
 	// ---- End sessions (ADR-0329) ----
 
@@ -64,6 +76,17 @@
 	let userToDelete = $state.raw<User | null>(null);
 	let deleting = $state(false);
 	let deleteError = $state('');
+
+	/** What deleting `user` does, said before it is done; the server's delete_user does it. */
+	function deleteConsequences(user: User): string[] {
+		const smb = user.smb?.state === 'active' || user.smb?.state === 'password_needed';
+		return [
+			$t('users.delete.sessions'),
+			$t('users.delete.access'),
+			smb ? $t('users.delete.smb') : '',
+			$t('users.delete.files')
+		].filter(Boolean);
+	}
 
 	function openDelete(user: User) {
 		userToDelete = user;
@@ -109,19 +132,27 @@
 			<Button icon={UserPlus} onclick={() => createDialog?.open()}>{$t('users.add')}</Button>
 		</div>
 
-		{#if directory.error}
-			<Alert variant="error">{directory.error}</Alert>
-		{/if}
 		<OutcomeAlerts outcome={directory.outcome} />
 
-		{#if directory.loading || groups.loading}
+		{#if directory.error}
+			<!-- A failed load says so, with Retry: never an empty list. Once loaded, the
+			     list stays under it. -->
+			<Alert variant="error" title={$t('users.loadFailed')}>
+				<p class="break-words">{directory.error}</p>
+				<Button variant="secondary" size="sm" class="mt-3" loading={retrying} onclick={retry}>
+					{$t('common.retry')}
+				</Button>
+			</Alert>
+		{/if}
+
+		{#if (directory.loading || groups.loading) && !directory.loaded}
 			<!-- The first load (ADR-0430): the users' table, the groups and the card under them. -->
 			<div class="space-y-6" aria-busy="true">
 				<Skeleton shape="table" columns={6} count={3} />
 				<Skeleton shape="card" count={3} />
 				<Skeleton shape="card" count={3} />
 			</div>
-		{:else}
+		{:else if directory.loaded}
 			<UsersCard
 				users={directory.users}
 				currentUserId={$currentUser?.id}
@@ -130,7 +161,6 @@
 				ondelete={openDelete}
 			/>
 			<GroupsCard users={directory.users} directory={groups} />
-			<UsersAboutCard />
 		{/if}
 	</div>
 
@@ -144,6 +174,7 @@
 		before={$t('users.delete.before')}
 		name={userToDelete?.username ?? null}
 		after={$t('users.delete.after')}
+		consequences={userToDelete ? deleteConsequences(userToDelete) : []}
 		submit={$t('users.delete.submit')}
 		error={deleteError}
 		errorTitle={$t('users.delete.failed')}

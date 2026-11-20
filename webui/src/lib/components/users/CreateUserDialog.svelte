@@ -6,7 +6,7 @@
 	import { t } from '$lib/i18n';
 	import type { UserDirectory } from './directory.svelte';
 	import { messageOf } from './errors';
-	import { passwordComplete } from './password';
+	import { MIN_PASSWORD_LENGTH, passwordComplete } from './password';
 	import PasswordFields from './PasswordFields.svelte';
 
 	type Props = {
@@ -23,13 +23,20 @@
 	let newSmb = $state(false);
 	let creating = $state(false);
 	let createError = $state('');
+	// Create was pressed: the fields left empty say so. The button is never disabled
+	// for what the form lacks: it names what is missing instead.
+	let attempted = $state(false);
 
 	let newUsernameError = $derived(
-		newUsername && !USERNAME_PATTERN.test(newUsername) ? $t('users.username.invalid') : ''
+		newUsername
+			? USERNAME_PATTERN.test(newUsername)
+				? ''
+				: $t('users.username.invalid')
+			: attempted
+				? $t('users.username.required')
+				: ''
 	);
-	let canCreate = $derived(
-		USERNAME_PATTERN.test(newUsername) && passwordComplete(newPassword, newConfirm) && !creating
-	);
+	let canCreate = $derived(USERNAME_PATTERN.test(newUsername) && passwordComplete(newPassword, newConfirm));
 
 	/** Opens the dialog with an empty form. */
 	export function open() {
@@ -38,6 +45,7 @@
 		newConfirm = '';
 		newSmb = false;
 		createError = '';
+		attempted = false;
 		createOpen = true;
 	}
 
@@ -63,6 +71,8 @@
 	}
 
 	async function handleCreate() {
+		if (creating) return;
+		attempted = true;
 		if (!canCreate) return;
 		const username = newUsername;
 		creating = true;
@@ -111,6 +121,8 @@
 			confirmId="new-password-confirm"
 			label={$t('common.password')}
 			confirmLabel={$t('users.new.confirm')}
+			hint={$t('users.password.rule', { n: MIN_PASSWORD_LENGTH })}
+			{attempted}
 			bind:password={newPassword}
 			bind:confirmation={newConfirm}
 		/>
@@ -121,6 +133,7 @@
 			</label>
 			<p class="form-hint">{$t('users.new.smbHint')}</p>
 		</div>
+		<p class="form-hint">{$t('users.new.roleHint')}</p>
 		{#if createError}
 			<Alert variant="error" title={$t('users.new.failed')}>{createError}</Alert>
 		{/if}
@@ -130,7 +143,7 @@
 		<Button variant="secondary" class="flex-1" disabled={creating} onclick={closeCreate}>
 			{$t('common.cancel')}
 		</Button>
-		<Button class="flex-1" loading={creating} disabled={!canCreate} onclick={handleCreate}>
+		<Button class="flex-1" loading={creating} onclick={handleCreate}>
 			{$t('users.new.submit')}
 		</Button>
 	{/snippet}

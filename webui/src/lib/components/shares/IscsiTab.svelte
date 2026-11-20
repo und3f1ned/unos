@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { HardDrive, Plus } from 'lucide-svelte';
+	import { HardDrive } from 'lucide-svelte';
 	import {
 		changeIscsiTarget,
 		createIscsiTarget,
@@ -25,11 +25,11 @@
 	type Props = {
 		/** Pools and volumes (GET /shares/paths): a target takes a volume of a pool that UNOS manages. */
 		paths?: SharePath[];
+		/** The targets and the host's support as last read; the page's Add target reads it. */
+		iscsiState?: IscsiState | null;
 	};
 
-	let { paths = [] }: Props = $props();
-
-	let iscsiState: IscsiState | null = $state(null);
+	let { paths = [], iscsiState = $bindable(null) }: Props = $props();
 	let loadError = $state('');
 	let notice = $state('');
 
@@ -60,7 +60,8 @@
 	let editDialog: ReturnType<typeof IscsiEditDialog> | undefined = $state();
 	let deleteDialog: ReturnType<typeof IscsiDeleteDialog> | undefined = $state();
 
-	function openCreate() {
+	/** The page header's Add target: opens the form of a new target. */
+	export function openCreate() {
 		createDialog?.reset();
 		creating = true;
 	}
@@ -119,66 +120,59 @@
 	}
 </script>
 
-<div class="space-y-6">
+<section class="space-y-6" aria-label={$t('iscsi.title')}>
 	{#if notice}
 		<Alert variant="success" dismissible ondismiss={() => (notice = '')}>{notice}</Alert>
 	{/if}
 
-	<Card>
-		<div class="card-header flex-wrap gap-2">
-			<h2 class="card-title">{$t('iscsi.title')}</h2>
-			<Button
-				icon={Plus}
-				disabled={!iscsiState || !iscsiState.kernel_support || volumes.length === 0}
-				onclick={openCreate}
-			>
-				{$t('iscsi.add')}
-			</Button>
+	{#if loadError}
+		<Alert variant="error" title={$t('iscsi.loadError')}>
+			<p>{loadError}</p>
+			<Button variant="secondary" size="sm" class="mt-3" onclick={load}>{$t('common.retry')}</Button>
+		</Alert>
+	{:else if !iscsiState}
+		<!-- The first load (ADR-0430): the portals' line and the targets. -->
+		<div class="space-y-4" aria-busy="true">
+			<Skeleton class="w-2/3" />
+			<Skeleton shape="card" count={4} />
 		</div>
-		<p class="text-sm text-content-secondary mb-4">{$t('iscsi.intro')}</p>
+	{:else}
+		<div class="space-y-4">
+			{#if !iscsiState.kernel_support}
+				<Alert variant="warning">{$t('iscsi.noKernel')}</Alert>
+			{/if}
+			{#if iscsiState.portals_problem}
+				<Alert variant="warning" title={$t('iscsi.portalsProblem')}>{iscsiState.portals_problem}</Alert>
+			{:else if iscsiState.portals.length === 0}
+				<Alert variant="warning">{$t('iscsi.noPortals')}</Alert>
+			{/if}
 
-		{#if loadError}
-			<Alert variant="error" title={$t('iscsi.loadError')}>{loadError}</Alert>
-		{:else if !iscsiState}
-			<div class="space-y-4" aria-busy="true">
-				<Skeleton shape="card" count={2} />
-				<Skeleton shape="table" columns={4} count={2} />
-			</div>
-		{:else}
-			<div class="space-y-4">
-				{#if !iscsiState.kernel_support}
-					<Alert variant="warning">{$t('iscsi.noKernel')}</Alert>
+			{#if iscsiState.targets.length === 0}
+				<Card>
+					<!-- Its next step is the header's Add target; without a volume, Storage. -->
+					<EmptyState icon={HardDrive} title={$t('iscsi.empty')} description={$t('iscsi.emptyHint')}>
+						{#if iscsiState.kernel_support && volumes.length === 0}
+							<a class="link" href="/storage">{$t('shares.toStorage')}</a>
+						{/if}
+					</EmptyState>
+				</Card>
+			{:else}
+				<ul class="space-y-4" aria-label={$t('iscsi.title')}>
+					{#each iscsiState.targets as target (target.name)}
+						<IscsiTargetItem {target} onedit={openEdit} ondelete={openDelete} />
+					{/each}
+				</ul>
+			{/if}
+			<!-- What an iSCSI target is, and where initiators connect: one line under the targets. -->
+			<p class="form-hint break-words">
+				{$t('iscsi.intro')}
+				{#if !iscsiState.portals_problem && iscsiState.portals.length > 0}
+					{' '}{$t('iscsi.portals', { portals: iscsiState.portals.join(', ') })}
 				{/if}
-				{#if volumes.length === 0}
-					<Alert variant="info">{$t('iscsi.noVolumes')}</Alert>
-				{/if}
-				{#if iscsiState.portals_problem}
-					<Alert variant="warning" title={$t('iscsi.portalsProblem')}>{iscsiState.portals_problem}</Alert>
-				{:else if iscsiState.portals.length > 0}
-					<p class="text-sm break-words">
-						{$t('iscsi.portals', { portals: iscsiState.portals.join(', ') })}
-					</p>
-				{:else}
-					<Alert variant="warning">{$t('iscsi.noPortals')}</Alert>
-				{/if}
-
-				{#if iscsiState.targets.length === 0}
-					<EmptyState icon={HardDrive} title={$t('iscsi.empty')} description={$t('iscsi.emptyHint')} />
-				{:else}
-					<ul class="space-y-3" aria-label={$t('iscsi.title')}>
-						{#each iscsiState.targets as target (target.name)}
-							<IscsiTargetItem
-								{target}
-								onedit={openEdit}
-								ondelete={openDelete}
-							/>
-						{/each}
-					</ul>
-				{/if}
-			</div>
-		{/if}
-	</Card>
-</div>
+			</p>
+		</div>
+	{/if}
+</section>
 
 {#if creating}
 	<IscsiCreateDialog bind:this={createDialog} {volumes} {saving} onclose={() => (creating = false)} oncreate={create} />

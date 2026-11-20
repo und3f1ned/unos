@@ -434,6 +434,7 @@ and this index, and `make check-fast` runs it.
 | [0431](0431-every-accounts-own-settings-are-on-the-account-page-system-is-the-nass-and-each-setting-action-and-fact-has-one-place.md) | Every account's own settings are on the Account page, System is the NAS's, and each setting, action and fact has one place | accepted | 2026-11-20 |
 | [0432](0432-the-web-uis-shared-components-carry-its-states-confirmations-menus-form-controls-and-tables-and-a-check-keeps-pages-on-them.md) | The web UI's shared components carry its states, confirmations, menus, form controls and tables, and a check keeps pages on them | accepted | 2026-11-20 |
 | [0434](0434-the-dashboard-counts-every-issue-it-knows-and-the-data-pages-keep-one-primary-action-each-with-the-rarer-ones-behind-more.md) | The dashboard counts every issue it knows, and the data pages keep one primary action each, with the rarer ones behind More | accepted | 2026-11-20 |
+| [0435](0435-share-access-is-a-table-of-who-and-level-and-the-sharing-and-people-pages-say-each-state-once.md) | Share access is a table of who and level, and the sharing and people pages say each state once | accepted | 2026-11-20 |
 
 ## Deploy
 

@@ -4799,7 +4799,38 @@
         "webui/tests/loading.spec.ts",
         "webui/tests/mobile-layout.spec.ts"
       ],
-      "notes": "Chunk 2 of the UX audit's order of work, built from mvp.batch-18 (69dfae5) beside the design-system foundations (chunk 1). The ADR's final number is 0434; this branch names it 0432 so that the ADR numbering test passes, and the merge renumbers it. Places that switch to a foundations component once it lands: PoolActions' More (ActionMenu), SelectionBar (BulkBar), DeletePoolDialog (ConfirmDialog), the disabled reasons of Create pool, Scrub and More's actions (Button disabledReason), the empty states (EmptyState action), Create pool's dialog (Modal size), the snapshot dates (nasTime), the storage page's unreadable lists (ErrorState with Retry; the header's Refresh reads them again meanwhile). Fresh-context review (10 findings): fixed the BLOCKING one (a pool's low-space problem hid its degraded health on the dashboard: only a socket problem of the same sense hides the dashboard's issue, and a disk the socket reports failing is not listed again as replace soon) and the RISK ones (the empty storage card's second link to Storage, Create snapshot's reason while the pools load, a disk that a new list no longer offers left in Create pool's selection, the empty state's free-disk count now shares the dialog's rule, Enter submitting Remove pool twice, the temporary screenshot spec removed); the nits too (a paused balance asks to be resumed or cancelled, a dead helper and a stale comment removed; the snapshot name prefixes stay, test_snapshots.py keeps them as the page's constants). Web UI only: not host-level (GLOSSARY.md)."
+      "notes": "Chunk 2 of the UX audit's order of work, built from mvp.batch-18 (69dfae5) beside the design-system foundations (chunk 1). The ADR is 0434: 0432 on its branch, renumbered when it was merged into mvp.batch-18. Places that switch to a foundations component once it lands: PoolActions' More (ActionMenu), SelectionBar (BulkBar), DeletePoolDialog (ConfirmDialog), the disabled reasons of Create pool, Scrub and More's actions (Button disabledReason), the empty states (EmptyState action), Create pool's dialog (Modal size), the snapshot dates (nasTime), the storage page's unreadable lists (ErrorState with Retry; the header's Refresh reads them again meanwhile). Fresh-context review (10 findings): fixed the BLOCKING one (a pool's low-space problem hid its degraded health on the dashboard: only a socket problem of the same sense hides the dashboard's issue, and a disk the socket reports failing is not listed again as replace soon) and the RISK ones (the empty storage card's second link to Storage, Create snapshot's reason while the pools load, a disk that a new list no longer offers left in Create pool's selection, the empty state's free-disk count now shares the dialog's rule, Enter submitting Remove pool twice, the temporary screenshot spec removed); the nits too (a paused balance asks to be resumed or cancelled, a dead helper and a stale comment removed; the snapshot name prefixes stay, test_snapshots.py keeps them as the page's constants). Web UI only: not host-level (GLOSSARY.md)."
+    },
+    {
+      "id": "webui.ux-sharing",
+      "category": "webui",
+      "description": "The share dialog's Access is a table of who and level, and Shares, Users and groups, the Audit Log and the sign-in pages say each state once, beside what it concerns",
+      "steps": [
+        "The Add and Edit share dialogs show Access as one row per user and group, each with its kind or SMB state and a None / Read / Read & write choice, an All users row, and at 375 px the choice under the name, nothing wider than the screen",
+        "Saving a served share that lowers access, turns guest access off, requires encryption or turns Previous Versions off first asks \"Close open connections?\", listing each change; giving access saves at once",
+        "Shares shows each tab's Add button in the page header (Add target too), says under a disabled one why, and names a share's problem once, on its card; features are neutral chips and users whose SMB is off are muted with a tag, never struck through",
+        "Users shows an error with Retry when the list cannot be read, never \"No users found\"; at 375 px every user's role, 2FA, SMB and actions are on screen, and Delete names what it removes",
+        "The Audit Log heads an API token's entry by what it did, shows the browser in a few words and folds its filters on a phone; first-run setup shows its rules and errors under the fields, and the forced two-factor setup is a sign-in card without the menu",
+        "Every new text is in English and Russian"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0435"
+      ],
+      "verified_by": [
+        "webui/tests/shares.spec.ts",
+        "webui/tests/nfs-exports.spec.ts",
+        "webui/tests/iscsi.spec.ts",
+        "webui/tests/smb-interfaces.spec.ts",
+        "webui/tests/users.spec.ts",
+        "webui/tests/audit.spec.ts",
+        "webui/tests/auth.spec.ts",
+        "webui/tests/first-run.spec.ts",
+        "webui/tests/mandatory-two-factor.spec.ts",
+        "webui/tests/mobile-layout.spec.ts",
+        "webui/tests/language.spec.ts"
+      ],
+      "notes": "Chunk 3 of the web UI's UX work, built on mvp.batch-18 69dfae5 beside chunk 1 (the design foundations), which owns lib/components/ui, app.css and the common and ui catalogs. The ADR is 0435: 0432 on its branch, renumbered when it was merged into mvp.batch-18. The pages use the ui components that exist now; the places that switch to chunk 1's ConfirmDialog, Sheet, Menu and Toast are listed in the ADR's consequences. NFS exports still have no Edit: the API has none. The Save question counts only what smb.conf has (a user whose SMB is active, a group with such a member, a guest access or Previous Versions that smb.conf did not leave out, on a share someone can connect to), as smbconf.shrunk_shares closes connections only then. Fresh-context review (10 findings): fixed the BLOCKING one (the Save question listed users not in smb.conf) and the RISKs: the header Add target said no volume while the paths loaded or failed; the access table links lost the open form (now a new tab) and /users#groups did not reach the Groups card (scrolled to after the load); a failed copy of a Connect address said nothing (now said, also to screen readers); a failed critical audit entry lost Critical; the specs did not cover setup validation, Show, the users load error, the audit entry words or the forced setup card (tests added in first-run, auth, users, audit and mandatory-two-factor specs). Left: a disabled Save with nothing to change (Edit user, SMB interfaces) and Export after a failed audit load give their reason as hover text only, until chunk 1 adds Button disabledReason (a one-line change each); the users page hides the groups while the users cannot be read, and a groups load error has no Retry of its own (Retry of the page reads both); UsersCard formats its dates itself instead of lib/time (chunk 1 owns it)."
     },
     {
       "id": "ci.btrfs-loop-device-tests",

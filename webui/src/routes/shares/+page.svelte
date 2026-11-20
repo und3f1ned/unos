@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount, untrack } from 'svelte';
 	import { Plus } from 'lucide-svelte';
+	import type { IscsiState } from '$lib/api/iscsi';
 	import { getSharePaths, type NfsExport, type RepairResult, type SharePath, type SmbShare } from '$lib/api/shares';
 	import { Alert, Button, Skeleton } from '$lib/components/ui';
 	import {
@@ -54,6 +55,31 @@
 	// The questions before a deletion, always mounted, which the page opens.
 	let deleteDialog: ReturnType<typeof DeleteShareDialog> | undefined;
 	let bulkDeleteDialog: ReturnType<typeof BulkDeleteDialog> | undefined;
+
+	// ---- iSCSI ----
+	// The tab's targets and the host's support, as the tab last read them, and the tab, whose form
+	// the header's Add target opens.
+	let iscsiState = $state<IscsiState | null>(null);
+	let iscsiTab: ReturnType<typeof IscsiTab> | undefined = $state();
+
+	// Why a share, an export or a target cannot be added now; '' when it can, or while the page
+	// still reads what it needs (then the button only waits). Said under the button.
+	const noPool = $derived(
+		loading ? '' : pathsError ? $t('shares.pathsError') : paths.length === 0 ? $t('shares.noPoolsShort') : ''
+	);
+	const iscsiBlocked = $derived(
+		!iscsiState
+			? ''
+			: !iscsiState.kernel_support
+				? $t('iscsi.noKernelShort')
+				: loading
+					? ''
+					: pathsError
+						? $t('shares.pathsError')
+						: !paths.some((p) => p.type === 'volume' && p.managed)
+							? $t('iscsi.noVolumesShort')
+							: ''
+	);
 
 	// ---- NFS dialogs ----
 	// The Add NFS export dialog: mounted while open.
@@ -140,17 +166,32 @@
 	}
 </script>
 
+{#snippet addButton(label: string, waiting: boolean, blocked: string, onclick: () => void)}
+	<div class="flex flex-col items-end gap-1">
+		<Button
+			icon={Plus}
+			disabled={waiting || blocked !== ''}
+			aria-describedby={blocked ? 'shares-add-blocked' : undefined}
+			{onclick}
+		>
+			{label}
+		</Button>
+		{#if blocked}
+			<p id="shares-add-blocked" class="text-xs text-content-muted text-right max-w-[16rem]">{blocked}</p>
+		{/if}
+	</div>
+{/snippet}
+
 <div class="page-container">
 	<div class="page-header">
 		<h1 class="page-title">{$t('shares.title')}</h1>
+		<!-- The tab's one main action; when it cannot be taken, why, under it. -->
 		{#if activeTab === 'smb'}
-			<Button icon={Plus} disabled={loading || paths.length === 0} onclick={openCreate}>
-				{$t('shares.smb.add')}
-			</Button>
+			{@render addButton($t('shares.smb.add'), loading, noPool, openCreate)}
 		{:else if activeTab === 'nfs'}
-			<Button icon={Plus} disabled={loading || paths.length === 0} onclick={() => (nfsFormOpen = true)}>
-				{$t('shares.nfs.add')}
-			</Button>
+			{@render addButton($t('shares.nfs.add'), loading, noPool, () => (nfsFormOpen = true))}
+		{:else}
+			{@render addButton($t('iscsi.add'), !iscsiState || loading, iscsiBlocked, () => iscsiTab?.openCreate())}
 		{/if}
 	</div>
 
@@ -166,8 +207,6 @@
 	>
 		{#if !loading && pathsError}
 			<Alert variant="error" title={$t('shares.pathsError')}>{pathsError}</Alert>
-		{:else if !loading && paths.length === 0}
-			<Alert variant="warning">{$t('shares.noPools')}</Alert>
 		{/if}
 
 		<ShareOutcomeAlerts {outcome} />
@@ -182,11 +221,14 @@
 			<SmbStatusAlerts
 				status={smb.status}
 				error={smb.statusError}
+				shares={smb.shares}
 				ondismissimport={() => smb.dismissImportReport()}
 			/>
 			<SmbShareList
 				{smb}
 				{host}
+				noPool={!loading && !pathsError && paths.length === 0}
+				onretry={() => smb.reload()}
 				onedit={openEdit}
 				onrepair={(share) => (repairing = share.name)}
 				ondelete={(share) => deleteDialog?.open(share)}
@@ -194,10 +236,15 @@
 			/>
 			<SmbInterfacesCard />
 		{:else if activeTab === 'iscsi'}
-			<IscsiTab {paths} />
+			<IscsiTab bind:this={iscsiTab} bind:iscsiState {paths} />
 		{:else}
 			<NfsStatusAlerts status={nfs.status} error={nfs.statusError} />
-			<NfsExportList exports={nfs.exports} error={nfs.error} ondelete={(exp) => nfsDeleteDialog?.open(exp)} />
+			<NfsExportList
+				exports={nfs.exports}
+				error={nfs.error}
+				noPool={!loading && !pathsError && paths.length === 0}
+				ondelete={(exp) => nfsDeleteDialog?.open(exp)}
+			/>
 		{/if}
 	</div>
 </div>

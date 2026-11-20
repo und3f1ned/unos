@@ -6,9 +6,9 @@ import type { Translation } from '../translate';
 
 export const en = {
 	'groups.title': 'Groups ({count})',
-	'groups.add': 'New group',
-	'groups.about':
-		'A group gets read or read & write access to shares on the Shares page. Every member whose SMB is on gets that access, and so does every user added to the group later; a user who also has access of their own gets the higher level.',
+	'groups.add': 'Add group',
+	'groups.deleteShort': 'Delete',
+	'groups.about': 'Give a group access on the Shares page: its members whose SMB is on get it.',
 	'groups.loadFailed': 'The groups could not be loaded',
 	'groups.empty': 'No groups yet.',
 	'groups.members': 'Members:',
@@ -29,7 +29,7 @@ export const en = {
 	// A change refused after its dialog closed: the group was renamed or deleted meanwhile.
 	'groups.actionFailed': 'The group was not changed',
 
-	'groups.form.addTitle': 'New group',
+	'groups.form.addTitle': 'Add group',
 	'groups.form.editTitle': 'Edit group {name}',
 	'groups.form.name': 'Name',
 	'groups.form.nameHint': '1–32 lowercase letters, digits, _ or -, starting with a letter',
@@ -55,9 +55,9 @@ export const en = {
 
 export const ru: Translation<typeof en> = {
 	'groups.title': 'Группы ({count})',
-	'groups.add': 'Новая группа',
-	'groups.about':
-		'Группа получает доступ к общим папкам на странице «Общие папки»: только чтение или чтение и запись. Этот доступ получает каждый участник с включённым SMB, как и любой пользователь, добавленный в группу позже; пользователь, у которого есть и собственный доступ, получает более высокий уровень.',
+	'groups.add': 'Добавить группу',
+	'groups.deleteShort': 'Удалить',
+	'groups.about': 'Доступ группе выдаётся на странице «Общие папки»: его получают её участники с включённым SMB.',
 	'groups.loadFailed': 'Не удалось загрузить группы',
 	'groups.empty': 'Групп пока нет.',
 	'groups.members': 'Участники:',
@@ -75,7 +75,7 @@ export const ru: Translation<typeof en> = {
 	'groups.deleted': 'Группа «{name}» удалена',
 	'groups.actionFailed': 'Группа не изменена',
 
-	'groups.form.addTitle': 'Новая группа',
+	'groups.form.addTitle': 'Добавление группы',
 	'groups.form.editTitle': 'Изменение группы {name}',
 	'groups.form.name': 'Имя',
 	'groups.form.nameHint': '1–32 строчные латинские буквы, цифры, _ или -, первая — буква',

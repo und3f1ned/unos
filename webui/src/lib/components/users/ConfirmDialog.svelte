@@ -13,6 +13,8 @@
 		before: string;
 		name: string | null;
 		after: string;
+		// What the action does, one line each, under the question.
+		consequences?: string[];
 		// The confirming button's text.
 		submit: string;
 		// The server's refusal, under its title.
@@ -31,6 +33,7 @@
 		before,
 		name,
 		after,
+		consequences = [],
 		submit,
 		error = '',
 		errorTitle = '',
@@ -47,6 +50,13 @@
 			{before}
 			<strong class="text-content">{name}</strong>{after}
 		</p>
+		{#if consequences.length > 0}
+			<ul class="list-disc space-y-1 pl-5 text-sm text-content-secondary">
+				{#each consequences as consequence (consequence)}
+					<li>{consequence}</li>
+				{/each}
+			</ul>
+		{/if}
 		{#if error}
 			<Alert variant="error" title={errorTitle}>{error}</Alert>
 		{/if}

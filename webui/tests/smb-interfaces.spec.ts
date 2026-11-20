@@ -44,7 +44,7 @@ test.describe('The network interfaces of SMB', () => {
     await page.goto('/shares');
 
     await expect(card(page)).toContainText('SMB listens on every network interface of the NAS.');
-    await expect(card(page)).toContainText('smbd answers on: every IPv4 address, every IPv6 address');
+    await expect(card(page)).toContainText('SMB answers on: every IPv4 address, every IPv6 address');
     await expect(card(page).getByRole('button', { name: 'Restart SMB…' })).toHaveCount(0);
 
     const dialog = await openDialog(page);
@@ -83,7 +83,7 @@ test.describe('The network interfaces of SMB', () => {
     await expect(card(page)).toContainText(`SMB listens only on ${NIC}, and on the NAS itself (the loopback).`);
     await expect(card(page)).toContainText(`SMB listens only on ${NIC} now.`);
     await expect(card(page)).toContainText(
-      'smbd answers on: 127.0.0.1, 192.168.10.5, ::1, 2001:db8:1234:5678:9abc:def0:1234:5678, fd00:1234:5678:9abc::5',
+      'SMB answers on: 127.0.0.1, 192.168.10.5, ::1, 2001:db8:1234:5678:9abc:def0:1234:5678, fd00:1234:5678:9abc::5',
     );
     await expect(card(page)).not.toContainText('192.168.7.20');
 

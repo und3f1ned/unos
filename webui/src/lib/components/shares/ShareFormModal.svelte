@@ -16,17 +16,19 @@
 	import { Alert, Button, Input, Modal, Skeleton } from '$lib/components/ui';
 	import { t } from '$lib/i18n';
 	import LocationFields from './LocationFields.svelte';
-	import ShareAccessPicker from './ShareAccessPicker.svelte';
+	import ShareAccessTable from './ShareAccessTable.svelte';
 	import ShareSettingsFields from './ShareSettingsFields.svelte';
 	import {
 		accessEntries,
 		groupAccessEntries,
 		groupLevelsFromAccess,
 		levelsFromAccess,
+		loweredAccess,
 		pickableUsers,
 		sameAccess,
 		sameGroupAccess,
-		type AccessChoice
+		type AccessChoice,
+		type Lowering
 	} from './access';
 	import { messageOf } from './errors';
 	import { folderParts, folderProblem, joinSharePath, managedLocations, splitSharePath } from './paths';
@@ -64,6 +66,13 @@
 	// The protocol options (ADR-0380), each off by default.
 	let options: Record<ShareOption, boolean> = $state(noOptions());
 
+	// The levels' names, by level.
+	const LEVEL_KEYS: Record<AccessChoice, string> = {
+		none: 'shares.access.none',
+		read: 'shares.access.read',
+		write: 'shares.access.write'
+	};
+
 	function noOptions(): Record<ShareOption, boolean> {
 		return { encryption_required: false, time_machine: false, previous_versions: false };
 	}
@@ -79,6 +88,10 @@
 	let reloadedNotice = $state('');
 	// Only the handlers read it, when the dialog closes.
 	let stale = false;
+	// What a save of a served share takes away, asked about before it is sent: only
+	// lowered access, guest access turned off, encryption required and Previous Versions turned
+	// off close the share's open connections (ADR-0103). null: no question open.
+	let confirming: { access: Lowering[]; settings: string[] } | null = $state(null);
 
 	function fillForm(from: SmbShare | null) {
 		const offered = managedLocations(paths);
@@ -197,14 +210,58 @@
 		return patch;
 	}
 
-	async function submit() {
+	/**
+	 * What saving the edited share takes away from its open connections; null when nothing. As the
+	 * server closes them (smbconf.shrunk_shares, ADR-0103) only when smb.conf shrinks, it counts
+	 * only what smb.conf has now: a share that someone can connect to, the access of a user whose
+	 * SMB is active or of a group with such a member, and a guest access or Previous Versions that
+	 * smb.conf did not leave out.
+	 */
+	function disconnecting(from: SmbShare): { access: Lowering[]; settings: string[] } | null {
+		if (!from.served || !from.available) return null;
+		const inFile = new Set(from.access.filter((entry) => entry.effective).map((entry) => entry.user_id));
+		const groupsInFile = new Set(
+			from.group_access.filter((entry) => entry.members.some((m) => m.effective)).map((entry) => entry.group_id)
+		);
+		const access = loweredAccess(
+			{
+				users: loadedAccess.filter((entry) => inFile.has(entry.user_id)),
+				groups: loadedGroupAccess.filter((entry) => groupsInFile.has(entry.group_id))
+			},
+			{ users: currentAccess, groups: currentGroupAccess }
+		);
+		const settings = [
+			from.guest_ok && !from.not_rendered.guest_ok && !guestOk ? $t('shares.form.lower.guest') : '',
+			!from.encryption_required && options.encryption_required ? $t('shares.form.lower.encryption') : '',
+			from.previous_versions && !from.not_rendered.previous_versions && !options.previous_versions
+				? $t('shares.form.lower.previousVersions')
+				: ''
+		].filter(Boolean);
+		return access.length > 0 || settings.length > 0 ? { access, settings } : null;
+	}
+
+	function submit() {
 		if (saving) return;
 		attempted = true;
 		error = '';
 		reloadedNotice = '';
 		// The conditions of the errors shown under the fields, now that `attempted` is set.
 		if ((!editing && !name.trim()) || (locationEditable && checkPath && problem)) return;
+		const question = loaded ? disconnecting(loaded) : null;
+		if (question) {
+			confirming = question;
+			return;
+		}
+		void save();
+	}
 
+	function confirmSave() {
+		confirming = null;
+		void save();
+	}
+
+	async function save() {
+		if (saving) return;
 		saving = true;
 		try {
 			if (!loaded) {
@@ -284,7 +341,7 @@
 			event.preventDefault();
 			submit();
 		}}
-		class="space-y-4 max-h-[60vh] overflow-y-auto scrollbar-thin pr-1"
+		class="space-y-4"
 	>
 		<Input
 			id="share-name"
@@ -348,11 +405,15 @@
 		<ShareSettingsFields bind:browseable bind:guestOk bind:options {guestLocked} {encryptionLocked} />
 
 		{#if usersLoading}
-			<div aria-busy="true"><Skeleton count={3} /></div>
+			<!-- The access table's place (ADR-0430): its label and rows. -->
+			<div aria-busy="true">
+				<Skeleton size="sm" class="w-16 mb-1.5" />
+				<Skeleton shape="row" columns={2} count={4} />
+			</div>
 		{:else if usersError}
 			<Alert variant="error" title={$t('shares.form.usersError')}>{usersError}</Alert>
 		{:else}
-			<ShareAccessPicker
+			<ShareAccessTable
 				{users}
 				bind:levels
 				{groups}
@@ -363,11 +424,9 @@
 				savedGroupLevels={loadedGroupLevels}
 			/>
 		{/if}
-
-		<p class="form-hint">{$t('shares.form.accessChangeNote')}</p>
 	</form>
 
-	<!-- Below the scrolling form, so that it is seen after a save. -->
+	<!-- Above the buttons, so that it is seen after a save. -->
 	{#if error}
 		<Alert variant="error" title={editing ? $t('shares.form.notSaved') : $t('shares.form.notCreated')}>
 			<p>{error}</p>
@@ -386,3 +445,31 @@
 		</Button>
 	{/snippet}
 </Modal>
+
+<!-- The question before a save that closes open connections, over the form. -->
+{#if confirming}
+	<Modal open title={$t('shares.form.lower.title')} size="md" onclose={() => (confirming = null)}>
+		<p>{$t('shares.form.lower.intro', { name: loaded?.name ?? '' })}</p>
+		<ul class="list-disc space-y-1 pl-5 text-sm" aria-label={$t('shares.form.lower.list')}>
+			{#each confirming.access as change (change.kind + change.name)}
+				<li class="break-words">
+					{$t(change.kind === 'user' ? 'shares.form.lower.user' : 'shares.form.lower.group', {
+						name: change.name,
+						from: $t(LEVEL_KEYS[change.from]),
+						to: $t(LEVEL_KEYS[change.to])
+					})}
+				</li>
+			{/each}
+			{#each confirming.settings as setting (setting)}
+				<li>{setting}</li>
+			{/each}
+		</ul>
+		<p class="text-sm text-content-secondary">{$t('shares.form.lower.reconnect')}</p>
+		{#snippet footer()}
+			<Button variant="secondary" class="flex-1" onclick={() => (confirming = null)}>
+				{$t('common.cancel')}
+			</Button>
+			<Button class="flex-1" onclick={confirmSave}>{$t('shares.form.lower.confirm')}</Button>
+		{/snippet}
+	</Modal>
+{/if}

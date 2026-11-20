@@ -10,6 +10,23 @@ test.describe('Authentication', () => {
     await expect(page.locator('input[type="password"]')).toBeVisible();
   });
 
+  test('Sign in is in sentence case, and Show shows the typed password until Hide', async ({ page }) => {
+    await page.goto('/login');
+    await expect(page.getByRole('button', { name: 'Sign in', exact: true })).toBeVisible();
+    const field = page.locator('#password');
+    await field.fill('a-typed-secret');
+    const show = page.getByRole('button', { name: 'Show', exact: true });
+    await expect(show).toHaveAttribute('aria-pressed', 'false');
+    await show.click();
+    await expect(field).toHaveAttribute('type', 'text');
+    await expect(field).toHaveValue('a-typed-secret');
+    const hide = page.getByRole('button', { name: 'Hide', exact: true });
+    await expect(hide).toHaveAttribute('aria-pressed', 'true');
+    await hide.click();
+    await expect(field).toHaveAttribute('type', 'password');
+    await expect(field).toHaveValue('a-typed-secret');
+  });
+
   test('should show error on invalid credentials', async ({ page }) => {
     await page.goto('/login');
     await page.fill('input[type="text"]', 'wronguser');

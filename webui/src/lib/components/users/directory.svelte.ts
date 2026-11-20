@@ -10,6 +10,9 @@ import { Outcome } from './outcome.svelte';
 export class UserDirectory {
 	users = $state.raw<User[]>([]);
 	loading = $state(true);
+	// A load has answered with the users once: until then a failed load replaces the list,
+	// after it the list stays under the error.
+	loaded = $state(false);
 	error = $state('');
 	// Outcome of the last change: shown until dismissed.
 	outcome = new Outcome();
@@ -25,6 +28,7 @@ export class UserDirectory {
 		if (showSpinner) this.loading = true;
 		try {
 			this.users = await getUsers();
+			this.loaded = true;
 			this.error = '';
 		} catch (e) {
 			this.error = messageOf(e) || this.#loadFailed();

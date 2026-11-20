@@ -105,30 +105,55 @@ function fakeUsers(): FakeUser[] {
 }
 
 test.describe('Users page SMB (fake data)', () => {
+  test('a list that cannot be read says so with Retry, never an empty list, and Retry reads it', async ({
+    authenticatedPage: page,
+  }) => {
+    await fakeSmbApi(page, { users: fakeUsers() });
+    let failing = true;
+    await page.route('**/api/v1/auth/users', (route) =>
+      failing && route.request().method() === 'GET'
+        ? route.fulfill({ status: 500, json: { detail: 'The user database could not be read' } })
+        : route.fallback(),
+    );
+    await page.goto('/users');
+    const alert = pageAlert(page, 'error');
+    await expect(alert).toContainText('The user database could not be read');
+    await expect(page.getByText('No users found')).toHaveCount(0);
+    await expect(page.getByRole('columnheader', { name: 'SMB' })).toHaveCount(0);
+
+    failing = false;
+    await alert.getByRole('button', { name: 'Retry' }).click();
+    await expect(userRow(page, 'alice')).toBeVisible();
+    await expect(alert).toHaveCount(0);
+  });
+
   test('the SMB column shows the state of every user', async ({ authenticatedPage: page }) => {
     await fakeSmbApi(page, { users: fakeUsers() });
     await page.goto('/users');
 
     await expect(page.getByRole('columnheader', { name: 'SMB' })).toBeVisible();
-    await expect(smbCell(page, 'alice')).toHaveText('Active');
-    await expect(smbBadge(page, 'bob')).toHaveText('Password needed');
+    await expect(smbCell(page, 'alice')).toHaveText('SMB on');
+    await expect(smbBadge(page, 'bob')).toHaveText('SMB: password needed');
     await expect(smbCell(page, 'bob').locator('[title]')).toHaveAttribute('title', PASSWORD_NEEDED_HINT);
-    await expect(smbCell(page, 'carol')).toHaveText('Off');
-    await expect(smbBadge(page, 'Erin.Old')).toHaveText('Not available');
+    await expect(smbCell(page, 'carol')).toHaveText('SMB off');
+    await expect(smbBadge(page, 'Erin.Old')).toHaveText('No SMB');
     await expect(smbCell(page, 'Erin.Old').locator('[title]')).toHaveAttribute('title', ERIN_REASON);
-    await expect(smbBadge(page, 'admin')).toHaveText('Not available');
+    await expect(smbBadge(page, 'admin')).toHaveText('No SMB');
     await expect(smbCell(page, 'admin').locator('[title]')).toHaveAttribute('title', ADMIN_REASON);
     // The hint is also text, for keyboard, touch and screen-reader users (a title is hover only).
-    await expect(smbCell(page, 'bob')).toHaveText(`Password needed (${PASSWORD_NEEDED_HINT})`);
-    await expect(smbCell(page, 'Erin.Old')).toHaveText(`Not available (${ERIN_REASON})`);
-    await expect(smbCell(page, 'admin')).toHaveText(`Not available (${ADMIN_REASON})`);
+    await expect(smbCell(page, 'bob')).toHaveText(`SMB: password needed (${PASSWORD_NEEDED_HINT})`);
+    await expect(smbCell(page, 'Erin.Old')).toHaveText(`No SMB (${ERIN_REASON})`);
+    await expect(smbCell(page, 'admin')).toHaveText(`No SMB (${ADMIN_REASON})`);
     await expect(smbCell(page, 'bob').locator('.sr-only')).toHaveText(`(${PASSWORD_NEEDED_HINT})`);
 
-    await expect(
-      page.getByText('SMB (network file) access is off by default. Allow it per user; administrators cannot use SMB.'),
-    ).toBeVisible();
-    await expect(page.getByText('2FA protects only the web interface.')).toBeVisible();
-    await expect(page.getByText('Passwords must be at least 8 characters long.')).toBeVisible();
+    // No About card: its rules are said at the fields they apply to (the create dialog's).
+    await expect(page.getByRole('heading', { name: 'About user management' })).toHaveCount(0);
+    await page.getByRole('button', { name: 'Add user' }).click();
+    const add = page.getByRole('dialog', { name: 'Add user' });
+    await expect(add.getByText('At least 8 characters')).toBeVisible();
+    await expect(add.getByLabel('Allow SMB (network file) access')).not.toBeChecked();
+    await expect(add.getByText('Uses the same password. SMB has no two-factor authentication.')).toBeVisible();
+    await expect(add.getByText('New users are regular users: make one an administrator with Edit.')).toBeVisible();
   });
 
   test('the create dialog checks the name and the password, and can allow SMB', async ({
@@ -157,9 +182,13 @@ test.describe('Users page SMB (fake data)', () => {
     await password.fill('e2e-New-Password-1');
     await confirmation.fill('e2e-New-Password-2');
     await expect(dialog.getByText('Passwords do not match')).toBeVisible();
-    await expect(create).toBeDisabled();
-    await confirmation.fill('e2e-New-Password-1');
+    // Create is never disabled for what the form lacks: pressed, it sends nothing.
     await expect(create).toBeEnabled();
+    await create.click();
+    await expect(dialog).toBeVisible();
+    expect(fake.writes).toEqual([]);
+    await confirmation.fill('e2e-New-Password-1');
+    await expect(dialog.getByText('Passwords do not match')).toHaveCount(0);
 
     const smb = dialog.getByLabel('Allow SMB (network file) access');
     await expect(smb).not.toBeChecked();
@@ -187,7 +216,7 @@ test.describe('Users page SMB (fake data)', () => {
     ]);
     await expect(page.getByText('User "e2e_new" created')).toBeVisible();
     await expect(page.getByText(warning)).toBeVisible();
-    await expect(smbBadge(page, 'e2e_new')).toHaveText('Off');
+    await expect(smbBadge(page, 'e2e_new')).toHaveText('SMB off');
   });
 
   test('a new password can also turn SMB on for a user who needs one', async ({ authenticatedPage: page }) => {
@@ -210,7 +239,7 @@ test.describe('Users page SMB (fake data)', () => {
         body: { username: 'bob', password: 'e2e-Bob-Password-1' },
       },
     ]);
-    await expect(smbBadge(page, 'bob')).toHaveText('Active');
+    await expect(smbBadge(page, 'bob')).toHaveText('SMB on');
 
     // Unchecked, only the UNOS password changes.
     await userRow(page, 'frank').getByRole('button', { name: 'Edit user frank' }).click();
@@ -225,7 +254,7 @@ test.describe('Users page SMB (fake data)', () => {
       path: '/auth/users/6',
       body: { username: 'frank', password: 'e2e-Frank-Password-1' },
     });
-    await expect(smbBadge(page, 'frank')).toHaveText('Password needed');
+    await expect(smbBadge(page, 'frank')).toHaveText('SMB: password needed');
   });
 
   test('a new password of a user with SMB on changes the SMB password too', async ({ authenticatedPage: page }) => {
@@ -243,7 +272,10 @@ test.describe('Users page SMB (fake data)', () => {
     await dialog.getByLabel('New password', { exact: true }).fill('short');
     await expect(dialog.getByText('Use at least 8 characters')).toBeVisible();
     await dialog.getByLabel('New password', { exact: true }).fill('e2e-Alice-Password-1');
-    await expect(save).toBeDisabled();
+    // A change: Save is enabled, and says what is missing when pressed.
+    await save.click();
+    await expect(dialog.getByText('Enter the password again')).toBeVisible();
+    expect(fake.writes).toEqual([]);
     await dialog.getByLabel('Confirm new password').fill('e2e-Alice-Password-1');
     await save.click();
     await expect(dialog).toBeHidden();
@@ -287,7 +319,7 @@ test.describe('Users page SMB (fake data)', () => {
     expect(fake.writes[1]).toEqual({ method: 'POST', path: '/auth/users/4/smb/disable', body: { username: 'carol' } });
 
     await dialog.getByRole('button', { name: 'Close', exact: true }).click();
-    await expect(smbBadge(page, 'carol')).toHaveText('Off');
+    await expect(smbBadge(page, 'carol')).toHaveText('SMB off');
   });
 
   test('making a user with SMB or share access an administrator warns first', async ({ authenticatedPage: page }) => {
@@ -323,7 +355,7 @@ test.describe('Users page SMB (fake data)', () => {
     await dialog.getByRole('button', { name: 'Save' }).click();
     await expect(dialog).toBeHidden();
     expect(fake.writes).toEqual([{ method: 'PUT', path: '/auth/users/2', body: { username: 'alice', is_admin: true } }]);
-    await expect(smbBadge(page, 'alice')).toHaveText('Not available');
+    await expect(smbBadge(page, 'alice')).toHaveText('No SMB');
   });
 
   test('a user whose id now names someone else is refused, the dialog closed and the list reloaded', async ({
@@ -374,7 +406,7 @@ test.describe('Users page SMB (fake data)', () => {
     expect(fake.writes).toEqual([{ method: 'POST', path: '/auth/users/2/smb/disable', body: { username: 'alice' } }]);
     // mallory keeps SMB.
     expect(fake.users[1].smb.state).toBe('active');
-    await expect(smbBadge(page, 'mallory')).toHaveText('Active');
+    await expect(smbBadge(page, 'mallory')).toHaveText('SMB on');
   });
 
   test('deleting a user sends the name, and shows the warnings of the answer', async ({ authenticatedPage: page }) => {
@@ -466,7 +498,7 @@ test.describe('Users page SMB (fake data)', () => {
     expect(fake.writes).toEqual([
       { method: 'POST', path: '/auth/users/3/smb/enable', body: { username: 'bob', password: 'e2e-Bob-Password-1' } },
     ]);
-    await expect(smbBadge(page, 'bob')).toHaveText('Active');
+    await expect(smbBadge(page, 'bob')).toHaveText('SMB on');
   });
 
   test('turning SMB on with a password can be refused, and the dialog shows why', async ({
@@ -497,7 +529,7 @@ test.describe('Users page SMB (fake data)', () => {
       { method: 'POST', path: '/auth/users/3/smb/enable', body: { username: 'bob', password: 'e2e-Bob-Password-1' } },
     ]);
     await dialog.getByRole('button', { name: 'Close', exact: true }).click();
-    await expect(smbBadge(page, 'bob')).toHaveText('Password needed');
+    await expect(smbBadge(page, 'bob')).toHaveText('SMB: password needed');
   });
 
   test('a common password is refused for SMB, and the dialog shows why', async ({ authenticatedPage: page }) => {
@@ -519,7 +551,7 @@ test.describe('Users page SMB (fake data)', () => {
     await expect(alice.locator('.alert', { hasText: 'The change was not made' })).toContainText(COMMON_PASSWORD_RULE);
     await expect(pageAlert(page, 'error')).toHaveCount(0);
     await alice.getByRole('button', { name: 'Close', exact: true }).click();
-    await expect(smbBadge(page, 'alice')).toHaveText('Active');
+    await expect(smbBadge(page, 'alice')).toHaveText('SMB on');
 
     // bob needs a password: SMB is not turned on with a common one.
     await userRow(page, 'bob').getByRole('button', { name: 'Edit user bob' }).click();
@@ -535,7 +567,7 @@ test.describe('Users page SMB (fake data)', () => {
       { method: 'POST', path: '/auth/users/3/smb/enable', body: { username: 'bob', password: 'Qwerty123' } },
     ]);
     await bob.getByRole('button', { name: 'Close', exact: true }).click();
-    await expect(smbBadge(page, 'bob')).toHaveText('Password needed');
+    await expect(smbBadge(page, 'bob')).toHaveText('SMB: password needed');
   });
 
   test('Escape closes only the Turn off SMB confirmation over the edit dialog, then the edit dialog', async ({
@@ -684,7 +716,8 @@ test.describe('Users page SMB (fake data)', () => {
 
     await username.fill('Alicia');
     await expect(dialog.getByText('Use 1–32 lowercase letters, digits, _ or -, starting with a letter')).toBeVisible();
-    await expect(save).toBeDisabled();
+    await save.click();
+    expect(fake.writes).toEqual([]);
 
     await username.fill('alicia');
     await expect(dialog.getByText('The user signs in with the new name; their sessions end')).toBeVisible();
@@ -693,14 +726,17 @@ test.describe('Users page SMB (fake data)', () => {
         'SMB is on for alice: a rename needs a new password, which becomes the UNOS and SMB password of the new name',
       ),
     ).toBeVisible();
-    await expect(save).toBeDisabled();
+    await save.click();
+    await expect(dialog.getByText('Enter a password')).toBeVisible();
+    expect(fake.writes).toEqual([]);
 
     // The role changes in another save.
     await dialog.getByLabel('Administrator').check();
     await expect(dialog.getByText('Change the name and the role one at a time')).toBeVisible();
     await dialog.getByLabel('New password', { exact: true }).fill('e2e-Alicia-Password-1');
     await dialog.getByLabel('Confirm new password').fill('e2e-Alicia-Password-1');
-    await expect(save).toBeDisabled();
+    await save.click();
+    expect(fake.writes).toEqual([]);
     await dialog.getByLabel('Administrator').uncheck();
     await expect(dialog.getByText('Change the name and the role one at a time')).toHaveCount(0);
 
@@ -716,7 +752,7 @@ test.describe('Users page SMB (fake data)', () => {
     await expect(pageAlert(page, 'error')).toHaveCount(0);
     await expect(page.getByText('User "alice" renamed to "alicia"')).toBeVisible();
     await expect(userRow(page, 'alice')).toHaveCount(0);
-    await expect(smbBadge(page, 'alicia')).toHaveText('Active');
+    await expect(smbBadge(page, 'alicia')).toHaveText('SMB on');
     expect(fake.shares[0].access.map((a) => a.username)).toEqual(['alicia']);
   });
 
@@ -757,7 +793,13 @@ test.describe('Users page SMB (fake data)', () => {
 
     await userRow(page, 'carol').getByRole('button', { name: 'Delete user carol' }).click();
     const dialog = page.getByRole('dialog', { name: 'Delete user' });
-    await expect(dialog).toContainText('Are you sure you want to delete user carol? This action cannot be undone.');
+    await expect(dialog).toContainText('Delete user carol? This action cannot be undone.');
+    // What the deletion does, before it is done: carol's SMB is off, so no SMB account is named.
+    await expect(dialog.getByRole('listitem')).toHaveText([
+      'They are signed out everywhere; their API tokens and security keys are deleted.',
+      'Their access to shares and their group memberships are removed.',
+      'The files they made in the shares are kept.',
+    ]);
     await dialog.getByRole('button', { name: 'Cancel' }).click();
     await expect(dialog).toBeHidden();
     expect(fake.writes).toEqual([]);
@@ -792,19 +834,20 @@ test.describe('Users page in Russian (fake data)', () => {
     const cells = (username: string) => userRow(page, username).locator('td');
     await expect(cells('admin').nth(1)).toHaveText('Администратор');
     await expect(cells('alice').nth(1)).toHaveText('Пользователь');
-    await expect(cells('alice').nth(2)).toHaveText('Выключена');
-    // A date in the language of the page: the day first, on a 24-hour clock.
-    await expect(cells('alice').nth(4)).toHaveText('01.10.2026, 09:00:00');
+    await expect(cells('alice').nth(2)).toHaveText('2FA выключена');
+    // The day in the language of the page, the exact time as its hover text.
+    await expect(cells('alice').nth(4)).toHaveText('1 окт. 2026 г.');
+    await expect(cells('alice').nth(4)).toHaveAttribute('title', '1 октября 2026 г. в 09:00');
     await expect(cells('bob').nth(3).locator('[title]')).toHaveAttribute('title', RU_PASSWORD_NEEDED_HINT);
     // The server's reason as it comes.
     await expect(cells('Erin.Old').nth(3).locator('[title]')).toHaveAttribute('title', ERIN_REASON);
-    await expect(page.getByRole('heading', { name: 'Об управлении пользователями' })).toBeVisible();
-    // The minimum length with the plural form of its count.
-    await expect(page.getByText('Пароль должен содержать не менее 8 символов.')).toBeVisible();
-    await expect(page.getByText('2FA защищает только веб-интерфейс.')).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Об управлении пользователями' })).toHaveCount(0);
 
     await page.getByRole('button', { name: 'Добавить пользователя' }).click();
     const add = page.getByRole('dialog', { name: 'Новый пользователь' });
+    // The minimum length with the plural form of its count, under the field.
+    await expect(add.getByText('Не короче 8 символов')).toBeVisible();
+    await expect(add.getByText('Используется тот же пароль. В SMB нет двухфакторной аутентификации.')).toBeVisible();
     await expect(
       add.getByText('1–32 символа: строчные латинские буквы, цифры, _ или -; первый символ — буква'),
     ).toBeVisible();
@@ -817,7 +860,8 @@ test.describe('Users page in Russian (fake data)', () => {
     await add.getByLabel('Подтверждение пароля').fill('other');
     await expect(add.getByText('Пароли не совпадают')).toBeVisible();
     await expect(add.getByLabel('Разрешить доступ по SMB (сетевой доступ к файлам)')).not.toBeChecked();
-    await expect(add.getByRole('button', { name: 'Создать пользователя' })).toBeDisabled();
+    await add.getByRole('button', { name: 'Создать пользователя' }).click();
+    await expect(add).toBeVisible();
     await add.getByRole('button', { name: 'Отмена' }).click();
     await expect(add).toBeHidden();
 
@@ -826,7 +870,7 @@ test.describe('Users page in Russian (fake data)', () => {
     await expect(bob.getByRole('heading', { name: 'Роль', exact: true })).toBeVisible();
     await expect(bob.getByText(RU_PASSWORD_NEEDED_HINT)).toBeVisible();
     await expect(bob.getByLabel('Также включить SMB с этим паролем')).toBeChecked();
-    await expect(bob.getByText('Оставьте пустым, чтобы сохранить текущий пароль')).toBeVisible();
+    await expect(bob.getByText('Не короче 8 символов; оставьте пустым, чтобы сохранить текущий пароль')).toBeVisible();
     await bob.getByLabel('Администратор', { exact: true }).check();
     await expect(
       bob.getByText(
@@ -910,14 +954,14 @@ test.describe('SMB activation (stand-in)', () => {
     created.push(username);
 
     await page.goto('/users');
-    await expect(smbBadge(page, username)).toHaveText('Off');
+    await expect(smbBadge(page, username)).toHaveText('SMB off');
     await userRow(page, username).getByRole('button', { name: `Edit user ${username}` }).click();
     const dialog = page.getByRole('dialog', { name: `Edit user ${username}` });
     await dialog.getByLabel('Allow SMB access').check();
     // Allowed; the user turns it on with their password.
     await expect(dialog.getByText(PASSWORD_NEEDED_HINT)).toBeVisible();
     await dialog.getByRole('button', { name: 'Close', exact: true }).click();
-    await expect(smbBadge(page, username)).toHaveText('Password needed');
+    await expect(smbBadge(page, username)).toHaveText('SMB: password needed');
   });
 
   test('creating a user with SMB creates the user and says why SMB stayed off', async ({
@@ -939,7 +983,7 @@ test.describe('SMB activation (stand-in)', () => {
     await expect(
       page.getByText(/^User created, but SMB access could not be turned on: SMB accounts are not available/),
     ).toBeVisible();
-    await expect(smbBadge(page, username)).toHaveText('Off');
+    await expect(smbBadge(page, username)).toHaveText('SMB off');
   });
 
   test('creating a user with SMB and a common password is refused with the reason, and creates nobody', async ({
@@ -1090,8 +1134,8 @@ test.describe('Groups (fake data)', () => {
     await expect(groupsCard(page).getByRole('heading', { name: 'Groups (0)' })).toBeVisible();
     await expect(groupsCard(page).getByText('No groups yet.')).toBeVisible();
 
-    await groupsCard(page).getByRole('button', { name: 'New group' }).click();
-    let dialog = page.getByRole('dialog', { name: 'New group' });
+    await groupsCard(page).getByRole('button', { name: 'Add group' }).click();
+    let dialog = page.getByRole('dialog', { name: 'Add group' });
     // The rule of usernames, checked as it is typed.
     await dialog.getByLabel('Name', { exact: true }).fill('Family');
     await expect(dialog.getByText('Use 1–32 lowercase letters, digits, _ or -, starting with a letter')).toBeVisible();
@@ -1113,7 +1157,7 @@ test.describe('Groups (fake data)', () => {
     await expect(groupsCard(page).getByText('Group "family" created')).toBeVisible();
     const item = groupItem(page, 'family');
     // A member whose SMB is not on yet is marked with the state.
-    await expect(item.getByText(/^Members:/).locator('..')).toHaveText(/Members:\s*alice\s*bob\s*Password needed/);
+    await expect(item.getByText(/^Members:/).locator('..')).toHaveText(/Members:\s*alice\s*bob\s*SMB: password needed/);
     await expect(item.getByText('No share access yet: give it on the Shares page.')).toBeVisible();
 
     await item.getByRole('button', { name: 'Edit group family' }).click();
@@ -1155,7 +1199,7 @@ test.describe('Groups (fake data)', () => {
     await page.goto('/users');
     const item = groupItem(page, 'family');
     await expect(item.getByText(/^Access:/).locator('..')).toHaveText('Access: docs (Read & write), media (Read only)');
-    await expect(item.getByText(/^Members:/).locator('..')).toHaveText(/Members:\s*alice\s*carol\s*Off/);
+    await expect(item.getByText(/^Members:/).locator('..')).toHaveText(/Members:\s*alice\s*carol\s*SMB off/);
   });
 
   test('a name the server refuses, and a group changed meanwhile, are shown in the dialog', async ({
@@ -1166,8 +1210,8 @@ test.describe('Groups (fake data)', () => {
     await page.goto('/users');
 
     // A name that another group has.
-    await groupsCard(page).getByRole('button', { name: 'New group' }).click();
-    let dialog = page.getByRole('dialog', { name: 'New group' });
+    await groupsCard(page).getByRole('button', { name: 'Add group' }).click();
+    let dialog = page.getByRole('dialog', { name: 'Add group' });
     await dialog.getByLabel('Name', { exact: true }).fill('family');
     await dialog.getByRole('button', { name: 'Create group' }).click();
     await expect(dialog.locator('.alert', { hasText: 'Group was not created' })).toContainText(
@@ -1210,8 +1254,8 @@ test.describe('Groups (fake data)', () => {
     await expect(
       item.getByText('Доступа к общим папкам пока нет: выдайте его на странице «Общие папки».'),
     ).toBeVisible();
-    await groupsCard(page).getByRole('button', { name: 'Новая группа' }).click();
-    const dialog = page.getByRole('dialog', { name: 'Новая группа' });
+    await groupsCard(page).getByRole('button', { name: 'Добавить группу' }).click();
+    const dialog = page.getByRole('dialog', { name: 'Добавление группы' });
     await expect(dialog.getByLabel('Имя', { exact: true })).toBeVisible();
     await expect(dialog.getByRole('button', { name: 'Создать группу' })).toBeVisible();
     await dialog.getByRole('button', { name: 'Отмена' }).click();
@@ -1264,15 +1308,15 @@ test.describe('Groups', () => {
     }
 
     await page.goto('/users');
-    await groupsCard(page).getByRole('button', { name: 'New group' }).click();
-    const dialog = page.getByRole('dialog', { name: 'New group' });
+    await groupsCard(page).getByRole('button', { name: 'Add group' }).click();
+    const dialog = page.getByRole('dialog', { name: 'Add group' });
     await dialog.getByLabel('Name', { exact: true }).fill(group);
     await dialog.getByRole('checkbox', { name: new RegExp(`^${first}`) }).check();
     await dialog.getByRole('checkbox', { name: new RegExp(`^${second}`) }).check();
     await dialog.getByRole('button', { name: 'Create group' }).click();
     await expect(dialog).toBeHidden();
     await expect(groupItem(page, group).getByText(/^Members:/).locator('..')).toHaveText(
-      new RegExp(`Members:\\s*${first}\\s*Off\\s*${second}\\s*Off`),
+      new RegExp(`Members:\\s*${first}\\s*SMB off\\s*${second}\\s*SMB off`),
     );
 
     const listed = (await (await request.get('/api/v1/groups', { headers: headers() })).json()) as {
@@ -1310,7 +1354,7 @@ test.describe('Groups', () => {
     await userRow(page, second).getByRole('button', { name: `Delete user ${second}` }).click();
     await page.getByRole('dialog', { name: 'Delete user' }).getByRole('button', { name: 'Delete user' }).click();
     await expect(groupItem(page, group).getByText(/^Members:/).locator('..')).toHaveText(
-      new RegExp(`^\\s*Members:\\s*${renamed}\\s*Off\\s*$`),
+      new RegExp(`^\\s*Members:\\s*${renamed}\\s*SMB off\\s*$`),
     );
     expect((await stored()).members.map((m) => m.username)).toEqual([renamed]);
     expect(secondId).toBeGreaterThan(0);

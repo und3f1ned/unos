@@ -124,3 +124,44 @@ export function effectiveLevel(
 	if (levels.includes('write')) return 'write';
 	return levels.includes('read') ? 'read' : null;
 }
+
+// ---- What a save lowers ----
+
+const RANK: Record<AccessChoice, number> = { none: 0, read: 1, write: 2 };
+
+/** One access that a save lowers or removes: a user's or a group's, from one level to a lower one. */
+export interface Lowering {
+	kind: 'user' | 'group';
+	name: string;
+	from: ShareAccessLevel;
+	to: AccessChoice;
+}
+
+/**
+ * The entries of `before` whose level `after` lowers or removes, users first, each by name. Only
+ * these close the open connections to the share when it is saved (ADR-0103); a new or raised
+ * entry closes none.
+ */
+export function loweredAccess(
+	before: { users: ShareAccessEntry[]; groups: ShareGroupAccessEntry[] },
+	after: { users: ShareAccessEntry[]; groups: ShareGroupAccessEntry[] }
+): Lowering[] {
+	const lowered: Lowering[] = [];
+	for (const entry of before.users) {
+		const now = after.users.find((e) => e.user_id === entry.user_id && e.username === entry.username);
+		const to: AccessChoice = now?.level ?? 'none';
+		if (RANK[to] < RANK[entry.level]) lowered.push({ kind: 'user', name: entry.username, from: entry.level, to });
+	}
+	for (const entry of before.groups) {
+		const now = after.groups.find((e) => e.group_id === entry.group_id && e.group === entry.group);
+		const to: AccessChoice = now?.level ?? 'none';
+		if (RANK[to] < RANK[entry.level]) lowered.push({ kind: 'group', name: entry.group, from: entry.level, to });
+	}
+	return lowered;
+}
+
+/** The level that every one of `levels` has, or null when they differ (or there are none). */
+export function commonLevel(levels: AccessChoice[]): AccessChoice | null {
+	if (levels.length === 0) return null;
+	return levels.every((level) => level === levels[0]) ? levels[0] : null;
+}

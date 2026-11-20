@@ -146,7 +146,7 @@ test.describe('Emergency reset of an administrator', () => {
     await page.getByLabel('Search', { exact: true }).fill(LOCKED_OUT.username);
     await page.getByLabel('User', { exact: true }).fill('root');
     const entries = page.getByRole('region', { name: 'Timeline' }).getByRole('listitem');
-    await expect(entries).toHaveText([/Totp disabled/, /Password change/]);
+    await expect(entries).toHaveText([/Two-factor authentication turned off/, /Password change/]);
     await expect(entries.first()).toContainText(
       "Two-factor authentication turned off on the host's command line, with its recovery codes",
     );

@@ -200,7 +200,8 @@ test.describe('Two-factor authentication for every account', () => {
     await page.locator('aside nav a[href="/account"]').click();
     await expect(page).toHaveURL('/two-factor-setup');
     await expect(page.getByText('the time to set it up has ended')).toBeVisible();
-    await expect(page.locator('aside nav a')).toHaveCount(0);
+    // The sign-in card alone: no shell, no empty menu, no "Connecting…".
+    await expect(page.locator('aside')).toHaveCount(0);
     const refused = await request.get('/api/v1/auth/me/smb', { headers: before });
     expect([refused.status(), (await refused.json()).detail]).toEqual([403, SETUP_REQUIRED]);
     // Any other page leads back to the setup.
@@ -225,9 +226,11 @@ test.describe('Two-factor authentication for every account', () => {
     const { secret } = await (await setupAnswer).json();
     await expect(page.getByRole('img', { name: 'QR code for your authenticator app' })).toBeVisible();
     await expect(page.locator('code')).toHaveText(secret);
+    // The sixth digit sends the code: no button to press.
     await page.getByLabel('Enter the 6-digit code from your app').fill(await currentTotpCode(secret));
-    await page.getByRole('button', { name: 'Enable 2FA' }).click();
     await expect(page.getByText('Two-factor authentication is on')).toBeVisible();
+    // Still the card, until the account leaves it.
+    await expect(page.locator('aside')).toHaveCount(0);
 
     // The same session has the account's rights again.
     const after = await browserSession(page);

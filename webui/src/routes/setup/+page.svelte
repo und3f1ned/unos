@@ -1,22 +1,35 @@
 <script lang="ts">
-  import { Button } from '$lib/components/ui';
+  import { Button, Input } from '$lib/components/ui';
   import { AuthCard, FormError } from '$lib/components/auth';
   import { goto } from '$app/navigation';
-  import { setup, login } from '$lib/api/auth';
+  import { setup, login, USERNAME_PATTERN } from '$lib/api/auth';
   import { connectWebSocket } from '$lib/stores/stats';
+  import { MIN_PASSWORD_LENGTH } from '$lib/components/users/password';
   import { t } from '$lib/i18n';
+
 
   let username = $state('');
   let password = $state('');
   let confirmPassword = $state('');
   let error = $state('');
   let loading = $state(false);
+  // Create was pressed: every field says what is wrong with it, in the page's language, under the
+  // field, instead of the browser's own bubble.
+  let attempted = $state(false);
+
+  const usernameError = $derived(
+    !attempted ? '' : !username ? $t('setup.usernameRequired') : USERNAME_PATTERN.test(username) ? '' : $t('setup.usernameInvalid')
+  );
+  const passwordError = $derived(
+    attempted && password.length < MIN_PASSWORD_LENGTH ? $t('setup.passwordShort', { n: MIN_PASSWORD_LENGTH }) : ''
+  );
+  const confirmError = $derived(
+    attempted && confirmPassword !== password ? $t('setup.mismatch') : ''
+  );
 
   async function handleSubmit() {
-    if (password !== confirmPassword) {
-      error = $t('setup.mismatch');
-      return;
-    }
+    attempted = true;
+    if (usernameError || passwordError || confirmError) return;
 
     error = '';
     loading = true;
@@ -36,6 +49,7 @@
 
 <AuthCard intro={$t('setup.intro')}>
   <form
+    novalidate
     onsubmit={(event) => {
       event.preventDefault();
       handleSubmit();
@@ -46,48 +60,35 @@
       <FormError message={error} />
     {/if}
 
-    <div>
-      <label for="username" class="block text-sm font-medium text-content-secondary mb-1">
-        {$t('common.username')}
-      </label>
-      <input
-        type="text"
-        id="username"
-        bind:value={username}
-        class="form-input"
-        required
-      />
-    </div>
+    <Input
+      id="username"
+      label={$t('common.username')}
+      bind:value={username}
+      autocomplete="username"
+      maxlength={32}
+      hint={$t('setup.usernameHint')}
+      error={usernameError}
+    />
+    <Input
+      id="password"
+      type="password"
+      label={$t('common.password')}
+      bind:value={password}
+      autocomplete="new-password"
+      hint={$t('setup.passwordHint', { n: MIN_PASSWORD_LENGTH })}
+      error={passwordError}
+    />
+    <Input
+      id="confirmPassword"
+      type="password"
+      label={$t('setup.confirmPassword')}
+      bind:value={confirmPassword}
+      autocomplete="new-password"
+      error={confirmError}
+    />
 
-    <div>
-      <label for="password" class="block text-sm font-medium text-content-secondary mb-1">
-        {$t('common.password')}
-      </label>
-      <input
-        type="password"
-        id="password"
-        bind:value={password}
-        class="form-input"
-        required
-        minlength="8"
-      />
-    </div>
-
-    <div>
-      <label for="confirmPassword" class="block text-sm font-medium text-content-secondary mb-1">
-        {$t('setup.confirmPassword')}
-      </label>
-      <input
-        type="password"
-        id="confirmPassword"
-        bind:value={confirmPassword}
-        class="form-input"
-        required
-      />
-    </div>
-
-    <Button variant="primary" class="w-full" type="submit" disabled={loading}>
-      {loading ? $t('setup.creating') : $t('setup.create')}
+    <Button variant="primary" class="w-full" type="submit" loading={loading}>
+      {$t('setup.create')}
     </Button>
   </form>
 </AuthCard>

@@ -901,11 +901,14 @@ every served share below such a folder until the command has run.
    - **Protocol options** - **Require encryption**, **Time Machine backups of
      Macs** and **Previous Versions from snapshots**, each off by default:
      see [Protocol Options](#protocol-options)
-   - **Access** - For each user, and below them for each group (with its
-     members under it): No access, Read only or Read & write. **Everyone:
-     Read only** and **Everyone: Read & write** set the level of every user,
-     not of the groups; **Clear** sets every user and every group to No
-     access.
+   - **Access** - A table with a row for each user, then for each group
+     (with its members): who it is on the left, **None**, **Read** or
+     **Read & write** on the right. A user whose SMB is not on yet is shown
+     muted, with why (**SMB off**, with a link to turn it on in Users; **SMB
+     not on yet**; **No SMB**, with the reason): their access counts once
+     their SMB is on. The **All users** row sets every user at once, not the
+     groups; it shows no level while the users' levels differ. On a phone the
+     choice sits under the name.
 3. Click **Create**
 
 Folders that apps use (downloads, media) can be shared. SMB users with write
@@ -992,7 +995,9 @@ encryption required loses guest access at the restore, with a note.
   group's (and removing a member from a group, see [Groups](#groups)),
   turning guest access off, requiring encryption and turning Previous
   Versions off disconnect every open connection to that share; the computers
-  reconnect by themselves. Adding access disconnects nobody.
+  reconnect by themselves. **Save** then asks first, in **Close open
+  connections?**, which lists each such change; **Cancel** goes back to the
+  form. Adding access disconnects nobody and asks nothing.
 - **Repair permissions** fixes the permissions of the files that are already
   in the share (see below).
 - **Delete** removes the share; the folder and its files are kept. Open
@@ -1120,7 +1125,7 @@ Manager** → **Windows Credentials**.
 
 By default SMB listens on every network interface of the NAS. The card
 **Network interfaces** of the SMB tab shows where it listens, and the
-addresses that smbd answers on. **Choose interfaces…** limits SMB to the
+addresses that SMB answers on. **Choose interfaces…** limits SMB to the
 interfaces you tick, for example the wired network card when the NAS also
 has Wi-Fi, a second network card or a VPN: SMB then stops answering on the
 addresses of the others. The NAS itself (the loopback) always stays bound.
@@ -1266,7 +1271,8 @@ it, and the **iSCSI** tab says when the kernel lacks its modules.
 
 #### Adding a Target
 
-1. Go to **Shares**, open the **iSCSI** tab and click **Add target**
+1. Go to **Shares**, open the **iSCSI** tab and click **Add target** at the
+   top of the page
 2. Configure:
    - **Name** - 1 to 32 lowercase letters, digits and `-`. It becomes part of
      the target's name on the network, its IQN, such as
@@ -1294,7 +1300,7 @@ it, and the **iSCSI** tab says when the kernel lacks its modules.
 UNOS shows the secrets once, right after the target is made: enter them in
 the initiators then. They are kept on the NAS (`/data/iscsi_secrets.json`,
 readable by root only), never shown again, never in a log, the audit log or
-a backup; a lost one can only be replaced: **Change**, **Set a new CHAP
+a backup; a lost one can only be replaced: **Edit**, **Set a new CHAP
 secret**.
 
 Initiators connect to the NAS's addresses on your local network, port 3260,
@@ -1345,7 +1351,7 @@ disk.
 
 #### Changing and Deleting a Target
 
-**Change** sets the allowed initiators, a new CHAP secret, and mutual CHAP on
+**Edit** sets the allowed initiators, a new CHAP secret, and mutual CHAP on
 or off; an initiator removed from the list loses the disk at once. A new
 secret, and mutual CHAP turned on or off, end the sessions of every initiator
 of the target: they log in again with the new values. The name, the volume
@@ -1998,7 +2004,7 @@ one whose process the kernel ended for lack of memory.
 ### Creating Users
 
 1. Go to **Users** (administrators only)
-2. Click **Add User**
+2. Click **Add user**
 3. Enter:
    - Username: 1 to 32 lowercase letters, digits, `_` or `-`, starting with a
      letter. It must differ from every other username in more than letter
@@ -2008,7 +2014,7 @@ one whose process the kernel ended for lack of memory.
    - Password (twice, at least 8 characters)
    - **Allow SMB (network file) access** (optional): turns SMB on for the new
      user with this password (see [SMB Access](#smb-access))
-4. Click **Create User**
+4. Click **Create user**. A field that is missing or wrong says so under it.
 
 New accounts are regular users. To make one an administrator, edit it and
 tick **Administrator privileges**.
@@ -2046,7 +2052,7 @@ and the page shows why.
 ### Groups
 
 A group gives several users the same access to shares. Under **Groups** on
-the **Users** page, click **New group**, enter a name (1 to 32 lowercase
+the **Users** page, click **Add group**, enter a name (1 to 32 lowercase
 letters, digits, `_` or `-`, starting with a letter; no two groups may have
 the same name in any letter case) and tick its members, then click **Create
 group**. Administrators are not listed, since they cannot use SMB, and users
@@ -2094,13 +2100,13 @@ it. The **SMB** column of the **Users** page shows each user's state:
 
 | State | Meaning |
 |-------|---------|
-| Active | The user can open shares over SMB with their UNOS username and password |
-| Password needed | SMB is allowed, but Samba does not have the user's password yet |
-| Off | SMB is not allowed for the user |
-| Not available | Administrators, and usernames that SMB cannot use |
+| SMB on | The user can open shares over SMB with their UNOS username and password |
+| SMB: password needed | SMB is allowed, but Samba does not have the user's password yet |
+| SMB off | SMB is not allowed for the user |
+| No SMB | Administrators, and usernames that SMB cannot use |
 
 To allow SMB for a user, edit the user and turn on **Allow SMB access**. The
-state is then **Password needed**, and SMB is turned on with a password in
+state is then **SMB: password needed**, and SMB is turned on with a password in
 one of two ways:
 - the user goes to **Account** → **File sharing**, enters their
   current password (and their two-factor code, if they use 2FA) and clicks
@@ -2165,7 +2171,7 @@ at once, the **Account** page shows a short warning without details; the
 details are in the supervisor's log.
 
 After a backup is restored, a user whose password changed since the backup
-was made shows **Password needed** and must turn SMB on again.
+was made shows **SMB: password needed** and must turn SMB on again.
 
 ### Changing Passwords
 
@@ -3390,7 +3396,7 @@ SMB after a restore:
   back without access to shares. A backup of a UNOS from before shares were
   stored in the database is refused.
 - SMB keeps working for users whose password did not change since the backup
-  was made. Everyone else shows **Password needed** and must turn SMB on
+  was made. Everyone else shows **SMB: password needed** and must turn SMB on
   again (see [SMB Access](#smb-access)), and so must a user whose SMB user id
   belongs to another account on this NAS (for example in a backup of another
   installation), or once went to a user of another name who was deleted from

@@ -21,7 +21,8 @@ const WINDOWS = 'iqn.1991-05.com.microsoft:desktop-abc123';
 async function openIscsiTab(page: Page) {
   await page.goto('/shares');
   await page.getByRole('tab', { name: 'iSCSI' }).click();
-  await expect(page.getByRole('heading', { name: 'iSCSI targets', exact: true })).toBeVisible();
+  // The tab has no card title repeating it: its line about targets ends the first load.
+  await expect(page.getByText(/^A target gives a computer a disk of its own/)).toBeVisible();
 }
 
 const targetItem = (page: Page, name: string) => page.locator(`li[data-target="${name}"]`);
@@ -122,8 +123,8 @@ test.describe('iSCSI targets', () => {
     const fake = await fakeIscsiApi(page, { targets: [fakeTarget('backup')] });
     await openIscsiTab(page);
 
-    await targetItem(page, 'backup').getByRole('button', { name: 'Change' }).click();
-    const dialog = page.getByRole('dialog', { name: 'Change backup' });
+    await targetItem(page, 'backup').getByRole('button', { name: 'Edit target backup' }).click();
+    const dialog = page.getByRole('dialog', { name: 'Edit backup' });
     await expect(dialog.getByLabel('Allowed initiators')).toHaveValue(LINUX);
     await dialog.getByLabel('Allowed initiators').fill(`${LINUX}\n${WINDOWS}`);
     await dialog.getByLabel('Set a new CHAP secret').check();
@@ -185,6 +186,8 @@ test.describe('iSCSI targets', () => {
     await expect(item.getByText(NO_SECRET)).toBeVisible();
     await expect(page.getByText("The host's kernel has no iSCSI target (LIO)")).toBeVisible();
     await expect(page.getByText('The host has no address of the local network')).toBeVisible();
+    // The header's Add target is disabled, and says why under it.
     await expect(page.getByRole('button', { name: 'Add target' })).toBeDisabled();
+    await expect(page.getByText("The host's kernel has no iSCSI target", { exact: true })).toBeVisible();
   });
 });
