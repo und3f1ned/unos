@@ -3,7 +3,9 @@
 -r requirements.txt
 pytest==9.2.0
 pytest-asyncio==1.4.1.post1
+# make test measures the coverage of src with them (ADR-0442).
 pytest-cov==7.1.0
+coverage==7.17.2
 # make test runs the tests in parallel worker processes (ADR-0383).
 pytest-xdist==3.8.0
 # tests/test_authz.py reads the compose files (also pulled in by uvicorn[standard]).

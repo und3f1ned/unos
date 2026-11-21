@@ -13,6 +13,7 @@ GIT_DIR and GIT_INDEX_FILE pointing at a repository that must stay unchanged).
 from __future__ import annotations
 
 import ast
+import configparser
 import functools
 import hashlib
 import importlib.util
@@ -181,8 +182,140 @@ def test_the_tests_run_in_workers_with_pytest_xdist_and_in_one_process_without(t
 
     assert result.returncode == 0, result.stderr
     assert result.stdout.splitlines()[-1].split() == (
-        f"python -m pytest tests/ -q --tb=short --ignore=tests/fixtures {options}".split())
+        f"python -m pytest tests/ -q --tb=short --ignore=tests/fixtures {options} {COVERAGE}".split())
     assert ("make test: pytest-xdist is not installed" in result.stdout) == (xdist == "1")
+
+
+# --- the coverage of make test and its floor (ADR-0442) -------------------------------------
+
+# pytest-cov's options in make test: the line coverage of supervisor/src, its total only.
+COVERAGE = "--cov=src --cov-report="
+COVERAGERC = REPO_ROOT / "supervisor" / ".coveragerc"
+
+
+def test_make_test_measures_the_coverage_of_src_when_it_runs_every_test():
+    """make test over every test measures supervisor/src, whatever PYTEST_ARGS say, so that no option
+    turns the floor off; a part named in TESTS, make test-fast and make smoke measure nothing: their
+    coverage is not the backend's, and the pre-commit hook stays fast. Each run writes its own data
+    file (the shell's pid) and leaves it as supervisor/.coverage."""
+    every = [make("-n", "test", "PYTHON=true", *extra).stdout
+             for extra in ((), ("TESTS=tests/",), ("TESTS=tests",), ("TESTS=./tests/",), ("PYTEST_ARGS=-x",),
+                           ("PYTEST_ARGS=-k smb",))]
+    parts = [make("-n", "test", "PYTHON=true", extra).stdout
+             for extra in ("TESTS=tests/test_auth.py", "TESTS=tests/test_auth.py tests/test_smbconf.py")]
+    others = [make("-n", target, "PYTHON=true").stdout for target in ("test-fast", "smoke", "check-fast")]
+
+    assert [run for run in every if not re.search(
+        rf"^cd supervisor && COVERAGE_FILE=\.coverage\.run\$\$ true -m pytest \S+ -q --tb=short "
+        rf"--ignore=tests/fixtures -n auto {re.escape(COVERAGE)} .*; status=\$\?; "
+        r"mv -f \.coverage\.run\$\$ \.coverage 2> /dev/null; exit \$status$", run, re.M)] == []
+    assert [run for run in parts + others if "--cov" in run or "COVERAGE_FILE" in run] == []
+    assert [run for run in parts if "make test: no coverage for a part of the tests" not in run] == []
+    assert f"-n auto {COVERAGE}" in make("-n", "check", "PYTHON=true").stdout
+
+
+def read_coveragerc(text: str, where: Path):
+    """coverage's own reading of a .coveragerc of this text, written to ``where``."""
+    coverage = pytest.importorskip("coverage", reason="make setup installs coverage")
+    where.write_text(text)
+    return coverage.Coverage(config_file=str(where))
+
+
+def coverage_floor(text: str, where: Path) -> float:
+    """The floor of a .coveragerc's text as coverage reads it (0 without one)."""
+    return read_coveragerc(text, where).get_option("report:fail_under")
+
+
+def test_the_floor_is_a_whole_percent_kept_in_supervisor_coveragerc_alone(tmp_path):
+    text = COVERAGERC.read_text()
+    settings = read_coveragerc(text, tmp_path / ".coveragerc")
+    floor = settings.get_option("report:fail_under")
+    sections = configparser.ConfigParser()
+    sections.read_string(text)
+    # Where a floor is set: a fail_under of coverage's settings or pytest-cov's --cov-fail-under.
+    places = subprocess.run(["git", "grep", "--untracked", "-l", "-E", "-e", "fail_under[[:space:]]*=",
+                             "-e", "cov-fail-under", "--", ":!docs/adr/"],
+                            cwd=REPO_ROOT, capture_output=True, text=True, timeout=60,
+                            env=without_git_variables(os.environ)).stdout.split()
+    # coverage's default exclusion: a line marked so counts as no statement (ADR-0442).
+    pragmas = subprocess.run(["git", "grep", "--untracked", "-n", "-i", "-E",
+                              "#[[:space:]]*pragma[:[:space:]]?[[:space:]]*no[[:space:]]*cover", "--", "supervisor/src"],
+                             cwd=REPO_ROOT, capture_output=True, text=True, timeout=60,
+                             env=without_git_variables(os.environ)).stdout.splitlines()
+
+    assert floor == int(floor) and 0 < floor <= 100
+    # Two decimals: with coverage's default of none, 85.71 would round up to a floor of 86 and pass.
+    assert settings.get_option("report:precision") == 2
+    # Nothing else: an omit or an exclusion would raise the measure as a lower floor would.
+    assert {name: set(sections[name]) for name in sections.sections()} == {"report": {"fail_under", "precision"}}
+    assert pragmas == []
+    assert [place for place in places if not place.startswith(("supervisor/tests/", "docs/TESTING.md"))] == [
+        "supervisor/.coveragerc"]
+
+
+def committed_floors(repo: Path, env: dict, scratch: Path) -> dict[str, float]:
+    """The floor of supervisor/.coveragerc at each commit of HEAD's history that changed the file."""
+    log = subprocess.run(["git", "log", "--full-history", "--format=%H", "HEAD", "--", "supervisor/.coveragerc"],
+                         cwd=repo, capture_output=True, text=True, timeout=60, env=env)
+    assert log.returncode == 0, log.stderr
+    floors = {}
+    for commit in log.stdout.split():
+        shown = subprocess.run(["git", "show", f"{commit}:supervisor/.coveragerc"], cwd=repo, capture_output=True,
+                               text=True, timeout=60, env=env)
+        if shown.returncode == 0:  # not at a commit that deleted it
+            floors[commit] = coverage_floor(shown.stdout, scratch / f"{commit}.coveragerc")
+    return floors
+
+
+def floors_above(floor: float, floors: dict[str, float]) -> dict[str, float]:
+    """The committed floors above ``floor``, by their commit's short id."""
+    return {commit[:12]: committed for commit, committed in floors.items() if committed > floor}
+
+
+def test_the_floor_only_rises(tmp_path):
+    """The floor of the working tree is not below one committed before it, on this branch or on
+    the branches merged into it, mvp.batch-19's included once it has one."""
+    env = without_git_variables(os.environ)
+    if shutil.which("git") is None:
+        pytest.skip("git is not installed (the chroot of scripts/dev/linux-tests.sh has none)")
+    inside = subprocess.run(["git", "rev-parse", "--verify", "-q", "HEAD"], cwd=REPO_ROOT, capture_output=True,
+                            text=True, timeout=60, env=env)
+    if inside.returncode != 0:
+        pytest.skip("not a git work tree with a commit (scripts/dev/linux-tests.sh bundles the files alone)")
+    floor = coverage_floor(COVERAGERC.read_text(), tmp_path / ".coveragerc")
+
+    assert floors_above(floor, committed_floors(REPO_ROOT, env, tmp_path)) == {}
+
+
+def test_a_floor_below_a_committed_one_is_refused(tmp_path):
+    if shutil.which("git") is None:
+        pytest.skip("git is not installed (the chroot of scripts/dev/linux-tests.sh has none)")
+    repo = tmp_path / "repo"
+    (repo / "supervisor").mkdir(parents=True)
+    env = isolated_git_env(tmp_path / "home")
+    subprocess.run(["git", "init", "-q"], cwd=repo, env=env, check=True, timeout=30)
+    commits = {}
+    # Raised, then disabled in a section that coverage reads before [report], deleted, written lower.
+    texts = {70: "[report]\nfail_under = 70\n", 75: "[report]\nfail_under = 75\n",
+             0: "[coverage:report]\nprecision = 2\n[report]\nfail_under = 90\n", None: None,
+             72: "[report]\nfail_under = 72\n"}
+    for floor, text in texts.items():
+        rc = repo / "supervisor" / ".coveragerc"
+        if text is None:
+            rc.unlink()
+        else:
+            rc.write_text(text)
+        subprocess.run(["git", "add", "-A"], cwd=repo, env=env, check=True, timeout=30)
+        subprocess.run(["git", "commit", "-q", "-m", f"floor {floor}"], cwd=repo, env=env, check=True, timeout=30)
+        commits[floor] = subprocess.run(["git", "rev-parse", "HEAD"], cwd=repo, env=env, capture_output=True,
+                                        text=True, check=True, timeout=30).stdout.strip()
+
+    floors = committed_floors(repo, env, tmp_path)
+
+    assert floors == {commits[70]: 70, commits[75]: 75, commits[0]: 0, commits[72]: 72}
+    assert floors_above(72, floors) == {commits[75][:12]: 75}
+    assert floors_above(75, floors) == {} and floors_above(76, floors) == {}
+    assert coverage_floor(texts[0], tmp_path / "disabled.coveragerc") == 0  # the 90 of [report] is ignored
 
 
 def test_the_defaults_are_the_environments_of_make_setup(tmp_path):
@@ -1864,9 +1997,11 @@ def test_gitignore_covers_the_local_environments_and_a_linked_node_modules(tmp_p
     subprocess.run(["git", "init", "-q"], cwd=repo, env=env, check=True, timeout=30)
     (tmp_path / "modules").mkdir()
     (repo / "webui" / "node_modules").symlink_to(tmp_path / "modules")
+    # make test's coverage data and that of its workers (ADR-0442): a file that git does not ignore
+    # would change the state of the tree that a green run records.
     for path in ("supervisor/.venv/bin/python", ".venv-lint/bin/ruff", ".standin/data/unos.db", "dev.env",
                  "tmp/guard/denials.log", "tmp/stop-check/green", "tmp/dev/backup/x/unos-data.tar",
-                 ".claude/settings.local.json"):
+                 ".claude/settings.local.json", "supervisor/.coverage", "supervisor/.coverage.host.4711.XkqaPmzx"):
         (repo / path).parent.mkdir(parents=True, exist_ok=True)
         (repo / path).write_text("x\n")
 

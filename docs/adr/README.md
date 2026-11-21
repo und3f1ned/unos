@@ -516,6 +516,7 @@ and this index, and `make check-fast` runs it.
 | [0383](0383-backend-tests-run-in-parallel-with-paths-of-their-own-and-a-green-tree-skips-the-pre-commit-check.md) | Backend tests run in parallel with paths of their own, and a green tree skips the pre-commit check | accepted | 2026-11-17 |
 | [0433](0433-a-feature-runs-the-e2e-specs-of-its-area-and-the-full-suite-runs-once-per-batch.md) | A feature runs the E2E specs of its area, and the full suite runs once per batch | accepted | 2026-11-20 |
 | [0439](0439-each-worktree-runs-a-compose-test-stack-of-its-own-with-a-project-ports-and-a-subnet-derived-from-its-path.md) | Each worktree runs a compose test stack of its own, with a project, ports and a subnet derived from its path | accepted | 2026-11-21 |
+| [0442](0442-the-backend-tests-measure-their-line-coverage-and-fail-below-a-floor-that-only-rises.md) | The backend tests measure their line coverage and fail below a floor that only rises | accepted | 2026-11-21 |
 
 ## CI
 
