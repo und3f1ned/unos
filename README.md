@@ -103,7 +103,7 @@ UNOS turns any Debian or Ubuntu machine into a full-featured NAS server with a m
 
 ### System Updates
 - **Update script** - `sudo /opt/unos/deploy/update.sh` updates UNOS from its git branch, backs up the database and the data volume first, and rolls back automatically if the new version does not start
-- **Version check** - System > Updates shows the installed version and the latest release on GitHub, and names the update script
+- **Version check** - System > Updates shows the installed version and the latest release on GitHub, and names the update script; Install, Rollback and the automatic install from the web UI are built up to the part that is still to be decided (where a release's images come from and how UNOS replaces its own container, ADR-0443)
 
 ### Planned
 

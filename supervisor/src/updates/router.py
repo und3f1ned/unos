@@ -1,10 +1,9 @@
 """API router for update endpoints."""
 
-import asyncio
 import logging
 from typing import Annotated
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 
@@ -17,9 +16,8 @@ from .schemas import (
     UpdateConfig,
     UpdateHistoryEntry,
     UpdateProgress,
-    UpdateStatus,
 )
-from .updater import UpdateError, get_updater
+from .updater import UpdateConflict, UpdateError, get_updater
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +34,8 @@ _GITHUB_FAILED = {
     500: "The request failed unexpectedly.",
     502: "GitHub could not be asked, or answered with an error.",
 }
-_RUNS = "An update or a rollback runs."
+_REFUSED = ("An update or a rollback runs, a restore of a backup runs, or this NAS cannot install releases: "
+            "install_unavailable of GET /updates/progress says why (ADR-0443).")
 
 
 @router.get("/current", response_model=CurrentVersion, summary="Read the installed version")
@@ -107,86 +106,64 @@ async def get_latest_release(
     "/install", summary="Install an update",
     responses={
         **answer({"status": "started", "message": "Installing update to v1.3.0", "version": "v1.3.0"},
-                 "status started, a message and the release's tag; GET /updates/progress shows how it goes."),
+                 "status started, a message and the release's tag; GET /updates/progress and the events "
+                 "socket show how it goes."),
         **errors({
-            400: "That release is installed already, or GitHub could not be asked for it.",
+            400: "The installed version is that release or newer, or unknown, or GitHub could not be asked.",
             404: "GitHub lists no release, or version is not the tag of the latest stable release.",
-            409: _RUNS,
+            409: _REFUSED,
             500: "The update could not be started.",
         }),
     },
 )
 async def install_update(
-    background_tasks: BackgroundTasks,
     version: Annotated[str | None, Query(
         description="The tag of the latest stable release, such as v1.3.0; none for that release."
     )] = None,
     _: dict = Depends(verify_token),
 ):
     """
-    Install an update.
+    Install an update in the background: the release's images, a backup of the database, the switch
+    to the release and its health check; a switch that fails or a release that does not answer in
+    time is rolled back (ADR-0443).
 
     If version is not specified, installs the latest stable release; a version that is not its tag
-    answers 404. The update backs up the installed version first.
-    The update runs in the background - poll /updates/progress to monitor status.
+    answers 404.
     """
     updater = get_updater()
-
-    # Check if update is already in progress
-    progress = updater.get_progress()
-    if progress.status not in [UpdateStatus.IDLE, UpdateStatus.COMPLETED, UpdateStatus.FAILED]:
-        raise HTTPException(
-            status_code=409,
-            detail=f"Update already in progress: {progress.status.value}",
-        )
+    refusal = updater._refusal()
+    if refusal:
+        raise HTTPException(status_code=409, detail=refusal)
 
     try:
-        # Get the release to install
-        if version:
-            # Fetch specific version (would need to add this method)
-            release = await updater.fetch_latest_release()
-            if release is None or release.tag_name != version:
-                raise HTTPException(status_code=404, detail=f"Version {version} not found")
-        else:
-            release = await updater.fetch_latest_release()
-            if release is None:
-                raise HTTPException(status_code=404, detail="No releases available")
-
-        # Check if already on this version
-        current = await updater.get_current_version()
-        if current.version == release.tag_name:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Already running version {release.tag_name}",
-            )
-
-        # Start update in background
-        async def run_update():
-            try:
-                await updater.install_update(release)
-            except Exception as e:
-                logger.error(f"Background update failed: {e}")
-
-        background_tasks.add_task(asyncio.create_task, run_update())
-
-        return {
-            "status": "started",
-            "message": f"Installing update to {release.tag_name}",
-            "version": release.tag_name,
-        }
-
+        release = await updater.fetch_latest_release()
+        if release is None:
+            raise HTTPException(status_code=404, detail="No releases available")
+        if version and release.tag_name != version:
+            raise HTTPException(status_code=404, detail=f"Version {version} not found")
+        # 400 for a version that runs already or is newer (a build after the release's tag), and for
+        # an unknown one, which an update could not roll back to.
+        updater.start_install(release)
     except HTTPException:
         raise
+    except UpdateConflict as e:
+        raise HTTPException(status_code=409, detail=str(e))
     except UpdateError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception:
         logger.exception("Failed to start the update")
         raise HTTPException(status_code=500, detail="Failed to start update")
+    return {
+        "status": "started",
+        "message": f"Installing update to {release.tag_name}",
+        "version": release.tag_name,
+    }
 
 
 @router.get("/progress", response_model=UpdateProgress, summary="Read the update's progress")
 async def get_update_progress(_: dict = Depends(verify_token)):
-    """Get the current update progress: of the update or rollback that runs, or of the last one."""
+    """The update or rollback that runs, or the last one; whether one can roll back; why none can run
+    on this NAS; and the automatic install's next look."""
     updater = get_updater()
     return updater.get_progress()
 
@@ -195,98 +172,64 @@ async def get_update_progress(_: dict = Depends(verify_token)):
     "/rollback", summary="Roll back the last update",
     responses={
         **answer({"status": "started", "message": "Rolling back to previous version"},
-                 "status started and a message; GET /updates/progress shows how it goes."),
+                 "status started and a message; GET /updates/progress and the events socket show how it goes."),
         **errors({
-            400: "No update backed up the version before it: can_rollback of GET /updates/progress is false.",
-            409: _RUNS,
+            400: "No backup of the version before the one that runs: can_rollback of GET /updates/progress is false.",
+            409: _REFUSED,
         }),
     },
 )
-async def rollback_update(
-    background_tasks: BackgroundTasks,
-    _: dict = Depends(verify_token),
-):
+async def rollback_update(_: dict = Depends(verify_token)):
     """
-    Rollback to the previous version, in the background.
+    Roll back to the version before the last update, in the background: its database from the
+    backup the update made, then its containers, and its health check.
 
-    Only available once an update has backed up the version before it (can_rollback), also when
-    that update failed later.
+    Only available once an update has switched to a release after its backup (can_rollback), also
+    when that update failed later and its own rollback failed too.
     """
     updater = get_updater()
-
-    progress = updater.get_progress()
-    if not progress.can_rollback:
-        raise HTTPException(
-            status_code=400,
-            detail="Rollback not available - no recent backup exists",
-        )
-
-    if progress.status not in [UpdateStatus.IDLE, UpdateStatus.COMPLETED, UpdateStatus.FAILED]:
-        raise HTTPException(
-            status_code=409,
-            detail=f"Cannot rollback during update: {progress.status.value}",
-        )
-
-    async def run_rollback():
-        try:
-            await updater.rollback()
-        except Exception as e:
-            logger.error(f"Background rollback failed: {e}")
-
-    background_tasks.add_task(asyncio.create_task, run_rollback())
-
+    try:
+        updater.start_rollback()
+    except UpdateConflict as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    except UpdateError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     return {"status": "started", "message": "Rolling back to previous version"}
-
-
-@router.post(
-    "/reset", summary="Reset the update's state",
-    responses={
-        **answer({"status": "ok", "message": "Update status reset"}, "status ok and a message."),
-        **errors({409: "An update downloads or installs, or a rollback runs."}),
-    },
-)
-async def reset_update_status(_: dict = Depends(verify_token)):
-    """Reset the update status to idle (useful after failed updates); can_rollback turns false."""
-    updater = get_updater()
-    progress = updater.get_progress()
-
-    if progress.status in [UpdateStatus.DOWNLOADING, UpdateStatus.INSTALLING, UpdateStatus.ROLLBACK]:
-        raise HTTPException(
-            status_code=409,
-            detail="Cannot reset while update is in progress",
-        )
-
-    updater.reset_progress()
-    return {"status": "ok", "message": "Update status reset"}
 
 
 @router.get("/history", response_model=list[UpdateHistoryEntry], summary="List the updates made")
 async def get_update_history(_: dict = Depends(verify_token)):
-    """Get the update history: the last 50 updates, newest first; rollbacks are not in it."""
+    """Get the update history: the last 50 updates, newest first; rollbacks by hand are not in it, a
+    failed update's own rollback is in its error."""
     updater = get_updater()
     return await updater.get_update_history()
 
 
 @router.get("/config", response_model=UpdateConfig, summary="Read the update settings")
 async def get_update_config(_: dict = Depends(verify_token)):
-    """Get the update configuration, or the defaults when none is stored. Nothing acts on it yet:
-    updates are checked and installed only on request."""
+    """The automatic install's settings, or the defaults when none are stored."""
     updater = get_updater()
     return await updater.get_config()
 
 
 @router.put(
     "/config", response_model=UpdateConfig, summary="Save the update settings",
-    responses=errors(BODY, {500: "The settings could not be written."}),
+    responses=errors(BODY, {
+        409: "auto_install is true where this NAS cannot install releases (install_unavailable).",
+        500: "The settings could not be written.",
+    }),
 )
 async def update_config(
     config: UpdateConfig,
     _: dict = Depends(verify_token),
 ):
-    """Update the update configuration, and answer it. Nothing acts on it yet."""
+    """Store the automatic install's settings, and answer them. The next look is one interval after
+    the change (next_automatic_check of GET /updates/progress)."""
     updater = get_updater()
     try:
         await updater.save_config(config)
         return config
+    except UpdateConflict as e:
+        raise HTTPException(status_code=409, detail=str(e))
     except UpdateError as e:
         raise HTTPException(status_code=500, detail=str(e))

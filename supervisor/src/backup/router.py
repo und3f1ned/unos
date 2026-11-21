@@ -174,6 +174,7 @@ def restore_running() -> bool:
     return _restore_running
 
 SMB_REPAIRED_AT_START = "SMB state is repaired at the next start"
+UPDATE_RUNS = "An update or a rollback of UNOS runs: restore when it has ended"
 
 
 class BackupValidationError(Exception):
@@ -1458,7 +1459,7 @@ async def upload_backup(request: Request, user=Depends(verify_token)):
         **errors(BODY, _NOT_A_BACKUP, {
             400: "The name is not a backup's file name, an encrypted backup has no passphrase or a wrong one, or "
                  "the archive or its database fails the checks of a restore.",
-            409: "Another restore runs.",
+            409: "Another restore runs, or an update or a rollback of UNOS (ADR-0443).",
             500: "The restore failed otherwise, for example when the database stayed busy.",
             503: "The list of pools in the host's fstab, which the SMB checks of the backup's database need, "
                  "cannot be read: nothing was restored.",
@@ -1481,6 +1482,11 @@ async def restore_backup(
     its database into /tmp (a tmpfs in RAM in the container); when it does
     not fit, the answer is 507 and nothing was restored.
     """
+    # An update of UNOS backs up the database and puts that copy back when it rolls back (ADR-0443).
+    from ..updates.updater import get_updater
+
+    if get_updater().running():
+        raise HTTPException(409, UPDATE_RUNS)
     ensure_backup_dir()
     backup_path = _backup_path(filename)
     if not _is_regular_file(backup_path):

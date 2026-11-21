@@ -261,7 +261,7 @@ STATE_FILES = [
               lambda: _run(updates.Updater()._add_history_entry("1.0.0", "1.1.0", "completed", _NOW)),
               lambda: _run(updates.Updater().get_update_history()), []),
     StateFile("update_config.json", updates, "UPDATE_CONFIG_FILE",
-              lambda: _run(updates.Updater().save_config(UpdateConfig(auto_install=True))),
+              lambda: _run(updates.Updater().save_config(UpdateConfig(check_interval_hours=12))),
               lambda: _run(updates.Updater().get_config()), UpdateConfig()),
     StateFile("scheduled_tasks.json", scheduler, "TASKS_FILE",
               lambda: scheduler.save_tasks([_TASK]), scheduler.load_tasks, []),

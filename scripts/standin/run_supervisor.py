@@ -48,8 +48,9 @@ The stand-in keeps the supervisor away from this machine's system:
   suspend it, to cancel its shutdowns and to change Wake-on-LAN (ADR-0233),
   and the UPS monitor sees a container (container=docker), so it never shuts
   this machine down.
-* UNOS_INSTALL_DIR names a folder that does not exist: the updater never runs
-  git or docker compose in a checkout.
+* The updater installs nothing: its release installer is not decided
+  (src/updates/installer.py, ADR-0443), so Install Update, Rollback and the
+  automatic install refuse with its reason.
 * The served certificate (ADR-0404) is data/served-certificate/served.pem, which
   front.mjs serves from its next connection on, while it loads, as Caddy would
   after a reload: the supervisor's handshake asks front.mjs (--front-https-port,
@@ -136,7 +137,6 @@ def stand_in_environment(state: Path, *, front_https_port: int = DEFAULT_FRONT_H
         "UNOS_WEBUI_TLS_PORT": str(front_https_port),
         "UNOS_DOCKER_SOCKET": str(no_docker),
         "DOCKER_HOST": f"unix://{no_docker}",
-        "UNOS_INSTALL_DIR": str(state / "no-install"),
         "UNOS_HOST_EXEC": "local",
         "UNOS_DISABLE_BACKGROUND_TASKS": "1",
         "container": "docker",

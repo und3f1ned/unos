@@ -48,6 +48,11 @@ services:
       # Caddy imports read-only (ADR-0420).
       - app-names:/app-names
       - /var/run/docker.sock:/var/run/docker.sock
+      # The copies of the database that the in-app updater makes before an update, beside those of
+      # update.sh, in folders that only root reads (UNOS_UPDATE_BACKUP_DIR's default): on the host's
+      # disk, so that a rollback still has them after the supervisor's container was replaced
+      # (ADR-0443).
+      - /var/lib/unos/backups:/var/lib/unos/backups
       - /etc/samba:/etc/samba
       - /etc/os-release:/host/os-release:ro
       - type: bind

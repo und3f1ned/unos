@@ -1318,6 +1318,58 @@ class TestTheInstallsOnTheEventsSocket:
             assert [ws.receive_json()["type"] for _ in range(10)] == ["stats"] * 10
 
 
+class TestTheUpdateOnTheEventsSocket:
+    """The events socket sends administrators the progress of an update of UNOS (ADR-0443)."""
+
+    @pytest.fixture
+    def updater(self, monkeypatch, tmp_path):
+        updater_module = importlib.import_module("src.updates.updater")
+        monkeypatch.setattr(updater_module, "UPDATE_STATE_FILE", tmp_path / "update_state.json")
+        updater = updater_module.Updater()
+        monkeypatch.setattr(updater_module, "_updater", updater)
+        return updater
+
+    def _step(self, updater, status, message: str) -> None:
+        from src.updates.schemas import UpdateStatus
+
+        updater._progress.action, updater._progress.version = "update", "v1.3.0"
+        updater._update_progress(UpdateStatus(status), 50, message)
+
+    def test_an_administrator_gets_each_step_once_one_ran(self, client, admin_token, fast_recheck, alerts,
+                                                          no_repair, updater):
+        with client.websocket_connect("/ws/v1/events") as ws:
+            _auth(ws, admin_token)
+            assert ws.receive_json() == {"type": "auth_ok"}
+            assert ws.receive_json()["type"] == "problems"
+            assert ws.receive_json()["type"] == "repair"
+            # None ran since the start: no message.
+            assert ws.receive_json()["type"] == "stats"
+
+            self._step(updater, "verifying", "Waiting for v1.3.0 to answer")
+            message = ws.receive_json()
+            while message["type"] != "update":
+                message = ws.receive_json()
+            assert message["data"]["status"] == "verifying"
+            assert message["data"]["version"] == "v1.3.0"
+            assert message["data"]["install_unavailable"] is not None  # the supervisor's own installer
+
+        # A new socket gets the last step at once.
+        with client.websocket_connect("/ws/v1/events") as ws:
+            _auth(ws, admin_token)
+            types = [ws.receive_json()["type"] for _ in range(4)]
+            assert types[:3] == ["auth_ok", "problems", "repair"]
+            assert "update" in types
+
+    def test_a_regular_user_never_gets_it(self, client, user_token, fast_recheck, alerts, no_repair, updater):
+        self._step(updater, "installing", "Starting v1.3.0")
+
+        with client.websocket_connect("/ws/v1/events") as ws:
+            _auth(ws, user_token)
+            assert ws.receive_json() == {"type": "auth_ok"}
+            self._step(updater, "completed", "Updated to v1.3.0")
+            assert [ws.receive_json()["type"] for _ in range(5)] == ["stats"] * 5
+
+
 # ---------------------------------------------------------------------------
 # The host's interfaces in the stats message (system.dashboard, ADR-0388)
 # ---------------------------------------------------------------------------

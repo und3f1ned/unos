@@ -372,7 +372,7 @@ and this index, and `make check-fast` runs it.
 | [0047](0047-event-bus-for-alerts.md) | Send alerts to every channel through an event bus, with a health banner in the UI | superseded by [0332](0332-problems-are-kept-in-ram-alerted-once-to-every-channel-and-shown-in-a-banner.md) | 2026-11-05 |
 | [0171](0171-supervisor-volatile-files-in-ram.md) | The supervisor keeps volatile files in RAM | accepted | 2026-11-06 |
 | [0172](0172-unique-task-ids-and-bounded-smart-tests.md) | Scheduled tasks get unique ids, backups run concurrently, and SMART tests time out | accepted | 2026-11-06 |
-| [0173](0173-in-app-updater-in-its-own-slice.md) | Redesign the in-app updater in its own slice; until then update.sh is the way | proposed | 2026-11-06 |
+| [0173](0173-in-app-updater-in-its-own-slice.md) | Redesign the in-app updater in its own slice; until then update.sh is the way | superseded by [0443](0443-the-in-app-updater-backs-up-and-rolls-back-the-database-safely-and-waits-for-a-release-installer.md) | 2026-11-06 |
 | [0233](0233-power-actions-run-on-the-host-and-are-off-where-host-commands-run-locally.md) | Power actions run on the host through host.py and are off where host commands run locally | accepted | 2026-11-07 |
 | [0234](0234-the-image-carries-its-version-and-the-updates-tab-shows-only-what-works.md) | The supervisor image carries its version, and System > Updates shows only what works | superseded by [0431](0431-every-accounts-own-settings-are-on-the-account-page-system-is-the-nass-and-each-setting-action-and-fact-has-one-place.md) | 2026-11-07 |
 | [0244](0244-a-disabled-interface-comes-back-on-unless-the-change-is-kept.md) | A disabled network interface comes back on by itself after 60 seconds unless the change is kept | accepted | 2026-11-07 |
@@ -404,6 +404,7 @@ and this index, and `make check-fast` runs it.
 | [0421](0421-check-sh-measures-heat-only-in-zones-that-slow-a-processor-and-unos-keeps-its-idle-budget.md) | The device check measures heat only in zones that slow a processor, and UNOS keeps its idle budget | accepted | 2026-11-19 |
 | [0424](0424-bonds-vlans-and-bridges-are-systemd-networkd-files-and-a-change-that-may-cut-the-connection-waits-to-be-kept.md) | Bonds, VLANs and bridges are systemd-networkd files that UNOS writes, and a change that may cut the connection waits to be kept | accepted | 2026-11-19 |
 | [0441](0441-unos-sends-no-telemetry.md) | UNOS sends no telemetry, not even when an administrator turns it on | accepted | 2026-11-21 |
+| [0443](0443-the-in-app-updater-backs-up-and-rolls-back-the-database-safely-and-waits-for-a-release-installer.md) | The in-app updater backs up and rolls back the database through SQLite's backup API, and installs only through a release installer that is not decided yet | accepted | 2026-11-21 |
 
 ## Web UI
 

@@ -89,6 +89,7 @@ from .offsite.router import router as offsite_router
 from .offsite.service import stop as stop_offsite
 from .audit.router import router as audit_router
 from .updates.router import router as updates_router
+from .updates.updater import get_updater, start_automatic_install, stop_automatic_install
 from .websocket.events import router as ws_router
 from .scheduler.router import start_scheduler, stop_scheduler
 from .health.router import start_health_monitors, stop_health_monitors
@@ -151,6 +152,8 @@ async def lifespan(app: FastAPI):
     # The volumes that hold the LUNs of iSCSI targets, which the Storage page does not unmount or
     # delete (ADR-0418): read before the first request.
     await iscsi.load_index()
+    # An update or rollback of UNOS that a stop interrupted has ended, failed (ADR-0443).
+    get_updater().recover_after_start()
     # UNOS_DISABLE_BACKGROUND_TASKS=1 (tests, development) also skips the pool
     # mount check below, because it mounts filesystems on the host.
     run_background = os.environ.get("UNOS_DISABLE_BACKGROUND_TASKS") != "1"
@@ -203,6 +206,9 @@ async def lifespan(app: FastAPI):
         # A point of the host's CPU, memory, network and disks every 10 s, an hour of them in RAM,
         # for the Resource Monitor's history (ADR-0399).
         await start_history()
+        # Installs a newer release at the interval of System > Updates when its automatic install is
+        # on and this NAS can install releases (ADR-0443).
+        await start_automatic_install()
         # Applies the iSCSI targets again when the host's LAN addresses changed, every 5 minutes
         # while a target exists (ADR-0418).
         await iscsi.start_follow()
@@ -211,6 +217,7 @@ async def lifespan(app: FastAPI):
     finally:
         if run_background:
             await iscsi.stop_follow()
+            await stop_automatic_install()
             await stop_history()
             await stop_app_resources()
             await stop_upload_leftover_check()

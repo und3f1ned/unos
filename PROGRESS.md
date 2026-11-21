@@ -732,6 +732,38 @@ Open owner actions:
 
 ## Log
 
+### 2026-11-21: The in-app updater, built up to its release installer (ADR-0443)
+
+- `system.in-app-updater` (branch `system.in-app-updater`, from `mvp.batch-19`), `passes` false.
+  The cause first: the backup before an update is `copy_database` (with the commits still in
+  `unos.db-wal`; the base's `shutil.copy2` lost them, shown by a test on the base tree) into
+  `/var/lib/unos/backups/in-app-<time>/`, which compose now mounts into the supervisor, and a
+  rollback puts it back through the open database with the restore's `_replace_database`. Then
+  Install Update (images, backup, switch, a health check of 300 s, an automatic rollback), Rollback,
+  the automatic install at its interval, the progress over `/ws/v1/events` and System > Updates
+  wired to them, shown only where the supervisor can install.
+- Open for the owner (ADR-0443, the entry's notes): where a release's images come from while GHCR
+  has none, and how the supervisor replaces its own container. Until then the release installer
+  is `Undecided`: Install Update, Rollback and the automatic install answer its reason, and the tab
+  names `update.sh`. The compose mount makes the entry host-level: its device check waits for an
+  installer and a release.
+- Gates: `TEST_WORKERS=4 make check` exit 0 (10797 passed, 124 skipped, 1 xfailed). E2E on the
+  stand-in: `updates.spec.ts` 14 passed, with the Updates views of `mobile-layout.spec.ts`,
+  `information-architecture.spec.ts` and `times.spec.ts` 23 passed after the review's fixes; before
+  them the seven specs that visit the tab ran 314 tests, 312 passed, and the 2 failures (Russian
+  Users cut off by the boot screen, and this change's own view waiting for an English heading,
+  fixed) passed on a rerun.
+- Review in a fresh context: 7 should-fix and 6 nits, all fixed: a rollback offered after update.sh
+  installed another version (now only while the newest backup is of the version that runs), no
+  deadline on the installer's steps (health checks cut off at 300 s, an hour for images, 700 s a
+  switch), the rollback's restore without the restore's post-restore step (now under smb_lock with
+  it), a stale next look and a layout shift on the tab, the race of two installs and the compose
+  mount untested, corrupt backups, text-only lifespan tests, the automatic job cancelled at a stop,
+  a dev build that could install its own release (downgrade) or an unknown version, and texts.
+- Seen, not changed: `test_api_times.py` fails after `test_state_files.py` in one worker process
+  on the base tree too (`/api/v1/health/raid-monitor/status` and a pool `tank`), an order
+  dependence of those two files.
+
 ### 2026-11-21: Every page on the shared components; the design check keeps no baseline (ADR-0438)
 
 - At the owner's word (the design was left half done), two builders moved the data and sharing

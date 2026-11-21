@@ -6,8 +6,10 @@ import { balances, type BalanceUpdate } from '$lib/stores/balances';
 import { diskRemovals, type DiskRemovalUpdate } from '$lib/stores/diskRemovals';
 import { repairJob } from '$lib/stores/repair';
 import { appInstalls } from '$lib/stores/appInstalls';
+import { updateProgress } from '$lib/stores/updates';
 import type { RepairResult } from '$lib/api/shares';
 import type { AppInstallJob } from '$lib/api/apps';
+import type { UpdateProgress } from '$lib/api/updates';
 
 // The parts of the stats message of /ws/v1/events (supervisor/src/websocket/events.py)
 export interface CpuStats {
@@ -208,6 +210,7 @@ export function connectWebSocket() {
       balances.set([]);
       diskRemovals.set([]);
       appInstalls.set([]);
+      updateProgress.set(null);
     } else if (message.type === 'stats' && message.data) {
       if (!authenticatedAt) authenticatedAt = Date.now();
       wsConnected.set(true);
@@ -233,6 +236,9 @@ export function connectWebSocket() {
     } else if (message.type === 'app_installs' && Array.isArray(message.data)) {
       // Administrators only: the running install of an app and the last of each app (ADR-0384).
       appInstalls.set(message.data as AppInstallJob[]);
+    } else if (message.type === 'update' && message.data) {
+      // Administrators only: each step of the update or rollback of UNOS (ADR-0443).
+      updateProgress.set(message.data as UpdateProgress);
     }
   };
 
@@ -279,6 +285,7 @@ export function disconnectWebSocket() {
   diskRemovals.set([]);
   repairJob.set(null);
   appInstalls.set([]);
+  updateProgress.set(null);
 }
 
 export function formatBytes(bytes: number): string {

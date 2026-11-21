@@ -3183,14 +3183,23 @@
         "Rollback returns to the version before",
         "With automatic install on, a new release is installed at the configured interval"
       ],
+      "verified_by": [
+        "supervisor/tests/test_update_install.py",
+        "supervisor/tests/test_updates.py",
+        "supervisor/tests/test_lifespan.py",
+        "supervisor/tests/test_ws_auth.py",
+        "webui/tests/updates.spec.ts",
+        "webui/tests/mobile-layout.spec.ts"
+      ],
       "passes": false,
       "adr": [
         "ADR-0173",
         "ADR-0049",
         "ADR-0050",
-        "ADR-0306"
+        "ADR-0306",
+        "ADR-0443"
       ],
-      "notes": "Install Update and Rollback start nothing today: users update with deploy/update.sh (deploy.update-script). Its backup and its rollback copy unos.db with shutil.copy2 (supervisor/src/updates/updater.py), which the write-ahead log makes wrong (ADR-0306): the copy lacks the commits still in unos.db-wal, and a unos.db put back beside that log is read through it. Before Install Update starts anything, it needs copy_database and the restore's backup API of supervisor/src/backup/router.py."
+      "notes": "Built 2026-11-21 up to the release installer (ADR-0443); passes stays false until the owner decides it, a release exists and the dev device checks it. Fixed first, the cause: the backup before an update is copy_database (SQLite's backup API, with the commits still in unos.db-wal, one file with the rollback journal) into in-app-<time> of UNOS_UPDATE_BACKUP_DIR, which deploy/docker-compose.yml now mounts from the host's /var/lib/unos/backups (mode 700, newest 3 kept), and a rollback puts it back through the open database with the restore's _replace_database after _verify_database and _verify_page_size (test_update_install.py TestTheBackupHoldsTheLastCommits; on the base code the backup lost the commit still in the log). Step 1: the tab as before (updates.spec.ts). Step 2: the images first (up to an hour), then the backup, the switch (up to 700 s) and a health check of 300 s every 3 s, each check cut off at the deadline, for a known installed version older than the release; a failed switch or a release that does not answer is rolled back with the backup's database and the version before, and the history says failed (TestInstallUpdate, the spec's install and failure tests). Step 3: Rollback, offered while the newest backup is of the update to the version that runs, puts its database back with the restore's post-restore step, starts the version before and waits for it (TestRollback, the spec's rollback test). Step 4: automatic_install_loop in the lifespan installs a newer stable release once next_automatic_check has come, an interval after it was turned on or after the last look (TestAutomaticInstall, the spec's automatic install test). Also: jobs start as asyncio tasks (BackgroundTasks ran create_task in a worker thread), the progress is written once a step and sent over /ws/v1/events, an interrupted job is failed at the next start, a restore is refused while an update runs and the reverse, POST /updates/reset, the tarball download, git and docker compose in the container, UNOS_INSTALL_DIR and the settings nothing read are gone. Open, for the owner (ADR-0443): (1) where a release's images come from while GHCR has none (CI off, ADR-0230; building them on the device writes hundreds of MB to the SD card, ADR-0214); (2) how the supervisor replaces its own container, since the process that runs the update is in one of the containers it replaces (a unit on the host, a helper container, update.sh with a tag, or another way). Until then src/updates/installer.py's Undecided refuses Install Update, Rollback and the automatic install with that reason, and the tab names update.sh. Then: an installer that fills the seam, a release tag, and the device check of an install, a failed install's rollback and a Rollback, before and after a reboot (ADR-0018): host-level through the compose mount."
     },
     {
       "id": "system.updates-tab-without-dead-buttons",

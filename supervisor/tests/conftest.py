@@ -87,6 +87,15 @@ def _no_install_jobs_yet(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _no_update_ran_yet(monkeypatch):
+    """The updater of System > Updates keeps the version of its progress in RAM, which the events
+    socket follows (ADR-0443): every test starts with a new one, as the supervisor does."""
+    updater = sys.modules.get("src.updates.updater")
+    if updater is not None:
+        monkeypatch.setattr(updater, "_updater", None)
+
+
+@pytest.fixture(autouse=True)
 def _no_problems_yet(monkeypatch):
     """The problems of the NAS, the SMART monitor's verdicts of the disks (and the disks' I/O counts at
     its reads, ADR-0378) and the pools that the RAID monitor read last are kept in RAM (ADR-0332): every

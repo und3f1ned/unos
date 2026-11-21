@@ -137,6 +137,11 @@ host that runs unless the administrator keeps the change within 60 seconds (an i
 ADR-0244) or 120 seconds (the firewall, ADR-0416; a virtual interface, ADR-0424). Avoid: rollback
 (what `update.sh` and `deploy.sh` do), undo.
 
+**Release installer**: The part of an in-app update of UNOS that gets a release's images and
+switches the containers to it and back (`supervisor/src/updates/installer.py`); the updater runs the
+backup, the health check and the rollback around it. None is decided yet, so Install Update and
+Rollback answer why (ADR-0443). Avoid: updater (the whole), `update.sh` (the script on the host).
+
 **Virtual interface**: A bond, VLAN or bridge that UNOS made on the host with systemd-networkd,
 whose `.netdev` file names it as UNOS's; UNOS lists and removes only those (ADR-0424). Its files
 are live in `/run/systemd/network`, and kept, for the boot, in `/etc/unos/netdevs`. Avoid: netdev

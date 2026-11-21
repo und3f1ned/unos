@@ -92,7 +92,6 @@ HOST_SETTINGS = {
     "UNOS_MOUNTS_BASE_PATH": "mnt",
     "UNOS_SERVED_CERTIFICATE_DIR": "served-certificate",
     "UNOS_UPDATE_BACKUP_DIR": "update-backups",
-    "UNOS_INSTALL_DIR": "no-install",
 }
 HOST_PATHS = {
     "settings.smb_conf_path": "smb.conf",
@@ -108,7 +107,6 @@ HOST_PATHS = {
     "src.offsite.service.MOUNTS_BASE": "mnt",
     "src.security.serving.SERVED_DIR": "served-certificate",
     "src.updates.updater.BACKUP_DIR": "update-backups",
-    "src.updates.updater.INSTALL_DIR": "no-install",
 }
 # Host paths without a setting, the same wherever the data directory is.
 FIXED_PATHS = {

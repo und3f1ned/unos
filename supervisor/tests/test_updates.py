@@ -112,8 +112,7 @@ def test_the_current_version_is_the_one_the_image_was_built_with(
 
 
 def test_the_version_needs_no_checkout(no_commands, monkeypatch, tmp_path):
-    # The install directory the updater knows does not exist in the container.
-    monkeypatch.setattr(updater_module, "INSTALL_DIR", tmp_path / "no-checkout")
+    # The container has no checkout of UNOS: the version is the image's.
     monkeypatch.setenv("UNOS_VERSION", "v1.2.0-3-g712fc3a")
 
     current = asyncio.run(updater_module.Updater().get_current_version())

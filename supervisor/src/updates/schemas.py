@@ -1,6 +1,8 @@
 """Pydantic schemas for the updates module."""
 
 from enum import Enum
+from typing import Literal
+
 from pydantic import BaseModel, ConfigDict, Field
 
 from ..times import UtcDatetime
@@ -14,7 +16,6 @@ class UpdateStatus(str, Enum):
     VERIFYING = "verifying"
     BACKING_UP = "backing_up"
     INSTALLING = "installing"
-    RESTARTING = "restarting"
     COMPLETED = "completed"
     FAILED = "failed"
     ROLLBACK = "rollback"
@@ -27,14 +28,8 @@ _RELEASE_EXAMPLE = {
     "published_at": "2026-11-12T09:30:00Z",
     "html_url": "https://github.com/und3f1ned/unos/releases/tag/v1.3.0",
     "prerelease": False,
-    "assets": [{
-        "name": "unos-v1.3.0.tar.gz.sha256",
-        "download_url": "https://github.com/und3f1ned/unos/releases/download/v1.3.0/unos-v1.3.0.tar.gz.sha256",
-        "size": 91, "content_type": "text/plain",
-    }],
-    "checksum_sha256": "3b9f6c1e8a2d4f7b0c5e9a1d3f6b8e2c4a7d0f9b1e3c5a8d2f4b6e9c1a3d5f7b",
+    "assets": [],
 }
-_NOTHING_RUNS = "Nothing runs on its own: it is only stored."
 
 
 class ReleaseAsset(BaseModel):
@@ -57,10 +52,6 @@ class ReleaseInfo(BaseModel):
     html_url: str = Field(description="Its page on GitHub.")
     prerelease: bool = Field(False, description="Whether it is a prerelease.")
     assets: list[ReleaseAsset] = Field([], description="The files attached to it.")
-    # SHA256 of the release archive
-    checksum_sha256: str | None = Field(None, description="The SHA-256 from its .sha256 or checksums.txt asset, "
-                                                          "which an install checks the download against; null "
-                                                          "without one.")
 
 
 class CurrentVersion(BaseModel):
@@ -95,24 +86,39 @@ class UpdateCheck(BaseModel):
 
 
 class UpdateProgress(BaseModel):
-    """Progress of an ongoing update operation."""
+    """The update or rollback that runs, or the last one, and the updater's state (ADR-0443)."""
     model_config = ConfigDict(json_schema_extra={"examples": [{
-        "status": "verifying", "progress_percent": 45, "message": "Verifying checksum...",
+        "status": "verifying", "progress_percent": 80, "message": "Waiting for v1.3.0 to answer",
         "started_at": "2026-11-19T10:06:00.118221Z", "completed_at": None, "error": None, "can_rollback": True,
+        "action": "update", "version": "v1.3.0", "rolled_back": False, "install_unavailable": None,
+        "next_automatic_check": None,
     }]})
 
-    status: UpdateStatus = Field(description="What the update or the rollback does now: idle, checking, "
-                                             "downloading, verifying, backing_up, installing, restarting, "
-                                             "completed, failed or rollback.")
+    status: UpdateStatus = Field(description="What the update or the rollback does now: idle (none ran), "
+                                             "checking, downloading (the release's images), backing_up (the "
+                                             "database), installing (the switch to the release), verifying "
+                                             "(its health check), rollback, completed or failed.")
     progress_percent: int = Field(ge=0, le=100, default=0, description="How far it got, in percent.")
-    message: str = Field("", description="What it does, or how it ended.")
-    started_at: UtcDatetime | None = Field(None, description="When the last update started, in UTC; null when "
-                                                             "none is recorded.")
+    message: str = Field("", description="What it does, or how it ended, in English.")
+    started_at: UtcDatetime | None = Field(None, description="When the last update or rollback started, in UTC; "
+                                                             "null when none is recorded.")
     completed_at: UtcDatetime | None = Field(None, description="When the last update or rollback ended, in UTC; "
-                                                               "null while an update runs or none is recorded.")
+                                                               "null while one runs or none is recorded.")
     error: str | None = Field(None, description="Why it failed; null unless it did.")
-    can_rollback: bool = Field(False, description="Whether an update backed up the version before it, which POST "
-                                                  "/updates/rollback goes back to.")
+    can_rollback: bool = Field(False, description="Whether an update switched to a release after a backup of the "
+                                                  "version before, which POST /updates/rollback goes back to.")
+    action: Literal["update", "rollback"] | None = Field(None, description="Whether the last job is an update "
+                                                                           "or a rollback; null when none ran.")
+    version: str | None = Field(None, description="The release that the update installs, or the version that "
+                                                  "the rollback returns to.")
+    rolled_back: bool = Field(False, description="Whether a failed update was rolled back to the version before "
+                                                 "it, with the database of its backup.")
+    install_unavailable: str | None = Field(None, description="Why Install Update, Rollback and the automatic "
+                                                              "install cannot run on this NAS; null when they "
+                                                              "can. Not stored.")
+    next_automatic_check: UtcDatetime | None = Field(None, description="When the automatic install looks for a "
+                                                                       "new release next, in UTC; null while it "
+                                                                       "is off.")
 
 
 class UpdateHistoryEntry(BaseModel):
@@ -126,7 +132,7 @@ class UpdateHistoryEntry(BaseModel):
     id: int = Field(description="Its number; the newest has the highest.")
     from_version: str = Field(description="The version before the update.")
     to_version: str = Field(description="The release it installed.")
-    status: str = Field(description="success or failed.")
+    status: str = Field(description="success, or failed (after a rollback when error says so).")
     started_at: UtcDatetime = Field(description="When it started, in UTC.")
     completed_at: UtcDatetime | None = Field(None, description="When it ended, in UTC.")
     error: str | None = Field(None, description="Why it failed; null after a success.")
@@ -134,18 +140,11 @@ class UpdateHistoryEntry(BaseModel):
 
 
 class UpdateConfig(BaseModel):
-    """Update configuration settings."""
-    model_config = ConfigDict(json_schema_extra={"examples": [{
-        "auto_check": True, "check_interval_hours": 24, "auto_install": False, "include_prereleases": False,
-        "github_repo": "und3f1ned/unos",
-    }]})
+    """The automatic install's settings (ADR-0443)."""
+    model_config = ConfigDict(json_schema_extra={"examples": [{"auto_install": True, "check_interval_hours": 24}]})
 
-    auto_check: bool = Field(True, description=f"Whether to check for updates on a schedule. {_NOTHING_RUNS}")
+    auto_install: bool = Field(False, description="Whether UNOS looks for a newer stable release at the interval "
+                                                  "and installs it, as Install Update does.")
     # 1 hour to 1 week
-    check_interval_hours: int = Field(ge=1, le=168, default=24, description="The hours between two checks, 1 to "
-                                                                            f"168. {_NOTHING_RUNS}")
-    auto_install: bool = Field(False, description=f"Whether to install updates on their own. {_NOTHING_RUNS}")
-    include_prereleases: bool = Field(False, description="Whether checks take prereleases. It is only stored: a "
-                                                         "check takes its own include_prereleases.")
-    github_repo: str = Field("und3f1ned/unos", description="The GitHub repository of the releases, owner/name. It "
-                                                           "is only stored: the checks ask und3f1ned/unos.")
+    check_interval_hours: int = Field(ge=1, le=168, default=24, description="The hours between two looks, 1 to "
+                                                                            "168.")

@@ -498,7 +498,6 @@ const RELEASE = {
   html_url: 'https://github.com/und3f1ned/unos/releases/tag/v1.3.0',
   prerelease: false,
   assets: [],
-  checksum_sha256: null,
 };
 const UPDATES = {
   '/api/v1/updates/current': { version: 'v1.2.0-3-g712fc3a', commit_hash: '712fc3a', install_date: null, is_development: false },
@@ -509,6 +508,26 @@ const UPDATES = {
     release_info: RELEASE,
     checked_at: '2026-12-02T08:00:00Z',
   },
+  // An installer that can install (ADR-0443): the last update, failed and rolled back, its history
+  // with long versions, and the automatic install on.
+  '/api/v1/updates/progress': {
+    status: 'failed', progress_percent: 100, message: 'Update failed, rolled back', started_at: '2026-12-02T08:00:00Z',
+    completed_at: '2026-12-02T08:09:00Z',
+    error: 'v1.3.0 did not answer within 300 seconds; rolled back to v1.2.0-3-g712fc3a1b2c3d4e5f60718293a4b5c6d7e8f9012',
+    can_rollback: false, action: 'update', version: 'v1.3.0', rolled_back: true, install_unavailable: null,
+    next_automatic_check: '2026-12-03T08:00:00Z',
+  },
+  '/api/v1/updates/history': [
+    {
+      id: 2, from_version: 'v1.2.0-3-g712fc3a1b2c3d4e5f60718293a4b5c6d7e8f9012', to_version: 'v1.3.0', status: 'failed',
+      started_at: '2026-12-02T08:00:00Z', completed_at: '2026-12-02T08:09:00Z', error: 'did not answer', changelog: null,
+    },
+    {
+      id: 1, from_version: 'v1.1.0', to_version: 'v1.2.0-3-g712fc3a1b2c3d4e5f60718293a4b5c6d7e8f9012', status: 'success',
+      started_at: '2026-11-02T08:00:00Z', completed_at: '2026-11-02T08:04:00Z', error: null, changelog: null,
+    },
+  ],
+  '/api/v1/updates/config': { auto_install: true, check_interval_hours: 24 },
 };
 
 const BACKUPS = {
@@ -1225,7 +1244,8 @@ const VIEWS: View[] = [
     name: 'System: Updates',
     path: '/system#updates',
     fake: (page) => serve(page, UPDATES),
-    shows: (page) => page.getByText('UNOS v1.3.0').first(),
+    // The cards of the installer load after the release: the history's oldest version, in both languages.
+    shows: (page) => page.getByText('v1.1.0', { exact: true }),
   },
   {
     name: 'System: Security',
