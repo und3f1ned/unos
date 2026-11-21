@@ -535,3 +535,4 @@ and this index, and `make check-fast` runs it.
 | [0423](0423-actions-are-pinned-by-commit-the-audits-tools-by-hash-and-pip-takes-wheels.md) | Actions are pinned by commit, the audit's tools by hash, and pip takes wheels only | accepted | 2026-11-19 |
 | [0425](0425-ruff-checks-the-rules-that-find-bugs-set-in-ruff-toml-and-a-finding-kept-in-the-code-says-why.md) | Ruff checks the rules that find bugs, set in ruff.toml, and a finding kept in the code says why | accepted | 2026-11-19 |
 | [0445](0445-the-history-is-scanned-by-gitleaks-pinned-by-digest-with-an-allowlist-by-commit-and-path.md) | The history is scanned by gitleaks pinned by digest, with an allowlist by commit and path | accepted | 2026-11-21 |
+| [0446](0446-both-images-are-scanned-weekly-by-trivy-pinned-by-digest-and-a-fixable-high-finding-fails.md) | Both images are scanned weekly by trivy pinned by digest, and a fixable high finding fails | accepted | 2026-11-21 |

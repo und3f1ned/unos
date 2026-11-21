@@ -22,8 +22,9 @@ COPY requirements.txt .
 # platform's manylinux tags). On riscv64, cryptography, bcrypt, cffi, psutil and uvloop publish no
 # wheel, so this layer also installs what compiles them (Rust, the headers of OpenSSL and libffi,
 # make), builds them and removes it again: the image keeps no Rust toolchain. Elsewhere nothing
-# is compiled (ADR-0370).
-RUN pip install --no-cache-dir pip==26.3 \
+# is compiled (ADR-0370). setuptools 84.2.1 replaces the base's 79.0.1, whose vendored jaraco.context
+# 5.3.0 and wheel 0.45.1 have fixed HIGH vulnerabilities that the image scan fails for (ADR-0446).
+RUN pip install --no-cache-dir pip==26.3 setuptools==84.2.1 \
     && if [ "$(dpkg --print-architecture)" != riscv64 ]; then \
         pip install --no-cache-dir -r requirements.txt; \
     else \

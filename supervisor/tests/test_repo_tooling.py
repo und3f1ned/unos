@@ -35,7 +35,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 MAKEFILE = REPO_ROOT / "Makefile"
 WORKFLOWS = REPO_ROOT / ".github" / "workflows"
 TARGETS = ("help", "setup", "check", "check-fast", "lint", "test", "test-fast", "smoke", "frontend", "e2e-local",
-           "audit", "secret-scan")
+           "audit", "secret-scan", "image-scan")
 TEST_FAST = ("tests/test_adrs.py", "tests/test_feature_list.py", "tests/test_agent_guard.py",
              "tests/test_repo_tooling.py", "tests/test_dev_scripts.py", "tests/test_dev_scenarios.py",
              "tests/test_standin.py")
@@ -114,6 +114,8 @@ def test_help_is_the_default_target():
                "cd webui && npm audit --omit=dev --audit-level=high"]),
     # gitleaks over the whole history (ADR-0445).
     ("secret-scan", ["scripts/secret-scan.sh"]),
+    # trivy over both images (ADR-0446).
+    ("image-scan", ["scripts/image-scan.sh"]),
 ])
 def test_targets_run_the_agreed_commands(target, commands):
     dry_run = make("-n", target, *TOOLS).stdout

@@ -91,6 +91,7 @@ The make targets use these environments when they exist, and `python3`, `ruff`, 
 | `make catalog-tags` | `scripts/catalog-platforms.py tags`: the tag of every pinned image of the catalog still names the index it is pinned to, asked with HEAD requests only (needs the network, ADR-0410) |
 | `make audit` | `scripts/audit-python.sh` (pip-audit of `supervisor/requirements.txt` as resolved in the audit environment, below) and `npm audit --omit=dev --audit-level=high` in `webui/` (needs the network) |
 | `make secret-scan` | `scripts/secret-scan.sh`: gitleaks, pinned by the digest of its image, over every commit of the history, with `.gitleaks.toml`, and `scripts/published-passwords.py` (needs Docker, and the network for the first pull; below, ADR-0445) |
+| `make image-scan` | `scripts/image-scan.sh`: builds both images and scans each with trivy, pinned by the digest of its image, for fixable HIGH and CRITICAL vulnerabilities (needs Docker and the network; below, ADR-0446) |
 | `make setup` | `scripts/setup.sh` (needs the network) |
 
 `make check`, `make check-fast`, `make lint` and `make frontend` run every part, also after one
@@ -652,6 +653,21 @@ that this page has the commands of the lint and frontend jobs).
   commit of a newer release, ADR-0423) and the Docker base images (a newer digest of each pinned
   tag, ADR-0305), with a cooldown of a week and Conventional Commit prefixes. Nothing is merged
   automatically. New major npm versions and Playwright are left out (ADR-0427).
+- The `images` job of `audit.yml` (Image vulnerabilities) runs `make image-scan` every Monday
+  (ADR-0446): `scripts/image-scan.sh` builds the supervisor's and the web UI's image with
+  `docker compose` (project `unos-image-scan`) without the build cache, as `deploy/update.sh`
+  does, or scans the images it is given, with trivy from `ghcr.io/aquasecurity/trivy:0.76.2`,
+  pinned by the digest of its index. trivy downloads its vulnerability database in a run of its
+  own into `TRIVY_CACHE` (default `~/.cache/trivy`), then scans each image from an archive of
+  `docker image save`, without the network, the Docker socket or capabilities, as the calling
+  user. The policy: `--scanners vuln --pkg-types os,library --severity HIGH,CRITICAL
+  --ignore-unfixed`, so a HIGH or CRITICAL vulnerability with a fixed version fails the run
+  (`--exit-code 3`; trivy's own errors exit 1 and fail it too), and its table names the package
+  with the installed and the fixed version; one without a fix is not counted until it has one.
+  A fresh build (apt-get and apk install the packages of the day), a newer digest of the base
+  image or a newer package fixes it; an exception goes into `.trivyignore.yaml` with the package
+  (`purls`), its reason (`statement`) and a date at most a year on (`expired_at`), after which
+  trivy reports it again.
 - The monthly local passes are listed in [maintenance.md](maintenance.md).
 
 ### Running the CI Checks Locally
@@ -660,6 +676,7 @@ that this page has the commands of the lint and frontend jobs).
 make check      # Unit Tests, Lint and Frontend Checks
 make audit      # the two audits (needs the network)
 make secret-scan        # gitleaks over the whole history (needs Docker)
+make image-scan         # both images built and scanned by trivy (needs Docker and the network)
 make catalog-platforms  # the catalog images' recorded platforms against the registries (needs the network)
 make catalog-tags       # the catalog images' pinned tags against the registries (needs the network)
 ```

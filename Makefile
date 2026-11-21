@@ -96,7 +96,7 @@ run_all = failed=; for target in $(1); do echo "== make $@: $$target"; \
 .DEFAULT_GOAL := help
 .PHONY: help setup check check-fast lint lint-ruff lint-shell lint-json test test-fast smoke
 .PHONY: frontend frontend-check frontend-runes frontend-i18n frontend-design frontend-build e2e-local audit catalog-platforms catalog-tags
-.PHONY: secret-scan
+.PHONY: secret-scan image-scan
 
 help: ## List the targets and the variables
 	@echo "UNOS: make <target> [VARIABLE=value ...], from the repository root"
@@ -169,6 +169,9 @@ audit: ## pip-audit and npm audit of the runtime dependencies (needs the network
 
 secret-scan: ## gitleaks, pinned by digest, over every commit of the history (needs Docker; ADR-0445)
 	scripts/secret-scan.sh
+
+image-scan: ## trivy, pinned by digest, over both images, built here (needs Docker and the network; ADR-0446)
+	scripts/image-scan.sh
 
 catalog-platforms: ## The recorded platforms of the catalog's images are the registries' (needs the network; ADR-0403)
 	$(PYTHON) scripts/catalog-platforms.py check

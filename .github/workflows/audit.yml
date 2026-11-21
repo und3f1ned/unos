@@ -68,6 +68,24 @@ jobs:
         working-directory: webui
         run: npm audit --omit=dev --audit-level=high
 
+  # The known vulnerabilities of UNOS's two images (ADR-0446): make image-scan builds the
+  # supervisor's and the web UI's image as an install does, then trivy, pinned by digest, scans
+  # each one without the network. A fixable HIGH or CRITICAL vulnerability fails the run, and the
+  # table names its package and the fixed version: move the base image's digest or the package,
+  # or add an entry with its reason and expiry to .trivyignore.yaml.
+  images:
+    name: Image vulnerabilities
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Build and scan both images
+        run: make image-scan
+
   # The platforms recorded for the catalog's images against the registries (ADR-0403). The same
   # command as make catalog-platforms. Every image is pinned (ADR-0410), so a difference means a
   # pin whose record was not rewritten or an index that is gone: run scripts/catalog-platforms.py
