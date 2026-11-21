@@ -1,4 +1,3 @@
-export { default as ConfirmDialog } from './ConfirmDialog.svelte';
 export { default as CreateUserDialog } from './CreateUserDialog.svelte';
 export { default as EditUserDialog } from './EditUserDialog.svelte';
 export { default as GroupDialog } from './GroupDialog.svelte';

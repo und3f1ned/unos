@@ -422,7 +422,7 @@ async function fakeFilesWithLeftovers(page: Page): Promise<void> {
 }
 /** The row of the File Browser's entry at `path`. */
 const fileRow = (page: Page, path: string) =>
-  page.locator('main div.grid').filter({ has: page.locator(`input[data-path="${path}"]`) });
+  page.locator('main div.grid').filter({ has: page.locator(`[data-path="${path}"]`) });
 /** A double-click on its row opens a folder: here e2e_data. */
 const openData = (page: Page) => fileRow(page, DATA).dblclick();
 const TRASH = {
@@ -916,11 +916,20 @@ interface View {
 /** The title and the last button of a dialog that is named one (role dialog), as Modal's are. */
 const dialogTitle = (page: Page) => page.getByRole('dialog').getByRole('heading', { name: /\S/ }).first();
 const dialogEnd = (page: Page) => page.getByRole('dialog').getByRole('button').last();
-/** Opens every pool's More, where its less frequent actions are. */
-async function poolMore(page: Page): Promise<void> {
-  const buttons = page.getByRole('button', { name: /^(More actions for|Ещё действия с) / });
+/** Chooses `item` in the ⋯ menu of the first pool where it can run now (ADR-0432). */
+async function poolAction(page: Page, item: RegExp): Promise<void> {
+  const buttons = page.getByRole('button', { name: /^(Actions for|Действия:) / });
   await expect(buttons.first()).toBeVisible();
-  for (const button of await buttons.all()) await button.click();
+  for (const button of await buttons.all()) {
+    await button.click();
+    const choice = page.getByRole('menu').getByRole('menuitem', { name: item, disabled: false });
+    if ((await choice.count()) > 0) {
+      await choice.first().click();
+      return;
+    }
+    await page.keyboard.press('Escape');
+  }
+  throw new Error(`no pool can run ${item} now`);
 }
 
 /**
@@ -1518,8 +1527,7 @@ const VIEWS: View[] = [
     path: '/storage',
     fake: (page) => fakeStorageApi(page),
     open: async (page) => {
-      await poolMore(page);
-      await page.getByRole('button', { name: /^(Balance…|Балансировка…)$/, disabled: false }).first().click();
+      await poolAction(page, /^(Balance…|Балансировка…)$/);
       await page.getByRole('dialog').getByRole('combobox').click();
       await settled(page.getByRole('listbox'));
       await page.getByRole('option', { name: /^(Every chunk \(full balance\)|Все блоки \(полная балансировка\))$/ }).click();
@@ -1543,8 +1551,7 @@ const VIEWS: View[] = [
         }),
       }),
     open: async (page) => {
-      await poolMore(page);
-      await page.getByRole('button', { name: /^(Add disk…|Добавить диск…)$/, disabled: false }).first().click();
+      await poolAction(page, /^(Add disk…|Добавить диск…)$/);
       await page.getByRole('dialog').getByRole('radio').check();
     },
     shows: (page) => page.getByRole('dialog').getByRole('checkbox'),
@@ -1572,8 +1579,7 @@ const VIEWS: View[] = [
         }),
       }),
     open: async (page) => {
-      await poolMore(page);
-      await page.getByRole('button', { name: /^(Remove disk…|Удалить диск…)$/, disabled: false }).first().click();
+      await poolAction(page, /^(Remove disk…|Удалить диск…)$/);
       await page.getByRole('dialog').getByRole('radio').first().check();
     },
     shows: (page) => page.getByRole('dialog').getByRole('textbox'),

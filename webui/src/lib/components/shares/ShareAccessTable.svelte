@@ -3,7 +3,7 @@
 	import { User as UserIcon, Users as UsersIcon } from 'lucide-svelte';
 	import type { User } from '$lib/api/auth';
 	import type { Group } from '$lib/api/groups';
-	import type { IconComponent } from '$lib/components/ui';
+	import { Badge, HelpText, type IconComponent } from '$lib/components/ui';
 	import { t } from '$lib/i18n';
 	import AccessLevelControl from './AccessLevelControl.svelte';
 	import { accessKey, canBeGivenAccess, commonLevel, groupKey, pickableUsers, type AccessChoice } from './access';
@@ -101,7 +101,7 @@
 	<legend class="form-label">{$t('shares.access.title')}</legend>
 
 	{#if reduceOnly && reduceOnlyHint}
-		<p class="form-hint mt-0">{reduceOnlyHint}</p>
+		<HelpText text={reduceOnlyHint} />
 	{/if}
 
 	<div class="access-table">
@@ -145,13 +145,13 @@
 						<p class="access-name" id="share-access-name-{user.id}">{user.username}</p>
 						<p class="access-hint" id="share-access-hint-{user.id}">
 							{#if state === 'off'}
-								<span class="access-tag">{$t('shares.access.smbOff')}</span>
+								<Badge variant="neutral">{$t('shares.access.smbOff')}</Badge>
 								<a class="link" href="/users" target="_blank" rel="noopener">{$t('shares.access.turnOnSmb')}<span class="sr-only">{` ${$t('shares.access.newTab')}`}</span></a>
 							{:else if state === 'password_needed'}
-								<span class="access-tag">{$t('shares.access.smbPending')}</span>
+								<Badge variant="warning">{$t('shares.access.smbPending')}</Badge>
 								{$t('shares.access.smbPendingHint')}
 							{:else if state === 'unavailable'}
-								<span class="access-tag">{$t('shares.access.smbUnavailable')}</span>
+								<Badge variant="neutral">{$t('shares.access.smbUnavailable')}</Badge>
 								<!-- The server's reason in two lines, whole in its hover text; the Users page shows it whole. -->
 								<span class="line-clamp-2 w-full" title={user.smb?.reason ?? ''}>{user.smb?.reason ?? ''}</span>
 							{:else}
@@ -209,10 +209,11 @@
 		{/if}
 	</div>
 
-	<p class="form-hint">
-		{$t('shares.access.adminsNotListed')}
-		{#if groups.length > 0}{' '}{$t('shares.access.groupsHint')}{/if}
-	</p>
+	<HelpText
+		text={groups.length > 0
+			? `${$t('shares.access.adminsNotListed')} ${$t('shares.access.groupsHint')}`
+			: $t('shares.access.adminsNotListed')}
+	/>
 </fieldset>
 
 <style>
@@ -265,10 +266,6 @@
 
 	.access-hint {
 		@apply mt-0.5 flex flex-wrap items-baseline gap-x-2 gap-y-0.5 text-xs leading-[18px] text-content-muted;
-	}
-
-	.access-tag {
-		@apply inline-flex items-center rounded border border-border-strong px-1.5 text-2xs font-medium text-content-secondary;
 	}
 
 	.access-empty {

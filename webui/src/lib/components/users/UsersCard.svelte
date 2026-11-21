@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { Edit, LogOut, Shield, Trash2, User as UserIcon, Users } from 'lucide-svelte';
 	import type { User } from '$lib/api/auth';
-	import { Badge, Button, Card } from '$lib/components/ui';
+	import { ActionMenu, Badge, Button, Card } from '$lib/components/ui';
 	import { SmbStateBadge } from '$lib/components/shares';
 	import { intlLocale, t } from '$lib/i18n';
 	import { apiTime } from '$lib/time';
@@ -48,7 +48,7 @@
 	</div>
 
 	<div class="table-frame">
-		<table class="table users-table">
+		<table class="table table-stack">
 			<thead class="table-header">
 				<tr>
 					<th>{$t('common.username')}</th>
@@ -62,7 +62,7 @@
 			<tbody>
 				{#each users as user (user.id)}
 					<tr class="table-row">
-						<td class="users-name">
+						<td>
 							<div class="flex flex-wrap items-center gap-2">
 								<span class="font-medium break-all">{user.username}</span>
 								{#if currentUserId === user.id}
@@ -70,7 +70,7 @@
 								{/if}
 							</div>
 						</td>
-						<td class="users-meta">
+						<td data-label={$t('users.role')}>
 							<span class="inline-flex items-center gap-1.5 whitespace-nowrap {user.is_admin ? 'text-content' : 'text-secondary'}">
 								{#if user.is_admin}
 									<Shield class="w-4 h-4 text-content-secondary" aria-hidden="true" />
@@ -81,39 +81,31 @@
 								{/if}
 							</span>
 						</td>
-						<td class="users-meta">
+						<td data-label={$t('users.twoFactor')}>
 							{#if user.totp_enabled}
 								<Badge variant="success" dot>{$t('users.twoFactorOn')}</Badge>
 							{:else}
 								<Badge variant="neutral">{$t('users.twoFactorOff')}</Badge>
 							{/if}
 						</td>
-						<td class="users-meta">
+						<td data-label={$t('users.smb')}>
 							{#if user.smb}
 								<SmbStateBadge state={user.smb.state} hint={smbHint(user)} />
 							{:else}
 								<span class="text-muted">-</span>
 							{/if}
 						</td>
-						<td class="users-created text-secondary whitespace-nowrap" title={formatMoment(user.created_at)}>
+						<td class="stack-hide text-secondary whitespace-nowrap" title={formatMoment(user.created_at)}>
 							{formatDay(user.created_at)}
 						</td>
 						<td class="users-actions">
-							<div class="table-actions flex-nowrap">
+							<!-- Edit and Delete as icons, the rest in the row's menu (ADR-0432). -->
+							<div class="table-actions">
 								<Button variant="ghost" size="icon-sm" title={$t('users.editShort')} onclick={() => onedit(user)}>
 									<Edit class="w-4 h-4" />
 									<span class="sr-only">{$t('users.editUser', { name: user.username })}</span>
 								</Button>
 								{#if currentUserId !== user.id}
-									<Button
-										variant="ghost"
-										size="icon-sm"
-										title={$t('users.endSessionsShort')}
-										onclick={() => onendsessions(user)}
-									>
-										<LogOut class="w-4 h-4" />
-										<span class="sr-only">{$t('users.endSessionsOf', { name: user.username })}</span>
-									</Button>
 									<Button
 										variant="ghost-danger"
 										size="icon-sm"
@@ -123,6 +115,10 @@
 										<Trash2 class="w-4 h-4" />
 										<span class="sr-only">{$t('users.deleteUser', { name: user.username })}</span>
 									</Button>
+									<ActionMenu
+										name={user.username}
+										items={[{ label: $t('users.endSessionsShort'), icon: LogOut, onclick: () => onendsessions(user) }]}
+									/>
 								{/if}
 							</div>
 						</td>
@@ -136,47 +132,5 @@
 <style>
 	.users-actions {
 		@apply w-px whitespace-nowrap;
-	}
-
-	/* A phone: a row is the name with its actions on the right, and its role, two-factor and SMB
-	   state wrapped under it; the date is the desktop's. */
-	@media (max-width: 639px) {
-		.users-table thead {
-			@apply sr-only;
-		}
-
-		.users-table tr {
-			@apply flex flex-wrap items-center gap-x-2 gap-y-1.5 px-5 py-3;
-		}
-
-		.users-table tr::after {
-			content: '';
-			order: 3;
-			flex-basis: 100%;
-		}
-
-		.users-table td {
-			@apply block p-0;
-		}
-
-		.users-name {
-			order: 1;
-			flex: 1 1 0;
-			min-width: 0;
-		}
-
-		.users-actions {
-			order: 2;
-			@apply w-auto;
-		}
-
-		.users-meta {
-			order: 4;
-		}
-
-		/* Above .users-table td, which makes every cell a block. */
-		.users-table .users-created {
-			@apply hidden;
-		}
 	}
 </style>

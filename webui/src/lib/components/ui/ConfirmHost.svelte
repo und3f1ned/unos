@@ -21,6 +21,7 @@
 			cancelLabel={request.cancelLabel}
 			tone={request.tone}
 			typeToConfirm={request.typeToConfirm}
+			focusCancel={request.focusCancel}
 			onconfirm={() => request.answer(true)}
 			oncancel={() => request.answer(false)}
 		/>

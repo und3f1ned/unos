@@ -5,7 +5,7 @@
 	// that the About card listed are where they apply.
 	import { onMount } from 'svelte';
 	import { Archive, Copy, Plus, Trash2, RotateCcw, RefreshCw } from 'lucide-svelte';
-	import { Alert, Button, Card, EmptyState, Select, Skeleton } from '$lib/components/ui';
+	import { Alert, Button, Card, EmptyState, ErrorState, Select, Skeleton } from '$lib/components/ui';
 	import {
 		deleteRestoreCopy,
 		deleteSnapshot,
@@ -109,23 +109,32 @@
 					<Skeleton shape="block" class="h-9 w-full" />
 				</div>
 			{/if}
-			<Button variant="secondary" size="icon" disabled={lists.busy} title={$t('common.refresh')} onclick={() => lists.refresh()}>
-				<RefreshCw class="w-4 h-4 {lists.busy ? 'animate-spin' : ''}" aria-hidden="true" />
+			<Button
+				variant="secondary"
+				size="icon"
+				icon={RefreshCw}
+				loading={lists.busy}
+				title={$t('common.refresh')}
+				onclick={() => lists.refresh()}
+			>
 				<span class="sr-only">{$t('common.refresh')}</span>
 			</Button>
 			<!-- Without a mounted pool there is nothing to take a snapshot of: the button says why, once the
 			     pools have answered (while they load, or when they could not be read, no reason is true). -->
-			<span
-				class="flex"
-				title={lists.selected || lists.subvolumesLoading || lists.subvolumesError ? undefined : $t('snapshots.createBlocked')}
+			<Button
+				icon={Plus}
+				disabled={!lists.selected}
+				disabledReason={lists.selected || lists.subvolumesLoading || lists.subvolumesError ? '' : $t('snapshots.createBlocked')}
+				onclick={openCreate}>{$t('snapshots.create')}</Button
 			>
-				<Button icon={Plus} disabled={!lists.selected} onclick={openCreate}>{$t('snapshots.create')}</Button>
-			</span>
 		</div>
 	</div>
 
 	{#if lists.subvolumesError}
-		<Alert variant="error" title={$t('snapshots.loadPoolsError')}>{lists.subvolumesError}</Alert>
+		<Card>
+			<!-- The header's Refresh tries again: no Retry of its own (ADR-0431). -->
+			<ErrorState title={$t('snapshots.loadPoolsError')} message={lists.subvolumesError} />
+		</Card>
 	{/if}
 
 	{#each lists.unreadVolumes as sv (sv.path)}
@@ -149,6 +158,7 @@
 	{/if}
 
 	{#if restoredTo}
+		<!-- Not a toast: where the copy was made is to be read, and kept, before going on. -->
 		<Alert
 			variant="success"
 			title={$t('snapshots.restored')}
@@ -180,7 +190,7 @@
 				</div>
 			{:else if lists.snapshots.error}
 				<div class="px-5 pb-5">
-					<Alert variant="error" size="sm" title={$t('snapshots.loadError')}>{lists.snapshots.error}</Alert>
+					<ErrorState title={$t('snapshots.loadError')} message={lists.snapshots.error} />
 				</div>
 			{:else if lists.snapshots.items.length === 0}
 				<!-- Create snapshot is the header's: the empty state says where they come from. -->
@@ -232,10 +242,10 @@
 				<div class="px-5 pb-5" aria-busy="true"><Skeleton count={2} /></div>
 			{:else if lists.copies.error}
 				<div class="px-5 pb-5">
-					<Alert variant="error" size="sm" title={$t('snapshots.copies.loadError')}>{lists.copies.error}</Alert>
+					<ErrorState title={$t('snapshots.copies.loadError')} message={lists.copies.error} />
 				</div>
 			{:else if lists.copies.items.length === 0}
-				<p class="px-5 pb-5 text-sm text-muted">{$t('snapshots.copies.empty')}</p>
+				<EmptyState compact icon={Copy} title={$t('snapshots.copies.empty')} />
 			{:else}
 				<SnapshotTable
 					rows={lists.copies.items}

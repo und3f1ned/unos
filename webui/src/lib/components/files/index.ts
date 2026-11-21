@@ -6,6 +6,5 @@ export { default as FilesHeader } from './FilesHeader.svelte';
 export { default as LeftoversDialog } from './LeftoversDialog.svelte';
 export { default as LeftoversNotice } from './LeftoversNotice.svelte';
 export { default as NewFolderForm } from './NewFolderForm.svelte';
-export { default as SelectionBar } from './SelectionBar.svelte';
 export { default as TransferBar } from './TransferBar.svelte';
 export { default as TrashTable } from './TrashTable.svelte';

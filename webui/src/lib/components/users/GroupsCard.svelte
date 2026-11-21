@@ -4,10 +4,9 @@
 	import type { User } from '$lib/api/auth';
 	import { ApiError } from '$lib/api/client';
 	import { deleteGroup, type Group } from '$lib/api/groups';
-	import { Alert, Button, Card, Skeleton } from '$lib/components/ui';
+	import { Alert, Button, Card, CardAction, ConfirmDialog, EmptyState, HelpText, LoadState, Skeleton } from '$lib/components/ui';
 	import { SmbStateBadge } from '$lib/components/shares';
 	import { t } from '$lib/i18n';
-	import ConfirmDialog from './ConfirmDialog.svelte';
 	import { messageOf } from './errors';
 	import GroupDialog from './GroupDialog.svelte';
 	import type { GroupDirectory } from './groups.svelte';
@@ -30,6 +29,17 @@
 
 	// The dialog of a new group or of a group's name and members.
 	let groupDialog: ReturnType<typeof GroupDialog> | undefined;
+
+	let retrying = $state(false);
+
+	async function retry() {
+		retrying = true;
+		try {
+			await directory.load();
+		} finally {
+			retrying = false;
+		}
+	}
 
 	// Again with each new list of users (no polling: only after a load of the page's own). The
 	// page loaded the groups with the first list.
@@ -98,20 +108,25 @@
 			<UsersRound class="w-5 h-5 text-content-secondary" aria-hidden="true" />
 			{$t('groups.title', { count: directory.groups.length })}
 		</h2>
-		<Button icon={Plus} variant="secondary" size="sm" onclick={() => groupDialog?.openCreate()}>{$t('groups.add')}</Button>
+		<CardAction icon={Plus} onclick={() => groupDialog?.openCreate()}>{$t('groups.add')}</CardAction>
 	</div>
-	<p class="form-hint mt-0 mb-4">{$t('groups.about')}</p>
+	<HelpText text={$t('groups.about')} class="mb-4" />
 
-	{#if directory.loadError}
-		<Alert variant="error" title={$t('groups.loadFailed')}>{directory.loadError}</Alert>
-	{/if}
 	<OutcomeAlerts outcome={directory.outcome} failureTitle={$t('groups.actionFailed')} />
 
-	{#if directory.loading}
-		<div aria-busy="true"><Skeleton count={2} /></div>
-	{:else if directory.groups.length === 0 && !directory.loadError}
-		<p class="text-muted">{$t('groups.empty')}</p>
-	{:else}
+	<LoadState
+		loading={directory.loading}
+		error={directory.loadError}
+		errorTitle={$t('groups.loadFailed')}
+		keepOnError={directory.groups.length > 0}
+		empty={directory.groups.length === 0}
+		onretry={retry}
+		{retrying}
+	>
+		{#snippet skeleton()}<Skeleton count={2} />{/snippet}
+		{#snippet emptyState()}
+			<EmptyState compact icon={UsersRound} title={$t('groups.empty')} />
+		{/snippet}
 		<ul class="space-y-3">
 			{#each directory.groups as group (group.id)}
 				<li class="card-nested">
@@ -156,7 +171,7 @@
 				</li>
 			{/each}
 		</ul>
-	{/if}
+	</LoadState>
 </Card>
 </div>
 
@@ -165,14 +180,19 @@
 <ConfirmDialog
 	open={toDelete !== null}
 	title={$t('groups.delete.title')}
-	danger
 	busy={deleting}
-	before={$t('groups.delete.before')}
-	name={toDelete?.name ?? null}
-	after={$t('groups.delete.after')}
-	submit={$t('groups.delete.submit')}
-	error={deleteError}
-	errorTitle={$t('groups.delete.failed')}
-	onclose={closeDelete}
+	confirmLabel={$t('groups.delete.submit')}
+	oncancel={closeDelete}
 	onconfirm={confirmDelete}
-/>
+>
+	{#if toDelete}
+		<!-- In parts around the name: ADR-0296. -->
+		<p>
+			{$t('groups.delete.before')}
+			<strong class="text-content">{toDelete.name}</strong>{$t('groups.delete.after')}
+		</p>
+		{#if deleteError}
+			<Alert variant="error" title={$t('groups.delete.failed')}>{deleteError}</Alert>
+		{/if}
+	{/if}
+</ConfirmDialog>

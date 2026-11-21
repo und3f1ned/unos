@@ -202,7 +202,6 @@ export const en = {
 	'shares.form.browseable': 'Show in network browsing',
 	'shares.form.guest': 'Guests can read this share without a password',
 	'shares.form.guestShort': 'Anyone on your network can read this share without a password.',
-	'shares.form.details': 'Details',
 	// As the server words its warning about a guest share (ADR-0096).
 	'shares.form.guestWarning':
 		'Anyone on your network can read this share without a password, and its name is visible to anyone on your network. Guests can never write. While a guest share exists, connections to this server are not required to be signed. Windows 11 refuses guest access by default, and guest connections are neither signed nor encrypted.',
@@ -587,7 +586,6 @@ export const ru: Translation<typeof en> = {
 	'shares.form.browseable': 'Показывать в сетевом окружении',
 	'shares.form.guest': 'Гости могут читать эту общую папку без пароля',
 	'shares.form.guestShort': 'Любой в вашей сети может читать эту общую папку без пароля.',
-	'shares.form.details': 'Подробнее',
 	'shares.form.guestWarning':
 		'Любой в вашей сети может читать эту общую папку без пароля, и её имя видно всем в вашей сети. Гости никогда не могут записывать. Пока существует гостевая общая папка, подпись подключений к этому серверу не требуется. Windows 11 по умолчанию отказывает в гостевом доступе, а гостевые подключения не подписываются и не шифруются.',
 	'shares.form.options': 'Параметры протокола',

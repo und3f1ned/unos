@@ -1,6 +1,6 @@
 <script lang="ts">
 	import type { IscsiSecrets } from '$lib/api/iscsi';
-	import { Alert, Button, Modal } from '$lib/components/ui';
+	import { Alert, Button, Modal, toast } from '$lib/components/ui';
 	import { t } from '$lib/i18n';
 
 	// The secrets of a target that was created or got new ones, shown once. Mounted while open.
@@ -12,17 +12,16 @@
 
 	let { secrets, onclose }: Props = $props();
 
-	let copied = $state(false);
+	// A failed copy stays under the secrets, which are then to be copied by hand.
 	let copyFailed = $state(false);
 
 	async function copy(text: string | null) {
 		if (!text) return;
 		try {
 			await navigator.clipboard.writeText(text);
-			copied = true;
 			copyFailed = false;
+			toast.success($t('iscsi.secret.copied'));
 		} catch {
-			copied = false;
 			copyFailed = true;
 		}
 	}
@@ -56,7 +55,6 @@
 		{#if secrets.mutual_secret}
 			{@render secretField('iscsi-shown-mutual', $t('iscsi.secret.mutual'), secrets.mutual_secret)}
 		{/if}
-		{#if copied}<p class="text-sm text-status-success">{$t('iscsi.secret.copied')}</p>{/if}
 		{#if copyFailed}<p class="text-sm text-status-error">{$t('iscsi.secret.copyFailed')}</p>{/if}
 	</div>
 	{#snippet footer()}

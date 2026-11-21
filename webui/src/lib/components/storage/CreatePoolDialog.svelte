@@ -6,8 +6,8 @@
 	// its reason. The dialog scrolls as a whole, with no box that scrolls inside it, and says what is
 	// still missing while Create is disabled.
 	import { untrack } from 'svelte';
-	import { ChevronDown } from 'lucide-svelte';
-	import { Alert, Badge, Button, Input, Modal, Select } from '$lib/components/ui';
+	import { ChevronDown, HardDrive } from 'lucide-svelte';
+	import { Alert, Badge, Button, Checkbox, EmptyState, ErrorState, Input, Select, Sheet, Skeleton } from '$lib/components/ui';
 	import { ApiError } from '$lib/api/client';
 	import {
 		createPool,
@@ -191,7 +191,8 @@
 	}
 </script>
 
-<Modal
+<!-- A form of a list of disks and its fields: a Sheet (ADR-0432). -->
+<Sheet
 	{open}
 	title={$t('storage.create.title')}
 	size="lg"
@@ -223,47 +224,38 @@
 		<div>
 			<p class="form-label">{$t('storage.create.devices')}</p>
 			{#if disksLoading}
-				<p class="text-muted text-sm">{$t('storage.create.checkingDisks')}</p>
+				<!-- The disks' place while they are read again (ADR-0430). -->
+				<div aria-busy="true"><Skeleton shape="block" class="h-16 w-full" /></div>
 			{:else if disksError}
-				<Alert variant="error" size="sm" title={$t('storage.disks.loadError')}>{disksError}</Alert>
+				<ErrorState title={$t('storage.disks.loadError')} message={disksError} onretry={reloadDisks} />
 			{:else if disks.length === 0}
-				<p class="text-muted text-sm">{$t('storage.disks.none')}</p>
+				<EmptyState compact icon={HardDrive} title={$t('storage.disks.none')} />
 			{:else}
 				{#if usable.length === 0}
-					<p class="text-muted text-sm">{$t('storage.create.noneUsable')}</p>
+					<EmptyState compact icon={HardDrive} title={$t('storage.create.noneUsable')} />
 				{/if}
 				<div class="space-y-2">
 					{#each usable as disk}
-						<label
-							class="flex items-start gap-3 p-2 bg-surface-muted rounded-lg transition-colors cursor-pointer hover:bg-surface-overlay"
-						>
-							<input
-								type="checkbox"
-								checked={poolForm.devices.includes(disk.path)}
-								onchange={() => toggleDevice(disk)}
-								class="form-checkbox mt-1"
-							/>
-							<div class="flex-1 min-w-0">
-								<div class="flex flex-wrap items-center gap-x-2">
-									<span class="mono">{disk.path}</span>
-									<span class="text-secondary text-sm">{formatBytes(disk.size)}</span>
-									{#if disk.model}
-										<span class="text-muted text-xs">{disk.model}</span>
-									{/if}
-									{#if disk.serial}
-										<span class="mono-xs text-muted">{disk.serial}</span>
-									{/if}
-								</div>
-								<p class="text-xs text-secondary">
-									{describeContents(disk)}{disk.pool
-										? ` · ${$t('storage.create.memberOf', { pool: disk.pool })}`
-										: ''}
-								</p>
-								{#if disk.has_data}
-									<Badge variant="warning" class="mt-1">{$t('storage.create.containsData')}</Badge>
+						<Checkbox checked={poolForm.devices.includes(disk.path)} onchange={() => toggleDevice(disk)}>
+							<span class="flex flex-wrap items-center gap-x-2">
+								<span class="mono">{disk.path}</span>
+								<span class="text-secondary text-sm">{formatBytes(disk.size)}</span>
+								{#if disk.model}
+									<span class="text-muted text-xs">{disk.model}</span>
 								{/if}
-							</div>
-						</label>
+								{#if disk.serial}
+									<span class="mono-xs text-muted">{disk.serial}</span>
+								{/if}
+							</span>
+							<span class="block text-xs text-secondary">
+								{describeContents(disk)}{disk.pool
+									? ` · ${$t('storage.create.memberOf', { pool: disk.pool })}`
+									: ''}
+							</span>
+							{#if disk.has_data}
+								<Badge variant="warning" class="mt-1">{$t('storage.create.containsData')}</Badge>
+							{/if}
+						</Checkbox>
 					{/each}
 				</div>
 				{#if unusable.length > 0}
@@ -320,10 +312,7 @@
 						</li>
 					{/each}
 				</ul>
-				<label class="flex items-center gap-2 mt-3 text-content cursor-pointer">
-					<input type="checkbox" bind:checked={poolForm.force} class="form-checkbox" />
-					{$t('storage.create.eraseData')}
-				</label>
+				<Checkbox bind:checked={poolForm.force} label={$t('storage.create.eraseData')} class="mt-3" />
 			</Alert>
 		{/if}
 
@@ -369,4 +358,4 @@
 			{$t('storage.create.submit')}
 		</Button>
 	{/snippet}
-</Modal>
+</Sheet>

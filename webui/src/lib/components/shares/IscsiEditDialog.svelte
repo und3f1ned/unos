@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { untrack } from 'svelte';
 	import type { IscsiTarget, IscsiTargetChange } from '$lib/api/iscsi';
-	import { Alert, Button, Input, Modal } from '$lib/components/ui';
+	import { Alert, Button, Checkbox, Input, Modal } from '$lib/components/ui';
 	import { t } from '$lib/i18n';
 	import { messageOf } from './errors';
 	import IscsiInitiatorsField from './IscsiInitiatorsField.svelte';
@@ -70,10 +70,7 @@
 		class="space-y-4"
 	>
 		<IscsiInitiatorsField id="iscsi-edit-initiators" bind:value={editInitiators} />
-		<label class="flex items-center gap-2 cursor-pointer">
-			<input type="checkbox" class="form-checkbox" bind:checked={newSecret} />
-			{$t('iscsi.edit.newSecret')}
-		</label>
+		<Checkbox bind:checked={newSecret} label={$t('iscsi.edit.newSecret')} />
 		{#if newSecret}
 			<Input
 				id="iscsi-edit-secret"
@@ -85,15 +82,9 @@
 				hint={$t('iscsi.edit.newSecretHint')}
 			/>
 		{/if}
-		<label class="flex items-center gap-2 cursor-pointer">
-			<input type="checkbox" class="form-checkbox" bind:checked={editMutual} />
-			{$t('iscsi.edit.mutual')}
-		</label>
+		<Checkbox bind:checked={editMutual} label={$t('iscsi.edit.mutual')} />
 		{#if editMutual && target.mutual}
-			<label class="flex items-center gap-2 cursor-pointer">
-				<input type="checkbox" class="form-checkbox" bind:checked={newMutualSecret} />
-				{$t('iscsi.edit.newMutualSecret')}
-			</label>
+			<Checkbox bind:checked={newMutualSecret} label={$t('iscsi.edit.newMutualSecret')} />
 		{/if}
 		{#if editMutual && (newMutualSecret || !target.mutual)}
 			<Input

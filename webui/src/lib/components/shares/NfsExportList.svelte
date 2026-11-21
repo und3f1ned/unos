@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { Network, Trash2 } from 'lucide-svelte';
 	import type { NfsExport, NfsExportClient } from '$lib/api/shares';
-	import { Alert, Badge, Button, Card, EmptyState } from '$lib/components/ui';
+	import { Badge, Button, Card, EmptyState, ErrorState, HelpText } from '$lib/components/ui';
 	import { t } from '$lib/i18n';
 
 	type Props = {
@@ -13,9 +13,22 @@
 		noPool?: boolean;
 		/** The delete button of an export that UNOS added: the page asks first. */
 		ondelete: (exp: NfsExport) => void;
+		/** Read the exports again after a failed load. */
+		onretry: () => Promise<void>;
 	};
 
-	let { exports, error, noPool = false, ondelete }: Props = $props();
+	let { exports, error, noPool = false, ondelete, onretry }: Props = $props();
+
+	let retrying = $state(false);
+
+	async function retry() {
+		retrying = true;
+		try {
+			await onretry();
+		} finally {
+			retrying = false;
+		}
+	}
 
 	/** What a client may do, in the words of the SMB access levels. */
 	function accessLabel(client: NfsExportClient): string {
@@ -29,7 +42,9 @@
      options of exportfs under Options. No card around them repeats the tab. -->
 <section class="space-y-4" aria-label={$t('shares.nfs.title')}>
 	{#if error}
-		<Alert variant="error" title={$t('shares.nfs.loadError')}>{error}</Alert>
+		<Card>
+			<ErrorState title={$t('shares.nfs.loadError')} message={error} onretry={retry} {retrying} />
+		</Card>
 	{:else if exports.length === 0}
 		<!-- Its next step is the header's Add NFS export, which it names; without a pool, Storage. -->
 		<Card>
@@ -50,7 +65,7 @@
 							<p class="mono break-all font-medium text-content">{exp.path}</p>
 							{#if !exp.managed}
 								<p class="flex flex-wrap items-center gap-2 text-xs text-muted">
-									<Badge variant="neutral">{$t('shares.nfs.notUnos')}</Badge>
+									<Badge variant="outline">{$t('shares.nfs.notUnos')}</Badge>
 									<span class="break-words">{$t('shares.nfs.notAddedInUnos', { file: exp.file, line: exp.line })}</span>
 								</p>
 							{/if}
@@ -88,7 +103,7 @@
 		</ul>
 	{/if}
 
-	<p class="form-hint">{$t('shares.nfs.note')}</p>
+	<HelpText text={$t('shares.nfs.note')} />
 </section>
 
 <style>

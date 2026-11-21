@@ -1,8 +1,7 @@
 <script lang="ts">
 	import { restartSmb, type SmbInterfaces } from '$lib/api/shares';
-	import { Alert } from '$lib/components/ui';
+	import { Alert, ConfirmDialog } from '$lib/components/ui';
 	import { t } from '$lib/i18n';
-	import DangerDialog from './DangerDialog.svelte';
 	import { messageOf } from './errors';
 
 	// Restart SMB, which closes every open SMB connection: the dialog says so first. Always
@@ -54,12 +53,12 @@
 	}
 </script>
 
-<DangerDialog
+<ConfirmDialog
 	open={isOpen}
 	title={$t('shares.interfaces.restartTitle')}
 	busy={restarting}
 	confirmLabel={$t('shares.interfaces.restartNow')}
-	onclose={close}
+	oncancel={close}
 	onconfirm={restart}
 >
 	{#if current}
@@ -69,4 +68,4 @@
 	{#if error}
 		<Alert variant="error" title={$t('shares.interfaces.notRestarted')}>{error}</Alert>
 	{/if}
-</DangerDialog>
+</ConfirmDialog>

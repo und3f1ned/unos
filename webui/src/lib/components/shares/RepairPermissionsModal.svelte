@@ -3,7 +3,7 @@
 	import { StopCircle, Wrench } from 'lucide-svelte';
 	import { ApiError } from '$lib/api/client';
 	import { getRepairResult, repairSharePermissions, stopRepair, type RepairResult } from '$lib/api/shares';
-	import { Alert, Badge, Button, Modal } from '$lib/components/ui';
+	import { Alert, Badge, Button, Sheet } from '$lib/components/ui';
 	import { intlLocale, t } from '$lib/i18n';
 	import { formatDateTime } from '$lib/time';
 	import { isRepairOf, repairJob } from '$lib/stores/repair';
@@ -119,8 +119,9 @@
 	);
 </script>
 
-<Modal open title={$t('shares.repair.title', { name })} size="lg" closable={!starting} onclose={close}>
-	<div class="space-y-3 max-h-[60vh] overflow-y-auto scrollbar-thin pr-1">
+<!-- The outcome of a run, its lists and what a run does: a Sheet, which scrolls them (ADR-0432). -->
+<Sheet open title={$t('shares.repair.title', { name })} size="lg" closable={!starting} onclose={close}>
+	<div class="space-y-3">
 		<!-- The outcome first: after a run it is what the user is waiting for. -->
 		{#if lastError}
 			<Alert variant="error" title={$t('shares.repair.lastError')}>{lastError}</Alert>
@@ -223,4 +224,4 @@
 			</Button>
 		{/if}
 	{/snippet}
-</Modal>
+</Sheet>

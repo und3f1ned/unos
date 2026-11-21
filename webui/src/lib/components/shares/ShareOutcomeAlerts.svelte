@@ -25,9 +25,6 @@
 	}
 </script>
 
-{#if outcome.notice}
-	<Alert variant="success" dismissible ondismiss={() => (outcome.notice = '')}>{outcome.notice}</Alert>
-{/if}
 {#if outcome.warnings.length > 0}
 	<Alert variant="warning" dismissible ondismiss={() => (outcome.warnings = [])}>
 		{#each outcome.warnings as warning}

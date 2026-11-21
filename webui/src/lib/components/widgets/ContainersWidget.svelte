@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { Container, ExternalLink } from 'lucide-svelte';
-	import { Card, Badge } from '$lib/components/ui';
+	import { Badge, Card, EmptyState } from '$lib/components/ui';
 	import { t } from '$lib/i18n';
 
 	type Props = {
@@ -101,7 +101,7 @@
 		</dl>
 
 		{#if containers.length === 0}
-			<p class="text-secondary text-sm">{$t('dashboard.containers.none')}</p>
+			<EmptyState compact icon={Container} title={$t('dashboard.containers.none')} />
 		{:else}
 			<!-- A row per container: its name and image, then its state as a badge with a dot. No
 			     state icon: the play and stop icons are the Containers page's buttons. -->

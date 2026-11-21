@@ -81,7 +81,8 @@ test.describe('The network interfaces of SMB', () => {
     await expect(dialog).toBeHidden();
     expect(puts(fake)).toEqual([{ interfaces: [NIC] }]);
     await expect(card(page)).toContainText(`SMB listens only on ${NIC}, and on the NAS itself (the loopback).`);
-    await expect(card(page)).toContainText(`SMB listens only on ${NIC} now.`);
+    // What the change did is a toast (ADR-0432).
+    await expect(page.getByText(`SMB listens only on ${NIC} now.`, { exact: true })).toBeVisible();
     await expect(card(page)).toContainText(
       'SMB answers on: 127.0.0.1, 192.168.10.5, ::1, 2001:db8:1234:5678:9abc:def0:1234:5678, fd00:1234:5678:9abc::5',
     );
@@ -96,7 +97,8 @@ test.describe('The network interfaces of SMB', () => {
     await expect(again).toBeHidden();
     expect(puts(fake)).toEqual([{ interfaces: [NIC] }, { interfaces: [] }]);
     await expect(card(page)).toContainText('SMB listens on every network interface of the NAS.');
-    await expect(card(page)).toContainText('SMB listens on every network interface again.');
+    // What the change did is a toast (ADR-0432).
+    await expect(page.getByText('SMB listens on every network interface again.', { exact: true })).toBeVisible();
   });
 
   test('a choice that leaves no interface of the local network is refused by the server', async ({
@@ -166,7 +168,8 @@ test.describe('The network interfaces of SMB', () => {
 
     await expect(restart).toBeHidden();
     expect(fake.writes.map((w) => `${w.method} ${w.path}`)).toEqual(['POST /shares/smb-interfaces/restart']);
-    await expect(card(page)).toContainText('SMB was restarted.');
+    // What the change did is a toast (ADR-0432).
+    await expect(page.getByText('SMB was restarted.', { exact: true })).toBeVisible();
     await expect(card(page)).toContainText('192.168.10.6');
     await expect(card(page)).not.toContainText(notListening('192.168.10.6', NIC));
     // The missing adapter stays chosen: a restart cannot bring it.

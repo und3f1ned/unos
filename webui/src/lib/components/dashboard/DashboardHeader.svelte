@@ -1,7 +1,7 @@
 <script lang="ts">
-	import { AlertCircle, AlertTriangle, Check, CheckCircle, RefreshCw, SlidersHorizontal } from 'lucide-svelte';
+	import { AlertTriangle, Check, RefreshCw, SlidersHorizontal } from 'lucide-svelte';
 	import type { SystemInfo } from '$lib/api/system';
-	import { Button, Skeleton, StatusDot } from '$lib/components/ui';
+	import { Badge, Button, Skeleton, StatusDot } from '$lib/components/ui';
 	import { intlLocale, t } from '$lib/i18n';
 	import { isAdmin } from '$lib/stores/auth';
 	import { problemsKnown } from '$lib/stores/problems';
@@ -130,15 +130,11 @@
 		{/if}
 		{#if $isAdmin && issueCount !== null && issueCount > 0}
 			<!-- The banner under the header lists them, each linked to where it is dealt with. -->
-			<a href="#problems-banner" class="chip hover:bg-surface-hover {issueError ? 'text-status-error' : 'text-status-warning'}">
-				<AlertCircle class="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
-				<span>{$t('dashboard.issues', { n: issueCount })}</span>
+			<a href="#problems-banner" class="rounded-full">
+				<Badge variant={issueError ? 'error' : 'warning'} dot>{$t('dashboard.issues', { n: issueCount })}</Badge>
 			</a>
 		{:else if $isAdmin && $wsConnected && $problemsKnown && issueCount === 0}
-			<span class="chip text-status-success">
-				<CheckCircle class="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
-				<span>{$t('dashboard.noProblems')}</span>
-			</span>
+			<Badge variant="success" dot>{$t('dashboard.noProblems')}</Badge>
 		{/if}
 		{#if customizable}
 			<span data-customize>
@@ -154,8 +150,15 @@
 				</Button>
 			</span>
 		{/if}
-		<Button variant="secondary" size="icon-sm" onclick={onrefresh} disabled={loading || saving} title={$t('common.refresh')}>
-			<RefreshCw class="w-4 h-4 {loading ? 'animate-spin' : ''}" aria-hidden="true" />
+		<Button
+			variant="secondary"
+			size="icon-sm"
+			icon={RefreshCw}
+			loading={loading}
+			disabled={saving}
+			onclick={onrefresh}
+			title={$t('common.refresh')}
+		>
 			<span class="sr-only">{$t('common.refresh')}</span>
 		</Button>
 	</div>

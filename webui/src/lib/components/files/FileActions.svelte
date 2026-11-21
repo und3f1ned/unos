@@ -1,9 +1,8 @@
 <script lang="ts">
   import { Copy, Download, FolderInput, Pencil, Trash2 } from "lucide-svelte";
-  import { Button } from "$lib/components/ui";
+  import { Button, BulkBar } from "$lib/components/ui";
   import { t } from "$lib/i18n";
   import type { FileBrowser } from "./browser.svelte";
-  import SelectionBar from "./SelectionBar.svelte";
 
   type Props = {
     browser: FileBrowser;
@@ -21,9 +20,16 @@
   }
 </script>
 
-<!-- Actions on the selected items, shown in the selection's bar while one is selected; Delete
-     moves to the trash, so it is no solid red button. -->
-<SelectionBar count={browser.selected.size} hint={$t("files.selectHint")}>
+<!-- Actions on the selected items, shown in the selection's bar while one is selected, and until
+     then what selecting does; Delete moves to the trash, so it is no solid red button. -->
+<BulkBar
+  class="mb-4"
+  count={browser.selected.size}
+  label={$t("files.selectedItems")}
+  summary={$t("files.selected", { n: browser.selected.size })}
+  hint={$t("files.selectHint")}
+  onclear={browser.working ? null : () => (browser.selected = new Set())}
+>
   <Button
     variant="secondary"
     size="sm"
@@ -72,4 +78,4 @@
       {$t("files.delete")}
     </Button>
   </span>
-</SelectionBar>
+</BulkBar>

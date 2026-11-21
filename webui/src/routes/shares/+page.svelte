@@ -3,7 +3,7 @@
 	import { Plus } from 'lucide-svelte';
 	import type { IscsiState } from '$lib/api/iscsi';
 	import { getSharePaths, type NfsExport, type RepairResult, type SharePath, type SmbShare } from '$lib/api/shares';
-	import { Alert, Button, Skeleton } from '$lib/components/ui';
+	import { Alert, Button, Skeleton, Tabs } from '$lib/components/ui';
 	import {
 		BulkDeleteDialog,
 		DeleteNfsExportDialog,
@@ -15,7 +15,6 @@
 		RepairPermissionsModal,
 		ShareFormModal,
 		ShareOutcomeAlerts,
-		ShareTabs,
 		SmbInterfacesCard,
 		SmbShareList,
 		SmbStatusAlerts
@@ -195,7 +194,14 @@
 		{/if}
 	</div>
 
-	<ShareTabs {tabs} active={activeTab} onselect={(id) => (activeTab = id)} />
+	<Tabs
+		{tabs}
+		active={activeTab}
+		label={$t('shares.tabs.label')}
+		tabId={(id) => `shares-tab-${id}`}
+		panelId={() => 'shares-panel'}
+		onselect={(id) => (activeTab = id)}
+	/>
 
 	<!-- What the selected tab shows. -->
 	<div
@@ -244,6 +250,7 @@
 				error={nfs.error}
 				noPool={!loading && !pathsError && paths.length === 0}
 				ondelete={(exp) => nfsDeleteDialog?.open(exp)}
+				onretry={() => nfs.load()}
 			/>
 		{/if}
 	</div>

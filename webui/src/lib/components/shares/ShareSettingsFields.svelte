@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { SHARE_OPTIONS, type ShareOption } from '$lib/api/shares';
-	import { Alert } from '$lib/components/ui';
+	import { Alert, Checkbox, HelpText } from '$lib/components/ui';
 	import { t } from '$lib/i18n';
 
 	// The settings of a share: whether it is listed, guest access, and the protocol options
@@ -50,21 +50,14 @@
 </script>
 
 <div class="space-y-2">
-	<label class="flex items-center gap-2 cursor-pointer">
-		<input type="checkbox" class="form-checkbox" bind:checked={browseable} />
-		{$t('shares.form.browseable')}
-	</label>
-	<label class="flex items-center gap-2 {guestLocked ? 'opacity-60' : 'cursor-pointer'}">
-		<input type="checkbox" class="form-checkbox" bind:checked={guestOk} disabled={guestLocked} />
-		{$t('shares.form.guest')}
-	</label>
+	<Checkbox bind:checked={browseable} label={$t('shares.form.browseable')} />
+	<Checkbox bind:checked={guestOk} disabled={guestLocked} label={$t('shares.form.guest')} />
 	{#if guestOk}
-		<!-- The one line that matters, and the server's whole warning (ADR-0096) under Details. -->
+		<!-- The one line that matters, and the server's whole warning (ADR-0096) under its details. -->
 		<Alert variant="warning" size="sm" title={$t('shares.form.guestShort')}>
-			<details>
-				<summary class="cursor-pointer">{$t('shares.form.details')}</summary>
-				<p class="mt-1">{$t('shares.form.guestWarning')}</p>
-			</details>
+			{#snippet details()}
+				<p>{$t('shares.form.guestWarning')}</p>
+			{/snippet}
 		</Alert>
 	{/if}
 </div>
@@ -73,22 +66,17 @@
 	<legend class="form-label">{$t('shares.form.options')}</legend>
 	{#each optionChoices as choice (choice.name)}
 		<div>
-			<label class="flex items-center gap-2 {choice.locked ? 'opacity-60' : 'cursor-pointer'}">
-				<input
-					type="checkbox"
-					class="form-checkbox"
-					bind:checked={options[choice.name]}
-					disabled={choice.locked}
-					aria-describedby="share-option-{choice.name}"
-				/>
-				{choice.label}
-			</label>
-			<div id="share-option-{choice.name}" class="form-hint ml-6">
-				{choice.hint}
-				<details class="mt-0.5">
-					<summary class="cursor-pointer text-content-secondary">{$t('shares.form.details')}</summary>
-					<p class="mt-1">{choice.more}</p>
-				</details>
+			<Checkbox
+				bind:checked={options[choice.name]}
+				disabled={choice.locked}
+				label={choice.label}
+				describedby="share-option-{choice.name}"
+			/>
+			<!-- One line under each option, and the whole of it under Details. -->
+			<div id="share-option-{choice.name}" class="ml-7">
+				<HelpText text={choice.hint}>
+					{#snippet more()}<p>{choice.more}</p>{/snippet}
+				</HelpText>
 			</div>
 		</div>
 	{/each}

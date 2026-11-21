@@ -13,6 +13,8 @@
 		description?: string;
 		/** The name for screen readers where no label shows, such as a row's checkbox. */
 		ariaLabel?: string;
+		/** The id of the element that describes it, such as a HelpText under it. */
+		describedby?: string;
 		indeterminate?: boolean;
 		disabled?: boolean;
 		id?: string;
@@ -29,6 +31,7 @@
 		label = '',
 		description = '',
 		ariaLabel = '',
+		describedby = undefined,
 		indeterminate = false,
 		disabled = false,
 		id = undefined,
@@ -64,6 +67,7 @@
 		{indeterminate}
 		{disabled}
 		aria-label={ariaLabel || undefined}
+		aria-describedby={describedby}
 		onchange={change}
 	/>
 {/snippet}

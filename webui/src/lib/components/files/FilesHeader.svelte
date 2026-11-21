@@ -28,12 +28,10 @@
   <h1 class="page-title">{$t("files.title")}</h1>
   <div class="page-actions">
     <input bind:this={uploadInput} type="file" multiple class="hidden" onchange={handleUpload} />
-    <Button variant="secondary" size="icon"
+    <Button variant="secondary" size="icon" icon={RefreshCw} loading={browser.loading}
       onclick={() => browser.refresh()}
       title={$t("common.refresh")}
-      disabled={browser.loading}
     >
-      <RefreshCw class="w-4 h-4 {browser.loading ? 'animate-spin' : ''}" aria-hidden="true" />
       <span class="sr-only">{$t("common.refresh")}</span>
     </Button>
     <Button variant="secondary" icon={FolderPlus} onclick={() => (browser.showNewFolder = true)}>

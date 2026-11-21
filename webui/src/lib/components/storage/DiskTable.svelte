@@ -3,7 +3,7 @@
 	// their state, and each disk's power: awake or asleep, and its idle timeout, which its button
 	// sets (ADR-0378). Where a disk is mounted is its status's reason.
 	import { HardDrive, Pencil } from 'lucide-svelte';
-	import { Alert, Badge, Button, Card, EmptyState, StatusDot } from '$lib/components/ui';
+	import { Alert, Badge, Button, Card, EmptyState, ErrorState, StatusDot } from '$lib/components/ui';
 	import type { Disk, PowerState } from '$lib/api/storage';
 	import { t } from '$lib/i18n';
 	import type { BadgeVariant } from './pools';
@@ -82,11 +82,8 @@
 	{/if}
 	{#if error}
 		<div class="px-5 pb-5">
-			<Alert variant="error" size="sm" title={$t('storage.disks.loadError')}>
-				{#if errorDetail}
-					<span class="text-xs text-content-secondary break-words">{error}</span>
-				{/if}
-			</Alert>
+			<!-- The header's Refresh tries again (ADR-0431). -->
+			<ErrorState title={$t('storage.disks.loadError')} message={errorDetail ? error : ''} />
 		</div>
 	{:else if disks.length === 0}
 		<EmptyState compact icon={HardDrive} title={$t('storage.disks.none')} />

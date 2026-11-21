@@ -2,7 +2,7 @@
   import { tick } from "svelte";
   import { ArrowUp } from "lucide-svelte";
   import { formatSize, type FileInfo } from "$lib/api/files";
-  import { Button, Input } from "$lib/components/ui";
+  import { Button, Checkbox, Input } from "$lib/components/ui";
   import { intlLocale, t } from "$lib/i18n";
   import { formatDate } from "$lib/time";
   import type { FileBrowser } from "./browser.svelte";
@@ -111,8 +111,8 @@
     await tick();
     // Unless the focus has gone elsewhere meanwhile.
     if (document.activeElement !== null && document.activeElement !== document.body) return;
-    const boxes = Array.from(listBox?.querySelectorAll<HTMLInputElement>("input[data-path]") ?? []);
-    boxes.find((box) => box.dataset.path === path)?.focus();
+    const boxes = Array.from(listBox?.querySelectorAll<HTMLElement>("[data-path]") ?? []);
+    boxes.find((box) => box.dataset.path === path)?.querySelector("input")?.focus();
   }
 </script>
 
@@ -157,17 +157,15 @@
           onclick={() => browser.toggleSelect(item.path)}
           ondblclick={() => browser.open(item)}
         >
-          <input
-            type="checkbox"
-            aria-label={$t("files.select", { name: item.name })}
-            data-path={item.path}
-            checked={browser.selected.has(item.path)}
-            onclick={(e) => {
-              e.stopPropagation();
-              browser.toggleSelect(item.path);
-            }}
-            class="w-4 h-4 rounded bg-surface-overlay border-border-strong"
-          />
+          <!-- The checkbox's click stays out of the row, which would select the item a second time. -->
+          <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+          <span class="inline-flex" data-path={item.path} onclick={(e) => e.stopPropagation()}>
+            <Checkbox
+              ariaLabel={$t("files.select", { name: item.name })}
+              checked={browser.selected.has(item.path)}
+              onchange={() => browser.toggleSelect(item.path)}
+            />
+          </span>
           <div class="flex items-center gap-3 min-w-0">
             <Icon
               class="w-[18px] h-[18px] flex-shrink-0 text-content-secondary"

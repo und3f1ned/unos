@@ -1,11 +1,11 @@
 <script lang="ts">
 	// The actions of a pool's card: its two everyday ones, Volumes and Scrub (Mount for a
-	// pool that is not mounted), as buttons, and the rest behind More: a balance (ADR-0379), a
+	// pool that is not mounted), as buttons, and the rest in its ⋯ menu: a balance (ADR-0379), a
 	// disk's add and removal (ADR-0411), the unmount and the removal of the pool. An action that
 	// cannot run now is disabled and says why. The controls of a job that runs (cancel a scrub,
 	// pause, resume or cancel a balance) are the job's own, beside its progress.
-	import { ChevronDown, Layers, Loader2, MinusCircle, Plug, Plus, RefreshCw, Scale, Trash2, Unplug } from 'lucide-svelte';
-	import { Button, type IconComponent } from '$lib/components/ui';
+	import { Layers, MinusCircle, Plug, Plus, RefreshCw, Scale, Trash2, Unplug } from 'lucide-svelte';
+	import { ActionMenu, Button, type IconComponent } from '$lib/components/ui';
 	import type { BalanceStatus, DiskRemovalStatus, Pool, ScrubStatus } from '$lib/api/storage';
 	import { t } from '$lib/i18n';
 	import { blockedReason, type PoolHandlers } from './pools';
@@ -41,7 +41,7 @@
 	// A balance that runs or is paused has its controls beside its progress.
 	let balanceShown = $derived(!balance || balance.status === 'idle');
 
-	/** An action behind More: what the ActionMenu of the design system will list. */
+	/** An action of the pool's menu. */
 	type MoreAction = {
 		id: string;
 		label: string;
@@ -69,15 +69,17 @@
 		return list;
 	}
 
-	// The reasons of the disabled actions behind More, each once.
-	let reasons = $derived(
-		[...new Set([pool.mounted && balanceShown ? balanceBlocked : null, pool.mounted ? disksBlocked : null])].filter(
-			(reason): reason is string => reason !== null
-		)
+	// The menu's items; one that cannot run now is disabled and says why under its label.
+	const items = $derived(
+		moreActions().map((action) => ({
+			label: action.label,
+			icon: action.icon,
+			onclick: action.run,
+			danger: action.danger,
+			disabled: !!action.blocked,
+			disabledReason: action.blocked ? $t(action.blocked) : undefined
+		}))
 	);
-
-	let open = $state(false);
-	const panelId = $derived(`pool-more-${pool.name}`);
 </script>
 
 <div class="flex flex-wrap items-center gap-2">
@@ -87,62 +89,24 @@
 		</Button>
 		{#if scrub?.status !== 'running'}
 			<!-- No scrub beside a balance or a disk removal that runs (ADR-0379, ADR-0411): the
-			     tooltip and the text for screen readers say why. -->
-			<span class="flex" title={scrubBlocked ? $t(scrubBlocked) : undefined}>
-				<Button
-					variant="secondary"
-					size="sm"
-					icon={startingScrub ? Loader2 : RefreshCw}
-					disabled={startingScrub || scrubBlocked !== null}
-					aria-describedby={scrubBlocked ? `${panelId}-scrub` : undefined}
-					onclick={() => onscrub(pool)}
-				>
-					{$t('storage.pool.scrub')}
-				</Button>
-			</span>
-			{#if scrubBlocked}
-				<span id="{panelId}-scrub" class="sr-only">{$t(scrubBlocked)}</span>
-			{/if}
+			     button says why. -->
+			<Button
+				variant="secondary"
+				size="sm"
+				icon={RefreshCw}
+				loading={startingScrub}
+				disabled={scrubBlocked !== null}
+				disabledReason={scrubBlocked ? $t(scrubBlocked) : ''}
+				onclick={() => onscrub(pool)}
+			>
+				{$t('storage.pool.scrub')}
+			</Button>
 		{/if}
 	{:else}
 		<Button variant="secondary" size="sm" icon={Plug} onclick={() => onmount(pool)}>
 			{$t('storage.pool.mount')}
 		</Button>
 	{/if}
-	<Button
-		variant="ghost"
-		size="sm"
-		aria-expanded={open}
-		aria-controls={panelId}
-		aria-label={$t('storage.pool.moreOf', { name: pool.name })}
-		onclick={() => (open = !open)}
-	>
-		{$t('storage.pool.more')}
-		<ChevronDown class="w-4 h-4 transition-transform {open ? 'rotate-180' : ''}" aria-hidden="true" />
-	</Button>
+	<!-- The other actions, in the pool's ⋯ menu (ADR-0432), the removal last. -->
+	<ActionMenu name={pool.name} {items} />
 </div>
-
-{#if open}
-	<!-- The other actions, in a row under the header: the ActionMenu of the design system takes
-	     this list when it comes. -->
-	<div id={panelId} class="basis-full flex flex-col gap-2 pt-3 border-t border-border">
-		<div class="flex flex-wrap items-center gap-2" role="group" aria-label={$t('storage.pool.moreOf', { name: pool.name })}>
-			{#each moreActions() as action (action.id)}
-				<Button
-					variant={action.danger ? 'ghost-danger' : 'secondary'}
-					size="sm"
-					icon={action.icon}
-					disabled={!!action.blocked}
-					title={action.blocked ? $t(action.blocked) : undefined}
-					aria-label={action.danger ? $t('storage.pool.remove', { name: pool.name }) : undefined}
-					onclick={action.run}
-				>
-					{action.label}
-				</Button>
-			{/each}
-		</div>
-		{#each reasons as reason (reason)}
-			<p class="text-xs text-content-secondary">{$t(reason)}</p>
-		{/each}
-	</div>
-{/if}

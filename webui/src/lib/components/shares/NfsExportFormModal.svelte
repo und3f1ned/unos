@@ -6,7 +6,7 @@
 		type SharePath,
 		type ShareAccessLevel
 	} from '$lib/api/shares';
-	import { Alert, Button, Input, Modal, Select } from '$lib/components/ui';
+	import { Alert, Button, HelpText, Input, Modal, Select } from '$lib/components/ui';
 	import { t } from '$lib/i18n';
 	import { messageOf } from './errors';
 	import LocationFields from './LocationFields.svelte';
@@ -121,7 +121,7 @@
 			options={accessOptions}
 		/>
 
-		<p class="form-hint">{$t('shares.nfs.note')}</p>
+		<HelpText text={$t('shares.nfs.note')} />
 	</form>
 
 	{#if error}

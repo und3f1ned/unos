@@ -1,5 +1,6 @@
 <script lang="ts">
   import { formatSize, type TrashItem } from "$lib/api/files";
+  import { Checkbox } from "$lib/components/ui";
   import { intlLocale, t } from "$lib/i18n";
   import { DATE_TIME_MINUTES } from "$lib/format";
   import { formatDate, formatDateTime } from "$lib/time";
@@ -63,13 +64,7 @@
         {@const Icon = trashItemIcon(item)}
         <tr class="table-row align-top">
           <td>
-            <input
-              type="checkbox"
-              aria-label={checkboxLabel(item)}
-              checked={selected.has(item.path)}
-              onchange={() => ontoggle(item.path)}
-              class="w-4 h-4 rounded bg-surface-overlay border-border"
-            />
+            <Checkbox ariaLabel={checkboxLabel(item)} checked={selected.has(item.path)} onchange={() => ontoggle(item.path)} />
           </td>
           <td class="min-w-[12rem]">
             <div class="flex items-start gap-2 min-w-0">

@@ -13,7 +13,7 @@
 		type IscsiTargetCreate
 	} from '$lib/api/iscsi';
 	import type { SharePath } from '$lib/api/shares';
-	import { Alert, Button, Card, EmptyState, Skeleton } from '$lib/components/ui';
+	import { Alert, Card, EmptyState, HelpText, LoadState, Skeleton, toast } from '$lib/components/ui';
 	import { t } from '$lib/i18n';
 	import { messageOf } from './errors';
 	import IscsiCreateDialog from './IscsiCreateDialog.svelte';
@@ -31,7 +31,7 @@
 
 	let { paths = [], iscsiState = $bindable(null) }: Props = $props();
 	let loadError = $state('');
-	let notice = $state('');
+	let retrying = $state(false);
 
 	// The volumes that can hold a LUN, by "pool/volume".
 	const volumes = $derived(paths.filter((p) => p.type === 'volume' && p.managed));
@@ -42,6 +42,15 @@
 			loadError = '';
 		} catch (e) {
 			loadError = messageOf(e);
+		}
+	}
+
+	async function retry() {
+		retrying = true;
+		try {
+			await load();
+		} finally {
+			retrying = false;
 		}
 	}
 
@@ -82,7 +91,7 @@
 		try {
 			const result = await createIscsiTarget(target);
 			creating = false;
-			notice = $t('iscsi.created', { name: result.target.name });
+			toast.success($t('iscsi.created', { name: result.target.name }));
 			shown = result;
 			await load();
 		} finally {
@@ -97,7 +106,7 @@
 		try {
 			const result = await changeIscsiTarget(target.name, change);
 			editing = null;
-			notice = $t('iscsi.changed', { name: target.name });
+			toast.success($t('iscsi.changed', { name: target.name }));
 			if (result.chap_secret || result.mutual_secret) shown = result;
 			await load();
 		} finally {
@@ -112,7 +121,7 @@
 		try {
 			await deleteIscsiTarget(target.name, typed);
 			deleting = null;
-			notice = $t('iscsi.deleted', { name: target.name });
+			toast.success($t('iscsi.deleted', { name: target.name }));
 			await load();
 		} finally {
 			saving = false;
@@ -121,57 +130,58 @@
 </script>
 
 <section class="space-y-6" aria-label={$t('iscsi.title')}>
-	{#if notice}
-		<Alert variant="success" dismissible ondismiss={() => (notice = '')}>{notice}</Alert>
-	{/if}
-
-	{#if loadError}
-		<Alert variant="error" title={$t('iscsi.loadError')}>
-			<p>{loadError}</p>
-			<Button variant="secondary" size="sm" class="mt-3" onclick={load}>{$t('common.retry')}</Button>
-		</Alert>
-	{:else if !iscsiState}
-		<!-- The first load (ADR-0430): the portals' line and the targets. -->
-		<div class="space-y-4" aria-busy="true">
-			<Skeleton class="w-2/3" />
-			<Skeleton shape="card" count={4} />
-		</div>
-	{:else}
-		<div class="space-y-4">
-			{#if !iscsiState.kernel_support}
-				<Alert variant="warning">{$t('iscsi.noKernel')}</Alert>
-			{/if}
-			{#if iscsiState.portals_problem}
-				<Alert variant="warning" title={$t('iscsi.portalsProblem')}>{iscsiState.portals_problem}</Alert>
-			{:else if iscsiState.portals.length === 0}
-				<Alert variant="warning">{$t('iscsi.noPortals')}</Alert>
-			{/if}
-
-			{#if iscsiState.targets.length === 0}
-				<Card>
-					<!-- Its next step is the header's Add target; without a volume, Storage. -->
-					<EmptyState icon={HardDrive} title={$t('iscsi.empty')} description={$t('iscsi.emptyHint')}>
-						{#if iscsiState.kernel_support && volumes.length === 0}
-							<a class="link" href="/storage">{$t('shares.toStorage')}</a>
-						{/if}
-					</EmptyState>
-				</Card>
-			{:else}
-				<ul class="space-y-4" aria-label={$t('iscsi.title')}>
-					{#each iscsiState.targets as target (target.name)}
-						<IscsiTargetItem {target} onedit={openEdit} ondelete={openDelete} />
-					{/each}
-				</ul>
-			{/if}
-			<!-- What an iSCSI target is, and where initiators connect: one line under the targets. -->
-			<p class="form-hint break-words">
-				{$t('iscsi.intro')}
-				{#if !iscsiState.portals_problem && iscsiState.portals.length > 0}
-					{' '}{$t('iscsi.portals', { portals: iscsiState.portals.join(', ') })}
+	<LoadState
+		loading={!iscsiState && !loadError}
+		error={loadError}
+		errorTitle={$t('iscsi.loadError')}
+		keepOnError={iscsiState !== null}
+		onretry={retry}
+		{retrying}
+	>
+		{#snippet skeleton()}
+			<!-- The first load (ADR-0430): the portals' line and the targets. -->
+			<div class="space-y-4">
+				<Skeleton class="w-2/3" />
+				<Skeleton shape="card" count={4} />
+			</div>
+		{/snippet}
+		{#if iscsiState}
+			<div class="space-y-4">
+				{#if !iscsiState.kernel_support}
+					<Alert variant="warning">{$t('iscsi.noKernel')}</Alert>
 				{/if}
-			</p>
-		</div>
-	{/if}
+				{#if iscsiState.portals_problem}
+					<Alert variant="warning" title={$t('iscsi.portalsProblem')}>{iscsiState.portals_problem}</Alert>
+				{:else if iscsiState.portals.length === 0}
+					<Alert variant="warning">{$t('iscsi.noPortals')}</Alert>
+				{/if}
+
+				{#if iscsiState.targets.length === 0}
+					<Card>
+						<!-- Its next step is the header's Add target; without a volume, Storage. -->
+						<EmptyState icon={HardDrive} title={$t('iscsi.empty')} description={$t('iscsi.emptyHint')}>
+							{#if iscsiState.kernel_support && volumes.length === 0}
+								<a class="link" href="/storage">{$t('shares.toStorage')}</a>
+							{/if}
+						</EmptyState>
+					</Card>
+				{:else}
+					<ul class="space-y-4" aria-label={$t('iscsi.title')}>
+						{#each iscsiState.targets as target (target.name)}
+							<IscsiTargetItem {target} onedit={openEdit} ondelete={openDelete} />
+						{/each}
+					</ul>
+				{/if}
+				<!-- What an iSCSI target is, and where initiators connect: one line under the targets. -->
+				<HelpText
+					class="break-words"
+					text={!iscsiState.portals_problem && iscsiState.portals.length > 0
+						? `${$t('iscsi.intro')} ${$t('iscsi.portals', { portals: iscsiState.portals.join(', ') })}`
+						: $t('iscsi.intro')}
+				/>
+			</div>
+		{/if}
+	</LoadState>
 </section>
 
 {#if creating}

@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { FolderOpen, Trash2 } from 'lucide-svelte';
 	import type { SmbShare } from '$lib/api/shares';
-	import { Alert, Button, Card, EmptyState } from '$lib/components/ui';
+	import { BulkBar, Button, Card, Checkbox, EmptyState, ErrorState, HelpText } from '$lib/components/ui';
 	import { t } from '$lib/i18n';
 	import { isRepairOf, repairJob } from '$lib/stores/repair';
 	import ShareCard from './ShareCard.svelte';
@@ -41,12 +41,9 @@
 <!-- The shares, each a card, under the tab that names them: no card around them repeats the tab. -->
 <section class="space-y-4" aria-label={$t('shares.smb.title')}>
 	{#if smb.error}
-		<Alert variant="error" title={$t('shares.smb.loadError')}>
-			<p>{smb.error}</p>
-			<Button variant="secondary" size="sm" class="mt-3" loading={retrying} onclick={retry}>
-				{$t('common.retry')}
-			</Button>
-		</Alert>
+		<Card>
+			<ErrorState title={$t('shares.smb.loadError')} message={smb.error} onretry={retry} {retrying} />
+		</Card>
 	{:else if smb.shares.length === 0}
 		<!-- Its next step is the header's Add SMB share, which it names; without a pool, Storage. -->
 		<Card>
@@ -59,41 +56,35 @@
 	{:else}
 		<!-- The selection for an action on several shares (ADR-0389): Delete selected shows only
 		     with a selection, and confirms in its dialog. -->
-		<div
-			class="flex min-h-8 flex-wrap items-center gap-x-4 gap-y-2"
-			role="toolbar"
-			aria-label={$t('shares.bulk.toolbar')}
+		<BulkBar
+			count={smb.selected.size}
+			label={$t('shares.bulk.toolbar')}
+			summary={$t('shares.bulk.selected', { n: smb.selected.size })}
 		>
-			<label class="flex items-center gap-2 text-sm">
-				<input
-					type="checkbox"
-					class="form-checkbox"
+			{#snippet leading()}
+				<Checkbox
+					label={$t('shares.bulk.selectAll')}
 					checked={smb.allSelected}
+					indeterminate={smb.selected.size > 0 && !smb.allSelected}
 					disabled={smb.bulkDeleting}
-					onchange={(event) => smb.selectAll(event.currentTarget.checked)}
+					onchange={(on) => smb.selectAll(on)}
 				/>
-				{$t('shares.bulk.selectAll')}
-			</label>
-			{#if smb.selected.size > 0}
-				<span class="text-sm text-content-secondary">
-					{$t('shares.bulk.selected', { n: smb.selected.size })}
-				</span>
-				<Button
-					variant="secondary"
-					size="sm"
-					icon={Trash2}
-					disabled={smb.selected.size > BULK_DELETE_MAX || smb.bulkDeleting}
-					onclick={() => onbulkdelete()}
-				>
-					{$t('shares.bulk.delete')}
-				</Button>
-			{/if}
+			{/snippet}
+			<Button
+				variant="secondary"
+				size="sm"
+				icon={Trash2}
+				disabled={smb.selected.size > BULK_DELETE_MAX || smb.bulkDeleting}
+				onclick={() => onbulkdelete()}
+			>
+				{$t('shares.bulk.delete')}
+			</Button>
 			{#if smb.selected.size > BULK_DELETE_MAX}
-				<p class="w-full text-sm text-warning">
+				<p class="text-sm text-warning">
 					{$t('shares.bulk.tooMany', { max: BULK_DELETE_MAX })}
 				</p>
 			{/if}
-		</div>
+		</BulkBar>
 		{#each smb.shares as share (share.name)}
 			<ShareCard
 				{share}
@@ -111,5 +102,5 @@
 		{/each}
 	{/if}
 
-	<p class="form-hint">{$t('shares.smb.networkNote')}</p>
+	<HelpText text={$t('shares.smb.networkNote')} />
 </section>

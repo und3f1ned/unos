@@ -1,9 +1,8 @@
 <script lang="ts">
 	import { ApiError } from '$lib/api/client';
 	import { deleteSmbShares, type SmbShare } from '$lib/api/shares';
-	import { Alert } from '$lib/components/ui';
+	import { Alert, ConfirmDialog, toast } from '$lib/components/ui';
 	import { t } from '$lib/i18n';
-	import DangerDialog from './DangerDialog.svelte';
 	import { messageOf } from './errors';
 	import type { ShareOutcome } from './outcome.svelte';
 	import { BULK_DELETE_MAX, keyOf, type SmbShares } from './smb.svelte';
@@ -61,13 +60,11 @@
 			smb.selected = new Set(asked.filter((share) => kept.has(share.name)).map(keyOf));
 			smb.bulkDeleting = false;
 			close();
-			outcome.notice =
-				deleted.length > 0
-					? $t('shares.bulk.deleted', {
-							n: deleted.length,
-							names: deleted.map((result) => result.name).join(', ')
-						})
-					: '';
+			if (deleted.length > 0) {
+				toast.success(
+					$t('shares.bulk.deleted', { n: deleted.length, names: deleted.map((result) => result.name).join(', ') })
+				);
+			}
 			outcome.warnings = answer.warnings;
 			outcome.error = '';
 			await smb.reload();
@@ -90,12 +87,12 @@
 	}
 </script>
 
-<DangerDialog
+<ConfirmDialog
 	open={shares !== null}
 	title={$t('shares.bulk.deleteTitle', { n: shares?.length ?? 0 })}
 	busy={smb.bulkDeleting}
 	confirmLabel={$t('shares.bulk.confirm', { n: shares?.length ?? 0 })}
-	onclose={close}
+	oncancel={close}
 	onconfirm={confirm}
 >
 	{#if shares}
@@ -117,4 +114,4 @@
 			{/if}
 		</div>
 	{/if}
-</DangerDialog>
+</ConfirmDialog>
