@@ -726,6 +726,23 @@ Open owner actions:
 
 ## Log
 
+### 2026-11-21: Every page on the shared components; the design check keeps no baseline (ADR-0438)
+
+- At the owner's word (the design was left half done), two builders moved the data and sharing
+  pages (873f6b63) and the apps, containers, System, Account, sign-in and layout pages (692746cc)
+  onto `webui/src/lib/components/ui` (ADR-0432): every raw checkbox and radio, the hand-made
+  selection bars (BulkBar), long dialogs and details (Sheet), menus, tabs, loads, pills and
+  single-question dialogs (confirm()), and success notices as toasts. Each reviewed in a fresh
+  context (11 and 10 findings, fixed but for the ones in their commits). Merged as 39e67336 and
+  58b87177.
+- a0f852f3 (ADR-0438): the design check's baseline is gone, and success Alerts, spinners and raw
+  `<details>` fail unless a `design-ignore` gives the reason; the Button tooltip got the token
+  `surface-inverse` instead of a theme.spec exception. At the owner's word ("remove this line from
+  everywhere") the Live/Disconnected line left the dashboard and the sidebar, with its spec
+  assertions. `make check` 10765 passed; full E2E 1163 passed, 2 failed (a class `times.spec`
+  reads, restored, and a sign-in timeout of shares.spec that passed alone), 14 skipped.
+- Not deployed yet: the dev device and the BPI-F3 run 9daf179a and 8297e142.
+
 ### 2026-11-20: A seventeenth batch: ruff, ghcr.io, Svelte 5, the redesign, TRIM; the BPI-F3 moved
 
 - A diagnosis first: the transmission image of the catalog's pin came from ghcr.io in 10 s
