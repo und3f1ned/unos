@@ -675,8 +675,10 @@ async def _balance(func: Callable[..., T], name: str, *args: Any, reads: bool = 
         if reads:
             balances.note(validated_name, detail)
         raise HTTPException(status_code=500, detail=detail)
-    balances.note(validated_name, answer[0] if isinstance(answer, tuple) else answer)
+    # Each balance command answers its BalanceStatus, alone or first in a tuple.
+    balances.note(validated_name, answer[0] if isinstance(answer, tuple) else answer)  # type: ignore[arg-type]
     return answer
+
 
 
 async def _audit_balance(action: AuditAction, request: Request, user: User, name: str, details: str) -> None:

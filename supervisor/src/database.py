@@ -2,12 +2,13 @@ import logging
 import re
 import sqlite3
 from pathlib import Path
+from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 from alembic import command
 from alembic.config import Config
 from alembic.runtime.migration import MigrationContext
 from alembic.script import ScriptDirectory
-from sqlalchemy import Connection, create_engine, event
+from sqlalchemy import Connection, CursorResult, Result, Table, create_engine, event
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase
@@ -99,7 +100,15 @@ async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit
 
 
 class Base(DeclarativeBase):
-    pass
+    if TYPE_CHECKING:
+        # Every model is a declared table: DeclarativeBase types __table__ as any FromClause.
+        __table__: ClassVar[Table]
+
+
+def rowcount(result: Result) -> int:
+    """The rows that an UPDATE or DELETE matched: Session.execute returns a CursorResult for them,
+    typed as the Result of a query, which has no rowcount."""
+    return cast(CursorResult, result).rowcount
 
 
 async def get_db():
@@ -137,7 +146,7 @@ def server_default_differs(context, inspected_column, metadata_column, inspected
 
 # What autogenerate compares, in src/migrations/env.py and in tests/test_migrations.py, which fails
 # for a model whose difference from the head of the migrations has no revision yet.
-AUTOGENERATE = {"compare_type": True, "compare_server_default": server_default_differs}
+AUTOGENERATE: dict[str, Any] = {"compare_type": True, "compare_server_default": server_default_differs}
 
 
 def migration_config() -> Config:
@@ -274,7 +283,7 @@ async def checkpoint_db():
     """
     try:
         async with engine.connect() as conn:
-            busy, _, _ = (await conn.exec_driver_sql("PRAGMA wal_checkpoint(TRUNCATE)")).one()
+            busy = (await conn.exec_driver_sql("PRAGMA wal_checkpoint(TRUNCATE)")).one()[0]  # (busy, log, checkpointed)
     except SQLAlchemyError as exc:
         logger.warning("The database's last commits stay in unos.db-wal: the checkpoint failed (%s)", exc)
         return

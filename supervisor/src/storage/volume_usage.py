@@ -240,7 +240,7 @@ def _load(state: _State) -> None:
         for uuid, entry in saved.listed.items()
     }
     state.series = {
-        (entry.uuid, entry.id): _Series(entry.pool, entry.volume, [tuple(point) for point in entry.points],
+        (entry.uuid, entry.id): _Series(entry.pool, entry.volume, list(entry.points),
                                         entry.stage)
         for entry in saved.series
     }
@@ -353,7 +353,7 @@ def _volumes_of(state: _State, info: PoolInfo, uuid: str) -> dict[str, int] | No
     with state.lock:
         known = state.listed.get(uuid)
     same = known is not None and generation is not None and known.generation == generation and known.pool == info.name
-    if same and known.settled:
+    if same and known is not None and known.settled:
         return None if known.failure else known.volumes
     volumes = known.volumes if known is not None else None
     failure = None
@@ -370,6 +370,7 @@ def _volumes_of(state: _State, info: PoolInfo, uuid: str) -> dict[str, int] | No
             _destroy_stale_groups(state, info.name, target, uuid, tree, groups - listed_ids)
         lost = unresolved & set((known.volumes or {}).values()) if known is not None else set()
         if lost:
+            assert known is not None  # lost holds ids of its volumes
             volumes, failure = known.volumes, f"btrfs could not resolve the subvolume ids {sorted(lost)}"
     if failure is not None and (known is None or known.failure != failure):
         logger.warning("Could not list the volumes of pool %s for their quotas: %s", info.name, failure)
@@ -512,11 +513,11 @@ def _sample(infos: list[PoolInfo], earlier: dict[str, problems.Problem]) -> dict
         # First, so that a point of a clock that was set ahead does not hold back this hour's.
         _forget_points(state, now)
         pools_found = {info.uuid for info in infos if info.uuid}
-        for uuid in [uuid for uuid in state.listed if uuid not in pools_found]:
-            del state.listed[uuid]
+        for gone in [listed for listed in state.listed if listed not in pools_found]:
+            del state.listed[gone]
             state.unsaved = True
-        for uuid in [uuid for uuid in state.stale if uuid not in pools_found]:
-            del state.stale[uuid]
+        for gone in [stale for stale in state.stale if stale not in pools_found]:
+            del state.stale[gone]
         _forget_groups(state, lambda uuid, _: uuid not in pools_found)
         state.destroy_hung = False
     found: dict[str, problems.Problem] = {}
@@ -559,7 +560,7 @@ def _sample(infos: list[PoolInfo], earlier: dict[str, problems.Problem]) -> dict
                 if series.stage != stage:
                     series.stage = stage
                     state.unsaved = True
-            if stage:
+            if stage and reading.quota is not None:  # a stage comes from a quota
                 found[key] = _quota_problem(info.name, volume, subvol_id, reading.used, reading.quota, stage)
     return found
 

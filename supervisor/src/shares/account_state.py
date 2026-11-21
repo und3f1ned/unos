@@ -33,17 +33,17 @@ class SmbAccountStatus(BaseModel):
     )
     allowed: bool = Field(description="Whether an administrator allowed SMB for the user.")
     linux_name: str | None = Field(
-        None, description="The name of the user's SMB account on the host; null unless SMB is allowed."
+        default=None, description="The name of the user's SMB account on the host; null unless SMB is allowed."
     )
     uid: int | None = Field(
-        None,
+        default=None,
         description="The user id of the SMB account on the host, 70000 to 79999; null unless SMB is allowed and "
                     "the account has one.",
     )
     password_set_at: UtcDatetime | None = Field(
-        None, description="When Samba got the account's password, in UTC; null unless the state is active."
+        default=None, description="When Samba got the account's password, in UTC; null unless the state is active."
     )
-    reason: str | None = Field(None, description="Why SMB is unavailable; null for the other states.")
+    reason: str | None = Field(default=None, description="Why SMB is unavailable; null for the other states.")
 
 
 def username_smb_problem(username: str) -> str | None:

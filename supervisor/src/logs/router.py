@@ -99,7 +99,9 @@ class LogEntry(BaseModel):
     # UTC with its offset, to the second; "" when the journal gives none.
     timestamp: str = Field(description="When it was logged, in UTC with its offset, to the second; empty when the "
                                        "journal gives no time.")
-    facility: str = Field("", description="The number of its syslog facility, such as 4 for auth; empty when it has none.")
+    facility: str = Field(
+        default="", description="The number of its syslog facility, such as 4 for auth; empty when it has none."
+    )
     priority: str = Field(
         description="Its level: emerg, alert, crit, err, warning, notice, info or debug; info when it has none."
     )
@@ -107,11 +109,14 @@ class LogEntry(BaseModel):
     source: str = Field(description="The source that was read, as GET /logs/sources names it.")
     # The program that logged it: SYSLOG_IDENTIFIER, else _COMM, else _SYSTEMD_UNIT.
     unit: str | None = Field(
-        None, description="The program that logged it: its syslog identifier, else its command, else its systemd "
+        default=None,
+        description="The program that logged it: its syslog identifier, else its command, else its systemd "
                           "unit; null when the entry names none."
     )
     # The journal's cursor of the entry (__CURSOR): the journal socket follows on after it (ADR-0366).
-    cursor: str = Field("", description="The journal's cursor of the entry, where /ws/v1/journal follows on after it.")
+    cursor: str = Field(
+        default="", description="The journal's cursor of the entry, where /ws/v1/journal follows on after it."
+    )
 
 
 class LogsResponse(BaseModel):
@@ -264,13 +269,17 @@ async def read_journal(
 class JournalQuery(BaseModel):
     """What System > Logs reads: the values of GET /entries, also those of the journal socket."""
 
-    source: str = Field("journal", description="A source of GET /logs/sources.")
-    limit: int = Field(100, ge=1, le=1000, description="How many of the newest entries to read, from 1 to 1000.")
-    priority: Priority | None = Field(None, description="Only this level and the more severe ones; null for all.")
-    search: str | None = Field(
-        None, max_length=MAX_SEARCH_CHARS, description="Only the entries with this text in their message, in any case."
+    source: str = Field(default="journal", description="A source of GET /logs/sources.")
+    limit: int = Field(
+        default=100, ge=1, le=1000, description="How many of the newest entries to read, from 1 to 1000."
     )
-    since: str | None = Field(None, description="<N> minutes ago, <N> hours ago or <N> days ago; null for all.")
+    priority: Priority | None = Field(
+        default=None, description="Only this level and the more severe ones; null for all."
+    )
+    search: str | None = Field(
+        default=None, max_length=MAX_SEARCH_CHARS, description="Only the entries with this text in their message, in any case."
+    )
+    since: str | None = Field(default=None, description="<N> minutes ago, <N> hours ago or <N> days ago; null for all.")
 
 
 def _check_query(source: str, since: str | None, search: str | None) -> None:

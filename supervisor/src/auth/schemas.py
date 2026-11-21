@@ -1,6 +1,7 @@
 from typing import Annotated, Literal
 
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, StrictBool, StringConstraints, model_validator
+from pydantic.config import JsonDict
 
 from ..times import UtcDatetime
 from . import scopes
@@ -43,7 +44,7 @@ class UserCreate(BaseModel):
     password: NewPassword = Field(description="The new user's password, at most 72 bytes in UTF-8.")
     # Also turn SMB on with this password (POST /auth/users only).
     smb_enabled: bool = Field(
-        False,
+        default=False,
         description="Also turn SMB on with this password (POST /auth/users only; first-run setup refuses true).",
     )
 
@@ -80,20 +81,21 @@ class UserResponse(BaseModel):
                                 "another user.")
     username: str = Field(description="The user's name.")
     is_admin: bool = Field(description="Whether the user is an administrator; otherwise a regular user.")
-    totp_enabled: bool = Field(False, description="Whether the user has two-factor authentication.")
-    created_at: UtcDatetime | None = Field(None, description="When the user was created, in UTC.")
+    totp_enabled: bool = Field(default=False, description="Whether the user has two-factor authentication.")
+    created_at: UtcDatetime | None = Field(default=None, description="When the user was created, in UTC.")
     # Set by the user management endpoints; GET /auth/me keeps it null (the
     # Account page uses GET /auth/me/smb).
     smb: SmbAccountStatus | None = Field(
-        None, description="The user's SMB state in the answers of /auth/users and its routes; null in the others."
+        default=None,
+        description="The user's SMB state in the answers of /auth/users and its routes; null in the others."
     )
     warnings: list[str] = Field(
-        [], description="What the change did not finish, such as an smb.conf that could not be updated yet."
+        default=[], description="What the change did not finish, such as an smb.conf that could not be updated yet."
     )
     # Set by GET /auth/me only: null while every account need not have two-factor authentication,
     # or this one has it.
     two_factor_required: TwoFactorRequired | None = Field(
-        None,
+        default=None,
         description="In GET /auth/me's answer only: by when the account must set up two-factor authentication; "
                     "null while it need not, or has it.",
     )
@@ -111,7 +113,7 @@ class SecurityKeyRequest(BaseModel):
     )  # base64url
     timeout_ms: int = Field(description="How long the browser waits for the key, in milliseconds.")
     user_verification: Literal["discouraged"] = Field(
-        "discouraged", description="Always discouraged: the key is a second factor beside the password."
+        default="discouraged", description="Always discouraged: the key is a second factor beside the password."
     )
 
 
@@ -135,17 +137,17 @@ class Token(BaseModel):
                     "session went into the session cookie and at the step that asks for the second factor."
     )
     token_type: str = Field(
-        "bearer", description="bearer, or cookie when the session went into the session cookie."
+        default="bearer", description="bearer, or cookie when the session went into the session cookie."
     )
     requires_totp: bool = Field(
-        False,
+        default=False,
         description="True at the step that asks for the second factor: sign in again with the password and a "
                     "two-factor code, a recovery code or a security key's answer.",
     )
     # The session key, which the web UI's page sends with the session cookie (ADR-0397); empty at the
     # step that asks for the second factor. A program with the token needs none.
     session_key: str = Field(
-        "",
+        default="",
         description="The session key, which the web UI's page sends with the session cookie in the "
                     "X-UNOS-Session-Key header; empty at the step that asks for the second factor.",
     )
@@ -153,12 +155,12 @@ class Token(BaseModel):
     # account has keys that work at this address, and the addresses where its keys work, when it has
     # any. The sign-in leaves them out of its answer otherwise (response_model_exclude_none).
     security_key: SecurityKeyRequest | None = Field(
-        None,
+        default=None,
         description="At the step that asks for the second factor: the challenge for the account's security "
                     "keys that work at this address; left out otherwise.",
     )
     security_key_origins: list[str] | None = Field(
-        None,
+        default=None,
         description="At the step that asks for the second factor: the web UI's addresses where the account's "
                     "security keys work; left out otherwise, and when it has none.",
     )
@@ -201,12 +203,12 @@ class LoginRequest(BaseModel):
     )
     # In place of totp_code: a security key's answer to the challenge of the code step (ADR-0409).
     security_key: SecurityKeyAssertion | None = Field(
-        None, description="In place of totp_code: a security key's answer to the challenge of the code step."
+        default=None, description="In place of totp_code: a security key's answer to the challenge of the code step."
     )
     # The web UI's sign-in: the session goes into the HttpOnly session cookie, not into the answer
     # (ADR-0397). Programs leave it out and get the token for a Bearer header.
     cookie: StrictBool = Field(
-        False,
+        default=False,
         description="The web UI's sign-in: the session goes into the session cookie and the answer holds only "
                     "the session key; only the web UI's own page may ask for it. Programs leave it out.",
     )
@@ -238,10 +240,11 @@ class UserUpdate(BaseModel):
     ]})
 
     is_admin: bool | None = Field(
-        None, description="Make the user an administrator (true) or a regular user (false); null keeps the role."
+        default=None,
+        description="Make the user an administrator (true) or a regular user (false); null keeps the role."
     )
     password: NewPassword | None = Field(
-        None,
+        default=None,
         description="A new password, at most 72 bytes in UTF-8: it ends the user's sessions (but the "
                     "administrator's own one), and an active SMB account gets it too. Null keeps the password.",
     )
@@ -277,7 +280,7 @@ class SmbEnableRequest(BaseModel):
         max_length=64, description="The user's current name: 409 when the id now belongs to another user."
     )  # must be the user's current username (409)
     password: NewPassword | None = Field(
-        None,
+        default=None,
         description="A password for the user, at most 72 bytes in UTF-8: it becomes the UNOS password and the "
                     "SMB password, and SMB is turned on. Null only allows SMB.",
     )
@@ -325,7 +328,7 @@ class MySmbShare(BaseModel):
        # the share is served (ADR-0145) is not checked, since that needs the host's pool list
 
 
-_MY_SMB_EXAMPLE = {
+_MY_SMB_EXAMPLE: JsonDict = {
     "account": {
         "state": "password_needed", "allowed": True, "linux_name": "alice", "uid": 70000,
         "password_set_at": None, "reason": None,
@@ -359,7 +362,7 @@ class MySmbChange(MySmbStatus):
     model_config = ConfigDict(json_schema_extra={"examples": [{**_MY_SMB_EXAMPLE, "warnings": []}]})
 
     warnings: list[str] = Field(
-        [], description="What the change did not finish, such as SMB connections that could not be ended."
+        default=[], description="What the change did not finish, such as SMB connections that could not be ended."
     )
 
 
@@ -419,7 +422,7 @@ class APITokenCreate(BaseModel):
     ] = Field(description="The token's name, 1 to 64 characters; white space around it is dropped.")
     # The token's scope (ADR-0392): read only, or read and change; and its areas of the API, each
     # once, or None for every area. Without either, the token is full, as tokens were before.
-    read_only: StrictBool = Field(False, description="Whether the token may only read; false: read and change.")
+    read_only: StrictBool = Field(default=False, description="Whether the token may only read; false: read and change.")
     areas: Annotated[
         list[scopes.Area] | None,
         Field(
@@ -458,18 +461,18 @@ class APITokenResponse(BaseModel):
     # refused everywhere, and read_only true with no areas says so.
     read_only: bool = Field(description="Whether the token may only read; false: read and change.")
     areas: list[str] | None = Field(
-        None, description="The areas of the API that the token reaches, sorted; null: every area."
+        default=None, description="The areas of the API that the token reaches, sorted; null: every area."
     )
     scope_known: bool = Field(
-        True,
+        default=True,
         description="False for a stored scope that cannot be read (a restored or damaged database): the token "
                     "is refused everywhere, and read_only is true with no areas.",
     )
-    created_at: UtcDatetime | None = Field(None, description="When the token was created, in UTC.")
+    created_at: UtcDatetime | None = Field(default=None, description="When the token was created, in UTC.")
     last_used_at: UtcDatetime | None = Field(
-        None, description="When the token was last used, in UTC, stored at most once an hour; null: never."
+        default=None, description="When the token was last used, in UTC, stored at most once an hour; null: never."
     )
-    expires_at: UtcDatetime | None = Field(None, description="When the token expires, in UTC; null: never.")
+    expires_at: UtcDatetime | None = Field(default=None, description="When the token expires, in UTC; null: never.")
 
 
 class APITokenCreated(BaseModel):
@@ -490,9 +493,9 @@ class APITokenCreated(BaseModel):
     token_prefix: str = Field(description="The token's first 12 characters, to tell it apart.")
     read_only: bool = Field(description="Whether the token may only read; false: read and change.")
     areas: list[str] | None = Field(
-        None, description="The areas of the API that the token reaches, sorted; null: every area."
+        default=None, description="The areas of the API that the token reaches, sorted; null: every area."
     )
-    expires_at: UtcDatetime | None = Field(None, description="When the token expires, in UTC; null: never.")
+    expires_at: UtcDatetime | None = Field(default=None, description="When the token expires, in UTC; null: never.")
 
 
 # 2FA recovery codes (ADR-0238)

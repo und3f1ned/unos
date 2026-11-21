@@ -14,6 +14,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Request
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, StrictBool
+from pydantic.config import JsonDict
 from sqlalchemy import delete, select
 from sqlalchemy.dialects.sqlite import insert
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -54,7 +55,7 @@ def _each_id_once(widgets: list[Widget]) -> list[Widget]:
     return widgets
 
 
-_LAYOUT_EXAMPLE = {"widgets": [
+_LAYOUT_EXAMPLE: JsonDict = {"widgets": [
     {"id": "storage", "hidden": False}, {"id": "cpu", "hidden": False}, {"id": "memory", "hidden": False},
     {"id": "network", "hidden": True}, {"id": "disk-io", "hidden": False}, {"id": "temperature", "hidden": True},
 ]}

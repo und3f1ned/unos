@@ -172,10 +172,13 @@ def load_logs() -> list[NotificationLog]:
 def _without_a_time_that_is_none(item: object) -> object:
     """A history entry whose event's timestamp is no time without that timestamp: POST /send took any
     text there before ADR-0401, and the entry stays in the history."""
-    event = item.get("event") if isinstance(item, dict) else None
+    if not isinstance(item, dict):
+        return item
+    event = item.get("event")
     stamp = event.get("timestamp") if isinstance(event, dict) else None
     if stamp is None:
         return item
+    assert isinstance(event, dict)  # it holds the timestamp
     try:
         parse_time(stamp)
     except (TypeError, ValueError):
@@ -441,6 +444,7 @@ def _deliver_email(config: EmailConfig, message: str) -> None:
     without a login, such as a relay in the LAN; one with a username never
     sends without its login.
     """
+    server: smtplib.SMTP  # SMTP_SSL is one
     if config.smtp_port == IMPLICIT_TLS_PORT:
         server = smtplib.SMTP_SSL(
             config.smtp_host, config.smtp_port, timeout=SEND_TIMEOUT, context=_tls_context(config)

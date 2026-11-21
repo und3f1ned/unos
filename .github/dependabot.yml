@@ -4,7 +4,7 @@
 # and merged by the owner. A cooldown skips releases younger than a week; compromised releases are
 # usually pulled by then.
 #
-# Not here: .github/lint-requirements.txt (ruff and pip-audit with every dependency and hash,
+# Not here: .github/lint-requirements.txt (ruff, mypy and pip-audit with every dependency and hash,
 # compiled by uv from lint-requirements.in; docs/TESTING.md has the command) and
 # .github/audit-env-requirements.txt (the hashed tools of scripts/audit-python.sh, ADR-0423), moved
 # by hand in the monthly maintenance pass; Playwright, that is

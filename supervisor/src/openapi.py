@@ -79,7 +79,7 @@ def errors(*parts: Mapping[int, str]) -> dict[int | str, dict[str, Any]]:
     merged: dict[int, str] = {}
     for part in parts:
         merged.update(part)
-    models = {422: Unprocessable, 429: RateLimited}
+    models: dict[int, type[BaseModel]] = {422: Unprocessable, 429: RateLimited}
     return {
         code: {"model": models.get(code, ErrorDetail), "description": text}
         for code, text in sorted(merged.items())
@@ -90,6 +90,13 @@ def answer(example: Any, description: str, *, status: int = 200) -> dict[int | s
     """The ``responses`` entry of a JSON answer that has no response model: what it holds and an
     example of it."""
     return {status: {"description": description, "content": {"application/json": {"example": example}}}}
+
+
+def model_example(model: type[BaseModel]) -> Any:
+    """The first example of the model's json_schema_extra, for a route's answer of the same shape."""
+    extra = model.model_config.get("json_schema_extra")
+    assert isinstance(extra, dict) and isinstance(extra["examples"], list)
+    return extra["examples"][0]
 
 
 def file_answer(media_type: str, description: str, *, status: int = 200) -> dict[int | str, dict[str, Any]]:

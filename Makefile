@@ -7,6 +7,7 @@
 # make test PYTHON=/path/to/python3.11.
 PYTHON ?= $(if $(wildcard supervisor/.venv/bin/python),supervisor/.venv/bin/python,python3)
 RUFF ?= $(if $(wildcard .venv-lint/bin/ruff),.venv-lint/bin/ruff,ruff)
+MYPY ?= $(if $(wildcard .venv-lint/bin/mypy),.venv-lint/bin/mypy,mypy)
 PIP_AUDIT ?= $(if $(wildcard .venv-lint/bin/pip-audit),.venv-lint/bin/pip-audit,pip-audit)
 NPM ?= npm
 
@@ -41,6 +42,9 @@ SHELL_SCRIPT_DIRS = deploy scripts .claude/hooks
 # The Python that make lint checks with ruff, with the rules of ruff.toml (ADR-0425): the supervisor
 # and the repository's own tooling (the guard, scripts/dev, the stand-in, the commit checker).
 PYTHON_DIRS = supervisor scripts .claude/hooks
+# The Python that make lint type-checks with mypy, with the settings of mypy.ini, against the
+# packages of PYTHON, the supervisor's environment (ADR-0447).
+TYPED_DIRS = supervisor/src
 JSON_FILES = feature-list.json .claude/settings.json
 
 # A tool given as a path keeps working after `cd supervisor` or `cd webui`.
@@ -70,15 +74,15 @@ coverage_kept = $(if $(every_test),; status=$$?; mv -f .coverage.run$$$$ .covera
 # records nothing: a dry run or one that ignores errors (make -n, -t, -q, -i, -e, also through
 # MAKEFLAGS), a variable on the command line other than TEST_WORKERS, a tool or TESTS or
 # PYTEST_ARGS from the environment, a makefile besides this one (-f, MAKEFILES, a GNUmakefile), a
-# MAKE from the environment, and the environment of Python and pytest that changes what runs
-# (PYTEST_ADDOPTS, PYTEST_PLUGINS, PYTHONPATH, PYTHONHOME). GNU make 3.81 writes the single-letter
-# options first in MAKEFLAGS ("n") or after its long ones ("--no-print-directory -n"), and the
-# variables of the command line after them.
+# MAKE from the environment, and the environment of Python, pytest and mypy that changes what runs
+# (PYTEST_ADDOPTS, PYTEST_PLUGINS, PYTHONPATH, PYTHONHOME, MYPYPATH). GNU make 3.81 writes the
+# single-letter options first in MAKEFLAGS ("n") or after its long ones ("--no-print-directory -n"),
+# and the variables of the command line after them.
 make_options = $(subst -,,$(foreach word,$(filter-out --%,$(MAKEFLAGS)),$(if $(findstring =,$(word)),,$(word))))
 command_line = $(foreach v,$(.VARIABLES),$(if $(filter command line,$(origin $(v))),$(v)))
 narrowed = $(filter-out TEST_WORKERS,$(command_line)) $(filter-out Makefile,$(MAKEFILE_LIST)) $(MAKEFILES) \
-	$(filter environment,$(foreach v,PYTHON RUFF NPM TESTS PYTEST_ARGS,$(origin $(v)))) \
-	$(filter-out default,$(origin MAKE)) $(PYTEST_ADDOPTS) $(PYTEST_PLUGINS) $(PYTHONPATH) $(PYTHONHOME) \
+	$(filter environment,$(foreach v,PYTHON RUFF MYPY NPM TESTS PYTEST_ARGS,$(origin $(v)))) \
+	$(filter-out default,$(origin MAKE)) $(PYTEST_ADDOPTS) $(PYTEST_PLUGINS) $(PYTHONPATH) $(PYTHONHOME) $(MYPYPATH) \
 	$(foreach o,n t q i e,$(findstring $(o),$(make_options)))
 records_green = $(if $(strip $(narrowed)),,yes)
 green_begin = $(if $(records_green),state=$$($(PY) scripts/green-run.py state 2> /dev/null);)
@@ -94,7 +98,7 @@ run_all = failed=; for target in $(1); do echo "== make $@: $$target"; \
 	done; if [ -n "$$failed" ]; then echo "make $@ failed:$$failed" >&2; exit 1; fi; echo "make $@ passed: $(1)"
 
 .DEFAULT_GOAL := help
-.PHONY: help setup check check-fast lint lint-ruff lint-shell lint-json test test-fast smoke
+.PHONY: help setup check check-fast lint lint-ruff lint-mypy lint-shell lint-json test test-fast smoke
 .PHONY: frontend frontend-check frontend-runes frontend-i18n frontend-design frontend-build e2e-local audit catalog-platforms catalog-tags
 .PHONY: secret-scan image-scan
 
@@ -103,7 +107,7 @@ help: ## List the targets and the variables
 	@echo
 	@awk 'BEGIN { FS = ":.*## " } /^[a-z][a-z0-9-]*:.*## / { printf "  %-11s %s\n", $$1, $$2 }' $(firstword $(MAKEFILE_LIST))
 	@echo
-	@echo "Variables: PYTHON=$(PYTHON) RUFF=$(RUFF) PIP_AUDIT=$(PIP_AUDIT) NPM=$(NPM)"
+	@echo "Variables: PYTHON=$(PYTHON) RUFF=$(RUFF) MYPY=$(MYPY) PIP_AUDIT=$(PIP_AUDIT) NPM=$(NPM)"
 	@echo "           TESTS=$(TESTS) PYTEST_ARGS=$(PYTEST_ARGS) TEST_WORKERS=$(TEST_WORKERS) E2E_ARGS=$(E2E_ARGS)"
 
 setup: ## Bootstrap this checkout: venvs, npm ci, Chromium, git hooks, dev.env (needs the network)
@@ -115,11 +119,14 @@ check: ## The quality gate: lint, test and frontend, as CI runs them, without th
 check-fast: ## lint and test-fast: what the pre-commit hook and the Stop hook run
 	+@$(call green_run,lint test-fast)
 
-lint: ## ruff (the rules of ruff.toml), bash -n on the shell scripts, JSON syntax; all three run
-	+@$(call run_all,lint-ruff lint-shell lint-json)
+lint: ## ruff (the rules of ruff.toml), mypy (mypy.ini), bash -n on the shell scripts, JSON syntax; all run
+	+@$(call run_all,lint-ruff lint-mypy lint-shell lint-json)
 
 lint-ruff:
 	$(RUFF) check $(PYTHON_DIRS)
+
+lint-mypy:
+	$(MYPY) --python-executable $(PY) $(TYPED_DIRS)
 
 lint-shell:
 	@n=0; bad=; for f in $$(find $(SHELL_SCRIPT_DIRS) -type f 2> /dev/null | sort); do \

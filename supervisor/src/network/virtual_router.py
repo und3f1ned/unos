@@ -14,6 +14,7 @@ from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, Path, Request
 from pydantic import BaseModel, ConfigDict, Field
+from pydantic.config import JsonDict
 
 from ..audit.changes import audit_change
 from ..audit.schemas import AuditAction
@@ -24,12 +25,12 @@ from .links import is_hidden
 
 router = APIRouter(prefix="/network", tags=["network"])
 
-_BOND = {
+_BOND: JsonDict = {
     "kind": "bond", "name": "bond0", "present": True, "state": "UP", "mode": "802.3ad", "ports": ["eth0", "eth1"],
     "parent": None, "vlan_id": None, "mtu": None, "addressing": "copied", "addresses": [], "copied_from": "eth0",
     "protected": True,
 }
-_VLAN = {
+_VLAN: JsonDict = {
     "kind": "vlan", "name": "bond0.20", "present": True, "state": "UP", "mode": None, "ports": [],
     "parent": "bond0", "vlan_id": 20, "mtu": None, "addressing": "static", "addresses": ["198.51.100.10/24"],
     "copied_from": None, "protected": False,

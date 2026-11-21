@@ -105,12 +105,12 @@ async def update(source: str, found: dict[str, Problem]) -> None:
 
 
 async def _alert(problem: Problem, at: str) -> None:
-    event = NotificationEvent(
-        type=NotificationType.ERROR if problem.severity == "error" else NotificationType.WARNING,
-        title=problem.title,
-        message=problem.detail,
-        timestamp=at,
-    )
+    event = NotificationEvent.model_validate({  # the model reads the ISO text of ``at``
+        "type": NotificationType.ERROR if problem.severity == "error" else NotificationType.WARNING,
+        "title": problem.title,
+        "message": problem.detail,
+        "timestamp": at,
+    })
     # Through the module, at the time of the alert: the health router imports this module, and the
     # tests replace its _deliver_alert.
     health_router = importlib.import_module(".router", __package__)

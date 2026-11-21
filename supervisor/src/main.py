@@ -29,6 +29,7 @@ from .logging_setup import configure_logging
 configure_logging()
 
 from contextlib import asynccontextmanager
+from typing import Any
 from fastapi import Depends, FastAPI, Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
@@ -268,7 +269,8 @@ app = FastAPI(
 
 # Add rate limiter to app state and exception handler
 app.state.limiter = limiter
-app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+# Starlette types a handler for any exception; slowapi's takes the one it is registered for.
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)  # type: ignore[arg-type]
 
 
 @app.exception_handler(RequestValidationError)
@@ -440,7 +442,7 @@ async def full_health_check():
     is reported in the answer, not as an error."""
     import psutil
     from pathlib import Path
-    health = {
+    health: dict[str, Any] = {
         "status": "healthy",
         "timestamp": utc_now().isoformat(),
         "version": "0.1.0",

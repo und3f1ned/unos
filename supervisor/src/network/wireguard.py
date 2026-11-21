@@ -52,7 +52,7 @@ PORT_MIN, PORT_MAX = 1024, 65535
 PREFIX_MIN, PREFIX_MAX = 16, 28
 # The private IPv4 networks of the local networks (ADR-0095): SMB's hosts allow and UNOS's firewall
 # rules let a tunnel network inside them in. Not 100.64.0.0/10 (Tailscale's) or link-local.
-TUNNEL_PARENTS = tuple(ipaddress.ip_network(n) for n in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"))
+TUNNEL_PARENTS = tuple(ipaddress.IPv4Network(n) for n in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"))
 NAME_MAX = 32
 
 # Forwarded packets from the tunnel are dropped unless Docker's DNAT of a published port made them.
@@ -131,7 +131,7 @@ def check_network(value: str) -> ipaddress.IPv4Network:
         network = ipaddress.ip_network(value.strip(), strict=True)
     except ValueError:
         raise ValueError("the tunnel network must be an IPv4 network such as 10.99.0.0/24") from None
-    if network.version != 4:
+    if not isinstance(network, ipaddress.IPv4Network):
         raise ValueError("the tunnel network must be an IPv4 network such as 10.99.0.0/24")
     if not PREFIX_MIN <= network.prefixlen <= PREFIX_MAX:
         raise ValueError(f"the tunnel network's prefix must be /{PREFIX_MIN} to /{PREFIX_MAX}")
@@ -399,7 +399,7 @@ async def host_networks() -> list[tuple[ipaddress.IPv4Network, str]]:
             continue
         for info in link.get("addr_info") or []:
             try:
-                networks.append((ipaddress.ip_interface(f"{info['local']}/{info['prefixlen']}").network,
+                networks.append((ipaddress.IPv4Interface(f"{info['local']}/{info['prefixlen']}").network,
                                  str(link.get("ifname"))))
             except (KeyError, ValueError):
                 continue
@@ -407,7 +407,7 @@ async def host_networks() -> list[tuple[ipaddress.IPv4Network, str]]:
         if route.get("dev") == INTERFACE or route.get("dst") in (None, "default"):
             continue
         try:
-            networks.append((ipaddress.ip_network(route["dst"], strict=False), str(route.get("dev"))))
+            networks.append((ipaddress.IPv4Network(route["dst"], strict=False), str(route.get("dev"))))
         except ValueError:
             continue
     return networks

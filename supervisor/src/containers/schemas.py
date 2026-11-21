@@ -1,4 +1,5 @@
 from pydantic import BaseModel, ConfigDict, Field
+from pydantic.config import JsonDict
 from enum import Enum
 
 
@@ -15,10 +16,12 @@ class PortMapping(BaseModel):
     """A port of a container and the host's port that publishes it."""
 
     host_port: int | None = Field(
-        None, description="The host's port that publishes it; null when no host port publishes it."
+        default=None, description="The host's port that publishes it; null when no host port publishes it."
     )
     container_port: int = Field(description="The container's port.")
-    protocol: str = Field("tcp", description="Its protocol, as Docker names it: tcp (the default), udp or sctp.")
+    protocol: str = Field(
+        default="tcp", description="Its protocol, as Docker names it: tcp (the default), udp or sctp."
+    )
 
 
 class VolumeMount(BaseModel):
@@ -26,10 +29,12 @@ class VolumeMount(BaseModel):
 
     host_path: str = Field(description="The host's folder or file, as an absolute path.")
     container_path: str = Field(description="Where the container sees it, as an absolute path.")
-    mode: str = Field("rw", description="Docker's options of the bind: rw (the default) to read and write, ro to read only.")
+    mode: str = Field(
+        default="rw", description="Docker's options of the bind: rw (the default) to read and write, ro to read only."
+    )
 
 
-_CONTAINER_EXAMPLE = {
+_CONTAINER_EXAMPLE: JsonDict = {
     "id": "4f2a9c81d03e",
     "name": "jellyfin",
     "image": "jellyfin/jellyfin:12.4.20261026-211555",
@@ -60,12 +65,12 @@ class ContainerInfo(BaseModel):
     )
     created: str = Field(description="When Docker created the container, as Docker writes it (UTC, with Z).")
     ports: list[PortMapping] = Field(
-        [],
+        default=[],
         description="Its ports with the host's ports that publish them; the list of all containers also names "
                     "the ports that no host port publishes, the answer about one container does not.",
     )
     labels: dict[str, str] = Field(
-        {}, description="Its Docker labels; the containers of an app carry unos.app, the app's id, among them."
+        default={}, description="Its Docker labels; the containers of an app carry unos.app, the app's id, among them."
     )
 
 
@@ -87,14 +92,15 @@ class ContainerCreate(BaseModel):
         description="The image it runs, as name:tag or name@sha256:...; Docker pulls it first when it lacks it."
     )
     ports: list[PortMapping] = Field(
-        [], description="Its ports; each one with a host port is published on that port of the host."
+        default=[], description="Its ports; each one with a host port is published on that port of the host."
     )
-    volumes: list[VolumeMount] = Field([], description="The host's folders and files bound into it.")
-    environment: dict[str, str] = Field({}, description="Variables of its environment, by name.")
+    volumes: list[VolumeMount] = Field(default=[], description="The host's folders and files bound into it.")
+    environment: dict[str, str] = Field(default={}, description="Variables of its environment, by name.")
     restart_policy: str = Field(
-        "unless-stopped", description="Docker's restart policy: no, always, on-failure or unless-stopped (the default)."
+        default="unless-stopped",
+        description="Docker's restart policy: no, always, on-failure or unless-stopped (the default)."
     )
-    labels: dict[str, str] = Field({}, description="Docker labels to give it.")
+    labels: dict[str, str] = Field(default={}, description="Docker labels to give it.")
 
 
 class ContainerLogs(BaseModel):

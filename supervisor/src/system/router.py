@@ -172,8 +172,10 @@ class TemperatureSensor(BaseModel):
 
     label: str = Field(description="The sensor's label; Sensor <n> when the driver gives none.")
     current: float = Field(description="The temperature now.")
-    high: float | None = Field(None, description="The driver's high threshold; null when it gives none.")
-    critical: float | None = Field(None, description="The driver's critical threshold; null when it gives none.")
+    high: float | None = Field(default=None, description="The driver's high threshold; null when it gives none.")
+    critical: float | None = Field(
+        default=None, description="The driver's critical threshold; null when it gives none."
+    )
 
 
 class TemperatureGroup(BaseModel):
@@ -199,7 +201,7 @@ async def get_temperatures(_=Depends(verify_token)):
     try:
         sensors = psutil.sensors_temperatures()
         for name, entries in sensors.items():
-            sensor_list = []
+            sensor_list: list[TemperatureSensor] = []
             for entry in entries:
                 sensor_list.append(TemperatureSensor(
                     label=entry.label or f"Sensor {len(sensor_list)}",

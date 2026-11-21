@@ -39,7 +39,7 @@ import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, UTC
-from typing import Any
+from typing import Any, Literal
 
 from docker.errors import DockerException
 from fastapi import HTTPException
@@ -49,6 +49,9 @@ from . import pulls, stacks
 from .schemas import AppInstallJob, AppInstallResponse, AppTemplate, ContainerStart, ImagePull
 
 logger = logging.getLogger(__name__)
+
+# What a job does: AppInstallJob.kind.
+JobKind = Literal["install", "update", "rollback"]
 
 # How often, at most, the progress of a pull is published.
 PROGRESS_INTERVAL_SECONDS = 1.0
@@ -91,7 +94,7 @@ class _Running:
 
     job_id: str
     name: str
-    kind: str = "install"
+    kind: JobKind = "install"
     stop: threading.Event = field(default_factory=threading.Event)
     cancelled_by: str | None = None
     # A stop of the supervisor: it wins over a cancel, whose clean-up would not fit in Docker's 10 s.
@@ -216,7 +219,7 @@ def dismiss_or_cancel(job_id: str, who: str) -> AppInstallJob | None:
     return cancel(job_id, who)
 
 
-def start(template: AppTemplate, work: Callable[[Progress], AppInstallResponse], *, kind: str = "install",
+def start(template: AppTemplate, work: Callable[[Progress], AppInstallResponse], *, kind: JobKind = "install",
           containers: list[str] | None = None) -> AppInstallJob:
     """Start the job that runs ``work`` (the install, an update or a rollback: ``kind``) and answer
     it as it starts, running. ``containers``: the Docker names of the containers that it makes or
@@ -447,7 +450,7 @@ class Progress:
 
     def _publish_layers(self, ref: str, state: str | None = None) -> None:
         layers = self._layers.get(ref, {}).values()
-        counts = {
+        counts: dict[str, int | str] = {
             "layers": len(layers),
             "layers_done": sum(layer.done for layer in layers),
             "bytes_total": sum(layer.total for layer in layers),

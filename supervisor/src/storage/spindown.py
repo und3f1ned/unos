@@ -457,14 +457,14 @@ def set_timeout(name: str, minutes: int) -> Change:
                 else:
                     host.run_on_host(["rm", "-f", "--", RULES_PATH], timeout=UDEV_TIMEOUT, check=True)
             except Exception as exc:
-                why = str(exc).strip() or type(exc).__name__
+                failure = str(exc).strip() or type(exc).__name__
                 if (serial in wanted.scans_off) != (serial in current.scans_off):  # a record added or removed
                     left = _undo_scans(facts.path, serial in current.scans_off)
                     if left:
-                        why += f"; {left}"
+                        failure += f"; {left}"
                     else:
                         change = replace(change, scans=None, warning=None)
-                raise RuleNotWritten(change, why) from exc
+                raise RuleNotWritten(change, failure) from exc
             _reload_rules()
     return change
 

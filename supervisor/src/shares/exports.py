@@ -190,6 +190,7 @@ def _option_problem(option: str) -> str | None:
     if key in ("squash_uids", "squash_gids"):
         # The option ends at the next comma, so the list holds one id or range.
         match = _SQUASH.match(value)
+        assert match is not None  # the pattern matches the empty string too
         if any(part is not None and _MINUS_ONE.fullmatch(part) for part in match.groups()):
             return "uid/gid -1 not permitted"
         return None if match.end() == len(value) else "bad uid/gid list"
@@ -296,7 +297,8 @@ def parse(data: bytes) -> Parsed:
             ok, word = reader.word(CLIENT_BUFFER)
             if ok < 0:
                 return stop(start, "a client longer than 511 bytes")
-        name, own = word, []
+        name = word
+        own: list[str] = []
         paren = word.find(b"(")
         if paren >= 0:
             name = word[:paren] if paren > 0 else b"*"

@@ -29,7 +29,7 @@ from src.database import Base
 SUPERVISOR = Path(__file__).resolve().parents[1]
 REPO = SUPERVISOR.parent
 # The SHA-256 of supervisor/src/migrations/versions/0001_baseline.py, as committed.
-BASELINE_SHA256 = "9b3e35c287cc1b6f763d753d837ff00f064b93e02273db92371c081465b6f432"
+BASELINE_SHA256 = "951771e4d841b922e7eb8c6ac1a8dcdb6cb1cdfa1bf69c6fd882e36355f9114b"
 
 
 def _script() -> ScriptDirectory:

@@ -19,6 +19,7 @@ import shutil
 import sqlite3
 from datetime import datetime, timedelta
 from pathlib import Path
+from typing import Literal
 
 import httpx
 
@@ -175,10 +176,10 @@ class Updater:
         parsed2 = self._parse_version(v2)
 
         # Compare major, minor, patch
-        for i in range(3):
-            if parsed1[i] < parsed2[i]:
+        for part1, part2 in zip(parsed1[:3], parsed2[:3]):
+            if part1 < part2:
                 return -1
-            if parsed1[i] > parsed2[i]:
+            if part1 > part2:
                 return 1
 
         # Compare prerelease (empty string means stable release, which is higher)
@@ -492,7 +493,7 @@ class Updater:
             return RESTORE_RUNS
         return None
 
-    def _begin(self, action: str, version: str) -> None:
+    def _begin(self, action: Literal["update", "rollback"], version: str) -> None:
         self._progress.action = action
         self._progress.version = version
         self._progress.rolled_back = False
@@ -645,7 +646,9 @@ class Updater:
     ):
         """Add an entry to the update history."""
         try:
-            history = state_files.load_json(UPDATE_HISTORY_FILE, _history_list, list, what="the update history")
+            history: list[dict] = state_files.load_json(
+                UPDATE_HISTORY_FILE, _history_list, list, what="the update history"
+            )
 
             new_id = max([e.get("id", 0) for e in history], default=0) + 1
 
@@ -734,7 +737,8 @@ async def automatic_install_pass(now: datetime) -> None:
             logger.info("The automatic install installs %s", check.release_info.tag_name)
             updater.start_install(check.release_info)
             # Shielded: a stop of the loop leaves the job to end as a job started by hand does.
-            await asyncio.shield(updater._job)
+            if updater._job is not None:
+                await asyncio.shield(updater._job)
     except UpdateError as e:
         logger.warning("The automatic install did not install: %s", e)
 

@@ -104,25 +104,34 @@ class SmbShareCreate(BaseModel):
                     "created with the group unos-smb and the mode 2770; an existing one is never changed.",
     )
     comment: str = Field(default="", max_length=1024, description=f"The comment that clients show: {_COMMENT}.")
-    browseable: bool = Field(True, description="Whether network browsing lists the share among the NAS's shares.")
+    browseable: bool = Field(
+        default=True, description="Whether network browsing lists the share among the NAS's shares."
+    )
     # guests can only ever read
     guest_ok: bool = Field(
-        False, description="Whether it is a guest share, which guests may read without a password; guests never write."
+        default=False,
+        description="Whether it is a guest share, which guests may read without a password; guests never write."
     )
-    access: AccessList = Field([], description="The share access of users: each user at most once, at most 200.")
-    group_access: GroupAccessList = Field([], description="The group access: each group at most once, at most 200.")
+    access: AccessList = Field(
+        default=[], description="The share access of users: each user at most once, at most 200."
+    )
+    group_access: GroupAccessList = Field(
+        default=[], description="The group access: each group at most once, at most 200."
+    )
     # The protocol options (ADR-0380), each off by default.
     # clients that cannot encrypt (SMB3) are refused
     encryption_required: bool = Field(
-        False, description="Require encryption: only clients that encrypt with SMB 3 open the share. Not with guest_ok."
+        default=False,
+        description="Require encryption: only clients that encrypt with SMB 3 open the share. Not with guest_ok."
     )
     # a Mac can back up to the share with Time Machine
     time_machine: bool = Field(
-        False, description="Let Macs back up to the share with Time Machine; needs Samba's vfs modules on the host."
+        default=False,
+        description="Let Macs back up to the share with Time Machine; needs Samba's vfs modules on the host."
     )
     # Windows lists the snapshots of the share's pool or volume
     previous_versions: bool = Field(
-        False,
+        default=False,
         description="Let Windows list the snapshots of the share's pool or volume as Previous Versions; needs "
                     "Samba's vfs modules on the host and a folder that those snapshots hold.",
     )
@@ -145,7 +154,8 @@ class SmbShareUpdate(BaseModel):
 
     # when sent: 409 if the share's version differs
     expected_version: int | None = Field(
-        None, description="The share's version as the client loaded it; when sent, 409 if the share has another now."
+        default=None,
+        description="The share's version as the client loaded it; when sent, 409 if the share has another now."
     )
     name: str | None = Field(default=None, max_length=64, description=f"A new name: {_SHARE_NAME}.")
     path: str | None = Field(
@@ -154,22 +164,26 @@ class SmbShareUpdate(BaseModel):
         description=f"A new folder: {_SHARE_FOLDER}. A missing folder is created as for a new share.",
     )
     comment: str | None = Field(default=None, max_length=1024, description=f"A new comment: {_COMMENT}.")
-    browseable: bool | None = Field(None, description="Whether network browsing lists the share.")
-    guest_ok: bool | None = Field(None, description="Whether it is a guest share.")
+    browseable: bool | None = Field(default=None, description="Whether network browsing lists the share.")
+    guest_ok: bool | None = Field(default=None, description="Whether it is a guest share.")
     # when sent: the complete list (replaces it)
-    access: AccessList | None = Field(None, description="The complete share access of users, which replaces it.")
+    access: AccessList | None = Field(
+        default=None, description="The complete share access of users, which replaces it."
+    )
     # when sent: the complete list (replaces it)
-    group_access: GroupAccessList | None = Field(None, description="The complete group access, which replaces it.")
+    group_access: GroupAccessList | None = Field(
+        default=None, description="The complete group access, which replaces it."
+    )
     # only [] is accepted: dismisses the notes
     import_notes: list[str] | None = Field(
-        None, description="Only an empty list, which dismisses the notes of the one-time import."
+        default=None, description="Only an empty list, which dismisses the notes of the one-time import."
     )
     encryption_required: bool | None = Field(
-        None, description="Require encryption: only clients that encrypt with SMB 3 open the share."
+        default=None, description="Require encryption: only clients that encrypt with SMB 3 open the share."
     )
-    time_machine: bool | None = Field(None, description="Let Macs back up to the share with Time Machine.")
+    time_machine: bool | None = Field(default=None, description="Let Macs back up to the share with Time Machine.")
     previous_versions: bool | None = Field(
-        None, description="Let Windows list the snapshots of the share's pool or volume as Previous Versions."
+        default=None, description="Let Windows list the snapshots of the share's pool or volume as Previous Versions."
     )
 
     @model_validator(mode="after")
@@ -257,7 +271,7 @@ class SmbShareInfo(BaseModel):
     # sorted by username
     access: list[ShareAccessInfo] = Field(description="The share access of users, sorted by username.")
     # Sorted by group name. A member gets the higher of the group's level and their own.
-    group_access: list[ShareGroupAccessInfo] = Field([], description="The group access, sorted by group name.")
+    group_access: list[ShareGroupAccessInfo] = Field(default=[], description="The group access, sorted by group name.")
     # send it back as expected_version
     version: int = Field(description="The share's version, which grows with each change: send it as expected_version.")
     # the path passes the path rules (ADR-0145): the share is rendered
@@ -292,12 +306,14 @@ class SmbShareInfo(BaseModel):
     # previous_versions (vfs modules missing on the host, a folder in no snapshot of UNOS) and
     # guest_ok (a share that requires encryption admits no guest). GET /shares/smb-status names them too.
     not_rendered: dict[str, str] = Field(
-        {},
+        default={},
         description="The settings that are on but that smb.conf leaves out (time_machine, previous_versions, "
                     "guest_ok), each with why.",
     )
     # only in answers to changes
-    warnings: list[str] = Field([], description="What needs a look after the change; only in answers to changes.")
+    warnings: list[str] = Field(
+        default=[], description="What needs a look after the change; only in answers to changes."
+    )
 
 
 class SmbShareDeleted(BaseModel):
@@ -305,8 +321,10 @@ class SmbShareDeleted(BaseModel):
 
     model_config = ConfigDict(json_schema_extra={"examples": [{"status": "deleted", "warnings": []}]})
 
-    status: Literal["deleted"] = Field("deleted", description="Always deleted.")
-    warnings: list[str] = Field([], description="What the apply of smb.conf reported, such as a reload that failed.")
+    status: Literal["deleted"] = Field(default="deleted", description="Always deleted.")
+    warnings: list[str] = Field(
+        default=[], description="What the apply of smb.conf reported, such as a reload that failed."
+    )
 
 
 # Deleting several shares at once (POST /shares/smb/bulk-delete, ADR-0389): one hold of smb_lock and
@@ -363,7 +381,7 @@ class SmbShareDeleteResult(BaseModel):
                     "version or folder is no longer the one sent, and it was not deleted."
     )
     # why it was not deleted, as a single request answers it
-    detail: str | None = Field(None, description="Why it was not deleted; null when it was.")
+    detail: str | None = Field(default=None, description="Why it was not deleted; null when it was.")
 
 
 class SmbSharesDeleted(BaseModel):
@@ -381,7 +399,8 @@ class SmbSharesDeleted(BaseModel):
     results: list[SmbShareDeleteResult] = Field(description="One result per share sent, in the order sent.")
     # of the one apply
     warnings: list[str] = Field(
-        [], description="What the one apply of smb.conf reported, and the audit entries that could not be written."
+        default=[],
+        description="What the one apply of smb.conf reported, and the audit entries that could not be written."
     )
 
 
@@ -513,10 +532,10 @@ class SmbInterfaces(BaseModel):
         description="The open SMB sessions, which a restart ends; null when they could not be counted."
     )
     # only in answers to changes: smbd was restarted
-    restarted: bool = Field(False, description="Whether smbd was restarted; true only in answers to changes.")
+    restarted: bool = Field(default=False, description="Whether smbd was restarted; true only in answers to changes.")
     # only in answers to changes
     warnings: list[str] = Field(
-        [], description="What the change reported, such as a restart that failed; only in answers to changes."
+        default=[], description="What the change reported, such as a restart that failed; only in answers to changes."
     )
 
 
@@ -599,7 +618,7 @@ class NfsExportInfo(BaseModel):
     file: str = Field(description="The export file that holds the entry.")
     line: int = Field(description="The line of the file where the entry starts, from 1.")
     # only in answers to changes: what exportfs reported
-    warnings: list[str] = Field([], description="What exportfs reported; only in answers to changes.")
+    warnings: list[str] = Field(default=[], description="What exportfs reported; only in answers to changes.")
 
 
 class NfsExportDeleted(BaseModel):
@@ -607,8 +626,8 @@ class NfsExportDeleted(BaseModel):
 
     model_config = ConfigDict(json_schema_extra={"examples": [{"status": "deleted", "warnings": []}]})
 
-    status: Literal["deleted"] = Field("deleted", description="Always deleted.")
-    warnings: list[str] = Field([], description="What exportfs reported when it applied the change.")
+    status: Literal["deleted"] = Field(default="deleted", description="Always deleted.")
+    warnings: list[str] = Field(default=[], description="What exportfs reported when it applied the change.")
 
 
 class NfsServiceStatus(BaseModel):
@@ -668,7 +687,7 @@ class GroupCreate(BaseModel):
 
     name: str = Field(max_length=64, description=f"The group's name: {_GROUP_NAME}.")
     members: MemberList = Field(
-        [], description="Its members: each user at most once, at most 500, no administrator."
+        default=[], description="Its members: each user at most once, at most 500, no administrator."
     )
 
 
@@ -691,11 +710,12 @@ class GroupUpdate(BaseModel):
     )
     # when sent: 409 if the group's version differs
     expected_version: int | None = Field(
-        None, description="The group's version as the client loaded it; when sent, 409 if the group has another now."
+        default=None,
+        description="The group's version as the client loaded it; when sent, 409 if the group has another now."
     )
     new_name: str | None = Field(default=None, max_length=64, description=f"A new name: {_GROUP_NAME}.")
     # when sent: the complete list (replaces it)
-    members: MemberList | None = Field(None, description="The complete list of members, which replaces it.")
+    members: MemberList | None = Field(default=None, description="The complete list of members, which replaces it.")
 
     @model_validator(mode="after")
     def _sent_fields_have_values(self) -> GroupUpdate:
@@ -745,7 +765,9 @@ class GroupInfo(BaseModel):
     # the shares the group has access to, sorted by name
     shares: list[GroupShareInfo] = Field(description="The shares it has group access to, sorted by name.")
     # only in answers to changes
-    warnings: list[str] = Field([], description="What the apply of smb.conf reported; only in answers to changes.")
+    warnings: list[str] = Field(
+        default=[], description="What the apply of smb.conf reported; only in answers to changes."
+    )
 
 
 class GroupDeleted(BaseModel):
@@ -753,5 +775,5 @@ class GroupDeleted(BaseModel):
 
     model_config = ConfigDict(json_schema_extra={"examples": [{"status": "deleted", "warnings": []}]})
 
-    status: Literal["deleted"] = Field("deleted", description="Always deleted.")
-    warnings: list[str] = Field([], description="What the apply of smb.conf reported.")
+    status: Literal["deleted"] = Field(default="deleted", description="Always deleted.")
+    warnings: list[str] = Field(default=[], description="What the apply of smb.conf reported.")

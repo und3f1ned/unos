@@ -260,6 +260,7 @@ async def stop_repair(
         if running.stopped_by is None:
             running.stopped_by = admin.username
         running.stop.set()
+        assert _job is not None  # _publish set it when the repair started
         return _job
     if share_id is None:
         raise HTTPException(status_code=404, detail=SHARE_NOT_FOUND)
@@ -313,6 +314,8 @@ async def _share_by_id(db: AsyncSession, share_id: int) -> Row | None:
 
 def _pool_of(path: object) -> str | None:
     """The pool of a share's folder: its first component below the pools base; None when it is not below it."""
+    if not isinstance(path, str):  # a restored row may hold anything
+        return None
     try:
         parts = PurePosixPath(path).relative_to(pools_base()).parts
     except (TypeError, ValueError):

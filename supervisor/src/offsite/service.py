@@ -53,10 +53,12 @@ from dataclasses import dataclass, field
 from datetime import datetime, UTC
 from enum import Enum
 from pathlib import Path
+from typing import Any
 from urllib.parse import urlsplit
 
 from fastapi import HTTPException
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic.config import JsonDict, JsonValue
 
 from .. import host, paths, state_files
 from ..config import get_settings
@@ -200,8 +202,8 @@ class Kind(str, Enum):
 
 
 
-_SOURCES_EXAMPLE = ["/mnt/pools/data/documents", "/mnt/pools/data/photos"]
-_RETENTION_EXAMPLE = {"keep_daily": 7, "keep_weekly": 4, "keep_monthly": 12, "check_percent": 2}
+_SOURCES_EXAMPLE: list[JsonValue] = ["/mnt/pools/data/documents", "/mnt/pools/data/photos"]
+_RETENTION_EXAMPLE: JsonDict = {"keep_daily": 7, "keep_weekly": 4, "keep_monthly": 12, "check_percent": 2}
 
 
 def _retention_text(period: str) -> str:
@@ -216,53 +218,53 @@ class OffsiteSettings(BaseModel):
                                    "that is not the system disk; s3, a bucket of an S3-compatible store; rest, a restic "
                                    "REST server over HTTPS; sftp, a folder of an SFTP server.")
     # disk: the folder of the repository, below MOUNTS_BASE; sftp: the folder on the server
-    path: str | None = Field(None, description=f"disk: the folder of the copy repository, below {MOUNTS_BASE}, "
+    path: str | None = Field(default=None, description=f"disk: the folder of the copy repository, below {MOUNTS_BASE}, "
                                                   "made when it is missing; sftp: its folder on the server, absolute or "
                                                   "below the login's home folder; null for s3 and rest.")
     # s3: https://host[:port] or http://host[:port]; rest: https://host[:port]
-    endpoint: str | None = Field(None, description="s3: the store's address, https:// or http://, its host and "
+    endpoint: str | None = Field(default=None, description="s3: the store's address, https:// or http://, its host and "
                                                       "an optional port; rest: the server's, https:// only; null "
                                                       "otherwise.")
-    bucket: str | None = Field(None, description="s3: the bucket, 3 to 63 letters, digits, '.', '_' or '-'; "
+    bucket: str | None = Field(default=None, description="s3: the bucket, 3 to 63 letters, digits, '.', '_' or '-'; "
                                                     "null otherwise.")
-    prefix: str | None = Field(None, description="s3: the folders of the copy repository in the bucket, rest: on "
+    prefix: str | None = Field(default=None, description="s3: the folders of the copy repository in the bucket, rest: on "
                                                     "the server, joined by /; null for the top.")
-    region: str | None = Field(None, description="s3: the store's region, such as eu-central-1; null when it "
+    region: str | None = Field(default=None, description="s3: the store's region, such as eu-central-1; null when it "
                                                     "needs none.")
-    access_key_id: str | None = Field(None, description="s3: the access key ID; null otherwise.")
+    access_key_id: str | None = Field(default=None, description="s3: the access key ID; null otherwise.")
     # rest: the user of basic authentication; sftp: the login on the server
-    username: str | None = Field(None, description="rest: the server's user; sftp: the login on the server; null "
+    username: str | None = Field(default=None, description="rest: the server's user; sftp: the login on the server; null "
                                                       "otherwise.")
     # sftp
-    host: str | None = Field(None, description="sftp: the server's host name or IP address; null otherwise.")
-    port: int | None = Field(None, description="sftp: the server's SSH port, 22 by default; null otherwise.")
+    host: str | None = Field(default=None, description="sftp: the server's host name or IP address; null otherwise.")
+    port: int | None = Field(default=None, description="sftp: the server's SSH port, 22 by default; null otherwise.")
     # the server's key, "<type> <base64>", pinned at the first test of the server
-    host_key: str | None = Field(None, description="sftp: the server's host key that the first test pinned, "
+    host_key: str | None = Field(default=None, description="sftp: the server's host key that the first test pinned, "
                                                       "'<type> <base64>'; a request cannot set it. null otherwise.")
     # rest: system, fingerprint or ca
-    tls: str | None = Field(None, description="rest: how the server's certificate is checked: system, by the "
+    tls: str | None = Field(default=None, description="rest: how the server's certificate is checked: system, by the "
                                                  "system's roots; fingerprint, by the server's own certificate that a "
                                                  "save pinned by certificate_sha256; ca, by the CA certificate of "
                                                  "certificate. null otherwise.")
-    certificate: str | None = Field(None, description="rest: the certificate in PEM that restic trusts alone: the "
+    certificate: str | None = Field(default=None, description="rest: the certificate in PEM that restic trusts alone: the "
                                                          "CA's (tls ca, given) or the server's own (tls fingerprint, "
                                                          "read from the server at the save); null otherwise.")
-    certificate_sha256: str | None = Field(None, description="rest, tls fingerprint: the SHA-256 fingerprint of "
+    certificate_sha256: str | None = Field(default=None, description="rest, tls fingerprint: the SHA-256 fingerprint of "
                                                                 "the server's certificate, 64 hexadecimal digits, "
                                                                 "colons allowed in a request.")
     # folders of the pools
-    sources: list[str] = Field([], description=f"The folders of the pools that a copy takes, 1 to {MAX_SOURCES}, "
+    sources: list[str] = Field(default=[], description=f"The folders of the pools that a copy takes, 1 to {MAX_SOURCES}, "
                                                "each on a mounted pool.")
     # KiB/s, 0: none; s3 only
-    limit_upload_kib: int = Field(0, description=f"s3, rest and sftp: the most that restic sends, in KiB/s, 0 to "
+    limit_upload_kib: int = Field(default=0, description=f"s3, rest and sftp: the most that restic sends, in KiB/s, 0 to "
                                                  f"{MAX_LIMIT_KIB}; 0: no limit.")
-    limit_download_kib: int = Field(0, description=f"s3, rest and sftp: the most that restic reads, in KiB/s, 0 to "
+    limit_download_kib: int = Field(default=0, description=f"s3, rest and sftp: the most that restic reads, in KiB/s, 0 to "
                                                    f"{MAX_LIMIT_KIB}; 0: no limit.")
-    keep_daily: int = Field(7, description=_retention_text("daily"))
-    keep_weekly: int = Field(4, description=_retention_text("weekly"))
-    keep_monthly: int = Field(12, description=_retention_text("monthly"))
+    keep_daily: int = Field(default=7, description=_retention_text("daily"))
+    keep_weekly: int = Field(default=4, description=_retention_text("weekly"))
+    keep_monthly: int = Field(default=12, description=_retention_text("monthly"))
     # the share of the data that each check reads, 0 to 100
-    check_percent: int = Field(2, description="The share of the data that the check after each copy reads, 0 to "
+    check_percent: int = Field(default=2, description="The share of the data that the check after each copy reads, 0 to "
                                               "100 percent; 0 checks the repository's structure only.")
 
 
@@ -326,37 +328,37 @@ class Secrets(BaseModel):
 class CopySummary(BaseModel):
     """What a copy added."""
 
-    files_new: int = Field(0, description="The files that the copy of the data found new.")
-    files_changed: int = Field(0, description="The files that it found changed.")
-    files_unmodified: int = Field(0, description="The files that it found unchanged.")
+    files_new: int = Field(default=0, description="The files that the copy of the data found new.")
+    files_changed: int = Field(default=0, description="The files that it found changed.")
+    files_unmodified: int = Field(default=0, description="The files that it found unchanged.")
     # by both snapshots, before compression
-    bytes_added: int = Field(0, description="The bytes that both snapshots added to the copy repository, before "
+    bytes_added: int = Field(default=0, description="The bytes that both snapshots added to the copy repository, before "
                                             "compression.")
-    configuration_snapshot: str | None = Field(None, description="The ID of its configuration snapshot.")
-    data_snapshot: str | None = Field(None, description="The ID of its data snapshot.")
+    configuration_snapshot: str | None = Field(default=None, description="The ID of its configuration snapshot.")
+    data_snapshot: str | None = Field(default=None, description="The ID of its data snapshot.")
 
 
 class CopyResult(BaseModel):
     """The last copy, in STATUS_FILE. Times are ISO 8601 in UTC."""
 
     started: str = Field(description="When it started, in UTC with +00:00.")
-    ended: str | None = Field(None, description="When it ended, in UTC with +00:00.")
+    ended: str | None = Field(default=None, description="When it ended, in UTC with +00:00.")
     # task: a task of the Scheduler; manual: Run now on Backup & Restore
     trigger: str = Field(description="task: a task of the Scheduler; manual: Run now.")
-    success: bool = Field(False, description="Whether it succeeded.")
+    success: bool = Field(default=False, description="Whether it succeeded.")
     # the step that failed: settings, folders, unlock, configuration, data, ...
-    step: str | None = Field(None, description="The step that failed: settings, folders, unlock, "
+    step: str | None = Field(default=None, description="The step that failed: settings, folders, unlock, "
                                                   "configuration, data, forget, check or restore_test.")
-    error: str | None = Field(None, description="Why it failed; null after a success.")
-    summary: CopySummary | None = Field(None, description="What it added; null when it did not get that far.")
+    error: str | None = Field(default=None, description="Why it failed; null after a success.")
+    summary: CopySummary | None = Field(default=None, description="What it added; null when it did not get that far.")
     # passed or failed; None when the run did not get there
-    check: str | None = Field(None, description="The check of the copy repository: passed or failed; null when "
+    check: str | None = Field(default=None, description="The check of the copy repository: passed or failed; null when "
                                                    "the copy did not get there.")
-    restore_test: str | None = Field(None, description="The restore test of the configuration: passed or "
+    restore_test: str | None = Field(default=None, description="The restore test of the configuration: passed or "
                                                           "failed; null when the copy did not get there.")
     # What the copy of the data could not read that is not the error: the files that vanished while
     # restic read the folders (no failure), and those that could not be read when a later step failed.
-    note: str | None = Field(None, description="The files that vanished while restic read them, and those it "
+    note: str | None = Field(default=None, description="The files that vanished while restic read them, and those it "
                                                   "could not read when a later step failed; null when none.")
 
 
@@ -364,18 +366,20 @@ class RestoreResult(BaseModel):
     """The last restore of files, in STATUS_FILE."""
 
     snapshot_id: str = Field(description="The full ID of the snapshot.")
-    path: str | None = Field(None, description="The folder of the snapshot that it restored; null for all of it.")
+    path: str | None = Field(
+        default=None, description="The folder of the snapshot that it restored; null for all of it."
+    )
     folder: str = Field(description="The new folder that it wrote, removed again when a failed restore wrote "
                                     "nothing into it.")
     started: str = Field(description="When it started, in UTC with +00:00.")
-    ended: str | None = Field(None, description="When it ended, in UTC with +00:00.")
-    success: bool = Field(False, description="Whether it succeeded.")
-    error: str | None = Field(None, description="Why it failed; null after a success.")
+    ended: str | None = Field(default=None, description="When it ended, in UTC with +00:00.")
+    success: bool = Field(default=False, description="Whether it succeeded.")
+    error: str | None = Field(default=None, description="Why it failed; null after a success.")
 
 
 class Status(BaseModel):
-    last_copy: CopyResult | None = Field(None, description="The last copy; null before the first.")
-    last_restore: RestoreResult | None = Field(None, description="The last restore of files; null before the "
+    last_copy: CopyResult | None = Field(default=None, description="The last copy; null before the first.")
+    last_restore: RestoreResult | None = Field(default=None, description="The last restore of files; null before the "
                                                                     "first.")
 
 
@@ -400,7 +404,7 @@ class RestoreFilesRequest(BaseModel):
     snapshot_id: str = Field(description=f"{_SNAPSHOT_ID_TEXT}.")
     pool: str = Field(description="The pool at whose top the new folder restored-<date>-<time in UTC> is made.")
     # a folder in the snapshot; none: all of it
-    path: str | None = Field(None, description="A folder in the snapshot, as an absolute path such as "
+    path: str | None = Field(default=None, description="A folder in the snapshot, as an absolute path such as "
                                                   "/mnt/pools/data/photos; none for all of it.")
 
 
@@ -448,6 +452,7 @@ def _running(activity: Activity) -> str:
 
 
 def _busy() -> str:
+    assert _activity is not None  # called while something runs
     return _running(_activity)
 
 
@@ -996,6 +1001,7 @@ def _target_path(path: object) -> str:
     """The folder of a disk target, normalized; 400 for one that is not strictly below MOUNTS_BASE."""
     what = "The folder of the copy"
     parts = _parts(path, what)
+    assert isinstance(path, str)  # _parts refuses anything else
     if _PATTERN_CHARACTERS.search(path):
         raise _bad(f"{what} must not contain *, ?, [ or \\")
     base = _base_parts()
@@ -1178,7 +1184,8 @@ def _folders(value: object, what: str) -> str | None:
     if not value:
         return None
     parts = [p for p in value.split("/") if p] if isinstance(value, str) else []
-    if not parts or len(value) > 512 or any(not _PREFIX_PART.fullmatch(p) or p in (".", "..") for p in parts):
+    if not isinstance(value, str) or not parts or len(value) > 512 or any(
+            not _PREFIX_PART.fullmatch(p) or p in (".", "..") for p in parts):
         raise _bad(f"{what} must be folder names of letters, digits, '.', '_' or '-', joined by '/'")
     return "/".join(parts)
 
@@ -1232,7 +1239,7 @@ def _password(value: str) -> str:
 
 def _normalized(request: SettingsRequest) -> OffsiteSettings:
     """The settings of REQUEST, checked as far as that needs no filesystem; 400 otherwise."""
-    numbers = {
+    numbers: dict[str, Any] = {
         "limit_upload_kib": _number(request.limit_upload_kib, "limit_upload_kib", 0, MAX_LIMIT_KIB),
         "limit_download_kib": _number(request.limit_download_kib, "limit_download_kib", 0, MAX_LIMIT_KIB),
         "keep_daily": _number(request.keep_daily, "keep_daily", 0, MAX_KEEP),
@@ -1391,6 +1398,7 @@ def _prepare_folders(settings: OffsiteSettings, activity: Activity) -> tuple[str
     settings.sources = sources
     if settings.kind != Kind.DISK:
         return None, []
+    assert settings.path is not None  # a disk target has its folder (_normalized)
     if any(_inside(source, settings.path) for source in sources):
         raise _bad(f"{settings.path} holds a folder that it copies: choose a folder outside them, or one inside "
                    "a folder that it copies")
@@ -1406,6 +1414,7 @@ def _warnings(settings: OffsiteSettings) -> list[dict]:
         return []
     target: int | None = None
     sources: list[int] = []
+    assert settings.path is not None  # a disk target has its folder (_normalized)
     try:
         target = _open_target(settings.path, create=False)[0]
         for source in settings.sources:
@@ -1483,7 +1492,8 @@ async def _open_or_create(repo: _Repository, created: str | None, expected: str 
         raise _bad(f"The password does not open the copy repository at {where}: {failure.message}")
     if failure.code != REPOSITORY_MISSING:
         raise _bad(f"The copy repository at {where} cannot be reached: {failure.message}")
-    if repo.settings.kind == Kind.DISK and created is None and await asyncio.to_thread(_holds_files, repo.settings.path):
+    path = repo.settings.path  # a disk target's folder
+    if repo.settings.kind == Kind.DISK and created is None and path and await asyncio.to_thread(_holds_files, path):
         raise _bad(f"{repo.settings.path} holds files but no copy repository: choose an empty folder, or the folder "
                    "of an existing copy")
     try:
@@ -1856,8 +1866,9 @@ def _excludes(settings: OffsiteSettings) -> list[str]:
     disk target that lies inside a folder that is copied."""
     base = str(pools_base())
     patterns = [f"{base}/*/{SNAPSHOTS}", f"{base}/*/{TRASH}", f"{base}/*/*/{SNAPSHOTS}", f"{base}/*/*/{TRASH}"]
-    if settings.kind == Kind.DISK and any(_inside(settings.path, source) for source in settings.sources):
-        patterns.append(settings.path)
+    path = settings.path  # a disk target's folder
+    if settings.kind == Kind.DISK and path and any(_inside(path, source) for source in settings.sources):
+        patterns.append(path)
     return [arg for pattern in patterns for arg in ("--exclude", pattern)]
 
 
@@ -2037,6 +2048,8 @@ async def _steps(activity: Activity, result: CopyResult, repo: _Repository, unre
     if problem:  # the snapshot is saved, without these files
         raise _Failed("data", problem, PARTIAL, prefix=INCOMPLETE)
     summary = result.summary
+    # Set by the backup step above, with the IDs of both snapshots.
+    assert summary is not None and summary.configuration_snapshot and summary.data_snapshot
     checked = f"the check of {settings.check_percent}% of the data" if settings.check_percent else "the check"
     return (f"Copied {summary.files_new} new, {summary.files_changed} changed and {summary.files_unmodified} "
             f"unmodified files, {_size(summary.bytes_added)} added; configuration snapshot "
@@ -2150,7 +2163,7 @@ async def _snapshots(repo: _Repository) -> list[dict]:
         if not isinstance(item, dict) or not isinstance(item.get("id"), str):
             continue
         tags = [t for t in item.get("tags") or [] if isinstance(t, str)]
-        summary = item.get("summary") if isinstance(item.get("summary"), dict) else {}
+        summary = item["summary"] if isinstance(item.get("summary"), dict) else {}
         snapshots.append({
             "id": item["id"],
             "short_id": item.get("short_id") or item["id"][:8],

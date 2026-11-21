@@ -24,9 +24,9 @@ class RemotePeer(BaseModel):
     public_key: str = Field(description="The peer's WireGuard public key, base64")
     address: str = Field(description="The peer's IPv4 address in the tunnel", examples=["10.99.0.2"])
     latest_handshake: UtcDatetime | None = Field(
-        None, description="The peer's last handshake while the tunnel is up, in UTC; none before its first")
-    received: int | None = Field(None, description="Bytes received from the peer since the tunnel came up")
-    sent: int | None = Field(None, description="Bytes sent to the peer since the tunnel came up")
+        default=None, description="The peer's last handshake while the tunnel is up, in UTC; none before its first")
+    received: int | None = Field(default=None, description="Bytes received from the peer since the tunnel came up")
+    sent: int | None = Field(default=None, description="Bytes sent to the peer since the tunnel came up")
 
 
 class RemoteAccessStatus(BaseModel):
@@ -39,14 +39,17 @@ class RemoteAccessStatus(BaseModel):
     enabled: bool = Field(description="Whether the tunnel comes up at boot (the unit is enabled)")
     active: bool = Field(description="Whether the tunnel is up now")
     configured: bool = Field(description="Whether remote access was set up: its configuration file exists")
-    port: int | None = Field(None, description="The UDP port that WireGuard listens on")
-    network: str | None = Field(None, description="The tunnel network")
-    address: str | None = Field(None, description="The NAS's own address in the tunnel")
-    endpoint: str | None = Field(None, description="The DNS name or IP address that peers reach the NAS at")
-    public_key: str | None = Field(None, description="The server's public key; its private key never leaves the host")
+    port: int | None = Field(default=None, description="The UDP port that WireGuard listens on")
+    network: str | None = Field(default=None, description="The tunnel network")
+    address: str | None = Field(default=None, description="The NAS's own address in the tunnel")
+    endpoint: str | None = Field(default=None, description="The DNS name or IP address that peers reach the NAS at")
+    public_key: str | None = Field(
+        default=None, description="The server's public key; its private key never leaves the host"
+    )
     peers: list[RemotePeer] = Field(description="The devices that may connect")
     firewall_rule: bool | None = Field(
-        None, description="Whether the host's ufw lets the tunnel's port in (UNOS: remote access); none without ufw")
+        default=None,
+        description="Whether the host's ufw lets the tunnel's port in (UNOS: remote access); none without ufw")
     defaults: RemoteAccessDefaults = Field(description="The port and tunnel network that the card offers first")
 
 
@@ -106,7 +109,7 @@ class RemotePeerCreate(BaseModel):
 
     name: str = Field(description="1 to 32 printable characters", examples=["phone"])
     public_key: str | None = Field(
-        None, description="The device's WireGuard public key; without it UNOS makes the peer's key pair and "
+        default=None, description="The device's WireGuard public key; without it UNOS makes the peer's key pair and "
                           "answers its private key once, in the configuration")
 
     @field_validator("name")
@@ -157,8 +160,8 @@ class AppNamesStatus(BaseModel):
     volume: bool = Field(description="Whether the volume app-names is mounted in the supervisor")
     announcer: bool = Field(description="Whether the host has avahi-publish (avahi-utils), which announces the names")
     host_name: str = Field(description="The host's name, the names' last part before .local", examples=["nas"])
-    address: str | None = Field(None, description="The host's IPv4 address on its default route now")
-    announced: str | None = Field(None, description="The address that avahi announces the names with now")
+    address: str | None = Field(default=None, description="The host's IPv4 address on its default route now")
+    announced: str | None = Field(default=None, description="The address that avahi announces the names with now")
     names: list[AppName] = Field(description="The app names")
     apps: list[AppNameApp] = Field(description="The published TCP ports of the installed apps, each app's web port "
                                                "first")
@@ -172,7 +175,7 @@ class AppNameCreate(BaseModel):
 
     label: str = Field(description="1 to 32 characters a-z, 0-9 and -", examples=["jellyfin"])
     app: str = Field(description="The installed app's name", examples=["jellyfin"])
-    port: int | None = Field(None, ge=1, le=65535,
+    port: int | None = Field(default=None, ge=1, le=65535,
                                 description="One of the app's published TCP ports; its web port when left out",
                                 examples=[8096])
 

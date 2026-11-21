@@ -38,7 +38,7 @@ from .auth.models import SecurityKey, User, UserSession
 from .auth.schemas import MAX_PASSWORD_BYTES
 from .auth.utils import hash_password
 from .config import get_settings
-from .database import BUSY_TIMEOUT_SECONDS
+from .database import BUSY_TIMEOUT_SECONDS, rowcount
 
 # What the web UI asks of a new password (webui/src/routes/users/+page.svelte, the setup page).
 MIN_PASSWORD_CHARS = 8
@@ -177,14 +177,14 @@ def _store(engine: Engine, admin: Administrator, hashed: str) -> int:
             .values(hashed_password=hashed, totp_enabled=False, totp_secret=None, recovery_codes=None)
             .execution_options(synchronize_session=False)
         )
-        if result.rowcount != 1:
+        if rowcount(result) != 1:
             session.rollback()
             raise EmergencyError(
                 f"Administrator '{_shown(admin.username)}' changed while the new password was typed: "
                 "run the command again."
             )
         session.execute(delete(UserSession).where(UserSession.user_id == admin.id))
-        keys = session.execute(delete(SecurityKey).where(SecurityKey.user_id == admin.id)).rowcount or 0
+        keys = rowcount(session.execute(delete(SecurityKey).where(SecurityKey.user_id == admin.id))) or 0
         session.commit()
     return keys
 

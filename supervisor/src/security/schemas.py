@@ -168,20 +168,25 @@ class FirewallRule(BaseModel):
     family: Literal["ipv4", "ipv6"] = Field(description="The address family that the rule filters.")
     action: str = Field(description="allow, deny, reject or limit.")
     direction: str = Field(description="in or out.")
-    route: bool = Field(False, description="Whether it is a rule of forwarded traffic (ufw route).")
-    log: bool = Field(False, description="Whether ufw logs what it matches.")
+    route: bool = Field(default=False, description="Whether it is a rule of forwarded traffic (ufw route).")
+    log: bool = Field(default=False, description="Whether ufw logs what it matches.")
     protocol: str = Field(description="tcp, udp, any, or another protocol that ufw takes, such as esp or gre.")
-    port: str | None = Field(None, description="The destination ports, such as 22 or 6000:6007; null for every port.")
-    destination: str | None = Field(
-        None, description="The destination address or network; null for any address of the host."
+    port: str | None = Field(
+        default=None, description="The destination ports, such as 22 or 6000:6007; null for every port."
     )
-    source_port: str | None = Field(None, description="The source ports; null for any.")
-    source: str | None = Field(None, description="The source address or network; null for anywhere.")
-    interface: str | None = Field(None, description="The interface that the rule is limited to; null for every one.")
-    app: str | None = Field(None, description="The ufw application profile that the rule names; null for none.")
-    comment: str | None = Field(None, description="The rule's comment; null for none.")
+    destination: str | None = Field(
+        default=None, description="The destination address or network; null for any address of the host."
+    )
+    source_port: str | None = Field(default=None, description="The source ports; null for any.")
+    source: str | None = Field(default=None, description="The source address or network; null for anywhere.")
+    interface: str | None = Field(
+        default=None, description="The interface that the rule is limited to; null for every one."
+    )
+    app: str | None = Field(default=None, description="The ufw application profile that the rule names; null for none.")
+    comment: str | None = Field(default=None, description="The rule's comment; null for none.")
     unos: bool = Field(
-        False, description="Whether it is one of UNOS's rules, whose comment starts with UNOS: and which UNOS keeps."
+        default=False,
+        description="Whether it is one of UNOS's rules, whose comment starts with UNOS: and which UNOS keeps."
     )
 
 
@@ -218,14 +223,18 @@ class FirewallStatus(BaseModel):
     ipv6: bool = Field(description="Whether ufw filters IPv6 too (IPV6=yes in /etc/default/ufw).")
     rules: list[FirewallRule] = Field(description="The host's rules in the order of ufw's numbers; none without ufw.")
     revert_in: int | None = Field(
-        None, description="Seconds until the automatic revert undoes the change that waits to be kept; null when "
+        default=None,
+        description="Seconds until the automatic revert undoes the change that waits to be kept; null when "
                           "none waits."
     )
-    reverting: bool = Field(False, description="Whether the automatic revert undoes a change now.")
-    revert_failed: bool = Field(False, description="Whether the last automatic revert could not put everything back.")
+    reverting: bool = Field(default=False, description="Whether the automatic revert undoes a change now.")
+    revert_failed: bool = Field(
+        default=False, description="Whether the last automatic revert could not put everything back."
+    )
     revert_seconds: int = Field(description="How long a change waits to be kept, in seconds.")
     client_local: bool | None = Field(
-        None, description="Whether the asking computer is in the local networks that UNOS's rules let in; null when "
+        default=None,
+        description="Whether the asking computer is in the local networks that UNOS's rules let in; null when "
                           "its address is not known."
     )
 
@@ -237,7 +246,8 @@ class FirewallChange(BaseModel):
 
     changed: bool = Field(description="Whether the host's ufw changed.")
     revert_in: int | None = Field(
-        None, description="Seconds until the automatic revert undoes the change unless it is kept; null when the "
+        default=None,
+        description="Seconds until the automatic revert undoes the change unless it is kept; null when the "
                           "change armed none: a rule change while ufw is off, a turning off, a reset or no change."
     )
 
@@ -297,17 +307,20 @@ class FirewallRuleCreate(BaseModel):
     }]})
     action: FirewallAction = Field(description="What the rule does with the traffic it matches.")
     protocol: FirewallProtocol = Field(
-        FirewallProtocol.TCP, description="The protocol it matches; any takes one port only, not a range or a list."
+        default=FirewallProtocol.TCP,
+        description="The protocol it matches; any takes one port only, not a range or a list."
     )
     port: Annotated[str, AfterValidator(validate_firewall_port)] = Field(
         description="The ports from 1 to 65535: one, a range such as 6000:6007 or a list such as 80,443, at most 15 "
                     "ports with a range counting as two."
     )
     source: Annotated[str | None, AfterValidator(validate_firewall_source)] = Field(
-        None, description="The IPv4 or IPv6 address or network that the rule matches; null or empty for anywhere."
+        default=None,
+        description="The IPv4 or IPv6 address or network that the rule matches; null or empty for anywhere."
     )
     comment: Annotated[str | None, AfterValidator(validate_firewall_comment)] = Field(
-        None, description="At most 64 printable characters, starting with neither - nor UNOS:; null or empty for none."
+        default=None,
+        description="At most 64 printable characters, starting with neither - nor UNOS:; null or empty for none."
     )
 
     @model_validator(mode="after")
@@ -337,21 +350,29 @@ class Certificate(BaseModel):
     id: str = Field(description="The stored certificate's id: custom_ and its name, the subject CN.")
     type: CertificateType = Field(description="self_signed when its issuer is its subject, else custom.")
     domain: str = Field(description="Its subject CN, or its name when openssl prints none.")
-    issuer: str | None = Field(None, description="The issuer's organization, else its CN; Unknown when it has neither.")
-    valid_from: UtcDatetime | None = Field(None, description="When it becomes valid, in UTC; null when not readable.")
-    valid_until: UtcDatetime | None = Field(None, description="When it expires, in UTC; null when not readable.")
-    is_valid: bool = Field(True, description="Whether it has not expired.")
+    issuer: str | None = Field(
+        default=None, description="The issuer's organization, else its CN; Unknown when it has neither."
+    )
+    valid_from: UtcDatetime | None = Field(
+        default=None, description="When it becomes valid, in UTC; null when not readable."
+    )
+    valid_until: UtcDatetime | None = Field(
+        default=None, description="When it expires, in UTC; null when not readable."
+    )
+    is_valid: bool = Field(default=True, description="Whether it has not expired.")
     # Valid, and expires within EXPIRY_WARNING_DAYS of src/security/serving.py.
-    expires_soon: bool = Field(False, description="Whether it is valid and expires within 30 days.")
+    expires_soon: bool = Field(default=False, description="Whether it is valid and expires within 30 days.")
     # Browsers get it: the web UI's Caddy serves it (ADR-0404).
-    served: bool = Field(False, description="Whether browsers get it: the web UI's Caddy serves it.")
+    served: bool = Field(default=False, description="Whether browsers get it: the web UI's Caddy serves it.")
     # An administrator chose it: the served file holds it, whether Caddy loaded it or not.
     chosen: bool = Field(
-        False, description="Whether an administrator chose it as the served certificate, whether Caddy loaded it or not."
+        default=False,
+        description="Whether an administrator chose it as the served certificate, whether Caddy loaded it or not."
     )
     # SHA-256, as a TLS handshake shows the certificate and openssl prints it.
     fingerprint: str | None = Field(
-        None, description="Its SHA-256 fingerprint as openssl prints it: pairs of hexadecimal digits with colons."
+        default=None,
+        description="Its SHA-256 fingerprint as openssl prints it: pairs of hexadecimal digits with colons."
     )
 
 
@@ -370,14 +391,15 @@ class CertificateStatus(BaseModel):
                     "Caddy did not answer a TLS handshake."
     )
     served_id: str | None = Field(
-        None, description="The id of the stored certificate that browsers get; null when they get none of them."
+        default=None, description="The id of the stored certificate that browsers get; null when they get none of them."
     )
     chosen_id: str | None = Field(
-        None, description="The id of the stored certificate an administrator chose; null when none is chosen and "
+        default=None,
+        description="The id of the stored certificate an administrator chose; null when none is chosen and "
                           "Caddy's local CA is."
     )
     fingerprint: str | None = Field(
-        None, description="The SHA-256 fingerprint of the certificate browsers get; null when it is unknown."
+        default=None, description="The SHA-256 fingerprint of the certificate browsers get; null when it is unknown."
     )
 
 
@@ -415,7 +437,8 @@ class ServeCertificateResponse(BaseModel):
     }]})
     changed: bool = Field(description="Whether the served certificate or what Caddy serves changed.")
     expires_soon: bool = Field(
-        False, description="Whether the stored certificate now served expires within 30 days; false for Caddy's local CA."
+        default=False,
+        description="Whether the stored certificate now served expires within 30 days; false for Caddy's local CA."
     )
     status: CertificateStatus = Field(description="What browsers get now and which stored certificate was chosen.")
 
@@ -437,7 +460,7 @@ class CertificateUpload(BaseModel):
         description="The certificate's private key in PEM; one protected by a passphrase is stored but cannot be served."
     )
     chain: str | None = Field(
-        None, description="The intermediate certificates in PEM, the certificate's issuer first; null for none."
+        default=None, description="The intermediate certificates in PEM, the certificate's issuer first; null for none."
     )
 
 
@@ -452,12 +475,12 @@ class SelfSignedCertRequest(BaseModel):
         description="A host name or an IP address of at most 64 characters: the subject CN, the subject alternative "
                     "name and the stored certificate's name; a stored certificate of that name is replaced."
     )
-    validity_days: int = Field(365, description="How many days the certificate is valid, from now.")
+    validity_days: int = Field(default=365, description="How many days the certificate is valid, from now.")
     organization: Annotated[str, AfterValidator(validate_organization)] | None = Field(
-        None, description="The subject's organization, at most 64 printable characters; null for none."
+        default=None, description="The subject's organization, at most 64 printable characters; null for none."
     )
     country: Annotated[str, AfterValidator(validate_country)] | None = Field(
-        None, description="The subject's country, two letters such as DE; null for none."
+        default=None, description="The subject's country, two letters such as DE; null for none."
     )
 
 
@@ -475,14 +498,15 @@ class TwoFactorRequirementStatus(BaseModel):
 
     enabled: bool = Field(description="Whether the two-factor requirement is on.")
     grace_days: int | None = Field(
-        None, description="The grace period in days, from when it was turned on or the account was created, "
+        default=None, description="The grace period in days, from when it was turned on or the account was created, "
                           "whichever is later; null when it is off."
     )
     enabled_at: UtcDatetime | None = Field(  # when it was turned on
-        None, description="When it was turned on, in UTC; null when it is off or the stored time cannot be read."
+        default=None,
+        description="When it was turned on, in UTC; null when it is off or the stored time cannot be read."
     )
     enabled_by: str | None = Field(  # the administrator who turned it on
-        None, description="The administrator who turned it on; null when it is off."
+        default=None, description="The administrator who turned it on; null when it is off."
     )
 
 
@@ -491,7 +515,8 @@ class TwoFactorRequirementEnable(BaseModel):
 
     model_config = ConfigDict(extra="forbid", json_schema_extra={"examples": [{"grace_days": 7, "code": "123456"}]})
     grace_days: GraceDays = Field(
-        7, description="The grace period in days: 0, 1, 3, 7, 14 or 30. An account without two-factor authentication "
+        default=7,
+        description="The grace period in days: 0, 1, 3, 7, 14 or 30. An account without two-factor authentication "
                        "reaches only its setup after it."
     )
     code: str = Field(  # a current code of the administrator's own authenticator

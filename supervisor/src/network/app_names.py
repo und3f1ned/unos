@@ -229,7 +229,7 @@ async def host_address() -> str | None:
         found = json.loads(routes.stdout or "[]") if routes.ok else []
     except ValueError:
         found = []
-    devices = [route.get("dev") for route in found if isinstance(route, dict) and route.get("dev")]
+    devices = [route["dev"] for route in found if isinstance(route, dict) and route.get("dev")]
     for device in devices:
         addresses = await firewall.run(["ip", "-j", "-4", "addr", "show", "dev", device])
         try:

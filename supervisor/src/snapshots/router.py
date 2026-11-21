@@ -259,6 +259,7 @@ def make_snapshot(subvolume: Path, name: str) -> Path:
             raise HTTPException(
                 500, f"Failed to create snapshot: cannot create {snap_dir}: {exc.strerror or exc}"
             ) from exc
+        assert snap_dir_fd is not None  # create=True makes a missing one
         if _exists(snap_dir_fd, name):
             raise HTTPException(400, f"Snapshot already exists: {name}")
         stderr, rc = _btrfs_snapshot(subvolume_fd, snap_dir_fd, name, read_only=True)

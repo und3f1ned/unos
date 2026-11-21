@@ -1,4 +1,5 @@
 from pydantic import BaseModel, ConfigDict, Field
+from pydantic.config import JsonDict
 from enum import Enum
 
 
@@ -9,7 +10,7 @@ class FileType(str, Enum):
 
 
 _TYPE = "file, directory or symlink; a symbolic link is described, never followed."
-FILE_EXAMPLE = {
+FILE_EXAMPLE: JsonDict = {
     "name": "report.pdf", "path": "/mnt/pools/data/documents/report.pdf", "type": "file", "size": 482133,
     "modified": "2026-11-18T09:41:07.512000+00:00", "permissions": "-rw-rw----", "owner": "70001",
     "group": "70000",
@@ -60,7 +61,7 @@ class DirectoryListing(BaseModel):
 class FileOperation(BaseModel):
     action: str = Field(description="copy, move or delete.")  # copy, move, delete
     source: str | list[str] = Field(description="The path or paths it takes.")
-    destination: str | None = Field(None, description="The folder that a copy or a move goes to.")
+    destination: str | None = Field(default=None, description="The folder that a copy or a move goes to.")
 
 
 class CreateDirectoryRequest(BaseModel):

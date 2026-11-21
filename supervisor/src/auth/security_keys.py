@@ -31,7 +31,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..audit.router import log_action
 from ..audit.schemas import AuditAction, AuditSeverity
-from ..database import get_db
+from ..database import get_db, rowcount
 from ..openapi import BODY, RATE_LIMITED, SIGNED_IN, answer, errors
 from ..times import UtcDatetime, db_now, parse_time
 from . import webauthn
@@ -143,12 +143,12 @@ class SecurityKeyCreation(BaseModel):
         description="The credential ids of the user's keys, base64url, which the browser does not register again."
     )
     timeout_ms: int = Field(description="How long the browser waits for the key, in milliseconds.")
-    attestation: Literal["none"] = Field("none", description="Always none: UNOS asks for no attestation.")
+    attestation: Literal["none"] = Field(default="none", description="Always none: UNOS asks for no attestation.")
     user_verification: Literal["discouraged"] = Field(
-        "discouraged", description="Always discouraged: the key is a second factor beside the password."
+        default="discouraged", description="Always discouraged: the key is a second factor beside the password."
     )
     resident_key: Literal["discouraged"] = Field(
-        "discouraged", description="Always discouraged: the key need not keep a discoverable credential."
+        default="discouraged", description="Always discouraged: the key need not keep a discoverable credential."
     )
 
 
@@ -165,18 +165,19 @@ class SecurityKeyInfo(BaseModel):
     name: str = Field(description="The key's name; ? when the stored one cannot be read.")
     # The web UI's address where the key works; null when the stored one cannot be read.
     origin: str | None = Field(
-        None, description="The web UI's address where the key works; null when the stored one cannot be read."
+        default=None, description="The web UI's address where the key works; null when the stored one cannot be read."
     )
     created_at: UtcDatetime | None = Field(
-        None, description="When the key was added, in UTC; null when the stored time cannot be read."
+        default=None, description="When the key was added, in UTC; null when the stored time cannot be read."
     )
     last_used_at: UtcDatetime | None = Field(
-        None, description="When the key last signed in, in UTC; null: never, or a stored time that cannot be read."
+        default=None,
+        description="When the key last signed in, in UTC; null: never, or a stored time that cannot be read."
     )
     # False for a key whose stored row cannot be read (a restored or damaged database): it signs in
     # nowhere and can only be removed.
     usable: bool = Field(
-        True,
+        default=True,
         description="False for a key whose stored row cannot be read (a restored or damaged database): it signs "
                     "in nowhere and can only be removed.",
     )
@@ -289,7 +290,7 @@ async def _stored_keys(db: AsyncSession, user_id: int) -> list[StoredKey]:
 async def delete_keys_of(db: AsyncSession, user_id: int) -> int:
     """Delete every key of the user in the caller's transaction; how many there were."""
     result = await db.execute(delete(SecurityKey).where(SecurityKey.user_id == user_id))
-    return result.rowcount or 0
+    return rowcount(result) or 0
 
 
 def keys_text(count: int) -> str:
@@ -333,7 +334,9 @@ def _registration_address(request: Request) -> tuple[str, str]:
         rp_id = webauthn.rp_id_of_host(host)
     except webauthn.WebAuthnError:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=NEEDS_HOST_NAME) from None
-    return webauthn.origin_of_host(host), rp_id
+    origin = webauthn.origin_of_host(host)
+    assert origin is not None  # rp_id_of_host took the host
+    return origin, rp_id
 
 
 @router.get(
@@ -450,15 +453,16 @@ async def finish_registration(
     except IntegrityError:
         await db.rollback()
         raise _refused(ALREADY_REGISTERED, status.HTTP_409_CONFLICT) from None
+    async def keys_where(*where) -> int:
+        return await db.scalar(select(func.count()).select_from(SecurityKey).where(*where)) or 0
     problem = None
     if not await db.scalar(select(User.totp_enabled).where(User.id == user_id, User.username == username)):
         problem = NEEDS_TWO_FACTOR
-    elif await db.scalar(select(func.count()).select_from(SecurityKey).where(SecurityKey.credential_id == stored_id)) > 1:
+    elif await keys_where(SecurityKey.credential_id == stored_id) > 1:
         problem = ALREADY_REGISTERED
-    elif await db.scalar(select(func.count()).select_from(SecurityKey).where(SecurityKey.user_id == user_id)) > MAX_KEYS_PER_USER:
+    elif await keys_where(SecurityKey.user_id == user_id) > MAX_KEYS_PER_USER:
         problem = TOO_MANY_KEYS
-    elif await db.scalar(select(func.count()).select_from(SecurityKey).where(
-            SecurityKey.user_id == user_id, SecurityKey.name == body.name)) > 1:
+    elif await keys_where(SecurityKey.user_id == user_id, SecurityKey.name == body.name) > 1:
         problem = NAME_TAKEN
     if problem is not None:
         await db.rollback()
@@ -502,7 +506,7 @@ async def delete_security_key(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=KEY_NOT_FOUND)
     result = await db.execute(delete(SecurityKey).where(SecurityKey.id == key_id, SecurityKey.user_id == user_id))
     await db.commit()
-    if result.rowcount != 1:
+    if rowcount(result) != 1:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=KEY_NOT_FOUND)
     removed = found[0]
     details = f"Security key '{removed.name}' removed"
@@ -521,20 +525,23 @@ async def code_step_offer(
     work at the address of the request, if any, and the addresses where its keys work (None without
     keys). A challenge is issued only for keys of this address, after the password."""
     keys = [key for key in await _stored_keys(db, user.id) if key.usable]
-    origins = sorted({key.origin for key in keys}) or None
+    # A usable key has every value: the `is not None` below only narrow the types.
+    origins = sorted({key.origin for key in keys if key.origin is not None}) or None
     host = request.headers.get("host")
     try:
         rp_id = webauthn.rp_id_of_host(host)
     except webauthn.WebAuthnError:
         return None, origins
     origin = webauthn.origin_of_host(host)
+    assert origin is not None  # rp_id_of_host took the host
     here = [key for key in keys if key.origin == origin and key.rp_id == rp_id]
     if not here:
         return None, origins
     challenge = webauthn.issue(webauthn.GET, user.id, user.username, origin, rp_id)
     return SecurityKeyRequest(
         challenge=webauthn.b64url_encode(challenge), rp_id=rp_id,
-        credential_ids=[key.credential_id for key in here], timeout_ms=webauthn.TIMEOUT_MS,
+        credential_ids=[key.credential_id for key in here if key.credential_id is not None],
+        timeout_ms=webauthn.TIMEOUT_MS,
     ), origins
 
 
@@ -576,6 +583,7 @@ async def verify_sign_in(db: AsyncSession, user: User, answer: SecurityKeyAssert
     if len(matches) != 1:
         raise _invalid()
     [key] = matches
+    assert key.public_key is not None and key.algorithm is not None and key.sign_count is not None  # usable
     if (client.type != webauthn.GET or client.origin != key.origin or pending.origin != key.origin
             or pending.rp_id != key.rp_id or auth.rp_id_hash != webauthn.rp_id_hash(key.rp_id)
             or not auth.user_present or auth.credential_id is not None):
@@ -594,7 +602,7 @@ async def verify_sign_in(db: AsyncSession, user: User, answer: SecurityKeyAssert
         .values(sign_count=auth.sign_count, last_used_at=db_now())
         .execution_options(synchronize_session=False)
     )
-    if result.rowcount != 1:  # another sign-in with this key at the same moment
+    if rowcount(result) != 1:  # another sign-in with this key at the same moment
         await db.rollback()
         raise _invalid()
     return key.name

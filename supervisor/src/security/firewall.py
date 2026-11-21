@@ -29,7 +29,7 @@ import re
 import subprocess
 import time
 import weakref
-from typing import NamedTuple
+from typing import Literal, NamedTuple
 from collections.abc import Callable
 
 from fastapi import HTTPException
@@ -410,7 +410,7 @@ def _app_key(fields: tuple[str, ...]) -> str:
     return key + " " + direction.replace("!", " ")
 
 
-def _rule(family: str, number: int, entry: _Tuple) -> FirewallRule:
+def _rule(family: Literal["ipv4", "ipv6"], number: int, entry: _Tuple) -> FirewallRule:
     fields = entry.fields
     action, proto, dport, dst, sport, src = fields[:6]
     apps = fields[6:8] if len(fields) >= 8 else ("-", "-")
@@ -438,7 +438,7 @@ def _rule(family: str, number: int, entry: _Tuple) -> FirewallRule:
         interface=interface or None,
         app=app,
         comment=comment,
-        unos=bool(comment) and comment.upper().startswith(UNOS_PREFIX),
+        unos=bool(comment and comment.upper().startswith(UNOS_PREFIX)),
     )
 
 
@@ -447,7 +447,8 @@ def parse_rules(v4: str, v6: str) -> list[FirewallRule]:
     (ufw's get_rule_by_number). ``v6`` is empty where ufw does no IPv6."""
     rules: list[FirewallRule] = []
     seen_apps: set[str] = set()
-    for family, text in (("ipv4", v4), ("ipv6", v6)):
+    families: tuple[tuple[Literal["ipv4", "ipv6"], str], ...] = (("ipv4", v4), ("ipv6", v6))
+    for family, text in families:
         for entry in parse_tuples(text):
             if len(entry.fields) >= 8:
                 key = _app_key(entry.fields)

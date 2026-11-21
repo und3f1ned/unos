@@ -47,6 +47,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, UTC
 from pathlib import Path, PurePosixPath
 from types import SimpleNamespace
+from typing import Any
 
 from fastapi import HTTPException
 from sqlalchemy import DateTime, delete, select
@@ -178,7 +179,7 @@ def share_path_problem(
 def _path_problem(path: object, other_paths: Mapping[str, str], pool_names: Collection[str]) -> str | None:
     # 1. A valid folder, written in normal form.
     try:
-        normalized = validate_share_path(path)  # type: ignore[arg-type]
+        normalized = validate_share_path(path)  # type: ignore[arg-type]  # any stored value: share_path_problem answers its error
     except HTTPException as exc:
         return str(exc.detail)
     if path != normalized:
@@ -225,7 +226,7 @@ def _check_paths(entries: Sequence[tuple[int, str, object]], pool_names: Collect
     for key, name, path in entries:
         problem = share_path_problem(path, other_paths={}, pool_names=pool_names)
         if problem is None:
-            passing[key] = (name, path)  # type: ignore[assignment]
+            passing[key] = (name, path)  # type: ignore[assignment]  # a path that passed rules 1-5 is a text
         else:
             problems[key] = problem
     for key, (_name, path) in passing.items():
@@ -306,7 +307,7 @@ def snapshot_root(path: object) -> tuple[str | None, str | None]:
     parent's tree. Sync: reads the filesystem.
     """
     try:
-        normalized = validate_share_path(path)  # type: ignore[arg-type]
+        normalized = validate_share_path(path)  # type: ignore[arg-type]  # any stored value: the except answers its error
         parts = PurePosixPath(normalized).relative_to(pools_base()).parts
     except HTTPException as exc:
         return None, str(exc.detail)
@@ -484,10 +485,10 @@ class _Groups:
     members: list
     access: list
 
-    def levels(self) -> dict[object, dict[object, str]]:
+    def levels(self) -> dict[object, dict[int, str]]:
         """share id -> group id -> level, from the access rows of existing groups with a valid
         level; two rows of one group (no constraint in a restored database) give the lower level."""
-        levels: dict[object, dict[object, str]] = {}
+        levels: dict[object, dict[int, str]] = {}
         for row in self.access:
             if row.group_id not in self.names or row.level not in ("read", "write"):
                 continue
@@ -620,19 +621,19 @@ async def _read_render_input(db: AsyncSession, pool_names: Collection[str]) -> t
         for row in account_rows
     }
     active: dict[object, str] = {}
-    for row in user_rows:
-        user = SimpleNamespace(username=row.username, is_admin=bool(row.is_admin))
-        state = account_state.derive_smb_state(user, accounts.get(row.id)).state
+    for user_row in user_rows:
+        user = SimpleNamespace(username=user_row.username, is_admin=bool(user_row.is_admin))
+        state = account_state.derive_smb_state(user, accounts.get(user_row.id)).state
         if state is account_state.SmbAccountState.ACTIVE:
-            active[row.id] = row.username
+            active[user_row.id] = user_row.username
     levels: dict[object, dict[str, str]] = {}
-    for row in access_rows:
-        name = active.get(row.user_id)
-        if row.level not in ("read", "write") or name is None or row.username != name:
+    for access_row in access_rows:
+        name = active.get(access_row.user_id)
+        if access_row.level not in ("read", "write") or name is None or access_row.username != name:
             continue
-        current = levels.setdefault(row.share_id, {}).get(name)
+        current = levels.setdefault(access_row.share_id, {}).get(name)
         # Two rows for one user (no constraint in a restored database): the lower level.
-        levels[row.share_id][name] = "read" if "read" in (current, row.level) else "write"
+        levels[access_row.share_id][name] = "read" if "read" in (current, access_row.level) else "write"
     # Groups (ADR-0385): each member with an active account under the member row's name gets the
     # group's level, or keeps the higher level of their own or of another group.
     groups = await _read_groups(db)
@@ -960,11 +961,11 @@ def _import_section(
         removed = True
         listed = ", ".join(smbconf.note_value(v) for v in ctx.includes)
         _add(notes, f"smb.conf included another file ({listed}), which UNOS cannot read; access was removed")
-    for option in ctx.global_restrictions:
+    for restriction in ctx.global_restrictions:
         removed = True
         _add(
             notes,
-            f"The old [global] had {option}, which UNOS does not keep per share; access was removed: "
+            f"The old [global] had {restriction}, which UNOS does not keep per share; access was removed: "
             "review it and grant access",
         )
     if values.copy:
@@ -1217,13 +1218,13 @@ def _plan_import(
         report.append(line)
     report.extend(skipped)
     report.extend(parsed.notes)
-    for option in global_restrictions:
+    for restriction in global_restrictions:
         report.append(
-            f"The old [global] had {option}, which UNOS does not keep per share: access to every imported "
+            f"The old [global] had {restriction}, which UNOS does not keep per share: access to every imported "
             "share was removed; review the shares and grant access"
         )
-    for option in global_encryption:
-        report.append(f"The old [global] had {option}: every imported share requires encryption")
+    for encryption in global_encryption:
+        report.append(f"The old [global] had {encryption}: every imported share requires encryption")
     new_globals = {
         smbconf.normalize_key(k): v
         for k, v in smbconf.global_settings(any(s.guest_ok for s in shares), any(s.time_machine for s in shares))
@@ -1798,9 +1799,9 @@ async def delete_access_of_user(db: AsyncSession, user_id: int) -> int:
             .execution_options(**_FRESH)
         )
     ).all()
-    memberships = (
+    memberships = database.rowcount(
         await db.execute(delete(models.UserGroupMember).where(models.UserGroupMember.user_id == user_id))
-    ).rowcount or 0
+    ) or 0
     if not rows:
         if memberships:
             await db.flush()
@@ -1923,8 +1924,9 @@ async def _purge_group_rows(
         )
     ).all()
     stale_access = [row for row in access if row.share_id not in share_ids or row.group_id not in groups.names]
-    for row in stale_access:
-        logger.info("Removing the stale access row of group id %s to share id %s", row.group_id, row.share_id)
+    for access_row in stale_access:
+        logger.info("Removing the stale access row of group id %s to share id %s", access_row.group_id,
+                    access_row.share_id)
     if stale_members:
         await db.execute(delete(models.UserGroupMember).where(models.UserGroupMember.id.in_(stale_members)))
     if stale_access:
@@ -1994,7 +1996,9 @@ def _same_gid_conflict(group_problem: str | None, gid: str | None) -> bool:
     has the SMB group's gid (gid_problem: "gid N belongs to the host group X, not unos-smb: ...").
     Not when gid_problem() could not check the gid: then the conflict is the only sign of it."""
     taken = _GID_TAKEN.fullmatch(group_problem) if group_problem and gid else None
-    return taken is not None and gid.startswith(f"gid {taken[1]} belongs to the host group {taken[2]}, not ")
+    return taken is not None and gid is not None and gid.startswith(
+        f"gid {taken[1]} belongs to the host group {taken[2]}, not "
+    )
 
 
 @dataclass
@@ -2035,7 +2039,7 @@ async def _rollback(db: AsyncSession) -> None:
         logger.warning("Rolling back the session failed: %s", exc)
 
 
-async def _share_rows(db: AsyncSession) -> list:
+async def _share_rows(db: AsyncSession) -> Sequence[Any]:
     """(id, name, path) of every share row, as stored now, by id."""
     return (
         await db.execute(
@@ -2746,7 +2750,9 @@ async def _update_share_locked(db: AsyncSession, name: str, data: schemas.SmbSha
 
     rows = await _share_rows(db)
     new_name = share.name
+    # A field that is sent is never null (SmbShareUpdate refuses it): the asserts below narrow the types.
     if "name" in sent:
+        assert data.name is not None
         new_name = validate_share_name(data.name)
         if new_name != share.name and _find_share(rows, new_name, ignore=share_id) is not None:
             raise HTTPException(status_code=409, detail=f"Share {new_name} already exists")
@@ -2755,11 +2761,17 @@ async def _update_share_locked(db: AsyncSession, name: str, data: schemas.SmbSha
     pool_names: frozenset[str] | None = None
     new_path, parts = share.path, None
     if "path" in sent:
+        assert data.path is not None
         pool_names = await _pool_names()
         new_path, parts = await asyncio.to_thread(_new_path, data.path, share_id, rows, pool_names)
-    access = await _check_access(db, data.access) if "access" in sent else None
-    group_access = await _check_group_access(db, data.group_access) if "group_access" in sent else None
-    guest_ok = data.guest_ok if "guest_ok" in sent else bool(share.guest_ok)
+    access = group_access = None
+    if "access" in sent:
+        assert data.access is not None
+        access = await _check_access(db, data.access)
+    if "group_access" in sent:
+        assert data.group_access is not None
+        group_access = await _check_group_access(db, data.group_access)
+    guest_ok = bool(data.guest_ok) if "guest_ok" in sent else bool(share.guest_ok)
 
     # The protocol options (ADR-0380): what is on now, and what this PATCH turns on.
     stored = share.options
@@ -2809,12 +2821,15 @@ async def _update_share_locked(db: AsyncSession, name: str, data: schemas.SmbSha
         moved.append("folder")
         share.path = new_path
     if "comment" in sent and data.comment != share.comment:
+        assert data.comment is not None
         changes.append("comment")
         share.comment = data.comment
     if "browseable" in sent and data.browseable != bool(share.browseable):
+        assert data.browseable is not None
         changes.append(f"browseable {'yes' if data.browseable else 'no'}")
         share.browseable = data.browseable
     if "guest_ok" in sent and data.guest_ok != bool(share.guest_ok):
+        assert data.guest_ok is not None
         guest_turned_on = data.guest_ok
         changes.append(f"guest access {'on' if data.guest_ok else 'off'}")
         share.guest_ok = data.guest_ok
@@ -2871,7 +2886,7 @@ async def _update_share_locked(db: AsyncSession, name: str, data: schemas.SmbSha
     )
 
 
-def _stop_repair(share_id: object, stopped_by: str, *, deleted: bool = False) -> None:
+def _stop_repair(share_id: int, stopped_by: str, *, deleted: bool = False) -> None:
     """Stop the running repair of the share, if one runs (repair_router.stop_for_share, ADR-0363)."""
     from . import repair_router  # lazily: repair_router imports this module
 
@@ -2930,7 +2945,7 @@ async def delete_shares(db: AsyncSession, wanted: Sequence[schemas.SmbShareToDel
     running repair of one of them stops (ADR-0363).
     """
     results: list[schemas.SmbShareDeleteResult] = []
-    deleted: list[tuple[object, str, str]] = []  # (id, name, path) of each share deleted
+    deleted: list[tuple[int, str, str]] = []  # (id, name, path) of each share deleted
     async with smb_lock():
         try:
             await _import_if_needed_locked(db)
@@ -3077,10 +3092,10 @@ async def _account_states(db: AsyncSession) -> dict[object, _UserState]:
     return states
 
 
-def _listed_members(groups: _Groups, states: Mapping[object, _UserState]) -> dict[object, list[object]]:
+def _listed_members(groups: _Groups, states: Mapping[object, _UserState]) -> dict[object, list[int]]:
     """group id -> the user ids of its members as the API lists them, sorted by username: member rows
     of an existing user with the row's username who is not an administrator (ADR-0137)."""
-    found: dict[object, dict[object, str]] = {}
+    found: dict[object, dict[int, str]] = {}
     for row in groups.members:
         user = states.get(row.user_id)
         if (
@@ -3144,27 +3159,27 @@ async def _infos(
 
     pools_of = {row.id: _pool_of(row.path) for row in share_rows}
     folders = {}
-    for row_id, share in served.items():
+    for row_id, served_share in served.items():
         if _pool_mounted(pools_of[row_id], mounts):
             try:
-                folders[row_id] = PurePosixPath(share.path).relative_to(pools_base()).parts
+                folders[row_id] = PurePosixPath(served_share.path).relative_to(pools_base()).parts
             except ValueError:
                 continue
     permissions = await asyncio.to_thread(_permissions, folders) if folders else {}
 
-    levels: dict[object, dict[object, str]] = {}
-    for row in access_rows:
-        known = states.get(row.user_id)
+    levels: dict[object, dict[int, str]] = {}
+    for access_row in access_rows:
+        known = states.get(access_row.user_id)
         if (
             known is None
             or known.is_admin
-            or not isinstance(row.username, str)
-            or row.username != known.username
-            or row.level not in ("read", "write")
+            or not isinstance(access_row.username, str)
+            or access_row.username != known.username
+            or access_row.level not in ("read", "write")
         ):
             continue  # not rendered, and purged at the next start or restore (ADR-0137)
-        current = levels.setdefault(row.share_id, {}).get(row.user_id)
-        levels[row.share_id][row.user_id] = "read" if "read" in (current, row.level) else "write"
+        current = levels.setdefault(access_row.share_id, {}).get(access_row.user_id)
+        levels[access_row.share_id][access_row.user_id] = "read" if "read" in (current, access_row.level) else "write"
 
     infos = []
     for row in share_rows:
@@ -3173,7 +3188,7 @@ async def _infos(
         access = [
             schemas.ShareAccessInfo(
                 user_id=user_id,
-                username=states[user_id].username,
+                username=_text(states[user_id].username),
                 level=schemas.ShareAccessLevel(level),
                 smb_state=states[user_id].state,
                 effective=states[user_id].username in rendered_names,
@@ -3188,7 +3203,7 @@ async def _infos(
                 level=schemas.ShareAccessLevel(level),
                 members=[
                     schemas.ShareGroupMemberInfo(
-                        username=states[user_id].username,
+                        username=_text(states[user_id].username),
                         smb_state=states[user_id].state,
                         effective=states[user_id].username in rendered_names,
                     )
@@ -3219,7 +3234,9 @@ async def _infos(
                 pool_mounted=_pool_mounted(pools_of[row.id], mounts),
                 permissions_ok=permissions.get(row.id),
                 import_notes=json_lines(row.import_notes),
-                **{name: bool(getattr(option_rows.get(row.id), name, False)) for name in OPTION_LABELS},
+                encryption_required=bool(getattr(option_rows.get(row.id), "encryption_required", False)),
+                time_machine=bool(getattr(option_rows.get(row.id), "time_machine", False)),
+                previous_versions=bool(getattr(option_rows.get(row.id), "previous_versions", False)),
                 not_rendered=render.not_rendered.get(row.id, {}) if share is not None else {},
             )
         )

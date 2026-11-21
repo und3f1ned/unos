@@ -109,7 +109,7 @@ def rendered_interfaces(names: list[object]) -> tuple[tuple[str, ...] | None, li
     for name in names:
         problem = name_problem(name)
         if problem is None:
-            valid.add(name)  # type: ignore[arg-type]
+            valid.add(name)  # type: ignore[arg-type]  # a name without a problem is a text
         else:
             problems.append(f"SMB interface {smbconf.note_value(name)} is left out of smb.conf: {problem}")
     if not valid:

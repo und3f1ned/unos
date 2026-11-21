@@ -20,7 +20,7 @@ from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..config import get_settings
-from ..database import get_db
+from ..database import get_db, rowcount
 from . import requirement, scopes
 from .models import APIToken, User, UserSession
 from .schemas import MAX_PASSWORD_BYTES
@@ -146,7 +146,7 @@ async def end_session(db: AsyncSession, session_id: str) -> bool:
     to end: a sign-out of the same session that came first leaves none (ADR-0343)."""
     result = await db.execute(delete(UserSession).where(UserSession.id == session_id))
     kept = _unstored_sessions.pop(session_id, None) is not None
-    return bool(result.rowcount) or kept
+    return bool(rowcount(result)) or kept
 
 
 def decode_access_token(token: str) -> tuple[str, str]:
@@ -321,7 +321,8 @@ def generate_recovery_codes(count: int = RECOVERY_CODE_COUNT) -> tuple[list[str]
         if candidate not in digits:  # two equal codes would make one code sign in twice
             digits.append(candidate)
     shown = [f"{d[:4]}-{d[4:8]}-{d[8:]}" for d in digits]
-    return shown, [recovery_code_hash(code) for code in shown]
+    hashes = [recovery_code_hash(code) for code in shown]
+    return shown, [code_hash for code_hash in hashes if code_hash is not None]  # every new code has its hash
 
 
 def recovery_code_hashes(stored: object) -> list:
@@ -474,12 +475,12 @@ async def authenticate_token(
     check of a credential leaves the scope out.
     """
     if token.startswith(API_TOKEN_PREFIX):
-        user, permissions = await verify_api_token(token, db)
-        await _refuse_setup_only(db, user, allowed=False)
+        token_user, permissions = await verify_api_token(token, db)
+        await _refuse_setup_only(db, token_user, allowed=False)
         refused = scopes.stored_refusal(permissions, operation)
         if refused is not None:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=refused)
-        return user
+        return token_user
 
     try:
         username, session_id = decode_access_token(token)

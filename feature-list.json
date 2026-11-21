@@ -4281,7 +4281,15 @@
         "make lint runs mypy or pyright on supervisor/src, with the settings in the repository",
         "CI fails on a type error"
       ],
-      "passes": false
+      "verified_by": [
+        "supervisor/tests/test_repo_tooling.py",
+        "supervisor/tests/test_deploy_scripts.py"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0447"
+      ],
+      "notes": "Built 2026-11-21 (ADR-0447): mypy 2.4.1, pinned with its hashes in .github/lint-requirements.txt and installed into .venv-lint, runs in make lint as lint-mypy over supervisor/src with the settings of mypy.ini, against supervisor/.venv, where supervisor/requirements-dev.txt pins the stubs types-croniter, types-docker and types-psutil; the CI workflow's Lint job installs requirements-dev.txt and runs make lint. The code was fixed to meet the settings, with no module exempted. Step 1: test_mypy_checks_the_supervisor_with_the_settings_of_mypy_ini and test_targets_run_the_agreed_commands of test_repo_tooling.py, and make lint itself. Step 2: test_python_checks_install_hashed_tools of test_deploy_scripts.py shows the Lint job's installs and make lint's mypy; that the job fails on a type error is not seen: the workflow is off on GitHub (ADR-0230), so passes stays false until it runs there once with a type error. Review in a fresh context (ADR-0017): no blocker; its findings fixed (CI installs the unhashed supervisor packages into a venv of their own after the audit, reasons on every type: ignore, docs, MYPYPATH in the green-run rules, a test case for mypy_path) but one, recorded in PROGRESS.md. Not a host-level change: no device check."
     },
     {
       "id": "ci.shellcheck",

@@ -80,7 +80,7 @@ and proposes the changes, and the owner reviews them.
     apt-get and pip again: say so in the pull request.
 12. **The pinned check tools.** Dependabot leaves `.github/lint-requirements.txt` and
     `.github/audit-env-requirements.txt` alone (ADR-0423). Regenerate the first with `--upgrade`
-    (docs/TESTING.md, "Updating ruff and pip-audit"), then move the second to the same pip and
+    (docs/TESTING.md, "Updating the lint tools"), then move the second to the same pip and
     packaging and to the newest setuptools and wheel that are a week old ("Updating the audit
     environment"); `make test` compares pip's and packaging's hashes with those of the first,
     `make setup` installs the first and `make audit` the second on the owner's machine, and pip

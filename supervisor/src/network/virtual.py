@@ -29,7 +29,7 @@ import subprocess
 import time
 import weakref
 from dataclasses import dataclass, field
-from typing import Literal
+from typing import Literal, TypeGuard
 
 from fastapi import HTTPException
 
@@ -85,6 +85,7 @@ NOT_NETWORKD = (
 
 Kind = Literal["bond", "vlan", "bridge"]
 Addressing = Literal["none", "dhcp", "static", "copied"]
+Manager = Literal["systemd-networkd", "NetworkManager", "ifupdown", "none"]
 
 
 # ---------------------------------------------------------------------------
@@ -381,7 +382,7 @@ class Item:
         }, separators=(",", ":"))
 
 
-def valid_name(name: str) -> bool:
+def valid_name(name: object) -> TypeGuard[str]:
     """A name UNOS gives an interface: the kernel's limit of 15 characters, letters, digits, '_', '.'
     and '-', not one of the names the kernel, Docker or UNOS keep."""
     return (
@@ -485,7 +486,7 @@ class Link:
 
 @dataclass
 class Snapshot:
-    manager: str
+    manager: Manager
     links: dict[str, Link]
     protected: set[str]
     items: dict[str, Item]
@@ -497,7 +498,7 @@ async def _active(unit: str) -> bool:
     return (await run(["systemctl", "is-active", "--quiet", unit])).ok
 
 
-async def manager() -> str:
+async def manager() -> Manager:
     """Who keeps the host's network: NetworkManager, systemd-networkd, ifupdown or none."""
     if await _active("NetworkManager.service"):
         return "NetworkManager"
@@ -844,7 +845,7 @@ def parse_record(text: str) -> Recorded | None:
     parts = text.split()
     if (len(parts) == 3 and parts[0] in ("create", "delete") and parts[1] in ("bond", "vlan", "bridge")
             and valid_name(parts[2])):
-        return Recorded(parts[0], parts[1], parts[2])  # type: ignore[arg-type]
+        return Recorded(parts[0], parts[1], parts[2])  # type: ignore[arg-type]  # the checks above narrow the words
     return None
 
 
@@ -989,7 +990,7 @@ async def _copied_config(primary: Link) -> tuple[str, int | None]:
 
 
 async def plan_bond_or_bridge(kind: Kind, name: str, ports: list[str], *, mode: str | None, mtu: int | None,
-                              addressing: str, addresses: list[str], snap: Snapshot) -> Plan:
+                              addressing: Addressing, addresses: list[str], snap: Snapshot) -> Plan:
     _check_new_name(name, snap)
     _check_mtu(mtu)
     bond = kind == "bond"
@@ -1024,13 +1025,13 @@ async def plan_bond_or_bridge(kind: Kind, name: str, ports: list[str], *, mode: 
     item = Item(kind=kind, name=name, files=[netdev, network, *port_files], mode=mode if bond else None,
                 ports=list(ports), mtu=mtu, addressing=addressing, addresses=addresses,
                 copied_from=primary.name if primary else None)
-    ops = [("add", netdev, render_netdev(item, primary.mac if primary else None)),
-           ("add", network, render_network(item, copied, iaid))]
+    ops: list[tuple[str, str, str | None]] = [("add", netdev, render_netdev(item, primary.mac if primary else None)),
+                                              ("add", network, render_network(item, copied, iaid))]
     ops += [("add", path, render_port(item, port)) for path, port in zip(port_files, ports)]
     return Plan("create", item, ops, set(ports), [name])
 
 
-async def plan_vlan(parent: str, vlan_id: int, name: str | None, *, mtu: int | None, addressing: str,
+async def plan_vlan(parent: str, vlan_id: int, name: str | None, *, mtu: int | None, addressing: Addressing,
                     addresses: list[str], snap: Snapshot) -> Plan:
     if not valid_port_name(parent) or is_hidden(parent):
         raise HTTPException(400, f"{parent!r} is not an interface that UNOS changes")
@@ -1337,7 +1338,7 @@ async def status(client: str | None) -> tuple[Snapshot, Waiting]:
         return snap, await waiting()
 
 
-async def create_bond(name: str, mode: str, ports: list[str], mtu: int | None, addressing: str,
+async def create_bond(name: str, mode: str, ports: list[str], mtu: int | None, addressing: Addressing,
                       addresses: list[str], client: str | None) -> Change:
     _refuse_locally()
     async with _lock():
@@ -1349,7 +1350,7 @@ async def create_bond(name: str, mode: str, ports: list[str], mtu: int | None, a
         return await _carry_out(plan, snap)
 
 
-async def create_bridge(name: str, ports: list[str], mtu: int | None, addressing: str, addresses: list[str],
+async def create_bridge(name: str, ports: list[str], mtu: int | None, addressing: Addressing, addresses: list[str],
                         client: str | None) -> Change:
     _refuse_locally()
     async with _lock():
@@ -1361,7 +1362,7 @@ async def create_bridge(name: str, ports: list[str], mtu: int | None, addressing
         return await _carry_out(plan, snap)
 
 
-async def create_vlan(parent: str, vlan_id: int, name: str | None, mtu: int | None, addressing: str,
+async def create_vlan(parent: str, vlan_id: int, name: str | None, mtu: int | None, addressing: Addressing,
                       addresses: list[str], client: str | None) -> Change:
     _refuse_locally()
     async with _lock():

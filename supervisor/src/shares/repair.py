@@ -283,7 +283,9 @@ class _Tally:
             reason = exc.strerror or (os.strerror(exc.errno) if exc.errno else str(exc))
             self.error_samples.append(f"{_display(path)}: {reason}")
 
-    def result(self, state: str, started_at: datetime, message: str) -> RepairResult:
+    def result(
+        self, state: Literal["running", "done", "incomplete", "failed"], started_at: datetime, message: str
+    ) -> RepairResult:
         return RepairResult(
             share="",
             state=state,

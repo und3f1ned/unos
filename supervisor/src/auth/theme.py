@@ -44,7 +44,7 @@ async def _stored(db: AsyncSession, user_id: int) -> object:
 
 def _read(stored: object) -> Theme:
     """The theme of a stored value; system for no row and for anything that is not a theme."""
-    return stored if isinstance(stored, str) and stored in THEMES else DEFAULT  # type: ignore[return-value]
+    return stored if isinstance(stored, str) and stored in THEMES else DEFAULT  # type: ignore[return-value]  # one of THEMES
 
 
 @router.get("", response_model=ThemeBody, summary="Read your theme", responses=errors(SIGNED_IN))

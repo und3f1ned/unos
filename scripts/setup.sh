@@ -10,7 +10,7 @@
 #      Node.js with npm in the version of webui/package.json (engines). When one is missing, the
 #      script says so and stops before it changes anything.
 #   2. supervisor/.venv: Python 3.11 with supervisor/requirements-dev.txt (make test, make e2e-local).
-#   3. .venv-lint: ruff and pip-audit from .github/lint-requirements.txt, with their hashes (make lint,
+#   3. .venv-lint: ruff, mypy and pip-audit from .github/lint-requirements.txt, with their hashes (make lint,
 #      make audit).
 #   4. webui/node_modules: npm ci from webui/package-lock.json. A symbolic link is left as it is.
 #   5. Chromium for Playwright, the version that webui/package-lock.json pins (make e2e-local).
@@ -141,7 +141,7 @@ echo "setup.sh: this checkout ($repo)"
 python_env supervisor/.venv "Python 3.11 with supervisor/requirements-dev.txt" \
     "supervisor/requirements.txt supervisor/requirements-dev.txt" --no-binary=nut2 \
     -r supervisor/requirements-dev.txt
-python_env .venv-lint "ruff and pip-audit with their hashes" \
+python_env .venv-lint "ruff, mypy and pip-audit with their hashes" \
     ".github/lint-requirements.txt" --require-hashes -r .github/lint-requirements.txt
 
 # --- 4. and 5. the web UI's packages and Chromium ------------------------------------------

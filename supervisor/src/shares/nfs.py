@@ -265,7 +265,11 @@ def _info(file: _File, entry: exports.Entry, own: str) -> NfsExportInfo:
     return NfsExportInfo(
         path=entry.path,
         clients=[
-            NfsExportClient(client=client.name, options=list(client.options), access=client.access)
+            NfsExportClient(
+                client=client.name,
+                options=list(client.options),
+                access=None if client.access is None else ShareAccessLevel(client.access),
+            )
             for client in entry.clients
         ],
         managed=_is_unos(file, entry, own),
@@ -374,7 +378,9 @@ def _client_text(network: ipaddress.IPv4Network | ipaddress.IPv6Network) -> str:
 
 
 def _is_local(network: ipaddress.IPv4Network | ipaddress.IPv6Network) -> bool:
-    return any(network.version == local.version and network.subnet_of(local) for local in LOCAL_NETWORKS)
+    if isinstance(network, ipaddress.IPv4Network):
+        return any(isinstance(local, ipaddress.IPv4Network) and network.subnet_of(local) for local in LOCAL_NETWORKS)
+    return any(isinstance(local, ipaddress.IPv6Network) and network.subnet_of(local) for local in LOCAL_NETWORKS)
 
 
 def _validate_client(value: str) -> str:
@@ -550,9 +556,9 @@ def delete_export(path: str) -> NfsExportDeleted:
         own = next((file for file in files if file.path == own_path), None)
         wanted = PurePosixPath(path)
         mine = [
-            entry for entry in (own.parsed.entries if own else ())
+            entry for entry in own.parsed.entries
             if PurePosixPath(entry.path) == wanted and _is_unos(own, entry, own_path)
-        ]
+        ] if own is not None else []
         if not mine:
             for file in files:
                 for entry in file.parsed.entries:
@@ -564,6 +570,7 @@ def delete_export(path: str) -> NfsExportDeleted:
         _refuse_while_unreadable(files)
         # A line of UNOS's holds its entry alone: removing it changes no other entry.
         removed = {entry.first_line for entry in mine}
+        assert own is not None  # mine holds entries of its file
         kept = b"".join(line for number, line in enumerate(own.lines, 1) if number not in removed)
         host.write_host_file_atomic(
             own_path, kept.decode("utf-8", "surrogateescape"), mode="0644", errors="surrogateescape"

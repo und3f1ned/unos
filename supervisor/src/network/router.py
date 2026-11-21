@@ -13,6 +13,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Request
 from pydantic import BaseModel, ConfigDict, Field
+from pydantic.config import JsonDict
 
 from . import links
 from ..audit.changes import audit_change
@@ -26,7 +27,7 @@ router = APIRouter(prefix="/network", tags=["network"])
 # The host's /etc/hostname, mounted into the container (deploy/docker-compose.yml).
 
 
-_ETH0 = {
+_ETH0: JsonDict = {
     "name": "eth0", "mac": "00:00:5e:00:53:01", "state": "UP", "enabled": True,
     "ip_addresses": ["192.0.2.10/24", "2001:db8::10/64", "fe80::1/64"], "speed": 1000, "mtu": 1500,
     "type": "ether", "revert_in": None,
