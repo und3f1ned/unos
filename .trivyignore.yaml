@@ -1,0 +1,29 @@
+# Vulnerabilities that the image scan (scripts/image-scan.sh, ADR-0439) leaves out, each with the
+# reason (statement) and a date after which trivy reports it again (expired_at), at most a year on.
+# An entry is the exception: a fixable vulnerability is fixed by a newer base image or package.
+vulnerabilities:
+  - id: CVE-2025-47273
+    purls:
+      - pkg:pypi/setuptools@70.3.0
+    statement: >-
+      pip 26.3 vendors only pkg_resources of setuptools 70.3.0, as its SBOM (pip/_vendor/bom.cdx.json)
+      lists it; the vulnerability is in setuptools' package_index, which pip does not vendor. The
+      image's own setuptools is 84.2.1. trivy reports this package of the SBOM without a path, so
+      the entry names it by its purl, this version only.
+    expired_at: 2027-05-21
+  - id: CVE-2026-78661
+    purls:
+      - pkg:golang/golang.org/x/net@v0.60.0
+    statement: >-
+      Caddy 2.11.9 of the newest caddy:2-alpine is built with golang.org/x/net 0.60.0, and no Caddy
+      image with 0.62.0 is published yet; the next digest of caddy:2-alpine, which Dependabot
+      proposes, brings it.
+    expired_at: 2026-12-21
+  - id: CVE-2026-97054
+    purls:
+      - pkg:golang/stdlib@v1.27.3
+    statement: >-
+      Caddy 2.11.9 of the newest caddy:2-alpine is built with Go 1.27.3, and no Caddy image built
+      with Go 1.27.4 is published yet; the next digest of caddy:2-alpine, which Dependabot proposes,
+      brings it.
+    expired_at: 2026-12-21

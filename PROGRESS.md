@@ -725,12 +725,36 @@ Open owner actions:
 20. A second network card on the dev device (a USB NIC), for a real bond of
     `system.network-bonding-and-vlans`'s step 1, and `make audit` in the owner's terminal for
     `ci.pinned-check-tools` (pip cannot reach the index from the agents' sessions).
+21. Before the next deploy of the web UI: `caddy:2-alpine@sha256:003a9780…` (Caddy 2.11.9) pulled
+    onto the dev device, which `scripts/dev/deploy.sh build-webui` asks for before it builds on a
+    new base (ADR-0439, ADR-0305).
 19. Done on 2026-11-19: the pulls from lscr.io failed on the dev device's network, those from
     ghcr.io of the same images do not; the catalog takes LinuxServer's images from ghcr.io
     (ADR-0426). BookStack's login page after an install is still to read (one install, about 1
     GB on the SD card).
 
 ## Log
+
+### 2026-11-21: Both images are scanned weekly by trivy pinned by digest (ADR-0439)
+
+- `ci.container-image-scanning`: `make image-scan` (`scripts/image-scan.sh`) and the Image
+  vulnerabilities job of the weekly Audit workflow build the supervisor's and the web UI's image
+  and scan each with trivy 0.76.2 from its image pinned by digest, from an archive and without
+  the network: a HIGH or CRITICAL vulnerability with a fixed version fails, minus the entries of
+  `.trivyignore.yaml`, each with its reason and expiry. The first local run failed with 143
+  findings (Debian's kernel headers of a cached apt layer, Alpine 3.22's packages, Caddy 2.10.2's
+  Go modules, the vendored packages of setuptools 79.0.1). The scan now builds without the cache,
+  as update.sh does; `caddy:2-alpine` moved to its digest of 2026-11-21 (Caddy 2.11.9 on Alpine
+  3.24) and the pip layer pins setuptools 84.2.1, after which it passed with 3 entries ignored
+  (pip's SBOM; Caddy 2.11.9's x/net and Go, until 2026-12-21). `python:3.11-slim` keeps its pin:
+  its newest digest changed only the riscv64 image.
+- Reviewed in a fresh context: 6 findings, all fixed (trivy as the calling user, which Linux
+  needs without capabilities; findings exit 3, apart from trivy's own errors; the build without
+  cache and the base pin kept; the owner's pull of the Caddy base, Open owner actions 21; the
+  ignore file's date check; the reason the SBOM entry has no path).
+- Not deployed: the new Caddy base and the setuptools pin rebuild both images on the dev device
+  at the next deploy, hundreds of MB on its SD card (ADR-0214). `passes` stays false until the
+  job has run on GitHub.
 
 ### 2026-11-21: Every page on the shared components; the design check keeps no baseline (ADR-0438)
 

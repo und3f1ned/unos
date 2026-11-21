@@ -4244,12 +4244,17 @@
       "description": "CI scans the supervisor and web UI images for known vulnerabilities",
       "steps": [
         "The weekly audit workflow builds both images and scans them",
-        "A finding of high severity fails the run and names the package"
+        "A fixable finding of high or critical severity fails the run and names the package (ADR-0439)"
       ],
       "passes": false,
       "adr": [
-        "ADR-0218"
-      ]
+        "ADR-0218",
+        "ADR-0439"
+      ],
+      "verified_by": [
+        "supervisor/tests/test_image_scan.py"
+      ],
+      "notes": "make image-scan (scripts/image-scan.sh) and the Image vulnerabilities job of the weekly Audit workflow build both images without the cache and scan them with trivy 0.76.2, pinned by digest, offline, for fixable HIGH and CRITICAL vulnerabilities minus .trivyignore.yaml (ADR-0439). On 2026-11-21 the first local run failed with 143 findings; after a fresh build, the new caddy:2-alpine digest and setuptools 84.2.1 it passed, with 3 entries ignored until 2026-12-21 and 2027-05-21. passes stays false until the job has run on GitHub."
     },
     {
       "id": "ci.samba-in-ci",

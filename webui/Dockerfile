@@ -21,7 +21,7 @@ COPY . .
 # update.sh take the web UI's image of a K1 from another machine (ADR-0373).
 RUN npm run build
 
-FROM caddy:2-alpine@sha256:f2b257f20955d6be2229bed86bad24193eeb8c4dc962a4031a6eb42344ffa457
+FROM caddy:2-alpine@sha256:003a97808e781aa9f7e75cc2f43d34d461099031faf5e20faefb9f61126836f0
 
 COPY --from=builder /app/build /srv
 COPY Caddyfile /etc/caddy/Caddyfile

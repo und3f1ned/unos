@@ -11,6 +11,7 @@ nothing is not a result.
 | --- | --- | --- | --- |
 | Dependency audit | GitHub Actions: `.github/workflows/audit.yml`, every week and on demand (`workflow_dispatch`) | `scripts/audit-python.sh` (pip-audit of `supervisor/requirements.txt`, resolved in the audit environment, ADR-0423), and `npm audit --omit=dev --audit-level=high` in `webui/` | A failed run: the owner updates the dependency, or a feature-list entry when the update needs work |
 | Dependency updates | Dependabot: `.github/dependabot.yml` | New versions for pip, npm, GitHub Actions (the commit of a newer release and its version comment, ADR-0423) and the Docker base images, grouped, after a cooldown, with Conventional Commit prefixes; no new major npm versions and no Playwright (ADR-0427) | Pull requests that the owner reviews and merges by hand after `make check` passes in a checkout set up from the pull request's branch, since CI is off (ADR-0230): never automatically, because the supervisor runs privileged with the Docker socket |
+| Image vulnerabilities | GitHub Actions: the `images` job of `audit.yml` | `make image-scan`: both images built as an install builds them, then trivy, pinned by digest, without the network: fixable HIGH and CRITICAL vulnerabilities of their OS packages and libraries, minus `.trivyignore.yaml` (ADR-0439) | A failed run names the package and its fixed version: the owner moves the base image's digest or the package, or adds an entry with its reason and expiry to `.trivyignore.yaml`; an expired entry fails the run again |
 | Catalog image platforms | GitHub Actions: the `platforms` job of `audit.yml` | `scripts/catalog-platforms.py check`: the platforms recorded for every pinned image of the app catalog against the registries' manifests of its index (ADR-0403, ADR-0410) | A failed run: a pin whose record was not rewritten, or an index that its registry no longer serves; the owner runs `make catalog-platforms`, then `scripts/catalog-platforms.py record` and reviews the diff |
 | Catalog image tags | GitHub Actions: the `tags` job of `audit.yml` | `scripts/catalog-platforms.py tags`: the tag of every pinned image of the app catalog against the index its registry names now (ADR-0410) | A failed run: a publisher pushed a pinned version again or a line tag (Traefik's `v3.7`) moved on (`MOVED`, with the templates and both digests), or a pinned index is gone; the owner reviews the new index and pins it in `supervisor/src/apps/catalog.py` with its `VOLUME`s and size, then runs `scripts/catalog-platforms.py record`, or keeps the pin. Immich's five pins move only together with an Immich release: a re-pin offers the dev device's Immich an update |
 
@@ -83,7 +84,8 @@ and proposes the changes, and the owner reviews them.
     packaging and to the newest setuptools and wheel that are a week old ("Updating the audit
     environment"); `make test` compares pip's and packaging's hashes with those of the first,
     `make setup` installs the first and `make audit` the second on the owner's machine, and pip
-    checks every hash there.
+    checks every hash there. The trivy image of `scripts/image-scan.sh` moves to the digest of a
+    newer release's index that is a week old, then `make image-scan` runs (ADR-0439).
 
 ## After a session that went badly
 

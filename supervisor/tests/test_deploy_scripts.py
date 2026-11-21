@@ -3876,7 +3876,8 @@ class TestBuildContexts:
         layer = _instruction(lines, _pip_layer(lines))
         toolchain = "cargo rustc pkg-config libssl-dev libffi-dev make"
 
-        pip = re.match(r"RUN pip install --no-cache-dir pip==(\d+)\.(\d+)(?:\.\d+)? && ", layer)
+        # setuptools in the same command, pinned: the base's has vulnerable vendored packages (ADR-0439).
+        pip = re.match(r"RUN pip install --no-cache-dir pip==(\d+)\.(\d+)(?:\.\d+)? setuptools==\d+\.\d+\.\d+ && ", layer)
         assert pip and (int(pip[1]), int(pip[2])) >= (24, 1), layer
         other, riscv64 = re.fullmatch(
             r'.*? && if \[ "\$\(dpkg --print-architecture\)" != riscv64 \]; then (.*?); else (.*?); fi', layer

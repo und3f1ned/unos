@@ -34,7 +34,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 MAKEFILE = REPO_ROOT / "Makefile"
 WORKFLOWS = REPO_ROOT / ".github" / "workflows"
 TARGETS = ("help", "setup", "check", "check-fast", "lint", "test", "test-fast", "smoke", "frontend", "e2e-local",
-           "audit")
+           "audit", "image-scan")
 TEST_FAST = ("tests/test_adrs.py", "tests/test_feature_list.py", "tests/test_agent_guard.py",
              "tests/test_repo_tooling.py", "tests/test_dev_scripts.py", "tests/test_dev_scenarios.py",
              "tests/test_standin.py")
@@ -111,6 +111,8 @@ def test_help_is_the_default_target():
     # pip-audit of the supervisor's dependencies as resolved by pinned, hashed tools (ADR-0423).
     ("audit", ['PYTHON="/opt/py/bin/python" PIP_AUDIT="pip-audit" scripts/audit-python.sh',
                "cd webui && npm audit --omit=dev --audit-level=high"]),
+    # trivy over both images (ADR-0439).
+    ("image-scan", ["scripts/image-scan.sh"]),
 ])
 def test_targets_run_the_agreed_commands(target, commands):
     dry_run = make("-n", target, *TOOLS).stdout
