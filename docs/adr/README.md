@@ -71,6 +71,7 @@ and this index, and `make check-fast` runs it.
 | [0416](0416-the-system-security-logs-and-nfs-routers-reach-the-host-only-through-host-py-and-the-firewall-is-the-hosts-ufw-turned-on-only-with-a-revert-armed.md) | The system, security, logs and NFS routers reach the host only through host.py, and the firewall is the host's ufw, changed only with the local networks let in and a revert armed | accepted | 2026-11-18 |
 | [0417](0417-the-api-documentation-describes-every-route-field-example-and-error-status-and-a-test-derives-the-errors.md) | The API documentation describes every route, field, example and error status, and a test derives the errors from the code | accepted | 2026-11-19 |
 | [0419](0419-every-data-path-of-the-supervisor-follows-unos-data-dir-read-once-at-its-start.md) | Every data path of the supervisor follows UNOS_DATA_DIR, read once at its start, and the stand-in patches no constant | accepted | 2026-11-19 |
+| [0440](0440-unos-takes-no-plugins-and-backends-channels-and-sign-in-providers-are-added-in-its-own-code.md) | UNOS takes no plugins, and storage backends, notification channels and sign-in providers are added in its own code | accepted | 2026-11-21 |
 
 ## Security
 
@@ -402,6 +403,7 @@ and this index, and `make check-fast` runs it.
 | [0420](0420-remote-access-is-a-wireguard-tunnel-to-the-nas-alone-and-apps-get-local-names-through-caddy.md) | Remote access is a WireGuard tunnel on the host that reaches the NAS alone, and apps get single-label local names through Caddy | superseded by [0431](0431-every-accounts-own-settings-are-on-the-account-page-system-is-the-nass-and-each-setting-action-and-fact-has-one-place.md) | 2026-11-19 |
 | [0421](0421-check-sh-measures-heat-only-in-zones-that-slow-a-processor-and-unos-keeps-its-idle-budget.md) | The device check measures heat only in zones that slow a processor, and UNOS keeps its idle budget | accepted | 2026-11-19 |
 | [0424](0424-bonds-vlans-and-bridges-are-systemd-networkd-files-and-a-change-that-may-cut-the-connection-waits-to-be-kept.md) | Bonds, VLANs and bridges are systemd-networkd files that UNOS writes, and a change that may cut the connection waits to be kept | accepted | 2026-11-19 |
+| [0441](0441-unos-sends-no-telemetry.md) | UNOS sends no telemetry, not even when an administrator turns it on | accepted | 2026-11-21 |
 
 ## Web UI
 
